@@ -1,0 +1,45 @@
+{
+  "$description": "NOX · Generated-avatar palette (avatar backgrounds only). Pick: palette[ hash(name) % 8 ]. Initials always #FFFFFF. Hash: h=(h*31+charCodeAt(i))>>>0. See nox_brand.dart for the exact function.",
+  "avatar": {
+    "0": {
+      "$type": "color",
+      "$value": "#0E7C7C",
+      "$description": "teal — contrast ≥4.5:1 vs white initials."
+    },
+    "1": {
+      "$type": "color",
+      "$value": "#8A6A00",
+      "$description": "gold-deep — contrast ≥4.5:1 vs white initials."
+    },
+    "2": {
+      "$type": "color",
+      "$value": "#AD4A15",
+      "$description": "coral-deep — contrast ≥4.5:1 vs white initials."
+    },
+    "3": {
+      "$type": "color",
+      "$value": "#5C7300",
+      "$description": "lime-deep — contrast ≥4.5:1 vs white initials."
+    },
+    "4": {
+      "$type": "color",
+      "$value": "#2E6FB0",
+      "$description": "blue — contrast ≥4.5:1 vs white initials."
+    },
+    "5": {
+      "$type": "color",
+      "$value": "#C0392B",
+      "$description": "red — contrast ≥4.5:1 vs white initials."
+    },
+    "6": {
+      "$type": "color",
+      "$value": "#7A4DB3",
+      "$description": "violet — contrast ≥4.5:1 vs white initials."
+    },
+    "7": {
+      "$type": "color",
+      "$value": "#1E7268",
+      "$description": "green — contrast ≥4.5:1 vs white initials."
+    }
+  }
+}

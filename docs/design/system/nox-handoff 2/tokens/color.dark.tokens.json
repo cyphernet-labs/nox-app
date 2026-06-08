@@ -1,0 +1,172 @@
+{
+  "$description": "NOX · Material 3 ColorScheme — DARK. Canonical source: src/tokens.jsx. In Flutter, elevation is conveyed by tonal overlay (no box-shadow).",
+  "color": {
+    "dark": {
+      "primary": {
+        "$type": "color",
+        "$value": "#4CDADA",
+        "$description": "Primary brand color — high-emphasis fills (FilledButton, FAB, active states)."
+      },
+      "onPrimary": {
+        "$type": "color",
+        "$value": "#003737",
+        "$description": "Text/icons on top of primary."
+      },
+      "primaryContainer": {
+        "$type": "color",
+        "$value": "#004F4F",
+        "$description": "Standout fill for primary-tinted containers (docked FAB, own message bubble)."
+      },
+      "onPrimaryContainer": {
+        "$type": "color",
+        "$value": "#6FF7F6",
+        "$description": "Content on primaryContainer."
+      },
+      "secondary": {
+        "$type": "color",
+        "$value": "#B0CCCB",
+        "$description": "Less-prominent accent for secondary elements."
+      },
+      "onSecondary": {
+        "$type": "color",
+        "$value": "#1B3534",
+        "$description": "Content on secondary."
+      },
+      "secondaryContainer": {
+        "$type": "color",
+        "$value": "#324B4A",
+        "$description": "Selected SegmentedButton segment."
+      },
+      "onSecondaryContainer": {
+        "$type": "color",
+        "$value": "#CCE8E7",
+        "$description": "Content on secondaryContainer."
+      },
+      "tertiary": {
+        "$type": "color",
+        "$value": "#DEC56B",
+        "$description": "Contrasting accent to balance primary/secondary."
+      },
+      "onTertiary": {
+        "$type": "color",
+        "$value": "#3A2F00",
+        "$description": "Content on tertiary."
+      },
+      "tertiaryContainer": {
+        "$type": "color",
+        "$value": "#534619",
+        "$description": "Tertiary-tinted container fill."
+      },
+      "onTertiaryContainer": {
+        "$type": "color",
+        "$value": "#FAE08A",
+        "$description": "Content on tertiaryContainer."
+      },
+      "error": {
+        "$type": "color",
+        "$value": "#FFB4AB",
+        "$description": "Error states — destructive actions, errorText, error status icon, Logout."
+      },
+      "onError": {
+        "$type": "color",
+        "$value": "#690005",
+        "$description": "Content on error."
+      },
+      "errorContainer": {
+        "$type": "color",
+        "$value": "#93000A",
+        "$description": "Error snackbar / error container fill."
+      },
+      "onErrorContainer": {
+        "$type": "color",
+        "$value": "#FFDAD6",
+        "$description": "Content on errorContainer."
+      },
+      "surface": {
+        "$type": "color",
+        "$value": "#0E1514",
+        "$description": "Default screen background."
+      },
+      "onSurface": {
+        "$type": "color",
+        "$value": "#DDE4E3",
+        "$description": "Primary text/icons on surface."
+      },
+      "surfaceVariant": {
+        "$type": "color",
+        "$value": "#3F4948",
+        "$description": "Deprecated in M3 (use surfaceContainerHighest). Kept for LinearProgress track."
+      },
+      "onSurfaceVariant": {
+        "$type": "color",
+        "$value": "#BEC9C8",
+        "$description": "Secondary text/icons — captions, helper, unselected nav, dividers source."
+      },
+      "outline": {
+        "$type": "color",
+        "$value": "#899393",
+        "$description": "Decorative outlines, TextField border (unfocused)."
+      },
+      "outlineVariant": {
+        "$type": "color",
+        "$value": "#4E5B58",
+        "$description": "Subtle dividers."
+      },
+      "surfaceContainerLowest": {
+        "$type": "color",
+        "$value": "#0C1312",
+        "$description": "Lowest tonal surface tier."
+      },
+      "surfaceContainerLow": {
+        "$type": "color",
+        "$value": "#1C2423",
+        "$description": "Low tonal surface (identity card fill)."
+      },
+      "surfaceContainer": {
+        "$type": "color",
+        "$value": "#222A28",
+        "$description": "Base tonal container (BottomAppBar, composer, MaterialBanner)."
+      },
+      "surfaceContainerHigh": {
+        "$type": "color",
+        "$value": "#2C3431",
+        "$description": "High tonal container (SearchBar, AlertDialog, other message bubble)."
+      },
+      "surfaceContainerHighest": {
+        "$type": "color",
+        "$value": "#37403C",
+        "$description": "Highest tonal container (file-chip)."
+      },
+      "inverseSurface": {
+        "$type": "color",
+        "$value": "#DDE4E3",
+        "$description": "Inverse background — Snackbar."
+      },
+      "onInverseSurface": {
+        "$type": "color",
+        "$value": "#2B3231",
+        "$description": "Content on inverseSurface."
+      },
+      "inversePrimary": {
+        "$type": "color",
+        "$value": "#006A6A",
+        "$description": "Primary tone on inverse surfaces."
+      },
+      "surfaceTint": {
+        "$type": "color",
+        "$value": "#4CDADA",
+        "$description": "Tonal-elevation tint color (= primary)."
+      },
+      "shadow": {
+        "$type": "color",
+        "$value": "#000000",
+        "$description": "Shadow color."
+      },
+      "scrim": {
+        "$type": "color",
+        "$value": "#000000",
+        "$description": "Scrim behind modals / camera mask."
+      }
+    }
+  }
+}

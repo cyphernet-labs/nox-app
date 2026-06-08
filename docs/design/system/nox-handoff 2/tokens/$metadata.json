@@ -1,0 +1,13 @@
+{
+  "tokenSetOrder": [
+    "brand",
+    "avatars",
+    "color.light",
+    "color.dark",
+    "typography",
+    "spacing",
+    "shape",
+    "elevation",
+    "motion"
+  ]
+}

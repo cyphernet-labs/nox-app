@@ -1,0 +1,61 @@
+{
+  "$description": "NOX · Corner radii. full=999 → Flutter StadiumBorder / circle. Message bubble: base l(16), own bottom-right & other bottom-left clipped to 4.",
+  "shape": {
+    "none": {
+      "$type": "dimension",
+      "$value": {
+        "value": 0,
+        "unit": "px"
+      },
+      "$description": "Edge-to-edge video (2.2)."
+    },
+    "xs": {
+      "$type": "dimension",
+      "$value": {
+        "value": 4,
+        "unit": "px"
+      },
+      "$description": "TextField (outlined), file-chip."
+    },
+    "s": {
+      "$type": "dimension",
+      "$value": {
+        "value": 8,
+        "unit": "px"
+      },
+      "$description": "Small chips, SegmentedButton segments."
+    },
+    "m": {
+      "$type": "dimension",
+      "$value": {
+        "value": 12,
+        "unit": "px"
+      },
+      "$description": "Card (identity card)."
+    },
+    "l": {
+      "$type": "dimension",
+      "$value": {
+        "value": 16,
+        "unit": "px"
+      },
+      "$description": "Message bubble (base radius)."
+    },
+    "xl": {
+      "$type": "dimension",
+      "$value": {
+        "value": 28,
+        "unit": "px"
+      },
+      "$description": "Bottom sheet top corners, AlertDialog."
+    },
+    "full": {
+      "$type": "dimension",
+      "$value": {
+        "value": 999,
+        "unit": "px"
+      },
+      "$description": "Stadium / circle — FilledButton, TextButton, SearchBar, Badge, docked FAB."
+    }
+  }
+}

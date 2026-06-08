@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NOX · Mobile screens</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,0,0&display=block" rel="stylesheet" />
+<style>
+  :root{--ink:#161D1D;--variant:#3F4948;--line:#D7E0DE;--canvas:#0C2424;--teal:#12B4B4;--mono:'Roboto Mono',ui-monospace,monospace}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{font-family:'Roboto',system-ui,sans-serif;color:var(--ink);background:#EEF3F2;-webkit-font-smoothing:antialiased}
+  .msr{font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;line-height:1;
+    letter-spacing:normal;white-space:nowrap;direction:ltr;-webkit-font-smoothing:antialiased;font-feature-settings:'liga'}
+  @keyframes noxSpin{to{transform:rotate(360deg)}}
+  @keyframes noxCaret{50%{opacity:0}}
+  /* one-shot entrance neutralized in this static review harness — splash shows its end-state */
+  @keyframes noxSplashIn{from{opacity:1;transform:none}to{opacity:1;transform:none}}
+
+  #app{display:flex;flex-direction:column;height:100%}
+  header{flex-shrink:0;height:60px;background:var(--canvas);color:#EAF3F2;display:flex;align-items:center;gap:14px;padding:0 20px}
+  header .wm{font-weight:700;letter-spacing:.14em;font-size:14px;color:#4CDADA}
+  header .ttl{font-size:15px;font-weight:500}
+  header .sub{font-size:12.5px;color:#8FB3B1}
+  header .sp{flex:1}
+  .seg{display:flex;border:1px solid #2f5250;border-radius:999px;overflow:hidden}
+  .seg button{appearance:none;border:0;background:transparent;color:#9FC2C0;font:inherit;font-size:12.5px;
+    padding:6px 14px;cursor:pointer}
+  .seg button.on{background:#11302f;color:#EAF3F2}
+
+  .body{flex:1;min-height:0;display:flex}
+  .side{width:248px;flex-shrink:0;background:#fff;border-right:1px solid var(--line);overflow:auto;padding:8px 0}
+  .grp{font-size:11px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--variant);padding:14px 18px 6px}
+  .nav{display:flex;flex-direction:column}
+  .nav a{display:flex;gap:10px;align-items:baseline;padding:8px 18px;cursor:pointer;color:var(--ink);text-decoration:none;font-size:13.5px}
+  .nav a:hover{background:#F1F6F5}
+  .nav a.on{background:#E0EFEE;font-weight:500}
+  .nav a .n{font-family:var(--mono);font-size:11px;color:var(--teal);min-width:26px}
+
+  .stage{flex:1;min-width:0;display:flex;flex-direction:column;background:
+    radial-gradient(circle at 50% 38%, #f6faf9, #e6edec)}
+  .chips{flex-shrink:0;display:flex;flex-wrap:wrap;gap:7px;padding:14px 18px 4px;justify-content:center}
+  .chips button{appearance:none;border:1px solid var(--line);background:#fff;border-radius:999px;
+    font:inherit;font-size:12px;padding:5px 12px;cursor:pointer;color:var(--variant)}
+  .chips button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .frameWrap{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden}
+  .scaler{transform-origin:center center}
+
+  .spec{width:368px;flex-shrink:0;background:#fff;border-left:1px solid var(--line);overflow:auto;padding:22px 24px 60px}
+  .spec h2{margin:0;font-size:20px;font-weight:600}
+  .spec .num{font-family:var(--mono);font-size:12px;color:var(--teal)}
+  .spec .purpose{font-size:14px;color:var(--variant);margin:10px 0 0}
+  .spec h3{font-size:11px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--teal);
+    margin:22px 0 8px;padding-bottom:7px;border-bottom:1px solid var(--line)}
+  .spec p.an{font-size:13.5px;color:var(--ink);margin:0}
+  .spec ul{margin:0;padding-left:18px}
+  .spec li{font-size:13.5px;color:var(--ink);margin-bottom:7px;line-height:1.5}
+  .spec li.copy{color:var(--variant)}
+  .spec .dsrow{display:flex;flex-wrap:wrap;gap:6px}
+  .spec .ds{font-family:var(--mono);font-size:11px;background:#EEF3F2;color:var(--variant);padding:3px 8px;border-radius:6px}
+  @media(max-width:1080px){.spec{width:300px}.side{width:210px}}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="specs.js"></script>
+<script type="text/babel" src="_src/tokens.jsx"></script>
+<script type="text/babel" src="_src/m3.jsx"></script>
+<script type="text/babel" src="_src/chats-parts.jsx"></script>
+<script type="text/babel" src="_src/screens-onboarding.jsx"></script>
+<script type="text/babel" src="_src/screens-chats.jsx"></script>
+<script type="text/babel" src="_src/screens-settings.jsx"></script>
+<script type="text/babel">
+const { useState, useRef, useLayoutEffect } = React;
+const SPECS = window.NOX_SPECS;
+const byId = Object.fromEntries(SPECS.map(s => [s.id, s]));
+
+// id + state + theme → the screen rendered inside a Phone
+function renderScreen(id, st, T) {
+  const P = (props, kids) => <Phone t={T} {...props}>{kids}</Phone>;
+  switch (id) {
+    case 'splash':  return <Phone t={DARK} surface={BRAND.canvasDark} statusColor={BRAND.white} noNav><SplashScreen /></Phone>;
+    case 'login':   return P({}, <LoginScreen t={T} state={st} />);
+    case 'qr-scan': return st === 'denied' ? P({}, <QRPermissionScreen t={T} />) : P({ noNav:true }, <QRScanScreen t={T} />);
+    case 'username':return P({}, <SetUsernameScreen t={T} state={st} />);
+    case 'error':   return P({}, <ErrorScreen t={T} mode={st} title={st==='embedded'?'Couldn’t load this chat':'Something went wrong'} message="Check your connection and try again." />);
+    case 'shell':   return st === 'settings' ? P({}, <SettingsRootScreen t={T} state="loaded" />) : P({}, <ChatsListScreen t={T} state="filled" />);
+    case 'chats':   return P({}, <ChatsListScreen t={T} state={st === 'snack' ? 'filled' : st} snack={st === 'snack' ? { text:'Message sent', action:'Undo' } : null} />);
+    case 'thread':  return P({}, <ChatThreadScreen t={T} state={st} />);
+    case 'file':    return P({}, <FileViewScreen t={T} state={st} />);
+    case 'card':    return P({}, <ChatCardScreen t={T} view={st} />);
+    case 'create':  return P({}, <CreateChatScreen t={T} state={st} />);
+    case 'settings':return P({}, <SettingsRootScreen t={T} state={st} />);
+    case 'notifications': return P({}, <NotificationsScreen t={T} denied={st === 'denied'} on={true} />);
+    case 'appearance':    return P({}, <AppearanceScreen t={T} value={st} />);
+    case 'language':      return P({}, <LanguageScreen t={T} value={st} />);
+    case 'terms':   return P({}, <TermsScreen t={T} />);
+    case 'about':   return P({}, <AboutScreen t={T} />);
+    default: return null;
+  }
+}
+
+const PHONE_W = 409, PHONE_H = 868; // phone outer incl. 8px bezel
+
+function Stage({ id, st, T }) {
+  const wrapRef = useRef(null);
+  const [scale, setScale] = useState(1);
+  useLayoutEffect(() => {
+    const el = wrapRef.current; if (!el) return;
+    const fit = () => {
+      const r = el.getBoundingClientRect();
+      setScale(Math.min((r.width - 32) / PHONE_W, (r.height - 24) / PHONE_H, 1));
+    };
+    fit();
+    const ro = new ResizeObserver(fit); ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return (
+    <div className="frameWrap" ref={wrapRef}>
+      <div className="scaler" style={{ transform: `scale(${scale})` }}>
+        {renderScreen(id, st, T)}
+      </div>
+    </div>
+  );
+}
+
+function SpecPanel({ s }) {
+  return (
+    <div className="spec">
+      <div className="num">{s.num} · {s.group}</div>
+      <h2>{s.title}</h2>
+      <p className="purpose">{s.purpose}</p>
+      <h3>Anatomy</h3><p className="an">{s.anatomy}</p>
+      <h3>Behavior</h3><ul>{s.behavior.map((b,i) => <li key={i}>{b}</li>)}</ul>
+      <h3>Navigation</h3><ul>{s.navigation.map((b,i) => <li key={i}>{b}</li>)}</ul>
+      <h3>Copy · EN</h3><ul>{s.copy.map((b,i) => <li key={i} className="copy">{b}</li>)}</ul>
+      <h3>Design system</h3><div className="dsrow">{s.ds.map((d,i) => <span key={i} className="ds">{d}</span>)}</div>
+    </div>
+  );
+}
+
+function App() {
+  const [id, setId] = useState(SPECS[0].id);
+  const [st, setSt] = useState(SPECS[0].states[0].key);
+  const [theme, setTheme] = useState('light');
+  const s = byId[id];
+  const T = theme === 'dark' ? DARK : LIGHT;
+  const pick = (nid) => { setId(nid); setSt(byId[nid].states[0].key); };
+  const groups = [...new Set(SPECS.map(x => x.group))];
+  return (
+    <div className="body">
+      <nav className="side">
+        {groups.map(g => (
+          <div key={g}>
+            <div className="grp">{g}</div>
+            <div className="nav">
+              {SPECS.filter(x => x.group === g).map(x => (
+                <a key={x.id} className={x.id === id ? 'on' : ''} onClick={() => pick(x.id)}>
+                  <span className="n">{x.num}</span><span>{x.title}</span>
+                </a>
+              ))}
+            </div>
+          </div>
+        ))}
+      </nav>
+      <div className="stage">
+        <div className="chips">
+          {s.states.map(stt => (
+            <button key={stt.key} className={stt.key === st ? 'on' : ''} onClick={() => setSt(stt.key)}>{stt.label}</button>
+          ))}
+        </div>
+        <Stage id={id} st={st} T={T} />
+      </div>
+      <SpecPanel s={s} />
+    </div>
+  );
+}
+
+function Root() {
+  const [theme, setTheme] = useState('light');
+  return (
+    <>
+      <header>
+        <span className="wm">NOX</span>
+        <span className="ttl">Mobile screens</span>
+        <span className="sub">iOS / Android · Material 3 · live from the design system</span>
+        <span className="sp" />
+        <div className="seg">
+          <button className={theme==='light'?'on':''} onClick={()=>setTheme('light')}>Light</button>
+          <button className={theme==='dark'?'on':''} onClick={()=>setTheme('dark')}>Dark</button>
+        </div>
+      </header>
+      <AppThemed theme={theme} />
+    </>
+  );
+}
+// lift theme into App via context-free prop
+function AppThemed({ theme }) {
+  const [id, setId] = useState(SPECS[0].id);
+  const [st, setSt] = useState(SPECS[0].states[0].key);
+  const s = byId[id];
+  const T = theme === 'dark' ? DARK : LIGHT;
+  const pick = (nid) => { setId(nid); setSt(byId[nid].states[0].key); };
+  const groups = [...new Set(SPECS.map(x => x.group))];
+  return (
+    <div className="body">
+      <nav className="side">
+        {groups.map(g => (
+          <div key={g}>
+            <div className="grp">{g}</div>
+            <div className="nav">
+              {SPECS.filter(x => x.group === g).map(x => (
+                <a key={x.id} className={x.id === id ? 'on' : ''} onClick={() => pick(x.id)}>
+                  <span className="n">{x.num}</span><span>{x.title}</span>
+                </a>
+              ))}
+            </div>
+          </div>
+        ))}
+      </nav>
+      <div className="stage">
+        <div className="chips">
+          {s.states.map(stt => (
+            <button key={stt.key} className={stt.key === st ? 'on' : ''} onClick={() => setSt(stt.key)}>{stt.label}</button>
+          ))}
+        </div>
+        <Stage id={id} st={st} T={T} />
+      </div>
+      <SpecPanel s={s} />
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('app')).render(<Root />);
+</script>
+</body>
+</html>

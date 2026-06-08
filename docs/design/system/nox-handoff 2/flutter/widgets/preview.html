@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NOX · Widgets → Flutter</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,0,0&display=block" rel="stylesheet" />
+<style>
+  :root{
+    --primary:#006A6A; --surface:#F4FBFA; --on-surface:#161D1D; --on-variant:#3F4948;
+    --outline:#BEC9C8; --container:#E9EFEE; --container-low:#EFF5F4; --canvas:#0C2424;
+    --mono:'Roboto Mono',ui-monospace,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--surface);color:var(--on-surface);
+    font-family:'Roboto',system-ui,sans-serif;line-height:1.5;-webkit-font-smoothing:antialiased}
+  .msr{font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;
+    line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;word-wrap:normal;
+    direction:ltr;-webkit-font-smoothing:antialiased;font-feature-settings:'liga'}
+  @keyframes noxSpin{to{transform:rotate(360deg)}}
+  @keyframes noxCaret{50%{opacity:0}}
+
+  .wrap{max-width:1180px;margin:0 auto;padding:0 24px 96px}
+  header.hero{background:var(--canvas);color:#FAFAFA;padding:56px 24px 48px}
+  .hero-in{max-width:1180px;margin:0 auto}
+  .word{font-weight:700;letter-spacing:.12em;font-size:15px;color:#4CDADA}
+  .hero h1{font-size:40px;line-height:1.12;font-weight:400;margin:16px 0 12px}
+  .hero p{font-size:16px;color:#B0CCCB;max-width:64ch;margin:0}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:24px}
+  .chip{font-size:12.5px;font-weight:500;padding:6px 12px;border-radius:999px;border:1px solid #324B4A;color:#CCE8E7;background:#11302f}
+
+  h2{font-size:13px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--primary);
+    margin:52px 0 4px;padding-bottom:10px;border-bottom:1px solid var(--outline)}
+  h2 .f{font-family:var(--mono);font-size:11px;color:var(--on-variant);letter-spacing:.02em;text-transform:none;float:right;font-weight:400}
+
+  .card{display:grid;grid-template-columns:380px 1fr;gap:0;border:1px solid var(--outline);
+    border-radius:14px;overflow:hidden;background:#fff;margin-top:16px}
+  .preview{background:var(--container-low);display:flex;align-items:center;justify-content:center;
+    padding:28px;border-right:1px solid var(--outline);min-height:150px}
+  .meta{padding:20px 22px;min-width:0}
+  .meta .top{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .meta h3{margin:0;font-size:17px;font-weight:600}
+  .tag{font-family:var(--mono);font-size:10px;letter-spacing:.04em;text-transform:uppercase;
+    padding:3px 8px;border-radius:6px}
+  .tag.custom{background:#CCE8E7;color:#053f3e}
+  .tag.stock{background:var(--container);color:var(--on-variant)}
+  .meta p{margin:9px 0 12px;font-size:13.5px;color:var(--on-variant)}
+  pre.dart{margin:0;font-family:var(--mono);font-size:12px;line-height:1.55;background:var(--canvas);
+    color:#CCE8E7;border-radius:10px;padding:13px 15px;overflow:auto;white-space:pre-wrap;word-break:break-word}
+  pre.dart .k{color:#4CDADA}
+  .src{margin-top:10px;font-family:var(--mono);font-size:11px;color:var(--on-variant)}
+  .foot{margin-top:60px;padding-top:22px;border-top:1px solid var(--outline);font-size:13px;color:var(--on-variant)}
+  @media(max-width:780px){.card{grid-template-columns:1fr}.preview{border-right:none;border-bottom:1px solid var(--outline)}}
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="hero-in">
+    <div class="word">NOX</div>
+    <h1>Widgets → Flutter</h1>
+    <p>Every design-system primitive rendered live (the real <code style="background:#11302f;color:#CCE8E7;border:1px solid #324B4A;padding:1px 5px;border-radius:4px">src/</code>
+       components — not screenshots), paired with the Dart that builds it. Dart source:
+       <code style="background:#11302f;color:#CCE8E7;border:1px solid #324B4A;padding:1px 5px;border-radius:4px">flutter/widgets/*.dart</code>.</p>
+    <div class="chips">
+      <span class="chip">Material 3 · light</span>
+      <span class="chip">Custom + stock-themed</span>
+      <span class="chip">Spec: spec/primitives.md</span>
+    </div>
+  </div>
+</header>
+<div class="wrap"><div id="root"></div></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script type="text/babel" src="_src/tokens.jsx"></script>
+<script type="text/babel" src="_src/m3.jsx"></script>
+<script type="text/babel" src="_src/chats-parts.jsx"></script>
+<script type="text/babel">
+const t = window.LIGHT;
+
+// A preview wrapper sized to its content
+const Box = ({ w, children }) => <div style={{ width: w || 'auto', maxWidth: '100%' }}>{children}</div>;
+
+const SECTIONS = [
+  { title: 'Primitives', file: 'nox_primitives.dart', items: [
+    { name: 'NoxIcon', tag: 'custom', desc: 'Material Symbols Rounded glyph. FILL 0 outlined / 1 filled; weight 400, optical 24.',
+      dart: `NoxIcon(Symbols.forum, fill: 1, size: 24, color: cs.primary)`,
+      render: () => <div style={{display:'flex',gap:20,alignItems:'center'}}>
+        <Icon name="forum" size={28} color={t.primary} fill={1} />
+        <Icon name="forum" size={28} color={t.onSurfaceVariant} fill={0} />
+        <Icon name="search" size={28} color={t.onSurfaceVariant} />
+        <Icon name="settings" size={28} color={t.primary} fill={1} />
+      </div> },
+    { name: 'NoxAvatar', tag: 'custom', desc: 'Generated color from the name hash; white initials, or a forum glyph fallback. Always circular.',
+      dart: `NoxAvatar(name: 'Aria Lin', size: 40)`,
+      render: () => <div style={{display:'flex',gap:14}}>
+        <Avatar name="Aria Lin" size={48} /><Avatar name="Mox" size={48} />
+        <Avatar name="Nyx" size={48} /><Avatar name="42" size={48} />
+      </div> },
+    { name: 'NoxSpinner', tag: 'stock', desc: 'Indeterminate progress. Standalone → primary; inside a FilledButton → onPrimary.',
+      dart: `NoxSpinner(size: 24) // CircularProgressIndicator`,
+      render: () => <Spinner size={28} color={t.primary} /> },
+    { name: 'NoxFileGlyph', tag: 'custom', desc: 'File-type icon in a soft tinted rounded square (file lists 5.4 / file view 5.3).',
+      dart: `NoxFileGlyph(type: NoxFileType.pdf, box: 44)`,
+      render: () => <div style={{display:'flex',gap:12}}>
+        <FileGlyph type="pdf" /><FileGlyph type="image" /><FileGlyph type="sheet" /><FileGlyph type="archive" />
+      </div> },
+  ]},
+  { title: 'Buttons & input', file: 'nox_theme.dart (stock-themed)', items: [
+    { name: 'FilledButton', tag: 'stock', desc: 'Primary action. Stadium, Label Large, min-height 48. Disabled + loading variants.',
+      dart: `FilledButton(onPressed: …, child: Text('Sign in'))`,
+      render: () => <div style={{display:'flex',gap:12,alignItems:'center',flexWrap:'wrap'}}>
+        <FilledButton t={t} label="Sign in" />
+        <FilledButton t={t} label="Loading" loading />
+        <FilledButton t={t} label="Disabled" disabled />
+      </div> },
+    { name: 'TextButton', tag: 'stock', desc: 'Secondary action. Text primary, stadium.',
+      dart: `TextButton(onPressed: …, child: Text('Skip'))`,
+      render: () => <div style={{display:'flex',gap:8}}><TextButton t={t} label="Skip" /><TextButton t={t} label="Cancel" /></div> },
+    { name: 'IconButton', tag: 'stock', desc: '48×48 tap target. Icon onSurfaceVariant, or primary when active.',
+      dart: `IconButton(onPressed: …, icon: NoxIcon(Symbols.search))`,
+      render: () => <div style={{display:'flex',gap:4}}>
+        <IconButton t={t} name="search" /><IconButton t={t} name="content_copy" /><IconButton t={t} name="qr_code_scanner" />
+      </div> },
+    { name: 'TextField', tag: 'stock', desc: 'Outlined. shape xs, outline → primary on focus → error. Floating label, helper, counter.',
+      dart: `TextField(decoration: InputDecoration(labelText: 'Username', counterText: '5/32'))`,
+      render: () => <Box w={300}><div style={{display:'flex',flexDirection:'column',gap:16}}>
+        <TextField t={t} label="Username" value="nyx_42" counter="6/32" helper="Available" />
+        <TextField t={t} label="Account ID" focused placeholder="Paste or type" />
+      </div></Box> },
+  ]},
+  { title: 'Search', file: 'nox_widgets.dart', items: [
+    { name: 'NoxSearchBar', tag: 'custom', desc: 'Persistent search (5.1). Brand-teal icon, surfaceContainerHigh, stadium, elevation 2.',
+      dart: `NoxSearchBar(hint: 'Search', onTap: …)`,
+      render: () => <Box w={340}><SearchBar t={t} /></Box> },
+  ]},
+  { title: 'Chat & messaging', file: 'nox_widgets.dart', items: [
+    { name: 'NoxChatListItem', tag: 'custom', desc: 'Chat row (5.1). Avatar ring + name + preview + time + unread badge (hidden at 0, caps 99+).',
+      dart: `NoxChatListItem(name: 'Aria', preview: '…', time: '12:40', unread: 3)`,
+      render: () => <Box w={340}><div style={{background:t.surface,borderRadius:12,overflow:'hidden'}}>
+        <ChatListItem t={t} name="Aria Lin" preview="Sent the deck — take a look" time="12:40" unread={3} />
+        <ChatListItem t={t} name="Mox" preview="ok 👍" time="Tue" unread={0} />
+      </div></Box> },
+    { name: 'NoxFileChip', tag: 'custom', desc: 'Attachment chip. Standalone surfaceContainerHighest; inside a bubble it tints to the bubble text color. Optional remove ×.',
+      dart: `NoxFileChip(type: NoxFileType.pdf, name: 'spec.pdf', size: '2.4 MB', removable: true)`,
+      render: () => <Box w={260}><FileChip t={t} type="pdf" name="design-spec.pdf" size="2.4 MB" removable /></Box> },
+    { name: 'NoxMessageBubble', tag: 'custom', desc: 'Base radius l; own/other corner clips to 4. Own primaryContainer; other surfaceContainerHigh. Own status icon.',
+      dart: `NoxMessageBubble(isOwn: true, text: '…', time: '12:41', status: NoxMsgStatus.sent)`,
+      render: () => <Box w={340}><div style={{display:'flex',flexDirection:'column',gap:2}}>
+        <MsgBubble t={t} mine={false} text="Did the QR flow land?" time="12:40" />
+        <MsgBubble t={t} mine text="Shipped — scanning works in dark mode now." time="12:41" status="sent" />
+        <MsgBubble t={t} mine text="Pushing the build." time="12:41" status="pending" last />
+      </div></Box> },
+    { name: 'NoxComposer', tag: 'custom', desc: 'Message input (5.2). surfaceContainer, top divider, optional attachment. Send active → primary filled.',
+      dart: `NoxComposer(value: '…', sendActive: true, onSend: …)`,
+      render: () => <Box w={360}><div style={{borderRadius:12,overflow:'hidden',border:'1px solid '+t.outlineVariant}}>
+        <Composer t={t} value="On it" sendActive />
+      </div></Box> },
+    { name: 'NoxEmptyState', tag: 'custom', desc: 'Illustration placeholder + headline + message. Swap the box for a real SVG when art ships.',
+      dart: `NoxEmptyState(glyph: Symbols.forum, title: 'No chats yet', message: '…')`,
+      render: () => <Box w={300}><div style={{height:300,display:'flex'}}>
+        <EmptyState t={t} glyph="forum" title="No chats yet" message="Start a conversation — tap +." />
+      </div></Box> },
+    { name: 'NoxSegmented', tag: 'stock', desc: 'Single-select. Selected secondaryContainer + check.',
+      dart: `NoxSegmented(options: {…}, selected: …, onChanged: …)`,
+      render: () => <Segmented t={t} options={['System','Light','Dark']} value="Light" /> },
+  ]},
+  { title: 'Shell & feedback', file: 'nox_scaffold.dart', items: [
+    { name: 'NoxBottomBar + NoxCreateFab', tag: 'custom', desc: 'Bottom bar (4.1) with circular notch + docked "+" FAB. Two tabs; FAB visible on both.',
+      dart: `Scaffold(\n  bottomNavigationBar: NoxBottomBar(active: …, onSelect: …),\n  floatingActionButton: NoxCreateFab(onPressed: …),\n  floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked)`,
+      render: () => <div style={{width:393,maxWidth:'100%',height:96,position:'relative',marginTop:28}}>
+        <div style={{position:'absolute',bottom:0,left:0,right:0}}><BottomBar t={t} active="chats" /></div>
+      </div> },
+    { name: 'NoxSplashHairline', tag: 'custom', desc: 'The C-direction signature: a 3dp gradient rule under the app bar (teal→lime→gold→coral→red).',
+      dart: `AppBar(bottom: NoxSplashHairline())`,
+      render: () => <Box w={320}><div style={{height:3,borderRadius:2,background:'linear-gradient(90deg,'+BRAND.teal+','+BRAND.lime+','+BRAND.gold+','+BRAND.coral+','+BRAND.red+')'}} /></Box> },
+    { name: 'showNoxSnackBar', tag: 'stock', desc: 'Transient feedback (§9.11). Neutral inverseSurface; error errorContainer. One action.',
+      dart: `showNoxSnackBar(context, text: '…', actionLabel: 'Undo')`,
+      render: () => <Box w={360}><div style={{display:'flex',flexDirection:'column',gap:10}}>
+        <Snackbar t={t} text="Message sent" action="Undo" />
+        <Snackbar t={t} text="Couldn't send. Tap to retry." action="Retry" error />
+      </div></Box> },
+    { name: 'showNoxBanner', tag: 'stock', desc: 'Persistent banner (offline). surfaceContainer, action primary, top of screen.',
+      dart: `showNoxBanner(context, text: 'No connection', actionLabel: 'Retry')`,
+      render: () => <Box w={360}><MaterialBanner t={t} text="No connection" action="Retry" /></Box> },
+  ]},
+];
+
+function App(){
+  return SECTIONS.map((sec) => (
+    <div key={sec.title}>
+      <h2>{sec.title}<span className="f">{sec.file}</span></h2>
+      {sec.items.map((it) => (
+        <div className="card" key={it.name}>
+          <div className="preview">{it.render()}</div>
+          <div className="meta">
+            <div className="top">
+              <h3>{it.name}</h3>
+              <span className={'tag '+it.tag}>{it.tag}</span>
+            </div>
+            <p>{it.desc}</p>
+            <pre className="dart">{it.dart}</pre>
+          </div>
+        </div>
+      ))}
+    </div>
+  ));
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
