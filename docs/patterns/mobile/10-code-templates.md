@@ -1,7 +1,7 @@
 # 10 — Каталог шаблонов кода
 
 > **Назначение:** единый copy-paste-ready справочник шаблонов для каждого артефакта скелета (модель → enum → конвертер → контракт → конфиг → entity → mapper → DAO → repository → BLoC → page → тема → DI). Каждый шаблон дан в двух формах: рабочий пример на нейтральной фиче `Item` и пустой скелет `<Feature>` / `<Model>`. Это чистый каталог — обоснования и правила живут в слоевых документах, сюда вынесена только готовая к вставке форма.
-> **Когда читать:** когда вы скаффолдите конкретную фичу (первая реальная — список записей `records`) или любой сквозной артефакт (конвертер, `ThemeExtension`, DI-регистрация) и хотите канонический, проектно-верный код, который остаётся переименовать и вставить.
+> **Когда читать:** когда вы скаффолдите конкретную фичу (первая реальная — список чатов: открытый список чатов общего пространства, серверный network-only пагинированный список) или любой сквозной артефакт (конвертер, `ThemeExtension`, DI-регистрация) и хотите канонический, проектно-верный код, который остаётся переименовать и вставить.
 > **Связанные документы:** `03-domain-layer.md` (RepositoryResult, configs, exceptions, модели), `04-data-layer.md` (entities, mappers, DAO, ResponseEntity/EntityConverter, repo impl, Dio), `05-presentation-layer.md` (BLoC-трио, страницы, BaseStatePage, общие виджеты), `06-theming.md` (ThemeExtension, токены), `07-pagination.md` (полный контракт пагинации, `PagingStateExt.applyPage`), `02-dependency-injection.md` (единый `configureDependencies(env)`), `08-conventions-and-constitution.md` (нейминг/импорты/правила), `11-scaffolding-plan.md` (порядок скаффолдинга), `12-dev-commands.md` (команды и codegen).
 
 ---
@@ -10,12 +10,12 @@
 
 - **Рабочий пример** использует одну нейтральную фичу `Item`: `ItemModel`, `ItemEntity`, `ItemRepository`, `ItemRepositoryImpl`, `ItemMapper`, `ItemDao`, `ItemListPage`, `ItemListBloc`, `ItemListEvent`, `ItemListState`, `GetItemsConfig`.
 - Для **пустого скелета** подставляйте плейсхолдеры: `<Feature>` — PascalCase имя фичи (`Record`, `Voice`, `Language`), `<Model>` — PascalCase имя модели (часто совпадает с `<Feature>`), `<feature>` / `<model>` — `snake_case` формы для путей файлов и barrel-экспортов в слоях `domain`/`data` (группировка по сущности). В презентации привязка идёт к **страницам**, не к абстрактным «фичам»: один экран = одна плоская папка `lib/presentation/pages/<page>_page/`, плейсхолдер `<page>` — `snake_case` имя страницы (`item_list`, `item_details`), а bloc-файлы внутри — `<page>_bloc.dart` / `<page>_event.dart` / `<page>_state.dart` (без инфикса `_page_`).
-- Имя Dart-пакета фиксировано: `speech_ai_mobile`. Все импорты идут через `package:speech_ai_mobile/...`. Владелец может переименовать пакет — это отмечено один раз в `README.md`, в шаблонах ниже имя зашито.
+- Имя Dart-пакета фиксировано: `nox_app`. Все импорты идут через `package:nox_app/...`. Владелец может переименовать пакет — это отмечено один раз в `README.md`, в шаблонах ниже имя зашито.
 - Слои — это **папки в одном `lib/`**: `lib/data`, `lib/domain`, `lib/presentation`, `lib/di`, `lib/general`, `lib/design`, `lib/resource`. Никаких трёх пакетов и path-зависимостей. Зависимости однонаправленны: `presentation → domain`, `data → domain`; `domain` не импортирует ничего из приложения.
 - После вставки любого Freezed / json_serializable / injectable-артефакта запустите codegen `fvm dart run build_runner build --delete-conflicting-outputs` (опциональная обёртка `./script_auto_generate.sh` — только как fvm-врапер этой же команды), отформатируйте затронутые файлы (`fvm dart format -l 140 <paths>`) и прогоните `fvm flutter analyze` (см. `12-dev-commands.md`).
 - Генерируемые файлы (`*.freezed.dart`, `*.g.dart`, `*.config.dart`, `lib/design/gen/**`) исключены из анализа и **никогда** не редактируются руками.
 
-> **Соглашение по умолчанию для пагинации — OFFSET.** В шаблонах ниже список-конфиг и метаданные страницы используют offset-форму (`page` + `pageSize` + `total`), потому что records-list бэкенда `client_backend` — offset-based (`page` / `page_size` / `count`). Cursor-вариант (`CursorPaginationMetadata { String? nextCursor }`) описан как альтернатива в `07-pagination.md`; не смешивайте формы в одной фиче.
+> **Соглашение по умолчанию для пагинации — OFFSET.** В шаблонах ниже список-конфиг и метаданные страницы используют offset-форму (`page` + `pageSize` + `total`): offset — флейвор по умолчанию, cursor (`CursorPaginationMetadata { String? nextCursor }`) задокументирован как альтернатива в `07-pagination.md`. Конкретный контракт пагинации списка чатов финализируется позже вместе с бэкендом NOX (пример — бэкенд/протокол NOX ещё не выбран; заменить на реальный контракт); не смешивайте формы в одной фиче.
 
 ---
 
@@ -28,7 +28,7 @@
 
 ```dart
 import 'package:freezed_annotation/freezed_annotation.dart';
-import 'package:speech_ai_mobile/domain/model/item/item_status.dart';
+import 'package:nox_app/domain/model/item/item_status.dart';
 
 part 'item_model.freezed.dart';
 
@@ -60,7 +60,7 @@ extension ItemModelExt on ItemModel {
 
 ```dart
 import 'package:freezed_annotation/freezed_annotation.dart';
-import 'package:speech_ai_mobile/domain/model/<feature>/<feature>_status.dart';
+import 'package:nox_app/domain/model/<feature>/<feature>_status.dart';
 
 part '<model>_model.freezed.dart';
 
@@ -137,7 +137,7 @@ class CustomTypeConverter<T, S> implements JsonConverter<T, S> {
 
 ```dart
 import 'package:freezed_annotation/freezed_annotation.dart';
-import 'package:speech_ai_mobile/domain/model/item/item_status.dart';
+import 'package:nox_app/domain/model/item/item_status.dart';
 
 class ItemStatusConverter implements JsonConverter<ItemStatus, String> {
   const ItemStatusConverter();
@@ -184,7 +184,7 @@ abstract class ItemEntity with _$ItemEntity {
 
 ```dart
 import 'package:freezed_annotation/freezed_annotation.dart';
-import 'package:speech_ai_mobile/domain/exception/base_repository_exception.dart';
+import 'package:nox_app/domain/exception/base_repository_exception.dart';
 
 part 'repository_result.freezed.dart';
 
@@ -219,8 +219,8 @@ sealed class RepositoryResult<T> with _$RepositoryResult<T> {
 Урезанный `match` — ровно две ветки (никаких `onPartial` / `onEmpty`, потому что результат строго XOR):
 
 ```dart
-import 'package:speech_ai_mobile/domain/exception/base_repository_exception.dart';
-import 'package:speech_ai_mobile/domain/repository/base/repository_result.dart';
+import 'package:nox_app/domain/exception/base_repository_exception.dart';
+import 'package:nox_app/domain/repository/base/repository_result.dart';
 
 extension RepositoryResultMatch<T> on RepositoryResult<T> {
   R match<R>({
@@ -257,7 +257,7 @@ abstract class BaseRepositoryException {}
 **Целевой путь:** `lib/domain/exception/repository_exception.dart`
 
 ```dart
-import 'package:speech_ai_mobile/domain/exception/base_repository_exception.dart';
+import 'package:nox_app/domain/exception/base_repository_exception.dart';
 
 enum RepositoryException implements BaseRepositoryException {
   unknown,
@@ -273,9 +273,9 @@ enum RepositoryException implements BaseRepositoryException {
 
 ```dart
 // lib/domain/repository/<feature>/<feature>_repository_exception.dart  (пример)
-import 'package:speech_ai_mobile/domain/exception/base_repository_exception.dart';
+import 'package:nox_app/domain/exception/base_repository_exception.dart';
 
-enum RecordsRepositoryException implements BaseRepositoryException {
+enum ChatsRepositoryException implements BaseRepositoryException {
   quotaExceeded,
 }
 ```
@@ -298,11 +298,11 @@ export 'repository_result_handling.dart';
 **Рабочий пример:** `lib/domain/repository/item/item_repository.dart`
 
 ```dart
-import 'package:speech_ai_mobile/domain/model/item/item_model.dart';
-import 'package:speech_ai_mobile/domain/repository/base/repository_result.dart';
-import 'package:speech_ai_mobile/domain/repository/item/get_item_config.dart';
-import 'package:speech_ai_mobile/domain/repository/item/get_items_config.dart';
-import 'package:speech_ai_mobile/domain/repository/base/page_metadata.dart';
+import 'package:nox_app/domain/model/item/item_model.dart';
+import 'package:nox_app/domain/repository/base/repository_result.dart';
+import 'package:nox_app/domain/repository/item/get_item_config.dart';
+import 'package:nox_app/domain/repository/item/get_items_config.dart';
+import 'package:nox_app/domain/repository/base/page_metadata.dart';
 
 abstract class ItemRepository {
   /// Cache-first single resource. Replays the last value, then live updates.
@@ -348,7 +348,7 @@ abstract class ItemRepository {
 
 ```dart
 import 'package:freezed_annotation/freezed_annotation.dart';
-import 'package:speech_ai_mobile/domain/repository/base/repository_config.dart';
+import 'package:nox_app/domain/repository/base/repository_config.dart';
 
 part 'get_items_config.freezed.dart';
 
@@ -376,7 +376,7 @@ abstract class GetItemsConfig with _$GetItemsConfig implements RepositoryConfig 
 
 ```dart
 import 'package:freezed_annotation/freezed_annotation.dart';
-import 'package:speech_ai_mobile/domain/repository/base/repository_config.dart';
+import 'package:nox_app/domain/repository/base/repository_config.dart';
 
 part 'get_item_config.freezed.dart';
 
@@ -428,13 +428,13 @@ abstract class ItemEntity with _$ItemEntity {
 **Целевой путь:** `lib/data/entity/<feature>/<model>s_entity.dart`
 **Рабочий пример:** `lib/data/entity/item/items_entity.dart`
 
-Обёртка несёт срез страницы плюс серверные offset-метаданные (`page` / `page_size` / `total`). Имена JSON-ключей подгоняются под реальный envelope бэкенда.
+Обёртка несёт срез страницы плюс серверные offset-метаданные (`page` / `page_size` / `total`). Имена JSON-ключей подгоняются под реальный envelope бэкенда NOX (пример — бэкенд/протокол NOX ещё не выбран; заменить на реальный контракт).
 
 ```dart
 // ignore_for_file: invalid_annotation_target
 
 import 'package:freezed_annotation/freezed_annotation.dart';
-import 'package:speech_ai_mobile/data/entity/item/item_entity.dart';
+import 'package:nox_app/data/entity/item/item_entity.dart';
 
 part 'items_entity.freezed.dart';
 part 'items_entity.g.dart';
@@ -463,7 +463,7 @@ import 'package:freezed_annotation/freezed_annotation.dart';
 
 part 'page_metadata.freezed.dart';
 
-/// Offset-style page metadata (default flavor for the SpeechAI records list).
+/// Offset-style page metadata (default flavor for the NOX chats list).
 /// nextPage == null => last page.
 @freezed
 abstract class PageMetadata with _$PageMetadata {
@@ -488,7 +488,7 @@ abstract class CursorPaginationMetadata with _$CursorPaginationMetadata {
 
 ## 7. `ResponseEntity<T>` + реестр `EntityConverter<E>`
 
-Реальный бэкенд `client_backend` возвращает унифицированный envelope. `ResponseEntity<T>` — generic-обёртка над ним с полями `success` / `error` / `data`; `@EntityConverter()` резолвит generic `T` в конкретный `fromJson`/`toJson` entity.
+Предполагается, что бэкенд NOX возвращает унифицированный envelope (пример — бэкенд/протокол NOX ещё не выбран; заменить на реальный контракт). `ResponseEntity<T>` — generic-обёртка над ним с полями `success` / `error` / `data`; `@EntityConverter()` резолвит generic `T` в конкретный `fromJson`/`toJson` entity.
 
 ### 7a. `ResponseEntity<T>`
 
@@ -496,7 +496,7 @@ abstract class CursorPaginationMetadata with _$CursorPaginationMetadata {
 
 ```dart
 import 'package:freezed_annotation/freezed_annotation.dart';
-import 'package:speech_ai_mobile/data/entity/base/entity_converter.dart';
+import 'package:nox_app/data/entity/base/entity_converter.dart';
 
 part 'response_entity.freezed.dart';
 part 'response_entity.g.dart';
@@ -513,7 +513,7 @@ abstract class ResponseEntity<T> with _$ResponseEntity<T> {
 }
 ```
 
-> Поля — ровно `success` (bool, `@Default(false)`), `error` (`String?`), `data` (`@EntityConverter() T?`). Это канон существующего проекта. Механизм, который надо сохранить, — generic `T?`, резолвимый `JsonConverter`'ом.
+> Поля — ровно `success` (bool, `@Default(false)`), `error` (`String?`), `data` (`@EntityConverter() T?`) — это правило данного блюпринта. Механизм, который надо сохранить, — generic `T?`, резолвимый `JsonConverter`'ом. Конкретный набор полей конверта подгоняется под реальный контракт бэкенда NOX (пример — бэкенд/протокол NOX ещё не выбран; заменить на реальный контракт).
 
 ### 7b. `EntityConverter<E>` — реестр типов, поддерживаемый руками
 
@@ -523,8 +523,8 @@ abstract class ResponseEntity<T> with _$ResponseEntity<T> {
 
 ```dart
 import 'package:freezed_annotation/freezed_annotation.dart';
-import 'package:speech_ai_mobile/data/entity/item/item_entity.dart';
-import 'package:speech_ai_mobile/data/entity/item/items_entity.dart';
+import 'package:nox_app/data/entity/item/item_entity.dart';
+import 'package:nox_app/data/entity/item/items_entity.dart';
 // ... import every registered entity ...
 
 bool _isType<E, T>() => <E>[] is List<T>;
@@ -609,10 +609,10 @@ abstract class BaseMapper<E, M, AdResult, AdParam> {
 
 ```dart
 import 'package:injectable/injectable.dart';
-import 'package:speech_ai_mobile/data/entity/item/item_entity.dart';
-import 'package:speech_ai_mobile/data/mapper/base_mapper.dart';
-import 'package:speech_ai_mobile/domain/model/item/item_model.dart';
-import 'package:speech_ai_mobile/domain/model/item/item_status.dart';
+import 'package:nox_app/data/entity/item/item_entity.dart';
+import 'package:nox_app/data/mapper/base_mapper.dart';
+import 'package:nox_app/domain/model/item/item_model.dart';
+import 'package:nox_app/domain/model/item/item_status.dart';
 
 @lazySingleton
 class ItemMapper extends BaseMapper<ItemEntity, ItemModel, dynamic, dynamic> {
@@ -652,7 +652,7 @@ class ItemMapper extends BaseMapper<ItemEntity, ItemModel, dynamic, dynamic> {
 
 ## 9. DAO Sembast (реактивный) + `AppDatabase`
 
-> Слой данных **не** заводит типизированную иерархию исключений (`ApiException` / `DaoException` / `BaseDomainExceptionHelper` намеренно отсутствуют — канон существующего проекта, см. [04-data-layer.md](04-data-layer.md) §5). DAO **не** оборачивает ошибки в типизированный `DaoException`: при сбое хранилища он бросает **сырое** исключение Sembast (его поймает catch-all-ветка `execute` → `RepositoryException.unknown`), а отсутствие записи / ошибку парсинга отдаёт как `null`. Решение «cache-miss → `notFound`» принимает **callback репозитория**, проверяя `null` и явно возвращая `RepositoryResult.error(exception: RepositoryException.notFound)` (см. §11c), а не DAO.
+> Слой данных **не** заводит типизированную иерархию исключений (`ApiException` / `DaoException` / `BaseDomainExceptionHelper` намеренно отсутствуют — правило данного блюпринта, см. [04-data-layer.md](04-data-layer.md) §5). DAO **не** оборачивает ошибки в типизированный `DaoException`: при сбое хранилища он бросает **сырое** исключение Sembast (его поймает catch-all-ветка `execute` → `RepositoryException.unknown`), а отсутствие записи / ошибку парсинга отдаёт как `null`. Решение «cache-miss → `notFound`» принимает **callback репозитория**, проверяя `null` и явно возвращая `RepositoryResult.error(exception: RepositoryException.notFound)` (см. §11c), а не DAO.
 
 ### 9a. `AppDatabase` — env-scoped (Dev/Prod = IO, Test = memory)
 
@@ -741,8 +741,8 @@ class AppDatabaseTest implements AppDatabase {
 
 ```dart
 import 'package:injectable/injectable.dart';
-import 'package:speech_ai_mobile/data/entity/item/item_entity.dart';
-import 'package:speech_ai_mobile/data/local/app_database.dart';
+import 'package:nox_app/data/entity/item/item_entity.dart';
+import 'package:nox_app/data/local/app_database.dart';
 import 'package:sembast/sembast.dart';
 
 @lazySingleton
@@ -849,7 +849,7 @@ class ItemDao {
 
 ## 10. Обработка ошибок слоя данных — без типизированной иерархии исключений
 
-> **Канон существующего проекта:** слой данных **не** заводит собственную иерархию типизированных исключений — `ApiException`, `DaoException` и `BaseDomainExceptionHelper` намеренно отсутствуют. Единственный механизм — тонкий mixin `BaseRepositoryHelper.execute<TD>()` (см. §11): он оборачивает операцию репозитория в guarded try/catch, **обязательно** логирует через `LogRepository` и грубо мапит framework-ошибки в доменный `RepositoryException` (`DioException` → `internal`, любое другое исключение → `unknown`). Конкретные доменные коды (`notFound` при cache-miss, `unauthenticated` при 401 и т. д.) callback возвращает сам — явным `return RepositoryResult.error(exception: RepositoryException.<code>)`. Полное описание — в [04-data-layer.md](04-data-layer.md) §5; шаблон `RepositoryException`-enum — в §3e выше.
+> **Правило данного блюпринта:** слой данных **не** заводит собственную иерархию типизированных исключений — `ApiException`, `DaoException` и `BaseDomainExceptionHelper` намеренно отсутствуют. Единственный механизм — тонкий mixin `BaseRepositoryHelper.execute<TD>()` (см. §11): он оборачивает операцию репозитория в guarded try/catch, **обязательно** логирует через `LogRepository` и грубо мапит framework-ошибки в доменный `RepositoryException` (`DioException` → `internal`, любое другое исключение → `unknown`). Конкретные доменные коды (`notFound` при cache-miss, `unauthenticated` при 401 и т. д.) callback возвращает сам — явным `return RepositoryResult.error(exception: RepositoryException.<code>)`. Полное описание — в [04-data-layer.md](04-data-layer.md) §5; шаблон `RepositoryException`-enum — в §3e выше.
 
 ---
 
@@ -877,9 +877,9 @@ Mixin оборачивает операцию в try/catch, **обязатель
 
 ```dart
 import 'package:dio/dio.dart';
-import 'package:speech_ai_mobile/di/global_aliases.dart';
-import 'package:speech_ai_mobile/domain/exception/repository_exception.dart';
-import 'package:speech_ai_mobile/domain/repository/base/repository_result.dart';
+import 'package:nox_app/di/global_aliases.dart';
+import 'package:nox_app/domain/exception/repository_exception.dart';
+import 'package:nox_app/domain/repository/base/repository_result.dart';
 
 mixin BaseRepositoryHelper {
   Future<RepositoryResult<TD>> execute<TD>(Function executionFunction) async {
@@ -910,17 +910,17 @@ import 'dart:async';
 
 import 'package:injectable/injectable.dart';
 import 'package:rxdart/rxdart.dart';
-import 'package:speech_ai_mobile/data/exception/base_repository_helper.dart';
-import 'package:speech_ai_mobile/data/local/item_dao.dart';
-import 'package:speech_ai_mobile/data/mapper/item/item_mapper.dart';
-import 'package:speech_ai_mobile/data/remote/api/item/get_items_api.dart';
-import 'package:speech_ai_mobile/domain/exception/repository_exception.dart';
-import 'package:speech_ai_mobile/domain/model/item/item_model.dart';
-import 'package:speech_ai_mobile/domain/repository/base/repository_result.dart';
-import 'package:speech_ai_mobile/domain/repository/item/get_item_config.dart';
-import 'package:speech_ai_mobile/domain/repository/item/get_items_config.dart';
-import 'package:speech_ai_mobile/domain/repository/item/item_repository.dart';
-import 'package:speech_ai_mobile/domain/repository/base/page_metadata.dart';
+import 'package:nox_app/data/exception/base_repository_helper.dart';
+import 'package:nox_app/data/local/item_dao.dart';
+import 'package:nox_app/data/mapper/item/item_mapper.dart';
+import 'package:nox_app/data/remote/api/item/get_items_api.dart';
+import 'package:nox_app/domain/exception/repository_exception.dart';
+import 'package:nox_app/domain/model/item/item_model.dart';
+import 'package:nox_app/domain/repository/base/repository_result.dart';
+import 'package:nox_app/domain/repository/item/get_item_config.dart';
+import 'package:nox_app/domain/repository/item/get_items_config.dart';
+import 'package:nox_app/domain/repository/item/item_repository.dart';
+import 'package:nox_app/domain/repository/base/page_metadata.dart';
 
 @LazySingleton(as: ItemRepository, env: [Environment.dev, Environment.prod, Environment.test])
 class ItemRepositoryImpl with BaseRepositoryHelper implements ItemRepository {
@@ -1043,8 +1043,8 @@ class ItemRepositoryImpl with BaseRepositoryHelper implements ItemRepository {
 
 ```dart
 import 'package:dio/dio.dart';
-import 'package:speech_ai_mobile/di/configure_dependencies.dart';
-import 'package:speech_ai_mobile/domain/repository/app_config/app_config_repository.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
 
 class ApiClient {
   static Dio initBase({String? contentType}) {
@@ -1097,13 +1097,15 @@ class ApiClient {
 
 > На non-2xx Dio бросает `DioException` — он пробрасывается до `DioException`-ветки `execute` (→ `RepositoryException.internal`). API-класс **не** мапит в типизированный `ApiException` (его нет — см. §10): никакого `_mapDioException`. Сохраняем паттерн `RequestBuilder`/`RequestBuilderHelper`.
 
+> Конкретный контракт авторизации в интерсепторе (`Authorization: Bearer <token>`, `getUserAuthIdToken`, модель access/refresh-токенов и любые security-заголовки, например HMAC-подпись) — это **пример** (бэкенд/протокол NOX ещё не выбран; заменить на реальный контракт). Паттерн (Dio + auth-интерсептор + опциональный второй хост без auth) сохраняется как есть; меняются только концретные заголовки и схема токенов под реальный бэкенд NOX.
+
 ### 12b. `BaseApiRepository` + `RequestBuilder<T>` + `RequestBuilderHelper`
 
 **Целевой путь:** `lib/data/remote/api/base/base_api_repository.dart`
 
 ```dart
 import 'package:dio/dio.dart' as dio;
-import 'package:speech_ai_mobile/data/remote/api/base/api_client.dart';
+import 'package:nox_app/data/remote/api/base/api_client.dart';
 
 abstract class BaseApiRepository {
   dio.Dio get baseClient => ApiClient.initBase();
@@ -1132,9 +1134,9 @@ abstract class RequestBuilder<T> {
 **Целевой путь:** `lib/data/remote/request_builder/base/request_builder_helper.dart`
 
 ```dart
-import 'package:speech_ai_mobile/data/remote/request_builder/base/request_builder.dart';
-import 'package:speech_ai_mobile/di/configure_dependencies.dart';
-import 'package:speech_ai_mobile/domain/repository/base/repository_config.dart';
+import 'package:nox_app/data/remote/request_builder/base/request_builder.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/repository/base/repository_config.dart';
 
 mixin RequestBuilderHelper<T extends RequestBuilder> {
   Future<Map<String, dynamic>> buildBody(RepositoryConfig config) async => getIt<T>().buildBody(config);
@@ -1154,12 +1156,12 @@ mixin RequestBuilderHelper<T extends RequestBuilder> {
 import 'dart:async';
 
 import 'package:injectable/injectable.dart';
-import 'package:speech_ai_mobile/data/entity/base/response_entity.dart';
-import 'package:speech_ai_mobile/data/entity/item/items_entity.dart';
-import 'package:speech_ai_mobile/data/remote/api/base/base_api_repository.dart';
-import 'package:speech_ai_mobile/data/remote/request_builder/base/request_builder_helper.dart';
-import 'package:speech_ai_mobile/data/remote/request_builder/item/get_items_api_request_builder.dart';
-import 'package:speech_ai_mobile/domain/repository/item/get_items_config.dart';
+import 'package:nox_app/data/entity/base/response_entity.dart';
+import 'package:nox_app/data/entity/item/items_entity.dart';
+import 'package:nox_app/data/remote/api/base/base_api_repository.dart';
+import 'package:nox_app/data/remote/request_builder/base/request_builder_helper.dart';
+import 'package:nox_app/data/remote/request_builder/item/get_items_api_request_builder.dart';
+import 'package:nox_app/domain/repository/item/get_items_config.dart';
 
 @lazySingleton
 class GetItemsApi extends BaseApiRepository with RequestBuilderHelper<GetItemsApiRequestBuilder> {
@@ -1176,8 +1178,8 @@ class GetItemsApi extends BaseApiRepository with RequestBuilderHelper<GetItemsAp
 
 ```dart
 import 'package:injectable/injectable.dart';
-import 'package:speech_ai_mobile/data/remote/request_builder/base/request_builder.dart';
-import 'package:speech_ai_mobile/domain/repository/item/get_items_config.dart';
+import 'package:nox_app/data/remote/request_builder/base/request_builder.dart';
+import 'package:nox_app/domain/repository/item/get_items_config.dart';
 
 @lazySingleton
 class GetItemsApiRequestBuilder extends RequestBuilder<GetItemsConfig> {
@@ -1197,11 +1199,13 @@ class GetItemsApiRequestBuilder extends RequestBuilder<GetItemsConfig> {
 }
 ```
 
+> Конкретный путь эндпоинта (`v1/items`), имена query-параметров (`page` / `page_size` / `search`) и форма ответа — это **пример** (бэкенд/протокол NOX ещё не выбран; заменить на реальный контракт). Для первой реальной фичи — списка чатов — путь, параметры и пагинация финализируются позже вместе с бэкендом NOX; паттерн `GetItemsApi` + request builder + обёртка в `ResponseEntity` остаётся неизменным.
+
 ---
 
 ## 13. BLoC-трио (`@freezed`) — `ItemListEvent` / `ItemListState` / `ItemListBloc`
 
-> Этот раздел **полностью заменяет** ручные sealed-`Equatable` события/состояния из старого скелета. BLoC = Freezed: `@freezed sealed` union'ы для State и Event, тонкий `BaseBloc<E, S>` с `executeLogic`, производная логика — в extension-геттерах, `copyWith` для переходов. Никакого `fromJson` на BLoC-типах (только `.freezed.dart`). Канонические имена под-состояний — `Initializing` / `Initialized` / `Error`, как `const factory` конструкторы. Пагинация — `infinite_scroll_pagination ^5.1.1` v5 stateless: `PagingState` живёт **в стейте**, не в `PagingController`; полный контракт и `PagingStateExt.applyPage` — в `07-pagination.md`.
+> Правило данного блюпринта: BLoC-события/состояния — **Freezed**, а не ручные sealed-`Equatable`. BLoC = Freezed: `@freezed sealed` union'ы для State и Event, тонкий `BaseBloc<E, S>` с `executeLogic`, производная логика — в extension-геттерах, `copyWith` для переходов. Никакого `fromJson` на BLoC-типах (только `.freezed.dart`). Канонические имена под-состояний — `Initializing` / `Initialized` / `Error`, как `const factory` конструкторы. Пагинация — `infinite_scroll_pagination ^5.1.1` v5 stateless: `PagingState` живёт **в стейте**, не в `PagingController`; полный контракт и `PagingStateExt.applyPage` — в `07-pagination.md`.
 
 ### 13a. `BaseBloc<E, S>` (вставить один раз на проект)
 
@@ -1312,14 +1316,14 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:infinite_scroll_pagination/infinite_scroll_pagination.dart';
 import 'package:rxdart/rxdart.dart';
-import 'package:speech_ai_mobile/di/configure_dependencies.dart';
-import 'package:speech_ai_mobile/domain/exception/base_repository_exception.dart';
-import 'package:speech_ai_mobile/domain/model/item/item_model.dart';
-import 'package:speech_ai_mobile/domain/repository/item/get_items_config.dart';
-import 'package:speech_ai_mobile/domain/repository/item/item_repository.dart';
-import 'package:speech_ai_mobile/domain/repository/base/page_metadata.dart';
-import 'package:speech_ai_mobile/presentation/base/base_bloc.dart';
-import 'package:speech_ai_mobile/presentation/pagination/paging_state_ext.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/exception/base_repository_exception.dart';
+import 'package:nox_app/domain/model/item/item_model.dart';
+import 'package:nox_app/domain/repository/item/get_items_config.dart';
+import 'package:nox_app/domain/repository/item/item_repository.dart';
+import 'package:nox_app/domain/repository/base/page_metadata.dart';
+import 'package:nox_app/presentation/base/base_bloc.dart';
+import 'package:nox_app/presentation/pagination/paging_state_ext.dart';
 
 part 'item_list_bloc.freezed.dart';
 part 'item_list_event.dart';
@@ -1462,7 +1466,7 @@ class ItemListBloc extends BaseBloc<ItemListEvent, ItemListState> {
 
 ```dart
 import 'package:infinite_scroll_pagination/infinite_scroll_pagination.dart';
-import 'package:speech_ai_mobile/domain/repository/base/page_metadata.dart';
+import 'package:nox_app/domain/repository/base/page_metadata.dart';
 
 extension PagingStateExt<K, T> on PagingState<K, T> {
   /// Appends a freshly fetched page into v5 paging state and returns the flat
@@ -1500,7 +1504,7 @@ extension PagingStateExt<K, T> on PagingState<K, T> {
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:speech_ai_mobile/design/app_spacing_tokens.dart';
+import 'package:nox_app/design/app_spacing_tokens.dart';
 
 abstract class BaseStatePage<T extends StatefulWidget> extends State<T> {
   final scaffoldKey = GlobalKey<ScaffoldState>();
@@ -1548,14 +1552,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:infinite_scroll_pagination/infinite_scroll_pagination.dart';
-import 'package:speech_ai_mobile/domain/model/item/item_model.dart';
-import 'package:speech_ai_mobile/presentation/pages/base/base_state_page.dart';
-import 'package:speech_ai_mobile/presentation/pages/item_details_page/item_details_page.dart';
-import 'package:speech_ai_mobile/presentation/pages/item_list_page/bloc/item_list_bloc.dart';
-import 'package:speech_ai_mobile/presentation/widgets/app_empty_content_widget.dart';
-import 'package:speech_ai_mobile/presentation/widgets/app_error_widget.dart';
-import 'package:speech_ai_mobile/presentation/widgets/app_progress_widget.dart';
-import 'package:speech_ai_mobile/presentation/widgets/app_refresh_indicator_widget.dart';
+import 'package:nox_app/domain/model/item/item_model.dart';
+import 'package:nox_app/presentation/pages/base/base_state_page.dart';
+import 'package:nox_app/presentation/pages/item_details_page/item_details_page.dart';
+import 'package:nox_app/presentation/pages/item_list_page/bloc/item_list_bloc.dart';
+import 'package:nox_app/presentation/widgets/app_empty_content_widget.dart';
+import 'package:nox_app/presentation/widgets/app_error_widget.dart';
+import 'package:nox_app/presentation/widgets/app_progress_widget.dart';
+import 'package:nox_app/presentation/widgets/app_refresh_indicator_widget.dart';
 
 class ItemListPage extends StatefulWidget {
   const ItemListPage({super.key});
@@ -1768,7 +1772,7 @@ extension AppColorsExtension on BuildContext {
 
 ```dart
 import 'package:flutter/material.dart';
-import 'package:speech_ai_mobile/design/theme/app_colors.dart';
+import 'package:nox_app/design/theme/app_colors.dart';
 
 class AppTheme {
   static ThemeData light() {
@@ -1815,7 +1819,7 @@ fvm dart run build_runner build --delete-conflicting-outputs
 ```dart
 import 'package:get_it/get_it.dart';
 import 'package:injectable/injectable.dart';
-import 'package:speech_ai_mobile/di/configure_dependencies.config.dart';
+import 'package:nox_app/di/configure_dependencies.config.dart';
 
 final getIt = GetIt.instance;
 
@@ -1830,9 +1834,9 @@ Future<void> configureDependencies(String env) async {
 **Целевой путь:** `lib/di/global_aliases.dart`
 
 ```dart
-import 'package:speech_ai_mobile/di/configure_dependencies.dart';
-import 'package:speech_ai_mobile/domain/repository/log_repository.dart';
-import 'package:speech_ai_mobile/domain/repository/item/item_repository.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/repository/log_repository.dart';
+import 'package:nox_app/domain/repository/item/item_repository.dart';
 
 /// Cross-cutting
 LogRepository get logRepository => getIt<LogRepository>();
@@ -1865,7 +1869,7 @@ abstract final class FeatureFlags {
 abstract final class TextConstants {
   const TextConstants._();
 
-  static const String appName = 'Speech AI';
+  static const String appName = 'NOX';
 
   static const String errorGeneralTitle = 'Something went wrong';
   static const String actionTryAgain = 'Try again';
@@ -1967,12 +1971,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:injectable/injectable.dart';
-import 'package:speech_ai_mobile/di/configure_dependencies.dart';
-import 'package:speech_ai_mobile/domain/model/app_config/app_flavor.dart';
-import 'package:speech_ai_mobile/domain/model/app_config/app_flavor_type.dart';
-import 'package:speech_ai_mobile/domain/repository/app_config/app_config_repository.dart';
-import 'package:speech_ai_mobile/domain/repository/log_repository.dart';
-import 'package:speech_ai_mobile/presentation/app/app_root.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/model/app_config/app_flavor.dart';
+import 'package:nox_app/domain/model/app_config/app_flavor_type.dart';
+import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
+import 'package:nox_app/domain/repository/log_repository.dart';
+import 'package:nox_app/presentation/app/app_root.dart';
 
 void main() {
   runZonedGuarded<Future<void>>(

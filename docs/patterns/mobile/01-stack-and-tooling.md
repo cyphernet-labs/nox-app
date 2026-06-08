@@ -1,6 +1,6 @@
 # 01 — Стек и инструментарий
 
-> **Назначение:** зафиксировать ровно один набор версий SDK, единый `pubspec.yaml` для одного Dart-пакета `speech_ai_mobile`, кодген-стек (freezed + json_serializable + injectable + flutter_gen), `build.yaml` и строгий `analysis_options.yaml`. Это «список покупок» и tooling-контракт перед написанием любого кода.
+> **Назначение:** зафиксировать ровно один набор версий SDK, единый `pubspec.yaml` для одного Dart-пакета `nox_app`, кодген-стек (freezed + json_serializable + injectable + flutter_gen), `build.yaml` и строгий `analysis_options.yaml`. Это «список покупок» и tooling-контракт перед написанием любого кода.
 > **Когда читать:** сразу после `00-architecture-overview.md` и до любого слоевого документа (`03`/`04`/`05`). Перед первым `pub get` + `build_runner`.
 > **Связанные документы:** `00-architecture-overview.md` (общая картина), `02-dependency-injection.md` (DI-обвязка под injectable), `06-theming.md` (flutter_screenutil 360×779 + ThemeExtension), `07-pagination.md` (infinite_scroll_pagination v5), `09-build-and-secrets-infra.md` (FVM/флейворы/SOPS), `11-scaffolding-plan.md` (порядок создания), `12-dev-commands.md` (команды кодгена и форматирования).
 
@@ -26,17 +26,17 @@
 fvm install   # читает .fvmrc, скачивает Flutter 3.44.1 в gitignored .fvm/
 ```
 
-> **Один пакет, а не три.** Вопреки исходным материалам (`migration_v1` описывал монорепо из трёх path-зависимых пакетов `root + domain/ + data/`), в этом блюпринте — **единственный Dart-пакет `speech_ai_mobile`**. Слои — это папки внутри одного `lib/` (`lib/domain`, `lib/data`, `lib/presentation`, `lib/di`, `lib/general`, `lib/design`, `lib/resource`). Один `pubspec.yaml`, один `build.yaml`, один прогон `build_runner`. Поэтому ниже — **ровно один** манифест зависимостей, объединяющий рантайм-набор базового подхода с добавками `migration_v1`. Подробности раскладки — в `00-architecture-overview.md` и `11-scaffolding-plan.md`.
+> **Один пакет.** В этом блюпринте — **единственный Dart-пакет `nox_app`**, без раскладки на несколько path-зависимых пакетов. Слои — это папки внутри одного `lib/` (`lib/domain`, `lib/data`, `lib/presentation`, `lib/di`, `lib/general`, `lib/design`, `lib/resource`). Один `pubspec.yaml`, один `build.yaml`, один прогон `build_runner`. Поэтому ниже — **ровно один** манифест зависимостей. Подробности раскладки — в `00-architecture-overview.md` и `11-scaffolding-plan.md`.
 
 ---
 
 ## Манифест зависимостей (`pubspec.yaml`)
 
-Полный файл ниже — готов к копированию. Имя пакета — `speech_ai_mobile`, все импорты вида `package:speech_ai_mobile/...`. Пины версий и inline-комментарии сохранены: они кодируют разрешённые конфликты — не трогайте без причины.
+Полный файл ниже — готов к копированию. Имя пакета — `nox_app`, все импорты вида `package:nox_app/...`. Пины версий и inline-комментарии сохранены: они кодируют разрешённые конфликты — не трогайте без причины.
 
 ```yaml
-name: speech_ai_mobile
-description: "Speech AI mobile app (iOS + Android)."
+name: nox_app
+description: "NOX secure messenger (iOS + Android)."
 publish_to: 'none'
 
 # CalVer + shifted-epoch build (YY.M.D+EPOCH, без ведущих нулей; см. 09-build-and-secrets-infra.md §9); CI переписывает это значение через commit.
@@ -57,7 +57,7 @@ dependencies:
 
   # --- Core model / reactive ---
   freezed_annotation: 3.1.0
-  json_annotation: ^4.12.0    # из migration_v1: явная зависимость для *.g.dart
+  json_annotation: ^4.12.0    # явная зависимость для *.g.dart
   rxdart: 0.28.0              # BehaviorSubject / PublishSubject в репозиториях и блоках
   collection: 1.19.1          # collection-расширения
   intl: 0.20.2                # ТОЛЬКО форматирование дат/чисел (без i18n-инфраструктуры)
@@ -83,7 +83,7 @@ dependencies:
 
   # --- Local store ---
   shared_preferences: ^2.5.5       # простой key/value (флаги, themeMode)
-  flutter_secure_storage: ^10.3.1  # из migration_v1: шифрованное хранилище (refresh-токен)
+  flutter_secure_storage: ^10.3.1  # шифрованное хранилище (refresh-токен)
   sembast: ^3.8.8                  # документная NoSQL (schema-less) для cache-first репозиториев — OQ-1 закрыт: Sembast; web-клиент переиспользует через sembast_web (databaseFactoryWeb)
   path_provider: 2.1.5             # резолв директории БД для Sembast (IO-бэкенд)
 
@@ -114,7 +114,7 @@ dev_dependencies:
   injectable_generator: ^3.0.2
   flutter_gen_runner: ^5.14.1
   mockito: ^5.7.0
-  bloc_test: ^10.0.0          # из migration_v1: blocTest-хелперы
+  bloc_test: ^10.0.0          # blocTest-хелперы
 
 flutter:
   uses-material-design: true
@@ -166,14 +166,14 @@ flutter_gen:
 | `json_annotation` (+ dev `json_serializable`) | сериализация **entity-слоя** (`*.g.dart`). Доменные модели JSON не несут. См. `04-data-layer.md`. |
 | `rxdart` | `BehaviorSubject<RepositoryResult<...>>` в репозиториях поверх реактивного Sembast-DAO. |
 | `injectable` + `get_it` (+ dev `injectable_generator`) | единый `configureDependencies(String env)` + `$initGetIt`. См. `02-dependency-injection.md`. |
-| `dio` | HTTP-клиент к client_backend (`/api/v1/...`). |
+| `dio` | HTTP-клиент к бэкенду NOX (эндпойнты вроде `/api/v1/...` — пример; бэкенд/протокол NOX ещё не выбран, заменить на реальный контракт). |
 | `infinite_scroll_pagination` 5.1.1 | stateless `PagingState`-в-bloc (без `PagingController`). См. `07-pagination.md`. |
 | `flutter_screenutil` 5.9.3 | адаптивные spacing/typography токены, design size 360×779. См. `06-theming.md`. |
 | `skeletonizer` | shimmer-плейсхолдеры для загрузки. |
-| `cached_network_image` / `flutter_svg` | картинки (обложки записей) и векторные ассеты. |
+| `cached_network_image` / `flutter_svg` | растровые картинки (например, аватары) и векторные ассеты. |
 | `sembast` + `path_provider` | cache-first DAO; env-scoped `AppDatabase` (Dev/Prod = IO, Test = memory). См. `04`. |
 | `shared_preferences` | простые флаги, `themeMode`. |
-| `flutter_secure_storage` | шифрованное хранилище refresh-токена (добавка `migration_v1`). |
+| `flutter_secure_storage` | шифрованное хранилище refresh-токена. |
 | `logger` | реализация обязательного `LogRepository` (единый канал, без raw `print`). |
 | `package_info_plus` | версия/билд приложения (регистрируется в DI-бутстрапе). |
 | `app_links` | приём входящих ссылок (deep / universal links) — cold-start + warm-поток; парсятся в `DeepLinkRepository`. См. `13-deep-links.md`. |
@@ -227,7 +227,7 @@ targets:
 | `include_if_null` | `true` | null-поля сохраняются в выводе |
 | `disallow_unrecognized_keys` | `false` | толерантность к лишним/forward-совместимым полям API |
 
-> Бэкенд возвращает unified-конверт `{data, timestamp, trace_id, meta}`; entity-слой парсит его через `ResponseEntity<T>` + `EntityConverter<E>` (см. `04-data-layer.md`). `explicit_to_json: true` критичен для вложенных entity внутри `data`.
+> Пример: бэкенд возвращает unified-конверт `{data, timestamp, trace_id, meta}`; entity-слой парсит его через `ResponseEntity<T>` + `EntityConverter<E>` (см. `04-data-layer.md`). `explicit_to_json: true` критичен для вложенных entity внутри `data`. (Форма конверта — пример: бэкенд/протокол NOX ещё не выбран, заменить на реальный контракт; сам паттерн `ResponseEntity<T>` + `EntityConverter<E>` сохраняется независимо от формы.)
 
 ### Запуск кодгена
 
@@ -235,7 +235,7 @@ targets:
 fvm dart run build_runner build --delete-conflicting-outputs
 ```
 
-`--delete-conflicting-outputs` удаляет устаревшие сгенерированные файлы перед регенерацией. Так как пакет один — это **один** прогон без порядка «data → domain → root» (тот порядок был артефактом трёх-пакетной раскладки `migration_v1` и здесь не нужен). Канонический скрипт-обёртка и watch-режим — в `12-dev-commands.md`.
+`--delete-conflicting-outputs` удаляет устаревшие сгенерированные файлы перед регенерацией. Так как пакет один — это **один** прогон без порядка «data → domain → root» (такой порядок осмыслен только при раскладке на несколько path-зависимых пакетов; здесь он не нужен). Канонический скрипт-обёртка и watch-режим — в `12-dev-commands.md`.
 
 ---
 
@@ -263,7 +263,7 @@ analyzer:
 
 Принципы конфигурации:
 
-- **Только стандартный `flutter_lints`.** Кастомная спека из исходных материалов (~40 явных правил + `errors`-карта, поднимавшая часть проблем до уровня ошибки) **намеренно убрана**: проект опирается на рекомендованный Dart/Flutter-линтер. Если конкретное правило когда-нибудь действительно понадобится — добавляйте его **осознанно и точечно**, а не копируйте чужой большой набор «на всякий случай».
+- **Только стандартный `flutter_lints`.** Большие кастомные спеки (десятки явных правил + `errors`-карта, поднимающая часть проблем до уровня ошибки) в этом блюпринте **намеренно не используются**: проект опирается на рекомендованный Dart/Flutter-линтер. Если конкретное правило когда-нибудь действительно понадобится — добавляйте его **осознанно и точечно**, а не копируйте чужой большой набор «на всякий случай».
 - **Длина строки — 140.** `formatter: page_width: 140` в `analysis_options.yaml` — единственный источник истины; `fvm dart format` подхватывает его автоматически (команды форматирования — в `12-dev-commands.md`; для явности они также передают `-l 140`).
 - **Сгенерированные файлы** (`*.g.dart`, `*.freezed.dart`, `*.config.dart`, `*.mocks.dart`, `lib/design/gen/**`) исключены из анализа и **никогда не правятся руками** — только регенерация через `build_runner`.
 
@@ -271,22 +271,22 @@ analyzer:
 
 ## Импорты и сгенерированные файлы
 
-- Все импорты — полные `package:speech_ai_mobile/...`. Относительные `../` запрещены, исключение — директивы `part`/`part of` (для `*.freezed.dart` / `*.g.dart`).
+- Все импорты — полные `package:nox_app/...`. Относительные `../` запрещены, исключение — директивы `part`/`part of` (для `*.freezed.dart` / `*.g.dart`).
 - Сгенерированные артефакты (`*.g.dart`, `*.freezed.dart`, `*.config.dart`, `lib/design/gen/**`) исключены из анализа и не редактируются руками — только регенерация через `build_runner`.
-- Имя пакета `speech_ai_mobile` владелец может переименовать; в таком случае это отмечается **один раз в `README.md`**, и меняются все `package:`-префиксы разом.
+- Имя пакета `nox_app` владелец может переименовать; в таком случае это отмечается **один раз в `README.md`**, и меняются все `package:`-префиксы разом.
 
 ---
 
 ## Чеклист
 
 - [ ] `.fvmrc` закоммичен со значением `{"flutter": "3.44.1"}`; `.fvm/` в `.gitignore`; `fvm install` отработал.
-- [ ] Один `pubspec.yaml` с `name: speech_ai_mobile`, `sdk: '>=3.12.0 <4.0.0'`, `flutter: 3.44.1`.
+- [ ] Один `pubspec.yaml` с `name: nox_app`, `sdk: '>=3.12.0 <4.0.0'`, `flutter: 3.44.1`.
 - [ ] Рантайм-набор присутствует целиком: `flutter_bloc`, `bloc_concurrency`, `rxdart`, `freezed_annotation`, `json_annotation`, `get_it`, `injectable`, `dio`, `infinite_scroll_pagination: 5.1.1`, `flutter_screenutil: 5.9.3`, `skeletonizer`, `cached_network_image`, `flutter_svg`, `url_launcher`, `app_links`, `intl`, `uuid`, `collection`, `logger`, `path_provider`, `shared_preferences`, `flutter_secure_storage`, `sembast`, `package_info_plus` (^10), `cupertino_icons`.
 - [ ] `dev_dependencies` содержит `build_runner`, `freezed`, `json_serializable`, `injectable_generator`, `flutter_gen_runner`, `flutter_lints: 6.0.0`, `mockito`, `bloc_test`, `integration_test`, `flutter_test`.
 - [ ] `dependency_overrides` отсутствует (или содержит только реально необходимые из-за конфликта резолва).
 - [ ] `build.yaml` создан с `explicit_to_json: true`; `flutter_gen` пишет в `lib/design/gen/`.
 - [ ] `analysis_options.yaml` = стандартный `flutter_lints` + `formatter: page_width: 140`; без кастомных правил и без `errors`-карты; сгенерированные файлы (`*.g.dart`, `*.freezed.dart`, `*.config.dart`, `lib/design/gen/**`) исключены из анализа.
-- [ ] Все импорты — `package:speech_ai_mobile/...`; относительные `../` отсутствуют (кроме `part`-директив).
+- [ ] Все импорты — `package:nox_app/...`; относительные `../` отсутствуют (кроме `part`-директив).
 - [ ] Первый `fvm dart pub get` + `fvm dart run build_runner build --delete-conflicting-outputs` прошли без ошибок; сгенерированные файлы появились.
 - [ ] `fvm flutter analyze` проходит без ошибок.
 - [ ] Нигде нет ссылок на трёх-пакетную раскладку (`domain:`/`data:` как path-deps, отдельные `build.yaml` по слоям, порядок «data → domain → root»).

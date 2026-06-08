@@ -1,8 +1,8 @@
 # 00 — Обзор архитектуры
 
 > **Назначение:** дать единую ментальную модель приложения — однопакетная Clean Architecture (presentation → domain ← data) с Freezed-BLoC, реактивными репозиториями и DI на injectable+get_it. Это карта, к которой привязаны все остальные документы блюпринта.
-> **Когда читать:** в самом начале, до того как трогать любой файл, пакет или шаблон. Это входная точка набора `docs/mobile/`.
-> **Связанные документы:** [01-stack-and-tooling.md](01-stack-and-tooling.md) (SDK, зависимости, FVM), [02-dependency-injection.md](02-dependency-injection.md) (injectable + get_it bootstrap), [03-domain-layer.md](03-domain-layer.md) (модели, `RepositoryResult`, контракты), [04-data-layer.md](04-data-layer.md) (entity, DAO, мапперы, импл, REST), [05-presentation-layer.md](05-presentation-layer.md) (Freezed-BLoC, страницы, виджеты), [06-theming.md](06-theming.md) (`AppColors`, `AppTheme`, токены), [07-pagination.md](07-pagination.md) (offset/cursor пагинация), [08-conventions-and-constitution.md](08-conventions-and-constitution.md) (полная конституция и правила), [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md) (флейворы, секреты, версии), [10-code-templates.md](10-code-templates.md) (copy-paste шаблоны), [11-scaffolding-plan.md](11-scaffolding-plan.md) (порядок сборки), [12-dev-commands.md](12-dev-commands.md) (dev-команды), [13-deep-links.md](13-deep-links.md) (deep/universal links), [14-networking-and-auth.md](14-networking-and-auth.md) (сеть/auth, connectivity + app-lifecycle), [15-push-notifications.md](15-push-notifications.md) (FCM), [16-file-upload.md](16-file-upload.md) (3-step upload), [17-analytics.md](17-analytics.md) (Mixpanel).
+> **Когда читать:** в самом начале, до того как трогать любой файл, пакет или шаблон. Это входная точка набора `docs/patterns/mobile/`.
+> **Связанные документы:** [01-stack-and-tooling.md](01-stack-and-tooling.md) (SDK, зависимости, FVM), [02-dependency-injection.md](02-dependency-injection.md) (injectable + get_it bootstrap), [03-domain-layer.md](03-domain-layer.md) (модели, `RepositoryResult`, контракты), [04-data-layer.md](04-data-layer.md) (entity, DAO, мапперы, импл, REST), [05-presentation-layer.md](05-presentation-layer.md) (Freezed-BLoC, страницы, виджеты), [06-theming.md](06-theming.md) (`AppColors`, `AppTheme`, токены), [07-pagination.md](07-pagination.md) (offset/cursor пагинация), [08-conventions-and-constitution.md](08-conventions-and-constitution.md) (полная конституция и правила), [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md) (флейворы, секреты, версии), [10-code-templates.md](10-code-templates.md) (copy-paste шаблоны), [11-scaffolding-plan.md](11-scaffolding-plan.md) (порядок сборки), [12-dev-commands.md](12-dev-commands.md) (dev-команды), [13-deep-links.md](13-deep-links.md) (deep/universal links), [14-networking-and-auth.md](14-networking-and-auth.md) (сеть/auth, connectivity + app-lifecycle), [15-push-notifications.md](15-push-notifications.md) (FCM), [16-file-upload.md](16-file-upload.md) (2-step upload вложения в чат), [17-analytics.md](17-analytics.md) (клиентская аналитика, вендоронезависимо).
 
 Этот документ — каноническая карта. Точные, готовые к копированию шаблоны живут в послойных документах, перечисленных выше; здесь задаются раскладка `lib/`, ответственность каждого слоя, реальное направление зависимостей, сценарии чтения и записи данных и набор принципов, который держит всё это вместе.
 
@@ -10,7 +10,7 @@
 
 ## 1. Ментальная модель: один пакет, три слоя — папками
 
-Приложение — это **один Dart-пакет** `speech_ai_mobile` с одним `pubspec.yaml` и одним прогоном `build_runner`. Слои Clean Architecture здесь — это **папки внутри одного `lib/`**, а не отдельные пакеты:
+Приложение — это **один Dart-пакет** `nox_app` с одним `pubspec.yaml` и одним прогоном `build_runner`. Слои Clean Architecture здесь — это **папки внутри одного `lib/`**, а не отдельные пакеты:
 
 ```
 ┌──────────────────────────────────────────────────────────┐
@@ -26,7 +26,7 @@
 └──────────────────────────────────────────────────────────┘
 ```
 
-> **Важно — это НЕ три пакета.** Ранние варианты этого блюпринта (источники `migration_v1`) описывали монорепо из трёх pub-пакетов (`domain/`, `data/` как path-зависимости с двусторонним циклом `domain ⇄ data`). Тот подход здесь **отменён намеренно**. У нас один пакет, одни импорты `package:speech_ai_mobile/...`, один генератор, один `configureDependencies(env)`. Любой путь вида `domain/lib/src/...` или `data/lib/src/...` из исходников переписывается в однопакетный `lib/domain/...` / `lib/data/...`. Никакого цикла `domain ⇄ data` нет — `domain` не импортирует ничего.
+> **Важно — это НЕ три пакета.** Правило этого блюпринта: один пакет, одни импорты `package:nox_app/...`, один генератор, один `configureDependencies(env)`. Трёхпакетный монорепо (`domain/`, `data/` как path-зависимости с двусторонним циклом `domain ⇄ data`) здесь **не используется**. Любой путь вида `domain/lib/src/...` или `data/lib/src/...` приводится к однопакетному `lib/domain/...` / `lib/data/...`. Никакого цикла `domain ⇄ data` нет — `domain` не импортирует ничего.
 
 **Почему один пакет, а не три.** Три path-пакета давали изоляцию на уровне `pubspec`, но платили за это: тройным `pub get` + `build_runner`, трёхуровневой цепочкой DI и реальным циклом зависимостей `domain ⇄ data` (потому что DI-bootstrap домена дёргал data). В одном пакете изоляция слоёв обеспечивается **дисциплиной импортов** (см. §3) и линтером, а не границами пакетов — этого достаточно для мобильного приложения, и это убирает всю оркестрационную сложность.
 
@@ -35,7 +35,7 @@
 ## 2. Раскладка `lib/` (ASCII-дерево)
 
 ```
-speech_ai_mobile/
+nox_app/
 ├── pubspec.yaml                        ← ОДИН pubspec на весь проект
 ├── analysis_options.yaml               line length 140, исключения для генерации
 ├── .fvmrc                              Flutter 3.44.1, закреплён через FVM
@@ -142,7 +142,7 @@ speech_ai_mobile/
 │       └── app_theme.dart                      AppTheme.light()/dark() + ThemeExtension<AppColors>
 ```
 
-> Никакого `lib/ui/` нет. Весь UI живёт под `lib/presentation/`. Если где-то в исходниках встречается старый UI-паттерн — игнорируйте его.
+> Никакого `lib/ui/` нет. Весь UI живёт под `lib/presentation/`. Если где-то встречается старый UI-паттерн `lib/ui/` — игнорируйте его.
 
 ---
 
@@ -159,13 +159,13 @@ speech_ai_mobile/
    (UI, BLoC)                      (контракт)                (реализация)
 ```
 
-Именно это делает архитектуру переносимой: доменный слой — единственный контракт, и оба края подключаются к нему. Поскольку `domain` не импортирует `data`, **никакого цикла нет** — в отличие от трёхпакетного варианта из исходников, где `data` и `domain` ссылались друг на друга. DI связывает интерфейс с реализацией в рантайме (`@LazySingleton(as: ItemRepository)`), так что `presentation` и `domain` никогда не видят `*Impl` напрямую.
+Именно это делает архитектуру переносимой: доменный слой — единственный контракт, и оба края подключаются к нему. Поскольку `domain` не импортирует `data`, **никакого цикла нет** — в отличие от трёхпакетного варианта, где `data` и `domain` ссылались бы друг на друга. DI связывает интерфейс с реализацией в рантайме (`@LazySingleton(as: ItemRepository)`), так что `presentation` и `domain` никогда не видят `*Impl` напрямую.
 
 ---
 
 ## 4. Сквозной поток данных — ЧТЕНИЕ
 
-Рабочий пример: `ItemListPage`, показывающая список элементов. Первая **реальная** фича, которую предстоит собрать, — это список записей (records list) поверх `client_backend` `GET /api/v1/user/records/`; на нём отрабатывается ровно этот же путь чтения.
+Рабочий пример: `ItemListPage`, показывающая список элементов. Первая **реальная** фича, которую предстоит собрать, — это **список чатов** (открытые общие пространства) поверх бэкенда NOX (например, через `GET /api/v1/chats/` — *пример, эндпоинт NOX TBD: бэкенд/протокол ещё не выбран, заменить на реальный контракт*); на нём отрабатывается ровно этот же путь чтения.
 
 ```
 1. Page (ItemListPage)
@@ -215,7 +215,7 @@ speech_ai_mobile/
 
 Пути чтения для **пользовательских ресурсов с локальным кэшем** — local-first: DAO (Sembast) служит источником истины для UI; удалённые данные втекают в локальное хранилище через маппер, а затем реактивно вытекают обратно через `BehaviorSubject`.
 
-> **Важная оговорка — список записей читается иначе.** Записи (records list) — это **серверный, постранично-владеемый список**. Для таких списков и для одноразовых POST-ов действует явное исключение из local-first: они **network-only** (нет DAO, нет `BehaviorSubject`). BLoC хранит `PagingState` и подгружает страницы напрямую через репозиторий — см. §7 принципов и [07-pagination.md](07-pagination.md). Local-first путь (с DAO и subject) остаётся для пользовательских ресурсов, которые имеет смысл кэшировать целиком (например, профиль).
+> **Важная оговорка — список чатов читается иначе.** Список чатов — это **серверный, постранично-владеемый список**. Для таких списков и для одноразовых POST-ов действует явное исключение из local-first: они **network-only** (нет DAO, нет `BehaviorSubject`). BLoC хранит `PagingState` и подгружает страницы напрямую через репозиторий — см. §7 принципов и [07-pagination.md](07-pagination.md). Local-first путь (с DAO и subject) остаётся для пользовательских ресурсов, которые имеет смысл кэшировать целиком (например, профиль).
 
 ---
 
@@ -278,13 +278,13 @@ lib/presentation/pages/<page>_page/
 
 Рабочий пример — `item_list_page/` (`item_list_page.dart` + `bloc/{item_list_bloc, item_list_event, item_list_state}.dart` + `widgets/`). Кросс-страничные переиспользуемые виджеты (кнопки, инпуты, progress/error/empty-состояния, refresh-индикатор) живут выше — под `lib/presentation/widgets/`, **а не** внутри `widgets/` конкретной страницы.
 
-> **Из v2 взято только использование Freezed для BLoC** (намеренное переопределение). В исходниках (`migration`, `migration_v1`) события и состояния были рукописными `sealed`-классами на `Equatable` с ручными `when()`/`copyWith()`. Здесь это **отменено намеренно**: события и состояния — это `@freezed sealed` unions (`*.freezed.dart`, **никогда** `*.g.dart` — на BLoC-типах нет `fromJson`). Canonical-имена подсостояний (`Initializing` / `Initialized` / `Error`) сохраняются и выражаются `const factory`-конструкторами Freezed. Производная/вычисляемая логика выносится в **extension-геттеры**, а не в тело `@freezed`. Тонкий `BaseBloc<E,S>` (в `lib/presentation/base/`) оборачивает обработчики в `executeLogic` с `try/catch`. Полностью — в [05-presentation-layer.md](05-presentation-layer.md).
+> **Для BLoC используется Freezed.** Правило этого блюпринта: события и состояния — это `@freezed sealed` unions (`*.freezed.dart`, **никогда** `*.g.dart` — на BLoC-типах нет `fromJson`), а не рукописные `sealed`-классы на `Equatable` с ручными `when()`/`copyWith()`. Canonical-имена подсостояний (`Initializing` / `Initialized` / `Error`) сохраняются и выражаются `const factory`-конструкторами Freezed. Производная/вычисляемая логика выносится в **extension-геттеры**, а не в тело `@freezed`. Тонкий `BaseBloc<E,S>` (в `lib/presentation/base/`) оборачивает обработчики в `executeLogic` с `try/catch`. Полностью — в [05-presentation-layer.md](05-presentation-layer.md).
 
 ---
 
 ## 7. Имена с первого взгляда
 
-Нейтральный рабочий пример сквозь весь блюпринт — **Item**. Для пустых скелетов используются плейсхолдеры `<Feature>` / `<feature>` / `<Model>`. Первая реальная фича — **список записей (records list)**.
+Нейтральный рабочий пример сквозь весь блюпринт — **Item**. Для пустых скелетов используются плейсхолдеры `<Feature>` / `<feature>` / `<Model>`. Первая реальная фича — **список чатов**.
 
 | Артефакт | Шаблон | Пример |
 |---|---|---|
@@ -317,10 +317,10 @@ lib/presentation/pages/<page>_page/
 - **Композиция в data-пайплайне** — мапперы композируют дочерние мапперы через конструктор; `BaseMapper` даёт list-варианты; entity содержат только базовые типы (enum как `.name` String, DateTime как ISO-8601 String) — вся коэрция в маппере.
 - **Дисциплина дизайн-токенов** — только токены (`AppSpacingTokens`, `AppTextStyleTokens`, responsive через `flutter_screenutil`); `Semantics` на интерактивных виджетах; единый `feature_flags.dart`.
 - **Наблюдаемость и обработка ошибок** — единый канал `LogRepository` (обязательный, никакого raw `print`); типизированные `DaoException`/`ApiException` мапятся в доменный `RepositoryException`; `BaseRepositoryHelper.execute<T>()` всегда логирует.
-- **Реактивные репозитории + carve-out** — для кэшируемых пользовательских ресурсов: `BehaviorSubject` + реактивный Sembast DAO (`onSnapshots`, transactions); env-scoped `AppDatabase` (Dev/Prod=IO, Test=memory) через `@LazySingleton(as: AppDatabase, env: [...])`; репозиторий подписывается на поток DAO один раз. **Carve-out:** постранично-владеемые серверные списки (records list) и одноразовые POST — **network-only**, без DAO и subject (см. [07-pagination.md](07-pagination.md)).
+- **Реактивные репозитории + carve-out** — для кэшируемых пользовательских ресурсов: `BehaviorSubject` + реактивный Sembast DAO (`onSnapshots`, transactions); env-scoped `AppDatabase` (Dev/Prod=IO, Test=memory) через `@LazySingleton(as: AppDatabase, env: [...])`; репозиторий подписывается на поток DAO один раз. **Carve-out:** постранично-владеемые серверные списки (список чатов) и одноразовые POST — **network-only**, без DAO и subject (см. [07-pagination.md](07-pagination.md)).
 - **`RepositoryResult<T>` повсюду** — `@freezed` с данными-XOR-исключением (`.success(data:)` / `.error(exception:)`); поверхностный `match<R>(onData, onError)`. Никогда не разыменовывать `data` вслепую.
 - **Тематизация — light + dark** — `ThemeExtension<AppColors>` + `AppTheme.light()/dark()` + `context.appColors`; `themeMode` приходит из `AppRootBloc`; конкретная палитра и responsive-токены — из базового варианта (см. [06-theming.md](06-theming.md)).
-- **Унифицированный envelope ответа** — реальный backend возвращает `{data, timestamp, trace_id, meta}`; на data-слое это `ResponseEntity<T>` + рукописный реестр `EntityConverter<E>`.
+- **Унифицированный envelope ответа** — паттерн: бэкенд возвращает единый конверт, на data-слое это `ResponseEntity<T>` + рукописный реестр `EntityConverter<E>`. Форма `{data, timestamp, trace_id, meta}` — *пример: бэкенд/протокол NOX ещё не выбран, заменить на реальный контракт*.
 - **Компиляционная изоляция флейворов** — `AppFlavorType{prod, stage}` + `AppFlavor.getFlavor()` из `String.fromEnvironment('app.flavor')`; маппинг `prod → Environment.prod`, `stage → Environment.dev`. Никакого рантайм-ветвления по флейвору. Секреты через SOPS+age+mise; версии — CalVer + сдвинутая эпоха (`YY.M.D+EPOCH`). См. [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md).
 
 ---
@@ -329,9 +329,9 @@ lib/presentation/pages/<page>_page/
 
 После прочтения этого документа вы должны уметь подтвердить:
 
-- [ ] Вы понимаете, что это **один пакет** `speech_ai_mobile` с одним `pubspec.yaml` и одним `build_runner`, а слои (`presentation`, `domain`, `data`) — это **папки** в `lib/`, а не отдельные pub-пакеты.
-- [ ] Вы можете сформулировать одностороннее правило зависимостей (`presentation → domain ← data`, `domain` не импортирует ничего) и понимаете, почему **цикла `domain ⇄ data` здесь нет** (в отличие от трёхпакетного варианта из исходников).
+- [ ] Вы понимаете, что это **один пакет** `nox_app` с одним `pubspec.yaml` и одним `build_runner`, а слои (`presentation`, `domain`, `data`) — это **папки** в `lib/`, а не отдельные pub-пакеты.
+- [ ] Вы можете сформулировать одностороннее правило зависимостей (`presentation → domain ← data`, `domain` не импортирует ничего) и понимаете, почему **цикла `domain ⇄ data` здесь нет** (в отличие от трёхпакетного варианта).
 - [ ] Вы можете провести путь чтения (UI → BLoC → контракт → impl → DAO/API → mapper → `RepositoryResult` → Freezed-состояние) и записи (UI → BLoC → impl `execute<T>` → DAO-транзакция → результат).
-- [ ] Вы знаете carve-out: пользовательские кэшируемые ресурсы идут local-first (DAO + `BehaviorSubject`), а **постраничные серверные списки (records list) и одноразовые POST — network-only**.
+- [ ] Вы знаете carve-out: пользовательские кэшируемые ресурсы идут local-first (DAO + `BehaviorSubject`), а **постраничные серверные списки (список чатов) и одноразовые POST — network-only**.
 - [ ] Вы знаете ключевые принципы: `RepositoryResult` (success XOR error), entity на базовых типах vs богатые модели, codegen-never-edited, **Freezed-BLoC** (а не рукописный Equatable-sealed).
-- [ ] Вы знаете, что нейтральный рабочий пример — **Item**, первая реальная фича — **список записей (records list)**, а следующий документ к прочтению — [01-stack-and-tooling.md](01-stack-and-tooling.md).
+- [ ] Вы знаете, что нейтральный рабочий пример — **Item**, первая реальная фича — **список чатов**, а следующий документ к прочтению — [01-stack-and-tooling.md](01-stack-and-tooling.md).

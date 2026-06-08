@@ -1,6 +1,6 @@
 # 02 — Внедрение зависимостей и bootstrap
 
-> **Назначение:** задать единственно верный способ собрать DI-контейнер приложения Speech AI Mobile — один `get_it` + `injectable` поверх **одного** Dart-пакета `speech_ai_mobile`, плюс детерминированную последовательность запуска (`main.dart`), флейворы, конфигурацию, локальную БД и обязательное логирование. **Когда читать:** при первичной настройке проекта, при добавлении нового репозитория / DAO / маппера / API, при отладке «почему `getIt<T>()` бросает на резолве», при правке последовательности bootstrap или флейворов. **Связанные документы:** [00-architecture-overview.md](00-architecture-overview.md) (границы слоёв и направление зависимостей), [01-stack-and-tooling.md](01-stack-and-tooling.md) (версии пакетов, FVM, build_runner), [03-domain-layer.md](03-domain-layer.md) (контракты репозиториев, `RepositoryResult`, `LogRepository`-интерфейс), [04-data-layer.md](04-data-layer.md) (`AppDatabase`, DAO, мапперы, impl-репозиториев, `LogRepositoryImpl`), [06-theming.md](06-theming.md) (`AppRootBloc`, `themeMode`), [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md) (`dart-define-from-file`, SOPS, флейворные сборки Android/iOS), [10-code-templates.md](10-code-templates.md) (готовые регистрационные сниппеты), [12-dev-commands.md](12-dev-commands.md) (команды перегенерации).
+> **Назначение:** задать единственно верный способ собрать DI-контейнер приложения NOX — один `get_it` + `injectable` поверх **одного** Dart-пакета `nox_app`, плюс детерминированную последовательность запуска (`main.dart`), флейворы, конфигурацию, локальную БД и обязательное логирование. **Когда читать:** при первичной настройке проекта, при добавлении нового репозитория / DAO / маппера / API, при отладке «почему `getIt<T>()` бросает на резолве», при правке последовательности bootstrap или флейворов. **Связанные документы:** [00-architecture-overview.md](00-architecture-overview.md) (границы слоёв и направление зависимостей), [01-stack-and-tooling.md](01-stack-and-tooling.md) (версии пакетов, FVM, build_runner), [03-domain-layer.md](03-domain-layer.md) (контракты репозиториев, `RepositoryResult`, `LogRepository`-интерфейс), [04-data-layer.md](04-data-layer.md) (`AppDatabase`, DAO, мапперы, impl-репозиториев, `LogRepositoryImpl`), [06-theming.md](06-theming.md) (`AppRootBloc`, `themeMode`), [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md) (`dart-define-from-file`, SOPS, флейворные сборки Android/iOS), [10-code-templates.md](10-code-templates.md) (готовые регистрационные сниппеты), [12-dev-commands.md](12-dev-commands.md) (команды перегенерации).
 
 ---
 
@@ -14,7 +14,7 @@
 - **один** сгенерированный файл `configure_dependencies.config.dart`,
 - **один** глобальный контейнер `GetIt.instance`.
 
-> ⚠️ **Это сознательно переписывает трёхпакетную схему из исходников.** В `migration_v1` DI был каскадом из трёх функций (`configureDependencies` → `configureDomainDependencies` → `configureDataDependencies`) с тремя `@InjectableInit` (`$initGetIt` / `$initDomainGetIt` / `$initDataGetIt`) и тремя `.config.dart`. **У нас этого нет.** Пути вида `domain/lib/src/...`, `data/lib/src/...`, path-зависимости в `pubspec.yaml` и любой цикл `domain ↔ data` запрещены. Все пути переписаны на `lib/domain/...`, `lib/data/...`, `lib/di/...`. Импорты — всегда полные: `package:speech_ai_mobile/...`.
+> ⚠️ **Правило блюпринта: трёхпакетной DI-схемы у нас нет.** Запрещён каскад из трёх функций (`configureDependencies` → `configureDomainDependencies` → `configureDataDependencies`) с тремя `@InjectableInit` (`$initGetIt` / `$initDomainGetIt` / `$initDataGetIt`) и тремя `.config.dart`. Пути вида `domain/lib/src/...`, `data/lib/src/...`, path-зависимости в `pubspec.yaml` и любой цикл `domain ↔ data` запрещены. Все пути — `lib/domain/...`, `lib/data/...`, `lib/di/...`. Импорты — всегда полные: `package:nox_app/...`.
 
 Направление зависимостей (см. [00-architecture-overview.md](00-architecture-overview.md)) обеспечивается **дисциплиной импортов**, а не границами пакетов:
 
@@ -60,7 +60,7 @@ dev_dependencies:
 import 'package:get_it/get_it.dart';
 import 'package:injectable/injectable.dart';
 import 'package:package_info_plus/package_info_plus.dart';
-import 'package:speech_ai_mobile/di/configure_dependencies.config.dart';
+import 'package:nox_app/di/configure_dependencies.config.dart';
 
 final getIt = GetIt.instance;
 
@@ -75,8 +75,8 @@ Future<void> configureDependencies(String env) async {
   //    mock under test). Everything else is annotation-driven.
   if (env == Environment.test) {
     PackageInfo.setMockInitialValues(
-      appName: 'Speech AI',
-      packageName: 'app.speechai.mobile',
+      appName: 'NOX',
+      packageName: 'com.cyphernetlabs.noxapp',
       version: '0.0.1',
       buildNumber: '1',
       buildSignature: '',
@@ -96,7 +96,7 @@ Future<void> configureDependencies(String env) async {
 - `getIt.$initGetIt(environment: env)` — единственный вызов генератора. `environment` фильтрует регистрации: попадают только классы, чей `env`-список содержит переданную строку.
 - `configure_dependencies.config.dart` — **сгенерирован**. Никогда не редактируется руками, исключён из анализа и форматирования (как `*.g.dart` / `*.freezed.dart`), см. [08-conventions-and-constitution.md](08-conventions-and-constitution.md).
 - `PackageInfo` (см. §6) — единственная значимая ручная регистрация: на устройстве это async-резолв с `preResolve: true`, под тестом — синхронный мок до запуска чего-либо.
-- Никакой ручной регистрации `AppDatabase` здесь нет — она декларативна (§5). Это умышленно отличается от рантайм-`if`-ветки в `migration` (BASE).
+- Никакой ручной регистрации `AppDatabase` здесь нет — она декларативна (§5). Рантайм-`if`-ветки для выбора БД быть не должно.
 
 ### 3.1 DI-окружения (`Environment.dev` / `prod` / `test`)
 
@@ -110,7 +110,7 @@ Future<void> configureDependencies(String env) async {
 
 Только классы, чей `env`-список содержит переданную строку, регистрируются. Это и есть механизм подмены реализаций по окружению — прежде всего env-скоупленной БД (§5).
 
-> **Маппинг флейвор → окружение** (см. §7 и §8): флейвор `prod` → `Environment.prod`; флейвор `stage` → `Environment.dev`. Окружений всего три, кастомных (вроде `CustomEnvironment.ipc` из исходников) **нет** — у мобильного приложения нет IPC/изолятов.
+> **Маппинг флейвор → окружение** (см. §7 и §8): флейвор `prod` → `Environment.prod`; флейвор `stage` → `Environment.dev`. Окружений всего три, кастомных (вроде `CustomEnvironment.ipc`) **нет** — у мобильного приложения нет IPC/изолятов.
 
 ---
 
@@ -127,7 +127,7 @@ Future<void> configureDependencies(String env) async {
 
 ## 5. Env-скоупленная `AppDatabase` (декларативный подход)
 
-Локальное хранилище (Sembast) выбирается **по окружению декларативно**: три провайдера, каждый со своим `env`-списком. Генератор зарегистрирует ровно один из них под интерфейс `AppDatabase`. Никакой рантайм-`if`-ветки в `configureDependencies` (это умышленно заменяет подход BASE, где БД регистрировалась через `if (env == Environment.test)`).
+Локальное хранилище (Sembast) выбирается **по окружению декларативно**: три провайдера, каждый со своим `env`-списком. Генератор зарегистрирует ровно один из них под интерфейс `AppDatabase`. Никакой рантайм-`if`-ветки в `configureDependencies` (правило блюпринта: БД не регистрируется через `if (env == Environment.test)`).
 
 Интерфейс и реализации живут в `lib/data/local/` (подробно — в [04-data-layer.md](04-data-layer.md)); здесь — только DI-аспект:
 
@@ -212,7 +212,7 @@ class ItemDao {
 ```dart
 // lib/data/mapper/item_mapper.dart
 import 'package:injectable/injectable.dart';
-import 'package:speech_ai_mobile/domain/model/item/item_model.dart';
+import 'package:nox_app/domain/model/item/item_model.dart';
 
 @lazySingleton
 class ItemMapper {
@@ -234,7 +234,7 @@ Impl регистрируется **под доменным контрактом
 ```dart
 // lib/data/repository/item_repository_impl.dart
 import 'package:injectable/injectable.dart';
-import 'package:speech_ai_mobile/domain/repository/item_repository.dart';
+import 'package:nox_app/domain/repository/item_repository.dart';
 
 @LazySingleton(
   as: ItemRepository,
@@ -283,7 +283,7 @@ enum AppFlavorType { prod, stage }
 ### 7.2 `AppFlavor` — `lib/domain/model/app_config/app_flavor.dart`
 
 ```dart
-import 'package:speech_ai_mobile/domain/model/app_config/app_flavor_type.dart';
+import 'package:nox_app/domain/model/app_config/app_flavor_type.dart';
 
 class AppFlavor {
   static const String _flavor = String.fromEnvironment('app.flavor');
@@ -306,13 +306,15 @@ class AppFlavor {
 
 Абстрактный интерфейс + **одна** реализация, читающая каждое значение через `const String.fromEnvironment`. **Per-flavor-подкласса нет** — все различия приходят из dart-define-payload'а. Реализация регистрируется для `prod` и `dev` (не для `test` — под тестом значения мокаются явно или не нужны).
 
+> Набор геттеров ниже — **пример** (бэкенд/протокол NOX ещё не выбран; заменить на реальный контракт). Паттерн «интерфейс + одна `const String.fromEnvironment`-реализация» неизменен; конкретные ключи (`API_URL`, ключ HMAC-подписи, идентификатор проекта бэкенда и т. д.) подставляются после выбора бэкенда NOX.
+
 ```dart
 import 'package:injectable/injectable.dart';
 
 abstract class AppConfigModel {
   String get apiUrl;
   String get apiSignatureKey;
-  String get appwriteProjectId;
+  String get backendProjectId;
   String get supportEmail;
   // ... one getter per config value the app needs ...
 }
@@ -326,7 +328,7 @@ final class AppConfigModelImpl implements AppConfigModel {
   String get apiSignatureKey => const String.fromEnvironment('API_SIGNATURE_KEY', defaultValue: '');
 
   @override
-  String get appwriteProjectId => const String.fromEnvironment('APPWRITE_PROJECT_ID', defaultValue: '');
+  String get backendProjectId => const String.fromEnvironment('BACKEND_PROJECT_ID', defaultValue: '');
 
   @override
   String get supportEmail => const String.fromEnvironment('SUPPORT_EMAIL', defaultValue: '');
@@ -336,7 +338,7 @@ final class AppConfigModelImpl implements AppConfigModel {
 
 > Enum- и list-типизированные значения парсятся из строкового env (например `FIRST_PARTY_HOSTS`, разбиваемый по `,`; короткий код, маппящийся в enum). Парсинг — внутри геттера, наружу торчит уже типизированное значение.
 >
-> Первый реальный набор значений (`API_URL`, `API_SIGNATURE_KEY`, `APPWRITE_PROJECT_ID` и т. д.) для stage/prod описан в [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md): источник истины — зашифрованные секреты (SOPS+age+mise), которые `dart-define-from-file` материализует в `.env.<flavor>.json` на этапе сборки.
+> Реальный набор значений (`API_URL`, `API_SIGNATURE_KEY`, идентификатор проекта бэкенда и т. д. — **пример**, бэкенд/протокол NOX ещё не выбран; заменить на реальный контракт) для stage/prod описан в [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md): источник истины — зашифрованные секреты (SOPS+age+mise), которые `dart-define-from-file` материализует в `.env.<flavor>.json` на этапе сборки.
 
 ---
 
@@ -345,10 +347,10 @@ final class AppConfigModelImpl implements AppConfigModel {
 Вручную поддерживаемые top-level **геттеры**, оборачивающие `getIt<T>()` для часто используемых синглтонов. Применяются внутри реализаций репозиториев и API-классов, чтобы не писать `getIt<...>()` каждый раз.
 
 ```dart
-import 'package:speech_ai_mobile/di/configure_dependencies.dart';
-import 'package:speech_ai_mobile/domain/repository/log_repository.dart';
-import 'package:speech_ai_mobile/domain/repository/app_config/app_config_repository.dart';
-import 'package:speech_ai_mobile/domain/repository/item_repository.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/repository/log_repository.dart';
+import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
+import 'package:nox_app/domain/repository/item_repository.dart';
 
 /// repositories
 LogRepository get logRepository => getIt<LogRepository>();
@@ -393,7 +395,7 @@ abstract class LogRepository {
 ```dart
 import 'package:injectable/injectable.dart';
 import 'package:logger/logger.dart';
-import 'package:speech_ai_mobile/domain/repository/log_repository.dart';
+import 'package:nox_app/domain/repository/log_repository.dart';
 
 @LazySingleton(as: LogRepository)
 class LogRepositoryImpl extends LogRepository {
@@ -432,12 +434,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:injectable/injectable.dart';
-import 'package:speech_ai_mobile/di/configure_dependencies.dart';
-import 'package:speech_ai_mobile/domain/model/app_config/app_flavor.dart';
-import 'package:speech_ai_mobile/domain/model/app_config/app_flavor_type.dart';
-import 'package:speech_ai_mobile/domain/repository/app_config/app_config_repository.dart';
-import 'package:speech_ai_mobile/domain/repository/log_repository.dart';
-import 'package:speech_ai_mobile/presentation/app/app_root.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/model/app_config/app_flavor.dart';
+import 'package:nox_app/domain/model/app_config/app_flavor_type.dart';
+import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
+import 'package:nox_app/domain/repository/log_repository.dart';
+import 'package:nox_app/presentation/app/app_root.dart';
 
 void main() {
   runZonedGuarded<Future<void>>(
@@ -516,7 +518,7 @@ Future<void> initializeMock() async {
 
 ## 12. Перегенерация DI (build_runner)
 
-При **любом** добавлении/удалении аннотации или изменении сигнатуры конструктора аннотированного класса нужно перегенерировать `configure_dependencies.config.dart`. Поскольку пакет **один**, прогон тоже **один** (никаких трёх per-package прогонов из исходников):
+При **любом** добавлении/удалении аннотации или изменении сигнатуры конструктора аннотированного класса нужно перегенерировать `configure_dependencies.config.dart`. Поскольку пакет **один**, прогон тоже **один** (никаких трёх per-package прогонов):
 
 ```bash
 fvm dart run build_runner build --delete-conflicting-outputs
@@ -529,7 +531,7 @@ fvm dart run build_runner build --delete-conflicting-outputs
 ## Чеклист
 
 - [ ] Один `lib/di/configure_dependencies.dart` с **единственным** `@InjectableInit(initializerName: r'$initGetIt')`, вызывающим `getIt.$initGetIt(environment: env)`.
-- [ ] Никаких трёх `configure*Dependencies` / `$initDomainGetIt` / `$initDataGetIt` / path-зависимостей — пакет один, контейнер плоский, импорты `package:speech_ai_mobile/...`.
+- [ ] Никаких трёх `configure*Dependencies` / `$initDomainGetIt` / `$initDataGetIt` / path-зависимостей — пакет один, контейнер плоский, импорты `package:nox_app/...`.
 - [ ] Окружения только `Environment.dev` / `prod` / `test`; кастомных нет.
 - [ ] `AppDatabase` — три env-скоупленных провайдера (`AppDatabaseDev`/`Prod`/`Test`), `@LazySingleton(as: AppDatabase, env: [<one>])`, **по одному** env на провайдер; Dev/Prod = `databaseFactoryIo`, Test = `databaseFactoryMemory`. Никакой рантайм-`if`-ветки.
 - [ ] DAO и мапперы — `@lazySingleton` (без `env`).

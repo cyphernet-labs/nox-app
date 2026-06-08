@@ -1,20 +1,20 @@
 # 07 — Пагинация
 
-> **Назначение:** зафиксировать единственный канонический стандарт постраничной подгрузки списков в приложении Speech AI Mobile — библиотека `infinite_scroll_pagination` ^5.1.1 (v5, stateless), `PagingState<K,T>` внутри Freezed-стейта BLoC, переиспользуемый extension `PagingStateExt.applyPage`, OFFSET-модель по умолчанию (под records-list `client_backend`) и CURSOR как альтернатива. **Когда читать:** перед реализацией любого экрана со списком, который сервер отдаёт постранично (первый реальный кейс — список записей `records`), а также при ревью BLoC, отдающего `PagingState`. **Связанные документы:** `05-presentation-layer.md` (BLoC = Freezed, `BaseBloc`, страницы, `state.when`), `04-data-layer.md` (`RepositoryResult`, `ResponseEntity`, mapper, network-only списки), `03-domain-layer.md` (доменные модели `@freezed`, `RepositoryException`), `06-theming.md` (токены для индикаторов/разделителей), `10-code-templates.md` (полные шаблоны), `08-conventions-and-constitution.md` (правила слоёв).
+> **Назначение:** зафиксировать единственный канонический стандарт постраничной подгрузки списков в приложении NOX — библиотека `infinite_scroll_pagination` ^5.1.1 (v5, stateless), `PagingState<K,T>` внутри Freezed-стейта BLoC, переиспользуемый extension `PagingStateExt.applyPage`, OFFSET-модель как основной flavor по умолчанию и CURSOR как документированная альтернатива. **Когда читать:** перед реализацией любого экрана со списком, который сервер отдаёт постранично (первый реальный кейс — список чатов: общий открытый список чатов, который сам по себе server-owned и network-only), а также при ревью BLoC, отдающего `PagingState`. **Связанные документы:** `05-presentation-layer.md` (BLoC = Freezed, `BaseBloc`, страницы, `state.when`), `04-data-layer.md` (`RepositoryResult`, `ResponseEntity`, mapper, network-only списки), `03-domain-layer.md` (доменные модели `@freezed`, `RepositoryException`), `06-theming.md` (токены для индикаторов/разделителей), `10-code-templates.md` (полные шаблоны), `08-conventions-and-constitution.md` (правила слоёв).
 
 ---
 
 ## 1. Что это и почему именно так
 
-Постраничная подгрузка — частая операция в Speech AI Mobile: список записей (`records`), список треков внутри записи, любой каталог. Стандарт здесь **один на всё приложение** и не допускает разнобоя.
+Постраничная подгрузка — частая операция в NOX: список чатов, любой server-owned постраничный каталог. Стандарт здесь **один на всё приложение** и не допускает разнобоя.
 
 Ключевые решения (заблокированы для всего блюпринта):
 
 1. **Библиотека — `infinite_scroll_pagination` ^5.1.1 (v5).** В 5-й мажорной версии она stateless: `PagingState<K,T>` — это обычное иммутабельное значение, которое лежит внутри стейта BLoC и напрямую передаётся в `PagedListView(state:, fetchNextPage:)`. **Никаких `PagingController`** (это паттерн v4, он держит собственный стейт вне BLoC и ломает single source of truth) и никаких `addPageRequestListener`.
 2. **`PagingState<K,T>` — часть Freezed-стейта BLoC.** Лежит в варианте-наследнике `Initialized` (см. `05-presentation-layer.md` про Freezed-юнионы и канонические подсостояния `Initializing` / `Initialized` / `Error`). Пагинация прививается одинаково независимо от того, Freezed стейт или нет, — три поля (`pagingState`, плоский `items`, `nextPage`/`nextCursor`) просто живут в loaded-кейсе.
 3. **Плоский `List<T>` + производные `pages`.** В стейте храним **плоский** `List<T> items` для бизнес-логики (выбор, удаление, поиск), а `pages: List<List<T>>`, которого требует `PagedListView`, **пересчитываем** в helper'е. Хранить `pages: List<List<T>>` напрямую — антипаттерн.
-4. **OFFSET-модель по умолчанию.** `client_backend` records-list — offset-based (`page` + `page_size` + `count`), поэтому метаданные по умолчанию — `PageMetadata{int? nextPage, int total}`, `nextPage == null` ⇒ страниц больше нет. CURSOR-модель (`CursorPaginationMetadata{String? nextCursor}`) описана как альтернатива для курсорных эндпоинтов.
-5. **`RepositoryResult` остаётся.** Репозиторий возвращает `RepositoryResult<(List<T>, PageMetadata)>` (envelope из `04-data-layer.md`), а не «голый» `Future` + `try/catch`. BLoC вызывает `result.match` / `result.hasData`, применяет helper, и пробрасывает `result.exception` в `pagingState.error` — для v5-билдеров ошибок. **Это ключевой графт:** мы НЕ копируем «сырой» `Future + try/catch` из cursor-гайда, а оборачиваем его в наш envelope.
+4. **OFFSET-модель по умолчанию.** OFFSET — основной flavor пагинации блюпринта (`page` + `page_size` + `count`), поэтому метаданные по умолчанию — `PageMetadata{int? nextPage, int total}`, `nextPage == null` ⇒ страниц больше нет. CURSOR-модель (`CursorPaginationMetadata{String? nextCursor}`) описана как документированная альтернатива для курсорных эндпоинтов. Конкретный контракт пагинации списка чатов фиксируется позже вместе с бэкендом NOX *(пример — бэкенд/протокол NOX ещё не выбран; заменить на реальный контракт)*.
+5. **`RepositoryResult` остаётся.** Репозиторий возвращает `RepositoryResult<(List<T>, PageMetadata)>` (envelope из `04-data-layer.md`), а не «голый» `Future` + `try/catch`. BLoC вызывает `result.match` / `result.hasData`, применяет helper, и пробрасывает `result.exception` в `pagingState.error` — для v5-билдеров ошибок. **Это ключевое правило:** мы НЕ используем «сырой» `Future + try/catch`, а всегда оборачиваем загрузку страницы в наш envelope.
 6. **Один helper `PagingStateExt.applyPage` на весь проект.** Инкапсулирует пересчёт `pages`/`keys`/`hasNextPage`, ветку «пустой результат», всё через `copyWith`. Юнит-тестируется отдельно.
 7. **Debounce обязателен** на событии загрузки — `PagedListView` дёргает `fetchNextPage` агрессивно.
 
@@ -64,7 +64,7 @@ abstract class PageMetadata with _$PageMetadata {
 }
 ```
 
-> **Замечание по контракту.** Точные имена полей контракта records-list (`page` / `page_size` / `count`) и 1-based нумерацию сверяйте с `docs/spec/backend_mobile_client_0.2.md` и `postman/SpeechAI_Client_API.postman_collection.json`. Маппинг сырого envelope → `PageMetadata` (вычисление `nextPage` из `page`/`page_size`/`count`) выполняет data-слой в `PaginatedResponse.fromJson`, а не доменная модель.
+> **Замечание по контракту.** Точные имена полей контракта (`page` / `page_size` / `count`) и 1-based нумерацию сверяйте с реальным контрактом бэкенда NOX, когда он будет зафиксирован *(пример — бэкенд/протокол NOX ещё не выбран; заменить на реальный контракт)*. Маппинг сырого envelope → `PageMetadata` (вычисление `nextPage` из `page`/`page_size`/`count`) выполняет data-слой в `PaginatedResponse.fromJson`, а не доменная модель.
 
 ### 4.2 Метаданные пагинации — CURSOR (альтернатива)
 
@@ -84,7 +84,7 @@ abstract class CursorPaginationMetadata with _$CursorPaginationMetadata {
 
 ```dart
 // lib/data/model/pagination/paginated_response.dart
-import 'package:speech_ai_mobile/domain/repository/base/page_metadata.dart';
+import 'package:nox_app/domain/repository/base/page_metadata.dart';
 
 class PaginatedResponse<T> {
   const PaginatedResponse({required this.data, required this.pagination});
@@ -98,7 +98,7 @@ class PaginatedResponse<T> {
   ) {
     final dataJson = json['data'] as List<dynamic>? ?? const [];
 
-    // Сырые поля offset-контракта records-list: page / page_size / count.
+    // Сырые поля offset-контракта (пример): page / page_size / count.
     final page = (json['page'] as num?)?.toInt();
     final pageSize = (json['page_size'] as num?)?.toInt();
     final total = (json['count'] as num?)?.toInt() ?? 0;
@@ -116,11 +116,11 @@ class PaginatedResponse<T> {
 }
 ```
 
-> Реальный бэкенд оборачивает ответ в `{data, timestamp, trace_id, meta}` (см. `04-data-layer.md`, `ResponseEntity<T>`). Распаковку envelope выполняет API-слой/`EntityConverter`; `PaginatedResponse.fromJson` работает уже с распакованным телом, где рядом с `data` лежат поля пагинации (`count`/`page`/`page_size`).
+> Бэкенд NOX может оборачивать ответ в унифицированный envelope вида `{data, timestamp, trace_id, meta}` (см. `04-data-layer.md`, `ResponseEntity<T>`) *(пример — бэкенд/протокол NOX ещё не выбран; заменить на реальный контракт)*. Распаковку envelope выполняет API-слой/`EntityConverter`; `PaginatedResponse.fromJson` работает уже с распакованным телом, где рядом с `data` лежат поля пагинации (`count`/`page`/`page_size`).
 
 ### 4.4 Конфиг запроса — `GetItemsConfig`
 
-Параметры списка собираются в иммутабельный `@freezed`-конфиг, реализующий `RepositoryConfig` (живёт в `lib/domain/...`, см. `03-domain-layer.md`). Никаких «магических чисел» в BLoC. `defaultPage = 1` (1-based, как в `client_backend`); `pageSize = 20`.
+Параметры списка собираются в иммутабельный `@freezed`-конфиг, реализующий `RepositoryConfig` (живёт в `lib/domain/...`, см. `03-domain-layer.md`). Никаких «магических чисел» в BLoC. `defaultPage = 1` (1-based — типовая нумерация offset-контракта; финальный контракт фиксируется с бэкендом NOX); `pageSize = 20`.
 
 ```dart
 // lib/domain/repository/item/get_items_config.dart
@@ -135,23 +135,23 @@ abstract class GetItemsConfig with _$GetItemsConfig implements RepositoryConfig 
   factory GetItemsConfig.nextPage({required int page, String? search}) => GetItemsConfig(page: page, search: search);
 
   static const int pageSize = 20;
-  static const int defaultPage = 1; // 1-based, как в client_backend
+  static const int defaultPage = 1; // 1-based (пример — финальный контракт фиксируется с бэкендом NOX)
 }
 ```
 
 ### 4.5 Репозиторий: контракт и реализация
 
-Пагинированный server-owned список отдаёт канонический метод `getItems` (префикс `get*` = параметризованный/списочный запрос; `fetch*` зарезервирован под одиночный one-shot `fetchItem`). Метод возвращает `RepositoryResult<(List<ItemModel>, PageMetadata)>` — Dart-record в payload, обёрнутый в наш envelope (именованные варианты `RepositoryResult.success(data:)` / `RepositoryResult.error(exception:)`). Перевод типизированных исключений (`ApiException` / `DaoException` → `BaseRepositoryException`) и обязательное логирование через `LogRepository` делает `BaseRepositoryHelper.execute<TD>()` (см. `04-data-layer.md`). Пагинированные server-owned списки — **network-only** (без DAO/subject), это явный carve-out base.
+Пагинированный server-owned список отдаёт канонический метод `getItems` (префикс `get*` = параметризованный/списочный запрос; `fetch*` зарезервирован под одиночный one-shot `fetchItem`). Метод возвращает `RepositoryResult<(List<ItemModel>, PageMetadata)>` — Dart-record в payload, обёрнутый в наш envelope (именованные варианты `RepositoryResult.success(data:)` / `RepositoryResult.error(exception:)`). Перевод типизированных исключений (`ApiException` / `DaoException` → `BaseRepositoryException`) и обязательное логирование через `LogRepository` делает `BaseRepositoryHelper.execute<TD>()` (см. `04-data-layer.md`). Пагинированные server-owned списки — **network-only** (без DAO/subject), это явный carve-out блюпринта.
 
 Полный контракт `ItemRepository` — канонический (см. `04-data-layer.md`); ниже показан целиком, списочный метод — `getItems`:
 
 ```dart
 // lib/domain/repository/item/item_repository.dart
-import 'package:speech_ai_mobile/domain/repository/base/repository_result.dart';
-import 'package:speech_ai_mobile/domain/model/item/item_model.dart';
-import 'package:speech_ai_mobile/domain/repository/base/page_metadata.dart';
-import 'package:speech_ai_mobile/domain/repository/item/get_item_config.dart';
-import 'package:speech_ai_mobile/domain/repository/item/get_items_config.dart';
+import 'package:nox_app/domain/repository/base/repository_result.dart';
+import 'package:nox_app/domain/model/item/item_model.dart';
+import 'package:nox_app/domain/repository/base/page_metadata.dart';
+import 'package:nox_app/domain/repository/item/get_item_config.dart';
+import 'package:nox_app/domain/repository/item/get_items_config.dart';
 
 abstract class ItemRepository {
   Stream<RepositoryResult<ItemModel>> watchItem({required String id});
@@ -167,14 +167,14 @@ abstract class ItemRepository {
 ```dart
 // lib/data/repository/item/item_repository_impl.dart
 import 'package:injectable/injectable.dart';
-import 'package:speech_ai_mobile/data/api/item/item_api.dart';
-import 'package:speech_ai_mobile/data/exception/base_repository_helper.dart';
-import 'package:speech_ai_mobile/data/mapper/item/item_mapper.dart';
-import 'package:speech_ai_mobile/domain/repository/base/repository_result.dart';
-import 'package:speech_ai_mobile/domain/model/item/item_model.dart';
-import 'package:speech_ai_mobile/domain/repository/base/page_metadata.dart';
-import 'package:speech_ai_mobile/domain/repository/item/get_items_config.dart';
-import 'package:speech_ai_mobile/domain/repository/item/item_repository.dart';
+import 'package:nox_app/data/api/item/item_api.dart';
+import 'package:nox_app/data/exception/base_repository_helper.dart';
+import 'package:nox_app/data/mapper/item/item_mapper.dart';
+import 'package:nox_app/domain/repository/base/repository_result.dart';
+import 'package:nox_app/domain/model/item/item_model.dart';
+import 'package:nox_app/domain/repository/base/page_metadata.dart';
+import 'package:nox_app/domain/repository/item/get_items_config.dart';
+import 'package:nox_app/domain/repository/item/item_repository.dart';
 
 @LazySingleton(as: ItemRepository, env: [Environment.dev, Environment.prod, Environment.test])
 class ItemRepositoryImpl with BaseRepositoryHelper implements ItemRepository {
@@ -212,7 +212,7 @@ class ItemRepositoryImpl with BaseRepositoryHelper implements ItemRepository {
 ```dart
 // lib/presentation/pagination/paging_state_ext.dart
 import 'package:infinite_scroll_pagination/infinite_scroll_pagination.dart';
-import 'package:speech_ai_mobile/domain/repository/base/page_metadata.dart';
+import 'package:nox_app/domain/repository/base/page_metadata.dart';
 
 extension PagingStateExt<K, T> on PagingState<K, T> {
   ({List<T> updatedList, PagingState<K, T> pagingState, int? nextPage}) applyPage({
@@ -247,7 +247,7 @@ extension PagingStateExt<K, T> on PagingState<K, T> {
 ```dart
 // lib/presentation/pagination/paging_state_ext_cursor.dart  (используется ВМЕСТО offset-варианта на курсорных экранах)
 import 'package:infinite_scroll_pagination/infinite_scroll_pagination.dart';
-import 'package:speech_ai_mobile/domain/repository/base/cursor_pagination_metadata.dart';
+import 'package:nox_app/domain/repository/base/cursor_pagination_metadata.dart';
 
 extension PagingStateCursorExt<K, T> on PagingState<K, T> {
   ({List<T> updatedList, PagingState<K, T> pagingState, String? nextCursor}) applyPageCursor({
@@ -279,7 +279,7 @@ BLoC построен по правилам `05-presentation-layer.md`: `@freeze
 
 ### 6.1 State (Freezed-юнион)
 
-Поля пагинации (`pagingState`, `items`, `nextPage`) живут в варианте `Initialized` плюс «v1-экстры» (`loadingInProgress`, `refreshInProgress`, `searchQuery`, `total`). Производный геттер `isAnyInProgress` — в extension, не в `@freezed`-теле.
+Поля пагинации (`pagingState`, `items`, `nextPage`) живут в варианте `Initialized` плюс вспомогательные поля (`loadingInProgress`, `refreshInProgress`, `searchQuery`, `total`). Производный геттер `isAnyInProgress` — в extension, не в `@freezed`-теле.
 
 ```dart
 // lib/presentation/pages/item_list_page/bloc/item_list_state.dart
@@ -381,14 +381,14 @@ import 'package:bloc_concurrency/bloc_concurrency.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:infinite_scroll_pagination/infinite_scroll_pagination.dart';
-import 'package:speech_ai_mobile/di/configure_dependencies.dart';
-import 'package:speech_ai_mobile/domain/exception/base_repository_exception.dart';
-import 'package:speech_ai_mobile/domain/model/item/item_model.dart';
-import 'package:speech_ai_mobile/domain/repository/base/page_metadata.dart';
-import 'package:speech_ai_mobile/domain/repository/item/get_items_config.dart';
-import 'package:speech_ai_mobile/domain/repository/item/item_repository.dart';
-import 'package:speech_ai_mobile/presentation/base/base_bloc.dart';
-import 'package:speech_ai_mobile/presentation/pagination/paging_state_ext.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/exception/base_repository_exception.dart';
+import 'package:nox_app/domain/model/item/item_model.dart';
+import 'package:nox_app/domain/repository/base/page_metadata.dart';
+import 'package:nox_app/domain/repository/item/get_items_config.dart';
+import 'package:nox_app/domain/repository/item/item_repository.dart';
+import 'package:nox_app/presentation/base/base_bloc.dart';
+import 'package:nox_app/presentation/pagination/paging_state_ext.dart';
 
 part 'item_list_event.dart';
 part 'item_list_state.dart';
@@ -524,7 +524,7 @@ class ItemListBloc extends BaseBloc<ItemListEvent, ItemListState> {
 - Параметры запроса (search/sort/filter) читаем из `state`, а не передаём в `LoadItems`. UI вызывает просто `add(const LoadItems(reset: false))`.
 - Stale-guard после `await`: повторно читаем `this.state` и сверяем `searchQuery` — чтобы не записать «протухший» ответ. `restartable()` на поиске даёт ту же защиту со стороны трансформера.
 - Тело хендлера обёрнуто в `executeLogic(() async {…}, onError: (error, exception, stackTrace) {…})` базового блока (`BaseBloc`) — позиционный первый аргумент-логика + 3-аргументный `onError` (см. `05-presentation-layer.md` §2); это и есть точка единого логирования/обработки сбоев.
-- `result.match(onData:, onError:)` — потребление `RepositoryResult` (именованные `success(data:)` / `error(exception:)`). `exception` уходит в `pagingState.error` (догрузка) или в `ItemListState.error` (первая страница при пустом списке) — это **ключевой графт**: мы не используем «сырой» `try/catch`, а потребляем `RepositoryResult`.
+- `result.match(onData:, onError:)` — потребление `RepositoryResult` (именованные `success(data:)` / `error(exception:)`). `exception` уходит в `pagingState.error` (догрузка) или в `ItemListState.error` (первая страница при пустом списке) — это **ключевое правило**: мы не используем «сырой» `try/catch`, а потребляем `RepositoryResult`.
 
 ---
 

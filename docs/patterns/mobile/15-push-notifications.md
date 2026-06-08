@@ -1,8 +1,8 @@
 # 15 — Push-уведомления (FCM)
 
-> **Назначение:** зафиксировать единый механизм push-уведомлений в `speech_ai_mobile` поверх Firebase Cloud Messaging — подключение `firebase_messaging`, получение и ротация device-токена, его регистрация/разрегистрация на `client_backend` (`POST`/`DELETE /api/v1/user/push_notification/`), три режима приёма сообщений (foreground / background / terminated), разрешения (iOS APNs, Android 13+ `POST_NOTIFICATIONS`) и навигацию по тапу. Слои — по канону блюпринта: `PushTokenRepository` (интерфейс в `lib/domain/repository/`, impl `with BaseRepositoryHelper`, методы возвращают `RepositoryResult<T>`), DI-регистрация `@LazySingleton(as: …)`, подключение в `main.dart` + `AppRoot`-observer. В existlive прямого аналога нет (`firebase_messaging` там не подключён) — паттерн собран по каноническим конвенциям проекта.
+> **Назначение:** зафиксировать единый механизм push-уведомлений в `nox_app` поверх Firebase Cloud Messaging — подключение `firebase_messaging`, получение и ротация device-токена, его регистрация/разрегистрация на бэкенде NOX (`POST`/`DELETE /api/v1/user/push_notification/` — пример; бэкенд/протокол NOX ещё не выбран, заменить на реальный контракт), три режима приёма сообщений (foreground / background / terminated), разрешения (iOS APNs, Android 13+ `POST_NOTIFICATIONS`) и навигацию по тапу. Слои — по канону блюпринта: `PushTokenRepository` (интерфейс в `lib/domain/repository/`, impl `with BaseRepositoryHelper`, методы возвращают `RepositoryResult<T>`), DI-регистрация `@LazySingleton(as: …)`, подключение в `main.dart` + `AppRoot`-observer.
 > **Когда читать:** перед поднятием папки push-уведомлений (`lib/{domain,data}/.../push/`), перед добавлением `firebase_messaging` в `pubspec.yaml`, при реализации регистрации device-токена на бэкенде, при разводке навигации «пользователь тапнул по уведомлению», а также при добавлении нового типа push-payload'а от worker-стороны.
-> **Связанные документы:** [13-deep-links.md](13-deep-links.md) (навигация по тапу — общий механизм маршрутизации `AppRootBloc`, `GlobalKey<NavigatorState>`, dispatch-table; push-tap переиспользует его), [14-networking-and-auth.md](14-networking-and-auth.md) (сетевой вызов register/unregister — HMAC + access/refresh JWT, security-заголовки — **не переизобретать**; push-endpoint'ы идут через полный security-pipeline), [04-data-layer.md](04-data-layer.md) (`BaseRepositoryHelper.execute`, мапперы, REST-слой `RequestBuilder`/`ResponseEntity`), [05-presentation-layer.md](05-presentation-layer.md) (`AppRoot`/`AppRootBloc`, `BaseBloc.executeLogic`, потребление `RepositoryResult` через `match`), [03-domain-layer.md](03-domain-layer.md) (`RepositoryResult`, `RepositoryException`, контракты репозитория), [02-dependency-injection.md](02-dependency-injection.md) (`configureDependencies`, регистрация репозитория, bootstrap `main.dart`), [01-stack-and-tooling.md](01-stack-and-tooling.md) (версии `firebase_core`/`firebase_messaging`/`permission_handler`).
+> **Связанные документы:** [13-deep-links.md](13-deep-links.md) (навигация по тапу — общий механизм маршрутизации `AppRootBloc`, `GlobalKey<NavigatorState>`, dispatch-table; push-tap переиспользует его), [14-networking-and-auth.md](14-networking-and-auth.md) (сетевой вызов register/unregister — HMAC + access/refresh JWT, security-заголовки — **не переизобретать**; push-endpoint'ы идут через полный security-pipeline; конкретная модель подписи/токенов — пример, бэкенд/протокол NOX ещё не выбран), [04-data-layer.md](04-data-layer.md) (`BaseRepositoryHelper.execute`, мапперы, REST-слой `RequestBuilder`/`ResponseEntity`), [05-presentation-layer.md](05-presentation-layer.md) (`AppRoot`/`AppRootBloc`, `BaseBloc.executeLogic`, потребление `RepositoryResult` через `match`), [03-domain-layer.md](03-domain-layer.md) (`RepositoryResult`, `RepositoryException`, контракты репозитория), [02-dependency-injection.md](02-dependency-injection.md) (`configureDependencies`, регистрация репозитория, bootstrap `main.dart`), [01-stack-and-tooling.md](01-stack-and-tooling.md) (версии `firebase_core`/`firebase_messaging`/`permission_handler`).
 
 ---
 
@@ -11,13 +11,15 @@
 Документ отвечает на четыре подвопроса:
 
 1. **Откуда берётся device-токен** — `firebase_messaging` (`getToken()` + поток `onTokenRefresh`), под капотом APNs (iOS) / FCM (Android). §2, §4.
-2. **Как токен попадает на бэкенд** — через `PushTokenRepository`, который шлёт `POST /api/v1/user/push_notification/` (register) и `DELETE …` (unregister на logout) строго по контракту §6. Сетевой вызов идёт через тот же подписанный сетевой слой, что и весь API ([14-networking-and-auth.md](14-networking-and-auth.md)). §6, §7.
+2. **Как токен попадает на бэкенд** — через `PushTokenRepository`, который шлёт `POST /api/v1/user/push_notification/` (register) и `DELETE …` (unregister на logout) по контракту §6 (пример — бэкенд/протокол NOX ещё не выбран; заменить на реальный контракт). Сетевой вызов идёт через тот же подписанный сетевой слой, что и весь API ([14-networking-and-auth.md](14-networking-and-auth.md)). §6, §7.
 3. **Как принимаются сообщения** — три канала: foreground (`onMessage`), background-tap (`onMessageOpenedApp`), terminated/cold-start (`getInitialMessage`) + top-level background-handler (`onBackgroundMessage`). §5.
 4. **Что происходит по тапу** — извлекаем routing-поля из `data`-payload'а и **переиспользуем** маршрутизатор deep-link'ов из [13-deep-links.md](13-deep-links.md), а не строим второй. §8.
 
-> **Единый пакет.** Все пути — `lib/...` внутри одного пакета `speech_ai_mobile` (worked example). Импорты — полные `package:speech_ai_mobile/...`, относительные `../` запрещены (кроме `part`-директив).
+> **Единый пакет.** Все пути — `lib/...` внутри одного пакета `nox_app` (worked example). Импорты — полные `package:nox_app/...`, относительные `../` запрещены (кроме `part`-директив).
 
-> **Зона ответственности `client_backend` — только регистрация/разрегистрация токена.** Сами push-**события** (`track_completed`, `track_error` и т.п.) эмитятся `worker_backend` / `worker_app`, **не** `client_backend`. Роль `client_backend` (и, стало быть, этого документа на стороне register/unregister) — только `POST`/`DELETE /api/v1/user/push_notification/`. Контракт payload'ов доставляемых уведомлений (§9) — на worker-стороне; мобильный handler читает их `data`-поля, но источник правды по их форме — worker-спека.
+> **Зона ответственности бэкенда NOX в этом документе — только регистрация/разрегистрация токена.** Сама эмиссия push-**событий** (что и когда отправлять) — отдельный серверный контракт, **не** покрываемый этим документом; на стороне мобильного клиента — только `POST`/`DELETE /api/v1/user/push_notification/` (пример — бэкенд/протокол NOX ещё не выбран; заменить на реальный контракт). Контракт payload'ов доставляемых уведомлений (§9) — на серверной стороне; мобильный handler читает их `data`-поля, но источник правды по их форме — серверная спека.
+
+> **NOX-нюанс приватности (предварительно).** Push приходят только по «своим» чатам — тем, что пользователь создал, где писал или которые открывал; включается единым toggle'ом. Точные правила охвата уточняются вместе с контрактом бэкенда NOX.
 
 **Стадии пайплайна:**
 
@@ -72,7 +74,7 @@
 | `permission_handler` | `^12.x` | Явный запрос `POST_NOTIFICATIONS` (Android 13+); опционален, можно обойтись `requestPermission()` плагина |
 | `firebase_messaging` (background) | — | top-level `@pragma('vm:entry-point')`-handler |
 
-> **`firebase_core` инициализируется явно.** В existlive `main.dart` **не** вызывает `Firebase.initializeApp()` (там рантайм оборачивает Datadog, а firebase-плагины поднимаются нативно/лениво). Для FCM это **не** годится — `FirebaseMessaging` требует инициализированного `Firebase`, поэтому в `speech_ai_mobile` `Firebase.initializeApp()` вызывается **явно** в bootstrap (§7.1), до регистрации background-handler'а.
+> **`firebase_core` инициализируется явно.** Правило блюпринта: `FirebaseMessaging` требует инициализированного `Firebase`, поэтому в `nox_app` `Firebase.initializeApp()` вызывается **явно** в bootstrap (§7.1), до регистрации background-handler'а. Ленивая/неявная инициализация firebase-плагинов для FCM не годится.
 
 ### Android — `android/app/src/main/AndroidManifest.xml` + `build.gradle`
 
@@ -152,7 +154,7 @@ abstract class PushTokenModel with _$PushTokenModel {
   }) = _PushTokenModel;
 }
 
-/// Closed allowlist бэкенда: см. §6 (push_notification_provider ∈ {firebase, apns, webpush}).
+/// Closed allowlist бэкенда (пример — контракт NOX ещё не выбран): см. §6 (push_notification_provider ∈ {firebase, apns, webpush}).
 enum PushProvider { firebase, apns, webpush }
 ```
 
@@ -184,9 +186,9 @@ abstract class PushMessageModel with _$PushMessageModel {
 `lib/domain/repository/push/push_token_repository.dart`:
 
 ```dart
-import 'package:speech_ai_mobile/domain/model/push/push_message_model.dart';
-import 'package:speech_ai_mobile/domain/model/push/push_token_model.dart';
-import 'package:speech_ai_mobile/domain/repository/base/repository_result.dart';
+import 'package:nox_app/domain/model/push/push_message_model.dart';
+import 'package:nox_app/domain/model/push/push_token_model.dart';
+import 'package:nox_app/domain/repository/base/repository_result.dart';
 
 abstract class PushTokenRepository {
   /// Разрешение + первый getToken + подписки на потоки. Вызывается ПОСЛЕ login (есть access-JWT).
@@ -251,9 +253,11 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
 ---
 
-## 6. Бэкенд-контракт регистрации токена (источник правды)
+## 6. Бэкенд-контракт регистрации токена (пример — TBD)
 
-Контракт **реализован и зашипен** в `client_backend` (сверено с `post_user_push_notification_api_executor.dart` / `delete_user_push_notification_api_executor.dart`); в `pending_implementations.md` push-токены не числятся как отложенные. Поэтому клиентскую часть оформляем **как готовую** (не TODO). Сетевой вызов идёт через подписанный слой [14-networking-and-auth.md](14-networking-and-auth.md) §4 — push-репозиторий передаёт только тело, заголовки/подпись ставит security-interceptor.
+> **Весь §6 — пример контракта; бэкенд/протокол NOX ещё не выбран, заменить на реальный.** Конкретные endpoint'ы, тело запроса, коды ошибок, rate-limit и серверные правила записи (§6.4) приведены как реалистичный образец того, как клиент регистрирует device-токен. Паттерн (репозиторий шлёт только тело, подпись/заголовки ставит security-interceptor подписанного слоя) — обязателен; конкретный контракт финализируется вместе с бэкендом NOX.
+
+Сетевой вызов идёт через подписанный слой [14-networking-and-auth.md](14-networking-and-auth.md) §4 — push-репозиторий передаёт только тело, заголовки/подпись ставит security-interceptor.
 
 ### 6.1 `POST /api/v1/user/push_notification/` — регистрация / обновление
 
@@ -318,7 +322,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 ```dart
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:speech_ai_mobile/data/repository/push/push_background_handler.dart';
+import 'package:nox_app/data/repository/push/push_background_handler.dart';
 // ... остальные импорты bootstrap'а — см. 05-presentation-layer.md §6.3
 
 void main() {
@@ -326,7 +330,7 @@ void main() {
     () async {
       WidgetsFlutterBinding.ensureInitialized();
 
-      // 1) Firebase — ЯВНО (в отличие от existlive). Нужен для FirebaseMessaging.
+      // 1) Firebase — ЯВНО (правило блюпринта). Нужен для FirebaseMessaging.
       await Firebase.initializeApp(/* options per флейвор, если используем DefaultFirebaseOptions */);
 
       // 2) background-handler — top-level, до runApp.
@@ -359,13 +363,13 @@ import 'dart:async';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:injectable/injectable.dart';
 import 'package:rxdart/rxdart.dart';
-import 'package:speech_ai_mobile/data/exception/base_repository_helper.dart';
-import 'package:speech_ai_mobile/data/mapper/push/push_message_mapper.dart';
-import 'package:speech_ai_mobile/data/remote/api/push/push_token_api.dart';
-import 'package:speech_ai_mobile/domain/model/push/push_message_model.dart';
-import 'package:speech_ai_mobile/domain/model/push/push_token_model.dart';
-import 'package:speech_ai_mobile/domain/repository/base/repository_result.dart';
-import 'package:speech_ai_mobile/domain/repository/push/push_token_repository.dart';
+import 'package:nox_app/data/exception/base_repository_helper.dart';
+import 'package:nox_app/data/mapper/push/push_message_mapper.dart';
+import 'package:nox_app/data/remote/api/push/push_token_api.dart';
+import 'package:nox_app/domain/model/push/push_message_model.dart';
+import 'package:nox_app/domain/model/push/push_token_model.dart';
+import 'package:nox_app/domain/repository/base/repository_result.dart';
+import 'package:nox_app/domain/repository/push/push_token_repository.dart';
 
 @LazySingleton(as: PushTokenRepository)
 class PushTokenRepositoryImpl with BaseRepositoryHelper implements PushTokenRepository {
@@ -461,8 +465,8 @@ class PushTokenRepositoryImpl with BaseRepositoryHelper implements PushTokenRepo
 ```dart
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:injectable/injectable.dart';
-import 'package:speech_ai_mobile/data/mapper/base_mapper.dart';
-import 'package:speech_ai_mobile/domain/model/push/push_message_model.dart';
+import 'package:nox_app/data/mapper/base_mapper.dart';
+import 'package:nox_app/domain/model/push/push_message_model.dart';
 
 @lazySingleton
 class PushMessageMapper extends BaseMapper<RemoteMessage, PushMessageModel, dynamic, dynamic> {
@@ -546,8 +550,8 @@ Tap по уведомлению (background/terminated) — это **тот же
 
 Два способа стыковки (выбрать один, рекомендован первый):
 
-1. **Через payload-`data` → доменная навигация (рекомендуется).** Worker кладёт в `data` push'а явные routing-поля (например `{"type": "track_completed", "record_id": "<id>"}`, §9). `AppRootBloc._onPushOpened` читает `message.data['type']` и пушит нужную страницу через `navigatorKey.currentState`, переиспользуя те же навигационные ветки, что и deep-link.
-2. **Через `data['deep_link']` → существующий deep-link-парсер.** Если payload несёт готовую ссылку (`{"deep_link": "https://<host>/r/<record_id>"}`), отдать её в `DeepLinkRepository.handleLink(config: HandleLinkConfig(data: …, source: DeepLinkSource.background))` ([13-deep-links.md](13-deep-links.md) §3.3) — она пройдёт штатную цепочку `isValid → parse → mapper` и доедет до того же `_onOnDeepLink`. Удобно, когда push и email-ссылка ведут в одно место (например, share-запись).
+1. **Через payload-`data` → доменная навигация (рекомендуется).** Сервер кладёт в `data` push'а явные routing-поля (например `{"type": "new_message", "chat_id": "<id>"}`, §9 — имена полей пример, заменить на реальный контракт). `AppRootBloc._onPushOpened` читает `message.data['type']` и пушит нужную страницу через `navigatorKey.currentState`, переиспользуя те же навигационные ветки, что и deep-link.
+2. **Через `data['deep_link']` → существующий deep-link-парсер.** Если payload несёт готовую ссылку (`{"deep_link": "https://<host>/c/<chat_id>"}`), отдать её в `DeepLinkRepository.handleLink(config: HandleLinkConfig(data: …, source: DeepLinkSource.background))` ([13-deep-links.md](13-deep-links.md) §3.3) — она пройдёт штатную цепочку `isValid → parse → mapper` и доедет до того же `_onOnDeepLink`. Удобно, когда push и внешняя ссылка ведут в одно место (например, конкретный чат).
 
 `lib/presentation/app/bloc/app_root_bloc.dart` (фрагмент `_onPushOpened`):
 
@@ -558,16 +562,16 @@ FutureOr<void> _onPushOpened(OnPushOpened event, Emitter<AppRootState> emit) asy
     final nav = event.navigatorKey.currentState;
     if (nav == null) return;
 
-    // Способ 1 — доменная навигация по routing-полю payload'а:
+    // Способ 1 — доменная навигация по routing-полю payload'а (имена полей — пример, §9):
     switch (data['type']) {
-      case 'track_completed':
-        final recordId = data['record_id'];
-        if (recordId != null) {
-          nav.push(RecordDetailsPage.route(recordId: recordId)); // worked example для своей темы
+      case 'new_message':
+        final chatId = data['chat_id'];
+        if (chatId != null) {
+          nav.push(ChatDetailsPage.route(chatId: chatId)); // worked example, заменить на свою фичу
         }
         break;
-      case 'track_error':
-        // увести на экран записи с подсветкой ошибки / кнопкой Retry
+      case 'chat_invite':
+        // увести на экран приглашения в чат / список чатов
         break;
       default:
         // Способ 2 — если есть готовая ссылка, отдать в deep-link-парсер:
@@ -586,24 +590,24 @@ FutureOr<void> _onPushOpened(OnPushOpened event, Emitter<AppRootState> emit) asy
 
 > **`executeLogic` — позиционный первый аргумент.** Сигнатура `executeLogic(() async {...}, onError: (String? error, dynamic exception, StackTrace stackTrace){...})` ([05-presentation-layer.md](05-presentation-layer.md) §2). Для навигации `onError` можно опустить (фоновая операция) — логирование уже произошло в репозитории; но эмитить терминальный `Error` тут не нужно, поэтому `onError` оставляем пустым/no-op.
 
-> **Worked example.** `RecordDetailsPage`/`record_id`/`track_completed` — реалистичный аналог для темы Speech AI (запись → трек). Под свою фичу замените набор routing-веток; механизм (payload → dispatch-table → `navigatorKey`) — без изменений.
+> **Worked example.** `ChatDetailsPage`/`chat_id`/`new_message` — реалистичный аналог для NOX (первая реальная поверхность — список чатов, тап ведёт в конкретный чат). Под свою фичу замените набор routing-веток; механизм (payload → dispatch-table → `navigatorKey`) — без изменений.
 
 ---
 
-## 9. Контракт push-payload'ов — зона worker-стороны (не `client_backend`)
+## 9. Контракт push-payload'ов — зона серверной стороны (пример — TBD)
 
-Форма доставляемых уведомлений (`track_completed`, `track_error` и т.п.) задокументирована в `docs/spec/backend_mobile_client_0.2.md`, но это **scope `worker_backend` / `worker_app`** — `client_backend` их **не** эмитит. Мобильный handler читает их `data`-поля (§8), но источник правды по их форме — worker-спека, не этот документ.
+Форма доставляемых уведомлений — серверный контракт, **не** покрываемый этим документом и **не** относящийся к стороне register/unregister. Мобильный handler читает их `data`-поля (§8), но источник правды по их форме — серверная спека, не этот документ.
 
-Ориентировочные routing-поля, которые handler ожидает в `data` (сверить с worker-контрактом перед реализацией навигации):
+Ориентировочные routing-поля, которые handler ожидает в `data` (пример — бэкенд/протокол NOX ещё не выбран; сверить с реальным контрактом перед реализацией навигации):
 
 | Поле `data` | Смысл | Использование на клиенте |
 |---|---|---|
-| `type` | тип события (`track_completed` / `track_error` / …) | ветка dispatch-table (§8) |
-| `record_id` | id записи | навигация на экран записи |
-| `track_id` | id трека (опц.) | подсветка конкретного трека |
+| `type` | тип события (`new_message` / `chat_invite` / …) | ветка dispatch-table (§8) |
+| `chat_id` | id чата | навигация на экран чата |
+| `message_id` | id сообщения (опц.) | подсветка конкретного сообщения |
 | `deep_link` (опц.) | готовая ссылка | передать в `DeepLinkRepository.handleLink` (§8, способ 2) |
 
-> **FLAG (cross-project).** Точные имена и набор `data`-полей push-payload'а — **не финальны** в этом документе: их источник правды — worker-сторона (`worker_backend` / `worker_app`). Перед реализацией навигационных веток (§8) — сверить с worker-контрактом; в коде оставить `TODO(cross-project)` на маппинге payload-полей, как это сделано для HMAC-контракта в [14-networking-and-auth.md](14-networking-and-auth.md) §4.
+> **TBD.** Точные имена и набор `data`-полей push-payload'а — **не финальны**: их источник правды — серверная сторона, а бэкенд/протокол NOX ещё не выбран. Перед реализацией навигационных веток (§8) — сверить с реальным контрактом; в коде оставить `TODO(backend-tbd)` на маппинге payload-полей.
 
 ---
 
@@ -611,24 +615,24 @@ FutureOr<void> _onPushOpened(OnPushOpened event, Emitter<AppRootState> emit) asy
 
 - [ ] `pubspec.yaml`: `firebase_core ^4.x` + `firebase_messaging ^16.x` (+ опц. `permission_handler ^12.x` / `flutter_local_notifications`); версии пинятся по `firebase_core` constraint ([01-stack-and-tooling.md](01-stack-and-tooling.md)).
 - [ ] Нативка: Android `google-services.json` + плагин `google-services` + `meta-data` канала; iOS `GoogleService-Info.plist` + APNs-ключ в Firebase + capabilities Push Notifications / Background Remote notifications (per флейвор, [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md)).
-- [ ] `main.dart`: **явный** `Firebase.initializeApp()` (в отличие от existlive) + `FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler)` — до `runApp`, рядом с `configureDependencies` ([05-presentation-layer.md](05-presentation-layer.md) §6.3).
+- [ ] `main.dart`: **явный** `Firebase.initializeApp()` (правило блюпринта) + `FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler)` — до `runApp`, рядом с `configureDependencies` ([05-presentation-layer.md](05-presentation-layer.md) §6.3).
 - [ ] `firebaseMessagingBackgroundHandler` — top-level `@pragma('vm:entry-point')`, DI недоступен, только лёгкая работа (§5).
 - [ ] Разрешение: `requestPermission(...)` **первым** в `initialize()`, до `getToken()`; iOS обязателен для выдачи токена; Android 13+ → `POST_NOTIFICATIONS`; `denied` → `success(data: false)`, не падать (§3).
 - [ ] Доменка: `PushTokenModel` (enum `PushProvider`, на мобиле всегда `firebase`), `PushMessageModel` (`title`/`body`/`data`), `PushTokenRepository` (`initialize`/`register`/`unregister`/`currentToken`/`watchForegroundMessages`/`watchMessageOpened`/`watchTokenRefresh`/`dispose`) — все мутации `RepositoryResult<T>` (§4).
 - [ ] Data: `PushTokenRepositoryImpl with BaseRepositoryHelper` `@LazySingleton(as: PushTokenRepository)` — три `PublishSubject`, подписки на `onMessage`/`onMessageOpenedApp`/`onTokenRefresh` + `getInitialMessage()`; `register`/`unregister` через `_pushTokenApi`, обёрнуты в `execute<bool>` (§7.2).
 - [ ] Mapper `RemoteMessage → PushMessageModel` `@lazySingleton`, one-way (`toEntity → UnimplementedError`); `data` нормализуется в `Map<String, String>` (§7.3).
-- [ ] Бэкенд-контракт (§6): тело **ровно 2 ключа** (`push_notification_provider`/`push_notification_token`); `register` после login + на каждый `onTokenRefresh`; `unregister` на logout **до** очистки токен-пары; идемпотентность DELETE; rate-limit `pushTokenWrite` 20/60s (общий bucket). Сетевой вызов — через подписанный слой [14-networking-and-auth.md](14-networking-and-auth.md) §4 (HMAC/Bearer ставит interceptor, не репозиторий).
+- [ ] Бэкенд-контракт (§6 — пример, бэкенд/протокол NOX ещё не выбран): тело **ровно 2 ключа** (`push_notification_provider`/`push_notification_token`); `register` после login + на каждый `onTokenRefresh`; `unregister` на logout **до** очистки токен-пары; идемпотентность DELETE; rate-limit `pushTokenWrite` 20/60s (общий bucket). Сетевой вызов — через подписанный слой [14-networking-and-auth.md](14-networking-and-auth.md) §4 (HMAC/Bearer ставит interceptor, не репозиторий).
 - [ ] Load-bearing (§6.4): `x-device-id` (из security-interceptor) — **единственная** клиентская ручка различения устройств (composite-UNIQUE `(owner_id, device_id)`); `platform`/`app_version`/… сервер не берёт из body — не слать.
 - [ ] Presentation (§7.5): `AppRoot` подписан на `watchMessageOpened()`/`watchTokenRefresh()` рано (в `initState`); `AppRootBloc` дёргает `initialize()`/`register()` **после login** (есть access-JWT), `unregister()`/`dispose()` на logout.
 - [ ] Навигация по тапу (§8): **переиспользовать** маршрутизатор deep-link ([13-deep-links.md](13-deep-links.md)) — `AppRootBloc._onPushOpened` по `message.data['type']` (или `data['deep_link']` → `DeepLinkRepository.handleLink`); `executeLogic` с **позиционным** первым аргументом, `onError` опционален для фоновой навигации.
-- [ ] **FLAG (cross-project, §9):** набор `data`-полей push-payload'а — источник правды worker-сторона (`worker_backend`/`worker_app`); сверить перед реализацией навигационных веток, в коде — `TODO(cross-project)`.
+- [ ] **TBD (§9):** набор `data`-полей push-payload'а — источник правды серверная сторона; бэкенд/протокол NOX ещё не выбран — сверить с реальным контрактом перед реализацией навигационных веток, в коде — `TODO(backend-tbd)`.
 
 ---
 
 ## Связанные документы
 
 - [13-deep-links.md](13-deep-links.md) — навигация по тапу переиспользует общий маршрутизатор входящих ссылок (`AppRootBloc._onOnDeepLink`, `GlobalKey<NavigatorState>`, dispatch-table, `DeepLinkRepository.handleLink`); push-tap — ещё один источник того же навигационного триггера.
-- [14-networking-and-auth.md](14-networking-and-auth.md) — сетевой вызов register/unregister идёт через подписанный слой (HMAC-SHA256 + security-заголовки + access/refresh JWT + `x-device-id`); push-репозиторий передаёт только тело, заголовки/подпись ставит security-interceptor — **не переизобретать**.
+- [14-networking-and-auth.md](14-networking-and-auth.md) — сетевой вызов register/unregister идёт через подписанный слой (HMAC-SHA256 + security-заголовки + access/refresh JWT + `x-device-id` — конкретная модель подписи/токенов пример, бэкенд/протокол NOX ещё не выбран); push-репозиторий передаёт только тело, заголовки/подпись ставит security-interceptor — **не переизобретать**.
 - [04-data-layer.md](04-data-layer.md) — `BaseRepositoryHelper.execute`, `BaseMapper`, REST-слой (`RequestBuilder`/`ResponseEntity<T>`/`EntityConverter`), отсутствие `ApiException`/`DaoException` (коэрция `DioException → RepositoryException.internal`).
 - [05-presentation-layer.md](05-presentation-layer.md) — `AppRoot`/`AppRootBloc` (app-shell, observer, `GlobalKey<NavigatorState>`), `BaseBloc.executeLogic` (позиционный первый аргумент), потребление `RepositoryResult<T>` через `match`/`hasData`, bootstrap `main.dart`.
 - [03-domain-layer.md](03-domain-layer.md) — `RepositoryResult<T>` (data-XOR-exception + `match`), `RepositoryException` (`internal`/`unknown`/`notFound`/…), контракт репозитория.

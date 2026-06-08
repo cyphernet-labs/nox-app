@@ -1,54 +1,50 @@
-# 16 — Загрузка контента (3-step: upload → estimate → create record)
+# 16 — Загрузка вложения в чат (picker → multipart upload → attach to message)
 
-> **Назначение:** зафиксировать клиентский контракт 3-шаговой загрузки пользовательского контента в `speech_ai_mobile` — выбор файла/изображения, multipart-upload каждого источника (`POST /api/v1/records/files/upload/`), read-only пре-флайт-оценка квоты (`POST /api/v1/records/length_check/`) и идемпотентное создание записи с атомарным списанием квоты (`POST /api/v1/records/`). Контракт endpoint'ов — **cross-project-решение** (`mobile ↔ client_backend`), здесь приведена текущая форма из `docs/spec/backend_mobile_client_0.2.md`. Worked-аналог `Item` из блюпринта здесь — пара `DataFile` (один загруженный source-файл) + `Record` (созданная запись). Сетевой слой (Dio `ApiClient`, HMAC + access/refresh JWT) **не переизобретается** — берётся из [14-networking-and-auth.md](14-networking-and-auth.md).
-> **Когда читать:** перед реализацией экрана загрузки контента (file/image picker → upload → estimate → create), перед поднятием `UploadRepository` / `RecordRepository` в `lib/data/`, и при добавлении нового `data_type` источника (`link`/`text`/`document`/`image`).
-> **Связанные документы:** [04-data-layer.md](04-data-layer.md) (`ApiClient`, `BaseApiRepository`, `BaseRepositoryHelper.execute`, `ResponseEntity<T>`/`EntityConverter<E>`, мапперы, REST-слой, network-only POST), [03-domain-layer.md](03-domain-layer.md) (`RepositoryResult`, `RepositoryException`, контракты репозиториев, per-call конфиги), [05-presentation-layer.md](05-presentation-layer.md) (Freezed-BLoC, `BaseBloc.executeLogic`, side-эффект-стримы, `state.when`), [14-networking-and-auth.md](14-networking-and-auth.md) (сетевой слой, HMAC + access/refresh JWT, security-заголовки — не переизобретать), [02-dependency-injection.md](02-dependency-injection.md) (`configureDependencies`, регистрация репозиториев), [07-pagination.md](07-pagination.md) (records-list, куда уходит созданная запись), [01-stack-and-tooling.md](01-stack-and-tooling.md) (`file_picker`, `image_picker`, `dio`).
+> **Назначение:** зафиксировать клиентский контракт загрузки вложения в сообщение чата в `nox_app` — выбор файла/изображения через picker, multipart-upload через Dio с прогрессом, и прикрепление загруженного файла к сообщению чата. Вложение в UI рендерится как чип с иконкой типа файла (без превью содержимого — по дизайну NOX). Конкретный контракт endpoint'ов — **пример-плейсхолдер** (бэкенд/протокол NOX ещё не выбран; заменить на реальный контракт). Worked-аналог `Item` из блюпринта здесь — пара `Attachment` (один загруженный файл) + `Message` (сообщение, к которому файл прикреплён). Сетевой слой (Dio `ApiClient`, signing + access/refresh-токены) **не переизобретается** — берётся из [14-networking-and-auth.md](14-networking-and-auth.md).
+> **Когда читать:** перед реализацией экрана/панели вложений в чате (file/image picker → upload → attach), перед поднятием `UploadRepository` / `AttachmentRepository` в `lib/data/`, и при добавлении нового типа вложения (`document`/`image`).
+> **Связанные документы:** [04-data-layer.md](04-data-layer.md) (`ApiClient`, `BaseApiRepository`, `BaseRepositoryHelper.execute`, `ResponseEntity<T>`/`EntityConverter<E>`, мапперы, REST-слой, network-only POST), [03-domain-layer.md](03-domain-layer.md) (`RepositoryResult`, `RepositoryException`, контракты репозиториев, per-call конфиги), [05-presentation-layer.md](05-presentation-layer.md) (Freezed-BLoC, `BaseBloc.executeLogic`, side-эффект-стримы, `state.when`), [14-networking-and-auth.md](14-networking-and-auth.md) (сетевой слой, signing + access/refresh-токены, security-заголовки — не переизобретать), [02-dependency-injection.md](02-dependency-injection.md) (`configureDependencies`, регистрация репозиториев), [07-pagination.md](07-pagination.md) (список чатов — куда возвращается сообщение с вложением), [01-stack-and-tooling.md](01-stack-and-tooling.md) (`file_picker`, `image_picker`, `dio`).
 
 ---
 
-## 0. Идея: три последовательных шага, не один POST
+## 0. Идея: два шага — upload, затем attach
 
-Создание записи в Speech AI — это **не** одиночный multipart-POST. Это конвейер из трёх вызовов, каждый из которых — отдельный запрос со своим контрактом и своими побочными эффектами:
+Отправка вложения в NOX — это **не** один общий POST. Это два вызова, каждый со своим контрактом и своими побочными эффектами:
 
-1. **Upload** (`POST /api/v1/records/files/upload/`) — клиент загружает **каждый** источник по отдельности (multipart) и получает на него `data_file_id`. Повторяется по числу источников (1..50).
-2. **Estimate / length_check** (`POST /api/v1/records/length_check/`) — read-only пре-флайт: «сколько секунд это займёт и хватит ли квоты». **Квота НЕ списывается.** Чистая функция от `(data_file_id, language_id, текущее состояние квоты)`.
-3. **Create record** (`POST /api/v1/records/`) — создание записи по набору `data_file_id`'ов с **атомарным** списанием квоты. Идемпотентно по natural-key `(owner_id, sources_signature)`: первый вызов → `201`, повтор того же набора → `200` без повторного списания.
+1. **Upload** (`POST <upload-endpoint>` — *пример-плейсхолдер; бэкенд/протокол NOX ещё не выбран; заменить на реальный контракт*) — клиент загружает выбранный файл (multipart) и получает на него `attachment_id`. Пробрасывается прогресс аплоада для прогресс-бара.
+2. **Attach to message** (`POST <message-endpoint>` — *пример-плейсхолдер*) — отправка сообщения чата, ссылающегося на ранее загруженный `attachment_id`. Идемпотентно по natural-key `(chat_id, client_message_id)`: первый вызов → `201`, повтор того же `client_message_id` → `200` без повторной отправки (где идемпотентность имеет смысл — клиент генерирует `client_message_id` локально).
 
 ```
-[picker] выбрать link/text/document/image
-   │  (каждый источник)
+[picker] выбрать document/image
+   │
    ▼
-1. UploadRepository.uploadFile(...)  → POST /records/files/upload/   → DataFileModel{ dataFileId, ... }
-   │  (накопить массив dataFileIds: 1..50)
+1. UploadRepository.uploadFile(...)  → POST <upload-endpoint>    → AttachmentModel{ attachmentId, ... }
+   │  (держим attachmentId для шага 2)
    ▼
-2. RecordRepository.lengthCheck(...) → POST /records/length_check/   → EstimateModel{ estimatedSeconds, canProcess, quota }
-   │  (read-only; квота НЕ списана; гейт UX перед create)
-   ▼
-3. RecordRepository.createRecord(...) → POST /records/              → (RecordModel, bool isCreated)
-        201 Created + Location  → новая запись + атомарный debit квоты + broker dispatch
-        200 OK (без Location)   → существующая запись (тот же набор), БЕЗ повторного списания
+2. AttachmentRepository.sendAttachment(...) → POST <message-endpoint> → (MessageModel, bool isCreated)
+        201 Created + Location  → новое сообщение с вложением
+        200 OK (без Location)   → существующее сообщение (тот же client_message_id), без повторной отправки
 ```
 
-> **Единый пакет.** Все пути — `lib/...` внутри одного пакета `speech_ai_mobile` (worked example). Импорты — полные `package:speech_ai_mobile/...`, относительные `../` запрещены (кроме `part`-директив).
+> **Единый пакет.** Все пути — `lib/...` внутри одного пакета `nox_app` (worked example). Импорты — полные `package:nox_app/...`, относительные `../` запрещены (кроме `part`-директив).
 
-> **Источники — это всегда файлы.** Даже `link` и `text` загружаются как маленькие UTF-8-файлы на шаге 1 (link — однострочный файл с URL, text — UTF-8-текст). Сервер сам читает `data_type` каждого источника из `data_files_v1` — клиент **не** передаёт `data_type` в шаг 3.
+> **Picker даёт файл, не репозиторий.** Picker'ы (file/image) живут в presentation-слое; репозиторий принимает уже готовые байты/путь и тип вложения. Вложение всегда загружается как файл — `document` или `image`.
 
 ---
 
 ## 1. Контракт и инварианты (что соблюдать дословно)
 
-- **Все три шага требуют аутентификации** (`Authorization: Bearer <access_jwt>`, [14-networking-and-auth.md](14-networking-and-auth.md) §4). Refresh→rotate→retry на `401` — забота auth-слоя из доки 14, **не** этого экрана.
-- **Подпись запроса (HMAC + security-заголовки) — забота interceptor'а доки 14**, не репозиториев этого документа. Сноска: шаг 1 (`upload`) — **единственный** `multipart/form-data` endpoint, и спека **не** перечисляет `x-request-signature` среди его обязательных заголовков; шаги 2 и 3 — обычный JSON-пайплайн с полным набором security-заголовков. Конкретику подписи multipart-запроса — **сверить с владельцем бэкенда** перед реализацией (см. [14-networking-and-auth.md](14-networking-and-auth.md) §4 FLAG).
-- **`data_file_id` = 1:1 Appwrite Storage `fileId` = `data_files_v1.$id`.** Это единственное поле из шага 1, которое нужно держать для шагов 2/3.
-- **`length_check` оценивает один файл за вызов**, `create` принимает массив. Расчёт `estimated_seconds` на шагах 2 и 3 — **один и тот же read-path** (читает сохранённое при upload `effective_content_chars`), поэтому успешный `length_check` высоко-предиктивен для `201` на create.
-- **Квота списывается только на шаге 3** и только на пути `201` (первое создание набора). Шаг 2 квоту не трогает; повтор шага 3 (`200`) квоту не трогает.
-- **Идемпотентность по natural-key.** `sources_signature = sha256_hex(utf8(join(sort_asc(data_file_ids), ",")))` — один и тот же **набор** файлов в любом порядке → одна и та же запись. Клиент различает исходы по HTTP-статусу (`201` vs `200`) или наличию заголовка `Location`. **`409` в v1 НЕ возвращается** — не ветвиться на него.
-- **Все методы репозиториев возвращают `RepositoryResult<T>`** ([03-domain-layer.md](03-domain-layer.md)); конкретные доменные коды (`notFound` на `404`, `quotaExceeded` на `400 quota_exceeded`) возвращаются **явным** `return RepositoryResult.error(...)` в callback'е `execute`, а не из catch-веток (канон [04-data-layer.md](04-data-layer.md) §5).
-- **Это network-only-фича** (one-shot POST'ы) — без Sembast-DAO и `BehaviorSubject` (carve-out [04-data-layer.md](04-data-layer.md) §8). Созданная запись затем подхватывается records-list ([07-pagination.md](07-pagination.md)).
+> Конкретные endpoint'ы, заголовки, статусы и поля ниже — **примеры-плейсхолдеры** (бэкенд/протокол NOX ещё не выбран; заменить на реальный контракт). Дословно соблюдать нужно **паттерн** (picker → multipart → attach, network-only, `RepositoryResult<T>`), а не конкретные имена полей.
+
+- **Оба шага требуют аутентификации** (`Authorization: Bearer <access_token>`, [14-networking-and-auth.md](14-networking-and-auth.md) §4). Refresh→rotate→retry на `401` — забота auth-слоя из доки 14, **не** этого экрана.
+- **Подпись запроса (signing + security-заголовки) — забота interceptor'а доки 14**, не репозиториев этого документа. Сноска: шаг 1 (`upload`) — **единственный** `multipart/form-data` endpoint, и подпись `multipart/form-data` может отличаться от обычного JSON-пайплайна; шаг 2 — обычный JSON-пайплайн с полным набором security-заголовков. Конкретику подписи multipart-запроса финализировать вместе с контрактом бэкенда NOX (см. [14-networking-and-auth.md](14-networking-and-auth.md) §4 FLAG).
+- **`attachment_id` — единственное поле из шага 1, которое нужно держать для шага 2.** (Конкретное имя поля — пример; заменить на реальный контракт.)
+- **Идемпотентность по natural-key.** `(chat_id, client_message_id)` — повторная отправка того же `client_message_id` не создаёт дубль сообщения. Клиент генерирует `client_message_id` локально (например, UUID) и различает исходы по HTTP-статусу (`201` vs `200`) или наличию заголовка `Location`. (Конкретная форма ключа/статусов — пример-плейсхолдер.)
+- **Все методы репозиториев возвращают `RepositoryResult<T>`** ([03-domain-layer.md](03-domain-layer.md)); конкретные доменные коды (`notFound` на `404`, и т.п.) возвращаются **явным** `return RepositoryResult.error(...)` в callback'е `execute`, а не из catch-веток (канон [04-data-layer.md](04-data-layer.md) §5).
+- **Это network-only-фича** (one-shot POST'ы) — без Sembast-DAO и `BehaviorSubject` (carve-out [04-data-layer.md](04-data-layer.md) §8). Отправленное сообщение затем подхватывается списком сообщений/чатов ([07-pagination.md](07-pagination.md)).
 
 ---
 
-## 2. Выбор источника: `file_picker` / `image_picker`
+## 2. Выбор файла: `file_picker` / `image_picker`
 
 Picker'ы живут в presentation-слое (или в тонком helper'е), но **не** в репозитории — репозиторий принимает уже готовые байты/путь. Пакеты — `file_picker` (документы/произвольные файлы) и `image_picker` (камера/галерея) (см. [01-stack-and-tooling.md](01-stack-and-tooling.md)). Размер/MIME-капы проверяются сервером (шаг 1, см. §3) — клиент валидирует их же **до** аплоада ради UX (мгновенный отказ вместо round-trip).
 
@@ -60,14 +56,14 @@ import 'dart:io';
 import 'package:collection/collection.dart'; // singleOrNull (IterableExtension)
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:speech_ai_mobile/domain/model/upload/data_type.dart';
+import 'package:nox_app/domain/model/upload/attachment_type.dart';
 
-/// Тонкая обёртка над picker'ами. Возвращает (файл, его data_type) или null (отмена).
+/// Тонкая обёртка над picker'ами. Возвращает (файл, его тип вложения) или null (отмена).
 class SourcePickerHelper {
   final _imagePicker = ImagePicker();
 
   /// Документ (pdf / docx). Cap 50 MB сверяется сервером; клиент-side — ради UX.
-  Future<(File, DataType)?> pickDocument() async {
+  Future<(File, AttachmentType)?> pickDocument() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: const ['pdf', 'docx'],
@@ -75,32 +71,32 @@ class SourcePickerHelper {
     );
     final path = result?.files.singleOrNull?.path;
     if (path == null) return null;
-    return (File(path), DataType.document);
+    return (File(path), AttachmentType.document);
   }
 
   /// Изображение (jpeg / png / webp). Cap 20 MB.
-  Future<(File, DataType)?> pickImage({required ImageSource source}) async {
+  Future<(File, AttachmentType)?> pickImage({required ImageSource source}) async {
     final picked = await _imagePicker.pickImage(source: source);
     if (picked == null) return null;
-    return (File(picked.path), DataType.image);
+    return (File(picked.path), AttachmentType.image);
   }
 }
 ```
 
-> `link` и `text` обычно **не** через picker, а из текстового поля экрана: клиент собирает однострочный URL (`link`) или сырой текст (`text`) в UTF-8-байты и подаёт их как «файл» (см. `UploadConfig.fromText` в §4). Сервер примет их как `text/plain`.
+> Капы/MIME-таблица ниже (§3) — **примеры-плейсхолдеры** (бэкенд/протокол NOX ещё не выбран; заменить на реальный контракт). Конкретные расширения/лимиты сверяются с реальным контрактом бэкенда NOX.
 
 ---
 
-## 3. Контракт endpoint'ов (текущая форма из спеки)
+## 3. Контракт endpoint'ов (пример — бэкенд/протокол NOX ещё не выбран; заменить на реальный контракт)
 
-### Шаг 1 — Upload (`POST /api/v1/records/files/upload/`)
+> Всё в этом разделе — **пример-плейсхолдер**: endpoint'ы, заголовки, статусы, имена и форма полей приведены как иллюстрация паттерна. Финальный контракт фиксируется вместе с выбором бэкенда/протокола NOX.
 
-`multipart/form-data`. Form-поля: `data_type` (`link`/`text`/`document`/`image`), `file` (payload). Капы (превышение → `413`, MIME-несоответствие → `415`):
+### Шаг 1 — Upload (`POST <upload-endpoint>`)
 
-| `data_type` | Cap | Допустимые MIME |
+`multipart/form-data`. Form-поля: `attachment_type` (`document`/`image`), `file` (payload). Капы (превышение → `413`, MIME-несоответствие → `415`):
+
+| `attachment_type` | Cap | Допустимые MIME |
 |---|---|---|
-| `link` | 10 KB | `text/plain` |
-| `text` | 1 MB | `text/plain`, `text/markdown` |
 | `document` | 50 MB | `application/pdf`, `…wordprocessingml.document` |
 | `image` | 20 MB | `image/jpeg`, `image/png`, `image/webp` |
 
@@ -108,159 +104,89 @@ class SourcePickerHelper {
 
 ```json
 {
-  "data_file_id": "file_456",
-  "data_type": "text",
-  "mime_type": "text/plain",
+  "attachment_id": "att_456",
+  "attachment_type": "image",
+  "mime_type": "image/jpeg",
   "size_bytes": 238942,
   "checksum_md5": "a7f5f35426b927411fc9231b56382173"
 }
 ```
 
-Ключевое поле — **`data_file_id`**. Внутреннее `effective_content_chars` сервер вычисляет и сохраняет при upload, но **в ответ не возвращает** — его читают только шаги 2 и 3.
+Ключевое поле — **`attachment_id`**: его держат для шага 2.
 
-### Шаг 2 — Length check / estimate (`POST /api/v1/records/length_check/`)
-
-JSON, оценивает **один** файл. Request: `{ "data_file_id": "file_456", "language_id": "en" }` (оба обязательны, непустые; `language_id` — внутренний DB id, не ISO). Ответ (`200 OK`), `data`:
-
-```json
-{
-  "estimated_seconds": 110,
-  "can_process": true,
-  "quota": {
-    "plan": "free",
-    "daily_remaining_seconds": 1500,
-    "daily_total_seconds": 1500,
-    "daily_hard_cap_seconds": 1500,
-    "max_per_request_seconds": 1500,
-    "daily_reset_at_utc": "2026-05-30T00:00:00.000Z"
-  },
-  "reason": null
-}
-```
-
-- `estimated_seconds` (int) = `max(1, ceil(effective_content_chars * 60 / 1000))`.
-- `can_process` (bool) — `false`, если сработал один из трёх quota-guard'ов.
-- `reason` (enum-string | null) — при `can_process: false` одно из `exceeds_max_per_request` / `exceeds_daily_remaining` / `exceeds_daily_hard_cap`.
-- `shortfall_seconds` (int) — присутствует **только** при `can_process: false`; = `estimated_seconds − релевантный лимит`.
-- **Квота НЕ списывается.** Несуществующий/чужой `data_file_id` → `404 not_found`.
-
-### Шаг 3 — Create record (`POST /api/v1/records/`)
+### Шаг 2 — Attach to message (`POST <message-endpoint>`)
 
 JSON. Request:
 
 ```json
 {
-  "title": "My sample record",
-  "voice_id": "voice_001",
-  "language_id": "lang_001",
-  "data_file_ids": ["file_456", "file_457"]
+  "chat_id": "chat_001",
+  "client_message_id": "550e8400-e29b-41d4-a716-446655440000",
+  "text": "",
+  "attachment_id": "att_456"
 }
 ```
 
-- `title` — опционален, trimmed 1..128 (пусто → хранится `''`; авто-генерация заголовка из первой строки — **клиентский** контракт, server-side fallback не делается).
-- `voice_id` / `language_id` — обязательны (внутренние DB id).
-- `data_file_ids` — массив **1..50**. Нарушения состава → `400` с `details.reason`: пустой → `sources_empty`, >50 → `sources_too_many`, дубликаты → `sources_duplicate`. Отсутствующий/чужой ID → `404` с `details.missing_ids: [...]`.
-- **Атомарное списание квоты** = SUM per-source `estimated_seconds` через `deductSecondsAtomic` (3-retry optimistic loop). При quota/hard-cap-сбое → `400` (`text_too_short` / `text_too_long` / `quota_exceeded`); при исчерпании ретраев → `503 conflict_retry_exhausted`.
-- **Исходы по natural-key:** первый вызов нового набора → **`201 Created`** + `Location: /api/v1/records/{record_id}/` + Record-конверт (только здесь — все side-effect'ы); повтор того же набора у того же пользователя → **`200 OK`** + существующий Record-конверт, **без** `Location`, без новых side-effect'ов и **без повторного списания квоты**. `voice_id`/`language_id` повтора к существующей записи **не** применяются (другой голос для того же набора → `POST /api/v1/records/{record_id}/tracks/`).
+- `chat_id` — обязателен (id чата, в который уходит сообщение).
+- `client_message_id` — обязателен; клиент генерирует локально (например, UUID); по нему сервер дедуплицирует отправку.
+- `text` — опционален, trimmed (пусто → хранится `''`); сообщение может нести только вложение без текста.
+- `attachment_id` — id ранее загруженного файла (шаг 1). Несуществующий/чужой → `404` с `details.reason`.
+- **Исходы по natural-key:** первый вызов нового `client_message_id` → **`201 Created`** + `Location: <message-endpoint>/{message_id}/` + Message-конверт; повтор того же `client_message_id` в том же чате → **`200 OK`** + существующий Message-конверт, **без** `Location` и без повторной отправки.
 
-Record-конверт (`data`, оба исхода):
+Message-конверт (`data`, оба исхода):
 
 ```json
 {
-  "id": "rec_001",
-  "owner_id": "usr_123",
-  "title": "My sample record",
+  "id": "msg_001",
+  "chat_id": "chat_001",
+  "sender_id": "usr_123",
   "created_at": "2024-10-27T03:33:20.000Z",
-  "updated_at": "2024-10-27T03:33:20.000Z",
-  "options": { "active_track_id": null, "is_bookmarked": false, "is_share_enabled": false, "share_url": null },
-  "data": {
-    "sources_count": 2,
-    "cover_file_id": "file_456",
-    "sources": [
-      { "data_file_id": "file_456", "order_index": 0, "data_type": "text" },
-      { "data_file_id": "file_457", "order_index": 1, "data_type": "image" }
-    ]
-  },
-  "tracks": [
-    { "id": "track_001", "voice_id": "voice_001", "language_id": "lang_001",
-      "status": "init", "error_code": null, "files": null,
-      "playback": { "duration_ms": 0, "duration_progress_ms": 0 } }
-  ]
+  "text": "",
+  "attachment": {
+    "attachment_id": "att_456",
+    "attachment_type": "image",
+    "mime_type": "image/jpeg",
+    "size_bytes": 238942,
+    "file_name": "photo.jpg"
+  }
 }
 ```
 
-Initial track создаётся со `status: "init"`, `files: null`, нулевым playback.
-
-| Шаг | Endpoint | Квота |
+| Шаг | Endpoint | Эффект |
 |---|---|---|
-| 2 estimate | `POST /api/v1/records/length_check/` | **НЕ списывается** (read-only, идемпотентен, без I/O) |
-| 3 create | `POST /api/v1/records/` | **Списывается атомарно** на пути `201`; на пути `200` (повтор) — **нет** |
+| 1 upload | `POST <upload-endpoint>` | загрузка файла → `attachment_id` (multipart, с прогрессом) |
+| 2 attach | `POST <message-endpoint>` | отправка сообщения с вложением на пути `201`; на пути `200` (повтор `client_message_id`) — без повторной отправки |
 
 ---
 
 ## 4. Доменный слой: модели, конфиги, контракты
 
-Доменные модели — Freezed без `fromJson` ([03-domain-layer.md](03-domain-layer.md)); JSON живёт в entity-слое (§5). Enum `DataType` — рядом с моделью.
+Доменные модели — Freezed без `fromJson` ([03-domain-layer.md](03-domain-layer.md)); JSON живёт в entity-слое (§5). Enum `AttachmentType` — рядом с моделью.
 
-`lib/domain/model/upload/data_type.dart`:
+`lib/domain/model/upload/attachment_type.dart`:
 
 ```dart
-/// data_type источника. Сериализуется как .name на проводе (см. mapper).
-enum DataType { link, text, document, image }
+/// Тип вложения. Сериализуется как .name на проводе (см. mapper).
+enum AttachmentType { document, image }
 ```
 
-`lib/domain/model/upload/data_file_model.dart` (результат шага 1):
+`lib/domain/model/upload/attachment_model.dart` (результат шага 1):
 
 ```dart
 import 'package:freezed_annotation/freezed_annotation.dart';
-import 'package:speech_ai_mobile/domain/model/upload/data_type.dart';
+import 'package:nox_app/domain/model/upload/attachment_type.dart';
 
-part 'data_file_model.freezed.dart';
+part 'attachment_model.freezed.dart';
 
 @freezed
-abstract class DataFileModel with _$DataFileModel {
-  const factory DataFileModel({
-    required String dataFileId,
-    required DataType dataType,
+abstract class AttachmentModel with _$AttachmentModel {
+  const factory AttachmentModel({
+    required String attachmentId,
+    required AttachmentType attachmentType,
     required String mimeType,
     required int sizeBytes,
     required String checksumMd5,
-  }) = _DataFileModel;
-}
-```
-
-`lib/domain/model/upload/estimate_model.dart` + `quota_model.dart` (результат шага 2):
-
-```dart
-import 'package:freezed_annotation/freezed_annotation.dart';
-
-part 'estimate_model.freezed.dart';
-
-@freezed
-abstract class EstimateModel with _$EstimateModel {
-  const factory EstimateModel({
-    required int estimatedSeconds,
-    required bool canProcess,
-    required QuotaModel quota,
-    EstimateReason? reason,
-    int? shortfallSeconds, // присутствует только при canProcess == false
-  }) = _EstimateModel;
-}
-
-enum EstimateReason { exceedsMaxPerRequest, exceedsDailyRemaining, exceedsDailyHardCap }
-```
-
-```dart
-@freezed
-abstract class QuotaModel with _$QuotaModel {
-  const factory QuotaModel({
-    required String plan, // 'free' | 'premium'
-    required int dailyRemainingSeconds,
-    required int dailyTotalSeconds,
-    required int dailyHardCapSeconds,
-    required int maxPerRequestSeconds,
-    required DateTime dailyResetAtUtc,
-  }) = _QuotaModel;
+  }) = _AttachmentModel;
 }
 ```
 
@@ -273,8 +199,8 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:freezed_annotation/freezed_annotation.dart';
-import 'package:speech_ai_mobile/domain/model/upload/data_type.dart';
-import 'package:speech_ai_mobile/domain/repository/base/repository_config.dart';
+import 'package:nox_app/domain/model/upload/attachment_type.dart';
+import 'package:nox_app/domain/repository/base/repository_config.dart';
 
 part 'upload_config.freezed.dart';
 
@@ -282,49 +208,31 @@ part 'upload_config.freezed.dart';
 abstract class UploadConfig with _$UploadConfig implements RepositoryConfig {
   /// Файл с диска (document/image) — отдаём путь, читаем потоком.
   const factory UploadConfig.fromPath({
-    required DataType dataType,
+    required AttachmentType attachmentType,
     required String path,
     required String fileName,
   }) = _UploadConfigFromPath;
 
-  /// link/text — синтетический файл из байтов (UTF-8).
+  /// Синтетический файл из байтов (например, изображение из памяти).
   const factory UploadConfig.fromBytes({
-    required DataType dataType,
+    required AttachmentType attachmentType,
     required Uint8List bytes,
     required String fileName,
   }) = _UploadConfigFromBytes;
-
-  /// Удобный конструктор для link/text из строки.
-  factory UploadConfig.fromText({
-    required DataType dataType,
-    required String content,
-    required String fileName,
-  }) =>
-      UploadConfig.fromBytes(dataType: dataType, bytes: Uint8List.fromList(utf8.encode(content)), fileName: fileName);
 }
 ```
 
-`lib/domain/repository/record/length_check_config.dart` и `create_record_config.dart`:
+`lib/domain/repository/chat/send_attachment_config.dart`:
 
 ```dart
 @freezed
-abstract class LengthCheckConfig with _$LengthCheckConfig implements RepositoryConfig {
-  const factory LengthCheckConfig({
-    required String dataFileId,
-    required String languageId,
-  }) = _LengthCheckConfig;
-}
-```
-
-```dart
-@freezed
-abstract class CreateRecordConfig with _$CreateRecordConfig implements RepositoryConfig {
-  const factory CreateRecordConfig({
-    required String voiceId,
-    required String languageId,
-    required List<String> dataFileIds, // 1..50, без дублей
-    @Default('') String title,
-  }) = _CreateRecordConfig;
+abstract class SendAttachmentConfig with _$SendAttachmentConfig implements RepositoryConfig {
+  const factory SendAttachmentConfig({
+    required String chatId,
+    required String clientMessageId, // генерируется клиентом (UUID); ключ дедупликации
+    required String attachmentId,
+    @Default('') String text,
+  }) = _SendAttachmentConfig;
 }
 ```
 
@@ -333,35 +241,32 @@ abstract class CreateRecordConfig with _$CreateRecordConfig implements Repositor
 `lib/domain/repository/upload/upload_repository.dart`:
 
 ```dart
-import 'package:speech_ai_mobile/domain/model/upload/data_file_model.dart';
-import 'package:speech_ai_mobile/domain/repository/base/repository_result.dart';
-import 'package:speech_ai_mobile/domain/repository/upload/upload_config.dart';
+import 'package:nox_app/domain/model/upload/attachment_model.dart';
+import 'package:nox_app/domain/repository/base/repository_result.dart';
+import 'package:nox_app/domain/repository/upload/upload_config.dart';
 
 abstract class UploadRepository {
-  /// Шаг 1: загрузить ОДИН источник. onProgress — для прогресс-бара (0.0..1.0).
-  Future<RepositoryResult<DataFileModel>> uploadFile({
+  /// Шаг 1: загрузить ОДИН файл. onProgress — для прогресс-бара (0.0..1.0).
+  Future<RepositoryResult<AttachmentModel>> uploadFile({
     required UploadConfig config,
     void Function(double progress)? onProgress,
   });
 }
 ```
 
-`lib/domain/repository/record/record_repository.dart`:
+`lib/domain/repository/chat/attachment_repository.dart`:
 
 ```dart
-abstract class RecordRepository {
-  /// Шаг 2: read-only оценка одного файла (квота НЕ списывается).
-  Future<RepositoryResult<EstimateModel>> lengthCheck({required LengthCheckConfig config});
-
-  /// Шаг 3: создать запись (атомарный debit на пути 201).
-  /// Возвращает (запись, isCreated): isCreated=true для 201, false для 200 (повтор набора).
-  Future<RepositoryResult<(RecordModel, bool)>> createRecord({required CreateRecordConfig config});
+abstract class AttachmentRepository {
+  /// Шаг 2: отправить сообщение с вложением.
+  /// Возвращает (сообщение, isCreated): isCreated=true для 201, false для 200 (повтор client_message_id).
+  Future<RepositoryResult<(MessageModel, bool)>> sendAttachment({required SendAttachmentConfig config});
 }
 ```
 
-> **Зачем `(RecordModel, bool)` на create.** Сервер различает «создано» (`201`) и «уже было» (`200`) **только** статусом/`Location`. Репозиторий обязан вернуть это различие наверх (record-кортеж `(RecordModel, bool isCreated)`), а **не** прятать его — UX «запись создана» vs «открыта существующая» зависит от исхода (§7).
+> **Зачем `(MessageModel, bool)` на attach.** Сервер различает «отправлено» (`201`) и «уже было» (`200`) **только** статусом/`Location`. Репозиторий обязан вернуть это различие наверх (кортеж `(MessageModel, bool isCreated)`), а **не** прятать его — UX «сообщение отправлено» vs «уже отправлено ранее» зависит от исхода (§7).
 
-> **`RecordModel` / `RecordEntity` — конкретный аналог worked-example `Item`** для records-фичи (модель `lib/domain/model/record/record_model.dart`, entity `lib/data/entity/record/record_entity.dart`), а **не** типы из [07-pagination.md](07-pagination.md) (там список построен на абстрактном `ItemModel`). Ссылки на `07` — про **механику** records-list (offset-пагинация, куда уходит созданная запись), а не про определение `RecordModel`; сами типы вводятся фичей records (форма entity зеркалит конверт записи из §3 — `id`/`owner_id`/`title`/`created_at`/`updated_at`/`sources`/`tracks`).
+> **`MessageModel` / `MessageEntity` — конкретный аналог worked-example `Item`** для чат-фичи (модель `lib/domain/model/chat/message_model.dart`, entity `lib/data/entity/chat/message_entity.dart`), а **не** типы из [07-pagination.md](07-pagination.md) (там список построен на абстрактном `ItemModel`). Ссылки на `07` — про **механику** списка (куда уходит отправленное сообщение), а не про определение `MessageModel`; сами типы вводятся чат-фичей (форма entity зеркалит конверт сообщения из §3 — `id`/`chat_id`/`sender_id`/`created_at`/`text`/`attachment`).
 
 ---
 
@@ -369,60 +274,60 @@ abstract class RecordRepository {
 
 ### 5.1 Entities + `ResponseEntity<T>`
 
-Entities — `@freezed` + `json_serializable`, только базовые типы; enum как `.name`, `DateTime` как ISO-8601 String ([04-data-layer.md](04-data-layer.md) §1). Каждый entity, ходящий через `ResponseEntity<T>`, регистрируется в **обеих** цепочках `EntityConverter` ([04-data-layer.md](04-data-layer.md) §3).
+Entities — `@freezed` + `json_serializable`, только базовые типы; enum как `.name`, `DateTime` как ISO-8601 String ([04-data-layer.md](04-data-layer.md) §1). Каждый entity, ходящий через `ResponseEntity<T>`, регистрируется в **обеих** цепочках `EntityConverter` ([04-data-layer.md](04-data-layer.md) §3). (Имена полей ниже — пример-плейсхолдер; заменить на реальный контракт.)
 
-`lib/data/entity/upload/data_file_entity.dart`:
+`lib/data/entity/upload/attachment_entity.dart`:
 
 ```dart
 // ignore_for_file: invalid_annotation_target
 
 import 'package:freezed_annotation/freezed_annotation.dart';
 
-part 'data_file_entity.freezed.dart';
-part 'data_file_entity.g.dart';
+part 'attachment_entity.freezed.dart';
+part 'attachment_entity.g.dart';
 
 @freezed
-abstract class DataFileEntity with _$DataFileEntity {
-  const factory DataFileEntity({
-    @JsonKey(name: 'data_file_id') required String dataFileId,
-    @JsonKey(name: 'data_type') required String dataType,
+abstract class AttachmentEntity with _$AttachmentEntity {
+  const factory AttachmentEntity({
+    @JsonKey(name: 'attachment_id') required String attachmentId,
+    @JsonKey(name: 'attachment_type') required String attachmentType,
     @JsonKey(name: 'mime_type') required String mimeType,
     @JsonKey(name: 'size_bytes') required int sizeBytes,
     @JsonKey(name: 'checksum_md5') required String checksumMd5,
-  }) = _DataFileEntity;
+  }) = _AttachmentEntity;
 
-  factory DataFileEntity.fromJson(Map<String, dynamic> json) => _$DataFileEntityFromJson(json);
+  factory AttachmentEntity.fromJson(Map<String, dynamic> json) => _$AttachmentEntityFromJson(json);
 }
 ```
 
-`EstimateEntity` / `QuotaEntity` / `RecordEntity` строятся так же (snake_case `@JsonKey`, `daily_reset_at_utc` / `created_at` — String, маппятся в `DateTime` в маппере). `RecordEntity` зеркалит §3-конверт (`options`/`data`/`tracks` — вложенные entity).
+`MessageEntity` строится так же (snake_case `@JsonKey`, `created_at` — String, маппится в `DateTime` в маппере). `MessageEntity` зеркалит §3-конверт (`attachment` — вложенный entity).
 
 ### 5.2 Мапперы (вся коэрция здесь)
 
-`lib/data/mapper/upload/data_file_mapper.dart`:
+`lib/data/mapper/upload/attachment_mapper.dart`:
 
 ```dart
 import 'package:injectable/injectable.dart';
-import 'package:speech_ai_mobile/data/entity/upload/data_file_entity.dart';
-import 'package:speech_ai_mobile/data/mapper/base_mapper.dart';
-import 'package:speech_ai_mobile/domain/model/upload/data_file_model.dart';
-import 'package:speech_ai_mobile/domain/model/upload/data_type.dart';
+import 'package:nox_app/data/entity/upload/attachment_entity.dart';
+import 'package:nox_app/data/mapper/base_mapper.dart';
+import 'package:nox_app/domain/model/upload/attachment_model.dart';
+import 'package:nox_app/domain/model/upload/attachment_type.dart';
 
 @lazySingleton
-class DataFileMapper extends BaseMapper<DataFileEntity, DataFileModel> {
+class AttachmentMapper extends BaseMapper<AttachmentEntity, AttachmentModel> {
   @override
-  DataFileModel toModel({required DataFileEntity entity}) => DataFileModel(
-        dataFileId: entity.dataFileId,
-        dataType: DataType.values.byName(entity.dataType),
+  AttachmentModel toModel({required AttachmentEntity entity}) => AttachmentModel(
+        attachmentId: entity.attachmentId,
+        attachmentType: AttachmentType.values.byName(entity.attachmentType),
         mimeType: entity.mimeType,
         sizeBytes: entity.sizeBytes,
         checksumMd5: entity.checksumMd5,
       );
 
   @override
-  DataFileEntity toEntity({required DataFileModel model}) => DataFileEntity(
-        dataFileId: model.dataFileId,
-        dataType: model.dataType.name,
+  AttachmentEntity toEntity({required AttachmentModel model}) => AttachmentEntity(
+        attachmentId: model.attachmentId,
+        attachmentType: model.attachmentType.name,
         mimeType: model.mimeType,
         sizeBytes: model.sizeBytes,
         checksumMd5: model.checksumMd5,
@@ -430,11 +335,11 @@ class DataFileMapper extends BaseMapper<DataFileEntity, DataFileModel> {
 }
 ```
 
-`EstimateMapper` коэрсит `reason`-строку (snake_case → `EstimateReason`), `daily_reset_at_utc` (ISO-8601 String → `DateTime.parse(...).toUtc()`).
+`MessageMapper` коэрсит `attachment_type`-строку (snake_case → `AttachmentType`) и `created_at` (ISO-8601 String → `DateTime.parse(...).toUtc()`).
 
 ### 5.3 REST-слой: multipart upload (шаг 1)
 
-Upload — **единственный** multipart API. API-класс расширяет `BaseApiRepository` ([04-data-layer.md](04-data-layer.md) §7б) и шлёт `FormData` через `baseClient`. `onSendProgress` Dio пробрасывается наверх для прогресс-бара. На non-2xx Dio бросает `DioException` — его **не** ловят на уровне API (канон [04-data-layer.md](04-data-layer.md) §7г).
+Upload — **единственный** multipart API. API-класс расширяет `BaseApiRepository` ([04-data-layer.md](04-data-layer.md) §7б) и шлёт `FormData` через `baseClient`. `onSendProgress` Dio пробрасывается наверх для прогресс-бара. На non-2xx Dio бросает `DioException` — его **не** ловят на уровне API (канон [04-data-layer.md](04-data-layer.md) §7г). Путь endpoint'а ниже — пример-плейсхолдер; заменить на реальный контракт бэкенда NOX.
 
 `lib/data/remote/api/upload/post_upload_file_api.dart`:
 
@@ -443,14 +348,14 @@ import 'dart:async';
 
 import 'package:dio/dio.dart';
 import 'package:injectable/injectable.dart';
-import 'package:speech_ai_mobile/data/entity/base/response_entity.dart';
-import 'package:speech_ai_mobile/data/entity/upload/data_file_entity.dart';
-import 'package:speech_ai_mobile/data/remote/api/base/base_api_repository.dart';
-import 'package:speech_ai_mobile/domain/repository/upload/upload_config.dart';
+import 'package:nox_app/data/entity/base/response_entity.dart';
+import 'package:nox_app/data/entity/upload/attachment_entity.dart';
+import 'package:nox_app/data/remote/api/base/base_api_repository.dart';
+import 'package:nox_app/domain/repository/upload/upload_config.dart';
 
 @lazySingleton
 class PostUploadFileApi extends BaseApiRepository {
-  Future<ResponseEntity<DataFileEntity>> execute({
+  Future<ResponseEntity<AttachmentEntity>> execute({
     required UploadConfig config,
     void Function(double progress)? onProgress,
   }) async {
@@ -458,61 +363,46 @@ class PostUploadFileApi extends BaseApiRepository {
       fromPath: (c) => MultipartFile.fromFile(c.path, filename: c.fileName),
       fromBytes: (c) async => MultipartFile.fromBytes(c.bytes, filename: c.fileName),
     );
-    final dataType = config.map(fromPath: (c) => c.dataType, fromBytes: (c) => c.dataType);
+    final attachmentType = config.map(fromPath: (c) => c.attachmentType, fromBytes: (c) => c.attachmentType);
 
     final formData = FormData.fromMap({
-      'data_type': dataType.name, // 'link' | 'text' | 'document' | 'image'
+      'attachment_type': attachmentType.name, // 'document' | 'image'
       'file': filePart,
     });
 
     final response = await baseClient.post(
-      'v1/records/files/upload/',
+      'v1/attachments/upload/', // пример-плейсхолдер; заменить на реальный endpoint
       data: formData,
       options: Options(contentType: 'multipart/form-data'),
       onSendProgress: (sent, total) {
         if (total > 0 && onProgress != null) onProgress(sent / total);
       },
     );
-    return ResponseEntity<DataFileEntity>.fromJson(response.data);
+    return ResponseEntity<AttachmentEntity>.fromJson(response.data);
   }
 }
 ```
 
-### 5.4 REST-слой: length_check + create (шаги 2/3, JSON)
+### 5.4 REST-слой: attach to message (шаг 2, JSON)
 
-JSON-API-классы — каноническая форма ([04-data-layer.md](04-data-layer.md) §7г): build path → POST через `baseClient` → `ResponseEntity<T>.fromJson`. На create **status-line и `Location` нужны выше** (различить `201`/`200`) — поэтому API возвращает не голый entity, а пару `(ResponseEntity<RecordEntity>, int statusCode)`.
+JSON-API-класс — каноническая форма ([04-data-layer.md](04-data-layer.md) §7г): build path → POST через `baseClient` → `ResponseEntity<T>.fromJson`. На attach **status-line и `Location` нужны выше** (различить `201`/`200`) — поэтому API возвращает не голый entity, а пару `(ResponseEntity<MessageEntity>, int statusCode)`. Путь endpoint'а и поля — пример-плейсхолдер; заменить на реальный контракт.
 
-`lib/data/remote/api/record/post_length_check_api.dart`:
-
-```dart
-@lazySingleton
-class PostLengthCheckApi extends BaseApiRepository {
-  Future<ResponseEntity<EstimateEntity>> execute({required LengthCheckConfig config}) async {
-    final response = await baseClient.post(
-      'v1/records/length_check/',
-      data: {'data_file_id': config.dataFileId, 'language_id': config.languageId},
-    );
-    return ResponseEntity<EstimateEntity>.fromJson(response.data);
-  }
-}
-```
-
-`lib/data/remote/api/record/post_create_record_api.dart`:
+`lib/data/remote/api/chat/post_send_attachment_api.dart`:
 
 ```dart
 @lazySingleton
-class PostCreateRecordApi extends BaseApiRepository {
-  Future<(ResponseEntity<RecordEntity>, int)> execute({required CreateRecordConfig config}) async {
+class PostSendAttachmentApi extends BaseApiRepository {
+  Future<(ResponseEntity<MessageEntity>, int)> execute({required SendAttachmentConfig config}) async {
     final response = await baseClient.post(
-      'v1/records/',
+      'v1/messages/', // пример-плейсхолдер; заменить на реальный endpoint
       data: {
-        'title': config.title,
-        'voice_id': config.voiceId,
-        'language_id': config.languageId,
-        'data_file_ids': config.dataFileIds,
+        'chat_id': config.chatId,
+        'client_message_id': config.clientMessageId,
+        'text': config.text,
+        'attachment_id': config.attachmentId,
       },
     );
-    final entity = ResponseEntity<RecordEntity>.fromJson(response.data);
+    final entity = ResponseEntity<MessageEntity>.fromJson(response.data);
     return (entity, response.statusCode ?? 0); // 201 vs 200 — load-bearing
   }
 }
@@ -520,7 +410,7 @@ class PostCreateRecordApi extends BaseApiRepository {
 
 ### 5.5 Репозитории (network-only)
 
-Network-only POST'ы: **без** DAO/`BehaviorSubject` (carve-out [04-data-layer.md](04-data-layer.md) §8). Каждый метод обёрнут в `execute<T>()` — он логирует необработанные исключения и коэрсит `DioException → internal`, любой другой `catch → unknown`; **конкретные** доменные коды (`notFound`, `quotaExceeded`) — явным `return RepositoryResult.error(...)` в callback'е после проверки `response.statusCode` ([04-data-layer.md](04-data-layer.md) §5, §8).
+Network-only POST'ы: **без** DAO/`BehaviorSubject` (carve-out [04-data-layer.md](04-data-layer.md) §8). Каждый метод обёрнут в `execute<T>()` — он логирует необработанные исключения и коэрсит `DioException → internal`, любой другой `catch → unknown`; **конкретные** доменные коды (`notFound`, и т.п.) — явным `return RepositoryResult.error(...)` в callback'е после проверки `response.statusCode` ([04-data-layer.md](04-data-layer.md) §5, §8).
 
 `lib/data/repository/upload/upload_repository_impl.dart`:
 
@@ -530,63 +420,53 @@ class UploadRepositoryImpl with BaseRepositoryHelper implements UploadRepository
   UploadRepositoryImpl(this._api, this._mapper);
 
   final PostUploadFileApi _api;
-  final DataFileMapper _mapper;
+  final AttachmentMapper _mapper;
 
   @override
-  Future<RepositoryResult<DataFileModel>> uploadFile({
+  Future<RepositoryResult<AttachmentModel>> uploadFile({
     required UploadConfig config,
     void Function(double progress)? onProgress,
   }) {
-    return execute<DataFileModel>(() async {
+    return execute<AttachmentModel>(() async {
       final response = await _api.execute(config: config, onProgress: onProgress);
       final entity = response.data;
       if (entity == null) {
         // Пустое тело при 2xx — аномалия. Сырой throw -> catch-all -> unknown.
         throw StateError('Empty upload response payload');
       }
-      return RepositoryResult<DataFileModel>.success(data: _mapper.toModel(entity: entity));
+      return RepositoryResult<AttachmentModel>.success(data: _mapper.toModel(entity: entity));
     });
   }
 }
 ```
 
-`lib/data/repository/record/record_repository_impl.dart` (фрагменты шагов 2/3):
+`lib/data/repository/chat/attachment_repository_impl.dart` (фрагмент шага 2):
 
 ```dart
 @override
-Future<RepositoryResult<EstimateModel>> lengthCheck({required LengthCheckConfig config}) {
-  return execute<EstimateModel>(() async {
-    final response = await _lengthCheckApi.execute(config: config);
+Future<RepositoryResult<(MessageModel, bool)>> sendAttachment({required SendAttachmentConfig config}) {
+  return execute<(MessageModel, bool)>(() async {
+    final (response, statusCode) = await _sendAttachmentApi.execute(config: config);
     final entity = response.data;
-    if (entity == null) throw StateError('Empty length_check payload');
-    return RepositoryResult<EstimateModel>.success(data: _estimateMapper.toModel(entity: entity));
-  });
-}
-
-@override
-Future<RepositoryResult<(RecordModel, bool)>> createRecord({required CreateRecordConfig config}) {
-  return execute<(RecordModel, bool)>(() async {
-    final (response, statusCode) = await _createRecordApi.execute(config: config);
-    final entity = response.data;
-    if (entity == null) throw StateError('Empty create-record payload');
-    // 201 => только что создано (квота списана); 200 => тот же набор уже существовал.
+    if (entity == null) throw StateError('Empty send-attachment payload');
+    // 201 => только что отправлено; 200 => тот же client_message_id уже существовал.
     final isCreated = statusCode == 201;
-    return RepositoryResult<(RecordModel, bool)>.success(
-      data: (_recordMapper.toModel(entity: entity), isCreated),
+    return RepositoryResult<(MessageModel, bool)>.success(
+      data: (_messageMapper.toModel(entity: entity), isCreated),
     );
   });
 }
 ```
 
-> **Маппинг квота-/состав-ошибок в доменный код.** `400 quota_exceeded` / `text_too_long` / `text_too_short`, `404 not_found` (чужой/несуществующий `data_file_id`), `503 conflict_retry_exhausted` приходят как `DioException` с `response.statusCode`/телом. Если нужен **точный** доменный код (чтобы экран показал «не хватает квоты», а не общий «что-то пошло не так»), извлеки его в callback'е **до** того, как `DioException` уйдёт в catch-ветку: оберни `_createRecordApi.execute` в локальный `try { ... } on DioException catch (e) { ... }` внутри `execute`, разбери `e.response?.statusCode` + `data.error`/`details.reason` и верни конкретный `RepositoryException.<code>` явным `return`. Точный набор feature-кодов (`quotaExceeded`/`textTooLong`/`sourcesTooMany`/…) добавляется в enum [03-domain-layer.md](03-domain-layer.md) — **согласовать состав enum, не плодить молча**.
+> **Маппинг ошибок в доменный код.** `404 not_found` (чужой/несуществующий `attachment_id`) и прочие feature-ошибки приходят как `DioException` с `response.statusCode`/телом (конкретные статусы/коды — пример-плейсхолдер; заменить на реальный контракт). Если нужен **точный** доменный код (чтобы экран показал внятную причину, а не общий «что-то пошло не так»), извлеки его в callback'е **до** того, как `DioException` уйдёт в catch-ветку: оберни `_sendAttachmentApi.execute` в локальный `try { ... } on DioException catch (e) { ... }` внутри `execute`, разбери `e.response?.statusCode` + `data.error`/`details.reason` и верни конкретный `RepositoryException.<code>` явным `return`. Точный набор feature-кодов добавляется в enum [03-domain-layer.md](03-domain-layer.md) — **согласовать состав enum, не плодить молча**.
 
 DI: `@lazySingleton` на API/мапперах, `@LazySingleton(as: ..., env:[dev,prod,test])` на репозиториях — `./script_auto_generate.sh` сгенерит `configure_dependencies.config.dart` ([02-dependency-injection.md](02-dependency-injection.md), [12-dev-commands.md](12-dev-commands.md)).
 
 ---
 
-## 6. BLoC экрана загрузки (Freezed, executeLogic позиционный)
+## 6. BLoC панели вложения (Freezed, executeLogic позиционный)
 
-Экран ведёт пользователя по трём шагам и держит весь конвейер в одном BLoC. State — `@freezed sealed` union; Event — `@freezed sealed` union; обёртка асинхронной логики — `BaseBloc.executeLogic` с **позиционным** первым аргументом ([05-presentation-layer.md](05-presentation-layer.md) §2). Навигация и снэкбары — через `PublishSubject`-стримы, **не** через state.
+Экран ведёт пользователя по двум шагам (выбрать файл → загрузить → отправить) и держит весь конвейер в одном BLoC. State — `@freezed sealed` union; Event — `@freezed sealed` union; обёртка асинхронной логики — `BaseBloc.executeLogic` с **позиционным** первым аргументом ([05-presentation-layer.md](05-presentation-layer.md) §2). Навигация и снэкбары — через `PublishSubject`-стримы, **не** через state.
 
 ### 6.1 Event
 
@@ -597,22 +477,16 @@ part of 'upload_bloc.dart';
 
 @freezed
 sealed class UploadEvent with _$UploadEvent {
-  const factory UploadEvent.initialize() = Initialize;
+  const factory UploadEvent.initialize({required String chatId}) = Initialize;
 
-  /// Пользователь выбрал источник (document/image/link/text) — поставить в очередь + загрузить.
-  const factory UploadEvent.addSource({required UploadConfig config}) = AddSource;
+  /// Пользователь выбрал файл (document/image) — поставить в очередь + загрузить.
+  const factory UploadEvent.addAttachment({required UploadConfig config}) = AddAttachment;
 
-  /// Удалить ещё не подтверждённый источник из набора.
-  const factory UploadEvent.removeSource({required String dataFileId}) = RemoveSource;
+  /// Удалить ещё не отправленное вложение.
+  const factory UploadEvent.removeAttachment({required String localId}) = RemoveAttachment;
 
-  /// Выбор голоса/языка для будущего трека.
-  const factory UploadEvent.selectVoiceLanguage({required String voiceId, required String languageId}) = SelectVoiceLanguage;
-
-  /// Шаг 2: пересчитать оценку по текущему набору + языку.
-  const factory UploadEvent.estimateRequested() = EstimateRequested;
-
-  /// Шаг 3: создать запись.
-  const factory UploadEvent.createRequested({@Default('') String title}) = CreateRequested;
+  /// Шаг 2: отправить сообщение с вложением.
+  const factory UploadEvent.sendRequested({@Default('') String text}) = SendRequested;
 }
 ```
 
@@ -628,43 +502,36 @@ sealed class UploadState with _$UploadState {
   const factory UploadState.initializing() = Initializing;
 
   const factory UploadState.initialized({
-    @Default(<UploadedSource>[]) List<UploadedSource> sources, // загруженные/в процессе
-    String? voiceId,
-    String? languageId,
-    EstimateModel? estimate, // результат шага 2 (null до estimate)
-    @Default(false) bool estimateInProgress,
-    @Default(false) bool createInProgress,
+    required String chatId,
+    @Default(<UploadedAttachment>[]) List<UploadedAttachment> attachments, // загруженные/в процессе
+    @Default(false) bool sendInProgress,
   }) = Initialized;
 
   const factory UploadState.error({BaseRepositoryException? exception}) = Error;
 }
 
-/// Один источник в наборе: статус аплоада + (после успеха) его data_file_id.
+/// Одно вложение: статус аплоада + (после успеха) его attachment_id.
 @freezed
-sealed class UploadedSource with _$UploadedSource {
-  const factory UploadedSource.uploading({required String localId, required double progress}) = SourceUploading;
-  const factory UploadedSource.ready({required String localId, required DataFileModel file}) = SourceReady;
-  const factory UploadedSource.failed({required String localId, required BaseRepositoryException exception}) = SourceFailed;
+sealed class UploadedAttachment with _$UploadedAttachment {
+  const factory UploadedAttachment.uploading({required String localId, required double progress}) = AttachmentUploading;
+  const factory UploadedAttachment.ready({required String localId, required AttachmentModel file}) = AttachmentReady;
+  const factory UploadedAttachment.failed({required String localId, required BaseRepositoryException exception}) = AttachmentFailed;
 }
 
 extension InitializedExt on Initialized {
-  List<String> get readyFileIds =>
-      sources.whereType<SourceReady>().map((s) => s.file.dataFileId).toList();
+  List<String> get readyAttachmentIds =>
+      attachments.whereType<AttachmentReady>().map((a) => a.file.attachmentId).toList();
 
-  /// Можно создавать: ≥1 готовый источник, выбраны голос+язык, не идёт create,
-  /// и (если оценка уже есть) она пропускает квоту.
-  bool get canCreate =>
-      readyFileIds.isNotEmpty &&
-      voiceId != null &&
-      languageId != null &&
-      !createInProgress &&
-      (estimate?.canProcess ?? true);
+  /// Можно отправлять: ≥1 готовое вложение и не идёт отправка.
+  bool get canSend =>
+      readyAttachmentIds.isNotEmpty &&
+      !sendInProgress;
 
-  bool get isAnyUploading => sources.any((s) => s is SourceUploading);
+  bool get isAnyUploading => attachments.any((a) => a is AttachmentUploading);
 }
 ```
 
-> **Прогресс аплоада — в state, гранулярно.** Каждый источник несёт свой `progress` (`SourceUploading.progress` 0.0..1.0). Глубокое value-equality Freezed ([05-presentation-layer.md](05-presentation-layer.md) §3.2) даёт точечные ребилды прогресс-бара без перерисовки всего экрана.
+> **Прогресс аплоада — в state, гранулярно.** Каждое вложение несёт свой `progress` (`AttachmentUploading.progress` 0.0..1.0). Глубокое value-equality Freezed ([05-presentation-layer.md](05-presentation-layer.md) §3.2) даёт точечные ребилды прогресс-бара без перерисовки всего экрана.
 
 ### 6.3 BLoC — handlers
 
@@ -676,18 +543,17 @@ import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:rxdart/rxdart.dart';
-import 'package:speech_ai_mobile/di/configure_dependencies.dart';
-import 'package:speech_ai_mobile/domain/exception/base_repository_exception.dart';
-import 'package:speech_ai_mobile/domain/model/record/record_model.dart';
-import 'package:speech_ai_mobile/domain/model/upload/data_file_model.dart';
-import 'package:speech_ai_mobile/domain/model/upload/estimate_model.dart';
-import 'package:speech_ai_mobile/domain/repository/record/create_record_config.dart';
-import 'package:speech_ai_mobile/domain/repository/record/length_check_config.dart';
-import 'package:speech_ai_mobile/domain/repository/record/record_repository.dart';
-import 'package:speech_ai_mobile/domain/repository/upload/upload_config.dart';
-import 'package:speech_ai_mobile/domain/repository/upload/upload_repository.dart';
-import 'package:speech_ai_mobile/general/text_constants.dart';
-import 'package:speech_ai_mobile/presentation/base/base_bloc.dart';
+import 'package:uuid/uuid.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/exception/base_repository_exception.dart';
+import 'package:nox_app/domain/model/chat/message_model.dart';
+import 'package:nox_app/domain/model/upload/attachment_model.dart';
+import 'package:nox_app/domain/repository/chat/attachment_repository.dart';
+import 'package:nox_app/domain/repository/chat/send_attachment_config.dart';
+import 'package:nox_app/domain/repository/upload/upload_config.dart';
+import 'package:nox_app/domain/repository/upload/upload_repository.dart';
+import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/presentation/base/base_bloc.dart';
 
 part 'upload_event.dart';
 part 'upload_state.dart';
@@ -696,45 +562,39 @@ part 'upload_bloc.freezed.dart';
 class UploadBloc extends BaseBloc<UploadEvent, UploadState> {
   UploadBloc() : super(const UploadState.initializing()) {
     on<Initialize>(_onInitialize);
-    on<AddSource>(_onAddSource);
-    on<RemoveSource>(_onRemoveSource);
-    on<SelectVoiceLanguage>(_onSelectVoiceLanguage);
-    on<EstimateRequested>(_onEstimateRequested);
-    on<CreateRequested>(_onCreateRequested);
+    on<AddAttachment>(_onAddAttachment);
+    on<RemoveAttachment>(_onRemoveAttachment);
+    on<SendRequested>(_onSendRequested);
   }
 
   final _uploadRepository = getIt<UploadRepository>();
-  final _recordRepository = getIt<RecordRepository>();
+  final _attachmentRepository = getIt<AttachmentRepository>();
 
   final _errorMessagesController = PublishSubject<String>();
-  final _recordCreatedController = PublishSubject<(RecordModel, bool)>(); // (запись, isCreated)
+  final _messageSentController = PublishSubject<(MessageModel, bool)>(); // (сообщение, isCreated)
 
   Stream<String> get errorMessages => _errorMessagesController.stream;
 
-  Stream<(RecordModel, bool)> get recordCreated => _recordCreatedController.stream;
+  Stream<(MessageModel, bool)> get messageSent => _messageSentController.stream;
 
   @override
   Future<void> close() async {
     await _errorMessagesController.close();
-    await _recordCreatedController.close();
+    await _messageSentController.close();
     await super.close();
   }
 
   void _onInitialize(Initialize event, Emitter<UploadState> emit) {
-    emit(const UploadState.initialized());
+    emit(UploadState.initialized(chatId: event.chatId));
   }
 
-  FutureOr<void> _onAddSource(AddSource event, Emitter<UploadState> emit) async {
+  FutureOr<void> _onAddAttachment(AddAttachment event, Emitter<UploadState> emit) async {
     final state = this.state;
     if (state is! Initialized) return;
-    if (state.readyFileIds.length >= 50) {
-      _errorMessagesController.add(TextConstants.uploadTooManySources);
-      return;
-    }
 
     final localId = DateTime.now().microsecondsSinceEpoch.toString();
     emit(state.copyWith(
-      sources: [...state.sources, UploadedSource.uploading(localId: localId, progress: 0)],
+      attachments: [...state.attachments, UploadedAttachment.uploading(localId: localId, progress: 0)],
     ));
 
     await executeLogic(
@@ -744,121 +604,80 @@ class UploadBloc extends BaseBloc<UploadEvent, UploadState> {
           onProgress: (p) => _patchProgress(localId, p), // живые апдейты прогресса
         );
         result.match(
-          onData: (file) => _replaceSource(localId, UploadedSource.ready(localId: localId, file: file)),
+          onData: (file) => _replaceAttachment(localId, UploadedAttachment.ready(localId: localId, file: file)),
           onError: (exception) {
-            _replaceSource(localId, UploadedSource.failed(localId: localId, exception: exception));
-            _errorMessagesController.add(_translate(exception));
-          },
-        );
-        // Новый источник делает прежнюю оценку устаревшей.
-        _invalidateEstimate();
-      },
-      onError: (String? error, dynamic exception, StackTrace stackTrace) {
-        _replaceSource(localId, UploadedSource.failed(localId: localId, exception: _unknown()));
-        _errorMessagesController.add(TextConstants.errorGeneralMessage);
-      },
-    );
-  }
-
-  FutureOr<void> _onEstimateRequested(EstimateRequested event, Emitter<UploadState> emit) async {
-    final state = this.state;
-    if (state is! Initialized) return;
-    final fileIds = state.readyFileIds;
-    final languageId = state.languageId;
-    if (fileIds.isEmpty || languageId == null || state.estimateInProgress) return;
-
-    emit(state.copyWith(estimateInProgress: true));
-
-    await executeLogic(
-      () async {
-        // length_check оценивает ОДИН файл; для UX-гейта берём первый/репрезентативный
-        // источник (полная сумма по набору считается атомарно на create, шаг 3).
-        final result = await _recordRepository.lengthCheck(
-          config: LengthCheckConfig(dataFileId: fileIds.first, languageId: languageId),
-        );
-        final updated = this.state;
-        if (updated is! Initialized) return;
-        result.match(
-          onData: (estimate) => emit(updated.copyWith(estimate: estimate, estimateInProgress: false)),
-          onError: (exception) {
-            emit(updated.copyWith(estimateInProgress: false));
+            _replaceAttachment(localId, UploadedAttachment.failed(localId: localId, exception: exception));
             _errorMessagesController.add(_translate(exception));
           },
         );
       },
       onError: (String? error, dynamic exception, StackTrace stackTrace) {
-        final updated = this.state;
-        if (updated is Initialized) emit(updated.copyWith(estimateInProgress: false));
+        _replaceAttachment(localId, UploadedAttachment.failed(localId: localId, exception: _unknown()));
         _errorMessagesController.add(TextConstants.errorGeneralMessage);
       },
     );
   }
 
-  FutureOr<void> _onCreateRequested(CreateRequested event, Emitter<UploadState> emit) async {
+  FutureOr<void> _onSendRequested(SendRequested event, Emitter<UploadState> emit) async {
     final state = this.state;
-    if (state is! Initialized || !state.canCreate) return;
-    final voiceId = state.voiceId!;
-    final languageId = state.languageId!;
-    final fileIds = state.readyFileIds;
+    if (state is! Initialized || !state.canSend) return;
+    final chatId = state.chatId;
+    final attachmentId = state.readyAttachmentIds.first;
+    final clientMessageId = const Uuid().v4(); // ключ дедупликации, генерируется клиентом
 
-    emit(state.copyWith(createInProgress: true));
+    emit(state.copyWith(sendInProgress: true));
 
     await executeLogic(
       () async {
-        final result = await _recordRepository.createRecord(
-          config: CreateRecordConfig(
-            voiceId: voiceId,
-            languageId: languageId,
-            dataFileIds: fileIds,
-            title: event.title,
+        final result = await _attachmentRepository.sendAttachment(
+          config: SendAttachmentConfig(
+            chatId: chatId,
+            clientMessageId: clientMessageId,
+            attachmentId: attachmentId,
+            text: event.text,
           ),
         );
         final updated = this.state;
         if (updated is! Initialized) return;
         result.match(
           onData: (data) {
-            emit(updated.copyWith(createInProgress: false));
-            // (запись, isCreated): true=201 «создана», false=200 «уже существовала».
-            _recordCreatedController.add(data);
+            emit(updated.copyWith(sendInProgress: false));
+            // (сообщение, isCreated): true=201 «отправлено», false=200 «уже отправлено ранее».
+            _messageSentController.add(data);
           },
           onError: (exception) {
-            emit(updated.copyWith(createInProgress: false));
+            emit(updated.copyWith(sendInProgress: false));
             _errorMessagesController.add(_translate(exception));
           },
         );
       },
       onError: (String? error, dynamic exception, StackTrace stackTrace) {
         final updated = this.state;
-        if (updated is Initialized) emit(updated.copyWith(createInProgress: false));
+        if (updated is Initialized) emit(updated.copyWith(sendInProgress: false));
         _errorMessagesController.add(TextConstants.errorGeneralMessage);
       },
     );
   }
 
-  // --- helpers (мутация source-списка / инвалидация оценки) ---
+  // --- helpers (мутация списка вложений) ---
 
   void _patchProgress(String localId, double progress) {
     final state = this.state;
     if (state is! Initialized) return;
-    _replaceSource(localId, UploadedSource.uploading(localId: localId, progress: progress));
+    _replaceAttachment(localId, UploadedAttachment.uploading(localId: localId, progress: progress));
   }
 
-  void _replaceSource(String localId, UploadedSource next) {
+  void _replaceAttachment(String localId, UploadedAttachment next) {
     final state = this.state;
     if (state is! Initialized) return;
     emit(state.copyWith(
-      sources: [for (final s in state.sources) if (_localIdOf(s) == localId) next else s],
+      attachments: [for (final a in state.attachments) if (_localIdOf(a) == localId) next else a],
     ));
-  }
-
-  void _invalidateEstimate() {
-    final state = this.state;
-    if (state is Initialized && state.estimate != null) emit(state.copyWith(estimate: null));
   }
 
   String _translate(BaseRepositoryException exception) {
     // Перевод доменного кода в строку для пользователя (полная таблица — 05 §3.3).
-    // quotaExceeded -> TextConstants.uploadQuotaExceeded, notFound -> ..., иначе общий.
+    // notFound -> ..., иначе общий.
     return TextConstants.errorGeneralMessage;
   }
 }
@@ -868,7 +687,7 @@ class UploadBloc extends BaseBloc<UploadEvent, UploadState> {
 
 ---
 
-## 7. Страница: прогресс, гейт по квоте, исход 201/200
+## 7. Страница: прогресс, чип вложения, исход 201/200
 
 Страница — `StatefulWidget` + `BaseStatePage<T>` ([05-presentation-layer.md](05-presentation-layer.md) §4–5): BLoC в `initState`, side-эффект-подписки в `initState` и отмена в `dispose`, тело — через `state.when(...)`.
 
@@ -877,17 +696,17 @@ class UploadBloc extends BaseBloc<UploadEvent, UploadState> {
 ```dart
 @override
 void initState() {
-  _bloc = UploadBloc()..add(const UploadEvent.initialize());
+  _bloc = UploadBloc()..add(UploadEvent.initialize(chatId: widget.chatId));
   // Снэкбары: переведённый текст, НИКОГДА сырое исключение (AlertDialogHelper, 05 §5.8).
   _errorSub = _bloc.errorMessages.listen((msg) => AlertDialogHelper.showSnackBar(context, msg));
-  // Исход создания: 201 — «запись создана» + переход в плеер; 200 — «открыта существующая».
-  _createdSub = _bloc.recordCreated.listen((data) {
-    final (record, isCreated) = data;
+  // Исход отправки: 201 — «отправлено» + возврат в чат; 200 — «уже отправлено ранее».
+  _sentSub = _bloc.messageSent.listen((data) {
+    final (message, isCreated) = data;
     AlertDialogHelper.showSnackBar(
       context,
-      isCreated ? TextConstants.uploadRecordCreated : TextConstants.uploadRecordExisting,
+      isCreated ? TextConstants.uploadMessageSent : TextConstants.uploadMessageAlreadySent,
     );
-    Navigator.of(context).pushReplacement(RecordPlayerPage.route(recordId: record.id));
+    Navigator.of(context).pop(message);
   });
   super.initState();
 }
@@ -895,45 +714,42 @@ void initState() {
 @override
 void dispose() {
   _errorSub.cancel();
-  _createdSub.cancel();
+  _sentSub.cancel();
   _bloc.close();
   super.dispose();
 }
 ```
 
-Гейт по квоте в UI (только то, что отдал `length_check`):
+Чип вложения в UI (по дизайну NOX — иконка типа файла, без превью содержимого):
 
 ```dart
 // внутри state.when(initialized: (s) { ... })
-if (s.estimate != null && !s.estimate!.canProcess) {
-  // Показать причину: reason + shortfall_seconds («не хватает N сек до дневного лимита»),
-  // кнопку «Создать» дизейблим (s.canCreate == false), CTA — апгрейд для plan == 'free'.
-}
-// Кнопка «Создать запись» активна по s.canCreate; пока s.isAnyUploading — ждём аплоады.
+// Каждое вложение — чип: иконка по attachmentType (document/image) + имя файла, БЕЗ превью.
+// Для AttachmentUploading — прогресс-бар по a.progress; для AttachmentFailed — иконка ошибки + retry.
+// Кнопка «Отправить» активна по s.canSend; пока s.isAnyUploading — ждём аплоады.
 ```
 
-> **Квота-гейт — UX, не контроль.** `length_check.can_process` — подсказка перед `create`. Финальное решение — за сервером на шаге 3: даже при `can_process: true` create может вернуть `400 quota_exceeded` (квота изменилась между шагами) — обработать в `_onCreateRequested` через тот же `_translate`. Не доверять клиентской оценке как авторизации.
+> **Превью не рендерим.** По дизайну NOX вложение показывается как чип с иконкой типа файла (`document`/`image`), без рендеринга содержимого — ни эскиза изображения, ни первой страницы документа. Это сознательное правило этого блюпринта для NOX.
 
 ---
 
-## 8. Refund-on-delete (упоминание; реализация — в доке про records)
+## 8. Удаление вложения до отправки (клиентское)
 
-Удаление трека/записи **не** в статусе `ready` (то есть `init`/`processing`/`error`) возвращает списанную квоту: `DELETE /api/v1/records/{id}/tracks/{tid}/` и каскад `DELETE /api/v1/records/{id}/` на сервере вызывают `refundSecondsAtomic` **после** удаления строки трека. Refund — **серверный** и failure-tolerant (никогда не валит delete). Клиенту в этом документе делать нечего: на стороне приложения это обычный `DELETE`-вызов соответствующего `RecordRepository`-метода (контракт — в доке про records / [07-pagination.md](07-pagination.md)), без специальной refund-логики на клиенте.
+Удалить ещё **не** отправленное вложение из набора — чисто клиентская операция: событие `RemoveAttachment` убирает запись из `attachments` в state, никаких сетевых вызовов. Если аплоад файла ещё идёт (`AttachmentUploading`), отмена снимает его из списка; уже загруженный, но не отправленный `attachment_id` на сервере остаётся осиротевшим — его уборка (TTL/GC неприкреплённых вложений) — забота бэкенда NOX (пример-плейсхолдер; уточнить в реальном контракте), клиенту здесь делать нечего.
 
-> **Инвариант квоты.** Сумма списания, вычисленная при `create` (шаг 3) через серверный estimator, — **окончательная**. Фактическая длительность аудио от worker'а на квоту **не** влияет. Возврат — только при пользовательском delete не-`ready` трека. Клиент не пересчитывает и не «доначисляет» квоту сам.
+> **Инвариант.** Пока сообщение не отправлено (шаг 2), вложение существует только в клиентском state как `attachment_id`. Никакого специального серверного «отката» загрузки на клиенте не делается.
 
 ---
 
 ## 9. Чеклист
 
-- [ ] **Picker** — `file_picker` (document/docx/pdf, cap 50 MB) / `image_picker` (jpeg/png/webp, cap 20 MB); `link`/`text` — из текстового поля в UTF-8-байты (`UploadConfig.fromText`); клиент-side валидация капов **до** аплоада ради UX.
-- [ ] **Шаг 1 (upload)** — `PostUploadFileApi` шлёт `FormData` (`data_type` + `file`) через `baseClient`, `onSendProgress` → прогресс-бар; повтор по каждому источнику (1..50); `UploadRepository.uploadFile → RepositoryResult<DataFileModel>`; держим только `data_file_id`.
-- [ ] **Шаг 2 (length_check)** — `PostLengthCheckApi` (JSON, один файл); `RecordRepository.lengthCheck → RepositoryResult<EstimateModel>`; **квота НЕ списывается**; результат — гейт UX (`can_process`/`reason`/`shortfall_seconds`), не авторизация.
-- [ ] **Шаг 3 (create)** — `PostCreateRecordApi` возвращает `(ResponseEntity<RecordEntity>, statusCode)`; `RecordRepository.createRecord → RepositoryResult<(RecordModel, bool isCreated)>`; `isCreated = statusCode == 201` (201 списал квоту, 200 — повтор набора, **без** списания); **не** ветвиться на `409` (в v1 нет).
-- [ ] **Идемпотентность** — натуральный ключ `(owner_id, sources_signature)` считает сервер; клиент различает исход по `201`/`200` (или `Location`); повтор того же набора **безопасен** (то же `RecordModel`, без двойного debit).
-- [ ] **Network-only** — upload/length_check/create без Sembast-DAO и `BehaviorSubject` ([04-data-layer.md](04-data-layer.md) §8); каждый метод в `execute<T>()` (логирование + `DioException→internal`/else→`unknown`); конкретные коды (`quotaExceeded`/`notFound`/…) — явным `return RepositoryResult.error(...)` в callback'е; состав feature-enum'а **согласовать** ([03-domain-layer.md](03-domain-layer.md)).
-- [ ] **BLoC** — `@freezed sealed` State/Event; `executeLogic(() async {...}, onError: (String? error, dynamic exception, StackTrace stackTrace) {...})` (позиционный первый арг); прогресс per-source в state (гранулярные ребилды); навигация/снэкбары через `PublishSubject`, не через state; `result.match`, никогда `result.data!`.
-- [ ] **Страница** — `BaseStatePage<T>`, BLoC + side-эффект-подписки в `initState`/`dispose`, `state.when`; квота-гейт по `estimate.canProcess`; исход создания — снэкбар «создана»/«уже существовала» + переход в плеер; снэкбары — переведённый текст, не сырое исключение.
-- [ ] **Сеть/auth** — `ApiClient`/`baseClient`, HMAC + security-заголовки + access/refresh JWT — из [14-networking-and-auth.md](14-networking-and-auth.md), **не переизобретать**; multipart-подпись шага 1 — **сверить с владельцем бэкенда**.
-- [ ] **Refund-on-delete** — серверный, failure-tolerant; клиент делает обычный `DELETE`, без refund-логики; create-time debit — окончательный, длительность аудио от worker'а на квоту не влияет.
-- [ ] **FLAG (cross-project):** точный контракт endpoint'ов (поля, статусы, набор `reason`/`error`-кодов, заголовки multipart-подписи) — источник правды `docs/spec/backend_mobile_client_0.2.md` + владелец бэкенда; перед реализацией сверить, в коде — `TODO(cross-project)`.
+- [ ] **Picker** — `file_picker` (document/docx/pdf, cap 50 MB) / `image_picker` (jpeg/png/webp, cap 20 MB); клиент-side валидация капов **до** аплоада ради UX (капы/расширения — пример-плейсхолдер, сверить с реальным контрактом NOX).
+- [ ] **Шаг 1 (upload)** — `PostUploadFileApi` шлёт `FormData` (`attachment_type` + `file`) через `baseClient`, `onSendProgress` → прогресс-бар; `UploadRepository.uploadFile → RepositoryResult<AttachmentModel>`; держим только `attachment_id`.
+- [ ] **Шаг 2 (attach)** — `PostSendAttachmentApi` возвращает `(ResponseEntity<MessageEntity>, statusCode)`; `AttachmentRepository.sendAttachment → RepositoryResult<(MessageModel, bool isCreated)>`; `isCreated = statusCode == 201` (200 — повтор `client_message_id`, **без** повторной отправки).
+- [ ] **Идемпотентность** — натуральный ключ `(chat_id, client_message_id)`; `client_message_id` генерирует клиент (UUID); клиент различает исход по `201`/`200` (или `Location`); повтор того же `client_message_id` **безопасен** (то же `MessageModel`, без дубля). Конкретная форма ключа/статусов — пример-плейсхолдер.
+- [ ] **Network-only** — upload/attach без Sembast-DAO и `BehaviorSubject` ([04-data-layer.md](04-data-layer.md) §8); каждый метод в `execute<T>()` (логирование + `DioException→internal`/else→`unknown`); конкретные коды (`notFound`/…) — явным `return RepositoryResult.error(...)` в callback'е; состав feature-enum'а **согласовать** ([03-domain-layer.md](03-domain-layer.md)).
+- [ ] **BLoC** — `@freezed sealed` State/Event; `executeLogic(() async {...}, onError: (String? error, dynamic exception, StackTrace stackTrace) {...})` (позиционный первый арг); прогресс per-attachment в state (гранулярные ребилды); навигация/снэкбары через `PublishSubject`, не через state; `result.match`, никогда `result.data!`.
+- [ ] **Страница** — `BaseStatePage<T>`, BLoC + side-эффект-подписки в `initState`/`dispose`, `state.when`; вложение — чип с иконкой типа файла, **без превью** (дизайн NOX); исход отправки — снэкбар «отправлено»/«уже отправлено ранее» + возврат в чат; снэкбары — переведённый текст, не сырое исключение.
+- [ ] **Сеть/auth** — `ApiClient`/`baseClient`, signing + security-заголовки + access/refresh-токены — из [14-networking-and-auth.md](14-networking-and-auth.md), **не переизобретать**; multipart-подпись шага 1 — финализировать вместе с контрактом бэкенда NOX.
+- [ ] **Удаление до отправки** — `RemoveAttachment` чисто клиентский (убрать из state, без сети); уборка осиротевших `attachment_id` — забота бэкенда NOX (пример-плейсхолдер).
+- [ ] **FLAG (бэкенд NOX не выбран):** точный контракт endpoint'ов (пути, поля, статусы, набор `error`-кодов, заголовки multipart-подписи) — **пример-плейсхолдер**; финализируется вместе с выбором бэкенда/протокола NOX; в коде — `TODO(nox-backend)`.

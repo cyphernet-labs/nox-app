@@ -1,7 +1,7 @@
 # 13 — Обработка ссылок (deep links / universal links)
 
-> **Назначение:** зафиксировать единый, **обобщённый** механизм обработки **любой** входящей ссылки в приложении Speech AI Mobile — не только «классических» deep links, но и universal/app links и любых внешних URL, которые должны открыть/направить приложение. Пайплайн: ОС отдаёт ссылку → `app_links` → `DeepLinkRepository` парсит сырой URI в **типизированную** доменную модель → app-root маршрутизирует по типу. Перенесён из существующего проекта владельца и адаптирован под конвенции блюпринта (single-package, `@freezed`-модели, Freezed-BLoC).
-> **Когда читать:** перед реализацией любого сценария «пользователь пришёл по ссылке» (верификация email, сброс пароля, открытие расшаренной записи, OAuth-callback и т.п.), а также при добавлении нового типа линка.
+> **Назначение:** зафиксировать единый, **обобщённый** механизм обработки **любой** входящей ссылки в приложении NOX — не только «классических» deep links, но и universal/app links и любых внешних URL, которые должны открыть/направить приложение. Пайплайн: ОС отдаёт ссылку → `app_links` → `DeepLinkRepository` парсит сырой URI в **типизированную** доменную модель → app-root маршрутизирует по типу. Механизм следует конвенциям блюпринта (single-package, `@freezed`-модели, Freezed-BLoC).
+> **Когда читать:** перед реализацией любого сценария «пользователь пришёл по ссылке» (верификация email, сброс пароля, открытие расшаренного объекта, OAuth-callback и т.п.), а также при добавлении нового типа линка.
 > **Связанные документы:** [03-domain-layer.md](03-domain-layer.md) (`RepositoryResult`, `RepositoryConfig`, `BaseMapper`-контракт), [04-data-layer.md](04-data-layer.md) (`BaseMapper`, `BaseRepositoryHelper`, DI-репозиториев), [05-presentation-layer.md](05-presentation-layer.md) (`AppRoot` + `AppRootBloc`, страницы, Freezed-BLoC), [02-dependency-injection.md](02-dependency-injection.md) (регистрация репозитория), [01-stack-and-tooling.md](01-stack-and-tooling.md) (`app_links`), [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md) (флейворы host/URL), [14-networking-and-auth.md](14-networking-and-auth.md) (verify-email/reset-password дёргают auth-endpoint'ы; web-deep-link endpoint'ы не подписываются HMAC).
 
 ---
@@ -51,7 +51,7 @@
 
 Без нативной декларации `app_links` ссылки **не дойдут** до приложения. Для **HTTPS universal/app links** (рекомендуется) нужны и нативные декларации, и файлы-ассоциации на домене.
 
-**Хост.** Берётся из deep-link-URL'ов бэкенда (`APPWRITE_VERIFY_URL` / `APPWRITE_RESET_URL` / `APPWRITE_SHARE_URL`, см. [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md)) — по флейвору: prod-хост и stage-хост. Ниже плейсхолдеры `<prod_host>` / `<stage_host>` (например `speech-ai.app` / `stage.speech-ai.app`).
+**Хост.** Берётся из deep-link-URL'ов бэкенда NOX (например `<VERIFY_URL>` / `<RESET_URL>` / `<SHARE_URL>` — *пример; бэкенд/протокол NOX ещё не выбран, заменить на реальные имена переменных контракта*, см. [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md)) — по флейвору: prod-хост и stage-хост. Ниже плейсхолдеры `<prod_host>` / `<stage_host>`.
 
 ### Android — `android/app/src/main/AndroidManifest.xml`
 
@@ -84,7 +84,7 @@
 - Требуется `https://<host>/.well-known/apple-app-site-association` (AASA, JSON, без расширения) с App ID и path-паттернами.
 - Кастомные схемы (`myapp://`) — только как fallback (`Info.plist` → `CFBundleURLTypes`); основной канал — HTTPS app links.
 
-> **Где живёт нативка в монорепо.** `sources/mobile_app/android/...` и `sources/mobile_app/ios/...`. Файлы-ассоциации (`assetlinks.json`, `apple-app-site-association`) публикуются на домене — это инфра бэкенда/хостинга, отдельная задача (см. `09-build-and-secrets-infra.md`).
+> **Где живёт нативка.** `android/...` и `ios/...`. Файлы-ассоциации (`assetlinks.json`, `apple-app-site-association`) публикуются на домене — это инфра бэкенда/хостинга, отдельная задача (см. `09-build-and-secrets-infra.md`).
 
 ---
 
@@ -171,7 +171,8 @@ class VerifyEmailDeepLinkEntity {
   final String userId;
   final String secret;
 
-  // Базовый URL = APPWRITE_VERIFY_URL бэкенда (по флейвору). СВЕРИТЬ формат с client_backend.
+  // Базовый URL = verify-URL бэкенда NOX (по флейвору). СВЕРИТЬ формат с бэкендом NOX
+  // (пример — бэкенд/протокол NOX ещё не выбран; заменить на реальный контракт).
   static const _verifyStage = 'https://<stage_host>/verify-email';
   static const _verifyProd = 'https://<prod_host>/verify-email';
 
@@ -188,7 +189,7 @@ class VerifyEmailDeepLinkEntity {
 }
 ```
 
-> Поля в path (а не query) извлекаются срезом после префикса: `token = data.substring(_prefix.length)` (например `https://<host>/r/<record_id>` для share).
+> Поля в path (а не query) извлекаются срезом после префикса: `token = data.substring(_prefix.length)` (например `https://<host>/s/<item_id>` для share).
 
 ### 4.2 (Опционально) Раскрытие tracking-редиректа
 
@@ -302,9 +303,9 @@ class DeepLinkRepositoryImpl with BaseRepositoryHelper implements DeepLinkReposi
           final e = await ResetPasswordDeepLinkEntity.parse(link);
           return RepositoryResult.success(data: resetPasswordDeepLinkMapper.toModel(entity: e, ad: (_) => config.source));
         }
-        if (ShareRecordDeepLinkEntity.isValid(link)) {
-          final e = await ShareRecordDeepLinkEntity.parse(link);
-          return RepositoryResult.success(data: shareRecordDeepLinkMapper.toModel(entity: e, ad: (_) => config.source));
+        if (ShareItemDeepLinkEntity.isValid(link)) {
+          final e = await ShareItemDeepLinkEntity.parse(link);
+          return RepositoryResult.success(data: shareItemDeepLinkMapper.toModel(entity: e, ad: (_) => config.source));
         }
         return RepositoryResult.error(exception: RepositoryException.unknown);
       });
@@ -375,8 +376,8 @@ FutureOr<void> _onOnDeepLink(OnDeepLink event, Emitter<AppRootState> emit) async
     unawaited(event.navigator.push(ValidateDeepLinkPage.route(deepLink: deepLink)));   // token → серверная валидация
   } else if (deepLink is ResetPasswordDeepLinkModel) {
     unawaited(event.navigator.push(SetNewPasswordPage.route(deepLink: deepLink)));     // напрямую на смену пароля
-  } else if (deepLink is ShareRecordDeepLinkModel) {
-    unawaited(event.navigator.push(RecordDetailsPage.route(recordId: deepLink.recordId)));
+  } else if (deepLink is ShareItemDeepLinkModel) {
+    unawaited(event.navigator.push(ItemDetailsPage.route(itemId: deepLink.itemId)));
   }
   // неизвестный подтип — молча игнорируется (нет default-ветки): dispatch-table курируется вручную
 }
@@ -433,23 +434,23 @@ FutureOr<void> _onInitialize(Initialize event, Emitter<ValidateDeepLinkState> em
 
 Тело страницы рендерится через `state.when(initializing: ..., error: ...)`: прогресс-плейсхолдер на `Initializing` и `ValidateDeepLinkErrorWidget` на `Error`. Валидация стартует сразу в `initState` (`..add(ValidateDeepLinkEvent.initialize(context: context))`).
 
-> **Не каждый тип проходит через ValidateDeepLinkPage.** `ResetPassword` (несёт `userId`/`secret` — Appwrite-recovery, без firebase-style `oobCode`) уходит **сразу** на экран смены пароля, который сам дёргает API при отправке формы (`verify_reset_password`). Серверную валидацию `ValidateDeepLinkPage` проходят только линки, которые надо подтвердить до показа экрана (verify-email и т.п.).
+> **Не каждый тип проходит через ValidateDeepLinkPage.** `ResetPassword` (в примере несёт `userId`/`secret` — *точная форма токена сброса зависит от ещё не выбранного бэкенда NOX*) уходит **сразу** на экран смены пароля, который сам дёргает API при отправке формы (`verify_reset_password`). Серверную валидацию `ValidateDeepLinkPage` проходят только линки, которые надо подтвердить до показа экрана (verify-email и т.п.).
 
 ---
 
-## 6. Типы линков SpeechAI (под бэкенд)
+## 6. Типы линков NOX (под бэкенд)
 
-Конкретный набор — под deep-link-URL'ы `client_backend`. **URL/имена query-параметров сверить с бэкендом перед реализацией** (`APPWRITE_VERIFY_URL` / `APPWRITE_RESET_URL` / `APPWRITE_SHARE_URL`; Appwrite-формат верификации/восстановления обычно несёт `userId` + `secret`).
+Конкретный набор — под deep-link-URL'ы бэкенда NOX. **URL/имена query-параметров сверить с бэкендом перед реализацией** (например `<VERIFY_URL>` / `<RESET_URL>` / `<SHARE_URL>`). Таблица ниже — **пример; бэкенд/протокол NOX ещё не выбран, заменить на реальный контракт** (форма токена верификации/восстановления — здесь показана как `userId` + `secret` — зависит от выбранного бэкенда).
 
 | Модель | URL-паттерн (host по флейвору) | Поля | Назначение |
 |---|---|---|---|
 | `VerifyEmailDeepLinkModel` | `https://<host>/verify-email?userId=…&secret=…` | `userId`, `secret` | подтверждение email → `ValidateDeepLinkPage` → endpoint `verify_email` |
 | `ResetPasswordDeepLinkModel` | `https://<host>/reset-password?userId=…&secret=…` | `userId`, `secret` | напрямую на экран смены пароля → `verify_reset_password` |
-| `ShareRecordDeepLinkModel` | `https://<host>/r/<record_id>` | `recordId` | открыть расшаренную запись (`APPWRITE_SHARE_URL`) |
+| `ShareItemDeepLinkModel` | `https://<host>/s/<item_id>` | `itemId` | открыть расшаренный объект (`<SHARE_URL>`) |
 
-> Это **cross-project контракт** (mobile ↔ client_backend ↔ Appwrite). Точный формат URL и параметров фиксируется совместно с владельцем бэкенда (см. также `docs/spec/` бэкенда); таблица выше — стартовая, не финальная. Эндпоинты `verify_email` / `verify_reset_password` — web-deep-link (`requiresWebDeepLink = true`): **не** подписываются HMAC и не несут security-заголовков (см. [14-networking-and-auth.md](14-networking-and-auth.md) §4.2) — запрос от `ValidateDeepLinkPage` / экрана смены пароля идёт без security-interceptor'а.
+> Это **cross-project контракт** (mobile ↔ бэкенд NOX). Точный формат URL и параметров фиксируется совместно с владельцем бэкенда; таблица выше — пример/стартовая, не финальная (бэкенд/протокол NOX ещё не выбран). Эндпоинты `verify_email` / `verify_reset_password` — web-deep-link (`requiresWebDeepLink = true`): **не** подписываются HMAC и не несут security-заголовков (см. [14-networking-and-auth.md](14-networking-and-auth.md) §4.2) — запрос от `ValidateDeepLinkPage` / экрана смены пароля идёт без security-interceptor'а.
 
-> **⚠ Перед боевым деплоем (native association — иначе ссылки молча уходят в браузер).** §2 даёт каркас intent-filter / Associated Domains, но для прода обязательно добить (пометить в `docs/predeploy/`): (1) **Android `https://<host>/.well-known/assetlinks.json`** с `delegate_permission/common.handle_all_urls`, `package_name` и SHA-256-fingerprint'ами **upload-key И Play App Signing key** (Google пере-подписывает APK — без его fingerprint App Links не верифицируются в проде; самый частый провал); (2) **iOS AASA `apple-app-site-association`** в новом формате `applinks.details[].appIDs` (`<TeamID>.<BundleID>`) + `components`, отдаётся как `application/json` без редиректа и без `.json`-расширения + capability **Associated Domains** в Xcode-таргете; (3) **реальные хосты SpeechAI**: deep-link host (`APPWRITE_VERIFY_URL`/`RESET_URL`/`SHARE_URL`) — это **web-хост писем/шары** (`speech-ai.app` / `stage.speech-ai.app`), а **не** API-хост (`api-*.speech-ai.app`) — сверить с владельцем, где публикуются ссылки и `.well-known/*`; (4) опц. **custom-scheme fallback** (`CFBundleURLTypes` / Android scheme intent-filter) для приёма до подтверждения App Links; (5) **тест-план верификации** (Android `adb shell am start -W -a android.intent.action.VIEW -d "https://<host>/verify-email?..." <app_id>` + `pm verify-app-links`; iOS — AASA через `app-site-association.cdn-apple.com/a/v1/<host>` + тап из Notes); (6) гейтинг **share-record при неавторизованном пользователе** (redirect на login → возврат к отложенному deep-link).
+> **⚠ Перед боевым деплоем (native association — иначе ссылки молча уходят в браузер).** §2 даёт каркас intent-filter / Associated Domains, но для прода обязательно добить (пометить в `docs/predeploy/`): (1) **Android `https://<host>/.well-known/assetlinks.json`** с `delegate_permission/common.handle_all_urls`, `package_name` и SHA-256-fingerprint'ами **upload-key И Play App Signing key** (Google пере-подписывает APK — без его fingerprint App Links не верифицируются в проде; самый частый провал); (2) **iOS AASA `apple-app-site-association`** в новом формате `applinks.details[].appIDs` (`<TeamID>.<BundleID>`) + `components`, отдаётся как `application/json` без редиректа и без `.json`-расширения + capability **Associated Domains** в Xcode-таргете; (3) **реальные хосты NOX**: deep-link host (`<VERIFY_URL>`/`<RESET_URL>`/`<SHARE_URL>`) — это **web-хост писем/шары** (`<prod_host>` / `<stage_host>`), а **не** API-хост — сверить с владельцем, где публикуются ссылки и `.well-known/*`; (4) опц. **custom-scheme fallback** (`CFBundleURLTypes` / Android scheme intent-filter) для приёма до подтверждения App Links; (5) **тест-план верификации** (Android `adb shell am start -W -a android.intent.action.VIEW -d "https://<host>/verify-email?..." <app_id>` + `pm verify-app-links`; iOS — AASA через `app-site-association.cdn-apple.com/a/v1/<host>` + тап из Notes); (6) гейтинг **share-link при неавторизованном пользователе** (redirect на login → возврат к отложенному deep-link).
 
 ---
 
@@ -491,4 +492,4 @@ FutureOr<void> _onInitialize(Initialize event, Emitter<ValidateDeepLinkState> em
 - [ ] `AppRoot` подписан на `watchDeepLink()` → `OnDeepLink(navigator, deepLink)`; отписка в `dispose`; `InitializeDeepLinks` после готовности приложения.
 - [ ] `AppRootBloc` dispatch-table (`cleanDeepLink()` первым; `is`-ветки на каждый тип → страница).
 - [ ] `ValidateDeepLinkPage` (page-folder + Freezed-BLoC `Initializing`/`Error`) для token-линков; успех = `pop`, ошибка = `ValidateDeepLinkErrorWidget`.
-- [ ] URL-контракт типов линков сверён с `client_backend` (`APPWRITE_VERIFY_URL`/`RESET_URL`/`SHARE_URL`).
+- [ ] URL-контракт типов линков сверён с бэкендом NOX (например `<VERIFY_URL>`/`<RESET_URL>`/`<SHARE_URL>`; бэкенд/протокол NOX ещё не выбран — финализировать контракт позже).

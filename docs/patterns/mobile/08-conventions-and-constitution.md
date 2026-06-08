@@ -16,7 +16,7 @@
 
 ### Принцип 1 — Один пакет, три слоя-папки, односторонние зависимости
 
-Приложение — **один Dart-пакет** `speech_ai_mobile` с одним `pubspec.yaml` и одним прогоном `build_runner`. Слои — это **папки** внутри `lib/`, а не отдельные пакеты:
+Приложение — **один Dart-пакет** `nox_app` с одним `pubspec.yaml` и одним прогоном `build_runner`. Слои — это **папки** внутри `lib/`, а не отдельные пакеты:
 
 ```
 lib/
@@ -35,9 +35,9 @@ lib/
 presentation ──▶ domain ◀── data
 ```
 
-`presentation` никогда не импортирует `data`; `data` никогда не импортирует `presentation`; **`domain` не импортирует ничего** (ни Flutter, ни персистентность, ни HTTP). Это устраняет цикл `domain ⇄ data`, который существовал в трёхпакетных источниках: внутри одного пакета нет path-зависимостей и нет встречной ссылки `data → domain` ради DI-бутстрапа. DI — **одноуровневый**: единственная `configureDependencies(String env)`, единственная аннотация `@InjectableInit(initializerName: r'$initGetIt')` и единственный сгенерированный `configure_dependencies.config.dart` (см. [02-dependency-injection.md](02-dependency-injection.md)).
+`presentation` никогда не импортирует `data`; `data` никогда не импортирует `presentation`; **`domain` не импортирует ничего** (ни Flutter, ни персистентность, ни HTTP). Однопакетная схема устраняет цикл `domain ⇄ data`, возможный при трёхпакетной раскладке: внутри одного пакета нет path-зависимостей и нет встречной ссылки `data → domain` ради DI-бутстрапа. DI — **одноуровневый**: единственная `configureDependencies(String env)`, единственная аннотация `@InjectableInit(initializerName: r'$initGetIt')` и единственный сгенерированный `configure_dependencies.config.dart` (см. [02-dependency-injection.md](02-dependency-injection.md)).
 
-> **Переписывание путей из источников.** Источники описывали три пакета с путями вида `domain/lib/src/models/items/item_model.dart` и `data/lib/src/repository/item/item_repository_impl.dart`. В этом блюпринте все такие пути переписаны на однопакетные: `lib/domain/model/items/item_model.dart`, `lib/data/repository/item/item_repository_impl.dart`. Импорты — всегда `package:speech_ai_mobile/...`. Описывать «три пакета», path-зависимости или цикл `domain ⇄ data` — нарушение.
+> **Однопакетные пути — правило блюпринта.** Все слой-пути однопакетные: `lib/domain/model/items/item_model.dart`, `lib/data/repository/item/item_repository_impl.dart`. Импорты — всегда `package:nox_app/...`. Описывать «три пакета», path-зависимости или цикл `domain ⇄ data` — нарушение.
 
 ### Принцип 2 — Каждый метод репозитория возвращает `RepositoryResult<T>`
 
@@ -55,7 +55,7 @@ API JSON ↔ Entity (@freezed + json_serializable) ↔ Mapper ↔ Model (@freeze
 - **Mapper** (`*Mapper`) — единственная граница обогащения: `String → enum`, `String → DateTime`, числовое форматирование/парсинг. Мапперы композируют дочерние мапперы через инъекцию в конструктор.
 - **Model** (`*Model`) — доменная модель: `@freezed`, **только `.freezed.dart`, без `.g.dart`** (никакого JSON на доменной модели). Богатые типы (enum, `DateTime`, вложенные модели). **Бизнес-логика живёт в `extension`-геттерах**, а не в теле `@freezed`-класса.
 
-Сверх трёхчастного split этот блюпринт сохраняет из BASE контракт сетевого ответа: реальный backend `client_backend` возвращает унифицированный конверт `{data, timestamp, trace_id, meta}`, поэтому в data-слое сохраняются `ResponseEntity<T>` + вручную поддерживаемый реестр `EntityConverter<E>`. См. [04-data-layer.md](04-data-layer.md).
+Сверх трёхчастного split этот блюпринт сохраняет паттерн унифицированного контракта сетевого ответа: если бэкенд NOX возвращает единый конверт вида `{data, timestamp, trace_id, meta}` *(пример — бэкенд/протокол NOX ещё не выбран; заменить на реальный контракт)*, то в data-слое применяются `ResponseEntity<T>` + вручную поддерживаемый реестр `EntityConverter<E>`. См. [04-data-layer.md](04-data-layer.md).
 
 ### Принцип 4 — Один объект-конфиг на один вызов API
 
@@ -65,7 +65,7 @@ API JSON ↔ Entity (@freezed + json_serializable) ↔ Mapper ↔ Model (@freeze
 
 Управление состоянием — **BLoC на Freezed**. State и Event — `@freezed sealed`-юнионы (`sealed` для многовариантных юнионов, `abstract` для одновариантных value-объектов). Канонические подсостояния — `Initializing` / `Initialized` / `Error`, объявленные как `const factory`-конструкторы. Тонкий `BaseBloc<E, S>` оборачивает обработчики в `executeLogic` с единым `try/catch`. Вычисляемая/производная логика живёт в **`extension`-геттерах** над состоянием (не в теле `@freezed`). Переходы — через `copyWith`. BLoC-типы имеют **только `.freezed.dart`, никогда `.g.dart`** (никакого `fromJson` на типах BLoC). Побочные эффекты (навигация, snackbar) уходят через `PublishSubject`-стримы, а не через state.
 
-> **Это сознательно переопределяет старое правило источников.** BASE и v1 описывали BLoC через **рукописные** `sealed`-иерархии на `Equatable` с ручными `when()`/`copyWith()` и правилом «никакого Freezed для state» (см. v1 §5.2). Этот блюпринт меняет решение: state/event — `@freezed`-юнионы. Имена подсостояний (`Initializing`/`Initialized`/`Error`) сохранены. Полная BLoC-троица — в [05-presentation-layer.md](05-presentation-layer.md).
+> **Правило блюпринта: BLoC на Freezed, не на Equatable.** State/event — `@freezed`-юнионы (а **не** рукописные `sealed`-иерархии на `Equatable` с ручными `when()`/`copyWith()`). Имена подсостояний — `Initializing`/`Initialized`/`Error`. Полная BLoC-троица — в [05-presentation-layer.md](05-presentation-layer.md).
 
 ### Принцип 6 — Единый канал логирования + маппинг доменных исключений
 
@@ -75,11 +75,11 @@ API JSON ↔ Entity (@freezed + json_serializable) ↔ Mapper ↔ Model (@freeze
 
 Для пользовательских наблюдаемых ресурсов репозитории — **cache-first и реактивные**: реактивный Sembast-DAO (`onSnapshots`, транзакции) + env-scoped `AppDatabase` (Dev/Prod = IO, Test = memory) через провайдеры `@LazySingleton(as: AppDatabase, env: [...])`. Репозиторий подписывается на стрим DAO один раз и кормит один `BehaviorSubject<RepositoryResult<...>>`; экспонирует парные `watchXxx()` (Stream) + `fetchXxx()` (Future). Удалённый API гидратирует локальное хранилище; UI смотрит на локальные стримы (local-first).
 
-> **Карвут (сохранён из BASE):** пагинированные серверо-владеемые списки и одноразовые POST-ы — **network-only**: без DAO и без `BehaviorSubject`. Список записей SpeechAI (`/api/v1/user/records/`) — именно такой случай: пагинированный серверный список → сетевой, без кэш-слоя (см. [07-pagination.md](07-pagination.md)).
+> **Карвут:** пагинированные серверо-владеемые списки и одноразовые POST-ы — **network-only**: без DAO и без `BehaviorSubject`. Список чатов NOX (общий открытый шаринг-спейс; эндпоинт вида `GET /api/v1/chats/` — *пример, бэкенд/протокол NOX ещё не выбран; заменить на реальный контракт*) — именно такой случай: пагинированный серверный список → сетевой, без кэш-слоя (см. [07-pagination.md](07-pagination.md)).
 
 ### Принцип 8 — Только токены дизайна (light + dark), Semantics, единый файл фиче-флагов
 
-В фиче-коде запрещены «сырые» `Color`, `EdgeInsets`, `TextStyle` и системный overlay-стиль. Используются только токены: `AppColorsTokens`, `AppSpacingTokens`, `AppTextStyleTokens`, `AppOverlayStyleTokens`. Spacing/типографика — через `flutter_screenutil` (адаптивные токены). Темизация — **light + dark** через `ThemeExtension<AppColors>` + `AppTheme.light()`/`dark()` + `context.appColors` + `themeMode` из `AppRootBloc` (механизм v1), но с конкретными значениями палитры из BASE. Новые интерактивные виджеты оборачивают интерактивный элемент в `Semantics(label:, button: true)`. Все статические тоглы — в **одном** `lib/general/feature_flags.dart` как `static const bool` (remote-config-флаги — вне области этого модуля). См. [06-theming.md](06-theming.md).
+В фиче-коде запрещены «сырые» `Color`, `EdgeInsets`, `TextStyle` и системный overlay-стиль. Используются только токены: `AppColorsTokens`, `AppSpacingTokens`, `AppTextStyleTokens`, `AppOverlayStyleTokens`. Spacing/типографика — через `flutter_screenutil` (адаптивные токены). Темизация — **light + dark** через `ThemeExtension<AppColors>` + `AppTheme.light()`/`dark()` + `context.appColors` + `themeMode` из `AppRootBloc`. Новые интерактивные виджеты оборачивают интерактивный элемент в `Semantics(label:, button: true)`. Все статические тоглы — в **одном** `lib/general/feature_flags.dart` как `static const bool` (remote-config-флаги — вне области этого модуля). См. [06-theming.md](06-theming.md).
 
 ### Принцип 9 — Compile-time изоляция флейворов
 
@@ -89,7 +89,7 @@ API JSON ↔ Entity (@freezed + json_serializable) ↔ Mapper ↔ Model (@freeze
 
 ## 2. Десять золотых правил
 
-Это компактная памятка-чеклист для ревью (надмножество восьми правил v1 и девяти правил BASE). Каждое правило проверяется одной строкой и кодируется в `CLAUDE.md` приложения. Правила 1–9 — операционные проекции принципов конституции; правило 10 добавляет стандарт пагинации.
+Это компактная памятка-чеклист для ревью. Каждое правило проверяется одной строкой и кодируется в `CLAUDE.md` приложения. Правила 1–9 — операционные проекции принципов конституции; правило 10 добавляет стандарт пагинации.
 
 1. **Один пакет, три слоя-папки, односторонние зависимости.** `presentation → domain ← data`; `domain` не импортирует ничего; один `pubspec.yaml`, один `build_runner`, одна `configureDependencies(env)`. (Принцип 1.)
 2. **Каждый метод репозитория возвращает `RepositoryResult<T>`** (или `Stream<...>`); `.exception` всегда `BaseRepositoryException`; доступ через `match()`/`hasData`, **никогда `result.data!`**. (Принцип 2.)
@@ -100,7 +100,7 @@ API JSON ↔ Entity (@freezed + json_serializable) ↔ Mapper ↔ Model (@freeze
 7. **Cache-first реактивные репозитории** для пользовательских наблюдаемых ресурсов (`BehaviorSubject` + Sembast-DAO); **карвут**: пагинированные серверные списки и одноразовые POST-ы — network-only. (Принцип 7.)
 8. **Только токены дизайна; light + dark; Semantics; единый `feature_flags.dart`.** Никаких хардкод-цветов/отступов/стилей/overlay. (Принцип 8.)
 9. **Codegen-first, генераты не редактируются руками.** Freezed + json_serializable + injectable; после правки любого аннотированного класса — прогон генератора. `*.g.dart`/`*.freezed.dart`/`*.config.dart`/`lib/design/gen/**` исключены из анализа и форматирования. (Принцип 9.)
-10. **Пагинация — стандарт v5.** `infinite_scroll_pagination ^5.1.1`, stateless `PagingState`-в-блоке (никогда `PagingController`), переиспользуемое расширение `PagingStateExt.applyPage`, дефолтный flavor — OFFSET (`PageMetadata{int? nextPage, int total}`); ошибки прокидываются в `pagingState.error`. (См. [07-pagination.md](07-pagination.md).)
+10. **Пагинация — стандарт v5.** `infinite_scroll_pagination ^5.1.1`, stateless `PagingState`-в-блоке (никогда `PagingController`), переиспользуемое расширение `PagingStateExt.applyPage`, дефолтный flavor — OFFSET (`PageMetadata{int? nextPage, int total}`), cursor — документированная альтернатива; ошибки прокидываются в `pagingState.error`. (См. [07-pagination.md](07-pagination.md).)
 
 > **Дополнительный нерушимый инвариант:** `AlertDialogHelper` — **единственный** канал пользовательских ошибок (см. §8 ниже и [05-presentation-layer.md](05-presentation-layer.md)). Компиляция-флейвор-изоляция (Принцип 9 конституции) и единый канал ошибок дополняют десятку золотых правил, но проверяются вместе с ними на каждом ревью.
 
@@ -108,7 +108,7 @@ API JSON ↔ Entity (@freezed + json_serializable) ↔ Mapper ↔ Model (@freeze
 
 ## 3. Конвенции нейминга
 
-Эти правила абсолютны: scaffolding-скиллы, анализатор и кодогенерация на них опираются. Нейтральный сквозной пример — **Item**; пустые скелеты используют плейсхолдеры `<Feature>` / `<feature>` / `<Model>`. Первая реальная фича для реализации — **список записей** (records list), но шаблоны держатся на нейтральном Item.
+Эти правила абсолютны: scaffolding-скиллы, анализатор и кодогенерация на них опираются. Нейтральный сквозной пример — **Item**; пустые скелеты используют плейсхолдеры `<Feature>` / `<feature>` / `<Model>`. Первая реальная фича для реализации — **список чатов** (открытый общий шаринг-спейс — серверо-владеемый, network-only пагинированный список), но шаблоны держатся на нейтральном Item.
 
 ### 3.1 Регистр идентификаторов
 
@@ -149,7 +149,7 @@ API JSON ↔ Entity (@freezed + json_serializable) ↔ Mapper ↔ Model (@freeze
 
 ### 3.3 Семантика имён методов репозитория
 
-Имена методов контракта кодируют, **откуда** данные и их **кардинальность** (свод правил из v1):
+Имена методов контракта кодируют, **откуда** данные и их **кардинальность**:
 
 ```dart
 // One-shot, reads a single record.
@@ -187,13 +187,13 @@ Future<void> clean();
 
 ### 4.1 Полные `package:`-импорты
 
-Использовать полные `package:speech_ai_mobile/...`-импорты по всему коду. Избегать относительной `../`-навигации — особенно в доменных моделях, entity и мапперах.
+Использовать полные `package:nox_app/...`-импорты по всему коду. Избегать относительной `../`-навигации — особенно в доменных моделях, entity и мапперах.
 
 ```dart
 // CORRECT
-import 'package:speech_ai_mobile/domain/model/items/item_model.dart';
-import 'package:speech_ai_mobile/data/entity/item/item_entity.dart';
-import 'package:speech_ai_mobile/data/mapper/item/item_mapper.dart';
+import 'package:nox_app/domain/model/items/item_model.dart';
+import 'package:nox_app/data/entity/item/item_entity.dart';
+import 'package:nox_app/data/mapper/item/item_mapper.dart';
 
 // WRONG — fragile relative traversal
 import '../../../domain/model/items/item_model.dart';
@@ -208,18 +208,18 @@ import '../../../domain/model/items/item_model.dart';
 1. Dart SDK — `dart:async`, `dart:convert`
 2. Flutter framework — `package:flutter/material.dart`
 3. Third-party — `package:freezed_annotation/...`, `package:injectable/...`
-4. Локальные импорты — `package:speech_ai_mobile/...`
+4. Локальные импорты — `package:nox_app/...`
 5. `part`-директивы
 
 ### 4.3 Бочки (barrels)
 
-Внутри одного пакета бочки нужны меньше, чем в трёхпакетной схеме, но папки-фичи могут экспонировать локальную бочку для удобства (`lib/domain/model/models.dart`, re-export по одному `export` на публичную модель). Cross-package-алиасинг (`import '...' as domain;`) из трёхпакетных источников **не нужен** — все типы в одном пакете.
+Внутри одного пакета бочки нужны меньше, чем в трёхпакетной схеме, но папки-фичи могут экспонировать локальную бочку для удобства (`lib/domain/model/models.dart`, re-export по одному `export` на публичную модель). Cross-package-алиасинг (`import '...' as domain;`), нужный в трёхпакетной раскладке, здесь **не требуется** — все типы в одном пакете.
 
 ---
 
 ## 5. Конвенции коммитов
 
-(Свод правил из v1 — независим от ветвления.)
+(Правила формы коммита — независимы от модели ветвления.)
 
 ### 5.1 Сабджект
 
@@ -256,9 +256,9 @@ git commit -s
 
 ### 5.5 База PR
 
-Источник практикует GitFlow-вариант: фиче-ветки мёрджатся в `develop`, `develop` мёрджится в `main` на релизе. Для скелета приложения выбрать одну модель и задокументировать её в собственном `CONTRIBUTING.md`; правила «imperative-subject + atomic + sign-off» от ветвления не зависят.
+Рекомендуемая модель — GitFlow-вариант: фиче-ветки мёрджатся в `develop`, `develop` мёрджится в `master` на релизе. Для скелета приложения выбрать одну модель и задокументировать её в собственном `CONTRIBUTING.md`; правила «imperative-subject + atomic + sign-off» от ветвления не зависят.
 
-> **Согласование с репозиторием SpeechAI:** этот блюпринт живёт в монорепо `speech-ai-app/speech-ai`, чья инфраструктура **запрещает автономные `git commit` / `git push` в `develop`/`main` и автономный merge PR** (см. `.claude/memory/feedback_no_auto_commit.md` / `feedback_no_auto_merge.md`). Claude стейджит изменения, показывает дифф, предлагает точную команду коммита и **ждёт** явного подтверждения владельца. Это не отменяет правила выше — они описывают форму коммита, а репо-правила описывают, кто и когда его выполняет.
+> **Согласование с репозиторием NOX:** коммиты и пуши в `develop`/`master` и merge PR **не** выполняются автономно. Изменения стейджатся, показывается дифф, предлагается точная команда коммита — и ожидается явное подтверждение владельца. Это не отменяет правила выше: они описывают форму коммита, а это — кто и когда его выполняет.
 
 ---
 
@@ -289,7 +289,7 @@ fvm dart format -l 140 path/to/file_a.dart path/to/file_b.dart
 // lib/general/text_constants.dart
 final class TextConstants {
   /// General
-  static const appName = 'Speech AI';
+  static const appName = 'NOX';
 
   /// General actions
   static const actionCancel = 'Cancel';
@@ -406,7 +406,7 @@ abstract class ItemModel with _$ItemModel {
 
 ### 11.2 BLoC — это `@freezed sealed`, НЕ рукописный Equatable
 
-В этом блюпринте state/event BLoC — `@freezed sealed`-юнионы с `const factory`-конструкторами `Initializing`/`Initialized`/`Error`, тонким `BaseBloc.executeLogic` и логикой в `extension`-геттерах. **Это сознательно переопределяет** правило источников «BLoC — рукописные sealed на Equatable, без Freezed» (v1 §5.2 / BASE принцип 6). BLoC-типы имеют только `.freezed.dart`, никогда `.g.dart`. Полная троица — в [05-presentation-layer.md](05-presentation-layer.md).
+В этом блюпринте state/event BLoC — `@freezed sealed`-юнионы с `const factory`-конструкторами `Initializing`/`Initialized`/`Error`, тонким `BaseBloc.executeLogic` и логикой в `extension`-геттерах. Это **правило блюпринта**: BLoC — на Freezed, а **не** рукописные sealed на `Equatable`. BLoC-типы имеют только `.freezed.dart`, никогда `.g.dart`. Полная троица — в [05-presentation-layer.md](05-presentation-layer.md).
 
 Это касается **не только BLoC**: `equatable` **намеренно исключён из зависимостей**. Value-equality (`==` / `hashCode`) везде даёт Freezed — любой value-объект объявляется `@freezed`-классом, а **не** наследует `Equatable`. Подключать `equatable` обратно — только если найдётся кейс, который Freezed реально не закрывает (на сегодня такого нет). См. заметку «Почему нет `equatable`» в [01-stack-and-tooling.md](01-stack-and-tooling.md).
 
@@ -457,23 +457,23 @@ fvm flutter analyze
 fvm dart run build_runner build --delete-conflicting-outputs
 ```
 
-Это переопределяет трёхпакетную последовательность `data → domain → root` из источников: внутри одного пакета `build_runner` запускается один раз и генерит всё (`*.freezed.dart`, `*.g.dart`, `*.config.dart`).
+В отличие от трёхпакетной раскладки (где требуется последовательность `data → domain → root`), внутри одного пакета `build_runner` запускается один раз и генерит всё (`*.freezed.dart`, `*.g.dart`, `*.config.dart`).
 
 ---
 
 ## 12. Скелет `CLAUDE.md` для мобильного приложения
 
-Заготовка `CLAUDE.md` для `sources/mobile_app/`, переносящая в проектную память существо этого блюпринта. Прозу держать на русском (репо-правило), код/команды/идентификаторы — на английском.
+Заготовка `CLAUDE.md` для `lib/`, переносящая в проектную память существо этого блюпринта. Прозу держать на русском (репо-правило), код/команды/идентификаторы — на английском.
 
 ```markdown
-# CLAUDE.md — Speech AI Mobile (sources/mobile_app/)
+# CLAUDE.md — NOX (lib/)
 
 ## Обзор проекта
-Flutter-приложение (iOS + Android) для Speech AI. ОДИН Dart-пакет `speech_ai_mobile`.
+Flutter-приложение (iOS + Android) для NOX. ОДИН Dart-пакет `nox_app`.
 Слои — папки в `lib/`: data / domain / presentation + di / general / design / resource.
 Flutter 3.44.1 (FVM, `.fvmrc`). Dart sdk >=3.12.0 <4.0.0. Line length 140.
-Флейворы: stage, prod. applicationId/bundle: app.speechai.mobile (stage: app.speechai.mobile.stage).
-Архитектурный референс: docs/mobile/ (этот блюпринт — каноничный источник).
+Флейворы: stage, prod. applicationId/bundle: com.cyphernetlabs.noxapp (stage: com.cyphernetlabs.noxapp.stage).
+Архитектурный референс: docs/patterns/mobile/ (этот блюпринт — каноничный источник).
 
 ## Основные команды
 - Codegen:  fvm dart run build_runner build --delete-conflicting-outputs
@@ -522,7 +522,7 @@ config get_items_config.dart.
 - [ ] Каждый новый файл — `snake_case.dart`; каждый класс/enum — `PascalCase`; члены — `camelCase`.
 - [ ] Суффиксы артефактов соответствуют §3.2 (`*Model`, `*Entity`, `*Repository`, `*RepositoryImpl`, `*Config`, `*Mapper`, `*Dao`, `*Page`, `*Bloc`).
 - [ ] Методы репозитория названы `fetch*` / `get*` / `watch*` / `create*` / `update*` / `delete*` / `clean` и возвращают `RepositoryResult<T>` (никогда голый `Future<T>`).
-- [ ] Импорты — полные `package:speech_ai_mobile/...`; никакой `../`-навигации, кроме `part`-директив.
+- [ ] Импорты — полные `package:nox_app/...`; никакой `../`-навигации, кроме `part`-директив.
 - [ ] Файлы организованы по папке-странице (presentation: одна плоская папка `lib/presentation/pages/<page>_page/` на экран) / по сущности (domain/data), не по типу артефакта.
 - [ ] Entity — только базовые типы; всё обогащение в мапперах.
 - [ ] State/event BLoC — `@freezed sealed`-юнионы с `Initializing`/`Initialized`/`Error`; только `.freezed.dart`, никогда `.g.dart`; побочные эффекты — через `PublishSubject`.
