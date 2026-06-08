@@ -1,0 +1,61 @@
+{
+  "$description": "NOX · Brand palette (logo / splash / decorative only). Do NOT use for primary actions — those come from the ColorScheme. Two members are brand-fixed exceptions to theming: canvasDark, qrSurface.",
+  "brand": {
+    "teal": {
+      "$type": "color",
+      "$value": "#12B4B4",
+      "$description": "Seed color → ColorScheme.fromSeed(seedColor: Color(0xFF12B4B4))."
+    },
+    "tealDeep": {
+      "$type": "color",
+      "$value": "#0E7C7C"
+    },
+    "gold": {
+      "$type": "color",
+      "$value": "#F4C20C"
+    },
+    "amber": {
+      "$type": "color",
+      "$value": "#FBB00C"
+    },
+    "coral": {
+      "$type": "color",
+      "$value": "#FB7A12"
+    },
+    "red": {
+      "$type": "color",
+      "$value": "#E11D1D"
+    },
+    "lime": {
+      "$type": "color",
+      "$value": "#8FA50C"
+    },
+    "blue": {
+      "$type": "color",
+      "$value": "#2E6FB0"
+    },
+    "white": {
+      "$type": "color",
+      "$value": "#FAFAFA"
+    },
+    "canvasDark": {
+      "$type": "color",
+      "$value": "#0C2424",
+      "$description": "Brand-fixed splash background. NOT themed — always dark (intentional exception #1)."
+    },
+    "ink": {
+      "$type": "color",
+      "$value": "#0C0C0C"
+    },
+    "qrSurface": {
+      "$type": "color",
+      "$value": "#FFFFFF",
+      "$description": "Brand-fixed QR card surface — always light so the code scans in dark mode (intentional exception #2)."
+    },
+    "qrInk": {
+      "$type": "color",
+      "$value": "#0C0C0C",
+      "$description": "QR module color."
+    }
+  }
+}

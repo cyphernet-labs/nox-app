@@ -32,8 +32,8 @@ Other directories (`lib/`, `android/`, `ios/`, `pubspec.yaml`, etc.) will be add
 - New design artifacts (vision, requirements, architecture, ADRs, threat model) go in `docs/`.
 - There are no build / test / lint commands yet — Flutter and Dart are not installed in this environment, and `pubspec.yaml` does not exist.
 - Do **not** add entries to `.gitignore` for intermediate or temporary files during this phase; the user wants everything tracked while the project bootstraps. This rule will be revisited once Flutter is initialized.
-- Repo's local default branch is `master`; the main branch used for PRs is `main` (none of them have commits yet).
-- There is no GitHub remote activity yet beyond the empty repo at `https://github.com/cyphernet-labs/nox-app.git`.
+- Branch model: `master` holds release commits only; `develop` is the working branch for day-to-day development and where feature branches start. Routine work is committed to `develop`, not `master`.
+- The remote is `https://github.com/cyphernet-labs/nox-app.git`, hosting `master` and `develop`.
 
 ## Flutter Stack (Future, Not Yet Adopted)
 
@@ -47,3 +47,8 @@ Sibling Flutter projects under `../` (e.g. `mycitadel-flutter`, `ray-flutter`) u
 - Clean Architecture split across `lib/` (presentation), `domain/`, `data/` packages
 
 These conventions are **not yet binding** for NOX. Confirm with the user before adopting any specific dependency, architecture pattern or folder layout for this project.
+
+<!-- SPECKIT START -->
+For additional context about technologies to be used, project structure,
+shell commands, and other important information, read the current plan
+<!-- SPECKIT END -->

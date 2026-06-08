@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NOX · Flutter handoff package</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --primary:#006A6A; --on-primary:#fff; --surface:#F4FBFA; --on-surface:#161D1D;
+    --on-variant:#3F4948; --outline:#BEC9C8; --container:#E9EFEE; --container-low:#EFF5F4;
+    --container-lowest:#fff; --canvas:#0C2424; --mono:'Roboto Mono',ui-monospace,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--surface);color:var(--on-surface);
+    font-family:'Roboto',system-ui,sans-serif;line-height:1.5;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 24px 96px}
+
+  /* hero */
+  header.hero{background:var(--canvas);color:#FAFAFA;padding:64px 24px 56px;margin-bottom:0}
+  .hero-in{max-width:1080px;margin:0 auto}
+  .word{font-weight:700;letter-spacing:.12em;font-size:15px;color:#4CDADA}
+  .hero h1{font-size:44px;line-height:1.12;font-weight:400;margin:18px 0 14px;max-width:18ch}
+  .hero p{font-size:17px;color:#B0CCCB;max-width:62ch;margin:0}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:26px}
+  .chip{font-size:12.5px;font-weight:500;letter-spacing:.02em;padding:6px 12px;border-radius:999px;
+    border:1px solid #324B4A;color:#CCE8E7;background:#11302f}
+
+  section{margin-top:56px}
+  h2{font-size:13px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--primary);
+    margin:0 0 18px;padding-bottom:10px;border-bottom:1px solid var(--outline)}
+  h3{font-size:18px;font-weight:500;margin:28px 0 12px}
+  p.lead{font-size:15.5px;color:var(--on-variant);max-width:70ch;margin:0 0 8px}
+
+  /* file tree */
+  pre.tree{font-family:var(--mono);font-size:13px;line-height:1.7;background:var(--container-lowest);
+    border:1px solid var(--outline);border-radius:12px;padding:20px 22px;overflow:auto;margin:0;
+    color:var(--on-surface)}
+  pre.tree b{color:var(--primary);font-weight:500}
+  pre.tree i{color:var(--on-variant);font-style:normal}
+
+  /* consume cards */
+  .cards{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .card{background:var(--container-lowest);border:1px solid var(--outline);border-radius:12px;padding:22px 24px}
+  .card h4{margin:0 0 8px;font-size:16px;font-weight:500}
+  .card .tag{font-family:var(--mono);font-size:11px;color:var(--primary);letter-spacing:.04em}
+  .card p{margin:6px 0 0;font-size:14px;color:var(--on-variant)}
+  code{font-family:var(--mono);font-size:.92em;background:var(--container);padding:1px 6px;border-radius:5px}
+  pre.code{font-family:var(--mono);font-size:12.5px;line-height:1.6;background:var(--canvas);color:#CCE8E7;
+    border-radius:10px;padding:16px 18px;overflow:auto;margin:12px 0 0}
+  pre.code .k{color:#4CDADA}
+
+  /* swatch grids */
+  .scheme{display:grid;grid-template-columns:1fr 1fr;gap:28px}
+  .scheme h3{margin-top:0}
+  .swatches{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+  .sw{border-radius:10px;overflow:hidden;border:1px solid rgba(0,0,0,.08)}
+  .sw .chip-c{height:46px}
+  .sw .meta{padding:7px 10px;background:var(--container-lowest);border-top:1px solid var(--outline)}
+  .sw .nm{font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sw .hx{font-family:var(--mono);font-size:10.5px;color:var(--on-variant)}
+  .panel.dark{background:#0E1514;border:1px solid #2C3431;border-radius:14px;padding:18px}
+  .panel.dark .sw .meta{background:#1C2423;border-top-color:#2C3431}
+  .panel.dark .sw .nm{color:#DDE4E3}
+  .panel.dark .sw .hx{color:#BEC9C8}
+  .panel.light{background:var(--container-low);border:1px solid var(--outline);border-radius:14px;padding:18px}
+  .panel .lbl{font-size:12px;font-weight:500;letter-spacing:.1em;text-transform:uppercase;margin:0 0 14px;opacity:.7}
+  .panel.dark .lbl{color:#B0CCCB}
+  .panel.light .lbl{color:var(--on-variant)}
+
+  /* type */
+  .typerow{display:flex;align-items:baseline;gap:20px;padding:13px 0;border-bottom:1px solid var(--outline)}
+  .typerow .tk{font-family:var(--mono);font-size:12px;color:var(--primary);width:130px;flex:none}
+  .typerow .sz{font-family:var(--mono);font-size:11px;color:var(--on-variant);width:120px;flex:none}
+  .typerow .sample{flex:1;color:var(--on-surface);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+  /* token mini-grids */
+  .mini{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+  .mini .t{background:var(--container-lowest);border:1px solid var(--outline);border-radius:10px;padding:12px 14px}
+  .mini .t .n{font-family:var(--mono);font-size:12px;color:var(--primary)}
+  .mini .t .v{font-size:14px;font-weight:500;margin-top:3px}
+  .mini .t .u{font-size:12px;color:var(--on-variant)}
+  .radii{display:flex;flex-wrap:wrap;gap:18px;align-items:flex-end}
+  .radii .r{text-align:center}
+  .radii .box{width:60px;height:60px;background:var(--primary);opacity:.92}
+  .radii .cap{font-family:var(--mono);font-size:11px;color:var(--on-variant);margin-top:7px}
+
+  .foot{margin-top:64px;padding-top:22px;border-top:1px solid var(--outline);font-size:13px;color:var(--on-variant)}
+  @media(max-width:760px){.cards,.scheme{grid-template-columns:1fr}.hero h1{font-size:34px}.typerow{flex-wrap:wrap;gap:6px}.typerow .sz{width:auto}}
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="hero-in">
+    <div class="word">NOX</div>
+    <h1>Flutter handoff package</h1>
+    <p>The NOX design system, exported as machine-readable design tokens and ready-to-drop Flutter
+       code. Built for Material Design 3, light&nbsp;+&nbsp;dark. No screenshots — every value is
+       parseable by a token pipeline or a code generator.</p>
+    <div class="chips">
+      <span class="chip">W3C Design Tokens (DTCG)</span>
+      <span class="chip">Flutter / Material 3</span>
+      <span class="chip">Light + Dark</span>
+      <span class="chip">Generated from src/tokens.jsx</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <section>
+    <h2>Two ways to consume</h2>
+    <div class="cards">
+      <div class="card">
+        <div class="tag">tokens/*.tokens.json</div>
+        <h4>A · Generate from tokens</h4>
+        <p>Standards-compliant <b>W3C Design Tokens</b> JSON. Feed to Style Dictionary, Tokens Studio,
+           or a custom generator to emit Dart / Kotlin / Swift / CSS. <code>$metadata.json</code> gives load order.</p>
+      </div>
+      <div class="card">
+        <div class="tag">flutter/*.dart</div>
+        <h4>B · Drop in the Dart</h4>
+        <p>The same data already transformed to Flutter — <code>ColorScheme</code>, <code>TextTheme</code>,
+           <code>ThemeData</code> + token constants. Copy into <code>lib/theme/</code> and go.</p>
+        <pre class="code"><span class="k">MaterialApp</span>(
+  theme: noxLightTheme,
+  darkTheme: noxDarkTheme,
+  themeMode: ThemeMode.system,
+);</pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Package structure</h2>
+    <pre class="tree">nox-handoff/
+├── <b>README.md</b>                  <i>index + consumption guide</i>
+├── <b>tokens/</b>                    <i>W3C Design Tokens — source of truth</i>
+│   ├── $metadata.json         <i>token-set load order</i>
+│   ├── brand.tokens.json      <i>brand palette + brand-fixed (splash, QR)</i>
+│   ├── avatars.tokens.json    <i>deterministic avatar palette</i>
+│   ├── color.light.tokens.json
+│   ├── color.dark.tokens.json
+│   ├── typography.tokens.json <i>M3 type scale (composite)</i>
+│   ├── spacing.tokens.json    <i>4dp grid</i>
+│   ├── shape.tokens.json      <i>corner radii</i>
+│   ├── elevation.tokens.json  <i>dp levels</i>
+│   └── motion.tokens.json     <i>durations + easings</i>
+├── <b>flutter/</b>                   <i>ready-to-drop Dart</i>
+│   ├── nox_color_scheme.dart  <i>ColorScheme light + dark</i>
+│   ├── nox_text_theme.dart    <i>TextTheme</i>
+│   ├── nox_tokens.dart        <i>spacing / radius / elevation / motion</i>
+│   ├── nox_brand.dart         <i>brand colors + avatar hash + initials</i>
+│   └── nox_theme.dart         <i>ThemeData wiring tokens → M3</i>
+└── <b>spec/</b>                      <i>widget mapping + token bindings</i>
+    ├── components.md          <i>component → M3 widget → tokens</i>
+    ├── screens.md             <i>screen catalog + states</i>
+    └── icons.md               <i>icon map</i></pre>
+  </section>
+
+  <section>
+    <h2>Color · Material 3 ColorScheme</h2>
+    <p class="lead">Seed <code>#12B4B4</code> (brand teal), roles hand-tuned. Use the explicit
+       schemes, not <code>fromSeed</code>. Full role set in the JSON / Dart.</p>
+    <div class="scheme">
+      <div class="panel light"><div class="lbl">Light</div><div class="swatches" id="lightSw"></div></div>
+      <div class="panel dark"><div class="lbl">Dark</div><div class="swatches" id="darkSw"></div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Typography · M3 type scale</h2>
+    <p class="lead">Roboto (sans) / Roboto Mono (ID only). <code>lineHeight</code> exported as a
+       ratio → Flutter <code>TextStyle.height</code>.</p>
+    <div id="typeList"></div>
+  </section>
+
+  <section>
+    <h2>Shape, spacing, elevation, motion</h2>
+    <h3>Corner radii</h3>
+    <div class="radii" id="radii"></div>
+    <h3>Spacing · 4dp grid</h3>
+    <div class="mini" id="space"></div>
+    <h3>Elevation · dp levels</h3>
+    <div class="mini" id="elev"></div>
+    <h3>Motion · durations</h3>
+    <div class="mini" id="motion"></div>
+  </section>
+
+  <div class="foot">
+    Generated from <code>src/tokens.jsx</code> (canonical) and <code>uploads/design-system.md</code>.
+    For pixel reference open <b>NOX&nbsp;-&nbsp;Mobile.html</b> / <b>NOX&nbsp;-&nbsp;Desktop.html</b>.
+    Still to deliver: final logo SVG · app icon · 3 empty-state illustrations · ColorScheme tuning pass.
+  </div>
+</div>
+
+<script>
+const LIGHT={primary:'#006A6A',onPrimary:'#FFFFFF',primaryContainer:'#6FF7F6',secondary:'#4A6363',
+  secondaryContainer:'#CCE8E7',tertiary:'#6F5E00',tertiaryContainer:'#FAE08A',error:'#BA1A1A',
+  errorContainer:'#FFDAD6',surface:'#F4FBFA',surfaceContainerHigh:'#E3EAE9',onSurface:'#161D1D',
+  onSurfaceVariant:'#3F4948',outline:'#6F7979',inverseSurface:'#2B3231'};
+const DARK={primary:'#4CDADA',onPrimary:'#003737',primaryContainer:'#004F4F',secondary:'#B0CCCB',
+  secondaryContainer:'#324B4A',tertiary:'#DEC56B',tertiaryContainer:'#534619',error:'#FFB4AB',
+  errorContainer:'#93000A',surface:'#0E1514',surfaceContainerHigh:'#2C3431',onSurface:'#DDE4E3',
+  onSurfaceVariant:'#BEC9C8',outline:'#899393',inverseSurface:'#DDE4E3'};
+function swatches(el,scheme){
+  el.innerHTML=Object.entries(scheme).map(([k,v])=>`
+    <div class="sw"><div class="chip-c" style="background:${v}"></div>
+    <div class="meta"><div class="nm">${k}</div><div class="hx">${v}</div></div></div>`).join('');
+}
+swatches(document.getElementById('lightSw'),LIGHT);
+swatches(document.getElementById('darkSw'),DARK);
+
+const TYPE=[['displaySmall',36,44,400],['headlineSmall',24,32,400],['titleLarge',22,28,400],
+  ['titleMedium',16,24,500],['bodyLarge',16,24,400],['bodyMedium',14,20,400],
+  ['labelLarge',14,20,500],['labelMedium',12,16,500],['labelSmall',11,16,500]];
+document.getElementById('typeList').innerHTML=TYPE.map(([k,s,l,w])=>`
+  <div class="typerow"><div class="tk">${k}</div><div class="sz">${s}/${l} · ${w}</div>
+  <div class="sample" style="font-size:${Math.min(s,30)}px;font-weight:${w};line-height:1.2">The quick brown fox</div></div>`).join('');
+
+const SHAPE=[['none',0],['xs',4],['s',8],['m',12],['l',16],['xl',28],['full',28]];
+document.getElementById('radii').innerHTML=SHAPE.map(([k,r])=>`
+  <div class="r"><div class="box" style="border-radius:${k==='full'?'999px':r+'px'}"></div>
+  <div class="cap">${k} · ${k==='full'?'999':r}</div></div>`).join('');
+
+const SPACE=[['space/1',4],['space/2',8],['space/3',12],['space/4',16],['space/6',24],['space/8',32]];
+document.getElementById('space').innerHTML=SPACE.map(([n,v])=>`
+  <div class="t"><div class="n">${n}</div><div class="v">${v}<span class="u"> dp</span></div></div>`).join('');
+
+const ELEV=[['level/0','0 dp','AppBar, flat'],['level/1','1 dp','Card, list'],['level/2','3 dp','BottomBar, Search'],
+  ['level/3','6 dp','FAB, Banner'],['level/5','12 dp','Dialog, sheet']];
+document.getElementById('elev').innerHTML=ELEV.map(([n,v,u])=>`
+  <div class="t"><div class="n">${n}</div><div class="v">${v}</div><div class="u">${u}</div></div>`).join('');
+
+const MOT=[['splashIn','400 ms','emph-decel'],['push','300 ms','emphasized'],['tabFade','150 ms','standard'],
+  ['snackbarIn','150 ms','standard'],['snackbarOut','75 ms','standard'],['sheet','300 ms','emph-decel']];
+document.getElementById('motion').innerHTML=MOT.map(([n,v,u])=>`
+  <div class="t"><div class="n">${n}</div><div class="v">${v}</div><div class="u">${u}</div></div>`).join('');
+</script>
+</body>
+</html>

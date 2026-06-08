@@ -63,7 +63,6 @@ domain/build/
 
 #General
 /vendor
-memory
 
 #ios
 /ios/build
@@ -74,11 +73,3 @@ memory
 
 #flatpak
 /.flatpak-builder/
-distribute_commit.py
-promts
-.claude
-.clinerules
-memory-bank
-CLAUDE.md
-.specify
-specs/

@@ -1,0 +1,194 @@
+{
+  "$description": "NOX · M3 type scale. Family: Roboto (sans) / Roboto Mono (mono, ID only). lineHeight is the unitless ratio (M3 lineHeightPx ÷ fontSize) so it maps directly to Flutter TextStyle.height. letterSpacing in logical px.",
+  "font": {
+    "family": {
+      "sans": {
+        "$type": "fontFamily",
+        "$value": [
+          "Roboto",
+          "system-ui",
+          "sans-serif"
+        ]
+      },
+      "mono": {
+        "$type": "fontFamily",
+        "$value": [
+          "Roboto Mono",
+          "ui-monospace",
+          "monospace"
+        ],
+        "$description": "ID string only (7.1), break-all."
+      }
+    },
+    "weight": {
+      "regular": {
+        "$type": "fontWeight",
+        "$value": 400
+      },
+      "medium": {
+        "$type": "fontWeight",
+        "$value": 500
+      },
+      "bold": {
+        "$type": "fontWeight",
+        "$value": 700,
+        "$description": "Wordmark NOX only — letterSpacing +0.12em."
+      }
+    }
+  },
+  "typography": {
+    "displaySmall": {
+      "$type": "typography",
+      "$value": {
+        "fontFamily": "Roboto",
+        "fontSize": {
+          "value": 36,
+          "unit": "px"
+        },
+        "fontWeight": 400,
+        "letterSpacing": {
+          "value": 0,
+          "unit": "px"
+        },
+        "lineHeight": 1.2222
+      },
+      "$description": "Reserve. (M3 36/44). Flutter height=1.222 (=44/36)."
+    },
+    "headlineSmall": {
+      "$type": "typography",
+      "$value": {
+        "fontFamily": "Roboto",
+        "fontSize": {
+          "value": 24,
+          "unit": "px"
+        },
+        "fontWeight": 400,
+        "letterSpacing": {
+          "value": 0,
+          "unit": "px"
+        },
+        "lineHeight": 1.3333
+      },
+      "$description": "Empty-state heading; large chat-name header (5.4); AlertDialog title (Logout). (M3 24/32). Flutter height=1.333 (=32/24)."
+    },
+    "titleLarge": {
+      "$type": "typography",
+      "$value": {
+        "fontFamily": "Roboto",
+        "fontSize": {
+          "value": 22,
+          "unit": "px"
+        },
+        "fontWeight": 400,
+        "letterSpacing": {
+          "value": 0,
+          "unit": "px"
+        },
+        "lineHeight": 1.2727
+      },
+      "$description": "AppBar titles (chat name, Settings, New chat, file name). (M3 22/28). Flutter height=1.273 (=28/22)."
+    },
+    "titleMedium": {
+      "$type": "typography",
+      "$value": {
+        "fontFamily": "Roboto",
+        "fontSize": {
+          "value": 16,
+          "unit": "px"
+        },
+        "fontWeight": 500,
+        "letterSpacing": {
+          "value": 0.15,
+          "unit": "px"
+        },
+        "lineHeight": 1.5
+      },
+      "$description": "Chat name in list (5.1); author name in thread (5.2); file name in chip/cell. (M3 16/24). Flutter height=1.500 (=24/16)."
+    },
+    "bodyLarge": {
+      "$type": "typography",
+      "$value": {
+        "fontFamily": "Roboto",
+        "fontSize": {
+          "value": 16,
+          "unit": "px"
+        },
+        "fontWeight": 400,
+        "letterSpacing": {
+          "value": 0.5,
+          "unit": "px"
+        },
+        "lineHeight": 1.5
+      },
+      "$description": "Message text; input fields; ID mask/value (mono family). (M3 16/24). Flutter height=1.500 (=24/16)."
+    },
+    "bodyMedium": {
+      "$type": "typography",
+      "$value": {
+        "fontFamily": "Roboto",
+        "fontSize": {
+          "value": 14,
+          "unit": "px"
+        },
+        "fontWeight": 400,
+        "letterSpacing": {
+          "value": 0.25,
+          "unit": "px"
+        },
+        "lineHeight": 1.4286
+      },
+      "$description": "Last-message preview; helperText; file size; AlertDialog body. (M3 14/20). Flutter height=1.429 (=20/14)."
+    },
+    "labelLarge": {
+      "$type": "typography",
+      "$value": {
+        "fontFamily": "Roboto",
+        "fontSize": {
+          "value": 14,
+          "unit": "px"
+        },
+        "fontWeight": 500,
+        "letterSpacing": {
+          "value": 0.1,
+          "unit": "px"
+        },
+        "lineHeight": 1.4286
+      },
+      "$description": "Button labels (Sign in, Create, Done, Try again). (M3 14/20). Flutter height=1.429 (=20/14)."
+    },
+    "labelMedium": {
+      "$type": "typography",
+      "$value": {
+        "fontFamily": "Roboto",
+        "fontSize": {
+          "value": 12,
+          "unit": "px"
+        },
+        "fontWeight": 500,
+        "letterSpacing": {
+          "value": 0.5,
+          "unit": "px"
+        },
+        "lineHeight": 1.3333
+      },
+      "$description": "Tab labels; counters N/32, N/64. (M3 12/16). Flutter height=1.333 (=16/12)."
+    },
+    "labelSmall": {
+      "$type": "typography",
+      "$value": {
+        "fontFamily": "Roboto",
+        "fontSize": {
+          "value": 11,
+          "unit": "px"
+        },
+        "fontWeight": 500,
+        "letterSpacing": {
+          "value": 0.5,
+          "unit": "px"
+        },
+        "lineHeight": 1.4545
+      },
+      "$description": "Bubble timestamp; unread badge. (M3 11/16). Flutter height=1.455 (=16/11)."
+    }
+  }
+}
