@@ -1,0 +1,70 @@
+{
+  "name": "nox-assets",
+  "description": "NOX graphic resources — icons, brand assets, illustrations. Companion to nox-handoff (tokens + Flutter code). Machine-readable index of every visual asset and its status.",
+  "version": "0.1.0",
+  "icons": {
+    "type": "icon-set",
+    "set": "Material Symbols Rounded",
+    "style": { "weight": 400, "opticalSize": 24, "grade": 0, "defaultSizeDp": 24 },
+    "custom": false,
+    "manifest": "icons/icons.json",
+    "svgDir": "icons/svg",
+    "svgFormat": { "viewBox": "0 -960 960 960", "fill": "currentColor", "source": "@material-symbols/svg-400 (Apache-2.0)" },
+    "flutterPub": "material_symbols_icons",
+    "uniqueLigatures": 33,
+    "references": 38,
+    "svgFiles": 37,
+    "status": "ready"
+  },
+  "brand": [
+    {
+      "id": "logo",
+      "path": "brand/logo.png",
+      "format": "png",
+      "dimensions": "200x200",
+      "usage": "Splash 1.1 (168x168 on brand/canvasDark)",
+      "status": "placeholder-raster",
+      "note": "Final vector SVG (full-color on dark) still to be ordered — design-system.md §11."
+    },
+    {
+      "id": "logo-reference",
+      "path": "brand/logo-reference.png",
+      "format": "png",
+      "dimensions": "200x200",
+      "usage": "Moodboard / palette source (seed teal #12B4B4)",
+      "status": "reference-only"
+    },
+    {
+      "id": "app-icon",
+      "path": null,
+      "usage": "Launcher icon",
+      "status": "pending",
+      "note": "Not yet produced — derive from final logo."
+    },
+    {
+      "id": "wordmark",
+      "type": "type-treatment",
+      "text": "NOX",
+      "font": "System sans (Roboto / SF Pro) Bold 700",
+      "letterSpacing": "+0.12em",
+      "color": { "splash": "#FAFAFA", "appBar": "colorScheme.onSurface" },
+      "status": "spec-only"
+    }
+  ],
+  "illustrations": [
+    { "id": "empty-chats", "path": "illustrations/empty-chats.svg", "screen": "5.1", "fallbackIcon": "forum_outlined", "status": "placeholder" },
+    { "id": "empty-messages", "path": "illustrations/empty-messages.svg", "screen": "5.2", "fallbackIcon": "chat_bubble_outline", "status": "placeholder" },
+    { "id": "empty-files", "path": "illustrations/empty-files.svg", "screen": "5.4", "fallbackIcon": "folder_open", "status": "placeholder" }
+  ],
+  "brandFixedColors": {
+    "note": "Theming exceptions — defined in ../nox-handoff/tokens/brand.tokens.json",
+    "splashBackground": "#0C2424",
+    "qrSurface": "#FFFFFF",
+    "qrInk": "#0C0C0C"
+  },
+  "pending": [
+    "Final logo SVG (full-color on dark)",
+    "App launcher icon",
+    "3 empty-state illustrations (chats / messages / files)"
+  ]
+}

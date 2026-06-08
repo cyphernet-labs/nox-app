@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NOX · Assets</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --primary:#006A6A; --surface:#F4FBFA; --on-surface:#161D1D; --on-variant:#3F4948;
+    --outline:#BEC9C8; --container:#E9EFEE; --container-lowest:#fff; --canvas:#0C2424;
+    --mono:'Roboto Mono',ui-monospace,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--surface);color:var(--on-surface);
+    font-family:'Roboto',system-ui,sans-serif;line-height:1.5;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 24px 96px}
+
+  header.hero{background:var(--canvas);color:#FAFAFA;padding:56px 24px 48px}
+  .hero-in{max-width:1080px;margin:0 auto}
+  .word{font-weight:700;letter-spacing:.12em;font-size:15px;color:#4CDADA}
+  .hero h1{font-size:40px;line-height:1.12;font-weight:400;margin:16px 0 12px}
+  .hero p{font-size:16px;color:#B0CCCB;max-width:60ch;margin:0}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:24px}
+  .chip{font-size:12.5px;font-weight:500;padding:6px 12px;border-radius:999px;border:1px solid #324B4A;color:#CCE8E7;background:#11302f}
+
+  section{margin-top:52px}
+  h2{font-size:13px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--primary);margin:0 0 6px;padding-bottom:10px;border-bottom:1px solid var(--outline)}
+  .sub{font-size:14px;color:var(--on-variant);margin:0 0 20px;max-width:72ch}
+  h3{font-size:12px;font-weight:500;letter-spacing:.1em;text-transform:uppercase;color:var(--on-variant);margin:26px 0 12px}
+  code{font-family:var(--mono);font-size:.9em;background:var(--container);padding:1px 6px;border-radius:5px}
+
+  .igrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:10px}
+  .icell{background:var(--container-lowest);border:1px solid var(--outline);border-radius:12px;
+    padding:16px 10px 11px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:9px}
+  .icell .gly{width:34px;height:34px;color:var(--on-surface);display:flex;align-items:center;justify-content:center}
+  .icell .gly img{width:30px;height:30px;display:block}
+  .icell .nm{font-family:var(--mono);font-size:10.5px;color:var(--on-variant);word-break:break-word;line-height:1.3}
+
+  .gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px}
+  .acard{border:1px solid var(--outline);border-radius:14px;overflow:hidden;background:var(--container-lowest)}
+  .acard .frame{height:180px;display:flex;align-items:center;justify-content:center}
+  .acard .frame.dark{background:var(--canvas)}
+  .acard .frame.tile{background:
+    linear-gradient(45deg,#e4ecea 25%,transparent 25%),linear-gradient(-45deg,#e4ecea 25%,transparent 25%),
+    linear-gradient(45deg,transparent 75%,#e4ecea 75%),linear-gradient(-45deg,transparent 75%,#e4ecea 75%);
+    background-size:18px 18px;background-position:0 0,0 9px,9px -9px,-9px 0}
+  .acard img,.acard svg{max-width:70%;max-height:74%}
+  .acard .meta{padding:12px 15px;border-top:1px solid var(--outline)}
+  .acard .meta .t{font-size:14px;font-weight:500}
+  .acard .meta .d{font-size:12px;color:var(--on-variant);margin-top:2px}
+  .acard .meta .badge{display:inline-block;margin-top:8px;font-family:var(--mono);font-size:10px;
+    letter-spacing:.04em;padding:3px 8px;border-radius:6px;text-transform:uppercase}
+  .badge.ready{background:#CCE8E7;color:#053f3e}
+  .badge.placeholder{background:#FAE08A;color:#3a2f00}
+  .badge.pending{background:#FFDAD6;color:#5c0d10}
+  .badge.ref{background:var(--container);color:var(--on-variant)}
+
+  .wordmark{background:var(--canvas);border-radius:14px;padding:40px;text-align:center;margin-top:8px}
+  .wordmark .w{font-weight:700;letter-spacing:.12em;font-size:52px;color:#FAFAFA}
+  .wordmark .c{font-family:var(--mono);font-size:12px;color:#7FA09F;margin-top:14px}
+
+  .foot{margin-top:60px;padding-top:22px;border-top:1px solid var(--outline);font-size:13px;color:var(--on-variant)}
+  @media(max-width:600px){.hero h1{font-size:30px}}
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="hero-in">
+    <div class="word">NOX</div>
+    <h1>Assets</h1>
+    <p>Icons, brand assets and illustrations for NOX. Companion to the
+       <code style="background:#11302f;color:#CCE8E7;border:1px solid #324B4A">nox-handoff</code>
+       token + Flutter package. Status of every asset is in <code style="background:#11302f;color:#CCE8E7;border:1px solid #324B4A">manifest.json</code>.</p>
+    <div class="chips">
+      <span class="chip">33 icons · Material Symbols Rounded</span>
+      <span class="chip">Brand</span>
+      <span class="chip">3 illustration placeholders</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <section>
+    <h2>Icons</h2>
+    <p class="sub">Real <b>SVG files</b> in <code>icons/svg/</code> — stock <b>Material Symbols Rounded</b>
+       (weight 400, viewBox 0&nbsp;-960&nbsp;960&nbsp;960, <code>fill="currentColor"</code>), no custom glyphs.
+       Outlined vs filled = the FILL axis (<code>name.svg</code> / <code>name-fill.svg</code>).
+       Flutter constants + per-icon mapping in <code>icons/icons.json</code>.</p>
+    <div id="icons"></div>
+  </section>
+
+  <section>
+    <h2>Brand</h2>
+    <p class="sub">The logo is a raster placeholder; final vector SVG + app launcher icon still to be ordered.</p>
+    <div class="gallery">
+      <div class="acard">
+        <div class="frame dark"><img src="brand/logo.png" alt="NOX logo" /></div>
+        <div class="meta"><div class="t">logo.png</div><div class="d">200×200 · splash 1.1 (168px on #0C2424)</div>
+          <span class="badge placeholder">placeholder-raster</span></div>
+      </div>
+      <div class="acard">
+        <div class="frame dark"><img src="brand/logo-reference.png" alt="logo reference" /></div>
+        <div class="meta"><div class="t">logo-reference.png</div><div class="d">Moodboard / palette source (seed #12B4B4)</div>
+          <span class="badge ref">reference-only</span></div>
+      </div>
+      <div class="acard">
+        <div class="frame tile"><span style="font-family:var(--mono);font-size:13px;color:#9aa4a3;letter-spacing:.04em">PENDING</span></div>
+        <div class="meta"><div class="t">app-icon</div><div class="d">Launcher icon — derive from final logo</div>
+          <span class="badge pending">pending</span></div>
+      </div>
+    </div>
+    <h3>Wordmark</h3>
+    <div class="wordmark">
+      <div class="w">NOX</div>
+      <div class="c">System sans · Bold 700 · letter-spacing +0.12em · #FAFAFA on #0C2424</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Illustrations</h2>
+    <p class="sub">Empty-state art (placeholders). Spec: light line / brushstroke, contour
+       <code>onSurfaceVariant</code> + brand teal/gold accents, transparent, ~120–160 tall, reads on light &amp; dark.</p>
+    <div class="gallery">
+      <div class="acard">
+        <div class="frame tile"><img src="illustrations/empty-chats.svg" alt="empty chats" /></div>
+        <div class="meta"><div class="t">empty-chats.svg</div><div class="d">5.1 no chats · fallback forum_outlined</div>
+          <span class="badge placeholder">placeholder</span></div>
+      </div>
+      <div class="acard">
+        <div class="frame tile"><img src="illustrations/empty-messages.svg" alt="empty messages" /></div>
+        <div class="meta"><div class="t">empty-messages.svg</div><div class="d">5.2 no messages · fallback chat_bubble_outline</div>
+          <span class="badge placeholder">placeholder</span></div>
+      </div>
+      <div class="acard">
+        <div class="frame tile"><img src="illustrations/empty-files.svg" alt="empty files" /></div>
+        <div class="meta"><div class="t">empty-files.svg</div><div class="d">5.4 no files · fallback folder_open</div>
+          <span class="badge placeholder">placeholder</span></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="foot">
+    Icons render with the Material Symbols Rounded webfont. Brand-fixed colors (splash, QR) live as
+    tokens in <code>../nox-handoff/tokens/brand.tokens.json</code>.
+  </div>
+</div>
+
+<script>
+// [displayLabel, svgFile] — renders the actual shipped SVG files from icons/svg/.
+const GROUPS={
+  Navigation:[['forum','forum-fill.svg'],['forum · outlined','forum.svg'],['settings','settings-fill.svg'],['settings · outlined','settings.svg'],['add','add.svg']],
+  Actions:[['arrow_back','arrow_back.svg'],['content_paste','content_paste.svg'],['qr_code_scanner','qr_code_scanner.svg'],['attach_file','attach_file.svg'],['send','send-fill.svg'],['flashlight_on','flashlight_on-fill.svg'],['flashlight_off','flashlight_off.svg'],['cameraswitch','cameraswitch.svg'],['search','search.svg'],['visibility','visibility.svg'],['visibility_off','visibility_off.svg'],['content_copy','content_copy.svg'],['qr_code','qr_code.svg'],['download','download.svg'],['edit','edit.svg'],['close','close.svg']],
+  Status:[['schedule','schedule.svg'],['check','check.svg'],['error · outlined','error.svg']],
+  'File types':[['image','image.svg'],['videocam','videocam.svg'],['music_note','music_note.svg'],['picture_as_pdf','picture_as_pdf.svg'],['description','description.svg'],['table_chart','table_chart.svg'],['article','article.svg'],['folder_zip','folder_zip.svg'],['draft','draft.svg']],
+  'Empty states':[['chat_bubble · outlined','chat_bubble.svg'],['folder_open','folder_open.svg']]
+};
+const host=document.getElementById('icons');
+for(const [g,arr] of Object.entries(GROUPS)){
+  const h=document.createElement('h3'); h.textContent=g; host.appendChild(h);
+  const grid=document.createElement('div'); grid.className='igrid';
+  grid.innerHTML=arr.map(([label,file])=>`<div class="icell"><span class="gly"><img src="icons/svg/${file}" alt="${label}" /></span><span class="nm">${label}</span></div>`).join('');
+  host.appendChild(grid);
+}
+</script>
+</body>
+</html>
