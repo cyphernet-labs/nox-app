@@ -1,14 +1,14 @@
 # 06 — Темизация и дизайн-токены
 
-> **Назначение:** канонический контракт темизации Speech AI Mobile — светлая и тёмная темы через `ThemeExtension<AppColors>`, сборка `AppTheme.light()/dark()`, четыре класса дизайн-токенов (отзывчивые отступы на `flutter_screenutil`, цвето-инъецирующие текстовые стили, overlay-стили, пути ассетов) и поддерживающий слой `lib/general/` (Constants, PlatformUtils, форматтеры). Цвет приходит только из `AppColors`-расширения темы (`context.appColors`); все прочие токены — статические классы. Сырые `Color`/`EdgeInsets`/`TextStyle`/`SystemUiOverlayStyle` в коде фич запрещены.
-> **Когда читать:** при настройке внешнего вида приложения — сборка темы для `MaterialApp`, подключение токенов вместо «магических» значений, форматирование чисел и дат; перед реализацией любого экрана (первый реальный экран — список записей `records`).
+> **Назначение:** канонический контракт темизации NOX — светлая и тёмная темы через `ThemeExtension<AppColors>`, сборка `AppTheme.light()/dark()`, четыре класса дизайн-токенов (отзывчивые отступы на `flutter_screenutil`, цвето-инъецирующие текстовые стили, overlay-стили, пути ассетов) и поддерживающий слой `lib/general/` (Constants, PlatformUtils, форматтеры). Цвет приходит только из `AppColors`-расширения темы (`context.appColors`); все прочие токены — статические классы. Сырые `Color`/`EdgeInsets`/`TextStyle`/`SystemUiOverlayStyle` в коде фич запрещены.
+> **Когда читать:** при настройке внешнего вида приложения — сборка темы для `MaterialApp`, подключение токенов вместо «магических» значений, форматирование чисел и дат; перед реализацией любого экрана (первый реальный экран — список чатов).
 > **Связанные документы:** `05-presentation-layer.md` (где `AppTheme.light()/dark()` потребляются `MaterialApp` под управлением `AppRootBloc`, и где живёт `AppRootBloc` с `themeMode`), `00-architecture-overview.md` (раскладка single-package), `01-stack-and-tooling.md` (зависимости `flutter_screenutil`, `intl`, опциональный `flutter_svg`), `02-dependency-injection.md` (регистрация `@lazySingleton ValueFormatter`), `08-conventions-and-constitution.md` (дисциплина именования и правило «только токены»).
 
 ---
 
 ## 0. Где всё лежит
 
-Темизация и дизайн-токены живут в `lib/design/`, поддерживающие утилиты — в `lib/general/`. Обе папки — части единого пакета `speech_ai_mobile`; никаких отдельных пакетов или path-зависимостей (см. `00-architecture-overview.md`).
+Темизация и дизайн-токены живут в `lib/design/`, поддерживающие утилиты — в `lib/general/`. Обе папки — части единого пакета `nox_app`; никаких отдельных пакетов или path-зависимостей (см. `00-architecture-overview.md`).
 
 ```
 lib/
@@ -29,7 +29,7 @@ lib/
         └── date_formatter.dart         # static DateFormat-хелперы
 ```
 
-Архитектурное решение по темизации в этом блюпринте — **гибрид**: механизм светлой/тёмной темы взят из варианта `migration_v1` (`ThemeExtension<AppColors>` + `AppTheme.light()/dark()` + `context.appColors` + `themeMode` из app-level BLoC), а конкретные **значения палитры** и **отзывчивые токены отступов/типографики на `flutter_screenutil`** + `AppOverlayStyleTokens` взяты из BASE-подхода (`migration`). Ниже это явно отмечено в каждом разделе.
+Архитектурное решение по темизации в этом блюпринте: механизм светлой/тёмной темы — `ThemeExtension<AppColors>` + `AppTheme.light()/dark()` + `context.appColors` + `themeMode` из app-level BLoC; значения палитры и отзывчивые токены отступов/типографики строятся на `flutter_screenutil`, плюс `AppOverlayStyleTokens` для overlay-стилей. Ниже каждый из этих элементов разобран в своём разделе. Конкретные дизайн-токены NOX (палитра, типографика, размеры) поставляются дизайн-системой и живут в `docs/design/system/nox-handoff/`; раздел 1 ниже даёт пример наполнения, которое замещается реальными значениями из хэндофа.
 
 > **Где живёт цвет.** Никакого отдельного публичного класса-палитры цветов нет — единственный канал доступа к цвету в коде фич это `context.appColors.xxx` (`AppColors`-расширение темы). Сырые значения цвета объявляются **только** внутри файла темы `lib/design/theme/app_colors.dart` (раздел 1 — приватная палитра внутри этого файла), откуда `LightAppColors`/`DarkAppColors` мапят их в семантические роли. Статические классы-токены (`AppSpacingTokens`/`AppTextStyleTokens`/`AppOverlayStyleTokens`/`AppImagesTokens`) — для не-цветовых измерений.
 
@@ -39,7 +39,7 @@ lib/
 
 ## 1. Палитра-источник — приватные значения внутри файла темы
 
-Это **сырая** палитра (значения из BASE): плоские `static const Color` внутри файла темы `lib/design/theme/app_colors.dart`. Это **не** публичный класс-токен — это приватный набор констант (`_PaletteColors`) в одном файле с `AppColors`, из которого `LightAppColors` / `DarkAppColors` (раздел 2) собирают семантические темы. Держите здесь нейтральный ramp `tint1..tint10` (от светлого к тёмному) и семантические цвета (`error`/`green`/`link`), плюс `white`/`black`/`transparent`.
+Это **сырая** палитра: плоские `static const Color` внутри файла темы `lib/design/theme/app_colors.dart`. Это **не** публичный класс-токен — это приватный набор констант (`_PaletteColors`) в одном файле с `AppColors`, из которого `LightAppColors` / `DarkAppColors` (раздел 2) собирают семантические темы. Держите здесь нейтральный ramp `tint1..tint10` (от светлого к тёмному) и семантические цвета (`error`/`green`/`link`), плюс `white`/`black`/`transparent`.
 
 **Файл:** `lib/design/theme/app_colors.dart` (та же библиотека, что и `AppColors` ниже)
 
@@ -82,7 +82,7 @@ class _PaletteColors {
 
 ## 2. Паттерн `ThemeExtension` — механизм светлой/тёмной темы
 
-Flutter `ThemeExtension<T>` навешивает типизированные, зависящие от режима темы свойства на `ThemeData`. Это **механизм из `migration_v1`**, который заменяет одно-темовый подход BASE: вместо единственного `getAppTheme()` мы строим две `ThemeData` (`light`/`dark`) и переключаемся через `themeMode`.
+Flutter `ThemeExtension<T>` навешивает типизированные, зависящие от режима темы свойства на `ThemeData`. Это несущий механизм темизации в этом блюпринте: вместо единственной `ThemeData` мы строим две (`light`/`dark`) и переключаемся через `themeMode`.
 
 Паттерн состоит из пяти частей в одном файле:
 
@@ -214,7 +214,7 @@ extension AppColorsExtension on BuildContext {
 
 ## 3. Сборка темы — `AppTheme`
 
-Один класс с приватным конструктором строит `light()` и `dark()` `ThemeData`. Каждый стартует от Material 3 базы (`useMaterial3: true`), задаёт `brightness` + `colorSchemeSeed`, переопределяет встроенные слоты темы и **регистрирует** оба наших расширения через `extensions: [...]` (Light-вариант в `light()`, Dark — в `dark()`). На **обеих** темах задаётся `pageTransitionsTheme` с Cupertino-переходами и для iOS, и для Android (из BASE-темы) — единый платформенно-нативный жест перехода.
+Один класс с приватным конструктором строит `light()` и `dark()` `ThemeData`. Каждый стартует от Material 3 базы (`useMaterial3: true`), задаёт `brightness` + `colorSchemeSeed`, переопределяет встроенные слоты темы и **регистрирует** оба наших расширения через `extensions: [...]` (Light-вариант в `light()`, Dark — в `dark()`). На **обеих** темах задаётся `pageTransitionsTheme` с Cupertino-переходами и для iOS, и для Android — единый платформенно-нативный жест перехода.
 
 Сырые значения цвета, нужные для встроенных слотов `ThemeData` (`scaffoldBackgroundColor`, `appBarTheme.*`), берутся напрямую из `context.appColors`-варианта через инстансы `LightAppColors()` / `DarkAppColors()` — единый источник, без дублирования hex-литералов в `app_theme.dart`.
 
@@ -223,8 +223,8 @@ extension AppColorsExtension on BuildContext {
 ```dart
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:speech_ai_mobile/design/app_text_style_tokens.dart';
-import 'package:speech_ai_mobile/design/theme/app_colors.dart';
+import 'package:nox_app/design/app_text_style_tokens.dart';
+import 'package:nox_app/design/theme/app_colors.dart';
 
 /// Centralized theme assembly. Composes a Material 3 base with the custom
 /// AppColors ThemeExtension and built-in theme-slot overrides.
@@ -294,6 +294,10 @@ class AppTheme {
 - Каждое кастомное `ThemeExtension` регистрируется в **обоих** методах (`Light*` в `light()`, `Dark*` в `dark()`). Забыть один вариант — значит получить рантайм-исключение `context.appColors` в этом режиме (из-за `!`).
 - `colorSchemeSeed` выводится из одного и того же семантического `link` обеих тем — Material 3 сам выводит из seed согласованные светлый и тёмный `ColorScheme`. Наши семантические цвета поверх него идут через `AppColors`.
 
+> **Инвариант кросс-платформенной темы.** Единая Material 3 тема из одного teal-seed на всех 5 платформах (iOS, Android, Windows, Linux, macOS); `yaru` / платформенные desktop-темы НЕ используются. (В примере выше seed берётся из placeholder-`link`; реальный seed — teal из `nox-handoff`.)
+
+> **Цвета desktop `NavigationRail`.** Selected-indicator и labels десктопного `NavigationRail` берутся из стокового M3 `ColorScheme` (`secondaryContainer` / `onSecondaryContainer`) — новой роли в `AppColors` не нужно.
+
 ### 3.1 Потребление в `MaterialApp`
 
 Полная сборка root-виджета — в `05-presentation-layer.md`. `AppRootBloc` (он же app-level BLoC) держит `themeMode` в своём состоянии; `MaterialApp` читает обе темы статически и переключается реактивно:
@@ -361,7 +365,7 @@ MediaQuery(                                          // (1) снаружи: уб
 
 ## 4. Дизайн-токены — отзывчивые отступы (`AppSpacingTokens`)
 
-Токены отступов — **отзывчивый `sN`-масштаб из BASE**: каждое значение умножается на кэшированный `_scale`, выведенный из `flutter_screenutil` (среднее `scaleWidth` и `scaleHeight`; полный механизм скейла — §3.2). Это даёт пропорциональные отступы на разных размерах экранов при дизайн-размере `360x779`. Именование: `sN`, где `N` — базовое пиксельное значение. Все `EdgeInsets`/`SizedBox`/`gap` в коде фич ссылаются на токен, а не на литерал.
+Токены отступов — **отзывчивый `sN`-масштаб**: каждое значение умножается на кэшированный `_scale`, выведенный из `flutter_screenutil` (среднее `scaleWidth` и `scaleHeight`; полный механизм скейла — §3.2). Это даёт пропорциональные отступы на разных размерах экранов при дизайн-размере `360x779`. Именование: `sN`, где `N` — базовое пиксельное значение. Все `EdgeInsets`/`SizedBox`/`gap` в коде фич ссылаются на токен, а не на литерал.
 
 **Файл:** `lib/design/app_spacing_tokens.dart`
 
@@ -429,14 +433,14 @@ Padding(
 
 ## 5. Дизайн-токены — текстовые стили (`AppTextStyleTokens`)
 
-Текстовые стили — **цвето-инъецирующие фабрики из BASE** (НЕ `const`-поля): каждый метод принимает обязательный `Color color`, использует фиксированное семейство `_fontFamily = 'AppFont'` и масштабирует `fontSize`/`height` через `ScreenUtil().scaleText` (берёт меньший из факторов width/height благодаря `minTextAdapt: true`, см. §3.2). Цвет не зашит в стиль — он передаётся на месте вызова (обычно из `context.appColors.xxx`), что делает стиль независимым от темы. Поверх фабрик добавлено **аддитивное расширение из `migration_v1`** (`extension on TextStyle`) с мутациями `withPrimaryColor` / `withSecondaryColor` / `withMonospace` для сокращения `copyWith`-бойлерплейта.
+Текстовые стили — **цвето-инъецирующие фабрики** (НЕ `const`-поля): каждый метод принимает обязательный `Color color`, использует фиксированное семейство `_fontFamily = 'AppFont'` и масштабирует `fontSize`/`height` через `ScreenUtil().scaleText` (берёт меньший из факторов width/height благодаря `minTextAdapt: true`, см. §3.2). Цвет не зашит в стиль — он передаётся на месте вызова (обычно из `context.appColors.xxx`), что делает стиль независимым от темы. Поверх фабрик добавлено **аддитивное расширение** (`extension on TextStyle`) с мутациями `withPrimaryColor` / `withSecondaryColor` / `withMonospace` для сокращения `copyWith`-бойлерплейта.
 
 **Файл:** `lib/design/app_text_style_tokens.dart`
 
 ```dart
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:speech_ai_mobile/design/theme/app_colors.dart';
+import 'package:nox_app/design/theme/app_colors.dart';
 
 /// Color-injecting text-style factories. Color is a REQUIRED parameter
 /// (pass context.appColors.xxx at the call site) so styles stay theme-agnostic.
@@ -522,7 +526,7 @@ Text('123.45', style: AppTextStyleTokens.body2(color: context.appColors.textPrim
 
 ## 6. Дизайн-токены — overlay-стили (`AppOverlayStyleTokens`)
 
-Четвёртый класс токенов (из BASE) — `static const SystemUiOverlayStyle` для статус-бара и системного навбара. Сырой `SystemUiOverlayStyle` в коде фич запрещён — задавайте overlay только через эти константы (обычно в `AnnotatedRegion` или `SystemChrome.setSystemUIOverlayStyle`). Сами значения цвета (системный навбар, прозрачный статус-бар) — `const Color`-литералы внутри этого файла токенов, что разрешено правилом §9 для файлов токенов.
+Четвёртый класс токенов — `static const SystemUiOverlayStyle` для статус-бара и системного навбара. Сырой `SystemUiOverlayStyle` в коде фич запрещён — задавайте overlay только через эти константы (обычно в `AnnotatedRegion` или `SystemChrome.setSystemUIOverlayStyle`). Сами значения цвета (системный навбар, прозрачный статус-бар) — `const Color`-литералы внутри этого файла токенов, что разрешено правилом §9 для файлов токенов.
 
 **Файл:** `lib/design/app_overlay_style_tokens.dart`
 
@@ -557,7 +561,7 @@ class AppOverlayStyleTokens {
 
 ## 7. Дизайн-токены — пути ассетов (`AppImagesTokens`)
 
-Пятый класс токенов (из `migration_v1`) — статические строковые константы путей к ассетам, сгруппированные по категориям. Единый источник истины для каждой ссылки на ассет — никаких строковых литералов путей, разбросанных по виджетам. PNG рендерится встроенным `Image.asset` (без доп. зависимостей); для SVG — опциональный `flutter_svg` (см. `01-stack-and-tooling.md`) и `SvgPicture.asset(...)`.
+Пятый класс токенов — статические строковые константы путей к ассетам, сгруппированные по категориям. Единый источник истины для каждой ссылки на ассет — никаких строковых литералов путей, разбросанных по виджетам. PNG рендерится встроенным `Image.asset` (без доп. зависимостей); для SVG — опциональный `flutter_svg` (см. `01-stack-and-tooling.md`) и `SvgPicture.asset(...)`.
 
 **Файл:** `lib/design/app_images_tokens.dart`
 
@@ -592,7 +596,7 @@ Image.asset(AppImagesTokens.iconHome);
 
 ## 8. Поддерживающий слой `lib/general/`
 
-Вспомогательные синглтоны и утилиты, не относящиеся ни к одному конкретному экрану. Все классы-токены и утилиты здесь имеют **явный приватный конструктор `._()`** (дисциплина из `migration_v1`) — они никогда не инстанцируются, доступ только статический (кроме `@lazySingleton ValueFormatter`, который резолвится через `getIt`).
+Вспомогательные синглтоны и утилиты, не относящиеся ни к одному конкретному экрану. Все классы-токены и утилиты здесь имеют **явный приватный конструктор `._()`** — они никогда не инстанцируются, доступ только статический (кроме `@lazySingleton ValueFormatter`, который резолвится через `getIt`).
 
 ### 8.1 Constants
 
@@ -608,13 +612,14 @@ final class Constants {
   Constants._();
 
   /// General config
-  static const databaseName = 'speech_ai_mobile_db';
+  static const databaseName = 'nox_app_db';
   static const defaultLocale = 'en_US';
 
   /// UI
   static const defaultNavTransitionTimeMilliseconds = 300;
   static const preventDoubleNavDelayMilliseconds = 300;
   static const designSize = Size(360, 779); // flutter_screenutil reference
+  static const double railBreakpoint = 840; // M3 medium→expanded; bottom-bar ↔ NavigationRail
 
   /// Validation patterns (compile once as static final RegExp)
   static final emailRegex = RegExp(
@@ -634,9 +639,11 @@ if (!Constants.emailRegex.hasMatch(email)) {
 }
 ```
 
+> **`railBreakpoint` — единственный источник истины для брейкпоинта оболочки.** `Constants.railBreakpoint = 840` (M3-граница medium→expanded) — единственная точка, по которой оболочка переключается между нижним баром (`bottom-bar`) и боковым `NavigationRail`. Значение совпадает с desktop-классом окна expanded (любое десктоп-окно `≥ 840dp` попадает в expanded; FUTURE-канвас `1440×900` — тоже expanded), так что один и тот же порог обслуживает и адаптивную мобильную раскладку, и десктоп.
+
 ### 8.2 PlatformUtils
 
-Оборачивает проверки `dart:io` `Platform` за маленьким статическим хелпером — платформенное ветвление централизовано и легко грепается. Для мобильного приложения практически всё пойдёт через `isMobile`, но десктоп-геттеры оставлены для совместимости (например, отладочные сборки на macOS).
+Оборачивает проверки `dart:io` `Platform` за маленьким статическим хелпером — платформенное ветвление централизовано и легко грепается. На мобильных таргетах основной путь — `isMobile`; десктоп-геттеры (`isDesktop` / `isMacOS` / …) используются на десктопных таргетах (Windows/Linux/macOS), которые входят в scope (конституция v1.1.0).
 
 **Файл:** `lib/general/platform_utils.dart`
 
@@ -672,8 +679,8 @@ class PlatformUtils {
 ```dart
 import 'package:injectable/injectable.dart';
 import 'package:intl/intl.dart';
-import 'package:speech_ai_mobile/domain/repository/settings/settings_repository.dart';
-import 'package:speech_ai_mobile/domain/model/settings/settings_formatting_model.dart';
+import 'package:nox_app/domain/repository/settings/settings_repository.dart';
+import 'package:nox_app/domain/model/settings/settings_formatting_model.dart';
 
 /// Formats numeric values with locale-aware separators using intl's NumberFormat.
 /// Stateful: watches the settings repository so the active locale stays current.
@@ -750,8 +757,8 @@ class DateFormatter {
 **Файл:** `lib/presentation/extension/value_formatter_ext.dart`
 
 ```dart
-import 'package:speech_ai_mobile/di/configure_dependencies.dart';
-import 'package:speech_ai_mobile/general/formatters/value_formatter.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/general/formatters/value_formatter.dart';
 
 extension NumFormatterExt on num {
   String toFormattedString({int precision = 2, String? unit}) {
@@ -769,7 +776,7 @@ extension NumFormatterExt on num {
 
 ```dart
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speech_ai_mobile/general/formatters/value_formatter.dart';
+import 'package:nox_app/general/formatters/value_formatter.dart';
 
 void main() {
   late ValueFormatter formatter;
@@ -816,12 +823,12 @@ void main() {
 
 ```dart
 import 'package:flutter/material.dart';
-import 'package:speech_ai_mobile/design/app_spacing_tokens.dart';
-import 'package:speech_ai_mobile/design/app_text_style_tokens.dart';
-import 'package:speech_ai_mobile/design/theme/app_colors.dart';
-import 'package:speech_ai_mobile/general/formatters/date_formatter.dart';
-import 'package:speech_ai_mobile/presentation/extension/value_formatter_ext.dart';
-import 'package:speech_ai_mobile/domain/model/item/item_model.dart';
+import 'package:nox_app/design/app_spacing_tokens.dart';
+import 'package:nox_app/design/app_text_style_tokens.dart';
+import 'package:nox_app/design/theme/app_colors.dart';
+import 'package:nox_app/general/formatters/date_formatter.dart';
+import 'package:nox_app/presentation/extension/value_formatter_ext.dart';
+import 'package:nox_app/domain/model/item/item_model.dart';
 
 Widget buildItemRow(BuildContext context, ItemModel item) {
   return Container(

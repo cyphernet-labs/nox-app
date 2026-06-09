@@ -1,19 +1,19 @@
 # 09 — Сборка, секреты и CI
 
-> **Назначение:** превратить пустой плейсхолдер `sources/mobile_app/` в воспроизводимо собираемый и публикуемый проект с **нулём секретов в репозитории**. Описывает production-grade инфраструктуру: FVM (пин SDK), mise (пины инструментов + граф задач), SOPS + age (шифрованные секреты), Android Gradle flavors, iOS xcconfig/schemes, тонкий Makefile, релизный поток (CalVer + shifted-epoch) и GitHub Actions CI.
-> **Когда читать:** когда вы развернули дерево исходников (см. `11-scaffolding-plan.md`) и нужно сделать его собираемым/тестируемым на машине и в CI; перед первой сборкой stage/prod APK/IPA; при онбординге проекта `mobile_app` в монорепозиторную CI/CD-политику.
+> **Назначение:** превратить пустой плейсхолдер `lib/` в воспроизводимо собираемый и публикуемый проект с **нулём секретов в репозитории**. Описывает production-grade инфраструктуру: FVM (пин SDK), mise (пины инструментов + граф задач), SOPS + age (шифрованные секреты), Android Gradle flavors, iOS xcconfig/schemes, тонкий Makefile, релизный поток (CalVer + shifted-epoch) и GitHub Actions CI.
+> **Когда читать:** когда вы развернули дерево исходников (см. `11-scaffolding-plan.md`) и нужно сделать его собираемым/тестируемым на машине и в CI; перед первой сборкой stage/prod APK/IPA; при онбординге проекта NOX в CI/CD-политику.
 > **Связанные документы:** `01-stack-and-tooling.md` (версии инструментов, `analysis_options.yaml`, `build.yaml`), `02-dependency-injection.md` (`configureDependencies(String env)` + флейворная изоляция), `08-conventions-and-constitution.md` (правило line-length 140, политика форматирования), `12-dev-commands.md` (обёртки `.claude/commands` вокруг этих задач), `11-scaffolding-plan.md` (порядок раскатки файлов).
 
 ---
 
 ## 0. Ментальная модель
 
-Этот документ описывает **один Dart-пакет** `speech_ai_mobile` (слои — это папки `lib/data`, `lib/domain`, `lib/presentation`, …; см. `00-architecture-overview.md`). Из этого следуют ключевые упрощения относительно исходных трёх-пакетных шаблонов:
+Этот документ описывает **один Dart-пакет** `nox_app` (слои — это папки `lib/data`, `lib/domain`, `lib/presentation`, …; см. `00-architecture-overview.md`). Из этого следуют ключевые правила:
 
-1. **Один `pubspec.yaml`, один прогон `build_runner`.** Нет порядка «data → domain → root»: кодогенерация — это **единственный** прогон `build_runner build` в корне пакета. Везде, где исходные шаблоны раскладывали кодоген на три каталога, мы схлопываем его в один шаг.
+1. **Один `pubspec.yaml`, один прогон `build_runner`.** Нет порядка «data → domain → root»: кодогенерация — это **единственный** прогон `build_runner build` в корне пакета. Кодоген не раскладывается на три каталога — он схлопнут в один шаг.
 2. **Flutter пинится через FVM.** Никогда не вызываем голый `flutter`/`dart` — каждый скрипт и каждый CI-шаг использует `fvm flutter` / `fvm dart`, чтобы SDK был идентичен везде. Версия в `.fvmrc` — единственный источник истины.
 3. **Сгенерированные файлы не редактируются и не форматируются вручную.** `*.freezed.dart`, `*.config.dart`, `lib/design/gen/**` (а также `*.g.dart` / `*.mocks.dart`, если они появятся) производятся `build_runner` и исключены из форматирования и анализа. Доменные/BLoC-типы по конвенции имеют только `*.freezed.dart` (никаких `*.g.dart` — JSON живёт в entity-слое; см. `03-domain-layer.md`, `04-data-layer.md`).
-4. **Компайл-таймовая изоляция флейворов.** Флейвор приходит в Dart через `--dart-define=app.flavor=<flavor>` и читается `AppFlavor.getFlavor()` из `String.fromEnvironment('app.flavor')`; маппинг `prod → Environment.prod`, `stage → Environment.dev` (см. `02-dependency-injection.md`). Секреты приходят через `--dart-define-from-file=...`.
+4. **Компайл-таймовая изоляция флейворов.** Флейвор приходит в Dart через `--dart-define=app.flavor=<flavor>` и читается `AppFlavor.getFlavor()` из `String.fromEnvironment('app.flavor')`; маппинг `prod → Environment.prod`, `stage → Environment.dev` (см. `02-dependency-injection.md`). Секреты приходят через `--dart-define-from-file=...`. На desktop (Windows/Linux/macOS) **нет** нативного `--flavor` (Flutter не поддерживает product flavors для desktop-таргетов): stage/prod выбирается через `--dart-define-from-file=config/<flavor>.json` — закоммиченный, secret-free файл, несущий только `app.flavor`. Резолюция `AppFlavor.getFlavor()` и маппинг `prod → Environment.prod` / `stage → Environment.dev` остаются **идентичны** мобильным.
 
 Поток сборки — одной картинкой:
 
@@ -32,7 +32,7 @@ String.fromEnvironment('API_URL') / AppFlavor.getFlavor() / configureDependencie
 
 ## 1. FVM — пин Flutter SDK
 
-`.fvmrc` в корне `sources/mobile_app/`, закоммичен. Единственный источник истины для версии SDK.
+`.fvmrc` в корне `lib/`, закоммичен. Единственный источник истины для версии SDK.
 
 ```json
 {
@@ -57,7 +57,7 @@ fvm install        # читает .fvmrc, ставит Flutter 3.44.1
 
 `.fvm/flutter_sdk` (локальный симлинк/кэш) — gitignored; `.fvmrc` — закоммичен. Все скрипты ниже предполагают, что `fvm` есть в `PATH`, и проверяют это.
 
-> **Согласование с монорепо.** Остальные Flutter-проекты репозитория (`web_app`) пинят SDK через `.fvmrc` + ручной симлинк `.fvm/flutter_sdk` (CLI `fvm use`/`fvm install` там не используется). Для `mobile_app` мы используем **полноценный FVM CLI** (`fvm install`), потому что у мобильного проекта своя сборочная инфраструктура и mise-задачи; никогда не запускайте `fvm use` поверх вручную созданного симлинка в `web_app` — это разные проекты с разными конвенциями.
+> **Согласование с FVM.** NOX использует **полноценный FVM CLI** (`fvm install`), потому что у проекта своя сборочная инфраструктура и mise-задачи. `.fvmrc` — единственный источник истины для версии SDK; не подменяйте его вручную созданным симлинком `.fvm/flutter_sdk` в обход CLI.
 
 ---
 
@@ -68,7 +68,9 @@ fvm install        # читает .fvmrc, ставит Flutter 3.44.1
 - `Makefile` — человеко-дружелюбная поверхность; реальная логика живёт в `.mise.toml`.
 - Зашифрованные бандлы `secrets/<flavor>.enc.yaml` коммитятся; расшифрованные артефакты (`*.dart-define.json`, нативные `google-services.json` / `GoogleService-Info.plist`, keystores) — **никогда** (см. §10 `.gitignore`).
 
-> **Согласование с монорепо.** Корневой репозиторий уже использует SOPS+age+mise для `client_backend` (`secrets/{dev,stage,production}.enc.yaml`, задачи `mise run secrets:*`). Мобильный проект использует **тот же стек инструментов**, но со своим набором флейворных файлов `secrets/<flavor>.enc.yaml` и своими decrypt-в-`dart-define`-задачами. Это осознанная симметрия: один менеджер секретов на весь монорепо, разные схемы потребления (backend → `.env`-файлы; mobile → `dart-define`-JSON + нативные конфиги). Не смешивайте два набора задач.
+> **Согласование с бэкендом NOX.** Когда у бэкенда NOX появится свой набор секретов (например, `secrets/{dev,stage,production}.enc.yaml` + задачи `mise run secrets:*`), мобильный проект использует **тот же стек инструментов** (SOPS+age+mise), но со своим набором флейворных файлов `secrets/<flavor>.enc.yaml` и своими decrypt-в-`dart-define`-задачами. Разные схемы потребления (backend → `.env`-файлы; mobile → `dart-define`-JSON + нативные конфиги) не смешивайте — это разные наборы задач.
+
+> **Desktop (Win/Linux/macOS) в скелете не потребляет реальных секретов** → пропускает `secrets:decrypt`, не нуждается в age-ключе. Когда у desktop появятся секреты, на него расширяется та же схема SOPS+age+mise (именование задач — см. §4).
 
 ---
 
@@ -117,7 +119,7 @@ description = "Decrypt stage secrets into .secrets-runtime/stage.dart-define.jso
 run = """
 mkdir -p .secrets-runtime
 sops -d --output-type json secrets/stage.enc.yaml \
-  | jq '{API_URL, SUPPORT_EMAIL, SENTRY_DSN}' \
+  | jq '{API_URL, SUPPORT_EMAIL, OBSERVABILITY_DSN}' \
   > .secrets-runtime/stage.dart-define.json.tmp
 mv .secrets-runtime/stage.dart-define.json.tmp .secrets-runtime/stage.dart-define.json
 # Also materialize native config files atomically where the IDE/build needs them:
@@ -131,7 +133,7 @@ description = "Decrypt prod secrets into .secrets-runtime/prod.dart-define.json 
 run = """
 mkdir -p .secrets-runtime
 sops -d --output-type json secrets/prod.enc.yaml \
-  | jq '{API_URL, SUPPORT_EMAIL, SENTRY_DSN}' \
+  | jq '{API_URL, SUPPORT_EMAIL, OBSERVABILITY_DSN}' \
   > .secrets-runtime/prod.dart-define.json.tmp
 mv .secrets-runtime/prod.dart-define.json.tmp .secrets-runtime/prod.dart-define.json
 # Mirror the native-config materialization for prod (prod keystore + Firebase plist).
@@ -183,6 +185,32 @@ $FLUTTER build ipa --flavor prod --obfuscate --split-debug-info=build/symbols \
   --dart-define=app.flavor=prod \
   --dart-define-from-file=.secrets-runtime/prod.dart-define.json
 """
+
+# --- desktop build matrix (no native --flavor; flavor-only config) ----------
+# skeleton: no real secrets on desktop — flavor-only config
+[tasks."build:macos:stage"]
+description = "Build the stage macOS app"
+run = "$FLUTTER build macos --dart-define-from-file=config/stage.json"
+
+[tasks."build:macos:prod"]
+description = "Build the prod macOS app"
+run = "$FLUTTER build macos --dart-define-from-file=config/prod.json"
+
+[tasks."build:windows:stage"]
+description = "Build the stage Windows app"
+run = "$FLUTTER build windows --dart-define-from-file=config/stage.json"
+
+[tasks."build:windows:prod"]
+description = "Build the prod Windows app"
+run = "$FLUTTER build windows --dart-define-from-file=config/prod.json"
+
+[tasks."build:linux:stage"]
+description = "Build the stage Linux app"
+run = "$FLUTTER build linux --dart-define-from-file=config/stage.json"
+
+[tasks."build:linux:prod"]
+description = "Build the prod Linux app"
+run = "$FLUTTER build linux --dart-define-from-file=config/prod.json"
 ```
 
 Инварианты, которые нужно сохранить:
@@ -190,10 +218,10 @@ $FLUTTER build ipa --flavor prod --obfuscate --split-debug-info=build/symbols \
 - **Decrypt-задачи атомарны** — пишут в `.tmp`, затем `mv`. Это защищает от частично записанного `dart-define.json`, если процесс упадёт посередине.
 - Decrypt пишет **и** `dart-define.json`, **и** нативные конфиги туда, где их ждёт IDE/Gradle/Xcode для one-click переключения флейворов.
 - Сборки резолвят Flutter через симлинк FVM (`$FLUTTER`), передают `--dart-define=app.flavor=<flavor>` + `--dart-define-from-file=...`, и сначала делают `flutter clean`.
-- `--obfuscate --split-debug-info=build/symbols` включён для релизных сборок (символы для Sentry-дешифровки стек-трейсов — см. `SENTRY_DSN` в env-наборе; Sentry env-gated в `prod`/`stage`).
-- `jq '{ ... }'` явно перечисляет только те ключи, которые должны попасть в `dart-define` — это allowlist, а не «весь YAML». Добавляя новую переменную в `dart-define`, расширьте этот список **в обоих** флейворах.
+- `--obfuscate --split-debug-info=build/symbols` включён для релизных сборок (символы для дешифровки стек-трейсов в observability-бэкенде — см. `OBSERVABILITY_DSN` в env-наборе; конкретный observability-вендор не зафиксирован, DSN env-gated в `prod`/`stage`).
+- `jq '{ ... }'` явно перечисляет только те ключи, которые должны попасть в `dart-define` — это allowlist, а не «весь YAML». Набор ключей (`API_URL`, `SUPPORT_EMAIL`, `OBSERVABILITY_DSN`) — **пример** (бэкенд/протокол NOX ещё не выбран; замените на реальный контракт). Добавляя новую переменную в `dart-define`, расширьте этот список **в обоих** флейворах.
 
-> **Согласование с existlive (реальная конвенция владельца).** В мобильном проекте владельца (existlive) эта же mise-схема (`secrets:decrypt:<flavor>` + `build:<platform>:<channel>` + `depends = ["secrets:decrypt:<flavor>"]`, тот же путь `SOPS_AGE_KEY_FILE = ~/.config/sops/age/keys.txt`, атомарный tmp+mv) развёрнута шире по двум осям: (1) **prod разбит по назначению дистрибуции** — `build:android:prod:firebase` (Firebase App Distribution) / `build:android:prod:google` (Google Play AAB) и `build:ios:prod:firebase` / `build:ios:prod:apple` (TestFlight); (2) `secrets:decrypt:<flavor>` материализует **оба** flavor-JSON сразу (cross-flavor invariant — переключение флейвора в IDE никогда не упирается в отсутствующий `--dart-define-from-file`). Здесь оставлен базовый 4-entrypoint вариант (`build:<platform>:{stage,prod}`), потому что мобильный CD отложен (§11); при активации дистрибуции расширьте матрицу до existlive-формы (`namespace:platform:channel[:destination]`, `depends` на decrypt — те же). Плюс у existlive есть `secrets:edit-binary` (редактирование зашифрованных keystore/plist по label-аргументу), `release:prepare` и `install:hooks` — добавьте их при онбординге дистрибуции.
+> **Расширение матрицы задач (на будущее).** Та же mise-схема (`secrets:decrypt:<flavor>` + `build:<platform>:<channel>` + `depends = ["secrets:decrypt:<flavor>"]`, тот же путь `SOPS_AGE_KEY_FILE = ~/.config/sops/age/keys.txt`, атомарный tmp+mv) может разворачиваться шире по двум осям: (1) **prod разбит по назначению дистрибуции** — например `build:android:prod:firebase` (Firebase App Distribution) / `build:android:prod:google` (Google Play AAB) и `build:ios:prod:firebase` / `build:ios:prod:apple` (TestFlight); этот firebase/google/apple-сплит — нейтральный пример, конкретные каналы дистрибуции выбираются позже; (2) `secrets:decrypt:<flavor>` может материализовать **оба** flavor-JSON сразу (cross-flavor invariant — переключение флейвора в IDE никогда не упирается в отсутствующий `--dart-define-from-file`). Здесь оставлен базовый 4-entrypoint вариант (`build:<platform>:{stage,prod}`), потому что мобильный CD отложен (§11); при активации дистрибуции расширьте матрицу по схеме именования задач `namespace:action:channel` (для сборок — `build:<platform>:<channel>[:destination]`), `depends` на decrypt — те же. Дополнительно при онбординге дистрибуции добавьте `secrets:edit-binary` (редактирование зашифрованных keystore/plist по label-аргументу), `release:prepare` и `install:hooks`.
 
 ---
 
@@ -251,7 +279,9 @@ secrets-clean: ## Wipe decrypted artifacts
 
 ## 6. Android Gradle — флейворы, подпись, pre-build хук секретов
 
-`android/app/build.gradle.kts` — несущие блоки. Конвенции проекта: `compileSdk 36`, `minSdk 26`, Java 17, `applicationId` по флейвору (`app.speechai.mobile` для prod, `app.speechai.mobile.stage` для stage).
+`android/app/build.gradle.kts` — несущие блоки. Конвенции проекта: `compileSdk 36`, `minSdk 26`, Java 17, `applicationId` по флейвору (`com.cyphernetlabs.noxapp` для prod, `com.cyphernetlabs.noxapp.stage` для stage).
+
+> **Skeleton carve-out (Feature-001):** в текущем скелете нативные Android-флейворы НЕ заведены — флейвор инжектится через `--dart-define-from-file=config/<flavor>.json` (как desktop, §7a), потому что per-flavor нативной разницы пока нет. Блок `productFlavors` ниже вводится с первой реальной per-flavor нативной потребностью (раздельная подпись / Firebase / идентичность).
 
 ```kotlin
 plugins {
@@ -262,7 +292,7 @@ plugins {
 }
 
 android {
-    namespace = "app.speechai.mobile"
+    namespace = "com.cyphernetlabs.noxapp"
     compileSdk = 36
     ndkVersion = "28.2.13676358"
 
@@ -284,13 +314,13 @@ android {
     productFlavors {
         create("stage") {
             dimension = "app"
-            applicationId = "app.speechai.mobile.stage"
-            resValue("string", "app_name", "Speech AI Stage")
+            applicationId = "com.cyphernetlabs.noxapp.stage"
+            resValue("string", "app_name", "NOX Stage")
         }
         create("prod") {
             dimension = "app"
-            applicationId = "app.speechai.mobile"
-            resValue("string", "app_name", "Speech AI")
+            applicationId = "com.cyphernetlabs.noxapp"
+            resValue("string", "app_name", "NOX")
         }
     }
 
@@ -352,7 +382,7 @@ afterEvaluate {
     listOf("Stage", "Prod").forEach { flavorCap ->
         val flavor = flavorCap.lowercase()
         val decryptTask = tasks.register<Exec>("decryptSecrets$flavorCap") {
-            workingDir = rootProject.projectDir.parentFile  // sources/mobile_app/
+            workingDir = rootProject.projectDir.parentFile  // lib/
             commandLine("mise", "run", "secrets:decrypt:$flavor")
         }
         listOf("Debug", "Release").forEach { buildType ->
@@ -369,18 +399,20 @@ afterEvaluate {
 
 ## 7. iOS — xcconfig, schemes, fastlane
 
-- **Per-flavor xcconfig.** `ios/Flutter/Stage.xcconfig` и `ios/Flutter/Prod.xcconfig` задают `PRODUCT_BUNDLE_IDENTIFIER` (`app.speechai.mobile.stage` / `app.speechai.mobile`), `DISPLAY_NAME` (`Speech AI Stage` / `Speech AI`) и любые нативные значения (например, OAuth reverse-client-id), которые нужны нативной части iOS — через xcconfig-подстановку, а не копированием plist.
+> **Skeleton carve-out (Feature-001):** в скелете iOS-флейворы (xcconfig / schemes ниже) НЕ заведены — флейвор идёт через `--dart-define-from-file=config/<flavor>.json` (как desktop, §7a). Нативная настройка ниже вводится с первой реальной per-flavor нативной потребностью.
+
+- **Per-flavor xcconfig.** `ios/Flutter/Stage.xcconfig` и `ios/Flutter/Prod.xcconfig` задают `PRODUCT_BUNDLE_IDENTIFIER` (`com.cyphernetlabs.noxapp.stage` / `com.cyphernetlabs.noxapp`), `DISPLAY_NAME` (`NOX Stage` / `NOX`) и любые нативные значения (например, OAuth reverse-client-id), которые нужны нативной части iOS — через xcconfig-подстановку, а не копированием plist.
 
   ```
   // ios/Flutter/Stage.xcconfig
   #include "Generated.xcconfig"
-  PRODUCT_BUNDLE_IDENTIFIER = app.speechai.mobile.stage
-  DISPLAY_NAME = Speech AI Stage
+  PRODUCT_BUNDLE_IDENTIFIER = com.cyphernetlabs.noxapp.stage
+  DISPLAY_NAME = NOX Stage
 
   // ios/Flutter/Prod.xcconfig
   #include "Generated.xcconfig"
-  PRODUCT_BUNDLE_IDENTIFIER = app.speechai.mobile
-  DISPLAY_NAME = Speech AI
+  PRODUCT_BUNDLE_IDENTIFIER = com.cyphernetlabs.noxapp
+  DISPLAY_NAME = NOX
   ```
 
 - **Per-flavor schemes.** Создайте схемы `stage` и `prod` в Xcode (Product → Scheme → Manage Schemes), каждая указывает на свою конфигурацию build settings, привязанную к соответствующему xcconfig. `flutter build ipa --flavor stage` подбирает схему `stage`.
@@ -389,29 +421,39 @@ afterEvaluate {
 
 ---
 
+## 7a. Идентичность desktop (macOS / Windows / Linux)
+
+В этой итерации desktop-таргеты несут **только prod-идентичность** на нативном уровне (одна нативная конфигурация на платформу). Отдельная нативная `.stage`-идентичность (и, соответственно, упаковка двух раздельных артефактов) — **на будущее** (§11a). Stage на desktop виден исключительно через `app.flavor` в Dart (`--dart-define-from-file=config/stage.json`), нативная конфигурация при этом не меняется.
+
+- **macOS.** В `macos/Runner/Configs/AppInfo.xcconfig` (и Xcode build settings) prod-идентичность: `PRODUCT_BUNDLE_IDENTIFIER = com.cyphernetlabs.noxapp` + `PRODUCT_NAME = NOX`. Отдельная `.stage`-идентичность (`com.cyphernetlabs.noxapp.stage`) → упаковка **на будущее** (§11a).
+- **Windows.** В `windows/runner/CMakeLists.txt` — `BINARY_NAME = NOX`; в `windows/runner/Runner.rc` блок `VERSIONINFO` несёт `CompanyName = "Cyphernet Labs"` и `ProductName = "NOX"`, плюс зафиксированный закоммиченный GUID приложения (стабильный между сборками). Отдельная `.stage`-идентичность → упаковка **на будущее** (§11a).
+- **Linux.** В `linux/CMakeLists.txt` — `APPLICATION_ID = com.cyphernetlabs.noxapp`; имя бинарника и `Name` в `.desktop`-файле — `NOX`. Отдельная `.stage`-идентичность → упаковка **на будущее** (§11a).
+
+---
+
 ## 8. CI — GitHub Actions
 
 Два workflow. Первый (`ci.yml`) — гейт: format-check → **один** прогон кодогена → analyze → test. Второй (`compile-check.yml`) — per-platform debug smoke-сборки. Оба пинят Flutter `3.44.1` через `subosito/flutter-action`.
 
-> **Адаптировано под один пакет.** Исходный шаблон CI раскладывал `pub get`, кодоген и тесты на три каталога (`data → domain → root`). Здесь — **единственный** прогон каждого шага: пакет один. Не воспроизводите трёх-этапный порядок.
+> **Один пакет — один прогон.** Пакет один, поэтому `pub get`, кодоген и тесты — **единственный** прогон каждого шага. Не раскладывайте их на три каталога (`data → domain → root`) и не воспроизводите трёх-этапный порядок.
 
 ### 8.1 `.github/workflows/ci.yml` — analyze & test
 
-**Триггеры:** push и pull_request в `develop` и `main` (ветки монорепо).
+**Триггеры:** push и pull_request в `develop` и `main`.
 **Порядок шагов:** checkout → install Flutter → cache pub → `pub get` → `build_runner` (один прогон) → format-check (140) → `analyze` → `test`.
 
 ```yaml
-name: mobile_app CI
+name: NOX CI
 
 on:
   push:
     branches: [develop, main]
     paths:
-      - "sources/mobile_app/**"
+      - "lib/**"
   pull_request:
     branches: [develop, main]
     paths:
-      - "sources/mobile_app/**"
+      - "lib/**"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -419,7 +461,7 @@ concurrency:
 
 defaults:
   run:
-    working-directory: sources/mobile_app
+    working-directory: lib
 
 jobs:
   analyze-and-test:
@@ -440,7 +482,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.pub-cache
-          key: pub-cache-${{ runner.os }}-${{ hashFiles('sources/mobile_app/pubspec.lock') }}
+          key: pub-cache-${{ runner.os }}-${{ hashFiles('lib/pubspec.lock') }}
 
       - name: Install dependencies
         run: flutter pub get
@@ -470,25 +512,25 @@ jobs:
 - CI использует `subosito/flutter-action` напрямую (не FVM), но **версия совпадает с `.fvmrc`** (`3.44.1`), поэтому поведение идентично.
 - Format-check валит сборку, если хоть один in-scope файл не отформатирован на 140; правьте локально через `fvm dart format -l 140 <пути>` (изменённые файлы) или `make format` (всё дерево — только для воспроизведения CI-гейта).
 - Кодоген — **один** `dart run build_runner build --delete-conflicting-outputs` (не data→domain→root; пакет один). `--delete-conflicting-outputs` удаляет устаревшие сгенерированные файлы вместо ошибки при перезаписи.
-- `paths:` фильтр ограничивает workflow изменениями под `sources/mobile_app/**` — это согласуется с монорепо-политикой пер-проектного CI (детект изменений; см. ниже §11).
+- `paths:` фильтр ограничивает workflow изменениями под `lib/**` — это удобно для пер-проектного детекта изменений, если NOX когда-либо встроят в более широкую CI-политику (см. ниже §11).
 
 ### 8.2 `.github/workflows/compile-check.yml` — per-platform debug smoke-сборки
 
-**Триггеры:** push в `develop`/`main` (с `paths`-фильтром) и ручной `workflow_dispatch`. Два параллельных джоба собирают приложение в debug под Android и iOS, чтобы поймать слом компиляции на каждой платформе.
+**Триггеры:** push в `develop`/`main` (с `paths`-фильтром) и ручной `workflow_dispatch`. Пять параллельных джобов собирают приложение в debug под Android, iOS, macOS, Windows и Linux, чтобы поймать слом компиляции на каждой платформе (Windows/Linux — compile-only, launch отложен).
 
 ```yaml
-name: mobile_app Compile check
+name: NOX Compile check
 
 on:
   push:
     branches: [develop, main]
     paths:
-      - "sources/mobile_app/**"
+      - "lib/**"
   workflow_dispatch:
 
 defaults:
   run:
-    working-directory: sources/mobile_app
+    working-directory: lib
 
 jobs:
   compile-android:
@@ -520,11 +562,66 @@ jobs:
       - run: dart run build_runner build --delete-conflicting-outputs
       # iOS debug compile check without code signing.
       - run: flutter build ios --debug --no-codesign --flavor stage --dart-define=app.flavor=stage
+
+  compile-macos:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.1
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: dart run build_runner build --delete-conflicting-outputs
+      # macOS debug compile check — no secrets, no native --flavor.
+      - run: flutter build macos --debug
+
+  compile-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.1
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: dart run build_runner build --delete-conflicting-outputs
+      # Windows debug compile check — no secrets, no native --flavor.
+      - run: flutter build windows --debug
+
+  compile-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.1
+          channel: stable
+          cache: true
+      # GTK toolchain + deps required by the Flutter Linux desktop embedder.
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build libgtk-3-dev
+      - run: flutter pub get
+      - run: dart run build_runner build --delete-conflicting-outputs
+      # Linux debug compile check — no secrets, no native --flavor.
+      - run: flutter build linux --debug
 ```
 
 Замечания:
-- Smoke-сборки запускаются в `--debug` и **не требуют секретов** — мы не вызываем decrypt и не используем `--dart-define-from-file`. Это компайл-чек, а не релиз. Для Android stage достаточно `--dart-define=app.flavor=stage`; для iOS — `--no-codesign`.
-- Мы держим только Android + iOS (целевые платформы проекта). Никаких Linux/macOS/Windows desktop-джобов и никаких Rust/FFI-шагов (их не было в этом проекте).
+- Smoke-сборки запускаются в `--debug` и **не требуют секретов** — мы не вызываем decrypt и не используем `--dart-define-from-file`. Это компайл-чек, а не релиз. Для Android stage достаточно `--dart-define=app.flavor=stage`; для iOS — `--no-codesign`. Desktop-джобы (macOS/Windows/Linux) тоже **без секретов** — у них нет нативного `--flavor`, а `--debug` компайл-чек не требует ни decrypt, ни age-ключа.
+- Этот compile-check покрывает все 5 целевых платформ (конституция v1.1.0): Android + iOS + macOS + Windows + Linux. Desktop compile-smoke **добавлен**; упаковка/подпись (packaging/signing) — **на будущее** (§11a). Rust/FFI-шагов нет.
+
+**Platform support matrix (minimum OS).** Минимальные версии берутся из дефолтов `flutter create` под Flutter `3.44.1` (источник floor — `flutter create`-дефолты под `3.44.1`). Пиннинг конкретных таргетов и подбор Linux apt-deps — **на будущее**.
+
+| Platform | Minimum OS |
+|---|---|
+| Windows | Windows 10 (Flutter 3.44 floor) |
+| macOS | macOS 10.15+ (`flutter create` default) |
+| Linux | GTK3 runtime |
 
 ### 8.3 Локальное зеркало CI
 
@@ -559,17 +656,17 @@ echo "version: $(date -u +%y.%-m.%-d)+${BUILD_NUMBER}"
 # e.g. -> version: 26.6.7+202979472
 ```
 
-> **Расхождение с промптом — намеренное.** Локальный промпт упоминает форму `YY.MM.DD`, но **канонический формат репозитория — `YY.M.D`** (месяц/день без ведущего нуля, см. `docs/operations/versioning-strategy.md` §1 и пример тэга `client_backend-v26.5.8+200429805`). Мы следуем репозиторному канону — он единый источник истины для всех 7 проектов монорепо.
+> **Канонический формат — `YY.M.D`.** Месяц/день без ведущего нуля (не `YY.MM.DD`), см. `docs/operations/versioning-strategy.md` §1. Авторитетная политика версионирования репозитория — единый источник истины; следуйте ей.
 
-**Каналы не меняют строку версии.** Никаких суффиксов `-rc.N` / `-dev.N` / `-stage.N` в `version`. Stage и prod собирают один и тот же артефакт; различие — это git-тэг + флейвор, а не версия. Имя артефакта (см. `versioning-strategy.md` §9): `mobile_app_<version>_<build>.<ext>` — например `mobile_app_26.5.10_200429805.apk` / `.aab` / `.ipa`.
+**Каналы не меняют строку версии.** Никаких суффиксов `-rc.N` / `-dev.N` / `-stage.N` в `version`. Stage и prod собирают один и тот же артефакт; различие — это git-тэг + флейвор, а не версия. Имя артефакта (см. `versioning-strategy.md` §9): `nox_app_<version>_<build>.<ext>` — например `nox_app_26.5.10_200429805.apk` / `.aab` / `.ipa`.
 
-**Git-тэги** (канонический формат `<project>-v<version>` + суффикс канала для мобильного проекта): `mobile_app-v26.6.7+202979472-stage` / `mobile_app-v26.6.7+202979472-prod`. Гейт: если тэг указывает на коммит, где `pubspec.yaml::version` ≠ версии в тэге — build обязан фейлиться (`versioning-strategy.md` §6).
+**Git-тэги** (канонический формат `<project>-v<version>` + суффикс канала для мобильного проекта): `nox_app-v26.6.7+202979472-stage` / `nox_app-v26.6.7+202979472-prod`. Гейт: если тэг указывает на коммит, где `pubspec.yaml::version` ≠ версии в тэге — build обязан фейлиться (`versioning-strategy.md` §6).
 
 **Релизные entrypoints** (тонкие обёртки, композят mise-задачи):
 - `make release-prepare` — вычисляет `YY.M.D+SHIFTED_EPOCH`, записывает в `pubspec.yaml::version`, коммитит, тэгает, пушит (ветка-aware). Канал-suffix тэга задаётся аргументом.
 - `make release-stage` / `release-prod` — tag-driven: выбирают тэг, собирают на нём через `build:*` mise-задачи, восстанавливают HEAD на выходе.
 
-> **Версия — всегда закоммиченное значение.** CI может писать `pubspec.yaml::version`, но **только** через коммит — никогда runtime-инъекцией вида `flutter build --build-number=$GITHUB_RUN_NUMBER` (`versioning-strategy.md` §1). API-версионирование (`/api/v1/`) — отдельная ось от версии артефакта.
+> **Версия — всегда закоммиченное значение.** CI может писать `pubspec.yaml::version`, но **только** через коммит — никогда runtime-инъекцией вида `flutter build --build-number=$GITHUB_RUN_NUMBER` (`versioning-strategy.md` §1). API-версионирование (например `/api/v1/` — пример, бэкенд/протокол NOX ещё не выбран; заменить на реальный контракт) — отдельная ось от версии артефакта.
 
 ---
 
@@ -594,15 +691,29 @@ android/*_keystore.properties
 
 ---
 
-## 11. Интеграция в монорепозиторный CI/CD
+## 11. Интеграция в CI/CD
 
-Проект `mobile_app` онбордится в существующую GitHub Actions / CI-CD-политику монорепо (см. `docs/operations/ci_cd_strategy.md` §8.3 — пер-проектный чек-лист активации). Ключевые точки сопряжения:
+Проект NOX может онбордиться в более широкую GitHub Actions / CI-CD-политику (см. `docs/operations/ci_cd_strategy.md` §8.3 — пер-проектный чек-лист активации). Ключевые точки сопряжения:
 
-- **Детект изменений.** Корневой `ci.yml` использует `dorny/paths-filter@v3` для пер-проектных условных джобов; агрегатный `CI summary` — единственная required-проверка для branch protection. Workflow выше (`mobile_app CI`) фильтрует по `paths: sources/mobile_app/**` — это согласуется с детект-паттерном (но **не** переносите фильтр в `on.push.paths` корневого детектора — см. `feedback_ci_cd.md`).
-- **One-dispatch релизная модель.** Релизы запускаются единственным `workflow_dispatch` (`release-stage.yml` / `release-production.yml`), которые делают bump → PR → auto-merge → tag → CD. Тэг — единственный CD-триггер. Для `mobile_app` CD (`mobile_app-cd-{stage,prod}.yml`) пока **отложен** до появления Apple Developer / Google Play аккаунтов (`docs/predeploy/external-services-setup.md`); мобильный feature-branch flow с `branch_slug` в суффиксе тэга описан в `ci_cd_strategy.md` §13 и реактивируется при активации проекта.
-- **Аутентификация.** Релизные workflow используют `BUMP_PAT` (fine-grained PAT под org `speech-ai-app`), а не `GITHUB_TOKEN` — последний не триггерит downstream-workflow на push тэга.
-- **Секреты CI.** Расшифровка секретов в CI требует `SOPS_AGE_KEY_CI` (как у `client_backend`); приватный age-ключ команды кладётся в секреты репо через `./scripts/ci_cd/setup-github-secrets.sh`. Для smoke-сборок (`--debug`) ключ не нужен — они не расшифровывают секреты.
-- **Никаких автономных merge/deploy/commit.** Claude открывает PR и пушит в feature-ветку, но **не** мёрджит PR, **не** деплоит в cloud и **не** коммитит без явного in-session запроса владельца (`feedback_no_auto_merge.md`, `feedback_no_cloud_deploy.md`, `feedback_no_auto_commit.md`).
+- **Детект изменений.** Корневой `ci.yml` использует `dorny/paths-filter@v3` для пер-проектных условных джобов; агрегатный `CI summary` — единственная required-проверка для branch protection. Workflow выше (`NOX CI`) фильтрует по `paths: lib/**` — это согласуется с детект-паттерном (но **не** переносите фильтр в `on.push.paths` корневого детектора).
+- **One-dispatch релизная модель.** Релизы запускаются единственным `workflow_dispatch` (`release-stage.yml` / `release-production.yml`), которые делают bump → PR → auto-merge → tag → CD. Тэг — единственный CD-триггер. NOX CD (`nox_app-cd-{stage,prod}.yml`) пока **отложен** до появления Apple Developer / Google Play аккаунтов (`docs/predeploy/external-services-setup.md`); мобильный feature-branch flow с `branch_slug` в суффиксе тэга описан в `ci_cd_strategy.md` §13 и реактивируется при активации проекта.
+- **Аутентификация.** Релизные workflow используют fine-grained PAT (`BUMP_PAT`), а не `GITHUB_TOKEN` — последний не триггерит downstream-workflow на push тэга.
+- **Секреты CI.** Расшифровка секретов в CI требует `SOPS_AGE_KEY_CI`; приватный age-ключ команды кладётся в секреты репо через `./scripts/ci_cd/setup-github-secrets.sh`. Для smoke-сборок (`--debug`) ключ не нужен — они не расшифровывают секреты. Desktop (Win/Linux/macOS) в скелете не потребляет реальных секретов → пропускает `secrets:decrypt`, не нуждается в age-ключе; когда у desktop появятся секреты, на него расширяется та же схема SOPS+age+mise (именование задач — см. §4).
+- **Никаких автономных merge/deploy/commit.** Открывайте PR и пушьте в feature-ветку, но **не** мёрджите PR, **не** деплойте в cloud и **не** коммитьте без явного запроса владельца в текущей сессии.
+
+---
+
+## 11a. Упаковка и подпись desktop (на будущее)
+
+`TODO(blueprint-desktop-packaging)` — **без реализации** в этой итерации; скелет даёт только `--debug` compile-smoke (§8.2) и `build:<desktop>:<flavor>` без упаковки (§4). Когда desktop-дистрибуция активируется, по платформам:
+
+- **Windows.** MSIX-пакет + подпись инсталлятора code-signing-сертификатом (EV/OV).
+- **macOS.** DMG + `codesign` + нотаризация через `xcrun notarytool` + hardened runtime.
+- **Linux.** AppImage и/или `.deb`.
+
+Блокер тот же, что у мобильного CD (§11): нет аккаунтов/сертификатов для подписи (Apple Developer / code-signing cert) — пока они не заведены (`docs/predeploy/external-services-setup.md`), упаковка и подпись desktop остаются на будущее, параллельно отложенному мобильному CD.
+
+> `TODO(blueprint-desktop-window)` — скелет поставляет **дефолтное окно** Flutter desktop-раннера (single-window, без `window_manager`, нативный chrome/title bar). Полировка **на будущее**: `window_manager` для задания начального размера `1440x900` (канонический размер из корпуса) + `minimumSize 640x600` + кастомный unified title bar.
 
 ---
 
@@ -615,11 +726,14 @@ android/*_keystore.properties
 - [ ] `secrets/stage.enc.yaml` и `secrets/prod.enc.yaml` зашифрованы (закоммичены).
 - [ ] Decrypt-задачи атомарны (`.tmp` + `mv`) и пишут `dart-define.json` + нативные конфиги.
 - [ ] `Makefile` оборачивает mise-задачи + dev-workflow; `generate` — один прогон `build_runner`; `format` помечен как CI-гейт.
-- [ ] Gradle: dimension `app` (`stage`/`prod`), per-flavor `applicationId` (`app.speechai.mobile[.stage]`), детект активного флейвора, выбор keystore, decrypt-хук на `pre<Flavor><BuildType>Build`; `compileSdk 36`, `minSdk 26`, Java 17.
+- [ ] Gradle: dimension `app` (`stage`/`prod`), per-flavor `applicationId` (`com.cyphernetlabs.noxapp[.stage]`), детект активного флейвора, выбор keystore, decrypt-хук на `pre<Flavor><BuildType>Build`; `compileSdk 36`, `minSdk 26`, Java 17.
 - [ ] iOS: `Stage.xcconfig` / `Prod.xcconfig` + схемы `stage`/`prod`; заметка про fastlane на будущее.
-- [ ] `.github/workflows/ci.yml`: format-check → один кодоген → analyze → test; `subosito/flutter-action` `3.44.1`; `paths: sources/mobile_app/**`.
-- [ ] `.github/workflows/compile-check.yml`: debug smoke-сборки Android + iOS (без секретов, iOS `--no-codesign`).
+- [ ] `.github/workflows/ci.yml`: format-check → один кодоген → analyze → test; `subosito/flutter-action` `3.44.1`; `paths: lib/**`.
+- [ ] `.github/workflows/compile-check.yml`: debug smoke-сборки Android + iOS (без секретов, iOS `--no-codesign`) — desktop-таргеты в строке ниже.
+- [ ] compile-check покрывает все 5 таргетов (debug compile-only): `compile-macos`/`compile-windows`/`compile-linux` (`--debug`, без секретов; Linux ставит `ninja-build libgtk-3-dev`).
+- [ ] Desktop-сборки получают флейвор только через `config/<flavor>.json` (без secrets-decrypt / без age-ключа).
+- [ ] Упаковка/подпись desktop задокументированы как «на будущее» (§11a).
 - [ ] `version` в `pubspec.yaml` — закоммиченный `YY.M.D+SHIFTED_EPOCH` (epoch base `1577836800`), выровнен с `docs/operations/versioning-strategy.md`.
 - [ ] `.gitignore` исключает `.secrets-runtime/`, `.fvm/flutter_sdk`, расшифрованные нативные конфиги и keystores.
-- [ ] Проект онборжен в монорепо CI/CD (`ci_cd_strategy.md` §8.3); CD отложен до Apple/Play аккаунтов.
+- [ ] Проект онборжен в CI/CD-политику (`ci_cd_strategy.md` §8.3); CD отложен до Apple/Play аккаунтов.
 - [ ] Локальное зеркало CI (`make generate && make format && make analyze && make test`) проходит до пуша.

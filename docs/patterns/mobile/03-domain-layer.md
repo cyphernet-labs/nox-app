@@ -1,8 +1,8 @@
 # 03 — Доменный слой
 
-> **Назначение:** описать доменный слой (`lib/domain/`) единого Dart-пакета `speech_ai_mobile` так, чтобы по нему можно было собрать его с нуля и реализовать любую фичу: Freezed-модели без JSON, контракты репозиториев, обёртку `RepositoryResult<T>`, иерархию исключений и per-call конфиги. Доменный слой — чистый: он не зависит ни от чего, кроме аннотаций Freezed, и сам не импортирует ни `lib/data`, ни `lib/presentation`.
+> **Назначение:** описать доменный слой (`lib/domain/`) единого Dart-пакета `nox_app` так, чтобы по нему можно было собрать его с нуля и реализовать любую фичу: Freezed-модели без JSON, контракты репозиториев, обёртку `RepositoryResult<T>`, иерархию исключений и per-call конфиги. Доменный слой — чистый: он не зависит ни от чего, кроме аннотаций Freezed, и сам не импортирует ни `lib/data`, ни `lib/presentation`.
 >
-> **Когда читать:** когда создаёте доменный слой, добавляете новую доменную модель, объявляете контракт репозитория или подключаете инфраструктуру `RepositoryResult` / исключений / конфигов. Первая реальная фича, которую предстоит построить поверх этих шаблонов, — список записей (records list); шаблоны ниже даны на нейтральном примере `Item`, но списочные/пагинированные конфиги вынесены в `07-pagination.md`.
+> **Когда читать:** когда создаёте доменный слой, добавляете новую доменную модель, объявляете контракт репозитория или подключаете инфраструктуру `RepositoryResult` / исключений / конфигов. Первая реальная фича, которую предстоит построить поверх этих шаблонов, — список чатов (открытые общие пространства); это server-owned, network-only пагинированный список, поэтому к нему применим network-only carve-out. Шаблоны ниже даны на нейтральном примере `Item`, но списочные/пагинированные конфиги вынесены в `07-pagination.md`.
 >
 > **Связанные документы:** `00-architecture-overview.md` (раскладка пакета, направление зависимостей), `01-stack-and-tooling.md` (Freezed, build_runner, скрипты кодогенерации), `02-dependency-injection.md` (`configureDependencies`, `getIt`, окружения), `04-data-layer.md` (entity, DAO, mapper, реализации репозиториев, `BaseRepositoryHelper.execute`, `LogRepository`), `05-presentation-layer.md` (BLoC, потребляющий `RepositoryResult` через `match`), `07-pagination.md` (полный контракт пагинации, `PageMetadata`, `firstPage`/`nextPage`-конфиги), `10-code-templates.md` (сводные копипаст-шаблоны).
 
@@ -10,7 +10,7 @@
 
 ## 0. Что лежит в доменном слое
 
-Доменный слой — это **слой бизнес-контрактов**. Здесь нет I/O, нет персистентности, нет HTTP, нет Flutter-виджетов. Это **папки** внутри единого `lib/`, а не отдельный пакет (см. `00-architecture-overview.md`): доменный код лежит в `lib/domain/`, импортируется как `package:speech_ai_mobile/domain/...` и **ничего из других слоёв не импортирует** (правило однонаправленных зависимостей: `presentation -> domain`, `data -> domain`, `domain` не импортирует ничего из приложения).
+Доменный слой — это **слой бизнес-контрактов**. Здесь нет I/O, нет персистентности, нет HTTP, нет Flutter-виджетов. Это **папки** внутри единого `lib/`, а не отдельный пакет (см. `00-architecture-overview.md`): доменный код лежит в `lib/domain/`, импортируется как `package:nox_app/domain/...` и **ничего из других слоёв не импортирует** (правило однонаправленных зависимостей: `presentation -> domain`, `data -> domain`, `domain` не импортирует ничего из приложения).
 
 Доменный слой экспонирует:
 
@@ -42,7 +42,7 @@ lib/domain/
         └── get_items_config.dart
 ```
 
-> **Чем это отличается от прежних подходов.** В исходных вариантах доменный слой был отдельным пакетом (`domain/lib/src/...`) с path-зависимостью на `data` и циклом `domain <-> data`. Здесь — **один пакет, слои = папки**, направление зависимостей строго `data -> domain` (домен не знает про data). Поэтому из доменного слоя выпилены `DataConverter` / `ExceptionConverter` / `JsonMappers` / кастомные `JsonConverter` / `fromJson` на доменных типах — всё это перенесено в entity-слой (`04-data-layer.md`). Доменные конфиги — **по одному классу на вызов**, а не sealed-union на фичу.
+> **Правило раскладки.** Доменный слой — **не** отдельный пакет: **один пакет, слои = папки**, направление зависимостей строго `data -> domain` (домен не знает про data); цикла `domain <-> data` быть не должно. В доменном слое **нет** `DataConverter` / `ExceptionConverter` / `JsonMappers` / кастомных `JsonConverter` / `fromJson` на доменных типах — всё это живёт в entity-слое (`04-data-layer.md`). Доменные конфиги — **по одному классу на вызов**, а не sealed-union на фичу.
 
 ---
 
@@ -55,7 +55,7 @@ lib/domain/
 `lib/domain/repository/base/repository_result.dart`:
 ```dart
 import 'package:freezed_annotation/freezed_annotation.dart';
-import 'package:speech_ai_mobile/domain/exception/base_repository_exception.dart';
+import 'package:nox_app/domain/exception/base_repository_exception.dart';
 
 part 'repository_result.freezed.dart';
 
@@ -94,7 +94,7 @@ sealed class RepositoryResult<T> with _$RepositoryResult<T> {
 - `hasData` — безопасная булева проверка; предпочитайте её инлайновому `data != null`.
 - `data` / `exception` — удобные геттеры для миграции старого кода, но **канонический способ потребления — `match()`** (раздел 2). Прямой `result.data!` запрещён — на error-пути он бросает.
 
-> **Почему `@freezed sealed`, а не plain-класс.** Мандат проекта — BLoC и доменные value-объекты на Freezed. `RepositoryResult` — sealed-union из двух публичных вариантов (`RepositoryResultSuccess` / `RepositoryResultError`), что и даёт исчерпывающий `switch` в `match()` и компилятор-проверяемую взаимоисключаемость. Это сознательно заменяет прежний plain-класс с двумя nullable-полями (`base`) и прежний permissive-Freezed с обоими nullable-полями и `completed(...)`-фабрикой (`v1`).
+> **Почему `@freezed sealed`, а не plain-класс.** Мандат проекта — BLoC и доменные value-объекты на Freezed. `RepositoryResult` — sealed-union из двух публичных вариантов (`RepositoryResultSuccess` / `RepositoryResultError`), что и даёт исчерпывающий `switch` в `match()` и компилятор-проверяемую взаимоисключаемость. Это сознательная замена plain-класса с двумя nullable-полями и permissive-Freezed с обоими nullable-полями и `completed(...)`-фабрикой: оба допускают «partial»-состояние с обоими заполненными полями, чего здесь быть не должно.
 
 ### Безопасный доступ — никогда `result.data!`
 
@@ -118,12 +118,12 @@ if (result.hasData) {
 
 ## 2. `repository_result_handling.dart` — расширение `match()`
 
-`match()` превращает два возможных варианта `RepositoryResult<T>` в явные исчерпывающие ветки через `switch` по публичным вариантам. Это канонический способ потребить результат в BLoC и в любом вызывающем коде. Поскольку состояние **взаимоисключающее**, расширение **тримнутое**: только `onData` / `onError`, без `onPartial` / `onEmpty` (они были нужны прежнему permissive-варианту и здесь не имеют смысла).
+`match()` превращает два возможных варианта `RepositoryResult<T>` в явные исчерпывающие ветки через `switch` по публичным вариантам. Это канонический способ потребить результат в BLoC и в любом вызывающем коде. Поскольку состояние **взаимоисключающее**, расширение **тримнутое**: только `onData` / `onError`, без `onPartial` / `onEmpty` — для двух взаимоисключающих вариантов они не имеют смысла.
 
 `lib/domain/repository/base/repository_result_handling.dart`:
 ```dart
-import 'package:speech_ai_mobile/domain/exception/base_repository_exception.dart';
-import 'package:speech_ai_mobile/domain/repository/base/repository_result.dart';
+import 'package:nox_app/domain/exception/base_repository_exception.dart';
+import 'package:nox_app/domain/repository/base/repository_result.dart';
 
 /// Type-safe, exhaustive pattern-match over a [RepositoryResult] payload.
 ///
@@ -165,7 +165,7 @@ result.match<void>(
 
 ## 3. Иерархия исключений
 
-Два файла: однострочный маркер-интерфейс и enum стандартных режимов отказа. **Никаких JSON-методов на маркере** (это сознательно убирает прежний `fromJson`/`toJson`-контракт варианта `v1` — JSON-маппинг ошибок живёт в entity-слое, см. `04-data-layer.md`).
+Два файла: однострочный маркер-интерфейс и enum стандартных режимов отказа. **Никаких JSON-методов на маркере** (на маркере нет `fromJson`/`toJson` — JSON-маппинг ошибок живёт в entity-слое, см. `04-data-layer.md`).
 
 ### 3.1 `BaseRepositoryException` (маркер)
 
@@ -180,7 +180,7 @@ abstract class BaseRepositoryException {}
 
 `lib/domain/exception/repository_exception.dart`:
 ```dart
-import 'package:speech_ai_mobile/domain/exception/base_repository_exception.dart';
+import 'package:nox_app/domain/exception/base_repository_exception.dart';
 
 enum RepositoryException implements BaseRepositoryException {
   unknown,
@@ -209,7 +209,7 @@ enum RepositoryException implements BaseRepositoryException {
 
 ```dart
 // lib/domain/repository/payments/payments_repository_exception.dart  (пример)
-import 'package:speech_ai_mobile/domain/exception/base_repository_exception.dart';
+import 'package:nox_app/domain/exception/base_repository_exception.dart';
 
 enum PaymentsRepositoryException implements BaseRepositoryException {
   providerNotConnected,
@@ -241,18 +241,18 @@ enum PaymentsRepositoryException implements BaseRepositoryException {
 - Возврат — **всегда** `Future<RepositoryResult<T>>` или `Stream<RepositoryResult<T>>`, никогда голый `Future<T>`.
 - **Watchable-ресурсы экспонируют пару:** `watchXxx()` (Stream, backed `BehaviorSubject`) + `fetchXxx()` (Future, пушит на тот же стрим). Это касается одиночных кэшируемых ресурсов и реактивных коллекций.
 - **Carve-out (важно).** Пагинированные server-owned списки и одноразовые POST'ы — **network-only**: у них нет DAO/subject, только `get*` / `fetch*` / `create*`-метод, который ходит в сеть и возвращает результат напрямую. Не заводите `watch*`-пару для серверного пагинированного списка (см. `04-data-layer.md` про carve-out и `07-pagination.md` про контракт пагинации).
-- Списочные методы возвращают слайс страницы в паре с метаданными пагинации: `(List<T>, PageMetadata)` (offset-flavor — дефолт для records-list client_backend). Полный контракт — `07-pagination.md`.
+- Списочные методы возвращают слайс страницы в паре с метаданными пагинации: `(List<T>, PageMetadata)` (offset-flavor — дефолт; курсорный flavor задокументирован как альтернатива, конкретный контракт пагинации списка чатов фиксируется позже с бэкендом NOX). Полный контракт — `07-pagination.md`.
 - `clean()` сбрасывает кэш/subject'ы (вызывается на logout).
 
 ### 4.2 Рабочий пример: `ItemRepository`
 
 `lib/domain/repository/item/item_repository.dart`:
 ```dart
-import 'package:speech_ai_mobile/domain/model/item/item_model.dart';
-import 'package:speech_ai_mobile/domain/repository/base/page_metadata.dart';
-import 'package:speech_ai_mobile/domain/repository/base/repository_result.dart';
-import 'package:speech_ai_mobile/domain/repository/item/get_item_config.dart';
-import 'package:speech_ai_mobile/domain/repository/item/get_items_config.dart';
+import 'package:nox_app/domain/model/item/item_model.dart';
+import 'package:nox_app/domain/repository/base/page_metadata.dart';
+import 'package:nox_app/domain/repository/base/repository_result.dart';
+import 'package:nox_app/domain/repository/item/get_item_config.dart';
+import 'package:nox_app/domain/repository/item/get_items_config.dart';
 
 abstract class ItemRepository {
   /// Cache-first single resource. Replays the last value, then live updates.
@@ -281,17 +281,17 @@ abstract class ItemRepository {
 }
 ```
 
-> `PageMetadata` — offset-flavor (`{int? nextPage, int total}`), потому что records-list client_backend пагинируется по offset (`page` + `page_size` + `count`). Курсорный flavor (`CursorPaginationMetadata{String? nextCursor}`) задокументирован как альтернатива в `07-pagination.md`. Сам тип `PageMetadata` объявлен в `lib/domain/repository/base/` и описан в `07-pagination.md`.
+> `PageMetadata` — offset-flavor (`{int? nextPage, int total}`): offset (`page` + `page_size` + `count`) — дефолтный flavor. Курсорный flavor (`CursorPaginationMetadata{String? nextCursor}`) задокументирован как альтернатива в `07-pagination.md`; конкретный контракт пагинации списка чатов фиксируется позже с бэкендом NOX (пример — бэкенд/протокол NOX ещё не выбран; заменить на реальный контракт). Сам тип `PageMetadata` объявлен в `lib/domain/repository/base/` и описан в `07-pagination.md`.
 
 ### 4.3 Пустой скелет
 
 ```dart
 // lib/domain/repository/<feature>/<feature>_repository.dart
-import 'package:speech_ai_mobile/domain/model/<feature>/<model>_model.dart';
-import 'package:speech_ai_mobile/domain/repository/base/page_metadata.dart';
-import 'package:speech_ai_mobile/domain/repository/base/repository_result.dart';
-import 'package:speech_ai_mobile/domain/repository/<feature>/get_<model>_config.dart';
-import 'package:speech_ai_mobile/domain/repository/<feature>/get_<model>s_config.dart';
+import 'package:nox_app/domain/model/<feature>/<model>_model.dart';
+import 'package:nox_app/domain/repository/base/page_metadata.dart';
+import 'package:nox_app/domain/repository/base/repository_result.dart';
+import 'package:nox_app/domain/repository/<feature>/get_<model>_config.dart';
+import 'package:nox_app/domain/repository/<feature>/get_<model>s_config.dart';
 
 abstract class <Feature>Repository {
   Stream<RepositoryResult<<Model>Model>> watch<Model>({required String id});
@@ -316,7 +316,7 @@ abstract class <Feature>Repository {
 
 ## 5. Конфиги репозиториев — один Freezed-класс на вызов
 
-В отличие от прежних sealed-union-на-фичу (`<Feature>RepositoryConfigs`), здесь — **по одному `@freezed`-классу на каждый вызов** (`GetItemsConfig`, `GetItemConfig`, …). Каждый конфиг реализует однострочный маркер `RepositoryConfig`. Конфиги несут всё, что нужно вызову, плюс именованные фабрики под частые случаи и константы пагинации. **Только `.freezed.dart`, без `.g.dart`** — конфиги в JSON не сериализуются.
+Конфиги — **по одному `@freezed`-классу на каждый вызов** (`GetItemsConfig`, `GetItemConfig`, …), а не sealed-union-на-фичу (`<Feature>RepositoryConfigs`). Каждый конфиг реализует однострочный маркер `RepositoryConfig`. Конфиги несут всё, что нужно вызову, плюс именованные фабрики под частые случаи и константы пагинации. **Только `.freezed.dart`, без `.g.dart`** — конфиги в JSON не сериализуются.
 
 ### 5.1 Маркер `RepositoryConfig`
 
@@ -330,7 +330,7 @@ abstract class RepositoryConfig {}
 `lib/domain/repository/item/get_items_config.dart`:
 ```dart
 import 'package:freezed_annotation/freezed_annotation.dart';
-import 'package:speech_ai_mobile/domain/repository/base/repository_config.dart';
+import 'package:nox_app/domain/repository/base/repository_config.dart';
 
 part 'get_items_config.freezed.dart';
 
@@ -361,7 +361,7 @@ abstract class GetItemsConfig with _$GetItemsConfig implements RepositoryConfig 
 `lib/domain/repository/item/get_item_config.dart`:
 ```dart
 import 'package:freezed_annotation/freezed_annotation.dart';
-import 'package:speech_ai_mobile/domain/repository/base/repository_config.dart';
+import 'package:nox_app/domain/repository/base/repository_config.dart';
 
 part 'get_item_config.freezed.dart';
 
@@ -388,7 +388,7 @@ abstract class GetItemConfig with _$GetItemConfig implements RepositoryConfig {
 ```dart
 // lib/domain/repository/<feature>/get_<model>_config.dart
 import 'package:freezed_annotation/freezed_annotation.dart';
-import 'package:speech_ai_mobile/domain/repository/base/repository_config.dart';
+import 'package:nox_app/domain/repository/base/repository_config.dart';
 
 part 'get_<model>_config.freezed.dart';
 
@@ -401,7 +401,7 @@ abstract class Get<Model>Config with _$Get<Model>Config implements RepositoryCon
 }
 ```
 
-> **Чего НЕ делаем (сознательно отвергнуто из `v1`):** не объявляем JSON в домене (нет `fromJson`/`.g.dart` на конфигах), не используем `DataConverter`/`ExceptionConverter`, не делаем sealed-union-на-фичу (`<Feature>RepositoryConfigs` с `= NamedConfig`-редиректами). Один класс на вызов — проще, без union-разбора на стороне реализации.
+> **Чего НЕ делаем (сознательно):** не объявляем JSON в домене (нет `fromJson`/`.g.dart` на конфигах), не используем `DataConverter`/`ExceptionConverter`, не делаем sealed-union-на-фичу (`<Feature>RepositoryConfigs` с `= NamedConfig`-редиректами). Один класс на вызов — проще, без union-разбора на стороне реализации.
 
 ---
 
@@ -416,7 +416,7 @@ abstract class Get<Model>Config with _$Get<Model>Config implements RepositoryCon
 `lib/domain/model/item/item_model.dart`:
 ```dart
 import 'package:freezed_annotation/freezed_annotation.dart';
-import 'package:speech_ai_mobile/domain/model/item/item_status.dart';
+import 'package:nox_app/domain/model/item/item_status.dart';
 
 part 'item_model.freezed.dart';
 
@@ -514,5 +514,5 @@ ItemRepository                   GetItemConfig               RepositoryResult<It
 - [ ] Хотя бы один контракт `<Feature>Repository`, где каждое чтение/запись возвращает `RepositoryResult` / `Stream<RepositoryResult>`; watchable-ресурсы имеют пару `watchXxx()`/`fetchXxx()`; серверный пагинированный список — network-only (`getItems`, без `watch`-пары); записи — `createXxx`/`updateXxx`/`deleteXxx` (delete → `RepositoryResult<void>`); есть `clean()` → `Future<void>`.
 - [ ] По одному `@freezed`-конфигу **на вызов** (`GetItemConfig`, `GetItemsConfig`), реализующему `RepositoryConfig`. У пагинированного `GetItemsConfig` — поля `{page, search?}`, фабрики `firstPage`/`nextPage` + константы `pageSize`/`defaultPage`, **без** `cacheOnly`. У одиночного `GetItemConfig` — tri-state `cacheOnly`. **Только `.freezed.dart`**.
 - [ ] Хотя бы одна `@freezed`-модель (`ItemModel`) с одной `part '*.freezed.dart'`-директивой, **без** `fromJson`/`.g.dart`; производная логика — во внешнем `extension <Model>ModelExt`; мелкие enum'ы — в отдельном `*_status.dart` рядом.
-- [ ] Доменный слой **ничего** не импортирует из `lib/data` / `lib/presentation`; импорты — полные `package:speech_ai_mobile/...`, без относительных `../` (кроме `part`).
+- [ ] Доменный слой **ничего** не импортирует из `lib/data` / `lib/presentation`; импорты — полные `package:nox_app/...`, без относительных `../` (кроме `part`).
 - [ ] `./script_auto_generate.sh` перегенерирует все `*.freezed.dart` без ошибок; `dart analyze` по доменному слою чист.

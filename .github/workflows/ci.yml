@@ -1,0 +1,25 @@
+name: NOX CI
+
+on:
+  push:
+    branches: [develop, master]
+    paths: ['lib/**', 'test/**', 'pubspec.yaml', 'pubspec.lock', 'analysis_options.yaml', 'build.yaml']
+  pull_request:
+    paths: ['lib/**', 'test/**', 'pubspec.yaml', 'pubspec.lock', 'analysis_options.yaml', 'build.yaml']
+
+jobs:
+  gate:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.1'
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: dart run build_runner build --delete-conflicting-outputs
+      - name: Format check (lib + test only; docs/ and generated excluded)
+        run: dart format -l 140 --set-exit-if-changed $(git ls-files lib test | grep '\.dart$')
+      - run: flutter analyze
+      - run: flutter test

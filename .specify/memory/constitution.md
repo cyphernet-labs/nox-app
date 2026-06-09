@@ -1,50 +1,116 @@
-# [PROJECT_NAME] Constitution
-<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
+<!--
+Sync Impact Report
+==================
+Изменение версии: 1.0.0 → 1.1.0
+Обоснование инкремента: MINOR — существенное расширение ограничения по платформенному scope плюс
+  расширение связывающего scope Принципа III. Целевые платформы расширены с iOS + Android (только mobile)
+  до iOS, Android, Windows, Linux, macOS; web остаётся вне scope. Ни один принцип не удалён и не
+  переопределён обратно-несовместимым образом. Одобрено владельцем, удовлетворяет Принципу II
+  ("out-of-scope молча не расширяется").
+Изменённые принципы:
+  III. Архитектурный блюпринт обязателен — связывающий scope расширен с "всего mobile-кода" /
+       "mobile/Flutter-задача" до всего клиентского/Flutter-кода на всех пяти целевых платформах; добавлен
+       явный пункт о том, что платформенно-специфичные нативные части блюпринта (build/secrets,
+       push, deep-links, secure storage) сейчас определены для iOS/Android и MUST быть расширены на desktop
+       — либо для подсистемы зафиксирован документированный desktop-fallback — до desktop-работы в этой подсистеме.
+Изменённые разделы:
+  - Преамбула — "защищённый мобильный мессенджер (iOS + Android, Flutter)" →
+    "защищённый кросс-платформенный мессенджер (iOS, Android, Windows, Linux, macOS; Flutter)".
+  - Технологический контекст и ограничения — строка платформ расширена до набора из пяти платформ
+    (web вне scope); добавлена заметка о desktop-native-gap / документированном fallback.
+Добавленные разделы: нет. Удалённые разделы: нет.
+Проверенные шаблоны:
+  ✅ .specify/templates/plan-template.md — Constitution Check разрешается динамически против этого файла;
+     платформенно-нейтрален; правка не требуется.
+  ✅ .specify/templates/spec-template.md — совместим; конституция предписывает отсутствие новых/удалённых разделов.
+  ✅ .specify/templates/tasks-template.md — совместим; path-conventions — обобщённые примеры.
+Руководства времени выполнения / корпус, скорректированные в этом change-set (консистентность, Принцип II):
+  ✅ CLAUDE.md — строка платформ в Project Overview; формулировки scoping задач по блюпринту; версия конституции
+     в Spec Kit + сводка по Принципу III.
+  ✅ docs/README.md — продуктовое позиционирование на лендинге docs.
+  ✅ docs/patterns/mobile/README.md — назначение блюпринта, блок статуса (desktop gap), онбординг-чеклист.
+  ✅ docs/patterns/mobile/01-stack-and-tooling.md — строка описания pubspec.
+  ✅ docs/patterns/mobile/08-conventions-and-constitution.md — посеянный скелет lib/ CLAUDE.md.
+  ✅ docs/patterns/mobile/06-theming.md — формулировки прозы о desktop-геттерах PlatformUtils.
+  ✅ docs/patterns/mobile/17-analytics.md — "mobile-only"→"client-only"; значения platform super-property.
+  ✅ docs/patterns/mobile/09-build-and-secrets-infra.md — утверждение "Android+iOS only / no desktop jobs".
+  ✅ docs/vision.md — продуктовое позиционирование верхнего уровня.
+  ✅ docs/requirements.md — список Целевые платформы.
+Отложенные доработки (реальная desktop-работа — НЕ однострочные правки; отслеживается как зависимость feature-001):
+  ⚠ TODO(blueprint-desktop-build): desktop build/flavor/signing/distribution + CI smoke-build jobs
+     для Windows/Linux/macOS (docs/patterns/mobile/09).
+  ⚠ TODO(blueprint-desktop-deeplinks): регистрация desktop deep-link / protocol-handler (13).
+  ⚠ TODO(blueprint-desktop-push): desktop push-стратегия или документированный no-op (15).
+  ⚠ TODO(blueprint-desktop-multiwindow): пересмотреть single-window vs multi-window (05/11).
+  ⚠ TODO(blueprint-desktop-deps): пересмотреть исключённые desktop-зависимости — adaptive scaffold, Linux theming (11).
+  ⚠ TODO(design-desktop-fonts): маппинг шрифта по умолчанию для desktop (design-system.md, splash.md).
+  ⚠ TODO(design-desktop-qr): подход к захвату QR на desktop (qr-scan.md).
+  ⚠ TODO(tokens-desktop-transitions): desktop PageTransitions в сгенерированной теме (nox-handoff).
+  ⚠ TODO(handoff-duplicate): согласовать/удалить случайный дубль "docs/design/system/nox-handoff 2/".
+  ⚠ TODO(design-desktop-screens-reconcile): существующий git-tracked desktop design-корпус
+     docs/design/system/nox-desktop-screens/ (мобильный сосед nox-mobile-screens/) — подтвердить как авторитетный
+     desktop-референс экранов в рамках scope из пяти платформ; доработки design-desktop-fonts / design-desktop-qr
+     MUST ссылаться на существующие desktop-спеки (например, nox-desktop-screens/screens/06-qr.md), а не считать их net-new.
+  ⚠ TODO(design-desktop-handoff): docs/design/spec/HANDOFF-PROMPT.md оформлен как mobile-only (iOS/Android, 393×852);
+     расширить на набор desktop-платформ / desktop-оконный фрейм, согласованно с nox-desktop-screens/.
+-->
 
-## Core Principles
+# Конституция проекта NOX
 
-### [PRINCIPLE_1_NAME]
-<!-- Example: I. Library-First -->
-[PRINCIPLE_1_DESCRIPTION]
-<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
+NOX — защищённый кросс-платформенный мессенджер (iOS, Android, Windows, Linux, macOS; Flutter) с end-to-end шифрованием; ориентир — Signal. Эта конституция фиксирует не подлежащие компромиссу принципы проекта. Она имеет приоритет над прочими практиками; работа над фичами (spec → plan → tasks → implement) проверяется на соответствие ей.
 
-### [PRINCIPLE_2_NAME]
-<!-- Example: II. CLI Interface -->
-[PRINCIPLE_2_DESCRIPTION]
-<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
+## Основные принципы
 
-### [PRINCIPLE_3_NAME]
-<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
-[PRINCIPLE_3_DESCRIPTION]
-<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
+### I. Приватность и E2EE — без компромиссов
 
-### [PRINCIPLE_4_NAME]
-<!-- Example: IV. Integration Testing -->
-[PRINCIPLE_4_DESCRIPTION]
-<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
+E2EE включено по умолчанию для всех сообщений и файлов; сервер не имеет доступа к содержимому, и это **нельзя отключить**. Метаданные на стороне сервера минимизируются. Идентичность анонимна — без телефона и e-mail; технический идентификатор и публичный label разделены. Клиентская аналитика, логи и крэш-репорты **никогда** не содержат PII, содержимого сообщений, идентификаторов пользователей или имён чатов; аналитика — строго opt-in (по умолчанию выключена). Logout полностью стирает идентификатор и локальные данные с устройства.
 
-### [PRINCIPLE_5_NAME]
-<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
-[PRINCIPLE_5_DESCRIPTION]
-<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
+**Обоснование:** приватность — смысл продукта (Signal-like), а не фича; любое решение, ослабляющее её, отклоняется или выносится владельцу.
 
-## [SECTION_2_NAME]
-<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
+### II. Спецификации и дизайн-корпус — источник истины
 
-[SECTION_2_CONTENT]
-<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
+Каждая фича проходит spec-driven цикл: spec → plan → tasks → implement. Авторитетная UI/UX-спека — `docs/design/spec/` (верхнеуровневый UI зафиксирован, экраны детализированы); продуктовые решения фиксируются там и в таблице решений, а не «на ходу». Реализация не должна расходиться со спекой; обнаруженное расхождение устраняется в том же change-set — либо код приводится к спеке, либо спека осознанно обновляется. Зафиксированный out-of-scope молча не расширяется.
 
-## [SECTION_3_NAME]
-<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
+**Обоснование:** проект ведётся документацией-вперёд; согласованность спеки и реализации — условие предсказуемости.
 
-[SECTION_3_CONTENT]
-<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
+### III. Архитектурный блюпринт обязателен
 
-## Governance
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
+`docs/patterns/mobile/` — обязательный блюпринт для всего клиентского Flutter-кода (на всех пяти целевых платформах). В начале любой Flutter/клиентской задачи — сверяться с ним и строить по нему. Несущие инварианты: один Dart-пакет `nox_app`, Clean Architecture слоями-папками (`presentation → domain ← data`, `domain` ни от чего не зависит), BLoC = Freezed, единый injectable + get_it DI, `RepositoryResult<T>` повсюду, обязательный `LogRepository` (никаких сырых `print`), codegen-first, дизайн-токены вместо хардкода. Эти инварианты платформенно-нейтральны и применяются ко всем таргетам. Платформенно-специфичные части блюпринта (build/secrets, push, deep-links, secure storage) сейчас определены для iOS/Android; перед desktop-работой в такой подсистеме блюпринт расширяется на desktop либо для неё фиксируется явный документированный desktop-fallback. Дрейф реального кода от блюпринта чинится в том же change-set (правится код либо сам блюпринт).
 
-[GOVERNANCE_RULES]
-<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
+**Обоснование:** единый источник истины по архитектуре держит код консистентным между сессиями и контрибьюторами.
 
-**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
-<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+### IV. Верность дизайн-системе
+
+UI строится на Material Design 3, light + dark. Источник истины дизайн-токенов — `docs/design/system/nox-handoff/` (формат W3C DTCG); Dart-тема генерируется из них. В коде фич **нет** хардкод-цветов, отступов, типографики и overlay-стилей — только токены. Экраны следуют зафиксированным спекам и глобальным UI-конвенциям (уровни ошибок, форматы времени, иконки типов файлов, генерируемые аватары). Brand-fixed исключения (тёмный splash, светлая поверхность QR) соблюдаются вне зависимости от темы.
+
+**Обоснование:** единая токенизированная дизайн-система даёт консистентный UI и дешёвую темизацию.
+
+### V. Языковая дисциплина
+
+Документация и общение — **русский**; код, идентификаторы, имена файлов, shell-команды, сообщения коммитов, имена веток и заголовки PR — **английский**; UI-микрокопия — **английский**. Языки приложения — English + Українська (системный по умолчанию, fallback на English); русский в UI продукта не используется. Языки не смешиваются внутри одного артефакта.
+
+**Обоснование:** русскоязычная команда ведёт прозу, но кодовая база и продукт остаются англоязычными и переносимыми.
+
+## Технологический контекст и ограничения
+
+- Стек — по блюпринту `docs/patterns/mobile/`: Flutter, запиненный через FVM (`3.44.1`), Dart `>=3.12.0 <4.0.0`, длина строки 140, стоковый `flutter_lints`; freezed + json_serializable + injectable + flutter_gen за один прогон `build_runner`.
+- Платформы — iOS, Android, Windows, Linux, macOS (две мобильные + три десктопные). Web — вне scope. Платформенно-специфичные нативные части (сборка/секреты, push, deep-links, secure storage) сейчас покрыты блюпринтом для iOS/Android; для desktop они либо расширяются в блюпринте, либо получают явный документированный fallback (см. Принцип III).
+- Бэкенд, транспортный протокол, криптоядро и модель синхронизации **намеренно ещё не выбраны**. Любой план или код, касающийся сети, авторизации, формата конверта или эндпоинтов, помечает контракт как пример/TBD и согласуется с владельцем — не «изобретается на глаз».
+- Приложение пока не заскаффолжено (нет `lib/` / `pubspec.yaml`); репозиторий находится в фазе дизайна и документации.
+
+## Рабочий процесс и гейты качества
+
+- **Ветки:** `master` — только релизные коммиты; `develop` — рабочая ветка, от неё стартуют фиче-ветки. Рутинная работа идёт в `develop`.
+- **Коммиты:** imperative-subject, атомарные, на английском. Коммиты, пуши в `develop`/`master` и merge PR **не выполняются автономно** — изменения стейджатся, показывается дифф, предлагается команда коммита и ожидается явное подтверждение владельца.
+- **Гейт кода (по блюпринту):** перед завершением задачи — codegen (один прогон) → форматирование только изменённых файлов (`-l 140`) → `flutter analyze` без ошибок → затронутые тесты. Сгенерированные файлы руками не правятся.
+- **Гейт фичи (spec-kit):** spec → (опц.) clarify → plan → tasks → (опц.) analyze/checklist → implement; на этапе plan выполняется Constitution Check против принципов I–V.
+
+## Управление
+
+Эта конституция имеет приоритет над прочими практиками проекта. Поправки требуют документированного изменения, обновления версии по семантике (ниже) и явного одобрения владельца. Все планы и PR проверяются на соответствие принципам (Constitution Check — гейт этапа plan); отклонения фиксируются и обосновываются в разделе Complexity Tracking плана либо устраняются. Усложнение требует обоснования — проще лучше.
+
+Версионирование конституции: **MAJOR** — несовместимое изменение, удаление или переопределение принципов; **MINOR** — добавление принципа/раздела или существенное расширение; **PATCH** — уточнения и формулировки без смены смысла.
+
+Руководства времени разработки: `CLAUDE.md` (корневые правила репозитория), `docs/patterns/mobile/` (архитектура), `docs/design/spec/` и `docs/design/system/` (UI и дизайн-система).
+
+**Version**: 1.1.0 | **Ratified**: 2026-06-08 | **Last Amended**: 2026-06-08

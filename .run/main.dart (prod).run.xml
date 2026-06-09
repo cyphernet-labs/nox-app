@@ -1,0 +1,9 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="main.dart (prod)" type="FlutterRunConfigurationType" factoryName="Flutter">
+    <!-- Flavor via --dart-define-from-file (option A: uniform on all platforms;
+         native --flavor and SOPS secrets-decrypt are deferred — no secrets in the skeleton). -->
+    <option name="additionalArgs" value="--dart-define-from-file=$PROJECT_DIR$/config/prod.json" />
+    <option name="filePath" value="$PROJECT_DIR$/lib/main.dart" />
+    <method v="2" />
+  </configuration>
+</component>

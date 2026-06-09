@@ -1,17 +1,17 @@
 # 12 — Команды разработки
 
-> **Назначение:** дать единый, скопированный-вставленный набор повседневных команд для **одно-пакетного** приложения `speech_ai_mobile` (codegen, формат, анализ, тесты, mise-таски, Makefile) и набор скаффолдинг-скиллов `.claude/commands/*`, которые порождают артефакты строго по нашей архитектуре (Freezed-BLoC, пагинация через `applyPage`, единый DI). **Когда читать:** ежедневно во время разработки, а также перед заведением нового фичевого вертикального среза (records list — первый реальный). **Связанные документы:** [11-scaffolding-plan.md](11-scaffolding-plan.md) (порядок ручного скаффолдинга, который эти команды автоматизируют), [10-code-templates.md](10-code-templates.md) (canonical-шаблоны, которые команды эмитят), [08-conventions-and-constitution.md](08-conventions-and-constitution.md) (правила именования/импортов/коммитов, которые команды обязаны соблюдать), [01-stack-and-tooling.md](01-stack-and-tooling.md) (версии FVM/Dart/Flutter), [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md) (mise-таски секретов и flavored-сборки).
+> **Назначение:** дать единый, скопированный-вставленный набор повседневных команд для **одно-пакетного** приложения `nox_app` (codegen, формат, анализ, тесты, mise-таски, Makefile) и набор скаффолдинг-скиллов `.claude/commands/*`, которые порождают артефакты строго по нашей архитектуре (Freezed-BLoC, пагинация через `applyPage`, единый DI). **Когда читать:** ежедневно во время разработки, а также перед заведением нового фичевого вертикального среза (список чатов — первый реальный). **Связанные документы:** [11-scaffolding-plan.md](11-scaffolding-plan.md) (порядок ручного скаффолдинга, который эти команды автоматизируют), [10-code-templates.md](10-code-templates.md) (canonical-шаблоны, которые команды эмитят), [08-conventions-and-constitution.md](08-conventions-and-constitution.md) (правила именования/импортов/коммитов, которые команды обязаны соблюдать), [01-stack-and-tooling.md](01-stack-and-tooling.md) (версии FVM/Dart/Flutter), [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md) (mise-таски секретов и flavored-сборки).
 
 ---
 
-## 0. Ключевое отличие от трёх-пакетного оригинала
+## 0. Ключевое правило: один пакет, а не три
 
-В source-проекте было **три Dart-пакета** (`domain/`, `data/`, root), поэтому codegen запускался по очереди (`build_runner` в `data/` → `domain/` → root в порядке зависимостей), форматирование и импорты ходили по пяти корням (`lib/`, `domain/lib/`, `data/lib/`, `data/test/`, `test/`), а DI собиралось по-пакетно.
+Этот блюпринт намеренно использует **один Dart-пакет** `nox_app`, а не три (`domain/`, `data/`, root). В трёх-пакетной раскладке codegen пришлось бы запускать по очереди (`build_runner` в `data/` → `domain/` → root в порядке зависимостей), форматирование и импорты ходили бы по пяти корням (`lib/`, `domain/lib/`, `data/lib/`, `data/test/`, `test/`), а DI собиралось бы по-пакетно. Мы это не делаем.
 
-У нас **ОДИН пакет** `speech_ai_mobile`. Слои — это **папки** в одном `lib/` (`lib/domain`, `lib/data`, `lib/presentation`, `lib/di`, `lib/general`, `lib/design`, `lib/resource`), один `pubspec.yaml`, один `build_runner`-прогон, один `configureDependencies(env)`. Поэтому везде ниже:
+У нас **ОДИН пакет** `nox_app`. Слои — это **папки** в одном `lib/` (`lib/domain`, `lib/data`, `lib/presentation`, `lib/di`, `lib/general`, `lib/design`, `lib/resource`), один `pubspec.yaml`, один `build_runner`-прогон, один `configureDependencies(env)`. Поэтому везде ниже:
 
 - **codegen — ОДНА команда** `fvm dart run build_runner build --delete-conflicting-outputs`. Никакого `data → domain → root` порядка: нет нескольких пакетов, нечего упорядочивать.
-- **импорты — только `package:speech_ai_mobile/...`** (никаких `../` кроме `part`). Поиск-замена при рефакторинге идёт по одному корню `lib/` (+ `test/`, `integration_test/`), а не по пяти.
+- **импорты — только `package:nox_app/...`** (никаких `../` кроме `part`). Поиск-замена при рефакторинге идёт по одному корню `lib/` (+ `test/`, `integration_test/`), а не по пяти.
 - **DI — один** генерируемый `lib/di/configure_dependencies.config.dart`; команды не упоминают «три пакета» и path-deps.
 
 Эта поправка применяется к каждой команде в этом документе — отдельно повторяется в трейлерах.
@@ -52,7 +52,7 @@ fvm dart run build_runner watch --delete-conflicting-outputs
 
 ### 1.3. Форматирование (ТОЛЬКО изменённые файлы)
 
-Длина строки — **140** (закреплена в `analysis_options.yaml`). Форматируем **только файлы, которые трогали в текущей задаче** — никогда весь репозиторий (правило `feedback_format_scope`):
+Длина строки — **140** (закреплена в `analysis_options.yaml`). Форматируем **только файлы, которые трогали в текущей задаче** — никогда весь репозиторий:
 
 ```bash
 fvm dart format -l 140 lib/data/repository/item/item_repository_impl.dart lib/presentation/pages/item_list_page/bloc/item_list_bloc.dart
@@ -89,20 +89,18 @@ BLoC покрываем через `bloc_test` — он проверяет по�
 Flavor выбирается на этапе компиляции (`String.fromEnvironment('app.flavor')`); flavor-специфичные значения приходят через `--dart-define-from-file` (см. [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md)):
 
 ```bash
-# stage (расшифровать секреты при необходимости: mise run secrets:decrypt:stage)
-fvm flutter run --flavor stage --dart-define=app.flavor=stage \
-  --dart-define-from-file=.secrets-runtime/stage.dart-define.json
-
-# prod
-fvm flutter run --flavor prod  --dart-define=app.flavor=prod \
-  --dart-define-from-file=.secrets-runtime/prod.dart-define.json
+# Скелет: флейвор приходит из закоммиченного config-файла, единообразно на всех платформах.
+fvm flutter run --dart-define-from-file=config/stage.json   # stage
+fvm flutter run --dart-define-from-file=config/prod.json    # prod
 ```
+
+> Нативные mobile-флейворы (`--flavor`) и секреты (`secrets:decrypt` → `.secrets-runtime/<flavor>.dart-define.json`) — на будущее (блюпринт `09` §6/§7); в скелете не используются.
 
 ---
 
 ## 2. mise-таски и Makefile-обёртки
 
-Секреты (SOPS + age) и flavored-сборки оборачиваются в `mise`-таски (их **полное определение** — в [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md) §4 `.mise.toml`), а Makefile (§5 там же) даёт короткие алиасы. Именование тасков следует реальной конвенции владельца (existlive): `namespace:action[:channel]` для секретов и `build:<platform>:<channel>` для сборок; каждый `build:*` объявляет `depends = ["secrets:decrypt:<flavor>"]`, поэтому decrypt выполняется автоматически перед сборкой. Точные имена:
+Секреты (SOPS + age) и flavored-сборки оборачиваются в `mise`-таски (их **полное определение** — в [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md) §4 `.mise.toml`), а Makefile (§5 там же) даёт короткие алиасы. Именование тасков: `namespace:action[:channel]` для секретов и `build:<platform>:<channel>` для сборок; каждый `build:*` объявляет `depends = ["secrets:decrypt:<flavor>"]`, поэтому decrypt выполняется автоматически перед сборкой. Точные имена:
 
 ```bash
 # Расшифровать секреты в .secrets-runtime/<flavor>.dart-define.json (+ нативные конфиги)
@@ -132,13 +130,13 @@ build-ios-stage:      ; mise run build:ios:stage
 build-ios-prod:       ; mise run build:ios:prod
 ```
 
-> **Никогда не вызывать `sops`/`age` напрямую** — только через `mise run secrets:*` (правило `feedback_secrets_workflow`). Версионирование сборок — CalVer + shifted-epoch (`YY.M.D+EPOCH`), детали в [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md). Под prod-дистрибуцию existlive дополнительно разбивает таск по назначению (`build:android:prod:firebase` / `build:android:prod:google` / `build:ios:prod:firebase` / `build:ios:prod:apple`) — мобильный CD пока отложен (см. 09 §11), поэтому здесь оставлен базовый `build:<platform>:prod`.
+> **Никогда не вызывать `sops`/`age` напрямую** — только через `mise run secrets:*`. Версионирование сборок — CalVer + shifted-epoch (`YY.M.D+EPOCH`), детали в [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md). Под prod-дистрибуцию таск можно дополнительно разбить по назначению (`build:android:prod:firebase` / `build:android:prod:google` / `build:ios:prod:firebase` / `build:ios:prod:apple`) — мобильный CD пока отложен (см. 09 §11), поэтому здесь оставлен базовый `build:<platform>:prod`.
 
 ---
 
 ## 3. Скаффолдинг-скиллы `.claude/commands/*`
 
-`.claude/commands/<name>.md` — это **prompt-шаблон**, а не скрипт. Когда вы вводите `/<name> <args>`, Claude читает этот markdown и выполняет шаги. Ценность в том, что **рецепт лежит в репозитории** — скаффолдинг остаётся верным архитектуре спустя месяцы и между сессиями.
+`.claude/commands/<name>.md` — это **prompt-шаблон**, а не скрипт. Когда вы вводите `/<name> <args>`, агент читает этот markdown и выполняет шаги. Ценность в том, что **рецепт лежит в репозитории** — скаффолдинг остаётся верным архитектуре спустя месяцы и между сессиями.
 
 Три правила, которые соблюдает каждая команда набора:
 
@@ -146,7 +144,7 @@ build-ios-prod:       ; mise run build:ios:prod
 2. **Шаблоны живут в доках, а не в команде.** Каждая команда ссылается на [10-code-templates.md](10-code-templates.md) и нужный layer-док за точными байтами; команда говорит, *какой* шаблон применить, *куда* и *с какими именами*. Единый источник правды.
 3. **Каждая генеративная команда заканчивается одним трейлером:** codegen (один прогон) → format (только изменённые) → analyze. Ровно то, что делает `/check-build` (Раздел 3.1).
 
-> **Отличия от source-команд (важно).** Оригинальные команды эмитили **рукописный `Equatable`-BLoC** (sealed `State`/`Event extends Equatable` с ручными `when()`/`copyWith()`), три-пакетные пути (`domain/lib/src/...`, `data/lib/src/...`), пер-пакетный codegen-порядок, а также крипто/IPC-специфику (`@BigIntConverter()`, IPC-вариант репозитория, `CustomEnvironment.ipc`). У нас **всё переписано** на одно-пакетные пути (`lib/domain/...`, `lib/data/...`), **Freezed-BLoC** (см. [05-presentation-layer.md](05-presentation-layer.md)), env-лист `[Environment.dev, Environment.prod, Environment.test]` (`prod→Environment.prod`, `stage→Environment.dev`, плюс обязательная регистрация под `Environment.test`), пагинацию через `PagingStateExt.applyPage`. BigInt/IPC/swift-to-dart — **вне scope**, не эмитим.
+> **Что команды эмитят, а что — нет (важно).** Команды эмитят **Freezed-BLoC** (`State`/`Event` — `@freezed sealed`-юнионы с генерируемыми `when()`/`copyWith()`, см. [05-presentation-layer.md](05-presentation-layer.md)), а **не** рукописный `Equatable`-BLoC. Используются одно-пакетные пути (`lib/domain/...`, `lib/data/...`), env-лист `[Environment.dev, Environment.prod, Environment.test]` (`prod→Environment.prod`, `stage→Environment.dev`, плюс обязательная регистрация под `Environment.test`), пагинация через `PagingStateExt.applyPage`. BigInt/IPC/swift-to-dart, `@BigIntConverter()`, IPC-вариант репозитория и `CustomEnvironment.ipc` — **вне scope**, не эмитим.
 
 Создать файлы под `.claude/commands/` в репозитории мобильного приложения:
 
@@ -235,7 +233,7 @@ Create a Freezed domain model with corresponding data entity and mapper (single 
    - `part '<snake_name>_model.freezed.dart';` ONLY — NO `*.g.dart`, NO `fromJson`
      (domain models carry no JSON; JSON lives on the entity layer)
    - All fields `required` (nullable fields typed `T?`); no `@Default`
-   - Full package imports `package:speech_ai_mobile/...`, never relative
+   - Full package imports `package:nox_app/...`, never relative
    - Derived/computed logic goes in an EXTENSION getter, not in the @freezed body
    - Do NOT use BigInt money fields or `@BigIntConverter()`
 
@@ -262,7 +260,7 @@ Create a Freezed domain model with corresponding data entity and mapper (single 
 - Entity / mapper / ResponseEntity / EntityConverter registry: `04-data-layer.md`, `10-code-templates.md`
 ```
 
-> Worked-тройка `Item`: `ItemModel { id, name, description?, status:ItemStatus, createdAt:DateTime }` → `ItemEntity { id, name, description?, status:String, createdAt:String }` → `ItemMapper`. Никакого `BigIntConverter`/money. Первый реальный артефакт — `RecordModel` для records-list — делается этой же командой.
+> Worked-тройка `Item`: `ItemModel { id, name, description?, status:ItemStatus, createdAt:DateTime }` → `ItemEntity { id, name, description?, status:String, createdAt:String }` → `ItemMapper`. Никакого `BigIntConverter`/money. Первый реальный артефакт — модель элемента списка чатов (`ItemModel`-форма) — делается этой же командой.
 
 ---
 
@@ -292,9 +290,10 @@ Create a repository: contract, configs union, implementation, and DI registratio
    - Methods return `RepositoryResult<T>` (one-shot) or `Stream<RepositoryResult<T>>` (watch).
    - For server-owned paginated lists the LIST method is `get<Name>s` returning
      `Future<RepositoryResult<(List<<Name>Model>, PageMetadata)>>`
-     (offset flavor: `PageMetadata{required int total, int? nextPage}` at
-     `lib/domain/repository/base/page_metadata.dart`, `nextPage == null` => last page —
-     matches client_backend records-list). Paginated lists are NETWORK-ONLY (no DAO/subject).
+     (offset is the default pagination flavor: `PageMetadata{required int total, int? nextPage}` at
+     `lib/domain/repository/base/page_metadata.dart`, `nextPage == null` => last page; cursor is the
+     documented alternative — the concrete chats-list pagination contract is finalized later with the
+     NOX backend). Paginated lists are NETWORK-ONLY (no DAO/subject).
    - Canonical method set (per the method-prefix table — `get*` = parametrized/list,
      `fetch*` = one-shot single, `watch*` = stream): `watch<Name>`, `fetch<Name>`, `get<Name>s`,
      `create<Name>`, `update<Name>`, `delete<Name>`, `clean`.
@@ -334,7 +333,7 @@ Create a repository: contract, configs union, implementation, and DI registratio
 - DI annotations + bootstrap chain ($initGetIt): `02-dependency-injection.md`
 ```
 
-> **Env-лист — `[Environment.dev, Environment.prod, Environment.test]`** (два flavor: `prod→Environment.prod`, `stage→Environment.dev`; плюс **обязательный** `Environment.test`). Регистрация под `Environment.test` — **не опциональна**: без неё `getIt<<Name>Repository>()` бросит под `Environment.test`. Тестовый `AppDatabase` подменяется СВОИМ test-env-провайдером (`@LazySingleton(as: AppDatabase, env: [Environment.test])` → `AppDatabaseTest`), но сам репозиторий-импл регистрируется во всех трёх env, а не «подменяется отдельно». Конфиг — **единственный** `@freezed Get<Name>sConfig` (`firstPage`/`nextPage`, `defaultPage = 1`), без sealed-union-редиректа `…RepositoryConfigs.list` и без `page: 0`. IPC-вариант из оригинала **не эмитим**.
+> **Env-лист — `[Environment.dev, Environment.prod, Environment.test]`** (два flavor: `prod→Environment.prod`, `stage→Environment.dev`; плюс **обязательный** `Environment.test`). Регистрация под `Environment.test` — **не опциональна**: без неё `getIt<<Name>Repository>()` бросит под `Environment.test`. Тестовый `AppDatabase` подменяется СВОИМ test-env-провайдером (`@LazySingleton(as: AppDatabase, env: [Environment.test])` → `AppDatabaseTest`), но сам репозиторий-импл регистрируется во всех трёх env, а не «подменяется отдельно». Конфиг — **единственный** `@freezed Get<Name>sConfig` (`firstPage`/`nextPage`, `defaultPage = 1`), без sealed-union-редиректа `…RepositoryConfigs.list` и без `page: 0`. IPC-вариант репозитория **не эмитим**.
 
 ---
 
@@ -342,7 +341,7 @@ Create a repository: contract, configs union, implementation, and DI registratio
 
 **Назначение:** создать Flutter-страницу с её **Freezed-BLoC-трио** (bloc + events + states) и, если страница списочная — пагинацией через `PagingStateExt.applyPage`.
 
-**Когда:** при добавлении экрана. Связать с репозиторием, созданным `new-repository`. Первый реальный экран — `RecordListPage`.
+**Когда:** при добавлении экрана. Связать с репозиторием, созданным `new-repository`. Первый реальный экран — список чатов (server-owned, network-only пагинируемый список).
 
 `.claude/commands/new-page.md`:
 
@@ -412,7 +411,7 @@ Create a Flutter page with a FREEZED BLoC trio (NOT hand-written Equatable) foll
 - Shared widgets (App-prefixed: AppProgressWidget / AppErrorWidget / AppEmptyContentWidget): `05-presentation-layer.md`
 ```
 
-> **Это намеренно перебивает рукописный `Equatable`-BLoC оригинала.** У нас `State`/`Event` — `@freezed sealed`-юнионы (`*.freezed.dart`, никогда `*.g.dart`), `when()`/`copyWith()` генерируются Freezed, вычисляемая логика — в extension-геттерах. Поэтому `new-page` **обязан** запускать codegen (в отличие от оригинала, где BLoC был рукописным и codegen для страницы пропускался). Канонические имена сабстейтов — `Initializing` / `Initialized` / `Error` через `const factory`. Общие виджеты — с префиксом `App`.
+> **Правило блюпринта: только Freezed-BLoC, без рукописного `Equatable`.** У нас `State`/`Event` — `@freezed sealed`-юнионы (`*.freezed.dart`, никогда `*.g.dart`), `when()`/`copyWith()` генерируются Freezed, вычисляемая логика — в extension-геттерах. Поэтому `new-page` **обязан** запускать codegen: Freezed-BLoC без него не компилируется. Канонические имена сабстейтов — `Initializing` / `Initialized` / `Error` через `const factory`. Общие виджеты — с префиксом `App`.
 
 ---
 
@@ -431,7 +430,7 @@ Move Dart files to a new location and update all import references (single packa
 
 ## Steps
 1. Identify all `.dart` files to move (excluding `.freezed.dart`, `.g.dart`, `.config.dart`).
-2. Compute old and new `package:speech_ai_mobile/...` import paths.
+2. Compute old and new `package:nox_app/...` import paths.
 3. Create destination directory if needed.
 4. Move each source `.dart`; also move matching `.freezed.dart` / `.g.dart` alongside it.
 5. Replace old import paths with new across the single package: `lib/`, plus `test/`, `integration_test/`.
@@ -443,7 +442,7 @@ Move Dart files to a new location and update all import references (single packa
 10. fvm flutter analyze
 
 ## Important
-- Use full package imports `package:speech_ai_mobile/...`, never relative (except `part`).
+- Use full package imports `package:nox_app/...`, never relative (except `part`).
 - Do NOT move test files unless explicitly requested.
 - Do NOT hand-edit `.freezed.dart` / `.g.dart` / `.config.dart` — regenerate them.
 ```
@@ -507,7 +506,7 @@ Validate and update sample JSON data files against current entity structure (sin
 
 ## Important
 - Preserve existing valid values.
-- Generate realistic sample data matching the domain (records / tracks / voices).
+- Generate realistic sample data matching the domain (e.g. chats-list items).
 - Maintain clean JSON formatting.
 - JSON maps to the ENTITY layer (`*.g.dart` fromJson), NEVER to a domain model.
 ```
@@ -524,7 +523,7 @@ fvm dart format -l 140 <конкретные изменённые файлы>   
 fvm flutter analyze                                            # ноль ошибок перед остановкой
 ```
 
-- `new-page` у нас **НЕ пропускает codegen** (в отличие от оригинала): Freezed-BLoC `State`/`Event` требуют `*.freezed.dart`.
+- `new-page` у нас **НЕ пропускает codegen**: Freezed-BLoC `State`/`Event` требуют `*.freezed.dart`.
 - Передавать форматтеру **конкретные файлы**, не diff-режим: иначе переформатируется куча несвязанного.
 - Все скрипты вызывают `fvm flutter` / `fvm dart` — никогда голые `flutter`/`dart`.
 
@@ -537,7 +536,7 @@ fvm flutter analyze                                            # ноль оши
 - [ ] `fvm dart format -l 140 <только изменённые файлы>` — никогда весь репозиторий.
 - [ ] `fvm flutter analyze` — **ноль ошибок**.
 - [ ] `fvm flutter test` (+ `bloc_test` для затронутых BLoC; юнит-тест `applyPage` для затронутой пагинации).
-- [ ] Импорты — только `package:speech_ai_mobile/...` (никаких `../` кроме `part`).
+- [ ] Импорты — только `package:nox_app/...` (никаких `../` кроме `part`).
 - [ ] Никакого `print`/`debugPrint` в `lib/` — только `LogRepository`.
 - [ ] BLoC-`State`/`Event` — `@freezed sealed` с `*.freezed.dart` (никогда `*.g.dart`/`fromJson`).
 - [ ] Списочные экраны — `PagingState`-в-bloc через `applyPage` (никогда `PagingController`).
@@ -554,6 +553,6 @@ fvm flutter analyze                                            # ноль оши
 - [ ] `.claude/commands/*` заведены: `/check-build`, `/new-model`, `/new-repository`, `/new-page`, `/move-files`, `/rename-class`, `/update-json`.
 - [ ] `/new-repository` эмитит LIST-метод `get<Feature>s` (`fetch*`=single, `watch*`=stream, без `save*`/`fetch<Feature>s`-списка) + **единственный** `@freezed Get<Feature>sConfig` (`firstPage`/`nextPage`, `defaultPage = 1`) — **не** sealed-union `…RepositoryConfigs.list`, **не** `page: 0`.
 - [ ] `/new-page` эмитит **Freezed**-BLoC-трио (`@freezed sealed` State+Event, `when()`/`copyWith()`, extension-геттеры) + пагинацию через `applyPage` (`PagingState<String, …>`, key = item id, offset через `nextPage`) — **не** рукописный Equatable; и **запускает** codegen в трейлере.
-- [ ] Все команды используют одно-пакетные пути (`lib/domain/...`, `lib/data/...`, `lib/presentation/...`), env-лист `[Environment.dev, Environment.prod, Environment.test]` (test обязателен), импорты `package:speech_ai_mobile/...`; BigInt/IPC/swift-to-dart не эмитятся.
+- [ ] Все команды используют одно-пакетные пути (`lib/domain/...`, `lib/data/...`, `lib/presentation/...`), env-лист `[Environment.dev, Environment.prod, Environment.test]` (test обязателен), импорты `package:nox_app/...`; BigInt/IPC/swift-to-dart не эмитятся.
 - [ ] Каждая генеративная команда заканчивается трейлером codegen(один прогон) → format(изменённые) → analyze.
 - [ ] Команды кросс-ссылаются на [10-code-templates.md](10-code-templates.md) и нужный layer-док по каноническим именам файлов.

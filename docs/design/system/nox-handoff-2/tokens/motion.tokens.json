@@ -1,0 +1,85 @@
+{
+  "$description": "NOX · M3 motion. No looping/infinite animations (splash is one-shot). Flutter: Durations.* + Easing.* / Curves.*.",
+  "easing": {
+    "standard": {
+      "$type": "cubicBezier",
+      "$value": [
+        0.2,
+        0,
+        0,
+        1
+      ],
+      "$description": "→ Flutter Easing.standard."
+    },
+    "emphasized": {
+      "$type": "cubicBezier",
+      "$value": [
+        0.2,
+        0,
+        0,
+        1
+      ],
+      "$description": "M3 emphasized → Flutter Curves.easeInOutCubicEmphasized (two-part curve; the listed bezier is the simple-cubic fallback)."
+    },
+    "emphasizedDecelerate": {
+      "$type": "cubicBezier",
+      "$value": [
+        0.05,
+        0.7,
+        0.1,
+        1
+      ],
+      "$description": "→ Flutter Easing.emphasizedDecelerate."
+    }
+  },
+  "duration": {
+    "splashIn": {
+      "$type": "duration",
+      "$value": {
+        "value": 400,
+        "unit": "ms"
+      },
+      "$description": "Splash reveal (one-shot). Easing: emphasizedDecelerate."
+    },
+    "push": {
+      "$type": "duration",
+      "$value": {
+        "value": 300,
+        "unit": "ms"
+      },
+      "$description": "Screen push / pop. Easing: emphasized."
+    },
+    "tabFade": {
+      "$type": "duration",
+      "$value": {
+        "value": 150,
+        "unit": "ms"
+      },
+      "$description": "Tab switch (IndexedStack fade). Easing: standard."
+    },
+    "snackbarIn": {
+      "$type": "duration",
+      "$value": {
+        "value": 150,
+        "unit": "ms"
+      },
+      "$description": "Snackbar in. Easing: standard."
+    },
+    "snackbarOut": {
+      "$type": "duration",
+      "$value": {
+        "value": 75,
+        "unit": "ms"
+      },
+      "$description": "Snackbar out. Easing: standard."
+    },
+    "sheet": {
+      "$type": "duration",
+      "$value": {
+        "value": 300,
+        "unit": "ms"
+      },
+      "$description": "Bottom sheet expand. Easing: emphasizedDecelerate."
+    }
+  }
+}

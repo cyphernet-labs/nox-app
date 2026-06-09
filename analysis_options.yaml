@@ -1,0 +1,15 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  exclude:
+    - "**/*.g.dart"
+    - "**/*.freezed.dart"
+    - "**/*.config.dart"
+    - "lib/design/gen/**"
+    - "docs/**"          # design-system handoff Dart lives here; not part of the app
+    - "build/**"
+  errors:
+    invalid_annotation_target: ignore   # freezed/json_serializable annotation noise
+
+formatter:
+  page_width: 140

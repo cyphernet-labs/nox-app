@@ -1,0 +1,359 @@
+{
+  "$description": "NOX icon set. All icons are stock Material Symbols Rounded (weight 400) — no custom glyphs. Real SVG files ship in ./svg/ (Apache-2.0, from @material-symbols/svg-400, viewBox 0 -960 960 960, path fill=\"currentColor\"). Outlined vs filled is the FILL axis (0 = outlined, 1 = filled), so `name` is a valid base ligature and `svg` points to the exact file (name.svg / name-fill.svg). Flutter: material_symbols_icons `Symbols.<name>` with `Icon(..., fill: <fill>)`, or the stock `Icons.*` constant in `flutter`. Note: this svg package version lacks `audiotrack` and `insert_drive_file`; the visually identical `music_note` and `draft` are used instead (stock Flutter still has Icons.music_note / Icons.insert_drive_file).",
+  "style": {
+    "set": "Material Symbols Rounded",
+    "weight": 400,
+    "opticalSize": 24,
+    "grade": 0,
+    "defaultSizeDp": 24,
+    "svgViewBox": "0 -960 960 960",
+    "svgFill": "currentColor"
+  },
+  "package": {
+    "flutterPub": "material_symbols_icons",
+    "svgSource": "@material-symbols/svg-400 (npm, Apache-2.0)",
+    "font": "Material Symbols Rounded (Google Fonts, Apache-2.0)"
+  },
+  "counts": {
+    "groups": 6,
+    "references": 38,
+    "uniqueLigatures": 33,
+    "svgFiles": 35
+  },
+  "groups": {
+    "navigation": {
+      "description": "Bottom bar / nav rail (4.1). Selected = FILL 1 (filled), unselected = FILL 0 (outlined). Same glyph, FILL axis — Material Symbols has no *_outlined ligature.",
+      "icons": [
+        {
+          "name": "forum",
+          "fill": 1,
+          "svg": "svg/forum-fill.svg",
+          "flutter": "Icons.forum",
+          "symbols": "Symbols.forum (fill: 1)",
+          "use": "Chats tab — selected (filled)"
+        },
+        {
+          "name": "forum",
+          "fill": 0,
+          "svg": "svg/forum.svg",
+          "flutter": "Icons.forum_outlined",
+          "symbols": "Symbols.forum",
+          "use": "Chats tab — unselected (outlined)"
+        },
+        {
+          "name": "settings",
+          "fill": 1,
+          "svg": "svg/settings-fill.svg",
+          "flutter": "Icons.settings",
+          "symbols": "Symbols.settings (fill: 1)",
+          "use": "Settings tab — selected (filled)"
+        },
+        {
+          "name": "settings",
+          "fill": 0,
+          "svg": "svg/settings.svg",
+          "flutter": "Icons.settings_outlined",
+          "symbols": "Symbols.settings",
+          "use": "Settings tab — unselected (outlined)"
+        },
+        {
+          "name": "add",
+          "fill": 0,
+          "svg": "svg/add.svg",
+          "flutter": "Icons.add",
+          "symbols": "Symbols.add",
+          "use": "Center docked FAB — create chat"
+        }
+      ]
+    },
+    "actions": {
+      "description": "AppBar / inline actions.",
+      "icons": [
+        {
+          "name": "arrow_back",
+          "fill": 0,
+          "svg": "svg/arrow_back.svg",
+          "flutter": "Icons.arrow_back",
+          "symbols": "Symbols.arrow_back",
+          "use": "Back"
+        },
+        {
+          "name": "content_paste",
+          "fill": 0,
+          "svg": "svg/content_paste.svg",
+          "flutter": "Icons.content_paste",
+          "symbols": "Symbols.content_paste",
+          "use": "Paste ID"
+        },
+        {
+          "name": "qr_code_scanner",
+          "fill": 0,
+          "svg": "svg/qr_code_scanner.svg",
+          "flutter": "Icons.qr_code_scanner",
+          "symbols": "Symbols.qr_code_scanner",
+          "use": "Open QR scanner"
+        },
+        {
+          "name": "attach_file",
+          "fill": 0,
+          "svg": "svg/attach_file.svg",
+          "flutter": "Icons.attach_file",
+          "symbols": "Symbols.attach_file",
+          "use": "Attach file"
+        },
+        {
+          "name": "send",
+          "fill": 1,
+          "svg": "svg/send-fill.svg",
+          "flutter": "Icons.send",
+          "symbols": "Symbols.send (fill: 1)",
+          "use": "Send message (filled)"
+        },
+        {
+          "name": "flashlight_on",
+          "fill": 1,
+          "svg": "svg/flashlight_on-fill.svg",
+          "flutter": "Icons.flashlight_on",
+          "symbols": "Symbols.flashlight_on (fill: 1)",
+          "use": "Torch on"
+        },
+        {
+          "name": "flashlight_off",
+          "fill": 0,
+          "svg": "svg/flashlight_off.svg",
+          "flutter": "Icons.flashlight_off",
+          "symbols": "Symbols.flashlight_off",
+          "use": "Torch off"
+        },
+        {
+          "name": "cameraswitch",
+          "fill": 0,
+          "svg": "svg/cameraswitch.svg",
+          "flutter": "Icons.cameraswitch",
+          "symbols": "Symbols.cameraswitch",
+          "use": "Switch camera"
+        },
+        {
+          "name": "search",
+          "fill": 0,
+          "svg": "svg/search.svg",
+          "flutter": "Icons.search",
+          "symbols": "Symbols.search",
+          "use": "Search chats"
+        },
+        {
+          "name": "visibility",
+          "fill": 0,
+          "svg": "svg/visibility.svg",
+          "flutter": "Icons.visibility",
+          "symbols": "Symbols.visibility",
+          "use": "Reveal ID"
+        },
+        {
+          "name": "visibility_off",
+          "fill": 0,
+          "svg": "svg/visibility_off.svg",
+          "flutter": "Icons.visibility_off",
+          "symbols": "Symbols.visibility_off",
+          "use": "Hide ID"
+        },
+        {
+          "name": "content_copy",
+          "fill": 0,
+          "svg": "svg/content_copy.svg",
+          "flutter": "Icons.content_copy",
+          "symbols": "Symbols.content_copy",
+          "use": "Copy ID"
+        },
+        {
+          "name": "qr_code",
+          "fill": 0,
+          "svg": "svg/qr_code.svg",
+          "flutter": "Icons.qr_code",
+          "symbols": "Symbols.qr_code",
+          "use": "Show QR"
+        },
+        {
+          "name": "download",
+          "fill": 0,
+          "svg": "svg/download.svg",
+          "flutter": "Icons.download",
+          "symbols": "Symbols.download",
+          "use": "Save / download file"
+        },
+        {
+          "name": "edit",
+          "fill": 0,
+          "svg": "svg/edit.svg",
+          "flutter": "Icons.edit",
+          "symbols": "Symbols.edit",
+          "use": "Edit username"
+        },
+        {
+          "name": "close",
+          "fill": 0,
+          "svg": "svg/close.svg",
+          "flutter": "Icons.close",
+          "symbols": "Symbols.close",
+          "use": "Remove attachment / close"
+        }
+      ]
+    },
+    "status": {
+      "description": "Own-message delivery status (5.2). Color per design-system §9.2.",
+      "icons": [
+        {
+          "name": "schedule",
+          "fill": 0,
+          "svg": "svg/schedule.svg",
+          "flutter": "Icons.schedule",
+          "symbols": "Symbols.schedule",
+          "use": "Pending — onSurfaceVariant"
+        },
+        {
+          "name": "check",
+          "fill": 0,
+          "svg": "svg/check.svg",
+          "flutter": "Icons.check",
+          "symbols": "Symbols.check",
+          "use": "Sent — onSurfaceVariant"
+        },
+        {
+          "name": "error",
+          "fill": 0,
+          "svg": "svg/error.svg",
+          "flutter": "Icons.error_outline",
+          "symbols": "Symbols.error",
+          "use": "Error — error color (tap to retry)"
+        }
+      ]
+    },
+    "fileTypes": {
+      "description": "Attachment chip type icons (no content preview anywhere). Icon onSurfaceVariant.",
+      "icons": [
+        {
+          "name": "image",
+          "fill": 0,
+          "svg": "svg/image.svg",
+          "flutter": "Icons.image",
+          "symbols": "Symbols.image",
+          "use": "Image"
+        },
+        {
+          "name": "videocam",
+          "fill": 0,
+          "svg": "svg/videocam.svg",
+          "flutter": "Icons.videocam",
+          "symbols": "Symbols.videocam",
+          "use": "Video"
+        },
+        {
+          "name": "music_note",
+          "fill": 0,
+          "svg": "svg/music_note.svg",
+          "flutter": "Icons.music_note",
+          "symbols": "Symbols.music_note",
+          "use": "Audio"
+        },
+        {
+          "name": "picture_as_pdf",
+          "fill": 0,
+          "svg": "svg/picture_as_pdf.svg",
+          "flutter": "Icons.picture_as_pdf",
+          "symbols": "Symbols.picture_as_pdf",
+          "use": "PDF"
+        },
+        {
+          "name": "description",
+          "fill": 0,
+          "svg": "svg/description.svg",
+          "flutter": "Icons.description",
+          "symbols": "Symbols.description",
+          "use": "Document (doc/docx/odt)"
+        },
+        {
+          "name": "table_chart",
+          "fill": 0,
+          "svg": "svg/table_chart.svg",
+          "flutter": "Icons.table_chart",
+          "symbols": "Symbols.table_chart",
+          "use": "Spreadsheet (xls/csv)"
+        },
+        {
+          "name": "article",
+          "fill": 0,
+          "svg": "svg/article.svg",
+          "flutter": "Icons.article",
+          "symbols": "Symbols.article",
+          "use": "Text"
+        },
+        {
+          "name": "folder_zip",
+          "fill": 0,
+          "svg": "svg/folder_zip.svg",
+          "flutter": "Icons.folder_zip",
+          "symbols": "Symbols.folder_zip",
+          "use": "Archive (zip/rar/7z)"
+        },
+        {
+          "name": "draft",
+          "fill": 0,
+          "svg": "svg/draft.svg",
+          "flutter": "Icons.insert_drive_file",
+          "symbols": "Symbols.draft",
+          "use": "Other / unknown"
+        }
+      ]
+    },
+    "emptyStates": {
+      "description": "Empty-state fallback icons until the 3 illustrations ship (see illustrations/).",
+      "icons": [
+        {
+          "name": "forum",
+          "fill": 0,
+          "svg": "svg/forum.svg",
+          "flutter": "Icons.forum_outlined",
+          "symbols": "Symbols.forum",
+          "use": "5.1 no chats"
+        },
+        {
+          "name": "chat_bubble",
+          "fill": 0,
+          "svg": "svg/chat_bubble.svg",
+          "flutter": "Icons.chat_bubble_outline",
+          "symbols": "Symbols.chat_bubble",
+          "use": "5.2 no messages"
+        },
+        {
+          "name": "folder_open",
+          "fill": 0,
+          "svg": "svg/folder_open.svg",
+          "flutter": "Icons.folder_open",
+          "symbols": "Symbols.folder_open",
+          "use": "5.4 no files"
+        }
+      ]
+    },
+    "misc": {
+      "description": "Other.",
+      "icons": [
+        {
+          "name": "error",
+          "fill": 0,
+          "svg": "svg/error.svg",
+          "flutter": "Icons.error_outline",
+          "symbols": "Symbols.error",
+          "use": "Universal error screen (3.1), 48–96px"
+        },
+        {
+          "name": "forum",
+          "fill": 0,
+          "svg": "svg/forum.svg",
+          "flutter": "Icons.forum",
+          "symbols": "Symbols.forum",
+          "use": "Avatar fallback glyph (white on hash bg) when no valid initials"
+        }
+      ]
+    }
+  }
+}

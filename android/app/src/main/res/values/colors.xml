@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- NOX brand-fixed splash background: always dark, independent of the OS
+     light/dark setting (FR-005). Value = NoxBrand.canvasDark (#0C2424). -->
+<resources>
+    <color name="nox_splash">#FF0C2424</color>
+</resources>

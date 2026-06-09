@@ -1,8 +1,10 @@
-# 17 — Клиентская аналитика (Mixpanel)
+# 17 — Клиентская аналитика
 
-> **Назначение:** зафиксировать клиентский analytics-слой приложения Speech AI Mobile как сквозной (cross-cutting) сервис — интерфейс `AnalyticsRepository` в `lib/domain/repository/analytics/`, Mixpanel-имплементацию `AnalyticsRepositoryImpl` в `lib/data/repository/analytics/`, типобезопасный таксоном событий через `@freezed`-union `AnalyticsEvent`, инициализацию SDK (`mixpanel_flutter`) с project-token'ом из флейвора (`AppConfigRepository`, НЕ хардкод), super-properties (`user_id` / `platform` / `app_version` / `build`), правила приватности (opt-out, без PII) и точки вызова из BLoC. Слой проектируется **с нуля** — в проекте-каноне владельца (existlive) аналитики нет; зеркалируется лишь общая форма repository-слоя.
+> **Приватность прежде всего (NOX).** Аналитика в NOX **по умолчанию ВЫКЛЮЧЕНА** — это строго opt-in: пока пользователь явно не включил её, не отправляется ни одного события. И даже при включённой аналитике слой **никогда** не передаёт PII, содержимое сообщений, идентификаторы пользователей в открытом виде или имена чатов — это прямое следствие Signal-подобной модели NOX «минимизировать метаданные» (см. §6). Конкретный analytics-провайдер для NOX не выбран; этот документ фиксирует **паттерн** слоя, а не вендора.
+>
+> **Назначение:** зафиксировать клиентский analytics-слой приложения NOX как сквозной (cross-cutting) сервис — интерфейс `AnalyticsRepository` в `lib/domain/repository/analytics/`, имплементацию `AnalyticsRepositoryImpl` в `lib/data/repository/analytics/`, типобезопасный таксоном событий через `@freezed`-union `AnalyticsEvent`, инициализацию SDK с project-token'ом из флейвора (`AppConfigRepository`, НЕ хардкод), super-properties (`user_id` / `platform` / `app_version` / `build`), правила приватности (opt-in по умолчанию, без PII) и точки вызова из BLoC. Слой проектируется **с нуля** — это правило блюпринта; зеркалируется лишь общая форма repository-слоя.
 > **Когда читать:** перед поднятием папки `lib/{domain,data}/repository/analytics/`, перед добавлением первой точки трекинга в любой BLoC, и обязательно — при расширении таксонома событий (новое событие = новый вариант `AnalyticsEvent`, а не строковый литерал по коду).
-> **Связанные документы:** [03-domain-layer.md](03-domain-layer.md) (`RepositoryResult`, `RepositoryException`, контракты репозиториев), [04-data-layer.md](04-data-layer.md) (`BaseRepositoryHelper`, `execute(...)`, форма `*_repository_impl.dart`, `LogRepository` как сквозной), [05-presentation-layer.md](05-presentation-layer.md) (Freezed-BLoC, `AppRoot` + `AppRootBloc`, где звать `trackEvent`), [02-dependency-injection.md](02-dependency-injection.md) (`configureDependencies`, `@lazySingleton(as:)`, `AppConfigRepository`, bootstrap `main.dart`), [14-networking-and-auth.md](14-networking-and-auth.md) (auth-флоу: `identify` после login / `reset` после logout — `distinct_id` = Appwrite user `$id`; сетевой слой не трогаем — SDK ходит в Mixpanel сам), [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md) (`mixpanelProjectToken` per флейвор из зашифрованных секретов).
+> **Связанные документы:** [03-domain-layer.md](03-domain-layer.md) (`RepositoryResult`, `RepositoryException`, контракты репозиториев), [04-data-layer.md](04-data-layer.md) (`BaseRepositoryHelper`, `execute(...)`, форма `*_repository_impl.dart`, `LogRepository` как сквозной), [05-presentation-layer.md](05-presentation-layer.md) (Freezed-BLoC, `AppRoot` + `AppRootBloc`, где звать `trackEvent`), [02-dependency-injection.md](02-dependency-injection.md) (`configureDependencies`, `@lazySingleton(as:)`, `AppConfigRepository`, bootstrap `main.dart`), [14-networking-and-auth.md](14-networking-and-auth.md) (auth-флоу: `identify` после login / `reset` после logout — `distinct_id` = opaque user id бэкенда NOX; сетевой слой не трогаем — SDK ходит к analytics-провайдеру сам), [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md) (`analyticsProjectToken` per флейвор из зашифрованных секретов).
 
 ---
 
@@ -10,34 +12,36 @@
 
 Этот документ — единственный дом контракта клиентской аналитики. Он отвечает на три вопроса:
 
-1. **Зачем клиентская аналитика отдельным слоем** — продуктовые воронки (`Free → Premium`, `OCR → TTS → listening`) — это **поведенческие** данные, которых backend-строки в Appwrite не дают; их источник — клиентские события в Mixpanel. Прямое следствие Constitution Принципа XIII (см. §1). §1.
-2. **Как устроен слой** — `AnalyticsRepository` (контракт в `lib/domain/`) + `AnalyticsRepositoryImpl` (Mixpanel-обёртка в `lib/data/`), типобезопасный таксоном `AnalyticsEvent`, инициализация с токеном из конфига, super-properties, приватность. §2–§6.
+1. **Зачем клиентская аналитика отдельным слоем** — продуктовые воронки — это **поведенческие** данные, которых backend-строки бэкенда NOX не дают; их источник — клиентские события у analytics-провайдера. Прямое следствие Constitution Принципа XIII (см. §1). §1.
+2. **Как устроен слой** — `AnalyticsRepository` (контракт в `lib/domain/`) + `AnalyticsRepositoryImpl` (обёртка над analytics-провайдером в `lib/data/`), типобезопасный таксоном `AnalyticsEvent`, инициализация с токеном из конфига, super-properties, приватность. §2–§6.
 3. **Откуда и когда звать трекинг** — из presentation-слоя (BLoC) на ключевых переходах; `identify`/`reset` завязаны на auth-флоу; init — в bootstrap. §7.
 
-> **Единый пакет.** Все пути — `lib/...` внутри одного пакета `speech_ai_mobile` (worked example). Импорты — полные `package:speech_ai_mobile/...`, относительные `../` запрещены (кроме `part`-директив).
+> **Единый пакет.** Все пути — `lib/...` внутри одного пакета `nox_app` (worked example). Импорты — полные `package:nox_app/...`, относительные `../` запрещены (кроме `part`-директив).
 
-> **Аналитика никогда не роняет UX.** Сбой SDK, отсутствие токена, нет сети — всё это поглощается молча (fail-silent через `LogRepository`-предупреждение), ровно как best-effort broker-dispatch на бэкенде. Ни один вызов трекинга не должен бросать исключение в UI-поток и не должен блокировать пользовательское действие.
+> **Аналитика никогда не роняет UX.** Сбой SDK, отсутствие токена, нет сети — всё это поглощается молча (fail-silent через `LogRepository`-предупреждение). Ни один вызов трекинга не должен бросать исключение в UI-поток и не должен блокировать пользовательское действие.
 
 ---
 
 ## 1. Связь с Constitution Принципом XIII (Admin & Analytics Readiness by Design)
 
-Принцип XIII (`.specify/memory/constitution.md`, monorepo-wide — действует во **всех** проектах наравне с Принципом I) требует, чтобы **каждая** фича захватывала данные/события/queryable-поля, нужные admin-панели и продуктовой аналитике, **в момент первой записи** строки/события — а не ретрофитила позже. На backend это означает write-time capture в Appwrite-коллекциях: attribution (`owner_id`/actor IDs), timestamps (`created_at`/`updated_at` + время событий), явные status/lifecycle-enum'ы, counters/magnitudes (а не только booleans). Связка с Принципом VII (No DB Migrations): сигнал, не записанный в момент write, теряется навсегда — «добавить колонку потом» нельзя.
+Принцип XIII (`.specify/memory/constitution.md`, monorepo-wide — действует во **всех** проектах наравне с Принципом I) требует, чтобы **каждая** фича захватывала данные/события/queryable-поля, нужные admin-панели и продуктовой аналитике, **в момент первой записи** строки/события — а не ретрофитила позже. На backend это означает write-time capture: attribution (`owner_id`/actor IDs), timestamps (`created_at`/`updated_at` + время событий), явные status/lifecycle-enum'ы, counters/magnitudes (а не только booleans). Связка с Принципом VII (No DB Migrations): сигнал, не записанный в момент write, теряется навсегда — «добавить колонку потом» нельзя.
+
+> **Приватность побеждает capture (NOX).** В NOX Принцип XIII подчинён приватности: capture-not-build не оправдывает сбор PII, содержимого сообщений или метаданных, идентифицирующих переписку. Аналитика опциональна (opt-in), поведенческая и обезличенная — см. §6.
 
 **Что из этого следует для клиента:**
 
-- **Поведенческая аналитика — клиентская по природе.** Backend-строки фиксируют *состояние* (record создан, track `ready`), но не *поведение* (где пользователь нажал, на каком шаге воронки отвалился, что показал paywall). Принцип XIII прямо обосновывает, **зачем** в mobile нужен отдельный analytics-слой: это источник продуктовых воронок, которые admin-панель не получит из live-БД.
+- **Поведенческая аналитика — клиентская по природе.** Backend-строки фиксируют *состояние* (сущность создана, операция перешла в терминальный статус), но не *поведение* (где пользователь нажал, на каком шаге воронки отвалился). Принцип XIII прямо обосновывает, **зачем** клиенту нужен отдельный analytics-слой: это источник продуктовых воронок, которые admin-панель не получит из live-БД.
 - **Capture-not-build на клиенте тоже.** Каждый значимый пользовательский шаг (экран, действие в воронке, успех/ошибка длинной операции) закладывает точку трекинга **на этапе дизайна экрана/BLoC**, а не доклеивается потом. Аналитика — первоклассный компонент, а не afterthought.
 - **No speculative events.** Заводим интерфейс и стартовый таксоном (§5), но **конкретный финальный список событий — продуктовое решение** (см. §5). Не плодим события «на всякий случай».
-- **Mirror-инвариант идентификатора.** Где у фичи есть и backend-строка, и клиентское событие — идентификатор пользователя должен совпадать: Mixpanel `distinct_id` ← Appwrite user `$id` (тот же контракт, что у backend `owner_id` и RevenueCat `app_user_id`). Это связывает поведенческую воронку с серверной строкой при кросс-анализе.
+- **Mirror-инвариант идентификатора.** Где у фичи есть и backend-строка, и клиентское событие — идентификатор пользователя должен совпадать: analytics `distinct_id` ← opaque user id бэкенда NOX (тот же контракт, что у backend `owner_id`). Это связывает поведенческую воронку с серверной строкой при кросс-анализе. (В NOX `distinct_id` — всегда opaque-идентификатор, никогда не телефон/email/имя; см. §6.)
 
-> **Где именно «момент первой записи» на клиенте.** Для парных длинных операций (TTS-джоба, создание record) трекинг — это `_started` в начале и `_succeeded`/`_failed` в исходе (см. §5). Это и есть «counters/magnitudes, а не только boolean» из XIII: воронка `started → succeeded/failed` даёт drop-off, который один boolean «готово/нет» не покажет.
+> **Где именно «момент первой записи» на клиенте.** Для парных длинных операций (создание сущности и т.п.) трекинг — это `_started` в начале и `_succeeded`/`_failed` в исходе (см. §5). Это и есть «counters/magnitudes, а не только boolean» из XIII: воронка `started → succeeded/failed` даёт drop-off, который один boolean «готово/нет» не покажет.
 
 ---
 
-## 2. Раскладка и форма слоя (зеркало канона existlive)
+## 2. Раскладка и форма слоя
 
-В проекте-каноне владельца (existlive) клиентского analytics-слоя **нет** — ни `mixpanel_flutter`, ни `firebase_analytics`, ни одного `trackEvent`. Поэтому копировать готовый паттерн «как трекаются события» неоткуда: слой проектируется с нуля. Зеркалируется лишь **общая форма** repository-слоя, которую existlive фиксирует для всех областей:
+Готового паттерна «как трекаются события» в блюпринте нет — слой analytics проектируется с нуля. Зеркалируется лишь **общая форма** repository-слоя, единая для всех областей блюпринта:
 
 - интерфейс — `lib/domain/repository/<area>/...`;
 - имплементация — `lib/data/repository/<area>_repository_impl.dart`, `with BaseRepositoryHelper`, методы `return execute(() async { ... })`;
@@ -58,30 +62,30 @@ lib/
   data/
     repository/
       analytics/
-        analytics_repository_impl.dart  # @LazySingleton(as: AnalyticsRepository) — Mixpanel-обёртка
+        analytics_repository_impl.dart  # @LazySingleton(as: AnalyticsRepository) — обёртка над analytics-провайдером
 ```
 
-> **SDK ходит в Mixpanel сам.** `mixpanel_flutter` отправляет события напрямую в Mixpanel-ingest, **не** через `ApiClient`/Dio из [14-networking-and-auth.md](14-networking-and-auth.md). Сетевой слой и auth-pipeline клиента аналитика не трогает — это разные транспорты. Единственная точка пересечения с auth — `identify`/`reset` (§4, §7).
+> **SDK ходит к analytics-провайдеру сам.** Analytics-SDK отправляет события напрямую в свой ingest, **не** через `ApiClient`/Dio из [14-networking-and-auth.md](14-networking-and-auth.md). Сетевой слой и auth-pipeline клиента аналитика не трогает — это разные транспорты. Единственная точка пересечения с auth — `identify`/`reset` (§4, §7).
 
 ---
 
 ## 3. Доменный контракт `AnalyticsRepository`
 
-Интерфейс минимален и не утекает деталями Mixpanel: presentation знает только «трекни событие», «опознай пользователя», «сбрось», «обнови свойства профиля», «выключи аналитику».
+Интерфейс минимален и не утекает деталями analytics-провайдера: presentation знает только «трекни событие», «опознай пользователя», «сбрось», «обнови свойства профиля», «выключи аналитику».
 
 `lib/domain/repository/analytics/analytics_repository.dart`:
 
 ```dart
-import 'package:speech_ai_mobile/domain/model/analytics/analytics_event.dart';
-import 'package:speech_ai_mobile/domain/model/analytics/analytics_user_properties.dart';
-import 'package:speech_ai_mobile/domain/repository/base/repository_result.dart';
+import 'package:nox_app/domain/model/analytics/analytics_event.dart';
+import 'package:nox_app/domain/model/analytics/analytics_user_properties.dart';
+import 'package:nox_app/domain/repository/base/repository_result.dart';
 
 abstract interface class AnalyticsRepository {
   /// Поднимает SDK (token из AppConfigRepository), ставит super-properties.
   /// Best-effort: пустой token (dev / opt-out) => no-op success.
   Future<RepositoryResult<bool>> initialize();
 
-  /// Связывает дальнейшие события с пользователем. distinct_id == Appwrite user `$id`.
+  /// Связывает дальнейшие события с пользователем. distinct_id == opaque user id бэкенда NOX.
   Future<RepositoryResult<bool>> identify(String userId);
 
   /// Обновляет свойства профиля пользователя (people-properties). Без PII.
@@ -104,6 +108,8 @@ abstract interface class AnalyticsRepository {
 
 Таксоном — `@freezed sealed`-union: каждый вариант несёт **типизированные** properties, а не `Map<String, dynamic>` по месту вызова. Это превращает «забыл/опечатался в имени события» в ошибку компиляции. Имя события и собранную `Map<String, Object?>` отдают extension-геттеры `name` / `properties` (логика на состоянии живёт в extension, как и в BLoC — см. [05-presentation-layer.md](05-presentation-layer.md)).
 
+Ниже — worked-пример на нейтральной модели `Item` (`<Feature>`/`<Model>`-плейсхолдер блюпринта); реальные события NOX подставляются по тому же образцу.
+
 `lib/domain/model/analytics/analytics_event.dart`:
 
 ```dart
@@ -117,79 +123,77 @@ sealed class AnalyticsEvent with _$AnalyticsEvent {
 
   const factory AnalyticsEvent.authLogin({required String method}) = AuthLoginEvent;
 
-  const factory AnalyticsEvent.recordCreateStarted({
-    required String source, // text | ocr | import
-    String? languageId,
-  }) = RecordCreateStartedEvent;
+  const factory AnalyticsEvent.itemCreateStarted({
+    required String source,
+    String? variant,
+  }) = ItemCreateStartedEvent;
 
-  const factory AnalyticsEvent.recordCreateSucceeded({
-    required String recordId,
-    required int sourcesCount,
-  }) = RecordCreateSucceededEvent;
+  const factory AnalyticsEvent.itemCreateSucceeded({
+    required String itemId,
+    required int partsCount,
+  }) = ItemCreateSucceededEvent;
 
-  const factory AnalyticsEvent.recordCreateFailed({
+  const factory AnalyticsEvent.itemCreateFailed({
     required String errorCode,
     String? reason,
-  }) = RecordCreateFailedEvent;
-
-  const factory AnalyticsEvent.paywallViewed({required String trigger}) = PaywallViewedEvent;
+  }) = ItemCreateFailedEvent;
   // … остальные варианты из §5
 }
 
 extension AnalyticsEventX on AnalyticsEvent {
-  /// snake_case-имя события для Mixpanel.
+  /// snake_case-имя события для analytics-SDK.
   String get name => switch (this) {
         AppOpenEvent() => 'app_open',
         AuthLoginEvent() => 'auth_login',
-        RecordCreateStartedEvent() => 'record_create_started',
-        RecordCreateSucceededEvent() => 'record_create_succeeded',
-        RecordCreateFailedEvent() => 'record_create_failed',
-        PaywallViewedEvent() => 'paywall_viewed',
+        ItemCreateStartedEvent() => 'item_create_started',
+        ItemCreateSucceededEvent() => 'item_create_succeeded',
+        ItemCreateFailedEvent() => 'item_create_failed',
       };
 
   /// Типизированные properties → плоская Map для SDK. БЕЗ PII.
   Map<String, Object?> get properties => switch (this) {
         AppOpenEvent(:final isFirstOpen) => {'is_first_open': isFirstOpen},
         AuthLoginEvent(:final method) => {'method': method},
-        RecordCreateStartedEvent(:final source, :final languageId) => {
+        ItemCreateStartedEvent(:final source, :final variant) => {
             'source': source,
-            if (languageId != null) 'language_id': languageId,
+            if (variant != null) 'variant': variant,
           },
-        RecordCreateSucceededEvent(:final recordId, :final sourcesCount) => {
-            'record_id': recordId,
-            'sources_count': sourcesCount,
+        ItemCreateSucceededEvent(:final itemId, :final partsCount) => {
+            'item_id': itemId,
+            'parts_count': partsCount,
           },
-        RecordCreateFailedEvent(:final errorCode, :final reason) => {
+        ItemCreateFailedEvent(:final errorCode, :final reason) => {
             'error_code': errorCode,
             if (reason != null) 'reason': reason,
           },
-        PaywallViewedEvent(:final trigger) => {'trigger': trigger},
       };
 }
 ```
 
 > **Гарантия типобезопасности.** Имена событий и ключи properties живут в одном месте (extension над union), а не разбросаны строковыми литералами по BLoC'ам. Добавление события = новый `const factory` + ветка в `name`/`properties`; компилятор заставит закрыть `switch`.
 
-`AnalyticsUserProperties` — `@freezed` value-объект people-properties (plan, locale, и т.п. — **без PII**, см. §6); опускаю тело ради краткости, форма — обычный `@freezed`-класс с `toMixpanelMap()`-extension.
+`AnalyticsUserProperties` — `@freezed` value-объект people-properties (locale, категориальные флаги и т.п. — **без PII**, см. §6); опускаю тело ради краткости, форма — обычный `@freezed`-класс с `toProviderMap()`-extension.
 
 ---
 
-## 4. Mixpanel-имплементация
+## 4. Имплементация поверх analytics-провайдера
 
-`AnalyticsRepositoryImpl` оборачивает `mixpanel_flutter`, биндится через `@LazySingleton(as: AnalyticsRepository)`, использует `BaseRepositoryHelper.execute(...)` для единообразного guarded-логирования (см. [04-data-layer.md](04-data-layer.md)). Внутренне держит nullable `Mixpanel?` — `null` означает «не инициализирован / выключен / пустой token», и тогда каждый трек-вызов тихо no-op'ит.
+`AnalyticsRepositoryImpl` оборачивает SDK выбранного analytics-провайдера, биндится через `@LazySingleton(as: AnalyticsRepository)`, использует `BaseRepositoryHelper.execute(...)` для единообразного guarded-логирования (см. [04-data-layer.md](04-data-layer.md)). Внутренне держит nullable handle SDK — `null` означает «не инициализирован / выключен / пустой token», и тогда каждый трек-вызов тихо no-op'ит.
+
+> **Вендор не зафиксирован.** Конкретный analytics-провайдер для NOX не выбран. Один из возможных вариантов имплементации — Mixpanel (`mixpanel_flutter` как **опциональная** vendor-зависимость), на нём и показан worked-пример ниже; так же подставляется любой другой SDK. API провайдера (`init` / `identify` / `track` / `optInTracking`/`optOutTracking` / `reset`) — пример; реальные вызовы зависят от выбранного SDK.
 
 `lib/data/repository/analytics/analytics_repository_impl.dart`:
 
 ```dart
 import 'package:injectable/injectable.dart';
-import 'package:mixpanel_flutter/mixpanel_flutter.dart';
-import 'package:speech_ai_mobile/data/exception/base_repository_helper.dart';
-import 'package:speech_ai_mobile/domain/model/analytics/analytics_event.dart';
-import 'package:speech_ai_mobile/domain/model/analytics/analytics_user_properties.dart';
-import 'package:speech_ai_mobile/domain/repository/base/repository_result.dart';
-import 'package:speech_ai_mobile/domain/repository/analytics/analytics_repository.dart';
-import 'package:speech_ai_mobile/domain/repository/app_config/app_config_repository.dart';
-import 'package:speech_ai_mobile/domain/repository/log_repository.dart';
+import 'package:mixpanel_flutter/mixpanel_flutter.dart'; // пример vendor-SDK (опциональная зависимость)
+import 'package:nox_app/data/exception/base_repository_helper.dart';
+import 'package:nox_app/domain/model/analytics/analytics_event.dart';
+import 'package:nox_app/domain/model/analytics/analytics_user_properties.dart';
+import 'package:nox_app/domain/repository/base/repository_result.dart';
+import 'package:nox_app/domain/repository/analytics/analytics_repository.dart';
+import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
+import 'package:nox_app/domain/repository/log_repository.dart';
 
 @LazySingleton(as: AnalyticsRepository)
 class AnalyticsRepositoryImpl with BaseRepositoryHelper implements AnalyticsRepository {
@@ -198,53 +202,53 @@ class AnalyticsRepositoryImpl with BaseRepositoryHelper implements AnalyticsRepo
   final AppConfigRepository _appConfigRepository;
   final LogRepository _logRepository;
 
-  Mixpanel? _mixpanel;
-  bool _enabled = true;
+  Mixpanel? _client; // handle vendor-SDK (тип зависит от провайдера)
+  bool _enabled = false; // NOX: opt-in — трекинг включается только явным согласием пользователя
 
   @override
   Future<RepositoryResult<bool>> initialize() => execute(() async {
-        final token = _appConfigRepository.config.mixpanelProjectToken;
+        final token = _appConfigRepository.config.analyticsProjectToken;
         if (token.isEmpty) {
           // dev-флейвор / пустой секрет — аналитика отключена, это НЕ ошибка.
-          _logRepository.debug(target: 'AnalyticsRepositoryImpl', message: 'Analytics disabled: empty Mixpanel token');
+          _logRepository.debug(target: 'AnalyticsRepositoryImpl', message: 'Analytics disabled: empty analytics token');
           return RepositoryResult.success(data: false);
         }
-        final mixpanel = await Mixpanel.init(token, trackAutomaticEvents: false);
+        final client = await Mixpanel.init(token, trackAutomaticEvents: false);
 
         // super-properties — клеятся ко ВСЕМ событиям автоматически.
         final cfg = _appConfigRepository.config;
-        mixpanel.registerSuperProperties({
-          'platform': cfg.platform, // ios | android
+        client.registerSuperProperties({
+          'platform': cfg.platform, // ios | android | windows | linux | macos
           'app_version': cfg.appVersion, // CalVer YY.M.D
           'build': cfg.buildNumber, // shifted-epoch build
           'environment': cfg.environment, // stage | production
         });
 
-        _mixpanel = mixpanel;
-        await _applyOptState();
+        _client = client;
+        await _applyOptState(); // opt-in по умолчанию выключен (§6)
         return RepositoryResult.success(data: true);
       });
 
   @override
   Future<RepositoryResult<bool>> identify(String userId) => execute(() async {
-        // distinct_id == Appwrite user `$id` — совпадает с backend owner_id (Принцип XIII).
-        await _mixpanel?.identify(userId);
-        return RepositoryResult.success(data: _mixpanel != null);
+        // distinct_id == opaque user id бэкенда NOX — совпадает с backend owner_id (Принцип XIII).
+        await _client?.identify(userId);
+        return RepositoryResult.success(data: _client != null);
       });
 
   @override
   Future<RepositoryResult<bool>> setUserProperties(AnalyticsUserProperties properties) => execute(() async {
-        final people = _mixpanel?.getPeople();
-        properties.toMixpanelMap().forEach((k, v) => people?.set(k, v)); // people-properties, без PII
-        return RepositoryResult.success(data: _mixpanel != null);
+        final people = _client?.getPeople();
+        properties.toProviderMap().forEach((k, v) => people?.set(k, v)); // people-properties, без PII
+        return RepositoryResult.success(data: _client != null);
       });
 
   @override
   Future<RepositoryResult<bool>> trackEvent(AnalyticsEvent event) => execute(() async {
-        if (!_enabled || _mixpanel == null) {
+        if (!_enabled || _client == null) {
           return RepositoryResult.success(data: false); // opt-out / не инициализирован — тихий no-op
         }
-        await _mixpanel!.track(event.name, properties: event.properties);
+        await _client!.track(event.name, properties: event.properties);
         return RepositoryResult.success(data: true);
       });
 
@@ -257,80 +261,75 @@ class AnalyticsRepositoryImpl with BaseRepositoryHelper implements AnalyticsRepo
 
   @override
   Future<RepositoryResult<bool>> reset() => execute(() async {
-        await _mixpanel?.reset(); // разрывает связь с distinct_id (после logout)
-        return RepositoryResult.success(data: _mixpanel != null);
+        await _client?.reset(); // разрывает связь с distinct_id (после logout)
+        return RepositoryResult.success(data: _client != null);
       });
 
   Future<void> _applyOptState() async {
     if (_enabled) {
-      await _mixpanel?.optInTracking();
+      await _client?.optInTracking();
     } else {
-      await _mixpanel?.optOutTracking();
+      await _client?.optOutTracking();
     }
   }
 }
 ```
 
-> **Token не хардкодится.** `mixpanelProjectToken` приходит из `AppConfigRepository.config` per-флейвор (см. [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md)): public-token из `secrets/{stage,production}.enc.yaml::public.mixpanel.project_token`, прокидывается в bundle через `--dart-define`/флейвор-конфиг. В `dev` token — **пустая строка**, поэтому `initialize()` отдаёт `success(data: false)` и локалки событий не шлют. Это разделяет stage и prod **разными токенами** (= разные Mixpanel-проекты), а не env-тегом.
+> **Token не хардкодится.** `analyticsProjectToken` приходит из `AppConfigRepository.config` per-флейвор (см. [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md)): public-token из `secrets/{stage,production}.enc.yaml::public.analytics.project_token`, прокидывается в bundle через `--dart-define`/флейвор-конфиг. В `dev` token — **пустая строка**, поэтому `initialize()` отдаёт `success(data: false)` и локалки событий не шлют. Это разделяет stage и prod **разными токенами** (= разные проекты у провайдера), а не env-тегом.
 
-### Mixpanel-проекты (`docs/operations/external_resources.md` §4)
+### Проекты analytics-провайдера
 
-| Env | Project name | Project ID | Source токена |
-|---|---|---|---|
-| Stage | `Speech AI Stage` | `4022441` | `public.mixpanel.project_token` в `secrets/stage.enc.yaml` |
-| Production | `Speech AI Production` | `4022442` | `public.mixpanel.project_token` в `secrets/production.enc.yaml` |
-| Dev | — | — | пустая строка (события не шлются) |
+> *(пример — analytics-провайдер для NOX ещё не выбран; заменить на реальные проекты/идентификаторы выбранного вендора)*
 
-EU data-residency (`eu.mixpanel.com`), Free-план (1M событий/мес на проект). `API Secret` (`secret.mixpanel.api_secret`, server-only) на клиенте **не используется** — архитектура mobile-only, backend в Mixpanel напрямую не пишет.
+| Env | Project name | Source токена |
+|---|---|---|
+| Stage | `NOX Stage` | `public.analytics.project_token` в `secrets/stage.enc.yaml` |
+| Production | `NOX Production` | `public.analytics.project_token` в `secrets/production.enc.yaml` |
+| Dev | — | пустая строка (события не шлются) |
+
+Любой server-only `API Secret` провайдера на клиенте **не используется** — аналитика client-only, backend NOX к analytics-провайдеру напрямую не пишет. Регион данных (data-residency) выбирается под требования приватности NOX при фиксации вендора.
 
 ---
 
 ## 5. Стартовый таксоном событий — как ПАТТЕРН (не финальный контракт)
 
-> **Финальный список событий — продуктовое решение, не инженерное.** В `docs/product/overview_0.2.md` явно стоит «TODO: подготовить список событий». Поэтому ниже — стартовый **паттерн** + соглашения об именовании, **а не зафиксированный контракт**. Продуктовые доки фиксируют split двух систем: **Firebase Analytics** — объём/сессии (`app_open`, `screen_view`, `user_engaged`), **Mixpanel** — поведенческие воронки/инсайты (`record_create_*`, `tts_track_*`, `translation_toggled`, `share_link_opened`). Этот документ — про Mixpanel-часть.
+> **Финальный список событий — продуктовое решение, не инженерное.** Ниже — стартовый **паттерн** + соглашения об именовании, **а не зафиксированный контракт**. Продукт может разнести события по двум системам: одна — объём/сессии (`app_open`, `screen_view`, `user_engaged`), другая — поведенческие воронки/инсайты (`item_create_*`, `chats_list_*`). Этот документ — про поведенческую часть. С учётом приватности NOX (§6) любой такой список фильтруется: события без PII, без содержимого сообщений и без имён чатов.
 
 **Соглашения об именовании (паттерн):**
 
-- Имена событий — `snake_case`, форма `subject_verb` (`record_create_started`); исходы — состоянием/прошедшим временем (`_succeeded` / `_failed`).
+- Имена событий — `snake_case`, форма `subject_verb` (`item_create_started`); исходы — состоянием/прошедшим временем (`_succeeded` / `_failed`).
 - Парные длинные операции — `_started` → `_succeeded` / `_failed` (для воронок и drop-off): это «counters/magnitudes, а не boolean» из Принципа XIII.
-- Properties — типизированные: `source` (откуда инициировано), `language_id`, `voice_id`, `plan` (`free`/`premium`), `duration_ms`, `error_code` для `_failed`.
-- `distinct_id` = Appwrite user `$id`; `identify` после login, `reset` после logout (§7).
+- Properties — типизированные: `source` (откуда инициировано), `variant`, категориальные флаги, `duration_ms`, `error_code` для `_failed`. Только категории/магнитуды/opaque-ссылки — без PII (§6).
+- `distinct_id` = opaque user id бэкенда NOX; `identify` после login, `reset` после logout (§7).
 
-**Стартовый набор (worked-пример, ориентирован на воронки product-doc'ов — `OCR → TTS → listening`, `Free → Premium`):**
+**Стартовый набор (worked-пример на нейтральной модели `Item`; первая реальная поверхность NOX — список чатов общего пространства, см. ниже):**
 
 | Событие | Когда | Ключевые properties |
 |---|---|---|
-| `app_open` | холодный/тёплый старт (дублируется в Firebase как session) | `is_first_open` |
+| `app_open` | холодный/тёплый старт | `is_first_open` |
 | `onboarding_completed` | прошёл onboarding | `steps_seen` |
-| `auth_login` | успешный логин | `method` (`email`/`google`/`apple`) |
+| `auth_login` | успешный логин | `method` |
 | `auth_register` | успешная регистрация | `method` |
-| `record_create_started` | пользователь инициировал создание record | `source` (`text`/`ocr`/`import`), `language_id` |
-| `record_create_succeeded` | record создан (`201`/`200`) | `record_id`, `sources_count` |
-| `record_create_failed` | ошибка создания | `error_code`, `reason` |
-| `tts_track_started` | старт TTS-джобы | `voice_id`, `language_id`, `estimated_seconds` |
-| `tts_track_completed` | трек перешёл в `ready` | `track_id`, `duration_ms` |
-| `playback_started` | начал слушать | `track_id`, `speed` |
-| `translation_toggled` | переключил перевод | `enabled` |
-| `share_link_opened` | открыл/создал share-ссылку | `record_id` |
-| `paywall_viewed` | показан paywall | `trigger` (где сработал лимит) |
-| `subscription_purchased` | успешная подписка (RevenueCat) | `plan` (`monthly`/`annual`) |
+| `chats_list_viewed` | открыт список чатов (первая реальная поверхность) | `count_bucket` (диапазон, не точное число) |
+| `item_create_started` | пользователь инициировал создание сущности | `source`, `variant` |
+| `item_create_succeeded` | сущность создана | `item_id` (opaque), `parts_count` |
+| `item_create_failed` | ошибка создания | `error_code`, `reason` |
 
-Эти события закрывают воронки, явно названные продуктовыми доками: «Imported → Processed → Played», «переводы → TTS-jobs → completed listening», конверсия `Free → Premium`, retention 30/90 дней.
+Эти события закрывают поведенческие воронки уровня `started → succeeded/failed` и retention 30/90 дней — **без** содержимого сообщений и без имён/идентификаторов чатов (§6).
 
-> **`method=google`/`apple` — только Phase 2.** OAuth-логин (`/api/v1/auth/login_with_google/`, `/login_with_apple/`) **route-deactivated** в Phase 1 (возвращает `404`; см. `docs/spec/pending_implementations.md` §OAuth Phase 2). В Phase 1 у `auth_login`/`auth_register` фактически только `method=email`; `google`/`apple` появятся после реактивации OAuth. (Финальный список событий — продуктовое решение, OQ-3.)
-
-> **Связь events ↔ deep links.** `share_link_opened` коррелирует с входной share-ссылкой из [13-deep-links.md](13-deep-links.md) (`APPWRITE_SHARE_URL`/`share/{record_id}`): событие трекается в app-bloc на ветке маршрутизации share-модели — там же, где навигация по `is`-типу.
+> **Первая реальная поверхность — список чатов.** Первый реальный экран NOX — список чатов общего пространства (shared-space): это server-owned, network-only пагинируемый список (применяется network-only carve-out — без локального кеша). Его аналитика-точки (`chats_list_viewed` и т.п.) трекают только обезличенные магнитуды (диапазон количества, а не имена/идентификаторы чатов).
 
 ---
 
-## 6. Приватность: opt-out и запрет PII
+## 6. Приватность: opt-in по умолчанию и запрет PII
 
-Аналитика — поведенческая, не идентифицирующая. Два жёстких инварианта:
+Аналитика NOX — поведенческая, не идентифицирующая, и согласованная с Signal-подобной моделью «минимизировать метаданные». Три жёстких инварианта:
 
-1. **Никакого PII в свойствах событий и people-properties.** В `properties` / `setUserProperties` запрещены: email, имя/фамилия, телефон, текст пользовательских record'ов, содержимое source-файлов, любые токены/секреты. Допустимо: непрямые идентификаторы-ссылки (`record_id`, `track_id`, `voice_id`, `language_id`), категориальные поля (`plan`, `source`, `method`, `trigger`), магнитуды (`duration_ms`, `sources_count`, `estimated_seconds`). `distinct_id` — это Appwrite `$id` (opaque), **не** email.
-2. **Глобальный opt-out.** `setTrackingEnabled(false)` → `mixpanel.optOutTracking()` — SDK перестаёт слать что-либо до `optInTracking()`. Состояние opt-out персистится (через `AppConfigRepository`/local settings) и применяется на старте в `initialize()` до первого `track`. Точка вызова — экран приватности/настроек (toggle «Разрешить аналитику»), который дёргает `AnalyticsBloc`/настройки-BLoC → `setTrackingEnabled`.
+1. **Opt-in по умолчанию.** Трекинг **выключен**, пока пользователь явно не включил его (`_enabled = false` в §4). До opt-in `initialize()` поднимает SDK, но `_applyOptState()` оставляет его в `optOutTracking()` — ни одного события не уходит. Это противоположность «включено по умолчанию с возможностью отписаться».
+2. **Никакого PII и никаких метаданных переписки в свойствах событий и people-properties.** В `properties` / `setUserProperties` запрещены: email, имя/фамилия, телефон, текст и содержимое сообщений, имена/названия чатов, идентификаторы чатов и собеседников, любые токены/секреты. Допустимо: opaque-ссылки на нейтральные сущности (`item_id`), категориальные поля (`source`, `variant`, `method`), магнитуды и диапазоны (`duration_ms`, `parts_count`, `count_bucket`). `distinct_id` — это opaque user id бэкенда NOX, **не** email/телефон/имя.
+3. **Глобальный opt-out.** `setTrackingEnabled(false)` → `client.optOutTracking()` — SDK перестаёт слать что-либо до `optInTracking()`. Состояние opt-in/opt-out персистится (через `AppConfigRepository`/local settings) и применяется на старте в `initialize()` до первого `track`. Точка вызова — экран приватности/настроек (toggle «Разрешить аналитику», **по умолчанию выключен**), который дёргает `AnalyticsBloc`/настройки-BLoC → `setTrackingEnabled`.
 
-> **Правило свойства.** Прежде чем добавить ключ в `properties`/people-properties, ответь: «это категория/магнитуда/opaque-ссылка — или это идентифицирует человека?». Второе — запрещено. Сомневаешься — не клади (capture-not-build из §1: поле добавляется только под конкретный analytics-вопрос).
+> **Правило свойства.** Прежде чем добавить ключ в `properties`/people-properties, ответь: «это категория/магнитуда/opaque-ссылка — или это идентифицирует человека либо его переписку?». Второе — запрещено (в т.ч. имя чата, его участники, содержимое сообщения). Сомневаешься — не клади (capture-not-build из §1: поле добавляется только под конкретный analytics-вопрос).
 
 `super-properties` (§4) — тоже без PII: `platform` / `app_version` / `build` / `environment` категориальны и не идентифицируют пользователя.
 
@@ -344,29 +343,29 @@ Analytics — сквозной сервис; вызовы живут в presenta
 
 **(2) `identify` / `reset` — на границах auth-флоу** ([14-networking-and-auth.md](14-networking-and-auth.md)):
 
-- после **успешного login/register** (получены access+refresh JWT) → `identify(appwriteUserId)` + `setUserProperties(...)`. `appwriteUserId` — это `$id` пользователя, тот же, что backend пишет в `owner_id` (Принцип XIII, §1);
+- после **успешного login/register** → `identify(noxUserId)` + `setUserProperties(...)`. `noxUserId` — это opaque-идентификатор пользователя бэкенда NOX, тот же, что backend пишет в `owner_id` (Принцип XIII, §1);
 - после **logout** → `reset()` (разрывает связь с `distinct_id`, чтобы события следующего гостя не приклеились к предыдущему пользователю).
 
-**(3) `trackEvent` — на ключевых переходах**, из соответствующего BLoC:
+**(3) `trackEvent` — на ключевых переходах**, из соответствующего BLoC (worked-пример на нейтральной модели `Item`):
 
 ```dart
-// внутри RecordsCreateBloc — на ключевом переходе воронки:
-_analyticsRepository.trackEvent(const AnalyticsEvent.recordCreateStarted(source: 'ocr', languageId: 'en'));
-final result = await _recordsRepository.create(...);
+// внутри ItemCreateBloc — на ключевом переходе воронки:
+_analyticsRepository.trackEvent(const AnalyticsEvent.itemCreateStarted(source: 'manual', variant: 'a'));
+final result = await _itemRepository.create(...);
 result.match(
-  onData: (record) => _analyticsRepository.trackEvent(
-    AnalyticsEvent.recordCreateSucceeded(recordId: record.id, sourcesCount: record.sourcesCount),
+  onData: (item) => _analyticsRepository.trackEvent(
+    AnalyticsEvent.itemCreateSucceeded(itemId: item.id, partsCount: item.partsCount),
   ),
   onError: (e) => _analyticsRepository.trackEvent(
     // e — BaseRepositoryException (маркер без .name); сужаем до RepositoryException.
-    AnalyticsEvent.recordCreateFailed(errorCode: e is RepositoryException ? e.name : 'unknown', reason: null),
+    AnalyticsEvent.itemCreateFailed(errorCode: e is RepositoryException ? e.name : 'unknown', reason: null),
   ),
 );
 ```
 
 > **Где именно в BLoC.** Трек-вызов ставится **после** разрешения `RepositoryResult` через `match` (исход известен) для `_succeeded`/`_failed`, и **до** старта длинной операции для `_started`. Сам `trackEvent` — fire-and-forget best-effort: не `await`-им его так, чтобы он задерживал переход состояния, и его ошибка не уводит BLoC в `Error` (он сам гасит сбой через `execute`/`LogRepository`).
 
-`app_open` трекается из `AppRootBloc` на инициализации (после `initialize()`); экранные `screen_view`-подобные события (если решат вести их в Mixpanel, а не только Firebase) — из `initState` страницы или из route-observer'а, единообразно через `getIt<AnalyticsRepository>().trackEvent(...)`.
+`app_open` трекается из `AppRootBloc` на инициализации (после `initialize()`); экранные `screen_view`-подобные события (если решат вести их в analytics-провайдере) — из `initState` страницы или из route-observer'а, единообразно через `getIt<AnalyticsRepository>().trackEvent(...)`.
 
 ---
 
@@ -383,13 +382,14 @@ result.match(
 - [ ] `lib/domain/repository/analytics/analytics_repository.dart` — интерфейс (`initialize`/`identify`/`setUserProperties`/`trackEvent`/`setTrackingEnabled`/`reset`), все методы `Future<RepositoryResult<...>>`.
 - [ ] `lib/domain/model/analytics/analytics_event.dart` — `@freezed sealed` union + extension `name`/`properties` (типобезопасный таксоном, без строковых литералов по коду).
 - [ ] `lib/domain/model/analytics/analytics_user_properties.dart` — `@freezed` value-объект people-properties, **без PII**.
-- [ ] `lib/data/repository/analytics/analytics_repository_impl.dart` — `@LazySingleton(as: AnalyticsRepository)`, `with BaseRepositoryHelper`, методы через `execute(...)`; nullable `Mixpanel?` (пустой token ⇒ тихий no-op).
-- [ ] Token — из `AppConfigRepository.config.mixpanelProjectToken` per-флейвор (НЕ хардкод); `dev` = пустая строка; stage/prod — разные токены = разные проекты (`4022441` / `4022442`).
+- [ ] `lib/data/repository/analytics/analytics_repository_impl.dart` — `@LazySingleton(as: AnalyticsRepository)`, `with BaseRepositoryHelper`, методы через `execute(...)`; nullable handle SDK (пустой token ⇒ тихий no-op).
+- [ ] Token — из `AppConfigRepository.config.analyticsProjectToken` per-флейвор (НЕ хардкод); `dev` = пустая строка; stage/prod — разные токены = разные проекты у провайдера.
 - [ ] super-properties (`platform`/`app_version`/`build`/`environment`) регистрируются в `initialize()`; **без PII**.
-- [ ] `identify(appwriteUserId)` после login/register (`distinct_id` = Appwrite `$id` = backend `owner_id`, Принцип XIII); `reset()` после logout.
+- [ ] `identify(noxUserId)` после login/register (`distinct_id` = opaque user id бэкенда NOX = backend `owner_id`, Принцип XIII); `reset()` после logout.
 - [ ] Точки `trackEvent` заложены на этапе дизайна BLoC ключевых экранов/воронок; вызовы best-effort fire-and-forget — не блокируют переход состояния и не уводят BLoC в `Error`.
+- [ ] **opt-in по умолчанию (NOX):** трекинг выключен (`_enabled = false`), пока пользователь явно не включил; toggle на экране приватности по умолчанию off.
 - [ ] opt-out: `setTrackingEnabled(false)` → `optOutTracking()`, состояние персистится и применяется на старте; экран приватности дёргает toggle.
-- [ ] Запрет PII в `properties`/people-properties проверен для каждого ключа (категория/магнитуда/opaque-ссылка — да; идентифицирует человека — нет).
+- [ ] Запрет PII и метаданных переписки в `properties`/people-properties проверен для каждого ключа (категория/магнитуда/opaque-ссылка — да; идентифицирует человека, чат или содержимое сообщения — нет).
 - [ ] **Open question (продуктовое решение):** финальный список событий + их properties — вынести владельцу/продукту; стартовый таксоном §5 — лишь паттерн.
 - [ ] Кодогенерация: `*.freezed.dart` (union/value-объект) + `*.config.dart` (DI); `*.g.dart` у `AnalyticsEvent` **не** генерируется.
 
@@ -397,4 +397,4 @@ result.match(
 
 ## Связанные документы
 
-[03-domain-layer.md](03-domain-layer.md) (`RepositoryResult`, `RepositoryException`, форма контракта репозитория, потребление через `match`), [04-data-layer.md](04-data-layer.md) (`BaseRepositoryHelper`, `execute(...)`, форма `*_repository_impl.dart`, `LogRepository` как сквозной — fail-silent логирование сбоев SDK), [05-presentation-layer.md](05-presentation-layer.md) (Freezed-BLoC, extension-геттеры на union, `AppRoot` + `AppRootBloc`, где звать `trackEvent`/`identify`/`reset`), [02-dependency-injection.md](02-dependency-injection.md) (`configureDependencies`, `@lazySingleton(as:)`, инъекция `AppConfigRepository`/`LogRepository`, bootstrap `main.dart`), [14-networking-and-auth.md](14-networking-and-auth.md) (auth-флоу login/register/logout — границы `identify`/`reset`; SDK ходит в Mixpanel сам, сетевой слой не трогаем), [13-deep-links.md](13-deep-links.md) (share-ссылка ⇒ `share_link_opened`, трек в app-bloc на ветке маршрутизации), [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md) (`mixpanelProjectToken` per-флейвор из зашифрованных секретов, `public.mixpanel.project_token`), [01-stack-and-tooling.md](01-stack-and-tooling.md) (`mixpanel_flutter`, версии пакетов).
+[03-domain-layer.md](03-domain-layer.md) (`RepositoryResult`, `RepositoryException`, форма контракта репозитория, потребление через `match`), [04-data-layer.md](04-data-layer.md) (`BaseRepositoryHelper`, `execute(...)`, форма `*_repository_impl.dart`, `LogRepository` как сквозной — fail-silent логирование сбоев SDK), [05-presentation-layer.md](05-presentation-layer.md) (Freezed-BLoC, extension-геттеры на union, `AppRoot` + `AppRootBloc`, где звать `trackEvent`/`identify`/`reset`), [02-dependency-injection.md](02-dependency-injection.md) (`configureDependencies`, `@lazySingleton(as:)`, инъекция `AppConfigRepository`/`LogRepository`, bootstrap `main.dart`), [14-networking-and-auth.md](14-networking-and-auth.md) (auth-флоу login/register/logout — границы `identify`/`reset`; SDK ходит к analytics-провайдеру сам, сетевой слой не трогаем), [13-deep-links.md](13-deep-links.md) (deep-link-ветка маршрутизации ⇒ соответствующее событие, трек в app-bloc), [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md) (`analyticsProjectToken` per-флейвор из зашифрованных секретов, `public.analytics.project_token`), [01-stack-and-tooling.md](01-stack-and-tooling.md) (`mixpanel_flutter` как опциональная vendor-зависимость, версии пакетов).
