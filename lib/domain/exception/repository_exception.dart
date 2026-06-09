@@ -4,11 +4,4 @@ import 'package:nox_app/domain/exception/base_repository_exception.dart';
 /// marker (BaseRepositoryException) as separate enums — there is NO typed
 /// ApiException/DaoException hierarchy; data-layer errors are mapped into
 /// this enum in BaseRepositoryHelper.execute.
-enum RepositoryException implements BaseRepositoryException {
-  unknown,
-  internal,
-  authentication,
-  connection,
-  unauthenticated,
-  notFound,
-}
+enum RepositoryException implements BaseRepositoryException { unknown, internal, authentication, connection, unauthenticated, notFound }

@@ -1,25 +1,27 @@
 import 'package:flutter/material.dart';
 import 'package:nox_app/design/theme/app_colors.dart';
+import 'package:nox_app/design/theme/nox_color_scheme.dart';
+import 'package:nox_app/design/theme/nox_text_theme.dart';
 
-/// Minimal Material 3 light/dark theme, seeded from the NOX teal, with the
-/// AppColors extension registered. US4 replaces the seed/palette with the
-/// generated nox-handoff design tokens.
+/// NOX Material 3 theme. The `ColorScheme` and `TextTheme` come from the
+/// token-generated design-system handoff (`lib/design/theme/nox_*.dart`,
+/// regenerated from `docs/design/system/nox-handoff/tokens` — never hand-edited),
+/// so the palette is the hand-tuned NOX teal scheme, not a raw `fromSeed`.
+/// Semantic, mode-dependent extras ride along via the AppColors ThemeExtension.
 class AppTheme {
-  static const Color _seed = Color(0xFF0E8A8A); // placeholder teal; real value from nox-handoff (US4)
+  const AppTheme._();
 
-  static ThemeData light() {
+  static ThemeData light() => _build(noxLightScheme, const LightAppColors());
+
+  static ThemeData dark() => _build(noxDarkScheme, const DarkAppColors());
+
+  static ThemeData _build(ColorScheme scheme, AppColors appColors) {
     return ThemeData(
       useMaterial3: true,
-      colorScheme: ColorScheme.fromSeed(seedColor: _seed, brightness: Brightness.light),
-      extensions: const <ThemeExtension<dynamic>>[LightAppColors()],
-    );
-  }
-
-  static ThemeData dark() {
-    return ThemeData(
-      useMaterial3: true,
-      colorScheme: ColorScheme.fromSeed(seedColor: _seed, brightness: Brightness.dark),
-      extensions: const <ThemeExtension<dynamic>>[DarkAppColors()],
+      colorScheme: scheme,
+      textTheme: noxTextTheme,
+      scaffoldBackgroundColor: scheme.surface,
+      extensions: <ThemeExtension<dynamic>>[appColors],
     );
   }
 }

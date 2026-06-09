@@ -11,10 +11,7 @@ class ValueFormatter {
 
   /// Format a number with fixed fraction digits and locale-aware separators.
   String format({required num value, int precision = 2, String? locale}) {
-    final formatter = NumberFormat.decimalPatternDigits(
-      locale: locale ?? Constants.defaultLocale,
-      decimalDigits: precision,
-    );
+    final formatter = NumberFormat.decimalPatternDigits(locale: locale ?? Constants.defaultLocale, decimalDigits: precision);
     return formatter.format(value);
   }
 

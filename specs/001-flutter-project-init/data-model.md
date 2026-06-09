@@ -1,4 +1,4 @@
-# Data Model: Инициализация Flutter-проекта NOX (multi-platform skeleton)
+# Data Model: Инициализация Flutter-проекта NOX (мультиплатформенный каркас)
 
 **Branch**: `001-flutter-project-init` | **Phase**: 1 (Design) | **Spec**: [spec.md](spec.md) | **Plan**: [plan.md](plan.md)
 
@@ -12,7 +12,7 @@
 
 Это сущности из раздела **Key Entities** спеки. Каждая описана как «что это / ключевые атрибуты / отношения и правила». Это не runtime-объекты данных, а структурный инвариант проекта, который проверяется глазами против блюпринта.
 
-### 1.1 App package (`nox_app`)
+### 1.1 Пакет приложения (`nox_app`)
 
 - **Что это.** Единственный Dart-пакет — корень всего кода; держит все слои как папки в одном `lib/` (FR-001; блюпринт `00`, несущий инвариант 1).
 - **Ключевые атрибуты.**
@@ -38,16 +38,16 @@
 
 - **Отношения и правила (несущий инвариант).** Зависимости строго однонаправленные: `presentation → domain`, `data → domain`; **`domain` не импортирует ничего** из приложения. Цикла `domain ↔ data` нет — DI связывает реализацию с контрактом без обратной зависимости. Сгенерированные файлы (`*.g.dart`, `*.freezed.dart`, `*.config.dart`, `lib/design/gen/**`) исключены из анализа и не правятся руками.
 
-### 1.3 Platform target
+### 1.3 Целевая платформа
 
 - **Что это.** Целевая платформа сборки; нативный runner того же пакета (FR-002, FR-003; блюпринт `11` шаг 2).
 - **Ключевые атрибуты.** Ровно пять: `android`, `ios`, `macos`, `windows`, `linux`. **`web` отсутствует** в наборе таргетов (SC-006). Генерируются `flutter create --platforms=android,ios,macos,windows,linux`. Min-OS — дефолты Flutter `3.44.1` (Windows 10 / macOS 10.15 / GTK3); пин конкретики — FUTURE.
 - **Отношения и правила.**
   - Compile/build-verify — 5/5; launch-verify этой итерации — macOS + iOS + Android; Windows/Linux launch — tracked follow-up (CI-раннеры).
-  - Native-идентичность на десктопе — **prod-only** этой итерации: macOS `PRODUCT_BUNDLE_IDENTIFIER = com.cyphernetlabs.noxapp` + `PRODUCT_NAME = NOX`; Windows `BINARY_NAME = NOX` + фиксированный GUID; Linux `APPLICATION_ID = com.cyphernetlabs.noxapp` / `.desktop` `Name = NOX`. Distinct stage native identity на десктопе — FUTURE.
+  - Native-идентичность на десктопе — **prod-only** этой итерации: macOS `PRODUCT_BUNDLE_IDENTIFIER = com.cyphernetlabs.noxapp` + `PRODUCT_NAME = NOX`; Windows `BINARY_NAME = NOX` + фиксированный GUID; Linux `APPLICATION_ID = com.cyphernetlabs.noxapp` / `.desktop` `Name = NOX`. Отдельная stage-идентичность (native) на десктопе — FUTURE.
   - Десктоп-специфичные деградации (push / deep-links / secure-storage / flavor-secrets) задокументированы прозой (FR-012, SC-007) — кода в скелете нет.
 
-### 1.4 Flavor
+### 1.4 Флейвор
 
 - **Что это.** Compile-time вариант сборки, задающий идентификаторы и конфигурацию (FR-010; блюпринт `09`/`11`, инвариант 12).
 - **Ключевые атрибуты.** Два значения — `stage`, `prod` (`enum AppFlavorType { prod, stage }`). Резолв — `AppFlavor.getFlavor()` из `String.fromEnvironment('app.flavor')`. Маппинг flavor → DI-env: `prod → Environment.prod`, `stage → Environment.dev`.
@@ -56,7 +56,7 @@
   - **Никакого runtime-ветвления по flavor'у** — только compile-time.
   - Mobile (Android/iOS) — native `--flavor` + `--dart-define-from-file`. Desktop — flavor через `--dart-define-from-file=config/<flavor>.json` (только `app.flavor`, закоммичен, без секретов); secrets-decrypt на desktop в скелете пропускается (без age-ключа).
 
-### 1.5 App shell
+### 1.5 Оболочка приложения
 
 - **Что это.** Адаптивный навигационный каркас приложения с плейсхолдерным содержимым вкладок (FR-004; блюпринт `05` §6.5 / `11` шаг 9).
 - **Ключевые атрибуты.**
@@ -67,7 +67,7 @@
   - Destination-иконки: `Chats` = `Icons.forum`, `Settings` = `Icons.settings`; индикатор — стоковый M3 `secondaryContainer`; `body` = `IndexedStack` (сохраняет состояние вкладок).
 - **Отношения и правила (скелет).** Обе destination'ы ведут на одну страницу-плейсхолдер `Item` (`Item`-harness, §2). `+` — no-op со snackbar'ом (через `AlertDialogHelper`), без create-flow. **Нет** list-detail / two-pane раскладки (приходит с реальными фичами). Single-window `Navigator` — единый канон на всех пяти таргетах; нативный OS-title-bar, дефолтное окно runner'а (`window_manager` / 1440×900 / min-size / кастомный title bar = FUTURE).
 
-### 1.6 Design theme
+### 1.6 Тема оформления
 
 - **Что это.** Тема light/dark, собранная только из дизайн-токенов NOX (FR-005; блюпринт `06`).
 - **Ключевые атрибуты.** Material Design 3, light + dark, системная по умолчанию, seed = teal (из `docs/design/system/nox-handoff/`). `AppTheme.light()` / `AppTheme.dark()` композируют Material-базу + `extensions: [LightAppColors()/DarkAppColors()]`; доступ — `context.appColors`; `themeMode` поставляет `AppRootBloc`; токены spacing/typography responsive через `flutter_screenutil` (`designSize = Size(360, 779)`).
@@ -79,7 +79,7 @@
 - **Ключевые атрибуты.** Полный вертикальный срез: `ItemModel` (domain) ↔ `ItemMapper` ↔ `ItemEntity` (data) ↔ `ItemDao` (Sembast), `GetItemsConfig`, `ItemRepository`/`ItemRepositoryImpl`, `ItemListBloc`/`ItemListEvent`/`ItemListState` + `ItemListPage`. Подробная форма — §2.
 - **Отношения и правила.** Помечен как scaffold-demo на mock-данных. Список `Item` — server-owned **network-only** carve-out (без DAO/subject для пагинированного списка); источник в скелете — mock (реального бэкенда нет, FR-013). Baseline-тесты: `ItemListBloc` smoke (`Initialize → Initialized`) + round-trip `ItemMapper` (`ItemEntity ↔ ItemModel`).
 
-### 1.8 App config (`AppConfig` / `AppConfigRepository`)
+### 1.8 Конфигурация приложения (`AppConfig` / `AppConfigRepository`)
 
 - **Что это.** Флейвор-зависимый конфиг-холдер, поднимаемый в bootstrap после готового DI-контейнера (FR-006/FR-010; `contracts/di-bootstrap.md` §3; блюпринт `02` §7 / `14`).
 - **Ключевые атрибуты.** `AppFlavor.getFlavor()` + `enum AppFlavorType { prod, stage }` (`lib/domain/model/app_config/`); `AppConfigRepository.initialize(flavorType:)` вызывается в `main.dart` **после** `getIt.allReady()`. В скелете несёт **только флейвор**; источник токена / `apiUrl` / security-заголовки — **пример/TBD** (бэкенд NOX не выбран).
@@ -108,7 +108,7 @@
 
 > Поля `imageUrl` / `tags` присутствуют в расширенном worked-примере блюпринта (`03` §6.1), но базовый минимум `Item`-harness — `id` / `name` / `description` / `status` / `createdAt` (форма из `11` шаг 10a). Дополнительные поля опциональны для скелета.
 
-### 2.2 `ItemEntity` — DTO (Freezed + json_serializable, basic-types)
+### 2.2 `ItemEntity` — DTO (Freezed + json_serializable, базовые типы)
 
 `lib/data/entity/item/item_entity.dart` (блюпринт `04` §1, `11` шаг 10b).
 
@@ -193,7 +193,7 @@ ItemListPage (presentation)
 
 Сквозной примитив, доступный в каркасе даже без реальных репозиториев (FR-014; блюпринт `03` §1–§3).
 
-### 3.1 `RepositoryResult<T>` — data XOR exception
+### 3.1 `RepositoryResult<T>` — данные XOR исключение
 
 `lib/domain/repository/base/repository_result.dart`.
 

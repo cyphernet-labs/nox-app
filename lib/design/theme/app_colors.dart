@@ -6,20 +6,14 @@ import 'package:flutter/material.dart';
 /// docs/design/system/nox-handoff/) lands in US4.
 @immutable
 class AppColors extends ThemeExtension<AppColors> {
-  const AppColors({
-    required this.surfaceMuted,
-    required this.dividerSubtle,
-  });
+  const AppColors({required this.surfaceMuted, required this.dividerSubtle});
 
   final Color surfaceMuted;
   final Color dividerSubtle;
 
   @override
   AppColors copyWith({Color? surfaceMuted, Color? dividerSubtle}) {
-    return AppColors(
-      surfaceMuted: surfaceMuted ?? this.surfaceMuted,
-      dividerSubtle: dividerSubtle ?? this.dividerSubtle,
-    );
+    return AppColors(surfaceMuted: surfaceMuted ?? this.surfaceMuted, dividerSubtle: dividerSubtle ?? this.dividerSubtle);
   }
 
   @override
@@ -33,19 +27,11 @@ class AppColors extends ThemeExtension<AppColors> {
 }
 
 class LightAppColors extends AppColors {
-  const LightAppColors()
-      : super(
-          surfaceMuted: const Color(0xFFF2F2F2),
-          dividerSubtle: const Color(0xFFBDBDBD),
-        );
+  const LightAppColors() : super(surfaceMuted: const Color(0xFFF2F2F2), dividerSubtle: const Color(0xFFBDBDBD));
 }
 
 class DarkAppColors extends AppColors {
-  const DarkAppColors()
-      : super(
-          surfaceMuted: const Color(0xFF2D2D2D),
-          dividerSubtle: const Color(0xFF000000),
-        );
+  const DarkAppColors() : super(surfaceMuted: const Color(0xFF2D2D2D), dividerSubtle: const Color(0xFF000000));
 }
 
 extension AppColorsExtension on BuildContext {

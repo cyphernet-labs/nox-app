@@ -9,11 +9,7 @@ part 'response_entity.g.dart';
 /// by EntityConverter.
 @freezed
 abstract class ResponseEntity<T> with _$ResponseEntity<T> {
-  const factory ResponseEntity({
-    @Default(false) bool success,
-    String? error,
-    @EntityConverter() T? data,
-  }) = _ResponseEntity<T>;
+  const factory ResponseEntity({@Default(false) bool success, String? error, @EntityConverter() T? data}) = _ResponseEntity<T>;
 
   factory ResponseEntity.fromJson(Map<String, dynamic> json) => _$ResponseEntityFromJson(json);
 }

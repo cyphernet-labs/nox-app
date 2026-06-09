@@ -6,19 +6,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **NOX** — secure cross-platform messenger for iOS, Android, Windows, Linux and macOS (web out of scope), built in Flutter (Dart). Design anchor: **Signal**-like — end-to-end encrypted text and file exchange. Product name in UI, wordmarks and prose is `NOX` (all caps); the GitHub repo is `cyphernet-labs/nox-app` (lowercase, technically derived). Russian working name in materials: «Секюрный Мессенджер».
 
-**Status — design phase, no application code yet.** The repo holds documentation only: there is no `lib/`, no `pubspec.yaml`, no build system, and Flutter/Dart are not installed here. What *does* exist is a substantial design corpus (vision/requirements drafts, a locked UI/UX spec with a full design system, and a Flutter design-token handoff), the adopted NOX Flutter architecture blueprint, and Spec Kit scaffolding (all below). The transport protocol, sync model and server are still open.
+**Status — Flutter app skeleton scaffolded (Feature-001).** The repo is no longer docs-only: there is a single Dart package `nox_app` under `lib/` (Clean Architecture layers, injectable+get_it DI, design-token Material 3 theme, width-adaptive shell, and a network-only `Item` verification harness on mock data), plus `pubspec.yaml`, baseline tests, CI workflows and a `Makefile`. Targets: iOS, Android, macOS, Windows, Linux (web out of scope); Flutter `3.44.1` is FVM-pinned. Alongside it lives the substantial design corpus (vision/requirements drafts, a locked UI/UX spec with a full design system, and a Flutter design-token handoff), the adopted NOX Flutter architecture blueprint, and Spec Kit scaffolding (all below). The transport protocol, sync model and server are still open, and there are **no real product features yet** — the `Item` slice is verification-only.
 
 ## Language Conventions
+
+The team's working/documentation language is **Russian**; only the code sphere stays **English**. Split:
 
 | Surface | Language |
 |---|---|
 | Chat with the user | Russian |
 | Documentation prose in `docs/` | Russian |
-| Code, identifiers, file/dir names, shell commands | English |
-| Commit messages, branch names, PR titles | English |
+| Spec Kit feature artifacts in `specs/` (`spec.md`, `plan.md`, `tasks.md`, `research.md`, `data-model.md`, `quickstart.md`, `contracts/`, `checklists/`) | Russian |
+| Project `README.md` and other repo-root prose docs | Russian |
+| Code: identifiers, file/dir names, **code comments**, shell commands | English |
+| Git: **commit messages, PR titles & descriptions, branch names** | English (repo artifacts; branch names ASCII — Cyrillic breaks tooling/CI) |
+| Spec Kit tool internals (`.specify/templates`, `.claude/skills/speckit-*`) and this `CLAUDE.md` | English (tooling / agent-instruction files) |
 | **In-product UI microcopy** (labels, buttons, errors — even quoted inside Russian docs) | **English** |
 
-Do not mix languages within one artifact. UI nuance: the app's user-facing languages are **English + Ukrainian** (system default, fallback to English); **Russian is never a UI language** — only the language of internal docs and chat. So UI strings stay English even inside otherwise-Russian design docs.
+Do not mix languages within one artifact: code, commit messages and PR text stay English even when referencing Russian docs; docs and specs stay Russian even when quoting English APIs / identifiers. UI nuance: the app's user-facing languages are **English + Ukrainian** (system default, fallback to English); **Russian is never a UI language** — only the language of internal docs, specs and chat. So UI strings stay English even inside otherwise-Russian design docs.
 
 ## Repository / Documentation Map
 

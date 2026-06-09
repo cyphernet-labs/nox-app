@@ -6,13 +6,7 @@ import 'package:injectable/injectable.dart';
 /// contracts/build-flavors.md and blueprint 14-networking-and-auth.md.
 @lazySingleton
 class ApiClient {
-  ApiClient()
-      : dio = Dio(
-          BaseOptions(
-            connectTimeout: const Duration(seconds: 30),
-            receiveTimeout: const Duration(seconds: 30),
-          ),
-        );
+  ApiClient() : dio = Dio(BaseOptions(connectTimeout: const Duration(seconds: 30), receiveTimeout: const Duration(seconds: 30)));
 
   final Dio dio;
 }

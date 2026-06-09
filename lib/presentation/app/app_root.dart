@@ -53,12 +53,7 @@ class _AppRootState extends State<AppRoot> {
                   darkTheme: AppTheme.dark(),
                   themeMode: state.themeMode,
                   scrollBehavior: const MaterialScrollBehavior().copyWith(
-                    dragDevices: {
-                      PointerDeviceKind.mouse,
-                      PointerDeviceKind.touch,
-                      PointerDeviceKind.trackpad,
-                      PointerDeviceKind.stylus,
-                    },
+                    dragDevices: {PointerDeviceKind.mouse, PointerDeviceKind.touch, PointerDeviceKind.trackpad, PointerDeviceKind.stylus},
                   ),
                   home: const AppShell(),
                 );
@@ -70,4 +65,3 @@ class _AppRootState extends State<AppRoot> {
     );
   }
 }
-

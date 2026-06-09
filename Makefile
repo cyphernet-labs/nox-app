@@ -14,3 +14,23 @@ build-windows-stage:
 
 build-linux-stage:
 	mise run build:linux:stage
+
+# --- dev helpers (US3 / blueprint 12) ---
+.PHONY: deps generate format analyze test gate
+
+deps:
+	fvm flutter pub get
+
+generate:
+	fvm dart run build_runner build --delete-conflicting-outputs
+
+format:
+	fvm dart format -l 140 lib test
+
+analyze:
+	fvm flutter analyze
+
+test:
+	fvm flutter test
+
+gate: generate format analyze test

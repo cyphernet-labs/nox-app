@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/text_constants.dart';
-import 'package:nox_app/presentation/pages/placeholder/chats_placeholder_page.dart';
+import 'package:nox_app/presentation/pages/item_list_page/item_list_page.dart';
 import 'package:nox_app/presentation/pages/placeholder/settings_placeholder_page.dart';
 
 /// Adaptive app shell. The layout is **width-driven** (`LayoutBuilder` on
@@ -26,9 +26,9 @@ class _AppShellState extends State<AppShell> {
     _Destination(label: TextConstants.settings, icon: Icons.settings_outlined, selectedIcon: Icons.settings),
   ];
 
-  // Both tabs are full-screen placeholders in the skeleton; US2 swaps the Chats
-  // body for the Item verification-harness (ItemListPage).
-  static const List<Widget> _pages = <Widget>[ChatsPlaceholderPage(), SettingsPlaceholderPage()];
+  // Chats tab body is the Item verification-harness (mock data, scaffold-demo);
+  // Settings is a placeholder. No real product features yet (FR-013).
+  static const List<Widget> _pages = <Widget>[ItemListPage(), SettingsPlaceholderPage()];
 
   void _onSelect(int i) => setState(() => _index = i);
 
@@ -56,11 +56,7 @@ class _AppShellState extends State<AppShell> {
             selectedIndex: _index,
             onDestinationSelected: _onSelect,
             labelType: NavigationRailLabelType.all,
-            leading: FloatingActionButton(
-              onPressed: _onCreate,
-              tooltip: TextConstants.comingSoon,
-              child: const Icon(Icons.add),
-            ),
+            leading: FloatingActionButton(onPressed: _onCreate, tooltip: TextConstants.comingSoon, child: const Icon(Icons.add)),
             destinations: [
               for (final d in _destinations)
                 NavigationRailDestination(icon: Icon(d.icon), selectedIcon: Icon(d.selectedIcon), label: Text(d.label)),
@@ -76,11 +72,7 @@ class _AppShellState extends State<AppShell> {
   Widget _buildBottomBar(Widget body) {
     return Scaffold(
       body: body,
-      floatingActionButton: FloatingActionButton(
-        onPressed: _onCreate,
-        tooltip: TextConstants.comingSoon,
-        child: const Icon(Icons.add),
-      ),
+      floatingActionButton: FloatingActionButton(onPressed: _onCreate, tooltip: TextConstants.comingSoon, child: const Icon(Icons.add)),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
       bottomNavigationBar: BottomAppBar(
         shape: const CircularNotchedRectangle(),

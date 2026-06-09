@@ -16,13 +16,13 @@ sealed class RepositoryResult<T> with _$RepositoryResult<T> {
 
   /// Non-null data on a success result; null on error. Prefer [match].
   T? get data => switch (this) {
-        RepositoryResultSuccess(:final data) => data,
-        _ => null,
-      };
+    RepositoryResultSuccess(:final data) => data,
+    _ => null,
+  };
 
   /// The exception on an error result; null on success.
   BaseRepositoryException? get exception => switch (this) {
-        RepositoryResultError(:final exception) => exception,
-        _ => null,
-      };
+    RepositoryResultError(:final exception) => exception,
+    _ => null,
+  };
 }
