@@ -8,18 +8,20 @@
 
 ## 2. Доставка флейвора по платформам
 
-| Платформа | Механизм передачи `app.flavor` |
+| Платформа | Механизм передачи `app.flavor` (скелет) |
 |---|---|
-| Android | Gradle product-flavors (dimension `app`: `stage`/`prod`) + `--dart-define=app.flavor=<flavor>` |
-| iOS | per-flavor xcconfig (`Stage.xcconfig`/`Prod.xcconfig`) + schemes (`stage`/`prod`) + `--dart-define=app.flavor=<flavor>` |
-| Windows / Linux / macOS | **нет** нативного `--flavor`; флейвор только через `--dart-define-from-file=config/<flavor>.json` |
+| Android | `--dart-define-from-file=config/<flavor>.json` (нативные Gradle product-flavors — **отложены**, carve-out) |
+| iOS | `--dart-define-from-file=config/<flavor>.json` (нативные xcconfig/schemes — **отложены**, carve-out) |
+| Windows / Linux / macOS | `--dart-define-from-file=config/<flavor>.json`; нативного `--flavor` нет |
 
-`config/stage.json` и `config/prod.json` — закоммиченные, **secret-free**, несут только `{"app.flavor": "stage"|"prod"}`. Резолюция `AppFlavor.getFlavor()` на десктопе **идентична** мобильной.
+`config/stage.json` и `config/prod.json` — закоммиченные, **secret-free**, несут только `{"app.flavor": "stage"|"prod"}`. Резолюция `AppFlavor.getFlavor()` **идентична** на всех платформах.
+
+**Skeleton carve-out:** нативные mobile-флейворы (Android Gradle product-flavors, iOS xcconfig+schemes) и distinct stage native-идентичность отложены до первой реальной per-flavor нативной потребности — у скелета per-flavor нативной разницы нет, flavor живёт только в Dart через `app.flavor`, единообразно на пяти платформах (блюпринт 09 §6/§7, как desktop §7a).
 
 ## 3. Идентичность приложения (FR-003)
 
 - Display name: `NOX`. Prod `applicationId`/bundle id: `com.cyphernetlabs.noxapp`; stage: `com.cyphernetlabs.noxapp.stage`.
-- **Android/iOS** — обе native-идентичности (prod + stage) через product-flavors / xcconfig.
+- **Android/iOS (скелет)** — prod-only native, как desktop; обе native-идентичности (prod + stage) через product-flavors / xcconfig — **FUTURE** (вместе с нативными mobile-флейворами).
 - **Desktop — prod-only native** (одна нативная конфигурация на платформу):
   - macOS: `PRODUCT_BUNDLE_IDENTIFIER = com.cyphernetlabs.noxapp`, `PRODUCT_NAME = NOX`;
   - Windows: `BINARY_NAME = NOX` + закоммиченный фиксированный GUID (стабильный между сборками), `ProductName = "NOX"`;
@@ -45,15 +47,15 @@
 ## 6. CI — 5 таргетов, desktop compile-only
 
 - `ci.yml` — гейт: format-check (140) → один прогон `build_runner` → `analyze` → `test`.
-- `compile-check.yml` — пять debug smoke-джобов (`--debug`, **без секретов**): `compile-android` (stage flavor), `compile-ios` (`--no-codesign`), `compile-macos` / `compile-windows` / `compile-linux` (без native `--flavor`; Linux ставит `ninja-build libgtk-3-dev`).
+- `compile-check.yml` — пять debug smoke-джобов (`--debug`, **без секретов**): `compile-android` (stage через `--dart-define-from-file`), `compile-ios` (`--no-codesign`), `compile-macos` / `compile-windows` / `compile-linux`; нативного `--flavor` нет нигде (Linux ставит `ninja-build libgtk-3-dev`).
 - Launch-verify сейчас: macOS + iOS + Android; Windows/Linux — только compile/build-verify, launch — tracked follow-up (CI-раннеры).
 - Packaging/signing десктопа (MSIX / DMG+notarization / AppImage·.deb) — **FUTURE** (`09` §11a).
 
 ## Чеклист
 
 - [ ] Два флейвора `stage`/`prod`; `AppFlavor.getFlavor()` из `String.fromEnvironment('app.flavor')`; нет runtime-ветвления; дефолт → `prod`.
-- [ ] Android = Gradle flavors, iOS = xcconfig+schemes, desktop = `--dart-define-from-file=config/<flavor>.json` (secret-free, только `app.flavor`).
-- [ ] Display name `NOX`; prod `com.cyphernetlabs.noxapp`, stage `.stage`; desktop native — prod-only; distinct stage native = FUTURE.
+- [ ] Скелет: все платформы = `--dart-define-from-file=config/<flavor>.json` (secret-free, только `app.flavor`); нативные mobile-флейворы (Gradle / xcconfig) = FUTURE.
+- [ ] Display name `NOX`; prod `com.cyphernetlabs.noxapp`; native — prod-only на всех платформах (скелет); distinct stage native (`.stage`) = FUTURE.
 - [ ] Desktop secrets-decrypt пропущен (нет age-ключа); реальные конфиг-ключи = пример/TBD.
 - [ ] Desktop-fallback: push=disabled/no-op, deep-links=no-op (`nox://`=FUTURE), secure-storage=задокументированы бэкенды.
 - [ ] CI: `ci.yml`-гейт + `compile-check.yml` (5 debug smoke-джобов, без секретов); packaging/signing = FUTURE.

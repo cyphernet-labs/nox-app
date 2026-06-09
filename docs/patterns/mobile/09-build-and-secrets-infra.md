@@ -281,6 +281,8 @@ secrets-clean: ## Wipe decrypted artifacts
 
 `android/app/build.gradle.kts` — несущие блоки. Конвенции проекта: `compileSdk 36`, `minSdk 26`, Java 17, `applicationId` по флейвору (`com.cyphernetlabs.noxapp` для prod, `com.cyphernetlabs.noxapp.stage` для stage).
 
+> **Skeleton carve-out (Feature-001):** в текущем скелете нативные Android-флейворы НЕ заведены — флейвор инжектится через `--dart-define-from-file=config/<flavor>.json` (как desktop, §7a), потому что per-flavor нативной разницы пока нет. Блок `productFlavors` ниже вводится с первой реальной per-flavor нативной потребностью (раздельная подпись / Firebase / идентичность).
+
 ```kotlin
 plugins {
     id("com.android.application")
@@ -396,6 +398,8 @@ afterEvaluate {
 ---
 
 ## 7. iOS — xcconfig, schemes, fastlane
+
+> **Skeleton carve-out (Feature-001):** в скелете iOS-флейворы (xcconfig / schemes ниже) НЕ заведены — флейвор идёт через `--dart-define-from-file=config/<flavor>.json` (как desktop, §7a). Нативная настройка ниже вводится с первой реальной per-flavor нативной потребностью.
 
 - **Per-flavor xcconfig.** `ios/Flutter/Stage.xcconfig` и `ios/Flutter/Prod.xcconfig` задают `PRODUCT_BUNDLE_IDENTIFIER` (`com.cyphernetlabs.noxapp.stage` / `com.cyphernetlabs.noxapp`), `DISPLAY_NAME` (`NOX Stage` / `NOX`) и любые нативные значения (например, OAuth reverse-client-id), которые нужны нативной части iOS — через xcconfig-подстановку, а не копированием plist.
 

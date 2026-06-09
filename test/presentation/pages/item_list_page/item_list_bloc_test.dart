@@ -23,6 +23,7 @@ void main() {
       expect(state, isA<Initialized>());
       expect((state as Initialized).items, isNotEmpty);
       expect(state.total, greaterThan(0));
+      expect(state.loadingInProgress, isFalse); // page load settled
     },
   );
 }

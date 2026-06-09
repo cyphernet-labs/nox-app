@@ -121,11 +121,11 @@ fvm flutter test
 # macOS (desktop launch-verify; флейвор через config-файл, нативного --flavor нет)
 fvm flutter run -d macos --dart-define-from-file=config/stage.json
 
-# iOS (мобильный флейвор: native --flavor + app.flavor)
-fvm flutter run -d <ios-device-or-simulator> --flavor stage --dart-define=app.flavor=stage
+# iOS (флейвор через --dart-define-from-file; нативного --flavor нет — skeleton carve-out)
+fvm flutter run -d <ios-device-or-simulator> --dart-define-from-file=config/stage.json
 
 # Android
-fvm flutter run -d <android-device-or-emulator> --flavor stage --dart-define=app.flavor=stage
+fvm flutter run -d <android-device-or-emulator> --dart-define-from-file=config/stage.json
 ```
 
 **Ожидаемо:**

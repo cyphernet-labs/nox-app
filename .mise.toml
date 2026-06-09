@@ -7,14 +7,24 @@ SOPS_AGE_KEY_FILE = "{{ env.HOME }}/.config/sops/age/keys.txt"
 # Resolve Flutter via the FVM symlink (.fvmrc pins the version).
 FLUTTER = "{{ config_root }}/.fvm/flutter_sdk/bin/flutter"
 
-# --- Mobile flavored builds (native --flavor; secrets via SOPS+age for release) ---
+# --- Builds: flavor injected uniformly from a committed config file
+#     (--dart-define-from-file=config/<flavor>.json) on all five platforms.
+#     SKELETON CARVE-OUT: native mobile flavors (distinct stage applicationId/bundle id,
+#     signing) are deferred until a real per-flavor native need (blueprint 09 §6/§7,
+#     same stance as desktop §7a) — the skeleton has no per-flavor native difference yet.
+#     NO secrets:decrypt (no age key); all --debug (release/packaging = FUTURE, §11a).
 [tasks."build:android:stage"]
-run = "$FLUTTER build apk --flavor stage --dart-define=app.flavor=stage"
+run = "$FLUTTER build apk --debug --dart-define-from-file=config/stage.json"
+
+[tasks."build:android:prod"]
+run = "$FLUTTER build apk --debug --dart-define-from-file=config/prod.json"
 
 [tasks."build:ios:stage"]
-run = "$FLUTTER build ios --flavor stage --dart-define=app.flavor=stage --no-codesign"
+run = "$FLUTTER build ios --debug --no-codesign --dart-define-from-file=config/stage.json"
 
-# --- Desktop builds: flavor via committed config file; NO secrets:decrypt (skeleton, no age key) ---
+[tasks."build:ios:prod"]
+run = "$FLUTTER build ios --debug --no-codesign --dart-define-from-file=config/prod.json"
+
 [tasks."build:macos:stage"]
 run = "$FLUTTER build macos --debug --dart-define-from-file=config/stage.json"
 
@@ -24,5 +34,11 @@ run = "$FLUTTER build macos --debug --dart-define-from-file=config/prod.json"
 [tasks."build:windows:stage"]
 run = "$FLUTTER build windows --debug --dart-define-from-file=config/stage.json"
 
+[tasks."build:windows:prod"]
+run = "$FLUTTER build windows --debug --dart-define-from-file=config/prod.json"
+
 [tasks."build:linux:stage"]
 run = "$FLUTTER build linux --debug --dart-define-from-file=config/stage.json"
+
+[tasks."build:linux:prod"]
+run = "$FLUTTER build linux --debug --dart-define-from-file=config/prod.json"

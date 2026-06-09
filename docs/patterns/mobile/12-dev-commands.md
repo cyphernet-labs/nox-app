@@ -89,14 +89,12 @@ BLoC покрываем через `bloc_test` — он проверяет по�
 Flavor выбирается на этапе компиляции (`String.fromEnvironment('app.flavor')`); flavor-специфичные значения приходят через `--dart-define-from-file` (см. [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md)):
 
 ```bash
-# stage (расшифровать секреты при необходимости: mise run secrets:decrypt:stage)
-fvm flutter run --flavor stage --dart-define=app.flavor=stage \
-  --dart-define-from-file=.secrets-runtime/stage.dart-define.json
-
-# prod
-fvm flutter run --flavor prod  --dart-define=app.flavor=prod \
-  --dart-define-from-file=.secrets-runtime/prod.dart-define.json
+# Скелет: флейвор приходит из закоммиченного config-файла, единообразно на всех платформах.
+fvm flutter run --dart-define-from-file=config/stage.json   # stage
+fvm flutter run --dart-define-from-file=config/prod.json    # prod
 ```
+
+> Нативные mobile-флейворы (`--flavor`) и секреты (`secrets:decrypt` → `.secrets-runtime/<flavor>.dart-define.json`) — на будущее (блюпринт `09` §6/§7); в скелете не используются.
 
 ---
 

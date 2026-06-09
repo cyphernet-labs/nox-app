@@ -45,13 +45,13 @@ fvm flutter test
 
 ## Запуск / сборка
 
-Flavor'ы (`stage` / `prod`) задаются на этапе компиляции. На мобильных платформах используется нативный `--flavor`;
-у desktop нативного flavor нет, поэтому его конфигурация инжектится из
-`config/<flavor>.json` через `--dart-define-from-file`:
+Flavor'ы (`stage` / `prod`) задаются на этапе компиляции и инжектятся из
+`config/<flavor>.json` через `--dart-define-from-file` единообразно на всех пяти платформах
+(нативные mobile-флейворы отложены — у скелета нет per-flavor нативной разницы):
 
 ```bash
 # mobile (iOS / Android)
-fvm flutter run --flavor stage --dart-define=app.flavor=stage
+fvm flutter run --dart-define-from-file=config/stage.json
 
 # desktop (macOS / Windows / Linux)
 fvm flutter run -d macos   --dart-define-from-file=config/stage.json

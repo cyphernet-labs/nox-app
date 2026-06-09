@@ -52,9 +52,9 @@
 - **Что это.** Compile-time вариант сборки, задающий идентификаторы и конфигурацию (FR-010; блюпринт `09`/`11`, инвариант 12).
 - **Ключевые атрибуты.** Два значения — `stage`, `prod` (`enum AppFlavorType { prod, stage }`). Резолв — `AppFlavor.getFlavor()` из `String.fromEnvironment('app.flavor')`. Маппинг flavor → DI-env: `prod → Environment.prod`, `stage → Environment.dev`.
 - **Отношения и правила.**
-  - Идентификаторы: prod `applicationId`/bundle id `com.cyphernetlabs.noxapp`, stage `com.cyphernetlabs.noxapp.stage`; display name `NOX` (FR-003).
+  - Идентификаторы: prod `applicationId`/bundle id `com.cyphernetlabs.noxapp`, display name `NOX` (FR-003). Отдельный stage-идентификатор `com.cyphernetlabs.noxapp.stage` — на будущее, вместе с нативными mobile-флейворами.
   - **Никакого runtime-ветвления по flavor'у** — только compile-time.
-  - Mobile (Android/iOS) — native `--flavor` + `--dart-define-from-file`. Desktop — flavor через `--dart-define-from-file=config/<flavor>.json` (только `app.flavor`, закоммичен, без секретов); secrets-decrypt на desktop в скелете пропускается (без age-ключа).
+  - **Скелет — единообразно:** все пять платформ берут flavor через `--dart-define-from-file=config/<flavor>.json` (только `app.flavor`, закоммичен, без секретов). **Skeleton carve-out:** нативные mobile-флейворы (отдельный stage applicationId/bundle id, подпись) отложены до первой реальной per-flavor нативной потребности — у скелета per-flavor нативной разницы нет (блюпринт 09 §6/§7, как desktop §7a). secrets-decrypt в скелете пропускается (без age-ключа).
 
 ### 1.5 Оболочка приложения
 
