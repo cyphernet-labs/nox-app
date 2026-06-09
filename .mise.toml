@@ -1,0 +1,28 @@
+[tools]
+sops = "3.9"
+age = "1.2"
+
+[env]
+SOPS_AGE_KEY_FILE = "{{ env.HOME }}/.config/sops/age/keys.txt"
+# Resolve Flutter via the FVM symlink (.fvmrc pins the version).
+FLUTTER = "{{ config_root }}/.fvm/flutter_sdk/bin/flutter"
+
+# --- Mobile flavored builds (native --flavor; secrets via SOPS+age for release) ---
+[tasks."build:android:stage"]
+run = "$FLUTTER build apk --flavor stage --dart-define=app.flavor=stage"
+
+[tasks."build:ios:stage"]
+run = "$FLUTTER build ios --flavor stage --dart-define=app.flavor=stage --no-codesign"
+
+# --- Desktop builds: flavor via committed config file; NO secrets:decrypt (skeleton, no age key) ---
+[tasks."build:macos:stage"]
+run = "$FLUTTER build macos --debug --dart-define-from-file=config/stage.json"
+
+[tasks."build:macos:prod"]
+run = "$FLUTTER build macos --debug --dart-define-from-file=config/prod.json"
+
+[tasks."build:windows:stage"]
+run = "$FLUTTER build windows --debug --dart-define-from-file=config/stage.json"
+
+[tasks."build:linux:stage"]
+run = "$FLUTTER build linux --debug --dart-define-from-file=config/stage.json"

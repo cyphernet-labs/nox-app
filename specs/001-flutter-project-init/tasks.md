@@ -19,15 +19,15 @@
 
 **Purpose**: инициализация проекта и тулинга (блюпринт `11` шаги 1–4, `01`, `09`).
 
-- [ ] T001 Сгенерировать пять нативных runner'ов: `fvm flutter create --org com.cyphernetlabs --project-name nox_app --platforms=android,ios,macos,windows,linux .`; убедиться, что есть `android/ ios/ macos/ windows/ linux/` и нет `web/`
-- [ ] T002 [P] Заполнить `pubspec.yaml` (`name: nox_app`, `description: "NOX secure messenger."`, `environment.sdk '>=3.12.0 <4.0.0'` + `flutter: 3.44.1`; deps: `freezed_annotation`/`json_annotation`/`injectable`/`get_it`/`flutter_screenutil`/`infinite_scroll_pagination: ^5`/`sembast`/`rxdart`/`dio`[пример]/`flutter_gen`; dev: `build_runner`/`freezed`/`json_serializable`/`injectable_generator`/`flutter_gen_runner`/`flutter_lints`; `firebase_*` — mobile-only feature-gated) — блюпринт `01`
-- [ ] T003 [P] Создать `.fvmrc` (`{"flutter":"3.44.1"}`) — блюпринт `09` §1
-- [ ] T004 [P] Создать `analysis_options.yaml` (include `flutter_lints`, line length `140`, исключить `**/*.g.dart`/`**/*.freezed.dart`/`**/*.config.dart`/`lib/design/gen/**`) — блюпринт `01`/`08`
-- [ ] T005 [P] Создать `build.yaml` (`freezed` + `json_serializable` + `injectable_generator` + `flutter_gen_runner`) — блюпринт `01`
-- [ ] T006 [P] Создать `config/stage.json` и `config/prod.json` (`{"app.flavor":"stage|prod"}`, закоммичены, без секретов) — FR-010 / `contracts/build-flavors.md`
-- [ ] T007 [P] Создать `.gitignore` (`.secrets-runtime/`, `.fvm/flutter_sdk`, расшифрованные нативные конфиги, keystores) — **blueprint-mandated infra (Принцип III), без прямого FR** — блюпринт `09` §10
-- [ ] T008 [P] Поднять `.mise.toml` (пины инструментов + граф задач; desktop build-задачи БЕЗ `secrets:decrypt`), `.sops.yaml` и `Makefile` (**только build/secrets-обёртки**; dev-helper-таргеты добавляются позже в T052) — блюпринт `09` §3/§4
-- [ ] T009 Создать каркас слоёв-папок `lib/{data,domain,presentation,di,general,design,resource}` (+ под-папки) — блюпринт `00`/`11`
+- [x] T001 Сгенерировать пять нативных runner'ов: `fvm flutter create --org com.cyphernetlabs --project-name nox_app --platforms=android,ios,macos,windows,linux .`; убедиться, что есть `android/ ios/ macos/ windows/ linux/` и нет `web/`
+- [x] T002 [P] Заполнить `pubspec.yaml` (`name: nox_app`, `description: "NOX secure messenger."`, `environment.sdk '>=3.12.0 <4.0.0'` + `flutter: 3.44.1`; deps: `freezed_annotation`/`json_annotation`/`injectable`/`get_it`/`flutter_screenutil`/`infinite_scroll_pagination: ^5`/`sembast`/`rxdart`/`dio`[пример]/`flutter_gen`; dev: `build_runner`/`freezed`/`json_serializable`/`injectable_generator`/`flutter_gen_runner`/`flutter_lints`; `firebase_*` — mobile-only feature-gated) — блюпринт `01`
+- [x] T003 [P] Создать `.fvmrc` (`{"flutter":"3.44.1"}`) — блюпринт `09` §1
+- [x] T004 [P] Создать `analysis_options.yaml` (include `flutter_lints`, line length `140`, исключить `**/*.g.dart`/`**/*.freezed.dart`/`**/*.config.dart`/`lib/design/gen/**`) — блюпринт `01`/`08`
+- [x] T005 [P] Создать `build.yaml` (`freezed` + `json_serializable` + `injectable_generator` + `flutter_gen_runner`) — блюпринт `01`
+- [x] T006 [P] Создать `config/stage.json` и `config/prod.json` (`{"app.flavor":"stage|prod"}`, закоммичены, без секретов) — FR-010 / `contracts/build-flavors.md`
+- [x] T007 [P] Создать `.gitignore` (`.secrets-runtime/`, `.fvm/flutter_sdk`, расшифрованные нативные конфиги, keystores) — **blueprint-mandated infra (Принцип III), без прямого FR** — блюпринт `09` §10
+- [x] T008 [P] Поднять `.mise.toml` (пины инструментов + граф задач; desktop build-задачи БЕЗ `secrets:decrypt`), `.sops.yaml` и `Makefile` (**только build/secrets-обёртки**; dev-helper-таргеты добавляются позже в T052) — блюпринт `09` §3/§4
+- [x] T009 Создать каркас слоёв-папок `lib/{data,domain,presentation,di,general,design,resource}` (+ под-папки) — блюпринт `00`/`11`
 
 **Checkpoint**: проект генерируется, тулинг на месте, пять таргетов без web.
 

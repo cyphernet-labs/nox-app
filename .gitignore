@@ -73,3 +73,11 @@ domain/build/
 
 #flatpak
 /.flatpak-builder/
+# --- NOX blueprint additions (09 §10) ---
+.secrets-runtime/
+.fvm/flutter_sdk
+**/*.enc.yaml.dec
+android/**/google-services.json
+ios/Runner/Firebase/**/GoogleService-Info.plist
+**/*_keystore.jks
+**/*_keystore.properties
