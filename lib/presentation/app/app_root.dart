@@ -55,6 +55,12 @@ class _AppRootState extends State<AppRoot> {
                   scrollBehavior: const MaterialScrollBehavior().copyWith(
                     dragDevices: {PointerDeviceKind.mouse, PointerDeviceKind.touch, PointerDeviceKind.trackpad, PointerDeviceKind.stylus},
                   ),
+                  // Inner MediaQuery re-pins TextScaler inside MaterialApp's subtree so the
+                  // OS font scale cannot leak back into AppBar/Scaffold/etc (blueprint 06 §3.2).
+                  builder: (context, child) => MediaQuery(
+                    data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(1.0)),
+                    child: child ?? const SizedBox.shrink(),
+                  ),
                   home: const AppShell(),
                 );
               },

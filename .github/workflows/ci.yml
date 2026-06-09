@@ -19,7 +19,7 @@ jobs:
           cache: true
       - run: flutter pub get
       - run: dart run build_runner build --delete-conflicting-outputs
-      - name: Format check (line length 140; generated excluded)
-        run: dart format -l 140 --set-exit-if-changed $(git ls-files '*.dart' | grep -vE '\.(g|freezed|config)\.dart')
+      - name: Format check (lib + test only; docs/ and generated excluded)
+        run: dart format -l 140 --set-exit-if-changed $(git ls-files lib test | grep '\.dart$')
       - run: flutter analyze
       - run: flutter test

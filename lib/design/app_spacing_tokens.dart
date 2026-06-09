@@ -5,7 +5,9 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 abstract final class AppSpacingTokens {
   const AppSpacingTokens._();
 
-  static double get _scale => 1.w;
+  // Mean of width/height scale factors, so spacing stays balanced on extreme
+  // aspect ratios (desktop/landscape), not just width-driven (blueprint 06 §4).
+  static double get _scale => (1.w + 1.h) / 2;
 
   static double get s4 => 4 * _scale;
   static double get s8 => 8 * _scale;
