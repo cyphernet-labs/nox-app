@@ -30,7 +30,7 @@
 
 **Что из этого следует для клиента:**
 
-- **Поведенческая аналитика — клиентская по природе.** Backend-строки фиксируют *состояние* (сущность создана, операция перешла в терминальный статус), но не *поведение* (где пользователь нажал, на каком шаге воронки отвалился). Принцип XIII прямо обосновывает, **зачем** в mobile нужен отдельный analytics-слой: это источник продуктовых воронок, которые admin-панель не получит из live-БД.
+- **Поведенческая аналитика — клиентская по природе.** Backend-строки фиксируют *состояние* (сущность создана, операция перешла в терминальный статус), но не *поведение* (где пользователь нажал, на каком шаге воронки отвалился). Принцип XIII прямо обосновывает, **зачем** клиенту нужен отдельный analytics-слой: это источник продуктовых воронок, которые admin-панель не получит из live-БД.
 - **Capture-not-build на клиенте тоже.** Каждый значимый пользовательский шаг (экран, действие в воронке, успех/ошибка длинной операции) закладывает точку трекинга **на этапе дизайна экрана/BLoC**, а не доклеивается потом. Аналитика — первоклассный компонент, а не afterthought.
 - **No speculative events.** Заводим интерфейс и стартовый таксоном (§5), но **конкретный финальный список событий — продуктовое решение** (см. §5). Не плодим события «на всякий случай».
 - **Mirror-инвариант идентификатора.** Где у фичи есть и backend-строка, и клиентское событие — идентификатор пользователя должен совпадать: analytics `distinct_id` ← opaque user id бэкенда NOX (тот же контракт, что у backend `owner_id`). Это связывает поведенческую воронку с серверной строкой при кросс-анализе. (В NOX `distinct_id` — всегда opaque-идентификатор, никогда не телефон/email/имя; см. §6.)
@@ -218,7 +218,7 @@ class AnalyticsRepositoryImpl with BaseRepositoryHelper implements AnalyticsRepo
         // super-properties — клеятся ко ВСЕМ событиям автоматически.
         final cfg = _appConfigRepository.config;
         client.registerSuperProperties({
-          'platform': cfg.platform, // ios | android
+          'platform': cfg.platform, // ios | android | windows | linux | macos
           'app_version': cfg.appVersion, // CalVer YY.M.D
           'build': cfg.buildNumber, // shifted-epoch build
           'environment': cfg.environment, // stage | production
@@ -287,7 +287,7 @@ class AnalyticsRepositoryImpl with BaseRepositoryHelper implements AnalyticsRepo
 | Production | `NOX Production` | `public.analytics.project_token` в `secrets/production.enc.yaml` |
 | Dev | — | пустая строка (события не шлются) |
 
-Любой server-only `API Secret` провайдера на клиенте **не используется** — архитектура mobile-only, backend NOX к analytics-провайдеру напрямую не пишет. Регион данных (data-residency) выбирается под требования приватности NOX при фиксации вендора.
+Любой server-only `API Secret` провайдера на клиенте **не используется** — аналитика client-only, backend NOX к analytics-провайдеру напрямую не пишет. Регион данных (data-residency) выбирается под требования приватности NOX при фиксации вендора.
 
 ---
 

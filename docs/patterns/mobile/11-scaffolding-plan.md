@@ -19,7 +19,11 @@
 | Имя Dart-пакета | `nox_app` (все импорты — `package:nox_app/...`) |
 | Отображаемое имя | NOX |
 | Android `applicationId` / iOS bundle | `com.cyphernetlabs.noxapp` (stage: `com.cyphernetlabs.noxapp.stage`) |
+| macOS bundle id | `com.cyphernetlabs.noxapp` (только `prod`; десктоп-флейворы native-уровнем не разводятся) |
+| Windows identity | `NOX` (отображаемое имя) + закоммиченный GUID приложения |
+| Linux identity | application-id `com.cyphernetlabs.noxapp`, отображаемое имя `NOX` |
 | Флейворы | `stage`, `prod` |
+| Выбор флейвора на десктопе | `--dart-define-from-file=config/<flavor>.json` (нативного `--flavor` нет) |
 | Flutter / Dart | Flutter 3.44.1 через FVM; Dart sdk `>=3.12.0 <4.0.0` |
 | Длина строки форматтера | 140 |
 
@@ -72,7 +76,8 @@ fvm flutter --version  # подтвердить активную 3.44.1
 
 ```bash
 # Создаём РЕАЛЬНЫЙ Flutter-проект (нужны платформенные runner'ы для flutter build/test).
-fvm flutter create --org com.cyphernetlabs --project-name nox_app .
+# Целевые платформы: iOS, Android + три десктопа (macOS, Windows, Linux); web вне области.
+fvm flutter create --org com.cyphernetlabs --project-name nox_app --platforms=android,ios,macos,windows,linux .
 
 # Заменяем сгенерированный pubspec.yaml единым манифестом из шаблонов, затем:
 fvm flutter pub get
@@ -82,9 +87,12 @@ fvm flutter pub get
 
 **Не тянем (вне области этого блюпринта):** `ffi`, `flutter_rust_bridge`, `desktop_multi_window`, `yaru`, `flex_color_picker`, `decimal`, `custom_adaptive_scaffold`, любые crypto/wallet/RGB/FFI/multi-window зависимости.
 
+> **Важно — что именно исключено (а что НЕТ).** Десктоп-таргеты (macOS/Windows/Linux) **включены** (см. Шаг 2); исключаются конкретные desktop-пакеты, а не сама десктоп-поддержка. Конкретно: `desktop_multi_window` исключён = **«no multi-window»** (одно окно на приложение); `custom_adaptive_scaffold` исключён = **«no adaptive-scaffold dep»** (адаптив строим сами на `AppShell`, см. Шаг 9, без сторонней зависимости); `yaru` исключён = **«unified Material 3 (no yaru)»** (единая тема Material 3 на всех таргетах, без Linux-специфичного yaru). Управление нативным окном (`window_manager` / `bitsdojo_window`) в скелет **не входит** — дефолтное системное окно; пересмотр — когда появится конкретное требование к окну.
+
 **КОНТРОЛЬНАЯ ТОЧКА 2 — pub get clean**
 - [ ] `fvm flutter pub get` проходит без конфликтов версий.
 - [ ] `pubspec.lock` создан в корне.
+- [ ] runner'ы для всех 5 таргетов сгенерированы (`android/`, `ios/`, `macos/`, `windows/`, `linux/`), `web/` нет.
 - [ ] В `pubspec.yaml` нет path-зависимостей `domain`/`data` (это один пакет).
 - [ ] Нет crypto/FFI/multi-window зависимостей.
 
@@ -138,6 +146,7 @@ lib/
 │   │   └── repository/base/
 │   ├── presentation/
 │   │   ├── app/bloc/
+│   │   ├── app/widgets/
 │   │   ├── base/
 │   │   ├── pages/base/
 │   │   ├── widgets/
@@ -159,7 +168,7 @@ mkdir -p \
   lib/data/di lib/data/entity lib/data/exception lib/data/local lib/data/mapper \
   lib/data/remote/api lib/data/remote/request_builder/base lib/data/repository \
   lib/domain/exception lib/domain/models lib/domain/repository/base \
-  lib/presentation/app/bloc lib/presentation/base lib/presentation/pages/base lib/presentation/widgets lib/presentation/helpers lib/presentation/extension \
+  lib/presentation/app/bloc lib/presentation/app/widgets lib/presentation/base lib/presentation/pages/base lib/presentation/widgets lib/presentation/helpers lib/presentation/extension \
   lib/di lib/general/formatters lib/design/theme lib/resource \
   test/utils .github/workflows
 ```
@@ -291,7 +300,8 @@ fvm flutter analyze lib/design lib/resource lib/general lib/presentation/widgets
 - `lib/presentation/base/base_bloc.dart` — тонкий `BaseBloc<E,S>` с `executeLogic(..., onError: ...)` (try/catch-обёртка); все page-BLoC наследуют его (`extends BaseBloc<…>`), а не `Bloc<…>` напрямую.
 - `lib/presentation/pages/base/base_state_page.dart` — `abstract class BaseStatePage<T extends StatefulWidget> extends State<T>` (scaffoldKey, drawer-хелперы, `buildAppBar()`).
 - `lib/presentation/app/bloc/app_root_bloc.dart` + `app_root_state.dart` + `app_root_event.dart` — `AppRootBloc` на тонком `BaseBloc<E,S>`; `@freezed` Event sealed union; `AppRootState` — single-variant `@freezed abstract class` с полем `themeMode` (`const factory AppRootState({required ThemeMode themeMode}) = _AppRootState;`), без подсостояний `Initializing` / `Initialized` / `Error`. `MaterialApp` читает `state.themeMode`.
-- `lib/presentation/app/app_root.dart` — корневой `MaterialApp` (`theme`/`darkTheme` из `AppTheme`, `themeMode` из `AppRootBloc`, `navigatorKey`, `onGenerateRoute`); обёрнут в `ScreenUtilInit(designSize: Constants.designSize` = `Size(360, 779)`, `minTextAdapt: true)` + двойной `MediaQuery` (`TextScaler.noScaling` / `TextScaler.linear(1.0)`) — нейтрализация OS-масштаба шрифта (UI-скейл, см. `06-theming.md` §3.2); `home` → `ItemListPage` (после Шага 10).
+- `lib/presentation/app/app_root.dart` — корневой `MaterialApp` (`theme`/`darkTheme` из `AppTheme`, `themeMode` из `AppRootBloc`, `navigatorKey`, `onGenerateRoute`); обёрнут в `ScreenUtilInit(designSize: Constants.designSize` = `Size(360, 779)`, `minTextAdapt: true)` + двойной `MediaQuery` (`TextScaler.noScaling` / `TextScaler.linear(1.0)`) — нейтрализация OS-масштаба шрифта (UI-скейл, см. `06-theming.md` §3.2); `home` → `AppShell` (адаптивная оболочка скелета).
+- `lib/presentation/app/widgets/app_shell.dart` — адаптивная оболочка (`LayoutBuilder`-обёртка): ветвление **width-driven** по `constraints.maxWidth >= Constants.railBreakpoint` (840dp, граница M3 medium→expanded), **не** по `Platform` — узкое окно на десктопе остаётся на мобильной раскладке (см. `05-presentation-layer.md` §6.5). Mobile-ветка — `Scaffold` + нижний бар с центральным docked `+` FAB; desktop-ветка — `NavigationRail` (ширина `80`) с `+` как `leading` FAB. Две destination'ы (`Chats` — рендерится через плейсхолдер `Item`-слайса, и `Settings`-заглушка) переключаются через `IndexedStack`. Это единственный адаптивный шов скелета; сторонний `custom_adaptive_scaffold` не используется (`PlatformUtils` остаётся для иных per-OS нужд, но раскладку оболочки НЕ выбирает).
 
 > **Freezed-BLoC-конвенция (фиксируется здесь, применяется ко всем BLoC).** `@freezed` sealed union для State и Event; тонкий `BaseBloc<E,S>` с `executeLogic` (try/catch); производная/вычисляемая логика — в **extension-геттерах** (не в `@freezed`-теле); переходы через `copyWith`; `sealed` для multi-variant union'ов, `abstract` для single-variant value-объектов; **никакого `fromJson` на BLoC-типах** (только `*.freezed.dart`, никогда `*.g.dart`). Это **жёсткое правило** блюпринта: State/Event всегда `@freezed`, без руками-написанных sealed+Equatable BLoC и без Equatable на стейтах — см. `05-presentation-layer.md` и `08-conventions-and-constitution.md`. Канонические имена подсостояний для **multi-variant** стейтов страниц (например `ItemListState`) — `Initializing` / `Initialized` / `Error`, как `const factory`. **Single-variant** value-объекты (например `AppRootState` с `themeMode`) — `@freezed abstract class` с одним конструктором, без трио.
 
@@ -306,6 +316,7 @@ fvm flutter analyze lib/presentation lib/main.dart
 - [ ] `app_root_state.freezed.dart` / `app_root_event.freezed.dart` сгенерированы (и **нет** `.g.dart` для BLoC-типов).
 - [ ] `fvm flutter analyze lib/presentation lib/main.dart` без ошибок (ссылка на `ItemListPage` из `AppRoot` резолвится после Шага 10 — временно роутите на заглушку, если строите presentation-базу первой).
 - [ ] `BaseBloc`, `BaseStatePage`, `AppRootBloc`, `AppRoot`, `main.dart` компилируются.
+- [ ] `AppShell` (`LayoutBuilder`) ветвится width-driven по `constraints.maxWidth >= Constants.railBreakpoint` (840dp), **не** по `Platform`: нижний бар при `< 840dp`, `NavigationRail` (ширина `80`) при `>= 840dp`; `AppRoot` `home` → `AppShell`; обе destination'ы (`Chats`/`Settings`) ведут на плейсхолдер `Item` через `IndexedStack`.
 
 ---
 
@@ -424,7 +435,7 @@ fvm dart run build_runner build --delete-conflicting-outputs   # сгенери�
 
 **Файлы** (см. `10-code-templates.md` → «CI» и `09-build-and-secrets-infra.md`):
 - `.github/workflows/ci.yml` — на push/PR: `bash -n script_*.sh`; установка Flutter 3.44.1 (кэш pub-cache); `pub get`; один прогон `build_runner build`; проверка форматирования на 140 (исключая генерируемые); `flutter analyze`; `flutter test`.
-- `.github/workflows/compile-check.yml` (опционально) — per-platform debug smoke-сборки **обоих флейворов** (`stage`/`prod`). Никаких Rust toolchain / cargo / `frb_*` шагов.
+- `.github/workflows/compile-check.yml` — 5 per-platform debug smoke-джобов (`compile-android`, `compile-ios`, `compile-macos`, `compile-windows`, `compile-linux`; Linux ставит `ninja-build libgtk-3-dev`) для **обоих флейворов** (`stage`/`prod`); Win/Linux — compile-only. Никаких Rust toolchain / cargo / `frb_*` шагов. См. `09-build-and-secrets-infra.md` §8.2.
 
 **Команды.**
 
@@ -454,6 +465,21 @@ fvm flutter test
 - `dart-define-from-file` JSON'ы на флейвор (передают `app.flavor` → `String.fromEnvironment`).
 - `.gitignore` исключает расшифрованные артефакты.
 - Версионирование — CalVer + shifted-epoch (`YY.M.D+EPOCH`, без ведущих нулей), см. `09-build-and-secrets-infra.md`.
+
+> **Десктоп (macOS/Windows/Linux): выбор флейвора и упаковка.** На десктопе нативного механизма `--flavor` нет — флейвор выбирается **только** через `--dart-define-from-file=config/<flavor>.json` (тот же `app.flavor` → `String.fromEnvironment`, что и на мобайле). macOS bundle id остаётся `com.cyphernetlabs.noxapp` (только `prod`, без `.stage`-суффикса на native-уровне); Windows — отображаемое имя `NOX` + закоммиченный GUID; Linux — application-id `com.cyphernetlabs.noxapp`, имя `NOX`. Десктопная упаковка и подпись (DMG/MSIX/AppImage и т.п.) — **FUTURE**, в скелет не входят (см. `09-build-and-secrets-infra.md` §11a).
+
+### Матрица десктопных fallback'ов (desktop fallback matrix)
+
+Скелет компилируется на всех 5 таргетах, но ряд мобильных возможностей на десктопе ведёт себя иначе. Для Feature-001 это фиксируется **прозой** — кода для этих fallback'ов в скелете нет (FR-013):
+
+| Возможность | Windows | Linux | macOS |
+|---|---|---|---|
+| Push | no-op | no-op | no-op |
+| Deep-links | placeholder | placeholder | native-capable |
+| Secure-storage | placeholder | placeholder | native-capable |
+| Flavor-secrets | disabled | disabled | disabled |
+
+> **skeleton: проза-only, кода нет (FR-013).** Матрица описывает целевое поведение; реализация fallback'ов — за пределами скелета и подключается, когда соответствующая возможность станет реальной фичей.
 
 **Команды.**
 
@@ -504,6 +530,7 @@ mise run build:android:prod                # prod собирается
 - [ ] `fvm flutter analyze` чистый по всему пакету.
 - [ ] Все тесты проходят.
 - [ ] Обе флейворные сборки (`stage`/`prod`) компилируются; страница `Item` достижима из `AppRoot`, пагинация и pull-to-refresh работают.
+- [ ] Обе флейворные debug-сборки компилируются на всех 5 таргетах (Win/Linux — compile-only).
 - [ ] Нигде нет crypto / wallet / Rust / FFI / IPC / multi-window артефактов; нет трёх пакетов / path-зависимостей / цикла `domain↔data`.
 
 ---
@@ -541,3 +568,4 @@ mise run build:android:prod                # prod собирается
 - [ ] Секреты SOPS+age+mise; флейворные сборки `stage`/`prod` (`com.cyphernetlabs.noxapp[.stage]`); версионирование CalVer + shifted-epoch.
 - [ ] `CLAUDE.md` + (опц.) `.claude/memory/MEMORY.md` фиксируют инварианты.
 - [ ] `fvm flutter analyze` чистый, все тесты проходят, обе флейворные debug-сборки компилируются, страница `Item` достижима с рабочей пагинацией.
+- [ ] Обе флейворные debug-сборки компилируются на всех 5 таргетах (Win/Linux — compile-only).

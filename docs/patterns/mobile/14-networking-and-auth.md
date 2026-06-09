@@ -276,7 +276,7 @@ InterceptorsWrapper buildSecurityInterceptor(AppConfigRepository appConfig) {
 
 `AppConfigRepository.getUserAuthIdToken` (§2) под NOX отдаёт **access-JWT** из `AuthRepository`. Структура (пример — бэкенд/протокол NOX ещё не выбран; заменить на реальную схему авторизации, когда определят):
 
-- **`AuthRepository`** хранит пару `access` + `refresh` в **`flutter_secure_storage`** ([01-stack-and-tooling.md](01-stack-and-tooling.md)); контракт — `RepositoryResult`-форма ([03-domain-layer.md](03-domain-layer.md)), как у остального слоя данных.
+- **`AuthRepository`** хранит пару `access` + `refresh` в **`flutter_secure_storage`** ([01-stack-and-tooling.md](01-stack-and-tooling.md)); контракт — `RepositoryResult`-форма ([03-domain-layer.md](03-domain-layer.md)), как у остального слоя данных. Десктоп-бэкенд хранилища refresh-токена под будущий auth-флоу — Keychain (macOS) / DPAPI/wincreds (Windows) / libsecret (Linux), см. ниже «Secure storage — desktop backends & local wipe».
 - **`getUserAuthIdToken`** возвращает текущий access-JWT (или `null`, если разлогинен → запрос идёт без `Authorization`, §1).
 - **refresh-on-401**: отдельный response-interceptor (или обёртка в `AuthRepository`): при `401` (token expired) — дёрнуть refresh-эндпоинт (в примере — `POST /api/v1/auth/token/refresh/`) с `refresh_token` → получить **новую** пару → перезаписать в secure storage → **повторить** исходный запрос. В примере сервер делает **ротацию** refresh-токена и **reuse-detection**: предъявление уже отозванного refresh блэклистит всю сессию — поэтому клиент обязан хранить только **последнюю** выданную пару и не гонять параллельные refresh'и (нужен single-flight lock на refresh, иначе можно сжечь собственную сессию).
 
@@ -290,6 +290,8 @@ InterceptorsWrapper buildSecurityInterceptor(AppConfigRepository appConfig) {
 | `refresh_token_valid_timestamp` | ISO-8601 UTC — до когда валиден refresh |
 
 Алгоритм клиента: использовать access до `access_token_valid_timestamp`; на истечении (или на `401 token_expired`) — refresh → rotate → retry. При провале refresh (refresh истёк / блэклистнут) — разлогин → экран входа.
+
+> **Secure storage — desktop backends & local wipe.** `flutter_secure_storage` (`^10`) кросс-платформен и покрывает все 5 целевых платформ (iOS, Android, Windows, Linux, macOS): на macOS — Keychain, на Windows — DPAPI/wincreds, на Linux — libsecret/gnome-keyring (или KWallet). Продуктовое правило «one identity per device» опирается на этот ОС-keystore — он есть на всех 5 платформах. «Full local wipe на Logout» = `secureStorage.deleteAll()` + очистка Sembast/`shared_preferences` — **единый путь без платформенных веток** (один и тот же вызов на всех 5). Linux-нюанс: рабочий keyring (libsecret/gnome-keyring или KWallet) — **рантайм-предусловие** и **known-risk** именно для launch-deferred платформ Windows/Linux (их desktop-запуск отложен; в CI — только compile-smoke на всех трёх десктопах). В скелете Feature-001 secure storage **не подключается** — нет `AuthRepository` (FR-013); этот бэкенд активируется вместе с будущим auth-флоу.
 
 ### 4.4 Обработка статусов: 503 «initializing», 429, 426
 

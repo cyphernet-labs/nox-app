@@ -36,7 +36,7 @@ fvm install   # читает .fvmrc, скачивает Flutter 3.44.1 в gitign
 
 ```yaml
 name: nox_app
-description: "NOX secure messenger (iOS + Android)."
+description: "NOX secure messenger."
 publish_to: 'none'
 
 # CalVer + shifted-epoch build (YY.M.D+EPOCH, без ведущих нулей; см. 09-build-and-secrets-infra.md §9); CI переписывает это значение через commit.
@@ -83,7 +83,7 @@ dependencies:
 
   # --- Local store ---
   shared_preferences: ^2.5.5       # простой key/value (флаги, themeMode)
-  flutter_secure_storage: ^10.3.1  # шифрованное хранилище (refresh-токен)
+  flutter_secure_storage: ^10.3.1  # шифрованное хранилище (refresh-токен) (кросс-платформен: macOS Keychain / Windows DPAPI / Linux libsecret; рантайм libsecret-1-0 — Linux packaging concern, FUTURE; см. 14 secure-storage-нота)
   sembast: ^3.8.8                  # документная NoSQL (schema-less) для cache-first репозиториев — OQ-1 закрыт: Sembast; web-клиент переиспользует через sembast_web (databaseFactoryWeb)
   path_provider: 2.1.5             # резолв директории БД для Sembast (IO-бэкенд)
 
@@ -93,8 +93,8 @@ dependencies:
   package_info_plus: ^10.1.0
 
   # --- Feature-gated (вводятся при активации соответствующего дока; major-пины ПРОВИЗОРНЫ — сверить latest stable перед реализацией) ---
-  firebase_core: ^4.0.0        # push/FCM bootstrap — см. 15-push-notifications.md
-  firebase_messaging: ^16.0.0  # device-токен, foreground/background handlers — 15
+  firebase_core: ^4.0.0        # push/FCM bootstrap — см. 15-push-notifications.md (mobile-only: нет desktop-impl; desktop push = disabled no-op — см. 15 §Desktop fallback)
+  firebase_messaging: ^16.0.0  # device-токен, foreground/background handlers — 15 (mobile-only: нет desktop-impl; desktop push = disabled no-op — см. 15 §Desktop fallback)
   permission_handler: ^12.0.0  # iOS APNs / Android 13+ POST_NOTIFICATIONS — 15
   file_picker: ^8.0.0          # выбор документов (pdf/docx) — см. 16-file-upload.md
   image_picker: ^1.1.0         # камера/галерея — 16
@@ -153,7 +153,11 @@ flutter_gen:
 
 > **`dependency_overrides`.** В этом проекте — **пусто**. Добавляйте override только когда реально упёрлись в ошибку резолва (например, конфликт транзитивов вокруг `win32`). Не копируйте overrides «на всякий случай» из чужих проектов.
 
+> **`config/stage.json` + `config/prod.json`.** Закоммиченные build-input файлы (не bundled-ассеты, **не** перечислены в `flutter: assets:`, новой зависимости не вводят). Каждый несёт **только** `{"app.flavor": "stage|prod"}` и на desktop потребляется через `--dart-define-from-file` (флейвор-эквивалент для платформ без нативной flavor-машинерии Android/iOS; см. `09-build-and-secrets-infra.md`).
+
 > **Почему нет `equatable`.** Библиотека **намеренно исключена** из зависимостей. Value-equality (`==` / `hashCode`) в этом проекте полностью обеспечивает **Freezed**: каждый `@freezed`-класс генерирует структурное равенство сам — это покрывает и BLoC-state/event (`05-presentation-layer.md`), и любые value-объекты. Правило: **где нужен value-объект, делайте его `@freezed`-классом — не наследуйте `Equatable` и не добавляйте `equatable`**. `equatable` тянем обратно только если найдётся кейс, который Freezed реально не закрывает (на сегодня такого нет).
+
+> **Не тянем (desktop-shell).** Адаптивный shell строится на **кастомном breakpoint**, **без** `flutter_adaptive_scaffold` / `custom_adaptive_scaffold`. В скелете также **не добавляются** `window_manager` / `bitsdojo_window` / `desktop_multi_window` / `yaru`: дефолтный single-window runner, нативный оконный chrome платформы и единый Material 3 без desktop-специфичных пакетов. Любой из них вводится только когда появится конкретная потребность (custom window chrome, multi-window и т.п.), не «на всякий случай».
 
 > **Feature-gated зависимости.** `firebase_core`/`firebase_messaging`/`permission_handler` (push — `15`), `file_picker`/`image_picker` (upload — `16`), `connectivity_plus` (`14` §5), `mixpanel_flutter` (`17`) вынесены отдельной группой выше — они вводятся **при активации соответствующей фичи**, не нужны для скелета. **Major-версии ПРОВИЗОРНЫ**: перед реализацией сверить latest stable (pub.dev) и согласовать с владельцем. Доки 15/16/17/14 ссылаются сюда за версиями — поэтому пины живут тут, а не дублируются в каждом доке.
 

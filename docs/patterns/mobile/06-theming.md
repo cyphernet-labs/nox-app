@@ -294,6 +294,10 @@ class AppTheme {
 - Каждое кастомное `ThemeExtension` регистрируется в **обоих** методах (`Light*` в `light()`, `Dark*` в `dark()`). Забыть один вариант — значит получить рантайм-исключение `context.appColors` в этом режиме (из-за `!`).
 - `colorSchemeSeed` выводится из одного и того же семантического `link` обеих тем — Material 3 сам выводит из seed согласованные светлый и тёмный `ColorScheme`. Наши семантические цвета поверх него идут через `AppColors`.
 
+> **Инвариант кросс-платформенной темы.** Единая Material 3 тема из одного teal-seed на всех 5 платформах (iOS, Android, Windows, Linux, macOS); `yaru` / платформенные desktop-темы НЕ используются. (В примере выше seed берётся из placeholder-`link`; реальный seed — teal из `nox-handoff`.)
+
+> **Цвета desktop `NavigationRail`.** Selected-indicator и labels десктопного `NavigationRail` берутся из стокового M3 `ColorScheme` (`secondaryContainer` / `onSecondaryContainer`) — новой роли в `AppColors` не нужно.
+
 ### 3.1 Потребление в `MaterialApp`
 
 Полная сборка root-виджета — в `05-presentation-layer.md`. `AppRootBloc` (он же app-level BLoC) держит `themeMode` в своём состоянии; `MaterialApp` читает обе темы статически и переключается реактивно:
@@ -615,6 +619,7 @@ final class Constants {
   static const defaultNavTransitionTimeMilliseconds = 300;
   static const preventDoubleNavDelayMilliseconds = 300;
   static const designSize = Size(360, 779); // flutter_screenutil reference
+  static const double railBreakpoint = 840; // M3 medium→expanded; bottom-bar ↔ NavigationRail
 
   /// Validation patterns (compile once as static final RegExp)
   static final emailRegex = RegExp(
@@ -634,9 +639,11 @@ if (!Constants.emailRegex.hasMatch(email)) {
 }
 ```
 
+> **`railBreakpoint` — единственный источник истины для брейкпоинта оболочки.** `Constants.railBreakpoint = 840` (M3-граница medium→expanded) — единственная точка, по которой оболочка переключается между нижним баром (`bottom-bar`) и боковым `NavigationRail`. Значение совпадает с desktop-классом окна expanded (любое десктоп-окно `≥ 840dp` попадает в expanded; FUTURE-канвас `1440×900` — тоже expanded), так что один и тот же порог обслуживает и адаптивную мобильную раскладку, и десктоп.
+
 ### 8.2 PlatformUtils
 
-Оборачивает проверки `dart:io` `Platform` за маленьким статическим хелпером — платформенное ветвление централизовано и легко грепается. Для мобильного приложения практически всё пойдёт через `isMobile`, но десктоп-геттеры оставлены для совместимости (например, отладочные сборки на macOS).
+Оборачивает проверки `dart:io` `Platform` за маленьким статическим хелпером — платформенное ветвление централизовано и легко грепается. На мобильных таргетах основной путь — `isMobile`; десктоп-геттеры (`isDesktop` / `isMacOS` / …) используются на десктопных таргетах (Windows/Linux/macOS), которые входят в scope (конституция v1.1.0).
 
 **Файл:** `lib/general/platform_utils.dart`
 

@@ -60,6 +60,7 @@
 - **Background-handler — top-level функция, DI недоступен.** `onBackgroundMessage` исполняется в отдельном isolate, где `getIt` не поднят. Handler аннотируется `@pragma('vm:entry-point')`, делает **минимум** (логирование / показ локального уведомления) и **не** обращается к репозиториям через `getIt`.
 - **Навигация по тапу — через единый маршрутизатор.** Tap по уведомлению маршрутизируется тем же механизмом, что и deep-link ([13-deep-links.md](13-deep-links.md)): routing-поля из `message.data` → `AppRootBloc` → `GlobalKey<NavigatorState>`. Второго навигатора не заводим.
 - **Все мутации репозитория возвращают `RepositoryResult<T>`** (`success(data: …)` / `error(exception: …)`), как и весь остальной слой данных ([04-data-layer.md](04-data-layer.md) §5).
+- **push (`firebase_messaging`) — mobile-only feature-gated; desktop push вне scope (FUTURE отдельный канал).** На Windows / Linux / macOS push деградирует в no-op (§10) — `firebase_*` подключаются как platform-conditional (mobile-only) deps, desktop-env регистрирует no-op `PushTokenRepository`.
 
 ---
 
@@ -611,7 +612,18 @@ FutureOr<void> _onPushOpened(OnPushOpened event, Emitter<AppRootState> emit) asy
 
 ---
 
-## 10. Чеклист
+## 10. Desktop fallback — push отключён (no-op)
+
+`firebase_messaging` **не имеет desktop-реализации** (Windows / Linux / macOS) — плагин покрывает только iOS / Android. Поэтому push на этих трёх платформах = **выключен (no-op)**: ни токен не запрашивается, ни сетевая register/unregister не дёргается, ни стримы сообщений не эмитят.
+
+- **Feature-gated, mobile-only.** Сама push-фича — feature-gated; когда она включается, `firebase_*`-зависимости (`firebase_core`, `firebase_messaging`) добавляются как **platform-conditional (mobile-only)** deps, и в **том же** change-set'е desktop-env регистрирует **no-op `PushTokenRepository`** (все методы возвращают `RepositoryResult.success(data: false)` / пустые стримы, `currentToken()` → `null`). Так `getIt<PushTokenRepository>()` резолвится на всех 5 платформах, но на desktop ничего не делает.
+- **В skeleton (Feature-001) push не резолвится вообще.** Skeleton не содержит реальных продуктовых фич — `PushTokenRepository` в нём не регистрируется и не подключается; `initialize()` дёргается **только после login** (FR-013), которого в skeleton нет.
+
+> **Desktop push вне scope этой итерации.** Отдельный desktop-канал доставки (например, через нативные OS-нотификации без FCM) — **FUTURE**, отдельным каналом; здесь фиксируется только то, что mobile-фича на desktop деградирует в no-op, а не ломает сборку/запуск shell'а на macOS/Windows/Linux.
+
+---
+
+## 11. Чеклист
 
 - [ ] `pubspec.yaml`: `firebase_core ^4.x` + `firebase_messaging ^16.x` (+ опц. `permission_handler ^12.x` / `flutter_local_notifications`); версии пинятся по `firebase_core` constraint ([01-stack-and-tooling.md](01-stack-and-tooling.md)).
 - [ ] Нативка: Android `google-services.json` + плагин `google-services` + `meta-data` канала; iOS `GoogleService-Info.plist` + APNs-ключ в Firebase + capabilities Push Notifications / Background Remote notifications (per флейвор, [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md)).

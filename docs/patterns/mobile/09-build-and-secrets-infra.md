@@ -13,7 +13,7 @@
 1. **Один `pubspec.yaml`, один прогон `build_runner`.** Нет порядка «data → domain → root»: кодогенерация — это **единственный** прогон `build_runner build` в корне пакета. Кодоген не раскладывается на три каталога — он схлопнут в один шаг.
 2. **Flutter пинится через FVM.** Никогда не вызываем голый `flutter`/`dart` — каждый скрипт и каждый CI-шаг использует `fvm flutter` / `fvm dart`, чтобы SDK был идентичен везде. Версия в `.fvmrc` — единственный источник истины.
 3. **Сгенерированные файлы не редактируются и не форматируются вручную.** `*.freezed.dart`, `*.config.dart`, `lib/design/gen/**` (а также `*.g.dart` / `*.mocks.dart`, если они появятся) производятся `build_runner` и исключены из форматирования и анализа. Доменные/BLoC-типы по конвенции имеют только `*.freezed.dart` (никаких `*.g.dart` — JSON живёт в entity-слое; см. `03-domain-layer.md`, `04-data-layer.md`).
-4. **Компайл-таймовая изоляция флейворов.** Флейвор приходит в Dart через `--dart-define=app.flavor=<flavor>` и читается `AppFlavor.getFlavor()` из `String.fromEnvironment('app.flavor')`; маппинг `prod → Environment.prod`, `stage → Environment.dev` (см. `02-dependency-injection.md`). Секреты приходят через `--dart-define-from-file=...`.
+4. **Компайл-таймовая изоляция флейворов.** Флейвор приходит в Dart через `--dart-define=app.flavor=<flavor>` и читается `AppFlavor.getFlavor()` из `String.fromEnvironment('app.flavor')`; маппинг `prod → Environment.prod`, `stage → Environment.dev` (см. `02-dependency-injection.md`). Секреты приходят через `--dart-define-from-file=...`. На desktop (Windows/Linux/macOS) **нет** нативного `--flavor` (Flutter не поддерживает product flavors для desktop-таргетов): stage/prod выбирается через `--dart-define-from-file=config/<flavor>.json` — закоммиченный, secret-free файл, несущий только `app.flavor`. Резолюция `AppFlavor.getFlavor()` и маппинг `prod → Environment.prod` / `stage → Environment.dev` остаются **идентичны** мобильным.
 
 Поток сборки — одной картинкой:
 
@@ -69,6 +69,8 @@ fvm install        # читает .fvmrc, ставит Flutter 3.44.1
 - Зашифрованные бандлы `secrets/<flavor>.enc.yaml` коммитятся; расшифрованные артефакты (`*.dart-define.json`, нативные `google-services.json` / `GoogleService-Info.plist`, keystores) — **никогда** (см. §10 `.gitignore`).
 
 > **Согласование с бэкендом NOX.** Когда у бэкенда NOX появится свой набор секретов (например, `secrets/{dev,stage,production}.enc.yaml` + задачи `mise run secrets:*`), мобильный проект использует **тот же стек инструментов** (SOPS+age+mise), но со своим набором флейворных файлов `secrets/<flavor>.enc.yaml` и своими decrypt-в-`dart-define`-задачами. Разные схемы потребления (backend → `.env`-файлы; mobile → `dart-define`-JSON + нативные конфиги) не смешивайте — это разные наборы задач.
+
+> **Desktop (Win/Linux/macOS) в скелете не потребляет реальных секретов** → пропускает `secrets:decrypt`, не нуждается в age-ключе. Когда у desktop появятся секреты, на него расширяется та же схема SOPS+age+mise (именование задач — см. §4).
 
 ---
 
@@ -183,6 +185,32 @@ $FLUTTER build ipa --flavor prod --obfuscate --split-debug-info=build/symbols \
   --dart-define=app.flavor=prod \
   --dart-define-from-file=.secrets-runtime/prod.dart-define.json
 """
+
+# --- desktop build matrix (no native --flavor; flavor-only config) ----------
+# skeleton: no real secrets on desktop — flavor-only config
+[tasks."build:macos:stage"]
+description = "Build the stage macOS app"
+run = "$FLUTTER build macos --dart-define-from-file=config/stage.json"
+
+[tasks."build:macos:prod"]
+description = "Build the prod macOS app"
+run = "$FLUTTER build macos --dart-define-from-file=config/prod.json"
+
+[tasks."build:windows:stage"]
+description = "Build the stage Windows app"
+run = "$FLUTTER build windows --dart-define-from-file=config/stage.json"
+
+[tasks."build:windows:prod"]
+description = "Build the prod Windows app"
+run = "$FLUTTER build windows --dart-define-from-file=config/prod.json"
+
+[tasks."build:linux:stage"]
+description = "Build the stage Linux app"
+run = "$FLUTTER build linux --dart-define-from-file=config/stage.json"
+
+[tasks."build:linux:prod"]
+description = "Build the prod Linux app"
+run = "$FLUTTER build linux --dart-define-from-file=config/prod.json"
 ```
 
 Инварианты, которые нужно сохранить:
@@ -389,6 +417,16 @@ afterEvaluate {
 
 ---
 
+## 7a. Идентичность desktop (macOS / Windows / Linux)
+
+В этой итерации desktop-таргеты несут **только prod-идентичность** на нативном уровне (одна нативная конфигурация на платформу). Отдельная нативная `.stage`-идентичность (и, соответственно, упаковка двух раздельных артефактов) — **на будущее** (§11a). Stage на desktop виден исключительно через `app.flavor` в Dart (`--dart-define-from-file=config/stage.json`), нативная конфигурация при этом не меняется.
+
+- **macOS.** В `macos/Runner/Configs/AppInfo.xcconfig` (и Xcode build settings) prod-идентичность: `PRODUCT_BUNDLE_IDENTIFIER = com.cyphernetlabs.noxapp` + `PRODUCT_NAME = NOX`. Отдельная `.stage`-идентичность (`com.cyphernetlabs.noxapp.stage`) → упаковка **на будущее** (§11a).
+- **Windows.** В `windows/runner/CMakeLists.txt` — `BINARY_NAME = NOX`; в `windows/runner/Runner.rc` блок `VERSIONINFO` несёт `CompanyName = "Cyphernet Labs"` и `ProductName = "NOX"`, плюс зафиксированный закоммиченный GUID приложения (стабильный между сборками). Отдельная `.stage`-идентичность → упаковка **на будущее** (§11a).
+- **Linux.** В `linux/CMakeLists.txt` — `APPLICATION_ID = com.cyphernetlabs.noxapp`; имя бинарника и `Name` в `.desktop`-файле — `NOX`. Отдельная `.stage`-идентичность → упаковка **на будущее** (§11a).
+
+---
+
 ## 8. CI — GitHub Actions
 
 Два workflow. Первый (`ci.yml`) — гейт: format-check → **один** прогон кодогена → analyze → test. Второй (`compile-check.yml`) — per-platform debug smoke-сборки. Оба пинят Flutter `3.44.1` через `subosito/flutter-action`.
@@ -474,7 +512,7 @@ jobs:
 
 ### 8.2 `.github/workflows/compile-check.yml` — per-platform debug smoke-сборки
 
-**Триггеры:** push в `develop`/`main` (с `paths`-фильтром) и ручной `workflow_dispatch`. Два параллельных джоба собирают приложение в debug под Android и iOS, чтобы поймать слом компиляции на каждой платформе.
+**Триггеры:** push в `develop`/`main` (с `paths`-фильтром) и ручной `workflow_dispatch`. Пять параллельных джобов собирают приложение в debug под Android, iOS, macOS, Windows и Linux, чтобы поймать слом компиляции на каждой платформе (Windows/Linux — compile-only, launch отложен).
 
 ```yaml
 name: NOX Compile check
@@ -520,11 +558,66 @@ jobs:
       - run: dart run build_runner build --delete-conflicting-outputs
       # iOS debug compile check without code signing.
       - run: flutter build ios --debug --no-codesign --flavor stage --dart-define=app.flavor=stage
+
+  compile-macos:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.1
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: dart run build_runner build --delete-conflicting-outputs
+      # macOS debug compile check — no secrets, no native --flavor.
+      - run: flutter build macos --debug
+
+  compile-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.1
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: dart run build_runner build --delete-conflicting-outputs
+      # Windows debug compile check — no secrets, no native --flavor.
+      - run: flutter build windows --debug
+
+  compile-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.1
+          channel: stable
+          cache: true
+      # GTK toolchain + deps required by the Flutter Linux desktop embedder.
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build libgtk-3-dev
+      - run: flutter pub get
+      - run: dart run build_runner build --delete-conflicting-outputs
+      # Linux debug compile check — no secrets, no native --flavor.
+      - run: flutter build linux --debug
 ```
 
 Замечания:
-- Smoke-сборки запускаются в `--debug` и **не требуют секретов** — мы не вызываем decrypt и не используем `--dart-define-from-file`. Это компайл-чек, а не релиз. Для Android stage достаточно `--dart-define=app.flavor=stage`; для iOS — `--no-codesign`.
-- Мы держим только Android + iOS (целевые платформы проекта). Никаких Linux/macOS/Windows desktop-джобов и никаких Rust/FFI-шагов (их не было в этом проекте).
+- Smoke-сборки запускаются в `--debug` и **не требуют секретов** — мы не вызываем decrypt и не используем `--dart-define-from-file`. Это компайл-чек, а не релиз. Для Android stage достаточно `--dart-define=app.flavor=stage`; для iOS — `--no-codesign`. Desktop-джобы (macOS/Windows/Linux) тоже **без секретов** — у них нет нативного `--flavor`, а `--debug` компайл-чек не требует ни decrypt, ни age-ключа.
+- Этот compile-check покрывает все 5 целевых платформ (конституция v1.1.0): Android + iOS + macOS + Windows + Linux. Desktop compile-smoke **добавлен**; упаковка/подпись (packaging/signing) — **на будущее** (§11a). Rust/FFI-шагов нет.
+
+**Platform support matrix (minimum OS).** Минимальные версии берутся из дефолтов `flutter create` под Flutter `3.44.1` (источник floor — `flutter create`-дефолты под `3.44.1`). Пиннинг конкретных таргетов и подбор Linux apt-deps — **на будущее**.
+
+| Platform | Minimum OS |
+|---|---|
+| Windows | Windows 10 (Flutter 3.44 floor) |
+| macOS | macOS 10.15+ (`flutter create` default) |
+| Linux | GTK3 runtime |
 
 ### 8.3 Локальное зеркало CI
 
@@ -601,8 +694,22 @@ android/*_keystore.properties
 - **Детект изменений.** Корневой `ci.yml` использует `dorny/paths-filter@v3` для пер-проектных условных джобов; агрегатный `CI summary` — единственная required-проверка для branch protection. Workflow выше (`NOX CI`) фильтрует по `paths: lib/**` — это согласуется с детект-паттерном (но **не** переносите фильтр в `on.push.paths` корневого детектора).
 - **One-dispatch релизная модель.** Релизы запускаются единственным `workflow_dispatch` (`release-stage.yml` / `release-production.yml`), которые делают bump → PR → auto-merge → tag → CD. Тэг — единственный CD-триггер. NOX CD (`nox_app-cd-{stage,prod}.yml`) пока **отложен** до появления Apple Developer / Google Play аккаунтов (`docs/predeploy/external-services-setup.md`); мобильный feature-branch flow с `branch_slug` в суффиксе тэга описан в `ci_cd_strategy.md` §13 и реактивируется при активации проекта.
 - **Аутентификация.** Релизные workflow используют fine-grained PAT (`BUMP_PAT`), а не `GITHUB_TOKEN` — последний не триггерит downstream-workflow на push тэга.
-- **Секреты CI.** Расшифровка секретов в CI требует `SOPS_AGE_KEY_CI`; приватный age-ключ команды кладётся в секреты репо через `./scripts/ci_cd/setup-github-secrets.sh`. Для smoke-сборок (`--debug`) ключ не нужен — они не расшифровывают секреты.
+- **Секреты CI.** Расшифровка секретов в CI требует `SOPS_AGE_KEY_CI`; приватный age-ключ команды кладётся в секреты репо через `./scripts/ci_cd/setup-github-secrets.sh`. Для smoke-сборок (`--debug`) ключ не нужен — они не расшифровывают секреты. Desktop (Win/Linux/macOS) в скелете не потребляет реальных секретов → пропускает `secrets:decrypt`, не нуждается в age-ключе; когда у desktop появятся секреты, на него расширяется та же схема SOPS+age+mise (именование задач — см. §4).
 - **Никаких автономных merge/deploy/commit.** Открывайте PR и пушьте в feature-ветку, но **не** мёрджите PR, **не** деплойте в cloud и **не** коммитьте без явного запроса владельца в текущей сессии.
+
+---
+
+## 11a. Упаковка и подпись desktop (на будущее)
+
+`TODO(blueprint-desktop-packaging)` — **без реализации** в этой итерации; скелет даёт только `--debug` compile-smoke (§8.2) и `build:<desktop>:<flavor>` без упаковки (§4). Когда desktop-дистрибуция активируется, по платформам:
+
+- **Windows.** MSIX-пакет + подпись инсталлятора code-signing-сертификатом (EV/OV).
+- **macOS.** DMG + `codesign` + нотаризация через `xcrun notarytool` + hardened runtime.
+- **Linux.** AppImage и/или `.deb`.
+
+Блокер тот же, что у мобильного CD (§11): нет аккаунтов/сертификатов для подписи (Apple Developer / code-signing cert) — пока они не заведены (`docs/predeploy/external-services-setup.md`), упаковка и подпись desktop остаются на будущее, параллельно отложенному мобильному CD.
+
+> `TODO(blueprint-desktop-window)` — скелет поставляет **дефолтное окно** Flutter desktop-раннера (single-window, без `window_manager`, нативный chrome/title bar). Полировка **на будущее**: `window_manager` для задания начального размера `1440x900` (канонический размер из корпуса) + `minimumSize 640x600` + кастомный unified title bar.
 
 ---
 
@@ -618,7 +725,10 @@ android/*_keystore.properties
 - [ ] Gradle: dimension `app` (`stage`/`prod`), per-flavor `applicationId` (`com.cyphernetlabs.noxapp[.stage]`), детект активного флейвора, выбор keystore, decrypt-хук на `pre<Flavor><BuildType>Build`; `compileSdk 36`, `minSdk 26`, Java 17.
 - [ ] iOS: `Stage.xcconfig` / `Prod.xcconfig` + схемы `stage`/`prod`; заметка про fastlane на будущее.
 - [ ] `.github/workflows/ci.yml`: format-check → один кодоген → analyze → test; `subosito/flutter-action` `3.44.1`; `paths: lib/**`.
-- [ ] `.github/workflows/compile-check.yml`: debug smoke-сборки Android + iOS (без секретов, iOS `--no-codesign`).
+- [ ] `.github/workflows/compile-check.yml`: debug smoke-сборки Android + iOS (без секретов, iOS `--no-codesign`) — desktop-таргеты в строке ниже.
+- [ ] compile-check покрывает все 5 таргетов (debug compile-only): `compile-macos`/`compile-windows`/`compile-linux` (`--debug`, без секретов; Linux ставит `ninja-build libgtk-3-dev`).
+- [ ] Desktop-сборки получают флейвор только через `config/<flavor>.json` (без secrets-decrypt / без age-ключа).
+- [ ] Упаковка/подпись desktop задокументированы как «на будущее» (§11a).
 - [ ] `version` в `pubspec.yaml` — закоммиченный `YY.M.D+SHIFTED_EPOCH` (epoch base `1577836800`), выровнен с `docs/operations/versioning-strategy.md`.
 - [ ] `.gitignore` исключает `.secrets-runtime/`, `.fvm/flutter_sdk`, расшифрованные нативные конфиги и keystores.
 - [ ] Проект онборжен в CI/CD-политику (`ci_cd_strategy.md` §8.3); CD отложен до Apple/Play аккаунтов.

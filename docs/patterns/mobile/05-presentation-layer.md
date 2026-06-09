@@ -94,7 +94,7 @@ lib/
 - Все строки для пользователя — из `TextConstants` (в `lib/general/text_constants.dart`); ни одной голой строки в виджетах.
 - Цвета/отступы/типографика — только через токены / `context.appColors` (см. `06-theming.md`); ни одного голого `Color` / `EdgeInsets` / `TextStyle` в коде фич.
 
-> Десктопная multi-window-маршрутизация (`desktop_multi_window`, `WindowsConfig`, `MultiWindowHelper`) намеренно опущена — мобильное приложение использует только single-window `Navigator`.
+> Десктопная multi-window-маршрутизация (`desktop_multi_window`, `WindowsConfig`, `MultiWindowHelper`) намеренно опущена — приложение использует только single-window `Navigator`. Это подтверждено и для десктопных таргетов (Windows, Linux, macOS): single-window `Navigator` — единый канон на всех пяти платформах, `desktop_multi_window` не используется. `window_manager` (минимальный размер окна, кастомный title bar) — опциональный FUTURE, **не** входит в скелет. Сама оболочка size-driven (`AppShell`, §6.5), поэтому корректна при любом размере окна — отдельной десктопной маршрутизации не требуется.
 
 ---
 
@@ -999,6 +999,32 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
 ```
 
 > Observer интегрируется в **существующий** `_AppRootState` (§6.2) — тот уже держит `AppRootBloc` + `ScreenUtilInit`; добавляется `with WidgetsBindingObserver` + подписки. Connectivity/lifecycle — best-effort слой поверх обязательного auth-контура; источник истины о доступности API остаётся за `ApiClient` ([14-networking-and-auth.md](14-networking-and-auth.md) §5.5).
+
+### 6.5 Адаптивная оболочка (mobile нижний бар / desktop `NavigationRail`)
+
+`AppShell` (`lib/presentation/app/widgets/app_shell.dart`) — это `LayoutBuilder`-обёртка между `AppRoot` и страницей; переключение между мобильной и десктопной раскладкой **width-driven** — по `constraints.maxWidth >= Constants.railBreakpoint` (840dp, граница M3 medium→expanded), а **не** по `Platform`. Большое окно на десктопе и большой планшет получают одинаковую раскладку; узкое окно на десктопе остаётся на мобильной. Один и тот же размер-зависимый код корректен на всех пяти таргетах (iOS, Android, Windows, Linux, macOS).
+
+Две ветки:
+
+- **Mobile-ветка** (`maxWidth < Constants.railBreakpoint`): `Scaffold` с нижним баром (`Chats` / центральный docked `+` FAB / `Settings`). Нижний бар — кастомный `BottomAppBar` (`CircularNotchedRectangle`) + `FloatingActionButton` в `floatingActionButtonLocation: centerDocked` (стоковый `NavigationBar` не умеет docked-FAB с вырезом); см. locked-спеку `docs/design/spec/screens/tab-bar-shell.md`.
+- **Desktop-ветка** (`maxWidth >= Constants.railBreakpoint`): `Row[ NavigationRail(width: 80, extended: false, labelType: NavigationRailLabelType.all, leading: FloatingActionButton(child: Icon(Icons.add))), VerticalDivider(width: 1), Expanded(body) ]` — `leading`-FAB рейла и есть «доковый» `+`.
+
+Общее для обеих веток:
+
+- Ровно две destination'ы: `Chats` = `Icons.forum`, `Settings` = `Icons.settings`.
+- Индикатор выбранной destination — стоковый M3 `secondaryContainer`.
+- `body` — `IndexedStack` (сохраняет состояние вкладок при переключении).
+- **Аватар аккаунта из десктопного корпуса опущен** — в NOX нет profile-экрана (см. карту экранов).
+- Single-window `Navigator` сохраняется (§1) — оболочка не вводит multi-window.
+
+Скелет Feature-001 (без реальных продуктовых фич):
+
+- Обе destination'ы ведут на одну и ту же страницу-плейсхолдер `Item` (та же, что и в §3–§5).
+- `+` — no-op со snackbar'ом (через `AlertDialogHelper`, §8); никакого create-flow.
+- **Нет** list-detail / двухпанельной раскладки на десктопе — только rail + единый `body`.
+- Нативный OS window chrome — **без** кастомного title bar в скелете; кастомный унифицированный title bar — FUTURE (см. note про `window_manager`, §1).
+
+> Референс десктопной раскладки (rail, ширины, слоты) — `docs/design/system/nox-desktop-screens/`. Брейкпоинт `Constants.railBreakpoint = 840` задан в `lib/general/constants.dart` (см. `06-theming.md`).
 
 ---
 

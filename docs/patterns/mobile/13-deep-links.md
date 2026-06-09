@@ -86,6 +86,16 @@
 
 > **Где живёт нативка.** `android/...` и `ios/...`. Файлы-ассоциации (`assetlinks.json`, `apple-app-site-association`) публикуются на домене — это инфра бэкенда/хостинга, отдельная задача (см. `09-build-and-secrets-infra.md`).
 
+### Desktop (macOS / Windows / Linux) — нативная регистрация схемы — FUTURE
+
+`app_links` поддерживает все три desktop-платформы (macOS, Windows, Linux), так что слой данных пайплайна (`stringLinkStream` / `getInitialLinkString()`) кросс-платформенный без изменений (см. § Desktop fallback ниже). Но **нативная регистрация custom-scheme `nox://` на desktop — это FUTURE**: она вносится **вместе с самой deep-link-фичей**, а не в скелете (Feature-001). Когда дойдёт до неё, регистрировать по платформам:
+
+- **macOS** — `macos/Runner/Info.plist` → `CFBundleURLTypes` (аналог iOS-fallback'а: `CFBundleURLSchemes` со значением `nox`).
+- **Windows** — ключ реестра `HKCU\Software\Classes\nox\shell\open\command` (значение — путь к исполняемому файлу с `"%1"`), плюс `URL Protocol` на `HKCU\Software\Classes\nox`.
+- **Linux** — `.desktop`-файл с `MimeType=x-scheme-handler/nox;` (регистрация через `xdg-mime default <app>.desktop x-scheme-handler/nox`).
+
+> Эти три регистрации (как и iOS/Android intent-filter/associated-domains выше) — часть change-set'а deep-link-фичи, **не** скелета.
+
 ---
 
 ## 3. Доменный слой
@@ -477,6 +487,14 @@ FutureOr<void> _onInitialize(Initialize event, Emitter<ValidateDeepLinkState> em
 - **Не все типы валидируются на сервере.** `ValidateDeepLinkPage` — только для token-линков, требующих подтверждения до экрана; остальные роутятся напрямую.
 - **Навигация без `BuildContext` в bloc** — через `NavigatorState` из события (`GlobalKey<NavigatorState>` = `MaterialApp.navigatorKey`). На странице-валидаторе, наоборот, `BuildContext` прокидывается в событие и гардится `context.mounted` перед `pop` — две разные стратегии по слоям, не путать.
 - **URL-контракт — cross-project.** Host/path/query фиксируются совместно с бэкендом; не хардкодить «на глаз».
+
+---
+
+## 9. Desktop fallback (скелет и single-window)
+
+- **В скелете (Feature-001) deep links — no-op.** Feature-001 — скелет без реальных продуктовых фич: `DeepLinkRepository` **не регистрируется** в DI, а `AppRoot` **не подписан** на `watchDeepLink()` (нет `_deepLinkSub`, нет `OnDeepLink`-диспатча). Весь пайплайн § 3–§ 5 вносится **позже**, вместе с deep-link-фичей (см. FR-013). Скелет компилируется на всех пяти платформах (iOS, Android, Windows, Linux, macOS), но входящие ссылки в нём не обрабатываются.
+- **Single-window подтверждён.** NOX — single-window-приложение на desktop: «тёплая» ссылка будит **то же самое** окно через `app_links` `stringLinkStream` (`DeepLinkSource.foreground`), **без** открытия второго окна и **без** второго `Navigator`. Маршрутизация остаётся в единственном `AppRootBloc._onOnDeepLink` поверх единственного `MaterialApp.navigatorKey` (§ 5) — desktop тут ничем не отличается от mobile.
+- **`app_links` кросс-компилируется на desktop.** Пакет собирается на macOS/Windows/Linux из коробки — **гейтить его по платформе не нужно** (ни условный импорт, ни platform-специфичная зависимость в `pubspec.yaml`). Один и тот же код слоя данных работает на всех пяти платформах; платформо-зависима лишь нативная регистрация схемы (§ 2, FUTURE).
 
 ---
 

@@ -461,7 +461,7 @@ fvm dart run build_runner build --delete-conflicting-outputs
 
 ---
 
-## 12. Скелет `CLAUDE.md` для мобильного приложения
+## 12. Скелет `CLAUDE.md` приложения
 
 Заготовка `CLAUDE.md` для `lib/`, переносящая в проектную память существо этого блюпринта. Прозу держать на русском (репо-правило), код/команды/идентификаторы — на английском.
 
@@ -469,7 +469,7 @@ fvm dart run build_runner build --delete-conflicting-outputs
 # CLAUDE.md — NOX (lib/)
 
 ## Обзор проекта
-Flutter-приложение (iOS + Android) для NOX. ОДИН Dart-пакет `nox_app`.
+Flutter-приложение (iOS, Android, Windows, Linux, macOS) для NOX. ОДИН Dart-пакет `nox_app`.
 Слои — папки в `lib/`: data / domain / presentation + di / general / design / resource.
 Flutter 3.44.1 (FVM, `.fvmrc`). Dart sdk >=3.12.0 <4.0.0. Line length 140.
 Флейворы: stage, prod. applicationId/bundle: com.cyphernetlabs.noxapp (stage: com.cyphernetlabs.noxapp.stage).
