@@ -1,0 +1,8 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="NOX (prod)" type="FlutterRunConfigurationType" factoryName="Flutter">
+    <!-- Flavor via --dart-define-from-file (uniform on all platforms; native mobile flavors deferred). -->
+    <option name="additionalArgs" value="--dart-define-from-file=config/prod.json" />
+    <option name="filePath" value="$PROJECT_DIR$/lib/main.dart" />
+    <method v="2" />
+  </configuration>
+</component>
