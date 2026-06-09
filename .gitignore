@@ -81,3 +81,9 @@ android/**/google-services.json
 ios/Runner/Firebase/**/GoogleService-Info.plist
 **/*_keystore.jks
 **/*_keystore.properties
+
+# --- Generated (codegen-first; regenerate via build_runner) ---
+*.g.dart
+*.freezed.dart
+*.config.dart
+lib/design/gen/
