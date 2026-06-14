@@ -209,9 +209,9 @@ extension AppColorsExtension on BuildContext {
 }
 ```
 
-> **Состояние и план.** Текущий `AppColors` — намеренный **skeleton** с двумя полями (`surfaceMuted`, `dividerSubtle`) и raw-`Color`-литералами прямо в `Light/DarkAppColors`. Полный семантический набор доп-ролей, выведенный из `docs/design/system/nox-handoff/`, **прилетает в US4** (отмечено в комментарии кода). До тех пор большинство цветов берётся из стокового `ColorScheme` (`Theme.of(context).colorScheme`), а `AppColors` покрывает только то, чего в нём нет.
+> **Состояние.** `AppColors` — полный token-driven набор доп-ролей (`timestamp`@70%, `dividerSubtle`, `surfaceMuted`, `disabledContainer`@12%, `disabledContent`@38%, `dragHandle`@40%), выведенный из `ColorScheme` фабрикой `AppColors.fromScheme(ColorScheme)` (подклассы `Light/DarkAppColors` упразднены; raw-литералов нет). Большинство цветов по-прежнему берётся из стокового `ColorScheme` (`Theme.of(context).colorScheme`); `AppColors` покрывает только то, чего в нём нет, или роли с изменённой непрозрачностью.
 
-Для новой семантической роли добавляйте поле в `AppColors`, соответствующий параметр `copyWith`, строку в `lerp` и значения в `super(...)` обоих подклассов — **все четыре места в едином шаге**. Пропуск любого ломает либо компиляцию, либо анимацию темы. Регистрация в `ThemeData` — через `extensions:` (см. §3).
+Для новой семантической роли добавляйте поле в `AppColors`, соответствующий параметр `copyWith`, строку в `lerp` и деривацию в `AppColors.fromScheme(...)` — **все четыре места в едином шаге**. Пропуск любого ломает либо компиляцию, либо анимацию темы. Регистрация в `ThemeData` — через `extensions:` (см. §3).
 
 ---
 
@@ -410,7 +410,7 @@ abstract final class NoxEasing    { /* standard / emphasized / emphasizedDeceler
 
 ## 5. Дизайн-токены — текстовые стили (`AppTextStyleTokens`)
 
-Канонический type scale NOX — это сгенерированный `noxTextTheme` (§1), доступный через `Theme.of(context).textTheme.*` (`bodyMedium`, `titleMedium`, …). `AppTextStyleTokens` — **тонкая обёртка-фабрика** поверх него для частых стилей, где удобнее задать цвет на месте вызова: каждый метод принимает обязательный `Color color` и масштабирует `fontSize` через `.sp` (учитывает `minTextAdapt`, §3.2). Цвет не зашит в стиль — он передаётся на месте вызова (обычно из `context.appColors.xxx` или `Theme.of(context).colorScheme.*`), что делает стиль независимым от темы. Класс — `abstract final class` с приватным `const`-конструктором.
+Канонический type scale NOX — это сгенерированный `noxTextTheme` (§1), доступный через `Theme.of(context).textTheme.*` (`bodyMedium`, `titleMedium`, …). `AppTextStyleTokens` — **тонкая обёртка-фабрика** поверх него для частых стилей, где удобнее задать цвет на месте вызова: каждый метод оборачивает слот канонического `noxTextTheme` (`bodyMedium`/`titleMedium`/`labelMedium` — единый источник размеров/весов, без `.sp`-двойного скейла) и подставляет `Color color`. Цвет не зашит в стиль — он передаётся на месте вызова (обычно из `context.appColors.xxx` или `Theme.of(context).colorScheme.*`), что делает стиль независимым от темы. Класс — `abstract final class` с приватным `const`-конструктором.
 
 **Файл:** `lib/design/app_text_style_tokens.dart`
 

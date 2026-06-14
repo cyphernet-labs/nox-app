@@ -104,12 +104,12 @@
 
 ### Implementation (US4)
 
-- [ ] T027 [P] [US4] Сделать `AppSpacingTokens` единым каноническим spacing-каналом; `NoxSpacing` оставить только под `minTapTarget`/`screenPadding` (`lib/design/app_spacing_tokens.dart` + `nox_tokens.dart`) (data-model §6, FR-018, SC-006).
-- [ ] T028 [P] [US4] Свернуть `AppImagesTokens` в `flutter_gen` (единый канал ассетов) либо ретайрнуть `lib/design/app_images_tokens.dart` (data-model §11, FR-018, SC-006).
-- [ ] T029 [P] [US4] Выровнять `AppTextStyleTokens` под M3-шкалу `noxTextTheme` (`lib/design/app_text_style_tokens.dart`) (data-model §4, FR-019).
-- [ ] T030 [P] [US4] Поправить устаревшую прозу `docs/design/spec/design-system.md` §2.3 (dark `outlineVariant` #3F4948→#4E5B58 по токену; surface-container ярусы) — **док-фикс, не код** (research §G, FR-017).
-- [ ] T031 [P] [US4] Перенести FILL-axis `icons.md` из `docs/design/system/nox-handoff-2/` в `docs/design/system/nox-handoff/spec/`; удаление дубликата `nox-handoff-2/` — отдельным change-set (research §I, FR-020).
-- [ ] T032 [US4] Обновить блюпринты `docs/blueprints/mobile/06-theming.md` (docs-in-sync: override §3 «component-сабтемы заводятся сейчас», источник истины = токены, правило регенерации) **и `docs/blueprints/mobile/10-code-templates.md` §16b** (устаревший шаблон `ThemeData.light().copyWith` → реальная сборка темы через `noxLightScheme` + component-сабтемы) (FR-021, SC-009, plan Constitution III).
+- [x] T027 [P] [US4] Сделать `AppSpacingTokens` единым каноническим spacing-каналом; `NoxSpacing` оставить только под `minTapTarget`/`screenPadding` (`lib/design/app_spacing_tokens.dart` + `nox_tokens.dart`) (data-model §6, FR-018, SC-006).
+- [x] T028 [P] [US4] Свернуть `AppImagesTokens` в `flutter_gen` (единый канал ассетов) либо ретайрнуть `lib/design/app_images_tokens.dart` (data-model §11, FR-018, SC-006).
+- [x] T029 [P] [US4] Выровнять `AppTextStyleTokens` под M3-шкалу `noxTextTheme` (`lib/design/app_text_style_tokens.dart`) (data-model §4, FR-019).
+- [x] T030 [P] [US4] Поправить устаревшую прозу `docs/design/spec/design-system.md` §2.3 (dark `outlineVariant` #3F4948→#4E5B58 по токену; surface-container ярусы) — **док-фикс, не код** (research §G, FR-017).
+- [x] T031 [P] [US4] Перенести FILL-axis `icons.md` из `docs/design/system/nox-handoff-2/` в `docs/design/system/nox-handoff/spec/`; удаление дубликата `nox-handoff-2/` — отдельным change-set (research §I, FR-020).
+- [x] T032 [US4] Обновить блюпринты `docs/blueprints/mobile/06-theming.md` (docs-in-sync: override §3 «component-сабтемы заводятся сейчас», источник истины = токены, правило регенерации) **и `docs/blueprints/mobile/10-code-templates.md` §16b** (устаревший шаблон `ThemeData.light().copyWith` → реальная сборка темы через `noxLightScheme` + component-сабтемы) (FR-021, SC-009, plan Constitution III).
 
 **Контрольная точка US4**: дизайн-слой без дублей и дрейфов, источник истины зафиксирован.
 

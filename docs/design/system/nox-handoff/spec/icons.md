@@ -5,11 +5,16 @@ large icons on 3.1 / 5.3 are 48–96. Flutter: `Icons.*` (Material Icons) or the
 `material_symbols_icons` package (`Symbols.*`) — same glyph. Authoritative set for the
 mockups = Material Symbols Rounded.
 
+> **Outlined vs filled = the FILL axis, not a name suffix.** Material Symbols has no `*_outlined`
+> ligature; the base name (e.g. `forum`) renders outlined at `FILL 0` and filled at `FILL 1`.
+> Flutter: `Icon(Symbols.forum, fill: 1)`, or the stock `Icons.forum` / `Icons.forum_outlined`
+> constants which bake fill into the name. Names below are base ligatures.
+
 ## Navigation (4.1)
-| Use | Selected | Unselected |
+| Use | Selected (FILL 1) | Unselected (FILL 0) |
 |---|---|---|
-| Chats | `forum` | `forum_outlined` |
-| Settings | `settings` | `settings_outlined` |
+| Chats | `forum` | `forum` |
+| Settings | `settings` | `settings` |
 | Center action | `add` | — |
 
 ## Actions
@@ -35,7 +40,7 @@ mockups = Material Symbols Rounded.
 |---|---|---|
 | Pending | `schedule` | `onSurfaceVariant` |
 | Sent | `check` | `onSurfaceVariant` |
-| Error | `error_outline` | `error` |
+| Error | `error` (FILL 0) | `error` |
 
 ## File-type chips (no content preview anywhere)
 | Type | Icon |
@@ -53,12 +58,12 @@ mockups = Material Symbols Rounded.
 ## Empty states (fallback until illustrations ship)
 | Screen | Icon |
 |---|---|
-| 5.1 no chats | `forum_outlined` |
-| 5.2 no messages | `chat_bubble_outline` |
+| 5.1 no chats | `forum` (FILL 0) |
+| 5.2 no messages | `chat_bubble` (FILL 0) |
 | 5.4 no files | `folder_open` |
 
 ## Misc
 | Use | Icon |
 |---|---|
-| Universal error (3.1) | `error_outline` |
+| Universal error (3.1) | `error` (FILL 0) |
 | Avatar fallback (no valid initials) | `forum` (white on hash-color bg) |

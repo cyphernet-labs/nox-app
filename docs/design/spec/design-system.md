@@ -108,7 +108,7 @@
 | surfaceVariant | `#3F4948` |
 | onSurfaceVariant | `#BEC9C8` |
 | outline | `#899393` |
-| outlineVariant | `#3F4948` |
+| outlineVariant | `#4E5B58` |
 | surfaceContainerLowest | `#090F0F` |
 | surfaceContainerLow | `#161D1D` |
 | surfaceContainer | `#1A2120` |

@@ -1781,6 +1781,8 @@ class AppRefreshIndicatorWidget extends StatelessWidget {
 ## 16. `AppColors` (`ThemeExtension`) + Light/Dark + `AppTheme.light()/dark()`
 
 > Тема = light + dark через `ThemeExtension<AppColors>` + `AppTheme.light()/dark()` + `context.appColors`, `themeMode` едет из `AppRootBloc`. Полная палитра и токены — в `06-theming.md`; здесь — минимальный заготовочный шаблон.
+>
+> **Реализовано (feature 002) — актуальная форма в `lib/design/theme/`, шаблоны §16a/§16b ниже упрощены:** `AppColors` строится фабрикой `AppColors.fromScheme(ColorScheme)` (деривация из токен-схемы; подклассы `Light/DarkAppColors` упразднены); `AppTheme.light()/dark()` собирает **явные** `noxLightScheme`/`noxDarkScheme` + полный набор **component-сабтем** `ThemeData` (§9), а не `ThemeData.light().copyWith(...)`; `AppTextStyleTokens` оборачивает слоты `noxTextTheme`; `AppSpacingTokens` выводит значения из `NoxSpacing` (единый источник, §4.1).
 
 ### 16a. `AppColors`
 
