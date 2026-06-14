@@ -2,7 +2,7 @@ name: nox_app
 description: "NOX secure messenger."
 publish_to: 'none'
 
-# CalVer + shifted-epoch build (YY.M.D+EPOCH; см. docs/patterns/mobile/09-build-and-secrets-infra.md §9).
+# CalVer + shifted-epoch build (YY.M.D+EPOCH; см. docs/blueprints/mobile/09-build-and-secrets-infra.md §9).
 version: 26.1.1+0
 
 environment:

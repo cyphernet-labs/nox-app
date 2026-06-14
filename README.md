@@ -62,5 +62,5 @@ fvm flutter run -d linux   --dart-define-from-file=config/stage.json
 ## Дополнительно
 
 - Полная настройка и приёмочный walkthrough — `specs/001-flutter-project-init/quickstart.md`
-- Архитектурный blueprint — `docs/patterns/mobile/` (индекс в его `README.md`)
+- Архитектурный blueprint — `docs/blueprints/mobile/` (индекс в его `README.md`)
 - Руководство для контрибьюторов и агентов — `CLAUDE.md`

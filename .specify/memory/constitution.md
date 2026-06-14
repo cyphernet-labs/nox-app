@@ -28,17 +28,21 @@ Sync Impact Report
   ✅ CLAUDE.md — строка платформ в Project Overview; формулировки scoping задач по блюпринту; версия конституции
      в Spec Kit + сводка по Принципу III.
   ✅ docs/README.md — продуктовое позиционирование на лендинге docs.
-  ✅ docs/patterns/mobile/README.md — назначение блюпринта, блок статуса (desktop gap), онбординг-чеклист.
-  ✅ docs/patterns/mobile/01-stack-and-tooling.md — строка описания pubspec.
-  ✅ docs/patterns/mobile/08-conventions-and-constitution.md — посеянный скелет lib/ CLAUDE.md.
-  ✅ docs/patterns/mobile/06-theming.md — формулировки прозы о desktop-геттерах PlatformUtils.
-  ✅ docs/patterns/mobile/17-analytics.md — "mobile-only"→"client-only"; значения platform super-property.
-  ✅ docs/patterns/mobile/09-build-and-secrets-infra.md — утверждение "Android+iOS only / no desktop jobs".
+  ✅ docs/blueprints/mobile/README.md — назначение блюпринта, блок статуса (desktop gap), онбординг-чеклист.
+  ✅ docs/blueprints/mobile/01-stack-and-tooling.md — строка описания pubspec.
+  ✅ docs/blueprints/mobile/08-conventions-and-constitution.md — посеянный скелет lib/ CLAUDE.md.
+  ✅ docs/blueprints/mobile/06-theming.md — формулировки прозы о desktop-геттерах PlatformUtils.
+  ✅ docs/blueprints/mobile/17-analytics.md — "mobile-only"→"client-only"; значения platform super-property.
+  ✅ docs/blueprints/mobile/09-build-and-secrets-infra.md — утверждение "Android+iOS only / no desktop jobs".
   ✅ docs/vision.md — продуктовое позиционирование верхнего уровня.
   ✅ docs/requirements.md — список Целевые платформы.
+Reference-sync (2026-06-14, НЕ нормативное — принципы I–V без изменений, версия остаётся 1.1.0):
+  блюпринт перемещён `docs/patterns/mobile/` → `docs/blueprints/mobile/` (таксономия `docs/blueprints/`),
+  унифицирован с продвинутым кросс-проектным блюпринтом и сверен с заскаффолженным `lib/`; перекрёстные
+  ссылки по репозиторию (CLAUDE.md, specs/001, root README, pubspec, docs/README, память) обновлены на новый путь.
 Отложенные доработки (реальная desktop-работа — НЕ однострочные правки; отслеживается как зависимость feature-001):
   ⚠ TODO(blueprint-desktop-build): desktop build/flavor/signing/distribution + CI smoke-build jobs
-     для Windows/Linux/macOS (docs/patterns/mobile/09).
+     для Windows/Linux/macOS (docs/blueprints/mobile/09).
   ⚠ TODO(blueprint-desktop-deeplinks): регистрация desktop deep-link / protocol-handler (13).
   ⚠ TODO(blueprint-desktop-push): desktop push-стратегия или документированный no-op (15).
   ⚠ TODO(blueprint-desktop-multiwindow): пересмотреть single-window vs multi-window (05/11).
@@ -75,7 +79,7 @@ E2EE включено по умолчанию для всех сообщений
 
 ### III. Архитектурный блюпринт обязателен
 
-`docs/patterns/mobile/` — обязательный блюпринт для всего клиентского Flutter-кода (на всех пяти целевых платформах). В начале любой Flutter/клиентской задачи — сверяться с ним и строить по нему. Несущие инварианты: один Dart-пакет `nox_app`, Clean Architecture слоями-папками (`presentation → domain ← data`, `domain` ни от чего не зависит), BLoC = Freezed, единый injectable + get_it DI, `RepositoryResult<T>` повсюду, обязательный `LogRepository` (никаких сырых `print`), codegen-first, дизайн-токены вместо хардкода. Эти инварианты платформенно-нейтральны и применяются ко всем таргетам. Платформенно-специфичные части блюпринта (build/secrets, push, deep-links, secure storage) сейчас определены для iOS/Android; перед desktop-работой в такой подсистеме блюпринт расширяется на desktop либо для неё фиксируется явный документированный desktop-fallback. Дрейф реального кода от блюпринта чинится в том же change-set (правится код либо сам блюпринт).
+`docs/blueprints/mobile/` — обязательный блюпринт для всего клиентского Flutter-кода (на всех пяти целевых платформах). В начале любой Flutter/клиентской задачи — сверяться с ним и строить по нему. Несущие инварианты: один Dart-пакет `nox_app`, Clean Architecture слоями-папками (`presentation → domain ← data`, `domain` ни от чего не зависит), BLoC = Freezed, единый injectable + get_it DI, `RepositoryResult<T>` повсюду, обязательный `LogRepository` (никаких сырых `print`), codegen-first, дизайн-токены вместо хардкода. Эти инварианты платформенно-нейтральны и применяются ко всем таргетам. Платформенно-специфичные части блюпринта (build/secrets, push, deep-links, secure storage) сейчас определены для iOS/Android; перед desktop-работой в такой подсистеме блюпринт расширяется на desktop либо для неё фиксируется явный документированный desktop-fallback. Дрейф реального кода от блюпринта чинится в том же change-set (правится код либо сам блюпринт).
 
 **Обоснование:** единый источник истины по архитектуре держит код консистентным между сессиями и контрибьюторами.
 
@@ -93,10 +97,10 @@ UI строится на Material Design 3, light + dark. Источник ис�
 
 ## Технологический контекст и ограничения
 
-- Стек — по блюпринту `docs/patterns/mobile/`: Flutter, запиненный через FVM (`3.44.1`), Dart `>=3.12.0 <4.0.0`, длина строки 140, стоковый `flutter_lints`; freezed + json_serializable + injectable + flutter_gen за один прогон `build_runner`.
+- Стек — по блюпринту `docs/blueprints/mobile/`: Flutter, запиненный через FVM (`3.44.1`), Dart `>=3.12.0 <4.0.0`, длина строки 140, стоковый `flutter_lints`; freezed + json_serializable + injectable + flutter_gen за один прогон `build_runner`.
 - Платформы — iOS, Android, Windows, Linux, macOS (две мобильные + три десктопные). Web — вне scope. Платформенно-специфичные нативные части (сборка/секреты, push, deep-links, secure storage) сейчас покрыты блюпринтом для iOS/Android; для desktop они либо расширяются в блюпринте, либо получают явный документированный fallback (см. Принцип III).
 - Бэкенд, транспортный протокол, криптоядро и модель синхронизации **намеренно ещё не выбраны**. Любой план или код, касающийся сети, авторизации, формата конверта или эндпоинтов, помечает контракт как пример/TBD и согласуется с владельцем — не «изобретается на глаз».
-- Приложение пока не заскаффолжено (нет `lib/` / `pubspec.yaml`); репозиторий находится в фазе дизайна и документации.
+- Приложение заскаффолжено каркасом (Feature-001): `lib/` + `pubspec.yaml` существуют (slice `Item` — verification-only, без реальных продуктовых фич); сетевые/auth/протокол/envelope-контракты остаются помеченными как пример/TBD.
 
 ## Рабочий процесс и гейты качества
 
@@ -111,6 +115,6 @@ UI строится на Material Design 3, light + dark. Источник ис�
 
 Версионирование конституции: **MAJOR** — несовместимое изменение, удаление или переопределение принципов; **MINOR** — добавление принципа/раздела или существенное расширение; **PATCH** — уточнения и формулировки без смены смысла.
 
-Руководства времени разработки: `CLAUDE.md` (корневые правила репозитория), `docs/patterns/mobile/` (архитектура), `docs/design/spec/` и `docs/design/system/` (UI и дизайн-система).
+Руководства времени разработки: `CLAUDE.md` (корневые правила репозитория), `docs/blueprints/mobile/` (архитектура), `docs/design/spec/` и `docs/design/system/` (UI и дизайн-система).
 
-**Version**: 1.1.0 | **Ratified**: 2026-06-08 | **Last Amended**: 2026-06-08
+**Version**: 1.1.0 | **Ratified**: 2026-06-08 | **Last Amended**: 2026-06-14

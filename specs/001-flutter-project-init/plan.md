@@ -6,7 +6,7 @@
 
 ## Резюме
 
-Поднять пустой репозиторий до запускаемого, соответствующего блюпринту каркаса `nox_app` на пять платформ (iOS, Android, Windows, Linux, macOS; web вне scope), **без реальных продуктовых фич**. Технический подход целиком выводится из блюпринта `docs/patterns/mobile/` (особенно `11-scaffolding-plan.md`) с уже внесёнными desktop-расширениями: `flutter create --platforms` на пять таргетов, один Dart-пакет со слоями-папками, единый injectable+get_it DI, тема из дизайн-токенов, **адаптивная оболочка** (`NavigationBar`↔`NavigationRail`, width-driven на `840dp`), зелёный code-gate и сквозной `Item`-verification-harness. Desktop-специфика (флейворы через `--dart-define-from-file`, prod-only identity, no-op/disabled fallbacks для push/deep-links/secure-storage, 3 compile-smoke CI-джоба) зафиксирована в блюпринте и здесь реализуется по нему.
+Поднять пустой репозиторий до запускаемого, соответствующего блюпринту каркаса `nox_app` на пять платформ (iOS, Android, Windows, Linux, macOS; web вне scope), **без реальных продуктовых фич**. Технический подход целиком выводится из блюпринта `docs/blueprints/mobile/` (особенно `11-scaffolding-plan.md`) с уже внесёнными desktop-расширениями: `flutter create --platforms` на пять таргетов, один Dart-пакет со слоями-папками, единый injectable+get_it DI, тема из дизайн-токенов, **адаптивная оболочка** (`NavigationBar`↔`NavigationRail`, width-driven на `840dp`), зелёный code-gate и сквозной `Item`-verification-harness. Desktop-специфика (флейворы через `--dart-define-from-file`, prod-only identity, no-op/disabled fallbacks для push/deep-links/secure-storage, 3 compile-smoke CI-джоба) зафиксирована в блюпринте и здесь реализуется по нему.
 
 ## Технический контекст
 
@@ -38,7 +38,7 @@
 |---|---|---|
 | I. Приватность и E2EE | Аналитика/логи/крэши без PII; аналитика opt-in (выключена); identity-wipe-путь определён | ✅ PASS — крипто/messaging нет (FR-013); аналитика не подключена; secure-storage/wipe задокументированы, wiring с auth. Ничего не ослабляет приватность. |
 | II. Спека/дизайн-корпус — источник истины | План следует spec + `docs/design/spec/`; out-of-scope молча не расширяется | ✅ PASS — desktop расширен через governance (v1.1.0), не молча; план не выходит за spec. |
-| III. Блюпринт обязателен | Строим по `docs/patterns/mobile/` (+ desktop-расширения) | ✅ PASS — план = проекция блюпринта; desktop-части уже внесены. |
+| III. Блюпринт обязателен | Строим по `docs/blueprints/mobile/` (+ desktop-расширения) | ✅ PASS — план = проекция блюпринта; desktop-части уже внесены. |
 | IV. Верность дизайн-системе | M3 light+dark из токенов `nox-handoff`, без хардкода, тёмный splash | ✅ PASS — FR-005; единая M3 на 5 платформах, без `yaru`. |
 | V. Языковая дисциплина | RU-проза / EN-код/идентификаторы/UI-микрокопия | ✅ PASS — каркас EN-only (`TextConstants`), full i18n отложен. |
 

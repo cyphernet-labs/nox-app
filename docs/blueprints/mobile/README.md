@@ -1,12 +1,16 @@
 # NOX — Архитектурный блюпринт
 
-> **Назначение:** канонический референс архитектуры, паттернов и инфраструктуры кросс-платформенного приложения **NOX** (iOS, Android, Windows, Linux, macOS; Flutter), которое предстоит реализовать в `lib/` (сейчас — пустой плейсхолдер). Этот набор документов — единственный источник правды для любого разработчика при имплементации **каждой** фичи приложения. **Когда читать:** перед началом работы над приложением целиком, перед любой новой фичей, и как справочник по конкретному слою/паттерну. **Связанные документы:** все 18 спутниковых файлов `00-architecture-overview.md` … `17-analytics.md` (таблица ниже).
+> **Назначение:** канонический референс архитектуры, паттернов и инфраструктуры кросс-платформенного приложения **NOX** (iOS, Android, Windows, Linux, macOS; web — вне scope; Flutter), которое реализуется в `lib/`. Этот набор документов — единственный источник правды для любого разработчика (и для Claude Code) при имплементации **каждой** фичи приложения. **Когда читать:** перед началом работы над приложением целиком, перед любой новой фичей, и как справочник по конкретному слою/паттерну. **Связанные документы:** все 18 спутниковых файлов `00-architecture-overview.md` … `17-analytics.md` (таблица ниже).
 >
-> **Статус: рабочий блюпринт** — принят как авторитетный референс для `lib/` (2026-06-08). Любая Flutter/клиентская задача проектируется и кодится **по этому набору** (платформы — iOS, Android, Windows, Linux, macOS; web — вне scope); найденные расхождения чинятся в том же change-set'е. **Desktop проработан для скелета:** desktop-floor зафиксирован (дефолты Flutter `3.44.1`: Windows 10 / macOS 10.15 / GTK3), single-window подтверждён, адаптивная оболочка выставлена (`NavigationRail` на десктопе, width-driven порог `840dp`), desktop-идентичность задана (prod-only), а desktop compile-smoke прогоняется в CI (3 джоба). **Остаётся FUTURE:** packaging/signing, отдельная stage native identity для десктопа, `window_manager`-полировка (`1440×900` / min-size `640×600` / кастомный title bar) и per-подсистема desktop-native wiring (push / deep-links / secure-storage), которое материализуется с первым потребителем. **Правило fallback:** no-op stub вводится с первым desktop-потребителем подсистемы, не раньше. Известные отложенные гэпы (desktop FUTURE — см. выше; фиче-слои MVP — auth/app-state-spine, file-download, доменные контракты, client Sentry, native deep-link, локализация) **сейчас не покрываются**; при заходе в клиентскую фичу — пересобрать gap-анализ.
+> **Статус: рабочий блюпринт** — принят как авторитетный референс для `lib/` (2026-06-08). Любая Flutter/клиентская задача проектируется и кодится **по этому набору** (платформы — iOS, Android, Windows, Linux, macOS; web — вне scope); найденные баги/неверные/расходящиеся реализации приводят блюпринт в корректный вид в том же change-set'е. **Desktop проработан для скелета:** desktop-floor зафиксирован (дефолты Flutter `3.44.1`: Windows 10 / macOS 10.15 / GTK3), single-window подтверждён, адаптивная оболочка выставлена (`NavigationRail` на десктопе, width-driven порог `840dp`), desktop-идентичность задана (prod-only), а desktop compile-smoke прогоняется в CI (3 джоба). **Остаётся FUTURE:** packaging/signing, отдельная stage native identity для десктопа, `window_manager`-полировка (`1440×900` / min-size `640×600` / кастомный title bar) и per-подсистема desktop-native wiring (push / deep-links / secure-storage), которое материализуется с первым потребителем. **Правило fallback:** no-op stub вводится с первым desktop-потребителем подсистемы, не раньше. Известные отложенные гэпы (desktop FUTURE — см. выше; фиче-слои MVP — auth/app-state-spine, file-download, доменные контракты, client Sentry, native deep-link, локализация) **сейчас не покрываются**; при заходе в клиентскую фичу — пересобрать gap-анализ.
 
 ---
 
 ## Что это
+
+Это **унифицированный** и самодостаточный блюпринт — единственный авторитетный референс архитектуры приложения. Новый код пишется только по `docs/blueprints/mobile/`.
+
+> **Источник дизайна (актуальный).** Авторитетная UI/UX-спецификация NOX — в [`../../design/spec/`](../../design/spec/) (`overview.md`, `top-level-screens.md`, `screens/*.md`, `design-system.md`). Машинно-читаемый design-system-хендофф (W3C DTCG-токены — источник истины — плюс сгенерированный Flutter Dart) — в [`../../design/system/nox-handoff/`](../../design/system/nox-handoff/). Блюпринт описывает, **как** реализовать дизайн в коде (особенно [`06-theming.md`](06-theming.md) — маппинг сгенерированных `ColorScheme`/`TextTheme`/токенов в Flutter); регенерировать из токенов, а не править Dart руками.
 
 Блюпринт **доменно-нейтрален**: он описывает архитектуру, слои, кодоген, тулинг и инфраструктуру, не привязываясь к конкретной бизнес-логике. Сквозной worked-пример — нейтральная фича `Item`. **Первая реальная фича**, которую предстоит собрать по этому блюпринту, — список чатов (открытый общий список чатов: server-owned, network-only paginated-список); об этом упоминается там, где это уместно, но шаблоны остаются на нейтральном `Item`.
 
@@ -16,21 +20,23 @@
 
 Это несущие инварианты. Всё остальное — стиль. Авторитетный свод — **9 принципов + 10 золотых правил** (см. [`08-conventions-and-constitution.md`](08-conventions-and-constitution.md)); список ниже — их операционная проекция в этом индексе. Два решения блюпринта — **BLoC = Freezed** и **пагинация = `infinite_scroll_pagination` v5** — свёрнуты в существующие принципы/правила (не как новые отдельные пункты).
 
-1. **ОДИН Dart-пакет, слои — это папки.** Никаких трёх пакетов и path-deps. Слои живут как директории внутри одного `lib/`: `lib/data`, `lib/domain`, `lib/presentation`, плюс `lib/di`, `lib/general`, `lib/design`, `lib/resource`. ОДИН `pubspec.yaml`, ОДИН прогон `build_runner`. Однонаправленные зависимости: `presentation → domain`, `data → domain`; **`domain` не импортирует ничего**. Любые трёхпакетные пути (`domain/lib/src/...`, `data/lib/src/...`) переписываются в однопакетные (`lib/domain/...`, `lib/data/...`). См. `00-architecture-overview.md`.
+1. **ОДИН Dart-пакет, слои — это папки.** Никаких трёх пакетов и path-deps. Слои живут как директории внутри одного `lib/`: `lib/data`, `lib/domain`, `lib/presentation`, плюс `lib/di`, `lib/general`, `lib/design`, `lib/resource` (последняя — зарезервированный/пустой плейсхолдер, сейчас только `.gitkeep`). ОДИН `pubspec.yaml`, ОДИН прогон `build_runner`. Однонаправленные зависимости: `presentation → domain`, `data → domain`; **`domain` не импортирует ничего**. Любые трёхпакетные пути (`domain/lib/src/...`, `data/lib/src/...`) переписываются в однопакетные (`lib/domain/...`, `lib/data/...`). См. `00-architecture-overview.md`.
 
 2. **Единый DI:** один `configureDependencies(String env)` + один `@InjectableInit(initializerName: r'$initGetIt')` + один сгенерированный `configure_dependencies.config.dart`. Никакой трёхуровневой цепочки. См. `02-dependency-injection.md`.
 
-3. **BLoC = Freezed.** `@freezed` `sealed`-юнионы для State и Event; тонкий `BaseBloc<E, S>` с `executeLogic` (try/catch). Производная/вычисляемая логика — в **extension-геттерах** (не в теле `@freezed`-класса). `copyWith` для переходов; `sealed` для много-вариантных юнионов, `abstract` для одно-вариантных value-объектов; **никакого `fromJson` на BLoC-типах** (только `*.freezed.dart`, никогда `*.g.dart`). Это правило блюпринта: BLoC-типы строятся на Freezed, а не на рукописном `sealed` + `Equatable`. Канонические имена под-состояний — `Initializing` / `Initialized` / `Error` — сохраняются и выражаются Freezed-`const factory`-конструкторами. См. `05-presentation-layer.md`.
+3. **BLoC = Freezed.** `@freezed` `sealed`-юнионы для State и Event; тонкий `BaseBloc<E, S>` с `executeLogic` (try/catch). Производная/вычисляемая логика — в **extension-геттерах** (не в теле `@freezed`-класса). `copyWith` для переходов; `sealed` для много-вариантных юнионов, `abstract` для одно-вариантных value-объектов; **никакого `fromJson` на BLoC-типах** (только `*.freezed.dart`, никогда `*.g.dart`). Это правило блюпринта: BLoC-типы строятся на Freezed, а не на рукописном `sealed` + `Equatable`. Канонические имена под-состояний — `Initializing` / `Initialized` / `Error` (bare-имена union-членов, как в коде; при коллизиях допустим префиксный вариант `<Feature>Initializing`…) — выражаются Freezed-`const factory`-конструкторами. См. `05-presentation-layer.md`.
 
-4. **Пагинация = `infinite_scroll_pagination` ^5.1.1** (v5, stateless `PagingState`-в-bloc, **никогда** `PagingController`). Переиспользуемое расширение `PagingStateExt.applyPage`. **Дефолтный flavor — OFFSET** (`PageMetadata{int? nextPage, int total}`, например `page` + `page_size` + `count`); CURSOR (`CursorPaginationMetadata{String? nextCursor}`) документируется как альтернатива. Конкретный контракт пагинации списка чатов фиксируется позже вместе с бэкендом NOX. Репозиторий возвращает `RepositoryResult<(List<T>, PageMetadata)>`; `result.exception` прокидывается в `pagingState.error` для v5-error-builder'ов. См. `07-pagination.md`.
+3a. **Навигируемая страница ⇒ собственный BLoC (даже без логики).** Любой `*Page` с `routeName`/`route()`, попадающий в навигацию приложения, **обязан** иметь свой BLoC: logic-less/статичная страница получает минимальный BLoC (трио `Initializing`/`Initialized`/`Error` или одновариантный value-BLoC а-ля `AppRootBloc`). Переиспользуемые **виджеты** (`lib/presentation/widgets/`) BLoC **не требуют**. См. `05-presentation-layer.md` / `08-conventions-and-constitution.md` Принцип 5.1.
 
-5. **`RepositoryResult<T>` — `@freezed` с data-XOR-exception** (фабрики `success` / `error`, а не «оба nullable»). Усечённое расширение `match<R>(onData, onError)`. Каждый метод репозитория возвращает `RepositoryResult<T>` (или `Stream<RepositoryResult<T>>`), и `.exception` всегда — подтип `RepositoryException`, никогда сырой `Exception` или фреймворковая ошибка. См. `03-domain-layer.md`.
+4. **Пагинация = `infinite_scroll_pagination` ^5.1.1** (v5, stateless `PagingState`-в-bloc, **никогда** `PagingController`). Переиспользуемое расширение `PagingStateExt.applyPage`. **Дефолтный flavor — OFFSET, 1-based** (`PageMetadata{required int total, int? nextPage}`; entity `ItemsEntity{items, page, page_size, total}`, `defaultPage = 1`, `hasMore = (page*pageSize) < total`, `nextPage = hasMore ? page+1 : null`); CURSOR (`CursorPaginationMetadata{String? nextCursor}`) документируется как альтернатива. Конкретный контракт пагинации списка чатов фиксируется позже вместе с бэкендом NOX. Репозиторий возвращает `RepositoryResult<(List<T>, PageMetadata)>`; `result.exception` прокидывается в `pagingState.error` для v5-error-builder'ов. См. `07-pagination.md`.
+
+5. **`RepositoryResult<T>` — `@freezed` с data-XOR-exception** (фабрики `success` / `error`, а не «оба nullable»). Усечённое расширение `match<R>(onData, onError)`. Каждый метод репозитория возвращает `RepositoryResult<T>` (или `Stream<RepositoryResult<T>>`), и `.exception` всегда — маркер `BaseRepositoryException` (`RepositoryException` — enum-подтип, реализующий маркер; при необходимости — feature-specific enum'ы того же маркера), никогда сырой `Exception` или фреймворковая ошибка. Отдельной типизированной иерархии исключений data-слоя нет — необработанные ошибки мапятся в `RepositoryException` внутри `BaseRepositoryHelper.execute` (`DioException → internal`, прочее → `unknown`). См. `03-domain-layer.md`.
 
 6. **Трёхчастный data-split.** API JSON ↔ `Entity` (Freezed **+** `json_serializable`, basic-types-only) ↔ `Mapper` ↔ доменная `Model` (**только** Freezed, без JSON). Бизнес-логика — в `extension`'ах на модели, не в теле Freezed-класса. Сохраняется `ResponseEntity<T>` + рукописный реестр `EntityConverter<E>` (унифицированный конверт `{data, timestamp, trace_id, meta}` — пример; бэкенд/протокол NOX ещё не выбран, заменить на реальный контракт). Вся коэрция типов (`enum` как `.name` String, `DateTime` как ISO-8601 String) — в маппере. См. `04-data-layer.md`.
 
 7. **Один конфиг-объект на API-вызов** — Freezed-класс, передаваемый как `{required XxxConfig config}` (например `GetItemsConfig`). См. `03-domain-layer.md` / `04-data-layer.md`.
 
-8. **Только design-токены.** Никаких хардкод-`Color`, `EdgeInsets`, `TextStyle` или system-overlay-style в коде фич. Тема — **light + dark** через `ThemeExtension<AppColors>` + `AppTheme.light()/dark()` + `context.appColors` + `themeMode` из `AppRootBloc`, с конкретной палитрой и `flutter_screenutil`-токенами spacing/typography + `AppOverlayStyleTokens`. См. `06-theming.md`.
+8. **Только design-токены.** Никаких хардкод-`Color`, `EdgeInsets`, `TextStyle` или system-overlay-style в коде фич. Тема — **light + dark** через `ThemeExtension<AppColors>` + `AppTheme.light()/dark()` + `context.appColors` + `themeMode` из `AppRootBloc`, но с конкретной палитрой и `flutter_screenutil`-токенами spacing/typography + `AppOverlayStyleTokens`. Гибрид. См. `06-theming.md`.
 
 9. **Codegen-first.** Freezed + `json_serializable` + `injectable` + `flutter_gen`. Генератор прогоняется после правки любого аннотированного класса. Сгенерированные файлы (`*.g.dart`, `*.freezed.dart`, `*.config.dart`, `lib/design/gen/**`) исключены из анализа и **никогда не правятся руками**.
 
@@ -85,7 +91,7 @@
 | 12 | [`12-dev-commands.md`](12-dev-commands.md) | Повседневные команды (кодоген, format, analyze, test) и `.claude/commands`-хелперы. |
 | 13 | [`13-deep-links.md`](13-deep-links.md) | Обработка входящих ссылок (deep / universal links): `app_links`, `DeepLinkRepository` (парсинг URI → типизированная модель), маршрутизация в `AppRoot`, нативная интеграция. |
 | 14 | [`14-networking-and-auth.md`](14-networking-and-auth.md) | Сеть и авторизация: `ApiClient` (Dio + auth-interceptor), `AppConfigRepository` (флейвор-конфиг + источник токена), мост к REST-слою; §4 — адаптация под бэкенд NOX (HMAC-подпись + security-заголовки + access/refresh токен-модель — пример; бэкенд/протокол NOX ещё не выбран, заменить на реальный контракт); §6 — connectivity + app-lifecycle. |
-| 15 | [`15-push-notifications.md`](15-push-notifications.md) | Push-уведомления (FCM): `firebase_messaging`, device-токен и его ротация, регистрация/разрегистрация на бэкенде NOX, foreground/background/terminated, разрешения, навигация по тапу (через 13). |
+| 15 | [`15-push-notifications.md`](15-push-notifications.md) | Push-уведомления (FCM): `firebase_messaging` (mobile-only; desktop — disabled no-op по правилу fallback), device-токен и его ротация, регистрация/разрегистрация на бэкенде NOX, foreground/background/terminated, разрешения, навигация по тапу (через 13). |
 | 16 | [`16-file-upload.md`](16-file-upload.md) | Загрузка вложения в чат: 2-step (upload → attach to message) — пример конвейера; бэкенд/протокол NOX ещё не выбран, заменить на реальный контракт. File/image picker, размер/MIME-капы, идемпотентность по natural-key `(chat_id, client_message_id)`, BLoC-прогресс. |
 | 17 | [`17-analytics.md`](17-analytics.md) | Клиентская аналитика (вендоронезависимо): `AnalyticsRepository` (интерфейс + impl), `@freezed`-таксоном `AnalyticsEvent`, super-properties, приватность (opt-in по умолчанию, без PII), точки трекинга. |
 
@@ -107,7 +113,7 @@
 12. `11-scaffolding-plan.md` — пошаговый план сборки проекта.
 13. `12-dev-commands.md` — повседневные команды и слэш-хелперы.
 14. `13-deep-links.md` — обработка входящих ссылок (`app_links`, `DeepLinkRepository`, роутинг в `AppRoot`).
-15. `14-networking-and-auth.md` — сеть и авторизация (`ApiClient`, `AppConfigRepository`, HMAC/токены), connectivity + app-lifecycle.
+15. `14-networking-and-auth.md` — сеть и авторизация (`ApiClient`, `AppConfigRepository`, HMAC/токены — пример/TBD), connectivity + app-lifecycle.
 16. `15-push-notifications.md` — push-уведомления (FCM).
 17. `16-file-upload.md` — загрузка вложения в чат (2-step upload → attach to message).
 18. `17-analytics.md` — клиентская аналитика (вендоронезависимо, opt-in/без PII).
@@ -120,11 +126,11 @@
 
 Краткая выжимка зафиксированных архитектурных решений (детали — в спутниковых документах):
 
-- **ОДИН Dart-пакет** `nox_app`; слои — папки внутри `lib/`; один `pubspec.yaml`; один `build_runner`; один DI-init.
+- **ОДИН Dart-пакет** `nox_app`; слои — папки внутри `lib/` (включая зарезервированный `lib/resource`); один `pubspec.yaml`; один `build_runner`; один DI-init.
 - **BLoC = Freezed:** sealed State/Event-юнионы, тонкий `BaseBloc<E, S>`, производная логика в extension-геттерах, `copyWith` для переходов, без `*.g.dart` на BLoC-типах.
 - **Тема light + dark** через `ThemeExtension<AppColors>` (`AppTheme.light()/dark()`, `context.appColors`, `themeMode` из `AppRootBloc`) с палитрой и `flutter_screenutil`-токенами.
-- **Пагинация = `infinite_scroll_pagination` v5** + `PagingStateExt.applyPage`, дефолтный flavor — **OFFSET** (`page`/`page_size`/`count`), CURSOR — альтернатива; конкретный контракт списка чатов фиксируется позже с бэкендом NOX.
-- **`RepositoryResult<T>`** — Freezed data-XOR-exception; `RepositoryException` как единый домен-тип ошибок; типизированные `DaoException` / `ApiException` мапятся в него.
+- **Пагинация = `infinite_scroll_pagination` v5** + `PagingStateExt.applyPage`, дефолтный flavor — **OFFSET, 1-based** (`defaultPage = 1`; entity `ItemsEntity{items, page, page_size, total}`), CURSOR — альтернатива; конкретный контракт списка чатов фиксируется позже с бэкендом NOX.
+- **`RepositoryResult<T>`** — Freezed data-XOR-exception; базовый домен-тип ошибок — маркер `BaseRepositoryException` (`RepositoryException` — enum-подтип, реализующий маркер); необработанные ошибки мапятся в `RepositoryException` внутри `BaseRepositoryHelper.execute` (`DioException → internal`, прочее → `unknown`).
 - **Обязательный `LogRepository`** — единый канал логирования, никаких сырых `print`.
 - **RU-проза / EN-код:** вся проза и заголовки секций — на русском; код, идентификаторы, пути, имена пакетов, shell-команды, ключи YAML/JSON/TOML, значения enum, имена env-переменных — на английском (inline).
 
@@ -140,3 +146,50 @@
 - [ ] Знаете один-пакетную модель слоёв (`lib/data`, `lib/domain`, `lib/presentation`, `lib/di`, `lib/general`, `lib/design`, `lib/resource`) и однонаправленность зависимостей.
 - [ ] Нашли карту 18 документов (00–17), рекомендуемый порядок чтения и быстрый путь (`11-scaffolding-plan.md`).
 - [ ] Поняли ключевые решения и правило **RU-проза / EN-код**.
+
+---
+
+## Маршрутизатор: код-задача → документ
+
+Этот раздел отвечает на вопрос «**я кодю X — какие документы открыть и в каком порядке?**». TOC выше упорядочен по структуре блюпринта (для чтения подряд); этот маршрутизатор упорядочен по **типу задачи** (для точечного захода). Открывайте только релевантные документы; первый в списке — основной (контракт/паттерн), последующие — обязательный контекст.
+
+### По слою/артефакту → документы
+
+Берите эту таблицу, когда задача формулируется в терминах **артефакта** (репозиторий, экран, маппер, секрет). Колонка «Документы» перечислена в порядке открытия.
+
+| Кодю… | Документы (в порядке открытия) | Зачем именно эти |
+|---|---|---|
+| Новый репозиторий (`XxxRepository` + `XxxRepositoryImpl`) | [03](03-domain-layer.md) → [04](04-data-layer.md) → [02](02-dependency-injection.md) | Контракт + `RepositoryResult` (03), impl/маппер/DAO/remote-API (04), регистрация в DI (02). |
+| Экран / BLoC (`XxxPage` + `XxxBloc` + State/Event) | [05](05-presentation-layer.md) → [07](07-pagination.md) → [06](06-theming.md) | Freezed-BLoC и страница (05), пагинация списка если есть (07), design-токены вместо хардкода (06). |
+| Сетевой вызов (новый endpoint, request-builder, interceptor) | [14](14-networking-and-auth.md) → [04](04-data-layer.md) | `ApiClient`/auth-interceptor/HMAC+security-заголовки — пример; бэкенд/протокол NOX ещё не выбран (14); entity/маппер/REST-метод в data-слое (04). |
+| Секрет или сборка (flavor, `dart-define`, env-значение, версия) | [09](09-build-and-secrets-infra.md) → [12](12-dev-commands.md) | Flavor-изоляция, SOPS+age+mise, версионирование (09), команды сборки/прогона (12). |
+| Deep / universal link (входящая ссылка) | [13](13-deep-links.md) | `app_links`, `DeepLinkRepository`, парсинг URI → модель, роутинг в `AppRoot`, нативная интеграция. |
+| Событие аналитики (трекинг, super-property) | [17](17-analytics.md) | `AnalyticsRepository`, `@freezed`-таксономия `AnalyticsEvent`, приватность (вендоронезависимо, opt-in по умолчанию, без PII). |
+| Загрузка вложения в чат (upload, picker, размер/MIME-кап) | [16](16-file-upload.md) | 2-step (upload → attach to message) — пример/TBD, file/image picker, размер/MIME-капы, идемпотентность по natural-key `(chat_id, client_message_id)`. |
+| Push-уведомление (FCM, device-токен, тап) | [15](15-push-notifications.md) | `firebase_messaging` (mobile-only; desktop — disabled no-op), ротация токена, регистрация на бэкенде NOX, foreground/background/terminated, навигация по тапу (через 13). |
+
+### По фиче → стек документов (порядок)
+
+Берите эту таблицу, когда задача формулируется в терминах **фичи** целиком (а не отдельного артефакта). Стек перечислен в порядке прохождения — от входной точки до presentation.
+
+| Фича | Стек документов (порядок) | Комментарий |
+|---|---|---|
+| `chats`-list (первая реальная фича) | [11](11-scaffolding-plan.md) → [03](03-domain-layer.md) → [04](04-data-layer.md) → [07](07-pagination.md) → [02](02-dependency-injection.md) → [05](05-presentation-layer.md) | План поднятия (11) → контракт+модель (03) → impl+remote-API, network-only carve-out (04) → пагинация (07, контракт списка чатов фиксируется позже с бэкендом NOX) → DI (02) → экран+BLoC (05). |
+| Auth-флоу (login / refresh / токены) | [14](14-networking-and-auth.md) §4–5 | §4 — адаптация под бэкенд NOX (HMAC + security-заголовки + access/refresh токен-модель — пример; бэкенд/протокол ещё не выбран, заменить на реальный контракт), §5 — мост к REST-слою. |
+
+### Машинно-читаемая таблица (для ссылки из CLAUDE.md)
+
+Компактная `task-keyword → docs` карта; пригодна для встраивания/ссылки из `CLAUDE.md` или автоматического роутинга агента. Номера — это файлы `NN-*.md` в этом каталоге.
+
+| task-keyword | docs |
+|---|---|
+| `repository` | `03 04 02` |
+| `screen` / `bloc` | `05 07 06` |
+| `network-call` | `14 04` |
+| `secret` / `build` | `09 12` |
+| `deep-link` | `13` |
+| `analytics-event` | `17` |
+| `file-upload` | `16` |
+| `push` | `15` |
+| `chats-list` | `11 03 04 07 02 05` |
+| `auth-flow` | `14 (§4-5)` |

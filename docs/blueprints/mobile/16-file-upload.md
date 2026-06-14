@@ -22,7 +22,8 @@
    ▼
 2. AttachmentRepository.sendAttachment(...) → POST <message-endpoint> → (MessageModel, bool isCreated)
         201 Created + Location  → новое сообщение с вложением
-        200 OK (без Location)   → существующее сообщение (тот же client_message_id), без повторной отправки
+        200 OK (без Location)   → существующее сообщение (тот же client_message_id),
+                                  без повторной отправки
 ```
 
 > **Единый пакет.** Все пути — `lib/...` внутри одного пакета `nox_app` (worked example). Импорты — полные `package:nox_app/...`, относительные `../` запрещены (кроме `part`-директив).
@@ -39,14 +40,14 @@
 - **Подпись запроса (signing + security-заголовки) — забота interceptor'а доки 14**, не репозиториев этого документа. Сноска: шаг 1 (`upload`) — **единственный** `multipart/form-data` endpoint, и подпись `multipart/form-data` может отличаться от обычного JSON-пайплайна; шаг 2 — обычный JSON-пайплайн с полным набором security-заголовков. Конкретику подписи multipart-запроса финализировать вместе с контрактом бэкенда NOX (см. [14-networking-and-auth.md](14-networking-and-auth.md) §4 FLAG).
 - **`attachment_id` — единственное поле из шага 1, которое нужно держать для шага 2.** (Конкретное имя поля — пример; заменить на реальный контракт.)
 - **Идемпотентность по natural-key.** `(chat_id, client_message_id)` — повторная отправка того же `client_message_id` не создаёт дубль сообщения. Клиент генерирует `client_message_id` локально (например, UUID) и различает исходы по HTTP-статусу (`201` vs `200`) или наличию заголовка `Location`. (Конкретная форма ключа/статусов — пример-плейсхолдер.)
-- **Все методы репозиториев возвращают `RepositoryResult<T>`** ([03-domain-layer.md](03-domain-layer.md)); конкретные доменные коды (`notFound` на `404`, и т.п.) возвращаются **явным** `return RepositoryResult.error(...)` в callback'е `execute`, а не из catch-веток (канон [04-data-layer.md](04-data-layer.md) §5).
+- **Все методы репозиториев возвращают `RepositoryResult<T>`** ([03-domain-layer.md](03-domain-layer.md)); конкретные доменные коды (`notFound` на `404`, и т.п.) возвращаются **явным** `return RepositoryResult.error(...)` в callback'е `execute`, а не из catch-веток (канон [04-data-layer.md](04-data-layer.md) §5). Маркерный тип ошибки — `BaseRepositoryException`; общие коды — из enum `RepositoryException` ([03-domain-layer.md](03-domain-layer.md)).
 - **Это network-only-фича** (one-shot POST'ы) — без Sembast-DAO и `BehaviorSubject` (carve-out [04-data-layer.md](04-data-layer.md) §8). Отправленное сообщение затем подхватывается списком сообщений/чатов ([07-pagination.md](07-pagination.md)).
 
 ---
 
 ## 2. Выбор файла: `file_picker` / `image_picker`
 
-Picker'ы живут в presentation-слое (или в тонком helper'е), но **не** в репозитории — репозиторий принимает уже готовые байты/путь. Пакеты — `file_picker` (документы/произвольные файлы) и `image_picker` (камера/галерея) (см. [01-stack-and-tooling.md](01-stack-and-tooling.md)). Размер/MIME-капы проверяются сервером (шаг 1, см. §3) — клиент валидирует их же **до** аплоада ради UX (мгновенный отказ вместо round-trip).
+Picker'ы живут в presentation-слое (или в тонком helper'е), но **не** в репозитории — репозиторий принимает уже готовые байты/путь. Пакеты — `file_picker` (документы/произвольные файлы) и `image_picker` (камера/галерея) (см. [01-stack-and-tooling.md](01-stack-and-tooling.md)). Размер/MIME-капы проверяются сервером (шаг 1, см. §3) — клиент валидирует их же **до** аплоада ради UX (мгновенный отказ вместо round-trip). Капы — плейсхолдеры (см. §3), так что клиентская пре-флайт-проверка опциональна и сверяется с реальным контрактом NOX.
 
 `lib/presentation/pages/upload_page/helpers/source_picker_helper.dart`:
 
@@ -58,7 +59,8 @@ import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:nox_app/domain/model/upload/attachment_type.dart';
 
-/// Тонкая обёртка над picker'ами. Возвращает (файл, его тип вложения) или null (отмена).
+/// Тонкая обёртка над picker'ами.
+/// Возвращает (файл, его тип вложения) или null (отмена).
 class SourcePickerHelper {
   final _imagePicker = ImagePicker();
 
@@ -82,6 +84,8 @@ class SourcePickerHelper {
   }
 }
 ```
+
+> На десктопе (Windows/Linux/macOS — целевые платформы NOX, см. [00-architecture-overview.md](00-architecture-overview.md)) `file_picker` использует нативные системные диалоги; камера через `image_picker` доступна на мобильных платформах, на десктопе остаётся выбор файла из галереи/ФС. Конкретные ограничения per-platform сверять с пакетами на этапе реализации.
 
 > Капы/MIME-таблица ниже (§3) — **примеры-плейсхолдеры** (бэкенд/протокол NOX ещё не выбран; заменить на реальный контракт). Конкретные расширения/лимиты сверяются с реальным контрактом бэкенда NOX.
 
@@ -266,7 +270,7 @@ abstract class AttachmentRepository {
 
 > **Зачем `(MessageModel, bool)` на attach.** Сервер различает «отправлено» (`201`) и «уже было» (`200`) **только** статусом/`Location`. Репозиторий обязан вернуть это различие наверх (кортеж `(MessageModel, bool isCreated)`), а **не** прятать его — UX «сообщение отправлено» vs «уже отправлено ранее» зависит от исхода (§7).
 
-> **`MessageModel` / `MessageEntity` — конкретный аналог worked-example `Item`** для чат-фичи (модель `lib/domain/model/chat/message_model.dart`, entity `lib/data/entity/chat/message_entity.dart`), а **не** типы из [07-pagination.md](07-pagination.md) (там список построен на абстрактном `ItemModel`). Ссылки на `07` — про **механику** списка (куда уходит отправленное сообщение), а не про определение `MessageModel`; сами типы вводятся чат-фичей (форма entity зеркалит конверт сообщения из §3 — `id`/`chat_id`/`sender_id`/`created_at`/`text`/`attachment`).
+> **`MessageModel` / `MessageEntity` — конкретный аналог worked-example `Item`** для чат-фичи (модель `lib/domain/model/chat/message_model.dart`, entity `lib/data/entity/chat/message_entity.dart`), а **не** типы из [07-pagination.md](07-pagination.md) (там список построен на абстрактном `ItemModel`). Ссылки на `07` — про **механику** списка (куда уходит отправленное сообщение в открытый список чатов NOX), а не про определение `MessageModel`; сами типы вводятся чат-фичей (форма entity зеркалит конверт сообщения из §3 — `id`/`chat_id`/`sender_id`/`created_at`/`text`/`attachment`).
 
 ---
 
@@ -304,6 +308,8 @@ abstract class AttachmentEntity with _$AttachmentEntity {
 
 ### 5.2 Мапперы (вся коэрция здесь)
 
+`BaseMapper` — 4-аргументный generic из кода (`lib/data/mapper/base_mapper.dart`): `abstract class BaseMapper<E, M, AdResult, AdParam>` с `toModel({required E entity, AdResult Function(AdParam entity)? ad})` и `toEntity({required M model, AdResult Function(AdParam entity)? ad})`. Конкретный маппер без вспомогательного контекста подставляет `dynamic, dynamic` в `AdResult/AdParam` и игнорирует `ad` ([04-data-layer.md](04-data-layer.md) §2).
+
 `lib/data/mapper/upload/attachment_mapper.dart`:
 
 ```dart
@@ -314,9 +320,9 @@ import 'package:nox_app/domain/model/upload/attachment_model.dart';
 import 'package:nox_app/domain/model/upload/attachment_type.dart';
 
 @lazySingleton
-class AttachmentMapper extends BaseMapper<AttachmentEntity, AttachmentModel> {
+class AttachmentMapper extends BaseMapper<AttachmentEntity, AttachmentModel, dynamic, dynamic> {
   @override
-  AttachmentModel toModel({required AttachmentEntity entity}) => AttachmentModel(
+  AttachmentModel toModel({required AttachmentEntity entity, dynamic Function(dynamic entity)? ad}) => AttachmentModel(
         attachmentId: entity.attachmentId,
         attachmentType: AttachmentType.values.byName(entity.attachmentType),
         mimeType: entity.mimeType,
@@ -325,7 +331,7 @@ class AttachmentMapper extends BaseMapper<AttachmentEntity, AttachmentModel> {
       );
 
   @override
-  AttachmentEntity toEntity({required AttachmentModel model}) => AttachmentEntity(
+  AttachmentEntity toEntity({required AttachmentModel model, dynamic Function(dynamic entity)? ad}) => AttachmentEntity(
         attachmentId: model.attachmentId,
         attachmentType: model.attachmentType.name,
         mimeType: model.mimeType,
@@ -335,7 +341,7 @@ class AttachmentMapper extends BaseMapper<AttachmentEntity, AttachmentModel> {
 }
 ```
 
-`MessageMapper` коэрсит `attachment_type`-строку (snake_case → `AttachmentType`) и `created_at` (ISO-8601 String → `DateTime.parse(...).toUtc()`).
+`MessageMapper` (тоже `BaseMapper<MessageEntity, MessageModel, dynamic, dynamic>`) коэрсит `attachment_type`-строку (snake_case → `AttachmentType`) и `created_at` (ISO-8601 String → `DateTime.parse(...).toUtc()`).
 
 ### 5.3 REST-слой: multipart upload (шаг 1)
 
@@ -410,7 +416,7 @@ class PostSendAttachmentApi extends BaseApiRepository {
 
 ### 5.5 Репозитории (network-only)
 
-Network-only POST'ы: **без** DAO/`BehaviorSubject` (carve-out [04-data-layer.md](04-data-layer.md) §8). Каждый метод обёрнут в `execute<T>()` — он логирует необработанные исключения и коэрсит `DioException → internal`, любой другой `catch → unknown`; **конкретные** доменные коды (`notFound`, и т.п.) — явным `return RepositoryResult.error(...)` в callback'е после проверки `response.statusCode` ([04-data-layer.md](04-data-layer.md) §5, §8).
+Network-only POST'ы: **без** DAO/`BehaviorSubject` (carve-out [04-data-layer.md](04-data-layer.md) §8). Каждый метод обёрнут в `execute<T>()` (mixin `BaseRepositoryHelper`) — он логирует необработанные исключения через `LogRepository` и коэрсит `DioException → RepositoryException.internal`, любой другой `catch → RepositoryException.unknown`; **конкретные** доменные коды (`notFound`, и т.п.) — явным `return RepositoryResult.error(...)` в callback'е после проверки `response.statusCode` ([04-data-layer.md](04-data-layer.md) §5, §8). (Dio/transport-специфика `execute` — пример; транспорт NOX ещё не выбран, см. [04-data-layer.md](04-data-layer.md).)
 
 `lib/data/repository/upload/upload_repository_impl.dart`:
 
@@ -458,15 +464,15 @@ Future<RepositoryResult<(MessageModel, bool)>> sendAttachment({required SendAtta
 }
 ```
 
-> **Маппинг ошибок в доменный код.** `404 not_found` (чужой/несуществующий `attachment_id`) и прочие feature-ошибки приходят как `DioException` с `response.statusCode`/телом (конкретные статусы/коды — пример-плейсхолдер; заменить на реальный контракт). Если нужен **точный** доменный код (чтобы экран показал внятную причину, а не общий «что-то пошло не так»), извлеки его в callback'е **до** того, как `DioException` уйдёт в catch-ветку: оберни `_sendAttachmentApi.execute` в локальный `try { ... } on DioException catch (e) { ... }` внутри `execute`, разбери `e.response?.statusCode` + `data.error`/`details.reason` и верни конкретный `RepositoryException.<code>` явным `return`. Точный набор feature-кодов добавляется в enum [03-domain-layer.md](03-domain-layer.md) — **согласовать состав enum, не плодить молча**.
+> **Маппинг ошибок в доменный код.** `404 not_found` (чужой/несуществующий `attachment_id`) и прочие feature-ошибки приходят как `DioException` с `response.statusCode`/телом (конкретные статусы/коды — пример-плейсхолдер; заменить на реальный контракт). Если нужен **точный** доменный код (чтобы экран показал внятную причину, а не общий «что-то пошло не так»), извлеки его в callback'е **до** того, как `DioException` уйдёт в catch-ветку: оберни `_sendAttachmentApi.execute` в локальный `try { ... } on DioException catch (e) { ... }` внутри `execute`, разбери `e.response?.statusCode` + `data.error`/`details.reason` и верни конкретный `RepositoryException.<code>` явным `return`. Точный набор feature-кодов добавляется в enum [03-domain-layer.md](03-domain-layer.md) (общий enum — `RepositoryException`, расширяется только через `BaseRepositoryException`-маркер) — **согласовать состав enum, не плодить молча**.
 
-DI: `@lazySingleton` на API/мапперах, `@LazySingleton(as: ..., env:[dev,prod,test])` на репозиториях — `./script_auto_generate.sh` сгенерит `configure_dependencies.config.dart` ([02-dependency-injection.md](02-dependency-injection.md), [12-dev-commands.md](12-dev-commands.md)).
+DI: `@lazySingleton` на API/мапперах, `@LazySingleton(as: ..., env:[dev,prod,test])` на репозиториях; единый прогон `build_runner` сгенерит `configure_dependencies.config.dart` ([02-dependency-injection.md](02-dependency-injection.md), [12-dev-commands.md](12-dev-commands.md)).
 
 ---
 
 ## 6. BLoC панели вложения (Freezed, executeLogic позиционный)
 
-Экран ведёт пользователя по двум шагам (выбрать файл → загрузить → отправить) и держит весь конвейер в одном BLoC. State — `@freezed sealed` union; Event — `@freezed sealed` union; обёртка асинхронной логики — `BaseBloc.executeLogic` с **позиционным** первым аргументом ([05-presentation-layer.md](05-presentation-layer.md) §2). Навигация и снэкбары — через `PublishSubject`-стримы, **не** через state.
+Экран ведёт пользователя по двум шагам (выбрать файл → загрузить → отправить) и держит весь конвейер в одном BLoC. State — `@freezed sealed` union; Event — `@freezed sealed` union; обёртка асинхронной логики — `BaseBloc.executeLogic` с **позиционным** первым аргументом ([05-presentation-layer.md](05-presentation-layer.md) §2). Навигация и снэкбары — через `PublishSubject`-стримы, **не** через state. Варианты состояния названы каноническими bare-именами `Initializing`/`Initialized`/`Error` (как в shipped-коде; префиксные `<Feature>Initializing` — допустимый вариант против коллизий, см. [05-presentation-layer.md](05-presentation-layer.md) §3).
 
 ### 6.1 Event
 
@@ -601,18 +607,18 @@ class UploadBloc extends BaseBloc<UploadEvent, UploadState> {
       () async {
         final result = await _uploadRepository.uploadFile(
           config: event.config,
-          onProgress: (p) => _patchProgress(localId, p), // живые апдейты прогресса
+          onProgress: (p) => _patchProgress(emit, localId, p), // живые апдейты прогресса
         );
         result.match(
-          onData: (file) => _replaceAttachment(localId, UploadedAttachment.ready(localId: localId, file: file)),
+          onData: (file) => _replaceAttachment(emit, localId, UploadedAttachment.ready(localId: localId, file: file)),
           onError: (exception) {
-            _replaceAttachment(localId, UploadedAttachment.failed(localId: localId, exception: exception));
+            _replaceAttachment(emit, localId, UploadedAttachment.failed(localId: localId, exception: exception));
             _errorMessagesController.add(_translate(exception));
           },
         );
       },
       onError: (String? error, dynamic exception, StackTrace stackTrace) {
-        _replaceAttachment(localId, UploadedAttachment.failed(localId: localId, exception: _unknown()));
+        _replaceAttachment(emit, localId, UploadedAttachment.failed(localId: localId, exception: _unknown()));
         _errorMessagesController.add(TextConstants.errorGeneralMessage);
       },
     );
@@ -660,14 +666,19 @@ class UploadBloc extends BaseBloc<UploadEvent, UploadState> {
   }
 
   // --- helpers (мутация списка вложений) ---
+  // Получают `Emitter<UploadState> emit` активного хендлера: в bloc v8+ `emit` —
+  // НЕ метод блока, а только параметр `on<Event>(handler, emit)`. Все вызовы ниже
+  // приходят из колбэков (onProgress / result.match / executeLogic.onError), которые
+  // исполняются ДО завершения Future хендлера, поэтому переданный `emit`
+  // ещё валиден (канон 05 §2/§3.3 — эмиссия только через Emitter активного хендлера).
 
-  void _patchProgress(String localId, double progress) {
+  void _patchProgress(Emitter<UploadState> emit, String localId, double progress) {
     final state = this.state;
     if (state is! Initialized) return;
-    _replaceAttachment(localId, UploadedAttachment.uploading(localId: localId, progress: progress));
+    _replaceAttachment(emit, localId, UploadedAttachment.uploading(localId: localId, progress: progress));
   }
 
-  void _replaceAttachment(String localId, UploadedAttachment next) {
+  void _replaceAttachment(Emitter<UploadState> emit, String localId, UploadedAttachment next) {
     final state = this.state;
     if (state is! Initialized) return;
     emit(state.copyWith(
@@ -676,8 +687,8 @@ class UploadBloc extends BaseBloc<UploadEvent, UploadState> {
   }
 
   String _translate(BaseRepositoryException exception) {
-    // Перевод доменного кода в строку для пользователя (полная таблица — 05 §3.3).
-    // notFound -> ..., иначе общий.
+    // Перевод доменного кода в строку для пользователя
+    // (полная таблица — 05 §3.3). notFound -> ..., иначе общий.
     return TextConstants.errorGeneralMessage;
   }
 }
@@ -689,7 +700,7 @@ class UploadBloc extends BaseBloc<UploadEvent, UploadState> {
 
 ## 7. Страница: прогресс, чип вложения, исход 201/200
 
-Страница — `StatefulWidget` + `BaseStatePage<T>` ([05-presentation-layer.md](05-presentation-layer.md) §4–5): BLoC в `initState`, side-эффект-подписки в `initState` и отмена в `dispose`, тело — через `state.when(...)`.
+Страница — `StatefulWidget` + `BaseStatePage<T>` ([05-presentation-layer.md](05-presentation-layer.md) §4–5): BLoC в `initState`, side-эффект-подписки в `initState` и отмена в `dispose`, тело — через `state.when(...)`. Навигируемая страница **обязана** иметь свой BLoC (правило описано в [05-presentation-layer.md](05-presentation-layer.md); номерной Инвариант 3a — в [08-conventions-and-constitution.md](08-conventions-and-constitution.md)).
 
 `lib/presentation/pages/upload_page/upload_page.dart` (ключевые куски):
 
@@ -699,7 +710,8 @@ void initState() {
   _bloc = UploadBloc()..add(UploadEvent.initialize(chatId: widget.chatId));
   // Снэкбары: переведённый текст, НИКОГДА сырое исключение (AlertDialogHelper, 05 §5.8).
   _errorSub = _bloc.errorMessages.listen((msg) => AlertDialogHelper.showSnackBar(context, msg));
-  // Исход отправки: 201 — «отправлено» + возврат в чат; 200 — «уже отправлено ранее».
+  // Исход отправки: 201 — «отправлено» + возврат в чат;
+  // 200 — «уже отправлено ранее».
   _sentSub = _bloc.messageSent.listen((data) {
     final (message, isCreated) = data;
     AlertDialogHelper.showSnackBar(
@@ -729,7 +741,7 @@ void dispose() {
 // Кнопка «Отправить» активна по s.canSend; пока s.isAnyUploading — ждём аплоады.
 ```
 
-> **Превью не рендерим.** По дизайну NOX вложение показывается как чип с иконкой типа файла (`document`/`image`), без рендеринга содержимого — ни эскиза изображения, ни первой страницы документа. Это сознательное правило этого блюпринта для NOX.
+> **Превью не рендерим.** По дизайну NOX вложение показывается как чип с иконкой типа файла (`document`/`image`), без рендеринга содержимого — ни эскиза изображения, ни первой страницы документа. Это сознательное правило этого блюпринта для NOX (продуктовая модель: «file content previews — type-icon chips only»). На всех пяти платформах (iOS/Android/Windows/Linux/macOS) чип выглядит и ведёт себя одинаково.
 
 ---
 
@@ -737,19 +749,20 @@ void dispose() {
 
 Удалить ещё **не** отправленное вложение из набора — чисто клиентская операция: событие `RemoveAttachment` убирает запись из `attachments` в state, никаких сетевых вызовов. Если аплоад файла ещё идёт (`AttachmentUploading`), отмена снимает его из списка; уже загруженный, но не отправленный `attachment_id` на сервере остаётся осиротевшим — его уборка (TTL/GC неприкреплённых вложений) — забота бэкенда NOX (пример-плейсхолдер; уточнить в реальном контракте), клиенту здесь делать нечего.
 
-> **Инвариант.** Пока сообщение не отправлено (шаг 2), вложение существует только в клиентском state как `attachment_id`. Никакого специального серверного «отката» загрузки на клиенте не делается.
+> **Инвариант.** Пока сообщение не отправлено (шаг 2), вложение существует только в клиентском state как `attachment_id`. Никакого специального серверного «отката» загрузки на клиенте не делается. В NOX нет понятий квоты/расхода/возврата — удаление до отправки бесплатно и локально.
 
 ---
 
 ## 9. Чеклист
 
-- [ ] **Picker** — `file_picker` (document/docx/pdf, cap 50 MB) / `image_picker` (jpeg/png/webp, cap 20 MB); клиент-side валидация капов **до** аплоада ради UX (капы/расширения — пример-плейсхолдер, сверить с реальным контрактом NOX).
+- [ ] **Picker** — `file_picker` (document/docx/pdf, cap 50 MB) / `image_picker` (jpeg/png/webp, cap 20 MB); опциональная клиент-side валидация капов **до** аплоада ради UX (капы/расширения — пример-плейсхолдер, сверить с реальным контрактом NOX); нативные диалоги на всех пяти платформах.
 - [ ] **Шаг 1 (upload)** — `PostUploadFileApi` шлёт `FormData` (`attachment_type` + `file`) через `baseClient`, `onSendProgress` → прогресс-бар; `UploadRepository.uploadFile → RepositoryResult<AttachmentModel>`; держим только `attachment_id`.
 - [ ] **Шаг 2 (attach)** — `PostSendAttachmentApi` возвращает `(ResponseEntity<MessageEntity>, statusCode)`; `AttachmentRepository.sendAttachment → RepositoryResult<(MessageModel, bool isCreated)>`; `isCreated = statusCode == 201` (200 — повтор `client_message_id`, **без** повторной отправки).
-- [ ] **Идемпотентность** — натуральный ключ `(chat_id, client_message_id)`; `client_message_id` генерирует клиент (UUID); клиент различает исход по `201`/`200` (или `Location`); повтор того же `client_message_id` **безопасен** (то же `MessageModel`, без дубля). Конкретная форма ключа/статусов — пример-плейсхолдер.
-- [ ] **Network-only** — upload/attach без Sembast-DAO и `BehaviorSubject` ([04-data-layer.md](04-data-layer.md) §8); каждый метод в `execute<T>()` (логирование + `DioException→internal`/else→`unknown`); конкретные коды (`notFound`/…) — явным `return RepositoryResult.error(...)` в callback'е; состав feature-enum'а **согласовать** ([03-domain-layer.md](03-domain-layer.md)).
-- [ ] **BLoC** — `@freezed sealed` State/Event; `executeLogic(() async {...}, onError: (String? error, dynamic exception, StackTrace stackTrace) {...})` (позиционный первый арг); прогресс per-attachment в state (гранулярные ребилды); навигация/снэкбары через `PublishSubject`, не через state; `result.match`, никогда `result.data!`.
+- [ ] **Идемпотентность** — натуральный ключ `(chat_id, client_message_id)`; `client_message_id` генерирует клиент (`const Uuid().v4()`); клиент различает исход по `201`/`200` (или `Location`); повтор того же `client_message_id` **безопасен** (то же `MessageModel`, без дубля). Конкретная форма ключа/статусов — пример-плейсхолдер.
+- [ ] **Маппер** — `AttachmentMapper extends BaseMapper<AttachmentEntity, AttachmentModel, dynamic, dynamic>` (4-арг generic из кода); вся коэрция (`.name` ↔ enum, ISO ↔ `DateTime`) — в `toModel`/`toEntity`; параметр `ad` не используется (`dynamic`).
+- [ ] **Network-only** — upload/attach без Sembast-DAO и `BehaviorSubject` ([04-data-layer.md](04-data-layer.md) §8); каждый метод в `execute<T>()` (логирование через `LogRepository` + `DioException→RepositoryException.internal`/else→`RepositoryException.unknown`); конкретные коды (`notFound`/…) — явным `return RepositoryResult.error(...)` в callback'е; состав feature-enum'а **согласовать** ([03-domain-layer.md](03-domain-layer.md)).
+- [ ] **BLoC** — `@freezed sealed` State/Event (bare-имена `Initializing`/`Initialized`/`Error`); `executeLogic(() async {...}, onError: (String? error, dynamic exception, StackTrace stackTrace) {...})` (позиционный первый арг); прогресс per-attachment в state (гранулярные ребилды); навигация/снэкбары через `PublishSubject`, не через state; `result.match`, никогда `result.data!`.
 - [ ] **Страница** — `BaseStatePage<T>`, BLoC + side-эффект-подписки в `initState`/`dispose`, `state.when`; вложение — чип с иконкой типа файла, **без превью** (дизайн NOX); исход отправки — снэкбар «отправлено»/«уже отправлено ранее» + возврат в чат; снэкбары — переведённый текст, не сырое исключение.
-- [ ] **Сеть/auth** — `ApiClient`/`baseClient`, signing + security-заголовки + access/refresh-токены — из [14-networking-and-auth.md](14-networking-and-auth.md), **не переизобретать**; multipart-подпись шага 1 — финализировать вместе с контрактом бэкенда NOX.
+- [ ] **Сеть/auth** — `ApiClient`/`baseClient`, signing + security-заголовки + access/refresh-токены — из [14-networking-and-auth.md](14-networking-and-auth.md), **не переизобретать**; multipart-подпись шага 1 — финализировать вместе с контрактом бэкенда NOX (см. 14 §4 FLAG).
 - [ ] **Удаление до отправки** — `RemoveAttachment` чисто клиентский (убрать из state, без сети); уборка осиротевших `attachment_id` — забота бэкенда NOX (пример-плейсхолдер).
 - [ ] **FLAG (бэкенд NOX не выбран):** точный контракт endpoint'ов (пути, поля, статусы, набор `error`-кодов, заголовки multipart-подписи) — **пример-плейсхолдер**; финализируется вместе с выбором бэкенда/протокола NOX; в коде — `TODO(nox-backend)`.

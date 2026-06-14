@@ -1,7 +1,7 @@
 # 15 — Push-уведомления (FCM)
 
 > **Назначение:** зафиксировать единый механизм push-уведомлений в `nox_app` поверх Firebase Cloud Messaging — подключение `firebase_messaging`, получение и ротация device-токена, его регистрация/разрегистрация на бэкенде NOX (`POST`/`DELETE /api/v1/user/push_notification/` — пример; бэкенд/протокол NOX ещё не выбран, заменить на реальный контракт), три режима приёма сообщений (foreground / background / terminated), разрешения (iOS APNs, Android 13+ `POST_NOTIFICATIONS`) и навигацию по тапу. Слои — по канону блюпринта: `PushTokenRepository` (интерфейс в `lib/domain/repository/`, impl `with BaseRepositoryHelper`, методы возвращают `RepositoryResult<T>`), DI-регистрация `@LazySingleton(as: …)`, подключение в `main.dart` + `AppRoot`-observer.
-> **Когда читать:** перед поднятием папки push-уведомлений (`lib/{domain,data}/.../push/`), перед добавлением `firebase_messaging` в `pubspec.yaml`, при реализации регистрации device-токена на бэкенде, при разводке навигации «пользователь тапнул по уведомлению», а также при добавлении нового типа push-payload'а от worker-стороны.
+> **Когда читать:** перед поднятием папки push-уведомлений (`lib/{domain,data}/.../push/`), перед добавлением `firebase_messaging` в `pubspec.yaml`, при реализации регистрации device-токена на бэкенде, при разводке навигации «пользователь тапнул по уведомлению», а также при добавлении нового типа push-payload'а от серверной стороны.
 > **Связанные документы:** [13-deep-links.md](13-deep-links.md) (навигация по тапу — общий механизм маршрутизации `AppRootBloc`, `GlobalKey<NavigatorState>`, dispatch-table; push-tap переиспользует его), [14-networking-and-auth.md](14-networking-and-auth.md) (сетевой вызов register/unregister — HMAC + access/refresh JWT, security-заголовки — **не переизобретать**; push-endpoint'ы идут через полный security-pipeline; конкретная модель подписи/токенов — пример, бэкенд/протокол NOX ещё не выбран), [04-data-layer.md](04-data-layer.md) (`BaseRepositoryHelper.execute`, мапперы, REST-слой `RequestBuilder`/`ResponseEntity`), [05-presentation-layer.md](05-presentation-layer.md) (`AppRoot`/`AppRootBloc`, `BaseBloc.executeLogic`, потребление `RepositoryResult` через `match`), [03-domain-layer.md](03-domain-layer.md) (`RepositoryResult`, `RepositoryException`, контракты репозитория), [02-dependency-injection.md](02-dependency-injection.md) (`configureDependencies`, регистрация репозитория, bootstrap `main.dart`), [01-stack-and-tooling.md](01-stack-and-tooling.md) (версии `firebase_core`/`firebase_messaging`/`permission_handler`).
 
 ---
@@ -56,7 +56,7 @@
 - **Регистрация токена требует аутентификации.** `POST`/`DELETE /api/v1/user/push_notification/` идут с обязательным `Authorization: Bearer <access_jwt>` **и** полным security-pipeline (HMAC-подпись + security-заголовки) — иначе `401`/`403` ещё до исполнения endpoint'а (§6). Поэтому `register(...)` дёргается **только после успешного login** (когда `AuthRepository` уже держит токен-пару), а не на старте приложения.
 - **Сетевой слой не переизобретается.** Запрос строится тем же `RequestBuilder` → `baseClient` → `ResponseEntity<T>`, что и любой другой API-вызов; подпись/токен ставит security-interceptor из [14-networking-and-auth.md](14-networking-and-auth.md) §4. Push-репозиторий **не** трогает заголовки/подпись напрямую.
 - **Тело запроса — ровно два ключа.** Клиент шлёт только `push_notification_provider` + `push_notification_token`. Всё остальное (`device_id`, `platform`, …) проставляет сервер из заголовков/хардкодом — см. load-bearing-нюанс в §6.4. Не добавляйте в body «лишние» поля схемы — endpoint их не читает.
-- **Ротация токена → повторная регистрация.** На каждое событие `onTokenRefresh` повторяем `register(...)` с новым токеном. Сервер идемпотентен по composite-UNIQUE `(owner_id, device_id)` — повторный POST обновляет строку, не плодит дубли.
+- **Ротация токена → повторная регистрация.** На каждое событие `onTokenRefresh` повторяем `register(...)` с новым токеном. Сервер идемпотентен по composite-UNIQUE `(user, device_id)` (пример — точный ключ дедупликации финализируется с бэкендом NOX) — повторный POST обновляет строку, не плодит дубли.
 - **Background-handler — top-level функция, DI недоступен.** `onBackgroundMessage` исполняется в отдельном isolate, где `getIt` не поднят. Handler аннотируется `@pragma('vm:entry-point')`, делает **минимум** (логирование / показ локального уведомления) и **не** обращается к репозиториям через `getIt`.
 - **Навигация по тапу — через единый маршрутизатор.** Tap по уведомлению маршрутизируется тем же механизмом, что и deep-link ([13-deep-links.md](13-deep-links.md)): routing-поля из `message.data` → `AppRootBloc` → `GlobalKey<NavigatorState>`. Второго навигатора не заводим.
 - **Все мутации репозитория возвращают `RepositoryResult<T>`** (`success(data: …)` / `error(exception: …)`), как и весь остальной слой данных ([04-data-layer.md](04-data-layer.md) §5).
@@ -256,7 +256,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
 ## 6. Бэкенд-контракт регистрации токена (пример — TBD)
 
-> **Весь §6 — пример контракта; бэкенд/протокол NOX ещё не выбран, заменить на реальный.** Конкретные endpoint'ы, тело запроса, коды ошибок, rate-limit и серверные правила записи (§6.4) приведены как реалистичный образец того, как клиент регистрирует device-токен. Паттерн (репозиторий шлёт только тело, подпись/заголовки ставит security-interceptor подписанного слоя) — обязателен; конкретный контракт финализируется вместе с бэкендом NOX.
+> **Весь §6 — пример контракта; бэкенд/протокол NOX ещё не выбран, заменить на реальный.** Конкретные endpoint'ы, тело запроса, набор security-заголовков, коды ошибок, rate-limit и серверные правила записи (§6.4) приведены как реалистичный образец того, как клиент регистрирует device-токен. Паттерн (репозиторий шлёт только тело, подпись/заголовки ставит security-interceptor подписанного слоя) — обязателен; конкретный контракт финализируется вместе с бэкендом NOX.
 
 Сетевой вызов идёт через подписанный слой [14-networking-and-auth.md](14-networking-and-auth.md) §4 — push-репозиторий передаёт только тело, заголовки/подпись ставит security-interceptor.
 
@@ -266,7 +266,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 |---|---|
 | Метод + путь | `POST /api/v1/user/push_notification/` |
 | Аутентификация | access-JWT **обязателен** (`Authorization: Bearer …`); нет/невалиден/expired → `401` |
-| HMAC + security-заголовки | **обязательны** (`x-trace-id`, `x-request-timestamp`, `x-request-signature`, `x-user-agent`); проблема заголовка → `403`. `x-device-id` — **опционален**, но именно из него сервер берёт `device_id` (§6.4) |
+| HMAC + security-заголовки | HMAC-подпись **обязательна**. В этом примере запрос несёт security-заголовки `x-trace-id`, `x-request-timestamp`, `x-request-signature`, `x-user-agent` (обязательны — проблема любого → `403` до проверки HMAC) + `x-device-id`. `x-device-id` — **strongly-recommended, но формально опционален** в wire-контракте; именно из него сервер берёт `device_id` (§6.4), поэтому без стабильного непустого `x-device-id` различение устройств ломается. Точный набор и обязательность заголовков — пример, финализируется с бэкендом NOX |
 | Тело (ровно 2 ключа, оба обязательны) | `{"push_notification_provider": "firebase", "push_notification_token": "<token>"}` |
 | Валидация | `push_notification_provider` ∈ `{firebase, apns, webpush}`; `push_notification_token` непустой, ≤ 4096 байт |
 | Успех | `200 OK`, `data` = **пустой объект** `{}` (стандартный envelope) |
@@ -278,9 +278,9 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 |---|---|---|
 | `400` | `bad_request` | body null / не JSON-объект / пустое поле → `"Invalid or missing push notification data"`; провайдер вне allowlist → `"push_notification_provider must be one of: firebase, apns, webpush"`; токен > 4096 байт → `"push_notification_token exceeds maximum length (4096 bytes)"` |
 | `401` | `unauthorized` | `"Missing or invalid authentication token"` |
-| `403` | `forbidden` | `"Missing or invalid security headers"` |
+| `403` | `forbidden` | `"Missing or invalid security headers"` (отсутствует/невалиден обязательный security-заголовок, либо провал HMAC/replay-окна) |
 | `429` | `rate_limited` | `"Limited to 20 requests per 60-second window per authenticated user"` |
-| `503` | `service_unavailable` | `"Push registration service temporarily unavailable"` |
+| `503` | `service_unavailable` | сбой инфраструктуры/хранилища → `"Push registration service temporarily unavailable"` |
 
 ### 6.2 `DELETE /api/v1/user/push_notification/` — разрегистрация
 
@@ -304,11 +304,11 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
 Клиент шлёт **только** 2 ключа; остальное проставляет сервер — это важно учитывать, чтобы **не** пытаться слать «лишние» поля:
 
-1. **`device_id` — из заголовка `x-device-id`** (`request.deviceId`), а не из body. Без `x-device-id` composite-UNIQUE `(owner_id, device_id)` не различает устройства (все строки с `device_id=null` сольются в одну). **Вывод для клиента:** security-interceptor [14-networking-and-auth.md](14-networking-and-auth.md) §4.2 обязан слать стабильный `x-device-id` — иначе несколько устройств одного пользователя затрут друг друга. Это единственная клиентская «ручка», влияющая на различение устройств.
+1. **`device_id` — из заголовка `x-device-id`** (`request.deviceId`), а не из body. При **пустом значении** заголовка сервер пишет `device_id=null` — тогда дедупликация на стороне сервера (в этом примере) идёт по fallback-ключу `(user, push_token)` вместо `(user, device_id)`: строки не сливаются в одну, но при ротации FCM-токена создаётся новая строка вместо обновления существующей (старая остаётся сиротой), и различение устройств по `device_id` теряется. **Вывод для клиента:** security-interceptor [14-networking-and-auth.md](14-networking-and-auth.md) §4.2 обязан слать стабильный **непустой** `x-device-id` — иначе несколько устройств одного пользователя затрут друг друга. Это единственная клиентская «ручка», влияющая на различение устройств.
 2. **`platform` хардкодится сервером в `'mobile'`** (расходится с задокументированным enum схемы `{ios, android, web}` — известное расхождение реализации). Клиент `platform` **не** передаёт.
-3. **`app_version` / `os_version` / `locale` / `timezone` / `environment` этим endpoint'ом НЕ заполняются** — они есть в схеме `push_tokens_v1`, но POST-executor их не пишет. Клиенту слать их некуда (в body-контракте их нет).
+3. **`app_version` / `os_version` / `locale` / `timezone` / `environment` этим endpoint'ом НЕ заполняются** — даже если они есть в серверной схеме (пример — финализируется с бэкендом NOX), регистрация токена их не пишет. Клиенту слать их некуда (в body-контракте их нет).
 
-> **Коллекция `push_tokens_v1` — internal-only.** Мобильный клиент её напрямую не читает — только пишет токен через `POST`/`DELETE`. Публичного read-API у неё нет.
+> **Серверная коллекция токенов — internal-only (пример — TBD).** Мобильный клиент её напрямую не читает — только пишет токен через `POST`/`DELETE`. Публичного read-API у неё нет.
 
 ---
 
@@ -634,10 +634,11 @@ FutureOr<void> _onPushOpened(OnPushOpened event, Emitter<AppRootState> emit) asy
 - [ ] Data: `PushTokenRepositoryImpl with BaseRepositoryHelper` `@LazySingleton(as: PushTokenRepository)` — три `PublishSubject`, подписки на `onMessage`/`onMessageOpenedApp`/`onTokenRefresh` + `getInitialMessage()`; `register`/`unregister` через `_pushTokenApi`, обёрнуты в `execute<bool>` (§7.2).
 - [ ] Mapper `RemoteMessage → PushMessageModel` `@lazySingleton`, one-way (`toEntity → UnimplementedError`); `data` нормализуется в `Map<String, String>` (§7.3).
 - [ ] Бэкенд-контракт (§6 — пример, бэкенд/протокол NOX ещё не выбран): тело **ровно 2 ключа** (`push_notification_provider`/`push_notification_token`); `register` после login + на каждый `onTokenRefresh`; `unregister` на logout **до** очистки токен-пары; идемпотентность DELETE; rate-limit `pushTokenWrite` 20/60s (общий bucket). Сетевой вызов — через подписанный слой [14-networking-and-auth.md](14-networking-and-auth.md) §4 (HMAC/Bearer ставит interceptor, не репозиторий).
-- [ ] Load-bearing (§6.4): `x-device-id` (из security-interceptor) — **единственная** клиентская ручка различения устройств (composite-UNIQUE `(owner_id, device_id)`); `platform`/`app_version`/… сервер не берёт из body — не слать.
+- [ ] Load-bearing (§6.4): `x-device-id` (из security-interceptor) — **единственная** клиентская ручка различения устройств (composite-UNIQUE `(user, device_id)` — пример, ключ финализируется с бэкендом NOX); `platform`/`app_version`/… сервер не берёт из body — не слать.
 - [ ] Presentation (§7.5): `AppRoot` подписан на `watchMessageOpened()`/`watchTokenRefresh()` рано (в `initState`); `AppRootBloc` дёргает `initialize()`/`register()` **после login** (есть access-JWT), `unregister()`/`dispose()` на logout.
 - [ ] Навигация по тапу (§8): **переиспользовать** маршрутизатор deep-link ([13-deep-links.md](13-deep-links.md)) — `AppRootBloc._onPushOpened` по `message.data['type']` (или `data['deep_link']` → `DeepLinkRepository.handleLink`); `executeLogic` с **позиционным** первым аргументом, `onError` опционален для фоновой навигации.
 - [ ] **TBD (§9):** набор `data`-полей push-payload'а — источник правды серверная сторона; бэкенд/протокол NOX ещё не выбран — сверить с реальным контрактом перед реализацией навигационных веток, в коде — `TODO(backend-tbd)`.
+- [ ] Desktop (§10): на Windows/Linux/macOS push = no-op — `firebase_*` как platform-conditional (mobile-only) deps; desktop-env регистрирует no-op `PushTokenRepository` в том же change-set'е, чтобы `getIt<PushTokenRepository>()` резолвился на всех 5 платформах; в skeleton (Feature-001) push не резолвится вообще.
 
 ---
 

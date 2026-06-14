@@ -281,11 +281,19 @@ class DeepLinkRepositoryImpl with BaseRepositoryHelper implements DeepLinkReposi
     if (initial != null) {
       await _processAppLinkData(HandleLinkConfig(data: initial, source: DeepLinkSource.background));
     }
-    // warm: ссылка пришла во время работы
+    // warm: ссылка пришла во время работы.
+    // ОДНОКРАТНО подавляем cold-start-реплей: на некоторых платформах stringLinkStream
+    // первым кадром повторяет уже обработанную initial-ссылку. Гасим только
+    // ПЕРВОЕ совпадение (затем coldStartLink = null), чтобы повторный тап по
+    // ТОЙ ЖЕ ссылке (типовой кейс —
+    // повторный verify-email после ошибки) обрабатывался как обычно.
+    var coldStartLink = initial;
     _appLinksSubscription = _appLinks.stringLinkStream.listen((link) async {
-      if (link != initial) {
-        await _processAppLinkData(HandleLinkConfig(data: link, source: DeepLinkSource.foreground));
+      if (link == coldStartLink) {
+        coldStartLink = null; // cold-start-реплей израсходован — больше не подавляем этот URL
+        return;
       }
+      await _processAppLinkData(HandleLinkConfig(data: link, source: DeepLinkSource.foreground));
     });
   }
 
@@ -372,8 +380,9 @@ sealed class AppRootEvent with _$AppRootEvent {
 ```dart
 final _deepLinkRepository = getIt<DeepLinkRepository>();
 
-// Включаем ВХОД пайплайна, когда приложение готово (после DI; если есть auth/splash-флоу —
-// после ухода из init-состояния). До этого репозиторий буферизует cold-start-ссылку.
+// Включаем ВХОД пайплайна, когда приложение готово (после DI; если есть
+// auth/splash-флоу — после ухода из init-состояния). До этого репозиторий
+// буферизует cold-start-ссылку.
 FutureOr<void> _onInitializeDeepLinks(InitializeDeepLinks event, Emitter<AppRootState> emit) async {
   await _deepLinkRepository.initialize();
 }
@@ -389,7 +398,8 @@ FutureOr<void> _onOnDeepLink(OnDeepLink event, Emitter<AppRootState> emit) async
   } else if (deepLink is ShareItemDeepLinkModel) {
     unawaited(event.navigator.push(ItemDetailsPage.route(itemId: deepLink.itemId)));
   }
-  // неизвестный подтип — молча игнорируется (нет default-ветки): dispatch-table курируется вручную
+  // неизвестный подтип — молча игнорируется (нет default-ветки):
+  // dispatch-table курируется вручную
 }
 ```
 
@@ -402,14 +412,20 @@ FutureOr<void> _onOnDeepLink(OnDeepLink event, Emitter<AppRootState> emit) async
 
 Token-несущие линки (verify-email и т.п.) ведут на отдельную страницу, которая валидирует токен через репозиторий (например `AuthRepository`), показывает прогресс, и на успехе **закрывается** (pop) — пост-экран выбирает общий флоу приложения; на ошибке показывает error-виджет.
 
-Страница — по конвенции page-folder ([00-architecture-overview.md](00-architecture-overview.md) §6): `lib/presentation/pages/validate_deep_link_page/` + `bloc/` + `widgets/`. BLoC — Freezed (две подсостояния `Initializing` / `Error`, без явного success — успех выражается `pop`):
+Страница — по конвенции page-folder ([00-architecture-overview.md](00-architecture-overview.md) §6): `lib/presentation/pages/validate_deep_link_page/` + `bloc/` + `widgets/`. Как любая навигируемая страница, она **обязана** иметь свой BLoC (Принцип 5.1, [08](08-conventions-and-constitution.md)) — здесь он почти безлогичный, и это ровно случай «logic-less страница всё равно получает BLoC». BLoC — Freezed (две подсостояния `Initializing` / `Error`, без явного success — успех выражается `pop`):
 
 ```dart
 // validate_deep_link_state.dart
 @freezed
 sealed class ValidateDeepLinkState with _$ValidateDeepLinkState {
-  const factory ValidateDeepLinkState.initializing({required BaseDeepLinkModel deepLink, @Default(false) bool loading}) = Initializing;
-  const factory ValidateDeepLinkState.error({required BaseDeepLinkModel deepLink, BaseRepositoryException? exception}) = Error;
+  const factory ValidateDeepLinkState.initializing({
+    required BaseDeepLinkModel deepLink,
+    @Default(false) bool loading,
+  }) = ValidateDeepLinkInitializing;
+  const factory ValidateDeepLinkState.error({
+    required BaseDeepLinkModel deepLink,
+    BaseRepositoryException? exception,
+  }) = ValidateDeepLinkError;
 }
 
 // validate_deep_link_event.dart
@@ -423,7 +439,7 @@ sealed class ValidateDeepLinkEvent with _$ValidateDeepLinkEvent {
 // validate_deep_link_bloc.dart (фрагмент handler'а)
 FutureOr<void> _onInitialize(Initialize event, Emitter<ValidateDeepLinkState> emit) async {
   final state = this.state;
-  if (state is! Initializing || state.loading) return;
+  if (state is! ValidateDeepLinkInitializing || state.loading) return;
   emit(state.copyWith(loading: true));
 
   RepositoryResult<bool>? result;
@@ -460,7 +476,7 @@ FutureOr<void> _onInitialize(Initialize event, Emitter<ValidateDeepLinkState> em
 
 > Это **cross-project контракт** (mobile ↔ бэкенд NOX). Точный формат URL и параметров фиксируется совместно с владельцем бэкенда; таблица выше — пример/стартовая, не финальная (бэкенд/протокол NOX ещё не выбран). Эндпоинты `verify_email` / `verify_reset_password` — web-deep-link (`requiresWebDeepLink = true`): **не** подписываются HMAC и не несут security-заголовков (см. [14-networking-and-auth.md](14-networking-and-auth.md) §4.2) — запрос от `ValidateDeepLinkPage` / экрана смены пароля идёт без security-interceptor'а.
 
-> **⚠ Перед боевым деплоем (native association — иначе ссылки молча уходят в браузер).** §2 даёт каркас intent-filter / Associated Domains, но для прода обязательно добить (пометить в `docs/predeploy/`): (1) **Android `https://<host>/.well-known/assetlinks.json`** с `delegate_permission/common.handle_all_urls`, `package_name` и SHA-256-fingerprint'ами **upload-key И Play App Signing key** (Google пере-подписывает APK — без его fingerprint App Links не верифицируются в проде; самый частый провал); (2) **iOS AASA `apple-app-site-association`** в новом формате `applinks.details[].appIDs` (`<TeamID>.<BundleID>`) + `components`, отдаётся как `application/json` без редиректа и без `.json`-расширения + capability **Associated Domains** в Xcode-таргете; (3) **реальные хосты NOX**: deep-link host (`<VERIFY_URL>`/`<RESET_URL>`/`<SHARE_URL>`) — это **web-хост писем/шары** (`<prod_host>` / `<stage_host>`), а **не** API-хост — сверить с владельцем, где публикуются ссылки и `.well-known/*`; (4) опц. **custom-scheme fallback** (`CFBundleURLTypes` / Android scheme intent-filter) для приёма до подтверждения App Links; (5) **тест-план верификации** (Android `adb shell am start -W -a android.intent.action.VIEW -d "https://<host>/verify-email?..." <app_id>` + `pm verify-app-links`; iOS — AASA через `app-site-association.cdn-apple.com/a/v1/<host>` + тап из Notes); (6) гейтинг **share-link при неавторизованном пользователе** (redirect на login → возврат к отложенному deep-link).
+> **⚠ Перед боевым деплоем (native association — иначе ссылки молча уходят в браузер).** §2 даёт каркас intent-filter / Associated Domains, но для прода обязательно добить: (1) **Android `https://<host>/.well-known/assetlinks.json`** с `delegate_permission/common.handle_all_urls`, `package_name` и SHA-256-fingerprint'ами **upload-key И Play App Signing key** (Google пере-подписывает APK — без его fingerprint App Links не верифицируются в проде; самый частый провал); (2) **iOS AASA `apple-app-site-association`** в новом формате `applinks.details[].appIDs` (`<TeamID>.<BundleID>`) + `components`, отдаётся как `application/json` без редиректа и без `.json`-расширения + capability **Associated Domains** в Xcode-таргете; (3) **реальные хосты NOX**: deep-link host (`<VERIFY_URL>`/`<RESET_URL>`/`<SHARE_URL>`) — это **web-хост писем/шары** (`<prod_host>` / `<stage_host>`), а **не** API-хост — сверить с владельцем, где публикуются ссылки и `.well-known/*`; (4) опц. **custom-scheme fallback** (`CFBundleURLTypes` / Android scheme intent-filter) для приёма до подтверждения App Links; (5) **тест-план верификации** (Android `adb shell am start -W -a android.intent.action.VIEW -d "https://<host>/verify-email?..." <app_id>` + `pm verify-app-links`; iOS — AASA через `app-site-association.cdn-apple.com/a/v1/<host>` + тап из Notes); (6) гейтинг **share-link при неавторизованном пользователе** (redirect на login → возврат к отложенному deep-link).
 
 ---
 
@@ -481,6 +497,7 @@ FutureOr<void> _onInitialize(Initialize event, Emitter<ValidateDeepLinkState> em
 - **Интерфейсный полиморфизм, не union.** `BaseDeepLinkModel` — рукописный `abstract`-интерфейс; **нет** `.when`/`.map`. Различать только через `is`-проверки. (Это исключение из общего «Freezed-BLoC/Freezed-union»: модели линков — value-объекты с общим интерфейсом, а не sealed union.)
 - **`dataValue`/`sourceValue` + `._()`** обязательны в каждой модели — иначе `@override`-геттеры к `@freezed`-классу не добавить.
 - **`watchDeepLink()` nullable + `cleanDeepLink()`-ack.** `null` — «сброшено». Не вызвав `cleanDeepLink()`, рискуете обработать тот же линк дважды (BehaviorSubject реплеит последнее значение на новую подписку).
+- **Дедуп cold-start-реплея — ОДНОКРАТНЫЙ.** Warm-подписка (`stringLinkStream`) на некоторых платформах первым кадром повторяет уже обработанную initial-ссылку, поэтому первое совпадение с `coldStartLink` гасится. Но фильтр обязан быть одноразовым (`coldStartLink = null` после первого матча) — иначе вечное сравнение «текущая ссылка ≠ initial-ссылка» без сброса молча проглотит повторный тап пользователя по ТОЙ ЖЕ ссылке (типовой кейс — повторный verify-email после ошибки валидации) на всё время жизни приложения.
 - **Двухфазный старт.** Виджет подписывается рано; `initialize()` (нативные слушатели) включается, когда приложение готово. Репозиторий обязан буферизовать cold-start-ссылку (`BehaviorSubject`) до готовности потребителя.
 - **`autoVerify` + файлы-ассоциации.** Без `assetlinks.json` (Android) / `apple-app-site-association` (iOS) ссылки откроются в браузере, а не в приложении. Это отдельная инфра-задача на домене.
 - **Tracking-редирект-хост** (если есть) надо и **заклеймить** нативно, и **раскрыть** в `_internalParseLink` — иначе обёрнутая ссылка не дойдёт/не распарсится.
@@ -492,7 +509,7 @@ FutureOr<void> _onInitialize(Initialize event, Emitter<ValidateDeepLinkState> em
 
 ## 9. Desktop fallback (скелет и single-window)
 
-- **В скелете (Feature-001) deep links — no-op.** Feature-001 — скелет без реальных продуктовых фич: `DeepLinkRepository` **не регистрируется** в DI, а `AppRoot` **не подписан** на `watchDeepLink()` (нет `_deepLinkSub`, нет `OnDeepLink`-диспатча). Весь пайплайн § 3–§ 5 вносится **позже**, вместе с deep-link-фичей (см. FR-013). Скелет компилируется на всех пяти платформах (iOS, Android, Windows, Linux, macOS), но входящие ссылки в нём не обрабатываются.
+- **В скелете (Feature-001) deep links — no-op.** Feature-001 — скелет без реальных продуктовых фич: `DeepLinkRepository` **не регистрируется** в DI, а `AppRoot` **не подписан** на `watchDeepLink()` (нет `_deepLinkSub`, нет `OnDeepLink`-диспатча; `AppRootEvent` несёт только `Initialize`/`SetTheme`). Весь пайплайн § 3–§ 5 вносится **позже**, вместе с deep-link-фичей (см. FR-013). Скелет компилируется на всех пяти платформах (iOS, Android, Windows, Linux, macOS), но входящие ссылки в нём не обрабатываются. (`AppRoot` уже держит `_navigatorKey` = `MaterialApp.navigatorKey` — это шов, в который позже подключится подписка.)
 - **Single-window подтверждён.** NOX — single-window-приложение на desktop: «тёплая» ссылка будит **то же самое** окно через `app_links` `stringLinkStream` (`DeepLinkSource.foreground`), **без** открытия второго окна и **без** второго `Navigator`. Маршрутизация остаётся в единственном `AppRootBloc._onOnDeepLink` поверх единственного `MaterialApp.navigatorKey` (§ 5) — desktop тут ничем не отличается от mobile.
 - **`app_links` кросс-компилируется на desktop.** Пакет собирается на macOS/Windows/Linux из коробки — **гейтить его по платформе не нужно** (ни условный импорт, ни platform-специфичная зависимость в `pubspec.yaml`). Один и тот же код слоя данных работает на всех пяти платформах; платформо-зависима лишь нативная регистрация схемы (§ 2, FUTURE).
 

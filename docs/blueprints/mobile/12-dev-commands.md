@@ -74,8 +74,8 @@ fvm flutter analyze
 # Юнит + виджет-тесты (включая bloc_test для Freezed-BLoC)
 fvm flutter test
 
-# Один файл / директория
-fvm flutter test test/presentation/item_list_bloc_test.dart
+# Один файл / директория (тесты — DEEP-mirror структуры lib/)
+fvm flutter test test/presentation/pages/item_list_page/item_list_bloc_test.dart
 fvm flutter test test/data/
 
 # Интеграционные тесты (на устройстве/эмуляторе)
@@ -89,54 +89,74 @@ BLoC покрываем через `bloc_test` — он проверяет по�
 Flavor выбирается на этапе компиляции (`String.fromEnvironment('app.flavor')`); flavor-специфичные значения приходят через `--dart-define-from-file` (см. [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md)):
 
 ```bash
-# Скелет: флейвор приходит из закоммиченного config-файла, единообразно на всех платформах.
+# Скелет: флейвор приходит из закоммиченного config-файла, единообразно на всех ПЯТИ платформах.
 fvm flutter run --dart-define-from-file=config/stage.json   # stage
 fvm flutter run --dart-define-from-file=config/prod.json    # prod
 ```
 
-> Нативные mobile-флейворы (`--flavor`) и секреты (`secrets:decrypt` → `.secrets-runtime/<flavor>.dart-define.json`) — на будущее (блюпринт `09` §6/§7); в скелете не используются.
+> Нативные mobile-флейворы (`--flavor`) и секреты (`secrets:decrypt` → `.secrets-runtime/<flavor>.dart-define.json`) — на будущее (блюпринт `09` §6/§7); в скелете не используются. Те же `config/<flavor>.json` подключают IDE-конфиги запуска из `.run/` (IntelliJ/Android Studio: `main.dart (stage)` / `main.dart (prod)`).
 
 ---
 
 ## 2. mise-таски и Makefile-обёртки
 
-Секреты (SOPS + age) и flavored-сборки оборачиваются в `mise`-таски (их **полное определение** — в [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md) §4 `.mise.toml`), а Makefile (§5 там же) даёт короткие алиасы. Именование тасков: `namespace:action[:channel]` для секретов и `build:<platform>:<channel>` для сборок; каждый `build:*` объявляет `depends = ["secrets:decrypt:<flavor>"]`, поэтому decrypt выполняется автоматически перед сборкой. Точные имена:
+Секреты (SOPS + age) и flavored-сборки оборачиваются в `mise`-таски (их **полное определение** — в [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md) §4 `.mise.toml`), а Makefile (§5 там же) даёт короткие алиасы. Именование тасков: `namespace:action[:channel]` для секретов и `build:<platform>:<channel>` для сборок; на будущее каждый `build:*` сможет объявлять `depends = ["secrets:decrypt:<flavor>"]`, чтобы decrypt выполнялся автоматически перед сборкой. NOX — **пять платформ** (constitution v1.1.0): android, ios, macos, windows, linux; build-таски заведены на все пять. Точные имена:
 
 ```bash
-# Расшифровать секреты в .secrets-runtime/<flavor>.dart-define.json (+ нативные конфиги)
+# Расшифровать секреты в .secrets-runtime/<flavor>.dart-define.json (+ нативные конфиги) — на будущее
 mise run secrets:decrypt:stage
 mise run secrets:decrypt:prod
 
-# Полная flavored-сборка (depends авто-дёргает secrets:decrypt:<flavor>):
+# Полная flavored-сборка (mobile):
 mise run build:android:stage    # stage APK
 mise run build:android:prod     # prod App Bundle (AAB)
 mise run build:ios:stage        # stage IPA
 mise run build:ios:prod         # prod IPA
+
+# Полная flavored-сборка (desktop — NOX 5-platform scope):
+mise run build:macos:stage
+mise run build:macos:prod
+mise run build:windows:stage
+mise run build:windows:prod
+mise run build:linux:stage
+mise run build:linux:prod
 ```
 
-Makefile-обёртки поверх них (чтобы не помнить точный синтаксис mise; полный Makefile — в [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md) §5):
+> В текущем скелете build-таски запускаются **без** `secrets:decrypt` (нет age-ключа; все сборки `--debug`, флейвор — только из `config/<flavor>.json`); таск `secrets:decrypt:<flavor>` задокументирован как конвенция и подключится с первым реальным секретом (09 §6/§7/§11a).
+
+Makefile-обёртки поверх них (соответствуют реальному корневому Makefile; полный Makefile — в [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md) §5):
 
 ```makefile
-.PHONY: generate analyze test build-android-stage build-android-prod build-ios-stage build-ios-prod secrets-decrypt-stage secrets-decrypt-prod
+.PHONY: deps generate format analyze test gate \
+  build-android-stage build-android-prod build-ios-stage build-ios-prod \
+  build-macos-stage build-macos-prod build-windows-stage build-linux-stage
 
-generate:             ; fvm dart pub get && fvm dart run build_runner build --delete-conflicting-outputs
-analyze:              ; fvm flutter analyze
-test:                 ; fvm flutter test
-secrets-decrypt-stage:; mise run secrets:decrypt:stage
-secrets-decrypt-prod: ; mise run secrets:decrypt:prod
-build-android-stage:  ; mise run build:android:stage
-build-android-prod:   ; mise run build:android:prod
-build-ios-stage:      ; mise run build:ios:stage
-build-ios-prod:       ; mise run build:ios:prod
+# --- dev helpers (блюпринт 12) ---
+deps:                ; fvm flutter pub get
+generate:            ; fvm dart run build_runner build --delete-conflicting-outputs
+format:              ; fvm dart format -l 140 lib test   # bulk-свип всего дерева; пер-задачное форматирование — по явным путям
+analyze:             ; fvm flutter analyze
+test:                ; fvm flutter test
+gate: generate format analyze test
+
+# --- builds (через mise) ---
+build-android-stage: ; mise run build:android:stage
+build-android-prod:  ; mise run build:android:prod
+build-ios-stage:     ; mise run build:ios:stage
+build-ios-prod:      ; mise run build:ios:prod
+build-macos-stage:   ; mise run build:macos:stage
+build-macos-prod:    ; mise run build:macos:prod
+build-windows-stage: ; mise run build:windows:stage
+build-linux-stage:   ; mise run build:linux:stage
 ```
 
-> **Никогда не вызывать `sops`/`age` напрямую** — только через `mise run secrets:*`. Версионирование сборок — CalVer + shifted-epoch (`YY.M.D+EPOCH`), детали в [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md). Под prod-дистрибуцию таск можно дополнительно разбить по назначению (`build:android:prod:firebase` / `build:android:prod:google` / `build:ios:prod:firebase` / `build:ios:prod:apple`) — мобильный CD пока отложен (см. 09 §11), поэтому здесь оставлен базовый `build:<platform>:prod`.
+> **`make format` — это bulk-свип всего дерева** (`lib test`); пер-задачное правило из §1.3 остаётся в силе: руками форматируем **только изменённые файлы по явным путям**, а `make format` используем как CI-style единоразовый прогон. **Никогда не вызывать `sops`/`age` напрямую** — только через `mise run secrets:*`. Версионирование сборок — CalVer + shifted-epoch (`YY.M.D+EPOCH`), детали в [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md). Под prod-дистрибуцию таск можно дополнительно разбить по назначению (`build:android:prod:firebase` / `build:android:prod:google` / `build:ios:prod:firebase` / `build:ios:prod:apple`) — мобильный CD пока отложен (см. 09 §11), поэтому здесь оставлен базовый `build:<platform>:prod`.
 
 ---
 
 ## 3. Скаффолдинг-скиллы `.claude/commands/*`
 
-`.claude/commands/<name>.md` — это **prompt-шаблон**, а не скрипт. Когда вы вводите `/<name> <args>`, агент читает этот markdown и выполняет шаги. Ценность в том, что **рецепт лежит в репозитории** — скаффолдинг остаётся верным архитектуре спустя месяцы и между сессиями.
+`.claude/commands/<name>.md` — это **prompt-шаблон**, а не скрипт. Когда вы вводите `/<name> <args>`, агент читает этот markdown и выполняет шаги. Ценность в том, что **рецепт лежит в репозитории** — скаффолдинг остаётся верным архитектуре спустя месяцы и между сессиями. В текущем скелете `.claude/commands/` пуст — команды форвард-лукинг: авторим их по рецептам ниже.
 
 Три правила, которые соблюдает каждая команда набора:
 
@@ -221,14 +241,14 @@ Create a Freezed domain model with corresponding data entity and mapper (single 
 ## Input
 - `$ARGUMENTS`: `<ModelName>`
 - Example: `/new-model Item`
-- Paths are fixed by the single-package layout:
-  - model:  `lib/domain/model/<snake_name>_model.dart`
-  - entity: `lib/data/entity/<snake_name>_entity.dart`
-  - mapper: `lib/data/mapper/<snake_name>_mapper.dart`
+- Paths are fixed by the single-package layout (feature-folder per artefact):
+  - model:  `lib/domain/model/<feature>/<snake_name>_model.dart`
+  - entity: `lib/data/entity/<feature>/<snake_name>_entity.dart`
+  - mapper: `lib/data/mapper/<feature>/<snake_name>_mapper.dart`
 
 ## Steps
 
-1. **Domain model** — `lib/domain/model/<snake_name>_model.dart`:
+1. **Domain model** — `lib/domain/model/<feature>/<snake_name>_model.dart`:
    - `@freezed class <Name>Model with _$<Name>Model`
    - `part '<snake_name>_model.freezed.dart';` ONLY — NO `*.g.dart`, NO `fromJson`
      (domain models carry no JSON; JSON lives on the entity layer)
@@ -237,30 +257,36 @@ Create a Freezed domain model with corresponding data entity and mapper (single 
    - Derived/computed logic goes in an EXTENSION getter, not in the @freezed body
    - Do NOT use BigInt money fields or `@BigIntConverter()`
 
-2. **Data entity** — `lib/data/entity/<snake_name>_entity.dart`:
+2. **Data entity** — `lib/data/entity/<feature>/<snake_name>_entity.dart`:
    - `@freezed class <Name>Entity with _$<Name>Entity`
    - Basic types only: String/int/double/bool (+ `String?`); enums as their `.name` String;
      DateTime as ISO-8601 String. No converters in the entity — all coercion lives in the mapper.
    - `part '<snake_name>_entity.freezed.dart';` AND `part '<snake_name>_entity.g.dart';`
    - `factory <Name>Entity.fromJson(Map<String, Object?> json) => _$<Name>EntityFromJson(json);`
 
-3. **Mapper** — `lib/data/mapper/<snake_name>_mapper.dart`:
+3. **Mapper** — `lib/data/mapper/<feature>/<snake_name>_mapper.dart`:
    - `@lazySingleton`
-   - `class <Name>Mapper extends EntityConverter<<Name>Entity>` (registered in the converter registry)
-     producing `<Name>Model`; do the enum<->String name and DateTime<->ISO-8601 coercion HERE
+   - `class <Name>Mapper extends BaseMapper<<Name>Entity, <Name>Model, dynamic, dynamic>`
+     (4-param base at `lib/data/mapper/base_mapper.dart`); do the enum<->String name and
+     DateTime<->ISO-8601 coercion HERE
    - Implement `toModel()` / `toEntity()`
 
-4. Export new files from barrels if they exist.
-5. fvm dart run build_runner build --delete-conflicting-outputs   # ONE run
-6. fvm dart format -l 140 <the 3 new files>
-7. fvm flutter analyze
+4. **Register the entity in the `EntityConverter` registry** (for `ResponseEntity<T>`
+   envelope decoding) — this is a SEPARATE concern from the mapper above:
+   `EntityConverter` is the `JsonConverter`-registry that decodes `ResponseEntity<<Name>Entity>`,
+   NOT the mapper base. Add `<Name>Entity` to the registry per `04-data-layer.md`.
+
+5. Export new files from barrels if they exist.
+6. fvm dart run build_runner build --delete-conflicting-outputs   # ONE run
+7. fvm dart format -l 140 <the 3 new files>
+8. fvm flutter analyze
 
 ## References (canonical templates)
 - Model / extension getters / RepositoryResult: `03-domain-layer.md`, `10-code-templates.md`
-- Entity / mapper / ResponseEntity / EntityConverter registry: `04-data-layer.md`, `10-code-templates.md`
+- Entity / mapper (`BaseMapper` 4-param) / `ResponseEntity` / `EntityConverter` registry: `04-data-layer.md`, `10-code-templates.md`
 ```
 
-> Worked-тройка `Item`: `ItemModel { id, name, description?, status:ItemStatus, createdAt:DateTime }` → `ItemEntity { id, name, description?, status:String, createdAt:String }` → `ItemMapper`. Никакого `BigIntConverter`/money. Первый реальный артефакт — модель элемента списка чатов (`ItemModel`-форма) — делается этой же командой.
+> Worked-тройка `Item`: `ItemModel { id, name, description?, status:ItemStatus, createdAt:DateTime }` → `ItemEntity { id, name, description?, status:String, createdAt:String }` → `ItemMapper`. Никакого `BigIntConverter`/money. Первый реальный артефакт — модель элемента списка чатов — делается этой же командой.
 
 ---
 
@@ -304,20 +330,28 @@ Create a repository: contract, configs union, implementation, and DI registratio
    - `const factory Get<Name>sConfig({required int page, String? search}) = _Get<Name>sConfig;`
    - Named constructors `Get<Name>sConfig.firstPage({String? search})` (=> `page: defaultPage`) and
      `Get<Name>sConfig.nextPage({required int page, String? search})`
-   - `static const int pageSize = 20;` and `static const int defaultPage = 1;` (1-based)
+   - `static const int pageSize = 20;` and `static const int defaultPage = 1;` (1-based; the concrete
+     chats-list contract is finalized later with the NOX backend)
    - `part 'get_<snake_name>s_config.freezed.dart';` ONLY — no `*.g.dart`
-   - NO sealed-union `<Name>RepositoryConfigs.list` redirect; NEVER `Get<Name>sConfig(page: 0, pageSize: 50)`
+   - NO sealed-union `<Name>RepositoryConfigs.list` redirect; NEVER `Get<Name>sConfig(page: 0, pageSize: 50)` —
+     the first page is expressed ONLY via the `Get<Name>sConfig.firstPage()` factory
 
 3. **Implementation** — `lib/data/repository/<snake_name>/<snake_name>_repository_impl.dart`:
    - `@LazySingleton(as: <Name>Repository, env: [Environment.dev, Environment.prod, Environment.test])`
      (`test` is REQUIRED — the repo MUST resolve under `Environment.test` or `getIt` throws in tests;
      flavor map: prod->Environment.prod, stage->Environment.dev)
    - `class <Name>RepositoryImpl with BaseRepositoryHelper implements <Name>Repository`
-   - Wrap every method body in `execute<T>()`; the callback returns an already-wrapped `RepositoryResult` (`return RepositoryResult.success(data: …)` / `.error(exception: RepositoryException.<code>)`). `execute` only catches unhandled errors (DioException -> internal, else -> unknown) and ALWAYS logs via LogRepository
+   - Wrap every method body in `execute<T>()`; the callback returns an already-wrapped `RepositoryResult`
+     (`return RepositoryResult.success(data: …)` / `.error(exception: RepositoryException.<code>)`).
+     `execute` only catches unhandled errors (DioException -> internal, else -> unknown) and ALWAYS logs via LogRepository
    - Cache-first reactive watch*(): one BehaviorSubject fed by a single subscription to the DAO stream
    - Paginated `get<Name>s` / one-shot POSTs: NETWORK-ONLY, no DAO/subject (base carve-out);
-     parse the raw envelope via `PaginatedResponse<T>` and map to `(List<<Name>Model>, PageMetadata)`
-   - Inject the `<Name>Mapper` and `<Name>Dao` via constructor
+     the API class returns `ResponseEntity<<Name>sEntity>` (page wrapper `{items, page, page_size, total}`
+     — JSON keys are an EXAMPLE; backend/protocol not chosen); map to `(List<<Name>Model>, PageMetadata)`
+     per the `04-data-layer.md` §8 canon, computing `nextPage` client-side from the page metadata:
+     `final hasMore = (entity.page * entity.pageSize) < entity.total; nextPage = hasMore ? entity.page + 1 : null;`
+   - For the NETWORK-ONLY LIST path inject the `<Name>Mapper` and the API class
+     (`Get<Name>sApi`) via constructor — NOT a `<Name>Dao` (the Dao is for cache-first reactive features)
    - NO IPC/multi-process variant.
 
 4. Register in DI: confirm the env-list annotation (incl. `Environment.test`) is picked up by `$initGetIt`.
@@ -329,17 +363,19 @@ Create a repository: contract, configs union, implementation, and DI registratio
 ## References (canonical templates)
 - Contract / config / RepositoryResult / RepositoryException: `03-domain-layer.md`, `10-code-templates.md`
 - Repo impl / BaseRepositoryHelper / Sembast DAO / mapper / network-only carve-out: `04-data-layer.md`, `10-code-templates.md`
-- Pagination contract (PageMetadata / PaginatedResponse / RepositoryResult<(List, PageMetadata)>): `07-pagination.md`
+- Pagination contract (PageMetadata / client-side nextPage / RepositoryResult<(List, PageMetadata)>): `07-pagination.md`
 - DI annotations + bootstrap chain ($initGetIt): `02-dependency-injection.md`
 ```
 
-> **Env-лист — `[Environment.dev, Environment.prod, Environment.test]`** (два flavor: `prod→Environment.prod`, `stage→Environment.dev`; плюс **обязательный** `Environment.test`). Регистрация под `Environment.test` — **не опциональна**: без неё `getIt<<Name>Repository>()` бросит под `Environment.test`. Тестовый `AppDatabase` подменяется СВОИМ test-env-провайдером (`@LazySingleton(as: AppDatabase, env: [Environment.test])` → `AppDatabaseTest`), но сам репозиторий-импл регистрируется во всех трёх env, а не «подменяется отдельно». Конфиг — **единственный** `@freezed Get<Name>sConfig` (`firstPage`/`nextPage`, `defaultPage = 1`), без sealed-union-редиректа `…RepositoryConfigs.list` и без `page: 0`. IPC-вариант репозитория **не эмитим**.
+> **Env-лист — `[Environment.dev, Environment.prod, Environment.test]`** (два flavor: `prod→Environment.prod`, `stage→Environment.dev`; плюс **обязательный** `Environment.test`). Регистрация под `Environment.test` — **не опциональна**: без неё `getIt<<Name>Repository>()` бросит под `Environment.test`. Тестовый `AppDatabase` подменяется СВОИМ test-env-провайдером (`@LazySingleton(as: AppDatabase, env: [Environment.test])` → `AppDatabaseTest`), но сам репозиторий-импл регистрируется во всех трёх env, а не «подменяется отдельно». Конфиг — **единственный** `@freezed Get<Name>sConfig` (`firstPage`/`nextPage`, `defaultPage = 1` — 1-based; конкретный pagination-контракт списка чатов финализируется позже с NOX-бэкендом), без sealed-union-редиректа `…RepositoryConfigs.list` и без `page: 0`; никаких магических чисел страницы в BLoC — первая страница выражается только фабрикой `Get<Name>sConfig.firstPage()`. IPC-вариант репозитория **не эмитим**.
 
 ---
 
 ### 3.4. `/new-page`
 
 **Назначение:** создать Flutter-страницу с её **Freezed-BLoC-трио** (bloc + events + states) и, если страница списочная — пагинацией через `PagingStateExt.applyPage`.
+
+> **Каждая навигируемая страница ОБЯЗАТЕЛЬНО получает свой BLoC — даже logic-less** (Принцип 5.1, [08-conventions-and-constitution.md](08-conventions-and-constitution.md)). Для не-списочной/статичной страницы эмитится **минимальный** BLoC: трио `Initializing`/`Initialized` (одновариантный `Initialized` без полей) либо одновариантный value-BLoC а-ля `AppRootBloc`. `/new-page` **никогда** не создаёт навигируемую страницу как «голый» `StatefulWidget` без BLoC. Переиспользуемые виджеты (ненавигируемые компоненты — не предмет `/new-page`) BLoC не требуют.
 
 **Когда:** при добавлении экрана. Связать с репозиторием, созданным `new-repository`. Первый реальный экран — список чатов (server-owned, network-only пагинируемый список).
 
@@ -365,7 +401,7 @@ Create a Flutter page with a FREEZED BLoC trio (NOT hand-written Equatable) foll
    - `@freezed sealed class <Name>State with _$<Name>State`
    - Canonical const-factory substates: `.initializing()`, `.initialized(...)`, `.error(...)`
    - For a LIST page, the `.initialized` factory carries the loaded `items` plus
-     `PagingState<String, <Item>Model> pagingState` and `int? nextPage`
+     `PagingState<String, <Item>Model> pagingState` and `@Default(Get<Name>sConfig.defaultPage) int nextPage` (non-nullable)
      (key K = String = item id, one-item-per-page; offset tracked via `nextPage`, NOT via K)
    - Derived/computed logic (e.g. itemCount, isLastPage) in an EXTENSION getter, not the @freezed body
    - Transitions via `copyWith`
@@ -374,7 +410,8 @@ Create a Flutter page with a FREEZED BLoC trio (NOT hand-written Equatable) foll
    - `part '<snake_name>_event.freezed.dart';` ONLY
    - `@freezed sealed class <Name>Event with _$<Name>Event`
    - `const factory <Name>Event.initialize() = _Initialize;`
-   - For a LIST page: `const factory <Name>Event.fetchNextPage() = _FetchNextPage;`
+   - For a LIST page: ONE universal `const factory <Name>Event.loadItems({@Default(false) bool reset}) = LoadItems;`
+     (first load, load-more AND reset — per `07-pagination.md` §3 rules 4-5; NEVER separate fetchNextPage/loadNextPage events)
 
 4. **BLoC** — `bloc/<snake_name>_bloc.dart`:
    - `class <Name>Bloc extends BaseBloc<<Name>Event, <Name>State>`
@@ -394,11 +431,13 @@ Create a Flutter page with a FREEZED BLoC trio (NOT hand-written Equatable) foll
 
 5. **Page** — `lib/presentation/pages/<snake_name>_page/<snake_name>_page.dart`:
    - `class <Name>Page extends StatefulWidget` with `static const routeName` + `static Route route()` factory
+   - Its State MUST `extends BaseStatePage<<Name>Page>` (NOT a bare `State<<Name>Page>`) — the canonical
+     page-State base from `05-presentation-layer.md` §4
    - Create the BLoC in `initState()` with `..add(const <Name>Event.initialize())`; close in `dispose()`
    - `build()` = `BlocProvider` + `BlocBuilder` + Freezed `state.when(initializing:, initialized:, error:)`
    - initializing -> `AppProgressWidget()`; error -> `AppErrorWidget(onTryAgain: ...)`; empty -> `AppEmptyContentWidget()`
    - LIST page renders pagingState via `PagedListView<String, <Item>Model>` (infinite_scroll_pagination v5,
-     key K = String = item id), calling `bloc.add(const <Name>Event.fetchNextPage())` from the `fetchNextPage` callback
+     key K = String = item id), calling `bloc.add(const <Name>Event.loadItems())` from the `fetchNextPage` callback
    - Navigation single-window: `routeName` + `route()` + `Navigator.push`
 
 6. fvm dart run build_runner build --delete-conflicting-outputs   # REQUIRED — Freezed BLoC needs codegen
@@ -406,12 +445,12 @@ Create a Flutter page with a FREEZED BLoC trio (NOT hand-written Equatable) foll
 8. fvm flutter analyze
 
 ## References (canonical templates)
-- Page / BaseBloc / Freezed State+Event union / extension getters: `05-presentation-layer.md`, `10-code-templates.md`
+- Page / `BaseStatePage` / BaseBloc / Freezed State+Event union / extension getters: `05-presentation-layer.md`, `10-code-templates.md`
 - Pagination (PagingState-in-bloc, applyPage, PagedListView): `07-pagination.md`
 - Shared widgets (App-prefixed: AppProgressWidget / AppErrorWidget / AppEmptyContentWidget): `05-presentation-layer.md`
 ```
 
-> **Правило блюпринта: только Freezed-BLoC, без рукописного `Equatable`.** У нас `State`/`Event` — `@freezed sealed`-юнионы (`*.freezed.dart`, никогда `*.g.dart`), `when()`/`copyWith()` генерируются Freezed, вычисляемая логика — в extension-геттерах. Поэтому `new-page` **обязан** запускать codegen: Freezed-BLoC без него не компилируется. Канонические имена сабстейтов — `Initializing` / `Initialized` / `Error` через `const factory`. Общие виджеты — с префиксом `App`.
+> **Правило блюпринта: только Freezed-BLoC, без рукописного `Equatable`.** У нас `State`/`Event` — `@freezed sealed`-юнионы (`*.freezed.dart`, никогда `*.g.dart`), `when()`/`copyWith()` генерируются Freezed, вычисляемая логика — в extension-геттерах. Поэтому `new-page` **обязан** запускать codegen: Freezed-BLoC без него не компилируется. Канонические имена сабстейтов — **bare**: `Initializing` / `Initialized` / `Error` через `const factory` (как в реальном `ItemListState`); префиксные имена (`<Feature>Initializing` …) — допустимый вариант для избегания коллизий имён, но канон в блюпринте — bare. Общие виджеты — с префиксом `App`.
 
 ---
 
@@ -492,7 +531,7 @@ Validate and update sample JSON data files against current entity structure (sin
 
 ## Input
 - `$ARGUMENTS`: `<json_file_path> [entity_path]`
-- Example: `/update-json test/fixtures/item_sample_data.json lib/data/entity/item_entity.dart`
+- Example: `/update-json test/fixtures/item_sample_data.json lib/data/entity/item/item_entity.dart`
 
 ## Steps
 1. Read the JSON file.
@@ -549,9 +588,9 @@ fvm flutter analyze                                            # ноль оши
 - [ ] Все повседневные команды идут через `fvm` (`fvm flutter` / `fvm dart`), Flutter 3.44.1 из `.fvmrc`.
 - [ ] Codegen — **ОДНА** команда `fvm dart run build_runner build --delete-conflicting-outputs`; явно зафиксировано, что нет `data→domain→root`-порядка (один пакет).
 - [ ] Форматирование — только изменённые файлы, `-l 140`, явные пути.
-- [ ] `mise run secrets:decrypt:<flavor>` и `mise run build:<platform>:<channel>` (`build:android:stage`/`build:android:prod`/`build:ios:stage`/`build:ios:prod`, имена совпадают с 09 §4) + Makefile-обёртки задокументированы; `sops`/`age` напрямую не вызываются.
+- [ ] `mise run secrets:decrypt:<flavor>` и `mise run build:<platform>:<channel>` на **пяти** платформах (`build:android:stage`/`:android:prod`/`:ios:stage`/`:ios:prod` + desktop `build:macos:*`/`build:windows:*`/`build:linux:*`, имена совпадают с 09 §4) + Makefile-обёртки (включая dev-helpers `deps`/`generate`/`format`/`analyze`/`test`/`gate`) задокументированы; `make format` — bulk-свип, пер-задачное форматирование — по явным путям; `sops`/`age` напрямую не вызываются.
 - [ ] `.claude/commands/*` заведены: `/check-build`, `/new-model`, `/new-repository`, `/new-page`, `/move-files`, `/rename-class`, `/update-json`.
-- [ ] `/new-repository` эмитит LIST-метод `get<Feature>s` (`fetch*`=single, `watch*`=stream, без `save*`/`fetch<Feature>s`-списка) + **единственный** `@freezed Get<Feature>sConfig` (`firstPage`/`nextPage`, `defaultPage = 1`) — **не** sealed-union `…RepositoryConfigs.list`, **не** `page: 0`.
+- [ ] `/new-repository` эмитит LIST-метод `get<Feature>s` (`fetch*`=single, `watch*`=stream, без `save*`/`fetch<Feature>s`-списка) + **единственный** `@freezed Get<Feature>sConfig` (`firstPage`/`nextPage`, `defaultPage = 1` — 1-based) — **не** sealed-union `…RepositoryConfigs.list`, **не** `page: 0`; никаких магических чисел страницы в BLoC — первая страница выражается только фабрикой `Get<Feature>sConfig.firstPage()`.
 - [ ] `/new-page` эмитит **Freezed**-BLoC-трио (`@freezed sealed` State+Event, `when()`/`copyWith()`, extension-геттеры) + пагинацию через `applyPage` (`PagingState<String, …>`, key = item id, offset через `nextPage`) — **не** рукописный Equatable; и **запускает** codegen в трейлере.
 - [ ] Все команды используют одно-пакетные пути (`lib/domain/...`, `lib/data/...`, `lib/presentation/...`), env-лист `[Environment.dev, Environment.prod, Environment.test]` (test обязателен), импорты `package:nox_app/...`; BigInt/IPC/swift-to-dart не эмитятся.
 - [ ] Каждая генеративная команда заканчивается трейлером codegen(один прогон) → format(изменённые) → analyze.

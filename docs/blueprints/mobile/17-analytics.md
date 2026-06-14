@@ -2,7 +2,7 @@
 
 > **Приватность прежде всего (NOX).** Аналитика в NOX **по умолчанию ВЫКЛЮЧЕНА** — это строго opt-in: пока пользователь явно не включил её, не отправляется ни одного события. И даже при включённой аналитике слой **никогда** не передаёт PII, содержимое сообщений, идентификаторы пользователей в открытом виде или имена чатов — это прямое следствие Signal-подобной модели NOX «минимизировать метаданные» (см. §6). Конкретный analytics-провайдер для NOX не выбран; этот документ фиксирует **паттерн** слоя, а не вендора.
 >
-> **Назначение:** зафиксировать клиентский analytics-слой приложения NOX как сквозной (cross-cutting) сервис — интерфейс `AnalyticsRepository` в `lib/domain/repository/analytics/`, имплементацию `AnalyticsRepositoryImpl` в `lib/data/repository/analytics/`, типобезопасный таксоном событий через `@freezed`-union `AnalyticsEvent`, инициализацию SDK с project-token'ом из флейвора (`AppConfigRepository`, НЕ хардкод), super-properties (`user_id` / `platform` / `app_version` / `build`), правила приватности (opt-in по умолчанию, без PII) и точки вызова из BLoC. Слой проектируется **с нуля** — это правило блюпринта; зеркалируется лишь общая форма repository-слоя.
+> **Назначение:** зафиксировать клиентский analytics-слой приложения NOX как сквозной (cross-cutting) сервис — интерфейс `AnalyticsRepository` в `lib/domain/repository/analytics/`, имплементацию `AnalyticsRepositoryImpl` в `lib/data/repository/analytics/`, типобезопасный таксоном событий через `@freezed`-union `AnalyticsEvent`, инициализацию SDK с project-token'ом из флейвора (`AppConfigRepository`, НЕ хардкод), super-properties как поведенческий контекст (`platform` / `app_version` / `build` / `environment`), отдельную от них идентичность (`distinct_id` через `identify()`, зеркалит opaque user id бэкенда NOX — это **не** super-property), правила приватности (opt-in по умолчанию, без PII) и точки вызова из BLoC. Слой проектируется **с нуля** — это правило блюпринта; зеркалируется лишь общая форма repository-слоя.
 > **Когда читать:** перед поднятием папки `lib/{domain,data}/repository/analytics/`, перед добавлением первой точки трекинга в любой BLoC, и обязательно — при расширении таксонома событий (новое событие = новый вариант `AnalyticsEvent`, а не строковый литерал по коду).
 > **Связанные документы:** [03-domain-layer.md](03-domain-layer.md) (`RepositoryResult`, `RepositoryException`, контракты репозиториев), [04-data-layer.md](04-data-layer.md) (`BaseRepositoryHelper`, `execute(...)`, форма `*_repository_impl.dart`, `LogRepository` как сквозной), [05-presentation-layer.md](05-presentation-layer.md) (Freezed-BLoC, `AppRoot` + `AppRootBloc`, где звать `trackEvent`), [02-dependency-injection.md](02-dependency-injection.md) (`configureDependencies`, `@lazySingleton(as:)`, `AppConfigRepository`, bootstrap `main.dart`), [14-networking-and-auth.md](14-networking-and-auth.md) (auth-флоу: `identify` после login / `reset` после logout — `distinct_id` = opaque user id бэкенда NOX; сетевой слой не трогаем — SDK ходит к analytics-провайдеру сам), [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md) (`analyticsProjectToken` per флейвор из зашифрованных секретов).
 
@@ -12,7 +12,7 @@
 
 Этот документ — единственный дом контракта клиентской аналитики. Он отвечает на три вопроса:
 
-1. **Зачем клиентская аналитика отдельным слоем** — продуктовые воронки — это **поведенческие** данные, которых backend-строки бэкенда NOX не дают; их источник — клиентские события у analytics-провайдера. Прямое следствие Constitution Принципа XIII (см. §1). §1.
+1. **Зачем клиентская аналитика отдельным слоем** — продуктовые воронки — это **поведенческие** данные, которых серверное состояние бэкенда NOX не даёт; их источник — клиентские события у analytics-провайдера. Это вытекает из Принципа I конституции NOX (приватность/E2EE — opt-in, без PII) и Принципа III (архитектурный блюпринт) — см. §1.
 2. **Как устроен слой** — `AnalyticsRepository` (контракт в `lib/domain/`) + `AnalyticsRepositoryImpl` (обёртка над analytics-провайдером в `lib/data/`), типобезопасный таксоном `AnalyticsEvent`, инициализация с токеном из конфига, super-properties, приватность. §2–§6.
 3. **Откуда и когда звать трекинг** — из presentation-слоя (BLoC) на ключевых переходах; `identify`/`reset` завязаны на auth-флоу; init — в bootstrap. §7.
 
@@ -22,20 +22,20 @@
 
 ---
 
-## 1. Связь с Constitution Принципом XIII (Admin & Analytics Readiness by Design)
+## 1. Связь с Конституцией NOX (Принцип I — Приватность и E2EE)
 
-Принцип XIII (`.specify/memory/constitution.md`, monorepo-wide — действует во **всех** проектах наравне с Принципом I) требует, чтобы **каждая** фича захватывала данные/события/queryable-поля, нужные admin-панели и продуктовой аналитике, **в момент первой записи** строки/события — а не ретрофитила позже. На backend это означает write-time capture: attribution (`owner_id`/actor IDs), timestamps (`created_at`/`updated_at` + время событий), явные status/lifecycle-enum'ы, counters/magnitudes (а не только booleans). Связка с Принципом VII (No DB Migrations): сигнал, не записанный в момент write, теряется навсегда — «добавить колонку потом» нельзя.
+Якорь этого слоя — **Принцип I** конституции NOX (`.specify/memory/constitution.md`, v1.1.0, пять принципов: приватность/E2EE, спецификации-источник-истины, обязательный архитектурный блюпринт, верность дизайн-системе, языковая дисциплина). Принцип I прямо требует: клиентская аналитика **никогда** не содержит PII, содержимого сообщений, идентификаторов пользователей или имён чатов, и она **строго opt-in (по умолчанию выключена)**. Этот документ — реализация этого требования на уровне слоя. Вторично слой опирается на **Принцип III** (обязательный архитектурный блюпринт): форма repository-слоя, `RepositoryResult`, обязательный `LogRepository`, codegen-first — едины для всех областей и применяются здесь так же.
 
-> **Приватность побеждает capture (NOX).** В NOX Принцип XIII подчинён приватности: capture-not-build не оправдывает сбор PII, содержимого сообщений или метаданных, идентифицирующих переписку. Аналитика опциональна (opt-in), поведенческая и обезличенная — см. §6.
+> **Приватность — первичный гейт (NOX).** В NOX любая capture-логика подчинена Принципу I: фиксация поведенческого сигнала не оправдывает сбор PII, содержимого сообщений или метаданных, идентифицирующих переписку. Аналитика опциональна (opt-in), поведенческая и обезличенная — см. §6.
 
 **Что из этого следует для клиента:**
 
-- **Поведенческая аналитика — клиентская по природе.** Backend-строки фиксируют *состояние* (сущность создана, операция перешла в терминальный статус), но не *поведение* (где пользователь нажал, на каком шаге воронки отвалился). Принцип XIII прямо обосновывает, **зачем** клиенту нужен отдельный analytics-слой: это источник продуктовых воронок, которые admin-панель не получит из live-БД.
-- **Capture-not-build на клиенте тоже.** Каждый значимый пользовательский шаг (экран, действие в воронке, успех/ошибка длинной операции) закладывает точку трекинга **на этапе дизайна экрана/BLoC**, а не доклеивается потом. Аналитика — первоклассный компонент, а не afterthought.
+- **Поведенческая аналитика — клиентская по природе.** Серверные данные бэкенда NOX фиксируют *состояние* (сущность создана, операция перешла в терминальный статус), но не *поведение* (где пользователь нажал, на каком шаге воронки отвалился). Отсюда — **зачем** клиенту нужен отдельный analytics-слой: это источник продуктовых воронок, которые из серверного состояния не восстановить.
+- **Точки трекинга закладываются на этапе дизайна, а не доклеиваются потом.** Каждый значимый пользовательский шаг (экран, действие в воронке, успех/ошибка длинной операции) получает точку трекинга **на этапе дизайна экрана/BLoC**. Аналитика — первоклассный компонент, а не afterthought.
 - **No speculative events.** Заводим интерфейс и стартовый таксоном (§5), но **конкретный финальный список событий — продуктовое решение** (см. §5). Не плодим события «на всякий случай».
-- **Mirror-инвариант идентификатора.** Где у фичи есть и backend-строка, и клиентское событие — идентификатор пользователя должен совпадать: analytics `distinct_id` ← opaque user id бэкенда NOX (тот же контракт, что у backend `owner_id`). Это связывает поведенческую воронку с серверной строкой при кросс-анализе. (В NOX `distinct_id` — всегда opaque-идентификатор, никогда не телефон/email/имя; см. §6.)
+- **Mirror-инвариант идентификатора.** Где у фичи есть и серверная запись, и клиентское событие — идентификатор пользователя должен совпадать: analytics `distinct_id` ← opaque user id бэкенда NOX (TBD — backend/протокол NOX ещё не выбран). Это связывает поведенческую воронку с серверной записью при кросс-анализе. (В NOX `distinct_id` — всегда opaque-идентификатор, никогда не телефон/email/имя; см. §6.)
 
-> **Где именно «момент первой записи» на клиенте.** Для парных длинных операций (создание сущности и т.п.) трекинг — это `_started` в начале и `_succeeded`/`_failed` в исходе (см. §5). Это и есть «counters/magnitudes, а не только boolean» из XIII: воронка `started → succeeded/failed` даёт drop-off, который один boolean «готово/нет» не покажет.
+> **Где именно «момент первой записи» на клиенте.** Для парных длинных операций (создание сущности и т.п.) трекинг — это `_started` в начале и `_succeeded`/`_failed` в исходе (см. §5). Это даёт магнитуды/счётчики, а не один boolean: воронка `started → succeeded/failed` показывает drop-off, который «готово/нет» не покажет.
 
 ---
 
@@ -85,13 +85,13 @@ abstract interface class AnalyticsRepository {
   /// Best-effort: пустой token (dev / opt-out) => no-op success.
   Future<RepositoryResult<bool>> initialize();
 
-  /// Связывает дальнейшие события с пользователем. distinct_id == opaque user id бэкенда NOX.
+  /// Связывает события с пользователем. distinct_id == opaque user id бэкенда NOX (TBD).
   Future<RepositoryResult<bool>> identify(String userId);
 
   /// Обновляет свойства профиля пользователя (people-properties). Без PII.
   Future<RepositoryResult<bool>> setUserProperties(AnalyticsUserProperties properties);
 
-  /// Один трек-вызов. Типобезопасный — никаких строковых литералов на стороне вызова.
+  /// Один трек-вызов. Типобезопасный — без строковых литералов на стороне вызова.
   Future<RepositoryResult<bool>> trackEvent(AnalyticsEvent event);
 
   /// Глобальный opt-out: больше ничего не отправляется до opt-in.
@@ -215,7 +215,8 @@ class AnalyticsRepositoryImpl with BaseRepositoryHelper implements AnalyticsRepo
         }
         final client = await Mixpanel.init(token, trackAutomaticEvents: false);
 
-        // super-properties — клеятся ко ВСЕМ событиям автоматически.
+        // super-properties — поведенческий контекст, клеится ко ВСЕМ событиям автоматически.
+        // НЕ содержит идентичности: distinct_id ставится отдельно через identify() (ниже).
         final cfg = _appConfigRepository.config;
         client.registerSuperProperties({
           'platform': cfg.platform, // ios | android | windows | linux | macos
@@ -231,7 +232,7 @@ class AnalyticsRepositoryImpl with BaseRepositoryHelper implements AnalyticsRepo
 
   @override
   Future<RepositoryResult<bool>> identify(String userId) => execute(() async {
-        // distinct_id == opaque user id бэкенда NOX — совпадает с backend owner_id (Принцип XIII).
+        // distinct_id == opaque user id бэкенда NOX (TBD — backend/протокол не выбран).
         await _client?.identify(userId);
         return RepositoryResult.success(data: _client != null);
       });
@@ -275,7 +276,11 @@ class AnalyticsRepositoryImpl with BaseRepositoryHelper implements AnalyticsRepo
 }
 ```
 
-> **Token не хардкодится.** `analyticsProjectToken` приходит из `AppConfigRepository.config` per-флейвор (см. [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md)): public-token из `secrets/{stage,production}.enc.yaml::public.analytics.project_token`, прокидывается в bundle через `--dart-define`/флейвор-конфиг. В `dev` token — **пустая строка**, поэтому `initialize()` отдаёт `success(data: false)` и локалки событий не шлют. Это разделяет stage и prod **разными токенами** (= разные проекты у провайдера), а не env-тегом.
+> **Token не хардкодится.** `analyticsProjectToken` приходит из `AppConfigRepository.config` per-флейвор (см. [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md)): public-token из `secrets/{stage,production}.enc.yaml::public.analytics.project_token`, прокидывается в bundle через `--dart-define`/флейвор-конфиг. **Флейворов сборки два — `stage` и `prod`** (`AppFlavorType { prod, stage }`; каждый берёт токен из своего env-секрета: `secrets/stage.enc.yaml` / `secrets/production.enc.yaml` = разные проекты у провайдера). «dev» — это **не отдельный флейвор сборки**, а просто отсутствие токена (`analyticsProjectToken=''` при локальном запуске) ⇒ `initialize()` отдаёт `success(data: false)` и события не шлются. Это разделяет stage и prod **разными токенами** (= разные проекты у провайдера), а не env-тегом.
+
+> **Super-properties ≠ идентичность.** Super-properties — это **только поведенческий контекст**: `platform` / `app_version` / `build` / `environment` (категориальные поля, клеятся ко всем событиям). Идентификатор пользователя в их число **не входит** — идентичность задаётся отдельно через `identify(...)`, который выставляет `distinct_id`, зеркалящий opaque user id бэкенда NOX (mirror-инвариант §1). Это два разных механизма: контекст vs идентичность; не смешивать в `registerSuperProperties`.
+
+> **Поле `platform` — пять платформ.** В NOX `cfg.platform` принимает значения `ios | android | windows | linux | macos` (web вне области): аналитика должна различать все пять целевых платформ, включая desktop (Windows/Linux/macOS — обязательны по Constitution v1.1.0). Значение выводится из `Platform.isIOS/isAndroid/isWindows/isMacOS/isLinux`. Не сужать таксоном `platform` до `ios|android`.
 
 ### Проекты analytics-провайдера
 
@@ -298,7 +303,7 @@ class AnalyticsRepositoryImpl with BaseRepositoryHelper implements AnalyticsRepo
 **Соглашения об именовании (паттерн):**
 
 - Имена событий — `snake_case`, форма `subject_verb` (`item_create_started`); исходы — состоянием/прошедшим временем (`_succeeded` / `_failed`).
-- Парные длинные операции — `_started` → `_succeeded` / `_failed` (для воронок и drop-off): это «counters/magnitudes, а не boolean» из Принципа XIII.
+- Парные длинные операции — `_started` → `_succeeded` / `_failed` (для воронок и drop-off): магнитуды/счётчики, а не один boolean.
 - Properties — типизированные: `source` (откуда инициировано), `variant`, категориальные флаги, `duration_ms`, `error_code` для `_failed`. Только категории/магнитуды/opaque-ссылки — без PII (§6).
 - `distinct_id` = opaque user id бэкенда NOX; `identify` после login, `reset` после logout (§7).
 
@@ -319,6 +324,8 @@ class AnalyticsRepositoryImpl with BaseRepositoryHelper implements AnalyticsRepo
 
 > **Первая реальная поверхность — список чатов.** Первый реальный экран NOX — список чатов общего пространства (shared-space): это server-owned, network-only пагинируемый список (применяется network-only carve-out — без локального кеша). Его аналитика-точки (`chats_list_viewed` и т.п.) трекают только обезличенные магнитуды (диапазон количества, а не имена/идентификаторы чатов).
 
+> **Связь events ↔ deep links.** Если NOX введёт deep-link-входы (см. [13-deep-links.md](13-deep-links.md)), соответствующее событие трекается в app-bloc на ветке маршрутизации deep-link-модели — там же, где навигация по типу ссылки. Конкретный deep-link-контракт NOX — TBD-with-backend; пока это плейсхолдер.
+
 ---
 
 ## 6. Приватность: opt-in по умолчанию и запрет PII
@@ -329,7 +336,7 @@ class AnalyticsRepositoryImpl with BaseRepositoryHelper implements AnalyticsRepo
 2. **Никакого PII и никаких метаданных переписки в свойствах событий и people-properties.** В `properties` / `setUserProperties` запрещены: email, имя/фамилия, телефон, текст и содержимое сообщений, имена/названия чатов, идентификаторы чатов и собеседников, любые токены/секреты. Допустимо: opaque-ссылки на нейтральные сущности (`item_id`), категориальные поля (`source`, `variant`, `method`), магнитуды и диапазоны (`duration_ms`, `parts_count`, `count_bucket`). `distinct_id` — это opaque user id бэкенда NOX, **не** email/телефон/имя.
 3. **Глобальный opt-out.** `setTrackingEnabled(false)` → `client.optOutTracking()` — SDK перестаёт слать что-либо до `optInTracking()`. Состояние opt-in/opt-out персистится (через `AppConfigRepository`/local settings) и применяется на старте в `initialize()` до первого `track`. Точка вызова — экран приватности/настроек (toggle «Разрешить аналитику», **по умолчанию выключен**), который дёргает `AnalyticsBloc`/настройки-BLoC → `setTrackingEnabled`.
 
-> **Правило свойства.** Прежде чем добавить ключ в `properties`/people-properties, ответь: «это категория/магнитуда/opaque-ссылка — или это идентифицирует человека либо его переписку?». Второе — запрещено (в т.ч. имя чата, его участники, содержимое сообщения). Сомневаешься — не клади (capture-not-build из §1: поле добавляется только под конкретный analytics-вопрос).
+> **Правило свойства.** Прежде чем добавить ключ в `properties`/people-properties, ответь: «это категория/магнитуда/opaque-ссылка — или это идентифицирует человека либо его переписку?». Второе — запрещено (в т.ч. имя чата, его участники, содержимое сообщения). Сомневаешься — не клади (no speculative events из §1: поле добавляется только под конкретный analytics-вопрос).
 
 `super-properties` (§4) — тоже без PII: `platform` / `app_version` / `build` / `environment` категориальны и не идентифицируют пользователя.
 
@@ -343,7 +350,7 @@ Analytics — сквозной сервис; вызовы живут в presenta
 
 **(2) `identify` / `reset` — на границах auth-флоу** ([14-networking-and-auth.md](14-networking-and-auth.md)):
 
-- после **успешного login/register** → `identify(noxUserId)` + `setUserProperties(...)`. `noxUserId` — это opaque-идентификатор пользователя бэкенда NOX, тот же, что backend пишет в `owner_id` (Принцип XIII, §1);
+- после **успешного login/register** → `identify(noxUserId)` + `setUserProperties(...)`. `noxUserId` — это opaque user id пользователя бэкенда NOX (TBD — backend/протокол не выбран), тот же, что зеркалит `distinct_id` (mirror-инвариант §1);
 - после **logout** → `reset()` (разрывает связь с `distinct_id`, чтобы события следующего гостя не приклеились к предыдущему пользователю).
 
 **(3) `trackEvent` — на ключевых переходах**, из соответствующего BLoC (worked-пример на нейтральной модели `Item`):
@@ -384,8 +391,8 @@ result.match(
 - [ ] `lib/domain/model/analytics/analytics_user_properties.dart` — `@freezed` value-объект people-properties, **без PII**.
 - [ ] `lib/data/repository/analytics/analytics_repository_impl.dart` — `@LazySingleton(as: AnalyticsRepository)`, `with BaseRepositoryHelper`, методы через `execute(...)`; nullable handle SDK (пустой token ⇒ тихий no-op).
 - [ ] Token — из `AppConfigRepository.config.analyticsProjectToken` per-флейвор (НЕ хардкод); `dev` = пустая строка; stage/prod — разные токены = разные проекты у провайдера.
-- [ ] super-properties (`platform`/`app_version`/`build`/`environment`) регистрируются в `initialize()`; **без PII**.
-- [ ] `identify(noxUserId)` после login/register (`distinct_id` = opaque user id бэкенда NOX = backend `owner_id`, Принцип XIII); `reset()` после logout.
+- [ ] super-properties (`platform`/`app_version`/`build`/`environment`) регистрируются в `initialize()`; `platform` различает пять платформ (`ios|android|windows|linux|macos`); **без PII**.
+- [ ] `identify(noxUserId)` после login/register (`distinct_id` = opaque user id бэкенда NOX (TBD), Принцип I); `reset()` после logout.
 - [ ] Точки `trackEvent` заложены на этапе дизайна BLoC ключевых экранов/воронок; вызовы best-effort fire-and-forget — не блокируют переход состояния и не уводят BLoC в `Error`.
 - [ ] **opt-in по умолчанию (NOX):** трекинг выключен (`_enabled = false`), пока пользователь явно не включил; toggle на экране приватности по умолчанию off.
 - [ ] opt-out: `setTrackingEnabled(false)` → `optOutTracking()`, состояние персистится и применяется на старте; экран приватности дёргает toggle.

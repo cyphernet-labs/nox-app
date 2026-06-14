@@ -25,22 +25,32 @@
 ```
 lib/domain/
 ├── model/                       # Freezed-модели, по папке на фичу
-│   └── item/
-│       ├── item_model.dart
-│       └── item_status.dart      # мелкие enum'ы рядом с моделью
+│   ├── item/
+│   │   ├── item_model.dart
+│   │   └── item_status.dart      # мелкие enum'ы рядом с моделью
+│   └── app_config/              # рантайм-конфиг, зависящий от flavor (см. 02, 09)
+│       ├── app_config.dart       # plain-класс AppConfig({ required AppFlavorType flavor })
+│       ├── app_flavor.dart       # AppFlavor.getFlavor() из --dart-define app.flavor
+│       └── app_flavor_type.dart  # enum AppFlavorType { prod, stage }
 ├── exception/
 │   ├── base_repository_exception.dart
 │   └── repository_exception.dart
 └── repository/
-    ├── base/                     # инфраструктура: result + marker'ы + match
+    ├── base/                     # инфраструктура: result + marker'ы + match + метаданные пагинации
+    │   ├── base.dart             # barrel: re-export config + result + result_handling (удобство импорта)
+    │   ├── repository_config.dart
     │   ├── repository_result.dart
     │   ├── repository_result_handling.dart
-    │   └── repository_config.dart
+    │   └── page_metadata.dart    # PageMetadata{ total, nextPage? } (контракт — 07-pagination.md)
+    ├── log_repository.dart       # единственный канал логирования (FR-011); impl — в lib/data
+    ├── app_config/
+    │   └── app_config_repository.dart  # контракт flavor-конфига (реализация — lib/data, см. 02/09)
     └── item/                     # по одной папке на контракт
         ├── item_repository.dart
-        ├── get_item_config.dart
-        └── get_items_config.dart
+        └── get_items_config.dart # get_item_config.dart появится с кэшируемой фичей (§5.3)
 ```
+
+> **О составе дерева.** Доменный слой кроме рабочего примера `Item` несёт три кросс-слойных контракта/модели, которые задают границу домена для остальных частей: `repository/log_repository.dart` — единственный канал логирования (FR-011: голый `print`/`debugPrint` в `lib/` запрещён, всё идёт через `LogRepository`; реализация `LoggerLogRepository` — в `lib/data`, см. `02-dependency-injection.md`); `model/app_config/{app_config,app_flavor,app_flavor_type}.dart` + `repository/app_config/app_config_repository.dart` — flavor-зависимый рантайм-конфиг (`AppConfig` несёт только `flavor`; token source / apiUrl / security headers — пример/TBD, бэкенд NOX ещё не выбран; см. `02-dependency-injection.md` и `09-build-and-secrets-infra.md`); `repository/base/base.dart` — barrel-файл, реэкспортирующий `repository_config.dart` + `repository_result.dart` + `repository_result_handling.dart` ради одной строки импорта на стороне потребителя.
 
 > **Правило раскладки.** Доменный слой — **не** отдельный пакет: **один пакет, слои = папки**, направление зависимостей строго `data -> domain` (домен не знает про data); цикла `domain <-> data` быть не должно. В доменном слое **нет** `DataConverter` / `ExceptionConverter` / `JsonMappers` / кастомных `JsonConverter` / `fromJson` на доменных типах — всё это живёт в entity-слое (`04-data-layer.md`). Доменные конфиги — **по одному классу на вызов**, а не sealed-union на фичу.
 
@@ -118,7 +128,7 @@ if (result.hasData) {
 
 ## 2. `repository_result_handling.dart` — расширение `match()`
 
-`match()` превращает два возможных варианта `RepositoryResult<T>` в явные исчерпывающие ветки через `switch` по публичным вариантам. Это канонический способ потребить результат в BLoC и в любом вызывающем коде. Поскольку состояние **взаимоисключающее**, расширение **тримнутое**: только `onData` / `onError`, без `onPartial` / `onEmpty` — для двух взаимоисключающих вариантов они не имеют смысла.
+`match()` превращает два возможных варианта `RepositoryResult<T>` в явные исчерпывающие ветки через `switch` по публичным вариантам. Это канонический способ потребить результат в BLoC и в любом вызывающем коде. Поскольку состояние **взаимоисключающее**, расширение **тримнутое**: только `onData` / `onError`, без `onPartial` / `onEmpty` (они были нужны прежнему permissive-варианту и здесь не имеют смысла).
 
 `lib/domain/repository/base/repository_result_handling.dart`:
 ```dart
@@ -159,13 +169,15 @@ result.match<void>(
 );
 ```
 
+> Имена sub-state-вариантов — **bare** (`Initializing` / `Initialized` / `Error`), как в собранном коде (`05-presentation-layer.md`). Префиксные имена (`<Feature>Initializing`…) допустимы как вариант защиты от коллизий, но канон — bare.
+
 > `switch` по публичным вариантам `RepositoryResultSuccess` / `RepositoryResultError` исчерпывающий — компилятор гарантирует, что обе ветки покрыты, без `?? RepositoryException.unknown`-страховок. На error-пути `exception` всегда непусто (фабрика `RepositoryResult.error` требует его как `required`), так что в `onError(exception)` он не-nullable напрямую из деструктуризации варианта.
 
 ---
 
 ## 3. Иерархия исключений
 
-Два файла: однострочный маркер-интерфейс и enum стандартных режимов отказа. **Никаких JSON-методов на маркере** (на маркере нет `fromJson`/`toJson` — JSON-маппинг ошибок живёт в entity-слое, см. `04-data-layer.md`).
+Два файла: однострочный маркер-интерфейс и enum стандартных режимов отказа. **Никаких JSON-методов на маркере** (это сознательно убирает прежний `fromJson`/`toJson`-контракт варианта `v1` — JSON-маппинг ошибок живёт в entity-слое, см. `04-data-layer.md`).
 
 ### 3.1 `BaseRepositoryException` (маркер)
 
@@ -192,7 +204,7 @@ enum RepositoryException implements BaseRepositoryException {
 }
 ```
 
-Семантика каждого значения (data-слой маппит сюда свои `ApiException` / `DaoException` — см. `04-data-layer.md`):
+Типизированной иерархии `ApiException` / `DaoException` **нет** — это сознательное решение (подтверждено комментарием в `repository_exception.dart`). Data-слой маппит необработанные ошибки прямо в этот enum внутри `BaseRepositoryHelper.execute`: `DioException → RepositoryException.internal`, прочее → `unknown` (конкретика `DioException` — пример, транспорт NOX ещё не выбран; см. `04-data-layer.md` §5):
 
 | Значение | Смысл |
 |---|---|
@@ -246,12 +258,14 @@ enum PaymentsRepositoryException implements BaseRepositoryException {
 
 ### 4.2 Рабочий пример: `ItemRepository`
 
+Ниже — **полный** канонический контракт (cache-first watch/fetch + network-only список + CRUD); это эталон-цель блюпринта. В собранном скелете Feature-001 контракт сознательно урезан (см. примечание после кода).
+
 `lib/domain/repository/item/item_repository.dart`:
 ```dart
 import 'package:nox_app/domain/model/item/item_model.dart';
 import 'package:nox_app/domain/repository/base/page_metadata.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
-import 'package:nox_app/domain/repository/item/get_item_config.dart';
+import 'package:nox_app/domain/repository/item/get_item_config.dart'; // forward-looking — нет в коде скелета (см. §4.2)
 import 'package:nox_app/domain/repository/item/get_items_config.dart';
 
 abstract class ItemRepository {
@@ -281,7 +295,16 @@ abstract class ItemRepository {
 }
 ```
 
-> `PageMetadata` — offset-flavor (`{int? nextPage, int total}`): offset (`page` + `page_size` + `count`) — дефолтный flavor. Курсорный flavor (`CursorPaginationMetadata{String? nextCursor}`) задокументирован как альтернатива в `07-pagination.md`; конкретный контракт пагинации списка чатов фиксируется позже с бэкендом NOX (пример — бэкенд/протокол NOX ещё не выбран; заменить на реальный контракт). Сам тип `PageMetadata` объявлен в `lib/domain/repository/base/` и описан в `07-pagination.md`.
+> `PageMetadata` — offset-flavor (`{required int total, int? nextPage}`, где `nextPage` — **1-based** индекс следующей страницы, `null` на последней): offset (`page` + `page_size` + `total`/`count`) — дефолтный flavor. Курсорный flavor (`CursorPaginationMetadata{String? nextCursor}`) задокументирован как альтернатива в `07-pagination.md`; конкретный контракт пагинации списка чатов фиксируется позже с бэкендом NOX (пример — бэкенд/протокол NOX ещё не выбран; заменить на реальный контракт). Сам тип `PageMetadata` объявлен в `lib/domain/repository/base/page_metadata.dart` и описан в `07-pagination.md`.
+
+> **Сверка со скелетом (Feature-001).** Собранный `ItemRepository` — это **урезанный** verification-harness: он экспонирует **только** network-only список + `clean()`:
+> ```dart
+> abstract class ItemRepository {
+>   Future<RepositoryResult<(List<ItemModel>, PageMetadata)>> getItems({required GetItemsConfig config});
+>   Future<void> clean();
+> }
+> ```
+> Полный CRUD и cache-first `watchItem`/`fetchItem` (с `ItemDao` + `BehaviorSubject`) — это эталон-цель, который приходит с первой фичей, которой нужно кэширование (так и сказано в doc-комментарии `item_repository.dart`). Соответственно `get_item_config.dart` (см. §5.3) в коде сегодня **отсутствует** — импорт в примере выше forward-looking.
 
 ### 4.3 Пустой скелет
 
@@ -358,6 +381,8 @@ abstract class GetItemsConfig with _$GetItemsConfig implements RepositoryConfig 
 
 ### 5.3 Конфиг одиночного ресурса: `GetItemConfig`
 
+> Это эталон-шаблон для cache-first одиночного ресурса. В собранном скелете Feature-001 `get_item_config.dart` **ещё нет** (в коде только `get_items_config.dart`) — он приходит вместе с первой кэшируемой фичей (`watchItem`/`fetchItem`, см. §4.2).
+
 `lib/domain/repository/item/get_item_config.dart`:
 ```dart
 import 'package:freezed_annotation/freezed_annotation.dart';
@@ -413,27 +438,28 @@ abstract class Get<Model>Config with _$Get<Model>Config implements RepositoryCon
 
 ### 6.1 Рабочий пример: `ItemModel`
 
-`lib/domain/model/item/item_model.dart`:
+`lib/domain/model/item/item_model.dart` (форма из собранного скелета):
 ```dart
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:nox_app/domain/model/item/item_status.dart';
 
 part 'item_model.freezed.dart';
 
+/// Domain model — @freezed, no JSON (.freezed.dart only). Derived/business logic
+/// lives in extension getters, never in the @freezed body.
 @freezed
 abstract class ItemModel with _$ItemModel {
   const factory ItemModel({
     required String id,
     required String name,
-    String? description,
-    String? imageUrl,
-    @Default(ItemStatus.draft) ItemStatus status,
-    @Default(<String>[]) List<String> tags,
+    required String? description,
+    required ItemStatus status,
+    required DateTime createdAt,
   }) = _ItemModel;
 }
 
 extension ItemModelExt on ItemModel {
-  bool get isPublished => status == ItemStatus.active;
+  bool get isArchived => status == ItemStatus.archived;
 
   String get displayName => name.trim().isEmpty ? 'Untitled' : name;
 }
@@ -443,8 +469,9 @@ extension ItemModelExt on ItemModel {
 
 - `@freezed` + `with _$ItemModel` + `const factory`.
 - **Ровно одна `part`-директива** — `'item_model.freezed.dart'`. Никакого `'*.g.dart'`, никакого `fromJson`-фабричного конструктора.
-- Производная логика (`isPublished`, `displayName`) — **только** во внешнем `extension ItemModelExt on ItemModel`, **никогда** в теле `@freezed`-класса. Это держит сгенерированный класс чистым и не привязывает геттеры к Freezed-генерации.
+- Производная логика (`isArchived`, `displayName`) — **только** во внешнем `extension ItemModelExt on ItemModel`, **никогда** в теле `@freezed`-класса. Это держит сгенерированный класс чистым и не привязывает геттеры к Freezed-генерации.
 - Полные `package:`-импорты, никаких относительных `../` (кроме `part`-директив).
+- Доменная модель может нести богатые типы (`enum ItemStatus`, `DateTime createdAt`); коэрция «примитив <-> богатый тип» — в mapper'е (`04-data-layer.md`). Поля бывают `required` (в т.ч. `required String? description` — обязательный, но nullable), nullable или с `@Default(...)` — выбирайте по семантике поля; пустой скелет (§6.3) показывает все три формы.
 
 ### 6.2 Мелкие enum'ы / status-типы
 
@@ -477,7 +504,7 @@ extension <Model>ModelExt on <Model>Model {
 }
 ```
 
-> После добавления/изменения любой модели, конфига или контракта запустите `./script_auto_generate.sh` (или `dart run build_runner build --delete-conflicting-outputs`) — он перегенерирует все `*.freezed.dart` (см. `01-stack-and-tooling.md` и `12-dev-commands.md`). Никаких `*.g.dart` для доменных типов не появится — это норма.
+> После добавления/изменения любой модели, конфига или контракта запустите кодоген одним проходом — `fvm dart run build_runner build --delete-conflicting-outputs` (или `make generate`) — он перегенерирует все `*.freezed.dart` (см. `01-stack-and-tooling.md` и `12-dev-commands.md`). Никаких `*.g.dart` для доменных типов не появится — это норма.
 
 ---
 
@@ -497,7 +524,9 @@ ItemRepository                   GetItemConfig               RepositoryResult<It
               (BaseRepositoryHelper.execute + LogRepository)
 ```
 
-Доменный слой задаёт **словарь** (модели, конфиги, исключения) и **контракт** (`ItemRepository`) плюс **форму возврата** (`RepositoryResult` + `match`). Data-слой исполняет контракт (мапит entity -> model, маппит `ApiException`/`DaoException` -> `RepositoryException`, логирует через обязательный `LogRepository`). Presentation-слой потребляет результат через `match()` / `hasData`.
+Доменный слой задаёт **словарь** (модели, конфиги, исключения) и **контракт** (`ItemRepository`) плюс **форму возврата** (`RepositoryResult` + `match`). Data-слой исполняет контракт (мапит entity -> model, маппит необработанные ошибки -> `RepositoryException` (пример: `DioException → internal`, прочее → `unknown`; транспорт NOX ещё не выбран) внутри `BaseRepositoryHelper.execute`, логирует через обязательный `LogRepository`). Presentation-слой потребляет результат через `match()` / `hasData`.
+
+> Диаграмма выше показывает **полный** контракт `ItemRepository` (эталон-цель). В собранном скелете Feature-001 присутствуют только `getItems(GetItemsConfig)` + `clean()` (network-only carve-out); `watchItem`/`fetchItem`/CRUD и `GetItemConfig` приходят с первой кэшируемой фичей — см. §4.2.
 
 ---
 
@@ -512,7 +541,11 @@ ItemRepository                   GetItemConfig               RepositoryResult<It
 - [ ] `lib/domain/repository/base/repository_config.dart` — маркер `abstract class RepositoryConfig {}`.
 - [ ] Нигде в коде нет прямого `result.data!` — весь доступ через `match()` или guard по `hasData`.
 - [ ] Хотя бы один контракт `<Feature>Repository`, где каждое чтение/запись возвращает `RepositoryResult` / `Stream<RepositoryResult>`; watchable-ресурсы имеют пару `watchXxx()`/`fetchXxx()`; серверный пагинированный список — network-only (`getItems`, без `watch`-пары); записи — `createXxx`/`updateXxx`/`deleteXxx` (delete → `RepositoryResult<void>`); есть `clean()` → `Future<void>`.
-- [ ] По одному `@freezed`-конфигу **на вызов** (`GetItemConfig`, `GetItemsConfig`), реализующему `RepositoryConfig`. У пагинированного `GetItemsConfig` — поля `{page, search?}`, фабрики `firstPage`/`nextPage` + константы `pageSize`/`defaultPage`, **без** `cacheOnly`. У одиночного `GetItemConfig` — tri-state `cacheOnly`. **Только `.freezed.dart`**.
-- [ ] Хотя бы одна `@freezed`-модель (`ItemModel`) с одной `part '*.freezed.dart'`-директивой, **без** `fromJson`/`.g.dart`; производная логика — во внешнем `extension <Model>ModelExt`; мелкие enum'ы — в отдельном `*_status.dart` рядом.
+- [ ] По одному `@freezed`-конфигу **на вызов**, реализующему `RepositoryConfig`. У пагинированного `GetItemsConfig` — поля `{page, search?}`, фабрики `firstPage`/`nextPage` + константы `pageSize = 20` / `defaultPage = 1`, **без** `cacheOnly`. У одиночного `GetItemConfig` (эталон-шаблон; в скелете ещё нет) — tri-state `cacheOnly`. **Только `.freezed.dart`**.
+- [ ] `lib/domain/repository/base/page_metadata.dart` — `@freezed PageMetadata{ required int total, int? nextPage }` (`nextPage` — 1-based, `null` на последней странице); полный контракт — `07-pagination.md`.
+- [ ] `lib/domain/repository/base/base.dart` — barrel, реэкспортирующий `repository_config.dart` + `repository_result.dart` + `repository_result_handling.dart`.
+- [ ] `lib/domain/repository/log_repository.dart` — абстрактный `LogRepository` (`debug({Object? target, required String message})` / `error({Object? target, required Object error, StackTrace? stackTrace})`), единственный канал логирования (FR-011; реализация — `lib/data`, см. `02-dependency-injection.md`).
+- [ ] `lib/domain/model/app_config/{app_config,app_flavor,app_flavor_type}.dart` + `lib/domain/repository/app_config/app_config_repository.dart` — flavor-зависимый рантайм-конфиг (`AppConfig({ required AppFlavorType flavor })`, `enum AppFlavorType { prod, stage }`; token source/apiUrl/security headers — пример/TBD; см. `02`/`09`).
+- [ ] Хотя бы одна `@freezed`-модель (`ItemModel`) с одной `part '*.freezed.dart'`-директивой, **без** `fromJson`/`.g.dart`; производная логика — во внешнем `extension <Model>ModelExt` (для `ItemModel` — `isArchived` / `displayName`); мелкие enum'ы — в отдельном `*_status.dart` рядом.
 - [ ] Доменный слой **ничего** не импортирует из `lib/data` / `lib/presentation`; импорты — полные `package:nox_app/...`, без относительных `../` (кроме `part`).
-- [ ] `./script_auto_generate.sh` перегенерирует все `*.freezed.dart` без ошибок; `dart analyze` по доменному слою чист.
+- [ ] `fvm dart run build_runner build --delete-conflicting-outputs` (или `make generate`) перегенерирует все `*.freezed.dart` без ошибок; `fvm flutter analyze` по доменному слою чист.
