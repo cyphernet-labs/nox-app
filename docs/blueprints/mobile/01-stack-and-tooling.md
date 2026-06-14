@@ -88,7 +88,9 @@ dependencies:
   # --- Local store ---
   shared_preferences: ^2.5.5       # простой key/value (флаги, themeMode)
   # flutter_secure_storage: шифрованное хранилище (refresh-токен); кросс-платформен — macOS Keychain /
-  # Windows DPAPI / Linux libsecret (рантайм libsecret-1-0 — Linux packaging concern, FUTURE; см. 14 secure-storage-нота).
+  # Windows DPAPI / Linux libsecret. ВАЖНО: на Linux это и BUILD-TIME зависимость — flutter_secure_storage_linux
+  # требует dev-пакеты libsecret-1-dev + libjsoncpp-dev (CMake pkg_check_modules), поэтому CI compile-linux ставит
+  # их (см. 09); рантайм libsecret-1-0 — packaging concern (FUTURE; см. 14 secure-storage-нота).
   flutter_secure_storage: ^10.3.1
   # sembast: документная NoSQL (schema-less) для cache-first репозиториев — OQ-1 закрыт: Sembast,
   # бэкенд databaseFactoryIo на mobile/desktop (web — вне scope).
