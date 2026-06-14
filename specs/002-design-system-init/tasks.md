@@ -59,13 +59,13 @@
 
 ### Tests (US2)
 
-- [ ] T014 [P] [US2] Тест: `context.appColors` отдаёт полный набор доп-ролей (не skeleton), значения из токенов — `test/design/app_colors_test.dart`.
+- [x] T014 [P] [US2] Тест: `context.appColors` отдаёт полный набор доп-ролей (не skeleton), значения из токенов — `test/design/app_colors_test.dart`.
 
 ### Implementation (US2)
 
-- [ ] T015 [US2] Развернуть `AppColors` ThemeExtension в `lib/design/theme/app_colors.dart` до полного token-driven набора (timestamp@70%, `dividerSubtle`, `surfaceMuted`, disabled @12%/@38%, `dragHandle`@40%, scanner-роли и др. по research §D); убрать ad-hoc литералы (data-model §2, FR-007).
-- [ ] T016 [P] [US2] Завести `NoxComponentTokens` (`lib/design/theme/nox_component_tokens.dart`) — brand-fixed §9.9/§9.10 (QR scanner mask@55%/reticle/instruction, QR surface/ink) (data-model §9, FR-009 NEW).
-- [ ] T017 [US2] Сконфигурировать component-сабтемы `ThemeData` в `lib/design/theme/app_theme.dart` из токенов/§9 (`CardTheme`/`FilledButtonTheme`/`TextButtonTheme`/`AppBarTheme`/`SnackBarTheme`/`DialogTheme`/`NavigationBarTheme`/`NavigationRailTheme`/`SegmentedButtonTheme`/`SwitchTheme`/`SearchBarTheme` и др.; референс — handoff `nox_theme.dart`) (data-model §8, FR-008). Зависит от: T011, T015, T016.
+- [x] T015 [US2] Развернуть `AppColors` ThemeExtension в `lib/design/theme/app_colors.dart` до полного token-driven набора (timestamp@70%, `dividerSubtle`, `surfaceMuted`, disabled @12%/@38%, `dragHandle`@40%, scanner-роли и др. по research §D); убрать ad-hoc литералы (data-model §2, FR-007).
+- [x] T016 [P] [US2] Завести `NoxComponentTokens` (`lib/design/theme/nox_component_tokens.dart`) — brand-fixed §9.9/§9.10 (QR scanner mask@55%/reticle/instruction, QR surface/ink) (data-model §9, FR-009 NEW).
+- [x] T017 [US2] Сконфигурировать component-сабтемы `ThemeData` в `lib/design/theme/app_theme.dart` из токенов/§9 (`CardTheme`/`FilledButtonTheme`/`TextButtonTheme`/`AppBarTheme`/`SnackBarTheme`/`DialogTheme`/`NavigationBarTheme`/`NavigationRailTheme`/`SegmentedButtonTheme`/`SwitchTheme`/`SearchBarTheme` и др.; референс — handoff `nox_theme.dart`) (data-model §8, FR-008). Зависит от: T011, T015, T016.
 
 **Контрольная точка US2**: вся темизация (примитивы + семантика + сабтемы) завершена; виджеты не написаны, но стиль готов к наследованию.
 
