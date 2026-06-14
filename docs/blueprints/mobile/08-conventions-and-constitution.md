@@ -367,17 +367,18 @@ abstract final class FeatureFlags {
   - `test/data/mapper/item/item_mapper_test.dart`
   - `test/data/local/item/item_dao_test.dart`
   - `test/presentation/pages/item_list_page/item_list_bloc_test.dart`
-- Глобальный сетап — `test/flutter_test_config.dart` → `TestsUtils.initializeMock()` → `configureDependencies(Environment.test)`.
+- Бутстрап DI — **инлайн в каждом тест-файле**: `await configureDependencies(Environment.test)` в `setUp`/`setUpAll` + `await getIt.reset()` в `tearDown` (так устроены шипнутые тесты скелета). Отдельного авто-хука `test/flutter_test_config.dart` в скелете **нет**; при росте числа тестов его можно ввести как опциональную глобальную обёртку, но это не текущее состояние.
 - Мокинг — Mockito; bloc-тесты — `bloc_test`; интеграционные — `integration_test`.
 - DI-окружение `Environment.test` подключает in-memory `AppDatabaseTest`.
 
 ```dart
-// test/flutter_test_config.dart
-Future<void> testExecutable(FutureOr<void> Function() testMain) async {
-  TestWidgetsFlutterBinding.ensureInitialized();
-  await TestsUtils.initializeMock(); // → configureDependencies(Environment.test)
-  await testMain();
-}
+// per-test DI bootstrap (как в шипнутых тестах скелета)
+setUp(() async {
+  await configureDependencies(Environment.test); // Environment.test → in-memory AppDatabaseTest
+});
+tearDown(() async {
+  await getIt.reset();
+});
 ```
 
 Базовые шаблоны для копирования первой фичи: тест маппера + тест request-builder + bloc-тест.
