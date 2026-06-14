@@ -12,10 +12,10 @@
 
 ## Phase 1: Setup (общая инфраструктура)
 
-- [ ] T001 Добавить зависимость `material_symbols_icons` в `pubspec.yaml` (раздел `dependencies`) — иконочный набор Material Symbols Rounded (research §A).
-- [ ] T002 Положить файлы шрифта `Roboto Mono` в `assets/fonts/` и объявить блок `flutter.fonts:` (family `Roboto Mono`) в `pubspec.yaml`; подтвердить декларацию `assets/fonts/` (research §B, FR-010, SC-005). Зависит от: —.
-- [ ] T003 Выполнить `fvm flutter pub get` (подтянуть `material_symbols_icons` + шрифты). Зависит от: T001, T002.
-- [ ] T004 Прогнать кодоген `fvm dart run build_runner build --delete-conflicting-outputs` — `flutter_gen` подхватывает шрифты/ассеты в `lib/design/gen/assets.gen.dart`. Зависит от: T003.
+- [x] T001 Добавить зависимость `material_symbols_icons` в `pubspec.yaml` (раздел `dependencies`) — иконочный набор Material Symbols Rounded (research §A).
+- [x] T002 Положить файлы шрифта `Roboto Mono` в `assets/fonts/` и объявить блок `flutter.fonts:` (family `Roboto Mono`) в `pubspec.yaml`; подтвердить декларацию `assets/fonts/` (research §B, FR-010, SC-005). Зависит от: —.
+- [x] T003 Выполнить `fvm flutter pub get` (подтянуть `material_symbols_icons` + шрифты). Зависит от: T001, T002.
+- [x] T004 Прогнать кодоген `fvm dart run build_runner build --delete-conflicting-outputs` — `flutter_gen` подхватывает шрифты/ассеты в `lib/design/gen/assets.gen.dart`. Зависит от: T003.
 
 ---
 

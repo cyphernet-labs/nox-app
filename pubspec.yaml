@@ -53,6 +53,7 @@ dependencies:
   # --- Misc ---
   logger: ^2.7.0
   package_info_plus: ^10.1.0
+  material_symbols_icons: ^4.2928.1
 
   # --- Feature-gated (mobile-only / activated with the corresponding blueprint doc) ---
   # firebase_core / firebase_messaging — push (mobile-only; desktop = disabled no-op)
@@ -80,6 +81,11 @@ flutter:
     - assets/png/
     - assets/svg/
     - assets/animation/
+  # Sans — platform-native (not bundled); bundle only mono (Roboto Mono, OFL) for the Your ID slot.
+  fonts:
+    - family: Roboto Mono
+      fonts:
+        - asset: assets/fonts/RobotoMono.ttf
 
 flutter_gen:
   output: lib/design/gen/
