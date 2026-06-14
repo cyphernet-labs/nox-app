@@ -14,16 +14,20 @@ class DateFormatter {
 
   static String time(DateTime date) => _time.format(date);
 
+  /// Calendar-day difference (DST-safe): UTC midnights are exactly 24h apart, so
+  /// this is not skewed by spring-forward/fall-back like a local-time `Duration`.
+  static int _calendarDaysAgo(DateTime now, DateTime date) =>
+      DateTime.utc(now.year, now.month, now.day).difference(DateTime.utc(date.year, date.month, date.day)).inDays;
+
   /// Chat-list relative timestamp (overview §«Форматы времени и даты», 5.1):
-  /// `now` / `N min` / `N h` / `Yesterday` / `12 May` / `12 May 2025` (past years).
+  /// `now` / `N min` / `N h` (relative, <24h) / `Yesterday` / `12 May` / `12 May 2025`.
   static String chatListTimestamp(DateTime date, {DateTime? now}) {
     final n = now ?? DateTime.now();
     final diff = n.difference(date);
     if (diff.inMinutes < 1) return 'now';
     if (diff.inMinutes < 60) return '${diff.inMinutes} min';
-    if (diff.inHours < 24 && n.day == date.day) return '${diff.inHours} h';
-    final yesterday = DateTime(n.year, n.month, n.day).subtract(const Duration(days: 1));
-    if (date.year == yesterday.year && date.month == yesterday.month && date.day == yesterday.day) return 'Yesterday';
+    if (diff.inHours < 24) return '${diff.inHours} h'; // relative hours, regardless of calendar day
+    if (_calendarDaysAgo(n, date) == 1) return 'Yesterday';
     return date.year == n.year ? _dMonth.format(date) : _dMonthYear.format(date);
   }
 
@@ -31,9 +35,7 @@ class DateFormatter {
   /// `Today` / `Yesterday` / weekday (within a week) / `12 May` / `12 May 2025`.
   static String daySeparator(DateTime date, {DateTime? now}) {
     final n = now ?? DateTime.now();
-    final today = DateTime(n.year, n.month, n.day);
-    final day = DateTime(date.year, date.month, date.day);
-    final deltaDays = today.difference(day).inDays;
+    final deltaDays = _calendarDaysAgo(n, date);
     if (deltaDays == 0) return 'Today';
     if (deltaDays == 1) return 'Yesterday';
     if (deltaDays > 1 && deltaDays < 7) return _weekday.format(date);

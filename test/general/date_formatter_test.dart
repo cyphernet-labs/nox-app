@@ -11,6 +11,10 @@ void main() {
       expect(DateFormatter.chatListTimestamp(now.subtract(const Duration(minutes: 5)), now: now), '5 min');
       expect(DateFormatter.chatListTimestamp(now.subtract(const Duration(hours: 2)), now: now), '2 h');
     });
+    test('sub-24h relative hours hold across midnight (regression)', () {
+      // 1.5h ago but previous calendar day -> "1 h", NOT "Yesterday".
+      expect(DateFormatter.chatListTimestamp(DateTime(2025, 5, 11, 23, 30), now: DateTime(2025, 5, 12, 1, 0)), '1 h');
+    });
     test('yesterday / this-year date / past-year date', () {
       expect(DateFormatter.chatListTimestamp(DateTime(2025, 5, 11, 9), now: now), 'Yesterday');
       expect(DateFormatter.chatListTimestamp(DateTime(2025, 3, 3, 9), now: now), '3 Mar');

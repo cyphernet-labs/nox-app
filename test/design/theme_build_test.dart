@@ -14,8 +14,8 @@ void main() {
       expect(theme.colorScheme.brightness, Brightness.light);
       expect(theme.textTheme.bodyMedium, isNotNull);
       expect(theme.extension<AppColors>(), isNotNull);
-      // Full M3 tiered scheme (not a minimal one): a tier role is present.
-      expect(theme.colorScheme.surfaceContainerHighest, isNotNull);
+      // Full M3 tiered scheme (not a minimal one): the tier role is distinct from surface.
+      expect(theme.colorScheme.surfaceContainerHighest, isNot(theme.colorScheme.surface));
     });
 
     test('dark', () {

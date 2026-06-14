@@ -17,9 +17,13 @@ import 'package:nox_app/design/theme/nox_tokens.dart';
 class AppTheme {
   const AppTheme._();
 
-  static ThemeData light() => _build(noxLightScheme);
+  static ThemeData? _light;
+  static ThemeData? _dark;
 
-  static ThemeData dark() => _build(noxDarkScheme);
+  /// Cached: both schemes are compile-time-constant, so each ThemeData is built once.
+  static ThemeData light() => _light ??= _build(noxLightScheme);
+
+  static ThemeData dark() => _dark ??= _build(noxDarkScheme);
 
   static ThemeData _build(ColorScheme cs) {
     return ThemeData(
