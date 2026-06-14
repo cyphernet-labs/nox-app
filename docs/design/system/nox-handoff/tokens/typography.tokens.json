@@ -1,5 +1,5 @@
 {
-  "$description": "NOX · M3 type scale. Family: Roboto (sans) / Roboto Mono (mono, ID only). lineHeight is the unitless ratio (M3 lineHeightPx ÷ fontSize) so it maps directly to Flutter TextStyle.height. letterSpacing in logical px.",
+  "$description": "NOX · M3 type scale. Family: platform-native sans (Roboto on Android / SF on Apple / system elsewhere) / bundled Roboto Mono (mono, ID only). lineHeight is the unitless ratio (M3 lineHeightPx ÷ fontSize) so it maps directly to Flutter TextStyle.height. letterSpacing in logical px.",
   "font": {
     "family": {
       "sans": {

@@ -1,10 +1,12 @@
 // GENERATED — NOX M3 type scale → Flutter TextTheme.
 // Source: tokens/typography.tokens.json. height = lineHeightPx / fontSize.
-// Bundle Roboto + Roboto Mono (or rely on the platform default) in pubspec.yaml.
+// Sans = platform-native (DTCG sans stack ["Roboto","system-ui","sans-serif"] ->
+// Flutter platform default: Roboto on Android, SF on Apple, system elsewhere).
+// Mono = bundled Roboto Mono (pubspec fonts:), so 'Roboto Mono' resolves on all 5 targets.
 import 'package:flutter/material.dart';
 
-const String _sans = 'Roboto';
-const String noxMonoFamily = 'Roboto Mono'; // ID string only (7.1)
+const String? _sans = null; // platform-native sans (see header); null => Flutter platform default
+const String noxMonoFamily = 'Roboto Mono'; // ID string only (7.1); bundled via pubspec fonts:
 
 const TextTheme noxTextTheme = TextTheme(
   displaySmall: TextStyle(fontFamily: _sans, fontSize: 36, height: 1.222, fontWeight: FontWeight.w400, letterSpacing: 0), // 36/44
@@ -17,3 +19,7 @@ const TextTheme noxTextTheme = TextTheme(
   labelMedium: TextStyle(fontFamily: _sans, fontSize: 12, height: 1.333, fontWeight: FontWeight.w500, letterSpacing: 0.5), // 12/16
   labelSmall: TextStyle(fontFamily: _sans, fontSize: 11, height: 1.455, fontWeight: FontWeight.w500, letterSpacing: 0.5), // 11/16
 );
+
+// Wordmark «NOX» — design-system.md §1/§3: titleLarge base, weight 700,
+// letter-spacing +0.12em (= 2.64px @ 22). Brand surfaces (splash/AppBar wordmark).
+const TextStyle noxWordmark = TextStyle(fontFamily: _sans, fontSize: 22, height: 1.273, fontWeight: FontWeight.w700, letterSpacing: 2.64);

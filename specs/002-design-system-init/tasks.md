@@ -21,8 +21,8 @@
 
 ## Phase 2: Foundational (блокирующие предпосылки — ДО user stories)
 
-- [ ] T005 Сверить сгенерированный слой `lib/design/theme/nox_*.dart` (`nox_color_scheme`/`nox_text_theme`/`nox_tokens`/`nox_brand`) с `docs/design/system/nox-handoff/tokens/*.tokens.json`; зафиксировать правило регенерации (руками не править, регенерировать из токенов) комментарием-баннером в файлах (research §G/§H, data-model §0). **Блокирует все US.**
-- [ ] T006 [P] Подтвердить wiring `flutter_screenutil` (`Constants.designSize`, `ScreenUtilInit`) в `lib/general/constants.dart` как фундамент токенов spacing/typography (data-model §6). **Блокирует US1/US3 spacing-токены.**
+- [x] T005 Сверить сгенерированный слой `lib/design/theme/nox_*.dart` (`nox_color_scheme`/`nox_text_theme`/`nox_tokens`/`nox_brand`) с `docs/design/system/nox-handoff/tokens/*.tokens.json`; зафиксировать правило регенерации (руками не править, регенерировать из токенов) комментарием-баннером в файлах (research §G/§H, data-model §0). **Блокирует все US.**
+- [x] T006 [P] Подтвердить wiring `flutter_screenutil` (`Constants.designSize`, `ScreenUtilInit`) в `lib/general/constants.dart` как фундамент токенов spacing/typography (data-model §6). **Блокирует US1/US3 spacing-токены.**
 
 **Контрольная точка**: токен-точный генерируемый слой + screenutil подтверждены — можно начинать user stories.
 
@@ -36,16 +36,16 @@
 
 ### Tests (US1)
 
-- [ ] T007 [P] [US1] Тест сборки темы: `AppTheme.light()`/`AppTheme.dark()` собираются, все M3-роли `ColorScheme` не-null (SC-002) — `test/design/theme_build_test.dart`.
-- [ ] T008 [P] [US1] Тест верности токенам: значения `noxLightScheme`/`noxDarkScheme` совпадают с `color.{light,dark}.tokens.json` (нулевой дрейф; FR-001, SC-003) — `test/design/color_scheme_tokens_test.dart`.
+- [x] T007 [P] [US1] Тест сборки темы: `AppTheme.light()`/`AppTheme.dark()` собираются, все M3-роли `ColorScheme` не-null (SC-002) — `test/design/theme_build_test.dart`.
+- [x] T008 [P] [US1] Тест верности токенам: значения `noxLightScheme`/`noxDarkScheme` совпадают с `color.{light,dark}.tokens.json` (нулевой дрейф; FR-001, SC-003) — `test/design/color_scheme_tokens_test.dart`.
 
 ### Implementation (US1)
 
-- [ ] T009 [US1] Политика шрифтов в `lib/design/theme/nox_text_theme.dart`: sans — платформенно-нативный (убрать хардкод `fontFamily: 'Roboto'`); mono = бандленный `Roboto Mono` (`noxMonoFamily`) (research §B, data-model §3, FR-002, FR-010). Зависит от: T002.
-- [ ] T010 [US1] Добавить wordmark-стиль «NOX» (база `titleLarge`, weight 700, letter-spacing +0.12em) в `lib/design/theme/nox_text_theme.dart` (data-model §3, FR-005). Зависит от: T009 (тот же файл).
-- [ ] T011 [US1] Собрать/уточнить `AppTheme.light()/dark()` (примитивы) в `lib/design/theme/app_theme.dart`: `colorScheme` + `textTheme` + готовность `themeMode` (data-model §8, FR-006). Зависит от: T009, T010.
-- [ ] T012 [P] [US1] Сверить токен-классы `lib/design/theme/nox_tokens.dart` (`NoxSpacing`/`NoxRadius`(+bubble)/`NoxElevation`/`NoxDuration`/`NoxEasing`) с `{spacing,shape,elevation,motion}.tokens.json` (data-model §5, FR-003).
-- [ ] T013 [P] [US1] Сверить `NoxBrand` (бренд-фиксы splash/QR + бренд-палитра) в `lib/design/theme/nox_brand.dart` с `brand.tokens.json` (data-model §7, FR-004).
+- [x] T009 [US1] Политика шрифтов в `lib/design/theme/nox_text_theme.dart`: sans — платформенно-нативный (убрать хардкод `fontFamily: 'Roboto'`); mono = бандленный `Roboto Mono` (`noxMonoFamily`) (research §B, data-model §3, FR-002, FR-010). Зависит от: T002.
+- [x] T010 [US1] Добавить wordmark-стиль «NOX» (база `titleLarge`, weight 700, letter-spacing +0.12em) в `lib/design/theme/nox_text_theme.dart` (data-model §3, FR-005). Зависит от: T009 (тот же файл).
+- [x] T011 [US1] Собрать/уточнить `AppTheme.light()/dark()` (примитивы) в `lib/design/theme/app_theme.dart`: `colorScheme` + `textTheme` + готовность `themeMode` (data-model §8, FR-006). Зависит от: T009, T010.
+- [x] T012 [P] [US1] Сверить токен-классы `lib/design/theme/nox_tokens.dart` (`NoxSpacing`/`NoxRadius`(+bubble)/`NoxElevation`/`NoxDuration`/`NoxEasing`) с `{spacing,shape,elevation,motion}.tokens.json` (data-model §5, FR-003).
+- [x] T013 [P] [US1] Сверить `NoxBrand` (бренд-фиксы splash/QR + бренд-палитра) в `lib/design/theme/nox_brand.dart` с `brand.tokens.json` (data-model §7, FR-004).
 
 **Контрольная точка US1**: тема light/dark из токенов, шрифты и wordmark на месте — MVP дизайн-фундамента готов и независимо тестируем.
 
