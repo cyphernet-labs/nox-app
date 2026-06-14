@@ -79,18 +79,18 @@
 
 ### Tests (US3)
 
-- [ ] T018 [P] [US3] Тест: карта «тип файла → IconData» покрывает §8-набор + дефолт для неизвестного типа — `test/design/file_type_icon_test.dart`.
-- [ ] T019 [P] [US3] Тест: лестницы `DateFormatter` (relative + day-separator) дают форматы из `overview.md`/`design-system.md` — `test/general/date_formatter_test.dart`.
-- [ ] T020 [P] [US3] Тест: детерминизм аватара (палитра/хеш/инициалы/`forum`-fallback) против `design-system.md` §2.5 — `test/design/avatar_test.dart`.
+- [x] T018 [P] [US3] Тест: карта «тип файла → IconData» покрывает §8-набор + дефолт для неизвестного типа — `test/design/file_type_icon_test.dart`.
+- [x] T019 [P] [US3] Тест: лестницы `DateFormatter` (relative + day-separator) дают форматы из `overview.md`/`design-system.md` — `test/general/date_formatter_test.dart`.
+- [x] T020 [P] [US3] Тест: детерминизм аватара (палитра/хеш/инициалы/`forum`-fallback) против `design-system.md` §2.5 — `test/design/avatar_test.dart`.
 
 ### Implementation (US3)
 
-- [ ] T021 [P] [US3] Завести реестр `NoxIcons` + карту «тип файла → IconData» (с дефолтом) на `material_symbols_icons` в `lib/design/nox_icons.dart` (data-model §10, FR-011). Зависит от: T003.
-- [ ] T022 [P] [US3] Дополнить `lib/general/formatters/date_formatter.dart` лестницами относительного времени (список чатов) и разделителя дня (ленты) (data-model §14, FR-012).
-- [ ] T023 [P] [US3] Добавить сетевые/offline microcopy-строки (EN) в `lib/general/text_constants.dart` (включая «pull to refresh» для списка чатов) (data-model §15, FR-013).
-- [ ] T024 [P] [US3] Asset-реестр через `flutter_gen` (`lib/design/gen/assets.gen.dart`) + Material-icon fallback для непоставленных иллюстраций/лого (data-model §11, FR-015). Зависит от: T004.
-- [ ] T025 [P] [US3] Глобальное применение overlay-канона (`SystemChrome.setSystemUIOverlayStyle` по `Brightness`) + сверка `lib/design/app_overlay_style_tokens.dart` (data-model §12, FR-016; тонкий глобальный hook в `AppRoot`, не виджет).
-- [ ] T026 [P] [US3] Сверить фундамент генерируемого аватара (`noxAvatarPalette`/`noxAvatarIndex`/`noxAvatarColor`/`noxInitials`) в `lib/design/theme/nox_brand.dart` с §2.5 (data-model §7, FR-014).
+- [x] T021 [P] [US3] Завести реестр `NoxIcons` + карту «тип файла → IconData» (с дефолтом) на `material_symbols_icons` в `lib/design/nox_icons.dart` (data-model §10, FR-011). Зависит от: T003.
+- [x] T022 [P] [US3] Дополнить `lib/general/formatters/date_formatter.dart` лестницами относительного времени (список чатов) и разделителя дня (ленты) (data-model §14, FR-012).
+- [x] T023 [P] [US3] Добавить сетевые/offline microcopy-строки (EN) в `lib/general/text_constants.dart` (включая «pull to refresh» для списка чатов) (data-model §15, FR-013).
+- [x] T024 [P] [US3] Asset-реестр через `flutter_gen` (`lib/design/gen/assets.gen.dart`) + Material-icon fallback для непоставленных иллюстраций/лого (data-model §11, FR-015). Зависит от: T004.
+- [x] T025 [P] [US3] Глобальное применение overlay-канона (`SystemChrome.setSystemUIOverlayStyle` по `Brightness`) + сверка `lib/design/app_overlay_style_tokens.dart` (data-model §12, FR-016; тонкий глобальный hook в `AppRoot`, не виджет).
+- [x] T026 [P] [US3] Сверить фундамент генерируемого аватара (`noxAvatarPalette`/`noxAvatarIndex`/`noxAvatarColor`/`noxInitials`) в `lib/design/theme/nox_brand.dart` с §2.5 (data-model §7, FR-014).
 
 **Контрольная точка US3**: иконки/форматтеры/microcopy/аватары/ассеты/overlay — все сквозные фундаменты на месте.
 

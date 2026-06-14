@@ -14,4 +14,11 @@ abstract final class TextConstants {
   static const String actionTryAgain = 'Try again';
   static const String noData = 'Nothing here yet';
   static const String comingSoon = 'Coming soon';
+
+  // Network / connectivity copy (overview §«Сетевые ошибки — копирайт»).
+  // Canonical pattern: "Could not <verb>. Check your connection and try again."
+  // (the word is "connection", never "internet").
+  static const String errorGeneralMessage = 'Could not complete your request. Check your connection and try again.';
+  static const String errorLoadChats = 'Could not load chats. Pull to refresh.'; // 5.1 exception
+  static const String noConnection = 'No connection'; // persistent MaterialBanner while offline
 }

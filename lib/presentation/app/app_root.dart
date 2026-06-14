@@ -1,7 +1,9 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:nox_app/design/app_overlay_style_tokens.dart';
 import 'package:nox_app/design/theme/app_theme.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/text_constants.dart';
@@ -57,10 +59,22 @@ class _AppRootState extends State<AppRoot> {
                   ),
                   // Inner MediaQuery re-pins TextScaler inside MaterialApp's subtree so the
                   // OS font scale cannot leak back into AppBar/Scaffold/etc (blueprint 06 §3.2).
-                  builder: (context, child) => MediaQuery(
-                    data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(1.0)),
-                    child: child ?? const SizedBox.shrink(),
-                  ),
+                  builder: (context, child) {
+                    // Global system-overlay canon (§6.1): status-bar style follows the
+                    // effective theme brightness. Thin global hook, not a widget.
+                    final overlay = Theme.of(context).brightness == Brightness.dark
+                        ? AppOverlayStyleTokens.dark
+                        : AppOverlayStyleTokens.light;
+                    return AnnotatedRegion<SystemUiOverlayStyle>(
+                      value: overlay,
+                      // Inner MediaQuery re-pins TextScaler inside MaterialApp's subtree so the
+                      // OS font scale cannot leak back into AppBar/Scaffold/etc (blueprint 06 §3.2).
+                      child: MediaQuery(
+                        data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(1.0)),
+                        child: child ?? const SizedBox.shrink(),
+                      ),
+                    );
+                  },
                   home: const AppShell(),
                 );
               },
