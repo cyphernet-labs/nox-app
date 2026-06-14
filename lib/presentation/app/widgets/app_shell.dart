@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/pages/item_list_page/item_list_page.dart';
@@ -80,7 +81,7 @@ class _AppShellState extends State<AppShell> {
           mainAxisAlignment: MainAxisAlignment.spaceAround,
           children: [
             _BarItem(destination: _destinations[0], selected: _index == 0, onTap: () => _onSelect(0)),
-            const SizedBox(width: 48), // notch gap for the docked FAB
+            const SizedBox(width: NoxSpacing.minTapTarget), // notch gap for the docked FAB
             _BarItem(destination: _destinations[1], selected: _index == 1, onTap: () => _onSelect(1)),
           ],
         ),

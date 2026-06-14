@@ -1,6 +1,7 @@
 import 'package:flutter/services.dart';
 
-/// System UI overlay (status/nav bar) styles per brightness.
+/// System UI overlay (status bar) styles per brightness. Nav-bar fields are
+/// intentionally omitted (Android-only; NOX targets five platforms).
 abstract final class AppOverlayStyleTokens {
   const AppOverlayStyleTokens._();
 
