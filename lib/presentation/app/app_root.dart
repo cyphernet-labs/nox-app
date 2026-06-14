@@ -57,8 +57,6 @@ class _AppRootState extends State<AppRoot> {
                   scrollBehavior: const MaterialScrollBehavior().copyWith(
                     dragDevices: {PointerDeviceKind.mouse, PointerDeviceKind.touch, PointerDeviceKind.trackpad, PointerDeviceKind.stylus},
                   ),
-                  // Inner MediaQuery re-pins TextScaler inside MaterialApp's subtree so the
-                  // OS font scale cannot leak back into AppBar/Scaffold/etc (blueprint 06 §3.2).
                   builder: (context, child) {
                     // Global system-overlay canon (§6.1): status-bar style follows the
                     // effective theme brightness. Thin global hook, not a widget.

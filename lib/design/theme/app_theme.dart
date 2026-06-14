@@ -1,4 +1,3 @@
-import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 import 'package:flutter/material.dart';
 import 'package:nox_app/design/theme/app_colors.dart';
 import 'package:nox_app/design/theme/nox_color_scheme.dart';
@@ -37,6 +36,7 @@ class AppTheme {
       appBarTheme: AppBarTheme(
         backgroundColor: cs.surface,
         foregroundColor: cs.onSurface,
+        surfaceTintColor: Colors.transparent, // flat surface: no teal tonal tint on scroll (§9.11)
         elevation: NoxElevation.level0,
         scrolledUnderElevation: NoxElevation.level2,
         centerTitle: false,
@@ -151,10 +151,9 @@ class AppTheme {
 
       dividerTheme: DividerThemeData(color: cs.outlineVariant, thickness: 1, space: 1),
       progressIndicatorTheme: ProgressIndicatorThemeData(color: cs.primary, linearTrackColor: cs.surfaceContainerHighest),
-
-      pageTransitionsTheme: const PageTransitionsTheme(
-        builders: {TargetPlatform.android: ZoomPageTransitionsBuilder(), TargetPlatform.iOS: CupertinoPageTransitionsBuilder()},
-      ),
+      // pageTransitionsTheme intentionally unset: Flutter M3 defaults cover all 5
+      // platforms (Android predictive-back, iOS/macOS Cupertino, desktop zoom). A
+      // custom android+ios-only map would drop desktop transitions + predictive-back.
     );
   }
 }

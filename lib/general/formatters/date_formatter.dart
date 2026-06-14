@@ -14,31 +14,41 @@ class DateFormatter {
 
   static String time(DateTime date) => _time.format(date);
 
-  /// Calendar-day difference (DST-safe): UTC midnights are exactly 24h apart, so
-  /// this is not skewed by spring-forward/fall-back like a local-time `Duration`.
-  static int _calendarDaysAgo(DateTime now, DateTime date) =>
-      DateTime.utc(now.year, now.month, now.day).difference(DateTime.utc(date.year, date.month, date.day)).inDays;
+  /// Calendar-day difference for two LOCAL DateTimes (DST-safe): UTC midnights are
+  /// exactly 24h apart, so the count is not skewed by spring-forward/fall-back.
+  /// Callers normalize operands via toLocal() first (server timestamps are UTC).
+  static int _calendarDaysAgo(DateTime localNow, DateTime localDate) => DateTime.utc(
+    localNow.year,
+    localNow.month,
+    localNow.day,
+  ).difference(DateTime.utc(localDate.year, localDate.month, localDate.day)).inDays;
 
   /// Chat-list relative timestamp (overview §«Форматы времени и даты», 5.1):
   /// `now` / `N min` / `N h` (relative, <24h) / `Yesterday` / `12 May` / `12 May 2025`.
   static String chatListTimestamp(DateTime date, {DateTime? now}) {
-    final n = now ?? DateTime.now();
-    final diff = n.difference(date);
+    final n = (now ?? DateTime.now()).toLocal();
+    final d = date.toLocal(); // server timestamps are UTC (see ItemMapper); compare in local time
+    final diff = n.difference(d);
+    if (diff.isNegative) {
+      // Future timestamp (clock skew): same local day -> 'now', otherwise show its date.
+      return _calendarDaysAgo(n, d) == 0 ? 'now' : (d.year == n.year ? _dMonth.format(d) : _dMonthYear.format(d));
+    }
     if (diff.inMinutes < 1) return 'now';
     if (diff.inMinutes < 60) return '${diff.inMinutes} min';
     if (diff.inHours < 24) return '${diff.inHours} h'; // relative hours, regardless of calendar day
-    if (_calendarDaysAgo(n, date) == 1) return 'Yesterday';
-    return date.year == n.year ? _dMonth.format(date) : _dMonthYear.format(date);
+    if (_calendarDaysAgo(n, d) == 1) return 'Yesterday';
+    return d.year == n.year ? _dMonth.format(d) : _dMonthYear.format(d);
   }
 
   /// Chat-feed day separator (overview §«Форматы времени и даты», 5.2):
   /// `Today` / `Yesterday` / weekday (within a week) / `12 May` / `12 May 2025`.
   static String daySeparator(DateTime date, {DateTime? now}) {
-    final n = now ?? DateTime.now();
-    final deltaDays = _calendarDaysAgo(n, date);
+    final n = (now ?? DateTime.now()).toLocal();
+    final d = date.toLocal();
+    final deltaDays = _calendarDaysAgo(n, d);
     if (deltaDays == 0) return 'Today';
     if (deltaDays == 1) return 'Yesterday';
-    if (deltaDays > 1 && deltaDays < 7) return _weekday.format(date);
-    return date.year == n.year ? _dMonth.format(date) : _dMonthYear.format(date);
+    if (deltaDays > 1 && deltaDays < 7) return _weekday.format(d);
+    return d.year == n.year ? _dMonth.format(d) : _dMonthYear.format(d);
   }
 }

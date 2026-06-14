@@ -15,6 +15,10 @@ void main() {
       // 1.5h ago but previous calendar day -> "1 h", NOT "Yesterday".
       expect(DateFormatter.chatListTimestamp(DateTime(2025, 5, 11, 23, 30), now: DateTime(2025, 5, 12, 1, 0)), '1 h');
     });
+    test('future timestamps do not all collapse to now', () {
+      expect(DateFormatter.chatListTimestamp(DateTime(2025, 5, 12, 18), now: now), 'now'); // same-day clock skew
+      expect(DateFormatter.chatListTimestamp(DateTime(2025, 5, 14, 9), now: now), '14 May'); // far future -> date
+    });
     test('yesterday / this-year date / past-year date', () {
       expect(DateFormatter.chatListTimestamp(DateTime(2025, 5, 11, 9), now: now), 'Yesterday');
       expect(DateFormatter.chatListTimestamp(DateTime(2025, 3, 3, 9), now: now), '3 Mar');
