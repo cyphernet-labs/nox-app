@@ -117,10 +117,10 @@
 
 ## Phase 7: Polish & Cross-Cutting
 
-- [ ] T033 [P] A11y: автотесты контраста пар роль/фон `ColorScheme` (≥4.5:1 body, ≥3:1 large/icons) + timestamp 70% — `test/design/contrast_test.dart` (data-model §16, FR-024/SC-010).
-- [ ] T034 [P] Verification отсутствия хардкода стилей вне токенного слоя (grep `Color(`/`EdgeInsets`/`TextStyle(`/`Duration(` вне `lib/design/theme/*`, `app_colors.dart`, `nox_component_tokens.dart`, токен-файлов) (FR-022/SC-004); + сверка границы «никаких виджетов» (FR-023) — ни одного нового продуктового виджета в change-set.
-- [ ] T035 Code-gate: codegen (1 прогон) → `fvm dart format -l 140` изменённых → `fvm flutter analyze` (0 ошибок) → `fvm flutter test` (затронутые) (SC-008). Зависит от: все предыдущие.
-- [ ] T036 Прогон quickstart-валидации `specs/002-design-system-init/quickstart.md` (тема→контраст→шрифты/иконки→gate) (SC-001..SC-010). Зависит от: T035.
+- [x] T033 [P] A11y: автотесты контраста пар роль/фон `ColorScheme` (≥4.5:1 body, ≥3:1 large/icons) + timestamp 70% — `test/design/contrast_test.dart` (data-model §16, FR-024/SC-010).
+- [x] T034 [P] Verification отсутствия хардкода стилей вне токенного слоя (grep `Color(`/`EdgeInsets`/`TextStyle(`/`Duration(` вне `lib/design/theme/*`, `app_colors.dart`, `nox_component_tokens.dart`, токен-файлов) (FR-022/SC-004); + сверка границы «никаких виджетов» (FR-023) — ни одного нового продуктового виджета в change-set.
+- [x] T035 Code-gate: codegen (1 прогон) → `fvm dart format -l 140` изменённых → `fvm flutter analyze` (0 ошибок) → `fvm flutter test` (затронутые) (SC-008). Зависит от: все предыдущие.
+- [x] T036 Прогон quickstart-валидации `specs/002-design-system-init/quickstart.md` (тема→контраст→шрифты/иконки→gate) (SC-001..SC-010). Зависит от: T035.
 
 ---
 
