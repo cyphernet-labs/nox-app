@@ -26,4 +26,12 @@ abstract final class TextConstants {
   static const String tooltipSend = 'Send';
   static const String tooltipCreateChat = 'New chat';
   static const String tooltipRemove = 'Remove';
+  static const String tooltipToggleTheme = 'Toggle theme';
+
+  // Home launcher + UI-kit gallery
+  static const String uiKitTitle = 'NOX UI Kit';
+  static const String uiKitSubtitle = 'Browse every component in the design system.';
+  static const String actionOpenUiKit = 'Open UI Kit';
+  static const String themeLight = 'Light';
+  static const String themeDark = 'Dark';
 }
