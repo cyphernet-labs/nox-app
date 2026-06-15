@@ -13,7 +13,9 @@ void main() {
 
   test('pubspec declares both families with the expected weights', () {
     final pubspec = File('pubspec.yaml').readAsStringSync();
-    expect(pubspec.contains('family: Roboto'), isTrue);
+    // `contains('family: Roboto')` would also be satisfied by the `Roboto Mono` line — assert the
+    // sans family distinctly (not followed by " Mono") so a missing/misspelled sans family is caught.
+    expect(RegExp(r'family: Roboto\b(?! Mono)').hasMatch(pubspec), isTrue, reason: 'sans Roboto family not declared');
     expect(pubspec.contains('family: Roboto Mono'), isTrue);
     for (final w in ['weight: 400', 'weight: 500', 'weight: 700']) {
       expect(pubspec.contains(w), isTrue, reason: 'pubspec missing $w');

@@ -16,7 +16,7 @@
 lib/
 ├── design/
 │   ├── app_spacing_tokens.dart         # ОТЗЫВЧИВЫЙ sN-масштаб на flutter_screenutil (.w/.h)
-│   ├── app_text_style_tokens.dart      # цвето-инъецирующие фабрики полной M3-шкалы (8 ролей, .sp)
+│   ├── app_text_style_tokens.dart      # цвето-инъецирующие фабрики полной M3-шкалы (9 ролей, .sp)
 │   ├── app_overlay_style_tokens.dart   # static const SystemUiOverlayStyle (status-bar)
 │   ├── nox_icons.dart                  # семантический icon-реестр (NoxIcons → Assets.svg.icons.*)
 │   ├── gen/
@@ -410,7 +410,7 @@ abstract final class NoxEasing    { /* standard / emphasized / emphasizedDeceler
 
 ## 5. Дизайн-токены — текстовые стили (`AppTextStyleTokens`)
 
-Канонический type scale NOX — это сгенерированный `noxTextTheme` (§1), доступный через `Theme.of(context).textTheme.*` (`bodyMedium`, `titleMedium`, …). `AppTextStyleTokens` — **фабрики цвето-инъекции** поверх него: по фабрике на каждую из 8 ролей M3-шкалы (`displaySmall`, `headlineSmall`, `titleLarge`, `titleMedium`, `bodyLarge`, `bodyMedium`, `labelLarge`, `labelMedium`), где удобнее задать цвет на месте вызова: каждый метод принимает обязательный `Color color` и масштабирует `fontSize` через `.sp` (учитывает `minTextAdapt`, §3.2). Цвет не зашит в стиль — он передаётся на месте вызова (обычно из `context.appColors.xxx` или `Theme.of(context).colorScheme.*`), что делает стиль независимым от темы. Класс — `abstract final class` с приватным `const`-конструктором.
+Канонический type scale NOX — это сгенерированный `noxTextTheme` (§1), доступный через `Theme.of(context).textTheme.*` (`bodyMedium`, `titleMedium`, …). `AppTextStyleTokens` — **фабрики цвето-инъекции** поверх него: по фабрике на каждую из 9 ролей M3-шкалы (`displaySmall`, `headlineSmall`, `titleLarge`, `titleMedium`, `bodyLarge`, `bodyMedium`, `labelLarge`, `labelMedium`, `labelSmall`), где удобнее задать цвет на месте вызова: каждый метод принимает обязательный `Color color` и масштабирует `fontSize` через `.sp` (учитывает `minTextAdapt`, §3.2). Цвет не зашит в стиль — он передаётся на месте вызова (обычно из `context.appColors.xxx` или `Theme.of(context).colorScheme.*`), что делает стиль независимым от темы. Класс — `abstract final class` с приватным `const`-конструктором.
 
 **Файл:** `lib/design/app_text_style_tokens.dart`
 
@@ -418,19 +418,18 @@ abstract final class NoxEasing    { /* standard / emphasized / emphasizedDeceler
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
-/// Full M3 type scale (8 roles) as color-injecting factories — no `height`
-/// (comes from noxTextTheme), no `fontFamily` (inherited from the theme).
+/// Full M3 type scale (9 roles) as color-injecting factories — reproduce noxTextTheme's
+/// fontSize / fontWeight / letterSpacing; no `height` (would scale quadratically with `.sp`),
+/// no `fontFamily` (inherited from the theme).
 abstract final class AppTextStyleTokens {
   const AppTextStyleTokens._();
 
-  static TextStyle displaySmall({required Color color}) => TextStyle(fontSize: 36.sp, fontWeight: FontWeight.w400, color: color);
-  static TextStyle headlineSmall({required Color color}) => TextStyle(fontSize: 24.sp, fontWeight: FontWeight.w400, color: color);
-  static TextStyle titleLarge({required Color color}) => TextStyle(fontSize: 22.sp, fontWeight: FontWeight.w400, color: color);
-  static TextStyle titleMedium({required Color color}) => TextStyle(fontSize: 16.sp, fontWeight: FontWeight.w500, color: color);
-  static TextStyle bodyLarge({required Color color}) => TextStyle(fontSize: 16.sp, fontWeight: FontWeight.w400, color: color);
-  static TextStyle bodyMedium({required Color color}) => TextStyle(fontSize: 14.sp, fontWeight: FontWeight.w400, color: color);
-  static TextStyle labelLarge({required Color color}) => TextStyle(fontSize: 14.sp, fontWeight: FontWeight.w500, color: color);
-  static TextStyle labelMedium({required Color color}) => TextStyle(fontSize: 12.sp, fontWeight: FontWeight.w500, color: color);
+  static TextStyle displaySmall({required Color color}) =>
+      TextStyle(fontSize: 36.sp, fontWeight: FontWeight.w400, letterSpacing: 0, color: color);
+  static TextStyle titleMedium({required Color color}) =>
+      TextStyle(fontSize: 16.sp, fontWeight: FontWeight.w500, letterSpacing: 0.15, color: color);
+  // … 9 roles: displaySmall/headlineSmall/titleLarge/titleMedium/bodyLarge/bodyMedium/
+  //   labelLarge/labelMedium/labelSmall — see lib/design/app_text_style_tokens.dart
 }
 ```
 
@@ -445,7 +444,7 @@ Text(item.displayName, style: Theme.of(context).textTheme.bodyMedium);
 
 > **Семейства шрифтов.** Реальная типографика NOX — `Roboto` (sans) и `Roboto Mono` (моноширинный, для ID/ключей) — приходит из сгенерированного `noxTextTheme` (§1). Фабрики `AppTextStyleTokens` семейство явно не задают (наследуют дефолт темы); для моноширинных мест используйте слот темы либо `fontFamily: noxMonoFamily` из `nox_text_theme.dart`. Семейства **забандлены** (`Roboto` 400/500/700 + `Roboto Mono` 400) в секции `fonts:` `pubspec.yaml` — см. `01-stack-and-tooling.md`.
 >
-> **План.** Набор покрывает все 8 ролей `noxTextTheme`; дополнительные хелперы (`extension on TextStyle` с `withMonospace`/`withPrimaryColor` и т.п.) добавляются при появлении реальной потребности.
+> **План.** Набор покрывает все 9 ролей `noxTextTheme`; дополнительные хелперы (`extension on TextStyle` с `withMonospace`/`withPrimaryColor` и т.п.) добавляются при появлении реальной потребности.
 
 ---
 

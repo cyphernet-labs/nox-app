@@ -119,7 +119,7 @@ assets:
 
 ## R7. Полная M3-шкала размеров шрифта в `AppTextStyleTokens`
 
-**Decision**: Заменить три ad-hoc стиля (`body`/`title`/`caption`) на **8 ролей** M3-шкалы, по значениям `noxTextTheme`. Каждая — color-injecting фабрика с `.sp`-размером, **без** `height` и **без** `fontFamily` (height несёт `noxTextTheme`; семейство наследуется из темы — `Roboto`):
+**Decision**: Заменить три ad-hoc стиля (`body`/`title`/`caption`) на **9 ролей** M3-шкалы, по значениям `noxTextTheme`. Каждая — color-injecting фабрика с `.sp`-размером и `letterSpacing`, **без** `height` и **без** `fontFamily` (height несёт `noxTextTheme`; семейство наследуется из темы — `Roboto`):
 
 | Роль | fontSize (sp) | fontWeight |
 |---|---|---|
@@ -131,6 +131,7 @@ assets:
 | `bodyMedium` | 14 | w400 |
 | `labelLarge` | 14 | w500 |
 | `labelMedium` | 12 | w500 |
+| `labelSmall` | 11 | w500 |
 
 **Rationale**: «Завести токены размеров шрифта» = полная шкала, а не произвольное подмножество (FR-009). Отсутствие `height`/`fontFamily` в фабриках — прямое требование блюпринта §3.2/§5 (height задаёт `noxTextTheme`, иначе квадратичный скейл; семейство — из темы). Внешних потребителей `body`/`title`/`caption` в `lib/` нет (проверено grep) → замена безопасна.
 
@@ -157,7 +158,7 @@ assets:
 
 - **§0 (файловое дерево)** — добавить `nox_icons.dart`, убрать `app_images_tokens.dart`.
 - **§1 (источник типографики)** — назвать забандленные семейства `Roboto` 400/500/700 + `Roboto Mono` 400.
-- **§5 (`AppTextStyleTokens` + footnote шрифтов)** — полная 8-ролевая шкала вместо skeleton `body/title/caption`; footnote (line 443) «Семейства бандлятся (или берётся платформенный дефолт)» → теперь забандлены.
+- **§5 (`AppTextStyleTokens` + footnote шрифтов)** — полная 9-ролевая шкала вместо skeleton `body/title/caption`; footnote (line 443) «Семейства бандлятся (или берётся платформенный дефолт)» → теперь забандлены.
 - **§7 (картиночные ассеты / «оба канала»)** — разрешено: `AppImagesTokens` удалён, flutter_gen авторитетен; **иконки** (картиночные ассеты через flutter_gen) и реестр `NoxIcons` заводятся здесь же. Отдельной icon-секции в `06-theming.md` нет (§8 — это `lib/general/`), поэтому иконки относятся к §7, а не к новому §8.
 
 **Rationale**: Конституция (Принцип III) требует чинить дрейф код↔блюпринт в том же change-set. Эти правки — документация, не код; выполняются на этапе реализации вместе с кодом.

@@ -101,19 +101,19 @@ description: "Список задач — 002-design-system-assets"
 
 ## Фаза 6: Пользовательская история 4 — Полнота и консистентность токенов (Приоритет: P2)
 
-**Цель**: 9 токен-сетов согласованы с `nox-handoff/`; `AppTextStyleTokens` — полная 8-ролевая шкала размеров шрифта.
+**Цель**: 9 токен-сетов согласованы с `nox-handoff/`; `AppTextStyleTokens` — полная 9-ролевая шкала размеров шрифта.
 
-**Независимый тест**: diff `lib/design/theme/nox_*.dart` vs хендоф (значения совпадают); `AppTextStyleTokens` = 8 ролей; brand-fixed/avatars на месте. (quickstart S4)
+**Независимый тест**: diff `lib/design/theme/nox_*.dart` vs хендоф (значения совпадают); `AppTextStyleTokens` = 9 ролей; brand-fixed/avatars на месте. (quickstart S4)
 
 ### Реализация Пользовательской истории 4
 
 - [x] T017 [US4] Проверить, что `lib/design/theme/nox_color_scheme.dart`, `nox_text_theme.dart`, `nox_brand.dart` совпадают по значениям с `docs/design/system/nox-handoff/flutter/`, и пересинхронизировать `lib/design/theme/nox_tokens.dart` к значениям источника (значения уже равны; согласовать только форматирование, `dart format -l 140`) — research R6
-- [x] T018 [US4] Обновить `lib/design/app_text_style_tokens.dart` — заменить `body`/`title`/`caption` на 8 color-injecting `.sp`-фабрик M3-ролей (`displaySmall` 36/w400, `headlineSmall` 24/w400, `titleLarge` 22/w400, `titleMedium` 16/w500, `bodyLarge` 16/w400, `bodyMedium` 14/w400, `labelLarge` 14/w500, `labelMedium` 12/w500), **без** `height`, **без** `fontFamily` (contracts §2, research R7)
+- [x] T018 [US4] Обновить `lib/design/app_text_style_tokens.dart` — заменить `body`/`title`/`caption` на 9 color-injecting `.sp`-фабрик M3-ролей (`displaySmall` 36/w400, `headlineSmall` 24/w400, `titleLarge` 22/w400, `titleMedium` 16/w500, `bodyLarge` 16/w400, `bodyMedium` 14/w400, `labelLarge` 14/w500, `labelMedium` 12/w500, `labelSmall` 11/w500), с `letterSpacing`, **без** `height`, **без** `fontFamily` (contracts §2, research R7)
 
 ### Тесты Пользовательской истории 4
 
 - [x] T019 [P] [US4] Добавить `test/design/tokens_sync_test.dart` — ассерты репрезентативных значений: spacing `s4==16`, radius `xl==28`, elevation `level2==3`, duration `push==300ms`, `bodyMedium.fontSize==14`, `titleMedium.fontWeight==w500`, brand splash `#0C2424` / QR surface `#FFFFFF` / QR ink `#0C0C0C`, длина палитры аватаров `8` (research R6)
-- [x] T020 [P] [US4] Добавить `test/design/text_style_tokens_test.dart` — проверить, что `AppTextStyleTokens` отдаёт 8 ролей с верными `fontSize`/`fontWeight` и не задаёт `height`
+- [x] T020 [P] [US4] Добавить `test/design/text_style_tokens_test.dart` — проверить, что `AppTextStyleTokens` отдаёт 9 ролей с верными `fontSize`/`fontWeight`/`letterSpacing` (производно от `noxTextTheme`) и не задаёт `height`
 
 **Контрольная точка**: US4 функциональна и тестируема независимо.
 
@@ -128,7 +128,7 @@ description: "Список задач — 002-design-system-assets"
 ### Реализация Пользовательской истории 5
 
 - [x] T021 [US5] Обновить `docs/blueprints/mobile/06-theming.md` §0 (файловое дерево) — добавить `nox_icons.dart`, убрать `app_images_tokens.dart`
-- [x] T022 [US5] Обновить `docs/blueprints/mobile/06-theming.md` §1 (семейства шрифтов теперь забандлены) и §5 (`AppTextStyleTokens` = 8-ролевая шкала; footnote на строке ~443 «Семейства бандлятся (или берётся платформенный дефолт)» → теперь забандлены `Roboto` 400/500/700 + `Roboto Mono` 400)
+- [x] T022 [US5] Обновить `docs/blueprints/mobile/06-theming.md` §1 (семейства шрифтов теперь забандлены) и §5 (`AppTextStyleTokens` = 9-ролевая шкала; footnote на строке ~443 «Семейства бандлятся (или берётся платформенный дефолт)» → теперь забандлены `Roboto` 400/500/700 + `Roboto Mono` 400)
 - [x] T023 [US5] Обновить `docs/blueprints/mobile/06-theming.md` §7 (ассеты «оба канала» разрешено: `AppImagesTokens` удалён, flutter_gen авторитетен; добавить реестр `NoxIcons` + заметку о забандленных иконках — иконки живут в §7 (картиночные ассеты), отдельного §8 для иконок нет) **и явно зафиксировать pending-ассеты как вне scope** (финальный вектор логотипа SVG, launcher app-icon, финальные иллюстрации — статус по `nox-assets/manifest.json`), чтобы FR-015 / SC-007 / Acceptance US3-#3 имели repo-visible запись, а не только прозу в tasks.md
 - [x] T024 [P] [US5] Добавить `test/design/single_channel_guard_test.dart` (или CI grep-шаг) — проверить, что в `lib/` вне `lib/design/gen/` нет сырых строк-литералов `'assets/...'`, а символ `AppImagesTokens` отсутствует
 

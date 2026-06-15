@@ -65,6 +65,12 @@ void main() {
     }
   });
 
+  test('NoxIcons exposes exactly 35 getters (parsed from source — catches silent drift)', () {
+    final src = File('lib/design/nox_icons.dart').readAsStringSync();
+    final getters = RegExp(r'static SvgGenImage get ').allMatches(src).length;
+    expect(getters, 35, reason: 'NoxIcons getter count must match the verified registry');
+  });
+
   test('count reconciliation: the 2 unreferenced outlined variants are bundled (35 + 2 = 37)', () {
     expect(File('assets/svg/icons/flashlight_on.svg').existsSync(), isTrue);
     expect(File('assets/svg/icons/send.svg').existsSync(), isTrue);

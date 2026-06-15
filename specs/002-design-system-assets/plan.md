@@ -26,7 +26,7 @@
 
 **Constraints**: только design-токены (никакого хардкод-`Color`/`EdgeInsets`/`TextStyle`); codegen-first (один прогон `build_runner`); line length 140; ноль ошибок `flutter analyze`; сгенерированные файлы (`*.gen.dart`) не правятся руками; `lib/design/gen/` — gitignored; ассеты-бинарники **коммитятся** (Flutter уже инициализирован — bootstrap-исключение из CLAUDE.md больше не применяется к ассетам).
 
-**Scale/Scope**: 37 SVG-иконок, 1 логотип (растровый плейсхолдер), 3 иллюстрации-плейсхолдера, 2 семейства шрифтов (4 файла начертаний), 9 токен-сетов, 8 ролей тайпскейла; **0 виджетов / 0 экранов**.
+**Scale/Scope**: 37 SVG-иконок, 1 логотип (растровый плейсхолдер), 3 иллюстрации-плейсхолдера, 2 семейства шрифтов (4 файла начертаний), 9 токен-сетов, 9 ролей тайпскейла; **0 виджетов / 0 экранов**.
 
 ## Constitution Check
 
@@ -83,7 +83,7 @@ lib/design/
 ├── gen/
 │   └── assets.gen.dart            # GENERATED (flutter_gen) — реальные аксессоры; gitignored
 ├── nox_icons.dart                 # NEW — семантический icon-реестр из icons.json (обёртка над Assets.svg.icons.*)
-├── app_text_style_tokens.dart     # UPDATED — полная M3-шкала размеров шрифта (8 ролей), .sp, color-injecting
+├── app_text_style_tokens.dart     # UPDATED — полная M3-шкала размеров шрифта (9 ролей), .sp, color-injecting
 ├── app_spacing_tokens.dart        # без изменений
 ├── app_overlay_style_tokens.dart  # без изменений
 ├── app_images_tokens.dart         # REMOVED — единственный канал путей = flutter_gen

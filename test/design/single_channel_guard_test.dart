@@ -5,9 +5,10 @@ import 'package:flutter_test/flutter_test.dart';
 /// US5 / FR-012 — flutter_gen is the single authoritative asset-path channel: no raw
 /// asset-path string literals in feature code, and no AppImagesTokens symbol anywhere.
 void main() {
-  final dartFiles = Directory(
-    'lib',
-  ).listSync(recursive: true).whereType<File>().where((f) => f.path.endsWith('.dart') && !f.path.contains('/design/gen/')).toList();
+  final dartFiles = Directory('lib').listSync(recursive: true).whereType<File>().where((f) {
+    final p = f.path.replaceAll(r'\', '/'); // normalize Windows separators
+    return p.endsWith('.dart') && !p.contains('/design/gen/');
+  }).toList();
 
   test('no raw "assets/..." path literals in lib/ outside the generated channel', () {
     final rawPath = RegExp('''['"]assets/''');

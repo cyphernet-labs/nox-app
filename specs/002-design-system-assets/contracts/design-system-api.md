@@ -52,10 +52,11 @@ abstract final class AppTextStyleTokens {
   static TextStyle bodyMedium({required Color color});   // 14.sp w400
   static TextStyle labelLarge({required Color color});   // 14.sp w500
   static TextStyle labelMedium({required Color color});  // 12.sp w500
+  static TextStyle labelSmall({required Color color});   // 11.sp w500
 }
 ```
 
-**Контракт-инварианты:** 8 ролей соответствуют M3-шкале `noxTextTheme` (data-model §2.2). Прежние `body/title/caption` удалены (внешних потребителей нет). Вызов — только внутри `build` под `ScreenUtilInit` (блюпринт §3.2).
+**Контракт-инварианты:** 9 ролей воспроизводят M3-шкалу `noxTextTheme` — `fontSize`/`fontWeight`/`letterSpacing` (data-model §2.2). Прежние `body/title/caption` удалены (внешних потребителей нет). Вызов — только внутри `build` под `ScreenUtilInit` (блюпринт §3.2).
 
 ## 3. `Assets` — type-safe пути (GENERATED, flutter_gen)
 
