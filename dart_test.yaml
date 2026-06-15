@@ -1,0 +1,8 @@
+# Dart/Flutter test-runner config.
+#
+# The `golden` tag marks macOS/M1-rendered snapshot tests (`@Tags(['golden'])`). They are
+# generated and verified ONLY locally — `make golden-update` / `make golden-verify` (which pass
+# `--tags golden`) — and are EXCLUDED from `make test` and CI (`flutter test --exclude-tags golden`).
+# Declaring the tag here silences "unknown tag" warnings; see .claude/commands/golden-test.md.
+tags:
+  golden:
