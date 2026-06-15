@@ -95,11 +95,11 @@
 
 ---
 
-## 7. Dev-галерея (`lib/gallery/` + `lib/main_gallery.dart`)
+## 7. Лаунчер + галерея (`lib/presentation/pages/`)
 
-- **`GalleryApp`** — `MaterialApp(theme: AppTheme.light(), darkTheme: AppTheme.dark())` + `ScreenUtilInit` + тоггл `themeMode`.
-- **`gallery_page.dart`** — секции (Primitives / Chat / Shell / State / Stock) со всеми виджетами и ключевыми вариантами.
-- **`main_gallery.dart`** — `void main() => runApp(const GalleryApp());`. Запуск: `fvm flutter run -t lib/main_gallery.dart`. Не импортируется продуктовым `main.dart`/`AppRoot`.
+- **`HomePage`** (`pages/home_page/`) — стартовый экран `AppRoot` (вместо `Item`-харнесса): brand-hero + кнопка «Open UI Kit» → `Navigator.push(UiKitPage.route())`. AppBar: wordmark + splash-hairline + `AppThemeToggle`.
+- **`UiKitPage`** (`pages/ui_kit_page/`) — каталог секций (Primitives / Chat & messaging / State / Feedback & stock) со всеми виджетами; `static Route<void> route()`.
+- **`AppThemeToggle`** (`app/widgets/`) — общий app-bar-переключатель light/dark (диспатчит `AppRootBloc.SetTheme`; требует `AppRootBloc`-предка, предоставляется `AppRoot`).
 
 ---
 

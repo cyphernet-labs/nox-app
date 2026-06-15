@@ -6,7 +6,7 @@
 
 ## Summary
 
-Собрать в `lib/presentation/widgets/` весь UI-кит NOX — все компоненты дизайн-системы из `docs/design/system/nox-handoff-2/` (примитивы, composite чата/сообщений, оболочка, обратная связь), реализованные как переиспользуемые **BLoC-less** виджеты по блюпринту (`docs/blueprints/mobile/05`,`06`,`10`) и конвенции нейминга `App*Widget`. Референсный Dart хендофа **адаптируется** под дисциплину дизайн-токенов (`ColorScheme`/`context.appColors`, `AppSpacingTokens`/`AppTextStyleTokens`, `NoxRadius`/`NoxElevation`, `NoxBrand`) — raw-значения и icon-шрифт заменяются токенами и SVG-реестром `NoxIcons` (Feature-002), `material_symbols_icons` не вводится. Сверх каталога: полный M3 component-theme wiring stock-виджетов в `app_theme.dart`, generic state-виджеты (`AppProgressWidget`/`AppErrorWidget`), реальные SVG-иллюстрации в empty-state. Для **каждого** виджета — golden-тест (кураторский набор 2–4 варианта × light/dark, локальный `matchesGoldenFile`-харнесс) и widget-тест; stock-виджеты покрываются одним сводным theme-showcase golden. Плюс dev-only галерея отдельной точкой входа `main_gallery.dart`.
+Собрать в `lib/presentation/widgets/` весь UI-кит NOX — все компоненты дизайн-системы из `docs/design/system/nox-handoff-2/` (примитивы, composite чата/сообщений, оболочка, обратная связь), реализованные как переиспользуемые **BLoC-less** виджеты по блюпринту (`docs/blueprints/mobile/05`,`06`,`10`) и конвенции нейминга `App*Widget`. Референсный Dart хендофа **адаптируется** под дисциплину дизайн-токенов (`ColorScheme`/`context.appColors`, `AppSpacingTokens`/`AppTextStyleTokens`, `NoxRadius`/`NoxElevation`, `NoxBrand`) — raw-значения и icon-шрифт заменяются токенами и SVG-реестром `NoxIcons` (Feature-002), `material_symbols_icons` не вводится. Сверх каталога: полный M3 component-theme wiring stock-виджетов в `app_theme.dart`, generic state-виджеты (`AppProgressWidget`/`AppErrorWidget`), реальные SVG-иллюстрации в empty-state. Для **каждого** виджета — golden-тест (кураторский набор 2–4 варианта × light/dark, локальный `matchesGoldenFile`-харнесс) и widget-тест; stock-виджеты покрываются одним сводным theme-showcase golden. Плюс продуктовый лаунчер `HomePage` (стартовый экран), открывающий галерею кита `UiKitPage` с переключателем темы.
 
 ## Technical Context
 
@@ -20,13 +20,13 @@
 
 **Target Platform**: iOS, Android, Windows, Linux, macOS (web — вне scope).
 
-**Project Type**: Кросс-платформенное Flutter-приложение, единый пакет `nox_app`; этот срез — **слой представления `lib/presentation/widgets/`** (UI-кит) + расширение темы (`lib/design/theme`) + dev-галерея. Data/domain не затрагиваются.
+**Project Type**: Кросс-платформенное Flutter-приложение, единый пакет `nox_app`; этот срез — **слой представления `lib/presentation/widgets/`** (UI-кит) + расширение темы (`lib/design/theme`) + лаунчер/галерея (`HomePage`/`UiKitPage`). Data/domain не затрагиваются.
 
 **Performance Goals**: Рантайм-перф не затрагивается. Виджеты — leaf, `const`-friendly, без подписок/таймеров. Goldens детерминированы при фиксированном surface 360×779 и `textScaler=1.0`.
 
-**Constraints**: только дизайн-токены (никакого хардкод-`Color`/`EdgeInsets`/`TextStyle`/радиуса/elevation в коде виджетов — brand-fixed только через `NoxBrand`); виджеты **без собственного BLoC** (Принцип 5.1 блюпринта — переиспользуемым виджетам BLoC не нужен); нейминг `App*Widget`, enum'ы без `Nox`-префикса (`FileType`/`MessageStatus`/`AppTab`); полные `package:nox_app/...` импорты в коде (относительные — только в тестах); codegen-first (один прогон `build_runner` для `assets.gen`/`*.mocks.dart`); line length 140; ноль ошибок `flutter analyze`; на каждый виджет — golden (2–4 варианта × light/dark) + widget-тест; галерея — отдельный entrypoint, вне релизных сборок.
+**Constraints**: только дизайн-токены (никакого хардкод-`Color`/`EdgeInsets`/`TextStyle`/радиуса/elevation в коде виджетов — brand-fixed только через `NoxBrand`); виджеты **без собственного BLoC** (Принцип 5.1 блюпринта — переиспользуемым виджетам BLoC не нужен); нейминг `App*Widget`, enum'ы без `Nox`-префикса (`FileType`/`MessageStatus`/`AppTab`); полные `package:nox_app/...` импорты в коде (относительные — только в тестах); codegen-first (один прогон `build_runner` для `assets.gen`/`*.mocks.dart`); line length 140; ноль ошибок `flutter analyze`; на каждый виджет — golden (2–4 варианта × light/dark) + widget-тест; галерея — экран `UiKitPage`, открываемый из лаунчера `HomePage` (стартовый экран `AppRoot`).
 
-**Scale/Scope**: ~17 классов-виджетов `App*Widget` (4 примитива + 6 composite + 4 shell + 3 generic state), 2 feedback-хелпера (`showAppSnackBar`/`showAppBanner`), 3 enum (`FileType`/`MessageStatus`/`AppTab`) + 2 map-хелпера (`noxFileIcon`/`noxFileColor`), расширение `app_theme.dart` (≥14 component sub-themes, incl. switch/radio/listTile/progressIndicator), 1 dev-галерея + `main_gallery.dart`, `test/utils/pump_app.dart`, ~17 golden + ~17 widget тест-файлов + 1 theme-showcase golden. **0 продуктовых экранов / 0 бизнес-логики / 0 BLoC.**
+**Scale/Scope**: ~17 классов-виджетов `App*Widget` (4 примитива + 6 composite + 4 shell + 3 generic state), 2 feedback-хелпера (`showAppSnackBar`/`showAppBanner`), 3 enum (`FileType`/`MessageStatus`/`AppTab`) + 2 map-хелпера (`noxFileIcon`/`noxFileColor`), расширение `app_theme.dart` (≥14 component sub-themes, incl. switch/radio/listTile/progressIndicator), лаунчер `HomePage` + галерея `UiKitPage` + общий `AppThemeToggle`, `test/utils/pump_app.dart`, ~17 golden + ~17 widget тест-файлов + 1 theme-showcase golden. **0 продуктовых экранов / 0 бизнес-логики / 0 BLoC.**
 
 ## Constitution Check
 
@@ -96,10 +96,10 @@ lib/design/theme/
 
 lib/general/text_constants.dart           # UPDATED — дефолтная UI-микрокопи кита (Search/Message/Dismiss/ошибки)
 
-lib/gallery/                              # NEW — dev-only галерея (вне продукта)
-├── gallery_app.dart                      # GalleryApp — MaterialApp(AppTheme) + переключатель темы
-└── gallery_page.dart                     # каталог всех виджетов × light/dark
-lib/main_gallery.dart                     # NEW — отдельная dev-точка входа (runApp(GalleryApp))
+lib/presentation/pages/home_page/home_page.dart    # NEW — лаунчер (стартовый экран): brand-hero + кнопка «Open UI Kit»
+lib/presentation/pages/ui_kit_page/ui_kit_page.dart # NEW — каталог всех виджетов × light/dark (push из лаунчера, route())
+lib/presentation/app/widgets/app_theme_toggle.dart  # NEW — общий переключатель темы (→ AppRootBloc.SetTheme)
+lib/presentation/app/app_root.dart                  # UPDATED — home: AppShell → HomePage
 
 test/utils/
 └── pump_app.dart                         # NEW — общий pump-хелпер (ScreenUtilInit + AppTheme + themeMode)
@@ -112,7 +112,7 @@ test/design/theme/
 pubspec.yaml                              # без изменений (новых deps нет; assets/fonts уже объявлены в Feature-002)
 ```
 
-**Structure Decision**: Единый пакет `nox_app`. UI-кит ложится в `lib/presentation/widgets/` (реализация FUTURE-директории блюпринта `05 §1`), сгруппированный по семантике (`primitives`/`chat`/`shell`/`state`) — одна публичная вёрстка = один файл, имя файла snake_case = имя класса. Feedback-каналы — в `lib/presentation/helpers/` (блюпринт `05 §8`). Per-component M3 sub-themes выносятся в `lib/design/theme/nox_component_themes.dart` и подключаются из `app_theme.dart`, чтобы тот остался читаемым. Тесты **deep-mirror** дерево `lib/` под `test/presentation/widgets/...`; goldens — в `goldens/` рядом с тестом (локальные фикстуры). Dev-галерея изолирована в `lib/gallery/` с отдельной точкой входа `lib/main_gallery.dart` — ноль следа в продуктовом `lib/main.dart`/`AppRoot` и релизных сборках. Новых слоёв/пакетов/зависимостей нет.
+**Structure Decision**: Единый пакет `nox_app`. UI-кит ложится в `lib/presentation/widgets/` (реализация FUTURE-директории блюпринта `05 §1`), сгруппированный по семантике (`primitives`/`chat`/`shell`/`state`) — одна публичная вёрстка = один файл, имя файла snake_case = имя класса. Feedback-каналы — в `lib/presentation/helpers/` (блюпринт `05 §8`). Per-component M3 sub-themes выносятся в `lib/design/theme/nox_component_themes.dart` и подключаются из `app_theme.dart`, чтобы тот остался читаемым. Тесты **deep-mirror** дерево `lib/` под `test/presentation/widgets/...`; goldens — в `goldens/` рядом с тестом (локальные фикстуры). Лаунчер `HomePage` — стартовый экран `AppRoot` (вместо `Item`-харнесса) — открывает галерею `UiKitPage` через `Navigator.push(UiKitPage.route())`; общий `AppThemeToggle` диспатчит `AppRootBloc.SetTheme`. Новых слоёв/пакетов/зависимостей нет.
 
 ## Complexity Tracking
 

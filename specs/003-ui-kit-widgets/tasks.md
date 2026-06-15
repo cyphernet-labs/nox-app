@@ -20,7 +20,7 @@ description: "Task list — UI-кит (003-ui-kit-widgets)"
 
 ## Path Conventions
 
-Единый пакет `nox_app`. Виджеты — `lib/presentation/widgets/<group>/`; хелперы — `lib/presentation/helpers/`; тема — `lib/design/theme/`; галерея — `lib/gallery/` + `lib/main_gallery.dart`; тесты deep-mirror — `test/presentation/widgets/<group>/`, goldens — в `goldens/` рядом с тестом.
+Единый пакет `nox_app`. Виджеты — `lib/presentation/widgets/<group>/`; хелперы — `lib/presentation/helpers/`; тема — `lib/design/theme/`; лаунчер/галерея — `lib/presentation/pages/home_page/`, `lib/presentation/pages/ui_kit_page/`; тесты deep-mirror — `test/presentation/widgets/<group>/`, goldens — в `goldens/` рядом с тестом.
 
 ---
 
@@ -148,18 +148,18 @@ description: "Task list — UI-кит (003-ui-kit-widgets)"
 
 ---
 
-## Phase 6: User Story 4 — Dev-only галерея кита (Priority: P3)
+## Phase 6: User Story 4 — Лаунчер + галерея кита (Priority: P3)
 
-**Goal**: dev-only экран-каталог всех виджетов в light+dark; отдельный entrypoint; не в продукте.
+**Goal**: продуктовый стартовый экран — лаунчер `HomePage` с кнопкой «Open UI Kit», открывающей каталог `UiKitPage` со всеми виджетами (light+dark, переключатель темы).
 
-**Independent Test**: `fvm flutter run -t lib/main_gallery.dart` → каталог со всеми виджетами; тоггл темы; галерея недостижима из `lib/main.dart` (`quickstart §3`).
+**Independent Test**: `fvm flutter run` → на старте лаунчер → тап «Open UI Kit» → каталог; `AppThemeToggle` переключает тему (`quickstart §3`).
 
 **Depends on**: US1–US3 (все виджеты).
 
-- [x] T062 [US4] `lib/gallery/gallery_page.dart` — секции Primitives/Chat/Shell/State/Stock со всеми виджетами и ключевыми вариантами.
-- [x] T063 [US4] `lib/gallery/gallery_app.dart` — `GalleryApp` (`MaterialApp(AppTheme.light()/dark())` + `ScreenUtilInit` + тоггл `themeMode`).
-- [x] T064 [US4] `lib/main_gallery.dart` — `void main() => runApp(const GalleryApp());` (отдельная dev-точка входа, без ссылок из продуктового `main.dart`, `FR-015`).
-- [x] T065 [US4] Smoke widget-тест `test/gallery/gallery_app_test.dart` — галерея строится без ошибок в обоих режимах темы — `/widget-test`.
+- [x] T062 [US4] `lib/presentation/pages/ui_kit_page/ui_kit_page.dart` — каталог секций Primitives/Chat/State/Feedback&stock со всеми виджетами + `route()`.
+- [x] T063 [US4] `lib/presentation/pages/home_page/home_page.dart` — лаунчер (brand-hero + кнопка «Open UI Kit» → `Navigator.push(UiKitPage.route())`); `AppRoot.home` → `HomePage`.
+- [x] T064 [US4] `lib/presentation/app/widgets/app_theme_toggle.dart` — общий переключатель темы (`AppRootBloc.SetTheme`), используемый обоими экранами.
+- [x] T065 [US4] Widget-тесты `home_page_test` (навигация + тоггл) и `ui_kit_page_test` (секции + тоггл) — `/widget-test`.
 
 **Checkpoint**: все четыре user story функциональны независимо.
 

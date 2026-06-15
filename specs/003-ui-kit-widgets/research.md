@@ -89,13 +89,13 @@
 
 ---
 
-## R8. Dev-галерея — отдельная точка входа
+## R8. Галерея — экран в продуктовом приложении (лаунчер → `UiKitPage`)
 
-**Decision.** Галерея — `lib/gallery/` (`GalleryApp` + `gallery_page.dart`) с отдельным entrypoint `lib/main_gallery.dart` (`runApp(GalleryApp())`), запуск `fvm flutter run -t lib/main_gallery.dart`. Переключатель light/dark внутри. Ноль ссылок из продуктового `lib/main.dart`/`AppRoot`.
+**Decision.** Галерея — экран `UiKitPage` (`lib/presentation/pages/ui_kit_page/`), открываемый со стартового лаунчера `HomePage` (`lib/presentation/pages/home_page/`) кнопкой «Open UI Kit» (`Navigator.push(UiKitPage.route())`). `AppRoot` стартует с `HomePage` (вместо `Item`-харнесса). Переключатель темы — общий `AppThemeToggle` (`AppRootBloc.SetTheme`). Запуск: `fvm flutter run`.
 
-**Rationale.** Уточнение владельца + `FR-015`: физическая изоляция гарантирует отсутствие в релизных сборках и продуктовой навигации (галерея просто не достижима из `main.dart`-дерева).
+**Rationale.** Уточнение владельца (2026-06-15): на текущем этапе (реальных продуктовых фич ещё нет) стартовый экран — простой лаунчер, открывающий каталог кита; лента/реальные экраны не показываются. Это **отменяет** прежнее решение про отдельную dev-точку входа `main_gallery.dart`.
 
-**Alternatives considered.** (a) `kDebugMode`-гейт маршрута в общем приложении — отвергнуто (код галереи попадает в продуктовый бинарник). (b) Build flavor — отвергнуто (тяжелее на 5 платформах; entrypoint проще).
+**Alternatives considered.** (a) Отдельная dev-точка входа `lib/main_gallery.dart` — первоначально выбрано, затем отменено уточнением (нужен продуктовый старт-экран). (b) `kDebugMode`-гейт / build flavor — отвергнуто (сложнее, без выгоды на текущем этапе).
 
 ---
 

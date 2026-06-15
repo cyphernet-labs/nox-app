@@ -76,7 +76,7 @@ grep -REn "Color\(0x|EdgeInsets\.|TextStyle\(" lib/presentation/widgets || echo 
 | Дефолт-микрокопи из `TextConstants` (English) | FR-012 |
 | golden-тест на каждый виджет (2–4 варианта × l/d) | FR-013, SC-001 |
 | widget-тест на каждый виджет (рендер + коллбэки) | FR-014, SC-001 |
-| Галерея отдельным entrypoint (шаг 3) | FR-015 |
+| Лаунчер `HomePage` → `UiKitPage` (шаг 3) | FR-015 |
 | tap-таргеты ≥48 (assert) + раскладка при `textScaler=2.0` + семантика/`tooltip` icon-only действий (T070) | FR-016 |
 | grep `dart:io`/`Platform.`/`defaultTargetPlatform`/`kIsWeb` пуст в `lib/presentation/widgets` (T071) | FR-017 |
 | `make gate` зелёный | FR-018, SC-004 |
