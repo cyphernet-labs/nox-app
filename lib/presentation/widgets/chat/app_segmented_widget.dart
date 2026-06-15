@@ -16,7 +16,9 @@ class AppSegmentedWidget<T> extends StatelessWidget {
       segments: [for (final entry in options.entries) ButtonSegment<T>(value: entry.key, label: Text(entry.value))],
       selected: {selected},
       showSelectedIcon: true,
-      onSelectionChanged: (selection) => onChanged(selection.first),
+      onSelectionChanged: (selection) {
+        if (selection.isNotEmpty) onChanged(selection.first);
+      },
     );
   }
 }

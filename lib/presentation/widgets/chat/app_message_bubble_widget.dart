@@ -41,6 +41,7 @@ class AppMessageBubbleWidget extends StatelessWidget {
     final foreground = isOwn ? colorScheme.onPrimaryContainer : colorScheme.onSurface;
     final meta = isOwn ? colorScheme.onPrimaryContainer.withValues(alpha: 0.7) : colorScheme.onSurfaceVariant;
     final statusColor = status == MessageStatus.error ? colorScheme.error : meta;
+    final statusIcon = isOwn ? _statusIcon(status) : null; // null for non-own or MessageStatus.none
     final hasText = text != null && text!.isNotEmpty;
     final hasFileOnly = file != null && !hasText;
 
@@ -72,9 +73,9 @@ class AppMessageBubbleWidget extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(time, style: textTheme.labelSmall?.copyWith(color: meta)),
-                if (isOwn && status != MessageStatus.none) ...[
+                if (statusIcon != null) ...[
                   SizedBox(width: AppSpacingTokens.s4),
-                  AppIconWidget(_statusIcon(status), size: _statusIconSize, color: statusColor),
+                  AppIconWidget(statusIcon, size: _statusIconSize, color: statusColor),
                 ],
               ],
             ),
@@ -85,9 +86,9 @@ class AppMessageBubbleWidget extends StatelessWidget {
   }
 }
 
-SvgGenImage _statusIcon(MessageStatus status) => switch (status) {
+SvgGenImage? _statusIcon(MessageStatus status) => switch (status) {
   MessageStatus.pending => NoxIcons.schedule,
   MessageStatus.sent => NoxIcons.check,
   MessageStatus.error => NoxIcons.error,
-  MessageStatus.none => NoxIcons.check,
+  MessageStatus.none => null,
 };

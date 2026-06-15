@@ -22,7 +22,9 @@ class AppSplashHairlineWidget extends StatelessWidget implements PreferredSizeWi
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, 0, AppSpacingTokens.s16, AppSpacingTokens.s14),
+      // Bottom gap is the unscaled `_gap` so the rendered height (_thickness + _gap)
+      // matches `preferredSize` on every device (a scaled value would overflow AppBar.bottom).
+      padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, 0, AppSpacingTokens.s16, _gap),
       child: Container(
         height: _thickness,
         decoration: BoxDecoration(gradient: _gradient, borderRadius: BorderRadius.circular(_radius)),

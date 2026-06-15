@@ -22,11 +22,7 @@ class HomePage extends StatelessWidget {
     final textTheme = Theme.of(context).textTheme;
     final colorScheme = Theme.of(context).colorScheme;
     return Scaffold(
-      appBar: AppBar(
-        title: const AppWordmarkWidget(),
-        bottom: const AppSplashHairlineWidget(),
-        actions: const [AppThemeToggle()],
-      ),
+      appBar: AppBar(title: const AppWordmarkWidget(), bottom: const AppSplashHairlineWidget(), actions: const [AppThemeToggle()]),
       body: Center(
         child: Padding(
           padding: EdgeInsets.all(AppSpacingTokens.s24),

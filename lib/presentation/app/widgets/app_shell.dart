@@ -5,6 +5,10 @@ import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/pages/item_list_page/item_list_page.dart';
 import 'package:nox_app/presentation/pages/placeholder/settings_placeholder_page.dart';
 
+/// NOT currently mounted — `AppRoot` starts at `HomePage` (the UI-kit launcher)
+/// until real chat features land; the live shell widgets now live in
+/// `lib/presentation/widgets/shell/`. Kept as the Feature-001 skeleton.
+///
 /// Adaptive app shell. The layout is **width-driven** (`LayoutBuilder` on
 /// `constraints.maxWidth >= Constants.railBreakpoint`, 840dp, M3 medium->expanded)
 /// — NOT Platform-driven, so a narrow desktop window gets the bottom bar and a

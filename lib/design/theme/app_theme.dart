@@ -12,9 +12,14 @@ import 'package:nox_app/design/theme/nox_text_theme.dart';
 class AppTheme {
   const AppTheme._();
 
-  static ThemeData light() => _build(noxLightScheme, const LightAppColors());
+  // Themes are static per ColorScheme; build once and cache so MaterialApp
+  // rebuilds (e.g. every AppRootBloc emission) don't reconstruct all sub-themes.
+  static ThemeData? _light;
+  static ThemeData? _dark;
 
-  static ThemeData dark() => _build(noxDarkScheme, const DarkAppColors());
+  static ThemeData light() => _light ??= _build(noxLightScheme, const LightAppColors());
+
+  static ThemeData dark() => _dark ??= _build(noxDarkScheme, const DarkAppColors());
 
   static ThemeData _build(ColorScheme scheme, AppColors appColors) {
     return ThemeData(

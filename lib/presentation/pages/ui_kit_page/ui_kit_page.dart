@@ -18,6 +18,7 @@ import 'package:nox_app/presentation/widgets/primitives/app_spinner_widget.dart'
 import 'package:nox_app/presentation/widgets/primitives/file_type.dart';
 import 'package:nox_app/presentation/widgets/shell/app_bottom_bar_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_create_fab_widget.dart';
+import 'package:nox_app/presentation/widgets/shell/app_splash_hairline_widget.dart';
 import 'package:nox_app/presentation/widgets/state/app_empty_content_widget.dart';
 import 'package:nox_app/presentation/widgets/state/app_error_widget.dart';
 import 'package:nox_app/presentation/widgets/state/app_progress_widget.dart';
@@ -28,8 +29,10 @@ import 'package:nox_app/presentation/widgets/state/app_progress_widget.dart';
 class UiKitPage extends StatelessWidget {
   const UiKitPage({super.key});
 
-  static Route<void> route() =>
-      MaterialPageRoute<void>(builder: (_) => const UiKitPage(), settings: const RouteSettings(name: '/ui-kit'));
+  static Route<void> route() => MaterialPageRoute<void>(
+    builder: (_) => const UiKitPage(),
+    settings: const RouteSettings(name: '/ui-kit'),
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -37,6 +40,7 @@ class UiKitPage extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text(TextConstants.uiKitTitle),
+        bottom: const AppSplashHairlineWidget(),
         actions: const [AppThemeToggle()],
       ),
       body: ListView(
@@ -79,11 +83,7 @@ class UiKitPage extends StatelessWidget {
             const AppMessageBubbleWidget(isOwn: true, text: 'Sent this', time: '09:00', status: MessageStatus.sent),
             const AppMessageBubbleWidget(isOwn: false, text: 'Got it!', time: '09:01'),
             SizedBox(height: AppSpacingTokens.s8),
-            AppSegmentedWidget<int>(
-              options: const {0: 'System', 1: 'Light', 2: 'Dark'},
-              selected: isDark ? 2 : 1,
-              onChanged: (_) {},
-            ),
+            AppSegmentedWidget<int>(options: const {0: 'System', 1: 'Light', 2: 'Dark'}, selected: isDark ? 2 : 1, onChanged: (_) {}),
             SizedBox(height: AppSpacingTokens.s8),
             const AppComposerWidget(value: 'Draft message', sendActive: true),
           ]),
