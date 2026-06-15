@@ -16,9 +16,7 @@ class AppThemeToggle extends StatelessWidget {
     return Tooltip(
       message: TextConstants.tooltipToggleTheme,
       child: TextButton(
-        onPressed: () => context
-            .read<AppRootBloc>()
-            .add(AppRootEvent.setTheme(themeMode: isDark ? ThemeMode.light : ThemeMode.dark)),
+        onPressed: () => context.read<AppRootBloc>().add(AppRootEvent.setTheme(themeMode: isDark ? ThemeMode.light : ThemeMode.dark)),
         child: Text(isDark ? TextConstants.themeLight : TextConstants.themeDark),
       ),
     );
