@@ -45,6 +45,7 @@ abstract final class NoxIcons {
 abstract final class AppTextStyleTokens {
   const AppTextStyleTokens._();
   static TextStyle displaySmall({required Color color}); // 36.sp w400
+  static TextStyle headlineSmall({required Color color}); // 24.sp w400
   static TextStyle titleLarge({required Color color});   // 22.sp w400
   static TextStyle titleMedium({required Color color});  // 16.sp w500
   static TextStyle bodyLarge({required Color color});    // 16.sp w400
@@ -54,7 +55,7 @@ abstract final class AppTextStyleTokens {
 }
 ```
 
-**Контракт-инварианты:** 7 ролей соответствуют M3-шкале `noxTextTheme` (data-model §2.2). Прежние `body/title/caption` удалены (внешних потребителей нет). Вызов — только внутри `build` под `ScreenUtilInit` (блюпринт §3.2).
+**Контракт-инварианты:** 8 ролей соответствуют M3-шкале `noxTextTheme` (data-model §2.2). Прежние `body/title/caption` удалены (внешних потребителей нет). Вызов — только внутри `build` под `ScreenUtilInit` (блюпринт §3.2).
 
 ## 3. `Assets` — type-safe пути (GENERATED, flutter_gen)
 

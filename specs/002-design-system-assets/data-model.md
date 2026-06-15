@@ -86,6 +86,7 @@
 | Роль | fontSize | lineHeight (px) | height (ratio) | weight |
 |---|---|---|---|---|
 | `displaySmall` | 36 | 44 | 1.222 | w400 |
+| `headlineSmall` | 24 | 32 | 1.333 | w400 |
 | `titleLarge` | 22 | 28 | 1.273 | w400 |
 | `titleMedium` | 16 | 24 | 1.500 | w500 |
 | `bodyLarge` | 16 | 24 | 1.500 | w400 |
@@ -93,7 +94,7 @@
 | `labelLarge` | 14 | 20 | 1.429 | w500 |
 | `labelMedium` | 12 | 16 | 1.333 | w500 |
 
-**Размеры шрифта (`AppTextStyleTokens`)** — пробел, закрываемый фичей: 7 color-injecting `.sp`-фабрик с теми же `fontSize`/`fontWeight` (без `height`, без `fontFamily`). См. contracts §2.
+**Размеры шрифта (`AppTextStyleTokens`)** — пробел, закрываемый фичей: 8 color-injecting `.sp`-фабрик с теми же `fontSize`/`fontWeight` (без `height`, без `fontFamily`). См. contracts §2.
 
 ### 2.3 Spacing — `nox_tokens.dart` → `NoxSpacing` (фикс) + `app_spacing_tokens.dart` → `AppSpacingTokens` (отзывчивый)
 Фикс (4dp-сетка): `s1=4, s2=8, s3=12, s4=16, s6=24, s8=32`. Отзывчивые (`.w/.h`-mean): `s4,s8,s12,s16,s24,s28,s32`. **Статус: фикс совпадает по значениям (отличие — форматирование, R6).**
@@ -124,7 +125,7 @@
 Семантический реестр: именованные геттеры (по глифу+FILL: `forum`/`forumFill`, …) → flutter_gen-аксессоры `Assets.svg.icons.*`. Несёт метаданные (FILL/`use`/группа) в doc-комментариях; **не** дублирует строки путей. Покрывает 35 используемых svg; 2 неиспользуемых outlined — вне реестра. Контракт — contracts §1.
 
 ### 3.2 `AppTextStyleTokens` (`app_text_style_tokens.dart`) — UPDATED
-Заменяет ad-hoc `body/title/caption` на 7 ролей (§2.2). Контракт — contracts §2.
+Заменяет ad-hoc `body/title/caption` на 8 ролей (§2.2). Контракт — contracts §2.
 
 ### 3.3 `Assets` (`lib/design/gen/assets.gen.dart`) — GENERATED
 flutter_gen: `Assets.png.logo`, `Assets.svg.icons.*`, `Assets.svg.illustrations.*`. Gitignored, воспроизводится кодогеном.
@@ -150,6 +151,6 @@ noxTextTheme (sizes) ◄── те же fontSize/weight ── AppTextStyleToke
 1. 37/37 иконок резолвятся; 0 битых путей среди всех аксессоров и токенов картинок.
 2. `family`-имена шрифтов = строки `noxTextTheme`; объявлены начертания 400/500/700 (Roboto) + 400 (Mono).
 3. 9/9 токен-сетов присутствуют и согласованы с `nox-handoff/`; репрезентативные значения проходят регрессионный тест (R6).
-4. `AppTextStyleTokens` перечисляет 7 ролей шкалы; `AppImagesTokens` отсутствует.
+4. `AppTextStyleTokens` перечисляет 8 ролей шкалы; `AppImagesTokens` отсутствует.
 5. `flutter analyze` — 0 ошибок; кодоген — один проход; сгенерированные файлы не редактированы руками.
 6. 0 виджетов/экранов добавлено; затронутые разделы блюпринта согласованы (R9).

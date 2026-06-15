@@ -24,7 +24,7 @@ fonts:
 
 **Rationale**:
 - Имена семейств **обязаны** точно совпадать со строками в `nox_text_theme.dart` (`_sans = 'Roboto'`, `noxMonoFamily = 'Roboto Mono'`) — иначе Flutter молча падает на дефолт.
-- Набор начертаний выведен из реального использования: `noxTextTheme` задаёт `w400` (displaySmall/titleLarge/bodyLarge/bodyMedium) и `w500` (titleMedium/labelLarge/labelMedium); вордмарк NOX — Bold `700` (`nox-assets/manifest.json` → brand.wordmark). `Roboto Mono` нужен только Regular (отображение `Your ID`/ключей). Бандл именно этих весов исключает faux-bold-синтез без лишнего веса.
+- Набор начертаний выведен из реального использования: `noxTextTheme` задаёт `w400` (displaySmall/headlineSmall/titleLarge/bodyLarge/bodyMedium) и `w500` (titleMedium/labelLarge/labelMedium); вордмарк NOX — Bold `700` (`nox-assets/manifest.json` → brand.wordmark). `Roboto Mono` нужен только Regular (отображение `Your ID`/ключей). Бандл именно этих весов исключает faux-bold-синтез без лишнего веса.
 - `fonts.enabled: false` в `flutter_gen` оставляем: семейства потребляются как строковые константы в сгенерированном `noxTextTheme`; генерируемый класс шрифтов не нужен.
 
 **Source / license**: `Roboto` и `Roboto Mono` — Apache-2.0, Google Fonts (канонические репозитории `github.com/googlefonts/roboto` и `github.com/googlefonts/RobotoMono`, статические инстансы). Дотягиваются в `assets/fonts/` на этапе реализации; рядом кладётся `assets/fonts/README.md` с источником, версией и текстом лицензии (Apache-2.0). Бинарников шрифтов в репозитории сейчас нет — это единственный внешний артефакт, который нужно принести.
@@ -119,11 +119,12 @@ assets:
 
 ## R7. Полная M3-шкала размеров шрифта в `AppTextStyleTokens`
 
-**Decision**: Заменить три ad-hoc стиля (`body`/`title`/`caption`) на **7 ролей** M3-шкалы, по значениям `noxTextTheme`. Каждая — color-injecting фабрика с `.sp`-размером, **без** `height` и **без** `fontFamily` (height несёт `noxTextTheme`; семейство наследуется из темы — `Roboto`):
+**Decision**: Заменить три ad-hoc стиля (`body`/`title`/`caption`) на **8 ролей** M3-шкалы, по значениям `noxTextTheme`. Каждая — color-injecting фабрика с `.sp`-размером, **без** `height` и **без** `fontFamily` (height несёт `noxTextTheme`; семейство наследуется из темы — `Roboto`):
 
 | Роль | fontSize (sp) | fontWeight |
 |---|---|---|
 | `displaySmall` | 36 | w400 |
+| `headlineSmall` | 24 | w400 |
 | `titleLarge` | 22 | w400 |
 | `titleMedium` | 16 | w500 |
 | `bodyLarge` | 16 | w400 |
@@ -156,7 +157,7 @@ assets:
 
 - **§0 (файловое дерево)** — добавить `nox_icons.dart`, убрать `app_images_tokens.dart`.
 - **§1 (источник типографики)** — назвать забандленные семейства `Roboto` 400/500/700 + `Roboto Mono` 400.
-- **§5 (`AppTextStyleTokens` + footnote шрифтов)** — полная 7-ролевая шкала вместо skeleton `body/title/caption`; footnote (line 443) «Семейства бандлятся (или берётся платформенный дефолт)» → теперь забандлены.
+- **§5 (`AppTextStyleTokens` + footnote шрифтов)** — полная 8-ролевая шкала вместо skeleton `body/title/caption`; footnote (line 443) «Семейства бандлятся (или берётся платформенный дефолт)» → теперь забандлены.
 - **§7 (картиночные ассеты / «оба канала»)** — разрешено: `AppImagesTokens` удалён, flutter_gen авторитетен; **иконки** (картиночные ассеты через flutter_gen) и реестр `NoxIcons` заводятся здесь же. Отдельной icon-секции в `06-theming.md` нет (§8 — это `lib/general/`), поэтому иконки относятся к §7, а не к новому §8.
 
 **Rationale**: Конституция (Принцип III) требует чинить дрейф код↔блюпринт в том же change-set. Эти правки — документация, не код; выполняются на этапе реализации вместе с кодом.

@@ -52,9 +52,9 @@ for f in nox_color_scheme nox_text_theme nox_brand; do
        <(tr -s ' \n' ' ' < lib/design/theme/$f.dart) && echo "OK $f"
 done
 fvm flutter test test/design/tokens_sync_test.dart      # репрезентативные значения (R6)
-grep -c "static TextStyle" lib/design/app_text_style_tokens.dart   # 7 ролей
+grep -c "static TextStyle" lib/design/app_text_style_tokens.dart   # 8 ролей
 ```
-- **Expected**: color/text/brand совпадают; `nox_tokens` совпадает по значениям (формат — к источнику); `AppTextStyleTokens` = 7 ролей шкалы; brand-fixed (#0C2424 / #FFFFFF / #0C0C0C) и 8-цветовая палитра аватаров на месте.
+- **Expected**: color/text/brand совпадают; `nox_tokens` совпадает по значениям (формат — к источнику); `AppTextStyleTokens` = 8 ролей шкалы; brand-fixed (#0C2424 / #FFFFFF / #0C0C0C) и 8-цветовая палитра аватаров на месте.
 
 ### S5. Единый канал и синхрон блюпринта (US5 / FR-012, FR-014, SC-006)
 ```bash
@@ -75,6 +75,6 @@ fvm flutter test               # затронутые тесты зелёные
 
 - [ ] 37 иконок + логотип + 3 иллюстрации забандлены и резолвятся (0 битых путей).
 - [ ] Шрифты `Roboto` 400/500/700 + `Roboto Mono` 400 забандлены, объявлены, лицензия зафиксирована.
-- [ ] 9 токен-сетов согласованы с `nox-handoff/`; `AppTextStyleTokens` = 7 ролей; `AppImagesTokens` удалён.
+- [ ] 9 токен-сетов согласованы с `nox-handoff/`; `AppTextStyleTokens` = 8 ролей; `AppImagesTokens` удалён.
 - [ ] flutter_gen — единственный канал путей; `NoxIcons` заведён.
 - [ ] Блюпринт §0/§1/§5/§7 синхронизирован; кодоген/format/analyze/тесты зелёные; виджетов/экранов не добавлено.
