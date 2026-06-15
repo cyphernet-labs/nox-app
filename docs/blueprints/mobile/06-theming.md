@@ -16,9 +16,9 @@
 lib/
 ├── design/
 │   ├── app_spacing_tokens.dart         # ОТЗЫВЧИВЫЙ sN-масштаб на flutter_screenutil (.w/.h)
-│   ├── app_text_style_tokens.dart      # цвето-инъецирующие фабрики body/title/caption (.sp)
+│   ├── app_text_style_tokens.dart      # цвето-инъецирующие фабрики полной M3-шкалы (9 ролей, .sp)
 │   ├── app_overlay_style_tokens.dart   # static const SystemUiOverlayStyle (status-bar)
-│   ├── app_images_tokens.dart          # static const пути ассетов (рукописный реестр)
+│   ├── nox_icons.dart                  # семантический icon-реестр (NoxIcons → Assets.svg.icons.*)
 │   ├── gen/
 │   │   └── assets.gen.dart             # flutter_gen → Assets.png/.svg/.animation (генерится, gitignored)
 │   └── theme/
@@ -47,7 +47,7 @@ lib/
 
 > **Где живёт цвет.** Два канала: (1) **роли M3** — `Theme.of(context).colorScheme.primary/surface/...` (приходят из сгенерированного `noxLightScheme`/`noxDarkScheme`); (2) **семантические доп-роли NOX** — `context.appColors.xxx` (`AppColors`-расширение темы). Сырые `Color`-литералы в коде фич запрещены — они объявляются **только** внутри сгенерированных файлов темы (`nox_*.dart`), `app_colors.dart` (skeleton-литералы доп-ролей) и файлов токенов (`app_overlay_style_tokens.dart` с его `const Color`-литералами). Брендовые фикс-цвета (splash-фон, QR-поверхность) — отдельный случай, см. §1.1.
 
-> **Замечание по `lib/design/gen/` (flutter_gen).** Пути к картиночным ассетам **генерируются** `flutter_gen_runner` (см. `01-stack-and-tooling.md`) в `lib/design/gen/assets.gen.dart` — type-safe аксессоры `Assets.png/.svg/.animation`. Файл исключён из анализатора, **gitignored** (`.gitignore` → `lib/design/gen/`) и регенерится `build_runner`. Блок `flutter_gen:` в `pubspec.yaml` (`output: lib/design/gen/`, `flutter_svg: true`, `fonts.enabled: false`, `line_length: 140`) задаёт его конфиг. **Однако** в коде сейчас сосуществует и рукописный `AppImagesTokens` (§7) — состояние «оба канала», которое разрешается в пользу `flutter_gen` (он уже подключён в pubspec и CI). Подробности и решение — в §7.
+> **Замечание по `lib/design/gen/` (flutter_gen).** Пути к картиночным ассетам **генерируются** `flutter_gen_runner` (см. `01-stack-and-tooling.md`) в `lib/design/gen/assets.gen.dart` — type-safe аксессоры `Assets.png/.svg/.animation`. Файл исключён из анализатора, **gitignored** (`.gitignore` → `lib/design/gen/`) и регенерится `build_runner`. Блок `flutter_gen:` в `pubspec.yaml` (`output: lib/design/gen/`, `flutter_svg: true`, `fonts.enabled: false`, `line_length: 140`) задаёт его конфиг. Это **единственный** канал путей к ассетам: рукописный `AppImagesTokens` удалён, а семантику иконок несёт `NoxIcons` (§7).
 
 ---
 
@@ -107,7 +107,7 @@ const TextTheme noxTextTheme = TextTheme(
 );
 ```
 
-Семейство шрифтов — `Roboto` (sans) и `Roboto Mono` (моноширинный, для отображения ID/ключей). `height` в каждом стиле — безразмерный множитель `lineHeightPx / fontSize` (так типографика приходит из дизайна без отдельного скейла высоты).
+Семейство шрифтов — `Roboto` (sans, начертания 400/500/700) и `Roboto Mono` (моноширинный 400, для отображения ID/ключей); оба **забандлены** в `assets/fonts/` и объявлены в `pubspec.yaml` (`fonts:`), поэтому рендерятся одинаково на всех пяти платформах. `height` в каждом стиле — безразмерный множитель `lineHeightPx / fontSize` (так типографика приходит из дизайна без отдельного скейла высоты).
 
 > **Почему не `ColorScheme.fromSeed`.** `fromSeed` детерминирован, но его алгоритм Material You может разойтись с конкретными ролями, заданными дизайнером NOX. Поэтому генерируется **полный явный** `ColorScheme` — каждая роль точно равна токену. Seed-teal `0xFF12B4B4` остаётся брендовой константой (см. `nox_brand.dart`, §1.1), но участвует лишь как отправная точка при генерации, а не как рантайм-источник схемы.
 
@@ -410,7 +410,7 @@ abstract final class NoxEasing    { /* standard / emphasized / emphasizedDeceler
 
 ## 5. Дизайн-токены — текстовые стили (`AppTextStyleTokens`)
 
-Канонический type scale NOX — это сгенерированный `noxTextTheme` (§1), доступный через `Theme.of(context).textTheme.*` (`bodyMedium`, `titleMedium`, …). `AppTextStyleTokens` — **тонкая обёртка-фабрика** поверх него для частых стилей, где удобнее задать цвет на месте вызова: каждый метод принимает обязательный `Color color` и масштабирует `fontSize` через `.sp` (учитывает `minTextAdapt`, §3.2). Цвет не зашит в стиль — он передаётся на месте вызова (обычно из `context.appColors.xxx` или `Theme.of(context).colorScheme.*`), что делает стиль независимым от темы. Класс — `abstract final class` с приватным `const`-конструктором.
+Канонический type scale NOX — это сгенерированный `noxTextTheme` (§1), доступный через `Theme.of(context).textTheme.*` (`bodyMedium`, `titleMedium`, …). `AppTextStyleTokens` — **фабрики цвето-инъекции** поверх него: по фабрике на каждую из 9 ролей M3-шкалы (`displaySmall`, `headlineSmall`, `titleLarge`, `titleMedium`, `bodyLarge`, `bodyMedium`, `labelLarge`, `labelMedium`, `labelSmall`), где удобнее задать цвет на месте вызова: каждый метод принимает обязательный `Color color` и масштабирует `fontSize` через `.sp` (учитывает `minTextAdapt`, §3.2). Цвет не зашит в стиль — он передаётся на месте вызова (обычно из `context.appColors.xxx` или `Theme.of(context).colorScheme.*`), что делает стиль независимым от темы. Класс — `abstract final class` с приватным `const`-конструктором.
 
 **Файл:** `lib/design/app_text_style_tokens.dart`
 
@@ -418,31 +418,33 @@ abstract final class NoxEasing    { /* standard / emphasized / emphasizedDeceler
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
-/// Typography scale. Color-injecting factory methods (NOT const TextStyle) —
-/// callers pass the resolved color from `context.appColors` / ColorScheme.
+/// Full M3 type scale (9 roles) as color-injecting factories — reproduce noxTextTheme's
+/// fontSize / fontWeight / letterSpacing; no `height` (would scale quadratically with `.sp`),
+/// no `fontFamily` (inherited from the theme).
 abstract final class AppTextStyleTokens {
   const AppTextStyleTokens._();
 
-  static TextStyle body({required Color color}) => TextStyle(fontSize: 14.sp, fontWeight: FontWeight.w400, color: color);
-
-  static TextStyle title({required Color color}) => TextStyle(fontSize: 18.sp, fontWeight: FontWeight.w600, color: color);
-
-  static TextStyle caption({required Color color}) => TextStyle(fontSize: 12.sp, fontWeight: FontWeight.w400, color: color);
+  static TextStyle displaySmall({required Color color}) =>
+      TextStyle(fontSize: 36.sp, fontWeight: FontWeight.w400, letterSpacing: 0, color: color);
+  static TextStyle titleMedium({required Color color}) =>
+      TextStyle(fontSize: 16.sp, fontWeight: FontWeight.w500, letterSpacing: 0.15, color: color);
+  // … 9 roles: displaySmall/headlineSmall/titleLarge/titleMedium/bodyLarge/bodyMedium/
+  //   labelLarge/labelMedium/labelSmall — see lib/design/app_text_style_tokens.dart
 }
 ```
 
 Использование:
 
 ```dart
-Text(item.displayName, style: AppTextStyleTokens.body(color: context.appColors.surfaceMuted));
+Text(item.displayName, style: AppTextStyleTokens.bodyMedium(color: context.appColors.surfaceMuted));
 
 // Канонический type scale напрямую из темы:
 Text(item.displayName, style: Theme.of(context).textTheme.bodyMedium);
 ```
 
-> **Семейства шрифтов.** Реальная типографика NOX — `Roboto` (sans) и `Roboto Mono` (моноширинный, для ID/ключей) — приходит из сгенерированного `noxTextTheme` (§1). Фабрики `AppTextStyleTokens` семейство явно не задают (наследуют дефолт темы); для моноширинных мест используйте слот темы либо `fontFamily: noxMonoFamily` из `nox_text_theme.dart`. Семейства бандлятся (или берётся платформенный дефолт) в секции `fonts:` `pubspec.yaml` — см. `01-stack-and-tooling.md`.
+> **Семейства шрифтов.** Реальная типографика NOX — `Roboto` (sans) и `Roboto Mono` (моноширинный, для ID/ключей) — приходит из сгенерированного `noxTextTheme` (§1). Фабрики `AppTextStyleTokens` семейство явно не задают (наследуют дефолт темы); для моноширинных мест используйте слот темы либо `fontFamily: noxMonoFamily` из `nox_text_theme.dart`. Семейства **забандлены** (`Roboto` 400/500/700 + `Roboto Mono` 400) в секции `fonts:` `pubspec.yaml` — см. `01-stack-and-tooling.md`.
 >
-> **План.** Расширенный набор фабрик (доп. слоты, `extension on TextStyle` с `withMonospace`/`withPrimaryColor` и т.п.) можно добавить, когда появится реальная потребность; в скелете — три фабрики (`body`/`title`/`caption`), всё остальное берётся из `noxTextTheme`.
+> **План.** Набор покрывает все 9 ролей `noxTextTheme`; дополнительные хелперы (`extension on TextStyle` с `withMonospace`/`withPrimaryColor` и т.п.) добавляются при появлении реальной потребности.
 
 ---
 
@@ -483,36 +485,26 @@ abstract final class AppOverlayStyleTokens {
 
 ---
 
-## 7. Картиночные ассеты — `assets.gen.dart` (flutter_gen) и `AppImagesTokens`
+## 7. Картиночные ассеты — `assets.gen.dart` (flutter_gen) и `NoxIcons`
 
-В коде NOX сейчас сосуществуют **два** канала доступа к путям ассетов:
+Единственный канал доступа к путям ассетов — **`flutter_gen`**. `flutter_gen_runner` генерирует `lib/design/gen/assets.gen.dart` — type-safe аксессоры `Assets.png`/`Assets.svg`/`Assets.animation` из реальных файлов под `assets/`. Файл **gitignored** (`.gitignore` → `lib/design/gen/`), исключён из анализатора и регенерится `build_runner`. Конфиг — блок `flutter_gen:` в `pubspec.yaml` (`output: lib/design/gen/`, `flutter_svg: true`, `fonts.enabled: false`, `line_length: 140`). PNG рендерится `Image.asset`/`AssetGenImage`; SVG — через `flutter_svg` (`.svg()`). Рукописного `AppImagesTokens` больше нет — сырые строки путей в коде фич запрещены.
 
-1. **`flutter_gen` (канонический, подключён).** `flutter_gen_runner` генерирует `lib/design/gen/assets.gen.dart` — type-safe аксессоры `Assets.png`/`Assets.svg`/`Assets.animation` из реальных файлов под `assets/`. Файл **gitignored** (`.gitignore` → `lib/design/gen/`), исключён из анализатора и регенерится `build_runner`. Конфиг — блок `flutter_gen:` в `pubspec.yaml` (`output: lib/design/gen/`, `flutter_svg: true`, `fonts.enabled: false`, `line_length: 140`). PNG рендерится `Image.asset`/`AssetGenImage`; SVG — через `flutter_svg` (`.svg()`).
+**Забандленные наборы (`assets/`, перечислены в `pubspec.yaml::flutter.assets`):**
 
-2. **`AppImagesTokens` (рукописный реестр).** Плоский `abstract final class` со `static const`-путями под общим `_base = 'assets/png'`.
+- `assets/svg/icons/` — 37 SVG Material Symbols Rounded (`currentColor`); семантический доступ — `NoxIcons` (§7.1).
+- `assets/svg/illustrations/` — 3 плейсхолдера пустых состояний (`Assets.svg.illustrations.emptyChats` / `.emptyMessages` / `.emptyFiles`).
+- `assets/png/logo.png` — бренд-логотип (растровый плейсхолдер, splash) — `Assets.png.logo`.
+- `assets/fonts/*.ttf` — `Roboto` 400/500/700 + `Roboto Mono` 400 (объявлены в `fonts:`, см. §1/§5).
 
-**Файл (рукописный):** `lib/design/app_images_tokens.dart`
+### 7.1 Семантический icon-реестр — `NoxIcons`
 
-```dart
-/// Asset path registry. No literal asset strings in widgets.
-abstract final class AppImagesTokens {
-  const AppImagesTokens._();
-
-  static const String _base = 'assets/png';
-
-  static const String logo = '$_base/logo.png';
-  static const String emptyState = '$_base/empty_state.png';
-}
-```
-
-Использование (оба канала валидны, см. ниже):
+**Файл (рукописный):** `lib/design/nox_icons.dart`. `abstract final class NoxIcons` с именованными геттерами, **ссылающимися** на flutter_gen-аксессоры `Assets.svg.icons.*` (без сырых строк путей). Несёт семантику и ось FILL из `nox-assets/icons/icons.json`: outlined/filled — это `name.svg` / `name-fill.svg` (`forum`/`forumFill`, `settings`/`settingsFill`, `sendFill`, `flashlightOnFill`/`flashlightOff`, …). Покрывает 35 используемых глифов; 2 забандленных-но-неиспользуемых outlined-варианта (`flashlight_on.svg`, `send.svg` — их единственная используемая форма — filled) доступны через `Assets.svg.icons.*`, но в реестр не входят. Иконки перекрашиваются цветом темы на месте вызова (`currentColor`, цвет не зашит):
 
 ```dart
-Image.asset(Assets.png.logo.path);   // flutter_gen (канонический); SVG — Assets.svg.icon.svg()
-Image.asset(AppImagesTokens.logo);   // рукописный реестр
+NoxIcons.forum.svg(colorFilter: ColorFilter.mode(cs.onSurfaceVariant, BlendMode.srcIn));
 ```
 
-> **Решение и дрейф.** Канонический канал — **`flutter_gen`** (он подключён в `pubspec.yaml` и прогоняется в CI), как и type-safe генерация в остальном проекте. Рукописный `AppImagesTokens` остаётся в коде как переходное удобство (читаемые диффы без прогона `build_runner` при добавлении одной картинки), но это **дубликация, подлежащая сведению**: при росте набора ассетов реестр `AppImagesTokens` сворачивается в пользу `Assets.*`. Директории ассетов перечисляются в `pubspec.yaml::flutter.assets` (бандлятся в APK/IPA) — это нужно обоим каналам.
+> **Pending-ассеты (вне scope сейчас).** По `nox-assets/manifest.json` ещё не произведены: финальный вектор логотипа (SVG, full-color на тёмном), launcher app-icon, финальные иллюстрации пустых состояний. Заведены существующие плейсхолдеры; финалы заменяются точечно при поступлении ордеров.
 
 ---
 

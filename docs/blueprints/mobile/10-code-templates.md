@@ -1960,9 +1960,9 @@ abstract final class TextConstants {
 
 > **Migration-ready.** Файл должен быть пригоден к будущему переносу на локализацию (ARB + `flutter_localizations`, отдельный таск — см. [08-conventions-and-constitution.md](08-conventions-and-constitution.md) §7): одна `static const` на строку, параметризованные строки — методами (`static String greeting(String n) => 'Hello, $n';`), без рантайм-конкатенации; имена ключей стабильные и говорящие (станут ARB-ключами).
 
-### 17f. Четыре класса токенов
+### 17f. Классы токенов и icon-реестр
 
-> Цвета берутся **не** из статического токен-класса, а из `AppColors` `ThemeExtension` через `context.appColors` (см. §16). Класса `AppRadiusTokens` нет. Каноническая четвёрка статических токен-классов — `AppSpacingTokens` (responsive: `static double get sN => N * _scale`, где `_scale => (1.w + 1.h) / 2` через `flutter_screenutil`, **не** const-литералы; геттеры, а не `final`-поля, чтобы scale вычислялся лениво/desktop-aware), `AppTextStyleTokens` (color-injecting factory-методы, **не** const `TextStyle`), `AppOverlayStyleTokens`, `AppImagesTokens` (рукописный реестр путей ассетов). `AppColorsTokens` нет — цвет приходит только из `context.appColors`.
+> Цвета берутся **не** из статического токен-класса, а из `AppColors` `ThemeExtension` через `context.appColors` (см. §16). Класса `AppRadiusTokens` нет. Статические токен-классы — `AppSpacingTokens` (responsive: `static double get sN => N * _scale`, где `_scale => (1.w + 1.h) / 2` через `flutter_screenutil`, **не** const-литералы; геттеры, а не `final`-поля, чтобы scale вычислялся лениво/desktop-aware), `AppTextStyleTokens` (color-injecting factory-методы полной 9-ролевой M3-шкалы, **не** const `TextStyle`), `AppOverlayStyleTokens`. Пути к ассетам — только через сгенерированный `flutter_gen` (`Assets.*`) плюс семантический icon-реестр `NoxIcons`; рукописного `AppImagesTokens` нет. `AppColorsTokens` нет — цвет приходит только из `context.appColors`.
 
 **Целевой путь:** `lib/design/app_spacing_tokens.dart`
 
@@ -1994,16 +1994,18 @@ abstract final class AppSpacingTokens {
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
-/// Typography scale. Color-injecting factory methods (NOT const TextStyle) —
-/// callers pass the resolved color from `context.appColors`.
+/// Full M3 type scale (9 roles) as color-injecting factories — reproduce noxTextTheme's
+/// fontSize / fontWeight / letterSpacing; no height (would scale quadratically with .sp),
+/// no fontFamily (inherited from the theme).
 abstract final class AppTextStyleTokens {
   const AppTextStyleTokens._();
 
-  static TextStyle body({required Color color}) => TextStyle(fontSize: 14.sp, fontWeight: FontWeight.w400, color: color);
-
-  static TextStyle title({required Color color}) => TextStyle(fontSize: 18.sp, fontWeight: FontWeight.w600, color: color);
-
-  static TextStyle caption({required Color color}) => TextStyle(fontSize: 12.sp, fontWeight: FontWeight.w400, color: color);
+  static TextStyle displaySmall({required Color color}) =>
+      TextStyle(fontSize: 36.sp, fontWeight: FontWeight.w400, letterSpacing: 0, color: color);
+  static TextStyle titleMedium({required Color color}) =>
+      TextStyle(fontSize: 16.sp, fontWeight: FontWeight.w500, letterSpacing: 0.15, color: color);
+  // … 9 roles total: displaySmall/headlineSmall/titleLarge/titleMedium/bodyLarge/
+  //   bodyMedium/labelLarge/labelMedium/labelSmall — see lib/design/app_text_style_tokens.dart
 }
 ```
 
@@ -2030,21 +2032,23 @@ abstract final class AppOverlayStyleTokens {
 }
 ```
 
-**Целевой путь:** `lib/design/app_images_tokens.dart`
+**Целевой путь:** `lib/design/nox_icons.dart`
 
 ```dart
-/// Asset path registry. No literal asset strings in widgets.
-abstract final class AppImagesTokens {
-  const AppImagesTokens._();
+import 'package:nox_app/design/gen/assets.gen.dart';
 
-  static const String _base = 'assets/png';
+/// Semantic icon registry — named getters forwarding to flutter_gen accessors
+/// (Assets.svg.icons.*); carries FILL/use semantics from icons.json, no raw paths.
+abstract final class NoxIcons {
+  const NoxIcons._();
 
-  static const String logo = '$_base/logo.png';
-  static const String emptyState = '$_base/empty_state.png';
+  static SvgGenImage get forum => Assets.svg.icons.forum; // Chats tab — outlined
+  static SvgGenImage get forumFill => Assets.svg.icons.forumFill; // Chats tab — filled
+  // … 35 referenced glyphs total — see lib/design/nox_icons.dart
 }
 ```
 
-> **Два канала ассетов сосуществуют в коде.** Рядом с рукописным `AppImagesTokens` (`_base = 'assets/png'`) код держит сгенерированный `lib/design/gen/assets.gen.dart` (`flutter_gen`, gitignored, регенерится `build_runner`; ассет-директории — в `pubspec.yaml::flutter.assets`, бандлятся в APK/IPA/desktop-бандл). Использование flutter_gen: `Image.asset(Assets.png.logo.path)` / `Assets.png.logo.image()`. `flutter_gen` — намеренный канонический канал (type-safe, авто-синхронизация с `pubspec.yaml`); `AppImagesTokens` — convenience-реестр строковых путей. Оба присутствуют в `lib/design/`.
+> **flutter_gen — единственный канал путей к ассетам.** Рукописный `AppImagesTokens` удалён; пути к картинкам приходят только через сгенерированный `lib/design/gen/assets.gen.dart` (`Assets.png.logo`, `Assets.svg.icons.*`, `Assets.svg.illustrations.*`; gitignored, регенерится `build_runner`; ассет-директории — в `pubspec.yaml::flutter.assets`, бандлятся в APK/IPA/desktop-бандл). Семантику иконок (FILL/назначение) несёт `NoxIcons`; сырые строки путей в коде фич запрещены.
 
 ### 17g. `main.dart` (runZonedGuarded + allReady)
 
