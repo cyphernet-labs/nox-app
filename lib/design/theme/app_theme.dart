@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:nox_app/design/theme/app_colors.dart';
 import 'package:nox_app/design/theme/nox_color_scheme.dart';
+import 'package:nox_app/design/theme/nox_component_themes.dart';
 import 'package:nox_app/design/theme/nox_text_theme.dart';
 
 /// NOX Material 3 theme. The `ColorScheme` and `TextTheme` come from the
@@ -21,6 +22,21 @@ class AppTheme {
       colorScheme: scheme,
       textTheme: noxTextTheme,
       scaffoldBackgroundColor: scheme.surface,
+      // Stock-widget M3 component themes (lib/design/theme/nox_component_themes.dart).
+      appBarTheme: noxAppBarTheme(scheme),
+      filledButtonTheme: noxFilledButtonTheme(scheme),
+      textButtonTheme: noxTextButtonTheme(scheme),
+      iconButtonTheme: noxIconButtonTheme(scheme),
+      inputDecorationTheme: noxInputDecorationTheme(scheme),
+      segmentedButtonTheme: noxSegmentedButtonTheme(scheme),
+      switchTheme: noxSwitchTheme(scheme),
+      radioTheme: noxRadioTheme(scheme),
+      listTileTheme: noxListTileTheme(scheme),
+      progressIndicatorTheme: noxProgressIndicatorTheme(scheme),
+      dialogTheme: noxDialogTheme(scheme),
+      bottomSheetTheme: noxBottomSheetTheme(scheme),
+      cardTheme: noxCardTheme(scheme),
+      snackBarTheme: noxSnackBarTheme(scheme),
       extensions: <ThemeExtension<dynamic>>[appColors],
     );
   }
