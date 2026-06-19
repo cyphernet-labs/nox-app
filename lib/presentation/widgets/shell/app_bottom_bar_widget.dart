@@ -21,6 +21,7 @@ class AppBottomBarWidget extends StatelessWidget {
   final ValueChanged<AppTab> onSelect;
 
   static const double _height = 64;
+  // Must track the FAB diameter in AppCreateFabWidget so the notch cradles it.
   static const double _notchGap = 72;
 
   @override
@@ -74,15 +75,20 @@ class _Tab extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     final color = selected ? colorScheme.primary : colorScheme.onSurfaceVariant;
-    return InkResponse(
-      onTap: onTap,
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          AppIconWidget(selected ? filled : outlined, color: color),
-          SizedBox(height: AppSpacingTokens.s2),
-          Text(label, style: textTheme.labelMedium?.copyWith(color: color)),
-        ],
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: label,
+      child: InkResponse(
+        onTap: onTap,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            AppIconWidget(selected ? filled : outlined, color: color),
+            SizedBox(height: AppSpacingTokens.s2),
+            Text(label, style: textTheme.labelMedium?.copyWith(color: color)),
+          ],
+        ),
       ),
     );
   }

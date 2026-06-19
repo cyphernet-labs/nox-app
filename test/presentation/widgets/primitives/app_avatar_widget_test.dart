@@ -24,5 +24,32 @@ void main() {
     test('background color is deterministic per name', () {
       expect(noxAvatarColor('Ann Lee'), noxAvatarColor('Ann Lee'));
     });
+
+    test('background color is always a member of the avatar palette', () {
+      expect(noxAvatarPalette, contains(noxAvatarColor('Ann Lee')));
+    });
+
+    test('different names can resolve to different palette entries', () {
+      // 'Ann Lee' hashes to index 5, 'Charlie' to index 2.
+      expect(noxAvatarColor('Ann Lee'), isNot(noxAvatarColor('Charlie')));
+    });
+
+    test('initials use the first two words of a multi-word name', () {
+      expect(noxInitials('Mary Jane Watson'), 'MJ');
+    });
+
+    test('initials fall back to the first two alphanumerics of a single-word name', () {
+      expect(noxInitials('Cher'), 'CH');
+    });
+
+    test('initials skip a leading non-letter from the allowed label charset', () {
+      // '_bob' starts with '_' (not alphanumeric), so the two-word branch is
+      // skipped and the first two alphanumerics of the whole name are used.
+      expect(noxInitials('_bob smith'), 'BO');
+    });
+
+    test('initials are normalized to uppercase', () {
+      expect(noxInitials('ann lee'), 'AL');
+    });
   });
 }

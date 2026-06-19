@@ -6,7 +6,7 @@ import '../../../utils/pump_app.dart';
 void main() {
   testWidgets('AppSplashHairlineWidget has a preferred size and renders', (tester) async {
     const widget = AppSplashHairlineWidget();
-    expect(widget.preferredSize.height, 3 + 14);
+    expect(widget.preferredSize.height, AppSplashHairlineWidget.thickness + AppSplashHairlineWidget.gap);
 
     await pumpApp(tester, const AppSplashHairlineWidget());
     expect(find.byType(AppSplashHairlineWidget), findsOneWidget);

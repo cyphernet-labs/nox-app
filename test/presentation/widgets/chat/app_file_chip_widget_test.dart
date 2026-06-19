@@ -24,5 +24,16 @@ void main() {
       await tester.tap(find.byType(IconButton));
       expect(removed, 1);
     });
+
+    testWidgets('renders the in-bubble variant with the bubble text color applied to the name', (tester) async {
+      const onColor = Color(0xFF112233);
+      await pumpApp(tester, const AppFileChipWidget(type: FileType.pdf, name: 'doc.pdf', size: '3.1 MB', inBubble: true, onColor: onColor));
+
+      expect(find.text('doc.pdf'), findsOneWidget);
+      expect(find.text('3.1 MB'), findsOneWidget);
+
+      final name = tester.widget<Text>(find.text('doc.pdf'));
+      expect(name.style?.color, onColor);
+    });
   });
 }

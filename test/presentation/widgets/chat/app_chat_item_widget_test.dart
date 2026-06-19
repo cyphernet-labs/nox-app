@@ -23,6 +23,19 @@ void main() {
       expect(find.text('5'), findsOneWidget);
     });
 
+    testWidgets('shows the exact count at the 99 boundary', (tester) async {
+      await pumpApp(tester, const AppChatItemWidget(name: 'Ann', preview: 'hi', time: '09:00', unread: 99));
+
+      expect(find.text('99'), findsOneWidget);
+      expect(find.text('99+'), findsNothing);
+    });
+
+    testWidgets('caps to 99+ once the count exceeds 99', (tester) async {
+      await pumpApp(tester, const AppChatItemWidget(name: 'Ann', preview: 'hi', time: '09:00', unread: 100));
+
+      expect(find.text('99+'), findsOneWidget);
+    });
+
     testWidgets('fires onTap', (tester) async {
       var taps = 0;
       await pumpApp(tester, AppChatItemWidget(name: 'Ann', preview: 'hi', time: '09:00', onTap: () => taps++));

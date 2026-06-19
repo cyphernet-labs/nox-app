@@ -31,6 +31,7 @@ class AppFileChipWidget extends StatelessWidget {
   final VoidCallback? onRemove;
 
   static const double _iconSize = 28;
+  static const double _removeIconSize = 20;
   static const double _minWidth = 200;
   static const double _maxWidth = 260;
 
@@ -69,7 +70,7 @@ class AppFileChipWidget extends StatelessWidget {
             IconButton(
               onPressed: onRemove,
               tooltip: TextConstants.tooltipRemove,
-              icon: AppIconWidget(NoxIcons.close, size: 20, color: colorScheme.onSurfaceVariant),
+              icon: AppIconWidget(NoxIcons.close, size: _removeIconSize, color: colorScheme.onSurfaceVariant),
             ),
         ],
       ),

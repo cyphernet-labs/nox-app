@@ -31,23 +31,27 @@ class AppSearchBarWidget extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(NoxRadius.full),
-        child: SizedBox(
-          height: _height,
-          child: Padding(
-            padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s16),
-            child: Row(
-              children: [
-                AppIconWidget(NoxIcons.search, color: NoxBrand.teal),
-                SizedBox(width: AppSpacingTokens.s12),
-                Expanded(
-                  child: Text(
-                    hasValue ? value! : hint,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: textTheme.bodyLarge?.copyWith(color: hasValue ? colorScheme.onSurface : colorScheme.onSurfaceVariant),
+        child: Semantics(
+          button: true,
+          label: TextConstants.searchHint,
+          child: SizedBox(
+            height: _height,
+            child: Padding(
+              padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s16),
+              child: Row(
+                children: [
+                  AppIconWidget(NoxIcons.search, color: NoxBrand.teal),
+                  SizedBox(width: AppSpacingTokens.s12),
+                  Expanded(
+                    child: Text(
+                      hasValue ? value! : hint,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: textTheme.bodyLarge?.copyWith(color: hasValue ? colorScheme.onSurface : colorScheme.onSurfaceVariant),
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),

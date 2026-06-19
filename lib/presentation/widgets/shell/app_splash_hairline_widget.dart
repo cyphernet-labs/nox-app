@@ -9,24 +9,27 @@ import 'package:nox_app/design/theme/nox_brand.dart';
 class AppSplashHairlineWidget extends StatelessWidget implements PreferredSizeWidget {
   const AppSplashHairlineWidget({super.key});
 
-  static const double _thickness = 3;
-  static const double _gap = 14;
+  /// Gradient-rule thickness (dp); the rendered bar height.
+  static const double thickness = 3;
+
+  /// Bottom gap (dp) below the rule; `preferredSize.height` is `thickness + gap`.
+  static const double gap = 14;
   static const double _radius = 2;
   static const LinearGradient _gradient = LinearGradient(
     colors: [NoxBrand.teal, NoxBrand.lime, NoxBrand.gold, NoxBrand.coral, NoxBrand.red],
   );
 
   @override
-  Size get preferredSize => const Size.fromHeight(_thickness + _gap);
+  Size get preferredSize => const Size.fromHeight(thickness + gap);
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      // Bottom gap is the unscaled `_gap` so the rendered height (_thickness + _gap)
+      // Bottom gap is the unscaled `gap` so the rendered height (thickness + gap)
       // matches `preferredSize` on every device (a scaled value would overflow AppBar.bottom).
-      padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, 0, AppSpacingTokens.s16, _gap),
+      padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, 0, AppSpacingTokens.s16, gap),
       child: Container(
-        height: _thickness,
+        height: thickness,
         decoration: BoxDecoration(gradient: _gradient, borderRadius: BorderRadius.circular(_radius)),
       ),
     );

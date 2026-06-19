@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/gen/assets.gen.dart';
+import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/pages/item_list_page/item_list_page.dart';
 import 'package:nox_app/presentation/pages/placeholder/settings_placeholder_page.dart';
+import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 
 /// NOT currently mounted — `AppRoot` starts at `HomePage` (the UI-kit launcher)
 /// until real chat features land; the live shell widgets now live in
@@ -26,9 +29,9 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> {
   int _index = 0;
 
-  static const List<_Destination> _destinations = <_Destination>[
-    _Destination(label: TextConstants.chats, icon: Icons.forum_outlined, selectedIcon: Icons.forum),
-    _Destination(label: TextConstants.settings, icon: Icons.settings_outlined, selectedIcon: Icons.settings),
+  static final List<_Destination> _destinations = <_Destination>[
+    _Destination(label: TextConstants.chats, icon: NoxIcons.forum, selectedIcon: NoxIcons.forumFill),
+    _Destination(label: TextConstants.settings, icon: NoxIcons.settings, selectedIcon: NoxIcons.settingsFill),
   ];
 
   // Chats tab body is the Item verification-harness (mock data, scaffold-demo);
@@ -61,10 +64,10 @@ class _AppShellState extends State<AppShell> {
             selectedIndex: _index,
             onDestinationSelected: _onSelect,
             labelType: NavigationRailLabelType.all,
-            leading: FloatingActionButton(onPressed: _onCreate, tooltip: TextConstants.comingSoon, child: const Icon(Icons.add)),
+            leading: FloatingActionButton(onPressed: _onCreate, tooltip: TextConstants.comingSoon, child: AppIconWidget(NoxIcons.add)),
             destinations: [
               for (final d in _destinations)
-                NavigationRailDestination(icon: Icon(d.icon), selectedIcon: Icon(d.selectedIcon), label: Text(d.label)),
+                NavigationRailDestination(icon: AppIconWidget(d.icon), selectedIcon: AppIconWidget(d.selectedIcon), label: Text(d.label)),
             ],
           ),
           const VerticalDivider(width: 1),
@@ -77,7 +80,11 @@ class _AppShellState extends State<AppShell> {
   Widget _buildBottomBar(Widget body) {
     return Scaffold(
       body: body,
-      floatingActionButton: FloatingActionButton(onPressed: _onCreate, tooltip: TextConstants.comingSoon, child: const Icon(Icons.add)),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _onCreate,
+        tooltip: TextConstants.comingSoon,
+        child: AppIconWidget(NoxIcons.add),
+      ),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
       bottomNavigationBar: BottomAppBar(
         shape: const CircularNotchedRectangle(),
@@ -98,8 +105,8 @@ class _Destination {
   const _Destination({required this.label, required this.icon, required this.selectedIcon});
 
   final String label;
-  final IconData icon;
-  final IconData selectedIcon;
+  final SvgGenImage icon;
+  final SvgGenImage selectedIcon;
 }
 
 class _BarItem extends StatelessWidget {
@@ -120,7 +127,7 @@ class _BarItem extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(selected ? destination.selectedIcon : destination.icon, color: color),
+            AppIconWidget(selected ? destination.selectedIcon : destination.icon, color: color),
             Text(destination.label, style: Theme.of(context).textTheme.labelSmall?.copyWith(color: color)),
           ],
         ),
