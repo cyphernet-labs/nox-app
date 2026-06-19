@@ -4,7 +4,7 @@
 
 **Created**: 2026-06-15
 
-**Status**: Draft
+**Status**: Implemented
 
 **Input**: User description: «В `lib/presentation/widgets` собрать весь UI-кит: реализовать все компоненты дизайн-системы (`docs/design/system`) по стандартам реализации из блюпринта (`docs/blueprints/mobile`). Для каждого нового виджета — golden-тест (через подготовленный скилл) и widget-тест.»
 

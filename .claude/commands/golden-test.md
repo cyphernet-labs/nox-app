@@ -32,11 +32,13 @@ based on the widget's visual states (and both `light`/`dark` themes — the app 
    - Distinct modes (create/edit, tabs) if present.
    - If scenarios are provided in the arguments, use those.
 
-3. **Reuse the pump helper** in `test/utils/pump_app.dart` (the same one `/widget-test` uses; create it first per `/widget-test`
-   if absent). It wraps the widget in `ScreenUtilInit(designSize: Constants.designSize)` + `MaterialApp(theme: AppTheme.light()`,
-   `darkTheme: AppTheme.dark())` with a `themeMode` parameter — pass `ThemeMode.dark` for the dark variant. A BLoC-backed page
-   self-creates its BLoC in `initState`; the Item demo BLoC loads from the **test-env DI** (mock data) under
-   `configureDependencies(Environment.test)`, so no repository mock is needed for it.
+3. **Use the `goldenTest()` helper** in `test/utils/golden.dart` — `goldenTest(name, build, {settle})`. It does everything:
+   loads real fonts (`loadNoxFonts`, so glyphs aren't the `flutter_test` placeholder box-font), fixes the surface to
+   `Constants.designSize`, and renders **both** light and dark (`goldens/<name>_light.png` + `_dark.png`) via `pumpApp`. You
+   supply only `name` and a `build` thunk. Pass `settle: false` for animated content (spinners/progress, or any page that renders
+   one) — otherwise the internal `pumpAndSettle` hangs on the endless animation. Pure widgets need no DI; a page that needs a BLoC
+   usually wraps it inline (`BlocProvider<AppRootBloc>(create: (_) => AppRootBloc(), child: ...)`) — only a page whose BLoC
+   self-creates from `getIt` needs the test-env DI (see Rules).
 
 4. **Generate the golden test file mirroring the lib/ path under `test/`** (nox-app convention — tests deep-mirror the source
    tree, NOT flat): `test/presentation/pages/<page>/<widget_name>_golden_test.dart` — e.g.
@@ -45,65 +47,62 @@ based on the widget's visual states (and both `light`/`dark` themes — the app 
 
 ## Test file conventions
 
+**Plain widget** — one `goldenTest()` call covers light + dark:
+
 ```dart
 @Tags(['golden'])
 library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:injectable/injectable.dart' show Environment;
-import 'package:nox_app/di/configure_dependencies.dart';
-import 'package:nox_app/general/constants.dart';
-import 'package:nox_app/presentation/pages/item_list_page/item_list_page.dart';
+import 'package:nox_app/presentation/widgets/chat/app_chat_item_widget.dart';
 
-import '../../../utils/pump_app.dart'; // adjust relative depth to the test's location
-
-// 1:1 with the ScreenUtil design canvas → deterministic token scale (see Rules).
-const Size _surfaceSize = Constants.designSize;
+import '../../../utils/golden.dart'; // adjust relative depth to the test's location
 
 void main() {
-  setUpAll(() async => configureDependencies(Environment.test));
-  tearDownAll(() async => getIt.reset());
-
-  group('ItemListPage golden', () {
-    testWidgets('matches the light theme', (tester) async {
-      await tester.binding.setSurfaceSize(_surfaceSize);
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-
-      await pumpApp(tester, const ItemListPage());
-
-      await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/item_list_page_light.png'));
-    });
-
-    testWidgets('matches the dark theme', (tester) async {
-      await tester.binding.setSurfaceSize(_surfaceSize);
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-
-      await pumpApp(tester, const ItemListPage(), themeMode: ThemeMode.dark);
-
-      await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/item_list_page_dark.png'));
-    });
-  });
+  goldenTest(
+    'app_chat_item_widget',
+    () => const Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        AppChatItemWidget(name: 'Cyphernet Labs', preview: 'Latest build is green', time: '09:24'),
+        AppChatItemWidget(name: 'Ann Lee', preview: 'See you tomorrow', time: '08:10', unread: 5),
+      ],
+    ),
+  );
 }
+```
+
+**Animated content** — `settle: false` captures the first frame (otherwise `pumpAndSettle` hangs):
+
+```dart
+goldenTest('app_spinner_widget', () => const Center(child: AppSpinnerWidget(size: 32)), settle: false);
+```
+
+**Page needing a BLoC** — provide it inline (no `getIt` for `AppRootBloc`):
+
+```dart
+goldenTest('ui_kit_page', () => BlocProvider<AppRootBloc>(create: (_) => AppRootBloc(), child: const UiKitPage()), settle: false);
 ```
 
 ## Rules
 
 - **Tag** `@Tags(['golden'])` at the very top (before imports, with `library;`) — this is what keeps goldens out of CI / `make test`.
-- **Naming — descriptive sentences** (`'matches the light theme'`). Do **NOT** use a `test_shouldMatchGolden_when{X}` prefix.
-- **DI:** for a BLoC-backed page, boot the test container once — `setUpAll(() async => configureDependencies(Environment.test))`
-  + `tearDownAll(() async => getIt.reset())` (the nox-app pattern; there is no `flutter_test_config.dart`). Pure-widget goldens
-  (no BLoC / no `getIt`) can skip DI.
-- **Reuse `pumpApp`** from `test/utils/pump_app.dart` — it provides the mandatory `ScreenUtilInit` + `AppTheme` canvas; capture
-  both `light` and `dark` where the design differs. Relative imports of test helpers are allowed (test files are not in `lib/`).
-- **Fixed surface size:** `tester.binding.setSurfaceSize(Constants.designSize)` (360×779) and restore with `addTearDown` — a 1:1
-  ScreenUtil scale so tokens render at design values. `AppSpacingTokens`/`AppTextStyleTokens` read `ScreenUtil()` live (no static
-  cache), so a consistent surface across the run is enough.
-- **Golden file path:** `goldens/<widget_name>_<scenario>.png`, relative to the test file (`goldens/` is created on first generation).
-  There is **no `linux/` subdir** — a single macOS-rendered set.
-- **Subject:** `find.byType(MaterialApp)` for `matchesGoldenFile`. The pump helper already `pumpAndSettle()`s before you capture.
-- **Style:** line length **140**, single quotes, `const` wherever possible.
-- Golden `.png` files are **committable fixtures** (not gitignored).
+- **Always go through `goldenTest()`** (`test/utils/golden.dart`) — do **not** hand-roll `setSurfaceSize`/`matchesGoldenFile`/a
+  light-dark loop. The helper encapsulates the deterministic canvas (`ScreenUtilInit(Constants.designSize)` 360×779 + `AppTheme`
+  via `pumpApp`), the real-font load (`loadNoxFonts`), the light+dark pair, and
+  `expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/<name>_<mode>.png'))`. ScreenUtil at a fixed 1:1 surface is why
+  `AppSpacingTokens`/`AppTextStyleTokens` (which read `ScreenUtil()` live, no static cache) render at design values.
+- **`name`** → `goldens/<name>_light.png` + `<name>_dark.png` (relative to the test file; `goldens/` is created on first generation,
+  a single macOS-rendered set, **no `linux/` subdir**). Convention: `name` = the widget/page snake_case (`app_chat_item_widget`).
+  The per-test titles (`'matches the light theme'`) are produced by the helper — never write `test_shouldMatchGolden_when{X}`.
+- **`settle: false`** for any animated content (spinner/progress) or a page that renders one — otherwise the internal
+  `pumpAndSettle` never returns. Add a one-line comment saying why.
+- **DI:** pure widgets need none; a page wraps its own BLoC inline (`BlocProvider<…>(create: …, child: …)`). Only a page whose BLoC
+  self-creates from `getIt` needs `setUpAll(() async => configureDependencies(Environment.test))` +
+  `tearDownAll(() async => getIt.reset())` at `main()` level (there is no `flutter_test_config.dart`). Relative imports of test
+  helpers are allowed (test files are not in `lib/`).
+- **Style:** line length **140**, single quotes, `const` wherever possible. Golden `.png` files are **committable fixtures** (not gitignored).
 
 5. **Generate baselines (locally, on your M1 — never in CI):**
    ```bash
