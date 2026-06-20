@@ -29,7 +29,7 @@
 
 **Purpose**: Общая инфраструктура, нужная нескольким историям. ⚠️ Завершить до US3–US6.
 
-- [ ] T002 [P] Добавить всю UI-микрокопию M1 (English) в `lib/general/text_constants.dart` — строки Splash (debug-метки/placeholder), Error (`errorGeneralTitle` уже есть; добавить сетевой текст, заголовки), Appearance, Language, Notifications, Terms, About.
+- [x] T002 [P] Добавить всю UI-микрокопию M1 (English) в `lib/general/text_constants.dart` — строки Splash (debug-метки/placeholder), Error (`errorGeneralTitle` уже есть; добавить сетевой текст, заголовки), Appearance, Language, Notifications, Terms, About.
 - [x] T003 [P] Создать `AppDetailScaffoldWidget` в `lib/presentation/widgets/shell/app_detail_scaffold_widget.dart` (мобайл `Scaffold`+`AppBar`(title,back) ↔ десктоп ≥840 width-capped `ConstrainedBox(maxWidth:640)` через `LayoutBuilder`+`Constants.railBreakpoint`). Контракт — `contracts/widgets.md`.
 - [x] T004 Widget-тест адаптивности `AppDetailScaffoldWidget` (<840 fullscreen / ≥840 width-cap) в `test/presentation/widgets/shell/app_detail_scaffold_widget_test.dart` (зависит от T003).
 
@@ -142,10 +142,10 @@
 
 ## Phase 9: Polish & Cross-Cutting Concerns
 
-- [ ] T042 [P] Обновить `docs/roadmap.md`: отметить 7 экранов M1 `[x]` в таблице этапа M1 и счётчик прогресса (7/17 экранов, ✅ M0+M1).
-- [ ] T043 [P] Добавить M1-страницы в `test/presentation/widgets/accessibility_test.dart` (tap-targets ≥48, `textScaler 2.0` без overflow).
-- [ ] T044 Полный `make gate` (analyze без ошибок, все widget-тесты) + `make golden-verify` для всех новых goldens; устранить дрейф. Дополнительно (FR-006/SC-006): grep-проверить, что у всех заглушек стоит маркер `TODO(backend):`, и что в UI-строках `lib/presentation` нет кириллицы (`grep -rPn "[\x{0400}-\x{04FF}]" lib/presentation` — допустимы только не-UI комментарии на латинице).
-- [ ] T045 [P] Ручная проверка десктопа (≥840) для всех 7 экранов по `quickstart.md` (width-cap панель, Error TitleBar, Splash full-window).
+- [x] T042 [P] Обновить `docs/roadmap.md`: отметить 7 экранов M1 `[x]` в таблице этапа M1 и счётчик прогресса (7/17 экранов, ✅ M0+M1).
+- [x] T043 [P] Добавить M1-страницы в `test/presentation/widgets/accessibility_test.dart` (tap-targets ≥48, `textScaler 2.0` без overflow).
+- [x] T044 Полный `make gate` (analyze без ошибок, все widget-тесты) + `make golden-verify` для всех новых goldens; устранить дрейф. Дополнительно (FR-006/SC-006): grep-проверить, что у всех заглушек стоит маркер `TODO(backend):`, и что в UI-строках `lib/presentation` нет кириллицы (`grep -rPn "[\x{0400}-\x{04FF}]" lib/presentation` — допустимы только не-UI комментарии на латинице).
+- [x] T045 [P] Ручная проверка десктопа (≥840) для всех 7 экранов по `quickstart.md` (width-cap панель, Error TitleBar, Splash full-window).
 
 ---
 
