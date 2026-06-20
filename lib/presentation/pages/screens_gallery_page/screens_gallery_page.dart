@@ -3,11 +3,13 @@ import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/app/widgets/app_theme_toggle.dart';
+import 'package:nox_app/presentation/pages/about_page/about_page.dart';
 import 'package:nox_app/presentation/pages/appearance_page/appearance_page.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page.dart';
 import 'package:nox_app/presentation/pages/language_page/language_page.dart';
 import 'package:nox_app/presentation/pages/notifications_page/notifications_page.dart';
 import 'package:nox_app/presentation/pages/splash_page/splash_page.dart';
+import 'package:nox_app/presentation/pages/terms_page/terms_page.dart';
 import 'package:nox_app/presentation/widgets/shell/app_splash_hairline_widget.dart';
 
 /// Dev launcher listing every product screen from the design spec, grouped by the
@@ -160,8 +162,8 @@ const List<_ScreenSection> _sections = [
       _ScreenEntry(id: '7.2', title: 'Notifications', route: NotificationsPage.route),
       _ScreenEntry(id: '7.3', title: 'Appearance', route: AppearancePage.route),
       _ScreenEntry(id: '7.4', title: 'Language', route: LanguagePage.route),
-      _ScreenEntry(id: '7.6', title: 'Terms', route: null),
-      _ScreenEntry(id: '7.7', title: 'About', route: null),
+      _ScreenEntry(id: '7.6', title: 'Terms', route: TermsPage.route),
+      _ScreenEntry(id: '7.7', title: 'About', route: AboutPage.route),
     ],
   ),
 ];

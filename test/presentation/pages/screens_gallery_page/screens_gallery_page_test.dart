@@ -3,11 +3,13 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
+import 'package:nox_app/presentation/pages/about_page/about_page.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page.dart';
 import 'package:nox_app/presentation/pages/language_page/language_page.dart';
 import 'package:nox_app/presentation/pages/notifications_page/notifications_page.dart';
 import 'package:nox_app/presentation/pages/screens_gallery_page/screens_gallery_page.dart';
 import 'package:nox_app/presentation/pages/splash_page/splash_page.dart';
+import 'package:nox_app/presentation/pages/terms_page/terms_page.dart';
 
 import '../../../utils/pump_app.dart';
 
@@ -89,5 +91,22 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(NotificationsPage), findsOneWidget);
+  });
+
+  testWidgets('activated Terms (7.6) and About (7.7) rows open their pages', (tester) async {
+    await pumpApp(tester, underTest());
+
+    await tester.scrollUntilVisible(find.text('7.6'), 200);
+    await tester.tap(find.widgetWithText(ListTile, 'Terms'));
+    await tester.pumpAndSettle();
+    expect(find.byType(TermsPage), findsOneWidget);
+
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(find.text('7.7'), 200);
+    await tester.tap(find.widgetWithText(ListTile, 'About'));
+    await tester.pumpAndSettle();
+    expect(find.byType(AboutPage), findsOneWidget);
   });
 }

@@ -130,11 +130,11 @@
 
 **Independent Test**: Открыть Terms — секции + версия в подвале; открыть About — строка version/build.
 
-- [ ] T037 [P] [US6] Создать `AboutPage` в `lib/presentation/pages/about_page/about_page.dart`: строка `version (build N)` через `package_info_plus` (`FutureBuilder`), `AppDetailScaffoldWidget`; `route()`→`/settings/about` (зависит от T003, T002).
-- [ ] T038 [P] [US6] Создать `TermsPage`+`TermsBody` в `lib/presentation/pages/terms_page/terms_page.dart`: озаглавленные placeholder-секции (`Text`/`RichText`) + version-footer (`package_info_plus`), ссылки через `url_launcher`, `AppDetailScaffoldWidget`; `route()`→`/settings/terms` (зависит от T003, T002).
-- [ ] T039 [US6] Активировать строки `7.6` и `7.7` в `screens_gallery_page.dart` + gallery-тест (зависит от T037, T038).
-- [ ] T040 [P] [US6] Widget-тесты `AboutPage` и `TermsPage` (версия/секции/футер) в `test/presentation/pages/{about_page,terms_page}/` (зависит от T037, T038).
-- [ ] T041 [P] [US6] Golden-тесты `AboutPage` и `TermsPage` (light/dark) + бейзлайны (зависит от T037, T038).
+- [x] T037 [P] [US6] Создать `AboutPage` в `lib/presentation/pages/about_page/about_page.dart`: строка `version (build N)` через `package_info_plus` (`FutureBuilder`), `AppDetailScaffoldWidget`; `route()`→`/settings/about` (зависит от T003, T002).
+- [x] T038 [P] [US6] Создать `TermsPage`+`TermsBody` в `lib/presentation/pages/terms_page/terms_page.dart`: озаглавленные placeholder-секции (`Text`/`RichText`) + version-footer (`package_info_plus`), ссылки через `url_launcher`, `AppDetailScaffoldWidget`; `route()`→`/settings/terms` (зависит от T003, T002).
+- [x] T039 [US6] Активировать строки `7.6` и `7.7` в `screens_gallery_page.dart` + gallery-тест (зависит от T037, T038).
+- [x] T040 [P] [US6] Widget-тесты `AboutPage` и `TermsPage` (версия/секции/футер) в `test/presentation/pages/{about_page,terms_page}/` (зависит от T037, T038).
+- [x] T041 [P] [US6] Golden-тесты `AboutPage` и `TermsPage` (light/dark) + бейзлайны (зависит от T037, T038).
 
 **Checkpoint**: US6 независимо тестируема.
 

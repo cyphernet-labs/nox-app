@@ -106,8 +106,8 @@
 |---|---|---|---|---|---|---|
 | [x] | **1.1** | **Splash** | M | ✅ лого-композиция (`Assets.png.logo`) + Fade+Scale-обёртка; reuse `AppWordmarkWidget`; debug-исход → placeholder/Error | единая центр. композиция на обоих; десктоп — без OS-чрома, крупнее лого | (error-ветка → placeholder до US2/3.1) |
 | [x] | 3.1 | Error (universal) | M | ✅ `AppErrorPage` + `ErrorPageMode{blocking,embedded}` + пресеты; `AppWindowTitlebarWidget`; loading-retry | мобайл AppBar(back)/blocking → десктоп `TitleBar`, иконка 96dp | — |
-| [ ] | 7.7 | About | S | — (только `package_info_plus` для версии) | мобайл push → десктоп detail-pane | 7.1 |
-| [ ] | 7.6 | Terms | S | `TermsBody` (shared) + version footer | мобайл push → десктоп detail-pane | 7.1 |
+| [x] | 7.7 | About | S | ✅ version+build via `package_info_plus` (`AppVersionTextWidget`) | мобайл push → десктоп width-cap панель | 7.1 |
+| [x] | 7.6 | Terms | S | ✅ `TermsBody` (озаглавленные секции) + version footer | мобайл push → десктоп width-cap панель | 7.1 |
 | [x] | 7.3 | Appearance | S | ✅ `AppThemeOptionWidget` + `AppDetailScaffoldWidget`; **reuse `AppRootBloc`** (живой свитч темы работает) | мобайл push → десктоп width-cap панель | 7.1 |
 | [x] | 7.4 | Language | S | ✅ `AppLanguage` + `RadioGroup`/`RadioListTile`; сессионный выбор (l10n live re-render — заглушка) | мобайл push → десктоп width-cap панель | 7.1 |
 | [x] | 7.2 | Notifications | M | ✅ `AppSettingsSwitchRowWidget` + `AppInfoBannerWidget`; mock-permission + denied-баннер | мобайл push → десктоп width-cap панель | 7.1 |
@@ -137,7 +137,7 @@
 | [ ] | 5.3 | File view | M | `FileViewBody` (glyph+name+size); форматтер размера; фейк-прогресс загрузки | мобайл fullscreen push (Save) → десктоп lightbox-`Dialog` 520 (Download) | 5.2 |
 | [ ] | 5.4 | Chat card | M | `ChatCardPage` + list/grid-плитки файлов (reuse `AppSegmentedWidget`) | мобайл fullscreen push → десктоп side-sheet/detail-pane (инференс) | 5.2, 5.3 |
 
-**Прогресс фазы 1:** 5 / 17 экранов готовы (✅ 1.1 Splash, 3.1 Error, 7.3 Appearance, 7.4 Language, 7.2 Notifications) · M0 готов; M1 в работе (5 / 7).
+**Прогресс фазы 1:** 7 / 17 экранов готовы (✅ M1 полностью: 1.1 Splash, 3.1 Error, 7.2 Notifications, 7.3 Appearance, 7.4 Language, 7.6 Terms, 7.7 About) · M0 готов; ✅ M1 завершён (7 / 7).
 
 ---
 
