@@ -1067,9 +1067,16 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
 
 - `Chats`-вкладка ведёт на страницу-харнесс `Item` (та же, что и в §3–§5; mock-данные, FR-013), `Settings` — на `SettingsPlaceholderPage`. (Альтернативная заглушка `ChatsPlaceholderPage` присутствует в коде, но **не подключена**, т.к. Chats-вкладка занята харнессом; её можно удалить или подключить, когда харнесс уедет.)
 - `+` — no-op со snackbar'ом. В скелете это сырой `ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(TextConstants.comingSoon)))`; когда появится `AlertDialogHelper` (§8), no-op переключается на него. Никакого create-flow.
-- **Нет** list-detail / двухпанельной раскладки на десктопе — только rail + единый `body`.
+- Скелетный `AppShell` (Feature-001) даёт только rail + единый `body` (без list-detail). **Обновлено в M3 (006):** двухпанельная **list-detail** раскладка на десктопе введена — см. «Живой шелл M3» ниже.
 - Нативный OS window chrome — **без** кастомного title bar в скелете; кастомный унифицированный title bar — FUTURE (см. note про `window_manager`, §1).
-- **Код-расхождение (Принцип 5.1):** `AppShell` — обычный `StatefulWidget` без BLoC, выбранная вкладка `_index` хранится в локальном `setState` (см. §6 intro) — сознательное упрощение скелета; целевое место для состояния вкладки — `AppRootBloc` (§6.1).
+- **Код-расхождение (Принцип 5.1):** скелетный `AppShell` — обычный `StatefulWidget` без BLoC, выбранная вкладка `_index` хранится в локальном `setState`. С M3 это уже не «расхождение, а упрощение скелета», а **зафиксированный канон** (см. «Живой шелл M3»): для презентационного шелла локальный tab-state — корректный карв-аут 5.1; перенос в `AppRootBloc` — опциональный FUTURE, не обязателен.
+
+**Живой шелл M3 (Feature-006, заменяет скелетный `AppShell`).** Продуктовый шелл с этапа M3 — `TabBarShell` (`lib/presentation/widgets/shell/tab_bar_shell_widget.dart`), собранный на Feature-003 kit-виджетах (`AppBottomBarWidget` + center-docked `AppCreateFabWidget` на мобайле; `AppNavigationRailWidget` на десктопе), а **не** на сырых стоковых `NavigationBar`/`NavigationRail`/`Icons.*`. Несущие отличия от скелетного `AppShell`:
+
+- Иконки — SVG `NoxIcons.forum/forumFill/settings/settingsFill/add` (не `Icons.*`).
+- Состояние вкладки — локальный `AppTab _active` + `setState` (карв-аут 5.1; шелл презентационный, без BLoC); body — `IndexedStack`-эквивалент с кросс-фейдом `NoxDuration.tabFade`, сохраняющий состояние вкладок.
+- Вкладки хостят реальные 5.1 `ChatsListPage` + 7.1 `SettingsRootPage`; `+` → реальный 6.1 (width-adaptive: push на мобайле / `Dialog` на десктопе); системный back на root-вкладке: не-Chats → Chats, Chats → `SystemNavigator.pop`.
+- **Desktop list-detail введён** (заголовок этапа M3): 5.1 — rail + chat-list-pane (360) + thread-pane (контент ленты 5.2 — плейсхолдер до M4); 7.1 — rail + settings-menu-pane (340) + detail-pane (≤680). Выбор строки/пункта — **view-state** (`selectedChatId` в `ChatsListBloc`; локальный раздел в 7.1), меняет панель **без** push через контейнер `AppListDetailWidget`. Источник десктоп-раскладки — авторитетный корпус `nox-desktop-screens/{01-chats,02-settings}.md` + owner-решение (`specs/006-shell-settings-chats` Clarifications). Скелетный `AppShell` оставлен как верификационная ссылка (не смонтирован).
 
 > Референс десктопной раскладки (rail, ширины, слоты) — `docs/design/system/nox-desktop-screens/`. Брейкпоинт `Constants.railBreakpoint = 840` задан в `lib/general/constants.dart` (см. `06-theming.md`).
 

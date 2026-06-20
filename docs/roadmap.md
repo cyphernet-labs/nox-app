@@ -81,10 +81,10 @@
 | Поле-ввода семейство | ✅ `AppIdFieldWidget` (моно) + `AppLabeledFieldWidget` (counter + suffix-спиннер + errorText) | M2 (2.1) | 2.3, 6.1, 7.1 |
 | QR-сюрфейс / ретикл | ✅ `AppQrOverlayWidget` (brand-fixed ретикл+маска сканера 2.2); бренд-белая QR-поверхность показа — позже | M2 (2.2) | 7.1 |
 | Settings-строки | `AppSettingsNavRowWidget`, `AppSettingsSwitchRowWidget`, `AppInfoBannerWidget`, `AppSettingsGroupWidget` | M1 (7.2) | 7.1, 7.3, 7.4, 7.6, 7.7 |
-| Identity card | `AppIdentityCardWidget` (маска/reveal/copy/QR) + `AppLogoutDialogWidget` | M3 (7.1) | — |
-| Адаптивный шелл | `TabBarShell` (bottom bar ↔ `NavigationRail`), list-detail | M3 (4.1) | 5.1, 5.2, 7.1 |
+| Identity card | ✅ `AppIdentityCardWidget` (маска/reveal/copy/QR; desktop no-reveal) + `AppLogoutDialogWidget` + `AppQrSurfaceWidget` (fake-QR, brand-fixed light §9.10) | M3 (7.1) | — |
+| Адаптивный шелл | ✅ `TabBarShell` (bottom bar ↔ `AppNavigationRailWidget`) + `AppListDetailWidget` (двухпанельный контейнер) | M3 (4.1) | 5.1, 5.2, 7.1 |
 | Лента-элементы | редактируемый composer (апгрейд `AppComposerWidget`), `AppDateSeparatorWidget`, `AppAuthorHeaderWidget`, `AppSystemLineWidget` | M4 (5.2) | — |
-| Форматтеры | относительное время (список чатов), размер файла | M1/M3 | 5.1, 5.3, 5.4 |
+| Форматтеры | ✅ относительное время (`DateFormatter.relative`, лестница now/min/h/Yesterday/date — введено в 5.1); размер файла — M4 | M3 | 5.1, 5.3, 5.4 |
 
 ---
 
@@ -125,9 +125,9 @@
 
 | # | ID | Экран | Сложн. | Вводит / переиспользует | Мультиплатформа (ключевое отличие) | Зависит |
 |---|---|---|---|---|---|---|
-| [ ] | 4.1 | Tab-bar shell | M | `TabBarShell` (reuse `AppBottomBarWidget`/`AppCreateFabWidget`; сверить с Feature-001 `AppShell`) | bottom bar+notch+FAB → `NavigationRail` + leading FAB (840dp) | 5.1, 7.1, 6.1 |
-| [ ] | 7.1 | Settings root | L | `AppIdentityCardWidget` (маска/copy/QR), settings-nav-строки, logout-диалог; `SettingsRootBloc`; QR — `qr_flutter`/заглушка | мобайл fullscreen + QR-sheet → десктоп rail+menu+detail, QR/Logout = `Dialog` | 7.2–7.7, 2.3 |
-| [ ] | 5.1 | Chats list | L | `ChatsListPage` + search-view + офлайн-`MaterialBanner`; форматтер времени; `ChatsListBloc` (in-memory mock-repo) | мобайл bottom bar + push → десктоп rail + 360 list-pane + thread-pane (master-detail, highlight без push) | 4.1, 5.2, 6.1 |
+| [x] | 4.1 | Tab-bar shell | M | ✅ `TabBarShell` (kit `AppBottomBarWidget`/`AppCreateFabWidget` + `AppNavigationRailWidget`; заменил Feature-001 `AppShell`) | bottom bar+notch+FAB → `NavigationRail` + leading FAB (840dp) | 5.1, 7.1, 6.1 |
+| [x] | 7.1 | Settings root | L | ✅ `AppIdentityCardWidget` (маска/Copy/QR; desktop no-reveal) + `AppSettingsNavRowWidget` + `AppLogoutDialogWidget` + `AppQrSurfaceWidget` (fake-QR, brand-fixed); `SettingsRootBloc`; logout → 1.1 | мобайл fullscreen + QR-sheet → десктоп rail+menu+detail, QR/Logout = `Dialog` | 7.2–7.7, 2.3 |
+| [x] | 5.1 | Chats list | L | ✅ `ChatsListPage` + `AppSearchFieldWidget` + офлайн-баннер; `DateFormatter.relative`; `ChatsListBloc` (sealed + `PagingState`) над network-only мок-`ChatRepository` | мобайл bottom bar + push → десктоп rail + 360 list-pane + thread-pane (list-detail, highlight без push; лента = M4-плейсхолдер) | 4.1, 5.2, 6.1 |
 
 ### Этап M4 — Лента чата и файлы  ⟶ _самые сложные, чат-детали_
 
@@ -137,7 +137,7 @@
 | [ ] | 5.3 | File view | M | `FileViewBody` (glyph+name+size); форматтер размера; фейк-прогресс загрузки | мобайл fullscreen push (Save) → десктоп lightbox-`Dialog` 520 (Download) | 5.2 |
 | [ ] | 5.4 | Chat card | M | `ChatCardPage` + list/grid-плитки файлов (reuse `AppSegmentedWidget`) | мобайл fullscreen push → десктоп side-sheet/detail-pane (инференс) | 5.2, 5.3 |
 
-**Прогресс фазы 1:** 11 / 17 экранов готовы (✅ M1: 1.1 Splash, 3.1 Error, 7.2 Notifications, 7.3 Appearance, 7.4 Language, 7.6 Terms, 7.7 About · ✅ M2: 2.1 Login, 2.2 QR scan, 2.3 Set username, 6.1 Create chat) · M0 готов; ✅ M1 (7 / 7) и M2 (4 / 4) завершены.
+**Прогресс фазы 1:** 14 / 17 экранов готовы (✅ M1: 1.1 Splash, 3.1 Error, 7.2 Notifications, 7.3 Appearance, 7.4 Language, 7.6 Terms, 7.7 About · ✅ M2: 2.1 Login, 2.2 QR scan, 2.3 Set username, 6.1 Create chat · ✅ M3: 4.1 Tab-bar shell, 7.1 Settings root, 5.1 Chats list) · M0 готов; ✅ M1 (7 / 7), M2 (4 / 4) и M3 (3 / 3) завершены. Осталось — M4 (5.2 Chat thread, 5.3 File view, 5.4 Chat card).
 
 ---
 
@@ -150,7 +150,7 @@
 | Q1 | ~~Цветной логотип splash существует?~~ | 1.1 | **Решено:** `assets/png/logo.png` — нужная цветная маска. |
 | Q2 | Клиентская валидация формата ID: спека говорит «только сервер», корпус упоминает клиентскую проверку | 2.1 | принять до реализации 2.1 |
 | Q3 | Источник иконок экрана ошибки: спека просит `Icons.error_outline`/wifi/cloud, но kit — только SVG `NoxIcons` (нет wifi/cloud/camera) | 3.1 | маппить на имеющиеся `NoxIcons` или добавить SVG |
-| Q4 | Назначение Logout: Splash (1.1) vs Login (2.1) — доки расходятся | 7.1 | принять каноничный таргет |
+| Q4 | ~~Назначение Logout: Splash (1.1) vs Login (2.1) — доки расходятся~~ | 7.1 | **Решено (M3):** → **1.1 Splash** по locked-спеке `settings-root.md`; упоминания Login в десктоп/мобайл-корпусах — дрейф (Принцип II). |
 | Q5 | Appearance: плоские `RadioListTile` (спека) vs карточки с превью-тамбнейлом (корпус) | 7.3 | вероятно карточки |
 | Q6 | Десктоп-корпус отсутствует у 5.4, 7.2–7.7 — десктоп-трактовка выведена по аналогии | мн. | сверить с владельцем при реализации |
 

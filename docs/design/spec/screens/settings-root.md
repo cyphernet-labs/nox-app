@@ -113,3 +113,11 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 | — | QR sheet | QR на светлом фоне (сканируем в обеих темах), без raw-ID текстом, drag-handle, wrap-height |
 | — | Inline-name-edit | Save по Enter/Done/blur при валидном; invalid/taken — остаётся в edit; пустое → не меняет имя |
 | — | Logout-loading | Спиннер в кнопке диалога; диалог модален до перехода в 1.1 |
+
+## Десктоп-раскладка (этап M3, сверено с корпусом)
+
+> Добавлено при реализации M3. Сведено с `nox-desktop-screens/screens/02-settings.md`.
+
+- Десктоп (`>= 840dp`) — **list-detail**: `NavigationRail` (шелл) + settings-menu-pane ≈340 (`Account` + разделы 7.2–7.7 + `Log out`) + detail-pane (контент ≤680). Выбор пункта подсвечивает его (`secondaryContainer`) и меняет detail-pane **без** push (контейнер `AppListDetailWidget`); по умолчанию выбран `Account` (карта идентичности). Контент подэкранов 7.2–7.7 в detail-pane — переиспользуемые `…Body`-виджеты (без собственного AppBar).
+- **Раскрытие ID на десктопе отсутствует** (`Show/Hide` нет): ID всегда замаскирован, вместо reveal — inline account-QR в карте идентичности + `Copy` + `Show QR` (центрированный `Dialog`). Обоснование — Принцип I (минимизация раскрытия секрета). Мобайл сохраняет `Show/Hide` (верхняя часть спеки).
+- **Logout-таргет — 1.1 Splash** (как в основной части спеки). Десктоп-корпус `02-settings` и мобайл-корпус `7-1-settings` ошибочно ведут на Login — это дрейф корпусов; канон — Splash (Принцип II).
