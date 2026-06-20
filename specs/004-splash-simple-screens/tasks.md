@@ -60,14 +60,14 @@
 
 **Independent Test**: Открыть Error из Галереи (`routeDemo`); проверить embedded(back)/blocking(без back), спиннер на `Try again`, десктоп TitleBar + крупная иконка.
 
-- [ ] T011 [P] [US2] Создать `ErrorPageParams` + `ErrorPageMode{blocking,embedded}` + пресеты `fatal()`/`network()` в `lib/presentation/pages/error_page/error_page_params.dart` (иконка — `SvgGenImage` из `NoxIcons`). См. `data-model.md`.
-- [ ] T012 [P] [US2] Создать `AppWindowTitlebarWidget` (faux desktop TitleBar) в `lib/presentation/widgets/shell/app_window_titlebar_widget.dart`. Контракт — `contracts/widgets.md`.
-- [ ] T013 [US2] Создать `AppErrorPage` в `lib/presentation/pages/error_page/error_page.dart`: иконка(48/деск.96)+title+message+`Try again`(loading через `AppSpinnerWidget`); `embedded`→`AppBar`(back), `blocking`→без AppBar+`PopScope(canPop:false)`; десктоп — `AppWindowTitlebarWidget`; `route({required params})`+`routeDemo()` (зависит от T011, T012, T002).
-- [ ] T014 [US2] Активировать строку `3.1` (`route: AppErrorPage.routeDemo`) в `screens_gallery_page.dart` + проверка навигации в gallery-тесте (зависит от T013).
-- [ ] T015 [US2] Перевести error-ветку Splash на реальный `AppErrorPage(mode: blocking)` в `lib/presentation/pages/splash_page/splash_page.dart` (убрать временный placeholder из T007) и обновить splash-тест (зависит от T013, T007).
-- [ ] T016 [P] [US2] Widget-тест `AppErrorPage` (оба режима, loading-retry) в `test/presentation/pages/error_page/error_page_test.dart` (зависит от T013).
-- [ ] T017 [P] [US2] Golden-тест `AppErrorPage` (light/dark, blocking+embedded) в `test/presentation/pages/error_page/error_page_golden_test.dart` + бейзлайны (зависит от T013).
-- [ ] T018 [P] [US2] Widget+golden тест `AppWindowTitlebarWidget` в `test/presentation/widgets/shell/` (зависит от T012).
+- [x] T011 [P] [US2] Создать `ErrorPageParams` + `ErrorPageMode{blocking,embedded}` + пресеты `fatal()`/`network()` в `lib/presentation/pages/error_page/error_page_params.dart` (иконка — `SvgGenImage` из `NoxIcons`). См. `data-model.md`.
+- [x] T012 [P] [US2] Создать `AppWindowTitlebarWidget` (faux desktop TitleBar) в `lib/presentation/widgets/shell/app_window_titlebar_widget.dart`. Контракт — `contracts/widgets.md`.
+- [x] T013 [US2] Создать `AppErrorPage` в `lib/presentation/pages/error_page/error_page.dart`: иконка(48/деск.96)+title+message+`Try again`(loading через `AppSpinnerWidget`); `embedded`→`AppBar`(back), `blocking`→без AppBar+`PopScope(canPop:false)`; десктоп — `AppWindowTitlebarWidget`; `route({required params})`+`routeDemo()` (зависит от T011, T012, T002).
+- [x] T014 [US2] Активировать строку `3.1` (`route: AppErrorPage.routeDemo`) в `screens_gallery_page.dart` + проверка навигации в gallery-тесте (зависит от T013).
+- [x] T015 [US2] Перевести error-ветку Splash на реальный `AppErrorPage(mode: blocking)` в `lib/presentation/pages/splash_page/splash_page.dart` (убрать временный placeholder из T007) и обновить splash-тест (зависит от T013, T007).
+- [x] T016 [P] [US2] Widget-тест `AppErrorPage` (оба режима, loading-retry) в `test/presentation/pages/error_page/error_page_test.dart` (зависит от T013).
+- [x] T017 [P] [US2] Golden-тест `AppErrorPage` (light/dark, blocking+embedded) в `test/presentation/pages/error_page/error_page_golden_test.dart` + бейзлайны (зависит от T013).
+- [x] T018 [P] [US2] Widget+golden тест `AppWindowTitlebarWidget` в `test/presentation/widgets/shell/` (зависит от T012).
 
 **Checkpoint**: US2 независимо тестируема; Splash error-ветка теперь реальная.
 

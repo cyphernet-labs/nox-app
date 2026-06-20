@@ -5,6 +5,8 @@ import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/theme/nox_brand.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/general/constants.dart';
+import 'package:nox_app/presentation/pages/error_page/error_page.dart';
+import 'package:nox_app/presentation/pages/error_page/error_page_params.dart';
 import 'package:nox_app/presentation/pages/placeholder/route_placeholder_page.dart';
 import 'package:nox_app/presentation/widgets/shell/app_wordmark_widget.dart';
 
@@ -70,19 +72,27 @@ class _SplashPageState extends State<SplashPage> with SingleTickerProviderStateM
   void _maybeRoute() {
     if (_routed || !_animationDone || _outcome == null || !mounted) return;
     _routed = true;
-    final String label;
-    switch (_outcome!) {
-      case SplashOutcome.hasId:
-        label = 'Chats shell (4.1)';
-      case SplashOutcome.noId:
-        label = 'Login (2.1)';
-      case SplashOutcome.error:
-        // TODO(US2): route to AppErrorPage(mode: blocking) once 3.1 lands.
-        label = 'Error (3.1)';
-    }
     // Preview uses push (so back returns to the gallery).
     // TODO(backend): pushReplacement in the real cold-start flow (no return to splash).
-    Navigator.of(context).push(RoutePlaceholderPage.route(destinationLabel: label));
+    switch (_outcome!) {
+      case SplashOutcome.hasId:
+        Navigator.of(context).push(RoutePlaceholderPage.route(destinationLabel: 'Chats shell (4.1)'));
+      case SplashOutcome.noId:
+        Navigator.of(context).push(RoutePlaceholderPage.route(destinationLabel: 'Login (2.1)'));
+      case SplashOutcome.error:
+        Navigator.of(context).push(
+          AppErrorPage.route(
+            params: ErrorPageParams.fatal(
+              mode: ErrorPageMode.blocking,
+              // Preview escape (Try again pops back to splash); the real cold-start flow re-resolves auth.
+              onRetry: () async {
+                await Future<void>.delayed(const Duration(milliseconds: 400));
+                if (mounted) Navigator.of(context).maybePop();
+              },
+            ),
+          ),
+        );
+    }
   }
 
   @override

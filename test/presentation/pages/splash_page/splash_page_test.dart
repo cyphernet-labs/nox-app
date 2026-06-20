@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/design/theme/nox_brand.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
+import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/presentation/pages/error_page/error_page.dart';
 import 'package:nox_app/presentation/pages/placeholder/route_placeholder_page.dart';
 import 'package:nox_app/presentation/pages/splash_page/splash_page.dart';
 import 'package:nox_app/presentation/widgets/shell/app_wordmark_widget.dart';
@@ -35,14 +37,14 @@ void main() {
     expect(find.byType(RoutePlaceholderPage), findsOneWidget);
   });
 
-  testWidgets('Splash routes the error outcome (placeholder until 3.1 lands)', (tester) async {
+  testWidgets('Splash routes the error outcome to the blocking error screen (3.1)', (tester) async {
     await pumpApp(tester, const SplashPage(), settle: false);
     await tester.pump(NoxDuration.splashIn);
 
     await tester.tap(find.text('Error'));
     await tester.pumpAndSettle();
 
-    expect(find.byType(RoutePlaceholderPage), findsOneWidget);
-    expect(find.text('Error (3.1)'), findsOneWidget);
+    expect(find.byType(AppErrorPage), findsOneWidget);
+    expect(find.text(TextConstants.errorGeneralTitle), findsOneWidget);
   });
 }

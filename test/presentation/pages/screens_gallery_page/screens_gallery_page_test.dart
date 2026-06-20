@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
+import 'package:nox_app/presentation/pages/error_page/error_page.dart';
 import 'package:nox_app/presentation/pages/screens_gallery_page/screens_gallery_page.dart';
 import 'package:nox_app/presentation/pages/splash_page/splash_page.dart';
 
@@ -56,5 +57,15 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(SplashPage), findsOneWidget);
+  });
+
+  testWidgets('activated Error row (3.1) opens AppErrorPage', (tester) async {
+    await pumpApp(tester, underTest());
+
+    await tester.scrollUntilVisible(find.text('3.1'), 200);
+    await tester.tap(find.widgetWithText(ListTile, 'Error')); // the row, not the section header
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AppErrorPage), findsOneWidget);
   });
 }

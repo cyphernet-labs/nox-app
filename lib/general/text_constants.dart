@@ -11,6 +11,8 @@ abstract final class TextConstants {
 
   // Generic states
   static const String errorGeneralTitle = 'Something went wrong';
+  static const String errorFatalMessage = 'An unexpected error occurred. Please try again.';
+  static const String errorNetworkMessage = 'Could not connect. Check your connection and try again.';
   static const String actionTryAgain = 'Try again';
   static const String noData = 'Nothing here yet';
   static const String comingSoon = 'Coming soon';
@@ -27,6 +29,7 @@ abstract final class TextConstants {
   static const String tooltipCreateChat = 'New chat';
   static const String tooltipRemove = 'Remove';
   static const String tooltipToggleTheme = 'Toggle theme';
+  static const String tooltipBack = 'Back';
 
   // Home launcher + UI-kit gallery
   static const String uiKitTitle = 'NOX UI Kit';

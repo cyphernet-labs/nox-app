@@ -3,6 +3,7 @@ import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/app/widgets/app_theme_toggle.dart';
+import 'package:nox_app/presentation/pages/error_page/error_page.dart';
 import 'package:nox_app/presentation/pages/splash_page/splash_page.dart';
 import 'package:nox_app/presentation/widgets/shell/app_splash_hairline_widget.dart';
 
@@ -130,7 +131,7 @@ const List<_ScreenSection> _sections = [
   ),
   _ScreenSection(
     title: 'Error',
-    entries: [_ScreenEntry(id: '3.1', title: 'Error', route: null)],
+    entries: [_ScreenEntry(id: '3.1', title: 'Error', route: AppErrorPage.routeDemo)],
   ),
   _ScreenSection(
     title: 'Shell',
