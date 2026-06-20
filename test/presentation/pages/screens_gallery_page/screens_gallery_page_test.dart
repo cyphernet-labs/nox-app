@@ -14,6 +14,7 @@ import 'package:nox_app/presentation/pages/login_page/login_page.dart';
 import 'package:nox_app/presentation/pages/notifications_page/notifications_page.dart';
 import 'package:nox_app/presentation/pages/qr_scan_page/qr_scan_page.dart';
 import 'package:nox_app/presentation/pages/screens_gallery_page/screens_gallery_page.dart';
+import 'package:nox_app/presentation/pages/set_username_page/set_username_page.dart';
 import 'package:nox_app/presentation/pages/splash_page/splash_page.dart';
 import 'package:nox_app/presentation/pages/terms_page/terms_page.dart';
 
@@ -40,12 +41,11 @@ void main() {
   testWidgets('un-wired screens render as disabled "coming soon" stubs', (tester) async {
     await pumpApp(tester, underTest());
 
-    // No screen is wired yet, so the stub affordance is present across the list.
-    expect(find.text(TextConstants.comingSoon), findsWidgets);
-
-    // A late-milestone screen (5.2) stays a disabled stub through M1–M3.
+    // A late-milestone screen (5.2) stays a disabled stub through M1–M3; scroll to
+    // it (the early rows are now all wired) and confirm the stub affordance.
     final chatThread = find.text('Chat thread');
     await tester.scrollUntilVisible(chatThread, 200);
+    expect(find.text(TextConstants.comingSoon), findsWidgets);
     final tile = tester.widget<ListTile>(find.ancestor(of: chatThread, matching: find.byType(ListTile)));
     expect(tile.enabled, isFalse);
     expect(tile.onTap, isNull);
@@ -87,6 +87,16 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(QrScanPage), findsOneWidget);
+  });
+
+  testWidgets('activated Set username row (2.3) opens SetUsernamePage', (tester) async {
+    await pumpApp(tester, underTest());
+
+    await tester.scrollUntilVisible(find.text('2.3'), 200);
+    await tester.tap(find.widgetWithText(ListTile, 'Set username'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(SetUsernamePage), findsOneWidget);
   });
 
   testWidgets('activated Error row (3.1) opens AppErrorPage', (tester) async {

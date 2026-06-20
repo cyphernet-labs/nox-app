@@ -12,6 +12,7 @@ class AppLabeledFieldWidget extends StatelessWidget {
     required this.controller,
     required this.label,
     required this.maxLength,
+    this.focusNode,
     this.helperText,
     this.placeholder,
     this.errorText,
@@ -23,6 +24,7 @@ class AppLabeledFieldWidget extends StatelessWidget {
   });
 
   final TextEditingController controller;
+  final FocusNode? focusNode;
   final String label;
   final int maxLength;
   final String? helperText;
@@ -40,6 +42,7 @@ class AppLabeledFieldWidget extends StatelessWidget {
   Widget build(BuildContext context) {
     return TextField(
       controller: controller,
+      focusNode: focusNode,
       enabled: enabled,
       autofocus: autofocus,
       maxLength: maxLength,
