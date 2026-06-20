@@ -10,6 +10,7 @@ import 'package:nox_app/presentation/pages/about_page/about_page.dart';
 import 'package:nox_app/presentation/pages/appearance_page/appearance_page.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page.dart';
 import 'package:nox_app/presentation/pages/language_page/language_page.dart';
+import 'package:nox_app/presentation/pages/login_page/login_page.dart';
 import 'package:nox_app/presentation/pages/notifications_page/notifications_page.dart';
 import 'package:nox_app/presentation/pages/screens_gallery_page/screens_gallery_page.dart';
 import 'package:nox_app/presentation/pages/splash_page/splash_page.dart';
@@ -65,6 +66,16 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(SplashPage), findsOneWidget);
+  });
+
+  testWidgets('activated Login row (2.1) opens LoginPage', (tester) async {
+    await pumpApp(tester, underTest());
+
+    await tester.scrollUntilVisible(find.text('2.1'), 200);
+    await tester.tap(find.widgetWithText(ListTile, 'Login'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(LoginPage), findsOneWidget);
   });
 
   testWidgets('activated Error row (3.1) opens AppErrorPage', (tester) async {
