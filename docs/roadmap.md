@@ -104,7 +104,7 @@
 
 | # | ID | Экран | Сложн. | Вводит / переиспользует | Мультиплатформа (ключевое отличие) | Зависит |
 |---|---|---|---|---|---|---|
-| [ ] | **1.1** | **Splash** | M | лого-композиция (`Assets.png.logo`) + Fade+Scale-обёртка; reuse `AppWordmarkWidget` | единая центр. композиция на обоих; десктоп — без OS-чрома, крупнее лого | (роуты-заглушки 2.1/3.1/4.1) |
+| [x] | **1.1** | **Splash** | M | ✅ лого-композиция (`Assets.png.logo`) + Fade+Scale-обёртка; reuse `AppWordmarkWidget`; debug-исход → placeholder/Error | единая центр. композиция на обоих; десктоп — без OS-чрома, крупнее лого | (error-ветка → placeholder до US2/3.1) |
 | [ ] | 3.1 | Error (universal) | M | `AppErrorPage` + `ErrorMode{blocking,embedded}`; адаптивная обёртка | мобайл AppBar/fullscreen → десктоп `TitleBar`, иконка 96dp | — |
 | [ ] | 7.7 | About | S | — (только `package_info_plus` для версии) | мобайл push → десктоп detail-pane | 7.1 |
 | [ ] | 7.6 | Terms | S | `TermsBody` (shared) + version footer | мобайл push → десктоп detail-pane | 7.1 |
@@ -137,7 +137,7 @@
 | [ ] | 5.3 | File view | M | `FileViewBody` (glyph+name+size); форматтер размера; фейк-прогресс загрузки | мобайл fullscreen push (Save) → десктоп lightbox-`Dialog` 520 (Download) | 5.2 |
 | [ ] | 5.4 | Chat card | M | `ChatCardPage` + list/grid-плитки файлов (reuse `AppSegmentedWidget`) | мобайл fullscreen push → десктоп side-sheet/detail-pane (инференс) | 5.2, 5.3 |
 
-**Прогресс фазы 1:** 0 / 17 экранов готовы · этапов завершено 1 / 5 (✅ M0 — каркас галереи).
+**Прогресс фазы 1:** 1 / 17 экранов готовы (✅ 1.1 Splash) · M0 готов; M1 в работе (1 / 7).
 
 ---
 

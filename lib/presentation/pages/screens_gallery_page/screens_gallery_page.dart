@@ -3,6 +3,7 @@ import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/app/widgets/app_theme_toggle.dart';
+import 'package:nox_app/presentation/pages/splash_page/splash_page.dart';
 import 'package:nox_app/presentation/widgets/shell/app_splash_hairline_widget.dart';
 
 /// Dev launcher listing every product screen from the design spec, grouped by the
@@ -117,7 +118,7 @@ class _ScreenSection {
 const List<_ScreenSection> _sections = [
   _ScreenSection(
     title: 'Launch',
-    entries: [_ScreenEntry(id: '1.1', title: 'Splash', route: null)],
+    entries: [_ScreenEntry(id: '1.1', title: 'Splash', route: SplashPage.route)],
   ),
   _ScreenSection(
     title: 'Onboarding',

@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
 import 'package:nox_app/presentation/pages/screens_gallery_page/screens_gallery_page.dart';
+import 'package:nox_app/presentation/pages/splash_page/splash_page.dart';
 
 import '../../../utils/pump_app.dart';
 
@@ -46,5 +47,14 @@ void main() {
     await tester.pump();
 
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('activated Splash row (1.1) opens SplashPage', (tester) async {
+    await pumpApp(tester, underTest());
+
+    await tester.tap(find.text('Splash'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(SplashPage), findsOneWidget);
   });
 }

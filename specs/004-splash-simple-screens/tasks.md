@@ -21,7 +21,7 @@
 
 **Purpose**: Базовая готовность; новые зависимости НЕ добавляются.
 
-- [ ] T001 Проверить наличие M1-зависимостей (`package_info_plus`, `url_launcher`, `shared_preferences`) в `pubspec.yaml` и базовый зелёный `make gate` до изменений (никаких правок `pubspec.yaml`).
+- [x] T001 Проверить наличие M1-зависимостей (`package_info_plus`, `url_launcher`, `shared_preferences`) в `pubspec.yaml` и базовый зелёный `make gate` до изменений (никаких правок `pubspec.yaml`).
 
 ---
 
@@ -43,12 +43,12 @@
 
 **Independent Test**: Открыть Splash из Галереи (узкое/широкое окно, light/dark); лого+wordmark на тёмном фоне, reveal один раз ~400мс затем статика, экран пассивен; dev-контролом выбрать исход и убедиться в переходе.
 
-- [ ] T005 [P] [US1] Создать `RoutePlaceholderPage` в `lib/presentation/pages/placeholder/route_placeholder_page.dart` (`route({required String destinationLabel})`, `RouteSettings('/placeholder')`, показывает метку назначения).
-- [ ] T006 [US1] Создать `SplashPage` в `lib/presentation/pages/splash_page/splash_page.dart`: brand-fixed тёмный `Scaffold` (`NoxBrand.canvasDark`), центр — `Assets.png.logo` + `AppWordmarkWidget(color: NoxBrand.white)`, edge-to-edge `AnnotatedRegion<SystemUiOverlayStyle>`, `AnimationController`(`NoxDuration.splashIn`)+`FadeTransition`+`ScaleTransition`(0.85→1.0, `NoxEasing.emphasizedDecelerate`), один проход; пассивный ввод. `route()`→`/splash` (зависит от T002).
-- [ ] T007 [US1] Добавить `SplashOutcome{hasId,noId,error}` + dev-контрол + координацию `animationDone && outcomeResolved` в `lib/presentation/pages/splash_page/splash_page.dart`: `hasId`→`RoutePlaceholderPage('Chats shell (4.1)')`, `noId`→`RoutePlaceholderPage('Login (2.1)')`, `error`→`RoutePlaceholderPage('Error (3.1)')` **временно** с `// TODO(US2): wire to AppErrorPage(blocking)`. Навигация — `Navigator.push` (НЕ `pushReplacement`) в превью из Галереи (см. `contracts/navigation.md`) + `// TODO(backend): pushReplacement в реальном cold-start` (зависит от T005, T006).
-- [ ] T008 [US1] Активировать строку `1.1` (`route: SplashPage.route`) в `lib/presentation/pages/screens_gallery_page/screens_gallery_page.dart` и добавить в `test/presentation/pages/screens_gallery_page/screens_gallery_page_test.dart` проверку навигации в `SplashPage` (зависит от T006).
-- [ ] T009 [P] [US1] Widget-тест `SplashPage` в `test/presentation/pages/splash_page/splash_page_test.dart`: reveal-виджеты, пассивность, переход по каждому `SplashOutcome` (`tester.pump(NoxDuration.splashIn)`) (зависит от T006, T007).
-- [ ] T010 [P] [US1] Golden-тест `SplashPage` (light/dark, `settle:false`) в `test/presentation/pages/splash_page/splash_page_golden_test.dart` + сгенерировать бейзлайны (`make golden-update FILE=...`) (зависит от T006).
+- [x] T005 [P] [US1] Создать `RoutePlaceholderPage` в `lib/presentation/pages/placeholder/route_placeholder_page.dart` (`route({required String destinationLabel})`, `RouteSettings('/placeholder')`, показывает метку назначения).
+- [x] T006 [US1] Создать `SplashPage` в `lib/presentation/pages/splash_page/splash_page.dart`: brand-fixed тёмный `Scaffold` (`NoxBrand.canvasDark`), центр — `Assets.png.logo` + `AppWordmarkWidget(color: NoxBrand.white)`, edge-to-edge `AnnotatedRegion<SystemUiOverlayStyle>`, `AnimationController`(`NoxDuration.splashIn`)+`FadeTransition`+`ScaleTransition`(0.85→1.0, `NoxEasing.emphasizedDecelerate`), один проход; пассивный ввод. `route()`→`/splash` (зависит от T002).
+- [x] T007 [US1] Добавить `SplashOutcome{hasId,noId,error}` + dev-контрол + координацию `animationDone && outcomeResolved` в `lib/presentation/pages/splash_page/splash_page.dart`: `hasId`→`RoutePlaceholderPage('Chats shell (4.1)')`, `noId`→`RoutePlaceholderPage('Login (2.1)')`, `error`→`RoutePlaceholderPage('Error (3.1)')` **временно** с `// TODO(US2): wire to AppErrorPage(blocking)`. Навигация — `Navigator.push` (НЕ `pushReplacement`) в превью из Галереи (см. `contracts/navigation.md`) + `// TODO(backend): pushReplacement в реальном cold-start` (зависит от T005, T006).
+- [x] T008 [US1] Активировать строку `1.1` (`route: SplashPage.route`) в `lib/presentation/pages/screens_gallery_page/screens_gallery_page.dart` и добавить в `test/presentation/pages/screens_gallery_page/screens_gallery_page_test.dart` проверку навигации в `SplashPage` (зависит от T006).
+- [x] T009 [P] [US1] Widget-тест `SplashPage` в `test/presentation/pages/splash_page/splash_page_test.dart`: reveal-виджеты, пассивность, переход по каждому `SplashOutcome` (`tester.pump(NoxDuration.splashIn)`) (зависит от T006, T007).
+- [x] T010 [P] [US1] Golden-тест `SplashPage` (light/dark, `settle:false`) в `test/presentation/pages/splash_page/splash_page_golden_test.dart` + сгенерировать бейзлайны (`make golden-update FILE=...`) (зависит от T006).
 
 **Checkpoint**: US1 функциональна и тестируема независимо (error-ветка пока на placeholder).
 
