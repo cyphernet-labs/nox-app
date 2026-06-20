@@ -8,10 +8,14 @@ import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
 import 'package:nox_app/presentation/pages/about_page/about_page.dart';
 import 'package:nox_app/presentation/pages/appearance_page/appearance_page.dart';
+import 'package:nox_app/presentation/pages/create_chat_page/create_chat_page.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page.dart';
 import 'package:nox_app/presentation/pages/language_page/language_page.dart';
+import 'package:nox_app/presentation/pages/login_page/login_page.dart';
 import 'package:nox_app/presentation/pages/notifications_page/notifications_page.dart';
+import 'package:nox_app/presentation/pages/qr_scan_page/qr_scan_page.dart';
 import 'package:nox_app/presentation/pages/screens_gallery_page/screens_gallery_page.dart';
+import 'package:nox_app/presentation/pages/set_username_page/set_username_page.dart';
 import 'package:nox_app/presentation/pages/splash_page/splash_page.dart';
 import 'package:nox_app/presentation/pages/terms_page/terms_page.dart';
 
@@ -38,12 +42,11 @@ void main() {
   testWidgets('un-wired screens render as disabled "coming soon" stubs', (tester) async {
     await pumpApp(tester, underTest());
 
-    // No screen is wired yet, so the stub affordance is present across the list.
-    expect(find.text(TextConstants.comingSoon), findsWidgets);
-
-    // A late-milestone screen (5.2) stays a disabled stub through M1–M3.
+    // A late-milestone screen (5.2) stays a disabled stub through M1–M3; scroll to
+    // it (the early rows are now all wired) and confirm the stub affordance.
     final chatThread = find.text('Chat thread');
     await tester.scrollUntilVisible(chatThread, 200);
+    expect(find.text(TextConstants.comingSoon), findsWidgets);
     final tile = tester.widget<ListTile>(find.ancestor(of: chatThread, matching: find.byType(ListTile)));
     expect(tile.enabled, isFalse);
     expect(tile.onTap, isNull);
@@ -67,6 +70,36 @@ void main() {
     expect(find.byType(SplashPage), findsOneWidget);
   });
 
+  testWidgets('activated Login row (2.1) opens LoginPage', (tester) async {
+    await pumpApp(tester, underTest());
+
+    await tester.scrollUntilVisible(find.text('2.1'), 200);
+    await tester.tap(find.widgetWithText(ListTile, 'Login'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(LoginPage), findsOneWidget);
+  });
+
+  testWidgets('activated QR scan row (2.2) opens QrScanPage', (tester) async {
+    await pumpApp(tester, underTest(), settle: false);
+
+    await tester.scrollUntilVisible(find.text('2.2'), 200);
+    await tester.tap(find.widgetWithText(ListTile, 'QR scan'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(QrScanPage), findsOneWidget);
+  });
+
+  testWidgets('activated Set username row (2.3) opens SetUsernamePage', (tester) async {
+    await pumpApp(tester, underTest());
+
+    await tester.scrollUntilVisible(find.text('2.3'), 200);
+    await tester.tap(find.widgetWithText(ListTile, 'Set username'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(SetUsernamePage), findsOneWidget);
+  });
+
   testWidgets('activated Error row (3.1) opens AppErrorPage', (tester) async {
     await pumpApp(tester, underTest());
 
@@ -80,8 +113,11 @@ void main() {
   testWidgets('activated Language row (7.4) opens LanguagePage', (tester) async {
     await pumpApp(tester, underTest());
 
-    await tester.scrollUntilVisible(find.text('7.4'), 200);
-    await tester.tap(find.widgetWithText(ListTile, 'Language'));
+    final row = find.widgetWithText(ListTile, 'Language');
+    await tester.scrollUntilVisible(row, 200);
+    await tester.ensureVisible(row);
+    await tester.pumpAndSettle();
+    await tester.tap(row);
     await tester.pumpAndSettle();
 
     expect(find.byType(LanguagePage), findsOneWidget);
@@ -90,8 +126,11 @@ void main() {
   testWidgets('activated Notifications row (7.2) opens NotificationsPage', (tester) async {
     await pumpApp(tester, underTest());
 
-    await tester.scrollUntilVisible(find.text('7.2'), 200);
-    await tester.tap(find.widgetWithText(ListTile, 'Notifications'));
+    final row = find.widgetWithText(ListTile, 'Notifications');
+    await tester.scrollUntilVisible(row, 200);
+    await tester.ensureVisible(row);
+    await tester.pumpAndSettle();
+    await tester.tap(row);
     await tester.pumpAndSettle();
 
     expect(find.byType(NotificationsPage), findsOneWidget);
@@ -100,18 +139,37 @@ void main() {
   testWidgets('activated Terms (7.6) and About (7.7) rows open their pages', (tester) async {
     await pumpApp(tester, underTest());
 
-    await tester.scrollUntilVisible(find.text('7.6'), 200);
-    await tester.tap(find.widgetWithText(ListTile, 'Terms'));
+    final termsRow = find.widgetWithText(ListTile, 'Terms');
+    await tester.scrollUntilVisible(termsRow, 200);
+    await tester.ensureVisible(termsRow);
+    await tester.pumpAndSettle();
+    await tester.tap(termsRow);
     await tester.pumpAndSettle();
     expect(find.byType(TermsPage), findsOneWidget);
 
     await tester.pageBack();
     await tester.pumpAndSettle();
 
-    await tester.scrollUntilVisible(find.text('7.7'), 200);
-    await tester.tap(find.widgetWithText(ListTile, 'About'));
+    final aboutRow = find.widgetWithText(ListTile, 'About');
+    await tester.scrollUntilVisible(aboutRow, 200);
+    await tester.ensureVisible(aboutRow);
+    await tester.pumpAndSettle();
+    await tester.tap(aboutRow);
     await tester.pumpAndSettle();
     expect(find.byType(AboutPage), findsOneWidget);
+  });
+
+  testWidgets('activated Create chat row (6.1) opens CreateChatPage', (tester) async {
+    await pumpApp(tester, underTest(), settle: false);
+
+    final row = find.widgetWithText(ListTile, 'Create chat');
+    await tester.scrollUntilVisible(row, 200);
+    await tester.ensureVisible(row);
+    await tester.pumpAndSettle();
+    await tester.tap(row);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(CreateChatPage), findsOneWidget);
   });
 
   testWidgets('activated Appearance row (7.3) opens AppearancePage', (tester) async {
@@ -129,8 +187,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.scrollUntilVisible(find.text('7.3'), 200);
-    await tester.tap(find.widgetWithText(ListTile, 'Appearance'));
+    final row = find.widgetWithText(ListTile, 'Appearance');
+    await tester.scrollUntilVisible(row, 200);
+    await tester.ensureVisible(row);
+    await tester.pumpAndSettle();
+    await tester.tap(row);
     await tester.pumpAndSettle();
 
     expect(find.byType(AppearancePage), findsOneWidget);

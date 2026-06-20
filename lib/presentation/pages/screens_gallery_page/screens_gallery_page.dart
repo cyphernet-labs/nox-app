@@ -5,9 +5,13 @@ import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/app/widgets/app_theme_toggle.dart';
 import 'package:nox_app/presentation/pages/about_page/about_page.dart';
 import 'package:nox_app/presentation/pages/appearance_page/appearance_page.dart';
+import 'package:nox_app/presentation/pages/create_chat_page/create_chat_page.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page.dart';
 import 'package:nox_app/presentation/pages/language_page/language_page.dart';
+import 'package:nox_app/presentation/pages/login_page/login_page.dart';
 import 'package:nox_app/presentation/pages/notifications_page/notifications_page.dart';
+import 'package:nox_app/presentation/pages/qr_scan_page/qr_scan_page.dart';
+import 'package:nox_app/presentation/pages/set_username_page/set_username_page.dart';
 import 'package:nox_app/presentation/pages/splash_page/splash_page.dart';
 import 'package:nox_app/presentation/pages/terms_page/terms_page.dart';
 import 'package:nox_app/presentation/widgets/shell/app_splash_hairline_widget.dart';
@@ -129,9 +133,9 @@ const List<_ScreenSection> _sections = [
   _ScreenSection(
     title: 'Onboarding',
     entries: [
-      _ScreenEntry(id: '2.1', title: 'Login', route: null),
-      _ScreenEntry(id: '2.2', title: 'QR scan', route: null),
-      _ScreenEntry(id: '2.3', title: 'Set username', route: null),
+      _ScreenEntry(id: '2.1', title: 'Login', route: LoginPage.routeDemo),
+      _ScreenEntry(id: '2.2', title: 'QR scan', route: QrScanPage.routeDemo),
+      _ScreenEntry(id: '2.3', title: 'Set username', route: SetUsernamePage.routeDemo),
     ],
   ),
   _ScreenSection(
@@ -153,7 +157,7 @@ const List<_ScreenSection> _sections = [
   ),
   _ScreenSection(
     title: 'Create',
-    entries: [_ScreenEntry(id: '6.1', title: 'Create chat', route: null)],
+    entries: [_ScreenEntry(id: '6.1', title: 'Create chat', route: CreateChatPage.routeDemo)],
   ),
   _ScreenSection(
     title: 'Settings',

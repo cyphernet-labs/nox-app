@@ -16,9 +16,9 @@
   },
   "counts": {
     "groups": 6,
-    "references": 38,
-    "uniqueLigatures": 33,
-    "svgFiles": 35
+    "references": 39,
+    "uniqueLigatures": 34,
+    "svgFiles": 36
   },
   "groups": {
     "navigation": {
@@ -132,6 +132,14 @@
           "flutter": "Icons.cameraswitch",
           "symbols": "Symbols.cameraswitch",
           "use": "Switch camera"
+        },
+        {
+          "name": "no_photography",
+          "fill": 0,
+          "svg": "svg/no_photography.svg",
+          "flutter": "Icons.no_photography",
+          "symbols": "Symbols.no_photography",
+          "use": "Camera permission denied (2.2)"
         },
         {
           "name": "search",

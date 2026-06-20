@@ -6,6 +6,10 @@ import 'package:nox_app/presentation/widgets/chat/app_composer_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_file_chip_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_message_bubble_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_search_bar_widget.dart';
+import 'package:nox_app/presentation/pages/create_chat_page/create_chat_page.dart';
+import 'package:nox_app/presentation/pages/login_page/login_page.dart';
+import 'package:nox_app/presentation/pages/qr_scan_page/qr_scan_page.dart';
+import 'package:nox_app/presentation/pages/set_username_page/set_username_page.dart';
 import 'package:nox_app/presentation/widgets/primitives/file_type.dart';
 import 'package:nox_app/presentation/widgets/shell/app_bottom_bar_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_create_fab_widget.dart';
@@ -104,6 +108,31 @@ void main() {
 
       await pumpApp(tester, AppBottomBarWidget(active: AppTab.chats, onSelect: (_) {}), textScale: 2.0);
       expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('M2 onboarding/form screens survive textScaler 2.0 without overflow', (tester) async {
+      await pumpApp(tester, const LoginPage(), textScale: 2.0, settle: false);
+      await tester.pump();
+      expect(tester.takeException(), isNull, reason: 'LoginPage overflowed at 2.0');
+
+      await pumpApp(tester, const SetUsernamePage(), textScale: 2.0, settle: false);
+      await tester.pump();
+      expect(tester.takeException(), isNull, reason: 'SetUsernamePage overflowed at 2.0');
+
+      await pumpApp(tester, const CreateChatPage(), textScale: 2.0, settle: false);
+      await tester.pump();
+      expect(tester.takeException(), isNull, reason: 'CreateChatPage overflowed at 2.0');
+
+      await pumpApp(tester, const QrScanPage(), textScale: 2.0, settle: false);
+      await tester.pump();
+      expect(tester.takeException(), isNull, reason: 'QrScanPage overflowed at 2.0');
+    });
+
+    testWidgets('QR scanner icon actions expose tooltips', (tester) async {
+      await pumpApp(tester, const QrScanPage(), settle: false);
+
+      expect(find.byTooltip(TextConstants.tooltipFlashlight), findsOneWidget);
+      expect(find.byTooltip(TextConstants.tooltipSwitchCamera), findsOneWidget);
     });
   });
 }

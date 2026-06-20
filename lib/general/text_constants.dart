@@ -69,4 +69,44 @@ abstract final class TextConstants {
 
   // Settings: About (7.7)
   static const String settingsAboutTitle = 'About';
+
+  // Onboarding: Login / ID entry (2.1)
+  static const String loginSignIn = 'Sign in';
+  static const String loginIdLabel = 'Your ID';
+  static const String loginIdHint = 'Paste or enter your ID';
+  static const String actionPaste = 'Paste';
+  static const String loginScanQr = 'Scan QR';
+  static const String loginInvalidId = 'Invalid identifier';
+  static const String loginNetworkError = 'Could not sign in. Check your connection and try again.';
+  static const String onboardTitleSignIn = 'NOX · Sign in';
+
+  // Onboarding: QR scan (2.2)
+  static const String tooltipFlashlight = 'Flashlight';
+  static const String tooltipSwitchCamera = 'Switch camera';
+  static const String qrAimHint = 'Aim your camera at a QR code';
+  static const String qrEnterManually = 'Enter manually';
+  static const String qrPermissionTitle = 'Camera access needed';
+  static const String qrPermissionMessage = 'To scan a QR code, allow camera access in system settings.';
+  static const String qrInvalidSnackbar = 'This QR code is invalid. Try another one.';
+  static const String qrDesktopTitle = 'Scan a QR code';
+  static const String qrDesktopHelper = 'Point your webcam at a code, or enter the ID manually.';
+  static const String onboardTitleScanQr = 'NOX · Scan QR';
+
+  // Onboarding: Set username (2.3)
+  static const String usernameLabel = 'Name';
+  static const String usernameHint = 'How others will see you';
+  static const String usernameHelper = 'Others see this name. You can change it now or later in Settings.';
+  static const String usernameCharsetError = 'Contains invalid characters (allowed: letters, digits, - _ .)';
+  static const String nameTakenError = 'This name is taken';
+  static const String actionDone = 'Done';
+  static const String actionSkip = 'Skip';
+  static const String onboardTitleSetUp = 'NOX · Set up';
+
+  // Create chat (6.1)
+  static const String createChatTitle = 'New chat';
+  static const String createChatNameLabel = 'Chat name';
+  static const String createChatNameHint = 'e.g. Random thoughts';
+  static const String createChatNetworkError = 'Could not create chat. Check your connection and try again.';
+  static const String actionCreate = 'Create';
+  static const String actionCancel = 'Cancel';
 }
