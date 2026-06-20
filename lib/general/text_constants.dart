@@ -41,4 +41,8 @@ abstract final class TextConstants {
   // Screens gallery (dev launcher for product screens)
   static const String screensGalleryTitle = 'NOX Screens';
   static const String actionOpenScreens = 'Open Screens';
+
+  // Settings: Appearance (7.3)
+  static const String settingsAppearanceTitle = 'Appearance';
+  static const String themeSystem = 'System';
 }

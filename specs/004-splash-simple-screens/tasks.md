@@ -30,8 +30,8 @@
 **Purpose**: Общая инфраструктура, нужная нескольким историям. ⚠️ Завершить до US3–US6.
 
 - [ ] T002 [P] Добавить всю UI-микрокопию M1 (English) в `lib/general/text_constants.dart` — строки Splash (debug-метки/placeholder), Error (`errorGeneralTitle` уже есть; добавить сетевой текст, заголовки), Appearance, Language, Notifications, Terms, About.
-- [ ] T003 [P] Создать `AppDetailScaffoldWidget` в `lib/presentation/widgets/shell/app_detail_scaffold_widget.dart` (мобайл `Scaffold`+`AppBar`(title,back) ↔ десктоп ≥840 width-capped `ConstrainedBox(maxWidth:640)` через `LayoutBuilder`+`Constants.railBreakpoint`). Контракт — `contracts/widgets.md`.
-- [ ] T004 Widget-тест адаптивности `AppDetailScaffoldWidget` (<840 fullscreen / ≥840 width-cap) в `test/presentation/widgets/shell/app_detail_scaffold_widget_test.dart` (зависит от T003).
+- [x] T003 [P] Создать `AppDetailScaffoldWidget` в `lib/presentation/widgets/shell/app_detail_scaffold_widget.dart` (мобайл `Scaffold`+`AppBar`(title,back) ↔ десктоп ≥840 width-capped `ConstrainedBox(maxWidth:640)` через `LayoutBuilder`+`Constants.railBreakpoint`). Контракт — `contracts/widgets.md`.
+- [x] T004 Widget-тест адаптивности `AppDetailScaffoldWidget` (<840 fullscreen / ≥840 width-cap) в `test/presentation/widgets/shell/app_detail_scaffold_widget_test.dart` (зависит от T003).
 
 **Checkpoint**: фундамент готов — истории можно реализовывать.
 
@@ -79,12 +79,12 @@
 
 **Independent Test**: Открыть Appearance из Галереи; тап по карточке мгновенно меняет тему; отмечена текущая.
 
-- [ ] T019 [P] [US3] Создать `AppThemeOptionWidget` (карточка: мини-превью+label+`selected`+`onTap`) в `lib/presentation/widgets/settings/app_theme_option_widget.dart`. Контракт — `contracts/widgets.md`.
-- [ ] T020 [US3] Создать `AppearancePage` в `lib/presentation/pages/appearance_page/appearance_page.dart`: три `AppThemeOptionWidget` (System/Light/Dark), читает/диспатчит `AppRootBloc` (`setTheme`), в `AppDetailScaffoldWidget`; `route()`→`/settings/appearance` (зависит от T019, T003, T002).
-- [ ] T021 [US3] Активировать строку `7.3` (`route: AppearancePage.route`) в `screens_gallery_page.dart` + gallery-тест (зависит от T020).
-- [ ] T022 [P] [US3] Widget-тест `AppearancePage`: выбор опции + живая смена темы через `AppRootBloc` в `test/presentation/pages/appearance_page/appearance_page_test.dart` (зависит от T020).
-- [ ] T023 [P] [US3] Golden-тест `AppearancePage` (light/dark) + бейзлайны (зависит от T020).
-- [ ] T024 [P] [US3] Widget+golden тест `AppThemeOptionWidget` в `test/presentation/widgets/settings/` (зависит от T019).
+- [x] T019 [P] [US3] Создать `AppThemeOptionWidget` (карточка: мини-превью+label+`selected`+`onTap`) в `lib/presentation/widgets/settings/app_theme_option_widget.dart`. Контракт — `contracts/widgets.md`.
+- [x] T020 [US3] Создать `AppearancePage` в `lib/presentation/pages/appearance_page/appearance_page.dart`: три `AppThemeOptionWidget` (System/Light/Dark), читает/диспатчит `AppRootBloc` (`setTheme`), в `AppDetailScaffoldWidget`; `route()`→`/settings/appearance` (зависит от T019, T003, T002).
+- [x] T021 [US3] Активировать строку `7.3` (`route: AppearancePage.route`) в `screens_gallery_page.dart` + gallery-тест (зависит от T020).
+- [x] T022 [P] [US3] Widget-тест `AppearancePage`: выбор опции + живая смена темы через `AppRootBloc` в `test/presentation/pages/appearance_page/appearance_page_test.dart` (зависит от T020).
+- [x] T023 [P] [US3] Golden-тест `AppearancePage` (light/dark) + бейзлайны (зависит от T020).
+- [x] T024 [P] [US3] Widget+golden тест `AppThemeOptionWidget` в `test/presentation/widgets/settings/` (зависит от T019).
 
 **Checkpoint**: US3 — единственная «живая» функция M1 — работает.
 

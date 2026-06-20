@@ -108,7 +108,7 @@
 | [x] | 3.1 | Error (universal) | M | ✅ `AppErrorPage` + `ErrorPageMode{blocking,embedded}` + пресеты; `AppWindowTitlebarWidget`; loading-retry | мобайл AppBar(back)/blocking → десктоп `TitleBar`, иконка 96dp | — |
 | [ ] | 7.7 | About | S | — (только `package_info_plus` для версии) | мобайл push → десктоп detail-pane | 7.1 |
 | [ ] | 7.6 | Terms | S | `TermsBody` (shared) + version footer | мобайл push → десктоп detail-pane | 7.1 |
-| [ ] | 7.3 | Appearance | S | `AppThemeOptionWidget`; **reuse `AppRootBloc`** (живой свитч темы работает по-настоящему) | мобайл push → десктоп detail-pane, карточки в грид | 7.1 |
+| [x] | 7.3 | Appearance | S | ✅ `AppThemeOptionWidget` + `AppDetailScaffoldWidget`; **reuse `AppRootBloc`** (живой свитч темы работает) | мобайл push → десктоп width-cap панель | 7.1 |
 | [ ] | 7.4 | Language | S | radio-список (live re-render — заглушка) | мобайл push → десктоп detail-pane | 7.1 |
 | [ ] | 7.2 | Notifications | M | `AppSettingsSwitchRowWidget` + `AppInfoBannerWidget` | мобайл push → десктоп detail-pane | 7.1 |
 
@@ -137,7 +137,7 @@
 | [ ] | 5.3 | File view | M | `FileViewBody` (glyph+name+size); форматтер размера; фейк-прогресс загрузки | мобайл fullscreen push (Save) → десктоп lightbox-`Dialog` 520 (Download) | 5.2 |
 | [ ] | 5.4 | Chat card | M | `ChatCardPage` + list/grid-плитки файлов (reuse `AppSegmentedWidget`) | мобайл fullscreen push → десктоп side-sheet/detail-pane (инференс) | 5.2, 5.3 |
 
-**Прогресс фазы 1:** 2 / 17 экранов готовы (✅ 1.1 Splash, 3.1 Error) · M0 готов; M1 в работе (2 / 7).
+**Прогресс фазы 1:** 3 / 17 экранов готовы (✅ 1.1 Splash, 3.1 Error, 7.3 Appearance) · M0 готов; M1 в работе (3 / 7).
 
 ---
 
