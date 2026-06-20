@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/pages/create_chat_page/create_chat_page.dart';
 import 'package:nox_app/presentation/pages/placeholder/chats_placeholder_page.dart';
-import 'package:nox_app/presentation/pages/placeholder/settings_placeholder_page.dart';
+import 'package:nox_app/presentation/pages/settings_root_page/settings_root_page.dart';
 import 'package:nox_app/presentation/widgets/shell/app_bottom_bar_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_create_fab_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_navigation_rail_widget.dart';
@@ -41,7 +41,7 @@ void main() {
 
       // Both bodies are always mounted (IndexedStack-like preservation, FR-021).
       expect(find.byType(ChatsPlaceholderPage), findsOneWidget);
-      expect(find.byType(SettingsPlaceholderPage), findsOneWidget);
+      expect(find.byType(SettingsRootPage), findsOneWidget);
       expect(bottomBar(tester).active, AppTab.chats);
 
       await tester.tap(find.descendant(of: find.byType(AppBottomBarWidget), matching: find.text(TextConstants.settings)));
@@ -50,7 +50,7 @@ void main() {
       expect(bottomBar(tester).active, AppTab.settings);
       // Bodies still both mounted after the switch.
       expect(find.byType(ChatsPlaceholderPage), findsOneWidget);
-      expect(find.byType(SettingsPlaceholderPage), findsOneWidget);
+      expect(find.byType(SettingsRootPage), findsOneWidget);
     });
 
     testWidgets('central + opens the real Create chat (6.1)', (tester) async {

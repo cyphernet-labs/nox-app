@@ -17,6 +17,7 @@ import 'package:nox_app/presentation/pages/qr_scan_page/qr_scan_page.dart';
 import 'package:nox_app/presentation/pages/screens_gallery_page/screens_gallery_page.dart';
 import 'package:nox_app/presentation/pages/set_username_page/set_username_page.dart';
 import 'package:nox_app/presentation/pages/splash_page/splash_page.dart';
+import 'package:nox_app/presentation/pages/settings_root_page/settings_root_page.dart';
 import 'package:nox_app/presentation/pages/terms_page/terms_page.dart';
 import 'package:nox_app/presentation/widgets/shell/tab_bar_shell_widget.dart';
 
@@ -184,6 +185,19 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(TabBarShell), findsOneWidget);
+  });
+
+  testWidgets('activated Settings row (7.1) opens SettingsRootPage', (tester) async {
+    await pumpApp(tester, underTest());
+
+    final row = find.widgetWithText(ListTile, 'Settings');
+    await tester.scrollUntilVisible(row, 200);
+    await tester.ensureVisible(row);
+    await tester.pumpAndSettle();
+    await tester.tap(row);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(SettingsRootPage), findsOneWidget);
   });
 
   testWidgets('activated Appearance row (7.3) opens AppearancePage', (tester) async {

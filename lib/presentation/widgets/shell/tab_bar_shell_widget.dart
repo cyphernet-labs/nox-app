@@ -3,7 +3,7 @@ import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/presentation/pages/create_chat_page/create_chat_page.dart';
 import 'package:nox_app/presentation/pages/placeholder/chats_placeholder_page.dart';
-import 'package:nox_app/presentation/pages/placeholder/settings_placeholder_page.dart';
+import 'package:nox_app/presentation/pages/settings_root_page/settings_root_page.dart';
 import 'package:nox_app/presentation/widgets/shell/app_bottom_bar_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_create_fab_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_navigation_rail_widget.dart';
@@ -43,7 +43,7 @@ class _TabBarShellState extends State<TabBarShell> {
   // Scaffold, which provides the bottom bar / rail + docked FAB).
   late final List<Widget> _bodies = <Widget>[
     const ChatsPlaceholderPage(), // US3 → ChatsListPage(scrollToTop: _chatsScrollToTop)
-    const SettingsPlaceholderPage(), // US2 → SettingsRootPage()
+    const SettingsRootPage(inShell: true),
   ];
 
   @override

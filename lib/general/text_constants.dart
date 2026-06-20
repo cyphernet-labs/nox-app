@@ -112,6 +112,7 @@ abstract final class TextConstants {
 
   // Settings root (7.1) — identity card + logout (reuse: settings, loginIdLabel='Your ID',
   // actionCancel='Cancel', usernameLabel='Name', usernameCharsetError, nameTakenError, settings*Title)
+  static const String settingsAccountTitle = 'Account'; // desktop list-detail menu item
   static const String settingsNameEditTooltip = 'Edit';
   static const String idMask = '••••••••'; // 8 dots, fixed length
   static const String idShowTooltip = 'Show';

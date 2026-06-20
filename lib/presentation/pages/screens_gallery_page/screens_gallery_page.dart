@@ -12,6 +12,7 @@ import 'package:nox_app/presentation/pages/login_page/login_page.dart';
 import 'package:nox_app/presentation/pages/notifications_page/notifications_page.dart';
 import 'package:nox_app/presentation/pages/qr_scan_page/qr_scan_page.dart';
 import 'package:nox_app/presentation/pages/set_username_page/set_username_page.dart';
+import 'package:nox_app/presentation/pages/settings_root_page/settings_root_page.dart';
 import 'package:nox_app/presentation/pages/splash_page/splash_page.dart';
 import 'package:nox_app/presentation/pages/terms_page/terms_page.dart';
 import 'package:nox_app/presentation/widgets/shell/app_splash_hairline_widget.dart';
@@ -163,7 +164,7 @@ const List<_ScreenSection> _sections = [
   _ScreenSection(
     title: 'Settings',
     entries: [
-      _ScreenEntry(id: '7.1', title: 'Settings', route: null),
+      _ScreenEntry(id: '7.1', title: 'Settings', route: SettingsRootPage.routeDemo),
       _ScreenEntry(id: '7.2', title: 'Notifications', route: NotificationsPage.route),
       _ScreenEntry(id: '7.3', title: 'Appearance', route: AppearancePage.route),
       _ScreenEntry(id: '7.4', title: 'Language', route: LanguagePage.route),
