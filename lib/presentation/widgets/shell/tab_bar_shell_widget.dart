@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/general/constants.dart';
+import 'package:nox_app/presentation/pages/chats_list_page/chats_list_page.dart';
 import 'package:nox_app/presentation/pages/create_chat_page/create_chat_page.dart';
-import 'package:nox_app/presentation/pages/placeholder/chats_placeholder_page.dart';
 import 'package:nox_app/presentation/pages/settings_root_page/settings_root_page.dart';
 import 'package:nox_app/presentation/widgets/shell/app_bottom_bar_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_create_fab_widget.dart';
@@ -42,7 +42,7 @@ class _TabBarShellState extends State<TabBarShell> {
   // Tab bodies. Each owns its own Scaffold + AppBar (nested under this shell's
   // Scaffold, which provides the bottom bar / rail + docked FAB).
   late final List<Widget> _bodies = <Widget>[
-    const ChatsPlaceholderPage(), // US3 → ChatsListPage(scrollToTop: _chatsScrollToTop)
+    ChatsListPage(inShell: true, scrollToTop: _chatsScrollToTop),
     const SettingsRootPage(inShell: true),
   ];
 

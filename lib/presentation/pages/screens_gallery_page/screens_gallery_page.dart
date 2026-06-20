@@ -5,6 +5,7 @@ import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/app/widgets/app_theme_toggle.dart';
 import 'package:nox_app/presentation/pages/about_page/about_page.dart';
 import 'package:nox_app/presentation/pages/appearance_page/appearance_page.dart';
+import 'package:nox_app/presentation/pages/chats_list_page/chats_list_page.dart';
 import 'package:nox_app/presentation/pages/create_chat_page/create_chat_page.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page.dart';
 import 'package:nox_app/presentation/pages/language_page/language_page.dart';
@@ -151,7 +152,7 @@ const List<_ScreenSection> _sections = [
   _ScreenSection(
     title: 'Chats',
     entries: [
-      _ScreenEntry(id: '5.1', title: 'Chats list', route: null),
+      _ScreenEntry(id: '5.1', title: 'Chats list', route: ChatsListPage.routeDemo),
       _ScreenEntry(id: '5.2', title: 'Chat thread', route: null),
       _ScreenEntry(id: '5.3', title: 'File view', route: null),
       _ScreenEntry(id: '5.4', title: 'Chat card', route: null),

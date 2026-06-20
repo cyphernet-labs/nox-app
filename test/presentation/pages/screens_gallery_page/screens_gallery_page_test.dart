@@ -2,12 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:injectable/injectable.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/design/theme/app_theme.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
 import 'package:nox_app/presentation/pages/about_page/about_page.dart';
 import 'package:nox_app/presentation/pages/appearance_page/appearance_page.dart';
+import 'package:nox_app/presentation/pages/chats_list_page/chats_list_page.dart';
 import 'package:nox_app/presentation/pages/create_chat_page/create_chat_page.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page.dart';
 import 'package:nox_app/presentation/pages/language_page/language_page.dart';
@@ -24,6 +27,15 @@ import 'package:nox_app/presentation/widgets/shell/tab_bar_shell_widget.dart';
 import '../../../utils/pump_app.dart';
 
 void main() {
+  // The shell (4.1) + Chats list (5.1) reached from the gallery resolve ChatRepository from DI.
+  setUpAll(() async {
+    await configureDependencies(Environment.test);
+  });
+
+  tearDownAll(() async {
+    await getIt.reset();
+  });
+
   // The page's AppBar hosts AppThemeToggle, which reads AppRootBloc only on tap.
   Widget underTest() => BlocProvider<AppRootBloc>(create: (_) => AppRootBloc(), child: const ScreensGalleryPage());
 
@@ -185,6 +197,19 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(TabBarShell), findsOneWidget);
+  });
+
+  testWidgets('activated Chats list row (5.1) opens ChatsListPage', (tester) async {
+    await pumpApp(tester, underTest());
+
+    final row = find.widgetWithText(ListTile, 'Chats list');
+    await tester.scrollUntilVisible(row, 200);
+    await tester.ensureVisible(row);
+    await tester.pumpAndSettle();
+    await tester.tap(row);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ChatsListPage), findsOneWidget);
   });
 
   testWidgets('activated Settings row (7.1) opens SettingsRootPage', (tester) async {

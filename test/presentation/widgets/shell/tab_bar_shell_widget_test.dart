@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:injectable/injectable.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/pages/create_chat_page/create_chat_page.dart';
-import 'package:nox_app/presentation/pages/placeholder/chats_placeholder_page.dart';
+import 'package:nox_app/presentation/pages/chats_list_page/chats_list_page.dart';
 import 'package:nox_app/presentation/pages/settings_root_page/settings_root_page.dart';
 import 'package:nox_app/presentation/widgets/shell/app_bottom_bar_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_create_fab_widget.dart';
@@ -12,6 +14,15 @@ import 'package:nox_app/presentation/widgets/shell/tab_bar_shell_widget.dart';
 import '../../../utils/pump_app.dart';
 
 void main() {
+  // The shell hosts the real Chats list, whose bloc resolves ChatRepository from DI.
+  setUpAll(() async {
+    await configureDependencies(Environment.test);
+  });
+
+  tearDownAll(() async {
+    await getIt.reset();
+  });
+
   group('TabBarShell', () {
     AppBottomBarWidget bottomBar(WidgetTester tester) => tester.widget<AppBottomBarWidget>(find.byType(AppBottomBarWidget));
 
@@ -40,7 +51,7 @@ void main() {
       await pumpApp(tester, const TabBarShell());
 
       // Both bodies are always mounted (IndexedStack-like preservation, FR-021).
-      expect(find.byType(ChatsPlaceholderPage), findsOneWidget);
+      expect(find.byType(ChatsListPage), findsOneWidget);
       expect(find.byType(SettingsRootPage), findsOneWidget);
       expect(bottomBar(tester).active, AppTab.chats);
 
@@ -49,7 +60,7 @@ void main() {
 
       expect(bottomBar(tester).active, AppTab.settings);
       // Bodies still both mounted after the switch.
-      expect(find.byType(ChatsPlaceholderPage), findsOneWidget);
+      expect(find.byType(ChatsListPage), findsOneWidget);
       expect(find.byType(SettingsRootPage), findsOneWidget);
     });
 
