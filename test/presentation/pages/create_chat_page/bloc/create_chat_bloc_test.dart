@@ -1,0 +1,70 @@
+import 'package:bloc_test/bloc_test.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:nox_app/presentation/pages/create_chat_page/bloc/create_chat_bloc.dart';
+
+void main() {
+  group('CreateChatBloc', () {
+    blocTest<CreateChatBloc, CreateChatState>(
+      'empty name disables create',
+      build: CreateChatBloc.new,
+      act: (bloc) => bloc.add(const CreateChatEvent.nameChanged('')),
+      expect: () => [predicate<CreateChatState>((s) => s.status == CreateChatStatus.empty && !s.canSubmit)],
+    );
+
+    blocTest<CreateChatBloc, CreateChatState>(
+      'a free name (any charset) resolves to valid after the debounced check',
+      build: CreateChatBloc.new,
+      act: (bloc) => bloc.add(const CreateChatEvent.nameChanged('Fresh chat ✨')),
+      wait: const Duration(milliseconds: 700),
+      expect: () => [
+        predicate<CreateChatState>((s) => s.status == CreateChatStatus.checking),
+        predicate<CreateChatState>((s) => s.status == CreateChatStatus.valid && s.canSubmit),
+      ],
+    );
+
+    blocTest<CreateChatBloc, CreateChatState>(
+      'a taken name resolves to taken',
+      build: CreateChatBloc.new,
+      act: (bloc) => bloc.add(const CreateChatEvent.nameChanged('General')),
+      wait: const Duration(milliseconds: 700),
+      expect: () => [
+        predicate<CreateChatState>((s) => s.status == CreateChatStatus.checking),
+        predicate<CreateChatState>((s) => s.status == CreateChatStatus.taken && s.errorText != null),
+      ],
+    );
+
+    blocTest<CreateChatBloc, CreateChatState>(
+      'create with the success outcome navigates',
+      build: CreateChatBloc.new,
+      act: (bloc) async {
+        bloc.add(const CreateChatEvent.nameChanged('Fresh chat'));
+        await Future<void>.delayed(const Duration(milliseconds: 700));
+        bloc.add(const CreateChatEvent.createRequested());
+      },
+      wait: const Duration(milliseconds: 600),
+      expect: () => [
+        predicate<CreateChatState>((s) => s.status == CreateChatStatus.checking),
+        predicate<CreateChatState>((s) => s.status == CreateChatStatus.valid),
+        predicate<CreateChatState>((s) => s.status == CreateChatStatus.submitting),
+        predicate<CreateChatState>((s) => s.status == CreateChatStatus.navSuccess),
+      ],
+    );
+
+    blocTest<CreateChatBloc, CreateChatState>(
+      'create with a network error re-enables create and shows the inline error',
+      build: CreateChatBloc.new,
+      act: (bloc) async {
+        bloc.add(const CreateChatEvent.nameChanged('Another chat'));
+        await Future<void>.delayed(const Duration(milliseconds: 700));
+        bloc.add(const CreateChatEvent.createRequested(outcome: CreateChatOutcome.network));
+      },
+      wait: const Duration(milliseconds: 600),
+      expect: () => [
+        predicate<CreateChatState>((s) => s.status == CreateChatStatus.checking),
+        predicate<CreateChatState>((s) => s.status == CreateChatStatus.valid),
+        predicate<CreateChatState>((s) => s.status == CreateChatStatus.submitting),
+        predicate<CreateChatState>((s) => s.status == CreateChatStatus.valid && s.networkError && s.canSubmit && s.errorText != null),
+      ],
+    );
+  });
+}

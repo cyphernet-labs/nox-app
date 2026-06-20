@@ -5,6 +5,7 @@ import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/app/widgets/app_theme_toggle.dart';
 import 'package:nox_app/presentation/pages/about_page/about_page.dart';
 import 'package:nox_app/presentation/pages/appearance_page/appearance_page.dart';
+import 'package:nox_app/presentation/pages/create_chat_page/create_chat_page.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page.dart';
 import 'package:nox_app/presentation/pages/language_page/language_page.dart';
 import 'package:nox_app/presentation/pages/login_page/login_page.dart';
@@ -156,7 +157,7 @@ const List<_ScreenSection> _sections = [
   ),
   _ScreenSection(
     title: 'Create',
-    entries: [_ScreenEntry(id: '6.1', title: 'Create chat', route: null)],
+    entries: [_ScreenEntry(id: '6.1', title: 'Create chat', route: CreateChatPage.routeDemo)],
   ),
   _ScreenSection(
     title: 'Settings',

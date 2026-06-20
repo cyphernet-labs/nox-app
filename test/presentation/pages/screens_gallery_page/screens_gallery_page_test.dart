@@ -8,6 +8,7 @@ import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
 import 'package:nox_app/presentation/pages/about_page/about_page.dart';
 import 'package:nox_app/presentation/pages/appearance_page/appearance_page.dart';
+import 'package:nox_app/presentation/pages/create_chat_page/create_chat_page.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page.dart';
 import 'package:nox_app/presentation/pages/language_page/language_page.dart';
 import 'package:nox_app/presentation/pages/login_page/login_page.dart';
@@ -156,6 +157,19 @@ void main() {
     await tester.tap(aboutRow);
     await tester.pumpAndSettle();
     expect(find.byType(AboutPage), findsOneWidget);
+  });
+
+  testWidgets('activated Create chat row (6.1) opens CreateChatPage', (tester) async {
+    await pumpApp(tester, underTest(), settle: false);
+
+    final row = find.widgetWithText(ListTile, 'Create chat');
+    await tester.scrollUntilVisible(row, 200);
+    await tester.ensureVisible(row);
+    await tester.pumpAndSettle();
+    await tester.tap(row);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(CreateChatPage), findsOneWidget);
   });
 
   testWidgets('activated Appearance row (7.3) opens AppearancePage', (tester) async {
