@@ -60,6 +60,9 @@ abstract final class NoxIcons {
   /// Switch camera.
   static SvgGenImage get cameraswitch => Assets.svg.icons.cameraswitch;
 
+  /// Camera permission denied (2.2).
+  static SvgGenImage get noPhotography => Assets.svg.icons.noPhotography;
+
   /// Search chats.
   static SvgGenImage get search => Assets.svg.icons.search;
 
