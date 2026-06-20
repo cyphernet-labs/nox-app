@@ -10,4 +10,7 @@ sealed class LoginEvent with _$LoginEvent {
 
   /// `Sign in` tapped; [outcome] is the (debug) sign-in result.
   const factory LoginEvent.signInRequested({@Default(LoginOutcome.auto) LoginOutcome outcome}) = SignInRequested;
+
+  /// The page consumed a terminal `nav*` status (navigated away) → reset to idle.
+  const factory LoginEvent.navigationHandled() = NavigationHandled;
 }

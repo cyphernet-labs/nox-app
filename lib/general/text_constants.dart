@@ -102,7 +102,8 @@ abstract final class TextConstants {
   static const String actionSkip = 'Skip';
   static const String onboardTitleSetUp = 'NOX · Set up';
 
-  // Create chat (6.1) — `tooltipCreateChat` ('New chat') is reused as the AppBar title.
+  // Create chat (6.1)
+  static const String createChatTitle = 'New chat';
   static const String createChatNameLabel = 'Chat name';
   static const String createChatNameHint = 'e.g. Random thoughts';
   static const String createChatNetworkError = 'Could not create chat. Check your connection and try again.';

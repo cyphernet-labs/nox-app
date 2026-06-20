@@ -72,8 +72,10 @@ class _SetUsernamePageState extends BaseStatePage<SetUsernamePage> {
     switch (state.status) {
       case UsernameStatus.navSuccess:
         Navigator.of(context).push(RoutePlaceholderPage.route(destinationLabel: 'Chats shell (4.1)'));
+        _bloc.add(const SetUsernameEvent.navigationHandled());
       case UsernameStatus.navFatal:
         Navigator.of(context).push(AppErrorPage.route(params: ErrorPageParams.fatal()));
+        _bloc.add(const SetUsernameEvent.navigationHandled());
       case UsernameStatus.raceTaken:
         _focusNode.requestFocus();
       default:

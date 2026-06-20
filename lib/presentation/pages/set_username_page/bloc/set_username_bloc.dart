@@ -20,6 +20,11 @@ class SetUsernameBloc extends BaseBloc<SetUsernameEvent, SetUsernameState> {
     on<NameChanged>(_onNameChanged);
     on<AvailabilityRequested>(_onAvailabilityRequested, transformer: debounceRestartable());
     on<DoneRequested>(_onDoneRequested);
+    on<NavigationHandled>(_onNavigationHandled);
+  }
+
+  void _onNavigationHandled(NavigationHandled event, Emitter<SetUsernameState> emit) {
+    emit(state.copyWith(status: UsernameStatus.valid));
   }
 
   /// Stub for the server-assigned default name (must NOT collide with the mock

@@ -10,10 +10,14 @@ import 'package:nox_app/general/text_constants.dart';
 /// #FAFAFA) are theme-INVARIANT, per `design-system.md` §9.9 — they do NOT read
 /// from `ColorScheme`. This is the one brand-fixed exception of milestone M2.
 class AppQrOverlayWidget extends StatelessWidget {
-  const AppQrOverlayWidget({super.key, this.reticleFraction = 0.7});
+  const AppQrOverlayWidget({super.key, this.reticleFraction = 0.7, this.showInstruction = true});
 
   /// Reticle side as a fraction of the available width (≈70%).
   final double reticleFraction;
+
+  /// Whether to draw the top instruction. Disabled on the small desktop viewfinder,
+  /// which carries its own title/helper outside the overlay (avoids overlap).
+  final bool showInstruction;
 
   @override
   Widget build(BuildContext context) {
@@ -23,19 +27,20 @@ class AppQrOverlayWidget extends StatelessWidget {
         Positioned.fill(
           child: CustomPaint(painter: _ReticlePainter(reticleFraction: reticleFraction)),
         ),
-        Positioned(
-          top: AppSpacingTokens.s32,
-          left: AppSpacingTokens.s24,
-          right: AppSpacingTokens.s24,
-          child: Text(
-            TextConstants.qrAimHint,
-            textAlign: TextAlign.center,
-            style: textTheme.bodyLarge?.copyWith(
-              color: NoxBrand.white,
-              shadows: const [Shadow(color: Color(0xCC000000), blurRadius: 4)],
+        if (showInstruction)
+          Positioned(
+            top: AppSpacingTokens.s32,
+            left: AppSpacingTokens.s24,
+            right: AppSpacingTokens.s24,
+            child: Text(
+              TextConstants.qrAimHint,
+              textAlign: TextAlign.center,
+              style: textTheme.bodyLarge?.copyWith(
+                color: NoxBrand.white,
+                shadows: const [Shadow(color: Color(0xCC000000), blurRadius: 4)],
+              ),
             ),
           ),
-        ),
       ],
     );
   }

@@ -66,8 +66,10 @@ class _CreateChatPageState extends BaseStatePage<CreateChatPage> {
     switch (state.status) {
       case CreateChatStatus.navSuccess:
         Navigator.of(context).push(RoutePlaceholderPage.route(destinationLabel: 'Chat thread (5.2)'));
+        _bloc.add(const CreateChatEvent.navigationHandled());
       case CreateChatStatus.navFatal:
         Navigator.of(context).push(AppErrorPage.route(params: ErrorPageParams.fatal()));
+        _bloc.add(const CreateChatEvent.navigationHandled());
       default:
         break;
     }
@@ -96,7 +98,7 @@ class _CreateChatPageState extends BaseStatePage<CreateChatPage> {
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(tooltip: TextConstants.tooltipBack, icon: AppIconWidget(NoxIcons.arrowBack), onPressed: _cancel),
-        title: const Text(TextConstants.tooltipCreateChat),
+        title: const Text(TextConstants.createChatTitle),
       ),
       body: SafeArea(
         child: Column(
@@ -124,14 +126,13 @@ class _CreateChatPageState extends BaseStatePage<CreateChatPage> {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     return Scaffold(
-      backgroundColor: Colors.transparent,
+      // Simulated modal scrim — the scrim is the Scaffold background so the backdrop
+      // is well-defined. Real showDialog over the chats window is M3 (// TODO(M3)).
+      backgroundColor: colorScheme.scrim.withValues(alpha: 0.4),
       body: Stack(
         children: [
           Positioned.fill(
-            child: GestureDetector(
-              onTap: _cancel,
-              child: ColoredBox(color: colorScheme.scrim.withValues(alpha: 0.4)),
-            ),
+            child: GestureDetector(behavior: HitTestBehavior.opaque, onTap: _cancel),
           ),
           Center(
             child: ConstrainedBox(
@@ -148,7 +149,7 @@ class _CreateChatPageState extends BaseStatePage<CreateChatPage> {
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        Text(TextConstants.tooltipCreateChat, style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
+                        Text(TextConstants.createChatTitle, style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
                         SizedBox(height: AppSpacingTokens.s16),
                         _field(state),
                         SizedBox(height: AppSpacingTokens.s24),

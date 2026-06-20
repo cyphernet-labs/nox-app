@@ -10,4 +10,7 @@ sealed class CreateChatEvent with _$CreateChatEvent {
 
   /// `Create` tapped; [outcome] is the (debug) create result.
   const factory CreateChatEvent.createRequested({@Default(CreateChatOutcome.success) CreateChatOutcome outcome}) = CreateRequested;
+
+  /// The page consumed a terminal `nav*` status (navigated away) → reset to valid.
+  const factory CreateChatEvent.navigationHandled() = NavigationHandled;
 }

@@ -66,5 +66,13 @@ void main() {
         predicate<CreateChatState>((s) => s.status == CreateChatStatus.valid && s.networkError && s.canSubmit && s.errorText != null),
       ],
     );
+
+    blocTest<CreateChatBloc, CreateChatState>(
+      'navigationHandled resets a terminal status to valid and clears the network error',
+      build: CreateChatBloc.new,
+      seed: () => const CreateChatState(name: 'Chat', status: CreateChatStatus.navSuccess),
+      act: (bloc) => bloc.add(const CreateChatEvent.navigationHandled()),
+      expect: () => [predicate<CreateChatState>((s) => s.status == CreateChatStatus.valid && !s.networkError)],
+    );
   });
 }

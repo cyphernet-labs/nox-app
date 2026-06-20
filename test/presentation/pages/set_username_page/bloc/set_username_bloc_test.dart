@@ -72,5 +72,13 @@ void main() {
         predicate<SetUsernameState>((s) => s.status == UsernameStatus.raceTaken && s.errorText != null),
       ],
     );
+
+    blocTest<SetUsernameBloc, SetUsernameState>(
+      'navigationHandled resets a terminal status to valid',
+      build: SetUsernameBloc.new,
+      seed: () => const SetUsernameState(name: 'Anna', status: UsernameStatus.navSuccess),
+      act: (bloc) => bloc.add(const SetUsernameEvent.navigationHandled()),
+      expect: () => [predicate<SetUsernameState>((s) => s.status == UsernameStatus.valid)],
+    );
   });
 }

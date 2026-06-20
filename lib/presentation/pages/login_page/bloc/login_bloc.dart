@@ -19,6 +19,7 @@ class LoginBloc extends BaseBloc<LoginEvent, LoginState> {
     on<IdChanged>(_onIdChanged);
     on<ClipboardChecked>(_onClipboardChecked);
     on<SignInRequested>(_onSignInRequested);
+    on<NavigationHandled>(_onNavigationHandled);
   }
 
   void _onIdChanged(IdChanged event, Emitter<LoginState> emit) {
@@ -28,6 +29,10 @@ class LoginBloc extends BaseBloc<LoginEvent, LoginState> {
 
   void _onClipboardChecked(ClipboardChecked event, Emitter<LoginState> emit) {
     emit(state.copyWith(canPaste: event.hasText));
+  }
+
+  void _onNavigationHandled(NavigationHandled event, Emitter<LoginState> emit) {
+    emit(state.copyWith(status: LoginStatus.idle));
   }
 
   Future<void> _onSignInRequested(SignInRequested event, Emitter<LoginState> emit) async {

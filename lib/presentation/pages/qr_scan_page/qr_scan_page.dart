@@ -145,7 +145,7 @@ class _QrScanPageState extends State<QrScanPage> {
                     child: Stack(
                       children: [
                         Positioned.fill(child: ColoredBox(color: colorScheme.surfaceContainerHighest)),
-                        const Positioned.fill(child: AppQrOverlayWidget(reticleFraction: 0.78)),
+                        const Positioned.fill(child: AppQrOverlayWidget(reticleFraction: 0.78, showInstruction: false)),
                       ],
                     ),
                   ),
@@ -160,12 +160,13 @@ class _QrScanPageState extends State<QrScanPage> {
               ],
             ),
           );
+    final dev = _devControl();
     return Scaffold(
       body: Column(
         children: [
           const AppWindowTitlebarWidget(title: TextConstants.onboardTitleScanQr),
           Expanded(child: content),
-          if (_devControl() != null) _devControl()!,
+          ?dev,
         ],
       ),
     );

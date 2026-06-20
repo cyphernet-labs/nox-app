@@ -10,4 +10,7 @@ sealed class SetUsernameEvent with _$SetUsernameEvent {
 
   /// `Done` tapped; [outcome] is the (debug) save result.
   const factory SetUsernameEvent.doneRequested({@Default(UsernameOutcome.success) UsernameOutcome outcome}) = DoneRequested;
+
+  /// The page consumed a terminal `nav*` status (navigated away) → reset to valid.
+  const factory SetUsernameEvent.navigationHandled() = NavigationHandled;
 }

@@ -42,7 +42,7 @@ class LoginPage extends StatefulWidget {
   State<LoginPage> createState() => _LoginPageState();
 }
 
-class _LoginPageState extends BaseStatePage<LoginPage> {
+class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserver {
   late final LoginBloc _bloc;
   final TextEditingController _controller = TextEditingController();
   LoginOutcome _outcome = LoginOutcome.auto;
@@ -51,14 +51,23 @@ class _LoginPageState extends BaseStatePage<LoginPage> {
   void initState() {
     super.initState();
     _bloc = LoginBloc();
+    WidgetsBinding.instance.addObserver(this);
     _refreshClipboard();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _controller.dispose();
     _bloc.close();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Re-check the clipboard on resume (the user may have copied an ID in another
+    // app) so `Paste` reflects the current buffer rather than the init-time check.
+    if (state == AppLifecycleState.resumed) _refreshClipboard();
   }
 
   Future<void> _refreshClipboard() async {
@@ -86,10 +95,13 @@ class _LoginPageState extends BaseStatePage<LoginPage> {
     switch (state.status) {
       case LoginStatus.navNewId:
         Navigator.of(context).push(RoutePlaceholderPage.route(destinationLabel: 'Set username (2.3)'));
+        _bloc.add(const LoginEvent.navigationHandled());
       case LoginStatus.navRegistered:
         Navigator.of(context).push(RoutePlaceholderPage.route(destinationLabel: 'Chats shell (4.1)'));
+        _bloc.add(const LoginEvent.navigationHandled());
       case LoginStatus.navFatal:
         Navigator.of(context).push(AppErrorPage.route(params: ErrorPageParams.fatal()));
+        _bloc.add(const LoginEvent.navigationHandled());
       case LoginStatus.idle:
       case LoginStatus.loading:
       case LoginStatus.errorFormat:

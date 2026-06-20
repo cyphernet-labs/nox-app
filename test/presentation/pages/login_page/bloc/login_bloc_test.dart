@@ -66,5 +66,13 @@ void main() {
       act: (bloc) => bloc.add(const LoginEvent.signInRequested()),
       expect: () => const <LoginState>[],
     );
+
+    blocTest<LoginBloc, LoginState>(
+      'navigationHandled resets a terminal status to idle (keeps the id)',
+      build: LoginBloc.new,
+      seed: () => const LoginState(id: 'kept-id', status: LoginStatus.navNewId),
+      act: (bloc) => bloc.add(const LoginEvent.navigationHandled()),
+      expect: () => [predicate<LoginState>((s) => s.status == LoginStatus.idle && s.id == 'kept-id')],
+    );
   });
 }

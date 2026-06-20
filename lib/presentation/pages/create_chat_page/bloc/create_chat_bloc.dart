@@ -19,6 +19,11 @@ class CreateChatBloc extends BaseBloc<CreateChatEvent, CreateChatState> {
     on<ChatNameChanged>(_onNameChanged);
     on<ChatAvailabilityRequested>(_onAvailabilityRequested, transformer: debounceRestartable());
     on<CreateRequested>(_onCreateRequested);
+    on<NavigationHandled>(_onNavigationHandled);
+  }
+
+  void _onNavigationHandled(NavigationHandled event, Emitter<CreateChatState> emit) {
+    emit(state.copyWith(status: CreateChatStatus.valid, networkError: false));
   }
 
   void _onNameChanged(ChatNameChanged event, Emitter<CreateChatState> emit) {
