@@ -54,13 +54,17 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
   FutureOr<void> _onSearchChanged(SearchChanged event, Emitter<ChatsListState> emit) async {
     final current = state;
     if (current is! Initialized) return;
-    emit(current.copyWith(query: event.query));
+    // Drop any desktop selection — the selected chat may be filtered out by the
+    // new query (would otherwise leave a stale thread pane / highlight).
+    emit(current.copyWith(query: event.query, selectedChatId: null));
     add(const ChatsListEvent.loadChats(reset: true));
   }
 
   FutureOr<void> _onSetScenario(SetScenario event, Emitter<ChatsListState> emit) async {
     _scenario = event.scenario;
-    add(const ChatsListEvent.loadChats(reset: true));
+    // From the Error state a plain loadChats early-returns (state is not Initialized);
+    // re-initialize so switching the debug scenario away from `fatal` recovers.
+    add(state is Initialized ? const ChatsListEvent.loadChats(reset: true) : const ChatsListEvent.initialize());
   }
 
   FutureOr<void> _onLoadChats(LoadChats event, Emitter<ChatsListState> emit) async {

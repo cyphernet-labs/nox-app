@@ -95,5 +95,36 @@ void main() {
       wait: const Duration(milliseconds: 500),
       verify: (bloc) => expect((bloc.state as Initialized).selectedChatId, 'chat_0'),
     );
+
+    blocTest<ChatsListBloc, ChatsListState>(
+      'a search clears a stale desktop selection',
+      build: ChatsListBloc.new,
+      act: (bloc) async {
+        bloc.add(const ChatsListEvent.initialize());
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+        bloc.add(const ChatsListEvent.chatSelected('chat_0'));
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        bloc.add(const ChatsListEvent.searchChanged('Garden'));
+      },
+      wait: const Duration(milliseconds: 700),
+      verify: (bloc) => expect((bloc.state as Initialized).selectedChatId, isNull),
+    );
+
+    blocTest<ChatsListBloc, ChatsListState>(
+      'switching the scenario away from fatal recovers from the Error state',
+      build: ChatsListBloc.new,
+      act: (bloc) async {
+        bloc.add(const ChatsListEvent.initialize());
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+        bloc.add(const ChatsListEvent.setScenario(ChatsListScenario.fatal));
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        bloc.add(const ChatsListEvent.setScenario(ChatsListScenario.normal));
+      },
+      wait: const Duration(milliseconds: 600),
+      verify: (bloc) {
+        expect(bloc.state, isA<Initialized>());
+        expect((bloc.state as Initialized).items, isNotEmpty);
+      },
+    );
   });
 }

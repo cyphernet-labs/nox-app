@@ -101,6 +101,38 @@ void main() {
 
       expect(find.byType(SplashPage), findsOneWidget);
     });
+
+    testWidgets('blur reverts an invalid inline name-edit (not a one-way trap)', (tester) async {
+      await pumpMobile(tester);
+
+      await tester.tap(find.byTooltip(TextConstants.settingsNameEditTooltip));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), 'bad name!'); // invalid charset
+      await tester.pump();
+
+      FocusManager.instance.primaryFocus?.unfocus(); // blur
+      await tester.pumpAndSettle();
+
+      // Edit mode exited and the committed name is unchanged (the draft was reverted).
+      expect(find.byType(TextField), findsNothing);
+      expect(find.byTooltip(TextConstants.settingsNameEditTooltip), findsOneWidget);
+      expect(find.text('User7421'), findsOneWidget);
+    });
+
+    testWidgets('blur commits a valid inline name-edit', (tester) async {
+      await pumpMobile(tester);
+
+      await tester.tap(find.byTooltip(TextConstants.settingsNameEditTooltip));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), 'Freename'); // valid + free
+      await tester.pumpAndSettle(); // debounce + availability check
+
+      FocusManager.instance.primaryFocus?.unfocus(); // blur
+      await tester.pumpAndSettle();
+
+      expect(find.byType(TextField), findsNothing);
+      expect(find.text('Freename'), findsOneWidget);
+    });
   });
 
   group('SettingsRootPage (desktop)', () {

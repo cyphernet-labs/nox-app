@@ -43,10 +43,15 @@ enum _Section { account, notifications, appearance, language, terms, about }
 /// Log out → real 1.1 Splash. Owns [SettingsRootBloc]. `[inShell]` suppresses the
 /// back affordance when hosted as a shell tab.
 class SettingsRootPage extends StatefulWidget {
-  const SettingsRootPage({super.key, this.demo = false, this.inShell = false});
+  const SettingsRootPage({super.key, this.demo = false, this.inShell = false, this.forceWide});
 
   final bool demo;
   final bool inShell;
+
+  /// When hosted in the shell, the shell's layout decision (rail vs bottom bar) is
+  /// passed down so the body follows it instead of re-measuring its rail-narrowed
+  /// width. Null (standalone) → self-measure against the breakpoint.
+  final bool? forceWide;
 
   static Route<void> route() => MaterialPageRoute<void>(
     builder: (_) => const SettingsRootPage(),
@@ -66,19 +71,31 @@ class SettingsRootPage extends StatefulWidget {
 class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
   late final SettingsRootBloc _bloc;
   final TextEditingController _nameController = TextEditingController();
+  final FocusNode _nameFocusNode = FocusNode();
   _Section _selected = _Section.account;
 
   @override
   void initState() {
     super.initState();
     _bloc = SettingsRootBloc()..add(const SettingsRootEvent.initialize());
+    _nameFocusNode.addListener(_onNameFocusChange);
   }
 
   @override
   void dispose() {
+    _nameFocusNode.removeListener(_onNameFocusChange);
+    _nameFocusNode.dispose();
     _nameController.dispose();
     _bloc.close();
     super.dispose();
+  }
+
+  // Blur exits the inline name-edit: commit when valid, otherwise revert (so an
+  // invalid/taken draft is never a one-way trap and a section switch that unmounts
+  // the field can't leave it stuck mid-edit). Mirrors the spec's Enter/Done/blur.
+  void _onNameFocusChange() {
+    if (!mounted || _nameFocusNode.hasFocus || !_bloc.state.editing) return;
+    _bloc.add(_bloc.state.canSave ? const SettingsRootEvent.nameSubmitted() : const SettingsRootEvent.nameEditCancelled());
   }
 
   void _startEdit() {
@@ -109,7 +126,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
       value: _bloc,
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final wide = constraints.maxWidth >= Constants.railBreakpoint;
+          final wide = widget.forceWide ?? (constraints.maxWidth >= Constants.railBreakpoint);
           return BlocBuilder<SettingsRootBloc, SettingsRootState>(
             builder: (context, state) => wide ? _wide(context, state) : _narrow(context, state),
           );
@@ -236,6 +253,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
       nameEditField: state.editing
           ? AppLabeledFieldWidget(
               controller: _nameController,
+              focusNode: _nameFocusNode,
               label: TextConstants.usernameLabel,
               maxLength: 32,
               autofocus: true,

@@ -20,7 +20,8 @@ class DateFormatter {
   static String relative(DateTime when, {DateTime? now}) {
     final ref = now ?? DateTime.now();
     final diff = ref.difference(when);
-    if (diff.inSeconds < 60) return TextConstants.timeNow;
+    // Clamp future timestamps (clock skew / a server time slightly ahead) to "now".
+    if (diff.isNegative || diff.inSeconds < 60) return TextConstants.timeNow;
     if (diff.inMinutes < 60) return '${diff.inMinutes} ${TextConstants.timeMinuteSuffix}';
     // Hours only within the same calendar day; a previous day is Yesterday / a date.
     final today = DateTime(ref.year, ref.month, ref.day);

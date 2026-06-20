@@ -8,6 +8,7 @@ import 'package:nox_app/presentation/pages/chats_list_page/chats_list_page.dart'
 import 'package:nox_app/presentation/pages/settings_root_page/settings_root_page.dart';
 import 'package:nox_app/presentation/widgets/shell/app_bottom_bar_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_create_fab_widget.dart';
+import 'package:nox_app/presentation/widgets/shell/app_list_detail_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_navigation_rail_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/tab_bar_shell_widget.dart';
 
@@ -42,6 +43,19 @@ void main() {
       await pumpApp(tester, const TabBarShell());
 
       expect(find.byType(AppNavigationRailWidget), findsOneWidget);
+      expect(find.byType(AppBottomBarWidget), findsNothing);
+    });
+
+    testWidgets('in the rail band (window just over 840) the body follows the shell into desktop list-detail', (tester) async {
+      // Window >= 840 (rail shown) but the rail-narrowed body width < 840: without
+      // forceWide the body would wrongly render its mobile branch.
+      await tester.binding.setSurfaceSize(const Size(880, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, const TabBarShell());
+
+      expect(find.byType(AppNavigationRailWidget), findsOneWidget);
+      // Both tab bodies use the desktop list-detail container (not the mobile chrome).
+      expect(find.byType(AppListDetailWidget), findsWidgets);
       expect(find.byType(AppBottomBarWidget), findsNothing);
     });
 

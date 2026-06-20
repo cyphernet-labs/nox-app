@@ -31,5 +31,10 @@ void main() {
     test('a previous year → "d MMM y"', () {
       expect(rel(DateTime(2025, 5, 12, 9)), '12 May 2025');
     });
+
+    test('a future timestamp (clock skew) clamps to now, never a negative value', () {
+      expect(rel(now.add(const Duration(minutes: 10))), TextConstants.timeNow);
+      expect(rel(now.add(const Duration(hours: 3))), TextConstants.timeNow);
+    });
   });
 }

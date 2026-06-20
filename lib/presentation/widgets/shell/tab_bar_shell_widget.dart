@@ -39,13 +39,6 @@ class _TabBarShellState extends State<TabBarShell> {
   // (US3) listens and scrolls to top. Unused by the placeholder body until then.
   final ValueNotifier<int> _chatsScrollToTop = ValueNotifier<int>(0);
 
-  // Tab bodies. Each owns its own Scaffold + AppBar (nested under this shell's
-  // Scaffold, which provides the bottom bar / rail + docked FAB).
-  late final List<Widget> _bodies = <Widget>[
-    ChatsListPage(inShell: true, scrollToTop: _chatsScrollToTop),
-    const SettingsRootPage(inShell: true),
-  ];
-
   @override
   void dispose() {
     _chatsScrollToTop.dispose();
@@ -63,11 +56,20 @@ class _TabBarShellState extends State<TabBarShell> {
 
   void _onCreate() => Navigator.of(context).push(CreateChatPage.route());
 
-  Widget _body() {
+  Widget _body(bool useRail) {
+    // Tab bodies own their AppBar (nested under this shell's Scaffold). The shell's
+    // layout decision is passed via forceWide so a body doesn't re-measure its
+    // rail-narrowed width and land on the wrong (mobile) branch in the 840–rail band.
+    // Rebuilt each frame, but State (blocs / scroll) is preserved by widget type +
+    // position; the scrollToTop notifier is a stable shell-owned field.
+    final bodies = <Widget>[
+      ChatsListPage(inShell: true, scrollToTop: _chatsScrollToTop, forceWide: useRail),
+      SettingsRootPage(inShell: true, forceWide: useRail),
+    ];
     return Stack(
       fit: StackFit.expand,
       children: [
-        for (var i = 0; i < _bodies.length; i++)
+        for (var i = 0; i < bodies.length; i++)
           // IgnorePointer + AnimatedOpacity (not Offstage) keeps every tab in the
           // tree so its state (scroll position, input) survives switches (FR-021),
           // while cross-fading over `tabFade`.
@@ -77,7 +79,7 @@ class _TabBarShellState extends State<TabBarShell> {
               opacity: _active.index == i ? 1 : 0,
               duration: NoxDuration.tabFade,
               curve: NoxEasing.standard,
-              child: _bodies[i],
+              child: bodies[i],
             ),
           ),
       ],
@@ -106,7 +108,7 @@ class _TabBarShellState extends State<TabBarShell> {
 
   Widget _mobile() {
     return Scaffold(
-      body: _body(),
+      body: _body(false),
       floatingActionButton: AppCreateFabWidget(onPressed: _onCreate),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
       bottomNavigationBar: AppBottomBarWidget(active: _active, onSelect: _onSelect),
@@ -119,7 +121,7 @@ class _TabBarShellState extends State<TabBarShell> {
         children: [
           AppNavigationRailWidget(active: _active, onSelect: _onSelect, onCreate: _onCreate),
           const VerticalDivider(width: 1),
-          Expanded(child: _body()),
+          Expanded(child: _body(true)),
         ],
       ),
     );

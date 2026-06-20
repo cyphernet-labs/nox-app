@@ -32,11 +32,16 @@ import 'package:nox_app/presentation/widgets/state/app_progress_widget.dart';
 /// network-only mock chats repository. `[inShell]` suppresses the back affordance
 /// when hosted as a shell tab; [scrollToTop] is bumped by the shell on Chats re-tap.
 class ChatsListPage extends StatefulWidget {
-  const ChatsListPage({super.key, this.demo = false, this.inShell = false, this.scrollToTop});
+  const ChatsListPage({super.key, this.demo = false, this.inShell = false, this.scrollToTop, this.forceWide});
 
   final bool demo;
   final bool inShell;
   final ValueListenable<int>? scrollToTop;
+
+  /// When hosted in the shell, the shell's layout decision (rail vs bottom bar) is
+  /// passed down so the body doesn't re-measure its (rail-narrowed) width and land
+  /// on the wrong branch. Null (standalone) → self-measure against the breakpoint.
+  final bool? forceWide;
 
   static Route<void> route() => MaterialPageRoute<void>(
     builder: (_) => const ChatsListPage(),
@@ -99,7 +104,7 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
       value: _bloc,
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final wide = constraints.maxWidth >= Constants.railBreakpoint;
+          final wide = widget.forceWide ?? (constraints.maxWidth >= Constants.railBreakpoint);
           return BlocBuilder<ChatsListBloc, ChatsListState>(
             builder: (context, state) => wide ? _desktop(context, state) : _mobile(context, state),
           );
@@ -179,8 +184,13 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
       return const AppDetailEmptyWidget(title: TextConstants.chatsNoSelectionTitle, message: TextConstants.chatsNoSelectionMessage);
     }
     final selected = state.items.where((c) => c.id == selectedId).firstOrNull;
+    if (selected == null) {
+      // The selected chat is no longer in the list (e.g. filtered out by search) —
+      // fall back to the no-selection pane rather than a stale thread placeholder.
+      return const AppDetailEmptyWidget(title: TextConstants.chatsNoSelectionTitle, message: TextConstants.chatsNoSelectionMessage);
+    }
     // Thread content (5.2) is built in M4 — show a placeholder for the selected chat.
-    return AppDetailEmptyWidget(title: selected?.name ?? TextConstants.chatThreadPlaceholder, message: TextConstants.comingSoon);
+    return AppDetailEmptyWidget(title: selected.name, message: TextConstants.comingSoon);
   }
 
   // ---- Shared ----------------------------------------------------------------
