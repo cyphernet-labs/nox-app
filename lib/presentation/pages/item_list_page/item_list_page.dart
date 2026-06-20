@@ -6,8 +6,9 @@ import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/pages/item_list_page/bloc/item_list_bloc.dart';
 
 /// Scaffold-DEMO verification harness on MOCK data (NOT a product feature — FR-013).
-/// Wired as the Chats-tab body to prove the layered vertical compiles end-to-end.
-/// Rendered inside AppShell's body (no own Scaffold).
+/// Proves the layered vertical (page → BLoC → repository) compiles end-to-end.
+/// Not currently mounted: the app starts at the UI-kit launcher (HomePage); this
+/// and AppShell are kept as the Feature-001 skeleton until real chat features land.
 class ItemListPage extends StatefulWidget {
   const ItemListPage({super.key});
 

@@ -71,18 +71,30 @@ fvm flutter analyze
 ### 1.5. Тесты
 
 ```bash
-# Юнит + виджет-тесты (включая bloc_test для Freezed-BLoC)
-fvm flutter test
+# Юнит + виджет-тесты (включая bloc_test для Freezed-BLoC).
+# Goldens исключены тегом `golden` (как в `make test` и CI); голый `fvm flutter test` без флага прогонит и их.
+fvm flutter test --exclude-tags golden
 
 # Один файл / директория (тесты — DEEP-mirror структуры lib/)
 fvm flutter test test/presentation/pages/item_list_page/item_list_bloc_test.dart
 fvm flutter test test/data/
 
-# Интеграционные тесты (на устройстве/эмуляторе)
+# Интеграционные тесты — каталога `integration_test/` ПОКА НЕТ (dev-зависимость заведена,
+# тесты не написаны); команда форвард-лукинг.
 fvm flutter test integration_test
 ```
 
 BLoC покрываем через `bloc_test` — он проверяет последовательность эмитнутых Freezed-`State` (`Initializing` → `Initialized` → …). Для пагинации тестируем чистую функцию `PagingStateExt.applyPage` отдельным юнит-тестом (детерминированно, без UI) — см. [07-pagination.md](07-pagination.md).
+
+**Golden-тесты (snapshot)** — plain-Flutter `matchesGoldenFile` через общий хелпер `test/utils/golden.dart` (`goldenTest()`: light+dark на фиксированной design-поверхности, реальные шрифты через `loadNoxFonts`). Помечены `@Tags(['golden'])` (тег объявлен в `dart_test.yaml`), **локальны (Apple Silicon / macOS) и исключены из CI** и из `make test` (`--exclude-tags golden`). Запуск только локально:
+
+```bash
+make golden-verify        # прогнать goldens (= fvm flutter test --tags golden)
+make golden-update        # перегенерировать эталоны (--update-goldens)
+make golden-verify FILE=test/presentation/widgets/chat/app_chat_item_widget_golden_test.dart   # один файл
+```
+
+Эталоны `goldens/*.png` коммитятся как фикстуры; рецепт авторинга — `/golden-test` ([.claude/commands/golden-test.md](../../../.claude/commands/golden-test.md)).
 
 ### 1.6. Запуск приложения с flavor
 
@@ -127,8 +139,7 @@ mise run build:linux:prod
 Makefile-обёртки поверх них (соответствуют реальному корневому Makefile; полный Makefile — в [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md) §5):
 
 ```makefile
-.PHONY: deps generate format analyze test gate \
-  build-android-stage build-android-prod build-ios-stage build-ios-prod \
+.PHONY: deps generate format analyze test golden-update golden-verify gate \
   build-macos-stage build-macos-prod build-windows-stage build-linux-stage
 
 # --- dev helpers (блюпринт 12) ---
@@ -136,21 +147,21 @@ deps:                ; fvm flutter pub get
 generate:            ; fvm dart run build_runner build --delete-conflicting-outputs
 format:              ; fvm dart format -l 140 lib test   # bulk-свип всего дерева; пер-задачное форматирование — по явным путям
 analyze:             ; fvm flutter analyze
-test:                ; fvm flutter test
+test:                ; fvm flutter test --exclude-tags golden $(FILE)   # goldens исключены; FILE= сужает до файла/каталога
 gate: generate format analyze test
 
-# --- builds (через mise) ---
-build-android-stage: ; mise run build:android:stage
-build-android-prod:  ; mise run build:android:prod
-build-ios-stage:     ; mise run build:ios:stage
-build-ios-prod:      ; mise run build:ios:prod
+# --- golden (snapshot) tests — ЛОКАЛЬНО (Apple Silicon/macOS), исключены из CI тегом `golden` ---
+golden-update:       ; fvm flutter test --tags golden --update-goldens $(FILE)
+golden-verify:       ; fvm flutter test --tags golden $(FILE)
+
+# --- builds (через mise) — только desktop-обёртки; android/ios собираем `mise run build:<platform>:<flavor>` напрямую ---
 build-macos-stage:   ; mise run build:macos:stage
 build-macos-prod:    ; mise run build:macos:prod
 build-windows-stage: ; mise run build:windows:stage
 build-linux-stage:   ; mise run build:linux:stage
 ```
 
-> **`make format` — это bulk-свип всего дерева** (`lib test`); пер-задачное правило из §1.3 остаётся в силе: руками форматируем **только изменённые файлы по явным путям**, а `make format` используем как CI-style единоразовый прогон. **Никогда не вызывать `sops`/`age` напрямую** — только через `mise run secrets:*`. Версионирование сборок — CalVer + shifted-epoch (`YY.M.D+EPOCH`), детали в [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md). Под prod-дистрибуцию таск можно дополнительно разбить по назначению (`build:android:prod:firebase` / `build:android:prod:google` / `build:ios:prod:firebase` / `build:ios:prod:apple`) — мобильный CD пока отложен (см. 09 §11), поэтому здесь оставлен базовый `build:<platform>:prod`.
+> **`make format` — это bulk-свип всего дерева** (`lib test`); пер-задачное правило из §1.3 остаётся в силе: руками форматируем **только изменённые файлы по явным путям**, а `make format` используем как CI-style единоразовый прогон. `make test` исключает goldens (`--exclude-tags golden`); сами goldens гоняем локально через `make golden-verify` / `make golden-update` (см. §1.5). Makefile оборачивает только **desktop**-сборки (`macos`/`windows`/`linux`); `android`/`ios` собираем `mise run build:<platform>:<flavor>` напрямую. **Никогда не вызывать `sops`/`age` напрямую** — только через `mise run secrets:*`. Версионирование сборок — CalVer + shifted-epoch (`YY.M.D+EPOCH`), детали в [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md). Под prod-дистрибуцию таск можно дополнительно разбить по назначению (`build:android:prod:firebase` / `build:android:prod:google` / `build:ios:prod:firebase` / `build:ios:prod:apple`) — мобильный CD пока отложен (см. 09 §11), поэтому здесь оставлен базовый `build:<platform>:prod`.
 
 ---
 
@@ -588,7 +599,7 @@ fvm flutter analyze                                            # ноль оши
 - [ ] Все повседневные команды идут через `fvm` (`fvm flutter` / `fvm dart`), Flutter 3.44.1 из `.fvmrc`.
 - [ ] Codegen — **ОДНА** команда `fvm dart run build_runner build --delete-conflicting-outputs`; явно зафиксировано, что нет `data→domain→root`-порядка (один пакет).
 - [ ] Форматирование — только изменённые файлы, `-l 140`, явные пути.
-- [ ] `mise run secrets:decrypt:<flavor>` и `mise run build:<platform>:<channel>` на **пяти** платформах (`build:android:stage`/`:android:prod`/`:ios:stage`/`:ios:prod` + desktop `build:macos:*`/`build:windows:*`/`build:linux:*`, имена совпадают с 09 §4) + Makefile-обёртки (включая dev-helpers `deps`/`generate`/`format`/`analyze`/`test`/`gate`) задокументированы; `make format` — bulk-свип, пер-задачное форматирование — по явным путям; `sops`/`age` напрямую не вызываются.
+- [ ] `mise run secrets:decrypt:<flavor>` и `mise run build:<platform>:<channel>` на **пяти** платформах (`build:android:stage`/`:android:prod`/`:ios:stage`/`:ios:prod` + desktop `build:macos:*`/`build:windows:*`/`build:linux:*`, имена совпадают с 09 §4) задокументированы; Makefile-обёртки — dev-helpers `deps`/`generate`/`format`/`analyze`/`test`/`gate` + golden `golden-update`/`golden-verify`, build-обёртки **только desktop** (`macos`/`windows`/`linux`; `android`/`ios` — `mise run` напрямую); `make format` — bulk-свип, `make test` — `--exclude-tags golden`, пер-задачное форматирование — по явным путям; `sops`/`age` напрямую не вызываются.
 - [ ] `.claude/commands/*` заведены: `/check-build`, `/new-model`, `/new-repository`, `/new-page`, `/move-files`, `/rename-class`, `/update-json`.
 - [ ] `/new-repository` эмитит LIST-метод `get<Feature>s` (`fetch*`=single, `watch*`=stream, без `save*`/`fetch<Feature>s`-списка) + **единственный** `@freezed Get<Feature>sConfig` (`firstPage`/`nextPage`, `defaultPage = 1` — 1-based) — **не** sealed-union `…RepositoryConfigs.list`, **не** `page: 0`; никаких магических чисел страницы в BLoC — первая страница выражается только фабрикой `Get<Feature>sConfig.firstPage()`.
 - [ ] `/new-page` эмитит **Freezed**-BLoC-трио (`@freezed sealed` State+Event, `when()`/`copyWith()`, extension-геттеры) + пагинацию через `applyPage` (`PagingState<String, …>`, key = item id, offset через `nextPage`) — **не** рукописный Equatable; и **запускает** codegen в трейлере.

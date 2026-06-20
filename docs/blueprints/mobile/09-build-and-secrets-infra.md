@@ -291,7 +291,7 @@ class AppConfigRepositoryImpl implements AppConfigRepository {
 
 `Makefile` — человеко-дружелюбная поверхность над dev-workflow и mise-задачами. Реальная логика секретов/сборок живёт в `.mise.toml`; dev-команды делегируют в `fvm`.
 
-> **Состояние скелета.** Актуальный `Makefile` несёт desktop-build-обёртки (делегируют в `mise run build:<platform>:<flavor>`) и dev-helpers: `deps` (`fvm flutter pub get`), `generate` (один прогон `build_runner`), `format` (`fvm dart format -l 140 lib test` — **mutating**, по `lib test`), `analyze`, `test`, и композитную цель `gate: generate format analyze test`. Цели `secrets-*` и отдельного `format-check` в нём **пока нет** — они вводятся вместе с секретами/CD (ниже).
+> **Состояние скелета.** Актуальный `Makefile` несёт desktop-build-обёртки (делегируют в `mise run build:<platform>:<flavor>`) и dev-helpers: `deps` (`fvm flutter pub get`), `generate` (один прогон `build_runner`), `format` (`fvm dart format -l 140 lib test` — **mutating**, по `lib test`), `analyze`, `test` (`--exclude-tags golden`), локальные golden-цели `golden-update`/`golden-verify` (`--tags golden`; см. `12-dev-commands.md` §1.5), и композитную цель `gate: generate format analyze test`. Цели `secrets-*` и отдельного `format-check` в нём **пока нет** — они вводятся вместе с секретами/CD (ниже).
 
 Целевая форма `Makefile` (рекомендуемая конвенция; добавляет `format`/`format-check`-сплит + secrets-обёртки):
 
@@ -750,7 +750,7 @@ lib/design/gen/
 - [ ] `.mise.toml` пинит `sops 3.9` / `age 1.2`, `SOPS_AGE_KEY_FILE` → приватный ключ, `FLUTTER` → `.fvm/flutter_sdk`; скелетные `build:<platform>:<flavor>` = `$FLUTTER build … --debug --dart-define-from-file=config/<flavor>.json` (10 комбинаций; **нет** `secrets:*`).
 - [ ] `.sops.yaml` содержит creation rule + (placeholder) командный публичный age-ключ; `secrets/` и decrypt-задачи — конвенция на будущее (бэкенд не выбран).
 - [ ] Decrypt-задачи (когда появятся) атомарны (`.tmp` + `mv`), пишут `dart-define.json` (jq-allowlist, vendor-neutral `OBSERVABILITY_DSN`) + нативные конфиги; набор ключей — пример/TBD.
-- [ ] `Makefile`: `deps`/`generate`/`format`/`analyze`/`test` + композитный `gate`; рекомендованный сплит `format` (mutating) vs `format-check` (non-mutating CI-гейт); build-обёртки делегируют в `mise run build:*`; **нет** `make release-*`.
+- [ ] `Makefile`: `deps`/`generate`/`format`/`analyze`/`test` (+ локальные golden-цели `golden-update`/`golden-verify`) + композитный `gate`; рекомендованный сплит `format` (mutating) vs `format-check` (non-mutating CI-гейт); build-обёртки делегируют в `mise run build:*`; **нет** `make release-*`.
 - [ ] Gradle (target): dimension `app` (`stage`/`prod`), per-flavor `applicationId` (`com.cyphernetlabs.noxapp[.stage]`), детект флейвора, выбор keystore, secrets-хук на `pre<Flavor><BuildType>Build`. Скелет: флейворов/подписи/хука нет, namespace `com.cyphernetlabs.nox_app` (underscore) vs applicationId `com.cyphernetlabs.noxapp`, compile/minSdk из `flutter.*`, label `NOX`, release на debug-ключах.
 - [ ] iOS (target): `Stage.xcconfig` / `Prod.xcconfig` + схемы `stage`/`prod`; Firebase plist через `secrets:decrypt`; fastlane на будущее. Скелет: флейворы не заведены.
 - [ ] Desktop-идентичность (§7a): macOS `PRODUCT_NAME=NOX` + bundle id `com.cyphernetlabs.noxapp`; Windows `ProductName "NOX"` / `BINARY_NAME "nox_app"`; Linux `APPLICATION_ID com.cyphernetlabs.noxapp` / `BINARY_NAME nox_app`; только prod-идентичность.

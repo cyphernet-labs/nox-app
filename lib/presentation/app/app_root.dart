@@ -6,11 +6,11 @@ import 'package:nox_app/design/theme/app_theme.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
-import 'package:nox_app/presentation/app/widgets/app_shell.dart';
+import 'package:nox_app/presentation/pages/home_page/home_page.dart';
 
 /// Root MaterialApp: theme from AppTheme, themeMode from AppRootBloc, design-scale
-/// via ScreenUtil with OS font-scale neutralized. Skeleton home is a placeholder;
-/// US1 (T030) replaces it with the adaptive AppShell.
+/// via ScreenUtil with OS font-scale neutralized. Home is the launcher
+/// ([HomePage]) — no real product features yet, so it opens the UI-kit gallery.
 class AppRoot extends StatefulWidget {
   const AppRoot({super.key});
 
@@ -61,7 +61,7 @@ class _AppRootState extends State<AppRoot> {
                     data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(1.0)),
                     child: child ?? const SizedBox.shrink(),
                   ),
-                  home: const AppShell(),
+                  home: const HomePage(),
                 );
               },
             ),

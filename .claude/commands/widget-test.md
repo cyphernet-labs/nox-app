@@ -24,8 +24,10 @@ defaults based on the widget's structure.
      `configureDependencies(Environment.test)` it loads mock items, so its widget tests need **no** repository mock.
    - Domain models/enums referenced in the UI (`lib/domain/model/...`).
    - Strings — **all from `lib/general/text_constants.dart` (`TextConstants.xxx`, `static const`)**; there is **no i18n**.
-     nox-app has **no** shared `App*Widget`s / `AlertDialogHelper` yet (widgets are out of scope so far) — pages use raw
-     `CircularProgressIndicator` / `Text` / `ListTile` / `PagedListView`. Assert against those + `TextConstants.*`.
+     nox-app ships a UI kit under `lib/presentation/widgets/` (Feature-003: `App*Widget`s like `AppProgressWidget` /
+     `AppErrorWidget` / `AppEmptyContentWidget` / `AppChatItemWidget` / `AppMessageBubbleWidget` / …) plus feedback helpers in
+     `lib/presentation/helpers/app_feedback_helper.dart` (`showAppSnackBar` / `showAppBanner`). Prefer asserting against those +
+     `TextConstants.*`; the shared pump helper is `test/utils/pump_app.dart`.
 
 2. **Analyze the widget** to understand: states/modes (loading/error/data; create/edit; tabs), the text it renders
    (`TextConstants.*`), user interactions and which BLoC events they dispatch, and any dependency that must be controlled.

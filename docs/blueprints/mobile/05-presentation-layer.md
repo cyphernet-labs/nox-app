@@ -78,7 +78,7 @@ lib/
     │           ├── item_list_bloc.dart        # @freezed part-host, handlers, transformers
     │           ├── item_list_event.dart       # @freezed sealed Event union (part of)
     │           └── item_list_state.dart       # @freezed sealed State union + extensions (part of)
-    └── widgets/                              # FUTURE: App*Widget (AppProgressWidget/AppErrorWidget/...)
+    └── widgets/                              # UI kit (Feature-003): App*Widget by group — primitives/ chat/ shell/ state/
 ```
 
 > **Что реально есть в скелете (Feature-001).** Сейчас в `lib/presentation/` присутствуют: `app/app_root.dart`, `app/bloc/` (`AppRootBloc`-trio), `app/widgets/app_shell.dart`, `base/base_bloc.dart`, `pages/base/base_state_page.dart`, `pages/placeholder/` (2 заглушки; `ChatsPlaceholderPage` сейчас не подключён — Chats-вкладка ведёт на `ItemListPage`-харнесс), `pages/item_list_page/` (страница + BLoC-trio), `pagination/paging_state_ext.dart`. Директории `helpers/`, `extension/`, `widgets/` и `general/bloc_concurrency/` пока **отсутствуют** — это канонические целевые места, заводимые с первой реальной фичей (см. сноску о реализованном vs полном паттерне в §3.5). Токены spacing живут в `lib/design/app_spacing_tokens.dart`, `app_colors.dart` — в `lib/design/theme/` (см. `06-theming.md`).
