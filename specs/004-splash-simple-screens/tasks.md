@@ -112,13 +112,13 @@
 
 **Independent Test**: Открыть Notifications; тогглить переключатель; demo-контролом включить `denied` → info-баннер с «open settings».
 
-- [ ] T030 [P] [US5] Создать `AppSettingsSwitchRowWidget` (`SwitchListTile`+supporting text) в `lib/presentation/widgets/settings/app_settings_switch_row_widget.dart`.
-- [ ] T031 [P] [US5] Создать `AppInfoBannerWidget` (`MaterialBanner`-стиль: `NoxIcons`-иконка+текст+одно действие) в `lib/presentation/widgets/settings/app_info_banner_widget.dart`.
-- [ ] T032 [US5] Создать `NotificationsPage` в `lib/presentation/pages/notifications_page/notifications_page.dart`: `AppSettingsSwitchRowWidget` + supporting text + mock `PermissionStatus{granted,denied}` + `AppInfoBannerWidget` при denied + demo-контрол; `AppDetailScaffoldWidget`; `route()`→`/settings/notifications` (зависит от T030, T031, T003, T002).
-- [ ] T033 [US5] Активировать строку `7.2` в `screens_gallery_page.dart` + gallery-тест (зависит от T032).
-- [ ] T034 [P] [US5] Widget-тест `NotificationsPage` (toggle + denied-баннер) в `test/presentation/pages/notifications_page/notifications_page_test.dart` (зависит от T032).
-- [ ] T035 [P] [US5] Golden-тест `NotificationsPage` (light/dark, enabled+denied) + бейзлайны (зависит от T032).
-- [ ] T036 [P] [US5] Widget+golden тест `AppSettingsSwitchRowWidget` и `AppInfoBannerWidget` в `test/presentation/widgets/settings/` (зависит от T030, T031).
+- [x] T030 [P] [US5] Создать `AppSettingsSwitchRowWidget` (`SwitchListTile`+supporting text) в `lib/presentation/widgets/settings/app_settings_switch_row_widget.dart`.
+- [x] T031 [P] [US5] Создать `AppInfoBannerWidget` (`MaterialBanner`-стиль: `NoxIcons`-иконка+текст+одно действие) в `lib/presentation/widgets/settings/app_info_banner_widget.dart`.
+- [x] T032 [US5] Создать `NotificationsPage` в `lib/presentation/pages/notifications_page/notifications_page.dart`: `AppSettingsSwitchRowWidget` + supporting text + mock `PermissionStatus{granted,denied}` + `AppInfoBannerWidget` при denied + demo-контрол; `AppDetailScaffoldWidget`; `route()`→`/settings/notifications` (зависит от T030, T031, T003, T002).
+- [x] T033 [US5] Активировать строку `7.2` в `screens_gallery_page.dart` + gallery-тест (зависит от T032).
+- [x] T034 [P] [US5] Widget-тест `NotificationsPage` (toggle + denied-баннер) в `test/presentation/pages/notifications_page/notifications_page_test.dart` (зависит от T032).
+- [x] T035 [P] [US5] Golden-тест `NotificationsPage` (light/dark, enabled+denied) + бейзлайны (зависит от T032).
+- [x] T036 [P] [US5] Widget+golden тест `AppSettingsSwitchRowWidget` и `AppInfoBannerWidget` в `test/presentation/widgets/settings/` (зависит от T030, T031).
 
 **Checkpoint**: US5 независимо тестируема.
 

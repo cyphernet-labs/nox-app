@@ -51,4 +51,11 @@ abstract final class TextConstants {
   static const String languageSystem = 'System';
   static const String languageEnglish = 'English';
   static const String languageUkrainian = 'Українська';
+
+  // Settings: Notifications (7.2)
+  static const String settingsNotificationsTitle = 'Notifications';
+  static const String notificationsPushTitle = 'Push notifications';
+  static const String notificationsPushSubtitle = 'Get notified about your chats.';
+  static const String notificationsDeniedMessage = 'Notifications are turned off in system settings.';
+  static const String actionOpenSettings = 'Open settings';
 }

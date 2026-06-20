@@ -5,6 +5,7 @@ import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page.dart';
 import 'package:nox_app/presentation/pages/language_page/language_page.dart';
+import 'package:nox_app/presentation/pages/notifications_page/notifications_page.dart';
 import 'package:nox_app/presentation/pages/screens_gallery_page/screens_gallery_page.dart';
 import 'package:nox_app/presentation/pages/splash_page/splash_page.dart';
 
@@ -78,5 +79,15 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(LanguagePage), findsOneWidget);
+  });
+
+  testWidgets('activated Notifications row (7.2) opens NotificationsPage', (tester) async {
+    await pumpApp(tester, underTest());
+
+    await tester.scrollUntilVisible(find.text('7.2'), 200);
+    await tester.tap(find.widgetWithText(ListTile, 'Notifications'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(NotificationsPage), findsOneWidget);
   });
 }
