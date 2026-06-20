@@ -102,11 +102,7 @@ class _SetUsernamePageState extends BaseStatePage<SetUsernamePage> {
 
   Widget _narrow(BuildContext context, SetUsernameState state) {
     return Scaffold(
-      appBar: AppBar(
-        centerTitle: true,
-        title: const AppWordmarkWidget(),
-        bottom: const AppSplashHairlineWidget(),
-      ),
+      appBar: AppBar(centerTitle: true, title: const AppWordmarkWidget(), bottom: const AppSplashHairlineWidget()),
       body: SafeArea(
         child: Column(
           children: [
@@ -116,10 +112,7 @@ class _SetUsernamePageState extends BaseStatePage<SetUsernamePage> {
                 child: _field(state),
               ),
             ),
-            Padding(
-              padding: EdgeInsets.all(AppSpacingTokens.s16),
-              child: _actions(context, state),
-            ),
+            Padding(padding: EdgeInsets.all(AppSpacingTokens.s16), child: _actions(context, state)),
           ],
         ),
       ),
@@ -172,17 +165,11 @@ class _SetUsernamePageState extends BaseStatePage<SetUsernamePage> {
           width: double.infinity,
           child: FilledButton(
             onPressed: state.canSubmit && !state.isSubmitting ? _done : null,
-            child: state.isSubmitting
-                ? AppSpinnerWidget(size: 18, color: colorScheme.onPrimary)
-                : const Text(TextConstants.actionDone),
+            child: state.isSubmitting ? AppSpinnerWidget(size: 18, color: colorScheme.onPrimary) : const Text(TextConstants.actionDone),
           ),
         ),
-        TextButton(
-          onPressed: state.isSubmitting ? null : _skip,
-          child: const Text(TextConstants.actionSkip),
-        ),
-        if (kDebugMode && widget.demo)
-          _OutcomeControl(value: _outcome, onChanged: (value) => setState(() => _outcome = value)),
+        TextButton(onPressed: state.isSubmitting ? null : _skip, child: const Text(TextConstants.actionSkip)),
+        if (kDebugMode && widget.demo) _OutcomeControl(value: _outcome, onChanged: (value) => setState(() => _outcome = value)),
       ],
     );
   }

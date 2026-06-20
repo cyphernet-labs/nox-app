@@ -93,15 +93,16 @@ class _QrScanPageState extends State<QrScanPage> {
             onPressed: _toggleTorch,
             icon: AppIconWidget(_torchOn ? NoxIcons.flashlightOnFill : NoxIcons.flashlightOff),
           ),
-          IconButton(
-            tooltip: TextConstants.tooltipSwitchCamera,
-            onPressed: _switchCamera,
-            icon: AppIconWidget(NoxIcons.cameraswitch),
-          ),
+          IconButton(tooltip: TextConstants.tooltipSwitchCamera, onPressed: _switchCamera, icon: AppIconWidget(NoxIcons.cameraswitch)),
         ],
       ),
       body: _preview == _QrPreview.permissionDenied
-          ? Center(child: Padding(padding: EdgeInsets.all(AppSpacingTokens.s24), child: _DeniedPanel(onOpenSettings: _openSettings)))
+          ? Center(
+              child: Padding(
+                padding: EdgeInsets.all(AppSpacingTokens.s24),
+                child: _DeniedPanel(onOpenSettings: _openSettings),
+              ),
+            )
           : Stack(
               children: [
                 Positioned.fill(child: ColoredBox(color: colorScheme.surfaceContainerHighest)),

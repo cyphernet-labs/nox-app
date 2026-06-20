@@ -33,35 +33,29 @@ class CreateChatBloc extends BaseBloc<CreateChatEvent, CreateChatState> {
 
   Future<void> _onAvailabilityRequested(ChatAvailabilityRequested event, Emitter<CreateChatState> emit) async {
     if (state.name != event.name || state.status != CreateChatStatus.checking) return;
-    await executeLogic(
-      () async {
-        // TODO(backend): real server uniqueness check.
-        await Future<void>.delayed(const Duration(milliseconds: 200));
-        if (state.name != event.name) return;
-        final taken = OnboardingMockData.takenChatNames.contains(event.name);
-        emit(state.copyWith(status: taken ? CreateChatStatus.taken : CreateChatStatus.valid));
-      },
-      onError: (error, exception, stackTrace) => emit(state.copyWith(status: CreateChatStatus.valid)),
-    );
+    await executeLogic(() async {
+      // TODO(backend): real server uniqueness check.
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      if (state.name != event.name) return;
+      final taken = OnboardingMockData.takenChatNames.contains(event.name);
+      emit(state.copyWith(status: taken ? CreateChatStatus.taken : CreateChatStatus.valid));
+    }, onError: (error, exception, stackTrace) => emit(state.copyWith(status: CreateChatStatus.valid)));
   }
 
   Future<void> _onCreateRequested(CreateRequested event, Emitter<CreateChatState> emit) async {
     if (!state.canSubmit) return;
     emit(state.copyWith(status: CreateChatStatus.submitting, networkError: false));
-    await executeLogic(
-      () async {
-        // TODO(backend): real create; the outcome is a debug stand-in.
-        await Future<void>.delayed(const Duration(milliseconds: 400));
-        switch (event.outcome) {
-          case CreateChatOutcome.success:
-            emit(state.copyWith(status: CreateChatStatus.navSuccess));
-          case CreateChatOutcome.network:
-            emit(state.copyWith(status: CreateChatStatus.valid, networkError: true));
-          case CreateChatOutcome.fatal:
-            emit(state.copyWith(status: CreateChatStatus.navFatal));
-        }
-      },
-      onError: (error, exception, stackTrace) => emit(state.copyWith(status: CreateChatStatus.valid, networkError: true)),
-    );
+    await executeLogic(() async {
+      // TODO(backend): real create; the outcome is a debug stand-in.
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      switch (event.outcome) {
+        case CreateChatOutcome.success:
+          emit(state.copyWith(status: CreateChatStatus.navSuccess));
+        case CreateChatOutcome.network:
+          emit(state.copyWith(status: CreateChatStatus.valid, networkError: true));
+        case CreateChatOutcome.fatal:
+          emit(state.copyWith(status: CreateChatStatus.navFatal));
+      }
+    }, onError: (error, exception, stackTrace) => emit(state.copyWith(status: CreateChatStatus.valid, networkError: true)));
   }
 }

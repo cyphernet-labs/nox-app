@@ -95,21 +95,14 @@ class _CreateChatPageState extends BaseStatePage<CreateChatPage> {
   Widget _narrow(BuildContext context, CreateChatState state) {
     return Scaffold(
       appBar: AppBar(
-        leading: IconButton(
-          tooltip: TextConstants.tooltipBack,
-          icon: AppIconWidget(NoxIcons.arrowBack),
-          onPressed: _cancel,
-        ),
+        leading: IconButton(tooltip: TextConstants.tooltipBack, icon: AppIconWidget(NoxIcons.arrowBack), onPressed: _cancel),
         title: const Text(TextConstants.tooltipCreateChat),
       ),
       body: SafeArea(
         child: Column(
           children: [
             Expanded(
-              child: SingleChildScrollView(
-                padding: EdgeInsets.all(AppSpacingTokens.s16),
-                child: _field(state),
-              ),
+              child: SingleChildScrollView(padding: EdgeInsets.all(AppSpacingTokens.s16), child: _field(state)),
             ),
             Padding(
               padding: EdgeInsets.all(AppSpacingTokens.s16),
@@ -197,9 +190,7 @@ class _CreateChatPageState extends BaseStatePage<CreateChatPage> {
     final colorScheme = Theme.of(context).colorScheme;
     return FilledButton(
       onPressed: state.canSubmit && !state.isSubmitting ? _create : null,
-      child: state.isSubmitting
-          ? AppSpinnerWidget(size: 18, color: colorScheme.onPrimary)
-          : const Text(TextConstants.actionCreate),
+      child: state.isSubmitting ? AppSpinnerWidget(size: 18, color: colorScheme.onPrimary) : const Text(TextConstants.actionCreate),
     );
   }
 

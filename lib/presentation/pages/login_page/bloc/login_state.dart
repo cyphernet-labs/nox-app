@@ -11,11 +11,8 @@ enum LoginStatus { idle, loading, errorFormat, errorNetwork, navNewId, navRegist
 abstract class LoginState with _$LoginState {
   const LoginState._();
 
-  const factory LoginState({
-    @Default('') String id,
-    @Default(LoginStatus.idle) LoginStatus status,
-    @Default(false) bool canPaste,
-  }) = _LoginState;
+  const factory LoginState({@Default('') String id, @Default(LoginStatus.idle) LoginStatus status, @Default(false) bool canPaste}) =
+      _LoginState;
 
   bool get isLoading => status == LoginStatus.loading;
 

@@ -10,10 +10,7 @@ enum UsernameStatus { prefilled, empty, invalidCharset, checking, valid, taken, 
 abstract class SetUsernameState with _$SetUsernameState {
   const SetUsernameState._();
 
-  const factory SetUsernameState({
-    @Default('') String name,
-    @Default(UsernameStatus.prefilled) UsernameStatus status,
-  }) = _SetUsernameState;
+  const factory SetUsernameState({@Default('') String name, @Default(UsernameStatus.prefilled) UsernameStatus status}) = _SetUsernameState;
 
   bool get isChecking => status == UsernameStatus.checking;
 

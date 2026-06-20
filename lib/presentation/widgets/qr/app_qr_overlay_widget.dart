@@ -20,7 +20,9 @@ class AppQrOverlayWidget extends StatelessWidget {
     final textTheme = Theme.of(context).textTheme;
     return Stack(
       children: [
-        Positioned.fill(child: CustomPaint(painter: _ReticlePainter(reticleFraction: reticleFraction))),
+        Positioned.fill(
+          child: CustomPaint(painter: _ReticlePainter(reticleFraction: reticleFraction)),
+        ),
         Positioned(
           top: AppSpacingTokens.s32,
           left: AppSpacingTokens.s24,

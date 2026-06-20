@@ -8,9 +8,9 @@ import 'package:nox_app/design/nox_icons.dart';
 void main() {
   final iconsDir = Directory('assets/svg/icons');
 
-  test('all 37 icon SVGs are bundled', () {
+  test('all 38 icon SVGs are bundled', () {
     final svgs = iconsDir.listSync().whereType<File>().where((f) => f.path.endsWith('.svg')).toList();
-    expect(svgs.length, 37, reason: 'expected 37 bundled icon SVGs');
+    expect(svgs.length, 38, reason: 'expected 38 bundled icon SVGs');
   });
 
   test('every bundled icon SVG uses currentColor and bakes no color (FR-003)', () {
@@ -21,7 +21,7 @@ void main() {
     }
   });
 
-  test('NoxIcons covers the 35 referenced glyphs and each resolves to an existing asset', () {
+  test('NoxIcons covers the 36 referenced glyphs and each resolves to an existing asset', () {
     final registry = <SvgGenImage>[
       NoxIcons.forum,
       NoxIcons.forumFill,
@@ -36,6 +36,7 @@ void main() {
       NoxIcons.flashlightOnFill,
       NoxIcons.flashlightOff,
       NoxIcons.cameraswitch,
+      NoxIcons.noPhotography,
       NoxIcons.search,
       NoxIcons.visibility,
       NoxIcons.visibilityOff,
@@ -59,19 +60,19 @@ void main() {
       NoxIcons.chatBubble,
       NoxIcons.folderOpen,
     ];
-    expect(registry.length, 35, reason: 'NoxIcons should expose the 35 referenced glyphs');
+    expect(registry.length, 36, reason: 'NoxIcons should expose the 36 referenced glyphs');
     for (final icon in registry) {
       expect(File(icon.path).existsSync(), isTrue, reason: '${icon.path}: asset not found');
     }
   });
 
-  test('NoxIcons exposes exactly 35 getters (parsed from source — catches silent drift)', () {
+  test('NoxIcons exposes exactly 36 getters (parsed from source — catches silent drift)', () {
     final src = File('lib/design/nox_icons.dart').readAsStringSync();
     final getters = RegExp(r'static SvgGenImage get ').allMatches(src).length;
-    expect(getters, 35, reason: 'NoxIcons getter count must match the verified registry');
+    expect(getters, 36, reason: 'NoxIcons getter count must match the verified registry');
   });
 
-  test('count reconciliation: the 2 unreferenced outlined variants are bundled (35 + 2 = 37)', () {
+  test('count reconciliation: the 2 unreferenced outlined variants are bundled (36 + 2 = 38)', () {
     expect(File('assets/svg/icons/flashlight_on.svg').existsSync(), isTrue);
     expect(File('assets/svg/icons/send.svg').existsSync(), isTrue);
   });

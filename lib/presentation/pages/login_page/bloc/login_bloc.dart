@@ -33,14 +33,11 @@ class LoginBloc extends BaseBloc<LoginEvent, LoginState> {
   Future<void> _onSignInRequested(SignInRequested event, Emitter<LoginState> emit) async {
     if (!state.canSubmit) return;
     emit(state.copyWith(status: LoginStatus.loading));
-    await executeLogic(
-      () async {
-        // TODO(backend): real sign-in request; the outcome is a debug stand-in.
-        await Future<void>.delayed(const Duration(milliseconds: 400));
-        emit(state.copyWith(status: _resolve(event.outcome, state.id)));
-      },
-      onError: (error, exception, stackTrace) => emit(state.copyWith(status: LoginStatus.errorNetwork)),
-    );
+    await executeLogic(() async {
+      // TODO(backend): real sign-in request; the outcome is a debug stand-in.
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      emit(state.copyWith(status: _resolve(event.outcome, state.id)));
+    }, onError: (error, exception, stackTrace) => emit(state.copyWith(status: LoginStatus.errorNetwork)));
   }
 
   /// Maps the (debug) outcome to a terminal status. `auto` derives new-vs-registered

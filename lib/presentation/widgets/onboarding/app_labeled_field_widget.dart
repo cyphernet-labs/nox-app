@@ -56,12 +56,7 @@ class AppLabeledFieldWidget extends StatelessWidget {
         helperMaxLines: 2,
         errorText: errorText,
         errorMaxLines: 2,
-        suffixIcon: checking
-            ? Padding(
-                padding: EdgeInsets.all(AppSpacingTokens.s12),
-                child: const AppSpinnerWidget(size: 18),
-              )
-            : null,
+        suffixIcon: checking ? Padding(padding: EdgeInsets.all(AppSpacingTokens.s12), child: const AppSpinnerWidget(size: 18)) : null,
       ),
     );
   }

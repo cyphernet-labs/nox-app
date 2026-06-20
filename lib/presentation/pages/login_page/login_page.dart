@@ -119,11 +119,7 @@ class _LoginPageState extends BaseStatePage<LoginPage> {
 
   Widget _narrow(BuildContext context, LoginState state) {
     return Scaffold(
-      appBar: AppBar(
-        centerTitle: true,
-        title: const AppWordmarkWidget(),
-        bottom: const AppSplashHairlineWidget(),
-      ),
+      appBar: AppBar(centerTitle: true, title: const AppWordmarkWidget(), bottom: const AppSplashHairlineWidget()),
       body: SafeArea(
         child: Column(
           children: [
@@ -133,10 +129,7 @@ class _LoginPageState extends BaseStatePage<LoginPage> {
                 child: _idField(state),
               ),
             ),
-            Padding(
-              padding: EdgeInsets.all(AppSpacingTokens.s16),
-              child: _actions(context, state),
-            ),
+            Padding(padding: EdgeInsets.all(AppSpacingTokens.s16), child: _actions(context, state)),
           ],
         ),
       ),
@@ -185,17 +178,11 @@ class _LoginPageState extends BaseStatePage<LoginPage> {
           width: double.infinity,
           child: FilledButton(
             onPressed: state.canSubmit ? _submit : null,
-            child: state.isLoading
-                ? AppSpinnerWidget(size: 18, color: colorScheme.onPrimary)
-                : const Text(TextConstants.loginSignIn),
+            child: state.isLoading ? AppSpinnerWidget(size: 18, color: colorScheme.onPrimary) : const Text(TextConstants.loginSignIn),
           ),
         ),
-        TextButton(
-          onPressed: state.isLoading ? null : _scanQr,
-          child: const Text(TextConstants.loginScanQr),
-        ),
-        if (kDebugMode && widget.demo)
-          _OutcomeControl(value: _outcome, onChanged: (value) => setState(() => _outcome = value)),
+        TextButton(onPressed: state.isLoading ? null : _scanQr, child: const Text(TextConstants.loginScanQr)),
+        if (kDebugMode && widget.demo) _OutcomeControl(value: _outcome, onChanged: (value) => setState(() => _outcome = value)),
       ],
     );
   }

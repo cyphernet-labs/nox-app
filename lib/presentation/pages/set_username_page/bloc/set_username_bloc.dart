@@ -16,8 +16,7 @@ part 'set_username_state.dart';
 /// field is pre-filled with the server-assigned `User<random>` (a stub here).
 /// `// TODO(backend): real uniqueness + save.`
 class SetUsernameBloc extends BaseBloc<SetUsernameEvent, SetUsernameState> {
-  SetUsernameBloc({String initialName = defaultName})
-    : super(SetUsernameState(name: initialName, status: UsernameStatus.prefilled)) {
+  SetUsernameBloc({String initialName = defaultName}) : super(SetUsernameState(name: initialName, status: UsernameStatus.prefilled)) {
     on<NameChanged>(_onNameChanged);
     on<AvailabilityRequested>(_onAvailabilityRequested, transformer: debounceRestartable());
     on<DoneRequested>(_onDoneRequested);
@@ -46,29 +45,23 @@ class SetUsernameBloc extends BaseBloc<SetUsernameEvent, SetUsernameState> {
   Future<void> _onAvailabilityRequested(AvailabilityRequested event, Emitter<SetUsernameState> emit) async {
     // Drop stale checks (the user kept typing); switchMap already cancels the prior run.
     if (state.name != event.name || state.status != UsernameStatus.checking) return;
-    await executeLogic(
-      () async {
-        // TODO(backend): real server uniqueness check.
-        await Future<void>.delayed(const Duration(milliseconds: 200));
-        if (state.name != event.name) return;
-        final taken = OnboardingMockData.takenUsernames.contains(event.name); // case-sensitive (FR-032)
-        emit(state.copyWith(status: taken ? UsernameStatus.taken : UsernameStatus.valid));
-      },
-      onError: (error, exception, stackTrace) => emit(state.copyWith(status: UsernameStatus.valid)),
-    );
+    await executeLogic(() async {
+      // TODO(backend): real server uniqueness check.
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      if (state.name != event.name) return;
+      final taken = OnboardingMockData.takenUsernames.contains(event.name); // case-sensitive (FR-032)
+      emit(state.copyWith(status: taken ? UsernameStatus.taken : UsernameStatus.valid));
+    }, onError: (error, exception, stackTrace) => emit(state.copyWith(status: UsernameStatus.valid)));
   }
 
   Future<void> _onDoneRequested(DoneRequested event, Emitter<SetUsernameState> emit) async {
     if (!state.canSubmit) return;
     emit(state.copyWith(status: UsernameStatus.submitting));
-    await executeLogic(
-      () async {
-        // TODO(backend): real save; the outcome is a debug stand-in.
-        await Future<void>.delayed(const Duration(milliseconds: 400));
-        emit(state.copyWith(status: _statusFor(event.outcome)));
-      },
-      onError: (error, exception, stackTrace) => emit(state.copyWith(status: UsernameStatus.navFatal)),
-    );
+    await executeLogic(() async {
+      // TODO(backend): real save; the outcome is a debug stand-in.
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      emit(state.copyWith(status: _statusFor(event.outcome)));
+    }, onError: (error, exception, stackTrace) => emit(state.copyWith(status: UsernameStatus.navFatal)));
   }
 
   UsernameStatus _statusFor(UsernameOutcome outcome) => switch (outcome) {

@@ -30,10 +30,7 @@ void main() {
     addTearDown(controller.dispose);
     String? last;
 
-    await pumpApp(
-      tester,
-      AppIdFieldWidget(controller: controller, canPaste: false, onPaste: () {}, onChanged: (value) => last = value),
-    );
+    await pumpApp(tester, AppIdFieldWidget(controller: controller, canPaste: false, onPaste: () {}, onChanged: (value) => last = value));
 
     await tester.enterText(find.byType(TextField), 'NOX-id-123 with spaces');
     expect(last, 'NOX-id-123 with spaces');

@@ -77,9 +77,9 @@
 |---|---|---|---|
 | Feedback helpers | `showAppSnackBar` / `showAppBanner` (уже есть в `app_feedback_helper.dart`); добавить `MaterialBanner` офлайн-баннер | M1 (3.1) | 5.1, 5.2, 5.3, 5.4, 7.x |
 | Адаптивная обёртка страницы | хелпер/паттерн «mobile-scaffold ↔ desktop-pane/dialog» по 840dp | M1 (3.1) | все экраны |
-| Онбординг-хром | `OnboardCard` (центр. карточка 440) + десктоп-окно/`TitleBar` | M2 (2.1) | 2.3, частично 1.1/3.1 |
-| Поле-ввода семейство | моно ID-поле; labeled `TextField` + счётчик + suffix-спиннер + errorText | M2 (2.1) | 2.3, 6.1, 7.1 |
-| QR-сюрфейс / ретикл | бренд-белая QR-поверхность; рамка-ретикл сканера + маска | M2 (2.2) | 7.1 |
+| Онбординг-хром | ✅ `AppOnboardCardWidget` (центр. карточка 440: лого+wordmark+hairline) + десктоп-`TitleBar` | M2 (2.1) | 2.3, 2.2-denied |
+| Поле-ввода семейство | ✅ `AppIdFieldWidget` (моно) + `AppLabeledFieldWidget` (counter + suffix-спиннер + errorText) | M2 (2.1) | 2.3, 6.1, 7.1 |
+| QR-сюрфейс / ретикл | ✅ `AppQrOverlayWidget` (brand-fixed ретикл+маска сканера 2.2); бренд-белая QR-поверхность показа — позже | M2 (2.2) | 7.1 |
 | Settings-строки | `AppSettingsNavRowWidget`, `AppSettingsSwitchRowWidget`, `AppInfoBannerWidget`, `AppSettingsGroupWidget` | M1 (7.2) | 7.1, 7.3, 7.4, 7.6, 7.7 |
 | Identity card | `AppIdentityCardWidget` (маска/reveal/copy/QR) + `AppLogoutDialogWidget` | M3 (7.1) | — |
 | Адаптивный шелл | `TabBarShell` (bottom bar ↔ `NavigationRail`), list-detail | M3 (4.1) | 5.1, 5.2, 7.1 |
@@ -116,10 +116,10 @@
 
 | # | ID | Экран | Сложн. | Вводит / переиспользует | Мультиплатформа (ключевое отличие) | Зависит |
 |---|---|---|---|---|---|---|
-| [ ] | 2.1 | Login (ID entry) | M | `OnboardCard` + моно ID-поле; минимальный `LoginBloc` | мобайл fullscreen + AppBar → десктоп центр. карточка 440 + `TitleBar` | 2.2, 2.3 |
-| [ ] | 2.3 | Set username | M | валидируемое поле (счётчик 32 + спиннер доступности); `SetUsernameBloc` | reuse онбординг-хрома | 2.1 |
-| [ ] | 6.1 | Create chat | L | labeled-поле + счётчик 64 + спиннер; `CreateChatBloc` | мобайл fullscreen push → десктоп модальный `Dialog` ~460 | 5.2 |
-| [ ] | 2.2 | QR scan | L | ретикл + маска + permission-denied панель; **камера — заглушка** | мобайл full-bleed + торч/смена камеры → десктоп ~300dp вьюфайндер | 2.1 |
+| [x] | 2.1 | Login (ID entry) | M | ✅ `AppOnboardCardWidget` + моно `AppIdFieldWidget`; `LoginBloc` | мобайл fullscreen + AppBar → десктоп центр. карточка 440 + `TitleBar` | 2.2, 2.3 |
+| [x] | 2.3 | Set username | M | ✅ `AppLabeledFieldWidget` (счётчик 32 + спиннер); `SetUsernameBloc` (charset + case-sensitive uniqueness) | reuse онбординг-хрома | 2.1 |
+| [x] | 6.1 | Create chat | L | ✅ `AppLabeledFieldWidget` (счётчик 64 + спиннер); `CreateChatBloc` | мобайл fullscreen push → десктоп модальный `Dialog` ~460 (Cancel+Create) | 5.2 |
+| [x] | 2.2 | QR scan | L | ✅ `AppQrOverlayWidget` (brand-fixed ретикл+маска) + permission-denied; **камера — заглушка**, без BLoC | мобайл full-bleed + торч/смена камеры → десктоп ~300dp вьюфайндер + `OnboardCard`-denied | 2.1 |
 
 ### Этап M3 — Шелл, корень настроек, список чатов  ⟶ _скелет приложения, адаптивный шелл + list-detail_
 
@@ -137,7 +137,7 @@
 | [ ] | 5.3 | File view | M | `FileViewBody` (glyph+name+size); форматтер размера; фейк-прогресс загрузки | мобайл fullscreen push (Save) → десктоп lightbox-`Dialog` 520 (Download) | 5.2 |
 | [ ] | 5.4 | Chat card | M | `ChatCardPage` + list/grid-плитки файлов (reuse `AppSegmentedWidget`) | мобайл fullscreen push → десктоп side-sheet/detail-pane (инференс) | 5.2, 5.3 |
 
-**Прогресс фазы 1:** 7 / 17 экранов готовы (✅ M1 полностью: 1.1 Splash, 3.1 Error, 7.2 Notifications, 7.3 Appearance, 7.4 Language, 7.6 Terms, 7.7 About) · M0 готов; ✅ M1 завершён (7 / 7).
+**Прогресс фазы 1:** 11 / 17 экранов готовы (✅ M1: 1.1 Splash, 3.1 Error, 7.2 Notifications, 7.3 Appearance, 7.4 Language, 7.6 Terms, 7.7 About · ✅ M2: 2.1 Login, 2.2 QR scan, 2.3 Set username, 6.1 Create chat) · M0 готов; ✅ M1 (7 / 7) и M2 (4 / 4) завершены.
 
 ---
 
