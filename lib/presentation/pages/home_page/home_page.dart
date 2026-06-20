@@ -3,6 +3,7 @@ import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/app/widgets/app_theme_toggle.dart';
+import 'package:nox_app/presentation/pages/screens_gallery_page/screens_gallery_page.dart';
 import 'package:nox_app/presentation/pages/ui_kit_page/ui_kit_page.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_splash_hairline_widget.dart';
@@ -48,6 +49,11 @@ class HomePage extends StatelessWidget {
               FilledButton(
                 onPressed: () => Navigator.of(context).push(UiKitPage.route()),
                 child: const Text(TextConstants.actionOpenUiKit),
+              ),
+              SizedBox(height: AppSpacingTokens.s16),
+              OutlinedButton(
+                onPressed: () => Navigator.of(context).push(ScreensGalleryPage.route()),
+                child: const Text(TextConstants.actionOpenScreens),
               ),
             ],
           ),

@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
 import 'package:nox_app/presentation/pages/home_page/home_page.dart';
+import 'package:nox_app/presentation/pages/screens_gallery_page/screens_gallery_page.dart';
 import 'package:nox_app/presentation/pages/ui_kit_page/ui_kit_page.dart';
 
 import '../../../utils/pump_app.dart';
@@ -19,6 +20,17 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400)); // finish it (gallery has spinners → no pumpAndSettle)
 
     expect(find.byType(UiKitPage), findsOneWidget);
+  });
+
+  testWidgets('HomePage opens the screens gallery', (tester) async {
+    await pumpApp(tester, BlocProvider<AppRootBloc>(create: (_) => AppRootBloc(), child: const HomePage()));
+
+    expect(find.text(TextConstants.actionOpenScreens), findsOneWidget);
+
+    await tester.tap(find.text(TextConstants.actionOpenScreens));
+    await tester.pumpAndSettle(); // the gallery is a static list (no spinners)
+
+    expect(find.byType(ScreensGalleryPage), findsOneWidget);
   });
 
   testWidgets('theme toggle dispatches to AppRootBloc', (tester) async {

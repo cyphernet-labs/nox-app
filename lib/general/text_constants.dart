@@ -34,4 +34,8 @@ abstract final class TextConstants {
   static const String actionOpenUiKit = 'Open UI Kit';
   static const String themeLight = 'Light';
   static const String themeDark = 'Dark';
+
+  // Screens gallery (dev launcher for product screens)
+  static const String screensGalleryTitle = 'NOX Screens';
+  static const String actionOpenScreens = 'Open Screens';
 }
