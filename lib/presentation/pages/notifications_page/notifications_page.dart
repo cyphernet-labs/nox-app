@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
@@ -42,7 +43,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
         children: [
           if (!_granted)
             AppInfoBannerWidget(
-              icon: NoxIcons.error,
+              icon: NoxIcons.settings,
               message: TextConstants.notificationsDeniedMessage,
               actionLabel: TextConstants.actionOpenSettings,
               onAction: () {}, // TODO(backend): deep-link to system settings (app_settings plugin)
@@ -53,8 +54,9 @@ class _NotificationsPageState extends State<NotificationsPage> {
             value: _granted && _enabled,
             onChanged: _granted ? (value) => setState(() => _enabled = value) : null,
           ),
-          const Divider(height: 1),
-          _PermissionDevControl(status: _permission, onChanged: (status) => setState(() => _permission = status)),
+          // Dev-only permission toggle (debug builds only); real OS permission is backend phase.
+          if (kDebugMode) const Divider(height: 1),
+          if (kDebugMode) _PermissionDevControl(status: _permission, onChanged: (status) => setState(() => _permission = status)),
         ],
       ),
     );

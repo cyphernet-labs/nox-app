@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nox_app/design/theme/app_theme.dart';
+import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
 import 'package:nox_app/presentation/pages/about_page/about_page.dart';
+import 'package:nox_app/presentation/pages/appearance_page/appearance_page.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page.dart';
 import 'package:nox_app/presentation/pages/language_page/language_page.dart';
 import 'package:nox_app/presentation/pages/notifications_page/notifications_page.dart';
@@ -108,5 +112,27 @@ void main() {
     await tester.tap(find.widgetWithText(ListTile, 'About'));
     await tester.pumpAndSettle();
     expect(find.byType(AboutPage), findsOneWidget);
+  });
+
+  testWidgets('activated Appearance row (7.3) opens AppearancePage', (tester) async {
+    // AppearancePage reads AppRootBloc in build, so the bloc must sit ABOVE the
+    // navigator (as AppRoot does). pumpApp can't do that, so wrap manually.
+    await tester.pumpWidget(
+      BlocProvider<AppRootBloc>(
+        create: (_) => AppRootBloc(),
+        child: ScreenUtilInit(
+          designSize: Constants.designSize,
+          minTextAdapt: true,
+          builder: (context, _) => MaterialApp(theme: AppTheme.light(), home: const ScreensGalleryPage()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(find.text('7.3'), 200);
+    await tester.tap(find.widgetWithText(ListTile, 'Appearance'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AppearancePage), findsOneWidget);
   });
 }

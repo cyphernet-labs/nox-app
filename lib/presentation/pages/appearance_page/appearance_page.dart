@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
-import 'package:nox_app/design/theme/nox_brand.dart';
+import 'package:nox_app/design/theme/nox_color_scheme.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
@@ -63,17 +63,21 @@ class _ThemePreview extends StatelessWidget {
   Widget build(BuildContext context) {
     final radius = BorderRadius.circular(NoxRadius.s);
     final border = Border.all(color: Theme.of(context).colorScheme.outlineVariant);
+    // Swatches use the actual generated theme surfaces (theme-independent) so each
+    // option reads as a true thumbnail of that theme.
+    final light = ColoredBox(color: noxLightScheme.surface);
+    final dark = ColoredBox(color: noxDarkScheme.surface);
     Widget fill;
     switch (mode) {
       case ThemeMode.light:
-        fill = const ColoredBox(color: NoxBrand.white);
+        fill = light;
       case ThemeMode.dark:
-        fill = const ColoredBox(color: NoxBrand.canvasDark);
+        fill = dark;
       case ThemeMode.system:
-        fill = const Row(
+        fill = Row(
           children: [
-            Expanded(child: ColoredBox(color: NoxBrand.white)),
-            Expanded(child: ColoredBox(color: NoxBrand.canvasDark)),
+            Expanded(child: light),
+            Expanded(child: dark),
           ],
         );
     }

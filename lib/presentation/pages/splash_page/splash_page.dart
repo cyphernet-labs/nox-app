@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
@@ -130,13 +131,15 @@ class _SplashPageState extends State<SplashPage> with SingleTickerProviderStateM
                 ),
               ),
             ),
-            // Dev-only preview control; the real cold-start splash has no controls (FR-012).
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: SafeArea(child: _DevOutcomeBar(onSelect: _select)),
-            ),
+            // Dev-only preview control (debug builds only); the real cold-start splash
+            // has no controls (FR-012) and routes from the auth resolver instead.
+            if (kDebugMode)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: SafeArea(child: _DevOutcomeBar(onSelect: _select)),
+              ),
           ],
         ),
       ),

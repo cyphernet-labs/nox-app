@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
@@ -68,7 +69,7 @@ class _AppErrorPageState extends State<AppErrorPage> {
           iconSize: wide ? 96 : 48,
           retrying: _retrying,
           onRetry: widget.params.onRetry == null ? null : _retry,
-          devControl: widget.demo ? _modeControl() : null,
+          devControl: (kDebugMode && widget.demo) ? _modeControl() : null,
         );
         if (wide) {
           return Scaffold(
