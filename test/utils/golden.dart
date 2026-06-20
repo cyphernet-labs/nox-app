@@ -9,6 +9,12 @@ import 'pump_app.dart';
 /// surface, against `goldens/<name>_<mode>.png` (relative to the calling test
 /// file). [settle] = false for animated content (spinners). Local-only harness —
 /// see .claude/commands/golden-test.md (`@Tags(['golden'])`, excluded from CI).
+///
+/// NOTE: the surface is pinned to `Constants.designSize` (the mobile design width
+/// that drives ScreenUtil), so every golden is the MOBILE layout. Desktop/wide
+/// branches (`>= Constants.railBreakpoint`) are verified by widget tests at a wide
+/// `setSurfaceSize`, not by goldens — a wide golden would mis-scale ScreenUtil's
+/// 360-based metrics.
 void goldenTest(String name, Widget Function() build, {bool settle = true}) {
   group('$name golden', () {
     setUpAll(loadNoxFonts);
