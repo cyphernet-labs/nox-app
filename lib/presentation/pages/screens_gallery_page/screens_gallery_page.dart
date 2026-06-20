@@ -5,6 +5,7 @@ import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/app/widgets/app_theme_toggle.dart';
 import 'package:nox_app/presentation/pages/appearance_page/appearance_page.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page.dart';
+import 'package:nox_app/presentation/pages/language_page/language_page.dart';
 import 'package:nox_app/presentation/pages/splash_page/splash_page.dart';
 import 'package:nox_app/presentation/widgets/shell/app_splash_hairline_widget.dart';
 
@@ -157,7 +158,7 @@ const List<_ScreenSection> _sections = [
       _ScreenEntry(id: '7.1', title: 'Settings', route: null),
       _ScreenEntry(id: '7.2', title: 'Notifications', route: null),
       _ScreenEntry(id: '7.3', title: 'Appearance', route: AppearancePage.route),
-      _ScreenEntry(id: '7.4', title: 'Language', route: null),
+      _ScreenEntry(id: '7.4', title: 'Language', route: LanguagePage.route),
       _ScreenEntry(id: '7.6', title: 'Terms', route: null),
       _ScreenEntry(id: '7.7', title: 'About', route: null),
     ],

@@ -96,11 +96,11 @@
 
 **Independent Test**: Открыть Language из Галереи; System по умолчанию; тап переносит выбор.
 
-- [ ] T025 [P] [US4] Создать `enum AppLanguage { system, english, ukrainian }` в `lib/general/app_language.dart`.
-- [ ] T026 [US4] Создать `LanguagePage` в `lib/presentation/pages/language_page/language_page.dart`: три `RadioListTile` (без флагов), локальный выбор, `AppDetailScaffoldWidget`, `// TODO(backend): LocaleController + l10n`; `route()`→`/settings/language` (зависит от T025, T003, T002).
-- [ ] T027 [US4] Активировать строку `7.4` в `screens_gallery_page.dart` + gallery-тест (зависит от T026).
-- [ ] T028 [P] [US4] Widget-тест `LanguagePage` (single-select) в `test/presentation/pages/language_page/language_page_test.dart` (зависит от T026).
-- [ ] T029 [P] [US4] Golden-тест `LanguagePage` (light/dark) + бейзлайны (зависит от T026).
+- [x] T025 [P] [US4] Создать `enum AppLanguage { system, english, ukrainian }` в `lib/general/app_language.dart`.
+- [x] T026 [US4] Создать `LanguagePage` в `lib/presentation/pages/language_page/language_page.dart`: три `RadioListTile` (без флагов), локальный выбор, `AppDetailScaffoldWidget`, `// TODO(backend): LocaleController + l10n`; `route()`→`/settings/language` (зависит от T025, T003, T002).
+- [x] T027 [US4] Активировать строку `7.4` в `screens_gallery_page.dart` + gallery-тест (зависит от T026).
+- [x] T028 [P] [US4] Widget-тест `LanguagePage` (single-select) в `test/presentation/pages/language_page/language_page_test.dart` (зависит от T026).
+- [x] T029 [P] [US4] Golden-тест `LanguagePage` (light/dark) + бейзлайны (зависит от T026).
 
 **Checkpoint**: US4 независимо тестируема.
 

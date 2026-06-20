@@ -45,4 +45,10 @@ abstract final class TextConstants {
   // Settings: Appearance (7.3)
   static const String settingsAppearanceTitle = 'Appearance';
   static const String themeSystem = 'System';
+
+  // Settings: Language (7.4)
+  static const String settingsLanguageTitle = 'Language';
+  static const String languageSystem = 'System';
+  static const String languageEnglish = 'English';
+  static const String languageUkrainian = 'Українська';
 }
