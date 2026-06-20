@@ -15,6 +15,7 @@ import 'package:nox_app/presentation/pages/set_username_page/set_username_page.d
 import 'package:nox_app/presentation/pages/splash_page/splash_page.dart';
 import 'package:nox_app/presentation/pages/terms_page/terms_page.dart';
 import 'package:nox_app/presentation/widgets/shell/app_splash_hairline_widget.dart';
+import 'package:nox_app/presentation/widgets/shell/tab_bar_shell_widget.dart';
 
 /// Dev launcher listing every product screen from the design spec, grouped by the
 /// screen-map sections. Each implemented screen opens standalone (the mobile or
@@ -144,7 +145,7 @@ const List<_ScreenSection> _sections = [
   ),
   _ScreenSection(
     title: 'Shell',
-    entries: [_ScreenEntry(id: '4.1', title: 'Tab bar shell', route: null)],
+    entries: [_ScreenEntry(id: '4.1', title: 'Tab bar shell', route: TabBarShell.route)],
   ),
   _ScreenSection(
     title: 'Chats',

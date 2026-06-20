@@ -18,6 +18,7 @@ import 'package:nox_app/presentation/pages/screens_gallery_page/screens_gallery_
 import 'package:nox_app/presentation/pages/set_username_page/set_username_page.dart';
 import 'package:nox_app/presentation/pages/splash_page/splash_page.dart';
 import 'package:nox_app/presentation/pages/terms_page/terms_page.dart';
+import 'package:nox_app/presentation/widgets/shell/tab_bar_shell_widget.dart';
 
 import '../../../utils/pump_app.dart';
 
@@ -170,6 +171,19 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(CreateChatPage), findsOneWidget);
+  });
+
+  testWidgets('activated Tab bar shell row (4.1) opens TabBarShell', (tester) async {
+    await pumpApp(tester, underTest());
+
+    final row = find.widgetWithText(ListTile, 'Tab bar shell');
+    await tester.scrollUntilVisible(row, 200);
+    await tester.ensureVisible(row);
+    await tester.pumpAndSettle();
+    await tester.tap(row);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(TabBarShell), findsOneWidget);
   });
 
   testWidgets('activated Appearance row (7.3) opens AppearancePage', (tester) async {

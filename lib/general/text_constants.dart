@@ -109,4 +109,35 @@ abstract final class TextConstants {
   static const String createChatNetworkError = 'Could not create chat. Check your connection and try again.';
   static const String actionCreate = 'Create';
   static const String actionCancel = 'Cancel';
+
+  // Settings root (7.1) — identity card + logout (reuse: settings, loginIdLabel='Your ID',
+  // actionCancel='Cancel', usernameLabel='Name', usernameCharsetError, nameTakenError, settings*Title)
+  static const String settingsNameEditTooltip = 'Edit';
+  static const String idMask = '••••••••'; // 8 dots, fixed length
+  static const String idShowTooltip = 'Show';
+  static const String idHideTooltip = 'Hide';
+  static const String idCopyTooltip = 'Copy';
+  static const String idShowQrTooltip = 'Show QR';
+  static const String qrSheetTitle = 'Your ID QR';
+  static const String qrAccountCaption = 'Show this code to let someone add you';
+  static const String actionClose = 'Close';
+  static const String copiedToClipboard = 'Copied to clipboard';
+  static const String logoutRow = 'Log out';
+  static const String logoutDialogTitle = 'Log out?';
+  static const String logoutDialogMessage = 'Your ID and local data will be removed from this device.';
+
+  // Chats list (5.1) (reuse: appName='NOX', searchHint='Search', noConnection='No connection')
+  static const String chatsEmptyTitle = 'No chats yet';
+  static const String chatsEmptyMessage = 'Tap + to create the first one.';
+  static const String chatsSearchEmpty = 'No chats found';
+  static const String chatsLoadError = 'Could not load chats. Pull to refresh.';
+  static const String chatsNoSelectionTitle = 'Select a chat';
+  static const String chatsNoSelectionMessage = 'Choose a conversation on the left, or press + to start a new one.';
+  static const String chatThreadPlaceholder = 'Chat thread (5.2)'; // dev placeholder destination (M4)
+
+  // Relative time ladder (5.1; reused 5.3/5.4 in M4) — see overview.md
+  static const String timeNow = 'now';
+  static const String timeYesterday = 'Yesterday';
+  static const String timeMinuteSuffix = 'min'; // "5 min"
+  static const String timeHourSuffix = 'h'; // "2 h"
 }

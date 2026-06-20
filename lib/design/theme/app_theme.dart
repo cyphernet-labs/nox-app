@@ -42,6 +42,10 @@ class AppTheme {
       bottomSheetTheme: noxBottomSheetTheme(scheme),
       cardTheme: noxCardTheme(scheme),
       snackBarTheme: noxSnackBarTheme(scheme),
+      searchBarTheme: noxSearchBarTheme(scheme),
+      bannerTheme: noxMaterialBannerTheme(scheme),
+      badgeTheme: noxBadgeTheme(scheme),
+      navigationRailTheme: noxNavigationRailTheme(scheme),
       extensions: <ThemeExtension<dynamic>>[appColors],
     );
   }
