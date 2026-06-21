@@ -5,6 +5,7 @@ import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/app/widgets/app_theme_toggle.dart';
 import 'package:nox_app/presentation/pages/about_page/about_page.dart';
 import 'package:nox_app/presentation/pages/appearance_page/appearance_page.dart';
+import 'package:nox_app/presentation/pages/chats_list_page/chats_list_page.dart';
 import 'package:nox_app/presentation/pages/create_chat_page/create_chat_page.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page.dart';
 import 'package:nox_app/presentation/pages/language_page/language_page.dart';
@@ -12,9 +13,11 @@ import 'package:nox_app/presentation/pages/login_page/login_page.dart';
 import 'package:nox_app/presentation/pages/notifications_page/notifications_page.dart';
 import 'package:nox_app/presentation/pages/qr_scan_page/qr_scan_page.dart';
 import 'package:nox_app/presentation/pages/set_username_page/set_username_page.dart';
+import 'package:nox_app/presentation/pages/settings_root_page/settings_root_page.dart';
 import 'package:nox_app/presentation/pages/splash_page/splash_page.dart';
 import 'package:nox_app/presentation/pages/terms_page/terms_page.dart';
 import 'package:nox_app/presentation/widgets/shell/app_splash_hairline_widget.dart';
+import 'package:nox_app/presentation/widgets/shell/tab_bar_shell_widget.dart';
 
 /// Dev launcher listing every product screen from the design spec, grouped by the
 /// screen-map sections. Each implemented screen opens standalone (the mobile or
@@ -144,12 +147,12 @@ const List<_ScreenSection> _sections = [
   ),
   _ScreenSection(
     title: 'Shell',
-    entries: [_ScreenEntry(id: '4.1', title: 'Tab bar shell', route: null)],
+    entries: [_ScreenEntry(id: '4.1', title: 'Tab bar shell', route: TabBarShell.route)],
   ),
   _ScreenSection(
     title: 'Chats',
     entries: [
-      _ScreenEntry(id: '5.1', title: 'Chats list', route: null),
+      _ScreenEntry(id: '5.1', title: 'Chats list', route: ChatsListPage.routeDemo),
       _ScreenEntry(id: '5.2', title: 'Chat thread', route: null),
       _ScreenEntry(id: '5.3', title: 'File view', route: null),
       _ScreenEntry(id: '5.4', title: 'Chat card', route: null),
@@ -162,7 +165,7 @@ const List<_ScreenSection> _sections = [
   _ScreenSection(
     title: 'Settings',
     entries: [
-      _ScreenEntry(id: '7.1', title: 'Settings', route: null),
+      _ScreenEntry(id: '7.1', title: 'Settings', route: SettingsRootPage.routeDemo),
       _ScreenEntry(id: '7.2', title: 'Notifications', route: NotificationsPage.route),
       _ScreenEntry(id: '7.3', title: 'Appearance', route: AppearancePage.route),
       _ScreenEntry(id: '7.4', title: 'Language', route: LanguagePage.route),

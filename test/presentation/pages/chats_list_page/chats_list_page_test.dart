@@ -1,0 +1,85 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:injectable/injectable.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/presentation/pages/chats_list_page/chats_list_page.dart';
+import 'package:nox_app/presentation/pages/placeholder/route_placeholder_page.dart';
+import 'package:nox_app/presentation/widgets/chat/app_chat_item_widget.dart';
+import 'package:nox_app/presentation/widgets/chat/app_search_field_widget.dart';
+import 'package:nox_app/presentation/widgets/shell/app_list_detail_widget.dart';
+import 'package:nox_app/presentation/widgets/shell/app_wordmark_widget.dart';
+
+import '../../../utils/pump_app.dart';
+
+void main() {
+  setUpAll(() async {
+    await configureDependencies(Environment.test);
+  });
+
+  tearDownAll(() async {
+    await getIt.reset();
+  });
+
+  group('ChatsListPage (mobile)', () {
+    Future<void> pumpMobile(WidgetTester tester) async {
+      await tester.binding.setSurfaceSize(const Size(420, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, const ChatsListPage());
+    }
+
+    testWidgets('shows the NOX wordmark, the search field and chat rows', (tester) async {
+      await pumpMobile(tester);
+
+      expect(find.byType(AppWordmarkWidget), findsWidgets);
+      expect(find.byType(AppSearchFieldWidget), findsOneWidget);
+      expect(find.byType(AppChatItemWidget), findsWidgets);
+    });
+
+    testWidgets('tapping a chat opens the M4 thread placeholder', (tester) async {
+      await pumpMobile(tester);
+
+      await tester.tap(find.byType(AppChatItemWidget).first);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(RoutePlaceholderPage), findsOneWidget);
+    });
+
+    testWidgets('search filters the list by chat name', (tester) async {
+      await pumpMobile(tester);
+
+      await tester.enterText(find.byType(AppSearchFieldWidget), 'Design');
+      await tester.pumpAndSettle();
+
+      expect(find.text('Design crit'), findsOneWidget);
+      expect(find.text('NOX core'), findsNothing);
+    });
+  });
+
+  group('ChatsListPage (desktop)', () {
+    Future<void> pumpDesktop(WidgetTester tester) async {
+      await tester.binding.setSurfaceSize(const Size(1200, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, const ChatsListPage());
+    }
+
+    testWidgets('renders the list-detail with a no-selection placeholder', (tester) async {
+      await pumpDesktop(tester);
+
+      expect(find.byType(AppListDetailWidget), findsOneWidget);
+      expect(find.text(TextConstants.chatsNoSelectionTitle), findsOneWidget);
+    });
+
+    testWidgets('selecting a row swaps the thread pane without a push', (tester) async {
+      await pumpDesktop(tester);
+
+      await tester.tap(find.byType(AppChatItemWidget).first);
+      await tester.pumpAndSettle();
+
+      // No-selection placeholder is gone (the thread pane swapped) and no push happened.
+      expect(find.text(TextConstants.chatsNoSelectionTitle), findsNothing);
+      expect(find.byType(ChatsListPage), findsOneWidget);
+      expect(find.byType(RoutePlaceholderPage), findsNothing);
+    });
+  });
+}

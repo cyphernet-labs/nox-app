@@ -86,3 +86,11 @@ Material `Scaffold` с кастомной нижней панелью; адап�
 | Q4 | Системный back на root-табах | Не Chats → переключить на Chats; на Chats → свернуть приложение |
 | — | Сохранение состояния табов | Сохраняется (`IndexedStack`) |
 | — | Видимость панели | Root-табы — видна; pushed-экраны (5.2/5.3/5.4/6.1/7.2–7.7) — на весь экран без панели |
+
+## Десктоп-раскладка (этап M3, сверено с корпусом)
+
+> Добавлено при реализации M3 (`specs/006-shell-settings-chats`). Верхняя часть спеки описывает мобильный bottom-bar; десктоп-раскладка сведена с авторитетным корпусом `nox-desktop-screens/{01-chats,02-settings}.md`.
+
+- **Адаптив width-driven** по `Constants.railBreakpoint` (840dp), не по платформе. `< 840` — мобильный bottom-bar + центральный docked `+` FAB; `>= 840` — `NavigationRail` с `+` как **leading** FAB (позиция leading — решение реализации; корпус лишь требует `+` на рейле).
+- Реализация — `TabBarShell` на kit-виджетах (`AppBottomBarWidget`/`AppCreateFabWidget`/`AppNavigationRailWidget`), заменяет верификационный Feature-001 `AppShell`. Состояние вкладки — локальное (`StatefulWidget`, без BLoC); `IndexedStack`-эквивалент с `tabFade`.
+- На десктопе вкладки 5.1/7.1 разворачиваются в **list-detail** (детали — в их спеках). `+` на десктопе открывает 6.1 модальным `Dialog` (а не полноэкранным push).

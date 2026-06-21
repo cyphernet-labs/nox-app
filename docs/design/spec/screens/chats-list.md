@@ -96,3 +96,11 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 | Q8 | Формат времени | Относительное (лестница в overview) |
 | Q9 | Initial-loading | Centered `CircularProgressIndicator` |
 | Q10 | Empty state | Иллюстрация + текст |
+
+## Десктоп-раскладка (этап M3, сверено с корпусом)
+
+> Добавлено при реализации M3. Сведено с `nox-desktop-screens/screens/01-chats.md`.
+
+- Десктоп (`>= 840dp`) — **list-detail**: `NavigationRail` (шелл) + chat-list-pane ≈360 (pane-header + поле поиска) + thread-pane. Выбор строки подсвечивает её (`secondaryContainer`) и загружает ленту справа **без** навигационного push (выбор — view-state в `ChatsListBloc`, контейнер `AppListDetailWidget`).
+- **Контент ленты (5.2) на этапе M3 — лёгкий плейсхолдер** «лента — в M4»; состояние no-selection — `Select a chat` / `Choose a conversation on the left, or press + to start a new one.`. Механика master-detail построена полностью; реальная лента 5.2 — этап M4.
+- Офлайн/inline-error — баннер под поиском в list-pane; список показывает кэш.

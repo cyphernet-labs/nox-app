@@ -104,3 +104,33 @@ SnackBarThemeData noxSnackBarTheme(ColorScheme cs) => SnackBarThemeData(
   actionTextColor: cs.inversePrimary,
   behavior: SnackBarBehavior.floating,
 );
+
+// 5.1 Chats list — permanent M3 SearchBar under the AppBar.
+SearchBarThemeData noxSearchBarTheme(ColorScheme cs) => SearchBarThemeData(
+  backgroundColor: WidgetStatePropertyAll(cs.surfaceContainerHigh),
+  elevation: const WidgetStatePropertyAll(NoxElevation.level2),
+  shape: WidgetStatePropertyAll(RoundedRectangleBorder(borderRadius: BorderRadius.circular(NoxRadius.full))),
+  hintStyle: WidgetStatePropertyAll(noxTextTheme.bodyLarge?.copyWith(color: cs.onSurfaceVariant)),
+  textStyle: WidgetStatePropertyAll(noxTextTheme.bodyLarge?.copyWith(color: cs.onSurface)),
+);
+
+// 5.1 Chats list — offline / inline-error banner (showAppBanner).
+MaterialBannerThemeData noxMaterialBannerTheme(ColorScheme cs) => MaterialBannerThemeData(
+  backgroundColor: cs.surfaceContainer,
+  elevation: NoxElevation.level3,
+  contentTextStyle: noxTextTheme.bodyMedium?.copyWith(color: cs.onSurface),
+);
+
+// 5.1 Chats list — unread badge uses the `primary` role (NOT the stock error-red).
+BadgeThemeData noxBadgeTheme(ColorScheme cs) =>
+    BadgeThemeData(backgroundColor: cs.primary, textColor: cs.onPrimary, textStyle: noxTextTheme.labelSmall);
+
+// 4.1 Tab-bar shell — desktop NavigationRail (selected = primary).
+NavigationRailThemeData noxNavigationRailTheme(ColorScheme cs) => NavigationRailThemeData(
+  backgroundColor: cs.surface,
+  selectedIconTheme: IconThemeData(color: cs.primary),
+  unselectedIconTheme: IconThemeData(color: cs.onSurfaceVariant),
+  selectedLabelTextStyle: noxTextTheme.labelMedium?.copyWith(color: cs.primary),
+  unselectedLabelTextStyle: noxTextTheme.labelMedium?.copyWith(color: cs.onSurfaceVariant),
+  indicatorColor: cs.secondaryContainer,
+);

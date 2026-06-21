@@ -1,0 +1,88 @@
+import 'package:bloc_test/bloc_test.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:nox_app/presentation/pages/settings_root_page/bloc/settings_root_bloc.dart';
+
+void main() {
+  group('SettingsRootBloc', () {
+    blocTest<SettingsRootBloc, SettingsRootState>(
+      'initialize clears the initial-loading flag',
+      build: SettingsRootBloc.new,
+      act: (bloc) => bloc.add(const SettingsRootEvent.initialize()),
+      wait: const Duration(milliseconds: 400),
+      expect: () => [predicate<SettingsRootState>((s) => !s.initialLoading)],
+    );
+
+    blocTest<SettingsRootBloc, SettingsRootState>(
+      'name-edit started enters editing with a valid (pristine) draft',
+      build: SettingsRootBloc.new,
+      act: (bloc) => bloc.add(const SettingsRootEvent.nameEditStarted()),
+      expect: () => [predicate<SettingsRootState>((s) => s.editing && s.status == SettingsNameStatus.valid)],
+    );
+
+    blocTest<SettingsRootBloc, SettingsRootState>(
+      'rejects an invalid charset immediately, without a server check',
+      build: SettingsRootBloc.new,
+      act: (bloc) => bloc.add(const SettingsRootEvent.nameChanged('bad name!')),
+      expect: () => [predicate<SettingsRootState>((s) => s.status == SettingsNameStatus.invalidCharset && s.nameError != null)],
+    );
+
+    blocTest<SettingsRootBloc, SettingsRootState>(
+      'an empty draft is not committable and shows no error',
+      build: SettingsRootBloc.new,
+      act: (bloc) => bloc.add(const SettingsRootEvent.nameChanged('')),
+      expect: () => [predicate<SettingsRootState>((s) => s.status == SettingsNameStatus.idle && !s.canSave && s.nameError == null)],
+    );
+
+    blocTest<SettingsRootBloc, SettingsRootState>(
+      'a free valid name resolves to valid after the debounced check',
+      build: SettingsRootBloc.new,
+      act: (bloc) => bloc.add(const SettingsRootEvent.nameChanged('Freename')),
+      wait: const Duration(milliseconds: 700),
+      expect: () => [
+        predicate<SettingsRootState>((s) => s.status == SettingsNameStatus.checking),
+        predicate<SettingsRootState>((s) => s.status == SettingsNameStatus.valid && s.canSave),
+      ],
+    );
+
+    blocTest<SettingsRootBloc, SettingsRootState>(
+      'a taken name resolves to taken (case-sensitive)',
+      build: SettingsRootBloc.new,
+      act: (bloc) => bloc.add(const SettingsRootEvent.nameChanged('NOX')),
+      wait: const Duration(milliseconds: 700),
+      expect: () => [
+        predicate<SettingsRootState>((s) => s.status == SettingsNameStatus.checking),
+        predicate<SettingsRootState>((s) => s.status == SettingsNameStatus.taken && s.nameError != null),
+      ],
+    );
+
+    blocTest<SettingsRootBloc, SettingsRootState>(
+      'the unchanged current name stays valid with no server check',
+      build: SettingsRootBloc.new,
+      act: (bloc) => bloc.add(const SettingsRootEvent.nameChanged('User7421')),
+      expect: () => [predicate<SettingsRootState>((s) => s.status == SettingsNameStatus.valid)],
+    );
+
+    blocTest<SettingsRootBloc, SettingsRootState>(
+      'submitting a valid draft commits the name and leaves edit mode',
+      build: SettingsRootBloc.new,
+      seed: () => const SettingsRootState(name: 'User7421', draftName: 'Freename', editing: true, status: SettingsNameStatus.valid),
+      act: (bloc) => bloc.add(const SettingsRootEvent.nameSubmitted()),
+      expect: () => [predicate<SettingsRootState>((s) => s.name == 'Freename' && !s.editing && s.status == SettingsNameStatus.idle)],
+    );
+
+    blocTest<SettingsRootBloc, SettingsRootState>(
+      'cancelling edit reverts the draft to the committed name',
+      build: SettingsRootBloc.new,
+      seed: () => const SettingsRootState(name: 'User7421', draftName: 'Half', editing: true, status: SettingsNameStatus.checking),
+      act: (bloc) => bloc.add(const SettingsRootEvent.nameEditCancelled()),
+      expect: () => [predicate<SettingsRootState>((s) => !s.editing && s.draftName == 'User7421' && s.status == SettingsNameStatus.idle)],
+    );
+
+    blocTest<SettingsRootBloc, SettingsRootState>(
+      'toggles the identifier reveal',
+      build: SettingsRootBloc.new,
+      act: (bloc) => bloc.add(const SettingsRootEvent.idRevealToggled()),
+      expect: () => [predicate<SettingsRootState>((s) => s.idRevealed)],
+    );
+  });
+}

@@ -1,6 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:injectable/injectable.dart' show Environment;
+import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/presentation/pages/chats_list_page/chats_list_page.dart';
+import 'package:nox_app/presentation/pages/settings_root_page/settings_root_page.dart';
+import 'package:nox_app/presentation/widgets/shell/tab_bar_shell_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_chat_item_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_composer_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_file_chip_widget.dart';
@@ -19,6 +24,15 @@ import '../../utils/pump_app.dart';
 /// Cross-widget accessibility checks (FR-016): tap targets >= 48x48, icon-only
 /// actions expose a tooltip/semantics, and layout survives textScaler up to 2.0.
 void main() {
+  // M3 screens (shell / chats list) resolve ChatRepository from DI.
+  setUpAll(() async {
+    await configureDependencies(Environment.test);
+  });
+
+  tearDownAll(() async {
+    await getIt.reset();
+  });
+
   group('accessibility (FR-016)', () {
     testWidgets('composer icon-action tap targets are >= 48x48', (tester) async {
       await pumpApp(tester, AppComposerWidget(sendActive: true, onSend: () {}, onAttach: () {}));
@@ -133,6 +147,19 @@ void main() {
 
       expect(find.byTooltip(TextConstants.tooltipFlashlight), findsOneWidget);
       expect(find.byTooltip(TextConstants.tooltipSwitchCamera), findsOneWidget);
+    });
+
+    testWidgets('M3 shell / settings / chats screens survive textScaler 2.0 without overflow', (tester) async {
+      // settle: true drains the screens' async init timers (Initialize + the mock
+      // load) and renders the loaded layout, where any overflow would surface.
+      await pumpApp(tester, const TabBarShell(), textScale: 2.0);
+      expect(tester.takeException(), isNull, reason: 'TabBarShell overflowed at 2.0');
+
+      await pumpApp(tester, const SettingsRootPage(), textScale: 2.0);
+      expect(tester.takeException(), isNull, reason: 'SettingsRootPage overflowed at 2.0');
+
+      await pumpApp(tester, const ChatsListPage(), textScale: 2.0);
+      expect(tester.takeException(), isNull, reason: 'ChatsListPage overflowed at 2.0');
     });
   });
 }

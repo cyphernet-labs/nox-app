@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/app/widgets/app_theme_toggle.dart';
-import 'package:nox_app/presentation/widgets/settings/app_version_text_widget.dart';
+import 'package:nox_app/presentation/pages/about_page/about_body.dart';
 import 'package:nox_app/presentation/widgets/shell/app_detail_scaffold_widget.dart';
 
 /// 7.7 About — only the app version + build number. No licenses, copyright, website
-/// or credits. No own BLoC (UI-first exception, blueprint 05 §5.1).
+/// or credits. No own BLoC (UI-first exception, blueprint 05 §5.1). Content lives
+/// in [AboutBody] so it can also fill the desktop Settings list-detail pane (7.1).
 class AboutPage extends StatelessWidget {
   const AboutPage({super.key});
 
@@ -16,19 +17,6 @@ class AboutPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
-    final colorScheme = Theme.of(context).colorScheme;
-    return AppDetailScaffoldWidget(
-      title: TextConstants.settingsAboutTitle,
-      actions: const [AppThemeToggle()],
-      body: ListView(
-        children: [
-          ListTile(
-            title: Text(TextConstants.versionLabel),
-            subtitle: AppVersionTextWidget(style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant)),
-          ),
-        ],
-      ),
-    );
+    return AppDetailScaffoldWidget(title: TextConstants.settingsAboutTitle, actions: const [AppThemeToggle()], body: const AboutBody());
   }
 }
