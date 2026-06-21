@@ -14,6 +14,7 @@ import 'package:nox_app/presentation/pages/chat_thread_page/chat_thread_page.dar
 import 'package:nox_app/presentation/pages/chats_list_page/chats_list_page.dart';
 import 'package:nox_app/presentation/pages/create_chat_page/create_chat_page.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page.dart';
+import 'package:nox_app/presentation/pages/file_view_page/file_view_page.dart';
 import 'package:nox_app/presentation/pages/language_page/language_page.dart';
 import 'package:nox_app/presentation/pages/login_page/login_page.dart';
 import 'package:nox_app/presentation/pages/notifications_page/notifications_page.dart';
@@ -57,12 +58,12 @@ void main() {
   testWidgets('un-wired screens render as disabled "coming soon" stubs', (tester) async {
     await pumpApp(tester, underTest());
 
-    // A late-milestone screen (5.3 File view) stays a disabled stub until M4 US2;
+    // A late-milestone screen (5.4 Chat card) stays a disabled stub until M4 US3;
     // scroll to it (the earlier rows are now all wired) and confirm the stub affordance.
-    final fileView = find.text('File view');
-    await tester.scrollUntilVisible(fileView, 200);
+    final chatCard = find.text('Chat card');
+    await tester.scrollUntilVisible(chatCard, 200);
     expect(find.text(TextConstants.comingSoon), findsWidgets);
-    final tile = tester.widget<ListTile>(find.ancestor(of: fileView, matching: find.byType(ListTile)));
+    final tile = tester.widget<ListTile>(find.ancestor(of: chatCard, matching: find.byType(ListTile)));
     expect(tile.enabled, isFalse);
     expect(tile.onTap, isNull);
   });
@@ -78,6 +79,19 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(ChatThreadPage), findsOneWidget);
+  });
+
+  testWidgets('activated File view row (5.3) opens FileViewPage', (tester) async {
+    await pumpApp(tester, underTest());
+
+    final row = find.widgetWithText(ListTile, 'File view');
+    await tester.scrollUntilVisible(row, 200);
+    await tester.ensureVisible(row);
+    await tester.pumpAndSettle();
+    await tester.tap(row);
+    await tester.pumpAndSettle(); // lets the fake download timer finish (no pending timer)
+
+    expect(find.byType(FileViewPage), findsOneWidget);
   });
 
   testWidgets('theme toggle dispatches to AppRootBloc without throwing', (tester) async {

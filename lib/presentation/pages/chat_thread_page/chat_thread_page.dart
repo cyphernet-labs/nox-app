@@ -3,6 +3,7 @@ import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/presentation/pages/file_view_page/file_view_page.dart';
 import 'package:nox_app/presentation/widgets/chat/app_thread_view_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 
@@ -43,7 +44,12 @@ class ChatThreadPage extends StatelessWidget {
         if (wide) {
           // Standalone desktop preview: the thread pane (persistent header) full-window.
           return Scaffold(
-            body: AppThreadViewWidget(chat: chat, demo: demo, showHeader: true),
+            body: AppThreadViewWidget(
+              chat: chat,
+              demo: demo,
+              showHeader: true,
+              onOpenFile: (file) => showFileView(context, file),
+            ),
           );
         }
         return Scaffold(
@@ -55,7 +61,7 @@ class ChatThreadPage extends StatelessWidget {
             ),
             title: Text(chat.name),
           ),
-          body: AppThreadViewWidget(chat: chat, demo: demo),
+          body: AppThreadViewWidget(chat: chat, demo: demo, onOpenFile: (file) => showFileView(context, file)),
         );
       },
     );

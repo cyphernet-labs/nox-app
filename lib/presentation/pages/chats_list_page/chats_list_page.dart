@@ -14,6 +14,7 @@ import 'package:nox_app/presentation/app/widgets/app_theme_toggle.dart';
 import 'package:nox_app/presentation/pages/base/base_state_page.dart';
 import 'package:nox_app/presentation/pages/chat_thread_page/chat_thread_page.dart';
 import 'package:nox_app/presentation/pages/chats_list_page/bloc/chats_list_bloc.dart';
+import 'package:nox_app/presentation/pages/file_view_page/file_view_page.dart';
 import 'package:nox_app/presentation/widgets/chat/app_chat_item_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_thread_view_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_search_field_widget.dart';
@@ -194,7 +195,12 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
       return const AppDetailEmptyWidget(title: TextConstants.chatsNoSelectionTitle, message: TextConstants.chatsNoSelectionMessage);
     }
     // Desktop list-detail: the real thread (5.2) loads in the pane (no push).
-    return AppThreadViewWidget(key: ValueKey(selected.id), chat: selected, showHeader: true);
+    return AppThreadViewWidget(
+      key: ValueKey(selected.id),
+      chat: selected,
+      showHeader: true,
+      onOpenFile: (file) => showFileView(context, file),
+    );
   }
 
   // ---- Shared ----------------------------------------------------------------
