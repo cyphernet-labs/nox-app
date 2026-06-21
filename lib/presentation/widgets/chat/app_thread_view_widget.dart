@@ -218,7 +218,6 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
       onChanged: (_) => setState(() {}),
       onAttach: () => _bloc.add(const ChatThreadEvent.attachmentPicked()),
       onSend: _onSend,
-      onSubmitted: canSend ? _onSend : null,
       attachment: draft == null
           ? null
           : AppFileChipWidget(

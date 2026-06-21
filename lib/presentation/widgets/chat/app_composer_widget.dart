@@ -19,7 +19,6 @@ class AppComposerWidget extends StatelessWidget {
     this.onChanged,
     this.onAttach,
     this.onSend,
-    this.onSubmitted,
   });
 
   final TextEditingController controller;
@@ -29,7 +28,6 @@ class AppComposerWidget extends StatelessWidget {
   final ValueChanged<String>? onChanged;
   final VoidCallback? onAttach;
   final VoidCallback? onSend;
-  final VoidCallback? onSubmitted;
 
   static const int _maxLines = 6;
 

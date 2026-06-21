@@ -80,6 +80,28 @@ void main() {
     );
 
     blocTest<ChatThreadBloc, ChatThreadState>(
+      'an offline send is re-delivered (pending → sent) once connection is restored',
+      build: ChatThreadBloc.new,
+      act: (bloc) async {
+        bloc.add(const ChatThreadEvent.initialize('chat_0'));
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+        bloc.add(const ChatThreadEvent.setScenario(ChatThreadScenario.offline));
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+        bloc.add(const ChatThreadEvent.messageSent(text: 'queued offline'));
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        // While offline the message stays pending.
+        expect((bloc.state as Initialized).outgoing.first.status, MessageStatus.pending);
+        bloc.add(const ChatThreadEvent.setScenario(ChatThreadScenario.normal));
+      },
+      wait: const Duration(milliseconds: 800),
+      verify: (bloc) {
+        final outgoing = (bloc.state as Initialized).outgoing.where((m) => m.text == 'queued offline');
+        expect(outgoing, isNotEmpty);
+        expect(outgoing.first.status, MessageStatus.sent);
+      },
+    );
+
+    blocTest<ChatThreadBloc, ChatThreadState>(
       'the empty scenario yields no real messages',
       build: ChatThreadBloc.new,
       act: (bloc) async {

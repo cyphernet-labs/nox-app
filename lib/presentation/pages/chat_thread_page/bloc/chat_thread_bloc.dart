@@ -201,9 +201,25 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   }
 
   FutureOr<void> _onSetScenario(SetScenario event, Emitter<ChatThreadState> emit) async {
+    final previous = _scenario;
     _scenario = event.scenario;
-    // send-error only affects the next send; the rest reload the history.
+    // send-error only affects the next send.
     if (event.scenario == ChatThreadScenario.sendError) return;
+
+    final current = state;
+    // Connectivity restored (offline → normal): re-deliver the messages that were
+    // queued as pending while offline, keeping the already-loaded history.
+    if (event.scenario == ChatThreadScenario.normal && previous == ChatThreadScenario.offline && current is Initialized) {
+      final queued = current.outgoing.where((message) => message.status == MessageStatus.pending).toList();
+      for (final message in queued) {
+        await _deliver(message.id, text: message.text, attachment: message.attachment, emit: emit);
+      }
+      return;
+    }
+
+    // Any other scenario switch is a debug reset: drop stale optimistic bubbles so a
+    // previous scenario's sends don't leak into (e.g.) the empty state.
+    if (current is Initialized) emit(current.copyWith(outgoing: const [], draftAttachment: null));
     add(state is Initialized ? const ChatThreadEvent.loadMessages(reset: true) : ChatThreadEvent.initialize(_chatId));
   }
 }

@@ -18,6 +18,15 @@ class FileSizeFormatter {
       value /= _step;
       unit++;
     }
+    // Display rounds to 1 decimal; a value like 1023.99 KB would render as
+    // "1,024.0 KB" — roll up to the next unit when rounding tips over the boundary.
+    if (unit < _units.length - 1) {
+      final rounded = (value * 10).round() / 10;
+      if (rounded >= _step) {
+        value = rounded / _step;
+        unit++;
+      }
+    }
     final formatter = NumberFormat.decimalPatternDigits(locale: locale ?? Constants.defaultLocale, decimalDigits: 1);
     return '${formatter.format(value)} ${_units[unit]}';
   }
