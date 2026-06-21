@@ -2,8 +2,8 @@ import 'dart:async';
 
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
-import 'package:nox_app/general/onboarding_mock_data.dart';
 import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/username_rules.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
 import 'package:nox_app/presentation/base/bloc_transformers.dart';
 
@@ -31,15 +31,13 @@ class SetUsernameBloc extends BaseBloc<SetUsernameEvent, SetUsernameState> {
   /// taken set, since the user's current name is always free to keep).
   static const String defaultName = 'User7421';
 
-  static final RegExp _charset = RegExp(r'^[A-Za-z0-9._-]+$');
-
   void _onNameChanged(NameChanged event, Emitter<SetUsernameState> emit) {
     final name = event.name;
     if (name.isEmpty) {
       emit(state.copyWith(name: name, status: UsernameStatus.empty));
       return;
     }
-    if (!_charset.hasMatch(name)) {
+    if (!UsernameRules.hasValidCharset(name)) {
       emit(state.copyWith(name: name, status: UsernameStatus.invalidCharset));
       return;
     }
@@ -54,7 +52,7 @@ class SetUsernameBloc extends BaseBloc<SetUsernameEvent, SetUsernameState> {
       // TODO(backend): real server uniqueness check.
       await Future<void>.delayed(const Duration(milliseconds: 200));
       if (state.name != event.name) return;
-      final taken = OnboardingMockData.takenUsernames.contains(event.name); // case-sensitive (FR-032)
+      final taken = UsernameRules.isTaken(event.name); // case-sensitive (FR-032)
       emit(state.copyWith(status: taken ? UsernameStatus.taken : UsernameStatus.valid));
     }, onError: (error, exception, stackTrace) => emit(state.copyWith(status: UsernameStatus.valid)));
   }

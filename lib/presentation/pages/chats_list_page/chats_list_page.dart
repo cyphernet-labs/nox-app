@@ -86,8 +86,11 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
   }
 
   Future<void> _refresh() async {
+    // Keep the RefreshIndicator spinner up until the reset load actually finishes
+    // (the handler emits loadingInProgress:true then false), not a fixed delay.
+    final done = _bloc.stream.firstWhere((s) => s is Error || (s is Initialized && !s.loadingInProgress));
     _bloc.add(const ChatsListEvent.loadChats(reset: true));
-    await Future<void>.delayed(const Duration(milliseconds: 400));
+    await done.timeout(const Duration(seconds: 5), onTimeout: () => _bloc.state);
   }
 
   void _onTapChat(ChatModel chat, {required bool wide}) {
@@ -201,18 +204,9 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
 
   Widget _banners(BuildContext context, ChatsListState state) {
     if (state is! Initialized) return const SizedBox.shrink();
-    if (state.isOffline) {
-      return MaterialBanner(
-        content: const Text(TextConstants.noConnection),
-        leading: AppIconWidget(NoxIcons.error, size: 22),
-        actions: const [SizedBox.shrink()],
-      );
-    }
+    if (state.isOffline) return const _NoticeStrip(message: TextConstants.noConnection);
     if (state.hasLoadError) {
-      return MaterialBanner(
-        content: const Text(TextConstants.chatsLoadError),
-        actions: [TextButton(onPressed: _refresh, child: const Text(TextConstants.actionTryAgain))],
-      );
+      return _NoticeStrip(message: TextConstants.chatsLoadError, actionLabel: TextConstants.actionTryAgain, onAction: _refresh);
     }
     return const SizedBox.shrink();
   }
@@ -274,4 +268,37 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
   }
 
   ChatsListScenario _devScenario = ChatsListScenario.normal;
+}
+
+/// Persistent inline notice strip under the search bar (5.1 offline / inline-error).
+/// A themed `surfaceContainer` row with an optional action — avoids `MaterialBanner`'s
+/// non-empty-actions requirement (no placeholder hack) and sits below the AppBar/search.
+class _NoticeStrip extends StatelessWidget {
+  const _NoticeStrip({required this.message, this.actionLabel, this.onAction});
+
+  final String message;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    return Material(
+      color: colorScheme.surfaceContainer,
+      child: Padding(
+        padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s16, vertical: AppSpacingTokens.s8),
+        child: Row(
+          children: [
+            AppIconWidget(NoxIcons.error, size: 20, color: colorScheme.onSurfaceVariant),
+            SizedBox(width: AppSpacingTokens.s12),
+            Expanded(
+              child: Text(message, style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurface)),
+            ),
+            if (actionLabel != null) TextButton(onPressed: onAction, child: Text(actionLabel!)),
+          ],
+        ),
+      ),
+    );
+  }
 }

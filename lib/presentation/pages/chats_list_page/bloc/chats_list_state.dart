@@ -14,7 +14,6 @@ sealed class ChatsListState with _$ChatsListState {
     required PagingState<String, ChatModel> pagingState,
     @Default([]) List<ChatModel> items,
     @Default(GetChatsConfig.defaultPage) int nextPage,
-    @Default(false) bool isLastPage,
     @Default(false) bool loadingInProgress,
     @Default('') String query,
     @Default(false) bool isOffline,

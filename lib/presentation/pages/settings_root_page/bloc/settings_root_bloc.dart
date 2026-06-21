@@ -2,8 +2,8 @@ import 'dart:async';
 
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
-import 'package:nox_app/general/onboarding_mock_data.dart';
 import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/username_rules.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
 import 'package:nox_app/presentation/base/bloc_transformers.dart';
 
@@ -32,8 +32,6 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
   /// server-assigned and read in the backend phase).
   static const String mockRawId = 'NOX-7c1f9a4e2b8d40f3-a6e5c2179bd0e83f-9f2a7c4e1b6d8a30';
 
-  static final RegExp _charset = RegExp(r'^[A-Za-z0-9._-]+$');
-
   Future<void> _onInitialize(SettingsInitialize event, Emitter<SettingsRootState> emit) async {
     // TODO(backend): load the real identity (name + identifier). Stub: brief delay
     // so the Initial-loading state (spinner in the ID position) is observable.
@@ -57,7 +55,7 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
       emit(state.copyWith(draftName: name, status: SettingsNameStatus.idle));
       return;
     }
-    if (!_charset.hasMatch(name)) {
+    if (!UsernameRules.hasValidCharset(name)) {
       emit(state.copyWith(draftName: name, status: SettingsNameStatus.invalidCharset));
       return;
     }
@@ -71,9 +69,12 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
       // TODO(backend): real server uniqueness check.
       await Future<void>.delayed(const Duration(milliseconds: 200));
       if (state.draftName != event.name) return;
-      final taken = OnboardingMockData.takenUsernames.contains(event.name); // case-sensitive (FR-032)
+      final taken = UsernameRules.isTaken(event.name); // case-sensitive (FR-032)
       emit(state.copyWith(status: taken ? SettingsNameStatus.taken : SettingsNameStatus.valid));
-    }, onError: (error, exception, stackTrace) => emit(state.copyWith(status: SettingsNameStatus.valid)));
+      // Fail-safe: a failed uniqueness check must NOT report the name as available
+      // (would let a possibly-taken label be committed). Fall back to a neutral,
+      // non-committable state so the user re-checks. `// TODO(backend):` retry UX.
+    }, onError: (error, exception, stackTrace) => emit(state.copyWith(status: SettingsNameStatus.idle)));
   }
 
   void _onNameSubmitted(NameSubmitted event, Emitter<SettingsRootState> emit) {

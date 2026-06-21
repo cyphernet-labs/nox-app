@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:nox_app/design/theme/nox_tokens.dart';
+import 'package:nox_app/design/app_spacing_tokens.dart';
 
 /// Desktop two-pane list-detail container (4.1 §desktop): a fixed-width list pane
 /// on the left, a vertical divider, and an expanded detail pane on the right.
@@ -48,7 +48,7 @@ class AppDetailEmptyWidget extends StatelessWidget {
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: _maxWidth),
         child: Padding(
-          padding: EdgeInsets.all(NoxSpacing.s6),
+          padding: EdgeInsets.all(AppSpacingTokens.s24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -57,7 +57,7 @@ class AppDetailEmptyWidget extends StatelessWidget {
                 style: textTheme.titleMedium?.copyWith(color: colorScheme.onSurface),
                 textAlign: TextAlign.center,
               ),
-              SizedBox(height: NoxSpacing.s2),
+              SizedBox(height: AppSpacingTokens.s8),
               Text(
                 message,
                 style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),

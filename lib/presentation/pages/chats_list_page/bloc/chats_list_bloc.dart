@@ -119,7 +119,6 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
                 items: r.updatedList,
                 pagingState: r.pagingState,
                 nextPage: r.nextPage ?? live.nextPage,
-                isLastPage: metadata.nextPage == null,
                 loadingInProgress: false,
                 // Offline shows the cached list under a banner; inline-error shows the
                 // cached list under a retry banner (both keep the data visible).
