@@ -141,4 +141,31 @@ abstract final class TextConstants {
   static const String timeYesterday = 'Yesterday';
   static const String timeMinuteSuffix = 'min'; // "5 min"
   static const String timeHourSuffix = 'h'; // "2 h"
+
+  // Chat thread (5.2) (reuse: composerHint='Message', tooltipSend='Send',
+  // tooltipAttachFile='Attach file', tooltipRemove='Remove', tooltipBack='Back',
+  // noConnection='No connection')
+  static const String tooltipRetry = 'Tap to retry';
+  static const String tooltipChatInfo = 'Chat info';
+  static const String threadEmptyTitle = 'No messages yet';
+  static const String threadEmptyMessage = 'Send the first one.';
+  static const String dateToday = 'Today';
+  static const String dateYesterday = 'Yesterday';
+  static String systemChatCreated(String username) => 'Chat created by $username';
+
+  // File view (5.3)
+  static const String tooltipSave = 'Save';
+  static const String savedToDownloads = 'Saved to Downloads';
+  static const String fileDownloadError = 'Could not download file. Check your connection and try again.';
+  static const String actionDownload = 'Download';
+  static String downloadingProgress(int percent) => 'Downloading… $percent%';
+
+  // Chat card (5.4)
+  static const String filesSectionTitle = 'Files';
+  static const String filesViewList = 'List';
+  static const String filesViewGrid = 'Grid';
+  static const String filesEmptyTitle = 'No files yet';
+  static const String filesEmptyMessage = 'Files sent in this chat will appear here.';
+  static const String chatInfoTitle = 'Details';
+  static const String chatInfoLoadError = 'Could not load chat info. Check your connection and try again.';
 }

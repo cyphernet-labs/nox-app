@@ -3,10 +3,12 @@ import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
+import 'package:nox_app/domain/model/chat/message_status.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 
-/// Own-message delivery status (5.2). No delivered/read in an open space.
-enum MessageStatus { none, pending, sent, error }
+// MessageStatus is the domain single source of truth; re-export so existing callers
+// (gallery / bubble tests) keep importing it from this widget.
+export 'package:nox_app/domain/model/chat/message_status.dart';
 
 /// Message bubble (5.2): base radius `l`; the own bottom-right / other
 /// bottom-left corner clips to `xs` (`NoxRadius.bubble`). Own = `primaryContainer`;

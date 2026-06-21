@@ -2,11 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_brand.dart';
+import 'package:nox_app/domain/model/file/file_type.dart';
 
-/// Attachment file category. Drives the type icon + decorative brand color used
-/// by [AppFileGlyphWidget] / [AppFileChipWidget]. NOX shows type-icon chips only
-/// (no content preview). Source: nox-handoff-2/spec/primitives.md.
-enum FileType { image, video, audio, pdf, doc, sheet, text, archive, other }
+// FileType is the domain single source of truth; re-export it so existing callers
+// (file chip / glyph / gallery / tests) keep importing it from here alongside the
+// presentation mappers below.
+export 'package:nox_app/domain/model/file/file_type.dart';
 
 /// Type icon (SVG glyph from the [NoxIcons] registry) for [type].
 /// `audio` → music_note, `other` → draft, to match the shipped SVG set.

@@ -3,10 +3,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/presentation/pages/chat_thread_page/chat_thread_page.dart';
 import 'package:nox_app/presentation/pages/chats_list_page/chats_list_page.dart';
-import 'package:nox_app/presentation/pages/placeholder/route_placeholder_page.dart';
 import 'package:nox_app/presentation/widgets/chat/app_chat_item_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_search_field_widget.dart';
+import 'package:nox_app/presentation/widgets/chat/app_thread_view_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_list_detail_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_wordmark_widget.dart';
 
@@ -36,13 +37,13 @@ void main() {
       expect(find.byType(AppChatItemWidget), findsWidgets);
     });
 
-    testWidgets('tapping a chat opens the M4 thread placeholder', (tester) async {
+    testWidgets('tapping a chat opens the real chat thread (5.2)', (tester) async {
       await pumpMobile(tester);
 
       await tester.tap(find.byType(AppChatItemWidget).first);
       await tester.pumpAndSettle();
 
-      expect(find.byType(RoutePlaceholderPage), findsOneWidget);
+      expect(find.byType(ChatThreadPage), findsOneWidget);
     });
 
     testWidgets('search filters the list by chat name', (tester) async {
@@ -70,7 +71,7 @@ void main() {
       expect(find.text(TextConstants.chatsNoSelectionTitle), findsOneWidget);
     });
 
-    testWidgets('selecting a row swaps the thread pane without a push', (tester) async {
+    testWidgets('selecting a row loads the real thread pane without a push', (tester) async {
       await pumpDesktop(tester);
 
       await tester.tap(find.byType(AppChatItemWidget).first);
@@ -79,7 +80,8 @@ void main() {
       // No-selection placeholder is gone (the thread pane swapped) and no push happened.
       expect(find.text(TextConstants.chatsNoSelectionTitle), findsNothing);
       expect(find.byType(ChatsListPage), findsOneWidget);
-      expect(find.byType(RoutePlaceholderPage), findsNothing);
+      expect(find.byType(ChatThreadPage), findsNothing); // pane swap, not a push
+      expect(find.byType(AppThreadViewWidget), findsOneWidget);
     });
   });
 }

@@ -8,28 +8,44 @@ import '../../../utils/pump_app.dart';
 void main() {
   group('AppComposerWidget', () {
     testWidgets('shows the hint when empty', (tester) async {
-      await pumpApp(tester, const AppComposerWidget());
+      await pumpApp(tester, AppComposerWidget(controller: TextEditingController()));
 
       expect(find.text(TextConstants.composerHint), findsOneWidget);
     });
 
     testWidgets('send is disabled until sendActive', (tester) async {
       var sends = 0;
-      await pumpApp(tester, AppComposerWidget(onSend: () => sends++));
+      await pumpApp(tester, AppComposerWidget(controller: TextEditingController(), onSend: () => sends++));
       await tester.tap(find.byType(IconButton).last);
       expect(sends, 0); // inactive
 
-      await pumpApp(tester, AppComposerWidget(value: 'hi', sendActive: true, onSend: () => sends++));
+      await pumpApp(
+        tester,
+        AppComposerWidget(
+          controller: TextEditingController(text: 'hi'),
+          sendActive: true,
+          onSend: () => sends++,
+        ),
+      );
       await tester.tap(find.byType(IconButton).last);
       expect(sends, 1); // active
     });
 
     testWidgets('fires onAttach', (tester) async {
       var attaches = 0;
-      await pumpApp(tester, AppComposerWidget(onAttach: () => attaches++));
+      await pumpApp(tester, AppComposerWidget(controller: TextEditingController(), onAttach: () => attaches++));
 
       await tester.tap(find.byType(IconButton).first);
       expect(attaches, 1);
+    });
+
+    testWidgets('typing updates the field', (tester) async {
+      await pumpApp(tester, AppComposerWidget(controller: TextEditingController()));
+
+      await tester.enterText(find.byType(TextField), 'hello');
+      await tester.pump();
+
+      expect(find.text('hello'), findsOneWidget);
     });
   });
 }

@@ -12,9 +12,10 @@ import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/presentation/app/widgets/app_theme_toggle.dart';
 import 'package:nox_app/presentation/pages/base/base_state_page.dart';
+import 'package:nox_app/presentation/pages/chat_thread_page/chat_thread_page.dart';
 import 'package:nox_app/presentation/pages/chats_list_page/bloc/chats_list_bloc.dart';
-import 'package:nox_app/presentation/pages/placeholder/route_placeholder_page.dart';
 import 'package:nox_app/presentation/widgets/chat/app_chat_item_widget.dart';
+import 'package:nox_app/presentation/widgets/chat/app_thread_view_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_search_field_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_list_detail_widget.dart';
@@ -97,7 +98,7 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
     if (wide) {
       _bloc.add(ChatsListEvent.chatSelected(chat.id)); // desktop: select, no push
     } else {
-      Navigator.of(context).push(RoutePlaceholderPage.route(destinationLabel: TextConstants.chatThreadPlaceholder));
+      Navigator.of(context).push(ChatThreadPage.route(chat)); // mobile: push the real thread (5.2)
     }
   }
 
@@ -192,8 +193,8 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
       // fall back to the no-selection pane rather than a stale thread placeholder.
       return const AppDetailEmptyWidget(title: TextConstants.chatsNoSelectionTitle, message: TextConstants.chatsNoSelectionMessage);
     }
-    // Thread content (5.2) is built in M4 — show a placeholder for the selected chat.
-    return AppDetailEmptyWidget(title: selected.name, message: TextConstants.comingSoon);
+    // Desktop list-detail: the real thread (5.2) loads in the pane (no push).
+    return AppThreadViewWidget(key: ValueKey(selected.id), chat: selected, showHeader: true);
   }
 
   // ---- Shared ----------------------------------------------------------------

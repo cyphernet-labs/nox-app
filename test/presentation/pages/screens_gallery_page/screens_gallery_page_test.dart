@@ -10,6 +10,7 @@ import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
 import 'package:nox_app/presentation/pages/about_page/about_page.dart';
 import 'package:nox_app/presentation/pages/appearance_page/appearance_page.dart';
+import 'package:nox_app/presentation/pages/chat_thread_page/chat_thread_page.dart';
 import 'package:nox_app/presentation/pages/chats_list_page/chats_list_page.dart';
 import 'package:nox_app/presentation/pages/create_chat_page/create_chat_page.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page.dart';
@@ -56,14 +57,27 @@ void main() {
   testWidgets('un-wired screens render as disabled "coming soon" stubs', (tester) async {
     await pumpApp(tester, underTest());
 
-    // A late-milestone screen (5.2) stays a disabled stub through M1–M3; scroll to
-    // it (the early rows are now all wired) and confirm the stub affordance.
-    final chatThread = find.text('Chat thread');
-    await tester.scrollUntilVisible(chatThread, 200);
+    // A late-milestone screen (5.3 File view) stays a disabled stub until M4 US2;
+    // scroll to it (the earlier rows are now all wired) and confirm the stub affordance.
+    final fileView = find.text('File view');
+    await tester.scrollUntilVisible(fileView, 200);
     expect(find.text(TextConstants.comingSoon), findsWidgets);
-    final tile = tester.widget<ListTile>(find.ancestor(of: chatThread, matching: find.byType(ListTile)));
+    final tile = tester.widget<ListTile>(find.ancestor(of: fileView, matching: find.byType(ListTile)));
     expect(tile.enabled, isFalse);
     expect(tile.onTap, isNull);
+  });
+
+  testWidgets('activated Chat thread row (5.2) opens ChatThreadPage', (tester) async {
+    await pumpApp(tester, underTest());
+
+    final row = find.widgetWithText(ListTile, 'Chat thread');
+    await tester.scrollUntilVisible(row, 200);
+    await tester.ensureVisible(row);
+    await tester.pumpAndSettle();
+    await tester.tap(row);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ChatThreadPage), findsOneWidget);
   });
 
   testWidgets('theme toggle dispatches to AppRootBloc without throwing', (tester) async {

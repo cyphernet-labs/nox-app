@@ -31,4 +31,16 @@ class DateFormatter {
     if (dayDiff == 1) return TextConstants.timeYesterday;
     return when.year == ref.year ? _dayMonth.format(when) : _dayMonthYear.format(when);
   }
+
+  /// Date-separator label for the chat thread (5.2): `Today` / `Yesterday` /
+  /// `12 May` (same year) / `12 May 2025` (older). [now] is injectable for tests.
+  static String daySeparator(DateTime when, {DateTime? now}) {
+    final ref = now ?? DateTime.now();
+    final today = DateTime(ref.year, ref.month, ref.day);
+    final thatDay = DateTime(when.year, when.month, when.day);
+    final dayDiff = today.difference(thatDay).inDays;
+    if (dayDiff <= 0) return TextConstants.dateToday;
+    if (dayDiff == 1) return TextConstants.dateYesterday;
+    return when.year == ref.year ? _dayMonth.format(when) : _dayMonthYear.format(when);
+  }
 }

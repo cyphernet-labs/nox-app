@@ -35,7 +35,7 @@ void main() {
 
   group('accessibility (FR-016)', () {
     testWidgets('composer icon-action tap targets are >= 48x48', (tester) async {
-      await pumpApp(tester, AppComposerWidget(sendActive: true, onSend: () {}, onAttach: () {}));
+      await pumpApp(tester, AppComposerWidget(controller: TextEditingController(), sendActive: true, onSend: () {}, onAttach: () {}));
 
       final buttons = find.byType(IconButton);
       expect(buttons, findsNWidgets(2));
@@ -68,7 +68,7 @@ void main() {
     });
 
     testWidgets('composer actions expose tooltips/semantics', (tester) async {
-      await pumpApp(tester, AppComposerWidget(sendActive: true, onSend: () {}, onAttach: () {}));
+      await pumpApp(tester, AppComposerWidget(controller: TextEditingController(), sendActive: true, onSend: () {}, onAttach: () {}));
 
       expect(find.byTooltip(TextConstants.tooltipAttachFile), findsOneWidget);
       expect(find.byTooltip(TextConstants.tooltipSend), findsOneWidget);
@@ -87,7 +87,7 @@ void main() {
       );
       expect(tester.takeException(), isNull);
 
-      await pumpApp(tester, const AppComposerWidget(value: 'A long draft that should reflow'), textScale: 2.0);
+      await pumpApp(tester, AppComposerWidget(controller: TextEditingController(text: 'A long draft that should reflow')), textScale: 2.0);
       expect(tester.takeException(), isNull);
     });
 
