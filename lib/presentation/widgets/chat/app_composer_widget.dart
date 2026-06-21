@@ -5,27 +5,17 @@ import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 
 /// Message input (5.2 §9.8): `surfaceContainer`, top divider, an optional attachment
-/// chip above the row. Attach + a growing multiline field (4–6 lines, then scrolls)
-/// + send; send active → `primary` (filled), else `onSurface`@38%. Editable
-/// (controller-driven); the owner recomputes [sendActive] on [onChanged].
-/// Source: `NoxComposer`.
+/// chip above the row. Attach + a growing multiline field (1–6 lines, then scrolls)
+/// + send. The send affordance is reactive: it watches [controller] (and the
+/// [attachment] presence) via a [ValueListenableBuilder] so typing only rebuilds the
+/// send button, not the owner's message list. Send is enabled when the field is
+/// non-empty or an attachment is staged. Source: `NoxComposer`.
 class AppComposerWidget extends StatelessWidget {
-  const AppComposerWidget({
-    super.key,
-    required this.controller,
-    this.focusNode,
-    this.attachment,
-    this.sendActive = false,
-    this.onChanged,
-    this.onAttach,
-    this.onSend,
-  });
+  const AppComposerWidget({super.key, required this.controller, this.focusNode, this.attachment, this.onAttach, this.onSend});
 
   final TextEditingController controller;
   final FocusNode? focusNode;
   final Widget? attachment; // an AppFileChipWidget(removable: true)
-  final bool sendActive;
-  final ValueChanged<String>? onChanged;
   final VoidCallback? onAttach;
   final VoidCallback? onSend;
 
@@ -66,7 +56,6 @@ class AppComposerWidget extends StatelessWidget {
                       child: TextField(
                         controller: controller,
                         focusNode: focusNode,
-                        onChanged: onChanged,
                         minLines: 1,
                         maxLines: _maxLines,
                         keyboardType: TextInputType.multiline,
@@ -81,13 +70,19 @@ class AppComposerWidget extends StatelessWidget {
                       ),
                     ),
                   ),
-                  IconButton(
-                    onPressed: sendActive ? onSend : null,
-                    tooltip: TextConstants.tooltipSend,
-                    icon: AppIconWidget(
-                      NoxIcons.sendFill,
-                      color: sendActive ? colorScheme.primary : colorScheme.onSurface.withValues(alpha: 0.38),
-                    ),
+                  ValueListenableBuilder<TextEditingValue>(
+                    valueListenable: controller,
+                    builder: (context, value, _) {
+                      final active = value.text.trim().isNotEmpty || attachment != null;
+                      return IconButton(
+                        onPressed: active ? onSend : null,
+                        tooltip: TextConstants.tooltipSend,
+                        icon: AppIconWidget(
+                          NoxIcons.sendFill,
+                          color: active ? colorScheme.primary : colorScheme.onSurface.withValues(alpha: 0.38),
+                        ),
+                      );
+                    },
                   ),
                 ],
               ),

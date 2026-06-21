@@ -11,6 +11,7 @@ import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/helpers/app_feedback_helper.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_file_glyph_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
+import 'package:nox_app/presentation/widgets/shell/app_panel_header_widget.dart';
 
 /// Open the file view (5.3) adaptively: mobile pushes the full screen; desktop
 /// shows a centered lightbox dialog (corpus `08-file`). The tap target lives in the
@@ -197,31 +198,10 @@ class _FileViewPageState extends State<FileViewPage> with SingleTickerProviderSt
   // ---- Lightbox content (shared by the dialog + the wide scaffold) -----------
 
   Widget _lightboxContent(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Padding(
-          padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s8, AppSpacingTokens.s8, AppSpacingTokens.s8),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  widget.file.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: textTheme.titleMedium?.copyWith(color: colorScheme.onSurface),
-                ),
-              ),
-              IconButton(
-                tooltip: TextConstants.actionClose,
-                icon: AppIconWidget(NoxIcons.close),
-                onPressed: () => Navigator.of(context).maybePop(),
-              ),
-            ],
-          ),
-        ),
+        AppPanelHeaderWidget(title: widget.file.name, onClose: () => Navigator.of(context).maybePop()),
         if (!_cached) LinearProgressIndicator(value: _progress),
         Padding(padding: EdgeInsets.all(AppSpacingTokens.s24), child: _info(context)),
         Padding(

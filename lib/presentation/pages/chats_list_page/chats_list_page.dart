@@ -25,6 +25,7 @@ import 'package:nox_app/presentation/widgets/shell/app_splash_hairline_widget.da
 import 'package:nox_app/presentation/widgets/shell/app_wordmark_widget.dart';
 import 'package:nox_app/presentation/widgets/state/app_empty_content_widget.dart';
 import 'package:nox_app/presentation/widgets/state/app_error_widget.dart';
+import 'package:nox_app/presentation/widgets/state/app_notice_strip_widget.dart';
 import 'package:nox_app/presentation/widgets/state/app_progress_widget.dart';
 
 /// 5.1 Chats list — the Chats tab body and the global open chats list. Mobile: an
@@ -213,9 +214,9 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
 
   Widget _banners(BuildContext context, ChatsListState state) {
     if (state is! Initialized) return const SizedBox.shrink();
-    if (state.isOffline) return const _NoticeStrip(message: TextConstants.noConnection);
+    if (state.isOffline) return const AppNoticeStripWidget(message: TextConstants.noConnection);
     if (state.hasLoadError) {
-      return _NoticeStrip(message: TextConstants.chatsLoadError, actionLabel: TextConstants.actionTryAgain, onAction: _refresh);
+      return AppNoticeStripWidget(message: TextConstants.chatsLoadError, actionLabel: TextConstants.actionTryAgain, onAction: _refresh);
     }
     return const SizedBox.shrink();
   }
@@ -277,37 +278,4 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
   }
 
   ChatsListScenario _devScenario = ChatsListScenario.normal;
-}
-
-/// Persistent inline notice strip under the search bar (5.1 offline / inline-error).
-/// A themed `surfaceContainer` row with an optional action — avoids `MaterialBanner`'s
-/// non-empty-actions requirement (no placeholder hack) and sits below the AppBar/search.
-class _NoticeStrip extends StatelessWidget {
-  const _NoticeStrip({required this.message, this.actionLabel, this.onAction});
-
-  final String message;
-  final String? actionLabel;
-  final VoidCallback? onAction;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    return Material(
-      color: colorScheme.surfaceContainer,
-      child: Padding(
-        padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s16, vertical: AppSpacingTokens.s8),
-        child: Row(
-          children: [
-            AppIconWidget(NoxIcons.error, size: 20, color: colorScheme.onSurfaceVariant),
-            SizedBox(width: AppSpacingTokens.s12),
-            Expanded(
-              child: Text(message, style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurface)),
-            ),
-            if (actionLabel != null) TextButton(onPressed: onAction, child: Text(actionLabel!)),
-          ],
-        ),
-      ),
-    );
-  }
 }

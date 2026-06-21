@@ -165,12 +165,6 @@ class _ComposerDemoState extends State<_ComposerDemo> {
 
   @override
   Widget build(BuildContext context) {
-    return AppComposerWidget(
-      controller: _controller,
-      sendActive: _controller.text.trim().isNotEmpty,
-      onChanged: (_) => setState(() {}),
-      onSend: () {},
-      onAttach: () {},
-    );
+    return AppComposerWidget(controller: _controller, onSend: () {}, onAttach: () {});
   }
 }

@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
-import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
@@ -18,9 +17,9 @@ import 'package:nox_app/presentation/widgets/chat/app_file_chip_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_message_bubble_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_system_line_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_thread_header_widget.dart';
-import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 import 'package:nox_app/presentation/widgets/state/app_empty_content_widget.dart';
 import 'package:nox_app/presentation/widgets/state/app_error_widget.dart';
+import 'package:nox_app/presentation/widgets/state/app_notice_strip_widget.dart';
 import 'package:nox_app/presentation/widgets/state/app_progress_widget.dart';
 
 /// Shared chat-thread body (5.2) — used by the mobile [ChatThreadPage] and the
@@ -36,12 +35,10 @@ class AppThreadViewWidget extends StatefulWidget {
   final bool demo;
   final bool showHeader;
 
-  /// Open the chat card (5.4). Wired by callers; null → no-op (the chat-card screen
-  /// lands in US3).
+  /// Open the chat card (5.4). Wired by callers; null → no-op.
   final VoidCallback? onInfo;
 
-  /// Open the file view (5.3) for an attachment. Wired by callers; null → no-op
-  /// (the file-view screen lands in US2).
+  /// Open the file view (5.3) for an attachment. Wired by callers; null → no-op.
   final void Function(MessageAttachment attachment)? onOpenFile;
 
   @override
@@ -74,7 +71,8 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
     if (!_scroll.hasClients) return;
     final position = _scroll.position;
     // Reverse list: scrolling up (toward older history) approaches maxScrollExtent.
-    if (position.pixels >= position.maxScrollExtent - 200) {
+    // Guard on a real scrollable extent so a short (non-filling) list doesn't fire.
+    if (position.maxScrollExtent > 0 && position.pixels >= position.maxScrollExtent - 200) {
       _bloc.add(const ChatThreadEvent.loadMessages());
     }
   }
@@ -83,8 +81,7 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
     final state = _bloc.state;
     final attachment = state is Initialized ? state.draftAttachment : null;
     _bloc.add(ChatThreadEvent.messageSent(text: _composer.text, attachment: attachment));
-    _composer.clear();
-    setState(() {}); // recompute the send affordance
+    _composer.clear(); // the reactive send button + draft chip update on their own
   }
 
   @override
@@ -96,7 +93,7 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
           return Column(
             children: [
               if (widget.showHeader) AppThreadHeaderWidget(chat: widget.chat, onInfo: widget.onInfo ?? () {}),
-              if (state is Initialized && state.isOffline) const _OfflineBanner(),
+              if (state is Initialized && state.isOffline) const AppNoticeStripWidget(message: TextConstants.noConnection),
               Expanded(child: _body(context, state)),
               if (state is Initialized) _composerBar(state),
               if (kDebugMode && widget.demo) _scenarioControl(),
@@ -113,16 +110,15 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
       return AppErrorWidget(onTryAgain: () => _bloc.add(ChatThreadEvent.initialize(widget.chat.id)));
     }
     final initialized = state as Initialized;
-    final all = initialized.allMessages;
+    final all = initialized.allMessages; // single merge+sort per build
 
     // Initial load (no data yet) → spinner, not the empty state.
     if (all.isEmpty && initialized.loadingInProgress) return const AppProgressWidget();
 
     if (!initialized.hasMessages) {
-      final systemLines = all.where((m) => m.isSystem).toList();
       return Column(
         children: [
-          for (final m in systemLines) AppSystemLineWidget(text: TextConstants.systemChatCreated(m.authorLabel)),
+          for (final m in all.where((m) => m.isSystem)) AppSystemLineWidget(text: TextConstants.systemChatCreated(m.authorLabel)),
           Expanded(
             child: AppEmptyContentWidget(
               illustration: Assets.svg.illustrations.emptyMessages,
@@ -134,49 +130,57 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
       );
     }
 
-    final rows = _buildRows(context, initialized);
-    final display = rows.reversed.toList();
+    // Build lightweight row descriptors once (oldest → newest), then reverse for the
+    // reverse: true list and materialize each widget lazily in itemBuilder.
+    final rows = _rows(all, initialized.currentId).reversed.toList();
     final showLoadingOlder = initialized.loadingInProgress && rows.isNotEmpty;
 
     return ListView.builder(
       controller: _scroll,
       reverse: true,
       padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s12, vertical: AppSpacingTokens.s8),
-      itemCount: display.length + (showLoadingOlder ? 1 : 0),
+      itemCount: rows.length + (showLoadingOlder ? 1 : 0),
       itemBuilder: (context, index) {
-        if (showLoadingOlder && index == display.length) {
+        if (showLoadingOlder && index == rows.length) {
           return Padding(padding: EdgeInsets.all(AppSpacingTokens.s8), child: const AppProgressWidget(size: 20));
         }
-        return display[index];
+        return _buildRow(context, rows[index]);
       },
     );
   }
 
-  /// Chronological rows (oldest → newest): system line, date separators, author
-  /// headers, message bubbles. The caller reverses for the `reverse: true` list.
-  List<Widget> _buildRows(BuildContext context, Initialized state) {
-    final rows = <Widget>[];
+  /// Chronological row descriptors: system line, date separators, author headers,
+  /// message rows. Pure data — widgets are built lazily by [_buildRow].
+  List<_ThreadRow> _rows(List<MessageModel> all, String currentId) {
+    final rows = <_ThreadRow>[];
     String? lastDay;
     String? lastOtherAuthorId;
-    for (final m in state.allMessages) {
+    for (final m in all) {
       if (m.isSystem) {
-        rows.add(AppSystemLineWidget(text: TextConstants.systemChatCreated(m.authorLabel)));
+        rows.add(_SystemRow(m.authorLabel));
         continue;
       }
       final day = '${m.sentAt.year}-${m.sentAt.month}-${m.sentAt.day}';
       if (day != lastDay) {
-        rows.add(AppDateSeparatorWidget(label: DateFormatter.daySeparator(m.sentAt)));
+        rows.add(_DateRow(DateFormatter.daySeparator(m.sentAt)));
         lastDay = day;
         lastOtherAuthorId = null;
       }
-      final isOwn = m.authorId == state.currentId;
-      if (!isOwn && m.authorId != lastOtherAuthorId) {
-        rows.add(AppAuthorHeaderWidget(label: m.authorLabel));
-      }
-      rows.add(_bubble(context, m, isOwn));
+      final isOwn = m.authorId == currentId;
+      if (!isOwn && m.authorId != lastOtherAuthorId) rows.add(_AuthorRow(m.authorLabel));
+      rows.add(_MessageRow(m, isOwn));
       lastOtherAuthorId = isOwn ? null : m.authorId;
     }
     return rows;
+  }
+
+  Widget _buildRow(BuildContext context, _ThreadRow row) {
+    return switch (row) {
+      _SystemRow(:final label) => AppSystemLineWidget(text: TextConstants.systemChatCreated(label)),
+      _DateRow(:final label) => AppDateSeparatorWidget(label: label),
+      _AuthorRow(:final label) => AppAuthorHeaderWidget(label: label),
+      _MessageRow(:final message, :final isOwn) => _bubble(context, message, isOwn),
+    };
   }
 
   Widget _bubble(BuildContext context, MessageModel m, bool isOwn) {
@@ -211,11 +215,8 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
 
   Widget _composerBar(Initialized state) {
     final draft = state.draftAttachment;
-    final canSend = _composer.text.trim().isNotEmpty || draft != null;
     return AppComposerWidget(
       controller: _composer,
-      sendActive: canSend,
-      onChanged: (_) => setState(() {}),
       onAttach: () => _bloc.add(const ChatThreadEvent.attachmentPicked()),
       onSend: _onSend,
       attachment: draft == null
@@ -248,28 +249,28 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
   }
 }
 
-/// Persistent "No connection" strip at the top of the thread (5.2 offline).
-class _OfflineBanner extends StatelessWidget {
-  const _OfflineBanner();
+/// Lightweight thread row descriptors (built once per render, materialized lazily).
+sealed class _ThreadRow {
+  const _ThreadRow();
+}
 
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    return Material(
-      color: colorScheme.surfaceContainer,
-      child: Padding(
-        padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s16, vertical: AppSpacingTokens.s8),
-        child: Row(
-          children: [
-            AppIconWidget(NoxIcons.error, size: 20, color: colorScheme.onSurfaceVariant),
-            SizedBox(width: AppSpacingTokens.s12),
-            Expanded(
-              child: Text(TextConstants.noConnection, style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurface)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+class _SystemRow extends _ThreadRow {
+  const _SystemRow(this.label);
+  final String label;
+}
+
+class _DateRow extends _ThreadRow {
+  const _DateRow(this.label);
+  final String label;
+}
+
+class _AuthorRow extends _ThreadRow {
+  const _AuthorRow(this.label);
+  final String label;
+}
+
+class _MessageRow extends _ThreadRow {
+  const _MessageRow(this.message, this.isOwn);
+  final MessageModel message;
+  final bool isOwn;
 }

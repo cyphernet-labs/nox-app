@@ -13,20 +13,10 @@ Future<T?> showRightSideSheet<T>(BuildContext context, {required Widget child, d
     barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
     barrierColor: colorScheme.scrim.withValues(alpha: 0.5),
     transitionDuration: NoxDuration.sheet,
-    pageBuilder: (context, animation, secondaryAnimation) {
-      return Align(
-        alignment: Alignment.centerRight,
-        child: Material(
-          color: Theme.of(context).colorScheme.surface,
-          elevation: NoxElevation.level5,
-          child: SizedBox(
-            width: width,
-            height: double.infinity,
-            child: SafeArea(child: child),
-          ),
-        ),
-      );
-    },
+    pageBuilder: (context, animation, secondaryAnimation) => Align(
+      alignment: Alignment.centerRight,
+      child: AppSideSheetPanel(width: width, child: child),
+    ),
     transitionBuilder: (context, animation, secondaryAnimation, child) {
       final offset = Tween<Offset>(
         begin: const Offset(1, 0),
@@ -35,4 +25,27 @@ Future<T?> showRightSideSheet<T>(BuildContext context, {required Widget child, d
       return SlideTransition(position: offset, child: child);
     },
   );
+}
+
+/// The right side-sheet panel surface (fixed width, full height, elevated `surface`).
+/// Shared by [showRightSideSheet] (the desktop overlay) and the standalone desktop
+/// preview of the chat card so the panel chrome is defined once.
+class AppSideSheetPanel extends StatelessWidget {
+  const AppSideSheetPanel({super.key, required this.child, this.width = 380});
+
+  final Widget child;
+  final double width;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Theme.of(context).colorScheme.surface,
+      elevation: NoxElevation.level5,
+      child: SizedBox(
+        width: width,
+        height: double.infinity,
+        child: SafeArea(child: child),
+      ),
+    );
+  }
 }

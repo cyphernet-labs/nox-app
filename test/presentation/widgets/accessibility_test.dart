@@ -41,7 +41,7 @@ void main() {
 
   group('accessibility (FR-016)', () {
     testWidgets('composer icon-action tap targets are >= 48x48', (tester) async {
-      await pumpApp(tester, AppComposerWidget(controller: TextEditingController(), sendActive: true, onSend: () {}, onAttach: () {}));
+      await pumpApp(tester, AppComposerWidget(controller: TextEditingController(), onSend: () {}, onAttach: () {}));
 
       final buttons = find.byType(IconButton);
       expect(buttons, findsNWidgets(2));
@@ -74,7 +74,7 @@ void main() {
     });
 
     testWidgets('composer actions expose tooltips/semantics', (tester) async {
-      await pumpApp(tester, AppComposerWidget(controller: TextEditingController(), sendActive: true, onSend: () {}, onAttach: () {}));
+      await pumpApp(tester, AppComposerWidget(controller: TextEditingController(), onSend: () {}, onAttach: () {}));
 
       expect(find.byTooltip(TextConstants.tooltipAttachFile), findsOneWidget);
       expect(find.byTooltip(TextConstants.tooltipSend), findsOneWidget);

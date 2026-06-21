@@ -18,7 +18,6 @@ void main() {
         AppComposerWidget(controller: TextEditingController()),
         AppComposerWidget(
           controller: TextEditingController(text: 'Draft message'),
-          sendActive: true,
           attachment: const AppFileChipWidget(type: FileType.image, name: 'photo.png', size: '1.1 MB', removable: true),
         ),
       ],

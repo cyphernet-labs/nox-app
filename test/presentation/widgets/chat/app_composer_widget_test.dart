@@ -13,22 +13,28 @@ void main() {
       expect(find.text(TextConstants.composerHint), findsOneWidget);
     });
 
-    testWidgets('send is disabled until sendActive', (tester) async {
+    testWidgets('send is disabled until there is text (reactive to the controller)', (tester) async {
       var sends = 0;
       await pumpApp(tester, AppComposerWidget(controller: TextEditingController(), onSend: () => sends++));
-      await tester.tap(find.byType(IconButton).last);
-      expect(sends, 0); // inactive
 
+      await tester.tap(find.byType(IconButton).last);
+      expect(sends, 0); // empty → inactive
+
+      await tester.enterText(find.byType(TextField), 'hi');
+      await tester.pump();
+      await tester.tap(find.byType(IconButton).last);
+      expect(sends, 1); // text present → active
+    });
+
+    testWidgets('send is active when an attachment is staged even with empty text', (tester) async {
+      var sends = 0;
       await pumpApp(
         tester,
-        AppComposerWidget(
-          controller: TextEditingController(text: 'hi'),
-          sendActive: true,
-          onSend: () => sends++,
-        ),
+        AppComposerWidget(controller: TextEditingController(), attachment: const SizedBox(width: 10, height: 10), onSend: () => sends++),
       );
+
       await tester.tap(find.byType(IconButton).last);
-      expect(sends, 1); // active
+      expect(sends, 1);
     });
 
     testWidgets('fires onAttach', (tester) async {

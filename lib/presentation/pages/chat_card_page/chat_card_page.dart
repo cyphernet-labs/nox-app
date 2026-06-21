@@ -16,9 +16,11 @@ import 'package:nox_app/presentation/widgets/chat/app_segmented_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_avatar_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_file_glyph_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
+import 'package:nox_app/presentation/widgets/shell/app_panel_header_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_side_sheet_widget.dart';
 import 'package:nox_app/presentation/widgets/state/app_empty_content_widget.dart';
 import 'package:nox_app/presentation/widgets/state/app_error_widget.dart';
+import 'package:nox_app/presentation/widgets/state/app_notice_strip_widget.dart';
 import 'package:nox_app/presentation/widgets/state/app_progress_widget.dart';
 
 /// Open the chat card (5.4) adaptively: mobile pushes the full screen; desktop
@@ -77,15 +79,8 @@ class ChatCardPage extends StatelessWidget {
                 ),
                 Align(
                   alignment: Alignment.centerRight,
-                  child: Material(
-                    color: colorScheme.surface,
-                    elevation: NoxElevation.level5,
-                    child: SizedBox(
-                      width: 380,
-                      child: SafeArea(
-                        child: ChatCardBody(chat: chat, demo: demo, isDrawer: true),
-                      ),
-                    ),
+                  child: AppSideSheetPanel(
+                    child: ChatCardBody(chat: chat, demo: demo, isDrawer: true),
                   ),
                 ),
               ],
@@ -158,26 +153,10 @@ class _ChatCardBodyState extends State<ChatCardBody> {
   }
 
   Widget _drawerHeader(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Padding(
-          padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s8, AppSpacingTokens.s8, AppSpacingTokens.s8),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(TextConstants.chatInfoTitle, style: textTheme.titleMedium?.copyWith(color: colorScheme.onSurface)),
-              ),
-              IconButton(
-                tooltip: TextConstants.actionClose,
-                icon: AppIconWidget(NoxIcons.close),
-                onPressed: () => Navigator.of(context).maybePop(),
-              ),
-            ],
-          ),
-        ),
+        AppPanelHeaderWidget(title: TextConstants.chatInfoTitle, onClose: () => Navigator.of(context).maybePop()),
         const Divider(height: 1),
       ],
     );
@@ -213,7 +192,7 @@ class _ChatCardBodyState extends State<ChatCardBody> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (initialized.isOffline) const _InlineBanner(message: TextConstants.noConnection),
+        if (initialized.isOffline) const AppNoticeStripWidget(message: TextConstants.noConnection),
         Padding(
           padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s8, AppSpacingTokens.s16, AppSpacingTokens.s8),
           child: Row(
@@ -314,34 +293,6 @@ class _ChatCardBodyState extends State<ChatCardBody> {
           }
         },
         items: [for (final s in ChatCardScenario.values) DropdownMenuItem(value: s, child: Text('scenario: ${s.name}'))],
-      ),
-    );
-  }
-}
-
-/// Persistent inline notice (5.4 offline / inline-error).
-class _InlineBanner extends StatelessWidget {
-  const _InlineBanner({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    return Material(
-      color: colorScheme.surfaceContainer,
-      child: Padding(
-        padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s16, vertical: AppSpacingTokens.s8),
-        child: Row(
-          children: [
-            AppIconWidget(NoxIcons.error, size: 20, color: colorScheme.onSurfaceVariant),
-            SizedBox(width: AppSpacingTokens.s12),
-            Expanded(
-              child: Text(message, style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurface)),
-            ),
-          ],
-        ),
       ),
     );
   }
