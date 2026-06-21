@@ -83,3 +83,11 @@ Material Scaffold; адаптируется под тему. Сверху вни
 | Q7 | Files фильтры | Все вложения вместе, без фильтров по типу |
 | Q8 | Files empty state | Иллюстрация + текст |
 | Q9 | Stats / метаданные | Не показываем (creator/date — только inline-событием в 5.2) |
+
+## Десктоп-раскладка (этап M4, сверено с корпусом)
+
+> Добавлено при реализации M4. Сведено с `nox-desktop-screens/screens/09-drawer.md`.
+
+- Десктоп (`>= 840dp`): карточка — **правый side-sheet 380** (`showRightSideSheet` / `AppSideSheetWidget`) со scrim поверх ленты; открывается из info-действия ThreadHeader (5.2 desktop). Заголовок `Details` + close, аватар + имя, секция Files (List / Grid, Grid — **2 колонки**). Тап по файлу → 5.3 (lightbox).
+- Мобайл — fullscreen push (AppBar back + имя), Grid — **3 колонки**.
+- Форма (правый drawer, не detail-pane swap) — owner-санкция (Clarifications M4; закрывает roadmap Q6).

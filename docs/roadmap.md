@@ -83,8 +83,8 @@
 | Settings-строки | `AppSettingsNavRowWidget`, `AppSettingsSwitchRowWidget`, `AppInfoBannerWidget`, `AppSettingsGroupWidget` | M1 (7.2) | 7.1, 7.3, 7.4, 7.6, 7.7 |
 | Identity card | ✅ `AppIdentityCardWidget` (маска/reveal/copy/QR; desktop no-reveal) + `AppLogoutDialogWidget` + `AppQrSurfaceWidget` (fake-QR, brand-fixed light §9.10) | M3 (7.1) | — |
 | Адаптивный шелл | ✅ `TabBarShell` (bottom bar ↔ `AppNavigationRailWidget`) + `AppListDetailWidget` (двухпанельный контейнер) | M3 (4.1) | 5.1, 5.2, 7.1 |
-| Лента-элементы | редактируемый composer (апгрейд `AppComposerWidget`), `AppDateSeparatorWidget`, `AppAuthorHeaderWidget`, `AppSystemLineWidget` | M4 (5.2) | — |
-| Форматтеры | ✅ относительное время (`DateFormatter.relative`, лестница now/min/h/Yesterday/date — введено в 5.1); размер файла — M4 | M3 | 5.1, 5.3, 5.4 |
+| Лента-элементы | ✅ редактируемый `AppComposerWidget` (апгрейд), `AppDateSeparatorWidget`, `AppAuthorHeaderWidget`, `AppSystemLineWidget`, `AppThreadViewWidget`, `AppThreadHeaderWidget`, `AppSideSheetWidget` | M4 (5.2/5.4) | — |
+| Форматтеры | ✅ относительное время (`DateFormatter.relative` + `daySeparator`); ✅ размер файла (`FileSizeFormatter`, M4) | M3 | 5.1, 5.3, 5.4 |
 
 ---
 
@@ -133,11 +133,11 @@
 
 | # | ID | Экран | Сложн. | Вводит / переиспользует | Мультиплатформа (ключевое отличие) | Зависит |
 |---|---|---|---|---|---|---|
-| [ ] | 5.2 | Chat thread | L | редактируемый composer, date-separator, author-header, system-line; `ChatThreadBloc` (PagingState-в-bloc, optimistic send) | мобайл fullscreen push → десктоп правый detail-pane + ThreadHeader, колонка ≤980px | 5.1, 5.3, 5.4 |
-| [ ] | 5.3 | File view | M | `FileViewBody` (glyph+name+size); форматтер размера; фейк-прогресс загрузки | мобайл fullscreen push (Save) → десктоп lightbox-`Dialog` 520 (Download) | 5.2 |
-| [ ] | 5.4 | Chat card | M | `ChatCardPage` + list/grid-плитки файлов (reuse `AppSegmentedWidget`) | мобайл fullscreen push → десктоп side-sheet/detail-pane (инференс) | 5.2, 5.3 |
+| [x] | 5.2 | Chat thread | L | ✅ редактируемый `AppComposerWidget` + `AppDateSeparatorWidget`/`AppAuthorHeaderWidget`/`AppSystemLineWidget` + `AppThreadViewWidget`/`AppThreadHeaderWidget`; `ChatThreadBloc` (PagingState-в-bloc, optimistic send) над network-only мок-`MessageRepository` | мобайл fullscreen push → десктоп правый thread-pane + ThreadHeader, колонка ≤980px | 5.1, 5.3, 5.4 |
+| [x] | 5.3 | File view | M | ✅ `FileViewPage` (glyph+name+size, без BLoC); `FileSizeFormatter`; фейк-прогресс (`AnimationController`); `showFileView` | мобайл fullscreen push (Save) → десктоп lightbox-`Dialog` 520 (Download) | 5.2 |
+| [x] | 5.4 | Chat card | M | ✅ `ChatCardPage`/`ChatCardBody` + `ChatCardBloc` (sealed) над `ChatRepository.getChatFiles`; list/grid (reuse `AppSegmentedWidget`); `showChatCard`/`AppSideSheetWidget` (корпус `09-drawer`) | мобайл fullscreen push → десктоп правый side-sheet 380 | 5.2, 5.3 |
 
-**Прогресс фазы 1:** 14 / 17 экранов готовы (✅ M1: 1.1 Splash, 3.1 Error, 7.2 Notifications, 7.3 Appearance, 7.4 Language, 7.6 Terms, 7.7 About · ✅ M2: 2.1 Login, 2.2 QR scan, 2.3 Set username, 6.1 Create chat · ✅ M3: 4.1 Tab-bar shell, 7.1 Settings root, 5.1 Chats list) · M0 готов; ✅ M1 (7 / 7), M2 (4 / 4) и M3 (3 / 3) завершены. Осталось — M4 (5.2 Chat thread, 5.3 File view, 5.4 Chat card).
+**Прогресс фазы 1:** **17 / 17 экранов готовы** — фаза 1 завершена (✅ M1: 1.1 Splash, 3.1 Error, 7.2 Notifications, 7.3 Appearance, 7.4 Language, 7.6 Terms, 7.7 About · ✅ M2: 2.1 Login, 2.2 QR scan, 2.3 Set username, 6.1 Create chat · ✅ M3: 4.1 Tab-bar shell, 7.1 Settings root, 5.1 Chats list · ✅ M4: 5.2 Chat thread, 5.3 File view, 5.4 Chat card) · M0 готов; ✅ M1 (7 / 7), M2 (4 / 4), M3 (3 / 3) и M4 (3 / 3) завершены. Стек чата `5.1 → 5.2 → 5.3/5.4` связан реальной навигацией; Галерея экранов без `Coming soon`. Следующее — Фаза 2 (backend).
 
 ---
 
@@ -152,7 +152,7 @@
 | Q3 | Источник иконок экрана ошибки: спека просит `Icons.error_outline`/wifi/cloud, но kit — только SVG `NoxIcons` (нет wifi/cloud/camera) | 3.1 | маппить на имеющиеся `NoxIcons` или добавить SVG |
 | Q4 | ~~Назначение Logout: Splash (1.1) vs Login (2.1) — доки расходятся~~ | 7.1 | **Решено (M3):** → **1.1 Splash** по locked-спеке `settings-root.md`; упоминания Login в десктоп/мобайл-корпусах — дрейф (Принцип II). |
 | Q5 | Appearance: плоские `RadioListTile` (спека) vs карточки с превью-тамбнейлом (корпус) | 7.3 | вероятно карточки |
-| Q6 | Десктоп-корпус отсутствует у 5.4, 7.2–7.7 — десктоп-трактовка выведена по аналогии | мн. | сверить с владельцем при реализации |
+| Q6 | ~~Десктоп-корпус отсутствует у 5.4, 7.2–7.7 — десктоп-трактовка выведена по аналогии~~ | мн. | **Решено (M4):** 5.4 на десктопе — правый side-sheet 380 по корпусу `09-drawer` (Clarifications); 7.2–7.7 — width-cap панели (M1) |
 
 ---
 

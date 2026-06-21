@@ -37,20 +37,17 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
       return;
     }
 
-    await executeLogic(
-      () async {
-        if (_scenario == ChatCardScenario.empty) {
-          emit(const ChatCardState.initialized(files: []));
-          return;
-        }
-        final result = await _chatRepository.getChatFiles(chatId: _chatId);
-        result.match<void>(
-          onData: (files) => emit(ChatCardState.initialized(files: files, isOffline: _scenario == ChatCardScenario.offline)),
-          onError: (_) => emit(const ChatCardState.error()),
-        );
-      },
-      onError: (error, exception, stackTrace) => emit(const ChatCardState.error()),
-    );
+    await executeLogic(() async {
+      if (_scenario == ChatCardScenario.empty) {
+        emit(const ChatCardState.initialized(files: []));
+        return;
+      }
+      final result = await _chatRepository.getChatFiles(chatId: _chatId);
+      result.match<void>(
+        onData: (files) => emit(ChatCardState.initialized(files: files, isOffline: _scenario == ChatCardScenario.offline)),
+        onError: (_) => emit(const ChatCardState.error()),
+      );
+    }, onError: (error, exception, stackTrace) => emit(const ChatCardState.error()));
   }
 
   void _onViewModeChanged(ViewModeChanged event, Emitter<ChatCardState> emit) {

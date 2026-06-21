@@ -13,6 +13,8 @@ void main() {
   // wide-surface widget test. settle: true lets the fake download finish (Loaded).
   goldenTest(
     'file_view_page',
-    () => const FileViewPage(file: MessageAttachment(id: 'f', type: FileType.pdf, name: 'design-spec.pdf', sizeBytes: 2516582)),
+    () => const FileViewPage(
+      file: MessageAttachment(id: 'f', type: FileType.pdf, name: 'design-spec.pdf', sizeBytes: 2516582),
+    ),
   );
 }

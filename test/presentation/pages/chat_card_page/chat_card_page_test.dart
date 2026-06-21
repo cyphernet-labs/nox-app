@@ -12,12 +12,7 @@ import 'package:nox_app/presentation/widgets/primitives/app_file_glyph_widget.da
 
 import '../../../utils/pump_app.dart';
 
-ChatModel _sampleChat() => ChatModel(
-  id: 'chat_0',
-  name: 'Design crit',
-  lastMessagePreview: '',
-  lastMessageAt: DateTime(2024, 1, 1),
-);
+ChatModel _sampleChat() => ChatModel(id: 'chat_0', name: 'Design crit', lastMessagePreview: '', lastMessageAt: DateTime(2024, 1, 1));
 
 void main() {
   setUpAll(() async {

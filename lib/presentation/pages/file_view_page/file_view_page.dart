@@ -22,7 +22,10 @@ Future<void> showFileView(BuildContext context, MessageAttachment file) {
       context: context,
       builder: (_) => Dialog(
         clipBehavior: Clip.antiAlias,
-        child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 520), child: FileViewPage(file: file, inDialog: true)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 520),
+          child: FileViewPage(file: file, inDialog: true),
+        ),
       ),
     );
   }
@@ -101,7 +104,13 @@ class _FileViewPageState extends State<FileViewPage> with SingleTickerProviderSt
   void _simulateError() {
     _controller.stop();
     setState(() {});
-    showAppSnackBar(context, text: TextConstants.fileDownloadError, actionLabel: TextConstants.actionTryAgain, onAction: _startDownload, error: true);
+    showAppSnackBar(
+      context,
+      text: TextConstants.fileDownloadError,
+      actionLabel: TextConstants.actionTryAgain,
+      onAction: _startDownload,
+      error: true,
+    );
   }
 
   double get _progress => _controller.value;
@@ -142,7 +151,11 @@ class _FileViewPageState extends State<FileViewPage> with SingleTickerProviderSt
       ),
       body: Stack(
         children: [
-          if (!_cached) Padding(padding: EdgeInsets.only(top: AppSpacingTokens.s2), child: LinearProgressIndicator(value: _progress)),
+          if (!_cached)
+            Padding(
+              padding: EdgeInsets.only(top: AppSpacingTokens.s2),
+              child: LinearProgressIndicator(value: _progress),
+            ),
           Center(child: _info(context)),
           if (kDebugMode && widget.demo) Align(alignment: Alignment.bottomCenter, child: _debugControls()),
         ],
@@ -158,7 +171,9 @@ class _FileViewPageState extends State<FileViewPage> with SingleTickerProviderSt
       backgroundColor: colorScheme.scrim.withValues(alpha: 0.55),
       body: Stack(
         children: [
-          Positioned.fill(child: GestureDetector(behavior: HitTestBehavior.opaque, onTap: () => Navigator.of(context).maybePop())),
+          Positioned.fill(
+            child: GestureDetector(behavior: HitTestBehavior.opaque, onTap: () => Navigator.of(context).maybePop()),
+          ),
           Center(
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 520),
@@ -208,10 +223,7 @@ class _FileViewPageState extends State<FileViewPage> with SingleTickerProviderSt
           ),
         ),
         if (!_cached) LinearProgressIndicator(value: _progress),
-        Padding(
-          padding: EdgeInsets.all(AppSpacingTokens.s24),
-          child: _info(context),
-        ),
+        Padding(padding: EdgeInsets.all(AppSpacingTokens.s24), child: _info(context)),
         Padding(
           padding: EdgeInsets.fromLTRB(AppSpacingTokens.s24, 0, AppSpacingTokens.s24, AppSpacingTokens.s24),
           child: SizedBox(

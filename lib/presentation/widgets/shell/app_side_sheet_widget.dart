@@ -19,7 +19,11 @@ Future<T?> showRightSideSheet<T>(BuildContext context, {required Widget child, d
         child: Material(
           color: Theme.of(context).colorScheme.surface,
           elevation: NoxElevation.level5,
-          child: SizedBox(width: width, height: double.infinity, child: SafeArea(child: child)),
+          child: SizedBox(
+            width: width,
+            height: double.infinity,
+            child: SafeArea(child: child),
+          ),
         ),
       );
     },

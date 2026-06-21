@@ -80,7 +80,12 @@ class ChatCardPage extends StatelessWidget {
                   child: Material(
                     color: colorScheme.surface,
                     elevation: NoxElevation.level5,
-                    child: SizedBox(width: 380, child: SafeArea(child: ChatCardBody(chat: chat, demo: demo, isDrawer: true))),
+                    child: SizedBox(
+                      width: 380,
+                      child: SafeArea(
+                        child: ChatCardBody(chat: chat, demo: demo, isDrawer: true),
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -162,7 +167,9 @@ class _ChatCardBodyState extends State<ChatCardBody> {
           padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s8, AppSpacingTokens.s8, AppSpacingTokens.s8),
           child: Row(
             children: [
-              Expanded(child: Text(TextConstants.chatInfoTitle, style: textTheme.titleMedium?.copyWith(color: colorScheme.onSurface))),
+              Expanded(
+                child: Text(TextConstants.chatInfoTitle, style: textTheme.titleMedium?.copyWith(color: colorScheme.onSurface)),
+              ),
               IconButton(
                 tooltip: TextConstants.actionClose,
                 icon: AppIconWidget(NoxIcons.close),
@@ -330,7 +337,9 @@ class _InlineBanner extends StatelessWidget {
           children: [
             AppIconWidget(NoxIcons.error, size: 20, color: colorScheme.onSurfaceVariant),
             SizedBox(width: AppSpacingTokens.s12),
-            Expanded(child: Text(message, style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurface))),
+            Expanded(
+              child: Text(message, style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurface)),
+            ),
           ],
         ),
       ),
