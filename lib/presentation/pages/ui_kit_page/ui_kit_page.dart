@@ -85,7 +85,7 @@ class UiKitPage extends StatelessWidget {
             SizedBox(height: AppSpacingTokens.s8),
             AppSegmentedWidget<int>(options: const {0: 'System', 1: 'Light', 2: 'Dark'}, selected: isDark ? 2 : 1, onChanged: (_) {}),
             SizedBox(height: AppSpacingTokens.s8),
-            const AppComposerWidget(value: 'Draft message', sendActive: true),
+            const _ComposerDemo(),
           ]),
           _section(context, 'State', [
             SizedBox(height: AppSpacingTokens.s32, child: const AppProgressWidget()),
@@ -143,5 +143,28 @@ class UiKitPage extends StatelessWidget {
         SizedBox(height: AppSpacingTokens.s16),
       ],
     );
+  }
+}
+
+/// Editable composer demo for the gallery (the composer is controller-driven).
+class _ComposerDemo extends StatefulWidget {
+  const _ComposerDemo();
+
+  @override
+  State<_ComposerDemo> createState() => _ComposerDemoState();
+}
+
+class _ComposerDemoState extends State<_ComposerDemo> {
+  final TextEditingController _controller = TextEditingController(text: 'Draft message');
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AppComposerWidget(controller: _controller, onSend: () {}, onAttach: () {});
   }
 }

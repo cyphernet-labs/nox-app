@@ -12,9 +12,12 @@ import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/presentation/app/widgets/app_theme_toggle.dart';
 import 'package:nox_app/presentation/pages/base/base_state_page.dart';
+import 'package:nox_app/presentation/pages/chat_card_page/chat_card_page.dart';
+import 'package:nox_app/presentation/pages/chat_thread_page/chat_thread_page.dart';
 import 'package:nox_app/presentation/pages/chats_list_page/bloc/chats_list_bloc.dart';
-import 'package:nox_app/presentation/pages/placeholder/route_placeholder_page.dart';
+import 'package:nox_app/presentation/pages/file_view_page/file_view_page.dart';
 import 'package:nox_app/presentation/widgets/chat/app_chat_item_widget.dart';
+import 'package:nox_app/presentation/widgets/chat/app_thread_view_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_search_field_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_list_detail_widget.dart';
@@ -22,6 +25,7 @@ import 'package:nox_app/presentation/widgets/shell/app_splash_hairline_widget.da
 import 'package:nox_app/presentation/widgets/shell/app_wordmark_widget.dart';
 import 'package:nox_app/presentation/widgets/state/app_empty_content_widget.dart';
 import 'package:nox_app/presentation/widgets/state/app_error_widget.dart';
+import 'package:nox_app/presentation/widgets/state/app_notice_strip_widget.dart';
 import 'package:nox_app/presentation/widgets/state/app_progress_widget.dart';
 
 /// 5.1 Chats list — the Chats tab body and the global open chats list. Mobile: an
@@ -97,7 +101,7 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
     if (wide) {
       _bloc.add(ChatsListEvent.chatSelected(chat.id)); // desktop: select, no push
     } else {
-      Navigator.of(context).push(RoutePlaceholderPage.route(destinationLabel: TextConstants.chatThreadPlaceholder));
+      Navigator.of(context).push(ChatThreadPage.route(chat)); // mobile: push the real thread (5.2)
     }
   }
 
@@ -192,8 +196,14 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
       // fall back to the no-selection pane rather than a stale thread placeholder.
       return const AppDetailEmptyWidget(title: TextConstants.chatsNoSelectionTitle, message: TextConstants.chatsNoSelectionMessage);
     }
-    // Thread content (5.2) is built in M4 — show a placeholder for the selected chat.
-    return AppDetailEmptyWidget(title: selected.name, message: TextConstants.comingSoon);
+    // Desktop list-detail: the real thread (5.2) loads in the pane (no push).
+    return AppThreadViewWidget(
+      key: ValueKey(selected.id),
+      chat: selected,
+      showHeader: true,
+      onInfo: () => showChatCard(context, selected),
+      onOpenFile: (file) => showFileView(context, file),
+    );
   }
 
   // ---- Shared ----------------------------------------------------------------
@@ -204,9 +214,9 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
 
   Widget _banners(BuildContext context, ChatsListState state) {
     if (state is! Initialized) return const SizedBox.shrink();
-    if (state.isOffline) return const _NoticeStrip(message: TextConstants.noConnection);
+    if (state.isOffline) return const AppNoticeStripWidget(message: TextConstants.noConnection);
     if (state.hasLoadError) {
-      return _NoticeStrip(message: TextConstants.chatsLoadError, actionLabel: TextConstants.actionTryAgain, onAction: _refresh);
+      return AppNoticeStripWidget(message: TextConstants.chatsLoadError, actionLabel: TextConstants.actionTryAgain, onAction: _refresh);
     }
     return const SizedBox.shrink();
   }
@@ -268,37 +278,4 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
   }
 
   ChatsListScenario _devScenario = ChatsListScenario.normal;
-}
-
-/// Persistent inline notice strip under the search bar (5.1 offline / inline-error).
-/// A themed `surfaceContainer` row with an optional action — avoids `MaterialBanner`'s
-/// non-empty-actions requirement (no placeholder hack) and sits below the AppBar/search.
-class _NoticeStrip extends StatelessWidget {
-  const _NoticeStrip({required this.message, this.actionLabel, this.onAction});
-
-  final String message;
-  final String? actionLabel;
-  final VoidCallback? onAction;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    return Material(
-      color: colorScheme.surfaceContainer,
-      child: Padding(
-        padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s16, vertical: AppSpacingTokens.s8),
-        child: Row(
-          children: [
-            AppIconWidget(NoxIcons.error, size: 20, color: colorScheme.onSurfaceVariant),
-            SizedBox(width: AppSpacingTokens.s12),
-            Expanded(
-              child: Text(message, style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurface)),
-            ),
-            if (actionLabel != null) TextButton(onPressed: onAction, child: Text(actionLabel!)),
-          ],
-        ),
-      ),
-    );
-  }
 }

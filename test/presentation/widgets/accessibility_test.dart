@@ -2,8 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/model/chat/chat_model.dart';
+import 'package:nox_app/domain/model/chat/message_attachment.dart';
+import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/presentation/pages/chat_card_page/chat_card_page.dart';
+import 'package:nox_app/presentation/pages/chat_thread_page/chat_thread_page.dart';
 import 'package:nox_app/presentation/pages/chats_list_page/chats_list_page.dart';
+import 'package:nox_app/presentation/pages/file_view_page/file_view_page.dart';
 import 'package:nox_app/presentation/pages/settings_root_page/settings_root_page.dart';
 import 'package:nox_app/presentation/widgets/shell/tab_bar_shell_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_chat_item_widget.dart';
@@ -35,7 +41,7 @@ void main() {
 
   group('accessibility (FR-016)', () {
     testWidgets('composer icon-action tap targets are >= 48x48', (tester) async {
-      await pumpApp(tester, AppComposerWidget(sendActive: true, onSend: () {}, onAttach: () {}));
+      await pumpApp(tester, AppComposerWidget(controller: TextEditingController(), onSend: () {}, onAttach: () {}));
 
       final buttons = find.byType(IconButton);
       expect(buttons, findsNWidgets(2));
@@ -68,7 +74,7 @@ void main() {
     });
 
     testWidgets('composer actions expose tooltips/semantics', (tester) async {
-      await pumpApp(tester, AppComposerWidget(sendActive: true, onSend: () {}, onAttach: () {}));
+      await pumpApp(tester, AppComposerWidget(controller: TextEditingController(), onSend: () {}, onAttach: () {}));
 
       expect(find.byTooltip(TextConstants.tooltipAttachFile), findsOneWidget);
       expect(find.byTooltip(TextConstants.tooltipSend), findsOneWidget);
@@ -87,7 +93,7 @@ void main() {
       );
       expect(tester.takeException(), isNull);
 
-      await pumpApp(tester, const AppComposerWidget(value: 'A long draft that should reflow'), textScale: 2.0);
+      await pumpApp(tester, AppComposerWidget(controller: TextEditingController(text: 'A long draft that should reflow')), textScale: 2.0);
       expect(tester.takeException(), isNull);
     });
 
@@ -160,6 +166,25 @@ void main() {
 
       await pumpApp(tester, const ChatsListPage(), textScale: 2.0);
       expect(tester.takeException(), isNull, reason: 'ChatsListPage overflowed at 2.0');
+    });
+
+    testWidgets('M4 chat-detail screens survive textScaler 2.0 without overflow', (tester) async {
+      final chat = ChatModel(id: 'chat_0', name: 'Design crit', lastMessagePreview: '', lastMessageAt: DateTime(2024, 1, 1));
+
+      await pumpApp(tester, ChatThreadPage(chat: chat), textScale: 2.0);
+      expect(tester.takeException(), isNull, reason: 'ChatThreadPage overflowed at 2.0');
+
+      await pumpApp(tester, ChatCardPage(chat: chat), textScale: 2.0);
+      expect(tester.takeException(), isNull, reason: 'ChatCardPage overflowed at 2.0');
+
+      await pumpApp(
+        tester,
+        const FileViewPage(
+          file: MessageAttachment(id: 'f', type: FileType.pdf, name: 'design-spec.pdf', sizeBytes: 2516582),
+        ),
+        textScale: 2.0,
+      );
+      expect(tester.takeException(), isNull, reason: 'FileViewPage overflowed at 2.0');
     });
   });
 }

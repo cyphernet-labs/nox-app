@@ -1,0 +1,39 @@
+import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_spacing_tokens.dart';
+import 'package:nox_app/design/nox_icons.dart';
+import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
+
+/// Persistent inline notice strip (offline / inline-error) shown under the
+/// AppBar/search or at the top of a pane: a themed `surfaceContainer` row with an
+/// error glyph, a message, and an optional action. Shared by the chats list (5.1),
+/// the chat thread (5.2) and the chat card (5.4) — sits below the chrome and avoids
+/// `MaterialBanner`'s non-empty-actions requirement.
+class AppNoticeStripWidget extends StatelessWidget {
+  const AppNoticeStripWidget({super.key, required this.message, this.actionLabel, this.onAction});
+
+  final String message;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    return Material(
+      color: colorScheme.surfaceContainer,
+      child: Padding(
+        padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s16, vertical: AppSpacingTokens.s8),
+        child: Row(
+          children: [
+            AppIconWidget(NoxIcons.error, size: 20, color: colorScheme.onSurfaceVariant),
+            SizedBox(width: AppSpacingTokens.s12),
+            Expanded(
+              child: Text(message, style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurface)),
+            ),
+            if (actionLabel != null) TextButton(onPressed: onAction, child: Text(actionLabel!)),
+          ],
+        ),
+      ),
+    );
+  }
+}

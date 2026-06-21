@@ -86,6 +86,7 @@ ios/Runner/Firebase/**/GoogleService-Info.plist
 *.g.dart
 *.freezed.dart
 *.config.dart
+*.mocks.dart
 lib/design/gen/
 
 # --- Golden-test failure diffs (regenerated on mismatch; never committed) ---

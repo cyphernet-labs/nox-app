@@ -29,6 +29,22 @@ class DateFormatter {
     final dayDiff = today.difference(thatDay).inDays;
     if (dayDiff == 0) return '${diff.inHours} ${TextConstants.timeHourSuffix}';
     if (dayDiff == 1) return TextConstants.timeYesterday;
-    return when.year == ref.year ? _dayMonth.format(when) : _dayMonthYear.format(when);
+    return _dateTail(when, ref);
   }
+
+  /// Date-separator label for the chat thread (5.2): `Today` / `Yesterday` /
+  /// `12 May` (same year) / `12 May 2025` (older / future). [now] is injectable for tests.
+  static String daySeparator(DateTime when, {DateTime? now}) {
+    final ref = now ?? DateTime.now();
+    final today = DateTime(ref.year, ref.month, ref.day);
+    final thatDay = DateTime(when.year, when.month, when.day);
+    final dayDiff = today.difference(thatDay).inDays;
+    if (dayDiff == 0) return TextConstants.dateToday;
+    if (dayDiff == 1) return TextConstants.dateYesterday;
+    // A future-dated message (clock skew) falls through to its actual date, not Today.
+    return _dateTail(when, ref);
+  }
+
+  /// Shared date tail: `d MMM` within the same year, otherwise `d MMM y`.
+  static String _dateTail(DateTime when, DateTime ref) => when.year == ref.year ? _dayMonth.format(when) : _dayMonthYear.format(when);
 }

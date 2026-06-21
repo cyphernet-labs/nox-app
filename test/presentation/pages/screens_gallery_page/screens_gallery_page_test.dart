@@ -10,9 +10,12 @@ import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
 import 'package:nox_app/presentation/pages/about_page/about_page.dart';
 import 'package:nox_app/presentation/pages/appearance_page/appearance_page.dart';
+import 'package:nox_app/presentation/pages/chat_card_page/chat_card_page.dart';
+import 'package:nox_app/presentation/pages/chat_thread_page/chat_thread_page.dart';
 import 'package:nox_app/presentation/pages/chats_list_page/chats_list_page.dart';
 import 'package:nox_app/presentation/pages/create_chat_page/create_chat_page.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page.dart';
+import 'package:nox_app/presentation/pages/file_view_page/file_view_page.dart';
 import 'package:nox_app/presentation/pages/language_page/language_page.dart';
 import 'package:nox_app/presentation/pages/login_page/login_page.dart';
 import 'package:nox_app/presentation/pages/notifications_page/notifications_page.dart';
@@ -53,17 +56,50 @@ void main() {
     expect(find.text('About'), findsOneWidget);
   });
 
-  testWidgets('un-wired screens render as disabled "coming soon" stubs', (tester) async {
+  testWidgets('every screen row is wired — no "coming soon" stubs remain (phase 1 complete)', (tester) async {
     await pumpApp(tester, underTest());
 
-    // A late-milestone screen (5.2) stays a disabled stub through M1–M3; scroll to
-    // it (the early rows are now all wired) and confirm the stub affordance.
-    final chatThread = find.text('Chat thread');
-    await tester.scrollUntilVisible(chatThread, 200);
-    expect(find.text(TextConstants.comingSoon), findsWidgets);
-    final tile = tester.widget<ListTile>(find.ancestor(of: chatThread, matching: find.byType(ListTile)));
-    expect(tile.enabled, isFalse);
-    expect(tile.onTap, isNull);
+    // M4 wires the last screens (5.2 / 5.3 / 5.4); the gallery has no stub left.
+    expect(find.text(TextConstants.comingSoon), findsNothing);
+  });
+
+  testWidgets('activated Chat thread row (5.2) opens ChatThreadPage', (tester) async {
+    await pumpApp(tester, underTest());
+
+    final row = find.widgetWithText(ListTile, 'Chat thread');
+    await tester.scrollUntilVisible(row, 200);
+    await tester.ensureVisible(row);
+    await tester.pumpAndSettle();
+    await tester.tap(row);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ChatThreadPage), findsOneWidget);
+  });
+
+  testWidgets('activated File view row (5.3) opens FileViewPage', (tester) async {
+    await pumpApp(tester, underTest());
+
+    final row = find.widgetWithText(ListTile, 'File view');
+    await tester.scrollUntilVisible(row, 200);
+    await tester.ensureVisible(row);
+    await tester.pumpAndSettle();
+    await tester.tap(row);
+    await tester.pumpAndSettle(); // lets the fake download timer finish (no pending timer)
+
+    expect(find.byType(FileViewPage), findsOneWidget);
+  });
+
+  testWidgets('activated Chat card row (5.4) opens ChatCardPage', (tester) async {
+    await pumpApp(tester, underTest());
+
+    final row = find.widgetWithText(ListTile, 'Chat card');
+    await tester.scrollUntilVisible(row, 200);
+    await tester.ensureVisible(row);
+    await tester.pumpAndSettle();
+    await tester.tap(row);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ChatCardPage), findsOneWidget);
   });
 
   testWidgets('theme toggle dispatches to AppRootBloc without throwing', (tester) async {

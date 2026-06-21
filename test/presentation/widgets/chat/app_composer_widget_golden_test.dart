@@ -12,14 +12,13 @@ import '../../../utils/golden.dart';
 void main() {
   goldenTest(
     'app_composer_widget',
-    () => const Column(
+    () => Column(
       mainAxisAlignment: MainAxisAlignment.end,
       children: [
-        AppComposerWidget(),
+        AppComposerWidget(controller: TextEditingController()),
         AppComposerWidget(
-          value: 'Draft message',
-          sendActive: true,
-          attachment: AppFileChipWidget(type: FileType.image, name: 'photo.png', size: '1.1 MB', removable: true),
+          controller: TextEditingController(text: 'Draft message'),
+          attachment: const AppFileChipWidget(type: FileType.image, name: 'photo.png', size: '1.1 MB', removable: true),
         ),
       ],
     ),

@@ -77,3 +77,10 @@ Material Scaffold; адаптируется под тему. Сверху вни
 | Q7 | Когда скачиваем | Auto при открытии 5.3 (или из кэша, если уже есть) |
 | Q8 | Long-press | Ничего |
 | Q9 | Loading UI | Linear progress bar с % |
+
+## Десктоп-раскладка (этап M4, сверено с корпусом)
+
+> Добавлено при реализации M4. Сведено с `nox-desktop-screens/screens/08-file.md`.
+
+- Десктоп (`>= 840dp`): просмотр файла — центрированный **lightbox-`Dialog` ~520** со scrim (`showFileView`): header (имя + close), крупный глиф, имя, размер, кнопка `Download` (или `Downloading… N%`). Мобайл — fullscreen push (AppBar back + имя + `Save`).
+- UI-фаза: скачивание — фейк-прогресс (`AnimationController`), Save / Download — no-op + snackbar (`// TODO(backend):`). Экран без BLoC — карв-аут блюпринта 05 §5.1 (презентационный, без репозитория).
