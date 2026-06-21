@@ -10,6 +10,7 @@ import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
 import 'package:nox_app/presentation/pages/about_page/about_page.dart';
 import 'package:nox_app/presentation/pages/appearance_page/appearance_page.dart';
+import 'package:nox_app/presentation/pages/chat_card_page/chat_card_page.dart';
 import 'package:nox_app/presentation/pages/chat_thread_page/chat_thread_page.dart';
 import 'package:nox_app/presentation/pages/chats_list_page/chats_list_page.dart';
 import 'package:nox_app/presentation/pages/create_chat_page/create_chat_page.dart';
@@ -55,17 +56,11 @@ void main() {
     expect(find.text('About'), findsOneWidget);
   });
 
-  testWidgets('un-wired screens render as disabled "coming soon" stubs', (tester) async {
+  testWidgets('every screen row is wired — no "coming soon" stubs remain (phase 1 complete)', (tester) async {
     await pumpApp(tester, underTest());
 
-    // A late-milestone screen (5.4 Chat card) stays a disabled stub until M4 US3;
-    // scroll to it (the earlier rows are now all wired) and confirm the stub affordance.
-    final chatCard = find.text('Chat card');
-    await tester.scrollUntilVisible(chatCard, 200);
-    expect(find.text(TextConstants.comingSoon), findsWidgets);
-    final tile = tester.widget<ListTile>(find.ancestor(of: chatCard, matching: find.byType(ListTile)));
-    expect(tile.enabled, isFalse);
-    expect(tile.onTap, isNull);
+    // M4 wires the last screens (5.2 / 5.3 / 5.4); the gallery has no stub left.
+    expect(find.text(TextConstants.comingSoon), findsNothing);
   });
 
   testWidgets('activated Chat thread row (5.2) opens ChatThreadPage', (tester) async {
@@ -92,6 +87,19 @@ void main() {
     await tester.pumpAndSettle(); // lets the fake download timer finish (no pending timer)
 
     expect(find.byType(FileViewPage), findsOneWidget);
+  });
+
+  testWidgets('activated Chat card row (5.4) opens ChatCardPage', (tester) async {
+    await pumpApp(tester, underTest());
+
+    final row = find.widgetWithText(ListTile, 'Chat card');
+    await tester.scrollUntilVisible(row, 200);
+    await tester.ensureVisible(row);
+    await tester.pumpAndSettle();
+    await tester.tap(row);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ChatCardPage), findsOneWidget);
   });
 
   testWidgets('theme toggle dispatches to AppRootBloc without throwing', (tester) async {

@@ -12,6 +12,7 @@ import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/presentation/app/widgets/app_theme_toggle.dart';
 import 'package:nox_app/presentation/pages/base/base_state_page.dart';
+import 'package:nox_app/presentation/pages/chat_card_page/chat_card_page.dart';
 import 'package:nox_app/presentation/pages/chat_thread_page/chat_thread_page.dart';
 import 'package:nox_app/presentation/pages/chats_list_page/bloc/chats_list_bloc.dart';
 import 'package:nox_app/presentation/pages/file_view_page/file_view_page.dart';
@@ -199,6 +200,7 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
       key: ValueKey(selected.id),
       chat: selected,
       showHeader: true,
+      onInfo: () => showChatCard(context, selected),
       onOpenFile: (file) => showFileView(context, file),
     );
   }

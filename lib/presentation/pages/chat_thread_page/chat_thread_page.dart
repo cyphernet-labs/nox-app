@@ -3,6 +3,7 @@ import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/presentation/pages/chat_card_page/chat_card_page.dart';
 import 'package:nox_app/presentation/pages/file_view_page/file_view_page.dart';
 import 'package:nox_app/presentation/widgets/chat/app_thread_view_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
@@ -48,6 +49,7 @@ class ChatThreadPage extends StatelessWidget {
               chat: chat,
               demo: demo,
               showHeader: true,
+              onInfo: () => showChatCard(context, chat),
               onOpenFile: (file) => showFileView(context, file),
             ),
           );
@@ -59,7 +61,8 @@ class ChatThreadPage extends StatelessWidget {
               icon: AppIconWidget(NoxIcons.arrowBack),
               onPressed: () => Navigator.of(context).maybePop(),
             ),
-            title: Text(chat.name),
+            // Tapping the chat name opens the chat card (5.4).
+            title: InkWell(onTap: () => showChatCard(context, chat), child: Text(chat.name)),
           ),
           body: AppThreadViewWidget(chat: chat, demo: demo, onOpenFile: (file) => showFileView(context, file)),
         );
