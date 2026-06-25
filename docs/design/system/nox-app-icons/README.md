@@ -79,13 +79,13 @@ For non-Flutter packaging use `macos/nox.icns` directly.
 Once a clean high-res/vector master exists, point the package at it:
 ```yaml
 flutter_launcher_icons:
-  image_path: "nox-app-icons/source/icon-master-1024.png"
+  image_path: "docs/design/system/nox-app-icons/source/icon-master-1024.png"
   android: true
   ios: true
   windows: { generate: true }
   macos: { generate: true }
   adaptive_icon_background: "#151919"
-  adaptive_icon_foreground: "nox-app-icons/source/icon-foreground-1024.png"
+  adaptive_icon_foreground: "docs/design/system/nox-app-icons/source/icon-foreground-1024.png"
 ```
 
 ---
