@@ -1,31 +1,43 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/theme/nox_brand.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/general/constants.dart';
+import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page_params.dart';
 import 'package:nox_app/presentation/pages/placeholder/route_placeholder_page.dart';
 import 'package:nox_app/presentation/widgets/shell/app_wordmark_widget.dart';
 
-/// Stub auth-resolution outcome. In the real cold-start flow this comes from the
-/// stored-identifier/session check (backend phase); here it is chosen via the dev
-/// control while the screen is previewed standalone from the gallery.
+/// Stub auth-resolution outcome for the standalone (gallery) preview only.
 enum SplashOutcome { hasId, noId, error }
 
 /// 1.1 Splash — brand launch screen. Brand-fixed dark canvas (`NoxBrand.canvasDark`,
-/// theme-independent — one of the two sanctioned theming exceptions), centered
-/// colored logo + 'NOX' wordmark with a one-shot fade+scale reveal. The screen is
-/// passive; routing happens no earlier than the reveal completes and waits for a
-/// resolved [SplashOutcome] (FR-011/FR-012/FR-013).
+/// theme-independent), centered colored logo + 'NOX' wordmark with a one-shot
+/// fade+scale reveal. The screen is passive.
+///
+/// In the real flow (`demo == false`) the splash is the app entry point under
+/// [AppRootBloc]: it plays the reveal and, once the first app state has resolved
+/// (`isReady`), dispatches `ApplyAppState` to release the first navigation
+/// (FR-006). In demo mode (gallery) it keeps a dev outcome selector and routes
+/// to placeholders, touching no real state.
 class SplashPage extends StatefulWidget {
-  const SplashPage({super.key});
+  const SplashPage({super.key, this.demo = false});
+
+  final bool demo;
 
   static Route<void> route() => MaterialPageRoute<void>(
     builder: (_) => const SplashPage(),
+    settings: const RouteSettings(name: '/splash'),
+  );
+
+  /// Gallery entry: adds the dev outcome selector and previews routing locally.
+  static Route<void> routeDemo() => MaterialPageRoute<void>(
+    builder: (_) => const SplashPage(demo: true),
     settings: const RouteSettings(name: '/splash'),
   );
 
@@ -37,6 +49,11 @@ class _SplashPageState extends State<SplashPage> with SingleTickerProviderStateM
   late final AnimationController _controller;
   late final Animation<double> _reveal;
   bool _animationDone = false;
+
+  // Real-flow gate.
+  bool _applied = false;
+
+  // Demo-flow (gallery) preview routing.
   SplashOutcome? _outcome;
   bool _routed = false;
 
@@ -51,7 +68,11 @@ class _SplashPageState extends State<SplashPage> with SingleTickerProviderStateM
       ..addStatusListener((status) {
         if (status == AnimationStatus.completed) {
           _animationDone = true;
-          _maybeRoute();
+          if (widget.demo) {
+            _maybeRoute();
+          } else {
+            _maybeApply();
+          }
         }
       });
     _reveal = CurvedAnimation(parent: _controller, curve: NoxEasing.emphasizedDecelerate);
@@ -64,17 +85,25 @@ class _SplashPageState extends State<SplashPage> with SingleTickerProviderStateM
     super.dispose();
   }
 
+  // Real flow: release the first navigation once the reveal is done AND the first
+  // app state has resolved. The AppRoot routing listener does the actual push.
+  void _maybeApply() {
+    if (widget.demo || _applied || !_animationDone || !mounted) return;
+    if (!context.read<AppRootBloc>().state.isReady) return;
+    _applied = true;
+    context.read<AppRootBloc>().add(const AppRootEvent.applyAppState());
+  }
+
   void _select(SplashOutcome outcome) {
     setState(() => _outcome = outcome);
     _maybeRoute();
   }
 
-  // Routes no earlier than the reveal completes AND an outcome is resolved.
+  // Demo flow only: routes no earlier than the reveal completes AND an outcome is
+  // resolved. Uses push (so back returns to the gallery).
   void _maybeRoute() {
     if (_routed || !_animationDone || _outcome == null || !mounted) return;
     _routed = true;
-    // Preview uses push (so back returns to the gallery).
-    // TODO(backend): pushReplacement in the real cold-start flow (no return to splash).
     switch (_outcome!) {
       case SplashOutcome.hasId:
         Navigator.of(context).push(RoutePlaceholderPage.route(destinationLabel: 'Chats shell (4.1)'));
@@ -85,7 +114,6 @@ class _SplashPageState extends State<SplashPage> with SingleTickerProviderStateM
           AppErrorPage.route(
             params: ErrorPageParams.fatal(
               mode: ErrorPageMode.blocking,
-              // Preview escape (Try again pops back to splash); the real cold-start flow re-resolves auth.
               onRetry: () async {
                 await Future<void>.delayed(const Duration(milliseconds: 400));
                 if (mounted) Navigator.of(context).maybePop();
@@ -98,7 +126,7 @@ class _SplashPageState extends State<SplashPage> with SingleTickerProviderStateM
 
   @override
   Widget build(BuildContext context) {
-    return AnnotatedRegion<SystemUiOverlayStyle>(
+    final canvas = AnnotatedRegion<SystemUiOverlayStyle>(
       value: const SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
         systemNavigationBarColor: Colors.transparent,
@@ -131,9 +159,9 @@ class _SplashPageState extends State<SplashPage> with SingleTickerProviderStateM
                 ),
               ),
             ),
-            // Dev-only preview control (debug builds only); the real cold-start splash
-            // has no controls (FR-012) and routes from the auth resolver instead.
-            if (kDebugMode)
+            // Dev-only preview control — gallery (demo) builds only. The real splash
+            // has no controls (FR-012) and routes from the resolved app state.
+            if (kDebugMode && widget.demo)
               Positioned(
                 left: 0,
                 right: 0,
@@ -143,6 +171,16 @@ class _SplashPageState extends State<SplashPage> with SingleTickerProviderStateM
           ],
         ),
       ),
+    );
+
+    if (widget.demo) return canvas;
+
+    // Real flow: also release the first navigation if the app state resolves AFTER
+    // the reveal finishes (the reveal may win the race).
+    return BlocListener<AppRootBloc, AppRootState>(
+      listenWhen: (previous, current) => !previous.isReady && current.isReady,
+      listener: (context, state) => _maybeApply(),
+      child: canvas,
     );
   }
 }

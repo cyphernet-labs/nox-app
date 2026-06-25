@@ -3,14 +3,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:nox_app/design/theme/app_theme.dart';
+import 'package:nox_app/domain/model/app/app_state_type.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
-import 'package:nox_app/presentation/pages/home_page/home_page.dart';
+import 'package:nox_app/presentation/pages/login_page/login_page.dart';
+import 'package:nox_app/presentation/pages/set_username_page/set_username_page.dart';
+import 'package:nox_app/presentation/pages/splash_page/splash_page.dart';
+import 'package:nox_app/presentation/widgets/shell/tab_bar_shell_widget.dart';
 
 /// Root MaterialApp: theme from AppTheme, themeMode from AppRootBloc, design-scale
-/// via ScreenUtil with OS font-scale neutralized. Home is the launcher
-/// ([HomePage]) — no real product features yet, so it opens the UI-kit gallery.
+/// via ScreenUtil with OS font-scale neutralized. Entry is the [SplashPage]; the
+/// app-state spine ([AppStateRepository] → [AppRootBloc]) drives top-level
+/// navigation by swapping the root route on each applied state change.
 class AppRoot extends StatefulWidget {
   const AppRoot({super.key});
 
@@ -21,6 +26,10 @@ class AppRoot extends StatefulWidget {
 class _AppRootState extends State<AppRoot> {
   late final AppRootBloc _bloc;
   final _navigatorKey = GlobalKey<NavigatorState>();
+
+  // The phase currently applied to the navigator. Starts at `init` (the Splash
+  // home route); the first transition away from it uses pushReplacement.
+  AppStateType _appliedPhase = AppStateType.init;
 
   @override
   void initState() {
@@ -34,39 +43,77 @@ class _AppRootState extends State<AppRoot> {
     super.dispose();
   }
 
+  Route<void>? _routeForState(AppStateType state) {
+    switch (state) {
+      case AppStateType.unauthorized:
+        return LoginPage.route();
+      case AppStateType.registrationPending:
+        return SetUsernamePage.route();
+      case AppStateType.authorized:
+        return TabBarShell.route();
+      case AppStateType.init:
+        return null; // stay on Splash
+    }
+  }
+
+  void _onAppStateRouting(BuildContext context, AppRootState state) {
+    final navigator = _navigatorKey.currentState;
+    final target = state.appliedAppState.state;
+    final route = _routeForState(target);
+    final wasInit = _appliedPhase == AppStateType.init;
+    _appliedPhase = target;
+    if (navigator == null || route == null) return;
+    // First transition away from Splash replaces it; any later auth boundary
+    // blows away the whole stack (no back across the boundary).
+    if (wasInit) {
+      navigator.pushReplacement(route);
+    } else {
+      navigator.pushAndRemoveUntil(route, (_) => false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return BlocProvider<AppRootBloc>.value(
       value: _bloc,
-      child: BlocBuilder<AppRootBloc, AppRootState>(
-        builder: (context, state) {
-          return MediaQuery(
-            data: MediaQuery.of(context).copyWith(textScaler: TextScaler.noScaling),
-            child: ScreenUtilInit(
-              designSize: Constants.designSize,
-              minTextAdapt: true,
-              builder: (context, child) {
-                return MaterialApp(
-                  title: TextConstants.appName,
-                  navigatorKey: _navigatorKey,
-                  theme: AppTheme.light(),
-                  darkTheme: AppTheme.dark(),
-                  themeMode: state.themeMode,
-                  scrollBehavior: const MaterialScrollBehavior().copyWith(
-                    dragDevices: {PointerDeviceKind.mouse, PointerDeviceKind.touch, PointerDeviceKind.trackpad, PointerDeviceKind.stylus},
-                  ),
-                  // Inner MediaQuery re-pins TextScaler inside MaterialApp's subtree so the
-                  // OS font scale cannot leak back into AppBar/Scaffold/etc (blueprint 06 §3.2).
-                  builder: (context, child) => MediaQuery(
-                    data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(1.0)),
-                    child: child ?? const SizedBox.shrink(),
-                  ),
-                  home: const HomePage(),
-                );
-              },
-            ),
-          );
-        },
+      child: MultiBlocListener(
+        listeners: [
+          BlocListener<AppRootBloc, AppRootState>(
+            listenWhen: (previous, current) => previous.appliedAppState.state != current.appliedAppState.state,
+            listener: _onAppStateRouting,
+          ),
+        ],
+        child: BlocBuilder<AppRootBloc, AppRootState>(
+          buildWhen: (previous, current) => previous.themeMode != current.themeMode,
+          builder: (context, state) {
+            return MediaQuery(
+              data: MediaQuery.of(context).copyWith(textScaler: TextScaler.noScaling),
+              child: ScreenUtilInit(
+                designSize: Constants.designSize,
+                minTextAdapt: true,
+                builder: (context, child) {
+                  return MaterialApp(
+                    title: TextConstants.appName,
+                    navigatorKey: _navigatorKey,
+                    theme: AppTheme.light(),
+                    darkTheme: AppTheme.dark(),
+                    themeMode: state.themeMode,
+                    scrollBehavior: const MaterialScrollBehavior().copyWith(
+                      dragDevices: {PointerDeviceKind.mouse, PointerDeviceKind.touch, PointerDeviceKind.trackpad, PointerDeviceKind.stylus},
+                    ),
+                    // Inner MediaQuery re-pins TextScaler inside MaterialApp's subtree so the
+                    // OS font scale cannot leak back into AppBar/Scaffold/etc (blueprint 06 §3.2).
+                    builder: (context, child) => MediaQuery(
+                      data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(1.0)),
+                      child: child ?? const SizedBox.shrink(),
+                    ),
+                    home: const SplashPage(),
+                  );
+                },
+              ),
+            );
+          },
+        ),
       ),
     );
   }

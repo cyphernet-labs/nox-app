@@ -21,6 +21,7 @@ import 'package:nox_app/presentation/pages/language_page/language_body.dart';
 import 'package:nox_app/presentation/pages/language_page/language_page.dart';
 import 'package:nox_app/presentation/pages/notifications_page/notifications_body.dart';
 import 'package:nox_app/presentation/pages/notifications_page/notifications_page.dart';
+import 'package:nox_app/presentation/pages/screens_gallery_page/screens_gallery_page.dart';
 import 'package:nox_app/presentation/pages/settings_root_page/bloc/settings_root_bloc.dart';
 import 'package:nox_app/presentation/pages/splash_page/splash_page.dart';
 import 'package:nox_app/presentation/pages/terms_page/terms_body.dart';
@@ -163,6 +164,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
           AppSettingsNavRowWidget(title: TextConstants.settingsAboutTitle, onTap: () => _openSection(AboutPage.route())),
           const Divider(height: 1),
           AppSettingsNavRowWidget(title: TextConstants.logoutRow, color: Theme.of(context).colorScheme.error, onTap: _logout),
+          if (kDebugMode) AppSettingsNavRowWidget(title: 'Screens gallery (dev)', onTap: () => _openSection(ScreensGalleryPage.route())),
           if (kDebugMode && widget.demo) _devControl(),
         ],
       ),
@@ -209,6 +211,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
               item(_Section.about, TextConstants.settingsAboutTitle),
               const Divider(height: 1),
               AppSettingsNavRowWidget(title: TextConstants.logoutRow, color: colorScheme.error, onTap: _logout),
+              if (kDebugMode) AppSettingsNavRowWidget(title: 'Screens gallery (dev)', onTap: () => _openSection(ScreensGalleryPage.route())),
               if (kDebugMode && widget.demo) _devControl(),
             ],
           ),
