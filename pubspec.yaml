@@ -73,6 +73,11 @@ dev_dependencies:
   mockito: ^5.6.4   # 5.6.5+ needs analyzer ^13 which conflicts with injectable_generator (analyzer <13)
   bloc_test: ^10.0.0
 
+  # Launcher-icon regeneration (NOT run in 008-app-icons — current install is a drop-in of the
+  # hand-crafted set in docs/design/system/nox-app-icons/; see contracts/flutter-launcher-icons.md).
+  # Kept as the reproducible regen path for the final vector logo (then switch bg to brand #0C2424).
+  flutter_launcher_icons: ^0.14.4
+
 flutter:
   uses-material-design: true
   assets:
@@ -93,6 +98,20 @@ flutter:
       fonts:
         - asset: assets/fonts/RobotoMono-Regular.ttf
           weight: 400
+
+# Launcher-icon regeneration config — DO NOT run the generator in 008-app-icons (it would overwrite
+# the hand-crafted per-platform set and does not cover Linux). Reproducible path for the future vector.
+flutter_launcher_icons:
+  image_path: "docs/design/system/nox-app-icons/source/icon-master-1024.png"
+  android: true
+  ios: true
+  macos:
+    generate: true
+  windows:
+    generate: true
+  adaptive_icon_background: "#151919"   # temporary (raster backdrop); switch to brand #0C2424 with the vector
+  adaptive_icon_foreground: "docs/design/system/nox-app-icons/source/icon-foreground-1024.png"
+  remove_alpha_ios: true
 
 flutter_gen:
   output: lib/design/gen/

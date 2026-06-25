@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Adaptive-icon background. Matches the logo artwork's own backdrop so the
+         scaled foreground sits seamlessly. Switch to brand canvasDark #0C2424 once
+         the final vector logo (with transparent ground) replaces the raster. -->
+    <color name="ic_launcher_background">#151919</color>
+</resources>
