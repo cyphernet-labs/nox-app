@@ -10,7 +10,7 @@ void main() {
   Finder signInButton() => find.widgetWithText(FilledButton, TextConstants.loginSignIn);
 
   testWidgets('Sign in is disabled when empty and enabled after typing', (tester) async {
-    await pumpApp(tester, const LoginPage());
+    await pumpApp(tester, const LoginPage(demo: true));
 
     expect(tester.widget<FilledButton>(signInButton()).onPressed, isNull);
 
@@ -21,7 +21,7 @@ void main() {
   });
 
   testWidgets('signing in with a new id routes to the set-username placeholder', (tester) async {
-    await pumpApp(tester, const LoginPage());
+    await pumpApp(tester, const LoginPage(demo: true));
 
     await tester.enterText(find.byType(TextField), 'fresh-identifier');
     await tester.pump();
@@ -34,7 +34,7 @@ void main() {
   });
 
   testWidgets('Scan QR opens a stubbed placeholder', (tester) async {
-    await pumpApp(tester, const LoginPage());
+    await pumpApp(tester, const LoginPage(demo: true));
 
     await tester.tap(find.widgetWithText(TextButton, TextConstants.loginScanQr));
     await tester.pumpAndSettle();

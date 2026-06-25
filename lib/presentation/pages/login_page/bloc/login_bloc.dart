@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
+import 'package:nox_app/di/global_aliases.dart';
+import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/general/onboarding_mock_data.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
@@ -15,12 +17,17 @@ part 'login_state.dart';
 /// validation of the ID (FR-011); the sign-in outcome is stubbed via a debug
 /// selector + the mock dataset (UI-only). `// TODO(backend): real sign-in.`
 class LoginBloc extends BaseBloc<LoginEvent, LoginState> {
-  LoginBloc() : super(const LoginState()) {
+  LoginBloc({this.demo = false}) : super(const LoginState()) {
     on<IdChanged>(_onIdChanged);
     on<ClipboardChecked>(_onClipboardChecked);
     on<SignInRequested>(_onSignInRequested);
     on<NavigationHandled>(_onNavigationHandled);
   }
+
+  /// In demo mode (gallery) the sign-in outcome is a debug stand-in and navigation
+  /// is local; in the real flow it persists the identifier via [AuthRepository] and
+  /// the app-state spine drives navigation.
+  final bool demo;
 
   void _onIdChanged(IdChanged event, Emitter<LoginState> emit) {
     // Editing clears any inline error.
@@ -38,10 +45,22 @@ class LoginBloc extends BaseBloc<LoginEvent, LoginState> {
   Future<void> _onSignInRequested(SignInRequested event, Emitter<LoginState> emit) async {
     if (!state.canSubmit) return;
     emit(state.copyWith(status: LoginStatus.loading));
+    if (demo) {
+      await executeLogic(() async {
+        // Debug stand-in outcome; the page navigates to a placeholder.
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+        emit(state.copyWith(status: _resolve(event.outcome, state.id)));
+      }, onError: (error, exception, stackTrace) => emit(state.copyWith(status: LoginStatus.errorNetwork)));
+      return;
+    }
+    // Real flow: persist the identifier + re-derive app state; the spine navigates
+    // (new id → Set username, registered id → Chats). No client-side validation (FR-011).
     await executeLogic(() async {
-      // TODO(backend): real sign-in request; the outcome is a debug stand-in.
-      await Future<void>.delayed(const Duration(milliseconds: 400));
-      emit(state.copyWith(status: _resolve(event.outcome, state.id)));
+      final result = await authRepository.signIn(identifier: state.id);
+      result.match<void>(
+        onData: (_) => emit(state.copyWith(status: LoginStatus.idle)),
+        onError: (_) => emit(state.copyWith(status: LoginStatus.errorNetwork)),
+      );
     }, onError: (error, exception, stackTrace) => emit(state.copyWith(status: LoginStatus.errorNetwork)));
   }
 

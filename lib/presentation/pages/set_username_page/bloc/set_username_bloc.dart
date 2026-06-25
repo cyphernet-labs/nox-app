@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
+import 'package:nox_app/di/global_aliases.dart';
+import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/general/username_rules.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
@@ -16,12 +18,18 @@ part 'set_username_state.dart';
 /// field is pre-filled with the server-assigned `User<random>` (a stub here).
 /// `// TODO(backend): real uniqueness + save.`
 class SetUsernameBloc extends BaseBloc<SetUsernameEvent, SetUsernameState> {
-  SetUsernameBloc({String initialName = defaultName}) : super(SetUsernameState(name: initialName, status: UsernameStatus.prefilled)) {
+  SetUsernameBloc({String initialName = defaultName, this.demo = false})
+    : super(SetUsernameState(name: initialName, status: UsernameStatus.prefilled)) {
     on<NameChanged>(_onNameChanged);
     on<AvailabilityRequested>(_onAvailabilityRequested, transformer: debounceRestartable());
     on<DoneRequested>(_onDoneRequested);
     on<NavigationHandled>(_onNavigationHandled);
   }
+
+  /// In demo mode (gallery) the save outcome is a debug stand-in and navigation is
+  /// local; in the real flow it marks onboarding complete via [AuthRepository] and
+  /// the app-state spine drives navigation to the shell.
+  final bool demo;
 
   void _onNavigationHandled(NavigationHandled event, Emitter<SetUsernameState> emit) {
     emit(state.copyWith(status: UsernameStatus.valid));
@@ -60,10 +68,22 @@ class SetUsernameBloc extends BaseBloc<SetUsernameEvent, SetUsernameState> {
   Future<void> _onDoneRequested(DoneRequested event, Emitter<SetUsernameState> emit) async {
     if (!state.canSubmit) return;
     emit(state.copyWith(status: UsernameStatus.submitting));
+    if (demo) {
+      await executeLogic(() async {
+        // Debug stand-in outcome; the page navigates to a placeholder.
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+        emit(state.copyWith(status: _statusFor(event.outcome)));
+      }, onError: (error, exception, stackTrace) => emit(state.copyWith(status: UsernameStatus.navFatal)));
+      return;
+    }
+    // Real flow: mark onboarding complete (caching the chosen label); the spine
+    // navigates to the shell (authorized).
     await executeLogic(() async {
-      // TODO(backend): real save; the outcome is a debug stand-in.
-      await Future<void>.delayed(const Duration(milliseconds: 400));
-      emit(state.copyWith(status: _statusFor(event.outcome)));
+      final result = await authRepository.completeOnboarding(label: state.name);
+      result.match<void>(
+        onData: (_) => emit(state.copyWith(status: UsernameStatus.valid)),
+        onError: (_) => emit(state.copyWith(status: UsernameStatus.navFatal)),
+      );
     }, onError: (error, exception, stackTrace) => emit(state.copyWith(status: UsernameStatus.navFatal)));
   }
 

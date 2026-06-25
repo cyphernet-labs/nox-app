@@ -100,15 +100,15 @@ description: "Task list for 009-app-state-flow implementation"
 
 ### Implementation
 
-- [ ] T027 [US2] `LoginBloc`/`LoginPage`: real-режим (`!widget.demo`) — `signInRequested` success → `authRepository.signIn(state.id)` (persist + `fetchAppState`); убрать placeholder-пуши `navNewId`/`navRegistered` в real-режиме; ошибка → inline `errorNetwork`; demo-режим сохраняет debug-outcome-обвязку — в `lib/presentation/pages/login_page/login_page.dart` (+ `bloc/login_bloc.dart`)
-- [ ] T028 [US2] `SetUsernameBloc`/`SetUsernamePage`: real-режим — `navSuccess`/skip → `authRepository.completeOnboarding(label)` (→ `authorized`); demo-режим сохраняет placeholder — в `lib/presentation/pages/set_username_page/set_username_page.dart` (+ bloc)
-- [ ] T029 [US2] `SettingsRootPage._logout`: real-режим (`!widget.demo`) — после подтверждения `AppLogoutDialogWidget.show` → `authRepository.logout(forced: false)` (заменить `Navigator.push(SplashPage.route())`); demo-режим сохраняет текущее — в `lib/presentation/pages/settings_root_page/settings_root_page.dart`
-- [ ] T030 [US2] `fvm dart format -l 140 <изменённые paths>` + `make analyze`
+- [X] T027 [US2] `LoginBloc`/`LoginPage`: real-режим (`!widget.demo`) — `signInRequested` success → `authRepository.signIn(state.id)` (persist + `fetchAppState`); убрать placeholder-пуши `navNewId`/`navRegistered` в real-режиме; ошибка → inline `errorNetwork`; demo-режим сохраняет debug-outcome-обвязку — в `lib/presentation/pages/login_page/login_page.dart` (+ `bloc/login_bloc.dart`)
+- [X] T028 [US2] `SetUsernameBloc`/`SetUsernamePage`: real-режим — `navSuccess`/skip → `authRepository.completeOnboarding(label)` (→ `authorized`); demo-режим сохраняет placeholder — в `lib/presentation/pages/set_username_page/set_username_page.dart` (+ bloc)
+- [X] T029 [US2] `SettingsRootPage._logout`: real-режим (`!widget.demo`) — после подтверждения `AppLogoutDialogWidget.show` → `authRepository.logout(forced: false)` (заменить `Navigator.push(SplashPage.route())`); demo-режим сохраняет текущее — в `lib/presentation/pages/settings_root_page/settings_root_page.dart`
+- [X] T030 [US2] `fvm dart format -l 140 <изменённые paths>` + `make analyze`
 
 ### Tests
 
-- [ ] T031 [P] [US2] widget/flow-тест: `signIn('newid')`→Set username; `signIn('registered')`→Chats; стек обнулён (`pushAndRemoveUntil`) — в `test/presentation/app/app_root_signin_flow_test.dart` (mockito-моки repo / test-env DI)
-- [ ] T032 [P] [US2] widget/flow-тест logout: из `authorized` → Settings logout → Login; перезапуск-резолюция (`SessionRepository` сохранил → cold-start даёт Chats; после `clear()` → Login) — в `test/presentation/app/app_root_logout_flow_test.dart`
+- [X] T031 [P] [US2] widget/flow-тест: `signIn('newid')`→Set username; `signIn('registered')`→Chats; стек обнулён (`pushAndRemoveUntil`) — в `test/presentation/app/app_root_signin_flow_test.dart` (mockito-моки repo / test-env DI)
+- [X] T032 [P] [US2] widget/flow-тест logout: из `authorized` → Settings logout → Login; перезапуск-резолюция (`SessionRepository` сохранил → cold-start даёт Chats; после `clear()` → Login) — в `test/presentation/app/app_root_logout_flow_test.dart`
 
 **Checkpoint**: US1 + US2 работают; полный transition-флоу.
 

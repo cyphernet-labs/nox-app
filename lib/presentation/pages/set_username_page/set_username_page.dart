@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
+import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/pages/base/base_state_page.dart';
@@ -49,7 +52,7 @@ class _SetUsernamePageState extends BaseStatePage<SetUsernamePage> {
   @override
   void initState() {
     super.initState();
-    _bloc = SetUsernameBloc();
+    _bloc = SetUsernameBloc(demo: widget.demo);
     _controller = TextEditingController(text: _bloc.state.name);
   }
 
@@ -64,8 +67,13 @@ class _SetUsernamePageState extends BaseStatePage<SetUsernamePage> {
   void _done() => _bloc.add(SetUsernameEvent.doneRequested(outcome: _outcome));
 
   void _skip() {
-    // Skip / back keeps the current name; standalone stub destination.
-    Navigator.of(context).push(RoutePlaceholderPage.route(destinationLabel: 'Chats shell (4.1)'));
+    if (widget.demo) {
+      // Skip / back keeps the current name; standalone stub destination.
+      Navigator.of(context).push(RoutePlaceholderPage.route(destinationLabel: 'Chats shell (4.1)'));
+      return;
+    }
+    // Real flow: keep the server-assigned name, mark onboarding complete; the spine navigates.
+    unawaited(authRepository.completeOnboarding());
   }
 
   void _onStatus(BuildContext context, SetUsernameState state) {

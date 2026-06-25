@@ -50,7 +50,7 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
   @override
   void initState() {
     super.initState();
-    _bloc = LoginBloc();
+    _bloc = LoginBloc(demo: widget.demo);
     WidgetsBinding.instance.addObserver(this);
     _refreshClipboard();
   }

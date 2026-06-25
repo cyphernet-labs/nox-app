@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
+import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/app/widgets/app_theme_toggle.dart';
@@ -112,7 +113,14 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
 
   Future<void> _logout() async {
     final confirmed = await AppLogoutDialogWidget.show(context);
-    if (confirmed == true && mounted) Navigator.of(context).push(SplashPage.route());
+    if (confirmed != true || !mounted) return;
+    if (widget.demo) {
+      // Gallery preview: hop to the standalone (demo) Splash without touching real state.
+      Navigator.of(context).push(SplashPage.routeDemo());
+    } else {
+      // Real flow: full wipe + re-derive app state; the spine returns to Login.
+      await authRepository.logout();
+    }
   }
 
   void _openSection(Route<void> route) => Navigator.of(context).push(route);
@@ -211,7 +219,8 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
               item(_Section.about, TextConstants.settingsAboutTitle),
               const Divider(height: 1),
               AppSettingsNavRowWidget(title: TextConstants.logoutRow, color: colorScheme.error, onTap: _logout),
-              if (kDebugMode) AppSettingsNavRowWidget(title: 'Screens gallery (dev)', onTap: () => _openSection(ScreensGalleryPage.route())),
+              if (kDebugMode)
+                AppSettingsNavRowWidget(title: 'Screens gallery (dev)', onTap: () => _openSection(ScreensGalleryPage.route())),
               if (kDebugMode && widget.demo) _devControl(),
             ],
           ),
