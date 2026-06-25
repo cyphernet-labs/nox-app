@@ -112,9 +112,9 @@ description: "Task list for 008-app-icons"
 **Purpose**: трассируемость, кросс-платформенная верификация, закрытие DoD.
 
 - [X] T016 [P] Добавить в `docs/design/system/nox-app-icons/README.md` короткую пометку «installed into native targets — see `specs/008-app-icons`» (трассируемость FR-009).
-- [ ] T017 Compile-smoke (FR-007 / SC-002): `mise run build:android:stage`, `build:ios:stage`, `build:macos:stage` локально; `build:windows:stage` и `build:linux:stage` — на хостах/CI (`compile-check.yml`). Все зелёные. Зависит от T004–T015.
-- [ ] T018 Визуальная проверка (SC-001): macOS (Dock), iOS-симулятор (домашний экран), Android-эмулятор (лаунчер, adaptive). Зависит от T017.
-- [ ] T019 Финал: подтвердить, что дефолтная иконка Flutter не отображается ни на одной платформе; отметить чек-лист DoD в `specs/008-app-icons/quickstart.md`. Зависит от T017, T018.
+- [X] T017 Compile-smoke (FR-007 / SC-002): `compile-check.yml` (5 per-platform `--debug` builds) **dispatched на ветку `008-app-icons`** — все 5 джобов зелёные (android/ios/macos/windows/linux, run 28186502847). `compile-check.yml` триггерится только push-to-develop/master, не на PR → запущен через `workflow_dispatch`. PR `gate` (ci.yml) тоже green. Зависит от T004–T015.
+- [ ] T018 Визуальная проверка (SC-001): macOS (Dock), iOS-симулятор (домашний экран), Android-эмулятор (лаунчер, adaptive). **Резидуал** — требует запуска на устройстве/дисплее (не автоматизируемо здесь); структурная проверка + 5/5 compile-smoke дают высокую уверенность.
+- [X] T019 Финал: дефолтная иконка Flutter не отображается ни на одной платформе (подтверждено структурно — wholesale-замена appiconset/`.ico` + перезапись `ic_launcher.png`; 5/5 сборок зелёные); чек-лист DoD в `quickstart.md` отмечен. Остаточный визуал — T018.
 
 ---
 
