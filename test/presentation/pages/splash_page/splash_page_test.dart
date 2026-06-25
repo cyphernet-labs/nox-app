@@ -12,7 +12,7 @@ import '../../../utils/pump_app.dart';
 
 void main() {
   testWidgets('Splash renders the brand logo + wordmark on the brand-fixed dark canvas', (tester) async {
-    await pumpApp(tester, const SplashPage(), settle: false);
+    await pumpApp(tester, const SplashPage(demo: true), settle: false);
 
     // Logo image + the NOX wordmark are in the reveal group.
     expect(find.byType(Image), findsWidgets);
@@ -25,7 +25,7 @@ void main() {
   });
 
   testWidgets('Splash stays put until an outcome is chosen, then routes', (tester) async {
-    await pumpApp(tester, const SplashPage(), settle: false);
+    await pumpApp(tester, const SplashPage(demo: true), settle: false);
     await tester.pump(NoxDuration.splashIn); // finish the reveal
 
     // Reveal done but no outcome chosen yet → no navigation.
@@ -38,7 +38,7 @@ void main() {
   });
 
   testWidgets('Splash routes the error outcome to the blocking error screen (3.1)', (tester) async {
-    await pumpApp(tester, const SplashPage(), settle: false);
+    await pumpApp(tester, const SplashPage(demo: true), settle: false);
     await tester.pump(NoxDuration.splashIn);
 
     await tester.tap(find.text('Error'));

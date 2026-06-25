@@ -134,7 +134,7 @@ class _ScreenSection {
 const List<_ScreenSection> _sections = [
   _ScreenSection(
     title: 'Launch',
-    entries: [_ScreenEntry(id: '1.1', title: 'Splash', route: SplashPage.route)],
+    entries: [_ScreenEntry(id: '1.1', title: 'Splash', route: SplashPage.routeDemo)],
   ),
   _ScreenSection(
     title: 'Onboarding',

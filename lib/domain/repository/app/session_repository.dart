@@ -8,11 +8,7 @@ abstract class SessionRepository {
   Future<RepositoryResult<SessionModel?>> readSession();
 
   /// Persists the identifier (secure storage) + onboarding flag / label (prefs).
-  Future<RepositoryResult<bool>> saveIdentifier({
-    required String identifier,
-    required bool onboardingComplete,
-    String? label,
-  });
+  Future<RepositoryResult<bool>> saveIdentifier({required String identifier, required bool onboardingComplete, String? label});
 
   /// Marks first-login onboarding complete (+ optionally caches the label).
   Future<RepositoryResult<bool>> setOnboardingComplete({String? label});

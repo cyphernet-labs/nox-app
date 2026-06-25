@@ -30,11 +30,11 @@ void main() {
         label: anyNamed('label'),
       ),
     ).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
-    when(session.setOnboardingComplete(label: anyNamed('label')))
-        .thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
+    when(session.setOnboardingComplete(label: anyNamed('label'))).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
     when(session.clear()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
-    when(appState.fetchAppState(sessionExpired: anyNamed('sessionExpired')))
-        .thenAnswer((_) async => RepositoryResult<AppStateModel>.success(data: AppStateModel.init()));
+    when(
+      appState.fetchAppState(sessionExpired: anyNamed('sessionExpired')),
+    ).thenAnswer((_) async => RepositoryResult<AppStateModel>.success(data: AppStateModel.init()));
   });
 
   test('signIn under a registered identifier persists onboardingComplete=true', () async {

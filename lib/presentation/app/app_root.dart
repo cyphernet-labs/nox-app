@@ -44,6 +44,10 @@ class _AppRootState extends State<AppRoot> {
     super.dispose();
   }
 
+  /// Pure, unit-testable seam (FR-016): always allows the top-level route swap.
+  /// Replace with a real predicate if a flow ever owns its own navigation.
+  bool _shouldSuppressTopLevelRouting(AppStateType previous, AppStateType next) => false;
+
   Route<void>? _routeForState(AppStateType state) {
     switch (state) {
       case AppStateType.unauthorized:
@@ -62,6 +66,9 @@ class _AppRootState extends State<AppRoot> {
     final target = state.appliedAppState.state;
     final route = _routeForState(target);
     final wasInit = _appliedPhase == AppStateType.init;
+    // Extension point (FR-016): a flow that owns its own navigation can veto the
+    // top-level stack replacement. Neutral for now — NOX has no such flow.
+    if (_shouldSuppressTopLevelRouting(_appliedPhase, target)) return;
     _appliedPhase = target;
     if (navigator == null || route == null) return;
     // First transition away from Splash replaces it; any later auth boundary

@@ -10,11 +10,8 @@ part 'app_state_model.freezed.dart';
 /// model emitted by a forced logout.
 @freezed
 abstract class AppStateModel with _$AppStateModel {
-  const factory AppStateModel({
-    required AppStateType state,
-    required SessionModel? session,
-    @Default(false) bool sessionExpired,
-  }) = _AppStateModel;
+  const factory AppStateModel({required AppStateType state, required SessionModel? session, @Default(false) bool sessionExpired}) =
+      _AppStateModel;
 
   /// Boot sentinel (before the first resolution).
   factory AppStateModel.init() => const AppStateModel(state: AppStateType.init, session: null);

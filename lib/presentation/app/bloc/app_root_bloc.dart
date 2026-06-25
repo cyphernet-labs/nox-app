@@ -29,9 +29,7 @@ class AppRootBloc extends BaseBloc<AppRootEvent, AppRootState> {
   StreamSubscription<RepositoryResult<AppStateModel>>? _appStateSubscription;
 
   FutureOr<void> _onInitialize(Initialize event, Emitter<AppRootState> emit) async {
-    _appStateSubscription ??= appStateRepository.watchAppState().listen(
-      (result) => add(AppRootEvent.updateAppState(result: result)),
-    );
+    _appStateSubscription ??= appStateRepository.watchAppState().listen((result) => add(AppRootEvent.updateAppState(result: result)));
   }
 
   FutureOr<void> _onSetTheme(SetTheme event, Emitter<AppRootState> emit) async {

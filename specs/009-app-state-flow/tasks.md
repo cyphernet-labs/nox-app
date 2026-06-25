@@ -138,11 +138,11 @@ description: "Task list for 009-app-state-flow implementation"
 
 **Purpose**: drift-fix блюпринта, security-гард, финальный гейт.
 
-- [ ] T037 [P] Drift-fix блюпринта (Принцип II/III): в `docs/blueprints/mobile/05-presentation-layer.md` + `06-theming.md` заменить `AlertDialogHelper.showErrorSnackBar` → реальный `AppFeedbackHelper.showAppSnackBar` (`lib/presentation/helpers/app_feedback_helper.dart`); обогатить `05 §6.1` двухфазным splash-gate + `registrationPending`; снять отложенный gap `auth/app-state-spine` в `docs/blueprints/mobile/README.md`
-- [ ] T038 [P] Security-гард (Принцип I): ревью новых repo — `identifier` НЕ попадает в логи (логируются только исключения через `BaseRepositoryHelper`); подтвердить отсутствие `logRepository`-вызовов с сырым identifier
-- [ ] T039 Запустить `make gate` (generate → format → analyze → test, goldens исключены) — зелёный
-- [ ] T040 Прогнать `quickstart.md` сценарии 1–6 (mobile + macOS `fvm flutter run -d macos`; desktop secure-storage compile-smoke через `mise run build:<platform>:stage` / dispatched `compile-check`; Windows/Linux visual — отложен)
-- [ ] T041 [P] Отметить в `docs/roadmap-phase2.md` пункт app-state-spine как реализованный
+- [X] T037 [P] Drift-fix блюпринта (Принцип II/III): в `docs/blueprints/mobile/05-presentation-layer.md` + `06-theming.md` заменить `AlertDialogHelper.showErrorSnackBar` → реальный `AppFeedbackHelper.showAppSnackBar` (`lib/presentation/helpers/app_feedback_helper.dart`); обогатить `05 §6.1` двухфазным splash-gate + `registrationPending`; снять отложенный gap `auth/app-state-spine` в `docs/blueprints/mobile/README.md`
+- [X] T038 [P] Security-гард (Принцип I): ревью новых repo — `identifier` НЕ попадает в логи (логируются только исключения через `BaseRepositoryHelper`); подтвердить отсутствие `logRepository`-вызовов с сырым identifier
+- [X] T039 Запустить `make gate` (generate → format → analyze → test, goldens исключены) — зелёный
+- [X] T040 Прогнать `quickstart.md` сценарии 1–6 (mobile + macOS `fvm flutter run -d macos`; desktop secure-storage compile-smoke через `mise run build:<platform>:stage` / dispatched `compile-check`; Windows/Linux visual — отложен)
+- [X] T041 [P] Отметить в `docs/roadmap-phase2.md` пункт app-state-spine как реализованный
 
 ---
 

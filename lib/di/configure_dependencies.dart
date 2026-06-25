@@ -8,5 +8,7 @@ final getIt = GetIt.instance;
 /// environment (Environment.dev / .prod / .test).
 @InjectableInit(initializerName: r'$initGetIt')
 Future<void> configureDependencies(String env) async {
-  getIt.$initGetIt(environment: env);
+  // Awaited: with a `@preResolve` dependency (SharedPreferences) the generated
+  // `$initGetIt` is async, so registration only completes once it is awaited.
+  await getIt.$initGetIt(environment: env);
 }

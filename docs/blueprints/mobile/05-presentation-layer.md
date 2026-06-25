@@ -862,7 +862,7 @@ class AppRootBloc extends BaseBloc<AppRootEvent, AppRootState> {
 }
 ```
 
-> **Опциональный auth/splash-флоу.** Расширенный вариант оборачивает `MaterialApp` в `BlocListener`, swap'ающий корневой маршрут (splash → login → home) через `_navigatorKey.currentState!.pushAndRemoveUntil(...)` при смене глобальной фазы app-state. Этот флоу (вместе с `SplashPage` / `LoginPage` / global-state-репозиторием) **опущен из обязательного скелета**. Добавляйте только если домену нужна аутентификация, опираясь на nullable app-state-поле в `AppRootState` + событие `UpdateAppState`, питаемое подпиской на репозиторий.
+> **Auth/splash-флоу — реализован в Feature-009 (`specs/009-app-state-flow/`).** `AppRoot` оборачивает `MaterialApp` в `BlocListener`, swap'ающий корневой маршрут через `_navigatorKey.currentState!.pushReplacement(...)` (первый переход со splash) либо `pushAndRemoveUntil(..., (_) => false)` (последующие — обнуляют стек через авторизационную границу) при смене **применённой** фазы app-state. Несущие части: `AppStateRepository` (in-memory `BehaviorSubject`-**проекция** сигналов сессии, **без DAO**) → расширенный `AppRootState` с **двухфазным применением** (`lastAppState`/`appliedAppState`/`isReady`: первый переход удержан за splash-анимацией, последующие применяются немедленно) + события `UpdateAppState`/`ApplyAppState`, питаемые подпиской `_onInitialize` на `watchAppState()`. Состояния NOX: `init` / `unauthorized` / `registrationPending` (first-login `Set username`) / `authorized`. Сигналы сессии — `SessionModel { identifier, label?, onboardingComplete }` (`identifier` → `flutter_secure_storage`, флаги → `shared_preferences`); мутации оркеструет `AuthRepository` по контракту «мутируй → `fetchAppState()`». One-shot `sessionExpired`-snackbar — через `AppFeedbackHelper.showAppSnackBar(error: true)` (post-frame, navigator context). Реальный сетевой sign-in и 401-перехватчик — TBD (бэкенд не выбран). Первый переход различается по `previous.appliedAppState == init` (без `NavigatorObserver`). Полная мотивация — `docs/app-state-flow-migration.md`.
 
 ### 6.2 `AppRoot` — корневой `MaterialApp`
 
@@ -1184,6 +1184,8 @@ class AppEmptyContentWidget extends StatelessWidget {
 ## 8. Сюрфейсинг ошибок — `AlertDialogHelper` (единственный канал)
 
 `AlertDialogHelper` — **единственный** канал пользовательских snackbar'ов. Никогда не показывайте сырой текст исключения — BLoC сначала предпереводит исключение в строку (геттер `_translate`, §3.3). Для in-body error-ветки — `AppErrorWidget` (§7.2). Цвета берутся через токены / `context.appColors`.
+
+> **Соответствие коду (drift-fix, Принцип III).** Реальный хелпер в `lib/` называется **`AppFeedbackHelper.showAppSnackBar(context, text:, error:)`** (`lib/presentation/helpers/app_feedback_helper.dart`) — используйте его; `AlertDialogHelper`/`showErrorSnackBar` в шаблоне ниже — историческое имя из скелета. Оставшиеся упоминания `AlertDialogHelper` в `00/08/11/16` — отложенный doc-дрейф (привести к `AppFeedbackHelper` отдельным change-set'ом).
 
 **Файл:** `lib/presentation/helpers/alert_dialog_helper.dart`
 
