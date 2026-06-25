@@ -48,17 +48,17 @@ abstract class SessionRepository {
   Future<RepositoryResult<SessionModel?>> readSession();
 
   /// Пишет identifier (secure storage) + onboardingComplete/label (prefs).
-  Future<RepositoryResult<void>> saveIdentifier({
+  Future<RepositoryResult<bool>> saveIdentifier({
     required String identifier,
     required bool onboardingComplete,
     String? label,
   });
 
   /// Помечает онбординг завершённым (+ опционально кэширует label).
-  Future<RepositoryResult<void>> setOnboardingComplete({String? label});
+  Future<RepositoryResult<bool>> setOnboardingComplete({String? label});
 
   /// Полный wipe: secureStorage.deleteAll() + удаление prefs-ключей.
-  Future<RepositoryResult<void>> clear();
+  Future<RepositoryResult<bool>> clear();
 }
 ```
 
@@ -80,14 +80,14 @@ abstract class AuthRepository {
   /// Стаб входа (бэкенд TBD): пишет сессию, затем re-deriv'ит app-state.
   /// registeredIds ⇒ onboardingComplete=true (→ authorized); иначе false
   /// (→ registrationPending). Клиентской валидации формата нет (FR-011).
-  Future<RepositoryResult<void>> signIn({required String identifier});
+  Future<RepositoryResult<bool>> signIn({required String identifier});
 
   /// Завершение first-login (Set username 2.3): onboardingComplete=true → fetchAppState.
-  Future<RepositoryResult<void>> completeOnboarding({String? label});
+  Future<RepositoryResult<bool>> completeOnboarding({String? label});
 
   /// Единственный путь выхода. Только forced передаёт sessionExpired=true.
   /// forceLogout == logout(forced: true) (программный/dev; 401-триггер — FR-017).
-  Future<RepositoryResult<void>> logout({bool forced = false});
+  Future<RepositoryResult<bool>> logout({bool forced = false});
 }
 ```
 

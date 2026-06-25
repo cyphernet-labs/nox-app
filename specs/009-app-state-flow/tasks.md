@@ -28,8 +28,8 @@ description: "Task list for 009-app-state-flow implementation"
 
 **Purpose**: нативные/проектные предусловия secure-storage.
 
-- [ ] T001 [P] Добавить Keychain Sharing entitlement `keychain-access-groups` (с `$(AppIdentifierPrefix)nox`) в `macos/Runner/DebugProfile.entitlements` и `macos/Runner/Release.entitlements` (обязательное предусловие `flutter_secure_storage` на macOS; сейчас отсутствует)
-- [ ] T002 [P] Sanity: подтвердить в `pubspec.yaml` наличие `flutter_secure_storage ^10.3.1`, `shared_preferences ^2.5.5`, `rxdart 0.28.0`; прогнать `make deps`
+- [X] T001 [P] Добавить Keychain Sharing entitlement `keychain-access-groups` (с `$(AppIdentifierPrefix)nox`) в `macos/Runner/DebugProfile.entitlements` и `macos/Runner/Release.entitlements` (обязательное предусловие `flutter_secure_storage` на macOS; сейчас отсутствует)
+- [X] T002 [P] Sanity: подтвердить в `pubspec.yaml` наличие `flutter_secure_storage ^10.3.1`, `shared_preferences ^2.5.5`, `rxdart 0.28.0`; прогнать `make deps`
 
 ---
 
@@ -41,27 +41,27 @@ description: "Task list for 009-app-state-flow implementation"
 
 ### Domain
 
-- [ ] T003 [P] Создать `enum AppStateType { init, unauthorized, registrationPending, authorized }` в `lib/domain/model/app/app_state_type.dart`
-- [ ] T004 [P] Создать `@freezed SessionModel { String identifier, String? label, @Default(false) bool onboardingComplete }` (только `.freezed.dart`, без JSON) в `lib/domain/model/app/session_model.dart`
-- [ ] T005 Создать `@freezed AppStateModel { AppStateType state, SessionModel? session, @Default(false) bool sessionExpired }` + `factory AppStateModel.init()` в `lib/domain/model/app/app_state_model.dart` (зависит T003, T004)
-- [ ] T006 [P] Создать контракт `SessionRepository` (`readSession`/`saveIdentifier`/`setOnboardingComplete`/`clear`, все → `RepositoryResult<…>`) в `lib/domain/repository/app/session_repository.dart` (см. `contracts/repositories.md`)
-- [ ] T007 Создать контракт `AppStateRepository` (`watchAppState`/`fetchAppState({sessionExpired})`/`currentState`) в `lib/domain/repository/app/app_state_repository.dart` (зависит T003, T005)
-- [ ] T008 [P] Создать контракт `AuthRepository` (`signIn`/`completeOnboarding`/`logout({forced})`) в `lib/domain/repository/app/auth_repository.dart`
+- [X] T003 [P] Создать `enum AppStateType { init, unauthorized, registrationPending, authorized }` в `lib/domain/model/app/app_state_type.dart`
+- [X] T004 [P] Создать `@freezed SessionModel { String identifier, String? label, @Default(false) bool onboardingComplete }` (только `.freezed.dart`, без JSON) в `lib/domain/model/app/session_model.dart`
+- [X] T005 Создать `@freezed AppStateModel { AppStateType state, SessionModel? session, @Default(false) bool sessionExpired }` + `factory AppStateModel.init()` в `lib/domain/model/app/app_state_model.dart` (зависит T003, T004)
+- [X] T006 [P] Создать контракт `SessionRepository` (`readSession`/`saveIdentifier`/`setOnboardingComplete`/`clear`, все → `RepositoryResult<…>`) в `lib/domain/repository/app/session_repository.dart` (см. `contracts/repositories.md`)
+- [X] T007 Создать контракт `AppStateRepository` (`watchAppState`/`fetchAppState({sessionExpired})`/`currentState`) в `lib/domain/repository/app/app_state_repository.dart` (зависит T003, T005)
+- [X] T008 [P] Создать контракт `AuthRepository` (`signIn`/`completeOnboarding`/`logout({forced})`) в `lib/domain/repository/app/auth_repository.dart`
 
 ### DI / Data
 
-- [ ] T009 Создать `@module abstract class RegisterModule` (`FlutterSecureStorage get secureStorage`, `@preResolve Future<SharedPreferences> get prefs`) в `lib/di/register_module.dart`
-- [ ] T010 Реализовать `SessionRepositoryImpl with BaseRepositoryHelper` (`@LazySingleton(as: SessionRepository, env:[dev,prod,test])`; identifier → secure storage `session.identifier`; `onboardingComplete`/`label` → prefs `session.onboarding_complete`/`session.label`; `clear()` = `deleteAll()` + remove prefs-keys) в `lib/data/repository/app/session_repository_impl.dart` (зависит T004, T006, T009)
-- [ ] T011 Реализовать `AppStateRepositoryImpl with BaseRepositoryHelper` (`@LazySingleton(as: AppStateRepository, env:[…])`; один `BehaviorSubject<RepositoryResult<AppStateModel>>` кормится императивно в `fetchAppState`, БЕЗ DAO; резолюция по `data-model.md §4`; `watchAppState` lazy-resolve-then-forward; `currentState => _subject.valueOrNull?.data?.state`; `@disposeMethod close()`) в `lib/data/repository/app/app_state_repository_impl.dart` (зависит T005, T007, T010)
-- [ ] T012 Реализовать `AuthRepositoryImpl with BaseRepositoryHelper` (`@LazySingleton(as: AuthRepository, env:[…])`; `signIn` → `registeredIds`-маппинг `onboardingComplete`, save + `fetchAppState()`; `completeOnboarding` → setOnboardingComplete + fetch; `logout({forced})` → `clear()` + `fetchAppState(sessionExpired: forced)`) в `lib/data/repository/app/auth_repository_impl.dart` (зависит T008, T010, T011)
-- [ ] T013 Добавить global-алиасы `AppStateRepository get appStateRepository => getIt<AppStateRepository>();` и `AuthRepository get authRepository => getIt<AuthRepository>();` в `lib/di/global_aliases.dart`
-- [ ] T014 Прогнать `make generate` (freezed: `AppStateModel`/`SessionModel`; injectable: 3 repo + `RegisterModule`) → затем `make analyze` (zero errors)
+- [X] T009 Создать `@module abstract class RegisterModule` (`FlutterSecureStorage get secureStorage`, `@preResolve Future<SharedPreferences> get prefs`) в `lib/di/register_module.dart`
+- [X] T010 Реализовать `SessionRepositoryImpl with BaseRepositoryHelper` (`@LazySingleton(as: SessionRepository, env:[dev,prod,test])`; identifier → secure storage `session.identifier`; `onboardingComplete`/`label` → prefs `session.onboarding_complete`/`session.label`; `clear()` = `deleteAll()` + remove prefs-keys) в `lib/data/repository/app/session_repository_impl.dart` (зависит T004, T006, T009)
+- [X] T011 Реализовать `AppStateRepositoryImpl with BaseRepositoryHelper` (`@LazySingleton(as: AppStateRepository, env:[…])`; один `BehaviorSubject<RepositoryResult<AppStateModel>>` кормится императивно в `fetchAppState`, БЕЗ DAO; резолюция по `data-model.md §4`; `watchAppState` lazy-resolve-then-forward; `currentState => _subject.valueOrNull?.data?.state`; `@disposeMethod close()`) в `lib/data/repository/app/app_state_repository_impl.dart` (зависит T005, T007, T010)
+- [X] T012 Реализовать `AuthRepositoryImpl with BaseRepositoryHelper` (`@LazySingleton(as: AuthRepository, env:[…])`; `signIn` → `registeredIds`-маппинг `onboardingComplete`, save + `fetchAppState()`; `completeOnboarding` → setOnboardingComplete + fetch; `logout({forced})` → `clear()` + `fetchAppState(sessionExpired: forced)`) в `lib/data/repository/app/auth_repository_impl.dart` (зависит T008, T010, T011)
+- [X] T013 Добавить global-алиасы `AppStateRepository get appStateRepository => getIt<AppStateRepository>();` и `AuthRepository get authRepository => getIt<AuthRepository>();` в `lib/di/global_aliases.dart`
+- [X] T014 Прогнать `make generate` (freezed: `AppStateModel`/`SessionModel`; injectable: 3 repo + `RegisterModule`) → затем `make analyze` (zero errors)
 
 ### Tests (data layer)
 
-- [ ] T015 [P] Unit-тест `SessionRepositoryImpl` (round-trip save→read; read без identifier → `null`; `clear()` стирает secure + prefs; ошибка backend → `RepositoryResult.error`; mockito-моки `FlutterSecureStorage`/`SharedPreferences`) в `test/data/repository/app/session_repository_impl_test.dart`
-- [ ] T016 [P] Unit-тест `AppStateRepositoryImpl` (все ветки резолюции: нет id→`unauthorized`; id+`!onboardingComplete`→`registrationPending`; id+`onboardingComplete`→`authorized`; ошибка хранилища→`unauthorized`; `currentState==null` до резолюции; реплей последнего значения новому подписчику; `fetchAppState(sessionExpired:true)` несёт флаг только на `unauthorized`) в `test/data/repository/app/app_state_repository_impl_test.dart`
-- [ ] T017 [P] Unit-тест `AuthRepositoryImpl` (`signIn('registered')`→`authorized`; `signIn('newid')`→`registrationPending`; `completeOnboarding`→`authorized`; `logout(forced:false)`→`unauthorized`,`sessionExpired=false`; `logout(forced:true)`→`sessionExpired=true`) в `test/data/repository/app/auth_repository_impl_test.dart`
+- [X] T015 [P] Unit-тест `SessionRepositoryImpl` (round-trip save→read; read без identifier → `null`; `clear()` стирает secure + prefs; ошибка backend → `RepositoryResult.error`; mockito-моки `FlutterSecureStorage`/`SharedPreferences`) в `test/data/repository/app/session_repository_impl_test.dart`
+- [X] T016 [P] Unit-тест `AppStateRepositoryImpl` (все ветки резолюции: нет id→`unauthorized`; id+`!onboardingComplete`→`registrationPending`; id+`onboardingComplete`→`authorized`; ошибка хранилища→`unauthorized`; `currentState==null` до резолюции; реплей последнего значения новому подписчику; `fetchAppState(sessionExpired:true)` несёт флаг только на `unauthorized`) в `test/data/repository/app/app_state_repository_impl_test.dart`
+- [X] T017 [P] Unit-тест `AuthRepositoryImpl` (`signIn('registered')`→`authorized`; `signIn('newid')`→`registrationPending`; `completeOnboarding`→`authorized`; `logout(forced:false)`→`unauthorized`,`sessionExpired=false`; `logout(forced:true)`→`sessionExpired=true`) в `test/data/repository/app/auth_repository_impl_test.dart`
 
 **Checkpoint**: spine-backend готов и протестирован; presentation-фазы могут начинаться.
 
