@@ -173,6 +173,8 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
           const Divider(height: 1),
           AppSettingsNavRowWidget(title: TextConstants.logoutRow, color: Theme.of(context).colorScheme.error, onTap: _logout),
           if (kDebugMode) AppSettingsNavRowWidget(title: 'Screens gallery (dev)', onTap: () => _openSection(ScreensGalleryPage.route())),
+          if (kDebugMode && !widget.demo)
+            AppSettingsNavRowWidget(title: 'Force logout (dev)', onTap: () => unawaited(authRepository.logout(forced: true))),
           if (kDebugMode && widget.demo) _devControl(),
         ],
       ),
@@ -221,6 +223,8 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
               AppSettingsNavRowWidget(title: TextConstants.logoutRow, color: colorScheme.error, onTap: _logout),
               if (kDebugMode)
                 AppSettingsNavRowWidget(title: 'Screens gallery (dev)', onTap: () => _openSection(ScreensGalleryPage.route())),
+              if (kDebugMode && !widget.demo)
+                AppSettingsNavRowWidget(title: 'Force logout (dev)', onTap: () => unawaited(authRepository.logout(forced: true))),
               if (kDebugMode && widget.demo) _devControl(),
             ],
           ),

@@ -7,6 +7,7 @@ import 'package:nox_app/domain/model/app/app_state_type.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
+import 'package:nox_app/presentation/helpers/app_feedback_helper.dart';
 import 'package:nox_app/presentation/pages/login_page/login_page.dart';
 import 'package:nox_app/presentation/pages/set_username_page/set_username_page.dart';
 import 'package:nox_app/presentation/pages/splash_page/splash_page.dart';
@@ -72,6 +73,18 @@ class _AppRootState extends State<AppRoot> {
     }
   }
 
+  // One-shot session-expiry message, shown over the freshly-pushed Login. Runs in a
+  // post-frame callback so it lands AFTER the routing push, on the navigator's
+  // context (below MaterialApp → a ScaffoldMessenger is in scope).
+  void _onSessionExpired(BuildContext context, AppRootState state) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final navigatorContext = _navigatorKey.currentContext;
+      if (navigatorContext != null && navigatorContext.mounted) {
+        showAppSnackBar(navigatorContext, text: TextConstants.sessionExpiredMessage, error: true);
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return BlocProvider<AppRootBloc>.value(
@@ -81,6 +94,13 @@ class _AppRootState extends State<AppRoot> {
           BlocListener<AppRootBloc, AppRootState>(
             listenWhen: (previous, current) => previous.appliedAppState.state != current.appliedAppState.state,
             listener: _onAppStateRouting,
+          ),
+          BlocListener<AppRootBloc, AppRootState>(
+            listenWhen: (previous, current) =>
+                current.appliedAppState.state == AppStateType.unauthorized &&
+                current.appliedAppState.sessionExpired &&
+                previous.appliedAppState.state != AppStateType.unauthorized,
+            listener: _onSessionExpired,
           ),
         ],
         child: BlocBuilder<AppRootBloc, AppRootState>(

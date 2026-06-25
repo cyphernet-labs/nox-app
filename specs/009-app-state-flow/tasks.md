@@ -122,13 +122,13 @@ description: "Task list for 009-app-state-flow implementation"
 
 ### Implementation
 
-- [ ] T033 [US3] Добавить `static const String sessionExpiredMessage = 'Your session expired';` в `lib/general/text_constants.dart`
-- [ ] T034 [US3] Добавить в `AppRoot` второй `BlocListener<AppRootBloc, AppRootState>` для `sessionExpired` (`listenWhen`: переход *в* `unauthorized` c `appliedAppState.sessionExpired==true` и `previous != unauthorized`; `addPostFrameCallback` → `showAppSnackBar(_navigatorKey.currentContext!, text: TextConstants.sessionExpiredMessage, error: true)`) в `lib/presentation/app/app_root.dart` (зависит T023, T033)
-- [ ] T035 [US3] Добавить `kDebugMode`-only dev-триггер `forceLogout` (вызывает `authRepository.logout(forced: true)`) — dev-row в `lib/presentation/pages/settings_root_page/settings_root_page.dart` (программный путь; 401-перехватчик — FR-017, отложен)
+- [X] T033 [US3] Добавить `static const String sessionExpiredMessage = 'Your session expired';` в `lib/general/text_constants.dart`
+- [X] T034 [US3] Добавить в `AppRoot` второй `BlocListener<AppRootBloc, AppRootState>` для `sessionExpired` (`listenWhen`: переход *в* `unauthorized` c `appliedAppState.sessionExpired==true` и `previous != unauthorized`; `addPostFrameCallback` → `showAppSnackBar(_navigatorKey.currentContext!, text: TextConstants.sessionExpiredMessage, error: true)`) в `lib/presentation/app/app_root.dart` (зависит T023, T033)
+- [X] T035 [US3] Добавить `kDebugMode`-only dev-триггер `forceLogout` (вызывает `authRepository.logout(forced: true)`) — dev-row в `lib/presentation/pages/settings_root_page/settings_root_page.dart` (программный путь; 401-перехватчик — FR-017, отложен)
 
 ### Tests
 
-- [ ] T036 [US3] widget-тест: forced-logout → snackbar `Your session expired` ровно один раз; обычный logout → snackbar не показан; повторные переходы не дублируют — в `test/presentation/app/app_root_session_expired_test.dart`
+- [X] T036 [US3] widget-тест: forced-logout → snackbar `Your session expired` ровно один раз; обычный logout → snackbar не показан; повторные переходы не дублируют — в `test/presentation/app/app_root_session_expired_test.dart`
 
 **Checkpoint**: все три user-story независимо функциональны.
 

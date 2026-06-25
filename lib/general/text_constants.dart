@@ -79,6 +79,7 @@ abstract final class TextConstants {
   static const String loginInvalidId = 'Invalid identifier';
   static const String loginNetworkError = 'Could not sign in. Check your connection and try again.';
   static const String onboardTitleSignIn = 'NOX · Sign in';
+  static const String sessionExpiredMessage = 'Your session expired';
 
   // Onboarding: QR scan (2.2)
   static const String tooltipFlashlight = 'Flashlight';
