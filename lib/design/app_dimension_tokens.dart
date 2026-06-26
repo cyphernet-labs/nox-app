@@ -85,6 +85,7 @@ final class AppSizeTokens {
 
   double get screenPad => AppSpacingTokens.s16;
   double get hitTarget => AppSpacingTokens.s48;
+  double get idFieldH => AppSpacingTokens.s120; // Login multiline mono paste-target box
 
   // Avatars (circle diameters).
   double get avatarXs => AppSpacingTokens.s36; // thread header

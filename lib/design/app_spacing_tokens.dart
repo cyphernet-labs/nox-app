@@ -13,7 +13,15 @@ abstract final class AppSpacingTokens {
 
   // Mean of width/height scale factors, so spacing stays balanced on extreme
   // aspect ratios (desktop/landscape), not just width-driven (blueprint 06 §4).
-  static double get _scale => (1.w + 1.h) / 2;
+  //
+  // CLAMPED to keep the UI near its design size across ALL platforms: the raw
+  // ScreenUtil factor is mobile-centric (designSize 360 wide), so on a wide
+  // desktop window `1.w` blows up (e.g. 1280/360 ≈ 3.6) and would scale every
+  // token ~2.4x — a bloated desktop. The clamp lets phones adapt mildly
+  // (~0.85–1.2) but stops tablets/desktop from ballooning; sizes stay ~design-px
+  // on wide windows, matching the desktop corpus (which reuses the mobile widget
+  // sizes). The 360 design surface yields 1.0 (unchanged).
+  static double get _scale => ((1.w + 1.h) / 2).clamp(0.85, 1.2).toDouble();
 
   static double get s0 => 0;
   static double get s1 => 1 * _scale;
