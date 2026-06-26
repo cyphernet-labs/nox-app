@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/design/theme/nox_brand.dart';
 import 'package:nox_app/presentation/widgets/settings/app_qr_surface_widget.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../../utils/pump_app.dart';
 
@@ -13,6 +14,12 @@ void main() {
       expect(find.byType(AppQrSurfaceWidget), findsOneWidget);
       final semantics = tester.getSemantics(find.byType(AppQrSurfaceWidget));
       expect(semantics.label, isNotEmpty);
+    });
+
+    testWidgets('renders a real scannable QR (QrImageView), not a placeholder painter', (tester) async {
+      await pumpApp(tester, const AppQrSurfaceWidget(data: 'alice'));
+
+      expect(find.byType(QrImageView), findsOneWidget);
     });
 
     testWidgets('uses the brand qr-surface color regardless of theme (not the ColorScheme)', (tester) async {

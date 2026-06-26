@@ -5,6 +5,8 @@ import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
+import 'package:nox_app/domain/model/qr/camera_permission_status.dart';
+import 'package:nox_app/presentation/pages/qr_scan_page/bloc/qr_scan_bloc.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/pages/chat_card_page/chat_card_page.dart';
 import 'package:nox_app/presentation/pages/chat_thread_page/chat_thread_page.dart';
@@ -149,7 +151,15 @@ void main() {
     });
 
     testWidgets('QR scanner icon actions expose tooltips', (tester) async {
-      await pumpApp(tester, const QrScanPage(), settle: false);
+      // Seed the scanning state (torch / switch-camera are shown only while the
+      // camera is active) without a live camera.
+      await pumpApp(
+        tester,
+        QrScanPage(
+          bloc: QrScanBloc()..add(const QrScanEvent.permissionResolved(CameraPermissionStatus.granted)),
+          previewBuilder: (_) => const SizedBox.expand(),
+        ),
+      );
 
       expect(find.byTooltip(TextConstants.tooltipFlashlight), findsOneWidget);
       expect(find.byTooltip(TextConstants.tooltipSwitchCamera), findsOneWidget);

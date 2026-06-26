@@ -31,7 +31,9 @@ class AppQrOverlayWidget extends StatelessWidget {
         ),
         if (showInstruction)
           Positioned(
-            top: AppSpacingTokens.s32,
+            // Sit just below the transparent AppBar (status bar + toolbar height), so
+            // the instruction never slides under the notch / Dynamic Island.
+            top: MediaQuery.paddingOf(context).top + kToolbarHeight + AppSpacingTokens.s8,
             left: AppSpacingTokens.s24,
             right: AppSpacingTokens.s24,
             child: Text(

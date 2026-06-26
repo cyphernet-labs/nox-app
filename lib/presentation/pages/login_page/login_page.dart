@@ -5,12 +5,14 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/general/constants.dart';
+import 'package:nox_app/general/qr_scanner_capability.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/pages/base/base_state_page.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page_params.dart';
 import 'package:nox_app/presentation/pages/login_page/bloc/login_bloc.dart';
 import 'package:nox_app/presentation/pages/placeholder/route_placeholder_page.dart';
+import 'package:nox_app/presentation/pages/qr_scan_page/qr_scan_page.dart';
 import 'package:nox_app/presentation/widgets/onboarding/app_id_field_widget.dart';
 import 'package:nox_app/presentation/widgets/onboarding/app_onboard_card_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_spinner_widget.dart';
@@ -86,10 +88,19 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
 
   void _submit() => _bloc.add(LoginEvent.signInRequested(outcome: _outcome));
 
-  void _scanQr() {
-    // TODO(backend): wire to the real QR scanner (2.2) — the QR-success auto-submit
-    // flow is out of scope this phase (screens are fully standalone, FR-016).
-    Navigator.of(context).push(RoutePlaceholderPage.route(destinationLabel: 'QR scan (2.2)'));
+  Future<void> _scanQr() async {
+    // Gallery preview: open the demo scanner (no camera/storage), don't submit.
+    if (widget.demo) {
+      await Navigator.of(context).push(QrScanPage.routeDemo());
+      return;
+    }
+    // Real flow: a successful scan returns the decoded id, which flows down the
+    // exact same path as manual entry (idChanged → submit → spine navigates).
+    final id = await Navigator.of(context).push(QrScanPage.route());
+    if (id == null || !mounted) return; // back / Enter manually → no submit, field kept (FR-013)
+    _controller.text = id;
+    _bloc.add(LoginEvent.idChanged(id));
+    _submit();
   }
 
   void _onStatus(BuildContext context, LoginState state) {
@@ -199,11 +210,15 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
                 : const Text(TextConstants.loginSignIn),
           ),
         ),
-        SizedBox(height: AppSpacingTokens.s8),
-        SizedBox(
-          width: double.infinity,
-          child: TextButton(onPressed: state.isLoading ? null : _scanQr, child: const Text(TextConstants.loginScanQr)),
-        ),
+        // `Scan QR` is shown only where the camera scanner exists (iOS/Android/macOS);
+        // on Windows/Linux it is hidden and 2.2 is unreachable (FR-016/FR-017).
+        if (QrScannerCapability.isAvailable) ...[
+          SizedBox(height: AppSpacingTokens.s8),
+          SizedBox(
+            width: double.infinity,
+            child: TextButton(onPressed: state.isLoading ? null : _scanQr, child: const Text(TextConstants.loginScanQr)),
+          ),
+        ],
         if (kDebugMode && widget.demo) _OutcomeControl(value: _outcome, onChanged: (value) => setState(() => _outcome = value)),
       ],
     );

@@ -19,7 +19,7 @@
 
 Полноэкранный Scaffold. Сверху вниз:
 
-1. **AppBar (M3):** сплошной; цвет берётся из текущей темы через `ColorScheme` — тёмный в dark mode, светлый в light mode. Слева — back-стрелка. В actions — иконки фонарика (toggle) и переключения камеры (toggle front/back).
+1. **AppBar (M3):** сплошной; цвет берётся из текущей темы через `ColorScheme` — тёмный в dark mode, светлый в light mode. Слева — back-стрелка. В actions — иконки фонарика (toggle) и переключения камеры (toggle front/back) **(только мобильная `_narrow`-ветка; в `_wide` этих действий нет)**.
 2. **Подложка:** live-видео с камеры заполняет область под AppBar до низа экрана.
 3. **Overlay-инструкция:** в верхней зоне видео поверх — текст `Aim your camera at a QR code`.
 4. **Прицел:** квадратное окно-«прицел» в центре, остальная площадь затемнена (mask).
@@ -27,15 +27,23 @@
 
 Камера активна всё время, пока экран на переднем плане.
 
+### Адаптация по ширине (mobile `_narrow` vs macOS `_wide`)
+
+Экран выбирает ветку по `constraints.maxWidth >= Constants.railBreakpoint` (как все responsive-экраны NOX):
+
+- **`_narrow` (iOS / Android)** — полноэкранный feed; прозрачный AppBar (без surface-заливки и без splash-hairline) с back-стрелкой и actions `Flashlight` / `Switch camera`; прицел + затемняющая маска `#000` @ 55% (brand-fixed); нижняя `Enter manually`-pill поверх feed. Источник: `nox-mobile-screens/screens/2-2-qr-scan.md`. Действия `Flashlight`/`Switch camera` gracefully no-op на устройстве без вспышки/второй камеры.
+- **`_wide` (macOS — единственный десктопный таргет с камерой)** — оконный `TitleBar` (`NOX · Scan QR`) + центрированный viewfinder 300×300 с brand-белыми углами на обычном `surface`-фоне (без полноэкранной маски), заголовок `Scan a QR code`, helper `Point your webcam at a code, or enter the ID manually.` с `Enter manually`-`TextButton`. Действий `Flashlight` / `Switch camera` НЕТ. Источник: `nox-desktop-screens/screens/06-qr.md`.
+- **Windows / Linux** — камеры нет: кнопка `Scan QR` на 2.1 скрыта, 2.2 недостижим (единый capability-флаг `QrScannerCapability`, FR-016/017 фичи 010).
+
 ## Состояния
 
 | Состояние | Описание |
 |---|---|
 | Permission-prompt | Системный диалог запроса доступа к камере (управляется ОС). |
-| Permission-denied | Доступ к камере отклонён. **Blocking-overlay** прямо на 2.2: пояснение и кнопка `Open settings`. |
+| Permission-denied | Доступ к камере отклонён. **Непрозрачный surface-экран** (НЕ поверх камеры; живого превью нет): глиф `no_photography`, заголовок `Camera access needed`, пояснение и кнопка `Open settings`. На мобильном (`_narrow`) — по центру `surface`-фона; на macOS (`_wide`) — внутри `OnboardCard`. При возврате приложения на передний план (`resumed`) статус доступа пере-проверяется: если выдан — авто-переход в Scanning, иначе остаётся denied. |
 | Scanning | Камера активна, прицел отображается. Кастомного UI-feedback'а нет — поведение библиотеки сканера остаётся как есть. |
 | Inline-error | QR распознан, но содержимое не валидно как идентификатор. **Snackbar внизу** с сообщением; сканирование продолжается. |
-| Fatal | Камера недоступна на уровне устройства → передача в 3.1. |
+| Fatal | Камера недоступна на уровне устройства (нет камеры — напр. iOS-симулятор, `MobileScannerErrorCode.unsupported`). *(Уточнено фичей 010 по фидбэку владельца:)* вместо dead-end-перехода в 3.1 показывается **in-screen surface** `Camera unavailable` + `Enter manually` (recoverable, та же opaque-surface форма, что и Permission-denied; ожидаемое условие логируется на debug, не error). |
 
 Отдельного «Detected» состояния с кастомным feedback'ом нет: после успешного распознавания сразу запускается closing-flow к 2.1.
 
@@ -61,7 +69,9 @@
 - Сторонний пакет для сканирования (например `mobile_scanner`) — в Material нет встроенного компонента; конкретный выбор — решение технического этапа.
 - `TextButton` — `Enter manually`.
 - `SnackBar` (M3) — inline-error.
-- `Text` — инструкция и сообщения в Permission-denied overlay.
+- `Icon` `no_photography` + `FilledButton` `Open settings` — на Permission-denied surface-экране (`_narrow` — по центру surface; `_wide` — внутри `OnboardCard`).
+- `Text` — инструкция и сообщения на Permission-denied surface-экране.
+- `AppWindowTitlebarWidget` + центрированный viewfinder 300×300 — десктопная `_wide`-ветка (macOS).
 
 ## Микрокопирайт
 
@@ -76,7 +86,12 @@
 | Permission-denied title | `Camera access needed` |
 | Permission-denied message | `To scan a QR code, allow camera access in system settings.` |
 | Permission-denied action | `Open settings` |
+| Camera-unavailable title | `Camera unavailable` |
+| Camera-unavailable message | `No camera is available on this device. Enter your ID manually instead.` |
+| Camera-unavailable action | `Enter manually` |
 | Snackbar inline-error | `This QR code is invalid. Try another one.` |
+| Desktop title (`_wide`) | `Scan a QR code` |
+| Desktop helper (`_wide`) | `Point your webcam at a code, or enter the ID manually.` |
 
 ## Принятые решения (Q1–Q9)
 
@@ -85,7 +100,7 @@
 | Q1 / Q7 | Поведение после распознавания | Single-shot; авто-закрытие 2.2; идентификатор → поле 2.1; программный submit. Confirm-шаг **не показываем**. |
 | Q2 | Кнопка вспышки | Toggle-иконка в AppBar |
 | Q3 | Переключение камеры | Toggle-иконка в AppBar (front ↔ back) |
-| Q4 | Permission denied | Blocking-overlay прямо на 2.2 с кнопкой `Open settings` |
+| Q4 | Permission denied | Непрозрачный surface-экран (НЕ поверх камеры) с глифом `no_photography` + `Open settings`; `_narrow` — по центру surface, `_wide` — в `OnboardCard`. Авто-resume по `resumed`. *(Уточнено фичей 010: ранее формулировалось как blocking-overlay; реализованная форма — opaque surface.)* |
 | Q5 | Inline-error UX | Snackbar внизу (M3); сканирование продолжается |
 | Q6 | Звук / вибрация | Тихо |
 | Q8 | UI-feedback в Detected | Стандартное поведение библиотеки сканера; кастомного нет |

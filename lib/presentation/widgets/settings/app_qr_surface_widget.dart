@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/theme/nox_brand.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
+import 'package:nox_app/general/nox_qr_envelope.dart';
 import 'package:nox_app/general/text_constants.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 /// Brand-fixed light QR surface for the user's identifier (7.1 Show QR). The
 /// surface is ALWAYS light and sits OUTSIDE the ColorScheme — the project's second
@@ -10,15 +12,47 @@ import 'package:nox_app/general/text_constants.dart';
 /// background `NoxBrand.qrSurface` (#FFFFFF), modules `NoxBrand.qrInk` (#0C0C0C),
 /// identical in light and dark.
 ///
-/// The modules are a NEUTRAL deterministic placeholder pattern (finder squares +
-/// hashed cells) — NOT a real encoding. Real QR generation needs a dependency and
-/// the real identifier, deferred to the backend phase. `// TODO(backend):` encode
-/// the real identifier (e.g. qr_flutter).
-class AppQrSurfaceWidget extends StatelessWidget {
+/// [data] is the raw `Your ID`; it is encoded as the `nox://id/<id>` envelope so
+/// another device's scanner (2.2) decodes back to the same identifier (FR-014,
+/// round-trip SC-005).
+class AppQrSurfaceWidget extends StatefulWidget {
   const AppQrSurfaceWidget({super.key, required this.data, this.size = 220});
 
   final String data;
   final double size;
+
+  @override
+  State<AppQrSurfaceWidget> createState() => _AppQrSurfaceWidgetState();
+}
+
+class _AppQrSurfaceWidgetState extends State<AppQrSurfaceWidget> {
+  // The QR matrix is cached and only rebuilt when [data] changes, so a parent that
+  // rebuilds for unrelated reasons (e.g. a Settings name-edit keystroke) does not
+  // re-run the Reed-Solomon encoding on a stable id.
+  late Widget _qr;
+
+  @override
+  void initState() {
+    super.initState();
+    _qr = _buildQr();
+  }
+
+  @override
+  void didUpdateWidget(AppQrSurfaceWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.data != widget.data) _qr = _buildQr();
+  }
+
+  Widget _buildQr() => QrImageView(
+    data: NoxQrEnvelope.encode(widget.data),
+    version: QrVersions.auto,
+    backgroundColor: NoxBrand.qrSurface,
+    eyeStyle: const QrEyeStyle(eyeShape: QrEyeShape.square, color: NoxBrand.qrInk),
+    dataModuleStyle: const QrDataModuleStyle(dataModuleShape: QrDataModuleShape.square, color: NoxBrand.qrInk),
+    errorCorrectionLevel: QrErrorCorrectLevel.M,
+    gapless: true,
+    padding: EdgeInsets.zero,
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -26,67 +60,16 @@ class AppQrSurfaceWidget extends StatelessWidget {
       label: TextConstants.qrSheetTitle,
       image: true,
       child: Container(
-        width: size,
-        height: size,
+        width: widget.size,
+        height: widget.size,
         decoration: BoxDecoration(color: NoxBrand.qrSurface, borderRadius: BorderRadius.circular(NoxRadius.m)),
-        // Quiet zone around the modules (always white).
-        padding: EdgeInsets.all(size * 0.1),
-        child: CustomPaint(painter: _FakeQrPainter(data)),
+        // Quiet zone around the modules (always white). The outer Container owns it,
+        // so the QrImageView's own padding is zeroed.
+        padding: EdgeInsets.all(widget.size * 0.1),
+        child: _qr,
       ),
     );
   }
-}
-
-/// Draws a neutral, deterministic QR-like grid (three finder patterns + hashed
-/// data modules). Purely decorative — does NOT encode [data].
-class _FakeQrPainter extends CustomPainter {
-  _FakeQrPainter(this.data);
-
-  final String data;
-
-  static const int _modules = 21; // v1 QR module count
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = NoxBrand.qrInk;
-    final cell = size.width / _modules;
-
-    void square(int col, int row) {
-      canvas.drawRect(Rect.fromLTWH(col * cell, row * cell, cell, cell), paint);
-    }
-
-    // Three finder patterns (top-left, top-right, bottom-left).
-    void finder(int ox, int oy) {
-      for (var r = 0; r < 7; r++) {
-        for (var c = 0; c < 7; c++) {
-          final onRing = r == 0 || r == 6 || c == 0 || c == 6;
-          final inCore = r >= 2 && r <= 4 && c >= 2 && c <= 4;
-          if (onRing || inCore) square(ox + c, oy + r);
-        }
-      }
-    }
-
-    finder(0, 0);
-    finder(_modules - 7, 0);
-    finder(0, _modules - 7);
-
-    // Hashed data modules in the remaining area (skip the finder zones).
-    var h = 0;
-    for (final cu in data.codeUnits) {
-      h = (h * 31 + cu) & 0x7FFFFFFF;
-    }
-    bool inFinder(int c, int r) => (c < 8 && r < 8) || (c > _modules - 9 && r < 8) || (c < 8 && r > _modules - 9);
-    for (var r = 0; r < _modules; r++) {
-      for (var c = 0; c < _modules; c++) {
-        if (inFinder(c, r)) continue;
-        h = (h * 1103515245 + 12345) & 0x7FFFFFFF;
-        if ((h >> 16) & 1 == 1) square(c, r);
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(_FakeQrPainter oldDelegate) => oldDelegate.data != data;
 }
 
 /// Shows the identifier QR: a modal bottom sheet on mobile, a centered dialog on

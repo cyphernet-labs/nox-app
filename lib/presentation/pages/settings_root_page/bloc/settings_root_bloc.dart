@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
+import 'package:nox_app/di/global_aliases.dart';
+import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/general/username_rules.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
@@ -28,15 +30,17 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
     on<IdRevealToggled>(_onIdRevealToggled);
   }
 
-  /// Stub identifier (a long key-like string; the real anonymous identifier is
-  /// server-assigned and read in the backend phase).
-  static const String mockRawId = 'NOX-7c1f9a4e2b8d40f3-a6e5c2179bd0e83f-9f2a7c4e1b6d8a30';
-
   Future<void> _onInitialize(SettingsInitialize event, Emitter<SettingsRootState> emit) async {
-    // TODO(backend): load the real identity (name + identifier). Stub: brief delay
-    // so the Initial-loading state (spinner in the ID position) is observable.
-    await Future<void>.delayed(const Duration(milliseconds: 300));
-    emit(state.copyWith(initialLoading: false));
+    // Load the user's own identifier for Show QR (FR-014) from the 009 session spine.
+    // Empty/error never fabricates a fake id (that would flow into a real scannable
+    // QR) — it degrades to an empty rawId. Settings is authorized-only, so the id is
+    // normally present. TODO(backend): also load the real name when the identity
+    // endpoint lands.
+    final result = await sessionRepository.readSession();
+    result.match<void>(
+      onData: (session) => emit(state.copyWith(initialLoading: false, rawId: session?.identifier ?? '')),
+      onError: (_) => emit(state.copyWith(initialLoading: false, rawId: '')),
+    );
   }
 
   void _onNameEditStarted(NameEditStarted event, Emitter<SettingsRootState> emit) {

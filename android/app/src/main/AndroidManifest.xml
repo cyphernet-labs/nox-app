@@ -1,4 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- QR scan (2.2). required=false: devices without a camera can still install
+         (the Scan QR affordance is hidden by the capability flag, FR-016/FR-017). -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+    <uses-feature android:name="android.hardware.camera" android:required="false"/>
     <application
         android:label="NOX"
         android:name="${applicationName}"
