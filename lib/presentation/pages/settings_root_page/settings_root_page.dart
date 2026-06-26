@@ -109,7 +109,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
 
   void _copyId() {
     // Fire-and-forget the clipboard write; the confirmation is instant.
-    unawaited(Clipboard.setData(const ClipboardData(text: SettingsRootBloc.mockRawId)));
+    unawaited(Clipboard.setData(ClipboardData(text: _bloc.state.rawId)));
     showAppSnackBar(context, text: TextConstants.copiedToClipboard);
   }
 
@@ -309,7 +309,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
     return AppIdentityCardWidget(
       name: state.name,
       maskedId: state.maskedId,
-      rawId: SettingsRootBloc.mockRawId,
+      rawId: state.rawId,
       revealable: revealable,
       showInlineQr: showInlineQr,
       initialLoading: state.initialLoading,
@@ -318,7 +318,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
       onToggleReveal: () => _bloc.add(const SettingsRootEvent.idRevealToggled()),
       onEditName: _startEdit,
       onCopy: _copyId,
-      onShowQr: () => showIdQr(context, data: SettingsRootBloc.mockRawId, wide: wide),
+      onShowQr: () => showIdQr(context, data: state.rawId, wide: wide),
       nameEditField: state.editing
           ? AppLabeledFieldWidget(
               controller: _nameController,
