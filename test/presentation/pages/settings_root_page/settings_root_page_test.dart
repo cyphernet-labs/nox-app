@@ -9,11 +9,17 @@ import 'package:nox_app/presentation/pages/settings_root_page/settings_root_page
 import 'package:nox_app/presentation/pages/splash_page/splash_page.dart';
 import 'package:nox_app/presentation/widgets/settings/app_identity_card_widget.dart';
 import 'package:nox_app/presentation/widgets/settings/app_qr_surface_widget.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/presentation/widgets/shell/app_list_detail_widget.dart';
 
+import '../../../utils/fake_session_repository.dart';
 import '../../../utils/pump_app.dart';
 
 void main() {
+  // The identity card loads the user's id from the session spine on init.
+  setUp(registerFakeSession);
+  tearDown(getIt.reset);
+
   // demo: true keeps the standalone preview behaviour (Log out → Splash; dev controls).
   // Real-flow logout (→ Login via the spine) is covered in app_root_logout_flow_test.dart.
   Widget underTest({bool inShell = false}) => BlocProvider<AppRootBloc>(
@@ -39,12 +45,13 @@ void main() {
     });
 
     testWidgets('Initial-loading shows a spinner in the ID position', (tester) async {
+      // First frame: the bloc is at its initial state (initialLoading: true); the
+      // dispatched Initialize hasn't resolved the session yet.
       await pumpMobile(tester, settle: false);
-      await tester.pump(); // first frame, Initialize not yet resolved (300ms)
 
       expect(find.descendant(of: find.byType(AppIdentityCardWidget), matching: find.byType(CircularProgressIndicator)), findsOneWidget);
 
-      await tester.pumpAndSettle(); // let Initialize resolve so no timers leak
+      await tester.pumpAndSettle(); // let Initialize resolve so nothing leaks
     });
 
     testWidgets('tapping a settings row opens the real subscreen (7.2)', (tester) async {

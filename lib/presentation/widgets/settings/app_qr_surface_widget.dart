@@ -15,11 +15,44 @@ import 'package:qr_flutter/qr_flutter.dart';
 /// [data] is the raw `Your ID`; it is encoded as the `nox://id/<id>` envelope so
 /// another device's scanner (2.2) decodes back to the same identifier (FR-014,
 /// round-trip SC-005).
-class AppQrSurfaceWidget extends StatelessWidget {
+class AppQrSurfaceWidget extends StatefulWidget {
   const AppQrSurfaceWidget({super.key, required this.data, this.size = 220});
 
   final String data;
   final double size;
+
+  @override
+  State<AppQrSurfaceWidget> createState() => _AppQrSurfaceWidgetState();
+}
+
+class _AppQrSurfaceWidgetState extends State<AppQrSurfaceWidget> {
+  // The QR matrix is cached and only rebuilt when [data] changes, so a parent that
+  // rebuilds for unrelated reasons (e.g. a Settings name-edit keystroke) does not
+  // re-run the Reed-Solomon encoding on a stable id.
+  late Widget _qr;
+
+  @override
+  void initState() {
+    super.initState();
+    _qr = _buildQr();
+  }
+
+  @override
+  void didUpdateWidget(AppQrSurfaceWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.data != widget.data) _qr = _buildQr();
+  }
+
+  Widget _buildQr() => QrImageView(
+    data: NoxQrEnvelope.encode(widget.data),
+    version: QrVersions.auto,
+    backgroundColor: NoxBrand.qrSurface,
+    eyeStyle: const QrEyeStyle(eyeShape: QrEyeShape.square, color: NoxBrand.qrInk),
+    dataModuleStyle: const QrDataModuleStyle(dataModuleShape: QrDataModuleShape.square, color: NoxBrand.qrInk),
+    errorCorrectionLevel: QrErrorCorrectLevel.M,
+    gapless: true,
+    padding: EdgeInsets.zero,
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -27,22 +60,13 @@ class AppQrSurfaceWidget extends StatelessWidget {
       label: TextConstants.qrSheetTitle,
       image: true,
       child: Container(
-        width: size,
-        height: size,
+        width: widget.size,
+        height: widget.size,
         decoration: BoxDecoration(color: NoxBrand.qrSurface, borderRadius: BorderRadius.circular(NoxRadius.m)),
         // Quiet zone around the modules (always white). The outer Container owns it,
         // so the QrImageView's own padding is zeroed.
-        padding: EdgeInsets.all(size * 0.1),
-        child: QrImageView(
-          data: NoxQrEnvelope.encode(data),
-          version: QrVersions.auto,
-          backgroundColor: NoxBrand.qrSurface,
-          eyeStyle: const QrEyeStyle(eyeShape: QrEyeShape.square, color: NoxBrand.qrInk),
-          dataModuleStyle: const QrDataModuleStyle(dataModuleShape: QrDataModuleShape.square, color: NoxBrand.qrInk),
-          errorCorrectionLevel: QrErrorCorrectLevel.M,
-          gapless: true,
-          padding: EdgeInsets.zero,
-        ),
+        padding: EdgeInsets.all(widget.size * 0.1),
+        child: _qr,
       ),
     );
   }

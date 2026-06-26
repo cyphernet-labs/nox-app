@@ -78,6 +78,7 @@ class _QrScanPageState extends State<QrScanPage> with WidgetsBindingObserver {
   late final bool _ownsBloc;
   MobileScannerController? _controller;
   bool _torchOn = false;
+  bool _cameraStarted = false;
 
   /// True only at real runtime: a live camera + permission service. Demo
   /// (gallery), goldens (previewBuilder) and widget tests (injected bloc) stay
@@ -93,7 +94,7 @@ class _QrScanPageState extends State<QrScanPage> with WidgetsBindingObserver {
     if (_ownsBloc) _bloc.add(const QrScanEvent.started());
     if (_live) {
       _controller = QrScanPage.createController();
-      _resolvePermission();
+      _resolve(initial: true);
     } else if (widget.demo) {
       // Gallery opens on the scanning layout; dev controls drive the rest.
       _bloc.add(const QrScanEvent.permissionResolved(CameraPermissionStatus.granted));
@@ -110,19 +111,60 @@ class _QrScanPageState extends State<QrScanPage> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // FR-006: returning from system settings re-checks permission and auto-starts
-    // (the camera feed itself is auto-managed by MobileScanner.useAppLifecycleState).
-    if (state == AppLifecycleState.resumed && _live) _resolvePermission();
+    if (!_live) return;
+    // The page owns the controller, so MobileScanner does NOT auto-manage the feed
+    // on lifecycle — we start/stop it explicitly. On resume re-check permission with
+    // the cheap non-prompting status() (FR-006: returning from system settings
+    // auto-restarts without a re-tap); on background, stop the camera.
+    switch (state) {
+      case AppLifecycleState.resumed:
+        _resolve(initial: false);
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.paused:
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.detached:
+        _stopCamera();
+    }
   }
 
-  Future<void> _resolvePermission() async {
+  /// Resolve camera permission and drive the camera: request() raises the OS prompt
+  /// on the initial open; status() is the cheap non-prompting re-check on resume.
+  /// macOS has no permission_handler, so the controller's own prompt + errorBuilder
+  /// drive it there.
+  Future<void> _resolve({required bool initial}) async {
+    final CameraPermissionStatus status;
     if (PlatformUtils.isMobile) {
-      final status = await cameraPermissionService.request();
-      if (mounted) _bloc.add(QrScanEvent.permissionResolved(status));
+      status = initial ? await cameraPermissionService.request() : await cameraPermissionService.status();
     } else {
-      // macOS: optimistic — the controller raises the prompt; a denial surfaces via
-      // MobileScanner.errorBuilder below.
-      if (mounted) _bloc.add(const QrScanEvent.permissionResolved(CameraPermissionStatus.granted));
+      status = CameraPermissionStatus.granted; // macOS: controller-driven (errorBuilder corrects on denial)
+    }
+    if (!mounted) return;
+    _bloc.add(QrScanEvent.permissionResolved(status));
+    if (status == CameraPermissionStatus.granted) {
+      await _startCamera();
+    } else {
+      await _stopCamera();
+    }
+  }
+
+  Future<void> _startCamera() async {
+    if (_controller == null || _cameraStarted) return;
+    _cameraStarted = true;
+    try {
+      await _controller!.start();
+    } catch (e, s) {
+      _cameraStarted = false;
+      logRepository.error(target: this, error: e, stackTrace: s);
+    }
+  }
+
+  Future<void> _stopCamera() async {
+    if (_controller == null || !_cameraStarted) return;
+    _cameraStarted = false;
+    try {
+      await _controller!.stop();
+    } catch (_) {
+      // Stopping an already-stopped controller is harmless.
     }
   }
 
@@ -191,6 +233,10 @@ class _QrScanPageState extends State<QrScanPage> with WidgetsBindingObserver {
       },
       errorBuilder: (context, error) {
         final denied = error.errorCode == MobileScannerErrorCode.permissionDenied;
+        // A denial is a recoverable in-screen state (Open settings); any other camera
+        // error is logged and treated as fatal → 3.1, itself recoverable (Back to Login,
+        // re-tapping Scan QR builds a fresh controller).
+        if (!denied) logRepository.error(target: this, error: error);
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
           _bloc.add(QrScanEvent.permissionResolved(denied ? CameraPermissionStatus.permanentlyDenied : CameraPermissionStatus.unavailable));

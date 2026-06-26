@@ -1,15 +1,20 @@
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/presentation/pages/settings_root_page/bloc/settings_root_bloc.dart';
+
+import '../../../../utils/fake_session_repository.dart';
 
 void main() {
   group('SettingsRootBloc', () {
+    setUp(registerFakeSession);
+    tearDown(getIt.reset);
+
     blocTest<SettingsRootBloc, SettingsRootState>(
-      'initialize clears the initial-loading flag',
+      'initialize clears the initial-loading flag and loads the identifier',
       build: SettingsRootBloc.new,
       act: (bloc) => bloc.add(const SettingsRootEvent.initialize()),
-      wait: const Duration(milliseconds: 400),
-      expect: () => [predicate<SettingsRootState>((s) => !s.initialLoading)],
+      expect: () => [predicate<SettingsRootState>((s) => !s.initialLoading && s.rawId == kTestIdentifier)],
     );
 
     blocTest<SettingsRootBloc, SettingsRootState>(

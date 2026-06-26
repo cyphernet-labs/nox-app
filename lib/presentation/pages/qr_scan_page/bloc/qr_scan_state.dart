@@ -16,6 +16,4 @@ abstract class QrScanState with _$QrScanState {
     // One-shot: a foreign/empty QR → inline snackbar; scanning continues.
     @Default(false) bool invalid,
   }) = _QrScanState;
-
-  bool get isScanning => status == QrScanStatus.scanning;
 }
