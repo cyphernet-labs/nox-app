@@ -73,6 +73,7 @@ final class AppIconTokens {
   double get xxl => AppSpacingTokens.s28; // file-chip / grid-glyph icon
   double get glyph => AppSpacingTokens.s32;
   double get hero => AppSpacingTokens.s48; // error/empty + file-view glyph icon
+  double get heroWide => AppSpacingTokens.s96; // error illustration icon on wide layouts
 }
 
 /// Fixed component & element sizes (size.*). `hitTarget` (48) is the minimum
@@ -125,4 +126,7 @@ final class AppLayoutTokens {
   double get fileChipMinW => 200;
   double get fileChipMaxW => 260;
   double get messageMaxW => 260; // empty-state message column
+  double get chatsListPaneW => 360; // chats master-detail list pane
+  double get settingsListPaneW => 340; // settings master-detail list pane
+  double get sideSheetW => 380; // desktop right side-sheet (chat card)
 }

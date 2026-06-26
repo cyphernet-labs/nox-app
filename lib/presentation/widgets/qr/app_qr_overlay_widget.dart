@@ -38,7 +38,7 @@ class AppQrOverlayWidget extends StatelessWidget {
               textAlign: TextAlign.center,
               style: textTheme.bodyLarge?.copyWith(
                 color: NoxBrand.white,
-                shadows: const [Shadow(color: Color(0xCC000000), blurRadius: 4)],
+                shadows: [Shadow(color: const Color(0xCC000000), blurRadius: AppSpacingTokens.s4)],
               ),
             ),
           ),

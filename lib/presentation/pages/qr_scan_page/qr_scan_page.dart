@@ -142,7 +142,7 @@ class _QrScanPageState extends State<QrScanPage> {
                   width: AppDimensionTokens.size.qrScanWindow,
                   height: AppDimensionTokens.size.qrScanWindow,
                   child: ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(AppDimensionTokens.radius.md),
                     child: Stack(
                       children: [
                         Positioned.fill(child: ColoredBox(color: colorScheme.surfaceContainerHighest)),

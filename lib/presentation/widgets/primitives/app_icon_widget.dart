@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
 
 /// Material Symbols Rounded glyph rendered from the [NoxIcons] SVG registry
@@ -7,15 +8,19 @@ import 'package:nox_app/design/gen/assets.gen.dart';
 /// (e.g. `NoxIcons.forum` vs `NoxIcons.forumFill`) — there is no numeric fill
 /// axis. Default color is `onSurfaceVariant`. Source: primitives.md `NoxIcon`.
 class AppIconWidget extends StatelessWidget {
-  const AppIconWidget(this.icon, {super.key, this.size = 24, this.color});
+  const AppIconWidget(this.icon, {super.key, this.size, this.color});
 
   final SvgGenImage icon;
-  final double size;
+
+  /// Render size; null falls back to `icon.xl` (24) — a token getter can't be a
+  /// const default.
+  final double? size;
   final Color? color;
 
   @override
   Widget build(BuildContext context) {
+    final dimension = size ?? AppDimensionTokens.icon.xl;
     final resolved = color ?? Theme.of(context).colorScheme.onSurfaceVariant;
-    return icon.svg(width: size, height: size, colorFilter: ColorFilter.mode(resolved, BlendMode.srcIn));
+    return icon.svg(width: dimension, height: dimension, colorFilter: ColorFilter.mode(resolved, BlendMode.srcIn));
   }
 }

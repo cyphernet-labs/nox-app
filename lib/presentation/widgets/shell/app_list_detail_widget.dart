@@ -9,20 +9,21 @@ import 'package:nox_app/design/app_spacing_tokens.dart';
 /// Used by 5.1 (chat list pane + thread pane) and 7.1 (settings menu pane +
 /// detail pane). Row highlight (`secondaryContainer`) lives on the list-pane item.
 class AppListDetailWidget extends StatelessWidget {
-  const AppListDetailWidget({super.key, required this.listPane, required this.detailPane, this.listPaneWidth = 360});
+  const AppListDetailWidget({super.key, required this.listPane, required this.detailPane, this.listPaneWidth});
 
   final Widget listPane;
   final Widget detailPane;
 
-  /// 5.1 = 360, 7.1 = 340 (per the desktop corpus).
-  final double listPaneWidth;
+  /// Fixed list-pane width (5.1 = 360, 7.1 = 340 per the desktop corpus). Null
+  /// falls back to the chats pane token (a token getter can't be a const default).
+  final double? listPaneWidth;
 
   @override
   Widget build(BuildContext context) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        SizedBox(width: listPaneWidth, child: listPane),
+        SizedBox(width: listPaneWidth ?? AppDimensionTokens.layout.chatsListPaneW, child: listPane),
         VerticalDivider(width: AppDimensionTokens.border.hairline),
         Expanded(child: detailPane),
       ],

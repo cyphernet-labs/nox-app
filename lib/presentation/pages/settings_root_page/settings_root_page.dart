@@ -186,7 +186,11 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
 
   Widget _wide(BuildContext context, SettingsRootState state) {
     return Scaffold(
-      body: AppListDetailWidget(listPaneWidth: 340, listPane: _menuPane(context, state), detailPane: _detailPane(context, state)),
+      body: AppListDetailWidget(
+        listPaneWidth: AppDimensionTokens.layout.settingsListPaneW,
+        listPane: _menuPane(context, state),
+        detailPane: _detailPane(context, state),
+      ),
     );
   }
 

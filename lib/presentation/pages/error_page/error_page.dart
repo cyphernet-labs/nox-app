@@ -67,7 +67,7 @@ class _AppErrorPageState extends State<AppErrorPage> {
         final wide = constraints.maxWidth >= Constants.railBreakpoint;
         final body = _ErrorBody(
           params: widget.params,
-          iconSize: wide ? 96 : 48,
+          iconSize: wide ? AppDimensionTokens.icon.heroWide : AppDimensionTokens.icon.hero,
           retrying: _retrying,
           onRetry: widget.params.onRetry == null ? null : _retry,
           devControl: (kDebugMode && widget.demo) ? _modeControl() : null,

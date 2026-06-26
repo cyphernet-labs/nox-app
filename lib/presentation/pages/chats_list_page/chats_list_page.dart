@@ -154,7 +154,7 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
     final selectedId = state is Initialized ? state.selectedChatId : null;
     return Scaffold(
       body: AppListDetailWidget(
-        listPaneWidth: 360,
+        listPaneWidth: AppDimensionTokens.layout.chatsListPaneW,
         listPane: Column(
           children: [
             _paneHeader(context),
