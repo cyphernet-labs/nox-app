@@ -10,7 +10,6 @@ import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/text_constants.dart';
-import 'package:nox_app/presentation/app/widgets/app_theme_toggle.dart';
 import 'package:nox_app/presentation/helpers/app_feedback_helper.dart';
 import 'package:nox_app/presentation/pages/about_page/about_body.dart';
 import 'package:nox_app/presentation/pages/about_page/about_page.dart';
@@ -158,7 +157,6 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
                 onPressed: () => Navigator.of(context).maybePop(),
               ),
         title: const Text(TextConstants.settings),
-        actions: const [AppThemeToggle()],
       ),
       body: ListView(
         children: [
@@ -210,7 +208,6 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
               Expanded(
                 child: Text(TextConstants.settings, style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
               ),
-              const AppThemeToggle(),
             ],
           ),
         ),

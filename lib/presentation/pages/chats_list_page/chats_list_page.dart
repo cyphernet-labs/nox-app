@@ -11,7 +11,6 @@ import 'package:nox_app/general/feature_flags.dart';
 import 'package:nox_app/general/formatters/date_formatter.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
-import 'package:nox_app/presentation/app/widgets/app_theme_toggle.dart';
 import 'package:nox_app/presentation/pages/base/base_state_page.dart';
 import 'package:nox_app/presentation/pages/chat_card_page/chat_card_page.dart';
 import 'package:nox_app/presentation/pages/chat_thread_page/chat_thread_page.dart';
@@ -135,7 +134,6 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
               ),
         title: const AppWordmarkWidget(),
         bottom: const AppSplashHairlineWidget(),
-        actions: const [AppThemeToggle()],
       ),
       body: Column(
         children: [
@@ -181,7 +179,6 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
               onPressed: () => Navigator.of(context).maybePop(),
             ),
           const Expanded(child: AppWordmarkWidget()),
-          const AppThemeToggle(),
         ],
       ),
     );

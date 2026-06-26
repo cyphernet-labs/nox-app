@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:nox_app/general/text_constants.dart';
-import 'package:nox_app/presentation/app/widgets/app_theme_toggle.dart';
 import 'package:nox_app/presentation/pages/language_page/language_body.dart';
 import 'package:nox_app/presentation/widgets/shell/app_detail_scaffold_widget.dart';
 
@@ -18,10 +17,6 @@ class LanguagePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AppDetailScaffoldWidget(
-      title: TextConstants.settingsLanguageTitle,
-      actions: const [AppThemeToggle()],
-      body: const LanguageBody(),
-    );
+    return AppDetailScaffoldWidget(title: TextConstants.settingsLanguageTitle, body: const LanguageBody());
   }
 }
