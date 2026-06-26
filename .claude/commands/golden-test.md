@@ -8,6 +8,11 @@ Generate a golden (snapshot) test for a `nox_app` page/widget.
 > - Golden tests are **excluded from CI**: they carry `@Tags(['golden'])`; `.github/workflows/ci.yml` runs `flutter test --exclude-tags golden`, and `make test` does the same. They run **only** via `make golden-update` / `make golden-verify` (which pass `--tags golden`). `dart_test.yaml` declares the `golden` tag.
 > - Baseline `goldens/*.png` are **committable fixtures** (not gitignored — only `*.g.dart`/`*.freezed.dart`/`*.config.dart`/`*.mocks.dart` + `lib/design/gen/` are).
 > - **Determinism:** pump under `ScreenUtilInit(designSize: Constants.designSize)` (360×779) and pin the surface to that size, so the ScreenUtil scale is a deterministic 1:1 and design tokens render at design values. `AppSpacingTokens.sN` / `AppTextStyleTokens` read `ScreenUtil()` **live** on each access (no static cache), so they resolve correctly once `ScreenUtilInit` has run and the surface is fixed.
+>
+> **Three golden categories (project rule).** Goldens split into THREE kinds — the existing approach stays, the third is added:
+> 1. **Widget** goldens — per `App*Widget` (a small piece OR a whole-page chunk of functionality), via `goldenTest`. Kept as-is.
+> 2. **Page — mobile** — every `*Page` on the 360 design surface, via `goldenTest`. Kept as-is.
+> 3. **Page — desktop** — every **product** `*Page` on a wide window (`kDesktopGoldenSize`, 1280×800), via `goldenTestDesktop`. **New, and required for every product page**: it locks the desktop `_wide` / master-detail / window-titlebar branch, which the mobile surface cannot exercise (this is how a desktop layout that renders crooked on a real computer gets caught). Exempt from the desktop variant: dev-only pages (the UI-kit / screens-gallery / launcher), and the brand-fixed **splash** (identical on mobile and desktop by design). So a product page owns a **pair**: `goldens/<page>_<mode>.png` (mobile) **and** `goldens/<page>_desktop_<mode>.png` (desktop).
 
 ## Input
 
@@ -39,6 +44,13 @@ based on the widget's visual states (and both `light`/`dark` themes — the app 
    one) — otherwise the internal `pumpAndSettle` hangs on the endless animation. Pure widgets need no DI; a page that needs a BLoC
    usually wraps it inline (`BlocProvider<AppRootBloc>(create: (_) => AppRootBloc(), child: ...)`) — only a page whose BLoC
    self-creates from `getIt` needs the test-env DI (see Rules).
+
+   For a **product page**, ALSO call **`goldenTestDesktop(name, build, {settle, size})`** (same file) with the *same* `name` and
+   `build` thunk. It is the identical harness pinned to `kDesktopGoldenSize` (1280×800, dpr 2) instead of the mobile surface, so the
+   page selects its `_wide` branch; it writes `goldens/<name>_desktop_light.png` + `_dark.png`. ScreenUtil resolves spacing/fonts
+   through the production clamps at that surface (spacing → 1.2 ceiling, fonts → 1.0 ceiling — see `AppTextStyleTokens.fontSizeResolver`),
+   so the baseline is the true desktop rendering, not an up-scaled phone. One wide-surface size is platform-agnostic (the five desktop
+   targets share one Flutter wide layout).
 
 4. **Generate the golden test file mirroring the lib/ path under `test/`** (nox-app convention — tests deep-mirror the source
    tree, NOT flat): `test/presentation/pages/<page>/<widget_name>_golden_test.dart` — e.g.
@@ -83,6 +95,15 @@ goldenTest('app_spinner_widget', () => const Center(child: AppSpinnerWidget(size
 
 ```dart
 goldenTest('ui_kit_page', () => BlocProvider<AppRootBloc>(create: (_) => AppRootBloc(), child: const UiKitPage()), settle: false);
+```
+
+**Product page = a mobile + desktop pair** — same `name` and `build`, two surfaces (`goldenTestDesktop` adds the `_wide` baseline):
+
+```dart
+void main() {
+  goldenTest('login_page', () => const LoginPage());
+  goldenTestDesktop('login_page', () => const LoginPage());
+}
 ```
 
 ## Rules

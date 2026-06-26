@@ -9,7 +9,8 @@ import 'package:nox_app/presentation/pages/settings_root_page/settings_root_page
 import '../../../utils/golden.dart';
 
 void main() {
-  // Mobile layout: identity card + flat settings rows + Log out (the desktop
-  // list-detail is verified by the widget test at a wide surface).
+  // Mobile layout: identity card + flat settings rows + Log out.
   goldenTest('settings_root_page', () => BlocProvider<AppRootBloc>(create: (_) => AppRootBloc(), child: const SettingsRootPage()));
+  // Desktop `_wide` branch: the list-detail (master list + detail pane).
+  goldenTestDesktop('settings_root_page', () => BlocProvider<AppRootBloc>(create: (_) => AppRootBloc(), child: const SettingsRootPage()));
 }

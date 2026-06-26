@@ -7,7 +7,7 @@ import 'package:nox_app/presentation/pages/create_chat_page/create_chat_page.dar
 import '../../../utils/golden.dart';
 
 void main() {
-  // Golden surface is the mobile design width; the desktop dialog branch is
-  // covered by a wide-surface widget test.
+  // Mobile design surface + the desktop `_wide` branch (centered dialog-style card).
   goldenTest('create_chat_page', () => const CreateChatPage());
+  goldenTestDesktop('create_chat_page', () => const CreateChatPage());
 }

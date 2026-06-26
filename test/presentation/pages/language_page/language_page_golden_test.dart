@@ -8,4 +8,5 @@ import '../../../utils/golden.dart';
 
 void main() {
   goldenTest('language_page', () => const LanguagePage());
+  goldenTestDesktop('language_page', () => const LanguagePage());
 }

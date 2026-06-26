@@ -19,4 +19,5 @@ void main() {
   });
 
   goldenTest('about_page', () => const AboutPage());
+  goldenTestDesktop('about_page', () => const AboutPage());
 }

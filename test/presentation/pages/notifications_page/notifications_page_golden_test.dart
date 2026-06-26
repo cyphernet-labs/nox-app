@@ -9,4 +9,5 @@ import '../../../utils/golden.dart';
 void main() {
   // Default (granted) state — the denied banner is covered by the widget test.
   goldenTest('notifications_page', () => const NotificationsPage());
+  goldenTestDesktop('notifications_page', () => const NotificationsPage());
 }
