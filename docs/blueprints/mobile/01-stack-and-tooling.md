@@ -102,12 +102,19 @@ dependencies:
   # 10.x безопасен — нет цепочки flutter_quill/win32; пин <10 нужен ТОЛЬКО при её появлении.
   package_info_plus: ^10.1.0
 
+  # --- Camera / QR (АКТИВНЫ с фичи 010-qr-login) ---
+  mobile_scanner: ^7.2.0         # камера-сканер QR (2.2); iOS/Android/macOS only, НЕТ Windows/Linux
+                                 # (объявляет только android/ios/macos/web → нет нативной компиляции на
+                                 # Windows/Linux; build-safe, рантайм-вызов закрыт capability-флагом).
+  qr_flutter: ^4.1.0             # pure-Dart рендер QR (Show QR 7.1); все 5 платформ, без нативного плагина.
+  permission_handler: ^12.0.3    # Permission.camera (status/request/openAppSettings); iOS/Android only
+                                 # (macOS НЕ поддерживается — там пермишен ведёт mobile_scanner-контроллер).
+
   # --- Feature-gated (в актуальном скелете ЗАКОММЕНТИРОВАНЫ; раскомментируются при активации
   #     соответствующего дока; major-пины ПРОВИЗОРНЫ — сверить latest stable перед реализацией) ---
   # firebase_*: push/FCM (mobile-only: нет desktop-impl; desktop push = disabled no-op — см. 15 §Desktop fallback).
   # firebase_core: ^4.0.0        # push/FCM bootstrap — см. 15-push-notifications.md
   # firebase_messaging: ^16.0.0  # device-токен, foreground/background handlers — 15
-  # permission_handler: ^12.0.0  # iOS APNs / Android 13+ POST_NOTIFICATIONS — 15
   # file_picker: ^8.0.0          # выбор документов (pdf/docx) — см. 16-file-upload.md
   # image_picker: ^1.1.0         # камера/галерея — 16
   # connectivity_plus: ^6.1.0    # сетевое состояние (онлайн/офлайн) — см. 14-networking-and-auth.md §5
@@ -175,7 +182,7 @@ flutter_gen:
 
 > **Не тянем (desktop-shell).** Адаптивный shell строится на **кастомном breakpoint** (`NavigationBar`↔`NavigationRail`, ширина-триггер `840dp` = `Constants.railBreakpoint`; single-window; центрально-докнутый `+` FAB; 2 destination — Chats/Settings; `IndexedStack`-body; без profile-экрана), **без** `flutter_adaptive_scaffold` / `custom_adaptive_scaffold`. В скелете также **не добавляются** `window_manager` / `bitsdojo_window` / `desktop_multi_window` / `yaru`: дефолтный single-window runner, нативный оконный chrome платформы и единый Material 3 без desktop-специфичных пакетов. Любой из них вводится только когда появится конкретная потребность (custom window chrome, multi-window и т.п.), не «на всякий случай».
 
-> **Feature-gated зависимости.** `firebase_core`/`firebase_messaging`/`permission_handler` (push — `15`), `file_picker`/`image_picker` (upload — `16`), `connectivity_plus` (`14` §5), vendor-SDK аналитики (`17`) вынесены отдельной группой выше и в актуальном скелете **закомментированы** — они вводятся **при активации соответствующей фичи**, не нужны для скелета. **Major-версии ПРОВИЗОРНЫ**: перед реализацией сверить latest stable (pub.dev) и согласовать с владельцем. Доки 15/16/17/14 ссылаются сюда за версиями — поэтому пины живут тут, а не дублируются в каждом доке. Push-зависимости (`firebase_*`) — **mobile-only**: desktop-impl нет, desktop push = disabled no-op, вводится с первым desktop-консьюмером (см. 15 §Desktop fallback).
+> **Feature-gated зависимости.** `firebase_core`/`firebase_messaging` (push — `15`), `file_picker`/`image_picker` (upload — `16`), `connectivity_plus` (`14` §5), vendor-SDK аналитики (`17`) вынесены отдельной группой выше и в актуальном скелете **закомментированы** (`permission_handler` — уже **активна** с фичи 010 для камеры, не для push) — они вводятся **при активации соответствующей фичи**, не нужны для скелета. **Major-версии ПРОВИЗОРНЫ**: перед реализацией сверить latest stable (pub.dev) и согласовать с владельцем. Доки 15/16/17/14 ссылаются сюда за версиями — поэтому пины живут тут, а не дублируются в каждом доке. Push-зависимости (`firebase_*`) — **mobile-only**: desktop-impl нет, desktop push = disabled no-op, вводится с первым desktop-консьюмером (см. 15 §Desktop fallback).
 
 > **Аналитика — vendor-neutral, opt-in.** Конкретный SDK аналитики **не выбран**: в манифесте он стоит плейсхолдером-комментарием, `mixpanel_flutter` приведён лишь как **пример** вендора. NOX — E2EE-продукт: аналитика **opt-in** (выключена до явного согласия), без PII. Детали — `17-analytics.md`. Не хардкодьте конкретного вендора в зависимостях скелета.
 
@@ -295,7 +302,8 @@ formatter:
 - [ ] `.fvmrc` закоммичен со значением `{"flutter": "3.44.1"}`; `.fvm/` в `.gitignore`; `fvm install` отработал.
 - [ ] Один `pubspec.yaml` с `name: nox_app`, `description: "NOX secure messenger."`, `sdk: '>=3.12.0 <4.0.0'`, `flutter: 3.44.1`.
 - [ ] Рантайм-набор присутствует целиком: `flutter_bloc`, `bloc_concurrency`, `rxdart`, `freezed_annotation`, `json_annotation`, `get_it`, `injectable`, `dio`, `infinite_scroll_pagination: 5.1.1`, `flutter_screenutil: 5.9.3`, `skeletonizer`, `cached_network_image`, `flutter_svg`, `url_launcher`, `app_links`, `intl`, `uuid`, `collection`, `logger`, `path_provider`, `shared_preferences`, `flutter_secure_storage`, `sembast`, `package_info_plus` (^10), `cupertino_icons`.
-- [ ] Feature-gated зависимости (`firebase_*`, `permission_handler`, `file_picker`, `image_picker`, `connectivity_plus`, vendor-SDK аналитики) — закомментированы; раскомментируются при активации дока 14/15/16/17.
+- [ ] Camera/QR (фича 010): `mobile_scanner: ^7.2.0` (iOS/Android/macOS only), `qr_flutter: ^4.1.0` (все 5), `permission_handler: ^12.0.3` (iOS/Android) — АКТИВНЫ.
+- [ ] Feature-gated зависимости (`firebase_*`, `file_picker`, `image_picker`, `connectivity_plus`, vendor-SDK аналитики) — закомментированы; раскомментируются при активации дока 14/15/16/17.
 - [ ] `dev_dependencies` содержит `build_runner`, `freezed`, `json_serializable`, `injectable_generator`, `flutter_gen_runner`, `flutter_lints: 6.0.0`, `mockito: ^5.6.4` (с комментарием про конфликт analyzer/injectable_generator), `bloc_test`, `integration_test`, `flutter_test`.
 - [ ] `dependency_overrides` отсутствует (или содержит только реально необходимые из-за конфликта резолва).
 - [ ] `build.yaml` создан минимальным: `field_rename: snake`, `explicit_to_json: true`, `create_to_json: true`; `flutter_gen` пишет в `lib/design/gen/`.

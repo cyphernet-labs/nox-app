@@ -48,7 +48,10 @@ Reference-sync (2026-06-14, НЕ нормативное — принципы I�
   ⚠ TODO(blueprint-desktop-multiwindow): пересмотреть single-window vs multi-window (05/11).
   ⚠ TODO(blueprint-desktop-deps): пересмотреть исключённые desktop-зависимости — adaptive scaffold, Linux theming (11).
   ⚠ TODO(design-desktop-fonts): маппинг шрифта по умолчанию для desktop (design-system.md, splash.md).
-  ⚠ TODO(design-desktop-qr): подход к захвату QR на desktop (qr-scan.md).
+  ⚠ TODO(design-desktop-qr): подход к захвату QR на desktop (qr-scan.md). ЧАСТИЧНО ЗАКРЫТ фичей
+     010-qr-login (2026-06-26): macOS — реальная камера (mobile_scanner + camera-entitlement, desktop-расширение
+     подсистемы); Windows/Linux — документированный desktop-fallback (камеры нет, кнопка `Scan QR` скрыта
+     capability-флагом). Остаётся открытым до реальной Windows/Linux-камеры (camera_windows/v4l2 + декодер).
   ⚠ TODO(tokens-desktop-transitions): desktop PageTransitions в сгенерированной теме (nox-handoff).
   ⚠ TODO(handoff-duplicate): согласовать/удалить случайный дубль "docs/design/system/nox-handoff 2/".
   ⚠ TODO(design-desktop-screens-reconcile): существующий git-tracked desktop design-корпус
