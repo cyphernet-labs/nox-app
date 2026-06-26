@@ -7,12 +7,12 @@ import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 
 /// The mono, multi-line identifier input (Login 2.1) — a fixed ~120dp paste-target
-/// box with a suffix `Paste` action. Open text (no mask), no client format
-/// validation (FR-011) — the field accepts any input and scrolls internally for a
-/// very long ID. A definite height (via `expands`) keeps it a clean box on both
-/// mobile and desktop and stops an auto-growing field from ballooning to fill a
-/// loose-height parent (e.g. the desktop OnboardCard's scroll view). Submit is the
-/// page's `Sign in` button (a multi-line field cannot submit on Enter).
+/// box with a TOP-right `Paste` action (aligned with the label / first line, not
+/// vertically centred). Open text (no mask), no client format validation (FR-011) —
+/// the field accepts any input and scrolls internally for a very long ID. A definite
+/// height (via `expands`) keeps it a clean box on both mobile and desktop and stops
+/// an auto-growing field from ballooning to fill a loose-height parent (e.g. the
+/// desktop OnboardCard's scroll view). Submit is the page's `Sign in` button.
 class AppIdFieldWidget extends StatelessWidget {
   const AppIdFieldWidget({
     super.key,
@@ -43,29 +43,43 @@ class AppIdFieldWidget extends StatelessWidget {
       children: [
         SizedBox(
           height: AppDimensionTokens.size.idFieldH,
-          child: TextField(
-            controller: controller,
-            enabled: enabled,
-            onChanged: onChanged,
-            // Definite-height box: `expands` fills the SizedBox exactly, so the field
-            // never grows to fill an unbounded parent; long input scrolls inside.
-            expands: true,
-            minLines: null,
-            maxLines: null,
-            textAlignVertical: TextAlignVertical.top,
-            keyboardType: TextInputType.multiline,
-            style: AppTextStyleTokens.monoBody(color: colorScheme.onSurface),
-            decoration: InputDecoration(
-              labelText: TextConstants.loginIdLabel,
-              hintText: TextConstants.loginIdHint,
-              alignLabelWithHint: true,
-              // Error is rendered below (a fixed-height field can't host the error row).
-              suffixIcon: IconButton(
-                tooltip: TextConstants.actionPaste,
-                onPressed: canPaste ? onPaste : null,
-                icon: AppIconWidget(NoxIcons.contentPaste),
+          // Stack so the Paste button sits at the TOP-right (a multiline/`expands`
+          // field would otherwise vertically-centre a `suffixIcon`). The field's
+          // right content padding reserves the icon column so wrapped text clears it.
+          child: Stack(
+            children: [
+              TextField(
+                controller: controller,
+                enabled: enabled,
+                onChanged: onChanged,
+                expands: true,
+                minLines: null,
+                maxLines: null,
+                textAlignVertical: TextAlignVertical.top,
+                keyboardType: TextInputType.multiline,
+                style: AppTextStyleTokens.monoBody(color: colorScheme.onSurface),
+                decoration: InputDecoration(
+                  labelText: TextConstants.loginIdLabel,
+                  hintText: TextConstants.loginIdHint,
+                  alignLabelWithHint: true,
+                  contentPadding: EdgeInsets.fromLTRB(
+                    AppSpacingTokens.s12,
+                    AppSpacingTokens.s16,
+                    AppSpacingTokens.s48,
+                    AppSpacingTokens.s12,
+                  ),
+                ),
               ),
-            ),
+              Positioned(
+                top: AppSpacingTokens.s4,
+                right: AppSpacingTokens.s4,
+                child: IconButton(
+                  tooltip: TextConstants.actionPaste,
+                  onPressed: canPaste ? onPaste : null,
+                  icon: AppIconWidget(NoxIcons.contentPaste),
+                ),
+              ),
+            ],
           ),
         ),
         if (errorText != null)

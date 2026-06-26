@@ -2,6 +2,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:nox_app/design/app_text_style_tokens.dart';
 import 'package:nox_app/design/theme/app_theme.dart';
 import 'package:nox_app/domain/model/app/app_state_type.dart';
 import 'package:nox_app/general/constants.dart';
@@ -111,7 +112,10 @@ class _AppRootState extends State<AppRoot> {
               data: MediaQuery.of(context).copyWith(textScaler: TextScaler.noScaling),
               child: ScreenUtilInit(
                 designSize: Constants.designSize,
-                minTextAdapt: true,
+                // Clamp `.sp` (≤ 1.0) so type never balloons on a wide desktop window
+                // (replaces screenutil's unbounded width-only default; `minTextAdapt`
+                // would be a dead no-op once a resolver is set). See the resolver doc.
+                fontSizeResolver: AppTextStyleTokens.fontSizeResolver,
                 builder: (context, child) {
                   return MaterialApp(
                     title: TextConstants.appName,
