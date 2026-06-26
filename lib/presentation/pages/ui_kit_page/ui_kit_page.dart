@@ -24,7 +24,8 @@ import 'package:nox_app/presentation/widgets/state/app_empty_content_widget.dart
 import 'package:nox_app/presentation/widgets/state/app_error_widget.dart';
 import 'package:nox_app/presentation/widgets/state/app_progress_widget.dart';
 
-/// Catalog of every UI-kit widget in the current theme. Pushed from [HomePage].
+/// Catalog of every UI-kit widget in the current theme. Reachable from the Settings
+/// dev rows (kDebugMode).
 /// The app-bar action toggles the app theme (via [AppRootBloc]) so each component
 /// can be reviewed in light and dark.
 class UiKitPage extends StatelessWidget {

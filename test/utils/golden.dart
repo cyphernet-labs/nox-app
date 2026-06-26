@@ -1,9 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/general/constants.dart';
 
 import 'fonts.dart';
 import 'pump_app.dart';
+
+/// `pumpAndSettle` does NOT await async PNG decoding, so the brand logo asset
+/// (AppOnboardCardWidget head / launcher) can snapshot BLANK non-deterministically.
+/// Precache it on SETTLED screens so logo-bearing goldens capture it reliably
+/// (animated `settle: false` screens never render the logo, so skip them — pumping
+/// them again would only shift the animation a frame). Mirrors splash_page_golden_test.dart.
+Future<void> _settleWithBrandLogo(WidgetTester tester, bool settle) async {
+  if (!settle) return;
+  await tester.runAsync(() => precacheImage(Assets.png.logo.provider(), tester.element(find.byType(MaterialApp))));
+  await tester.pumpAndSettle();
+}
 
 /// Runs a curated golden for [name] in BOTH light and dark, on the fixed design
 /// surface, against `goldens/<name>_<mode>.png` (relative to the calling test
@@ -32,6 +44,7 @@ void goldenTest(String name, Widget Function() build, {bool settle = true}) {
           tester.view.resetPhysicalSize();
         });
         await pumpApp(tester, build(), themeMode: mode, settle: settle);
+        await _settleWithBrandLogo(tester, settle);
         await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/${name}_$suffix.png'));
       });
     }
@@ -67,6 +80,7 @@ void goldenTestDesktop(String name, Widget Function() build, {bool settle = true
           tester.view.resetPhysicalSize();
         });
         await pumpApp(tester, build(), themeMode: mode, settle: settle);
+        await _settleWithBrandLogo(tester, settle);
         await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/${name}_desktop_$suffix.png'));
       });
     }

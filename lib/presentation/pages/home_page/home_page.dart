@@ -10,9 +10,10 @@ import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_splash_hairline_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_wordmark_widget.dart';
 
-/// App home for the current phase: a minimal launcher. No real product features
-/// exist yet, so the start screen simply opens the UI-kit gallery. It will be
-/// replaced by the real chats shell once product features land.
+/// Minimal dev launcher (UI-kit + screens gallery). NOT mounted: the app boots to
+/// `SplashPage` under the app-state spine, and the galleries are reached from the
+/// Settings dev rows (kDebugMode). Retained as a standalone dev launcher; will be
+/// dropped once real product features land.
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
 

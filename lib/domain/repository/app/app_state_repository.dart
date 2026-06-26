@@ -17,4 +17,8 @@ abstract class AppStateRepository {
   /// Last emitted phase, read SYNCHRONOUSLY (null before the first resolution).
   /// `null` means "not resolved yet" (≠ unauthorized).
   AppStateType? get currentState;
+
+  /// Close the backing stream. Called by get_it when the singleton is disposed
+  /// (e.g. test `getIt.reset()`); a no-op in production (the singleton lives forever).
+  void dispose();
 }

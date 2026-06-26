@@ -139,6 +139,7 @@ abstract final class TextConstants {
   static const String logoutRow = 'Log out';
   static const String logoutDialogTitle = 'Log out?';
   static const String logoutDialogMessage = 'Your ID and local data will be removed from this device.';
+  static const String logoutError = 'Could not log out. Please try again.';
 
   // Chats list (5.1) (reuse: appName='NOX', searchHint='Search', noConnection='No connection')
   static const String chatsEmptyTitle = 'No chats yet';

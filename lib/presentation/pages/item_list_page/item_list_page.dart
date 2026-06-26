@@ -8,7 +8,7 @@ import 'package:nox_app/presentation/pages/item_list_page/bloc/item_list_bloc.da
 
 /// Scaffold-DEMO verification harness on MOCK data (NOT a product feature — FR-013).
 /// Proves the layered vertical (page → BLoC → repository) compiles end-to-end.
-/// Not currently mounted: the app starts at the UI-kit launcher (HomePage); this
+/// Not currently mounted: the app starts at `SplashPage` (the app-state spine); this
 /// and AppShell are kept as the Feature-001 skeleton until real chat features land.
 class ItemListPage extends StatefulWidget {
   const ItemListPage({super.key});

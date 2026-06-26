@@ -5,6 +5,7 @@ import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/app_text_style_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_brand.dart';
+import 'package:nox_app/design/theme/nox_scrims.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page.dart';
@@ -145,7 +146,7 @@ class _QrScanPageState extends State<QrScanPage> {
   /// brand-fixed ~35% black scrim (theme-invariant, like the overlay mask).
   Widget _enterManuallyPill(BuildContext context) {
     return Material(
-      color: const Color(0x59000000),
+      color: NoxScrims.qrPill,
       shape: const StadiumBorder(),
       clipBehavior: Clip.antiAlias,
       child: InkWell(

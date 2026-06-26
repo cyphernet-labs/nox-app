@@ -29,6 +29,7 @@ description: "Task list for 009-app-state-flow implementation"
 **Purpose**: нативные/проектные предусловия secure-storage.
 
 - [X] T001 [P] Добавить Keychain Sharing entitlement `keychain-access-groups` (с `$(AppIdentifierPrefix)nox`) в `macos/Runner/DebugProfile.entitlements` и `macos/Runner/Release.entitlements` (обязательное предусловие `flutter_secure_storage` на macOS; сейчас отсутствует)
+  - **РЕКОНСИЛЯЦИЯ 2026-06-26 (одобрено мейнтейнером)**: entitlement откатан — он требует подписи с реальной dev-командой и ломал `flutter run` (ad-hoc), а пустой массив форсировал требование сертификата. Заменён на **legacy file-based keychain** через `MacOsOptions(usesDataProtectionKeychain: false)` в `lib/di/register_module.dart`: песочница даёт доступ к собственным items приложения без entitlement, локальная и нотаризованная сборка работают. Вернуть data-protection keychain + entitlement, когда появится macOS-подпись.
 - [X] T002 [P] Sanity: подтвердить в `pubspec.yaml` наличие `flutter_secure_storage ^10.3.1`, `shared_preferences ^2.5.5`, `rxdart 0.28.0`; прогнать `make deps`
 
 ---

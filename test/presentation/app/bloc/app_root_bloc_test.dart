@@ -53,10 +53,16 @@ void main() {
     );
 
     blocTest<AppRootBloc, AppRootState>(
-      'ignores an error emission (no data)',
+      'an error emission still lands — releases the splash to a safe unauthorized (Login), never stalls',
       build: AppRootBloc.new,
       act: (bloc) => bloc.add(const AppRootEvent.updateAppState(result: RepositoryResult.error(exception: RepositoryException.unknown))),
-      expect: () => const <AppRootState>[],
+      expect: () => [
+        isA<AppRootState>()
+            .having((s) => s.isReady, 'isReady', isTrue)
+            .having((s) => s.lastAppState.state, 'lastAppState', AppStateType.unauthorized)
+            // First emission → held behind the splash (not yet applied).
+            .having((s) => s.appliedAppState.state, 'appliedAppState', AppStateType.init),
+      ],
     );
   });
 }

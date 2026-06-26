@@ -17,6 +17,14 @@ abstract class RegisterModule {
     // keychain reaches the app's OWN items in the sandbox with no entitlement, so
     // local (ad-hoc-signed) and notarized builds both work. macOS-only knob — iOS /
     // Android / Windows (DPAPI) / Linux (libsecret) are unaffected.
+    //
+    // Constitution III reconciliation (009 plan): the planned macOS gate was "add
+    // keychain-access-groups". That path needs signing infra NOT yet set up (no
+    // backend / no release pipeline this phase) and broke `flutter run`, so the gate
+    // is met instead by the sandbox's own per-app keychain isolation via the legacy
+    // keychain — maintainer-approved 2026-06-26. Posture delta (legacy login keychain
+    // vs data-protection) is acceptable while the stored value is a stub identifier;
+    // revisit (switch to data-protection + the entitlement) when macOS signing lands.
     mOptions: MacOsOptions(usesDataProtectionKeychain: false),
   );
 

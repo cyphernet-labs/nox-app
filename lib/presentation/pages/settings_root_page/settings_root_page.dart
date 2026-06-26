@@ -8,6 +8,7 @@ import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/di/global_aliases.dart';
+import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/helpers/app_feedback_helper.dart';
@@ -23,6 +24,7 @@ import 'package:nox_app/presentation/pages/language_page/language_page.dart';
 import 'package:nox_app/presentation/pages/notifications_page/notifications_body.dart';
 import 'package:nox_app/presentation/pages/notifications_page/notifications_page.dart';
 import 'package:nox_app/presentation/pages/screens_gallery_page/screens_gallery_page.dart';
+import 'package:nox_app/presentation/pages/ui_kit_page/ui_kit_page.dart';
 import 'package:nox_app/presentation/pages/settings_root_page/bloc/settings_root_bloc.dart';
 import 'package:nox_app/presentation/pages/splash_page/splash_page.dart';
 import 'package:nox_app/presentation/pages/terms_page/terms_body.dart';
@@ -118,8 +120,15 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
       // Gallery preview: hop to the standalone (demo) Splash without touching real state.
       Navigator.of(context).push(SplashPage.routeDemo());
     } else {
-      // Real flow: full wipe + re-derive app state; the spine returns to Login.
-      await authRepository.logout();
+      // Real flow: full wipe + re-derive app state; the spine returns to Login. A
+      // failed wipe must NOT present as a successful logout (Constitution I: logout
+      // fully wipes) — surface it instead of silently leaving the identity on disk.
+      final result = await authRepository.logout();
+      if (!mounted) return;
+      result.match(
+        onData: (_) {},
+        onError: (_) => showAppSnackBar(context, text: TextConstants.logoutError, error: true),
+      );
     }
   }
 
@@ -172,6 +181,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
           Divider(height: AppDimensionTokens.border.hairline),
           AppSettingsNavRowWidget(title: TextConstants.logoutRow, color: Theme.of(context).colorScheme.error, onTap: _logout),
           if (kDebugMode) AppSettingsNavRowWidget(title: 'Screens gallery (dev)', onTap: () => _openSection(ScreensGalleryPage.route())),
+          if (kDebugMode) AppSettingsNavRowWidget(title: 'UI kit (dev)', onTap: () => _openSection(UiKitPage.route())),
           if (kDebugMode && !widget.demo)
             AppSettingsNavRowWidget(title: 'Force logout (dev)', onTap: () => unawaited(authRepository.logout(forced: true))),
           if (kDebugMode && widget.demo) _devControl(),
@@ -233,6 +243,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
               AppSettingsNavRowWidget(title: TextConstants.logoutRow, color: colorScheme.error, onTap: _logout),
               if (kDebugMode)
                 AppSettingsNavRowWidget(title: 'Screens gallery (dev)', onTap: () => _openSection(ScreensGalleryPage.route())),
+              if (kDebugMode) AppSettingsNavRowWidget(title: 'UI kit (dev)', onTap: () => _openSection(UiKitPage.route())),
               if (kDebugMode && !widget.demo)
                 AppSettingsNavRowWidget(title: 'Force logout (dev)', onTap: () => unawaited(authRepository.logout(forced: true))),
               if (kDebugMode && widget.demo) _devControl(),

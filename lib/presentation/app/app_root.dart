@@ -98,10 +98,14 @@ class _AppRootState extends State<AppRoot> {
             listener: _onAppStateRouting,
           ),
           BlocListener<AppRootBloc, AppRootState>(
+            // React when entering unauthorized-with-sessionExpired OR when the
+            // sessionExpired flag flips false→true while ALREADY on unauthorized (a
+            // forced logout from the Login screen — deferred 401 path), so the
+            // "session expired" notice is never silently dropped.
             listenWhen: (previous, current) =>
                 current.appliedAppState.state == AppStateType.unauthorized &&
                 current.appliedAppState.sessionExpired &&
-                previous.appliedAppState.state != AppStateType.unauthorized,
+                (previous.appliedAppState.state != AppStateType.unauthorized || !previous.appliedAppState.sessionExpired),
             listener: _onSessionExpired,
           ),
         ],

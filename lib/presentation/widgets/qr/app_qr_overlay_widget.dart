@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/theme/nox_brand.dart';
+import 'package:nox_app/design/theme/nox_scrims.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/general/text_constants.dart';
 
@@ -38,7 +39,7 @@ class AppQrOverlayWidget extends StatelessWidget {
               textAlign: TextAlign.center,
               style: textTheme.bodyLarge?.copyWith(
                 color: NoxBrand.white,
-                shadows: [Shadow(color: const Color(0xCC000000), blurRadius: AppSpacingTokens.s4)],
+                shadows: [Shadow(color: NoxScrims.qrTextShadow, blurRadius: AppSpacingTokens.s4)],
               ),
             ),
           ),
@@ -53,7 +54,7 @@ class _ReticlePainter extends CustomPainter {
   final double reticleFraction;
 
   /// `#000000` @ 55% — brand-fixed dimming mask (design-system.md §9.9).
-  static const Color _mask = Color(0x8C000000);
+  static const Color _mask = NoxScrims.qrMask;
   static const Color _reticle = NoxBrand.white; // #FAFAFA, 3dp
   static double get _stroke => AppDimensionTokens.border.heavy;
 

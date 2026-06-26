@@ -39,9 +39,14 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   @override
   Future<RepositoryResult<bool>> saveIdentifier({required String identifier, required bool onboardingComplete, String? label}) {
     return execute<bool>(() async {
-      await _secureStorage.write(key: _kIdentifier, value: identifier);
+      // Write the non-secret prefs (flag/label) FIRST and the secure identifier LAST:
+      // readSession() keys presence on the identifier, so it is the commit point. A
+      // crash between the two stores then leaves at worst (flag set, no identifier) →
+      // resolves to unauthorized (re-login), never (identifier present, flag absent)
+      // which would drop a registered user back onto 2.3 Set username.
       await _prefs.setBool(_kOnboardingComplete, onboardingComplete);
       if (label != null) await _prefs.setString(_kLabel, label);
+      await _secureStorage.write(key: _kIdentifier, value: identifier);
       return const RepositoryResult<bool>.success(data: true);
     });
   }

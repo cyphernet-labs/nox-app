@@ -23,6 +23,7 @@ class SetUsernameBloc extends BaseBloc<SetUsernameEvent, SetUsernameState> {
     on<NameChanged>(_onNameChanged);
     on<AvailabilityRequested>(_onAvailabilityRequested, transformer: debounceRestartable());
     on<DoneRequested>(_onDoneRequested);
+    on<SkipRequested>(_onSkipRequested);
     on<NavigationHandled>(_onNavigationHandled);
   }
 
@@ -80,6 +81,27 @@ class SetUsernameBloc extends BaseBloc<SetUsernameEvent, SetUsernameState> {
     // navigates to the shell (authorized). completeOnboarding returns a
     // RepositoryResult (never throws), so no executeLogic wrapper.
     final result = await authRepository.completeOnboarding(label: state.name);
+    result.match<void>(
+      onData: (_) => emit(state.copyWith(status: UsernameStatus.valid)),
+      onError: (_) => emit(state.copyWith(status: UsernameStatus.navFatal)),
+    );
+  }
+
+  /// `Skip` keeps the server-assigned name (no `canSubmit` gate) but shares the
+  /// `submitting` state with `Done`, so the re-entry / concurrent-with-Done guard is
+  /// the same single `isSubmitting` flag (no widget-local bool).
+  Future<void> _onSkipRequested(SkipRequested event, Emitter<SetUsernameState> emit) async {
+    if (state.isSubmitting) return;
+    emit(state.copyWith(status: UsernameStatus.submitting));
+    if (demo) {
+      await executeLogic(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+        emit(state.copyWith(status: UsernameStatus.navSuccess));
+      }, onError: (error, exception, stackTrace) => emit(state.copyWith(status: UsernameStatus.navFatal)));
+      return;
+    }
+    // Real flow: mark onboarding complete (keep the current name); the spine navigates.
+    final result = await authRepository.completeOnboarding();
     result.match<void>(
       onData: (_) => emit(state.copyWith(status: UsernameStatus.valid)),
       onError: (_) => emit(state.copyWith(status: UsernameStatus.navFatal)),

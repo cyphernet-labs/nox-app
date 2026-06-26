@@ -43,13 +43,24 @@ class AppStateRepositoryImpl implements AppStateRepository {
         if (!session.onboardingComplete) return AppStateModel(state: AppStateType.registrationPending, session: session);
         return AppStateModel(state: AppStateType.authorized, session: session);
       },
-      // Fail-safe: any storage read error resolves to unauthorized, never crashes.
-      onError: (_) => _unauthorized(sessionExpired),
+      // Fail-safe: a storage READ error is not proof the session is gone, so don't
+      // silently log out a valid user on a transient keychain/keystore hiccup — keep
+      // whatever state we last resolved. Only fall back to unauthorized on a cold
+      // start (no prior emission) where there is nothing to preserve.
+      onError: (_) =>
+          _subject.valueOrNull?.match(onData: (prev) => prev, onError: (_) => _unauthorized(sessionExpired)) ??
+          _unauthorized(sessionExpired),
     );
     final result = RepositoryResult<AppStateModel>.success(data: model);
     _subject.add(result);
     return result;
   }
+
+  /// Close the long-lived subject when get_it disposes the singleton (e.g. test
+  /// `getIt.reset()`), per the blueprint disposable reactive-repo convention.
+  @override
+  @disposeMethod
+  void dispose() => _subject.close();
 
   AppStateModel _unauthorized(bool sessionExpired) =>
       AppStateModel(state: AppStateType.unauthorized, session: null, sessionExpired: sessionExpired);

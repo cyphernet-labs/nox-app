@@ -28,8 +28,8 @@ import 'package:nox_app/presentation/widgets/shell/tab_bar_shell_widget.dart';
 /// desktop layout is chosen by window width); a not-yet-built screen shows a
 /// "Coming soon" affordance and is disabled. As a screen lands, set its
 /// [_ScreenEntry.route] and the row activates — so this gallery doubles as a
-/// visual progress tracker. Pushed from `HomePage`; mirrors the `UiKitPage`
-/// in-app pattern (no router; each page exposes its own `route()`).
+/// visual progress tracker. Reachable from the Settings dev rows (kDebugMode);
+/// mirrors the `UiKitPage` in-app pattern (no router; each page exposes its own `route()`).
 class ScreensGalleryPage extends StatelessWidget {
   const ScreensGalleryPage({super.key});
 

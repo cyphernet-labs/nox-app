@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
-import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/pages/base/base_state_page.dart';
@@ -47,7 +46,6 @@ class _SetUsernamePageState extends BaseStatePage<SetUsernamePage> {
   late final TextEditingController _controller;
   final FocusNode _focusNode = FocusNode();
   UsernameOutcome _outcome = UsernameOutcome.success;
-  bool _skipping = false;
 
   @override
   void initState() {
@@ -66,25 +64,9 @@ class _SetUsernamePageState extends BaseStatePage<SetUsernamePage> {
 
   void _done() => _bloc.add(SetUsernameEvent.doneRequested(outcome: _outcome));
 
-  Future<void> _skip() async {
-    if (widget.demo) {
-      // Skip / back keeps the current name; standalone stub destination.
-      Navigator.of(context).push(RoutePlaceholderPage.route(destinationLabel: 'Chats shell (4.1)'));
-      return;
-    }
-    // Skip is not bloc-driven (it never emits `submitting`), so guard re-entry /
-    // double-submit ourselves while completeOnboarding is in flight.
-    if (_skipping) return;
-    setState(() => _skipping = true);
-    // Real flow: keep the server-assigned name, mark onboarding complete; the spine
-    // navigates on success. Surface a failure instead of leaving Skip looking dead.
-    final result = await authRepository.completeOnboarding();
-    if (!mounted) return;
-    if (!result.hasData) {
-      setState(() => _skipping = false);
-      Navigator.of(context).push(AppErrorPage.route(params: ErrorPageParams.fatal()));
-    }
-  }
+  // Both Done and Skip go through the bloc, so they share the single `submitting`
+  // state (no widget-local re-entry flag). Skip keeps the server-assigned name.
+  void _skip() => _bloc.add(const SetUsernameEvent.skipRequested());
 
   void _onStatus(BuildContext context, SetUsernameState state) {
     switch (state.status) {
@@ -190,7 +172,7 @@ class _SetUsernamePageState extends BaseStatePage<SetUsernamePage> {
                 : const Text(TextConstants.actionDone),
           ),
         ),
-        TextButton(onPressed: (state.isSubmitting || _skipping) ? null : _skip, child: const Text(TextConstants.actionSkip)),
+        TextButton(onPressed: state.isSubmitting ? null : _skip, child: const Text(TextConstants.actionSkip)),
         if (kDebugMode && widget.demo) _OutcomeControl(value: _outcome, onChanged: (value) => setState(() => _outcome = value)),
       ],
     );

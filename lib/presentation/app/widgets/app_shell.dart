@@ -9,7 +9,7 @@ import 'package:nox_app/presentation/pages/item_list_page/item_list_page.dart';
 import 'package:nox_app/presentation/pages/placeholder/settings_placeholder_page.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 
-/// NOT currently mounted — `AppRoot` starts at `HomePage` (the UI-kit launcher)
+/// NOT currently mounted — `AppRoot` starts at `SplashPage` (the app-state spine)
 /// until real chat features land; the live shell widgets now live in
 /// `lib/presentation/widgets/shell/`. Kept as the Feature-001 skeleton.
 ///

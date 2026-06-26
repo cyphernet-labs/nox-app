@@ -37,6 +37,14 @@ class AppIdFieldWidget extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
+    final hasError = errorText != null;
+    // M3 error outline driven manually: the message renders below the fixed-height
+    // box (the Column child), so the field can't use InputDecoration.errorText (it
+    // would overflow the SizedBox) — colour the border on error instead.
+    OutlineInputBorder errorBorder(double width) => OutlineInputBorder(
+      borderRadius: BorderRadius.circular(AppDimensionTokens.radius.xs),
+      borderSide: BorderSide(color: colorScheme.error, width: width),
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -68,6 +76,8 @@ class AppIdFieldWidget extends StatelessWidget {
                     AppSpacingTokens.s48,
                     AppSpacingTokens.s12,
                   ),
+                  enabledBorder: hasError ? errorBorder(AppDimensionTokens.border.regular) : null,
+                  focusedBorder: hasError ? errorBorder(AppDimensionTokens.border.thick) : null,
                 ),
               ),
               Positioned(
@@ -75,7 +85,10 @@ class AppIdFieldWidget extends StatelessWidget {
                 right: AppSpacingTokens.s4,
                 child: IconButton(
                   tooltip: TextConstants.actionPaste,
-                  onPressed: canPaste ? onPaste : null,
+                  // Also gate on `enabled`: during an in-flight sign-in a Paste tap
+                  // would dispatch IdChanged, reset the loading state and let a second
+                  // concurrent signIn start.
+                  onPressed: (enabled && canPaste) ? onPaste : null,
                   icon: AppIconWidget(NoxIcons.contentPaste),
                 ),
               ),
@@ -85,7 +98,12 @@ class AppIdFieldWidget extends StatelessWidget {
         if (errorText != null)
           Padding(
             padding: EdgeInsets.only(top: AppSpacingTokens.s8, left: AppSpacingTokens.s12),
-            child: Text(errorText!, maxLines: 2, style: textTheme.bodySmall?.copyWith(color: colorScheme.error)),
+            // liveRegion so assistive tech announces the error when it appears (the
+            // message is a sibling of the field, not its InputDecoration.errorText).
+            child: Semantics(
+              liveRegion: true,
+              child: Text(errorText!, maxLines: 2, style: textTheme.bodySmall?.copyWith(color: colorScheme.error)),
+            ),
           ),
       ],
     );

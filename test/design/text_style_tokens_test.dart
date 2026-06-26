@@ -12,6 +12,7 @@ void main() {
     await tester.pumpWidget(
       ScreenUtilInit(
         designSize: const Size(393, 852),
+        fontSizeResolver: AppTextStyleTokens.fontSizeResolver,
         builder: (context, _) {
           const c = Color(0xFF000000);
           // factory under test -> the matching noxTextTheme role (source of truth)

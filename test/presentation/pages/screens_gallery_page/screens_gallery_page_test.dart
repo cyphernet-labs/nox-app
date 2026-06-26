@@ -3,8 +3,9 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart';
-import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/design/app_text_style_tokens.dart';
 import 'package:nox_app/design/theme/app_theme.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
@@ -269,7 +270,7 @@ void main() {
         create: (_) => AppRootBloc(),
         child: ScreenUtilInit(
           designSize: Constants.designSize,
-          minTextAdapt: true,
+          fontSizeResolver: AppTextStyleTokens.fontSizeResolver,
           builder: (context, _) => MaterialApp(theme: AppTheme.light(), home: const ScreensGalleryPage()),
         ),
       ),
