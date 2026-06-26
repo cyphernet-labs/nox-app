@@ -8,11 +8,11 @@ import 'package:nox_app/design/theme/nox_text_theme.dart';
 /// `fontSize` / `fontWeight` / `letterSpacing`. Sizes use `.sp` (responsive); callers pass
 /// the resolved color from `context.appColors` / `ColorScheme`.
 ///
-/// These factories deliberately set **no** `height` — it would scale quadratically with `.sp`
-/// (`.sp` already scales `fontSize`, and `height` is a multiplier of it); line height is supplied
-/// by the ambient `DefaultTextStyle` / the matching `Theme.textTheme` role. They also set no
-/// `fontFamily` (inherited from the theme — `Roboto`). For full-fidelity text that must carry the
-/// design line-height, use `Theme.of(context).textTheme.<role>` directly.
+/// These factories deliberately set **no** `height`: NOX's `Theme.textTheme` (now `.sp`-scaled,
+/// see `AppTheme`) carries the design line-height for full-fidelity text, and pinning an explicit
+/// line-height here regresses the `textScaler: 2.0` no-overflow guarantee (FR-016 a11y) in fixed
+/// columns. For text that must carry the design line-height, use `Theme.of(context).textTheme.<role>`.
+/// They also set no `fontFamily` (inherited from the theme — `Roboto`).
 ///
 /// Call only inside `build` under `ScreenUtilInit` (`.sp` is valid only after it runs).
 abstract final class AppTextStyleTokens {

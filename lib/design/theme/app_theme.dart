@@ -4,22 +4,25 @@ import 'package:nox_app/design/theme/nox_color_scheme.dart';
 import 'package:nox_app/design/theme/nox_component_themes.dart';
 import 'package:nox_app/design/theme/nox_text_theme.dart';
 
-/// NOX Material 3 theme. The `ColorScheme` and `TextTheme` come from the
+/// NOX Material 3 theme. The `ColorScheme` and base `TextTheme` come from the
 /// token-generated design-system handoff (`lib/design/theme/nox_*.dart`,
 /// regenerated from `docs/design/system/nox-handoff/tokens` — never hand-edited),
 /// so the palette is the hand-tuned NOX teal scheme, not a raw `fromSeed`.
 /// Semantic, mode-dependent extras ride along via the AppColors ThemeExtension.
+///
+/// Built FRESH each call (NOT cached): per-component sub-themes pull responsive
+/// sizes/radii from `AppDimensionTokens` and the opt-in `AppTextStyleTokens`
+/// (`.sp`/`.w`), which are only valid under `ScreenUtilInit` and must recompute
+/// per surface. The global `Theme.textTheme` deliberately stays the canonical
+/// design type-scale (`noxTextTheme`, fixed design px) — responsive text is opt-in
+/// via `AppTextStyleTokens`; scaling the whole scale destabilizes every
+/// stock-widget layout (and the FR-016 textScaler stress) for no design gain.
 class AppTheme {
   const AppTheme._();
 
-  // Themes are static per ColorScheme; build once and cache so MaterialApp
-  // rebuilds (e.g. every AppRootBloc emission) don't reconstruct all sub-themes.
-  static ThemeData? _light;
-  static ThemeData? _dark;
+  static ThemeData light() => _build(noxLightScheme, const LightAppColors());
 
-  static ThemeData light() => _light ??= _build(noxLightScheme, const LightAppColors());
-
-  static ThemeData dark() => _dark ??= _build(noxDarkScheme, const DarkAppColors());
+  static ThemeData dark() => _build(noxDarkScheme, const DarkAppColors());
 
   static ThemeData _build(ColorScheme scheme, AppColors appColors) {
     return ThemeData(
