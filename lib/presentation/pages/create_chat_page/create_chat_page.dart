@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
@@ -104,10 +105,13 @@ class _CreateChatPageState extends BaseStatePage<CreateChatPage> {
         child: Column(
           children: [
             Expanded(
-              child: SingleChildScrollView(padding: EdgeInsets.all(AppSpacingTokens.s16), child: _field(state)),
+              child: SingleChildScrollView(
+                padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s20, AppSpacingTokens.s16, AppSpacingTokens.s16),
+                child: _field(state),
+              ),
             ),
             Padding(
-              padding: EdgeInsets.all(AppSpacingTokens.s16),
+              padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s16, AppSpacingTokens.s16, AppSpacingTokens.s24),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -136,7 +140,7 @@ class _CreateChatPageState extends BaseStatePage<CreateChatPage> {
           ),
           Center(
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 460),
+              constraints: BoxConstraints(maxWidth: AppDimensionTokens.layout.dialogMaxW),
               child: Padding(
                 padding: EdgeInsets.all(AppSpacingTokens.s24),
                 child: Material(
@@ -191,7 +195,9 @@ class _CreateChatPageState extends BaseStatePage<CreateChatPage> {
     final colorScheme = Theme.of(context).colorScheme;
     return FilledButton(
       onPressed: state.canSubmit && !state.isSubmitting ? _create : null,
-      child: state.isSubmitting ? AppSpinnerWidget(size: 18, color: colorScheme.onPrimary) : const Text(TextConstants.actionCreate),
+      child: state.isSubmitting
+          ? AppSpinnerWidget(size: AppDimensionTokens.icon.md, color: colorScheme.onPrimary)
+          : const Text(TextConstants.actionCreate),
     );
   }
 

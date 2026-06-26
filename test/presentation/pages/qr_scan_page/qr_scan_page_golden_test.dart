@@ -10,4 +10,5 @@ void main() {
   // The reticle + mask are brand-fixed (#FAFAFA / #000 @ 55%): identical in both
   // themes; only the AppBar / placeholder surfaces differ by theme.
   goldenTest('qr_scan_page', () => const QrScanPage());
+  goldenTestDesktop('qr_scan_page', () => const QrScanPage());
 }

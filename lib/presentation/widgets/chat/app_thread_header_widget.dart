@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
@@ -17,7 +18,7 @@ class AppThreadHeaderWidget extends StatelessWidget {
   final ChatModel chat;
   final VoidCallback onInfo;
 
-  static const double _avatarSize = 36;
+  static double get _avatarSize => AppDimensionTokens.size.avatarXs;
 
   @override
   Widget build(BuildContext context) {
@@ -62,7 +63,7 @@ class AppThreadHeaderWidget extends StatelessWidget {
               ],
             ),
           ),
-          const Divider(height: 1),
+          Divider(height: AppDimensionTokens.border.hairline),
         ],
       ),
     );

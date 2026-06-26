@@ -19,4 +19,5 @@ void main() {
   });
 
   goldenTest('terms_page', () => const TermsPage());
+  goldenTestDesktop('terms_page', () => const TermsPage());
 }

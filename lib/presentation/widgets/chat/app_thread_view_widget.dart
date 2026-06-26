@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
+import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
@@ -93,7 +94,8 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
           return Column(
             children: [
               if (widget.showHeader) AppThreadHeaderWidget(chat: widget.chat, onInfo: widget.onInfo ?? () {}),
-              if (state is Initialized && state.isOffline) const AppNoticeStripWidget(message: TextConstants.noConnection),
+              if (state is Initialized && state.isOffline)
+                AppNoticeStripWidget(message: TextConstants.noConnection, icon: NoxIcons.wifiOff),
               Expanded(child: _body(context, state)),
               if (state is Initialized) _composerBar(state),
               if (kDebugMode && widget.demo) _scenarioControl(),

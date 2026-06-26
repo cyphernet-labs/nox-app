@@ -52,10 +52,10 @@
 
 Роутер **не нужен**: блюпринт `05 §6` канонизирует одно-оконный `Navigator` + `GlobalKey<NavigatorState>` с подменой корневого роута. `AppRoot` уже держит `_navigatorKey`; `flutter_secure_storage` и `shared_preferences` уже в `pubspec`.
 
-1. [ ] **Auth/local-state репозиторий** — чтение/хранение идентификатора через `flutter_secure_storage` (работает локально и без сервера); + settings-store на `shared_preferences`. Регистрация через injectable DI (как `AppConfigRepository`).
-2. [ ] **`AppRootState` + bootstrap-фаза** — `AppRootBloc._onInitialize` реально грузит сохранённую тему и резолвит сессию (`hasId`/`noId`/`error`); `_onSetTheme` персистит.
-3. [ ] **Splash — реальная точка входа** (`main.dart`/`AppRoot`); галерея остаётся только как debug-лаунчер.
-4. [ ] **Подмена корневого роута** (`05 §6.1`): `BlocListener<AppRootBloc>` → `pushAndRemoveUntil`/`pushReplacement` для `Splash → Login` (нет id) / `Splash → TabBarShell` (есть id) / `Splash → AppErrorPage` (error).
+1. [x] **Auth/local-state репозиторий** *(Feature-009: `SessionRepository`/`AppStateRepository`/`AuthRepository`; identifier через `flutter_secure_storage`, флаги через `shared_preferences`; общий settings-store — TBD)* — чтение/хранение идентификатора через `flutter_secure_storage` (работает локально и без сервера). Регистрация через injectable DI (как `AppConfigRepository`).
+2. [x] **`AppRootState` + bootstrap-фаза** *(Feature-009)* — `AppRootBloc._onInitialize` резолвит сессию (`unauthorized`/`registrationPending`/`authorized`) через подписку на `watchAppState()`; персист темы (сохранённая тема / `_onSetTheme`) — TBD.
+3. [x] **Splash — реальная точка входа** *(Feature-009)* (`main.dart`/`AppRoot`); галерея остаётся только как debug-лаунчер (`kDebugMode`-вход из Settings).
+4. [x] **Подмена корневого роута** *(Feature-009, `05 §6.1`)*: `BlocListener<AppRootBloc>` → `pushReplacement` (первый переход) / `pushAndRemoveUntil` (последующие) для `Splash → Login` (нет id) / `Splash → Set username` (новый id) / `Splash → TabBarShell` (есть id).
 5. [ ] **Онбординг-цепочка реальными роутами** — заменить заглушки `RoutePlaceholderPage` на реальные переходы: `2.1 ↔ 2.2` (round-trip), `2.1 → 2.3` (новый id), `2.3 → 4.1` (успех).
 6. [ ] **Персистентность настроек** — тема/язык/уведомления на `shared_preferences`; закрыть `Inline-error` (§2).
 7. [ ] **l10n (EN + UK)** — `flutter_localizations` + `l10n.yaml` + `.arb`, миграция `TextConstants`; `LocaleController` для живого переключения языка (`7.4`); `MaterialApp.localizationsDelegates`/`supportedLocales`/`locale`.

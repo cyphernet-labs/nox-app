@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_brand.dart';
@@ -16,7 +17,7 @@ class AppSearchBarWidget extends StatelessWidget {
   final String hint;
   final VoidCallback? onTap;
 
-  static const double _height = 56;
+  static double get _height => AppDimensionTokens.size.searchBarH;
 
   @override
   Widget build(BuildContext context) {

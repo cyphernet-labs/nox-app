@@ -11,14 +11,14 @@ void main() {
   Finder doneButton() => find.widgetWithText(FilledButton, TextConstants.actionDone);
 
   testWidgets('is pre-filled with the default name and enables Done', (tester) async {
-    await pumpApp(tester, const SetUsernamePage());
+    await pumpApp(tester, const SetUsernamePage(demo: true));
 
     expect(find.text(SetUsernameBloc.defaultName), findsOneWidget);
     expect(tester.widget<FilledButton>(doneButton()).onPressed, isNotNull);
   });
 
   testWidgets('an invalid charset shows an error and disables Done', (tester) async {
-    await pumpApp(tester, const SetUsernamePage());
+    await pumpApp(tester, const SetUsernamePage(demo: true));
 
     await tester.enterText(find.byType(TextField), 'bad name!');
     await tester.pump();
@@ -28,7 +28,7 @@ void main() {
   });
 
   testWidgets('a taken name shows the taken error after the debounced check', (tester) async {
-    await pumpApp(tester, const SetUsernamePage(), settle: false);
+    await pumpApp(tester, const SetUsernamePage(demo: true), settle: false);
 
     await tester.enterText(find.byType(TextField), 'NOX');
     await tester.pump();
@@ -38,7 +38,7 @@ void main() {
   });
 
   testWidgets('Skip routes to the shell placeholder', (tester) async {
-    await pumpApp(tester, const SetUsernamePage());
+    await pumpApp(tester, const SetUsernamePage(demo: true));
 
     await tester.tap(find.widgetWithText(TextButton, TextConstants.actionSkip));
     await tester.pumpAndSettle();

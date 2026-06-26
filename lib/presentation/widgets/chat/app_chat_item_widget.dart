@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_avatar_widget.dart';
@@ -15,9 +16,9 @@ class AppChatItemWidget extends StatelessWidget {
   final int unread;
   final VoidCallback? onTap;
 
-  static const double _minHeight = 72;
-  static const double _avatarSize = 40;
-  static const double _badgeSize = 20;
+  static double get _minHeight => AppDimensionTokens.size.chatRowMinH;
+  static double get _avatarSize => AppDimensionTokens.size.avatarSm;
+  static double get _badgeSize => AppSpacingTokens.s20;
 
   @override
   Widget build(BuildContext context) {
@@ -27,14 +28,14 @@ class AppChatItemWidget extends StatelessWidget {
     return InkWell(
       onTap: onTap,
       child: Container(
-        constraints: const BoxConstraints(minHeight: _minHeight),
+        constraints: BoxConstraints(minHeight: _minHeight),
         padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s16, vertical: AppSpacingTokens.s12),
         child: Row(
           children: [
             Container(
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                boxShadow: [BoxShadow(color: colorScheme.onSurface.withValues(alpha: 0.06), spreadRadius: 2)],
+                boxShadow: [BoxShadow(color: colorScheme.onSurface.withValues(alpha: 0.06), spreadRadius: AppDimensionTokens.border.thick)],
               ),
               child: AppAvatarWidget(name: name, size: _avatarSize),
             ),
@@ -71,7 +72,7 @@ class AppChatItemWidget extends StatelessWidget {
                 SizedBox(height: AppSpacingTokens.s6),
                 if (hasUnread)
                   Container(
-                    constraints: const BoxConstraints(minWidth: _badgeSize),
+                    constraints: BoxConstraints(minWidth: _badgeSize),
                     height: _badgeSize,
                     padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s6),
                     alignment: Alignment.center,

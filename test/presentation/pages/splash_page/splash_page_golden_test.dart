@@ -24,7 +24,7 @@ void main() {
       testWidgets('matches the $suffix theme', (tester) async {
         await tester.binding.setSurfaceSize(Constants.designSize);
         addTearDown(() => tester.binding.setSurfaceSize(null));
-        await pumpApp(tester, const SplashPage(), themeMode: mode, settle: false);
+        await pumpApp(tester, const SplashPage(demo: true), themeMode: mode, settle: false);
         await tester.runAsync(() async {
           await precacheImage(Assets.png.logo.provider(), tester.element(find.byType(SplashPage)));
         });

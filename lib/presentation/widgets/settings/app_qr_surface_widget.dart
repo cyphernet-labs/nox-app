@@ -117,7 +117,7 @@ class _IdQrContent extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(TextConstants.qrSheetTitle, style: textTheme.titleMedium?.copyWith(color: colorScheme.onSurface)),
+          Text(TextConstants.qrSheetTitle, style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
           SizedBox(height: AppSpacingTokens.s16),
           AppQrSurfaceWidget(data: data),
           SizedBox(height: AppSpacingTokens.s16),

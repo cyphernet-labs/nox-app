@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/nox_icons.dart';
@@ -23,7 +24,8 @@ import 'package:nox_app/presentation/widgets/state/app_empty_content_widget.dart
 import 'package:nox_app/presentation/widgets/state/app_error_widget.dart';
 import 'package:nox_app/presentation/widgets/state/app_progress_widget.dart';
 
-/// Catalog of every UI-kit widget in the current theme. Pushed from [HomePage].
+/// Catalog of every UI-kit widget in the current theme. Reachable from the Settings
+/// dev rows (kDebugMode).
 /// The app-bar action toggles the app theme (via [AppRootBloc]) so each component
 /// can be reviewed in light and dark.
 class UiKitPage extends StatelessWidget {
@@ -53,7 +55,7 @@ class UiKitPage extends StatelessWidget {
                 SizedBox(width: AppSpacingTokens.s12),
                 AppIconWidget(NoxIcons.forumFill),
                 SizedBox(width: AppSpacingTokens.s12),
-                AppIconWidget(NoxIcons.search, size: 32),
+                AppIconWidget(NoxIcons.search, size: AppDimensionTokens.icon.glyph),
                 SizedBox(width: AppSpacingTokens.s16),
                 const AppSpinnerWidget(),
               ],
@@ -93,7 +95,7 @@ class UiKitPage extends StatelessWidget {
             AppErrorWidget(message: 'Could not load chats', onTryAgain: () {}),
             SizedBox(height: AppSpacingTokens.s16),
             SizedBox(
-              height: 280,
+              height: AppSpacingTokens.s280,
               child: AppEmptyContentWidget(
                 illustration: Assets.svg.illustrations.emptyChats,
                 title: 'No chats yet',

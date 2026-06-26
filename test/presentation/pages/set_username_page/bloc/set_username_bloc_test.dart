@@ -6,21 +6,21 @@ void main() {
   group('SetUsernameBloc', () {
     blocTest<SetUsernameBloc, SetUsernameState>(
       'rejects an invalid charset immediately, without a server check',
-      build: SetUsernameBloc.new,
+      build: () => SetUsernameBloc(demo: true),
       act: (bloc) => bloc.add(const SetUsernameEvent.nameChanged('bad name!')),
       expect: () => [predicate<SetUsernameState>((s) => s.status == UsernameStatus.invalidCharset && s.errorText != null)],
     );
 
     blocTest<SetUsernameBloc, SetUsernameState>(
       'empty name disables submit',
-      build: SetUsernameBloc.new,
+      build: () => SetUsernameBloc(demo: true),
       act: (bloc) => bloc.add(const SetUsernameEvent.nameChanged('')),
       expect: () => [predicate<SetUsernameState>((s) => s.status == UsernameStatus.empty && !s.canSubmit)],
     );
 
     blocTest<SetUsernameBloc, SetUsernameState>(
       'a free valid name resolves to valid after the debounced check',
-      build: SetUsernameBloc.new,
+      build: () => SetUsernameBloc(demo: true),
       act: (bloc) => bloc.add(const SetUsernameEvent.nameChanged('Freename')),
       wait: const Duration(milliseconds: 700),
       expect: () => [
@@ -31,7 +31,7 @@ void main() {
 
     blocTest<SetUsernameBloc, SetUsernameState>(
       'a taken name resolves to taken',
-      build: SetUsernameBloc.new,
+      build: () => SetUsernameBloc(demo: true),
       act: (bloc) => bloc.add(const SetUsernameEvent.nameChanged('NOX')),
       wait: const Duration(milliseconds: 700),
       expect: () => [
@@ -42,7 +42,7 @@ void main() {
 
     blocTest<SetUsernameBloc, SetUsernameState>(
       'uniqueness is case-sensitive: "nox" is free even though "NOX" is taken',
-      build: SetUsernameBloc.new,
+      build: () => SetUsernameBloc(demo: true),
       act: (bloc) => bloc.add(const SetUsernameEvent.nameChanged('nox')),
       wait: const Duration(milliseconds: 700),
       expect: () => [
@@ -53,7 +53,7 @@ void main() {
 
     blocTest<SetUsernameBloc, SetUsernameState>(
       'Done with the success outcome navigates',
-      build: SetUsernameBloc.new,
+      build: () => SetUsernameBloc(demo: true),
       act: (bloc) => bloc.add(const SetUsernameEvent.doneRequested()),
       wait: const Duration(milliseconds: 500),
       expect: () => [
@@ -64,7 +64,7 @@ void main() {
 
     blocTest<SetUsernameBloc, SetUsernameState>(
       'Done with the race-taken outcome shows an inline error',
-      build: SetUsernameBloc.new,
+      build: () => SetUsernameBloc(demo: true),
       act: (bloc) => bloc.add(const SetUsernameEvent.doneRequested(outcome: UsernameOutcome.raceTaken)),
       wait: const Duration(milliseconds: 500),
       expect: () => [
@@ -75,7 +75,7 @@ void main() {
 
     blocTest<SetUsernameBloc, SetUsernameState>(
       'navigationHandled resets a terminal status to valid',
-      build: SetUsernameBloc.new,
+      build: () => SetUsernameBloc(demo: true),
       seed: () => const SetUsernameState(name: 'Anna', status: UsernameStatus.navSuccess),
       act: (bloc) => bloc.add(const SetUsernameEvent.navigationHandled()),
       expect: () => [predicate<SetUsernameState>((s) => s.status == UsernameStatus.valid)],

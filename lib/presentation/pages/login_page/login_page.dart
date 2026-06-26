@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/text_constants.dart';
@@ -50,7 +51,7 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
   @override
   void initState() {
     super.initState();
-    _bloc = LoginBloc();
+    _bloc = LoginBloc(demo: widget.demo);
     WidgetsBinding.instance.addObserver(this);
     _refreshClipboard();
   }
@@ -97,7 +98,7 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
         Navigator.of(context).push(RoutePlaceholderPage.route(destinationLabel: 'Set username (2.3)'));
         _bloc.add(const LoginEvent.navigationHandled());
       case LoginStatus.navRegistered:
-        Navigator.of(context).push(RoutePlaceholderPage.route(destinationLabel: 'Chats shell (4.1)'));
+        Navigator.of(context).push(RoutePlaceholderPage.route(destinationLabel: 'Chats (5.1)'));
         _bloc.add(const LoginEvent.navigationHandled());
       case LoginStatus.navFatal:
         Navigator.of(context).push(AppErrorPage.route(params: ErrorPageParams.fatal()));
@@ -141,7 +142,10 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
                 child: _idField(state),
               ),
             ),
-            Padding(padding: EdgeInsets.all(AppSpacingTokens.s16), child: _actions(context, state)),
+            Padding(
+              padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s16, AppSpacingTokens.s16, AppSpacingTokens.s24),
+              child: _actions(context, state),
+            ),
           ],
         ),
       ),
@@ -152,7 +156,7 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
     return Scaffold(
       body: Column(
         children: [
-          const AppWindowTitlebarWidget(title: TextConstants.onboardTitleSignIn),
+          const AppWindowTitlebarWidget(subtitle: 'Sign in'),
           Expanded(
             child: AppOnboardCardWidget(
               child: Column(
@@ -190,10 +194,16 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
           width: double.infinity,
           child: FilledButton(
             onPressed: state.canSubmit ? _submit : null,
-            child: state.isLoading ? AppSpinnerWidget(size: 18, color: colorScheme.onPrimary) : const Text(TextConstants.loginSignIn),
+            child: state.isLoading
+                ? AppSpinnerWidget(size: AppDimensionTokens.icon.md, color: colorScheme.onPrimary)
+                : const Text(TextConstants.loginSignIn),
           ),
         ),
-        TextButton(onPressed: state.isLoading ? null : _scanQr, child: const Text(TextConstants.loginScanQr)),
+        SizedBox(height: AppSpacingTokens.s8),
+        SizedBox(
+          width: double.infinity,
+          child: TextButton(onPressed: state.isLoading ? null : _scanQr, child: const Text(TextConstants.loginScanQr)),
+        ),
         if (kDebugMode && widget.demo) _OutcomeControl(value: _outcome, onChanged: (value) => setState(() => _outcome = value)),
       ],
     );

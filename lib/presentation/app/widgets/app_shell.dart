@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
@@ -8,7 +9,7 @@ import 'package:nox_app/presentation/pages/item_list_page/item_list_page.dart';
 import 'package:nox_app/presentation/pages/placeholder/settings_placeholder_page.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 
-/// NOT currently mounted — `AppRoot` starts at `HomePage` (the UI-kit launcher)
+/// NOT currently mounted — `AppRoot` starts at `SplashPage` (the app-state spine)
 /// until real chat features land; the live shell widgets now live in
 /// `lib/presentation/widgets/shell/`. Kept as the Feature-001 skeleton.
 ///
@@ -70,7 +71,7 @@ class _AppShellState extends State<AppShell> {
                 NavigationRailDestination(icon: AppIconWidget(d.icon), selectedIcon: AppIconWidget(d.selectedIcon), label: Text(d.label)),
             ],
           ),
-          const VerticalDivider(width: 1),
+          VerticalDivider(width: AppDimensionTokens.border.hairline),
           Expanded(child: body),
         ],
       ),

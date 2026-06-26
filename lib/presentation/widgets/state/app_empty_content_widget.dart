@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
 
@@ -12,8 +13,8 @@ class AppEmptyContentWidget extends StatelessWidget {
   final String title;
   final String message;
 
-  static const double _artSize = 132;
-  static const double _messageMaxWidth = 260;
+  static double get _artSize => AppDimensionTokens.size.emptyArt;
+  static double get _messageMaxWidth => AppDimensionTokens.layout.messageMaxW;
 
   @override
   Widget build(BuildContext context) {
@@ -34,7 +35,7 @@ class AppEmptyContentWidget extends StatelessWidget {
             ),
             SizedBox(height: AppSpacingTokens.s14),
             ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: _messageMaxWidth),
+              constraints: BoxConstraints(maxWidth: _messageMaxWidth),
               child: Text(
                 message,
                 textAlign: TextAlign.center,

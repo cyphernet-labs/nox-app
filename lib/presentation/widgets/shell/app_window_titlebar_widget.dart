@@ -1,31 +1,54 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
+import 'package:nox_app/design/gen/assets.gen.dart';
+import 'package:nox_app/presentation/widgets/shell/app_splash_hairline_widget.dart';
+import 'package:nox_app/presentation/widgets/shell/app_wordmark_widget.dart';
 
-/// Faux desktop title bar — a thin titled strip drawn at the top of a wide-window
-/// screen (e.g. the error screen). This is NOT native OS window chrome; truly
-/// hiding/replacing the native title bar is out of scope (desktop-infra phase).
-/// Reused by onboarding desktop layouts later.
+/// Faux desktop window chrome — the branded title strip drawn at the top of a
+/// wide-window screen: a `surfaceContainerLow` strip with the NOX logo glyph + the
+/// styled wordmark and an optional screen label (e.g. 'Sign in'), with the
+/// brand-splash gradient hairline beneath it. This is NOT native OS window chrome;
+/// truly hiding/replacing the native title bar (and its min/max/close controls) is
+/// out of scope (desktop-infra phase). Reused by the onboarding desktop layouts,
+/// the error screen and the desktop Chats shell.
 class AppWindowTitlebarWidget extends StatelessWidget {
-  const AppWindowTitlebarWidget({super.key, required this.title});
+  const AppWindowTitlebarWidget({super.key, this.subtitle});
 
-  final String title;
+  /// Optional screen label shown after the wordmark (e.g. 'Sign in'). Null → wordmark only.
+  final String? subtitle;
 
-  static const double _height = 40;
+  static double get _height => AppDimensionTokens.size.windowTitlebarH;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-    return Container(
-      height: _height,
-      width: double.infinity,
-      alignment: Alignment.centerLeft,
-      padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s16),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainer,
-        border: Border(bottom: BorderSide(color: colorScheme.outlineVariant)),
-      ),
-      child: Text(title, style: textTheme.titleSmall?.copyWith(color: colorScheme.onSurfaceVariant)),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          height: _height,
+          width: double.infinity,
+          alignment: Alignment.centerLeft,
+          padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s16),
+          color: colorScheme.surfaceContainerLow,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Assets.png.logo.image(height: AppDimensionTokens.icon.md),
+              SizedBox(width: AppSpacingTokens.s8),
+              const AppWordmarkWidget(),
+              if (subtitle != null) ...[
+                SizedBox(width: AppSpacingTokens.s8),
+                Text('· $subtitle', style: textTheme.titleSmall?.copyWith(color: colorScheme.onSurfaceVariant)),
+              ],
+            ],
+          ),
+        ),
+        const AppSplashHairlineWidget(),
+      ],
     );
   }
 }

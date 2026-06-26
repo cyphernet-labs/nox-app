@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_spinner_widget.dart';
 
@@ -56,7 +57,12 @@ class AppLabeledFieldWidget extends StatelessWidget {
         helperMaxLines: 2,
         errorText: errorText,
         errorMaxLines: 2,
-        suffixIcon: checking ? Padding(padding: EdgeInsets.all(AppSpacingTokens.s12), child: const AppSpinnerWidget(size: 18)) : null,
+        suffixIcon: checking
+            ? Padding(
+                padding: EdgeInsets.all(AppSpacingTokens.s12),
+                child: AppSpinnerWidget(size: AppDimensionTokens.icon.md),
+              )
+            : null,
       ),
     );
   }

@@ -14,9 +14,11 @@ import 'package:nox_app/presentation/widgets/shell/app_list_detail_widget.dart';
 import '../../../utils/pump_app.dart';
 
 void main() {
+  // demo: true keeps the standalone preview behaviour (Log out → Splash; dev controls).
+  // Real-flow logout (→ Login via the spine) is covered in app_root_logout_flow_test.dart.
   Widget underTest({bool inShell = false}) => BlocProvider<AppRootBloc>(
     create: (_) => AppRootBloc(),
-    child: SettingsRootPage(inShell: inShell),
+    child: SettingsRootPage(inShell: inShell, demo: true),
   );
 
   group('SettingsRootPage (mobile)', () {
@@ -96,7 +98,7 @@ void main() {
 
       await tester.tap(find.widgetWithText(ListTile, TextConstants.logoutRow));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, TextConstants.logoutRow));
+      await tester.tap(find.widgetWithText(TextButton, TextConstants.logoutRow));
       await tester.pumpAndSettle();
 
       expect(find.byType(SplashPage), findsOneWidget);

@@ -11,4 +11,5 @@ import '../../../utils/golden.dart';
 void main() {
   // Fresh AppRootBloc → System selected.
   goldenTest('appearance_page', () => BlocProvider<AppRootBloc>(create: (_) => AppRootBloc(), child: const AppearancePage()));
+  goldenTestDesktop('appearance_page', () => BlocProvider<AppRootBloc>(create: (_) => AppRootBloc(), child: const AppearancePage()));
 }

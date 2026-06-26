@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:infinite_scroll_pagination/infinite_scroll_pagination.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/nox_icons.dart';
@@ -10,7 +11,6 @@ import 'package:nox_app/general/feature_flags.dart';
 import 'package:nox_app/general/formatters/date_formatter.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
-import 'package:nox_app/presentation/app/widgets/app_theme_toggle.dart';
 import 'package:nox_app/presentation/pages/base/base_state_page.dart';
 import 'package:nox_app/presentation/pages/chat_card_page/chat_card_page.dart';
 import 'package:nox_app/presentation/pages/chat_thread_page/chat_thread_page.dart';
@@ -134,7 +134,6 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
               ),
         title: const AppWordmarkWidget(),
         bottom: const AppSplashHairlineWidget(),
-        actions: const [AppThemeToggle()],
       ),
       body: Column(
         children: [
@@ -153,7 +152,7 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
     final selectedId = state is Initialized ? state.selectedChatId : null;
     return Scaffold(
       body: AppListDetailWidget(
-        listPaneWidth: 360,
+        listPaneWidth: AppDimensionTokens.layout.chatsListPaneW,
         listPane: Column(
           children: [
             _paneHeader(context),
@@ -169,6 +168,8 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
   }
 
   Widget _paneHeader(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final colorScheme = Theme.of(context).colorScheme;
     return Padding(
       padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s12, AppSpacingTokens.s8, AppSpacingTokens.s12),
       child: Row(
@@ -179,31 +180,48 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
               icon: AppIconWidget(NoxIcons.arrowBack),
               onPressed: () => Navigator.of(context).maybePop(),
             ),
-          const Expanded(child: AppWordmarkWidget()),
-          const AppThemeToggle(),
+          // Pane title (the wordmark belongs only to the desktop window strip).
+          Expanded(
+            child: Text(TextConstants.chats, style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
+          ),
         ],
       ),
     );
   }
 
   Widget _threadPane(ChatsListState state, String? selectedId) {
-    if (selectedId == null || state is! Initialized) {
-      return const AppDetailEmptyWidget(title: TextConstants.chatsNoSelectionTitle, message: TextConstants.chatsNoSelectionMessage);
-    }
-    final selected = state.items.where((c) => c.id == selectedId).firstOrNull;
+    final colorScheme = Theme.of(context).colorScheme;
+    final ChatModel? selected = (selectedId == null || state is! Initialized)
+        ? null
+        : state.items.where((c) => c.id == selectedId).firstOrNull;
+    final Widget content;
     if (selected == null) {
-      // The selected chat is no longer in the list (e.g. filtered out by search) —
-      // fall back to the no-selection pane rather than a stale thread placeholder.
-      return const AppDetailEmptyWidget(title: TextConstants.chatsNoSelectionTitle, message: TextConstants.chatsNoSelectionMessage);
+      // No selection (or the selected chat dropped out of the list, e.g. filtered
+      // by search) → the illustrated empty state, not a stale thread placeholder.
+      content = AppEmptyContentWidget(
+        illustration: Assets.svg.illustrations.emptyChats,
+        title: TextConstants.chatsNoSelectionTitle,
+        message: TextConstants.chatsNoSelectionMessage,
+      );
+    } else {
+      // Desktop list-detail: the real thread (5.2) loads in the pane (no push),
+      // capped to a ≤980 reading column. The cap lives at this desktop call site
+      // (not inside the shared AppThreadViewWidget) so mobile stays full-bleed.
+      content = Center(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: AppDimensionTokens.layout.threadReadingColumnW),
+          child: AppThreadViewWidget(
+            key: ValueKey(selected.id),
+            chat: selected,
+            showHeader: true,
+            onInfo: () => showChatCard(context, selected),
+            onOpenFile: (file) => showFileView(context, file),
+          ),
+        ),
+      );
     }
-    // Desktop list-detail: the real thread (5.2) loads in the pane (no push).
-    return AppThreadViewWidget(
-      key: ValueKey(selected.id),
-      chat: selected,
-      showHeader: true,
-      onInfo: () => showChatCard(context, selected),
-      onOpenFile: (file) => showFileView(context, file),
-    );
+    // A distinct pane background separates the thread from the list pane.
+    return ColoredBox(color: colorScheme.surfaceContainerLowest, child: content);
   }
 
   // ---- Shared ----------------------------------------------------------------
@@ -214,9 +232,9 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
 
   Widget _banners(BuildContext context, ChatsListState state) {
     if (state is! Initialized) return const SizedBox.shrink();
-    if (state.isOffline) return const AppNoticeStripWidget(message: TextConstants.noConnection);
+    if (state.isOffline) return AppNoticeStripWidget(message: TextConstants.noConnection, icon: NoxIcons.wifiOff);
     if (state.hasLoadError) {
-      return AppNoticeStripWidget(message: TextConstants.chatsLoadError, actionLabel: TextConstants.actionTryAgain, onAction: _refresh);
+      return const AppNoticeStripWidget(message: TextConstants.chatsLoadError);
     }
     return const SizedBox.shrink();
   }
@@ -232,29 +250,49 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
       scrollController: _scrollController,
       fetchNextPage: () => _bloc.add(const ChatsListEvent.loadChats()),
       builderDelegate: PagedChildBuilderDelegate<ChatModel>(
-        itemBuilder: (context, chat, index) => ColoredBox(
-          color: wide && chat.id == selectedId ? Theme.of(context).colorScheme.secondaryContainer : Colors.transparent,
-          child: AppChatItemWidget(
+        itemBuilder: (context, chat, index) {
+          final row = AppChatItemWidget(
             key: ValueKey(chat.id),
             name: chat.name,
             preview: chat.lastMessagePreview,
             time: DateFormatter.relative(chat.lastMessageAt),
             unread: chat.unreadCount,
             onTap: () => _onTapChat(chat, wide: wide),
-          ),
-        ),
+          );
+          if (wide && chat.id == selectedId) {
+            // Desktop selected row: an inset rounded pill (not a full-bleed band).
+            return Container(
+              margin: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s8),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.secondaryContainer,
+                borderRadius: BorderRadius.circular(AppDimensionTokens.radius.lg),
+              ),
+              child: row,
+            );
+          }
+          return ColoredBox(color: Colors.transparent, child: row);
+        },
         firstPageProgressIndicatorBuilder: (_) => const AppProgressWidget(),
         newPageProgressIndicatorBuilder: (_) => const AppProgressWidget(),
         firstPageErrorIndicatorBuilder: (_) => AppErrorWidget(onTryAgain: () => _bloc.add(const ChatsListEvent.loadChats(reset: true))),
         noItemsFoundIndicatorBuilder: (_) => initialized.isSearching
-            ? Center(child: Text(TextConstants.chatsSearchEmpty))
+            ? Align(
+                alignment: Alignment.topCenter,
+                child: Padding(
+                  padding: EdgeInsets.only(top: AppSpacingTokens.s48),
+                  child: Text(
+                    TextConstants.chatsSearchEmpty,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                  ),
+                ),
+              )
             : AppEmptyContentWidget(
                 illustration: Assets.svg.illustrations.emptyChats,
                 title: TextConstants.chatsEmptyTitle,
                 message: TextConstants.chatsEmptyMessage,
               ),
       ),
-      separatorBuilder: (context, index) => const Divider(height: 1),
+      separatorBuilder: (context, index) => const SizedBox.shrink(),
     );
     if (!FeatureFlags.enablePullToRefresh) return pagedList;
     return RefreshIndicator(onRefresh: _refresh, child: pagedList);

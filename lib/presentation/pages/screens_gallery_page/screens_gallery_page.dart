@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/general/text_constants.dart';
@@ -27,8 +28,8 @@ import 'package:nox_app/presentation/widgets/shell/tab_bar_shell_widget.dart';
 /// desktop layout is chosen by window width); a not-yet-built screen shows a
 /// "Coming soon" affordance and is disabled. As a screen lands, set its
 /// [_ScreenEntry.route] and the row activates — so this gallery doubles as a
-/// visual progress tracker. Pushed from `HomePage`; mirrors the `UiKitPage`
-/// in-app pattern (no router; each page exposes its own `route()`).
+/// visual progress tracker. Reachable from the Settings dev rows (kDebugMode);
+/// mirrors the `UiKitPage` in-app pattern (no router; each page exposes its own `route()`).
 class ScreensGalleryPage extends StatelessWidget {
   const ScreensGalleryPage({super.key});
 
@@ -38,7 +39,7 @@ class ScreensGalleryPage extends StatelessWidget {
   );
 
   /// Cap the content width so the list stays readable in a wide desktop window.
-  static const double _maxContentWidth = 640;
+  static double get _maxContentWidth => AppDimensionTokens.layout.galleryMaxW;
 
   @override
   Widget build(BuildContext context) {
@@ -50,7 +51,7 @@ class ScreensGalleryPage extends StatelessWidget {
       ),
       body: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: _maxContentWidth),
+          constraints: BoxConstraints(maxWidth: _maxContentWidth),
           child: ListView(
             padding: EdgeInsets.only(bottom: AppSpacingTokens.s24),
             children: [for (final section in _sections) ..._buildSection(context, section)],
@@ -80,8 +81,8 @@ class _ScreenRow extends StatelessWidget {
 
   final _ScreenEntry entry;
 
-  static const double _badgeWidth = 44;
-  static const double _badgeHeight = 30;
+  static double get _badgeWidth => AppSpacingTokens.s44;
+  static double get _badgeHeight => AppSpacingTokens.s30;
 
   @override
   Widget build(BuildContext context) {
@@ -134,7 +135,7 @@ class _ScreenSection {
 const List<_ScreenSection> _sections = [
   _ScreenSection(
     title: 'Launch',
-    entries: [_ScreenEntry(id: '1.1', title: 'Splash', route: SplashPage.route)],
+    entries: [_ScreenEntry(id: '1.1', title: 'Splash', route: SplashPage.routeDemo)],
   ),
   _ScreenSection(
     title: 'Onboarding',
@@ -150,7 +151,7 @@ const List<_ScreenSection> _sections = [
   ),
   _ScreenSection(
     title: 'Shell',
-    entries: [_ScreenEntry(id: '4.1', title: 'Tab bar shell', route: TabBarShell.route)],
+    entries: [_ScreenEntry(id: '4.1', title: 'Tab bar shell', route: TabBarShell.routeDemo)],
   ),
   _ScreenSection(
     title: 'Chats',

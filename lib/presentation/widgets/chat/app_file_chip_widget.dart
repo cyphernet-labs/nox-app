@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
@@ -30,10 +31,10 @@ class AppFileChipWidget extends StatelessWidget {
   final bool removable;
   final VoidCallback? onRemove;
 
-  static const double _iconSize = 28;
-  static const double _removeIconSize = 20;
-  static const double _minWidth = 200;
-  static const double _maxWidth = 260;
+  static double get _iconSize => AppDimensionTokens.icon.xxl;
+  static double get _removeIconSize => AppDimensionTokens.icon.lg;
+  static double get _minWidth => AppDimensionTokens.layout.fileChipMinW;
+  static double get _maxWidth => AppDimensionTokens.layout.fileChipMaxW;
 
   @override
   Widget build(BuildContext context) {
@@ -44,7 +45,7 @@ class AppFileChipWidget extends StatelessWidget {
     final foreground = inBubble ? on : colorScheme.onSurface;
     final sub = inBubble ? on.withValues(alpha: 0.7) : colorScheme.onSurfaceVariant;
     return Container(
-      constraints: const BoxConstraints(minWidth: _minWidth, maxWidth: _maxWidth),
+      constraints: BoxConstraints(minWidth: _minWidth, maxWidth: _maxWidth),
       padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s12, vertical: AppSpacingTokens.s10),
       decoration: BoxDecoration(color: background, borderRadius: BorderRadius.circular(NoxRadius.xs)),
       child: Row(

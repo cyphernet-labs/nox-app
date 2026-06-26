@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/general/text_constants.dart';
@@ -35,7 +36,7 @@ void showAppBanner(BuildContext context, {required String text, SvgGenImage? ico
     MaterialBanner(
       backgroundColor: colorScheme.surfaceContainer,
       elevation: NoxElevation.level3,
-      leading: icon == null ? null : AppIconWidget(icon, size: 22, color: colorScheme.onSurfaceVariant),
+      leading: icon == null ? null : AppIconWidget(icon, size: AppDimensionTokens.icon.base, color: colorScheme.onSurfaceVariant),
       content: Text(text, style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurface)),
       actions: [
         TextButton(

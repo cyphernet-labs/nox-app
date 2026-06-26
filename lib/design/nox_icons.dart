@@ -98,6 +98,23 @@ abstract final class NoxIcons {
   /// Error — error color (tap to retry); also the universal error glyph (3.1).
   static SvgGenImage get error => Assets.svg.icons.error;
 
+  // --- notifications / connectivity / disclosure ---
+
+  /// 7.2 notifications switch leading chip (bell).
+  static SvgGenImage get notifications => Assets.svg.icons.notifications;
+
+  /// 7.2 notifications denied banner — permission off (bell, struck through).
+  static SvgGenImage get notificationsOff => Assets.svg.icons.notificationsOff;
+
+  /// Offline notice — no connection (5.1 / 5.2 offline banner).
+  static SvgGenImage get wifiOff => Assets.svg.icons.wifiOff;
+
+  /// Row disclosure chevron — list-row trailing affordance (5.4).
+  static SvgGenImage get chevronRight => Assets.svg.icons.chevronRight;
+
+  /// 7.4 Language "System" row leading glyph (device locale).
+  static SvgGenImage get smartphone => Assets.svg.icons.smartphone;
+
   // --- fileTypes — attachment-chip type icons (no content preview); `onSurfaceVariant` ---
 
   /// Image.

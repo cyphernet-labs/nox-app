@@ -18,7 +18,7 @@ App bar (NOX wordmark + splash hairline). Multiline mono ID field with a paste a
 - ID field is monospace, multiline (min 120), wraps break-all so a long ID never overflows.
 - Empty: Sign in disabled, paste icon at 38%. As soon as there is a value → enabled.
 - Submitting: button shows an inline spinner (onPrimary); field + Scan QR disabled.
-- Format error: inline errorText “Invalid identifier” (client-side check before submit).
+- Format error: inline errorText “Invalid identifier”. Per **FR-011 there is no client-side identifier validation** — this state is reached only by the server (a future 401-interceptor / sign-in rejection) or the dev outcome selector, never by a pre-submit local check.
 - Network/5xx on submit: inline errorText “Could not sign in. Check your connection and try again.”
 
 ## Navigation

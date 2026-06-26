@@ -11,6 +11,10 @@ sealed class SetUsernameEvent with _$SetUsernameEvent {
   /// `Done` tapped; [outcome] is the (debug) save result.
   const factory SetUsernameEvent.doneRequested({@Default(UsernameOutcome.success) UsernameOutcome outcome}) = DoneRequested;
 
+  /// `Skip` tapped — keep the server-assigned name, mark onboarding complete. Routed
+  /// through the bloc (not the widget) so it shares the `submitting` state with `Done`.
+  const factory SetUsernameEvent.skipRequested() = SkipRequested;
+
   /// The page consumed a terminal `nav*` status (navigated away) → reset to valid.
   const factory SetUsernameEvent.navigationHandled() = NavigationHandled;
 }

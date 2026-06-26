@@ -45,6 +45,9 @@ abstract final class TextConstants {
   // Settings: Appearance (7.3)
   static const String settingsAppearanceTitle = 'Appearance';
   static const String themeSystem = 'System';
+  static const String themeSystemCaption = 'Match your device';
+  static const String themeLightCaption = 'Always light';
+  static const String themeDarkCaption = 'Always dark';
 
   // Settings: Language (7.4)
   static const String settingsLanguageTitle = 'Language';
@@ -54,17 +57,26 @@ abstract final class TextConstants {
 
   // Settings: Notifications (7.2)
   static const String settingsNotificationsTitle = 'Notifications';
-  static const String notificationsPushTitle = 'Push notifications';
-  static const String notificationsPushSubtitle = 'Get notified about your chats.';
-  static const String notificationsDeniedMessage = 'Notifications are turned off in system settings.';
+  static const String notificationsPushTitle = 'Enable notifications';
+  static const String notificationsPushSubtitle = "Only for chats you're in";
+  static const String notificationsDeniedTitle = 'Notifications are blocked';
+  static const String notificationsDeniedMessage = 'Allow notifications in system settings to receive messages from your chats.';
   static const String actionOpenSettings = 'Open settings';
 
-  // Settings: Terms (7.6) — placeholder legal copy until legal text is delivered.
+  // Settings: Terms (7.6) — locked doc heading + section headings; bodies are
+  // placeholder until the final legal text is delivered. TODO(legal): real copy.
   static const String settingsTermsTitle = 'Terms';
-  static const String termsTermsHeading = 'Terms of Service';
-  static const String termsTermsBody = 'Placeholder Terms of Service. The final text will be provided before release.';
+  static const String termsDocHeading = 'Terms of Service';
+  static const String termsAcceptanceHeading = 'Acceptance';
+  static const String termsAcceptanceBody = 'By using NOX you accept these terms. If you do not agree, do not use the app.';
+  static const String termsIdentityHeading = 'Your identity';
+  static const String termsIdentityBody =
+      'Your account is an anonymous identifier and a display name — no phone number or email. Keep your identifier safe; anyone who has it can sign in as you.';
+  static const String termsContentHeading = 'Content';
+  static const String termsContentBody =
+      'Chats are an open shared space visible to everyone. You are responsible for what you send; do not post unlawful content.';
   static const String termsPrivacyHeading = 'Privacy';
-  static const String termsPrivacyBody = 'Placeholder Privacy notice. NOX is end-to-end encrypted; the server never sees message content.';
+  static const String termsPrivacyBody = 'NOX is end-to-end encrypted; the server never sees your message content.';
   static const String versionLabel = 'Version';
 
   // Settings: About (7.7)
@@ -79,6 +91,7 @@ abstract final class TextConstants {
   static const String loginInvalidId = 'Invalid identifier';
   static const String loginNetworkError = 'Could not sign in. Check your connection and try again.';
   static const String onboardTitleSignIn = 'NOX · Sign in';
+  static const String sessionExpiredMessage = 'Your session expired';
 
   // Onboarding: QR scan (2.2)
   static const String tooltipFlashlight = 'Flashlight';
@@ -126,6 +139,7 @@ abstract final class TextConstants {
   static const String logoutRow = 'Log out';
   static const String logoutDialogTitle = 'Log out?';
   static const String logoutDialogMessage = 'Your ID and local data will be removed from this device.';
+  static const String logoutError = 'Could not log out. Please try again.';
 
   // Chats list (5.1) (reuse: appName='NOX', searchHint='Search', noConnection='No connection')
   static const String chatsEmptyTitle = 'No chats yet';

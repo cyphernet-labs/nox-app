@@ -1,9 +1,11 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/widgets/settings/app_info_banner_widget.dart';
+import 'package:nox_app/presentation/widgets/settings/app_settings_group_widget.dart';
 import 'package:nox_app/presentation/widgets/settings/app_settings_switch_row_widget.dart';
 
 /// Mocked OS push-permission state (real query/prompt is backend phase).
@@ -32,19 +34,25 @@ class _NotificationsBodyState extends State<NotificationsBody> {
       children: [
         if (!_granted)
           AppInfoBannerWidget(
-            icon: NoxIcons.settings,
+            icon: NoxIcons.notificationsOff,
+            title: TextConstants.notificationsDeniedTitle,
             message: TextConstants.notificationsDeniedMessage,
             actionLabel: TextConstants.actionOpenSettings,
             onAction: () {}, // TODO(backend): deep-link to system settings (app_settings plugin)
           ),
-        AppSettingsSwitchRowWidget(
-          title: TextConstants.notificationsPushTitle,
-          supportingText: TextConstants.notificationsPushSubtitle,
-          value: _granted && _enabled,
-          onChanged: _granted ? (value) => setState(() => _enabled = value) : null,
+        AppSettingsGroupWidget(
+          children: [
+            AppSettingsSwitchRowWidget(
+              leadingIcon: NoxIcons.notifications,
+              title: TextConstants.notificationsPushTitle,
+              supportingText: TextConstants.notificationsPushSubtitle,
+              value: _granted && _enabled,
+              onChanged: _granted ? (value) => setState(() => _enabled = value) : null,
+            ),
+          ],
         ),
         // Dev-only permission toggle (debug builds only); real OS permission is backend phase.
-        if (kDebugMode) const Divider(height: 1),
+        if (kDebugMode) Divider(height: AppDimensionTokens.border.hairline),
         if (kDebugMode) _PermissionDevControl(status: _permission, onChanged: (status) => setState(() => _permission = status)),
       ],
     );

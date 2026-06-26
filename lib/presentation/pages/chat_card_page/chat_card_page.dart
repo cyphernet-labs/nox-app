@@ -1,7 +1,9 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
+import 'package:nox_app/design/app_text_style_tokens.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
@@ -157,7 +159,7 @@ class _ChatCardBodyState extends State<ChatCardBody> {
       mainAxisSize: MainAxisSize.min,
       children: [
         AppPanelHeaderWidget(title: TextConstants.chatInfoTitle, onClose: () => Navigator.of(context).maybePop()),
-        const Divider(height: 1),
+        Divider(height: AppDimensionTokens.border.hairline),
       ],
     );
   }
@@ -166,10 +168,16 @@ class _ChatCardBodyState extends State<ChatCardBody> {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     return Padding(
-      padding: EdgeInsets.all(AppSpacingTokens.s16),
+      padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s8, AppSpacingTokens.s16, AppSpacingTokens.s16),
       child: Row(
         children: [
-          AppAvatarWidget(name: widget.chat.name, size: 56),
+          Container(
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              boxShadow: [BoxShadow(color: colorScheme.onSurface.withValues(alpha: 0.06), spreadRadius: AppDimensionTokens.border.thick)],
+            ),
+            child: AppAvatarWidget(name: widget.chat.name, size: AppDimensionTokens.size.avatarLg),
+          ),
           SizedBox(width: AppSpacingTokens.s16),
           Expanded(
             child: Text(
@@ -192,17 +200,18 @@ class _ChatCardBodyState extends State<ChatCardBody> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (initialized.isOffline) const AppNoticeStripWidget(message: TextConstants.noConnection),
+        if (initialized.isOffline) AppNoticeStripWidget(message: TextConstants.noConnection, icon: NoxIcons.wifiOff),
         Padding(
-          padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s8, AppSpacingTokens.s16, AppSpacingTokens.s8),
+          padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s0, AppSpacingTokens.s16, AppSpacingTokens.s12),
           child: Row(
             children: [
               Expanded(child: Text(TextConstants.filesSectionTitle, style: Theme.of(context).textTheme.titleMedium)),
-              AppSegmentedWidget<FilesViewMode>(
-                options: const {FilesViewMode.list: TextConstants.filesViewList, FilesViewMode.grid: TextConstants.filesViewGrid},
-                selected: initialized.viewMode,
-                onChanged: (mode) => _bloc.add(ChatCardEvent.viewModeChanged(mode)),
-              ),
+              if (initialized.files.isNotEmpty)
+                AppSegmentedWidget<FilesViewMode>(
+                  options: const {FilesViewMode.list: TextConstants.filesViewList, FilesViewMode.grid: TextConstants.filesViewGrid},
+                  selected: initialized.viewMode,
+                  onChanged: (mode) => _bloc.add(ChatCardEvent.viewModeChanged(mode)),
+                ),
             ],
           ),
         ),
@@ -223,14 +232,16 @@ class _ChatCardBodyState extends State<ChatCardBody> {
   }
 
   Widget _list(BuildContext context, List<MessageAttachment> files) {
+    final colorScheme = Theme.of(context).colorScheme;
     return ListView.builder(
       itemCount: files.length,
       itemBuilder: (context, index) {
         final file = files[index];
         return ListTile(
-          leading: AppFileGlyphWidget(type: file.type, iconSize: 22, box: 40),
+          leading: AppFileGlyphWidget(type: file.type, iconSize: AppDimensionTokens.icon.xl, box: AppDimensionTokens.size.fileGlyphSm),
           title: Text(file.name, maxLines: 1, overflow: TextOverflow.ellipsis),
           subtitle: Text(FileSizeFormatter.format(file.sizeBytes)),
+          trailing: AppIconWidget(NoxIcons.chevronRight, size: AppDimensionTokens.icon.base, color: colorScheme.onSurfaceVariant),
           onTap: () => showFileView(context, file),
         );
       },
@@ -247,7 +258,9 @@ class _ChatCardBodyState extends State<ChatCardBody> {
         crossAxisCount: columns,
         crossAxisSpacing: AppSpacingTokens.s8,
         mainAxisSpacing: AppSpacingTokens.s8,
-        childAspectRatio: 0.82,
+        // Near-square cells (design = square; a true 1.0 clips the 48dp glyph +
+        // single-line name + size at 3 columns with Flutter's taller text metrics).
+        childAspectRatio: 0.8,
       ),
       itemCount: files.length,
       itemBuilder: (context, index) {
@@ -261,14 +274,14 @@ class _ChatCardBodyState extends State<ChatCardBody> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                AppFileGlyphWidget(type: file.type, iconSize: 28, box: 56),
+                AppFileGlyphWidget(type: file.type, iconSize: AppDimensionTokens.icon.fab, box: AppDimensionTokens.size.fileGlyphMd),
                 SizedBox(height: AppSpacingTokens.s8),
                 Text(
                   file.name,
-                  maxLines: 2,
+                  maxLines: 1,
                   textAlign: TextAlign.center,
                   overflow: TextOverflow.ellipsis,
-                  style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurface),
+                  style: AppTextStyleTokens.labelMedium(color: colorScheme.onSurface),
                 ),
                 SizedBox(height: AppSpacingTokens.s4),
                 Text(FileSizeFormatter.format(file.sizeBytes), style: textTheme.labelSmall?.copyWith(color: colorScheme.onSurfaceVariant)),

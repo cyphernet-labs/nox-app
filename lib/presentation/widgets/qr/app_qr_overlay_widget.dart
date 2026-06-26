@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/theme/nox_brand.dart';
+import 'package:nox_app/design/theme/nox_scrims.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/general/text_constants.dart';
 
@@ -37,7 +39,7 @@ class AppQrOverlayWidget extends StatelessWidget {
               textAlign: TextAlign.center,
               style: textTheme.bodyLarge?.copyWith(
                 color: NoxBrand.white,
-                shadows: const [Shadow(color: Color(0xCC000000), blurRadius: 4)],
+                shadows: [Shadow(color: NoxScrims.qrTextShadow, blurRadius: AppSpacingTokens.s4)],
               ),
             ),
           ),
@@ -52,9 +54,9 @@ class _ReticlePainter extends CustomPainter {
   final double reticleFraction;
 
   /// `#000000` @ 55% — brand-fixed dimming mask (design-system.md §9.9).
-  static const Color _mask = Color(0x8C000000);
+  static const Color _mask = NoxScrims.qrMask;
   static const Color _reticle = NoxBrand.white; // #FAFAFA, 3dp
-  static const double _stroke = 3;
+  static double get _stroke => AppDimensionTokens.border.heavy;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -68,11 +70,35 @@ class _ReticlePainter extends CustomPainter {
       ..fillType = PathFillType.evenOdd;
     canvas.drawPath(mask, Paint()..color = _mask);
 
-    canvas.drawRRect(
-      rrect,
+    // Reticle = four L-shaped corner brackets (not a full frame). Each corner is
+    // a horizontal + vertical leg meeting at the rect corner; round caps/joins
+    // keep the rounded-corner feel of the mask hole.
+    final leg = AppSpacingTokens.s40;
+    final brackets = Path()
+      // Top-left.
+      ..moveTo(rect.left, rect.top + leg)
+      ..lineTo(rect.left, rect.top)
+      ..lineTo(rect.left + leg, rect.top)
+      // Top-right.
+      ..moveTo(rect.right - leg, rect.top)
+      ..lineTo(rect.right, rect.top)
+      ..lineTo(rect.right, rect.top + leg)
+      // Bottom-right.
+      ..moveTo(rect.right, rect.bottom - leg)
+      ..lineTo(rect.right, rect.bottom)
+      ..lineTo(rect.right - leg, rect.bottom)
+      // Bottom-left.
+      ..moveTo(rect.left + leg, rect.bottom)
+      ..lineTo(rect.left, rect.bottom)
+      ..lineTo(rect.left, rect.bottom - leg);
+
+    canvas.drawPath(
+      brackets,
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = _stroke
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
         ..color = _reticle,
     );
   }

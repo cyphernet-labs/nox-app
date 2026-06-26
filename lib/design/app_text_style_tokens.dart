@@ -5,18 +5,45 @@ import 'package:nox_app/design/theme/nox_text_theme.dart';
 /// Responsive type-scale tokens — the full NOX M3 scale (9 roles) as color-injecting factories.
 ///
 /// One factory per role in `noxTextTheme` (`nox_text_theme.dart`), reproducing its
-/// `fontSize` / `fontWeight` / `letterSpacing`. Sizes use `.sp` (responsive); callers pass
-/// the resolved color from `context.appColors` / `ColorScheme`.
+/// `fontSize` / `fontWeight` / `letterSpacing`. Sizes use `.sp`, but `.sp` is globally
+/// CLAMPED by [fontSizeResolver] (registered on every `ScreenUtilInit`) so type never
+/// balloons on a wide desktop window and converges with the fixed-px `noxTextTheme`
+/// there. Callers pass the resolved color from `context.appColors` / `ColorScheme`.
 ///
-/// These factories deliberately set **no** `height` — it would scale quadratically with `.sp`
-/// (`.sp` already scales `fontSize`, and `height` is a multiplier of it); line height is supplied
-/// by the ambient `DefaultTextStyle` / the matching `Theme.textTheme` role. They also set no
-/// `fontFamily` (inherited from the theme — `Roboto`). For full-fidelity text that must carry the
-/// design line-height, use `Theme.of(context).textTheme.<role>` directly.
+/// These factories deliberately set **no** `height`: NOX's `Theme.textTheme`
+/// (`noxTextTheme`, fixed design px — see `AppTheme`) carries the design line-height for
+/// full-fidelity text, and pinning an explicit line-height here regresses the
+/// `textScaler: 2.0` no-overflow guarantee (FR-016 a11y) in fixed columns. For text that
+/// must carry the design line-height, use `Theme.of(context).textTheme.<role>`.
+/// They also set no `fontFamily` (inherited from the theme — `Roboto`).
 ///
 /// Call only inside `build` under `ScreenUtilInit` (`.sp` is valid only after it runs).
 abstract final class AppTextStyleTokens {
   const AppTextStyleTokens._();
+
+  /// Clamp band for the global font scale ([fontSizeResolver]). The ceiling is 1.0 —
+  /// type NEVER grows on a wide window — so the responsive `.sp` tokens CONVERGE with
+  /// the fixed-px `noxTextTheme` on desktop instead of rendering the same role at two
+  /// sizes. The 0.9 floor keeps sub-360 / split-screen text legible. Deliberately
+  /// tighter than the spacing band (AppSpacingTokens clamps 0.85–1.2): padding may
+  /// breathe on a wide canvas, but type stays anchored to its reading-distance-correct
+  /// size (M3: the type scale is fixed; form factors adapt via layout/columns, not glyph
+  /// size).
+  static const double fontScaleMin = 0.90;
+  static const double fontScaleMax = 1.00;
+
+  /// Global `ScreenUtilInit.fontSizeResolver` — register on EVERY `ScreenUtilInit` (app
+  /// + test harness) so every `.sp` (the tokens below and any stray widget usage) is
+  /// clamped consistently. flutter_screenutil's DEFAULT resolver is width-only with NO
+  /// upper bound: at design width 360 a 1440-wide desktop window yields a 4.0 factor, so
+  /// `16.sp` would render at 64dp — the desktop "balloon". This uses the SAME averaged
+  /// width/height metric AppSpacingTokens uses for spacing, bounded to
+  /// [fontScaleMin]–[fontScaleMax]. At the 360 design surface the factors are 1.0 → scale
+  /// 1.0 (goldens unchanged).
+  static double fontSizeResolver(num fontSize, ScreenUtil instance) {
+    final scale = ((instance.scaleWidth + instance.scaleHeight) / 2).clamp(fontScaleMin, fontScaleMax);
+    return (fontSize * scale).toDouble();
+  }
 
   /// 36 / w400 — display small.
   static TextStyle displaySmall({required Color color}) =>

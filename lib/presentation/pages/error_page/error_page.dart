@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/general/constants.dart';
@@ -66,7 +67,7 @@ class _AppErrorPageState extends State<AppErrorPage> {
         final wide = constraints.maxWidth >= Constants.railBreakpoint;
         final body = _ErrorBody(
           params: widget.params,
-          iconSize: wide ? 96 : 48,
+          iconSize: wide ? AppDimensionTokens.icon.heroWide : AppDimensionTokens.icon.illustration,
           retrying: _retrying,
           onRetry: widget.params.onRetry == null ? null : _retry,
           devControl: (kDebugMode && widget.demo) ? _modeControl() : null,
@@ -75,7 +76,7 @@ class _AppErrorPageState extends State<AppErrorPage> {
           return Scaffold(
             body: Column(
               children: [
-                const AppWindowTitlebarWidget(title: TextConstants.appName),
+                const AppWindowTitlebarWidget(subtitle: 'Error'),
                 Expanded(child: body),
               ],
             ),
@@ -128,7 +129,7 @@ class _ErrorBody extends StatelessWidget {
       children: [
         Center(
           child: Padding(
-            padding: EdgeInsets.all(AppSpacingTokens.s24),
+            padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s32, vertical: AppSpacingTokens.s24),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -137,18 +138,23 @@ class _ErrorBody extends StatelessWidget {
                 Text(
                   params.title,
                   textAlign: TextAlign.center,
-                  style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface),
+                  style: textTheme.headlineSmall?.copyWith(color: colorScheme.onSurface),
                 ),
-                SizedBox(height: AppSpacingTokens.s8),
-                Text(
-                  params.message,
-                  textAlign: TextAlign.center,
-                  style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
+                SizedBox(height: AppSpacingTokens.s16),
+                ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: AppDimensionTokens.layout.errorMsgW),
+                  child: Text(
+                    params.message,
+                    textAlign: TextAlign.center,
+                    style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
+                  ),
                 ),
                 SizedBox(height: AppSpacingTokens.s24),
                 FilledButton(
                   onPressed: retrying ? null : onRetry,
-                  child: retrying ? AppSpinnerWidget(size: 18, color: colorScheme.onPrimary) : const Text(TextConstants.actionTryAgain),
+                  child: retrying
+                      ? AppSpinnerWidget(size: AppDimensionTokens.icon.md, color: colorScheme.onPrimary)
+                      : const Text(TextConstants.actionTryAgain),
                 ),
               ],
             ),

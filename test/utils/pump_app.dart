@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nox_app/design/app_text_style_tokens.dart';
 import 'package:nox_app/design/theme/app_theme.dart';
 import 'package:nox_app/general/constants.dart';
 
@@ -17,7 +18,8 @@ Future<void> pumpApp(
   await tester.pumpWidget(
     ScreenUtilInit(
       designSize: Constants.designSize,
-      minTextAdapt: true,
+      // Mirror production: clamp `.sp` so test font metrics match the app (AppRoot).
+      fontSizeResolver: AppTextStyleTokens.fontSizeResolver,
       builder: (context, _) => MaterialApp(
         debugShowCheckedModeBanner: false,
         theme: AppTheme.light(),

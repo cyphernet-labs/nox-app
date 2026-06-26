@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/text_constants.dart';
@@ -49,7 +50,7 @@ class _SetUsernamePageState extends BaseStatePage<SetUsernamePage> {
   @override
   void initState() {
     super.initState();
-    _bloc = SetUsernameBloc();
+    _bloc = SetUsernameBloc(demo: widget.demo);
     _controller = TextEditingController(text: _bloc.state.name);
   }
 
@@ -63,10 +64,9 @@ class _SetUsernamePageState extends BaseStatePage<SetUsernamePage> {
 
   void _done() => _bloc.add(SetUsernameEvent.doneRequested(outcome: _outcome));
 
-  void _skip() {
-    // Skip / back keeps the current name; standalone stub destination.
-    Navigator.of(context).push(RoutePlaceholderPage.route(destinationLabel: 'Chats shell (4.1)'));
-  }
+  // Both Done and Skip go through the bloc, so they share the single `submitting`
+  // state (no widget-local re-entry flag). Skip keeps the server-assigned name.
+  void _skip() => _bloc.add(const SetUsernameEvent.skipRequested());
 
   void _onStatus(BuildContext context, SetUsernameState state) {
     switch (state.status) {
@@ -125,7 +125,7 @@ class _SetUsernamePageState extends BaseStatePage<SetUsernamePage> {
     return Scaffold(
       body: Column(
         children: [
-          const AppWindowTitlebarWidget(title: TextConstants.onboardTitleSetUp),
+          const AppWindowTitlebarWidget(subtitle: 'Set up'),
           Expanded(
             child: AppOnboardCardWidget(
               child: Column(
@@ -167,7 +167,9 @@ class _SetUsernamePageState extends BaseStatePage<SetUsernamePage> {
           width: double.infinity,
           child: FilledButton(
             onPressed: state.canSubmit && !state.isSubmitting ? _done : null,
-            child: state.isSubmitting ? AppSpinnerWidget(size: 18, color: colorScheme.onPrimary) : const Text(TextConstants.actionDone),
+            child: state.isSubmitting
+                ? AppSpinnerWidget(size: AppDimensionTokens.icon.md, color: colorScheme.onPrimary)
+                : const Text(TextConstants.actionDone),
           ),
         ),
         TextButton(onPressed: state.isSubmitting ? null : _skip, child: const Text(TextConstants.actionSkip)),

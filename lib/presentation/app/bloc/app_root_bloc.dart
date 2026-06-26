@@ -3,25 +3,72 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
+import 'package:nox_app/di/global_aliases.dart';
+import 'package:nox_app/domain/model/app/app_state_model.dart';
+import 'package:nox_app/domain/model/app/app_state_type.dart';
+import 'package:nox_app/domain/repository/base/repository_result.dart';
+import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
 
 part 'app_root_event.dart';
 part 'app_root_state.dart';
 part 'app_root_bloc.freezed.dart';
 
-/// App-level state: one concrete state with copyWith (NOT a trio) — it is always
-/// "live", carrying themeMode from start. Themes are static AppTheme.light()/dark().
+/// App-level BLoC: carries the theme and drives top-level navigation from the
+/// reactive [AppStateRepository]. Subscribes once on [Initialize]; each emission
+/// becomes [UpdateAppState]. Two-phase apply: the first resolved state lands in
+/// `lastAppState` but is NOT applied — the splash animation dispatches
+/// [ApplyAppState] when it finishes; every later change applies immediately.
 class AppRootBloc extends BaseBloc<AppRootEvent, AppRootState> {
-  AppRootBloc() : super(const AppRootState(themeMode: ThemeMode.system)) {
+  AppRootBloc() : super(AppRootState.initial()) {
     on<Initialize>(_onInitialize);
     on<SetTheme>(_onSetTheme);
+    on<UpdateAppState>(_onUpdateAppState);
+    on<ApplyAppState>(_onApplyAppState);
   }
 
+  StreamSubscription<RepositoryResult<AppStateModel>>? _appStateSubscription;
+
   FutureOr<void> _onInitialize(Initialize event, Emitter<AppRootState> emit) async {
-    // Hook for global startup (e.g. load a persisted themeMode).
+    _appStateSubscription ??= appStateRepository.watchAppState().listen((result) => add(AppRootEvent.updateAppState(result: result)));
   }
 
   FutureOr<void> _onSetTheme(SetTheme event, Emitter<AppRootState> emit) async {
     emit(state.copyWith(themeMode: event.themeMode));
+  }
+
+  FutureOr<void> _onUpdateAppState(UpdateAppState event, Emitter<AppRootState> emit) async {
+    event.result.match<void>(
+      onData: (model) => _land(model, emit),
+      // Never expected today (the repository emits only success). Still LAND it: log,
+      // then release the splash to a safe unauthorized (Login) state — an error-first
+      // emission must not stall the reveal forever (it would never set isReady).
+      onError: (exception) {
+        logRepository.error(target: this, error: exception);
+        _land(const AppStateModel(state: AppStateType.unauthorized, session: null), emit);
+      },
+    );
+  }
+
+  /// Land a resolved state: record it as `lastAppState` + mark ready. HOLD the first
+  /// transition (gate on whether the first state was APPLIED — `appliedAppState` still
+  /// `init` — not merely on `isReady`, which this emit itself flips true; otherwise a
+  /// second emission arriving during the splash-hold window would escape the gate and
+  /// navigate mid-reveal). Every later change applies immediately.
+  void _land(AppStateModel model, Emitter<AppRootState> emit) {
+    final alreadyApplied = state.appliedAppState.state != AppStateType.init;
+    emit(state.copyWith(lastAppState: model, isReady: true));
+    if (alreadyApplied) add(const AppRootEvent.applyAppState());
+  }
+
+  FutureOr<void> _onApplyAppState(ApplyAppState event, Emitter<AppRootState> emit) async {
+    if (state.isReady) emit(state.copyWith(appliedAppState: state.lastAppState));
+  }
+
+  @override
+  Future<void> close() {
+    _appStateSubscription?.cancel();
+    _appStateSubscription = null;
+    return super.close();
   }
 }

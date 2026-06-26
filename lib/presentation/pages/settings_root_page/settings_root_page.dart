@@ -4,11 +4,13 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
+import 'package:nox_app/di/global_aliases.dart';
+import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/text_constants.dart';
-import 'package:nox_app/presentation/app/widgets/app_theme_toggle.dart';
 import 'package:nox_app/presentation/helpers/app_feedback_helper.dart';
 import 'package:nox_app/presentation/pages/about_page/about_body.dart';
 import 'package:nox_app/presentation/pages/about_page/about_page.dart';
@@ -21,6 +23,8 @@ import 'package:nox_app/presentation/pages/language_page/language_body.dart';
 import 'package:nox_app/presentation/pages/language_page/language_page.dart';
 import 'package:nox_app/presentation/pages/notifications_page/notifications_body.dart';
 import 'package:nox_app/presentation/pages/notifications_page/notifications_page.dart';
+import 'package:nox_app/presentation/pages/screens_gallery_page/screens_gallery_page.dart';
+import 'package:nox_app/presentation/pages/ui_kit_page/ui_kit_page.dart';
 import 'package:nox_app/presentation/pages/settings_root_page/bloc/settings_root_bloc.dart';
 import 'package:nox_app/presentation/pages/splash_page/splash_page.dart';
 import 'package:nox_app/presentation/pages/terms_page/terms_body.dart';
@@ -111,7 +115,21 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
 
   Future<void> _logout() async {
     final confirmed = await AppLogoutDialogWidget.show(context);
-    if (confirmed == true && mounted) Navigator.of(context).push(SplashPage.route());
+    if (confirmed != true || !mounted) return;
+    if (widget.demo) {
+      // Gallery preview: hop to the standalone (demo) Splash without touching real state.
+      Navigator.of(context).push(SplashPage.routeDemo());
+    } else {
+      // Real flow: full wipe + re-derive app state; the spine returns to Login. A
+      // failed wipe must NOT present as a successful logout (Constitution I: logout
+      // fully wipes) — surface it instead of silently leaving the identity on disk.
+      final result = await authRepository.logout();
+      if (!mounted) return;
+      result.match(
+        onData: (_) {},
+        onError: (_) => showAppSnackBar(context, text: TextConstants.logoutError, error: true),
+      );
+    }
   }
 
   void _openSection(Route<void> route) => Navigator.of(context).push(route);
@@ -148,7 +166,6 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
                 onPressed: () => Navigator.of(context).maybePop(),
               ),
         title: const Text(TextConstants.settings),
-        actions: const [AppThemeToggle()],
       ),
       body: ListView(
         children: [
@@ -161,8 +178,12 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
           AppSettingsNavRowWidget(title: TextConstants.settingsLanguageTitle, onTap: () => _openSection(LanguagePage.route())),
           AppSettingsNavRowWidget(title: TextConstants.settingsTermsTitle, onTap: () => _openSection(TermsPage.route())),
           AppSettingsNavRowWidget(title: TextConstants.settingsAboutTitle, onTap: () => _openSection(AboutPage.route())),
-          const Divider(height: 1),
+          Divider(height: AppDimensionTokens.border.hairline),
           AppSettingsNavRowWidget(title: TextConstants.logoutRow, color: Theme.of(context).colorScheme.error, onTap: _logout),
+          if (kDebugMode) AppSettingsNavRowWidget(title: 'Screens gallery (dev)', onTap: () => _openSection(ScreensGalleryPage.route())),
+          if (kDebugMode) AppSettingsNavRowWidget(title: 'UI kit (dev)', onTap: () => _openSection(UiKitPage.route())),
+          if (kDebugMode && !widget.demo)
+            AppSettingsNavRowWidget(title: 'Force logout (dev)', onTap: () => unawaited(authRepository.logout(forced: true))),
           if (kDebugMode && widget.demo) _devControl(),
         ],
       ),
@@ -173,7 +194,11 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
 
   Widget _wide(BuildContext context, SettingsRootState state) {
     return Scaffold(
-      body: AppListDetailWidget(listPaneWidth: 340, listPane: _menuPane(context, state), detailPane: _detailPane(context, state)),
+      body: AppListDetailWidget(
+        listPaneWidth: AppDimensionTokens.layout.settingsListPaneW,
+        listPane: _menuPane(context, state),
+        detailPane: _detailPane(context, state),
+      ),
     );
   }
 
@@ -193,22 +218,34 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
               Expanded(
                 child: Text(TextConstants.settings, style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
               ),
-              const AppThemeToggle(),
             ],
           ),
         ),
-        const Divider(height: 1),
+        Divider(height: AppDimensionTokens.border.hairline),
+        // Grouped nav items (Account / preferences / legal), with the destructive
+        // Log out row pinned to the bottom via a Spacer.
         Expanded(
-          child: ListView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              // Group 1: Account.
               item(_Section.account, TextConstants.settingsAccountTitle),
+              Divider(height: AppDimensionTokens.border.hairline),
+              // Group 2: Notifications, Appearance, Language.
               item(_Section.notifications, TextConstants.settingsNotificationsTitle),
               item(_Section.appearance, TextConstants.settingsAppearanceTitle),
               item(_Section.language, TextConstants.settingsLanguageTitle),
+              Divider(height: AppDimensionTokens.border.hairline),
+              // Group 3: Terms, About.
               item(_Section.terms, TextConstants.settingsTermsTitle),
               item(_Section.about, TextConstants.settingsAboutTitle),
-              const Divider(height: 1),
+              const Spacer(),
               AppSettingsNavRowWidget(title: TextConstants.logoutRow, color: colorScheme.error, onTap: _logout),
+              if (kDebugMode)
+                AppSettingsNavRowWidget(title: 'Screens gallery (dev)', onTap: () => _openSection(ScreensGalleryPage.route())),
+              if (kDebugMode) AppSettingsNavRowWidget(title: 'UI kit (dev)', onTap: () => _openSection(UiKitPage.route())),
+              if (kDebugMode && !widget.demo)
+                AppSettingsNavRowWidget(title: 'Force logout (dev)', onTap: () => unawaited(authRepository.logout(forced: true))),
               if (kDebugMode && widget.demo) _devControl(),
             ],
           ),
@@ -217,7 +254,19 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
     );
   }
 
+  // Title of the selected detail section, mirroring the menu-pane item labels.
+  String _sectionTitle(_Section section) => switch (section) {
+    _Section.account => TextConstants.settingsAccountTitle,
+    _Section.notifications => TextConstants.settingsNotificationsTitle,
+    _Section.appearance => TextConstants.settingsAppearanceTitle,
+    _Section.language => TextConstants.settingsLanguageTitle,
+    _Section.terms => TextConstants.settingsTermsTitle,
+    _Section.about => TextConstants.settingsAboutTitle,
+  };
+
   Widget _detailPane(BuildContext context, SettingsRootState state) {
+    final textTheme = Theme.of(context).textTheme;
+    final colorScheme = Theme.of(context).colorScheme;
     final Widget body = switch (_selected) {
       _Section.account => ListView(
         padding: EdgeInsets.all(AppSpacingTokens.s16),
@@ -229,8 +278,28 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
       _Section.terms => const TermsBody(),
       _Section.about => const AboutBody(),
     };
-    return Center(
-      child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 680), child: body),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // PaneHeader: names the selected section (the detail pane has no AppBar of
+        // its own), aligned with the menu pane's header height/style.
+        Padding(
+          padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s12, AppSpacingTokens.s16, AppSpacingTokens.s12),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(_sectionTitle(_selected), style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
+          ),
+        ),
+        Divider(height: AppDimensionTokens.border.hairline),
+        Expanded(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: AppDimensionTokens.layout.settingsMaxW),
+              child: body,
+            ),
+          ),
+        ),
+      ],
     );
   }
 

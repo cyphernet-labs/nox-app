@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 
 /// Desktop right side-sheet (5.4 chat card / chat info drawer, corpus `09-drawer`):
 /// a fixed-width panel that slides in from the right over a scrim. Mobile uses a
 /// full-screen push instead, so this is desktop-only. Built on `showGeneralDialog`
 /// so it overlays the whole window (the thread pane lives inside the 5.1 list-detail).
-Future<T?> showRightSideSheet<T>(BuildContext context, {required Widget child, double width = 380}) {
+Future<T?> showRightSideSheet<T>(BuildContext context, {required Widget child, double? width}) {
   final colorScheme = Theme.of(context).colorScheme;
   return showGeneralDialog<T>(
     context: context,
@@ -31,10 +32,12 @@ Future<T?> showRightSideSheet<T>(BuildContext context, {required Widget child, d
 /// Shared by [showRightSideSheet] (the desktop overlay) and the standalone desktop
 /// preview of the chat card so the panel chrome is defined once.
 class AppSideSheetPanel extends StatelessWidget {
-  const AppSideSheetPanel({super.key, required this.child, this.width = 380});
+  const AppSideSheetPanel({super.key, required this.child, this.width});
 
   final Widget child;
-  final double width;
+
+  /// Null falls back to `layout.sideSheetW` (380) — a token getter can't be a const default.
+  final double? width;
 
   @override
   Widget build(BuildContext context) {
@@ -42,7 +45,7 @@ class AppSideSheetPanel extends StatelessWidget {
       color: Theme.of(context).colorScheme.surface,
       elevation: NoxElevation.level5,
       child: SizedBox(
-        width: width,
+        width: width ?? AppDimensionTokens.layout.sideSheetW,
         height: double.infinity,
         child: SafeArea(child: child),
       ),
