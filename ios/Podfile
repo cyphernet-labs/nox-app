@@ -42,7 +42,13 @@ post_install do |installer|
     target.build_configurations.each do |config|
       # permission_handler strips unused permission code via macros; PERMISSION_CAMERA=1
       # keeps the camera permission compiled in (otherwise its status is always denied).
-      config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] ||= ['$(inherited)', 'PERMISSION_CAMERA=1']
+      # APPEND (not ||=): Debug configs already have GCC_PREPROCESSOR_DEFINITIONS set
+      # (DEBUG=1, COCOAPODS=1), so a `||=` would silently skip and the macro would be
+      # missing on debug builds.
+      defs = config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] || ['$(inherited)']
+      defs = [defs] if defs.is_a?(String)
+      defs << 'PERMISSION_CAMERA=1' unless defs.include?('PERMISSION_CAMERA=1')
+      config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] = defs
     end
   end
 end

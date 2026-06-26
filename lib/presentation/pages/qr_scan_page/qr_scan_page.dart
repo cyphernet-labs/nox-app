@@ -193,7 +193,10 @@ class _QrScanPageState extends State<QrScanPage> with WidgetsBindingObserver {
       return;
     }
     if (state.status == QrScanStatus.fatal) {
-      Navigator.of(context).push(AppErrorPage.route(params: ErrorPageParams.fatal()));
+      // Embedded (NOT blocking): the scanner sits above Login, so the error screen
+      // must keep a Back arrow — a camera-unavailable error is recoverable, the user
+      // returns to Login and signs in manually.
+      Navigator.of(context).push(AppErrorPage.route(params: ErrorPageParams.fatal(mode: ErrorPageMode.embedded)));
     }
   }
 
@@ -251,6 +254,7 @@ class _QrScanPageState extends State<QrScanPage> with WidgetsBindingObserver {
   Widget _narrow(BuildContext context, QrScanState state) {
     final colorScheme = Theme.of(context).colorScheme;
     final denied = state.status == QrScanStatus.permissionDenied;
+    final scanning = state.status == QrScanStatus.scanning;
     return Scaffold(
       extendBodyBehindAppBar: !denied,
       appBar: AppBar(
@@ -258,20 +262,22 @@ class _QrScanPageState extends State<QrScanPage> with WidgetsBindingObserver {
         elevation: denied ? null : 0,
         scrolledUnderElevation: denied ? null : 0,
         foregroundColor: denied ? null : NoxBrand.white,
-        actions: denied
-            ? null
-            : [
+        // Torch / switch-camera sit over the live feed → forced brand white for
+        // contrast, and only while the camera is active (FR-005, mobile-only).
+        actions: scanning
+            ? [
                 IconButton(
                   tooltip: TextConstants.tooltipFlashlight,
                   onPressed: _toggleTorch,
-                  icon: AppIconWidget(_torchOn ? NoxIcons.flashlightOnFill : NoxIcons.flashlightOff),
+                  icon: AppIconWidget(_torchOn ? NoxIcons.flashlightOnFill : NoxIcons.flashlightOff, color: NoxBrand.white),
                 ),
                 IconButton(
                   tooltip: TextConstants.tooltipSwitchCamera,
                   onPressed: _switchCamera,
-                  icon: AppIconWidget(NoxIcons.cameraswitch),
+                  icon: AppIconWidget(NoxIcons.cameraswitch, color: NoxBrand.white),
                 ),
-              ],
+              ]
+            : null,
       ),
       body: denied
           ? Center(
@@ -282,7 +288,9 @@ class _QrScanPageState extends State<QrScanPage> with WidgetsBindingObserver {
             )
           : Stack(
               children: [
-                Positioned.fill(child: _cameraPreview(context)),
+                // The live camera is only mounted once permission is granted
+                // (scanning); during initializing show a neutral surface.
+                Positioned.fill(child: scanning ? _cameraPreview(context) : ColoredBox(color: colorScheme.surfaceContainerHighest)),
                 const Positioned.fill(child: AppQrOverlayWidget()),
                 Positioned(
                   left: 0,
@@ -339,7 +347,11 @@ class _QrScanPageState extends State<QrScanPage> with WidgetsBindingObserver {
                     borderRadius: BorderRadius.circular(AppDimensionTokens.radius.md),
                     child: Stack(
                       children: [
-                        Positioned.fill(child: _cameraPreview(context)),
+                        Positioned.fill(
+                          child: state.status == QrScanStatus.scanning
+                              ? _cameraPreview(context)
+                              : ColoredBox(color: colorScheme.surfaceContainerHighest),
+                        ),
                         const Positioned.fill(child: AppQrOverlayWidget(reticleFraction: 0.78, showInstruction: false)),
                       ],
                     ),
