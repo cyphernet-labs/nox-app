@@ -19,6 +19,7 @@ abstract final class AppSpacingTokens {
   static double get s1 => 1 * _scale;
   static double get s1_5 => 1.5 * _scale;
   static double get s2 => 2 * _scale;
+  static double get s3 => 3 * _scale;
   static double get s4 => 4 * _scale;
   static double get s6 => 6 * _scale;
   static double get s8 => 8 * _scale;
@@ -32,6 +33,7 @@ abstract final class AppSpacingTokens {
   static double get s24 => 24 * _scale;
   static double get s26 => 26 * _scale;
   static double get s28 => 28 * _scale;
+  static double get s30 => 30 * _scale;
   static double get s32 => 32 * _scale;
   static double get s36 => 36 * _scale;
   static double get s40 => 40 * _scale;
@@ -50,6 +52,8 @@ abstract final class AppSpacingTokens {
   static double get s160 => 160 * _scale;
   static double get s168 => 168 * _scale;
   static double get s220 => 220 * _scale;
+  static double get s280 => 280 * _scale;
+  static double get s300 => 300 * _scale;
 
   /// Fully-rounded radius marker (radius.pill). A large unscaled constant used
   /// with `BorderRadius.circular` / `StadiumBorder`.

@@ -137,7 +137,7 @@ class _CreateChatPageState extends BaseStatePage<CreateChatPage> {
           ),
           Center(
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 460),
+              constraints: BoxConstraints(maxWidth: AppDimensionTokens.layout.dialogMaxW),
               child: Padding(
                 padding: EdgeInsets.all(AppSpacingTokens.s24),
                 child: Material(

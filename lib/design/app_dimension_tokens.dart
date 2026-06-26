@@ -13,6 +13,7 @@ abstract final class AppDimensionTokens {
   static const AppBorderTokens border = AppBorderTokens._();
   static const AppIconTokens icon = AppIconTokens._();
   static const AppSizeTokens size = AppSizeTokens._();
+  static const AppLayoutTokens layout = AppLayoutTokens._();
 }
 
 /// Padding / gap roles (space.*).
@@ -53,6 +54,7 @@ final class AppBorderTokens {
   double get hairline => AppSpacingTokens.s1;
   double get regular => AppSpacingTokens.s1_5;
   double get thick => AppSpacingTokens.s2;
+  double get heavy => AppSpacingTokens.s3; // splash hairline / QR overlay strokes
 }
 
 /// Icon render-size roles (icon.*). `base` (22) is the default for most UI;
@@ -104,5 +106,23 @@ final class AppSizeTokens {
   double get splashLogoWide => AppSpacingTokens.s220; // splash logo (desktop)
   double get onboardLogoH => AppSpacingTokens.s64; // onboarding card logo
   double get qrSurface => AppSpacingTokens.s160; // identity-card QR (brand-fixed light)
+  double get qrScanWindow => AppSpacingTokens.s300; // QR scanner viewfinder square
   double get emptyArt => AppSpacingTokens.s132; // empty-state illustration box
+}
+
+/// UNSCALED content-width bounds (layout.*). Unlike every other group these do NOT
+/// multiply by the device scale: they cap line length / panel width for
+/// readability, so growing them on wide screens would defeat their purpose. Plain
+/// design-px constants, named so widgets carry no magic `maxWidth` numbers.
+final class AppLayoutTokens {
+  const AppLayoutTokens._();
+
+  double get dialogMaxW => 460; // create-chat modal
+  double get sheetMaxW => 320; // list-detail / side sheet
+  double get contentMaxW => 520; // file view / centered form column
+  double get settingsMaxW => 680; // settings content column
+  double get galleryMaxW => 640; // dev screens gallery
+  double get fileChipMinW => 200;
+  double get fileChipMaxW => 260;
+  double get messageMaxW => 260; // empty-state message column
 }

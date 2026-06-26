@@ -33,8 +33,8 @@ class AppFileChipWidget extends StatelessWidget {
 
   static double get _iconSize => AppDimensionTokens.icon.xxl;
   static double get _removeIconSize => AppDimensionTokens.icon.lg;
-  static const double _minWidth = 200;
-  static const double _maxWidth = 260;
+  static double get _minWidth => AppDimensionTokens.layout.fileChipMinW;
+  static double get _maxWidth => AppDimensionTokens.layout.fileChipMaxW;
 
   @override
   Widget build(BuildContext context) {
@@ -45,7 +45,7 @@ class AppFileChipWidget extends StatelessWidget {
     final foreground = inBubble ? on : colorScheme.onSurface;
     final sub = inBubble ? on.withValues(alpha: 0.7) : colorScheme.onSurfaceVariant;
     return Container(
-      constraints: const BoxConstraints(minWidth: _minWidth, maxWidth: _maxWidth),
+      constraints: BoxConstraints(minWidth: _minWidth, maxWidth: _maxWidth),
       padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s12, vertical: AppSpacingTokens.s10),
       decoration: BoxDecoration(color: background, borderRadius: BorderRadius.circular(NoxRadius.xs)),
       child: Row(

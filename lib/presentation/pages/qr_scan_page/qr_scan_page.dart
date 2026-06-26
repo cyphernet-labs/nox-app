@@ -139,8 +139,8 @@ class _QrScanPageState extends State<QrScanPage> {
                 Text(TextConstants.qrDesktopTitle, style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
                 SizedBox(height: AppSpacingTokens.s24),
                 SizedBox(
-                  width: 300,
-                  height: 300,
+                  width: AppDimensionTokens.size.qrScanWindow,
+                  height: AppDimensionTokens.size.qrScanWindow,
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(12),
                     child: Stack(

@@ -35,7 +35,7 @@ class AppChatItemWidget extends StatelessWidget {
             Container(
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                boxShadow: [BoxShadow(color: colorScheme.onSurface.withValues(alpha: 0.06), spreadRadius: 2)],
+                boxShadow: [BoxShadow(color: colorScheme.onSurface.withValues(alpha: 0.06), spreadRadius: AppDimensionTokens.border.thick)],
               ),
               child: AppAvatarWidget(name: name, size: _avatarSize),
             ),

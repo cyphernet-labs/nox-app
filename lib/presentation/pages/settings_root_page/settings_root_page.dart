@@ -247,7 +247,10 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
       _Section.about => const AboutBody(),
     };
     return Center(
-      child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 680), child: body),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: AppDimensionTokens.layout.settingsMaxW),
+        child: body,
+      ),
     );
   }
 

@@ -25,7 +25,7 @@ Future<void> showFileView(BuildContext context, MessageAttachment file) {
       builder: (_) => Dialog(
         clipBehavior: Clip.antiAlias,
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 520),
+          constraints: BoxConstraints(maxWidth: AppDimensionTokens.layout.contentMaxW),
           child: FileViewPage(file: file, inDialog: true),
         ),
       ),
@@ -178,7 +178,7 @@ class _FileViewPageState extends State<FileViewPage> with SingleTickerProviderSt
           ),
           Center(
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 520),
+              constraints: BoxConstraints(maxWidth: AppDimensionTokens.layout.contentMaxW),
               child: Padding(
                 padding: EdgeInsets.all(AppSpacingTokens.s24),
                 child: Material(

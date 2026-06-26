@@ -48,8 +48,8 @@ class _ThemePreview extends StatelessWidget {
 
   final ThemeMode mode;
 
-  static const double _width = 48;
-  static const double _height = 36;
+  static double get _width => AppSpacingTokens.s48;
+  static double get _height => AppSpacingTokens.s36;
 
   @override
   Widget build(BuildContext context) {

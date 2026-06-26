@@ -39,7 +39,7 @@ class AppDetailEmptyWidget extends StatelessWidget {
   final String title;
   final String message;
 
-  static const double _maxWidth = 320;
+  static double get _maxWidth => AppDimensionTokens.layout.sheetMaxW;
 
   @override
   Widget build(BuildContext context) {
@@ -47,7 +47,7 @@ class AppDetailEmptyWidget extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     return Center(
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: _maxWidth),
+        constraints: BoxConstraints(maxWidth: _maxWidth),
         child: Padding(
           padding: EdgeInsets.all(AppSpacingTokens.s24),
           child: Column(

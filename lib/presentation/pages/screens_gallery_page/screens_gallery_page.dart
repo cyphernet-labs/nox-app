@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/general/text_constants.dart';
@@ -38,7 +39,7 @@ class ScreensGalleryPage extends StatelessWidget {
   );
 
   /// Cap the content width so the list stays readable in a wide desktop window.
-  static const double _maxContentWidth = 640;
+  static double get _maxContentWidth => AppDimensionTokens.layout.galleryMaxW;
 
   @override
   Widget build(BuildContext context) {
@@ -50,7 +51,7 @@ class ScreensGalleryPage extends StatelessWidget {
       ),
       body: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: _maxContentWidth),
+          constraints: BoxConstraints(maxWidth: _maxContentWidth),
           child: ListView(
             padding: EdgeInsets.only(bottom: AppSpacingTokens.s24),
             children: [for (final section in _sections) ..._buildSection(context, section)],
@@ -80,8 +81,8 @@ class _ScreenRow extends StatelessWidget {
 
   final _ScreenEntry entry;
 
-  static const double _badgeWidth = 44;
-  static const double _badgeHeight = 30;
+  static double get _badgeWidth => AppSpacingTokens.s44;
+  static double get _badgeHeight => AppSpacingTokens.s30;
 
   @override
   Widget build(BuildContext context) {

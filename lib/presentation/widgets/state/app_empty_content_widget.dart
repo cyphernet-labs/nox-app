@@ -14,7 +14,7 @@ class AppEmptyContentWidget extends StatelessWidget {
   final String message;
 
   static double get _artSize => AppDimensionTokens.size.emptyArt;
-  static const double _messageMaxWidth = 260;
+  static double get _messageMaxWidth => AppDimensionTokens.layout.messageMaxW;
 
   @override
   Widget build(BuildContext context) {
@@ -35,7 +35,7 @@ class AppEmptyContentWidget extends StatelessWidget {
             ),
             SizedBox(height: AppSpacingTokens.s14),
             ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: _messageMaxWidth),
+              constraints: BoxConstraints(maxWidth: _messageMaxWidth),
               child: Text(
                 message,
                 textAlign: TextAlign.center,

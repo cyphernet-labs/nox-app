@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/general/text_constants.dart';
@@ -15,8 +16,8 @@ import 'package:nox_app/presentation/widgets/shell/app_wordmark_widget.dart';
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
 
-  static const double _heroSize = 96;
-  static const double _heroGlyphSize = 48;
+  static double get _heroSize => AppSpacingTokens.s96;
+  static double get _heroGlyphSize => AppDimensionTokens.icon.hero;
 
   @override
   Widget build(BuildContext context) {

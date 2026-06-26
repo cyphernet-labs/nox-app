@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/theme/nox_brand.dart';
 
@@ -10,17 +11,17 @@ class AppSplashHairlineWidget extends StatelessWidget implements PreferredSizeWi
   const AppSplashHairlineWidget({super.key});
 
   /// Gradient-rule thickness (dp); the rendered bar height.
-  static const double thickness = 3;
+  static double get thickness => AppDimensionTokens.border.heavy;
 
   /// Bottom gap (dp) below the rule; `preferredSize.height` is `thickness + gap`.
-  static const double gap = 14;
-  static const double _radius = 2;
+  static double get gap => AppSpacingTokens.s14;
+  static double get _radius => AppDimensionTokens.border.thick;
   static const LinearGradient _gradient = LinearGradient(
     colors: [NoxBrand.teal, NoxBrand.lime, NoxBrand.gold, NoxBrand.coral, NoxBrand.red],
   );
 
   @override
-  Size get preferredSize => const Size.fromHeight(thickness + gap);
+  Size get preferredSize => Size.fromHeight(thickness + gap);
 
   @override
   Widget build(BuildContext context) {
