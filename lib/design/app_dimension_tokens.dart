@@ -106,8 +106,7 @@ final class AppSizeTokens {
   double get fabNotchGap => AppSpacingTokens.s72; // bottom-bar central FAB notch
 
   // Hero / brand elements.
-  double get splashLogo => AppSpacingTokens.s168; // splash logo (mobile)
-  double get splashLogoWide => AppSpacingTokens.s220; // splash logo (desktop)
+  double get splashLogo => AppSpacingTokens.s168; // splash logo (mobile + desktop)
   double get onboardLogoH => AppSpacingTokens.s64; // onboarding card logo
   double get qrSurface => AppSpacingTokens.s160; // identity-card QR (brand-fixed light)
   double get qrScanWindow => AppSpacingTokens.s300; // QR scanner viewfinder square
@@ -135,4 +134,5 @@ final class AppLayoutTokens {
   double get settingsListPaneW => 340; // settings master-detail list pane
   double get sideSheetW => 380; // desktop right side-sheet (chat card)
   double get threadReadingColumnW => 980; // desktop thread pane reading column
+  double get onboardCardW => 440; // desktop centered onboarding card
 }

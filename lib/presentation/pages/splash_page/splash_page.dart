@@ -7,7 +7,6 @@ import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/theme/nox_brand.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
-import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page_params.dart';
@@ -58,8 +57,7 @@ class _SplashPageState extends State<SplashPage> with SingleTickerProviderStateM
   SplashOutcome? _outcome;
   bool _routed = false;
 
-  static double get _logoMobile => AppDimensionTokens.size.splashLogo;
-  static double get _logoWide => AppDimensionTokens.size.splashLogoWide;
+  static double get _logo => AppDimensionTokens.size.splashLogo;
   static const double _scaleFrom = 0.85;
 
   @override
@@ -144,18 +142,15 @@ class _SplashPageState extends State<SplashPage> with SingleTickerProviderStateM
                 opacity: _reveal,
                 child: ScaleTransition(
                   scale: Tween<double>(begin: _scaleFrom, end: 1).animate(_reveal),
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final logoSize = constraints.maxWidth >= Constants.railBreakpoint ? _logoWide : _logoMobile;
-                      return Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Assets.png.logo.image(width: logoSize, height: logoSize, fit: BoxFit.contain),
-                          SizedBox(height: AppSpacingTokens.s16),
-                          const AppWordmarkWidget(color: NoxBrand.white),
-                        ],
-                      );
-                    },
+                  // The same 168 logo on mobile and desktop (the desktop corpus reuses
+                  // the splash unchanged — no wide enlargement).
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Assets.png.logo.image(width: _logo, height: _logo, fit: BoxFit.contain),
+                      SizedBox(height: AppSpacingTokens.s16),
+                      const AppWordmarkWidget(color: NoxBrand.white),
+                    ],
                   ),
                 ),
               ),
