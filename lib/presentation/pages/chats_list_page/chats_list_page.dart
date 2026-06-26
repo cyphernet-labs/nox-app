@@ -168,6 +168,8 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
   }
 
   Widget _paneHeader(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final colorScheme = Theme.of(context).colorScheme;
     return Padding(
       padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s12, AppSpacingTokens.s8, AppSpacingTokens.s12),
       child: Row(
@@ -178,30 +180,48 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
               icon: AppIconWidget(NoxIcons.arrowBack),
               onPressed: () => Navigator.of(context).maybePop(),
             ),
-          const Expanded(child: AppWordmarkWidget()),
+          // Pane title (the wordmark belongs only to the desktop window strip).
+          Expanded(
+            child: Text(TextConstants.chats, style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
+          ),
         ],
       ),
     );
   }
 
   Widget _threadPane(ChatsListState state, String? selectedId) {
-    if (selectedId == null || state is! Initialized) {
-      return const AppDetailEmptyWidget(title: TextConstants.chatsNoSelectionTitle, message: TextConstants.chatsNoSelectionMessage);
-    }
-    final selected = state.items.where((c) => c.id == selectedId).firstOrNull;
+    final colorScheme = Theme.of(context).colorScheme;
+    final ChatModel? selected = (selectedId == null || state is! Initialized)
+        ? null
+        : state.items.where((c) => c.id == selectedId).firstOrNull;
+    final Widget content;
     if (selected == null) {
-      // The selected chat is no longer in the list (e.g. filtered out by search) —
-      // fall back to the no-selection pane rather than a stale thread placeholder.
-      return const AppDetailEmptyWidget(title: TextConstants.chatsNoSelectionTitle, message: TextConstants.chatsNoSelectionMessage);
+      // No selection (or the selected chat dropped out of the list, e.g. filtered
+      // by search) → the illustrated empty state, not a stale thread placeholder.
+      content = AppEmptyContentWidget(
+        illustration: Assets.svg.illustrations.emptyChats,
+        title: TextConstants.chatsNoSelectionTitle,
+        message: TextConstants.chatsNoSelectionMessage,
+      );
+    } else {
+      // Desktop list-detail: the real thread (5.2) loads in the pane (no push),
+      // capped to a ≤980 reading column. The cap lives at this desktop call site
+      // (not inside the shared AppThreadViewWidget) so mobile stays full-bleed.
+      content = Center(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: AppDimensionTokens.layout.threadReadingColumnW),
+          child: AppThreadViewWidget(
+            key: ValueKey(selected.id),
+            chat: selected,
+            showHeader: true,
+            onInfo: () => showChatCard(context, selected),
+            onOpenFile: (file) => showFileView(context, file),
+          ),
+        ),
+      );
     }
-    // Desktop list-detail: the real thread (5.2) loads in the pane (no push).
-    return AppThreadViewWidget(
-      key: ValueKey(selected.id),
-      chat: selected,
-      showHeader: true,
-      onInfo: () => showChatCard(context, selected),
-      onOpenFile: (file) => showFileView(context, file),
-    );
+    // A distinct pane background separates the thread from the list pane.
+    return ColoredBox(color: colorScheme.surfaceContainerLowest, child: content);
   }
 
   // ---- Shared ----------------------------------------------------------------
@@ -230,17 +250,28 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
       scrollController: _scrollController,
       fetchNextPage: () => _bloc.add(const ChatsListEvent.loadChats()),
       builderDelegate: PagedChildBuilderDelegate<ChatModel>(
-        itemBuilder: (context, chat, index) => ColoredBox(
-          color: wide && chat.id == selectedId ? Theme.of(context).colorScheme.secondaryContainer : Colors.transparent,
-          child: AppChatItemWidget(
+        itemBuilder: (context, chat, index) {
+          final row = AppChatItemWidget(
             key: ValueKey(chat.id),
             name: chat.name,
             preview: chat.lastMessagePreview,
             time: DateFormatter.relative(chat.lastMessageAt),
             unread: chat.unreadCount,
             onTap: () => _onTapChat(chat, wide: wide),
-          ),
-        ),
+          );
+          if (wide && chat.id == selectedId) {
+            // Desktop selected row: an inset rounded pill (not a full-bleed band).
+            return Container(
+              margin: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s8),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.secondaryContainer,
+                borderRadius: BorderRadius.circular(AppDimensionTokens.radius.lg),
+              ),
+              child: row,
+            );
+          }
+          return ColoredBox(color: Colors.transparent, child: row);
+        },
         firstPageProgressIndicatorBuilder: (_) => const AppProgressWidget(),
         newPageProgressIndicatorBuilder: (_) => const AppProgressWidget(),
         firstPageErrorIndicatorBuilder: (_) => AppErrorWidget(onTryAgain: () => _bloc.add(const ChatsListEvent.loadChats(reset: true))),

@@ -134,4 +134,5 @@ final class AppLayoutTokens {
   double get chatsListPaneW => 360; // chats master-detail list pane
   double get settingsListPaneW => 340; // settings master-detail list pane
   double get sideSheetW => 380; // desktop right side-sheet (chat card)
+  double get threadReadingColumnW => 980; // desktop thread pane reading column
 }

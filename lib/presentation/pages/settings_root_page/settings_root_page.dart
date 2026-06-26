@@ -212,16 +212,24 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
           ),
         ),
         Divider(height: AppDimensionTokens.border.hairline),
+        // Grouped nav items (Account / preferences / legal), with the destructive
+        // Log out row pinned to the bottom via a Spacer.
         Expanded(
-          child: ListView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              // Group 1: Account.
               item(_Section.account, TextConstants.settingsAccountTitle),
+              Divider(height: AppDimensionTokens.border.hairline),
+              // Group 2: Notifications, Appearance, Language.
               item(_Section.notifications, TextConstants.settingsNotificationsTitle),
               item(_Section.appearance, TextConstants.settingsAppearanceTitle),
               item(_Section.language, TextConstants.settingsLanguageTitle),
+              Divider(height: AppDimensionTokens.border.hairline),
+              // Group 3: Terms, About.
               item(_Section.terms, TextConstants.settingsTermsTitle),
               item(_Section.about, TextConstants.settingsAboutTitle),
-              Divider(height: AppDimensionTokens.border.hairline),
+              const Spacer(),
               AppSettingsNavRowWidget(title: TextConstants.logoutRow, color: colorScheme.error, onTap: _logout),
               if (kDebugMode)
                 AppSettingsNavRowWidget(title: 'Screens gallery (dev)', onTap: () => _openSection(ScreensGalleryPage.route())),
