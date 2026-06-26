@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
+import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/pages/chat_card_page/bloc/chat_card_bloc.dart';
 import 'package:nox_app/presentation/pages/chat_card_page/chat_card_page.dart';
@@ -25,8 +26,15 @@ void main() {
 
   group('ChatCardPage (mobile)', () {
     Future<void> pumpMobile(WidgetTester tester) async {
-      await tester.binding.setSurfaceSize(const Size(420, 900));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
+      // Pin the FlutterView to the design surface (scale 1.0) so the responsive
+      // file-glyph resolves at design size and the square grid cells fit as
+      // designed — setSurfaceSize alone leaves ScreenUtil at the 800x600 default.
+      tester.view.devicePixelRatio = 3.0;
+      tester.view.physicalSize = Constants.designSize * 3.0;
+      addTearDown(() {
+        tester.view.resetDevicePixelRatio();
+        tester.view.resetPhysicalSize();
+      });
       await pumpApp(tester, ChatCardPage(chat: _sampleChat()));
     }
 

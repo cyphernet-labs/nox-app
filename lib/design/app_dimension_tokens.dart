@@ -93,9 +93,8 @@ final class AppSizeTokens {
   double get avatarLg => AppSpacingTokens.s56; // chat card / identity card
 
   // File-type glyph boxes (the rounded square behind the type icon).
-  double get fileGlyphSm => AppSpacingTokens.s40; // chat-card file list
-  double get fileGlyphMd => AppSpacingTokens.s56; // chat-card file grid
-  double get fileGlyphLg => AppSpacingTokens.s96;
+  double get fileGlyphSm => AppSpacingTokens.s44; // chat-card file list
+  double get fileGlyphMd => AppSpacingTokens.s48; // chat-card file grid
   double get fileGlyphHero => AppSpacingTokens.s128; // file-view header glyph box
 
   // Component chrome heights.
