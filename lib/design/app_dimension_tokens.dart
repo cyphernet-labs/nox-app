@@ -125,6 +125,7 @@ final class AppLayoutTokens {
   double get contentMaxW => 520; // file view / centered form column
   double get settingsMaxW => 680; // settings content column
   double get galleryMaxW => 640; // dev screens gallery
+  double get detailMaxW => 640; // settings/legal leaf content column
   double get fileChipMinW => 200;
   double get fileChipMaxW => 260;
   double get messageMaxW => 260; // empty-state message column

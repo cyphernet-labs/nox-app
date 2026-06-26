@@ -63,12 +63,20 @@ abstract final class TextConstants {
   static const String notificationsDeniedMessage = 'Allow notifications in system settings to receive messages from your chats.';
   static const String actionOpenSettings = 'Open settings';
 
-  // Settings: Terms (7.6) — placeholder legal copy until legal text is delivered.
+  // Settings: Terms (7.6) — locked doc heading + section headings; bodies are
+  // placeholder until the final legal text is delivered. TODO(legal): real copy.
   static const String settingsTermsTitle = 'Terms';
-  static const String termsTermsHeading = 'Terms of Service';
-  static const String termsTermsBody = 'Placeholder Terms of Service. The final text will be provided before release.';
+  static const String termsDocHeading = 'Terms of Service';
+  static const String termsAcceptanceHeading = 'Acceptance';
+  static const String termsAcceptanceBody = 'By using NOX you accept these terms. If you do not agree, do not use the app.';
+  static const String termsIdentityHeading = 'Your identity';
+  static const String termsIdentityBody =
+      'Your account is an anonymous identifier and a display name — no phone number or email. Keep your identifier safe; anyone who has it can sign in as you.';
+  static const String termsContentHeading = 'Content';
+  static const String termsContentBody =
+      'Chats are an open shared space visible to everyone. You are responsible for what you send; do not post unlawful content.';
   static const String termsPrivacyHeading = 'Privacy';
-  static const String termsPrivacyBody = 'Placeholder Privacy notice. NOX is end-to-end encrypted; the server never sees message content.';
+  static const String termsPrivacyBody = 'NOX is end-to-end encrypted; the server never sees your message content.';
   static const String versionLabel = 'Version';
 
   // Settings: About (7.7)
