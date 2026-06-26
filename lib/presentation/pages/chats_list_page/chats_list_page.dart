@@ -212,9 +212,9 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
 
   Widget _banners(BuildContext context, ChatsListState state) {
     if (state is! Initialized) return const SizedBox.shrink();
-    if (state.isOffline) return const AppNoticeStripWidget(message: TextConstants.noConnection);
+    if (state.isOffline) return AppNoticeStripWidget(message: TextConstants.noConnection, icon: NoxIcons.wifiOff);
     if (state.hasLoadError) {
-      return AppNoticeStripWidget(message: TextConstants.chatsLoadError, actionLabel: TextConstants.actionTryAgain, onAction: _refresh);
+      return const AppNoticeStripWidget(message: TextConstants.chatsLoadError);
     }
     return const SizedBox.shrink();
   }

@@ -193,7 +193,7 @@ class _ChatCardBodyState extends State<ChatCardBody> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (initialized.isOffline) const AppNoticeStripWidget(message: TextConstants.noConnection),
+        if (initialized.isOffline) AppNoticeStripWidget(message: TextConstants.noConnection, icon: NoxIcons.wifiOff),
         Padding(
           padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s8, AppSpacingTokens.s16, AppSpacingTokens.s8),
           child: Row(

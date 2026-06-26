@@ -33,7 +33,7 @@ class _NotificationsBodyState extends State<NotificationsBody> {
       children: [
         if (!_granted)
           AppInfoBannerWidget(
-            icon: NoxIcons.settings,
+            icon: NoxIcons.notificationsOff,
             title: TextConstants.notificationsDeniedTitle,
             message: TextConstants.notificationsDeniedMessage,
             actionLabel: TextConstants.actionOpenSettings,
