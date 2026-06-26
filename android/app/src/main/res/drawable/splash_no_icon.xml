@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Fully transparent: suppresses the Android 12+ system-splash icon. The NOX
+     brand logo animates in the Flutter SplashPage, not the native splash, so the
+     system splash is just the dark brand background (FR-005). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <solid android:color="@android:color/transparent" />
+</shape>
