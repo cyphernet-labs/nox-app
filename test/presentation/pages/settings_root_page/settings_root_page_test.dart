@@ -98,7 +98,7 @@ void main() {
 
       await tester.tap(find.widgetWithText(ListTile, TextConstants.logoutRow));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, TextConstants.logoutRow));
+      await tester.tap(find.widgetWithText(TextButton, TextConstants.logoutRow));
       await tester.pumpAndSettle();
 
       expect(find.byType(SplashPage), findsOneWidget);

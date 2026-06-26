@@ -4,12 +4,11 @@ import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/app_text_style_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/general/text_constants.dart';
-import 'package:nox_app/presentation/widgets/primitives/app_avatar_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_spinner_widget.dart';
 import 'package:nox_app/presentation/widgets/settings/app_qr_surface_widget.dart';
 
-/// Identity card (7.1): generated avatar + Name block (inline-editable) + `Your ID`
+/// Identity card (7.1): a Name block (inline-editable) + `Your ID`
 /// block (masked, with Copy / Show QR / optional reveal). Parameterized per layout
 /// (Principle I — minimize secret exposure):
 ///   - mobile: `revealable = true` → a Show/Hide toggle reveals the raw identifier;
@@ -58,14 +57,7 @@ class AppIdentityCardWidget extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                AppAvatarWidget(name: name, size: AppDimensionTokens.size.avatarLg),
-                SizedBox(width: AppSpacingTokens.s16),
-                Expanded(child: _nameBlock(context)),
-              ],
-            ),
+            _nameBlock(context),
             Padding(
               padding: EdgeInsets.symmetric(vertical: AppSpacingTokens.s12),
               child: Divider(height: AppDimensionTokens.border.hairline),

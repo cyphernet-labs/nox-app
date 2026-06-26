@@ -42,9 +42,9 @@ void main() {
       await tester.tap(find.text('open'));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.widgetWithText(FilledButton, TextConstants.logoutRow));
-      await tester.pump(); // loading frame
-      expect(find.descendant(of: find.byType(FilledButton), matching: find.byType(CircularProgressIndicator)), findsOneWidget);
+      await tester.tap(find.widgetWithText(TextButton, TextConstants.logoutRow));
+      await tester.pump(); // loading frame — the confirm button now shows the spinner instead of its label
+      expect(find.descendant(of: find.byType(TextButton), matching: find.byType(CircularProgressIndicator)), findsOneWidget);
 
       await tester.pumpAndSettle();
       expect(result, isTrue);

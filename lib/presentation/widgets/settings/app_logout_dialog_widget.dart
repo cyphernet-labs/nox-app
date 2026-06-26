@@ -39,11 +39,11 @@ class _AppLogoutDialogWidgetState extends State<AppLogoutDialogWidget> {
         content: const Text(TextConstants.logoutDialogMessage),
         actions: [
           TextButton(onPressed: _loading ? null : () => Navigator.of(context).pop(false), child: const Text(TextConstants.actionCancel)),
-          FilledButton(
+          TextButton(
             onPressed: _loading ? null : _confirm,
-            style: FilledButton.styleFrom(backgroundColor: colorScheme.error, foregroundColor: colorScheme.onError),
+            style: TextButton.styleFrom(foregroundColor: colorScheme.error),
             child: _loading
-                ? AppSpinnerWidget(size: AppDimensionTokens.icon.md, color: colorScheme.onError)
+                ? AppSpinnerWidget(size: AppDimensionTokens.icon.md, color: colorScheme.error)
                 : const Text(TextConstants.logoutRow),
           ),
         ],
