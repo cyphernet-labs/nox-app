@@ -156,7 +156,7 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
     return Scaffold(
       body: Column(
         children: [
-          const AppWindowTitlebarWidget(title: TextConstants.onboardTitleSignIn),
+          const AppWindowTitlebarWidget(subtitle: 'Sign in'),
           Expanded(
             child: AppOnboardCardWidget(
               child: Column(

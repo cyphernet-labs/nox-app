@@ -143,7 +143,7 @@ class _SetUsernamePageState extends BaseStatePage<SetUsernamePage> {
     return Scaffold(
       body: Column(
         children: [
-          const AppWindowTitlebarWidget(title: TextConstants.onboardTitleSetUp),
+          const AppWindowTitlebarWidget(subtitle: 'Set up'),
           Expanded(
             child: AppOnboardCardWidget(
               child: Column(

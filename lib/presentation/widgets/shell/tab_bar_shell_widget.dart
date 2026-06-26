@@ -8,6 +8,7 @@ import 'package:nox_app/presentation/pages/settings_root_page/settings_root_page
 import 'package:nox_app/presentation/widgets/shell/app_bottom_bar_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_create_fab_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_navigation_rail_widget.dart';
+import 'package:nox_app/presentation/widgets/shell/app_window_titlebar_widget.dart';
 
 /// 4.1 Tab-bar shell — the app skeleton. Width-driven (`LayoutBuilder` on
 /// `Constants.railBreakpoint` = 840dp): a narrow window gets the [AppBottomBarWidget]
@@ -128,11 +129,20 @@ class _TabBarShellState extends State<TabBarShell> {
 
   Widget _desktop() {
     return Scaffold(
-      body: Row(
+      body: Column(
         children: [
-          AppNavigationRailWidget(active: _active, onSelect: _onSelect, onCreate: _onCreate),
-          VerticalDivider(width: AppDimensionTokens.border.hairline),
-          Expanded(child: _body(true)),
+          // Branded window strip + brand-splash hairline at the top of the desktop
+          // shell. Native min/max/close controls stay deferred (desktop-infra phase).
+          const AppWindowTitlebarWidget(subtitle: 'Chats'),
+          Expanded(
+            child: Row(
+              children: [
+                AppNavigationRailWidget(active: _active, onSelect: _onSelect, onCreate: _onCreate),
+                VerticalDivider(width: AppDimensionTokens.border.hairline),
+                Expanded(child: _body(true)),
+              ],
+            ),
+          ),
         ],
       ),
     );

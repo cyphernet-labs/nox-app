@@ -235,7 +235,19 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
     );
   }
 
+  // Title of the selected detail section, mirroring the menu-pane item labels.
+  String _sectionTitle(_Section section) => switch (section) {
+    _Section.account => TextConstants.settingsAccountTitle,
+    _Section.notifications => TextConstants.settingsNotificationsTitle,
+    _Section.appearance => TextConstants.settingsAppearanceTitle,
+    _Section.language => TextConstants.settingsLanguageTitle,
+    _Section.terms => TextConstants.settingsTermsTitle,
+    _Section.about => TextConstants.settingsAboutTitle,
+  };
+
   Widget _detailPane(BuildContext context, SettingsRootState state) {
+    final textTheme = Theme.of(context).textTheme;
+    final colorScheme = Theme.of(context).colorScheme;
     final Widget body = switch (_selected) {
       _Section.account => ListView(
         padding: EdgeInsets.all(AppSpacingTokens.s16),
@@ -247,11 +259,28 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
       _Section.terms => const TermsBody(),
       _Section.about => const AboutBody(),
     };
-    return Center(
-      child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: AppDimensionTokens.layout.settingsMaxW),
-        child: body,
-      ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // PaneHeader: names the selected section (the detail pane has no AppBar of
+        // its own), aligned with the menu pane's header height/style.
+        Padding(
+          padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s12, AppSpacingTokens.s16, AppSpacingTokens.s12),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(_sectionTitle(_selected), style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
+          ),
+        ),
+        Divider(height: AppDimensionTokens.border.hairline),
+        Expanded(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: AppDimensionTokens.layout.settingsMaxW),
+              child: body,
+            ),
+          ),
+        ),
+      ],
     );
   }
 

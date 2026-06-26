@@ -198,7 +198,7 @@ class _QrScanPageState extends State<QrScanPage> {
     return Scaffold(
       body: Column(
         children: [
-          const AppWindowTitlebarWidget(title: TextConstants.onboardTitleScanQr),
+          const AppWindowTitlebarWidget(subtitle: 'Scan QR'),
           Expanded(child: content),
           ?dev,
         ],

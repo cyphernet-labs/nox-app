@@ -101,7 +101,7 @@ final class AppSizeTokens {
   // Component chrome heights.
   double get bottomBarH => AppSpacingTokens.s64; // docked bottom bar
   double get searchBarH => AppSpacingTokens.s56;
-  double get windowTitlebarH => AppSpacingTokens.s40; // desktop custom titlebar
+  double get windowTitlebarH => AppSpacingTokens.s44; // desktop custom titlebar
   double get chatRowMinH => AppSpacingTokens.s72; // chat list row min height
   double get fabNotchGap => AppSpacingTokens.s72; // bottom-bar central FAB notch
 

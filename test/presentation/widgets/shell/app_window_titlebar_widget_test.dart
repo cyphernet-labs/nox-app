@@ -4,9 +4,10 @@ import 'package:nox_app/presentation/widgets/shell/app_window_titlebar_widget.da
 import '../../../utils/pump_app.dart';
 
 void main() {
-  testWidgets('AppWindowTitlebarWidget renders its title', (tester) async {
-    await pumpApp(tester, const AppWindowTitlebarWidget(title: 'NOX'));
+  testWidgets('AppWindowTitlebarWidget renders the NOX wordmark and the subtitle', (tester) async {
+    await pumpApp(tester, const AppWindowTitlebarWidget(subtitle: 'Sign in'));
 
-    expect(find.text('NOX'), findsOneWidget);
+    expect(find.text('NOX'), findsOneWidget); // styled wordmark
+    expect(find.textContaining('Sign in'), findsOneWidget); // subtitle
   });
 }
