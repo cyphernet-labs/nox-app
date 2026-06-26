@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 
 /// Inline system line at the start of a thread (5.2): `Chat created by {username}`.
-/// Not a message (no bubble). Centered `bodySmall` on `onSurfaceVariant`.
+/// Not a message (no bubble). Centered `bodyMedium` on `onSurfaceVariant`.
 class AppSystemLineWidget extends StatelessWidget {
   const AppSystemLineWidget({super.key, required this.text});
 
@@ -17,7 +17,7 @@ class AppSystemLineWidget extends StatelessWidget {
       child: Text(
         text,
         textAlign: TextAlign.center,
-        style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
+        style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
       ),
     );
   }

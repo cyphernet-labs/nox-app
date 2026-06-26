@@ -67,7 +67,7 @@ class _AppErrorPageState extends State<AppErrorPage> {
         final wide = constraints.maxWidth >= Constants.railBreakpoint;
         final body = _ErrorBody(
           params: widget.params,
-          iconSize: wide ? AppDimensionTokens.icon.heroWide : AppDimensionTokens.icon.hero,
+          iconSize: wide ? AppDimensionTokens.icon.heroWide : AppDimensionTokens.icon.illustration,
           retrying: _retrying,
           onRetry: widget.params.onRetry == null ? null : _retry,
           devControl: (kDebugMode && widget.demo) ? _modeControl() : null,
@@ -129,7 +129,7 @@ class _ErrorBody extends StatelessWidget {
       children: [
         Center(
           child: Padding(
-            padding: EdgeInsets.all(AppSpacingTokens.s24),
+            padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s32, vertical: AppSpacingTokens.s24),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -138,13 +138,16 @@ class _ErrorBody extends StatelessWidget {
                 Text(
                   params.title,
                   textAlign: TextAlign.center,
-                  style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface),
+                  style: textTheme.headlineSmall?.copyWith(color: colorScheme.onSurface),
                 ),
-                SizedBox(height: AppSpacingTokens.s8),
-                Text(
-                  params.message,
-                  textAlign: TextAlign.center,
-                  style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
+                SizedBox(height: AppSpacingTokens.s16),
+                ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: AppDimensionTokens.layout.errorMsgW),
+                  child: Text(
+                    params.message,
+                    textAlign: TextAlign.center,
+                    style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
+                  ),
                 ),
                 SizedBox(height: AppSpacingTokens.s24),
                 FilledButton(

@@ -15,7 +15,7 @@ class TermsBody extends StatelessWidget {
     final textTheme = Theme.of(context).textTheme;
     final colorScheme = Theme.of(context).colorScheme;
     return ListView(
-      padding: EdgeInsets.all(AppSpacingTokens.s16),
+      padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s8, AppSpacingTokens.s16, AppSpacingTokens.s16),
       children: [
         _section(context, TextConstants.termsTermsHeading, TextConstants.termsTermsBody),
         SizedBox(height: AppSpacingTokens.s24),

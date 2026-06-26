@@ -208,14 +208,14 @@ class _DeniedPanel extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        AppIconWidget(NoxIcons.noPhotography, size: AppDimensionTokens.icon.hero, color: colorScheme.onSurfaceVariant),
+        AppIconWidget(NoxIcons.noPhotography, size: AppDimensionTokens.icon.heroLg, color: colorScheme.onSurfaceVariant),
         SizedBox(height: AppSpacingTokens.s16),
         Text(
           TextConstants.qrPermissionTitle,
           textAlign: TextAlign.center,
-          style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface),
+          style: textTheme.headlineSmall?.copyWith(color: colorScheme.onSurface),
         ),
-        SizedBox(height: AppSpacingTokens.s8),
+        SizedBox(height: AppSpacingTokens.s16),
         Text(
           TextConstants.qrPermissionMessage,
           textAlign: TextAlign.center,

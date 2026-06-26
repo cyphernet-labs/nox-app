@@ -72,7 +72,9 @@ final class AppIconTokens {
   double get fab => AppSpacingTokens.s26; // central create FAB glyph
   double get xxl => AppSpacingTokens.s28; // file-chip / grid-glyph icon
   double get glyph => AppSpacingTokens.s32;
-  double get hero => AppSpacingTokens.s48; // error/empty + file-view glyph icon
+  double get hero => AppSpacingTokens.s48; // small hero glyph
+  double get heroLg => AppSpacingTokens.s72; // QR-denied glyph + file-view glyph icon
+  double get illustration => AppSpacingTokens.s80; // error/empty illustration glyph (mobile)
   double get heroWide => AppSpacingTokens.s96; // error illustration icon on wide layouts
 }
 
@@ -93,7 +95,8 @@ final class AppSizeTokens {
   // File-type glyph boxes (the rounded square behind the type icon).
   double get fileGlyphSm => AppSpacingTokens.s40; // chat-card file list
   double get fileGlyphMd => AppSpacingTokens.s56; // chat-card file grid
-  double get fileGlyphLg => AppSpacingTokens.s96; // file-view header
+  double get fileGlyphLg => AppSpacingTokens.s96;
+  double get fileGlyphHero => AppSpacingTokens.s128; // file-view header glyph box
 
   // Component chrome heights.
   double get bottomBarH => AppSpacingTokens.s64; // docked bottom bar
@@ -126,6 +129,7 @@ final class AppLayoutTokens {
   double get fileChipMinW => 200;
   double get fileChipMaxW => 260;
   double get messageMaxW => 260; // empty-state message column
+  double get errorMsgW => 300; // error-screen message column
   double get chatsListPaneW => 360; // chats master-detail list pane
   double get settingsListPaneW => 340; // settings master-detail list pane
   double get sideSheetW => 380; // desktop right side-sheet (chat card)

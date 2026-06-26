@@ -13,7 +13,7 @@ class AppErrorWidget extends StatelessWidget {
   final String? message;
   final VoidCallback? onTryAgain;
 
-  static double get _iconSize => AppDimensionTokens.icon.hero;
+  static double get _iconSize => AppDimensionTokens.icon.illustration;
 
   @override
   Widget build(BuildContext context) {

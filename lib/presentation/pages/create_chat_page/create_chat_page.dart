@@ -105,10 +105,13 @@ class _CreateChatPageState extends BaseStatePage<CreateChatPage> {
         child: Column(
           children: [
             Expanded(
-              child: SingleChildScrollView(padding: EdgeInsets.all(AppSpacingTokens.s16), child: _field(state)),
+              child: SingleChildScrollView(
+                padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s20, AppSpacingTokens.s16, AppSpacingTokens.s16),
+                child: _field(state),
+              ),
             ),
             Padding(
-              padding: EdgeInsets.all(AppSpacingTokens.s16),
+              padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s16, AppSpacingTokens.s16, AppSpacingTokens.s24),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [

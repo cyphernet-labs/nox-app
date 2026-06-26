@@ -134,7 +134,7 @@ class AppIdentityCardWidget extends StatelessWidget {
         Text(
           revealed ? rawId : maskedId,
           style: revealed
-              ? AppTextStyleTokens.monoBody(color: colorScheme.onSurface)
+              ? AppTextStyleTokens.monoBody(color: colorScheme.onSurfaceVariant)
               : textTheme.titleMedium?.copyWith(color: colorScheme.onSurface),
         ),
         SizedBox(height: AppSpacingTokens.s4),

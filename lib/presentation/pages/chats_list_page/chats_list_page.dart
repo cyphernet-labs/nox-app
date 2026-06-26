@@ -248,14 +248,23 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
         newPageProgressIndicatorBuilder: (_) => const AppProgressWidget(),
         firstPageErrorIndicatorBuilder: (_) => AppErrorWidget(onTryAgain: () => _bloc.add(const ChatsListEvent.loadChats(reset: true))),
         noItemsFoundIndicatorBuilder: (_) => initialized.isSearching
-            ? Center(child: Text(TextConstants.chatsSearchEmpty))
+            ? Align(
+                alignment: Alignment.topCenter,
+                child: Padding(
+                  padding: EdgeInsets.only(top: AppSpacingTokens.s48),
+                  child: Text(
+                    TextConstants.chatsSearchEmpty,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                  ),
+                ),
+              )
             : AppEmptyContentWidget(
                 illustration: Assets.svg.illustrations.emptyChats,
                 title: TextConstants.chatsEmptyTitle,
                 message: TextConstants.chatsEmptyMessage,
               ),
       ),
-      separatorBuilder: (context, index) => Divider(height: AppDimensionTokens.border.hairline),
+      separatorBuilder: (context, index) => const SizedBox.shrink(),
     );
     if (!FeatureFlags.enablePullToRefresh) return pagedList;
     return RefreshIndicator(onRefresh: _refresh, child: pagedList);

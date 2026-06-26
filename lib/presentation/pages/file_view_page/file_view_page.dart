@@ -153,12 +153,13 @@ class _FileViewPageState extends State<FileViewPage> with SingleTickerProviderSt
       ),
       body: Stack(
         children: [
-          if (!_cached)
-            Padding(
-              padding: EdgeInsets.only(top: AppSpacingTokens.s2),
-              child: LinearProgressIndicator(value: _progress),
+          if (!_cached) LinearProgressIndicator(value: _progress),
+          Center(
+            child: Padding(
+              padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s32),
+              child: _info(context),
             ),
-          Center(child: _info(context)),
+          ),
           if (kDebugMode && widget.demo) Align(alignment: Alignment.bottomCenter, child: _debugControls()),
         ],
       ),
@@ -228,14 +229,14 @@ class _FileViewPageState extends State<FileViewPage> with SingleTickerProviderSt
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        AppFileGlyphWidget(type: widget.file.type, iconSize: AppDimensionTokens.icon.hero, box: AppDimensionTokens.size.fileGlyphLg),
-        SizedBox(height: AppSpacingTokens.s16),
+        AppFileGlyphWidget(type: widget.file.type, iconSize: AppDimensionTokens.icon.heroLg, box: AppDimensionTokens.size.fileGlyphHero),
+        SizedBox(height: AppSpacingTokens.s18),
         Text(
           widget.file.name,
           textAlign: TextAlign.center,
-          style: textTheme.titleMedium?.copyWith(color: colorScheme.onSurface),
+          style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface),
         ),
-        SizedBox(height: AppSpacingTokens.s8),
+        SizedBox(height: AppSpacingTokens.s18),
         Text(
           _cached ? FileSizeFormatter.format(widget.file.sizeBytes) : TextConstants.downloadingProgress(_percent),
           style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),

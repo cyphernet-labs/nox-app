@@ -86,7 +86,7 @@ class _Tab extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             AppIconWidget(selected ? filled : outlined, color: color),
-            SizedBox(height: AppSpacingTokens.s2),
+            SizedBox(height: AppSpacingTokens.s3),
             Text(label, style: textTheme.labelMedium?.copyWith(color: color)),
           ],
         ),

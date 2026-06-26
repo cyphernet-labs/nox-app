@@ -142,7 +142,10 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
                 child: _idField(state),
               ),
             ),
-            Padding(padding: EdgeInsets.all(AppSpacingTokens.s16), child: _actions(context, state)),
+            Padding(
+              padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s16, AppSpacingTokens.s16, AppSpacingTokens.s24),
+              child: _actions(context, state),
+            ),
           ],
         ),
       ),
