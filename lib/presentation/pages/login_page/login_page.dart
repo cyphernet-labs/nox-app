@@ -193,7 +193,11 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
             child: state.isLoading ? AppSpinnerWidget(size: 18, color: colorScheme.onPrimary) : const Text(TextConstants.loginSignIn),
           ),
         ),
-        TextButton(onPressed: state.isLoading ? null : _scanQr, child: const Text(TextConstants.loginScanQr)),
+        SizedBox(height: AppSpacingTokens.s8),
+        SizedBox(
+          width: double.infinity,
+          child: TextButton(onPressed: state.isLoading ? null : _scanQr, child: const Text(TextConstants.loginScanQr)),
+        ),
         if (kDebugMode && widget.demo) _OutcomeControl(value: _outcome, onChanged: (value) => setState(() => _outcome = value)),
       ],
     );
