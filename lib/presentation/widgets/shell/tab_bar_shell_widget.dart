@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/presentation/pages/chats_list_page/chats_list_page.dart';
@@ -130,7 +131,7 @@ class _TabBarShellState extends State<TabBarShell> {
       body: Row(
         children: [
           AppNavigationRailWidget(active: _active, onSelect: _onSelect, onCreate: _onCreate),
-          const VerticalDivider(width: 1),
+          VerticalDivider(width: AppDimensionTokens.border.hairline),
           Expanded(child: _body(true)),
         ],
       ),

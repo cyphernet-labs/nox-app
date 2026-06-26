@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/nox_icons.dart';
@@ -20,9 +21,9 @@ class AppBottomBarWidget extends StatelessWidget {
   final AppTab active;
   final ValueChanged<AppTab> onSelect;
 
-  static const double _height = 64;
+  static double get _height => AppDimensionTokens.size.bottomBarH;
   // Must track the FAB diameter in AppCreateFabWidget so the notch cradles it.
-  static const double _notchGap = 72;
+  static double get _notchGap => AppDimensionTokens.size.fabNotchGap;
 
   @override
   Widget build(BuildContext context) {
@@ -45,7 +46,7 @@ class AppBottomBarWidget extends StatelessWidget {
               onTap: () => onSelect(AppTab.chats),
             ),
           ),
-          const SizedBox(width: _notchGap),
+          SizedBox(width: _notchGap),
           Expanded(
             child: _Tab(
               outlined: NoxIcons.settings,

@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/di/global_aliases.dart';
@@ -170,7 +171,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
           AppSettingsNavRowWidget(title: TextConstants.settingsLanguageTitle, onTap: () => _openSection(LanguagePage.route())),
           AppSettingsNavRowWidget(title: TextConstants.settingsTermsTitle, onTap: () => _openSection(TermsPage.route())),
           AppSettingsNavRowWidget(title: TextConstants.settingsAboutTitle, onTap: () => _openSection(AboutPage.route())),
-          const Divider(height: 1),
+          Divider(height: AppDimensionTokens.border.hairline),
           AppSettingsNavRowWidget(title: TextConstants.logoutRow, color: Theme.of(context).colorScheme.error, onTap: _logout),
           if (kDebugMode) AppSettingsNavRowWidget(title: 'Screens gallery (dev)', onTap: () => _openSection(ScreensGalleryPage.route())),
           if (kDebugMode && !widget.demo)
@@ -209,7 +210,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
             ],
           ),
         ),
-        const Divider(height: 1),
+        Divider(height: AppDimensionTokens.border.hairline),
         Expanded(
           child: ListView(
             children: [
@@ -219,7 +220,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
               item(_Section.language, TextConstants.settingsLanguageTitle),
               item(_Section.terms, TextConstants.settingsTermsTitle),
               item(_Section.about, TextConstants.settingsAboutTitle),
-              const Divider(height: 1),
+              Divider(height: AppDimensionTokens.border.hairline),
               AppSettingsNavRowWidget(title: TextConstants.logoutRow, color: colorScheme.error, onTap: _logout),
               if (kDebugMode)
                 AppSettingsNavRowWidget(title: 'Screens gallery (dev)', onTap: () => _openSection(ScreensGalleryPage.route())),

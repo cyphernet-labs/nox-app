@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/general/text_constants.dart';
@@ -44,7 +45,7 @@ class _NotificationsBodyState extends State<NotificationsBody> {
           onChanged: _granted ? (value) => setState(() => _enabled = value) : null,
         ),
         // Dev-only permission toggle (debug builds only); real OS permission is backend phase.
-        if (kDebugMode) const Divider(height: 1),
+        if (kDebugMode) Divider(height: AppDimensionTokens.border.hairline),
         if (kDebugMode) _PermissionDevControl(status: _permission, onChanged: (status) => setState(() => _permission = status)),
       ],
     );

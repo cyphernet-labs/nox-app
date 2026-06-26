@@ -55,39 +55,54 @@ final class AppBorderTokens {
   double get thick => AppSpacingTokens.s2;
 }
 
-/// Icon render-size roles (icon.*). `base` (22) is the default for most UI.
+/// Icon render-size roles (icon.*). `base` (22) is the default for most UI;
+/// `hero` (48) is the error/empty-state and file-view glyph icon.
 final class AppIconTokens {
   const AppIconTokens._();
 
   double get micro => AppSpacingTokens.s12;
-  double get xs => AppSpacingTokens.s14;
+  double get xs => AppSpacingTokens.s14; // message status tick
   double get sm => AppSpacingTokens.s16;
-  double get md => AppSpacingTokens.s18;
-  double get lg => AppSpacingTokens.s20;
-  double get base => AppSpacingTokens.s22;
+  double get md => AppSpacingTokens.s18; // in-button spinner
+  double get lg => AppSpacingTokens.s20; // identity-card / strip actions
+  double get base => AppSpacingTokens.s22; // default list-leading icon
   double get xl => AppSpacingTokens.s24;
-  double get xxl => AppSpacingTokens.s28;
+  double get fab => AppSpacingTokens.s26; // central create FAB glyph
+  double get xxl => AppSpacingTokens.s28; // file-chip / grid-glyph icon
   double get glyph => AppSpacingTokens.s32;
+  double get hero => AppSpacingTokens.s48; // error/empty + file-view glyph icon
 }
 
-/// Fixed component & layout sizes (size.*). `hitTarget` (48) is the minimum
-/// interactive tap target.
+/// Fixed component & element sizes (size.*). `hitTarget` (48) is the minimum
+/// interactive tap target. Each role maps to a real drawn element in the UI.
 final class AppSizeTokens {
   const AppSizeTokens._();
 
   double get screenPad => AppSpacingTokens.s16;
   double get hitTarget => AppSpacingTokens.s48;
-  double get appBarH => AppSpacingTokens.s64; // M3 small top app bar
-  double get bottomNavH => AppSpacingTokens.s72;
-  double get fieldH => AppSpacingTokens.s56;
-  double get buttonH => AppSpacingTokens.s40; // visible pill; tap target padded to 48
-  double get searchBarH => AppSpacingTokens.s56;
-  double get idFieldMinH => AppSpacingTokens.s120; // Login multiline paste-target
-  double get avatarSm => AppSpacingTokens.s40;
+
+  // Avatars (circle diameters).
+  double get avatarXs => AppSpacingTokens.s36; // thread header
+  double get avatarSm => AppSpacingTokens.s40; // chat list row
   double get avatarMd => AppSpacingTokens.s48;
-  double get avatarLg => AppSpacingTokens.s56;
-  double get illustrationIcon => AppSpacingTokens.s80; // error / empty-state hero icon
-  double get fileGlyphBox => AppSpacingTokens.s128;
-  double get fileGlyphIcon => AppSpacingTokens.s72;
-  double get splashLogo => AppSpacingTokens.s168;
+  double get avatarLg => AppSpacingTokens.s56; // chat card / identity card
+
+  // File-type glyph boxes (the rounded square behind the type icon).
+  double get fileGlyphSm => AppSpacingTokens.s40; // chat-card file list
+  double get fileGlyphMd => AppSpacingTokens.s56; // chat-card file grid
+  double get fileGlyphLg => AppSpacingTokens.s96; // file-view header
+
+  // Component chrome heights.
+  double get bottomBarH => AppSpacingTokens.s64; // docked bottom bar
+  double get searchBarH => AppSpacingTokens.s56;
+  double get windowTitlebarH => AppSpacingTokens.s40; // desktop custom titlebar
+  double get chatRowMinH => AppSpacingTokens.s72; // chat list row min height
+  double get fabNotchGap => AppSpacingTokens.s72; // bottom-bar central FAB notch
+
+  // Hero / brand elements.
+  double get splashLogo => AppSpacingTokens.s168; // splash logo (mobile)
+  double get splashLogoWide => AppSpacingTokens.s220; // splash logo (desktop)
+  double get onboardLogoH => AppSpacingTokens.s64; // onboarding card logo
+  double get qrSurface => AppSpacingTokens.s160; // identity-card QR (brand-fixed light)
+  double get emptyArt => AppSpacingTokens.s132; // empty-state illustration box
 }

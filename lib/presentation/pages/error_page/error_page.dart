@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/general/constants.dart';
@@ -148,7 +149,9 @@ class _ErrorBody extends StatelessWidget {
                 SizedBox(height: AppSpacingTokens.s24),
                 FilledButton(
                   onPressed: retrying ? null : onRetry,
-                  child: retrying ? AppSpinnerWidget(size: 18, color: colorScheme.onPrimary) : const Text(TextConstants.actionTryAgain),
+                  child: retrying
+                      ? AppSpinnerWidget(size: AppDimensionTokens.icon.md, color: colorScheme.onPrimary)
+                      : const Text(TextConstants.actionTryAgain),
                 ),
               ],
             ),

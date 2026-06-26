@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/general/constants.dart';
@@ -207,7 +208,7 @@ class _DeniedPanel extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        AppIconWidget(NoxIcons.noPhotography, size: 48, color: colorScheme.onSurfaceVariant),
+        AppIconWidget(NoxIcons.noPhotography, size: AppDimensionTokens.icon.hero, color: colorScheme.onSurfaceVariant),
         SizedBox(height: AppSpacingTokens.s16),
         Text(
           TextConstants.qrPermissionTitle,

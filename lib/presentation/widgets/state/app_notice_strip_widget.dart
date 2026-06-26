@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
@@ -25,7 +26,7 @@ class AppNoticeStripWidget extends StatelessWidget {
         padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s16, vertical: AppSpacingTokens.s8),
         child: Row(
           children: [
-            AppIconWidget(NoxIcons.error, size: 20, color: colorScheme.onSurfaceVariant),
+            AppIconWidget(NoxIcons.error, size: AppDimensionTokens.icon.lg, color: colorScheme.onSurfaceVariant),
             SizedBox(width: AppSpacingTokens.s12),
             Expanded(
               child: Text(message, style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurface)),

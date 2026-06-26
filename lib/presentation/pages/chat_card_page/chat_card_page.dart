@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/nox_icons.dart';
@@ -157,7 +158,7 @@ class _ChatCardBodyState extends State<ChatCardBody> {
       mainAxisSize: MainAxisSize.min,
       children: [
         AppPanelHeaderWidget(title: TextConstants.chatInfoTitle, onClose: () => Navigator.of(context).maybePop()),
-        const Divider(height: 1),
+        Divider(height: AppDimensionTokens.border.hairline),
       ],
     );
   }
@@ -169,7 +170,7 @@ class _ChatCardBodyState extends State<ChatCardBody> {
       padding: EdgeInsets.all(AppSpacingTokens.s16),
       child: Row(
         children: [
-          AppAvatarWidget(name: widget.chat.name, size: 56),
+          AppAvatarWidget(name: widget.chat.name, size: AppDimensionTokens.size.avatarLg),
           SizedBox(width: AppSpacingTokens.s16),
           Expanded(
             child: Text(
@@ -228,7 +229,7 @@ class _ChatCardBodyState extends State<ChatCardBody> {
       itemBuilder: (context, index) {
         final file = files[index];
         return ListTile(
-          leading: AppFileGlyphWidget(type: file.type, iconSize: 22, box: 40),
+          leading: AppFileGlyphWidget(type: file.type, iconSize: AppDimensionTokens.icon.base, box: AppDimensionTokens.size.fileGlyphSm),
           title: Text(file.name, maxLines: 1, overflow: TextOverflow.ellipsis),
           subtitle: Text(FileSizeFormatter.format(file.sizeBytes)),
           onTap: () => showFileView(context, file),
@@ -247,7 +248,9 @@ class _ChatCardBodyState extends State<ChatCardBody> {
         crossAxisCount: columns,
         crossAxisSpacing: AppSpacingTokens.s8,
         mainAxisSpacing: AppSpacingTokens.s8,
-        childAspectRatio: 0.82,
+        // Portrait cells with headroom for the responsive glyph box + 2-line name
+        // (the glyph scales with the device, the cell height must accommodate it).
+        childAspectRatio: 0.68,
       ),
       itemCount: files.length,
       itemBuilder: (context, index) {
@@ -261,7 +264,7 @@ class _ChatCardBodyState extends State<ChatCardBody> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                AppFileGlyphWidget(type: file.type, iconSize: 28, box: 56),
+                AppFileGlyphWidget(type: file.type, iconSize: AppDimensionTokens.icon.xxl, box: AppDimensionTokens.size.fileGlyphMd),
                 SizedBox(height: AppSpacingTokens.s8),
                 Text(
                   file.name,

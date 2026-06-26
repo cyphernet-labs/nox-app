@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
@@ -30,8 +31,8 @@ class AppFileChipWidget extends StatelessWidget {
   final bool removable;
   final VoidCallback? onRemove;
 
-  static const double _iconSize = 28;
-  static const double _removeIconSize = 20;
+  static double get _iconSize => AppDimensionTokens.icon.xxl;
+  static double get _removeIconSize => AppDimensionTokens.icon.lg;
   static const double _minWidth = 200;
   static const double _maxWidth = 260;
 

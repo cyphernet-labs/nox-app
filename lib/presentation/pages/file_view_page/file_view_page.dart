@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
@@ -227,7 +228,7 @@ class _FileViewPageState extends State<FileViewPage> with SingleTickerProviderSt
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        AppFileGlyphWidget(type: widget.file.type, iconSize: 48, box: 96),
+        AppFileGlyphWidget(type: widget.file.type, iconSize: AppDimensionTokens.icon.hero, box: AppDimensionTokens.size.fileGlyphLg),
         SizedBox(height: AppSpacingTokens.s16),
         Text(
           widget.file.name,

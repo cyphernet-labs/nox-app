@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:infinite_scroll_pagination/infinite_scroll_pagination.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/nox_icons.dart';
@@ -254,7 +255,7 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
                 message: TextConstants.chatsEmptyMessage,
               ),
       ),
-      separatorBuilder: (context, index) => const Divider(height: 1),
+      separatorBuilder: (context, index) => Divider(height: AppDimensionTokens.border.hairline),
     );
     if (!FeatureFlags.enablePullToRefresh) return pagedList;
     return RefreshIndicator(onRefresh: _refresh, child: pagedList);

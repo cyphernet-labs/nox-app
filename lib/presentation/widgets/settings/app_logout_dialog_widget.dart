@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_spinner_widget.dart';
 
@@ -41,7 +42,9 @@ class _AppLogoutDialogWidgetState extends State<AppLogoutDialogWidget> {
           FilledButton(
             onPressed: _loading ? null : _confirm,
             style: FilledButton.styleFrom(backgroundColor: colorScheme.error, foregroundColor: colorScheme.onError),
-            child: _loading ? AppSpinnerWidget(size: 18, color: colorScheme.onError) : const Text(TextConstants.logoutRow),
+            child: _loading
+                ? AppSpinnerWidget(size: AppDimensionTokens.icon.md, color: colorScheme.onError)
+                : const Text(TextConstants.logoutRow),
           ),
         ],
       ),

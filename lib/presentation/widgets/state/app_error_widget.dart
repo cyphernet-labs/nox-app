@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/general/text_constants.dart';
@@ -12,7 +13,7 @@ class AppErrorWidget extends StatelessWidget {
   final String? message;
   final VoidCallback? onTryAgain;
 
-  static const double _iconSize = 48;
+  static double get _iconSize => AppDimensionTokens.icon.hero;
 
   @override
   Widget build(BuildContext context) {

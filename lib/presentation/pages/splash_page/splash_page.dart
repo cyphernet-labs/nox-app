@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/theme/nox_brand.dart';
@@ -57,8 +58,8 @@ class _SplashPageState extends State<SplashPage> with SingleTickerProviderStateM
   SplashOutcome? _outcome;
   bool _routed = false;
 
-  static const double _logoMobile = 168;
-  static const double _logoWide = 220;
+  static double get _logoMobile => AppDimensionTokens.size.splashLogo;
+  static double get _logoWide => AppDimensionTokens.size.splashLogoWide;
   static const double _scaleFrom = 0.85;
 
   @override

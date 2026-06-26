@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/text_constants.dart';
@@ -190,7 +191,9 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
           width: double.infinity,
           child: FilledButton(
             onPressed: state.canSubmit ? _submit : null,
-            child: state.isLoading ? AppSpinnerWidget(size: 18, color: colorScheme.onPrimary) : const Text(TextConstants.loginSignIn),
+            child: state.isLoading
+                ? AppSpinnerWidget(size: AppDimensionTokens.icon.md, color: colorScheme.onPrimary)
+                : const Text(TextConstants.loginSignIn),
           ),
         ),
         SizedBox(height: AppSpacingTokens.s8),

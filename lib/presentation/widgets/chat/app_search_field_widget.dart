@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/general/text_constants.dart';
@@ -24,7 +25,7 @@ class AppSearchFieldWidget extends StatelessWidget {
         hintText: hint,
         onChanged: onChanged,
         leading: AppIconWidget(NoxIcons.search),
-        constraints: const BoxConstraints(minHeight: 48, maxWidth: double.infinity),
+        constraints: BoxConstraints(minHeight: AppDimensionTokens.size.hitTarget, maxWidth: double.infinity),
       ),
     );
   }

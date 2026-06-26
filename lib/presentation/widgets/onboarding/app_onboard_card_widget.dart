@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/presentation/widgets/shell/app_splash_hairline_widget.dart';
@@ -19,7 +20,7 @@ class AppOnboardCardWidget extends StatelessWidget {
   /// Desktop card cap.
   final double maxWidth;
 
-  static const double _logoHeight = 64;
+  static double get _logoHeight => AppDimensionTokens.size.onboardLogoH;
 
   @override
   Widget build(BuildContext context) {

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/general/text_constants.dart';
@@ -12,7 +13,7 @@ class AppCreateFabWidget extends StatelessWidget {
 
   final VoidCallback? onPressed;
 
-  static const double _iconSize = 26;
+  static double get _iconSize => AppDimensionTokens.icon.fab;
 
   @override
   Widget build(BuildContext context) {

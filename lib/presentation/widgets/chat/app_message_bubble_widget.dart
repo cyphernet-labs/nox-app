@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/nox_icons.dart';
@@ -33,7 +34,7 @@ class AppMessageBubbleWidget extends StatelessWidget {
   final bool isLast;
 
   static const double _maxWidthFactor = 0.8;
-  static const double _statusIconSize = 14;
+  static double get _statusIconSize => AppDimensionTokens.icon.xs;
 
   @override
   Widget build(BuildContext context) {

@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/general/constants.dart';
@@ -184,7 +185,9 @@ class _SetUsernamePageState extends BaseStatePage<SetUsernamePage> {
           width: double.infinity,
           child: FilledButton(
             onPressed: state.canSubmit && !state.isSubmitting ? _done : null,
-            child: state.isSubmitting ? AppSpinnerWidget(size: 18, color: colorScheme.onPrimary) : const Text(TextConstants.actionDone),
+            child: state.isSubmitting
+                ? AppSpinnerWidget(size: AppDimensionTokens.icon.md, color: colorScheme.onPrimary)
+                : const Text(TextConstants.actionDone),
           ),
         ),
         TextButton(onPressed: (state.isSubmitting || _skipping) ? null : _skip, child: const Text(TextConstants.actionSkip)),

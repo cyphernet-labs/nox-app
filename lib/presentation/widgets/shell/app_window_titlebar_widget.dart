@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 
 /// Faux desktop title bar — a thin titled strip drawn at the top of a wide-window
@@ -10,7 +11,7 @@ class AppWindowTitlebarWidget extends StatelessWidget {
 
   final String title;
 
-  static const double _height = 40;
+  static double get _height => AppDimensionTokens.size.windowTitlebarH;
 
   @override
   Widget build(BuildContext context) {

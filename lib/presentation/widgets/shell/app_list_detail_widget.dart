@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 
 /// Desktop two-pane list-detail container (4.1 §desktop): a fixed-width list pane
@@ -22,7 +23,7 @@ class AppListDetailWidget extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         SizedBox(width: listPaneWidth, child: listPane),
-        const VerticalDivider(width: 1),
+        VerticalDivider(width: AppDimensionTokens.border.hairline),
         Expanded(child: detailPane),
       ],
     );

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
@@ -70,7 +71,7 @@ class _AppShellState extends State<AppShell> {
                 NavigationRailDestination(icon: AppIconWidget(d.icon), selectedIcon: AppIconWidget(d.selectedIcon), label: Text(d.label)),
             ],
           ),
-          const VerticalDivider(width: 1),
+          VerticalDivider(width: AppDimensionTokens.border.hairline),
           Expanded(child: body),
         ],
       ),
