@@ -100,6 +100,8 @@ abstract final class TextConstants {
   static const String qrEnterManually = 'Enter manually';
   static const String qrPermissionTitle = 'Camera access needed';
   static const String qrPermissionMessage = 'To scan a QR code, allow camera access in system settings.';
+  static const String qrUnavailableTitle = 'Camera unavailable';
+  static const String qrUnavailableMessage = 'No camera is available on this device. Enter your ID manually instead.';
   static const String qrInvalidSnackbar = 'This QR code is invalid. Try another one.';
   static const String qrDesktopTitle = 'Scan a QR code';
   static const String qrDesktopHelper = 'Point your webcam at a code, or enter the ID manually.';

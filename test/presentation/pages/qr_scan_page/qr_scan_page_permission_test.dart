@@ -5,7 +5,6 @@ import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/qr/camera_permission_status.dart';
 import 'package:nox_app/domain/repository/qr/camera_permission_service.dart';
 import 'package:nox_app/general/text_constants.dart';
-import 'package:nox_app/presentation/pages/error_page/error_page.dart';
 import 'package:nox_app/presentation/pages/qr_scan_page/bloc/qr_scan_bloc.dart';
 import 'package:nox_app/presentation/pages/qr_scan_page/qr_scan_page.dart';
 
@@ -64,16 +63,13 @@ void main() {
     expect(find.text(TextConstants.qrInvalidSnackbar), findsOneWidget);
   });
 
-  testWidgets('camera unavailable routes to the universal error screen (3.1)', (tester) async {
-    // Drive the transition AFTER the page subscribes, so the navigation listener
-    // observes scanning → fatal (a seeded-fatal state would never fire the listener).
-    final bloc = QrScanBloc()..add(const QrScanEvent.permissionResolved(CameraPermissionStatus.granted));
-    await pumpApp(tester, QrScanPage(bloc: bloc, previewBuilder: (_) => const SizedBox.expand()));
+  testWidgets('camera unavailable shows the in-screen camera-unavailable panel (no dead-end)', (tester) async {
+    await pumpApp(tester, _seeded(CameraPermissionStatus.unavailable));
 
-    bloc.add(const QrScanEvent.permissionResolved(CameraPermissionStatus.unavailable));
-    await tester.pumpAndSettle();
-
-    expect(find.byType(AppErrorPage), findsOneWidget);
+    expect(find.text(TextConstants.qrUnavailableTitle), findsOneWidget);
+    expect(find.text(TextConstants.qrUnavailableMessage), findsOneWidget);
+    // Recoverable: Enter manually returns to Login. No generic error screen push.
+    expect(find.text(TextConstants.qrEnterManually), findsOneWidget);
   });
 
   blocTest<QrScanBloc, QrScanState>(

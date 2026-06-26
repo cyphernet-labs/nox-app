@@ -24,9 +24,18 @@ QrScanPage _denied() => QrScanPage(
   previewBuilder: (_) => const SizedBox.expand(),
 );
 
+/// Camera-unavailable opaque surface (no camera, e.g. iOS simulator) — recoverable
+/// in-screen state with Enter manually, NOT the generic error screen.
+QrScanPage _unavailable() => QrScanPage(
+  bloc: QrScanBloc()..add(const QrScanEvent.permissionResolved(CameraPermissionStatus.unavailable)),
+  previewBuilder: (_) => const SizedBox.expand(),
+);
+
 void main() {
   goldenTest('qr_scan_page', _scanning);
   goldenTestDesktop('qr_scan_page', _scanning);
   goldenTest('qr_scan_page_denied', _denied);
   goldenTestDesktop('qr_scan_page_denied', _denied);
+  goldenTest('qr_scan_page_unavailable', _unavailable);
+  goldenTestDesktop('qr_scan_page_unavailable', _unavailable);
 }

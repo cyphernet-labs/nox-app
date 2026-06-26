@@ -5,6 +5,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/app_text_style_tokens.dart';
+import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_brand.dart';
 import 'package:nox_app/design/theme/nox_scrims.dart';
@@ -14,8 +15,6 @@ import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/nox_qr_envelope.dart';
 import 'package:nox_app/general/platform_utils.dart';
 import 'package:nox_app/general/text_constants.dart';
-import 'package:nox_app/presentation/pages/error_page/error_page.dart';
-import 'package:nox_app/presentation/pages/error_page/error_page_params.dart';
 import 'package:nox_app/presentation/pages/qr_scan_page/bloc/qr_scan_bloc.dart';
 import 'package:nox_app/presentation/widgets/onboarding/app_onboard_card_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
@@ -79,6 +78,7 @@ class _QrScanPageState extends State<QrScanPage> with WidgetsBindingObserver {
   MobileScannerController? _controller;
   bool _torchOn = false;
   bool _cameraStarted = false;
+  bool _cameraErrorHandled = false;
 
   /// True only at real runtime: a live camera + permission service. Demo
   /// (gallery), goldens (previewBuilder) and widget tests (injected bloc) stay
@@ -150,12 +150,39 @@ class _QrScanPageState extends State<QrScanPage> with WidgetsBindingObserver {
   Future<void> _startCamera() async {
     if (_controller == null || _cameraStarted) return;
     _cameraStarted = true;
+    _cameraErrorHandled = false;
     try {
       await _controller!.start();
+    } on MobileScannerException catch (e) {
+      _cameraStarted = false;
+      _handleCameraError(e);
     } catch (e, s) {
       _cameraStarted = false;
-      logRepository.error(target: this, error: e, stackTrace: s);
+      if (mounted) {
+        logRepository.error(target: this, error: e, stackTrace: s);
+        _bloc.add(const QrScanEvent.permissionResolved(CameraPermissionStatus.unavailable));
+      }
     }
+  }
+
+  /// Maps a mobile_scanner error to a recoverable in-screen state. Permission
+  /// denial → the denied surface; a missing camera (`unsupported`, e.g. the iOS
+  /// simulator) → the camera-unavailable surface. Both are EXPECTED, recoverable
+  /// conditions logged at debug, not error; anything else is logged as an error.
+  /// Guarded so the per-frame `errorBuilder` does not spam.
+  void _handleCameraError(MobileScannerException error) {
+    if (_cameraErrorHandled || !mounted) return;
+    _cameraErrorHandled = true;
+    if (error.errorCode == MobileScannerErrorCode.permissionDenied) {
+      _bloc.add(const QrScanEvent.permissionResolved(CameraPermissionStatus.permanentlyDenied));
+      return;
+    }
+    if (error.errorCode == MobileScannerErrorCode.unsupported) {
+      logRepository.debug(target: this, message: 'Camera unavailable: $error');
+    } else {
+      logRepository.error(target: this, error: error);
+    }
+    _bloc.add(const QrScanEvent.permissionResolved(CameraPermissionStatus.unavailable));
   }
 
   Future<void> _stopCamera() async {
@@ -190,14 +217,9 @@ class _QrScanPageState extends State<QrScanPage> with WidgetsBindingObserver {
         ..hideCurrentSnackBar()
         ..showSnackBar(const SnackBar(content: Text(TextConstants.qrInvalidSnackbar)));
       _bloc.add(const QrScanEvent.signalHandled());
-      return;
     }
-    if (state.status == QrScanStatus.fatal) {
-      // Embedded (NOT blocking): the scanner sits above Login, so the error screen
-      // must keep a Back arrow — a camera-unavailable error is recoverable, the user
-      // returns to Login and signs in manually.
-      Navigator.of(context).push(AppErrorPage.route(params: ErrorPageParams.fatal(mode: ErrorPageMode.embedded)));
-    }
+    // `fatal` (camera unavailable) is handled in-screen by the builder (the
+    // camera-unavailable panel) — no dead-end navigation to the error screen.
   }
 
   @override
@@ -206,9 +228,7 @@ class _QrScanPageState extends State<QrScanPage> with WidgetsBindingObserver {
       value: _bloc,
       child: BlocConsumer<QrScanBloc, QrScanState>(
         listenWhen: (previous, current) =>
-            (current.decodedId != null && previous.decodedId == null) ||
-            (current.invalid && !previous.invalid) ||
-            (current.status == QrScanStatus.fatal && previous.status != QrScanStatus.fatal),
+            (current.decodedId != null && previous.decodedId == null) || (current.invalid && !previous.invalid),
         listener: _onSignal,
         builder: (context, state) {
           return LayoutBuilder(
@@ -235,15 +255,9 @@ class _QrScanPageState extends State<QrScanPage> with WidgetsBindingObserver {
         if (raw != null && raw.isNotEmpty) _bloc.add(QrScanEvent.detected(raw));
       },
       errorBuilder: (context, error) {
-        final denied = error.errorCode == MobileScannerErrorCode.permissionDenied;
-        // A denial is a recoverable in-screen state (Open settings); any other camera
-        // error is logged and treated as fatal → 3.1, itself recoverable (Back to Login,
-        // re-tapping Scan QR builds a fresh controller).
-        if (!denied) logRepository.error(target: this, error: error);
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          _bloc.add(QrScanEvent.permissionResolved(denied ? CameraPermissionStatus.permanentlyDenied : CameraPermissionStatus.unavailable));
-        });
+        // Errors that surface after start() (e.g. permission revoked mid-session)
+        // funnel through the same recoverable handler as the explicit start failure.
+        WidgetsBinding.instance.addPostFrameCallback((_) => _handleCameraError(error));
         return ColoredBox(color: Theme.of(context).colorScheme.surfaceContainerHighest);
       },
     );
@@ -253,15 +267,16 @@ class _QrScanPageState extends State<QrScanPage> with WidgetsBindingObserver {
 
   Widget _narrow(BuildContext context, QrScanState state) {
     final colorScheme = Theme.of(context).colorScheme;
-    final denied = state.status == QrScanStatus.permissionDenied;
+    final panel = _panelFor(state.status); // permission-denied / camera-unavailable surface
     final scanning = state.status == QrScanStatus.scanning;
     return Scaffold(
-      extendBodyBehindAppBar: !denied,
+      // Over-camera chrome only when there's no opaque panel.
+      extendBodyBehindAppBar: panel == null,
       appBar: AppBar(
-        backgroundColor: denied ? colorScheme.surface : Colors.transparent,
-        elevation: denied ? null : 0,
-        scrolledUnderElevation: denied ? null : 0,
-        foregroundColor: denied ? null : NoxBrand.white,
+        backgroundColor: panel == null ? Colors.transparent : colorScheme.surface,
+        elevation: panel == null ? 0 : null,
+        scrolledUnderElevation: panel == null ? 0 : null,
+        foregroundColor: panel == null ? NoxBrand.white : null,
         // Torch / switch-camera sit over the live feed → forced brand white for
         // contrast, and only while the camera is active (FR-005, mobile-only).
         actions: scanning
@@ -279,12 +294,9 @@ class _QrScanPageState extends State<QrScanPage> with WidgetsBindingObserver {
               ]
             : null,
       ),
-      body: denied
+      body: panel != null
           ? Center(
-              child: Padding(
-                padding: EdgeInsets.all(AppSpacingTokens.s24),
-                child: _DeniedPanel(onOpenSettings: _openSettings),
-              ),
+              child: Padding(padding: EdgeInsets.all(AppSpacingTokens.s24), child: panel),
             )
           : Stack(
               children: [
@@ -309,6 +321,27 @@ class _QrScanPageState extends State<QrScanPage> with WidgetsBindingObserver {
     );
   }
 
+  /// The opaque surface for a non-scanning terminal state — permission-denied
+  /// (Open settings) or camera-unavailable (Enter manually). `null` for the
+  /// camera states (initializing / scanning).
+  Widget? _panelFor(QrScanStatus status) => switch (status) {
+    QrScanStatus.permissionDenied => _QrStatePanel(
+      icon: NoxIcons.noPhotography,
+      title: TextConstants.qrPermissionTitle,
+      message: TextConstants.qrPermissionMessage,
+      actionLabel: TextConstants.actionOpenSettings,
+      onAction: _openSettings,
+    ),
+    QrScanStatus.fatal => _QrStatePanel(
+      icon: NoxIcons.noPhotography,
+      title: TextConstants.qrUnavailableTitle,
+      message: TextConstants.qrUnavailableMessage,
+      actionLabel: TextConstants.qrEnterManually,
+      onAction: _enterManually,
+    ),
+    QrScanStatus.initializing || QrScanStatus.scanning => null,
+  };
+
   /// "Enter manually" rendered as a tappable dark-scrim pill over the camera feed:
   /// the label is forced [NoxBrand.white] and the fill is the brand-fixed ~35%
   /// black scrim (theme-invariant, like the overlay mask).
@@ -332,8 +365,9 @@ class _QrScanPageState extends State<QrScanPage> with WidgetsBindingObserver {
   Widget _wide(BuildContext context, QrScanState state) {
     final textTheme = Theme.of(context).textTheme;
     final colorScheme = Theme.of(context).colorScheme;
-    final Widget content = state.status == QrScanStatus.permissionDenied
-        ? AppOnboardCardWidget(child: _DeniedPanel(onOpenSettings: _openSettings))
+    final panel = _panelFor(state.status);
+    final Widget content = panel != null
+        ? AppOnboardCardWidget(child: panel)
         : Center(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -415,11 +449,18 @@ class _QrScanPageState extends State<QrScanPage> with WidgetsBindingObserver {
   }
 }
 
-/// Permission-denied content (opaque surface on mobile, OnboardCard on desktop).
-class _DeniedPanel extends StatelessWidget {
-  const _DeniedPanel({required this.onOpenSettings});
+/// Opaque state surface for the scanner's non-camera terminal states — denied
+/// (Open settings) and camera-unavailable (Enter manually). Centered on a plain
+/// `surface` (mobile) / inside an `OnboardCard` (desktop). Icon + title + message
+/// + a single filled action (corpus `2-2-qr-scan.md` denied anatomy).
+class _QrStatePanel extends StatelessWidget {
+  const _QrStatePanel({required this.icon, required this.title, required this.message, required this.actionLabel, required this.onAction});
 
-  final VoidCallback onOpenSettings;
+  final SvgGenImage icon;
+  final String title;
+  final String message;
+  final String actionLabel;
+  final VoidCallback onAction;
 
   @override
   Widget build(BuildContext context) {
@@ -428,21 +469,24 @@ class _DeniedPanel extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        AppIconWidget(NoxIcons.noPhotography, size: AppDimensionTokens.icon.heroLg, color: colorScheme.onSurfaceVariant),
+        AppIconWidget(icon, size: AppDimensionTokens.icon.heroLg, color: colorScheme.onSurfaceVariant),
         SizedBox(height: AppSpacingTokens.s16),
         Text(
-          TextConstants.qrPermissionTitle,
+          title,
           textAlign: TextAlign.center,
           style: textTheme.headlineSmall?.copyWith(color: colorScheme.onSurface),
         ),
         SizedBox(height: AppSpacingTokens.s16),
-        Text(
-          TextConstants.qrPermissionMessage,
-          textAlign: TextAlign.center,
-          style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
+        ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: AppDimensionTokens.layout.errorMsgW),
+          child: Text(
+            message,
+            textAlign: TextAlign.center,
+            style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
+          ),
         ),
         SizedBox(height: AppSpacingTokens.s24),
-        FilledButton(onPressed: onOpenSettings, child: const Text(TextConstants.actionOpenSettings)),
+        FilledButton(onPressed: onAction, child: Text(actionLabel)),
       ],
     );
   }

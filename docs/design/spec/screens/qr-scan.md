@@ -43,7 +43,7 @@
 | Permission-denied | Доступ к камере отклонён. **Непрозрачный surface-экран** (НЕ поверх камеры; живого превью нет): глиф `no_photography`, заголовок `Camera access needed`, пояснение и кнопка `Open settings`. На мобильном (`_narrow`) — по центру `surface`-фона; на macOS (`_wide`) — внутри `OnboardCard`. При возврате приложения на передний план (`resumed`) статус доступа пере-проверяется: если выдан — авто-переход в Scanning, иначе остаётся denied. |
 | Scanning | Камера активна, прицел отображается. Кастомного UI-feedback'а нет — поведение библиотеки сканера остаётся как есть. |
 | Inline-error | QR распознан, но содержимое не валидно как идентификатор. **Snackbar внизу** с сообщением; сканирование продолжается. |
-| Fatal | Камера недоступна на уровне устройства → передача в 3.1. |
+| Fatal | Камера недоступна на уровне устройства (нет камеры — напр. iOS-симулятор, `MobileScannerErrorCode.unsupported`). *(Уточнено фичей 010 по фидбэку владельца:)* вместо dead-end-перехода в 3.1 показывается **in-screen surface** `Camera unavailable` + `Enter manually` (recoverable, та же opaque-surface форма, что и Permission-denied; ожидаемое условие логируется на debug, не error). |
 
 Отдельного «Detected» состояния с кастомным feedback'ом нет: после успешного распознавания сразу запускается closing-flow к 2.1.
 
@@ -86,6 +86,9 @@
 | Permission-denied title | `Camera access needed` |
 | Permission-denied message | `To scan a QR code, allow camera access in system settings.` |
 | Permission-denied action | `Open settings` |
+| Camera-unavailable title | `Camera unavailable` |
+| Camera-unavailable message | `No camera is available on this device. Enter your ID manually instead.` |
+| Camera-unavailable action | `Enter manually` |
 | Snackbar inline-error | `This QR code is invalid. Try another one.` |
 | Desktop title (`_wide`) | `Scan a QR code` |
 | Desktop helper (`_wide`) | `Point your webcam at a code, or enter the ID manually.` |
