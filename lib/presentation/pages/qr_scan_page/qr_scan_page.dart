@@ -2,7 +2,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
+import 'package:nox_app/design/app_text_style_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
+import 'package:nox_app/design/theme/nox_brand.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page.dart';
@@ -85,19 +87,32 @@ class _QrScanPageState extends State<QrScanPage> {
 
   Widget _narrow(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final denied = _preview == _QrPreview.permissionDenied;
+    // While scanning the camera feed fills the screen behind a transparent bar;
+    // denied keeps a standard opaque-surface AppBar (back only, no camera actions).
     return Scaffold(
+      extendBodyBehindAppBar: !denied,
       appBar: AppBar(
-        backgroundColor: colorScheme.surface,
-        actions: [
-          IconButton(
-            tooltip: TextConstants.tooltipFlashlight,
-            onPressed: _toggleTorch,
-            icon: AppIconWidget(_torchOn ? NoxIcons.flashlightOnFill : NoxIcons.flashlightOff),
-          ),
-          IconButton(tooltip: TextConstants.tooltipSwitchCamera, onPressed: _switchCamera, icon: AppIconWidget(NoxIcons.cameraswitch)),
-        ],
+        backgroundColor: denied ? colorScheme.surface : Colors.transparent,
+        elevation: denied ? null : 0,
+        scrolledUnderElevation: denied ? null : 0,
+        foregroundColor: denied ? null : NoxBrand.white,
+        actions: denied
+            ? null
+            : [
+                IconButton(
+                  tooltip: TextConstants.tooltipFlashlight,
+                  onPressed: _toggleTorch,
+                  icon: AppIconWidget(_torchOn ? NoxIcons.flashlightOnFill : NoxIcons.flashlightOff),
+                ),
+                IconButton(
+                  tooltip: TextConstants.tooltipSwitchCamera,
+                  onPressed: _switchCamera,
+                  icon: AppIconWidget(NoxIcons.cameraswitch),
+                ),
+              ],
       ),
-      body: _preview == _QrPreview.permissionDenied
+      body: denied
           ? Center(
               child: Padding(
                 padding: EdgeInsets.all(AppSpacingTokens.s24),
@@ -115,13 +130,31 @@ class _QrScanPageState extends State<QrScanPage> {
                   child: SafeArea(
                     child: Padding(
                       padding: EdgeInsets.all(AppSpacingTokens.s16),
-                      child: TextButton(onPressed: _enterManually, child: const Text(TextConstants.qrEnterManually)),
+                      child: Center(child: _enterManuallyPill(context)),
                     ),
                   ),
                 ),
               ],
             ),
       bottomNavigationBar: _devControl(),
+    );
+  }
+
+  /// "Enter manually" rendered as a tappable dark-scrim pill — sits over the
+  /// camera feed, so the label is forced [NoxBrand.white] and the fill is the
+  /// brand-fixed ~35% black scrim (theme-invariant, like the overlay mask).
+  Widget _enterManuallyPill(BuildContext context) {
+    return Material(
+      color: const Color(0x59000000),
+      shape: const StadiumBorder(),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: _enterManually,
+        child: Padding(
+          padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s20, vertical: AppSpacingTokens.s8),
+          child: Text(TextConstants.qrEnterManually, style: AppTextStyleTokens.labelLarge(color: NoxBrand.white)),
+        ),
+      ),
     );
   }
 
