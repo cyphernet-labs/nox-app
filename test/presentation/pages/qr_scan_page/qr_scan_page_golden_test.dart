@@ -18,7 +18,15 @@ QrScanPage _scanning() => QrScanPage(
   previewBuilder: (context) => ColoredBox(color: Theme.of(context).colorScheme.surfaceContainerHighest),
 );
 
+/// Permission-denied opaque surface (mobile: centered surface; desktop: OnboardCard).
+QrScanPage _denied() => QrScanPage(
+  bloc: QrScanBloc()..add(const QrScanEvent.permissionResolved(CameraPermissionStatus.permanentlyDenied)),
+  previewBuilder: (_) => const SizedBox.expand(),
+);
+
 void main() {
   goldenTest('qr_scan_page', _scanning);
   goldenTestDesktop('qr_scan_page', _scanning);
+  goldenTest('qr_scan_page_denied', _denied);
+  goldenTestDesktop('qr_scan_page_denied', _denied);
 }
