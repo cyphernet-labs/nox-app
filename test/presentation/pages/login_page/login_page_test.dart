@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nox_app/general/qr_scanner_capability.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/pages/login_page/login_page.dart';
 import 'package:nox_app/presentation/pages/placeholder/route_placeholder_page.dart';
+import 'package:nox_app/presentation/pages/qr_scan_page/qr_scan_page.dart';
 
 import '../../../utils/pump_app.dart';
 
@@ -33,12 +35,23 @@ void main() {
     expect(find.text('Set username (2.3)'), findsOneWidget);
   });
 
-  testWidgets('Scan QR opens a stubbed placeholder', (tester) async {
+  testWidgets('Scan QR opens the QR scanner (2.2) where the scanner exists', (tester) async {
+    addTearDown(() => QrScannerCapability.debugOverride = null);
+    QrScannerCapability.debugOverride = true;
     await pumpApp(tester, const LoginPage(demo: true));
 
+    expect(find.widgetWithText(TextButton, TextConstants.loginScanQr), findsOneWidget);
     await tester.tap(find.widgetWithText(TextButton, TextConstants.loginScanQr));
     await tester.pumpAndSettle();
 
-    expect(find.byType(RoutePlaceholderPage), findsOneWidget);
+    expect(find.byType(QrScanPage), findsOneWidget);
+  });
+
+  testWidgets('Scan QR is hidden on platforms without a scanner (Windows/Linux, FR-016)', (tester) async {
+    addTearDown(() => QrScannerCapability.debugOverride = null);
+    QrScannerCapability.debugOverride = false;
+    await pumpApp(tester, const LoginPage(demo: true));
+
+    expect(find.widgetWithText(TextButton, TextConstants.loginScanQr), findsNothing);
   });
 }
