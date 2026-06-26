@@ -98,7 +98,7 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
         Navigator.of(context).push(RoutePlaceholderPage.route(destinationLabel: 'Set username (2.3)'));
         _bloc.add(const LoginEvent.navigationHandled());
       case LoginStatus.navRegistered:
-        Navigator.of(context).push(RoutePlaceholderPage.route(destinationLabel: 'Chats shell (4.1)'));
+        Navigator.of(context).push(RoutePlaceholderPage.route(destinationLabel: 'Chats (5.1)'));
         _bloc.add(const LoginEvent.navigationHandled());
       case LoginStatus.navFatal:
         Navigator.of(context).push(AppErrorPage.route(params: ErrorPageParams.fatal()));

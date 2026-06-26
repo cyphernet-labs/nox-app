@@ -51,7 +51,7 @@ class AppThemeOptionWidget extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(label, style: textTheme.titleMedium?.copyWith(color: colorScheme.onSurface)),
-                    if (caption != null) Text(caption!, style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant)),
+                    if (caption != null) Text(caption!, style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant)),
                   ],
                 ),
               ),

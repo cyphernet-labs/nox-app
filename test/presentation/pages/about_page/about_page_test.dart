@@ -20,6 +20,6 @@ void main() {
     await pumpApp(tester, const AboutPage());
 
     expect(find.text(TextConstants.versionLabel), findsOneWidget);
-    expect(find.text('26.1.1 (7)'), findsOneWidget);
+    expect(find.text('26.1.1 (build 7)'), findsOneWidget);
   });
 }

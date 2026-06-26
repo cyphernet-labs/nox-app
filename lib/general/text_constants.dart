@@ -45,6 +45,9 @@ abstract final class TextConstants {
   // Settings: Appearance (7.3)
   static const String settingsAppearanceTitle = 'Appearance';
   static const String themeSystem = 'System';
+  static const String themeSystemCaption = 'Match your device';
+  static const String themeLightCaption = 'Always light';
+  static const String themeDarkCaption = 'Always dark';
 
   // Settings: Language (7.4)
   static const String settingsLanguageTitle = 'Language';
@@ -54,9 +57,10 @@ abstract final class TextConstants {
 
   // Settings: Notifications (7.2)
   static const String settingsNotificationsTitle = 'Notifications';
-  static const String notificationsPushTitle = 'Push notifications';
-  static const String notificationsPushSubtitle = 'Get notified about your chats.';
-  static const String notificationsDeniedMessage = 'Notifications are turned off in system settings.';
+  static const String notificationsPushTitle = 'Enable notifications';
+  static const String notificationsPushSubtitle = "Only for chats you're in";
+  static const String notificationsDeniedTitle = 'Notifications are blocked';
+  static const String notificationsDeniedMessage = 'Allow notifications in system settings to receive messages from your chats.';
   static const String actionOpenSettings = 'Open settings';
 
   // Settings: Terms (7.6) — placeholder legal copy until legal text is delivered.

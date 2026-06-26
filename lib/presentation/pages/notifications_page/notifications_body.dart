@@ -34,6 +34,7 @@ class _NotificationsBodyState extends State<NotificationsBody> {
         if (!_granted)
           AppInfoBannerWidget(
             icon: NoxIcons.settings,
+            title: TextConstants.notificationsDeniedTitle,
             message: TextConstants.notificationsDeniedMessage,
             actionLabel: TextConstants.actionOpenSettings,
             onAction: () {}, // TODO(backend): deep-link to system settings (app_settings plugin)

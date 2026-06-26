@@ -14,10 +14,10 @@ import 'package:nox_app/presentation/widgets/settings/app_theme_option_widget.da
 class AppearanceBody extends StatelessWidget {
   const AppearanceBody({super.key});
 
-  static const List<(ThemeMode, String)> _options = [
-    (ThemeMode.system, TextConstants.themeSystem),
-    (ThemeMode.light, TextConstants.themeLight),
-    (ThemeMode.dark, TextConstants.themeDark),
+  static const List<(ThemeMode, String, String)> _options = [
+    (ThemeMode.system, TextConstants.themeSystem, TextConstants.themeSystemCaption),
+    (ThemeMode.light, TextConstants.themeLight, TextConstants.themeLightCaption),
+    (ThemeMode.dark, TextConstants.themeDark, TextConstants.themeDarkCaption),
   ];
 
   @override
@@ -26,11 +26,12 @@ class AppearanceBody extends StatelessWidget {
     return ListView(
       padding: EdgeInsets.all(AppSpacingTokens.s16),
       children: [
-        for (final (mode, label) in _options)
+        for (final (mode, label, caption) in _options)
           Padding(
             padding: EdgeInsets.only(bottom: AppSpacingTokens.s12),
             child: AppThemeOptionWidget(
               label: label,
+              caption: caption,
               preview: _ThemePreview(mode: mode),
               selected: current == mode,
               onTap: () => context.read<AppRootBloc>().add(AppRootEvent.setTheme(themeMode: mode)),
