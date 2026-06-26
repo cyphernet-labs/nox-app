@@ -1,5 +1,4 @@
 import 'package:injectable/injectable.dart';
-import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/domain/model/app/app_state_model.dart';
 import 'package:nox_app/domain/model/app/app_state_type.dart';
 import 'package:nox_app/domain/repository/app/app_state_repository.dart';
@@ -13,14 +12,14 @@ import 'package:rxdart/rxdart.dart';
 /// blueprint reactive-repo shape (04 §8.1) without DAO. Singleton (subject must
 /// outlive every page).
 @LazySingleton(as: AppStateRepository, env: [Environment.dev, Environment.prod, Environment.test])
-class AppStateRepositoryImpl with BaseRepositoryHelper implements AppStateRepository {
+class AppStateRepositoryImpl implements AppStateRepository {
   AppStateRepositoryImpl(this._sessionRepository);
 
   final SessionRepository _sessionRepository;
   final BehaviorSubject<RepositoryResult<AppStateModel>> _subject = BehaviorSubject<RepositoryResult<AppStateModel>>();
 
   @override
-  AppStateType? get currentState => _subject.valueOrNull?.data?.state;
+  AppStateType? get currentState => _subject.valueOrNull?.match(onData: (model) => model.state, onError: (_) => null);
 
   @override
   Stream<RepositoryResult<AppStateModel>> watchAppState() async* {
@@ -34,25 +33,22 @@ class AppStateRepositoryImpl with BaseRepositoryHelper implements AppStateReposi
 
   @override
   Future<RepositoryResult<AppStateModel>> fetchAppState({bool sessionExpired = false}) async {
-    final result = await execute<AppStateModel>(() async {
-      final sessionResult = await _sessionRepository.readSession();
-      final model = sessionResult.match<AppStateModel>(
-        onData: (session) {
-          if (session == null || session.identifier.isEmpty) return _unauthorized(sessionExpired);
-          if (!session.onboardingComplete) return AppStateModel(state: AppStateType.registrationPending, session: session);
-          return AppStateModel(state: AppStateType.authorized, session: session);
-        },
-        // Fail-safe: any storage read error resolves to unauthorized, never crashes.
-        onError: (_) => _unauthorized(sessionExpired),
-      );
-      return RepositoryResult<AppStateModel>.success(data: model);
-    });
-    // `execute` can only error if the closure throws — readSession returns a result and
-    // match never throws, so this is purely defensive: always publish a value so the
-    // stream emits (FR-015).
-    final published = result.hasData ? result : RepositoryResult<AppStateModel>.success(data: _unauthorized(sessionExpired));
-    _subject.add(published);
-    return published;
+    // Cache-only resolution. readSession() is itself error-wrapped (never throws) and
+    // match is total, so this always yields a success result → the subject always emits
+    // (FR-015). The single fail-safe lives in match's onError below.
+    final sessionResult = await _sessionRepository.readSession();
+    final model = sessionResult.match<AppStateModel>(
+      onData: (session) {
+        if (session == null || session.identifier.isEmpty) return _unauthorized(sessionExpired);
+        if (!session.onboardingComplete) return AppStateModel(state: AppStateType.registrationPending, session: session);
+        return AppStateModel(state: AppStateType.authorized, session: session);
+      },
+      // Fail-safe: any storage read error resolves to unauthorized, never crashes.
+      onError: (_) => _unauthorized(sessionExpired),
+    );
+    final result = RepositoryResult<AppStateModel>.success(data: model);
+    _subject.add(result);
+    return result;
   }
 
   AppStateModel _unauthorized(bool sessionExpired) =>

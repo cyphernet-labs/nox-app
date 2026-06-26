@@ -150,7 +150,7 @@ const List<_ScreenSection> _sections = [
   ),
   _ScreenSection(
     title: 'Shell',
-    entries: [_ScreenEntry(id: '4.1', title: 'Tab bar shell', route: TabBarShell.route)],
+    entries: [_ScreenEntry(id: '4.1', title: 'Tab bar shell', route: TabBarShell.routeDemo)],
   ),
   _ScreenSection(
     title: 'Chats',

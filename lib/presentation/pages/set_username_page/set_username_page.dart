@@ -46,6 +46,7 @@ class _SetUsernamePageState extends BaseStatePage<SetUsernamePage> {
   late final TextEditingController _controller;
   final FocusNode _focusNode = FocusNode();
   UsernameOutcome _outcome = UsernameOutcome.success;
+  bool _skipping = false;
 
   @override
   void initState() {
@@ -70,10 +71,16 @@ class _SetUsernamePageState extends BaseStatePage<SetUsernamePage> {
       Navigator.of(context).push(RoutePlaceholderPage.route(destinationLabel: 'Chats shell (4.1)'));
       return;
     }
+    // Skip is not bloc-driven (it never emits `submitting`), so guard re-entry /
+    // double-submit ourselves while completeOnboarding is in flight.
+    if (_skipping) return;
+    setState(() => _skipping = true);
     // Real flow: keep the server-assigned name, mark onboarding complete; the spine
     // navigates on success. Surface a failure instead of leaving Skip looking dead.
     final result = await authRepository.completeOnboarding();
-    if (mounted && !result.hasData) {
+    if (!mounted) return;
+    if (!result.hasData) {
+      setState(() => _skipping = false);
       Navigator.of(context).push(AppErrorPage.route(params: ErrorPageParams.fatal()));
     }
   }
@@ -180,7 +187,7 @@ class _SetUsernamePageState extends BaseStatePage<SetUsernamePage> {
             child: state.isSubmitting ? AppSpinnerWidget(size: 18, color: colorScheme.onPrimary) : const Text(TextConstants.actionDone),
           ),
         ),
-        TextButton(onPressed: state.isSubmitting ? null : _skip, child: const Text(TextConstants.actionSkip)),
+        TextButton(onPressed: (state.isSubmitting || _skipping) ? null : _skip, child: const Text(TextConstants.actionSkip)),
         if (kDebugMode && widget.demo) _OutcomeControl(value: _outcome, onChanged: (value) => setState(() => _outcome = value)),
       ],
     );

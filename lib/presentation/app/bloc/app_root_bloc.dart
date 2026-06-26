@@ -5,7 +5,6 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/model/app/app_state_model.dart';
-import 'package:nox_app/domain/model/app/app_state_type.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
@@ -45,7 +44,9 @@ class AppRootBloc extends BaseBloc<AppRootEvent, AppRootState> {
         // First emission (isReady was false): hold — the splash releases it via ApplyAppState.
         if (isNeedApply) add(const AppRootEvent.applyAppState());
       },
-      onError: (_) {},
+      // Never expected today (the repository emits only success), but surface it rather
+      // than silently stalling cold start if a future backend ever pushes an error.
+      onError: (exception) => logRepository.error(target: this, error: exception),
     );
   }
 

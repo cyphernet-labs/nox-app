@@ -14,9 +14,6 @@ abstract class AppRootState with _$AppRootState {
     @Default(false) bool isReady,
   }) = _AppRootState;
 
-  factory AppRootState.initial() => const AppRootState(
-    themeMode: ThemeMode.system,
-    lastAppState: AppStateModel(state: AppStateType.init, session: null),
-    appliedAppState: AppStateModel(state: AppStateType.init, session: null),
-  );
+  factory AppRootState.initial() =>
+      AppRootState(themeMode: ThemeMode.system, lastAppState: AppStateModel.init(), appliedAppState: AppStateModel.init());
 }

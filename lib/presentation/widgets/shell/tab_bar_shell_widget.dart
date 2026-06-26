@@ -21,10 +21,20 @@ import 'package:nox_app/presentation/widgets/shell/app_navigation_rail_widget.da
 /// as placeholders; US2 swaps in the real Settings root (7.1) and US3 the real Chats
 /// list (5.1).
 class TabBarShell extends StatefulWidget {
-  const TabBarShell({super.key});
+  const TabBarShell({super.key, this.demo = false});
+
+  /// Gallery-preview mode: propagated to the tab bodies so the Settings tab's
+  /// Log out / Force logout (dev) do NOT wipe real storage or drive the real spine.
+  final bool demo;
 
   static Route<void> route() => MaterialPageRoute<void>(
     builder: (_) => const TabBarShell(),
+    settings: const RouteSettings(name: '/shell'),
+  );
+
+  /// Gallery entry: previews the shell with its tabs in demo mode (no real side effects).
+  static Route<void> routeDemo() => MaterialPageRoute<void>(
+    builder: (_) => const TabBarShell(demo: true),
     settings: const RouteSettings(name: '/shell'),
   );
 
@@ -63,8 +73,8 @@ class _TabBarShellState extends State<TabBarShell> {
     // Rebuilt each frame, but State (blocs / scroll) is preserved by widget type +
     // position; the scrollToTop notifier is a stable shell-owned field.
     final bodies = <Widget>[
-      ChatsListPage(inShell: true, scrollToTop: _chatsScrollToTop, forceWide: useRail),
-      SettingsRootPage(inShell: true, forceWide: useRail),
+      ChatsListPage(inShell: true, demo: widget.demo, scrollToTop: _chatsScrollToTop, forceWide: useRail),
+      SettingsRootPage(inShell: true, demo: widget.demo, forceWide: useRail),
     ];
     return Stack(
       fit: StackFit.expand,

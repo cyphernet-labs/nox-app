@@ -28,9 +28,9 @@ class _AppRootState extends State<AppRoot> {
   late final AppRootBloc _bloc;
   final _navigatorKey = GlobalKey<NavigatorState>();
 
-  // The phase currently applied to the navigator. Starts at `init` (the Splash
-  // home route); the first transition away from it uses pushReplacement.
-  AppStateType _appliedPhase = AppStateType.init;
+  // Whether the first app-state transition has already replaced the Splash home route.
+  // The first transition uses pushReplacement; every later one clears the whole stack.
+  bool _splashReplaced = false;
 
   @override
   void initState() {
@@ -43,10 +43,6 @@ class _AppRootState extends State<AppRoot> {
     _bloc.close();
     super.dispose();
   }
-
-  /// Pure, unit-testable seam (FR-016): always allows the top-level route swap.
-  /// Replace with a real predicate if a flow ever owns its own navigation.
-  bool _shouldSuppressTopLevelRouting(AppStateType previous, AppStateType next) => false;
 
   Route<void>? _routeForState(AppStateType state) {
     switch (state) {
@@ -63,17 +59,15 @@ class _AppRootState extends State<AppRoot> {
 
   void _onAppStateRouting(BuildContext context, AppRootState state) {
     final navigator = _navigatorKey.currentState;
-    final target = state.appliedAppState.state;
-    final route = _routeForState(target);
-    final wasInit = _appliedPhase == AppStateType.init;
-    // Extension point (FR-016): a flow that owns its own navigation can veto the
-    // top-level stack replacement. Neutral for now — NOX has no such flow.
-    if (_shouldSuppressTopLevelRouting(_appliedPhase, target)) return;
-    _appliedPhase = target;
+    final route = _routeForState(state.appliedAppState.state);
+    // FR-016 extension point: a flow that owns its own navigation (a multi-step wizard,
+    // a payment sheet) would veto the top-level stack replacement here — deliberately a
+    // no-op for now, NOX has no such flow.
     if (navigator == null || route == null) return;
-    // First transition away from Splash replaces it; any later auth boundary
-    // blows away the whole stack (no back across the boundary).
-    if (wasInit) {
+    // First transition away from Splash replaces it; any later auth boundary blows away
+    // the whole stack (no back across the boundary).
+    if (!_splashReplaced) {
+      _splashReplaced = true;
       navigator.pushReplacement(route);
     } else {
       navigator.pushAndRemoveUntil(route, (_) => false);
