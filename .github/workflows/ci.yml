@@ -1,11 +1,18 @@
 name: NOX CI
 
+# ⏸ TEMPORARILY DISABLED (2026-06-26): automatic runs are OFF to conserve scarce CI
+# minutes during active development. While paused, the gate is MANDATORY LOCALLY before
+# every commit/push — run `make gate` (generate → format → analyze → test) and
+# `make golden-verify`. Re-enable by uncommenting the push/pull_request triggers below
+# (and deleting the workflow_dispatch-only line). Manual runs stay available via the
+# Actions tab (workflow_dispatch).
 on:
-  push:
-    branches: [develop, master]
-    paths: ['lib/**', 'test/**', 'pubspec.yaml', 'pubspec.lock', 'analysis_options.yaml', 'build.yaml']
-  pull_request:
-    paths: ['lib/**', 'test/**', 'pubspec.yaml', 'pubspec.lock', 'analysis_options.yaml', 'build.yaml']
+  workflow_dispatch:
+  # push:
+  #   branches: [develop, master]
+  #   paths: ['lib/**', 'test/**', 'pubspec.yaml', 'pubspec.lock', 'analysis_options.yaml', 'build.yaml']
+  # pull_request:
+  #   paths: ['lib/**', 'test/**', 'pubspec.yaml', 'pubspec.lock', 'analysis_options.yaml', 'build.yaml']
 
 jobs:
   gate:

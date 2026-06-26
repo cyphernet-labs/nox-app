@@ -4,11 +4,14 @@ name: NOX Compile check
 # + Android; Windows/Linux are compile-only (launch is a tracked follow-up). Desktop
 # flavor comes from config/<flavor>.json (no native --flavor). Packaging/signing: FUTURE.
 
+# ⏸ TEMPORARILY DISABLED (2026-06-26): see ci.yml — auto-runs off to conserve CI
+# minutes during active development. Manual only for now; re-enable by uncommenting
+# the push trigger below.
 on:
-  push:
-    branches: [develop, master]
-    paths: ['lib/**', 'pubspec.yaml', 'pubspec.lock']
   workflow_dispatch:
+  # push:
+  #   branches: [develop, master]
+  #   paths: ['lib/**', 'pubspec.yaml', 'pubspec.lock']
 
 jobs:
   compile-android:
