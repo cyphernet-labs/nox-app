@@ -38,28 +38,23 @@ class AppStateRepositoryImpl with BaseRepositoryHelper implements AppStateReposi
       final sessionResult = await _sessionRepository.readSession();
       final model = sessionResult.match<AppStateModel>(
         onData: (session) {
-          if (session == null || session.identifier.isEmpty) {
-            return AppStateModel(state: AppStateType.unauthorized, session: null, sessionExpired: sessionExpired);
-          }
-          if (!session.onboardingComplete) {
-            return AppStateModel(state: AppStateType.registrationPending, session: session);
-          }
+          if (session == null || session.identifier.isEmpty) return _unauthorized(sessionExpired);
+          if (!session.onboardingComplete) return AppStateModel(state: AppStateType.registrationPending, session: session);
           return AppStateModel(state: AppStateType.authorized, session: session);
         },
         // Fail-safe: any storage read error resolves to unauthorized, never crashes.
-        onError: (_) => AppStateModel(state: AppStateType.unauthorized, session: null, sessionExpired: sessionExpired),
+        onError: (_) => _unauthorized(sessionExpired),
       );
       return RepositoryResult<AppStateModel>.success(data: model);
     });
-    // Guarantee the subject always gets a value so the stream emits (FR-015).
-    if (result.hasData) {
-      _subject.add(result);
-      return result;
-    }
-    final fallback = RepositoryResult<AppStateModel>.success(
-      data: AppStateModel(state: AppStateType.unauthorized, session: null, sessionExpired: sessionExpired),
-    );
-    _subject.add(fallback);
-    return fallback;
+    // `execute` can only error if the closure throws — readSession returns a result and
+    // match never throws, so this is purely defensive: always publish a value so the
+    // stream emits (FR-015).
+    final published = result.hasData ? result : RepositoryResult<AppStateModel>.success(data: _unauthorized(sessionExpired));
+    _subject.add(published);
+    return published;
   }
+
+  AppStateModel _unauthorized(bool sessionExpired) =>
+      AppStateModel(state: AppStateType.unauthorized, session: null, sessionExpired: sessionExpired);
 }

@@ -7,6 +7,7 @@ import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/model/app/app_state_model.dart';
 import 'package:nox_app/domain/model/app/app_state_type.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
+import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
 
 part 'app_root_event.dart';
@@ -37,11 +38,15 @@ class AppRootBloc extends BaseBloc<AppRootEvent, AppRootState> {
   }
 
   FutureOr<void> _onUpdateAppState(UpdateAppState event, Emitter<AppRootState> emit) async {
-    if (!event.result.hasData) return;
-    final isNeedApply = state.isReady; // already past first boot?
-    emit(state.copyWith(lastAppState: event.result.data!, isReady: true));
-    // First emission (isReady was false): hold — the splash releases it via ApplyAppState.
-    if (isNeedApply) add(const AppRootEvent.applyAppState());
+    event.result.match<void>(
+      onData: (model) {
+        final isNeedApply = state.isReady; // already past first boot?
+        emit(state.copyWith(lastAppState: model, isReady: true));
+        // First emission (isReady was false): hold — the splash releases it via ApplyAppState.
+        if (isNeedApply) add(const AppRootEvent.applyAppState());
+      },
+      onError: (_) {},
+    );
   }
 
   FutureOr<void> _onApplyAppState(ApplyAppState event, Emitter<AppRootState> emit) async {

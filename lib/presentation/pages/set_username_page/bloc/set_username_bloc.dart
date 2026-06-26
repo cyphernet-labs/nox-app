@@ -77,14 +77,13 @@ class SetUsernameBloc extends BaseBloc<SetUsernameEvent, SetUsernameState> {
       return;
     }
     // Real flow: mark onboarding complete (caching the chosen label); the spine
-    // navigates to the shell (authorized).
-    await executeLogic(() async {
-      final result = await authRepository.completeOnboarding(label: state.name);
-      result.match<void>(
-        onData: (_) => emit(state.copyWith(status: UsernameStatus.valid)),
-        onError: (_) => emit(state.copyWith(status: UsernameStatus.navFatal)),
-      );
-    }, onError: (error, exception, stackTrace) => emit(state.copyWith(status: UsernameStatus.navFatal)));
+    // navigates to the shell (authorized). completeOnboarding returns a
+    // RepositoryResult (never throws), so no executeLogic wrapper.
+    final result = await authRepository.completeOnboarding(label: state.name);
+    result.match<void>(
+      onData: (_) => emit(state.copyWith(status: UsernameStatus.valid)),
+      onError: (_) => emit(state.copyWith(status: UsernameStatus.navFatal)),
+    );
   }
 
   UsernameStatus _statusFor(UsernameOutcome outcome) => switch (outcome) {

@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nox_app/data/repository/app/auth_repository_impl.dart';
+import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/app/app_state_model.dart';
 import 'package:nox_app/domain/repository/app/app_state_repository.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
@@ -46,6 +47,18 @@ void main() {
   test('signIn under a new identifier persists onboardingComplete=false', () async {
     await repository.signIn(identifier: 'someoneNew');
     verify(session.saveIdentifier(identifier: 'someoneNew', onboardingComplete: false)).called(1);
+  });
+
+  test('signIn trims the identifier before matching and persisting', () async {
+    await repository.signIn(identifier: '  registered\n');
+    verify(session.saveIdentifier(identifier: 'registered', onboardingComplete: true)).called(1);
+  });
+
+  test('logout propagates a clear() failure and does not re-derive app state', () async {
+    when(session.clear()).thenAnswer((_) async => RepositoryResult<bool>.error(exception: RepositoryException.unknown));
+    final result = await repository.logout();
+    expect(result.hasData, isFalse);
+    verifyNever(appState.fetchAppState(sessionExpired: anyNamed('sessionExpired')));
   });
 
   test('completeOnboarding marks the flag and re-derives app state', () async {

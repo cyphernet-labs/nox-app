@@ -55,13 +55,12 @@ class LoginBloc extends BaseBloc<LoginEvent, LoginState> {
     }
     // Real flow: persist the identifier + re-derive app state; the spine navigates
     // (new id → Set username, registered id → Chats). No client-side validation (FR-011).
-    await executeLogic(() async {
-      final result = await authRepository.signIn(identifier: state.id);
-      result.match<void>(
-        onData: (_) => emit(state.copyWith(status: LoginStatus.idle)),
-        onError: (_) => emit(state.copyWith(status: LoginStatus.errorNetwork)),
-      );
-    }, onError: (error, exception, stackTrace) => emit(state.copyWith(status: LoginStatus.errorNetwork)));
+    // signIn returns a RepositoryResult (never throws), so no executeLogic wrapper.
+    final result = await authRepository.signIn(identifier: state.id);
+    result.match<void>(
+      onData: (_) => emit(state.copyWith(status: LoginStatus.idle)),
+      onError: (_) => emit(state.copyWith(status: LoginStatus.errorNetwork)),
+    );
   }
 
   /// Maps the (debug) outcome to a terminal status. `auto` derives new-vs-registered

@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -66,14 +64,18 @@ class _SetUsernamePageState extends BaseStatePage<SetUsernamePage> {
 
   void _done() => _bloc.add(SetUsernameEvent.doneRequested(outcome: _outcome));
 
-  void _skip() {
+  Future<void> _skip() async {
     if (widget.demo) {
       // Skip / back keeps the current name; standalone stub destination.
       Navigator.of(context).push(RoutePlaceholderPage.route(destinationLabel: 'Chats shell (4.1)'));
       return;
     }
-    // Real flow: keep the server-assigned name, mark onboarding complete; the spine navigates.
-    unawaited(authRepository.completeOnboarding());
+    // Real flow: keep the server-assigned name, mark onboarding complete; the spine
+    // navigates on success. Surface a failure instead of leaving Skip looking dead.
+    final result = await authRepository.completeOnboarding();
+    if (mounted && !result.hasData) {
+      Navigator.of(context).push(AppErrorPage.route(params: ErrorPageParams.fatal()));
+    }
   }
 
   void _onStatus(BuildContext context, SetUsernameState state) {
