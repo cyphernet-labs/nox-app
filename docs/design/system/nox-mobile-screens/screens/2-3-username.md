@@ -12,12 +12,14 @@ App bar (wordmark). Name field with counter N/32 + helper. Pinned bottom: primar
 - `checking` — Checking
 - `taken` — Taken
 - `empty` — Empty
+- `invalid-charset` — Out-of-charset
 
 ## Behavior
 - Pre-filled with the server default handle (e.g. User1234); user may keep, edit or skip.
-- Max 32 chars; counter updates live. Charset for username is restricted ([A-Za-z0-9._-]).
+- Max 32 chars; counter updates live. Charset for username is restricted ([A-Za-z0-9._-]); the client **validates immediately and shows an errorText** for an out-of-charset name (a deliberate validate-with-feedback choice — the user sees why a character was rejected — rather than silently filtering input).
 - Checking: trailing spinner while uniqueness is verified.
 - Taken: errorText “This name is taken”; Done disabled until resolved. Empty: Done disabled.
+- Out-of-charset: errorText “Contains invalid characters (allowed: letters, digits, - _ .)”; Done disabled until resolved.
 
 ## Navigation
 - Done / Skip → Chats shell (5.1).
@@ -27,7 +29,8 @@ App bar (wordmark). Name field with counter N/32 + helper. Pinned bottom: primar
 - Placeholder: How others will see you
 - Counter: N/32
 - Helper: Others see this name. You can change it now or later in Settings.
-- Error: This name is taken
+- Error (taken): This name is taken
+- Error (charset): Contains invalid characters (allowed: letters, digits, - _ .)
 - Primary: Done
 - Secondary: Skip
 
