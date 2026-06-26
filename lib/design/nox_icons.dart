@@ -112,6 +112,9 @@ abstract final class NoxIcons {
   /// Row disclosure chevron — list-row trailing affordance (5.4).
   static SvgGenImage get chevronRight => Assets.svg.icons.chevronRight;
 
+  /// 7.4 Language "System" row leading glyph (device locale).
+  static SvgGenImage get smartphone => Assets.svg.icons.smartphone;
+
   // --- fileTypes — attachment-chip type icons (no content preview); `onSurfaceVariant` ---
 
   /// Image.

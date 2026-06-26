@@ -8,9 +8,9 @@ import 'package:nox_app/design/nox_icons.dart';
 void main() {
   final iconsDir = Directory('assets/svg/icons');
 
-  test('all 42 icon SVGs are bundled', () {
+  test('all 43 icon SVGs are bundled', () {
     final svgs = iconsDir.listSync().whereType<File>().where((f) => f.path.endsWith('.svg')).toList();
-    expect(svgs.length, 42, reason: 'expected 42 bundled icon SVGs');
+    expect(svgs.length, 43, reason: 'expected 43 bundled icon SVGs');
   });
 
   test('every bundled icon SVG uses currentColor and bakes no color (FR-003)', () {
@@ -21,7 +21,7 @@ void main() {
     }
   });
 
-  test('NoxIcons covers the 40 referenced glyphs and each resolves to an existing asset', () {
+  test('NoxIcons covers the 41 referenced glyphs and each resolves to an existing asset', () {
     final registry = <SvgGenImage>[
       NoxIcons.forum,
       NoxIcons.forumFill,
@@ -63,20 +63,21 @@ void main() {
       NoxIcons.notificationsOff,
       NoxIcons.wifiOff,
       NoxIcons.chevronRight,
+      NoxIcons.smartphone,
     ];
-    expect(registry.length, 40, reason: 'NoxIcons should expose the 40 referenced glyphs');
+    expect(registry.length, 41, reason: 'NoxIcons should expose the 41 referenced glyphs');
     for (final icon in registry) {
       expect(File(icon.path).existsSync(), isTrue, reason: '${icon.path}: asset not found');
     }
   });
 
-  test('NoxIcons exposes exactly 40 getters (parsed from source — catches silent drift)', () {
+  test('NoxIcons exposes exactly 41 getters (parsed from source — catches silent drift)', () {
     final src = File('lib/design/nox_icons.dart').readAsStringSync();
     final getters = RegExp(r'static SvgGenImage get ').allMatches(src).length;
-    expect(getters, 40, reason: 'NoxIcons getter count must match the verified registry');
+    expect(getters, 41, reason: 'NoxIcons getter count must match the verified registry');
   });
 
-  test('count reconciliation: the 2 unreferenced outlined variants are bundled (40 + 2 = 42)', () {
+  test('count reconciliation: the 2 unreferenced outlined variants are bundled (41 + 2 = 43)', () {
     expect(File('assets/svg/icons/flashlight_on.svg').existsSync(), isTrue);
     expect(File('assets/svg/icons/send.svg').existsSync(), isTrue);
   });
