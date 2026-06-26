@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
-import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
-import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 
 /// Selectable theme option card (Appearance 7.3): a mini preview thumbnail + label,
-/// with a primary outline + check glyph when selected. Single-select is owned by
-/// the parent. Presentational only.
+/// with an always-present radio indicator (filled `primary` dot when selected) and a
+/// `surfaceContainerHigh` fill + primary outline only when selected. Single-select is
+/// owned by the parent. Presentational only.
 class AppThemeOptionWidget extends StatelessWidget {
   const AppThemeOptionWidget({
     super.key,
@@ -38,9 +38,12 @@ class AppThemeOptionWidget extends StatelessWidget {
         child: Container(
           padding: EdgeInsets.all(AppSpacingTokens.s12),
           decoration: BoxDecoration(
-            color: colorScheme.surfaceContainerHigh,
+            color: selected ? colorScheme.surfaceContainerHigh : Colors.transparent,
             borderRadius: borderRadius,
-            border: Border.all(color: selected ? colorScheme.primary : colorScheme.outlineVariant, width: selected ? 2 : 1),
+            border: Border.all(
+              color: selected ? colorScheme.primary : colorScheme.outlineVariant,
+              width: selected ? AppDimensionTokens.border.thick : AppDimensionTokens.border.hairline,
+            ),
           ),
           child: Row(
             children: [
@@ -55,11 +58,42 @@ class AppThemeOptionWidget extends StatelessWidget {
                   ],
                 ),
               ),
-              if (selected) AppIconWidget(NoxIcons.check, color: colorScheme.primary),
+              _RadioIndicator(selected: selected),
             ],
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Always-rendered single-select radio dot: a ringed circle (`primary` when
+/// selected, `outline` otherwise) with a centered filled `primary` dot only when
+/// selected. Sized from `icon.lg` (20).
+class _RadioIndicator extends StatelessWidget {
+  const _RadioIndicator({required this.selected});
+
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final diameter = AppDimensionTokens.icon.lg;
+    return Container(
+      width: diameter,
+      height: diameter,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        border: Border.all(color: selected ? colorScheme.primary : colorScheme.outline, width: AppDimensionTokens.border.thick),
+      ),
+      child: selected
+          ? Container(
+              width: AppSpacingTokens.s10,
+              height: AppSpacingTokens.s10,
+              decoration: BoxDecoration(shape: BoxShape.circle, color: colorScheme.primary),
+            )
+          : null,
     );
   }
 }
