@@ -55,6 +55,16 @@ void main() {
       expect(find.text('Design crit'), findsOneWidget);
       expect(find.text('NOX core'), findsNothing);
     });
+
+    testWidgets('search with no match shows the empty result text', (tester) async {
+      await pumpMobile(tester);
+
+      await tester.enterText(find.byType(AppSearchFieldWidget), 'zzzznomatch');
+      await tester.pumpAndSettle();
+
+      expect(find.text(TextConstants.chatsSearchEmpty), findsOneWidget);
+      expect(find.byType(AppChatItemWidget), findsNothing);
+    });
   });
 
   group('ChatsListPage (desktop)', () {
@@ -82,6 +92,20 @@ void main() {
       expect(find.byType(ChatsListPage), findsOneWidget);
       expect(find.byType(ChatThreadPage), findsNothing); // pane swap, not a push
       expect(find.byType(AppThreadViewWidget), findsOneWidget);
+    });
+
+    testWidgets('desktop selection fills the row with secondaryContainer', (tester) async {
+      await pumpDesktop(tester);
+
+      await tester.tap(find.byType(AppChatItemWidget).first);
+      await tester.pumpAndSettle();
+
+      final scheme = Theme.of(tester.element(find.byType(AppChatItemWidget).first)).colorScheme;
+      Material rowMaterial(int i) =>
+          tester.widget<Material>(find.ancestor(of: find.byType(AppChatItemWidget).at(i), matching: find.byType(Material)).first);
+
+      expect(rowMaterial(0).color, scheme.secondaryContainer); // selected row is filled
+      expect(rowMaterial(1).color, Colors.transparent); // a sibling row stays transparent
     });
   });
 }

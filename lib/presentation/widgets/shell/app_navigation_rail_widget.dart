@@ -18,8 +18,9 @@ import 'package:nox_app/presentation/widgets/shell/app_create_fab_widget.dart';
 /// The account avatar (design: `NavRail` bottom avatar, size 36 + subtle ring)
 /// renders the user's [accountLabel] initials via [noxAccountInitials] over the
 /// hashed avatar color; tapping it routes to Settings / Account ([onAccount]).
-/// `NavigationRail` lays its `trailing` slot out after the destinations' filling
-/// `Expanded`, so the avatar naturally sits at the bottom of the rail.
+/// `trailingAtBottom: true` pins the avatar to the bottom of the rail — without it
+/// the `trailing` slot renders inside the top-aligned destinations group (right
+/// under `Settings`), not at the bottom.
 class AppNavigationRailWidget extends StatelessWidget {
   const AppNavigationRailWidget({
     super.key,
@@ -48,6 +49,7 @@ class AppNavigationRailWidget extends StatelessWidget {
       labelType: NavigationRailLabelType.all,
       leading: AppCreateFabWidget(onPressed: onCreate),
       trailing: _accountAvatar(context),
+      trailingAtBottom: true,
       destinations: [
         NavigationRailDestination(
           icon: AppIconWidget(NoxIcons.forum),

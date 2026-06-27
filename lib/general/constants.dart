@@ -8,6 +8,11 @@ final class Constants {
   static const databaseName = 'nox_app_db';
   static const defaultLocale = 'en_US';
 
+  /// Placeholder display label assigned before a real one is known (server assigns
+  /// `User<random>` at first login). Single source for the shell avatar, Settings
+  /// and Set-username defaults — keep these in lockstep.
+  static const String defaultUserLabel = 'User7421';
+
   /// UI
   static const defaultNavTransitionTimeMilliseconds = 300;
   static const preventDoubleNavDelayMilliseconds = 300;

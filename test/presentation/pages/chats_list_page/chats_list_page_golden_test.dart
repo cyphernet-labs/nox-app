@@ -15,9 +15,10 @@ import '../../../utils/golden.dart';
 // TabBarShell so the rail + window titlebar + account avatar are part of the
 // baseline). Functional states are seeded via ChatsListPage.initialScenario.
 //
-// The interaction-only states (search-empty, desktop row-selected) are covered by
-// the behavioral widget tests (chats_list_page_test.dart, tab_bar_shell_account_
-// avatar_test.dart) rather than goldens.
+// The interaction-only states are locked by behavioral widget tests in
+// chats_list_page_test.dart rather than goldens: 'search filters …' / 'search with
+// no match …' cover the search/search-empty states, and 'desktop selection fills the
+// row …' asserts the selected-row fill swap (secondaryContainer vs transparent).
 void main() {
   setUpAll(() async {
     await configureDependencies(Environment.test);

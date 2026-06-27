@@ -5,6 +5,7 @@ import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/pages/about_page/about_body.dart';
 import 'package:nox_app/presentation/pages/settings_root_page/settings_root_page.dart';
+import 'package:nox_app/presentation/widgets/settings/app_identity_card_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_navigation_rail_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/tab_bar_shell_widget.dart';
 
@@ -60,7 +61,9 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(settingsTabOpacity(tester), 1.0); // Settings tab is now the active one
-      expect(find.byType(AboutBody), findsNothing); // jumped off the About section → back to Account
+      expect(find.byType(AboutBody), findsNothing); // left the About section
+      // Positively landed on Account: its detail (the identity card) is now built.
+      expect(find.byType(AppIdentityCardWidget), findsOneWidget);
     });
   });
 

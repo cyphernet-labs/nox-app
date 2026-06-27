@@ -271,15 +271,18 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
           );
           if (wide) {
             // Desktop rows are uniformly inset (design: every ChatRow carries an 8px
-            // horizontal margin + lg radius). Selection only swaps the fill, so the row
-            // content never shifts horizontally when a chat becomes selected.
-            return Container(
-              margin: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s8),
-              decoration: BoxDecoration(
+            // horizontal margin + lg radius). A Material with the matching borderRadius +
+            // antiAlias clip hosts the row's InkWell, so hover/press feedback follows the
+            // pill corners instead of overflowing as a rectangle; selection only swaps the
+            // fill, so the row content never shifts horizontally when it becomes selected.
+            return Padding(
+              padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s8),
+              child: Material(
                 color: chat.id == selectedId ? Theme.of(context).colorScheme.secondaryContainer : Colors.transparent,
                 borderRadius: BorderRadius.circular(AppDimensionTokens.radius.lg),
+                clipBehavior: Clip.antiAlias,
+                child: row,
               ),
-              child: row,
             );
           }
           return ColoredBox(color: Colors.transparent, child: row);
