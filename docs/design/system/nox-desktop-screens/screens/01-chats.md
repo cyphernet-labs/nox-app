@@ -7,7 +7,7 @@
 **Adaptation from mobile.** mobile BottomBar → NavigationRail · full screens (5.1 + 5.2) → list-detail panes
 
 ## Anatomy
-NavigationRail (80) + chat list pane (360, with pane header + SearchBar) + thread pane (header, message stream capped to a ≤980 reading column, composer). The mobile bottom bar becomes the rail; full-screen list/thread become side-by-side panes.
+NavigationRail (80) + chat list pane (360, with pane header + SearchBar) + thread pane (header, message stream capped to a ≤980 reading column, composer). The mobile bottom bar becomes the rail; full-screen list/thread become side-by-side panes. The rail's leading is the `+` create FAB; its **trailing is the account avatar** (size 36, generated initials + hashed color + subtle ring) pinned to the bottom.
 
 ## States
 - `filled` — Selected
@@ -31,6 +31,7 @@ NavigationRail (80) + chat list pane (360, with pane header + SearchBar) + threa
 ## Navigation
 - Row → loads thread in right pane.
 - Rail + → Create chat dialog (04).
+- Rail account avatar (bottom) → Settings, landing on the Account section (NOX has no separate profile screen).
 - Thread folder/info → Chat info drawer (04).
 - Attachment / file bubble → File view lightbox (04).
 

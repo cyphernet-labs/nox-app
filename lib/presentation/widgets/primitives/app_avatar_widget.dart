@@ -7,24 +7,30 @@ import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 /// initials, or a white `forum` glyph fallback when there are no valid initials.
 /// Always a circle. Source: primitives.md `NoxAvatar` (+ noxAvatarColor/noxInitials).
 class AppAvatarWidget extends StatelessWidget {
-  const AppAvatarWidget({super.key, required this.name, this.size = 40});
+  const AppAvatarWidget({super.key, required this.name, this.size = 40, this.initials});
 
   final String name;
   final double size;
 
+  /// Optional pre-derived initials override. When null (default), chat-row
+  /// initials are derived via [noxInitials]; the account avatar passes
+  /// [noxAccountInitials] here instead. The background is always hashed from
+  /// [name], so the avatar's color stays consistent with the chat avatars.
+  final String? initials;
+
   @override
   Widget build(BuildContext context) {
     final background = noxAvatarColor(name);
-    final initials = noxInitials(name);
+    final resolvedInitials = initials ?? noxInitials(name);
     final textTheme = Theme.of(context).textTheme;
     return Container(
       width: size,
       height: size,
       alignment: Alignment.center,
       decoration: BoxDecoration(color: background, shape: BoxShape.circle),
-      child: initials != null
+      child: resolvedInitials != null
           ? Text(
-              initials,
+              resolvedInitials,
               // Initials are brand-fixed white at ~40% of the avatar size (spec).
               style: textTheme.titleMedium?.copyWith(color: Colors.white, fontSize: size * 0.4, fontWeight: FontWeight.w500, height: 1),
             )

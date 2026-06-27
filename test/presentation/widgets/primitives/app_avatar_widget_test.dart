@@ -21,6 +21,18 @@ void main() {
       expect(find.byType(Text), findsNothing);
     });
 
+    testWidgets('initials override is rendered while the background stays hashed from name', (tester) async {
+      await pumpApp(tester, const AppAvatarWidget(name: 'User7421', initials: 'AB'));
+
+      // The override is drawn verbatim, not noxInitials('User7421') ('US').
+      expect(find.text('AB'), findsOneWidget);
+      expect(find.text('US'), findsNothing);
+
+      // The background remains hashed from `name`, independent of the override.
+      final decoration = tester.widget<Container>(find.byType(Container)).decoration! as BoxDecoration;
+      expect(decoration.color, noxAvatarColor('User7421'));
+    });
+
     test('background color is deterministic per name', () {
       expect(noxAvatarColor('Ann Lee'), noxAvatarColor('Ann Lee'));
     });

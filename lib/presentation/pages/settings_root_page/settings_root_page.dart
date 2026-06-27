@@ -47,7 +47,7 @@ enum _Section { account, notifications, appearance, language, terms, about }
 /// Log out → real 1.1 Splash. Owns [SettingsRootBloc]. `[inShell]` suppresses the
 /// back affordance when hosted as a shell tab.
 class SettingsRootPage extends StatefulWidget {
-  const SettingsRootPage({super.key, this.demo = false, this.inShell = false, this.forceWide});
+  const SettingsRootPage({super.key, this.demo = false, this.inShell = false, this.forceWide, this.jumpToAccount});
 
   final bool demo;
   final bool inShell;
@@ -56,6 +56,11 @@ class SettingsRootPage extends StatefulWidget {
   /// passed down so the body follows it instead of re-measuring its rail-narrowed
   /// width. Null (standalone) → self-measure against the breakpoint.
   final bool? forceWide;
+
+  /// Bumped by the shell when the desktop rail account avatar is tapped → land on
+  /// the Account section. Desktop-only by effect (the avatar lives only in the
+  /// rail); on mobile the flat list has no section selection, so it is a no-op.
+  final ValueListenable<int>? jumpToAccount;
 
   static Route<void> route() => MaterialPageRoute<void>(
     builder: (_) => const SettingsRootPage(),
@@ -83,10 +88,19 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
     super.initState();
     _bloc = SettingsRootBloc()..add(const SettingsRootEvent.initialize());
     _nameFocusNode.addListener(_onNameFocusChange);
+    widget.jumpToAccount?.addListener(_onJumpToAccount);
+  }
+
+  // Shell account avatar (desktop rail) tapped → land on the Account section.
+  // No-op on mobile (the flat list has no section selection).
+  void _onJumpToAccount() {
+    if (!mounted || _selected == _Section.account) return;
+    setState(() => _selected = _Section.account);
   }
 
   @override
   void dispose() {
+    widget.jumpToAccount?.removeListener(_onJumpToAccount);
     _nameFocusNode.removeListener(_onNameFocusChange);
     _nameFocusNode.dispose();
     _nameController.dispose();

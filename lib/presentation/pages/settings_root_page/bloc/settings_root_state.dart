@@ -9,7 +9,7 @@ abstract class SettingsRootState with _$SettingsRootState {
 
   const factory SettingsRootState({
     @Default(true) bool initialLoading,
-    @Default('User7421') String name,
+    @Default(Constants.defaultUserLabel) String name,
     // The user's own identifier (Your ID), encoded into the Show QR surface (7.1,
     // FR-014). Loaded from the session on initialize; falls back to the stub.
     @Default('') String rawId,

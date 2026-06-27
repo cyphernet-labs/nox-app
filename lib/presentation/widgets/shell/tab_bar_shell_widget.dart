@@ -1,6 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
+import 'package:nox_app/di/global_aliases.dart';
+import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/presentation/pages/chats_list_page/chats_list_page.dart';
 import 'package:nox_app/presentation/pages/create_chat_page/create_chat_page.dart';
@@ -15,8 +19,10 @@ import 'package:nox_app/presentation/widgets/shell/app_window_titlebar_widget.da
 /// (circular notch) + a center-docked [AppCreateFabWidget]; a wide window gets the
 /// [AppNavigationRailWidget] with the `+` as its leading FAB. Two destinations
 /// (Chats / Settings) hosted in a state-preserving cross-fade (`tabFade`). This is
-/// a presentational shell with NO BLoC (blueprint 05 §5/§6 carve-out — tab index is
-/// trivial local state), the live replacement for the unmounted Feature-001 AppShell.
+/// a (currently) BLoC-less shell holding trivial local state — tab index plus a
+/// one-shot, display-only avatar-label read (see the `_accountLabel` note on the
+/// blueprint 05 §5.1 stretch). It is the live replacement for the unmounted
+/// Feature-001 AppShell and migrates to a shell value-BLoC (§6.1) in the backend phase.
 ///
 /// The `+` opens the real Create chat (6.1), which self-adapts to a full-screen push
 /// (mobile) or a modal dialog (desktop) via its own LayoutBuilder. Tab bodies start
@@ -48,12 +54,50 @@ class _TabBarShellState extends State<TabBarShell> {
   AppTab _active = AppTab.chats;
 
   // Bumped when the Chats tab is re-tapped while already active → the Chats list
-  // (US3) listens and scrolls to top. Unused by the placeholder body until then.
+  // listens and scrolls to top.
   final ValueNotifier<int> _chatsScrollToTop = ValueNotifier<int>(0);
+
+  // Bumped when the desktop rail account avatar is tapped → the Settings tab
+  // listens and lands on the Account section (even if a different section was
+  // previously selected and the tab's state was preserved).
+  final ValueNotifier<int> _settingsJumpToAccount = ValueNotifier<int>(0);
+
+  // Account avatar label — seeded once from the session spine for the desktop rail
+  // avatar. Falls back to the placeholder while loading / when no session label is
+  // cached. NOTE: this is the session-cached label at shell mount; it does NOT
+  // live-update if the user edits their label in the Settings tab within the same
+  // session (label persistence is itself a backend TODO). A reactive label stream
+  // lands with the shell BLoC in the backend phase. // TODO(backend): live label.
+  //
+  // This one-shot repository read + setState stretches the blueprint 05 §5.1
+  // UI-first carve-out (which assumes NO repository/async). It is a deliberate,
+  // display-only convenience for this design pass; the shell's tab/label/jump state
+  // migrates into a shell value-BLoC (AppRootBloc, §6.1) once real tabs/data exist.
+  // TODO(blueprint-shell-bloc): move shell state into a value-BLoC.
+  String _accountLabel = Constants.defaultUserLabel;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadAccountLabel());
+  }
+
+  Future<void> _loadAccountLabel() async {
+    final result = await sessionRepository.readSession();
+    if (!mounted) return;
+    result.match(
+      onData: (session) {
+        final label = session?.label;
+        if (label != null && label.isNotEmpty) setState(() => _accountLabel = label);
+      },
+      onError: (_) {},
+    );
+  }
 
   @override
   void dispose() {
     _chatsScrollToTop.dispose();
+    _settingsJumpToAccount.dispose();
     super.dispose();
   }
 
@@ -68,6 +112,12 @@ class _TabBarShellState extends State<TabBarShell> {
 
   void _onCreate() => Navigator.of(context).push(CreateChatPage.route());
 
+  // Desktop rail account avatar → switch to Settings and land on the Account section.
+  void _onAccount() {
+    if (_active != AppTab.settings) setState(() => _active = AppTab.settings);
+    _settingsJumpToAccount.value++;
+  }
+
   Widget _body(bool useRail) {
     // Tab bodies own their AppBar (nested under this shell's Scaffold). The shell's
     // layout decision is passed via forceWide so a body doesn't re-measure its
@@ -76,7 +126,7 @@ class _TabBarShellState extends State<TabBarShell> {
     // position; the scrollToTop notifier is a stable shell-owned field.
     final bodies = <Widget>[
       ChatsListPage(inShell: true, demo: widget.demo, scrollToTop: _chatsScrollToTop, forceWide: useRail),
-      SettingsRootPage(inShell: true, demo: widget.demo, forceWide: useRail),
+      SettingsRootPage(inShell: true, demo: widget.demo, forceWide: useRail, jumpToAccount: _settingsJumpToAccount),
     ];
     return Stack(
       fit: StackFit.expand,
@@ -137,7 +187,13 @@ class _TabBarShellState extends State<TabBarShell> {
           Expanded(
             child: Row(
               children: [
-                AppNavigationRailWidget(active: _active, onSelect: _onSelect, onCreate: _onCreate),
+                AppNavigationRailWidget(
+                  active: _active,
+                  onSelect: _onSelect,
+                  onCreate: _onCreate,
+                  accountLabel: _accountLabel,
+                  onAccount: _onAccount,
+                ),
                 VerticalDivider(width: AppDimensionTokens.border.hairline),
                 Expanded(child: _body(true)),
               ],

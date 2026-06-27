@@ -36,11 +36,17 @@ import 'package:nox_app/presentation/widgets/state/app_progress_widget.dart';
 /// network-only mock chats repository. `[inShell]` suppresses the back affordance
 /// when hosted as a shell tab; [scrollToTop] is bumped by the shell on Chats re-tap.
 class ChatsListPage extends StatefulWidget {
-  const ChatsListPage({super.key, this.demo = false, this.inShell = false, this.scrollToTop, this.forceWide});
+  const ChatsListPage({super.key, this.demo = false, this.inShell = false, this.scrollToTop, this.forceWide, this.initialScenario});
 
   final bool demo;
   final bool inShell;
   final ValueListenable<int>? scrollToTop;
+
+  /// Test-only seam: seeds the debug [ChatsListScenario] on init so golden tests can
+  /// render the empty / offline / inline-error / fatal states deterministically
+  /// without driving the dev dropdown. Null → the normal (filled) scenario.
+  @visibleForTesting
+  final ChatsListScenario? initialScenario;
 
   /// When hosted in the shell, the shell's layout decision (rail vs bottom bar) is
   /// passed down so the body doesn't re-measure its (rail-narrowed) width and land
@@ -71,6 +77,10 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
   void initState() {
     super.initState();
     _bloc = ChatsListBloc()..add(const ChatsListEvent.initialize());
+    if (widget.initialScenario != null) {
+      _devScenario = widget.initialScenario!;
+      _bloc.add(ChatsListEvent.setScenario(widget.initialScenario!));
+    }
     widget.scrollToTop?.addListener(_onScrollToTop);
   }
 
@@ -259,15 +269,20 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
             unread: chat.unreadCount,
             onTap: () => _onTapChat(chat, wide: wide),
           );
-          if (wide && chat.id == selectedId) {
-            // Desktop selected row: an inset rounded pill (not a full-bleed band).
-            return Container(
-              margin: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s8),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.secondaryContainer,
+          if (wide) {
+            // Desktop rows are uniformly inset (design: every ChatRow carries an 8px
+            // horizontal margin + lg radius). A Material with the matching borderRadius +
+            // antiAlias clip hosts the row's InkWell, so hover/press feedback follows the
+            // pill corners instead of overflowing as a rectangle; selection only swaps the
+            // fill, so the row content never shifts horizontally when it becomes selected.
+            return Padding(
+              padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s8),
+              child: Material(
+                color: chat.id == selectedId ? Theme.of(context).colorScheme.secondaryContainer : Colors.transparent,
                 borderRadius: BorderRadius.circular(AppDimensionTokens.radius.lg),
+                clipBehavior: Clip.antiAlias,
+                child: row,
               ),
-              child: row,
             );
           }
           return ColoredBox(color: Colors.transparent, child: row);

@@ -16,7 +16,7 @@ void main() {
     () => Scaffold(
       body: Row(
         children: [
-          AppNavigationRailWidget(active: AppTab.chats, onSelect: (_) {}, onCreate: () {}),
+          AppNavigationRailWidget(active: AppTab.chats, onSelect: (_) {}, onCreate: () {}, accountLabel: 'User7421', onAccount: () {}),
           const Expanded(child: SizedBox.shrink()),
         ],
       ),
