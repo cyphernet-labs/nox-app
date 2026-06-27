@@ -9,14 +9,21 @@ import '../../../utils/pump_app.dart';
 
 void main() {
   group('AppNavigationRailWidget', () {
-    Widget host({ValueChanged<AppTab>? onSelect, VoidCallback? onCreate}) => Scaffold(
-      body: Row(
-        children: [
-          AppNavigationRailWidget(active: AppTab.chats, onSelect: onSelect ?? (_) {}, onCreate: onCreate ?? () {}),
-          const Expanded(child: SizedBox.shrink()),
-        ],
-      ),
-    );
+    Widget host({ValueChanged<AppTab>? onSelect, VoidCallback? onCreate, VoidCallback? onAccount, String accountLabel = 'User7421'}) =>
+        Scaffold(
+          body: Row(
+            children: [
+              AppNavigationRailWidget(
+                active: AppTab.chats,
+                onSelect: onSelect ?? (_) {},
+                onCreate: onCreate ?? () {},
+                accountLabel: accountLabel,
+                onAccount: onAccount ?? () {},
+              ),
+              const Expanded(child: SizedBox.shrink()),
+            ],
+          ),
+        );
 
     testWidgets('renders both destinations and the leading create FAB', (tester) async {
       await tester.binding.setSurfaceSize(const Size(1000, 900));
@@ -47,6 +54,20 @@ void main() {
 
       await tester.tap(find.byType(AppCreateFabWidget));
       expect(created, isTrue);
+    });
+
+    testWidgets('renders the account avatar and fires onAccount on tap', (tester) async {
+      var account = false;
+      await tester.binding.setSurfaceSize(const Size(1000, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, host(onAccount: () => account = true));
+
+      // The account avatar shows the label initials ('User7421' -> 'U') under an 'Account' tooltip.
+      expect(find.byTooltip(TextConstants.settingsAccountTitle), findsOneWidget);
+      expect(find.text('U'), findsOneWidget);
+
+      await tester.tap(find.byTooltip(TextConstants.settingsAccountTitle));
+      expect(account, isTrue);
     });
   });
 }

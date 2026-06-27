@@ -1,6 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
+import 'package:nox_app/di/global_aliases.dart';
+import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/presentation/pages/chats_list_page/chats_list_page.dart';
 import 'package:nox_app/presentation/pages/create_chat_page/create_chat_page.dart';
@@ -45,15 +49,48 @@ class TabBarShell extends StatefulWidget {
 }
 
 class _TabBarShellState extends State<TabBarShell> {
+  // Default display label shown by the account avatar (and Settings) until/unless
+  // the session spine yields a cached label. Mirrors SettingsRootState's default.
+  static const String _kDefaultAccountLabel = 'User7421';
+
   AppTab _active = AppTab.chats;
 
   // Bumped when the Chats tab is re-tapped while already active → the Chats list
-  // (US3) listens and scrolls to top. Unused by the placeholder body until then.
+  // listens and scrolls to top.
   final ValueNotifier<int> _chatsScrollToTop = ValueNotifier<int>(0);
+
+  // Bumped when the desktop rail account avatar is tapped → the Settings tab
+  // listens and lands on the Account section (even if a different section was
+  // previously selected and the tab's state was preserved).
+  final ValueNotifier<int> _settingsJumpToAccount = ValueNotifier<int>(0);
+
+  // Account avatar label — read once from the session spine (display-only; the
+  // shell stays BLoC-less per blueprint 05 §5.1). Falls back to the default while
+  // loading / when no session label is cached.
+  String _accountLabel = _kDefaultAccountLabel;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadAccountLabel());
+  }
+
+  Future<void> _loadAccountLabel() async {
+    final result = await sessionRepository.readSession();
+    if (!mounted) return;
+    result.match(
+      onData: (session) {
+        final label = session?.label;
+        if (label != null && label.isNotEmpty) setState(() => _accountLabel = label);
+      },
+      onError: (_) {},
+    );
+  }
 
   @override
   void dispose() {
     _chatsScrollToTop.dispose();
+    _settingsJumpToAccount.dispose();
     super.dispose();
   }
 
@@ -68,6 +105,12 @@ class _TabBarShellState extends State<TabBarShell> {
 
   void _onCreate() => Navigator.of(context).push(CreateChatPage.route());
 
+  // Desktop rail account avatar → switch to Settings and land on the Account section.
+  void _onAccount() {
+    if (_active != AppTab.settings) setState(() => _active = AppTab.settings);
+    _settingsJumpToAccount.value++;
+  }
+
   Widget _body(bool useRail) {
     // Tab bodies own their AppBar (nested under this shell's Scaffold). The shell's
     // layout decision is passed via forceWide so a body doesn't re-measure its
@@ -76,7 +119,7 @@ class _TabBarShellState extends State<TabBarShell> {
     // position; the scrollToTop notifier is a stable shell-owned field.
     final bodies = <Widget>[
       ChatsListPage(inShell: true, demo: widget.demo, scrollToTop: _chatsScrollToTop, forceWide: useRail),
-      SettingsRootPage(inShell: true, demo: widget.demo, forceWide: useRail),
+      SettingsRootPage(inShell: true, demo: widget.demo, forceWide: useRail, jumpToAccount: _settingsJumpToAccount),
     ];
     return Stack(
       fit: StackFit.expand,
@@ -137,7 +180,13 @@ class _TabBarShellState extends State<TabBarShell> {
           Expanded(
             child: Row(
               children: [
-                AppNavigationRailWidget(active: _active, onSelect: _onSelect, onCreate: _onCreate),
+                AppNavigationRailWidget(
+                  active: _active,
+                  onSelect: _onSelect,
+                  onCreate: _onCreate,
+                  accountLabel: _accountLabel,
+                  onAccount: _onAccount,
+                ),
                 VerticalDivider(width: AppDimensionTokens.border.hairline),
                 Expanded(child: _body(true)),
               ],
