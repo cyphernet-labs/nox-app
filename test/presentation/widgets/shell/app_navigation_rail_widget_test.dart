@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/widgets/shell/app_bottom_bar_widget.dart';
-import 'package:nox_app/presentation/widgets/shell/app_create_fab_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_navigation_rail_widget.dart';
 
 import '../../../utils/pump_app.dart';
@@ -30,8 +29,8 @@ void main() {
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await pumpApp(tester, host());
 
-      expect(find.byType(NavigationRail), findsOneWidget);
-      expect(find.byType(AppCreateFabWidget), findsOneWidget);
+      expect(find.byType(AppNavigationRailWidget), findsOneWidget);
+      expect(find.byTooltip(TextConstants.tooltipCreateChat), findsOneWidget); // the create FAB
       expect(find.text(TextConstants.chats), findsOneWidget);
       expect(find.text(TextConstants.settings), findsOneWidget);
     });
@@ -52,7 +51,7 @@ void main() {
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await pumpApp(tester, host(onCreate: () => created = true));
 
-      await tester.tap(find.byType(AppCreateFabWidget));
+      await tester.tap(find.byTooltip(TextConstants.tooltipCreateChat));
       expect(created, isTrue);
     });
 

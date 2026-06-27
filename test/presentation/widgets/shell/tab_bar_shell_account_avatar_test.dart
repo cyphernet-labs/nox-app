@@ -47,13 +47,13 @@ void main() {
 
       // Drive Settings to a non-Account section, then return to Chats, so the jump
       // has something to undo (proves it lands on Account, not just switches tabs).
-      await tester.tap(find.descendant(of: find.byType(NavigationRail), matching: find.text(TextConstants.settings)));
+      await tester.tap(find.descendant(of: find.byType(AppNavigationRailWidget), matching: find.text(TextConstants.settings)));
       await tester.pumpAndSettle();
       await tester.tap(find.text(TextConstants.settingsAboutTitle));
       await tester.pumpAndSettle();
       expect(find.byType(AboutBody), findsOneWidget);
 
-      await tester.tap(find.descendant(of: find.byType(NavigationRail), matching: find.text(TextConstants.chats)));
+      await tester.tap(find.descendant(of: find.byType(AppNavigationRailWidget), matching: find.text(TextConstants.chats)));
       await tester.pumpAndSettle();
 
       // Tap the account avatar → Settings becomes active AND the section resets to Account.
@@ -73,7 +73,6 @@ void main() {
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await pumpApp(tester, const TabBarShell());
 
-      expect(find.byType(NavigationRail), findsNothing);
       expect(find.byType(AppNavigationRailWidget), findsNothing);
       expect(find.byTooltip(TextConstants.settingsAccountTitle), findsNothing);
     });
