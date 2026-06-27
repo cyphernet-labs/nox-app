@@ -259,12 +259,14 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
             unread: chat.unreadCount,
             onTap: () => _onTapChat(chat, wide: wide),
           );
-          if (wide && chat.id == selectedId) {
-            // Desktop selected row: an inset rounded pill (not a full-bleed band).
+          if (wide) {
+            // Desktop rows are uniformly inset (design: every ChatRow carries an 8px
+            // horizontal margin + lg radius). Selection only swaps the fill, so the row
+            // content never shifts horizontally when a chat becomes selected.
             return Container(
               margin: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s8),
               decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.secondaryContainer,
+                color: chat.id == selectedId ? Theme.of(context).colorScheme.secondaryContainer : Colors.transparent,
                 borderRadius: BorderRadius.circular(AppDimensionTokens.radius.lg),
               ),
               child: row,
