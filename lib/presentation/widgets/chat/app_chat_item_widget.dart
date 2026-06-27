@@ -64,22 +64,27 @@ class AppChatItemWidget extends StatelessWidget {
               ),
             ),
             SizedBox(width: AppSpacingTokens.s8),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(time, style: textTheme.labelSmall?.copyWith(color: hasUnread ? colorScheme.primary : colorScheme.onSurfaceVariant)),
-                SizedBox(height: AppSpacingTokens.s6),
-                if (hasUnread)
-                  Container(
-                    constraints: BoxConstraints(minWidth: _badgeSize),
-                    height: _badgeSize,
-                    padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s6),
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(color: colorScheme.primary, borderRadius: BorderRadius.circular(NoxRadius.full)),
-                    child: Text(unread > 99 ? '99+' : '$unread', style: textTheme.labelSmall?.copyWith(color: colorScheme.onPrimary)),
-                  ),
-              ],
+            // Right meta column reserves a min width (design: trailing column minWidth 44)
+            // so the time/badge right-edge stays aligned across short and long timestamps.
+            ConstrainedBox(
+              constraints: BoxConstraints(minWidth: AppSpacingTokens.s44),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(time, style: textTheme.labelSmall?.copyWith(color: hasUnread ? colorScheme.primary : colorScheme.onSurfaceVariant)),
+                  SizedBox(height: AppSpacingTokens.s6),
+                  if (hasUnread)
+                    Container(
+                      constraints: BoxConstraints(minWidth: _badgeSize),
+                      height: _badgeSize,
+                      padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s6),
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(color: colorScheme.primary, borderRadius: BorderRadius.circular(NoxRadius.full)),
+                      child: Text(unread > 99 ? '99+' : '$unread', style: textTheme.labelSmall?.copyWith(color: colorScheme.onPrimary)),
+                    ),
+                ],
+              ),
             ),
           ],
         ),

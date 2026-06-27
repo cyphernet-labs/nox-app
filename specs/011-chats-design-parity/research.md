@@ -87,3 +87,29 @@ Phase 0. Разрешение технических неизвестных пе
 **Rationale.** Поведение уже соответствует desktop-корпусу (`01-chats.md`: «Selecting a row highlights it (secondaryContainer) and loads the thread — no navigation push»). Менять нечего, кроме визуальной сверки подсветки/инсета.
 
 **Alternatives considered.** Нет — поведение зафиксировано корпусом и кодом.
+
+---
+
+## Audit — mobile (T003, сверка с `src/chats-parts.jsx` + `src/screens-chats.jsx`)
+
+Источник: claude_design проект `d9e022e3-…`, JSX-исходники (из них собран `NOX - Mobile.html`). Текущий код строился по этому же дизайну → расхождения минимальны.
+
+| # | Элемент | Дизайн | Текущий код | Действие |
+|---|---|---|---|---|
+| M1 | `SearchBar` leading-иконка | `BRAND.teal` (`0xFF12B4B4`), всегда (light+dark) | `AppIconWidget(NoxIcons.search)` без цвета → `onSurfaceVariant` (серая) | **FIX (US1)**: `color: NoxBrand.teal` |
+| M2 | `ChatListItem` правая колонка (time/badge) | `minWidth: 44` | не задан | **FIX (US1)**: `ConstrainedBox(minWidth: s44)` |
+| M3 | Строка/бейдж/время/аватар-кольцо | titleMedium w600/500, preview onSurface/Variant, time primary/Variant, badge primary `99+`, ring `0 0 0 2px onSurface@0.06` | совпадает | — |
+| M4 | BottomBar (notch + docked FAB primaryContainer) | совпадает | совпадает | — |
+| M5 | SearchBar top-margin | `0` (margin `0 16 8`) | `vertical: s8` (8 сверху) | **DEFER**: ~8px, под-перцептивно; AppBar даёт собственный отступ; не трогаю |
+
+## Audit — desktop (T004, сверка с `src/desktop-shell.jsx` + `src/desktop-screens.jsx`)
+
+| # | Элемент | Дизайн | Текущий код | Действие |
+|---|---|---|---|---|
+| D1 | `NavRail` нижний аккаунт-аватар | `flex:1` spacer + ring + `Avatar size 36` (`avatarXs`), name `"Nyx"` | **отсутствует** | **FIX (US3)**: trailing-аватар, `avatarXs`, ring, тап→Settings/Account |
+| D2 | Desktop `ChatRow` инсет | `margin: '0 8px'` у **каждой** строки; selected → `secondaryContainer`, radius `SHAPE.l` | только selected-строка инсетится на s8; non-selected — full-bleed → **сдвиг на 8px при выборе** | **FIX (US2)**: оборачивать ВСЕ wide-строки `margin: s8` + bg `selected?secondaryContainer:transparent`, radius `lg` |
+| D3 | list-detail / no-selection empty `Select a chat` / `Choose a conversation on the left, or press + to start a new one.` | совпадает (`surfaceContainerLowest` + illustration) | совпадает | — |
+| D4 | TitleBar subtitle separator | `— Chats` (em-dash) | `· Chats` (middot) | **DEFER**: `AppWindowTitlebarWidget` — shared-чром (login/username/error/qr); вне scope чатов (spec ограничивает shell-чром добавлением аватара); правка зацепила бы 16 desktop-goldenов вне scope. Кандидат на отдельный PR |
+| D5 | PaneHeader высота/левый pad | `height 64`, `padding 0 8 0 20` | `~52`, left 16 | **DEFER**: выравнивание с ThreadHeader (5.2, вне 5.1-scope); под-перцептивно в no-selection; не трогаю |
+
+**Вывод аудита.** Реальные правки: M1+M2 (US1), D2 (US2), D1 (US3). Остальное (M5/D4/D5) — задокументированно отложено (Принцип II: не молча; D4 — кандидат на отдельный PR из-за shared-чрома).

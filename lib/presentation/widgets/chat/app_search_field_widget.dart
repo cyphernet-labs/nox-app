@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
+import 'package:nox_app/design/theme/nox_brand.dart';
 import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 
@@ -24,7 +25,8 @@ class AppSearchFieldWidget extends StatelessWidget {
         controller: controller,
         hintText: hint,
         onChanged: onChanged,
-        leading: AppIconWidget(NoxIcons.search),
+        // Brand-teal search glyph (design: SearchBar leading uses BRAND.teal in both themes).
+        leading: AppIconWidget(NoxIcons.search, color: NoxBrand.teal),
         constraints: BoxConstraints(minHeight: AppDimensionTokens.size.hitTarget, maxWidth: double.infinity),
       ),
     );
