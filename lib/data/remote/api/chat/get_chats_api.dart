@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
+import 'package:nox_app/general/app_clock.dart';
 import 'package:nox_app/domain/repository/base/page_metadata.dart';
 import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 
@@ -29,7 +30,7 @@ class GetChatsApi {
   /// 28 deterministic chats, newest first. Timestamps are relative to "now" so the
   /// relative-time ladder (now / N min / N h / Yesterday / date) reads consistently.
   List<ChatModel> _mockChats() {
-    final now = DateTime.now();
+    final now = AppClock.now();
     const seed = <(String, String, Duration, int)>[
       ('Design crit', 'Aria: pushed the new spacing tokens', Duration(seconds: 20), 3),
       ('Random thoughts', 'Mox: anyone up for a walk?', Duration(minutes: 5), 0),

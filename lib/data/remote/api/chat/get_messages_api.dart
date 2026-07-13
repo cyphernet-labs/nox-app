@@ -5,6 +5,7 @@ import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
 import 'package:nox_app/domain/model/chat/message_status.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
+import 'package:nox_app/general/app_clock.dart';
 import 'package:nox_app/domain/repository/base/page_metadata.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 import 'package:nox_app/general/identity_mock_data.dart';
@@ -37,7 +38,7 @@ class GetMessagesApi {
   /// message carries an attachment. Timestamps are relative to "now" so the date
   /// separators (Today / Yesterday / date) read consistently.
   List<MessageModel> _mockMessages(String chatId) {
-    final now = DateTime.now();
+    final now = AppClock.now();
     final messages = <MessageModel>[
       MessageModel(
         id: '${chatId}_sys',

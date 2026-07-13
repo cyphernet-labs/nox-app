@@ -1,4 +1,5 @@
 import 'package:intl/intl.dart';
+import 'package:nox_app/general/app_clock.dart';
 import 'package:nox_app/general/text_constants.dart';
 
 /// Static date-formatting helpers for consistent display app-wide.
@@ -18,7 +19,7 @@ class DateFormatter {
   /// `now` (<1 min) / `N min` (<1 h) / `N h` (<1 day) / `Yesterday` / `d MMM` (same
   /// year) / `d MMM y` (older). Source: `overview.md`. [now] is injectable for tests.
   static String relative(DateTime when, {DateTime? now}) {
-    final ref = now ?? DateTime.now();
+    final ref = now ?? AppClock.now();
     final diff = ref.difference(when);
     // Clamp future timestamps (clock skew / a server time slightly ahead) to "now".
     if (diff.isNegative || diff.inSeconds < 60) return TextConstants.timeNow;
@@ -35,7 +36,7 @@ class DateFormatter {
   /// Date-separator label for the chat thread (5.2): `Today` / `Yesterday` /
   /// `12 May` (same year) / `12 May 2025` (older / future). [now] is injectable for tests.
   static String daySeparator(DateTime when, {DateTime? now}) {
-    final ref = now ?? DateTime.now();
+    final ref = now ?? AppClock.now();
     final today = DateTime(ref.year, ref.month, ref.day);
     final thatDay = DateTime(when.year, when.month, when.day);
     final dayDiff = today.difference(thatDay).inDays;

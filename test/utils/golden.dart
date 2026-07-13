@@ -1,10 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
+import 'package:nox_app/general/app_clock.dart';
 import 'package:nox_app/general/constants.dart';
 
 import 'fonts.dart';
 import 'pump_app.dart';
+
+/// Fixed reference "now" for every golden. Relative-time output
+/// (`DateFormatter.relative`/`daySeparator`) and the mock sources
+/// (`GetChatsApi`/`GetMessagesApi`, seeded as `now - ago`) resolve against
+/// `AppClock`, so pinning it here makes time-bearing goldens deterministic
+/// day-to-day. The late-evening hour keeps ~1-day-old entries reading as
+/// `Yesterday` rather than flipping to an absolute date at some run times.
+final DateTime kGoldenClock = DateTime(2026, 6, 15, 21, 30);
 
 /// `pumpAndSettle` does NOT await async PNG decoding, so the brand logo asset
 /// (AppOnboardCardWidget head / launcher) can snapshot BLANK non-deterministically.
@@ -37,6 +46,8 @@ void goldenTest(String name, Widget Function() build, {bool settle = true}) {
       final mode = entry.$1;
       final suffix = entry.$2;
       testWidgets('matches the $suffix theme', (tester) async {
+        AppClock.freeze(kGoldenClock);
+        addTearDown(AppClock.reset);
         tester.view.devicePixelRatio = 3.0;
         tester.view.physicalSize = Constants.designSize * 3.0;
         addTearDown(() {
@@ -73,6 +84,8 @@ void goldenTestDesktop(String name, Widget Function() build, {bool settle = true
       final mode = entry.$1;
       final suffix = entry.$2;
       testWidgets('matches the $suffix theme', (tester) async {
+        AppClock.freeze(kGoldenClock);
+        addTearDown(AppClock.reset);
         tester.view.devicePixelRatio = 2.0;
         tester.view.physicalSize = size * 2.0;
         addTearDown(() {
