@@ -30,8 +30,8 @@ description: "Task list — Chats list design parity + golden coverage"
 
 **Purpose**: подготовить источник истины (макеты) и зафиксировать зелёную стартовую точку.
 
-- [ ] T001 Авторизовать claude_design MCP (`/design-login`) и импортировать оба макета проекта `d9e022e3-07fb-4fae-9147-226210933448`: `NOX - Mobile.html` и `NOX - Desktop.html` — как пиксельный источник истины (см. quickstart.md §1).
-- [ ] T002 Прогнать стартовый `make gate` и подтвердить зелёное состояние до правок (фиксация baseline качества).
+- [x] T001 Авторизовать claude_design MCP (`/design-login`) и импортировать оба макета проекта `d9e022e3-07fb-4fae-9147-226210933448`: `NOX - Mobile.html` и `NOX - Desktop.html` — как пиксельный источник истины (см. quickstart.md §1).
+- [x] T002 Прогнать стартовый `make gate` и подтвердить зелёное состояние до правок (фиксация baseline качества).
 
 ---
 
@@ -41,8 +41,8 @@ description: "Task list — Chats list design parity + golden coverage"
 
 **⚠️ CRITICAL**: правки конформности (US1/US2) не начинать до завершения соответствующего аудита.
 
-- [ ] T003 [P] Аудит mobile `_narrow` `ChatsListPage` против `NOX - Mobile.html` (light+dark): сверить токен-к-токену отступы/типографику/цвета/brand-hairline/тень поля `Search`/бейдж/время/empty-state; зафиксировать список дельт в `specs/011-chats-design-parity/research.md` (раздел «Audit — mobile»). **GATE (A1): T005 не начинать без зафиксированного конкретного delta-list.**
-- [ ] T004 [P] Аудит desktop `_wide` `ChatsListPage` + shell-чром против `NOX - Desktop.html` (light+dark): window-titlebar `NOX · Chats`, rail, pane-заголовок `Chats`, no-selection empty-state `Select a chat`, inset-пилюля выбранной строки; зафиксировать дельты в `research.md` (раздел «Audit — desktop»). **GATE (A1): T007 не начинать без зафиксированного конкретного delta-list.**
+- [x] T003 [P] Аудит mobile `_narrow` `ChatsListPage` против `NOX - Mobile.html` (light+dark): сверить токен-к-токену отступы/типографику/цвета/brand-hairline/тень поля `Search`/бейдж/время/empty-state; зафиксировать список дельт в `specs/011-chats-design-parity/research.md` (раздел «Audit — mobile»). **GATE (A1): T005 не начинать без зафиксированного конкретного delta-list.**
+- [x] T004 [P] Аудит desktop `_wide` `ChatsListPage` + shell-чром против `NOX - Desktop.html` (light+dark): window-titlebar `NOX · Chats`, rail, pane-заголовок `Chats`, no-selection empty-state `Select a chat`, inset-пилюля выбранной строки; зафиксировать дельты в `research.md` (раздел «Audit — desktop»). **GATE (A1): T007 не начинать без зафиксированного конкретного delta-list.**
 
 **Checkpoint**: дельты по обеим вёрсткам известны — конформность можно реализовывать.
 
@@ -54,8 +54,8 @@ description: "Task list — Chats list design parity + golden coverage"
 
 **Independent Test**: запустить на узкой поверхности (360–420dp), сверить состояния (filled/empty/loading/offline/inline-error/search/search-empty) с мобильным макетом в обеих темах.
 
-- [ ] T005 [US1] Применить дельты аудита (T003) к `_mobile`/`_searchField`/`_banners`/`_list` в `lib/presentation/pages/chats_list_page/chats_list_page.dart` (+ при необходимости `lib/presentation/widgets/chat/app_chat_item_widget.dart`, `lib/presentation/widgets/chat/app_search_field_widget.dart`, `lib/presentation/widgets/shell/app_splash_hairline_widget.dart`) — только дизайн-токены, без хардкода.
-- [ ] T006 [US1] Обновить mobile-группу в `test/presentation/pages/chats_list_page/chats_list_page_test.dart` под изменённое дерево (селекторы wordmark/search/rows/тап→thread остаются зелёными).
+- [x] T005 [US1] Применить дельты аудита (T003) к `_mobile`/`_searchField`/`_banners`/`_list` в `lib/presentation/pages/chats_list_page/chats_list_page.dart` (+ при необходимости `lib/presentation/widgets/chat/app_chat_item_widget.dart`, `lib/presentation/widgets/chat/app_search_field_widget.dart`, `lib/presentation/widgets/shell/app_splash_hairline_widget.dart`) — только дизайн-токены, без хардкода.
+- [x] T006 [US1] Обновить mobile-группу в `test/presentation/pages/chats_list_page/chats_list_page_test.dart` под изменённое дерево (селекторы wordmark/search/rows/тап→thread остаются зелёными).
 
 **Checkpoint**: mobile-вёрстка соответствует дизайну и функционально зелёная.
 
@@ -67,8 +67,8 @@ description: "Task list — Chats list design parity + golden coverage"
 
 **Independent Test**: запустить на широкой поверхности (≥1280dp), сверить состояния (filled/selected/no-selection/loading/offline/search/search-empty) с десктопным макетом в обеих темах.
 
-- [ ] T007 [US2] Применить дельты аудита (T004) к `_desktop`/`_paneHeader`/`_threadPane`/`_list` (desktop-ветка подсветки) в `lib/presentation/pages/chats_list_page/chats_list_page.dart` (+ при необходимости `lib/presentation/widgets/shell/app_window_titlebar_widget.dart`, `lib/presentation/widgets/shell/app_navigation_rail_widget.dart`, `lib/presentation/widgets/shell/app_list_detail_widget.dart`) — только токены.
-- [ ] T008 [US2] Обновить desktop-группу в `test/presentation/pages/chats_list_page/chats_list_page_test.dart` под изменённое дерево (list-detail, no-selection placeholder, select→thread-pane без push остаются зелёными).
+- [x] T007 [US2] Применить дельты аудита (T004) к `_desktop`/`_paneHeader`/`_threadPane`/`_list` (desktop-ветка подсветки) в `lib/presentation/pages/chats_list_page/chats_list_page.dart` (+ при необходимости `lib/presentation/widgets/shell/app_window_titlebar_widget.dart`, `lib/presentation/widgets/shell/app_navigation_rail_widget.dart`, `lib/presentation/widgets/shell/app_list_detail_widget.dart`) — только токены.
+- [x] T008 [US2] Обновить desktop-группу в `test/presentation/pages/chats_list_page/chats_list_page_test.dart` под изменённое дерево (list-detail, no-selection placeholder, select→thread-pane без push остаются зелёными).
 
 **Checkpoint**: desktop-вёрстка соответствует дизайну и функционально зелёная (US1+US2 независимо проверяемы).
 
@@ -82,14 +82,14 @@ description: "Task list — Chats list design parity + golden coverage"
 
 > Зависит от Phase 1 (Setup). НЕ зависит от аудита (Phase 2). T012 (rail) делать ПОСЛЕ US2 T007 (общий файл `app_navigation_rail_widget.dart`).
 
-- [ ] T009 [US3] Написать падающий unit-тест `test/design/theme/nox_account_initials_test.dart` по таблице из `contracts/account-avatar.md` (`User7421`→`U`, `john.doe`→`JD`, `john_doe_smith`→`JS`, `a-b-c`→`AC`, `Alice`→`A`, `nox.core.team`→`NT`, `` /`...`→`null`). Без `@Tags`.
-- [ ] T010 [US3] Реализовать `noxAccountInitials(String label)` в `lib/design/theme/nox_brand.dart` (split по `RegExp(r'[\s._-]+')`, первый+последний токен, один токен → 1 буква) — unit-тест T009 зелёный.
-- [ ] T011 [P] [US3] Добавить опциональный `final String? initials;` в `lib/presentation/widgets/primitives/app_avatar_widget.dart` (если задан — рисуем его, иначе текущий `noxInitials(name)`; фон всегда `noxAvatarColor(name)`) — обратносовместимо, аватары чатов не меняются.
-- [ ] T012 [US3] Добавить trailing аккаунт-аватар в `lib/presentation/widgets/shell/app_navigation_rail_widget.dart`: `NavigationRail.trailing` = `Expanded`+`Align.bottomCenter` вокруг кликабельного `AppAvatarWidget(name: accountLabel, initials: noxAccountInitials(accountLabel), size: <token>)`, tooltip `Account`; новые параметры `String? accountLabel` + `VoidCallback onAccount`. (depends T010, T011; ПОСЛЕ T007)
-- [ ] T013 [US3] Прокинуть данные/действие в `lib/presentation/widgets/shell/tab_bar_shell_widget.dart`: one-shot `sessionRepository.readSession()`→`_accountLabel` (fallback `User7421`); передать в rail; `onAccount` → `setState(_active = AppTab.settings)` + `_settingsJumpToAccount.value++`; добавить `ValueNotifier<int> _settingsJumpToAccount` (+ dispose). (depends T012)
-- [ ] T014 [US3] Принять сигнал в `lib/presentation/pages/settings_root_page/settings_root_page.dart`: новый `ValueListenable<int>? jumpToAccount` (по образцу `scrollToTop`); listener по бампу → `setState(_selected = _Section.account)`; подключить в `initState`/`dispose`. Прокинуть из `TabBarShell` (T013). **(U1a) Сигнал desktop-only по эффекту**: аватар существует лишь в rail, поэтому `jumpToAccount` бампится только на широком окне; на узком (mobile) `SettingsRootPage` корректно игнорирует его (плоский список без `_selected`). (depends T013)
-- [ ] T015 [US3] Widget-тест навигации `test/presentation/widgets/shell/tab_bar_shell_account_avatar_test.dart`: на широкой поверхности тап аватара в смонтированном `TabBarShell` → активна `Settings` И видна секция `Account` (`contracts/navigation.md`). **(G2) Дополнительно**: на узкой поверхности (bottom-bar) ассертить отсутствие аккаунт-аватара (`AppAvatarWidget` нет в rail/нижней панели). Без `@Tags`.
-- [ ] T016 [P] [US3] Drift-fix `docs/design/system/nox-desktop-screens/screens/01-chats.md`: добавить trailing account-аватар в анатомию rail + поведение перехода в `Settings`/`Account` (Принцип II).
+- [x] T009 [US3] Написать падающий unit-тест `test/design/theme/nox_account_initials_test.dart` по таблице из `contracts/account-avatar.md` (`User7421`→`U`, `john.doe`→`JD`, `john_doe_smith`→`JS`, `a-b-c`→`AC`, `Alice`→`A`, `nox.core.team`→`NT`, `` /`...`→`null`). Без `@Tags`.
+- [x] T010 [US3] Реализовать `noxAccountInitials(String label)` в `lib/design/theme/nox_brand.dart` (split по `RegExp(r'[\s._-]+')`, первый+последний токен, один токен → 1 буква) — unit-тест T009 зелёный.
+- [x] T011 [P] [US3] Добавить опциональный `final String? initials;` в `lib/presentation/widgets/primitives/app_avatar_widget.dart` (если задан — рисуем его, иначе текущий `noxInitials(name)`; фон всегда `noxAvatarColor(name)`) — обратносовместимо, аватары чатов не меняются.
+- [x] T012 [US3] Добавить trailing аккаунт-аватар в `lib/presentation/widgets/shell/app_navigation_rail_widget.dart`: `NavigationRail.trailing` = `Expanded`+`Align.bottomCenter` вокруг кликабельного `AppAvatarWidget(name: accountLabel, initials: noxAccountInitials(accountLabel), size: <token>)`, tooltip `Account`; новые параметры `String? accountLabel` + `VoidCallback onAccount`. (depends T010, T011; ПОСЛЕ T007)
+- [x] T013 [US3] Прокинуть данные/действие в `lib/presentation/widgets/shell/tab_bar_shell_widget.dart`: one-shot `sessionRepository.readSession()`→`_accountLabel` (fallback `User7421`); передать в rail; `onAccount` → `setState(_active = AppTab.settings)` + `_settingsJumpToAccount.value++`; добавить `ValueNotifier<int> _settingsJumpToAccount` (+ dispose). (depends T012)
+- [x] T014 [US3] Принять сигнал в `lib/presentation/pages/settings_root_page/settings_root_page.dart`: новый `ValueListenable<int>? jumpToAccount` (по образцу `scrollToTop`); listener по бампу → `setState(_selected = _Section.account)`; подключить в `initState`/`dispose`. Прокинуть из `TabBarShell` (T013). **(U1a) Сигнал desktop-only по эффекту**: аватар существует лишь в rail, поэтому `jumpToAccount` бампится только на широком окне; на узком (mobile) `SettingsRootPage` корректно игнорирует его (плоский список без `_selected`). (depends T013)
+- [x] T015 [US3] Widget-тест навигации `test/presentation/widgets/shell/tab_bar_shell_account_avatar_test.dart`: на широкой поверхности тап аватара в смонтированном `TabBarShell` → активна `Settings` И видна секция `Account` (`contracts/navigation.md`). **(G2) Дополнительно**: на узкой поверхности (bottom-bar) ассертить отсутствие аккаунт-аватара (`AppAvatarWidget` нет в rail/нижней панели). Без `@Tags`.
+- [x] T016 [P] [US3] Drift-fix `docs/design/system/nox-desktop-screens/screens/01-chats.md`: добавить trailing account-аватар в анатомию rail + поведение перехода в `Settings`/`Account` (Принцип II).
 
 **Checkpoint**: аватар работает; US1+US2+US3 независимо функциональны.
 
@@ -103,11 +103,11 @@ description: "Task list — Chats list design parity + golden coverage"
 
 > Зависит от финального визуала US1+US2+US3 (goldens снимаются с уже приведённого к дизайну экрана). Гранулярность кейсов — по `contracts/golden-coverage.md`.
 
-- [ ] T017 [US4] Создать `test/presentation/pages/chats_list_page/chats_list_page_golden_test.dart` (`@Tags(['golden'])`) с page-mobile кейсами `goldenTest`: `chats_list_page_filled`, `_empty`, `_loading` (settle:false), `_offline`, `_error`, `_search_empty` — состояния через `ChatsListScenario` + ввод в `AppSearchFieldWidget`, под `configureDependencies(Environment.test)`.
-- [ ] T018 [US4] В том же файле добавить page-desktop кейсы `goldenTestDesktop`: `chats_list_page` (no-selection), `_selected`, `_empty`, `_search_empty`. **(U1b) Решение зафиксировано**: рендерить `_wide` через смонтированный `TabBarShell` (широкая поверхность), чтобы в desktop-golden попали rail + window-titlebar + аккаунт-аватар (полный десктопный вид экрана), а не изолированная страница с `forceWide`. Зафиксировать это в комментарии теста.
-- [ ] T019 [P] [US4] Создать/обновить `test/presentation/widgets/shell/app_navigation_rail_widget_golden_test.dart` (`@Tags(['golden'])`): widget-golden rail c аккаунт-аватаром (`Chats` активна), light+dark.
-- [ ] T020 [P] [US4] Удалить осиротевшую папку `test/presentation/pages/chats_list_page/failures/` (артефакт прежнего упавшего golden).
-- [ ] T021 [US4] Сгенерировать baseline (`make golden-update FILE=…` для новых golden-файлов) и проверить `make golden-verify` — зелёный; закоммитить `goldens/*.png`. **(G1) Scope включает перегенерацию ВСЕХ затронутых СУЩЕСТВУЮЩИХ widget-goldens**, если US1/US2 изменили их виджеты: `test/presentation/widgets/chat/app_chat_item_widget_golden_test.dart` и `app_search_field_widget` (если есть golden), а не только новые файлы. (depends T017, T018, T019)
+- [x] T017 [US4] Создать `test/presentation/pages/chats_list_page/chats_list_page_golden_test.dart` (`@Tags(['golden'])`) с page-mobile кейсами `goldenTest`: `chats_list_page_filled`, `_empty`, `_loading` (settle:false), `_offline`, `_error`, `_search_empty` — состояния через `ChatsListScenario` + ввод в `AppSearchFieldWidget`, под `configureDependencies(Environment.test)`.
+- [x] T018 [US4] В том же файле добавить page-desktop кейсы `goldenTestDesktop`: `chats_list_page` (no-selection), `_selected`, `_empty`, `_search_empty`. **(U1b) Решение зафиксировано**: рендерить `_wide` через смонтированный `TabBarShell` (широкая поверхность), чтобы в desktop-golden попали rail + window-titlebar + аккаунт-аватар (полный десктопный вид экрана), а не изолированная страница с `forceWide`. Зафиксировать это в комментарии теста.
+- [x] T019 [P] [US4] Создать/обновить `test/presentation/widgets/shell/app_navigation_rail_widget_golden_test.dart` (`@Tags(['golden'])`): widget-golden rail c аккаунт-аватаром (`Chats` активна), light+dark.
+- [x] T020 [P] [US4] Удалить осиротевшую папку `test/presentation/pages/chats_list_page/failures/` (артефакт прежнего упавшего golden).
+- [x] T021 [US4] Сгенерировать baseline (`make golden-update FILE=…` для новых golden-файлов) и проверить `make golden-verify` — зелёный; закоммитить `goldens/*.png`. **(G1) Scope включает перегенерацию ВСЕХ затронутых СУЩЕСТВУЮЩИХ widget-goldens**, если US1/US2 изменили их виджеты: `test/presentation/widgets/chat/app_chat_item_widget_golden_test.dart` и `app_search_field_widget` (если есть golden), а не только новые файлы. (depends T017, T018, T019)
 
 **Checkpoint**: экран полностью golden-locked в обеих категориях.
 
@@ -117,11 +117,11 @@ description: "Task list — Chats list design parity + golden coverage"
 
 **Purpose**: финальная сверка, гейты, согласование корпусов.
 
-- [ ] T022 [P] Формат изменённых файлов: `fvm dart format -l 140 <changed lib/ + test/ paths>`.
-- [ ] T023 Прогнать `make gate` (generate → format → analyze → test, goldens исключены) — зелёный, `flutter analyze` без ошибок.
-- [ ] T024 Прогнать `make golden-verify` — зелёный (включая перегенерированные существующие widget-goldens из T021/G1); подтвердить SC-005 (намеренная дельта отступа/цвета ловится тестом — ручная проверка/revert).
-- [ ] T025 [P] Сверить мобильный корпус `docs/design/system/nox-mobile-screens/screens/5-1-chats.md` с финальным состоянием; при расхождении — привести корпус (Принцип II). Desktop-корпус уже обновлён в T016.
-- [ ] T026 Пройти `quickstart.md` Definition of Done: обе вёрстки ↔ макеты (SC-001/002), аватар (SC-003/004), goldens (SC-005/006), multi-platform parity (`_narrow`↔mobile, `_wide`↔desktop).
+- [x] T022 [P] Формат изменённых файлов: `fvm dart format -l 140 <changed lib/ + test/ paths>`.
+- [x] T023 Прогнать `make gate` (generate → format → analyze → test, goldens исключены) — зелёный, `flutter analyze` без ошибок.
+- [x] T024 Прогнать `make golden-verify` — зелёный (включая перегенерированные существующие widget-goldens из T021/G1); подтвердить SC-005 (намеренная дельта отступа/цвета ловится тестом — ручная проверка/revert).
+- [x] T025 [P] Сверить мобильный корпус `docs/design/system/nox-mobile-screens/screens/5-1-chats.md` с финальным состоянием; при расхождении — привести корпус (Принцип II). Desktop-корпус уже обновлён в T016.
+- [x] T026 Пройти `quickstart.md` Definition of Done: обе вёрстки ↔ макеты (SC-001/002), аватар (SC-003/004), goldens (SC-005/006), multi-platform parity (`_narrow`↔mobile, `_wide`↔desktop).
 
 ---
 

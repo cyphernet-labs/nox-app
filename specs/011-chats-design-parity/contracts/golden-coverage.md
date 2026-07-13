@@ -8,14 +8,15 @@
 
 Файл: `test/presentation/pages/chats_list_page/chats_list_page_golden_test.dart`.
 
+> **Реализация (факт, 011 merged — Принцип II).** Ниже — итоговая golden-матрица, как она реализована в `chats_list_page_golden_test.dart`. Она осознанно отличается от исходного предложения: `loading`/`search_empty` (mobile) и `selected`/`empty`/`search_empty` (desktop-page) НЕ заведены отдельными goldens — эти interaction-only состояния залочены **поведенческими** widget-тестами в `chats_list_page_test.dart` (`search filters …` / `search with no match …` / `desktop selection fills the row …`), а desktop-вид консолидирован в один полноэкранный кейс через `TabBarShell`. Кейс `filled` называется `chats_list_page`; добавлен отдельный `inline_error` (баннер) рядом с `error` (fatal).
+
 | Имя кейса | Сценарий | settle | Baseline |
 |---|---|---|---|
-| `chats_list_page_filled` | normal (есть чаты) | true | `chats_list_page_filled_{light,dark}.png` |
+| `chats_list_page` | normal (есть чаты) | true | `chats_list_page_{light,dark}.png` |
 | `chats_list_page_empty` | empty | true | `…_empty_{light,dark}.png` |
-| `chats_list_page_loading` | loading | **false** | `…_loading_{light,dark}.png` |
 | `chats_list_page_offline` | offline | true | `…_offline_{light,dark}.png` |
-| `chats_list_page_error` | fatal/inline-error | true | `…_error_{light,dark}.png` |
-| `chats_list_page_search_empty` | поиск без совпадений | true | `…_search_empty_{light,dark}.png` |
+| `chats_list_page_inline_error` | inline-error (баннер поверх списка) | true | `…_inline_error_{light,dark}.png` |
+| `chats_list_page_error` | fatal | true | `…_error_{light,dark}.png` |
 
 ## Категория «page — desktop» (`goldenTestDesktop`, 1280×800, dpr 2)
 
@@ -23,12 +24,9 @@
 
 | Имя кейса | Сценарий | settle | Baseline |
 |---|---|---|---|
-| `chats_list_page` | normal + no-selection | true | `chats_list_page_desktop_{light,dark}.png` |
-| `chats_list_page_selected` | normal + выбрана строка | true | `chats_list_page_selected_desktop_{light,dark}.png` |
-| `chats_list_page_empty` | empty | true | `chats_list_page_empty_desktop_{light,dark}.png` |
-| `chats_list_page_search_empty` | поиск без совпадений | true | `chats_list_page_search_empty_desktop_{light,dark}.png` |
+| `chats_list_page` (через `TabBarShell`) | full desktop view: window-titlebar + rail (с аккаунт-аватаром) + list-pane + no-selection thread-pane | true | `chats_list_page_desktop_{light,dark}.png` |
 
-> Desktop-кейсы рендерят страницу в `_wide`-ветке. Для отрисовки rail/titlebar при необходимости монтировать через `TabBarShell` или подавать `forceWide: true` — финализируется в tasks (важно: desktop-аватар живёт в rail, поэтому полноценный desktop-вид экрана = `TabBarShell` на широкой поверхности).
+> Desktop-кейс рендерит полный десктопный вид через смонтированный `TabBarShell` на широкой поверхности (не изолированная страница с `forceWide`), поэтому baseline включает rail + window-titlebar + аккаунт-аватар. Состояния `selected`/`empty`/`search_empty` на desktop-page залочены поведенческими widget-тестами (см. реконсиляционную заметку выше), а не отдельными desktop-goldens.
 
 ## Категория «widget» (`goldenTest`, существующий харнесс)
 
