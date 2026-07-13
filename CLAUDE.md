@@ -73,7 +73,7 @@ The adopted architecture for NOX's Flutter app (package `nox_app`, app id `com.c
 
 ## Spec Kit workflow
 
-Spec Kit is installed (CLI `specify`; tracked under `.specify/` + `.claude/skills/speckit-*`). Spec-driven flow via slash-command skills: `/speckit-constitution` → `/speckit-specify` → `/speckit-plan` → `/speckit-tasks` → `/speckit-implement`; optional `/speckit-clarify`, `/speckit-analyze`, `/speckit-checklist`, `/speckit-taskstoissues`. Templates and scripts live in `.specify/templates` and `.specify/scripts/bash`; a new feature scaffolds under `specs/NNN-*`. The constitution (`.specify/memory/constitution.md`) is **ratified (v1.1.0)** — five principles (privacy/E2EE, spec-as-truth, mandatory architecture blueprint, design-system fidelity, language discipline) govern specs/plans via the Constitution Check gate.
+Spec Kit `0.13.0` is installed (CLI `specify`; tracked under `.specify/` + `.claude/skills/speckit-*`). Spec-driven flow via slash-command skills: `/speckit-constitution` → `/speckit-specify` → `/speckit-plan` → `/speckit-tasks` → `/speckit-implement`; optional `/speckit-clarify`, `/speckit-analyze`, `/speckit-checklist`, `/speckit-converge` (assess codebase vs spec/plan/tasks, append remaining work to `tasks.md`), `/speckit-taskstoissues`. Templates and scripts live in `.specify/templates` and `.specify/scripts/bash`; a new feature scaffolds under `specs/NNN-*`. The constitution (`.specify/memory/constitution.md`) is **ratified (v1.1.0)** — five principles (privacy/E2EE, spec-as-truth, mandatory architecture blueprint, design-system fidelity, language discipline) govern specs/plans via the Constitution Check gate.
 
 ## Build / test / run
 
