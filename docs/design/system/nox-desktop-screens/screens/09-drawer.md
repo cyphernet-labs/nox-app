@@ -7,7 +7,7 @@
 **Adaptation from mobile.** mobile pushed Chat card (5.4) → right details drawer
 
 ## Anatomy
-Scrim + right drawer (380): Details header, chat avatar/name/members, “Files” with List/Grid toggle, file rows or 2-col grid.
+Scrim + right drawer (380): Details header, chat avatar/name, “Files” with List/Grid toggle, file rows or 2-col grid.
 
 ## States
 - `list` — Files · list

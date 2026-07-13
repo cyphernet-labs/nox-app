@@ -23,7 +23,7 @@ NavigationRail (80) + chat list pane (360, with pane header + SearchBar) + threa
 ## Behavior
 - Selecting a row highlights it (secondaryContainer) and loads the thread on the right — no navigation push.
 - No-selection: the thread pane shows a “Select a chat” placeholder; the “+” lives on the rail.
-- Thread header is persistent (avatar, members, search/folder/info actions) — a desktop affordance the mobile thread lacks.
+- Thread header is persistent (avatar + chat name + a single info action) — a desktop affordance the mobile thread lacks. Per the NOX open-space model it shows **no members, no per-chat search, no folders**: tapping the avatar/name opens the chat card, and the lone info action (folder-open icon) opens Chat info. Source of truth: `docs/design/spec/screens/chat.md` §Десктоп.
 - Offline: “No connection” banner appears in both panes. Loading: spinner in the list pane.
 - Search filters the list pane in place; no match → “No chats found”.
 - Transient feedback floats as a Snackbar centered over the thread pane.
@@ -32,7 +32,7 @@ NavigationRail (80) + chat list pane (360, with pane header + SearchBar) + threa
 - Row → loads thread in right pane.
 - Rail + → Create chat dialog (04).
 - Rail account avatar (bottom) → Settings, landing on the Account section (NOX has no separate profile screen).
-- Thread folder/info → Chat info drawer (04).
+- Thread header (avatar / chat name / info action) → Chat card / Chat info (04).
 - Attachment / file bubble → File view lightbox (04).
 
 ## Copy (EN)

@@ -48,7 +48,7 @@ window.NOX_SPECS = [
     "behavior": [
       "Selecting a row highlights it (secondaryContainer) and loads the thread on the right — no navigation push.",
       "No-selection: the thread pane shows a “Select a chat” placeholder; the “+” lives on the rail.",
-      "Thread header is persistent (avatar, members, search/folder/info actions) — a desktop affordance the mobile thread lacks.",
+      "Thread header is persistent (avatar + chat name + a single info action) — NOX open-space model: no members, no per-chat search, no folders. Source of truth: docs/design/spec/screens/chat.md §Десктоп.",
       "Offline: “No connection” banner appears in both panes. Loading: spinner in the list pane.",
       "Search filters the list pane in place; no match → “No chats found”.",
       "Transient feedback floats as a Snackbar centered over the thread pane."
@@ -56,7 +56,7 @@ window.NOX_SPECS = [
     "navigation": [
       "Row → loads thread in right pane.",
       "Rail + → Create chat dialog (04).",
-      "Thread folder/info → Chat info drawer (04).",
+      "Thread header (avatar / chat name / info action) → Chat card / Chat info (04).",
       "Attachment / file bubble → File view lightbox (04)."
     ],
     "copy": [
@@ -445,7 +445,7 @@ window.NOX_SPECS = [
         "label": "Empty"
       }
     ],
-    "anatomy": "Scrim + right drawer (380): Details header, chat avatar/name/members, “Files” with List/Grid toggle, file rows or 2-col grid.",
+    "anatomy": "Scrim + right drawer (380): Details header, chat avatar/name, “Files” with List/Grid toggle, file rows or 2-col grid.",
     "behavior": [
       "Mobile’s pushed Chat card (5.4) becomes a right drawer over the thread. Segmented switches List ⇄ Grid; empty → folder_open state."
     ],
