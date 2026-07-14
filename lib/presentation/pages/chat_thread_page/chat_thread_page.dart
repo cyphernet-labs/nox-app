@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/general/constants.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/pages/chat_card_page/chat_card_page.dart';
 import 'package:nox_app/presentation/pages/file_view_page/file_view_page.dart';
 import 'package:nox_app/presentation/widgets/chat/app_thread_view_widget.dart';
@@ -57,7 +57,7 @@ class ChatThreadPage extends StatelessWidget {
         return Scaffold(
           appBar: AppBar(
             leading: IconButton(
-              tooltip: TextConstants.tooltipBack,
+              tooltip: context.l10n.tooltipBack,
               icon: AppIconWidget(NoxIcons.arrowBack),
               onPressed: () => Navigator.of(context).maybePop(),
             ),

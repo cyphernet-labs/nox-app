@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/design/nox_icons.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/widgets/settings/app_info_banner_widget.dart';
 import 'package:nox_app/presentation/widgets/settings/app_settings_switch_row_widget.dart';
 import 'package:nox_app/presentation/widgets/settings/app_theme_option_widget.dart';
@@ -11,12 +11,14 @@ import '../../utils/pump_app.dart';
 
 /// Accessibility checks (FR-016) for the M1 settings surface: tap targets >= 48x48
 /// and layout survives textScaler up to 2.0.
+final l10nEn = AppLocalizationsEn();
+
 void main() {
   group('M1 settings accessibility (FR-016)', () {
     testWidgets('detail-scaffold back button is >= 48x48 with a tooltip', (tester) async {
       await pumpApp(tester, const AppDetailScaffoldWidget(title: 'Settings', body: SizedBox.shrink()));
 
-      expect(find.byTooltip(TextConstants.tooltipBack), findsOneWidget);
+      expect(find.byTooltip(l10nEn.tooltipBack), findsOneWidget);
       final size = tester.getSize(find.byType(IconButton));
       expect(size.width, greaterThanOrEqualTo(48));
       expect(size.height, greaterThanOrEqualTo(48));
@@ -52,7 +54,7 @@ void main() {
         AppInfoBannerWidget(
           icon: NoxIcons.error,
           message: 'A long banner message that should wrap and still fit at a large text scale',
-          actionLabel: TextConstants.actionOpenSettings,
+          actionLabel: l10nEn.actionOpenSettings,
           onAction: () {},
         ),
         textScale: 2.0,

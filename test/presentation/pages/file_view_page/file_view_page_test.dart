@@ -2,13 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/pages/file_view_page/file_view_page.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_file_glyph_widget.dart';
 
 import '../../../utils/pump_app.dart';
 
 const _file = MessageAttachment(id: 'f', type: FileType.pdf, name: 'design-spec.pdf', sizeBytes: 2516582);
+
+final l10nEn = AppLocalizationsEn();
 
 void main() {
   group('FileViewPage (mobile)', () {
@@ -27,10 +29,10 @@ void main() {
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await pumpApp(tester, const FileViewPage(file: _file));
 
-      await tester.tap(find.byTooltip(TextConstants.tooltipSave));
+      await tester.tap(find.byTooltip(l10nEn.tooltipSave));
       await tester.pump();
 
-      expect(find.text(TextConstants.savedToDownloads), findsOneWidget);
+      expect(find.text(l10nEn.savedToDownloads), findsOneWidget);
     });
   });
 
@@ -41,7 +43,7 @@ void main() {
       await pumpApp(tester, const FileViewPage(file: _file));
 
       expect(find.byType(AppFileGlyphWidget), findsOneWidget);
-      expect(find.widgetWithText(FilledButton, TextConstants.actionDownload), findsOneWidget);
+      expect(find.widgetWithText(FilledButton, l10nEn.actionDownload), findsOneWidget);
     });
   });
 }

@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/widgets/settings/app_identity_card_widget.dart';
 import 'package:nox_app/presentation/widgets/settings/app_qr_surface_widget.dart';
 
 import '../../../utils/pump_app.dart';
+
+final l10nEn = AppLocalizationsEn();
 
 void main() {
   AppIdentityCardWidget card({
@@ -15,7 +17,7 @@ void main() {
     bool idRevealed = false,
   }) => AppIdentityCardWidget(
     name: 'Aria',
-    maskedId: TextConstants.idMask,
+    maskedId: l10nEn.idMask,
     rawId: 'RAWID-0123456789',
     revealable: revealable,
     showInlineQr: showInlineQr,
@@ -34,11 +36,11 @@ void main() {
       await pumpApp(tester, card());
 
       expect(find.text('Aria'), findsOneWidget);
-      expect(find.text(TextConstants.idMask), findsOneWidget);
-      expect(find.byTooltip(TextConstants.settingsNameEditTooltip), findsOneWidget);
-      expect(find.byTooltip(TextConstants.idShowTooltip), findsOneWidget);
-      expect(find.byTooltip(TextConstants.idCopyTooltip), findsOneWidget);
-      expect(find.byTooltip(TextConstants.idShowQrTooltip), findsOneWidget);
+      expect(find.text(l10nEn.idMask), findsOneWidget);
+      expect(find.byTooltip(l10nEn.settingsNameEditTooltip), findsOneWidget);
+      expect(find.byTooltip(l10nEn.idShowTooltip), findsOneWidget);
+      expect(find.byTooltip(l10nEn.idCopyTooltip), findsOneWidget);
+      expect(find.byTooltip(l10nEn.idShowQrTooltip), findsOneWidget);
     });
 
     testWidgets('Initial-loading swaps the ID for a spinner', (tester) async {
@@ -46,7 +48,7 @@ void main() {
       await pumpApp(tester, card(initialLoading: true), settle: false);
 
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
-      expect(find.text(TextConstants.idMask), findsNothing);
+      expect(find.text(l10nEn.idMask), findsNothing);
     });
 
     testWidgets('revealed state shows the raw identifier', (tester) async {
@@ -64,8 +66,8 @@ void main() {
     testWidgets('desktop: no reveal toggle, inline account QR instead', (tester) async {
       await pumpApp(tester, card(revealable: false, showInlineQr: true));
 
-      expect(find.byTooltip(TextConstants.idShowTooltip), findsNothing);
-      expect(find.byTooltip(TextConstants.idHideTooltip), findsNothing);
+      expect(find.byTooltip(l10nEn.idShowTooltip), findsNothing);
+      expect(find.byTooltip(l10nEn.idHideTooltip), findsNothing);
       expect(find.byType(AppQrSurfaceWidget), findsOneWidget);
     });
   });

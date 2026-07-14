@@ -1,16 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/widgets/chat/app_composer_widget.dart';
 
 import '../../../utils/pump_app.dart';
+
+final l10nEn = AppLocalizationsEn();
 
 void main() {
   group('AppComposerWidget', () {
     testWidgets('shows the hint when empty', (tester) async {
       await pumpApp(tester, AppComposerWidget(controller: TextEditingController()));
 
-      expect(find.text(TextConstants.composerHint), findsOneWidget);
+      expect(find.text(l10nEn.composerHint), findsOneWidget);
     });
 
     testWidgets('send is disabled until there is text (reactive to the controller)', (tester) async {

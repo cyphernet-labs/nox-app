@@ -10,7 +10,7 @@ import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/general/constants.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/helpers/app_feedback_helper.dart';
 import 'package:nox_app/presentation/pages/about_page/about_body.dart';
 import 'package:nox_app/presentation/pages/about_page/about_page.dart';
@@ -124,7 +124,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
   void _copyId() {
     // Fire-and-forget the clipboard write; the confirmation is instant.
     unawaited(Clipboard.setData(ClipboardData(text: _bloc.state.rawId)));
-    showAppSnackBar(context, text: TextConstants.copiedToClipboard);
+    showAppSnackBar(context, text: context.l10n.copiedToClipboard);
   }
 
   Future<void> _logout() async {
@@ -141,7 +141,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
       if (!mounted) return;
       result.match(
         onData: (_) {},
-        onError: (_) => showAppSnackBar(context, text: TextConstants.logoutError, error: true),
+        onError: (_) => showAppSnackBar(context, text: context.l10n.logoutError, error: true),
       );
     }
   }
@@ -150,7 +150,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
 
   Widget _backOrNull(VoidCallback onPressed) => widget.inShell
       ? const SizedBox.shrink()
-      : IconButton(tooltip: TextConstants.tooltipBack, icon: AppIconWidget(NoxIcons.arrowBack), onPressed: onPressed);
+      : IconButton(tooltip: context.l10n.tooltipBack, icon: AppIconWidget(NoxIcons.arrowBack), onPressed: onPressed);
 
   @override
   Widget build(BuildContext context) {
@@ -175,11 +175,11 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
         leading: widget.inShell
             ? null
             : IconButton(
-                tooltip: TextConstants.tooltipBack,
+                tooltip: context.l10n.tooltipBack,
                 icon: AppIconWidget(NoxIcons.arrowBack),
                 onPressed: () => Navigator.of(context).maybePop(),
               ),
-        title: const Text(TextConstants.settings),
+        title: Text(context.l10n.settings),
       ),
       body: ListView(
         children: [
@@ -187,13 +187,13 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
             padding: EdgeInsets.all(AppSpacingTokens.s16),
             child: _identityCard(state, revealable: true, showInlineQr: false, wide: false),
           ),
-          AppSettingsNavRowWidget(title: TextConstants.settingsNotificationsTitle, onTap: () => _openSection(NotificationsPage.route())),
-          AppSettingsNavRowWidget(title: TextConstants.settingsAppearanceTitle, onTap: () => _openSection(AppearancePage.route())),
-          AppSettingsNavRowWidget(title: TextConstants.settingsLanguageTitle, onTap: () => _openSection(LanguagePage.route())),
-          AppSettingsNavRowWidget(title: TextConstants.settingsTermsTitle, onTap: () => _openSection(TermsPage.route())),
-          AppSettingsNavRowWidget(title: TextConstants.settingsAboutTitle, onTap: () => _openSection(AboutPage.route())),
+          AppSettingsNavRowWidget(title: context.l10n.settingsNotificationsTitle, onTap: () => _openSection(NotificationsPage.route())),
+          AppSettingsNavRowWidget(title: context.l10n.settingsAppearanceTitle, onTap: () => _openSection(AppearancePage.route())),
+          AppSettingsNavRowWidget(title: context.l10n.settingsLanguageTitle, onTap: () => _openSection(LanguagePage.route())),
+          AppSettingsNavRowWidget(title: context.l10n.settingsTermsTitle, onTap: () => _openSection(TermsPage.route())),
+          AppSettingsNavRowWidget(title: context.l10n.settingsAboutTitle, onTap: () => _openSection(AboutPage.route())),
           Divider(height: AppDimensionTokens.border.hairline),
-          AppSettingsNavRowWidget(title: TextConstants.logoutRow, color: Theme.of(context).colorScheme.error, onTap: _logout),
+          AppSettingsNavRowWidget(title: context.l10n.logoutRow, color: Theme.of(context).colorScheme.error, onTap: _logout),
           if (kDebugMode) AppSettingsNavRowWidget(title: 'Screens gallery (dev)', onTap: () => _openSection(ScreensGalleryPage.route())),
           if (kDebugMode) AppSettingsNavRowWidget(title: 'UI kit (dev)', onTap: () => _openSection(UiKitPage.route())),
           if (kDebugMode && !widget.demo)
@@ -230,7 +230,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
             children: [
               if (!widget.inShell) _backOrNull(() => Navigator.of(context).maybePop()),
               Expanded(
-                child: Text(TextConstants.settings, style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
+                child: Text(context.l10n.settings, style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
               ),
             ],
           ),
@@ -243,18 +243,18 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               // Group 1: Account.
-              item(_Section.account, TextConstants.settingsAccountTitle),
+              item(_Section.account, context.l10n.settingsAccountTitle),
               Divider(height: AppDimensionTokens.border.hairline),
               // Group 2: Notifications, Appearance, Language.
-              item(_Section.notifications, TextConstants.settingsNotificationsTitle),
-              item(_Section.appearance, TextConstants.settingsAppearanceTitle),
-              item(_Section.language, TextConstants.settingsLanguageTitle),
+              item(_Section.notifications, context.l10n.settingsNotificationsTitle),
+              item(_Section.appearance, context.l10n.settingsAppearanceTitle),
+              item(_Section.language, context.l10n.settingsLanguageTitle),
               Divider(height: AppDimensionTokens.border.hairline),
               // Group 3: Terms, About.
-              item(_Section.terms, TextConstants.settingsTermsTitle),
-              item(_Section.about, TextConstants.settingsAboutTitle),
+              item(_Section.terms, context.l10n.settingsTermsTitle),
+              item(_Section.about, context.l10n.settingsAboutTitle),
               const Spacer(),
-              AppSettingsNavRowWidget(title: TextConstants.logoutRow, color: colorScheme.error, onTap: _logout),
+              AppSettingsNavRowWidget(title: context.l10n.logoutRow, color: colorScheme.error, onTap: _logout),
               if (kDebugMode)
                 AppSettingsNavRowWidget(title: 'Screens gallery (dev)', onTap: () => _openSection(ScreensGalleryPage.route())),
               if (kDebugMode) AppSettingsNavRowWidget(title: 'UI kit (dev)', onTap: () => _openSection(UiKitPage.route())),
@@ -270,12 +270,12 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
 
   // Title of the selected detail section, mirroring the menu-pane item labels.
   String _sectionTitle(_Section section) => switch (section) {
-    _Section.account => TextConstants.settingsAccountTitle,
-    _Section.notifications => TextConstants.settingsNotificationsTitle,
-    _Section.appearance => TextConstants.settingsAppearanceTitle,
-    _Section.language => TextConstants.settingsLanguageTitle,
-    _Section.terms => TextConstants.settingsTermsTitle,
-    _Section.about => TextConstants.settingsAboutTitle,
+    _Section.account => context.l10n.settingsAccountTitle,
+    _Section.notifications => context.l10n.settingsNotificationsTitle,
+    _Section.appearance => context.l10n.settingsAppearanceTitle,
+    _Section.language => context.l10n.settingsLanguageTitle,
+    _Section.terms => context.l10n.settingsTermsTitle,
+    _Section.about => context.l10n.settingsAboutTitle,
   };
 
   Widget _detailPane(BuildContext context, SettingsRootState state) {
@@ -319,6 +319,14 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
 
   // ---- Shared ---------------------------------------------------------------
 
+  // Context-side resolver for the inline name-edit error (was
+  // SettingsRootState.nameError; the BLoC state no longer holds localized strings).
+  String? _nameError(SettingsNameStatus status) => switch (status) {
+    SettingsNameStatus.invalidCharset => context.l10n.usernameCharsetError,
+    SettingsNameStatus.taken => context.l10n.nameTakenError,
+    _ => null,
+  };
+
   Widget _identityCard(SettingsRootState state, {required bool revealable, required bool showInlineQr, required bool wide}) {
     return AppIdentityCardWidget(
       name: state.name,
@@ -337,10 +345,10 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
           ? AppLabeledFieldWidget(
               controller: _nameController,
               focusNode: _nameFocusNode,
-              label: TextConstants.usernameLabel,
+              label: context.l10n.usernameLabel,
               maxLength: 32,
               autofocus: true,
-              errorText: state.nameError,
+              errorText: _nameError(state.status),
               checking: state.isChecking,
               onChanged: (value) => _bloc.add(SettingsRootEvent.nameChanged(value)),
               onSubmitted: () => _bloc.add(const SettingsRootEvent.nameSubmitted()),

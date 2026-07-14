@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/widgets/state/app_error_widget.dart';
 
 import '../../../utils/pump_app.dart';
+
+final l10nEn = AppLocalizationsEn();
 
 void main() {
   group('AppErrorWidget', () {
@@ -12,7 +14,7 @@ void main() {
       await pumpApp(tester, AppErrorWidget(message: 'Boom', onTryAgain: () => taps++));
 
       expect(find.text('Boom'), findsOneWidget);
-      await tester.tap(find.text(TextConstants.actionTryAgain));
+      await tester.tap(find.text(l10nEn.actionTryAgain));
       expect(taps, 1);
     });
 
@@ -20,7 +22,7 @@ void main() {
       await pumpApp(tester, const AppErrorWidget());
 
       expect(find.byType(FilledButton), findsNothing);
-      expect(find.text(TextConstants.errorGeneralTitle), findsOneWidget);
+      expect(find.text(l10nEn.errorGeneralTitle), findsOneWidget);
     });
   });
 }

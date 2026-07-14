@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/widgets/settings/app_version_text_widget.dart';
 
 /// 7.7 About content — app version + build number only. No Scaffold/AppBar so it
@@ -15,7 +15,7 @@ class AboutBody extends StatelessWidget {
     return ListView(
       children: [
         ListTile(
-          title: Text(TextConstants.versionLabel),
+          title: Text(context.l10n.versionLabel),
           subtitle: AppVersionTextWidget(style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant)),
         ),
       ],

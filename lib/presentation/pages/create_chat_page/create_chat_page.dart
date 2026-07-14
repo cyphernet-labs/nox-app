@@ -6,7 +6,7 @@ import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/general/constants.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/pages/base/base_state_page.dart';
 import 'package:nox_app/presentation/pages/create_chat_page/bloc/create_chat_bloc.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page.dart';
@@ -98,8 +98,8 @@ class _CreateChatPageState extends BaseStatePage<CreateChatPage> {
   Widget _narrow(BuildContext context, CreateChatState state) {
     return Scaffold(
       appBar: AppBar(
-        leading: IconButton(tooltip: TextConstants.tooltipBack, icon: AppIconWidget(NoxIcons.arrowBack), onPressed: _cancel),
-        title: const Text(TextConstants.createChatTitle),
+        leading: IconButton(tooltip: context.l10n.tooltipBack, icon: AppIconWidget(NoxIcons.arrowBack), onPressed: _cancel),
+        title: Text(context.l10n.createChatTitle),
       ),
       body: SafeArea(
         child: Column(
@@ -107,7 +107,7 @@ class _CreateChatPageState extends BaseStatePage<CreateChatPage> {
             Expanded(
               child: SingleChildScrollView(
                 padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s20, AppSpacingTokens.s16, AppSpacingTokens.s16),
-                child: _field(state),
+                child: _field(context, state),
               ),
             ),
             Padding(
@@ -153,14 +153,14 @@ class _CreateChatPageState extends BaseStatePage<CreateChatPage> {
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        Text(TextConstants.createChatTitle, style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
+                        Text(context.l10n.createChatTitle, style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
                         SizedBox(height: AppSpacingTokens.s16),
-                        _field(state),
+                        _field(context, state),
                         SizedBox(height: AppSpacingTokens.s24),
                         Row(
                           mainAxisAlignment: MainAxisAlignment.end,
                           children: [
-                            TextButton(onPressed: state.isSubmitting ? null : _cancel, child: const Text(TextConstants.actionCancel)),
+                            TextButton(onPressed: state.isSubmitting ? null : _cancel, child: Text(context.l10n.actionCancel)),
                             SizedBox(width: AppSpacingTokens.s8),
                             _createButton(context, state),
                           ],
@@ -178,17 +178,23 @@ class _CreateChatPageState extends BaseStatePage<CreateChatPage> {
     );
   }
 
-  Widget _field(CreateChatState state) {
+  Widget _field(BuildContext context, CreateChatState state) {
     return AppLabeledFieldWidget(
       controller: _controller,
-      label: TextConstants.createChatNameLabel,
+      label: context.l10n.createChatNameLabel,
       maxLength: 64,
-      placeholder: TextConstants.createChatNameHint,
-      errorText: state.errorText,
+      placeholder: context.l10n.createChatNameHint,
+      errorText: _errorText(context, state),
       checking: state.isChecking,
       enabled: !state.isSubmitting,
       onChanged: (value) => _bloc.add(CreateChatEvent.nameChanged(value)),
     );
+  }
+
+  String? _errorText(BuildContext context, CreateChatState state) {
+    if (state.status == CreateChatStatus.taken) return context.l10n.nameTakenError;
+    if (state.networkError) return context.l10n.createChatNetworkError;
+    return null;
   }
 
   Widget _createButton(BuildContext context, CreateChatState state) {
@@ -197,7 +203,7 @@ class _CreateChatPageState extends BaseStatePage<CreateChatPage> {
       onPressed: state.canSubmit && !state.isSubmitting ? _create : null,
       child: state.isSubmitting
           ? AppSpinnerWidget(size: AppDimensionTokens.icon.md, color: colorScheme.onPrimary)
-          : const Text(TextConstants.actionCreate),
+          : Text(context.l10n.actionCreate),
     );
   }
 

@@ -2,9 +2,11 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/app/app_root.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+final l10nEn = AppLocalizationsEn();
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -26,10 +28,10 @@ void main() {
     // First frame: the app state resolves but the first navigation is held behind
     // the splash reveal — Login is not shown yet.
     await tester.pump();
-    expect(find.text(TextConstants.loginSignIn), findsNothing);
+    expect(find.text(l10nEn.loginSignIn), findsNothing);
 
     // Let the reveal finish; the splash releases the first navigation.
     await tester.pumpAndSettle();
-    expect(find.text(TextConstants.loginSignIn), findsOneWidget);
+    expect(find.text(l10nEn.loginSignIn), findsOneWidget);
   });
 }

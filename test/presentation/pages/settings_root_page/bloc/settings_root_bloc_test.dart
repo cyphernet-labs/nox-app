@@ -28,14 +28,14 @@ void main() {
       'rejects an invalid charset immediately, without a server check',
       build: SettingsRootBloc.new,
       act: (bloc) => bloc.add(const SettingsRootEvent.nameChanged('bad name!')),
-      expect: () => [predicate<SettingsRootState>((s) => s.status == SettingsNameStatus.invalidCharset && s.nameError != null)],
+      expect: () => [predicate<SettingsRootState>((s) => s.status == SettingsNameStatus.invalidCharset)],
     );
 
     blocTest<SettingsRootBloc, SettingsRootState>(
       'an empty draft is not committable and shows no error',
       build: SettingsRootBloc.new,
       act: (bloc) => bloc.add(const SettingsRootEvent.nameChanged('')),
-      expect: () => [predicate<SettingsRootState>((s) => s.status == SettingsNameStatus.idle && !s.canSave && s.nameError == null)],
+      expect: () => [predicate<SettingsRootState>((s) => s.status == SettingsNameStatus.idle && !s.canSave)],
     );
 
     blocTest<SettingsRootBloc, SettingsRootState>(
@@ -56,7 +56,7 @@ void main() {
       wait: const Duration(milliseconds: 700),
       expect: () => [
         predicate<SettingsRootState>((s) => s.status == SettingsNameStatus.checking),
-        predicate<SettingsRootState>((s) => s.status == SettingsNameStatus.taken && s.nameError != null),
+        predicate<SettingsRootState>((s) => s.status == SettingsNameStatus.taken),
       ],
     );
 

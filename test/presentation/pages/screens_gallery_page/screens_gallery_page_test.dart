@@ -7,7 +7,7 @@ import 'package:nox_app/design/app_text_style_tokens.dart';
 import 'package:nox_app/design/theme/app_theme.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/general/constants.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/l10n/app_localizations.dart';
 import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
 import 'package:nox_app/presentation/pages/about_page/about_page.dart';
@@ -31,6 +31,8 @@ import 'package:nox_app/presentation/widgets/shell/tab_bar_shell_widget.dart';
 
 import '../../../utils/pump_app.dart';
 
+final l10nEn = AppLocalizationsEn();
+
 void main() {
   // The shell (4.1) + Chats list (5.1) reached from the gallery resolve ChatRepository from DI.
   setUpAll(() async {
@@ -47,7 +49,7 @@ void main() {
   testWidgets('lists the screen-map sections and screens', (tester) async {
     await pumpApp(tester, underTest());
 
-    expect(find.text(TextConstants.screensGalleryTitle), findsOneWidget);
+    expect(find.text(l10nEn.screensGalleryTitle), findsOneWidget);
     // Top-of-list section headers + a screen row (title + id badge).
     expect(find.text('Launch'), findsOneWidget);
     expect(find.text('Onboarding'), findsOneWidget);
@@ -62,7 +64,7 @@ void main() {
     await pumpApp(tester, underTest());
 
     // M4 wires the last screens (5.2 / 5.3 / 5.4); the gallery has no stub left.
-    expect(find.text(TextConstants.comingSoon), findsNothing);
+    expect(find.text(l10nEn.comingSoon), findsNothing);
   });
 
   testWidgets('activated Chat thread row (5.2) opens ChatThreadPage', (tester) async {
@@ -107,7 +109,7 @@ void main() {
   testWidgets('theme toggle dispatches to AppRootBloc without throwing', (tester) async {
     await pumpApp(tester, underTest());
 
-    await tester.tap(find.byTooltip(TextConstants.tooltipToggleTheme));
+    await tester.tap(find.byTooltip(l10nEn.tooltipToggleTheme));
     await tester.pump();
 
     expect(tester.takeException(), isNull);

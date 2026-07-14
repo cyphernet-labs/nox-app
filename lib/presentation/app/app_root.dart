@@ -7,8 +7,8 @@ import 'package:nox_app/design/theme/app_theme.dart';
 import 'package:nox_app/domain/model/app/app_state_type.dart';
 import 'package:nox_app/general/app_language.dart';
 import 'package:nox_app/general/constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/general/locale_controller.dart';
-import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/l10n/app_localizations.dart';
 import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
 import 'package:nox_app/presentation/helpers/app_feedback_helper.dart';
@@ -88,7 +88,7 @@ class _AppRootState extends State<AppRoot> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final navigatorContext = _navigatorKey.currentContext;
       if (navigatorContext != null && navigatorContext.mounted) {
-        showAppSnackBar(navigatorContext, text: TextConstants.sessionExpiredMessage, error: true);
+        showAppSnackBar(navigatorContext, text: navigatorContext.l10n.sessionExpiredMessage, error: true);
       }
     });
   }
@@ -130,7 +130,7 @@ class _AppRootState extends State<AppRoot> {
                   return ValueListenableBuilder<AppLanguage>(
                     valueListenable: LocaleController.instance.language,
                     builder: (context, _, _) => MaterialApp(
-                      title: TextConstants.appName,
+                      onGenerateTitle: (context) => context.l10n.appName,
                       navigatorKey: _navigatorKey,
                       theme: AppTheme.light(),
                       darkTheme: AppTheme.dark(),

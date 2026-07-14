@@ -21,10 +21,4 @@ abstract class CreateChatState with _$CreateChatState {
   bool get isSubmitting => status == CreateChatStatus.submitting;
 
   bool get canSubmit => status == CreateChatStatus.valid;
-
-  String? get errorText {
-    if (status == CreateChatStatus.taken) return TextConstants.nameTakenError;
-    if (networkError) return TextConstants.createChatNetworkError;
-    return null;
-  }
 }

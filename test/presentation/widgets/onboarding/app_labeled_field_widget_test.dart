@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/widgets/onboarding/app_labeled_field_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_spinner_widget.dart';
 
 import '../../../utils/pump_app.dart';
+
+final l10nEn = AppLocalizationsEn();
 
 void main() {
   testWidgets('shows label, counter and error text', (tester) async {
@@ -13,16 +15,11 @@ void main() {
 
     await pumpApp(
       tester,
-      AppLabeledFieldWidget(
-        controller: controller,
-        label: TextConstants.usernameLabel,
-        maxLength: 32,
-        errorText: TextConstants.nameTakenError,
-      ),
+      AppLabeledFieldWidget(controller: controller, label: l10nEn.usernameLabel, maxLength: 32, errorText: l10nEn.nameTakenError),
     );
 
-    expect(find.text(TextConstants.usernameLabel), findsWidgets);
-    expect(find.text(TextConstants.nameTakenError), findsOneWidget);
+    expect(find.text(l10nEn.usernameLabel), findsWidgets);
+    expect(find.text(l10nEn.nameTakenError), findsOneWidget);
     expect(find.text('3/32'), findsOneWidget);
   });
 
@@ -33,12 +30,7 @@ void main() {
 
     await pumpApp(
       tester,
-      AppLabeledFieldWidget(
-        controller: controller,
-        label: TextConstants.createChatNameLabel,
-        maxLength: 64,
-        onChanged: (value) => last = value,
-      ),
+      AppLabeledFieldWidget(controller: controller, label: l10nEn.createChatNameLabel, maxLength: 64, onChanged: (value) => last = value),
     );
 
     await tester.enterText(find.byType(TextField), 'hi');
@@ -51,7 +43,7 @@ void main() {
 
     await pumpApp(
       tester,
-      AppLabeledFieldWidget(controller: controller, label: TextConstants.usernameLabel, maxLength: 32, checking: true),
+      AppLabeledFieldWidget(controller: controller, label: l10nEn.usernameLabel, maxLength: 32, checking: true),
       settle: false,
     );
 

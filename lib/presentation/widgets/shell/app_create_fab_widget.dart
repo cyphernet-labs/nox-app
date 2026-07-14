@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 
 /// The docked "+" FAB (create chat) that cradles into the bottom-bar notch.
@@ -20,7 +20,7 @@ class AppCreateFabWidget extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     return FloatingActionButton(
       onPressed: onPressed,
-      tooltip: TextConstants.tooltipCreateChat,
+      tooltip: context.l10n.tooltipCreateChat,
       backgroundColor: colorScheme.primaryContainer,
       foregroundColor: colorScheme.onPrimaryContainer,
       elevation: NoxElevation.level3,

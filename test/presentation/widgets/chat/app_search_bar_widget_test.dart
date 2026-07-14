@@ -1,15 +1,17 @@
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/widgets/chat/app_search_bar_widget.dart';
 
 import '../../../utils/pump_app.dart';
+
+final l10nEn = AppLocalizationsEn();
 
 void main() {
   group('AppSearchBarWidget', () {
     testWidgets('shows the hint when empty and the value when set', (tester) async {
       await pumpApp(tester, const AppSearchBarWidget());
-      expect(find.text(TextConstants.searchHint), findsOneWidget);
+      expect(find.text(l10nEn.searchHint), findsOneWidget);
 
       await pumpApp(tester, const AppSearchBarWidget(value: 'teal'));
       expect(find.text('teal'), findsOneWidget);
@@ -30,7 +32,7 @@ void main() {
       final semantics = tester
           .widgetList<Semantics>(find.descendant(of: find.byType(AppSearchBarWidget), matching: find.byType(Semantics)))
           .firstWhere((s) => s.properties.button ?? false);
-      expect(semantics.properties.label, TextConstants.searchHint);
+      expect(semantics.properties.label, l10nEn.searchHint);
     });
   });
 }

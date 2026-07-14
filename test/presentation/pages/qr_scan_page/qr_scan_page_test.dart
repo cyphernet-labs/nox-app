@@ -3,12 +3,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:nox_app/domain/model/qr/camera_permission_status.dart';
 import 'package:nox_app/general/nox_qr_envelope.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/pages/qr_scan_page/bloc/qr_scan_bloc.dart';
 import 'package:nox_app/presentation/pages/qr_scan_page/qr_scan_page.dart';
 import 'package:nox_app/presentation/widgets/qr/app_qr_overlay_widget.dart';
 
 import '../../../utils/pump_app.dart';
+
+final l10nEn = AppLocalizationsEn();
 
 void main() {
   group('demo (gallery) controls', () {
@@ -16,9 +18,9 @@ void main() {
       await pumpApp(tester, const QrScanPage(demo: true));
 
       expect(find.byType(AppQrOverlayWidget), findsOneWidget);
-      expect(find.text(TextConstants.qrEnterManually), findsOneWidget);
-      expect(find.byTooltip(TextConstants.tooltipFlashlight), findsOneWidget);
-      expect(find.byTooltip(TextConstants.tooltipSwitchCamera), findsOneWidget);
+      expect(find.text(l10nEn.qrEnterManually), findsOneWidget);
+      expect(find.byTooltip(l10nEn.tooltipFlashlight), findsOneWidget);
+      expect(find.byTooltip(l10nEn.tooltipSwitchCamera), findsOneWidget);
     });
 
     testWidgets('an invalid QR shows a snackbar and keeps scanning', (tester) async {
@@ -28,14 +30,14 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 750));
 
-      expect(find.text(TextConstants.qrInvalidSnackbar), findsOneWidget);
+      expect(find.text(l10nEn.qrInvalidSnackbar), findsOneWidget);
       expect(find.byType(AppQrOverlayWidget), findsOneWidget);
     });
 
     testWidgets('toggling the torch does not throw', (tester) async {
       await pumpApp(tester, const QrScanPage(demo: true));
 
-      await tester.tap(find.byTooltip(TextConstants.tooltipFlashlight));
+      await tester.tap(find.byTooltip(l10nEn.tooltipFlashlight));
       await tester.pump();
 
       expect(tester.takeException(), isNull);
@@ -96,7 +98,7 @@ void main() {
 
       await tester.tap(find.text('open'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text(TextConstants.qrEnterManually));
+      await tester.tap(find.text(l10nEn.qrEnterManually));
       await tester.pumpAndSettle();
 
       expect(find.byType(QrScanPage), findsNothing);

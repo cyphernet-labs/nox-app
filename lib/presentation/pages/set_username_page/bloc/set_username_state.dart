@@ -18,10 +18,4 @@ abstract class SetUsernameState with _$SetUsernameState {
 
   /// `Done` enabled only for a valid (or the pristine prefilled) name.
   bool get canSubmit => status == UsernameStatus.valid || status == UsernameStatus.prefilled;
-
-  String? get errorText => switch (status) {
-    UsernameStatus.invalidCharset => TextConstants.usernameCharsetError,
-    UsernameStatus.taken || UsernameStatus.raceTaken => TextConstants.nameTakenError,
-    _ => null,
-  };
 }

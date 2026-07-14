@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/pages/chat_thread_page/chat_thread_page.dart';
 import 'package:nox_app/presentation/pages/chats_list_page/chats_list_page.dart';
 import 'package:nox_app/presentation/widgets/chat/app_chat_item_widget.dart';
@@ -12,6 +12,8 @@ import 'package:nox_app/presentation/widgets/shell/app_list_detail_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_wordmark_widget.dart';
 
 import '../../../utils/pump_app.dart';
+
+final l10nEn = AppLocalizationsEn();
 
 void main() {
   setUpAll(() async {
@@ -62,7 +64,7 @@ void main() {
       await tester.enterText(find.byType(AppSearchFieldWidget), 'zzzznomatch');
       await tester.pumpAndSettle();
 
-      expect(find.text(TextConstants.chatsSearchEmpty), findsOneWidget);
+      expect(find.text(l10nEn.chatsSearchEmpty), findsOneWidget);
       expect(find.byType(AppChatItemWidget), findsNothing);
     });
   });
@@ -78,7 +80,7 @@ void main() {
       await pumpDesktop(tester);
 
       expect(find.byType(AppListDetailWidget), findsOneWidget);
-      expect(find.text(TextConstants.chatsNoSelectionTitle), findsOneWidget);
+      expect(find.text(l10nEn.chatsNoSelectionTitle), findsOneWidget);
     });
 
     testWidgets('selecting a row loads the real thread pane without a push', (tester) async {
@@ -88,7 +90,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // No-selection placeholder is gone (the thread pane swapped) and no push happened.
-      expect(find.text(TextConstants.chatsNoSelectionTitle), findsNothing);
+      expect(find.text(l10nEn.chatsNoSelectionTitle), findsNothing);
       expect(find.byType(ChatsListPage), findsOneWidget);
       expect(find.byType(ChatThreadPage), findsNothing); // pane swap, not a push
       expect(find.byType(AppThreadViewWidget), findsOneWidget);

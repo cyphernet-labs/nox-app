@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/pages/about_page/about_body.dart';
 import 'package:nox_app/presentation/pages/settings_root_page/settings_root_page.dart';
 import 'package:nox_app/presentation/widgets/settings/app_identity_card_widget.dart';
@@ -10,6 +10,8 @@ import 'package:nox_app/presentation/widgets/shell/app_navigation_rail_widget.da
 import 'package:nox_app/presentation/widgets/shell/tab_bar_shell_widget.dart';
 
 import '../../../utils/pump_app.dart';
+
+final l10nEn = AppLocalizationsEn();
 
 void main() {
   setUpAll(() async {
@@ -39,7 +41,7 @@ void main() {
       await pumpWide(tester);
 
       expect(find.byType(AppNavigationRailWidget), findsOneWidget);
-      expect(find.byTooltip(TextConstants.settingsAccountTitle), findsOneWidget);
+      expect(find.byTooltip(l10nEn.settingsAccountTitle), findsOneWidget);
     });
 
     testWidgets('tapping the avatar switches to Settings and lands on the Account section', (tester) async {
@@ -47,17 +49,17 @@ void main() {
 
       // Drive Settings to a non-Account section, then return to Chats, so the jump
       // has something to undo (proves it lands on Account, not just switches tabs).
-      await tester.tap(find.descendant(of: find.byType(AppNavigationRailWidget), matching: find.text(TextConstants.settings)));
+      await tester.tap(find.descendant(of: find.byType(AppNavigationRailWidget), matching: find.text(l10nEn.settings)));
       await tester.pumpAndSettle();
-      await tester.tap(find.text(TextConstants.settingsAboutTitle));
+      await tester.tap(find.text(l10nEn.settingsAboutTitle));
       await tester.pumpAndSettle();
       expect(find.byType(AboutBody), findsOneWidget);
 
-      await tester.tap(find.descendant(of: find.byType(AppNavigationRailWidget), matching: find.text(TextConstants.chats)));
+      await tester.tap(find.descendant(of: find.byType(AppNavigationRailWidget), matching: find.text(l10nEn.chats)));
       await tester.pumpAndSettle();
 
       // Tap the account avatar → Settings becomes active AND the section resets to Account.
-      await tester.tap(find.byTooltip(TextConstants.settingsAccountTitle));
+      await tester.tap(find.byTooltip(l10nEn.settingsAccountTitle));
       await tester.pumpAndSettle();
 
       expect(settingsTabOpacity(tester), 1.0); // Settings tab is now the active one
@@ -74,7 +76,7 @@ void main() {
       await pumpApp(tester, const TabBarShell());
 
       expect(find.byType(AppNavigationRailWidget), findsNothing);
-      expect(find.byTooltip(TextConstants.settingsAccountTitle), findsNothing);
+      expect(find.byTooltip(l10nEn.settingsAccountTitle), findsNothing);
     });
   });
 }

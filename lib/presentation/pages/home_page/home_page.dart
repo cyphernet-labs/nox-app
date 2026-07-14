@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/app/widgets/app_theme_toggle.dart';
 import 'package:nox_app/presentation/pages/screens_gallery_page/screens_gallery_page.dart';
 import 'package:nox_app/presentation/pages/ui_kit_page/ui_kit_page.dart';
@@ -40,22 +40,19 @@ class HomePage extends StatelessWidget {
                 child: AppIconWidget(NoxIcons.forumFill, size: _heroGlyphSize, color: colorScheme.onPrimaryContainer),
               ),
               SizedBox(height: AppSpacingTokens.s24),
-              Text(TextConstants.uiKitTitle, style: textTheme.headlineSmall?.copyWith(color: colorScheme.onSurface)),
+              Text(context.l10n.uiKitTitle, style: textTheme.headlineSmall?.copyWith(color: colorScheme.onSurface)),
               SizedBox(height: AppSpacingTokens.s8),
               Text(
-                TextConstants.uiKitSubtitle,
+                context.l10n.uiKitSubtitle,
                 textAlign: TextAlign.center,
                 style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
               ),
               SizedBox(height: AppSpacingTokens.s32),
-              FilledButton(
-                onPressed: () => Navigator.of(context).push(UiKitPage.route()),
-                child: const Text(TextConstants.actionOpenUiKit),
-              ),
+              FilledButton(onPressed: () => Navigator.of(context).push(UiKitPage.route()), child: Text(context.l10n.actionOpenUiKit)),
               SizedBox(height: AppSpacingTokens.s16),
               OutlinedButton(
                 onPressed: () => Navigator.of(context).push(ScreensGalleryPage.route()),
-                child: const Text(TextConstants.actionOpenScreens),
+                child: Text(context.l10n.actionOpenScreens),
               ),
             ],
           ),

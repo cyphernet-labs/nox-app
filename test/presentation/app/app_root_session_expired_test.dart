@@ -3,9 +3,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/repository/app/auth_repository.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/app/app_root.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+final l10nEn = AppLocalizationsEn();
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -35,8 +37,8 @@ void main() {
     // has fully replaced the stack (exactly one snackbar over Login).
     await tester.pump(const Duration(milliseconds: 400));
 
-    expect(find.text(TextConstants.sessionExpiredMessage), findsOneWidget);
-    expect(find.text(TextConstants.loginSignIn), findsOneWidget);
+    expect(find.text(l10nEn.sessionExpiredMessage), findsOneWidget);
+    expect(find.text(l10nEn.loginSignIn), findsOneWidget);
 
     // Drain the snackbar auto-dismiss timer to avoid a pending-timer failure.
     await tester.pump(const Duration(seconds: 5));
@@ -50,7 +52,7 @@ void main() {
     await getIt<AuthRepository>().logout();
     await tester.pumpAndSettle();
 
-    expect(find.text(TextConstants.loginSignIn), findsOneWidget);
-    expect(find.text(TextConstants.sessionExpiredMessage), findsNothing);
+    expect(find.text(l10nEn.loginSignIn), findsOneWidget);
+    expect(find.text(l10nEn.sessionExpiredMessage), findsNothing);
   });
 }

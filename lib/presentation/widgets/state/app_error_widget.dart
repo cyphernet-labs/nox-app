@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 
 /// Error state: an error glyph + an optional message + an optional retry CTA.
@@ -28,13 +28,13 @@ class AppErrorWidget extends StatelessWidget {
             AppIconWidget(NoxIcons.error, size: _iconSize, color: colorScheme.onSurfaceVariant),
             SizedBox(height: AppSpacingTokens.s16),
             Text(
-              message ?? TextConstants.errorGeneralTitle,
+              message ?? context.l10n.errorGeneralTitle,
               textAlign: TextAlign.center,
               style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
             ),
             if (onTryAgain != null) ...[
               SizedBox(height: AppSpacingTokens.s16),
-              FilledButton(onPressed: onTryAgain, child: const Text(TextConstants.actionTryAgain)),
+              FilledButton(onPressed: onTryAgain, child: Text(context.l10n.actionTryAgain)),
             ],
           ],
         ),

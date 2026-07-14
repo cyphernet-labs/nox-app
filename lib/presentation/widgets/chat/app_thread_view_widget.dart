@@ -9,7 +9,7 @@ import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
 import 'package:nox_app/general/formatters/date_formatter.dart';
 import 'package:nox_app/general/formatters/file_size_formatter.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/pages/chat_thread_page/bloc/chat_thread_bloc.dart';
 import 'package:nox_app/presentation/widgets/chat/app_author_header_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_composer_widget.dart';
@@ -94,8 +94,7 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
           return Column(
             children: [
               if (widget.showHeader) AppThreadHeaderWidget(chat: widget.chat, onInfo: widget.onInfo ?? () {}),
-              if (state is Initialized && state.isOffline)
-                AppNoticeStripWidget(message: TextConstants.noConnection, icon: NoxIcons.wifiOff),
+              if (state is Initialized && state.isOffline) AppNoticeStripWidget(message: context.l10n.noConnection, icon: NoxIcons.wifiOff),
               Expanded(child: _body(context, state)),
               if (state is Initialized) _composerBar(state),
               if (kDebugMode && widget.demo) _scenarioControl(),
@@ -120,12 +119,12 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
     if (!initialized.hasMessages) {
       return Column(
         children: [
-          for (final m in all.where((m) => m.isSystem)) AppSystemLineWidget(text: TextConstants.systemChatCreated(m.authorLabel)),
+          for (final m in all.where((m) => m.isSystem)) AppSystemLineWidget(text: context.l10n.systemChatCreated(m.authorLabel)),
           Expanded(
             child: AppEmptyContentWidget(
               illustration: Assets.svg.illustrations.emptyMessages,
-              title: TextConstants.threadEmptyTitle,
-              message: TextConstants.threadEmptyMessage,
+              title: context.l10n.threadEmptyTitle,
+              message: context.l10n.threadEmptyMessage,
             ),
           ),
         ],
@@ -134,7 +133,7 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
 
     // Build lightweight row descriptors once (oldest → newest), then reverse for the
     // reverse: true list and materialize each widget lazily in itemBuilder.
-    final rows = _rows(all, initialized.currentId).reversed.toList();
+    final rows = _rows(context, all, initialized.currentId).reversed.toList();
     final showLoadingOlder = initialized.loadingInProgress && rows.isNotEmpty;
 
     return ListView.builder(
@@ -153,7 +152,7 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
 
   /// Chronological row descriptors: system line, date separators, author headers,
   /// message rows. Pure data — widgets are built lazily by [_buildRow].
-  List<_ThreadRow> _rows(List<MessageModel> all, String currentId) {
+  List<_ThreadRow> _rows(BuildContext context, List<MessageModel> all, String currentId) {
     final rows = <_ThreadRow>[];
     String? lastDay;
     String? lastOtherAuthorId;
@@ -164,7 +163,7 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
       }
       final day = '${m.sentAt.year}-${m.sentAt.month}-${m.sentAt.day}';
       if (day != lastDay) {
-        rows.add(_DateRow(DateFormatter.daySeparator(m.sentAt)));
+        rows.add(_DateRow(DateFormatter.daySeparator(m.sentAt, l10n: context.l10n)));
         lastDay = day;
         lastOtherAuthorId = null;
       }
@@ -178,7 +177,7 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
 
   Widget _buildRow(BuildContext context, _ThreadRow row) {
     return switch (row) {
-      _SystemRow(:final label) => AppSystemLineWidget(text: TextConstants.systemChatCreated(label)),
+      _SystemRow(:final label) => AppSystemLineWidget(text: context.l10n.systemChatCreated(label)),
       _DateRow(:final label) => AppDateSeparatorWidget(label: label),
       _AuthorRow(:final label) => AppAuthorHeaderWidget(label: label),
       _MessageRow(:final message, :final isOwn) => _bubble(context, message, isOwn),
@@ -205,7 +204,7 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
     Widget bubble = AppMessageBubbleWidget(isOwn: isOwn, text: m.text, time: DateFormatter.time(m.sentAt), status: m.status, file: file);
     if (isOwn && m.status == MessageStatus.error) {
       bubble = Tooltip(
-        message: TextConstants.tooltipRetry,
+        message: context.l10n.tooltipRetry,
         child: GestureDetector(onTap: () => _bloc.add(ChatThreadEvent.sendRetried(m.id)), child: bubble),
       );
     }

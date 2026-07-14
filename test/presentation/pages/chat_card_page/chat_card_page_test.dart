@@ -4,7 +4,7 @@ import 'package:injectable/injectable.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/general/constants.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/pages/chat_card_page/bloc/chat_card_bloc.dart';
 import 'package:nox_app/presentation/pages/chat_card_page/chat_card_page.dart';
 import 'package:nox_app/presentation/pages/file_view_page/file_view_page.dart';
@@ -14,6 +14,8 @@ import 'package:nox_app/presentation/widgets/primitives/app_file_glyph_widget.da
 import '../../../utils/pump_app.dart';
 
 ChatModel _sampleChat() => ChatModel(id: 'chat_0', name: 'Design crit', lastMessagePreview: '', lastMessageAt: DateTime(2024, 1, 1));
+
+final l10nEn = AppLocalizationsEn();
 
 void main() {
   setUpAll(() async {
@@ -42,7 +44,7 @@ void main() {
       await pumpMobile(tester);
 
       expect(find.text('Design crit'), findsWidgets);
-      expect(find.text(TextConstants.filesSectionTitle), findsOneWidget);
+      expect(find.text(l10nEn.filesSectionTitle), findsOneWidget);
       expect(find.byType(AppSegmentedWidget<FilesViewMode>), findsOneWidget);
       expect(find.byType(AppFileGlyphWidget), findsWidgets);
     });
@@ -50,7 +52,7 @@ void main() {
     testWidgets('switching to Grid keeps the files visible', (tester) async {
       await pumpMobile(tester);
 
-      await tester.tap(find.text(TextConstants.filesViewGrid));
+      await tester.tap(find.text(l10nEn.filesViewGrid));
       await tester.pumpAndSettle();
 
       expect(find.byType(AppFileGlyphWidget), findsWidgets);
@@ -72,7 +74,7 @@ void main() {
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await pumpApp(tester, ChatCardPage(chat: _sampleChat()));
 
-      expect(find.text(TextConstants.chatInfoTitle), findsOneWidget);
+      expect(find.text(l10nEn.chatInfoTitle), findsOneWidget);
       expect(find.byType(AppFileGlyphWidget), findsWidgets);
     });
   });

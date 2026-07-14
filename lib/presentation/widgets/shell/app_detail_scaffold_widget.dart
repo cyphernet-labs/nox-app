@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/general/constants.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_splash_hairline_widget.dart';
 
@@ -38,7 +38,7 @@ class AppDetailScaffoldWidget extends StatelessWidget {
         return Scaffold(
           appBar: AppBar(
             leading: IconButton(
-              tooltip: TextConstants.tooltipBack,
+              tooltip: context.l10n.tooltipBack,
               icon: AppIconWidget(NoxIcons.arrowBack),
               onPressed: () => Navigator.of(context).maybePop(),
             ),

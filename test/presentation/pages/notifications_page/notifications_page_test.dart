@@ -1,16 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/pages/notifications_page/notifications_page.dart';
 import 'package:nox_app/presentation/widgets/settings/app_info_banner_widget.dart';
 
 import '../../../utils/pump_app.dart';
 
+final l10nEn = AppLocalizationsEn();
+
 void main() {
   testWidgets('push switch is on by default with no permission banner', (tester) async {
     await pumpApp(tester, const NotificationsPage());
 
-    expect(find.text(TextConstants.notificationsPushTitle), findsOneWidget);
+    expect(find.text(l10nEn.notificationsPushTitle), findsOneWidget);
     expect(find.byType(AppInfoBannerWidget), findsNothing);
 
     final row = tester.widget<SwitchListTile>(find.byType(SwitchListTile));

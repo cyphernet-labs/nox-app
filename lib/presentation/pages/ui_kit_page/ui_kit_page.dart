@@ -3,7 +3,7 @@ import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/nox_icons.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/app/widgets/app_theme_toggle.dart';
 import 'package:nox_app/presentation/helpers/app_feedback_helper.dart';
 import 'package:nox_app/presentation/widgets/chat/app_chat_item_widget.dart';
@@ -40,11 +40,7 @@ class UiKitPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
-      appBar: AppBar(
-        title: const Text(TextConstants.uiKitTitle),
-        bottom: const AppSplashHairlineWidget(),
-        actions: const [AppThemeToggle()],
-      ),
+      appBar: AppBar(title: Text(context.l10n.uiKitTitle), bottom: const AppSplashHairlineWidget(), actions: const [AppThemeToggle()]),
       body: ListView(
         padding: EdgeInsets.all(AppSpacingTokens.s16),
         children: [
@@ -118,7 +114,7 @@ class UiKitPage extends StatelessWidget {
                 ),
                 Builder(
                   builder: (context) => FilledButton(
-                    onPressed: () => showAppBanner(context, text: TextConstants.noConnection),
+                    onPressed: () => showAppBanner(context, text: context.l10n.noConnection),
                     child: const Text('Banner'),
                   ),
                 ),

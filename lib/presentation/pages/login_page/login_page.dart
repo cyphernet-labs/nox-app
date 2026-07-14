@@ -5,8 +5,8 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/general/constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/general/qr_scanner_capability.dart';
-import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/pages/base/base_state_page.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page_params.dart';
@@ -150,7 +150,7 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
             Expanded(
               child: SingleChildScrollView(
                 padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s24, AppSpacingTokens.s16, 0),
-                child: _idField(state),
+                child: _idField(context, state),
               ),
             ),
             Padding(
@@ -173,7 +173,7 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  _idField(state),
+                  _idField(context, state),
                   SizedBox(height: AppSpacingTokens.s24),
                   _actions(context, state),
                 ],
@@ -185,16 +185,24 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
     );
   }
 
-  Widget _idField(LoginState state) {
+  Widget _idField(BuildContext context, LoginState state) {
     return AppIdFieldWidget(
       controller: _controller,
       canPaste: state.canPaste,
       onPaste: _paste,
       onChanged: (value) => _bloc.add(LoginEvent.idChanged(value)),
-      errorText: state.errorText,
+      errorText: _errorText(context, state.status),
       enabled: !state.isLoading,
     );
   }
+
+  /// Resolves the inline ID-field error copy from the current status. Lives on the
+  /// widget (not the BLoC state) so it can read locale-aware strings via context.
+  String? _errorText(BuildContext context, LoginStatus status) => switch (status) {
+    LoginStatus.errorFormat => context.l10n.loginInvalidId,
+    LoginStatus.errorNetwork => context.l10n.loginNetworkError,
+    _ => null,
+  };
 
   Widget _actions(BuildContext context, LoginState state) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -207,7 +215,7 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
             onPressed: state.canSubmit ? _submit : null,
             child: state.isLoading
                 ? AppSpinnerWidget(size: AppDimensionTokens.icon.md, color: colorScheme.onPrimary)
-                : const Text(TextConstants.loginSignIn),
+                : Text(context.l10n.loginSignIn),
           ),
         ),
         // `Scan QR` is shown only where the camera scanner exists (iOS/Android/macOS);
@@ -216,7 +224,7 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
           SizedBox(height: AppSpacingTokens.s8),
           SizedBox(
             width: double.infinity,
-            child: TextButton(onPressed: state.isLoading ? null : _scanQr, child: const Text(TextConstants.loginScanQr)),
+            child: TextButton(onPressed: state.isLoading ? null : _scanQr, child: Text(context.l10n.loginScanQr)),
           ),
         ],
         if (kDebugMode && widget.demo) _OutcomeControl(value: _outcome, onChanged: (value) => setState(() => _outcome = value)),

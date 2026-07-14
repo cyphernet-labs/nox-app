@@ -4,7 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/general/constants.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/pages/base/base_state_page.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page_params.dart';
@@ -111,7 +111,7 @@ class _SetUsernamePageState extends BaseStatePage<SetUsernamePage> {
             Expanded(
               child: SingleChildScrollView(
                 padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s24, AppSpacingTokens.s16, 0),
-                child: _field(state),
+                child: _field(context, state),
               ),
             ),
             Padding(padding: EdgeInsets.all(AppSpacingTokens.s16), child: _actions(context, state)),
@@ -131,7 +131,7 @@ class _SetUsernamePageState extends BaseStatePage<SetUsernamePage> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  _field(state),
+                  _field(context, state),
                   SizedBox(height: AppSpacingTokens.s24),
                   _actions(context, state),
                 ],
@@ -143,20 +143,26 @@ class _SetUsernamePageState extends BaseStatePage<SetUsernamePage> {
     );
   }
 
-  Widget _field(SetUsernameState state) {
+  Widget _field(BuildContext context, SetUsernameState state) {
     return AppLabeledFieldWidget(
       controller: _controller,
       focusNode: _focusNode,
-      label: TextConstants.usernameLabel,
+      label: context.l10n.usernameLabel,
       maxLength: 32,
-      helperText: TextConstants.usernameHelper,
-      placeholder: TextConstants.usernameHint,
-      errorText: state.errorText,
+      helperText: context.l10n.usernameHelper,
+      placeholder: context.l10n.usernameHint,
+      errorText: _errorText(context, state.status),
       checking: state.isChecking,
       enabled: !state.isSubmitting,
       onChanged: (value) => _bloc.add(SetUsernameEvent.nameChanged(value)),
     );
   }
+
+  String? _errorText(BuildContext context, UsernameStatus status) => switch (status) {
+    UsernameStatus.invalidCharset => context.l10n.usernameCharsetError,
+    UsernameStatus.taken || UsernameStatus.raceTaken => context.l10n.nameTakenError,
+    _ => null,
+  };
 
   Widget _actions(BuildContext context, SetUsernameState state) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -169,10 +175,10 @@ class _SetUsernamePageState extends BaseStatePage<SetUsernamePage> {
             onPressed: state.canSubmit && !state.isSubmitting ? _done : null,
             child: state.isSubmitting
                 ? AppSpinnerWidget(size: AppDimensionTokens.icon.md, color: colorScheme.onPrimary)
-                : const Text(TextConstants.actionDone),
+                : Text(context.l10n.actionDone),
           ),
         ),
-        TextButton(onPressed: state.isSubmitting ? null : _skip, child: const Text(TextConstants.actionSkip)),
+        TextButton(onPressed: state.isSubmitting ? null : _skip, child: Text(context.l10n.actionSkip)),
         if (kDebugMode && widget.demo) _OutcomeControl(value: _outcome, onChanged: (value) => setState(() => _outcome = value)),
       ],
     );

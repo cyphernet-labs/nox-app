@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/app/widgets/app_theme_toggle.dart';
 import 'package:nox_app/presentation/pages/about_page/about_page.dart';
 import 'package:nox_app/presentation/pages/appearance_page/appearance_page.dart';
@@ -45,7 +45,7 @@ class ScreensGalleryPage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text(TextConstants.screensGalleryTitle),
+        title: Text(context.l10n.screensGalleryTitle),
         bottom: const AppSplashHairlineWidget(),
         actions: const [AppThemeToggle()],
       ),
@@ -104,7 +104,7 @@ class _ScreenRow extends StatelessWidget {
       title: Text(entry.title),
       trailing: available
           ? null
-          : Text(TextConstants.comingSoon, style: textTheme.labelMedium?.copyWith(color: colorScheme.onSurfaceVariant)),
+          : Text(context.l10n.comingSoon, style: textTheme.labelMedium?.copyWith(color: colorScheme.onSurfaceVariant)),
     );
   }
 }

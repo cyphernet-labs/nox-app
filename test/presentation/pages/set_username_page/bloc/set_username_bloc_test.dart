@@ -8,7 +8,7 @@ void main() {
       'rejects an invalid charset immediately, without a server check',
       build: () => SetUsernameBloc(demo: true),
       act: (bloc) => bloc.add(const SetUsernameEvent.nameChanged('bad name!')),
-      expect: () => [predicate<SetUsernameState>((s) => s.status == UsernameStatus.invalidCharset && s.errorText != null)],
+      expect: () => [predicate<SetUsernameState>((s) => s.status == UsernameStatus.invalidCharset)],
     );
 
     blocTest<SetUsernameBloc, SetUsernameState>(
@@ -36,7 +36,7 @@ void main() {
       wait: const Duration(milliseconds: 700),
       expect: () => [
         predicate<SetUsernameState>((s) => s.status == UsernameStatus.checking),
-        predicate<SetUsernameState>((s) => s.status == UsernameStatus.taken && s.errorText != null),
+        predicate<SetUsernameState>((s) => s.status == UsernameStatus.taken),
       ],
     );
 
@@ -69,7 +69,7 @@ void main() {
       wait: const Duration(milliseconds: 500),
       expect: () => [
         predicate<SetUsernameState>((s) => s.status == UsernameStatus.submitting),
-        predicate<SetUsernameState>((s) => s.status == UsernameStatus.raceTaken && s.errorText != null),
+        predicate<SetUsernameState>((s) => s.status == UsernameStatus.raceTaken),
       ],
     );
 

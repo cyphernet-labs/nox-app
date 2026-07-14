@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/app_theme.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_bottom_bar_widget.dart';
 
 import '../../../utils/pump_app.dart';
+
+final l10nEn = AppLocalizationsEn();
 
 void main() {
   group('AppBottomBarWidget', () {
@@ -17,15 +19,15 @@ void main() {
     testWidgets('renders both tabs', (tester) async {
       await pumpApp(tester, AppBottomBarWidget(active: AppTab.chats, onSelect: (_) {}));
 
-      expect(find.text(TextConstants.chats), findsOneWidget);
-      expect(find.text(TextConstants.settings), findsOneWidget);
+      expect(find.text(l10nEn.chats), findsOneWidget);
+      expect(find.text(l10nEn.settings), findsOneWidget);
     });
 
     testWidgets('reports the tapped tab', (tester) async {
       AppTab? picked;
       await pumpApp(tester, AppBottomBarWidget(active: AppTab.chats, onSelect: (tab) => picked = tab));
 
-      await tester.tap(find.text(TextConstants.settings));
+      await tester.tap(find.text(l10nEn.settings));
       expect(picked, AppTab.settings);
     });
 
@@ -34,11 +36,11 @@ void main() {
 
       final colorScheme = AppTheme.light().colorScheme;
 
-      final activeIcon = iconAbove(tester, TextConstants.chats);
+      final activeIcon = iconAbove(tester, l10nEn.chats);
       expect(activeIcon.icon.path, NoxIcons.forumFill.path);
       expect(activeIcon.color, colorScheme.primary);
 
-      final inactiveIcon = iconAbove(tester, TextConstants.settings);
+      final inactiveIcon = iconAbove(tester, l10nEn.settings);
       expect(inactiveIcon.icon.path, NoxIcons.settings.path);
       expect(inactiveIcon.color, colorScheme.onSurfaceVariant);
     });
@@ -47,7 +49,7 @@ void main() {
       AppTab? picked;
       await pumpApp(tester, AppBottomBarWidget(active: AppTab.chats, onSelect: (tab) => picked = tab));
 
-      await tester.tap(find.text(TextConstants.chats));
+      await tester.tap(find.text(l10nEn.chats));
       expect(picked, AppTab.chats);
     });
   });

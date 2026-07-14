@@ -9,7 +9,7 @@ import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/feature_flags.dart';
 import 'package:nox_app/general/formatters/date_formatter.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/presentation/pages/base/base_state_page.dart';
 import 'package:nox_app/presentation/pages/chat_card_page/chat_card_page.dart';
@@ -138,7 +138,7 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
         leading: widget.inShell
             ? null
             : IconButton(
-                tooltip: TextConstants.tooltipBack,
+                tooltip: context.l10n.tooltipBack,
                 icon: AppIconWidget(NoxIcons.arrowBack),
                 onPressed: () => Navigator.of(context).maybePop(),
               ),
@@ -186,13 +186,13 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
         children: [
           if (!widget.inShell)
             IconButton(
-              tooltip: TextConstants.tooltipBack,
+              tooltip: context.l10n.tooltipBack,
               icon: AppIconWidget(NoxIcons.arrowBack),
               onPressed: () => Navigator.of(context).maybePop(),
             ),
           // Pane title (the wordmark belongs only to the desktop window strip).
           Expanded(
-            child: Text(TextConstants.chats, style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
+            child: Text(context.l10n.chats, style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
           ),
         ],
       ),
@@ -210,8 +210,8 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
       // by search) → the illustrated empty state, not a stale thread placeholder.
       content = AppEmptyContentWidget(
         illustration: Assets.svg.illustrations.emptyChats,
-        title: TextConstants.chatsNoSelectionTitle,
-        message: TextConstants.chatsNoSelectionMessage,
+        title: context.l10n.chatsNoSelectionTitle,
+        message: context.l10n.chatsNoSelectionMessage,
       );
     } else {
       // Desktop list-detail: the real thread (5.2) loads in the pane (no push),
@@ -242,9 +242,9 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
 
   Widget _banners(BuildContext context, ChatsListState state) {
     if (state is! Initialized) return const SizedBox.shrink();
-    if (state.isOffline) return AppNoticeStripWidget(message: TextConstants.noConnection, icon: NoxIcons.wifiOff);
+    if (state.isOffline) return AppNoticeStripWidget(message: context.l10n.noConnection, icon: NoxIcons.wifiOff);
     if (state.hasLoadError) {
-      return const AppNoticeStripWidget(message: TextConstants.chatsLoadError);
+      return AppNoticeStripWidget(message: context.l10n.chatsLoadError);
     }
     return const SizedBox.shrink();
   }
@@ -265,7 +265,7 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
             key: ValueKey(chat.id),
             name: chat.name,
             preview: chat.lastMessagePreview,
-            time: DateFormatter.relative(chat.lastMessageAt),
+            time: DateFormatter.relative(chat.lastMessageAt, l10n: context.l10n),
             unread: chat.unreadCount,
             onTap: () => _onTapChat(chat, wide: wide),
           );
@@ -296,15 +296,15 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
                 child: Padding(
                   padding: EdgeInsets.only(top: AppSpacingTokens.s48),
                   child: Text(
-                    TextConstants.chatsSearchEmpty,
+                    context.l10n.chatsSearchEmpty,
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
                   ),
                 ),
               )
             : AppEmptyContentWidget(
                 illustration: Assets.svg.illustrations.emptyChats,
-                title: TextConstants.chatsEmptyTitle,
-                message: TextConstants.chatsEmptyMessage,
+                title: context.l10n.chatsEmptyTitle,
+                message: context.l10n.chatsEmptyMessage,
               ),
       ),
       separatorBuilder: (context, index) => const SizedBox.shrink(),

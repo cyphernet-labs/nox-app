@@ -56,7 +56,7 @@ void main() {
       expect: () => [
         predicate<LoginState>((s) => s.id == 'x'),
         predicate<LoginState>((s) => s.status == LoginStatus.loading),
-        predicate<LoginState>((s) => s.status == LoginStatus.errorNetwork && s.errorText != null),
+        predicate<LoginState>((s) => s.status == LoginStatus.errorNetwork),
       ],
     );
 

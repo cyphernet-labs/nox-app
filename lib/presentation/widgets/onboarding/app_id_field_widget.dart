@@ -3,7 +3,7 @@ import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/app_text_style_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 
 /// The mono, multi-line identifier input (Login 2.1) — a fixed ~120dp paste-target
@@ -67,8 +67,8 @@ class AppIdFieldWidget extends StatelessWidget {
                 keyboardType: TextInputType.multiline,
                 style: AppTextStyleTokens.monoBody(color: colorScheme.onSurface),
                 decoration: InputDecoration(
-                  labelText: TextConstants.loginIdLabel,
-                  hintText: TextConstants.loginIdHint,
+                  labelText: context.l10n.loginIdLabel,
+                  hintText: context.l10n.loginIdHint,
                   alignLabelWithHint: true,
                   contentPadding: EdgeInsets.fromLTRB(
                     AppSpacingTokens.s12,
@@ -84,7 +84,7 @@ class AppIdFieldWidget extends StatelessWidget {
                 top: AppSpacingTokens.s4,
                 right: AppSpacingTokens.s4,
                 child: IconButton(
-                  tooltip: TextConstants.actionPaste,
+                  tooltip: context.l10n.actionPaste,
                   // Also gate on `enabled`: during an in-flight sign-in a Paste tap
                   // would dispatch IdChanged, reset the loading state and let a second
                   // concurrent signIn start.

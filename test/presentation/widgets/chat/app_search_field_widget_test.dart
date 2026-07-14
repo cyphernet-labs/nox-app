@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/widgets/chat/app_search_field_widget.dart';
 
 import '../../../utils/pump_app.dart';
+
+final l10nEn = AppLocalizationsEn();
 
 void main() {
   group('AppSearchFieldWidget', () {
@@ -13,7 +15,7 @@ void main() {
       String? changed;
       await pumpApp(tester, AppSearchFieldWidget(controller: controller, onChanged: (value) => changed = value));
 
-      expect(find.text(TextConstants.searchHint), findsOneWidget);
+      expect(find.text(l10nEn.searchHint), findsOneWidget);
 
       await tester.enterText(find.byType(SearchBar), 'design');
       expect(changed, 'design');

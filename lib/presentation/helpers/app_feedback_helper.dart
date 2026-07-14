@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 
 /// Transient feedback (§9.11). The neutral palette + float behavior come from
@@ -44,7 +44,7 @@ void showAppBanner(BuildContext context, {required String text, SvgGenImage? ico
             messenger.hideCurrentMaterialBanner();
             onAction?.call();
           },
-          child: Text(actionLabel ?? TextConstants.actionDismiss),
+          child: Text(actionLabel ?? context.l10n.actionDismiss),
         ),
       ],
     ),

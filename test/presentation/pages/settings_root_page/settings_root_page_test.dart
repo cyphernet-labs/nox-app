@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
 import 'package:nox_app/presentation/pages/notifications_page/notifications_body.dart';
 import 'package:nox_app/presentation/pages/notifications_page/notifications_page.dart';
@@ -14,6 +14,8 @@ import 'package:nox_app/presentation/widgets/shell/app_list_detail_widget.dart';
 
 import '../../../utils/fake_session_repository.dart';
 import '../../../utils/pump_app.dart';
+
+final l10nEn = AppLocalizationsEn();
 
 void main() {
   // The identity card loads the user's id from the session spine on init.
@@ -38,10 +40,10 @@ void main() {
       await pumpMobile(tester);
 
       expect(find.byType(AppIdentityCardWidget), findsOneWidget);
-      expect(find.text(TextConstants.settingsNotificationsTitle), findsOneWidget);
-      expect(find.text(TextConstants.settingsAppearanceTitle), findsOneWidget);
-      expect(find.text(TextConstants.settingsAboutTitle), findsOneWidget);
-      expect(find.text(TextConstants.logoutRow), findsOneWidget);
+      expect(find.text(l10nEn.settingsNotificationsTitle), findsOneWidget);
+      expect(find.text(l10nEn.settingsAppearanceTitle), findsOneWidget);
+      expect(find.text(l10nEn.settingsAboutTitle), findsOneWidget);
+      expect(find.text(l10nEn.logoutRow), findsOneWidget);
     });
 
     testWidgets('Initial-loading shows a spinner in the ID position', (tester) async {
@@ -57,7 +59,7 @@ void main() {
     testWidgets('tapping a settings row opens the real subscreen (7.2)', (tester) async {
       await pumpMobile(tester);
 
-      await tester.tap(find.widgetWithText(ListTile, TextConstants.settingsNotificationsTitle));
+      await tester.tap(find.widgetWithText(ListTile, l10nEn.settingsNotificationsTitle));
       await tester.pumpAndSettle();
 
       expect(find.byType(NotificationsPage), findsOneWidget);
@@ -66,46 +68,46 @@ void main() {
     testWidgets('Copy puts the ID on the clipboard and shows a snackbar', (tester) async {
       await pumpMobile(tester);
 
-      await tester.tap(find.byTooltip(TextConstants.idCopyTooltip));
+      await tester.tap(find.byTooltip(l10nEn.idCopyTooltip));
       await tester.pump(); // snackbar in
       await tester.pump();
 
-      expect(find.text(TextConstants.copiedToClipboard), findsOneWidget);
+      expect(find.text(l10nEn.copiedToClipboard), findsOneWidget);
     });
 
     testWidgets('Show QR opens the brand-fixed light QR sheet', (tester) async {
       await pumpMobile(tester);
 
-      await tester.tap(find.byTooltip(TextConstants.idShowQrTooltip));
+      await tester.tap(find.byTooltip(l10nEn.idShowQrTooltip));
       await tester.pumpAndSettle();
 
       expect(find.byType(AppQrSurfaceWidget), findsOneWidget);
-      expect(find.text(TextConstants.qrSheetTitle), findsOneWidget);
+      expect(find.text(l10nEn.qrSheetTitle), findsOneWidget);
     });
 
     testWidgets('Show/Hide reveal is available on mobile', (tester) async {
       await pumpMobile(tester);
-      expect(find.byTooltip(TextConstants.idShowTooltip), findsOneWidget);
+      expect(find.byTooltip(l10nEn.idShowTooltip), findsOneWidget);
     });
 
     testWidgets('Log out opens a confirm dialog that Cancel dismisses', (tester) async {
       await pumpMobile(tester);
 
-      await tester.tap(find.widgetWithText(ListTile, TextConstants.logoutRow));
+      await tester.tap(find.widgetWithText(ListTile, l10nEn.logoutRow));
       await tester.pumpAndSettle();
-      expect(find.text(TextConstants.logoutDialogTitle), findsOneWidget);
+      expect(find.text(l10nEn.logoutDialogTitle), findsOneWidget);
 
-      await tester.tap(find.widgetWithText(TextButton, TextConstants.actionCancel));
+      await tester.tap(find.widgetWithText(TextButton, l10nEn.actionCancel));
       await tester.pumpAndSettle();
-      expect(find.text(TextConstants.logoutDialogTitle), findsNothing);
+      expect(find.text(l10nEn.logoutDialogTitle), findsNothing);
     });
 
     testWidgets('confirming Log out navigates to Splash (1.1)', (tester) async {
       await pumpMobile(tester);
 
-      await tester.tap(find.widgetWithText(ListTile, TextConstants.logoutRow));
+      await tester.tap(find.widgetWithText(ListTile, l10nEn.logoutRow));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(TextButton, TextConstants.logoutRow));
+      await tester.tap(find.widgetWithText(TextButton, l10nEn.logoutRow));
       await tester.pumpAndSettle();
 
       expect(find.byType(SplashPage), findsOneWidget);
@@ -114,7 +116,7 @@ void main() {
     testWidgets('blur reverts an invalid inline name-edit (not a one-way trap)', (tester) async {
       await pumpMobile(tester);
 
-      await tester.tap(find.byTooltip(TextConstants.settingsNameEditTooltip));
+      await tester.tap(find.byTooltip(l10nEn.settingsNameEditTooltip));
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextField), 'bad name!'); // invalid charset
       await tester.pump();
@@ -124,14 +126,14 @@ void main() {
 
       // Edit mode exited and the committed name is unchanged (the draft was reverted).
       expect(find.byType(TextField), findsNothing);
-      expect(find.byTooltip(TextConstants.settingsNameEditTooltip), findsOneWidget);
+      expect(find.byTooltip(l10nEn.settingsNameEditTooltip), findsOneWidget);
       expect(find.text('User7421'), findsOneWidget);
     });
 
     testWidgets('blur commits a valid inline name-edit', (tester) async {
       await pumpMobile(tester);
 
-      await tester.tap(find.byTooltip(TextConstants.settingsNameEditTooltip));
+      await tester.tap(find.byTooltip(l10nEn.settingsNameEditTooltip));
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextField), 'Freename'); // valid + free
       await tester.pumpAndSettle(); // debounce + availability check
@@ -161,7 +163,7 @@ void main() {
     testWidgets('selecting a menu item swaps the detail pane without a push', (tester) async {
       await pumpDesktop(tester);
 
-      await tester.tap(find.widgetWithText(ListTile, TextConstants.settingsNotificationsTitle));
+      await tester.tap(find.widgetWithText(ListTile, l10nEn.settingsNotificationsTitle));
       await tester.pumpAndSettle();
 
       expect(find.byType(NotificationsBody), findsOneWidget);
@@ -173,7 +175,7 @@ void main() {
     testWidgets('the raw ID is never revealable on desktop (no Show/Hide)', (tester) async {
       await pumpDesktop(tester);
 
-      expect(find.byTooltip(TextConstants.idShowTooltip), findsNothing);
+      expect(find.byTooltip(l10nEn.idShowTooltip), findsNothing);
       // Inline account QR is shown instead.
       expect(find.byType(AppQrSurfaceWidget), findsOneWidget);
     });

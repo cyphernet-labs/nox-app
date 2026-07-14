@@ -2,13 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/design/theme/nox_brand.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page.dart';
 import 'package:nox_app/presentation/pages/placeholder/route_placeholder_page.dart';
 import 'package:nox_app/presentation/pages/splash_page/splash_page.dart';
 import 'package:nox_app/presentation/widgets/shell/app_wordmark_widget.dart';
 
 import '../../../utils/pump_app.dart';
+
+final l10nEn = AppLocalizationsEn();
 
 void main() {
   testWidgets('Splash renders the brand logo + wordmark on the brand-fixed dark canvas', (tester) async {
@@ -45,6 +47,6 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(AppErrorPage), findsOneWidget);
-    expect(find.text(TextConstants.errorGeneralTitle), findsOneWidget);
+    expect(find.text(l10nEn.errorGeneralTitle), findsOneWidget);
   });
 }

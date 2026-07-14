@@ -3,7 +3,7 @@ import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/file_type.dart';
 
@@ -70,7 +70,7 @@ class AppFileChipWidget extends StatelessWidget {
           if (removable)
             IconButton(
               onPressed: onRemove,
-              tooltip: TextConstants.tooltipRemove,
+              tooltip: context.l10n.tooltipRemove,
               icon: AppIconWidget(NoxIcons.close, size: _removeIconSize, color: colorScheme.onSurfaceVariant),
             ),
         ],

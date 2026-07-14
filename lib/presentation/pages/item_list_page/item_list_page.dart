@@ -3,7 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:infinite_scroll_pagination/infinite_scroll_pagination.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/domain/model/item/item_model.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/pages/item_list_page/bloc/item_list_bloc.dart';
 
 /// Scaffold-DEMO verification harness on MOCK data (NOT a product feature — FR-013).
@@ -44,8 +44,8 @@ class _ItemListPageState extends State<ItemListPage> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text(TextConstants.errorGeneralTitle),
-                  TextButton(onPressed: () => _bloc.add(const ItemListEvent.initialize()), child: const Text(TextConstants.actionTryAgain)),
+                  Text(context.l10n.errorGeneralTitle),
+                  TextButton(onPressed: () => _bloc.add(const ItemListEvent.initialize()), child: Text(context.l10n.actionTryAgain)),
                 ],
               ),
             ),
@@ -56,7 +56,7 @@ class _ItemListPageState extends State<ItemListPage> {
                 itemBuilder: (context, item, index) => ListTile(key: ValueKey(item.id), title: Text(item.name), subtitle: Text(item.id)),
                 firstPageProgressIndicatorBuilder: (_) => const Center(child: CircularProgressIndicator()),
                 newPageProgressIndicatorBuilder: (_) => const Center(child: CircularProgressIndicator()),
-                noItemsFoundIndicatorBuilder: (_) => const Center(child: Text(TextConstants.noData)),
+                noItemsFoundIndicatorBuilder: (_) => Center(child: Text(context.l10n.noData)),
               ),
               separatorBuilder: (context, index) => Divider(height: AppDimensionTokens.border.hairline),
             ),

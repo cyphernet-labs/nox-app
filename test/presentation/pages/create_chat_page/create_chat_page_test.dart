@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/pages/create_chat_page/create_chat_page.dart';
 
 import '../../../utils/pump_app.dart';
 
+final l10nEn = AppLocalizationsEn();
+
 void main() {
-  Finder createButton() => find.widgetWithText(FilledButton, TextConstants.actionCreate);
+  Finder createButton() => find.widgetWithText(FilledButton, l10nEn.actionCreate);
 
   testWidgets('mobile: empty disables Create, a free name enables it', (tester) async {
     await pumpApp(tester, const CreateChatPage(), settle: false);
@@ -27,7 +29,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 700));
 
-    expect(find.text(TextConstants.nameTakenError), findsOneWidget);
+    expect(find.text(l10nEn.nameTakenError), findsOneWidget);
   });
 
   testWidgets('desktop: renders a modal dialog with Cancel and Create', (tester) async {
@@ -36,7 +38,7 @@ void main() {
 
     await pumpApp(tester, const CreateChatPage(), settle: false);
 
-    expect(find.widgetWithText(TextButton, TextConstants.actionCancel), findsOneWidget);
-    expect(find.widgetWithText(FilledButton, TextConstants.actionCreate), findsOneWidget);
+    expect(find.widgetWithText(TextButton, l10nEn.actionCancel), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, l10nEn.actionCreate), findsOneWidget);
   });
 }

@@ -7,7 +7,7 @@ import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/domain/model/qr/camera_permission_status.dart';
 import 'package:nox_app/presentation/pages/qr_scan_page/bloc/qr_scan_bloc.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/pages/chat_card_page/chat_card_page.dart';
 import 'package:nox_app/presentation/pages/chat_thread_page/chat_thread_page.dart';
 import 'package:nox_app/presentation/pages/chats_list_page/chats_list_page.dart';
@@ -31,6 +31,8 @@ import '../../utils/pump_app.dart';
 
 /// Cross-widget accessibility checks (FR-016): tap targets >= 48x48, icon-only
 /// actions expose a tooltip/semantics, and layout survives textScaler up to 2.0.
+final l10nEn = AppLocalizationsEn();
+
 void main() {
   // M3 screens (shell / chats list) resolve ChatRepository from DI.
   setUpAll(() async {
@@ -60,7 +62,7 @@ void main() {
       final size = tester.getSize(find.byType(FloatingActionButton));
       expect(size.width, greaterThanOrEqualTo(48));
       expect(size.height, greaterThanOrEqualTo(48));
-      expect(find.byTooltip(TextConstants.tooltipCreateChat), findsOneWidget);
+      expect(find.byTooltip(l10nEn.tooltipCreateChat), findsOneWidget);
     });
 
     testWidgets('bottom bar tab tap targets are >= 48x48', (tester) async {
@@ -78,8 +80,8 @@ void main() {
     testWidgets('composer actions expose tooltips/semantics', (tester) async {
       await pumpApp(tester, AppComposerWidget(controller: TextEditingController(), onSend: () {}, onAttach: () {}));
 
-      expect(find.byTooltip(TextConstants.tooltipAttachFile), findsOneWidget);
-      expect(find.byTooltip(TextConstants.tooltipSend), findsOneWidget);
+      expect(find.byTooltip(l10nEn.tooltipAttachFile), findsOneWidget);
+      expect(find.byTooltip(l10nEn.tooltipSend), findsOneWidget);
     });
 
     testWidgets('layout survives textScaler 2.0 without overflow', (tester) async {
@@ -161,8 +163,8 @@ void main() {
         ),
       );
 
-      expect(find.byTooltip(TextConstants.tooltipFlashlight), findsOneWidget);
-      expect(find.byTooltip(TextConstants.tooltipSwitchCamera), findsOneWidget);
+      expect(find.byTooltip(l10nEn.tooltipFlashlight), findsOneWidget);
+      expect(find.byTooltip(l10nEn.tooltipSwitchCamera), findsOneWidget);
     });
 
     testWidgets('M3 shell / settings / chats screens survive textScaler 2.0 without overflow', (tester) async {

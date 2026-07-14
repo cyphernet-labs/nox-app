@@ -3,7 +3,7 @@ import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_avatar_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 
@@ -57,7 +57,7 @@ class AppThreadHeaderWidget extends StatelessWidget {
                 ),
                 IconButton(
                   onPressed: onInfo,
-                  tooltip: TextConstants.tooltipChatInfo,
+                  tooltip: context.l10n.tooltipChatInfo,
                   icon: AppIconWidget(NoxIcons.folderOpen, color: colorScheme.onSurfaceVariant),
                 ),
               ],

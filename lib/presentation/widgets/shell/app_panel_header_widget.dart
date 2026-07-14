@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 
 /// Header row for an overlay panel (desktop side-sheet / lightbox): a title and a
@@ -29,7 +29,7 @@ class AppPanelHeaderWidget extends StatelessWidget {
               style: textTheme.titleMedium?.copyWith(color: colorScheme.onSurface),
             ),
           ),
-          IconButton(tooltip: TextConstants.actionClose, icon: AppIconWidget(NoxIcons.close), onPressed: onClose),
+          IconButton(tooltip: context.l10n.actionClose, icon: AppIconWidget(NoxIcons.close), onPressed: onClose),
         ],
       ),
     );

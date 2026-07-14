@@ -4,7 +4,7 @@ import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 
 /// The two product tabs. The central `+` (create chat) is an action, not a tab —
@@ -41,7 +41,7 @@ class AppBottomBarWidget extends StatelessWidget {
             child: _Tab(
               outlined: NoxIcons.forum,
               filled: NoxIcons.forumFill,
-              label: TextConstants.chats,
+              label: context.l10n.chats,
               selected: active == AppTab.chats,
               onTap: () => onSelect(AppTab.chats),
             ),
@@ -51,7 +51,7 @@ class AppBottomBarWidget extends StatelessWidget {
             child: _Tab(
               outlined: NoxIcons.settings,
               filled: NoxIcons.settingsFill,
-              label: TextConstants.settings,
+              label: context.l10n.settings,
               selected: active == AppTab.settings,
               onTap: () => onSelect(AppTab.settings),
             ),

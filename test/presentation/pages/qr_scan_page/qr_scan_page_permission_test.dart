@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/qr/camera_permission_status.dart';
 import 'package:nox_app/domain/repository/qr/camera_permission_service.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/pages/qr_scan_page/bloc/qr_scan_bloc.dart';
 import 'package:nox_app/presentation/pages/qr_scan_page/qr_scan_page.dart';
 
@@ -28,14 +28,16 @@ class _FakePermission implements CameraPermissionService {
 QrScanPage _seeded(CameraPermissionStatus permission) =>
     QrScanPage(bloc: QrScanBloc()..add(QrScanEvent.permissionResolved(permission)), previewBuilder: (_) => const SizedBox.expand());
 
+final l10nEn = AppLocalizationsEn();
+
 void main() {
   group('permission-denied', () {
     testWidgets('shows the opaque surface with title, message and Open settings', (tester) async {
       await pumpApp(tester, _seeded(CameraPermissionStatus.permanentlyDenied));
 
-      expect(find.text(TextConstants.qrPermissionTitle), findsOneWidget);
-      expect(find.text(TextConstants.qrPermissionMessage), findsOneWidget);
-      expect(find.text(TextConstants.actionOpenSettings), findsOneWidget);
+      expect(find.text(l10nEn.qrPermissionTitle), findsOneWidget);
+      expect(find.text(l10nEn.qrPermissionMessage), findsOneWidget);
+      expect(find.text(l10nEn.actionOpenSettings), findsOneWidget);
     });
 
     testWidgets('Open settings asks the permission service to open system settings', (tester) async {
@@ -45,7 +47,7 @@ void main() {
       addTearDown(() => getIt.reset());
 
       await pumpApp(tester, _seeded(CameraPermissionStatus.permanentlyDenied));
-      await tester.tap(find.text(TextConstants.actionOpenSettings));
+      await tester.tap(find.text(l10nEn.actionOpenSettings));
       await tester.pump();
 
       expect(fake.openSettingsCalls, 1);
@@ -60,16 +62,16 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
 
-    expect(find.text(TextConstants.qrInvalidSnackbar), findsOneWidget);
+    expect(find.text(l10nEn.qrInvalidSnackbar), findsOneWidget);
   });
 
   testWidgets('camera unavailable shows the in-screen camera-unavailable panel (no dead-end)', (tester) async {
     await pumpApp(tester, _seeded(CameraPermissionStatus.unavailable));
 
-    expect(find.text(TextConstants.qrUnavailableTitle), findsOneWidget);
-    expect(find.text(TextConstants.qrUnavailableMessage), findsOneWidget);
+    expect(find.text(l10nEn.qrUnavailableTitle), findsOneWidget);
+    expect(find.text(l10nEn.qrUnavailableMessage), findsOneWidget);
     // Recoverable: Enter manually returns to Login. No generic error screen push.
-    expect(find.text(TextConstants.qrEnterManually), findsOneWidget);
+    expect(find.text(l10nEn.qrEnterManually), findsOneWidget);
   });
 
   blocTest<QrScanBloc, QrScanState>(

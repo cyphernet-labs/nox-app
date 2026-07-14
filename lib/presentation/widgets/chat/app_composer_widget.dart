@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 
 /// Message input (5.2 §9.8): `surfaceContainer`, top divider, an optional attachment
@@ -47,7 +47,7 @@ class AppComposerWidget extends StatelessWidget {
                 children: [
                   IconButton(
                     onPressed: onAttach,
-                    tooltip: TextConstants.tooltipAttachFile,
+                    tooltip: context.l10n.tooltipAttachFile,
                     icon: AppIconWidget(NoxIcons.attachFile, color: colorScheme.onSurfaceVariant),
                   ),
                   Expanded(
@@ -64,7 +64,7 @@ class AppComposerWidget extends StatelessWidget {
                         decoration: InputDecoration(
                           isDense: true,
                           border: InputBorder.none,
-                          hintText: TextConstants.composerHint,
+                          hintText: context.l10n.composerHint,
                           hintStyle: textTheme.bodyLarge?.copyWith(color: colorScheme.onSurfaceVariant),
                         ),
                       ),
@@ -76,7 +76,7 @@ class AppComposerWidget extends StatelessWidget {
                       final active = value.text.trim().isNotEmpty || attachment != null;
                       return IconButton(
                         onPressed: active ? onSend : null,
-                        tooltip: TextConstants.tooltipSend,
+                        tooltip: context.l10n.tooltipSend,
                         icon: AppIconWidget(
                           NoxIcons.sendFill,
                           color: active ? colorScheme.primary : colorScheme.onSurface.withValues(alpha: 0.38),

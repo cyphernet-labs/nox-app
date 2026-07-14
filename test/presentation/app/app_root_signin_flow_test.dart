@@ -3,11 +3,13 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/app/app_root.dart';
 import 'package:nox_app/presentation/pages/set_username_page/set_username_page.dart';
 import 'package:nox_app/presentation/widgets/shell/tab_bar_shell_widget.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+final l10nEn = AppLocalizationsEn();
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -26,13 +28,13 @@ void main() {
   Future<void> bootToLogin(WidgetTester tester) async {
     await tester.pumpWidget(const AppRoot());
     await tester.pumpAndSettle();
-    expect(find.text(TextConstants.loginSignIn), findsOneWidget);
+    expect(find.text(l10nEn.loginSignIn), findsOneWidget);
   }
 
   Future<void> signIn(WidgetTester tester, String id) async {
     await tester.enterText(find.byType(TextField).first, id);
     await tester.pump();
-    await tester.tap(find.widgetWithText(FilledButton, TextConstants.loginSignIn));
+    await tester.tap(find.widgetWithText(FilledButton, l10nEn.loginSignIn));
     await tester.pumpAndSettle();
   }
 
@@ -40,7 +42,7 @@ void main() {
     await bootToLogin(tester);
     await signIn(tester, 'brand-new-id');
     expect(find.byType(SetUsernamePage), findsOneWidget);
-    expect(find.text(TextConstants.loginSignIn), findsNothing);
+    expect(find.text(l10nEn.loginSignIn), findsNothing);
   });
 
   testWidgets('signing in with a registered identifier lands on the shell', (tester) async {

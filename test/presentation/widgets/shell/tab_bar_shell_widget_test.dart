@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/pages/create_chat_page/create_chat_page.dart';
 import 'package:nox_app/presentation/pages/chats_list_page/chats_list_page.dart';
 import 'package:nox_app/presentation/pages/settings_root_page/settings_root_page.dart';
@@ -13,6 +13,8 @@ import 'package:nox_app/presentation/widgets/shell/app_navigation_rail_widget.da
 import 'package:nox_app/presentation/widgets/shell/tab_bar_shell_widget.dart';
 
 import '../../../utils/pump_app.dart';
+
+final l10nEn = AppLocalizationsEn();
 
 void main() {
   // The shell hosts the real Chats list, whose bloc resolves ChatRepository from DI.
@@ -69,7 +71,7 @@ void main() {
       expect(find.byType(SettingsRootPage), findsOneWidget);
       expect(bottomBar(tester).active, AppTab.chats);
 
-      await tester.tap(find.descendant(of: find.byType(AppBottomBarWidget), matching: find.text(TextConstants.settings)));
+      await tester.tap(find.descendant(of: find.byType(AppBottomBarWidget), matching: find.text(l10nEn.settings)));
       await tester.pumpAndSettle();
 
       expect(bottomBar(tester).active, AppTab.settings);
@@ -95,7 +97,7 @@ void main() {
       await pumpApp(tester, const TabBarShell());
 
       // Go to Settings.
-      await tester.tap(find.descendant(of: find.byType(AppBottomBarWidget), matching: find.text(TextConstants.settings)));
+      await tester.tap(find.descendant(of: find.byType(AppBottomBarWidget), matching: find.text(l10nEn.settings)));
       await tester.pumpAndSettle();
       expect(bottomBar(tester).active, AppTab.settings);
 
@@ -116,7 +118,7 @@ void main() {
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await pumpApp(tester, const TabBarShell());
 
-      await tester.tap(find.descendant(of: find.byType(AppBottomBarWidget), matching: find.text(TextConstants.chats)));
+      await tester.tap(find.descendant(of: find.byType(AppBottomBarWidget), matching: find.text(l10nEn.chats)));
       await tester.pumpAndSettle();
 
       expect(bottomBar(tester).active, AppTab.chats);

@@ -24,11 +24,7 @@ abstract class SettingsRootState with _$SettingsRootState {
   /// Save (Enter/Done/blur) is allowed only for a valid draft.
   bool get canSave => status == SettingsNameStatus.valid;
 
-  String get maskedId => TextConstants.idMask;
-
-  String? get nameError => switch (status) {
-    SettingsNameStatus.invalidCharset => TextConstants.usernameCharsetError,
-    SettingsNameStatus.taken => TextConstants.nameTakenError,
-    _ => null,
-  };
+  // Fixed-length, locale-independent id mask (8 U+2022 bullets). Not a localized
+  // string, so it stays inline rather than routing through l10n.
+  String get maskedId => '••••••••';
 }

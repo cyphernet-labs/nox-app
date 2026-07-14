@@ -8,7 +8,7 @@ import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/formatters/file_size_formatter.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/helpers/app_feedback_helper.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_file_glyph_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
@@ -100,7 +100,7 @@ class _FileViewPageState extends State<FileViewPage> with SingleTickerProviderSt
 
   void _save() {
     // TODO(backend): copy the cached file to Downloads (file_saver/path_provider) — Phase 2.
-    showAppSnackBar(context, text: TextConstants.savedToDownloads);
+    showAppSnackBar(context, text: context.l10n.savedToDownloads);
   }
 
   void _simulateError() {
@@ -108,8 +108,8 @@ class _FileViewPageState extends State<FileViewPage> with SingleTickerProviderSt
     setState(() {});
     showAppSnackBar(
       context,
-      text: TextConstants.fileDownloadError,
-      actionLabel: TextConstants.actionTryAgain,
+      text: context.l10n.fileDownloadError,
+      actionLabel: context.l10n.actionTryAgain,
       onAction: _startDownload,
       error: true,
     );
@@ -138,14 +138,14 @@ class _FileViewPageState extends State<FileViewPage> with SingleTickerProviderSt
       appBar: AppBar(
         backgroundColor: colorScheme.surface,
         leading: IconButton(
-          tooltip: TextConstants.tooltipBack,
+          tooltip: context.l10n.tooltipBack,
           icon: AppIconWidget(NoxIcons.arrowBack),
           onPressed: () => Navigator.of(context).maybePop(),
         ),
         title: Text(widget.file.name, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
           IconButton(
-            tooltip: TextConstants.tooltipSave,
+            tooltip: context.l10n.tooltipSave,
             onPressed: _cached ? _save : null,
             icon: AppIconWidget(NoxIcons.download, color: _cached ? colorScheme.onSurface : colorScheme.onSurface.withValues(alpha: 0.38)),
           ),
@@ -212,7 +212,7 @@ class _FileViewPageState extends State<FileViewPage> with SingleTickerProviderSt
             width: double.infinity,
             child: FilledButton(
               onPressed: _cached ? _save : null,
-              child: Text(_cached ? TextConstants.actionDownload : TextConstants.downloadingProgress(_percent)),
+              child: Text(_cached ? context.l10n.actionDownload : context.l10n.downloadingProgress(_percent)),
             ),
           ),
         ),
@@ -238,7 +238,7 @@ class _FileViewPageState extends State<FileViewPage> with SingleTickerProviderSt
         ),
         SizedBox(height: AppSpacingTokens.s18),
         Text(
-          _cached ? FileSizeFormatter.format(widget.file.sizeBytes) : TextConstants.downloadingProgress(_percent),
+          _cached ? FileSizeFormatter.format(widget.file.sizeBytes) : context.l10n.downloadingProgress(_percent),
           style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
         ),
       ],

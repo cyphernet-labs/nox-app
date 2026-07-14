@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/theme/nox_brand.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/general/nox_qr_envelope.dart';
-import 'package:nox_app/general/text_constants.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 /// Brand-fixed light QR surface for the user's identifier (7.1 Show QR). The
@@ -57,7 +57,7 @@ class _AppQrSurfaceWidgetState extends State<AppQrSurfaceWidget> {
   @override
   Widget build(BuildContext context) {
     return Semantics(
-      label: TextConstants.qrSheetTitle,
+      label: context.l10n.qrSheetTitle,
       image: true,
       child: Container(
         width: widget.size,
@@ -100,11 +100,11 @@ class _IdQrContent extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(TextConstants.qrSheetTitle, style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
+          Text(context.l10n.qrSheetTitle, style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
           SizedBox(height: AppSpacingTokens.s16),
           AppQrSurfaceWidget(data: data),
           SizedBox(height: AppSpacingTokens.s16),
-          TextButton(onPressed: () => Navigator.of(context).maybePop(), child: const Text(TextConstants.actionClose)),
+          TextButton(onPressed: () => Navigator.of(context).maybePop(), child: Text(context.l10n.actionClose)),
         ],
       ),
     );

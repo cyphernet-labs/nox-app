@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/pages/language_page/language_body.dart';
 import 'package:nox_app/presentation/widgets/shell/app_detail_scaffold_widget.dart';
 
@@ -17,6 +17,6 @@ class LanguagePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AppDetailScaffoldWidget(title: TextConstants.settingsLanguageTitle, body: const LanguageBody());
+    return AppDetailScaffoldWidget(title: context.l10n.settingsLanguageTitle, body: const LanguageBody());
   }
 }

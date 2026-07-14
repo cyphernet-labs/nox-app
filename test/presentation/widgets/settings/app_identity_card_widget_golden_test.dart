@@ -3,10 +3,12 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/widgets/settings/app_identity_card_widget.dart';
 
 import '../../../utils/golden.dart';
+
+final l10nEn = AppLocalizationsEn();
 
 void main() {
   goldenTest(
@@ -15,7 +17,7 @@ void main() {
       padding: const EdgeInsets.all(16),
       child: AppIdentityCardWidget(
         name: 'Aria',
-        maskedId: TextConstants.idMask,
+        maskedId: l10nEn.idMask,
         rawId: 'RAWID-0123456789',
         revealable: true,
         showInlineQr: false,

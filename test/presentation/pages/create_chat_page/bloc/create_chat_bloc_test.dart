@@ -29,7 +29,7 @@ void main() {
       wait: const Duration(milliseconds: 700),
       expect: () => [
         predicate<CreateChatState>((s) => s.status == CreateChatStatus.checking),
-        predicate<CreateChatState>((s) => s.status == CreateChatStatus.taken && s.errorText != null),
+        predicate<CreateChatState>((s) => s.status == CreateChatStatus.taken),
       ],
     );
 
@@ -63,7 +63,7 @@ void main() {
         predicate<CreateChatState>((s) => s.status == CreateChatStatus.checking),
         predicate<CreateChatState>((s) => s.status == CreateChatStatus.valid),
         predicate<CreateChatState>((s) => s.status == CreateChatStatus.submitting),
-        predicate<CreateChatState>((s) => s.status == CreateChatStatus.valid && s.networkError && s.canSubmit && s.errorText != null),
+        predicate<CreateChatState>((s) => s.status == CreateChatStatus.valid && s.networkError && s.canSubmit),
       ],
     );
 

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/widgets/settings/app_version_text_widget.dart';
 
 /// 7.6 Terms content — a titleLarge document heading over four titled sections
@@ -19,15 +19,15 @@ class TermsBody extends StatelessWidget {
     return ListView(
       padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s8, AppSpacingTokens.s16, AppSpacingTokens.s16),
       children: [
-        Text(TextConstants.termsDocHeading, style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
+        Text(context.l10n.termsDocHeading, style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
         SizedBox(height: AppSpacingTokens.s16),
-        _section(context, TextConstants.termsAcceptanceHeading, TextConstants.termsAcceptanceBody),
+        _section(context, context.l10n.termsAcceptanceHeading, context.l10n.termsAcceptanceBody),
         SizedBox(height: AppSpacingTokens.s24),
-        _section(context, TextConstants.termsIdentityHeading, TextConstants.termsIdentityBody),
+        _section(context, context.l10n.termsIdentityHeading, context.l10n.termsIdentityBody),
         SizedBox(height: AppSpacingTokens.s24),
-        _section(context, TextConstants.termsContentHeading, TextConstants.termsContentBody),
+        _section(context, context.l10n.termsContentHeading, context.l10n.termsContentBody),
         SizedBox(height: AppSpacingTokens.s24),
-        _section(context, TextConstants.termsPrivacyHeading, TextConstants.termsPrivacyBody),
+        _section(context, context.l10n.termsPrivacyHeading, context.l10n.termsPrivacyBody),
         SizedBox(height: AppSpacingTokens.s16),
         Divider(
           height: AppDimensionTokens.border.hairline,
@@ -40,7 +40,7 @@ class TermsBody extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text('${TextConstants.versionLabel} ', style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant)),
+              Text('${context.l10n.versionLabel} ', style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant)),
               AppVersionTextWidget(showBuild: false, style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant)),
             ],
           ),

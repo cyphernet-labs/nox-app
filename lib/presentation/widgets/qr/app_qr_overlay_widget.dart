@@ -4,7 +4,7 @@ import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/theme/nox_brand.dart';
 import 'package:nox_app/design/theme/nox_scrims.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 
 /// QR scanner overlay (2.2): a centered reticle, a dimming mask around it and the
 /// top instruction — drawn over the (stubbed) camera surface. BRAND-FIXED: the
@@ -37,7 +37,7 @@ class AppQrOverlayWidget extends StatelessWidget {
             left: AppSpacingTokens.s24,
             right: AppSpacingTokens.s24,
             child: Text(
-              TextConstants.qrAimHint,
+              context.l10n.qrAimHint,
               textAlign: TextAlign.center,
               style: textTheme.bodyLarge?.copyWith(
                 color: NoxBrand.white,

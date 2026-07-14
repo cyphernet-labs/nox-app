@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
 import 'package:nox_app/presentation/app/widgets/app_theme_toggle.dart';
 
 import '../../../utils/pump_app.dart';
+
+final l10nEn = AppLocalizationsEn();
 
 void main() {
   group('AppThemeToggle', () {
@@ -18,10 +20,10 @@ void main() {
         themeMode: ThemeMode.dark,
       );
 
-      expect(find.text(TextConstants.themeLight), findsOneWidget);
-      expect(find.text(TextConstants.themeDark), findsNothing);
+      expect(find.text(l10nEn.themeLight), findsOneWidget);
+      expect(find.text(l10nEn.themeDark), findsNothing);
 
-      await tester.tap(find.text(TextConstants.themeLight));
+      await tester.tap(find.text(l10nEn.themeLight));
       await tester.pump();
 
       expect(bloc.state.themeMode, ThemeMode.light);
@@ -36,10 +38,10 @@ void main() {
         themeMode: ThemeMode.light,
       );
 
-      expect(find.text(TextConstants.themeDark), findsOneWidget);
-      expect(find.text(TextConstants.themeLight), findsNothing);
+      expect(find.text(l10nEn.themeDark), findsOneWidget);
+      expect(find.text(l10nEn.themeLight), findsNothing);
 
-      await tester.tap(find.text(TextConstants.themeDark));
+      await tester.tap(find.text(l10nEn.themeDark));
       await tester.pump();
 
       expect(bloc.state.themeMode, ThemeMode.dark);

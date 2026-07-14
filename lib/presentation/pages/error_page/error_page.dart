@@ -4,7 +4,7 @@ import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/general/constants.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page_params.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_spinner_widget.dart';
@@ -86,7 +86,7 @@ class _AppErrorPageState extends State<AppErrorPage> {
           return Scaffold(
             appBar: AppBar(
               leading: IconButton(
-                tooltip: TextConstants.tooltipBack,
+                tooltip: context.l10n.tooltipBack,
                 icon: AppIconWidget(NoxIcons.arrowBack),
                 onPressed: () => Navigator.of(context).maybePop(),
               ),
@@ -125,6 +125,15 @@ class _ErrorBody extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
+    final l10n = context.l10n;
+    final title = switch (params.kind) {
+      ErrorPageKind.fatal => l10n.errorGeneralTitle,
+      ErrorPageKind.network => l10n.noConnection,
+    };
+    final message = switch (params.kind) {
+      ErrorPageKind.fatal => l10n.errorFatalMessage,
+      ErrorPageKind.network => l10n.errorNetworkMessage,
+    };
     return Stack(
       children: [
         Center(
@@ -136,7 +145,7 @@ class _ErrorBody extends StatelessWidget {
                 AppIconWidget(params.icon, size: iconSize, color: colorScheme.onSurfaceVariant),
                 SizedBox(height: AppSpacingTokens.s16),
                 Text(
-                  params.title,
+                  title,
                   textAlign: TextAlign.center,
                   style: textTheme.headlineSmall?.copyWith(color: colorScheme.onSurface),
                 ),
@@ -144,7 +153,7 @@ class _ErrorBody extends StatelessWidget {
                 ConstrainedBox(
                   constraints: BoxConstraints(maxWidth: AppDimensionTokens.layout.errorMsgW),
                   child: Text(
-                    params.message,
+                    message,
                     textAlign: TextAlign.center,
                     style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
                   ),
@@ -154,7 +163,7 @@ class _ErrorBody extends StatelessWidget {
                   onPressed: retrying ? null : onRetry,
                   child: retrying
                       ? AppSpinnerWidget(size: AppDimensionTokens.icon.md, color: colorScheme.onPrimary)
-                      : const Text(TextConstants.actionTryAgain),
+                      : Text(l10n.actionTryAgain),
                 ),
               ],
             ),

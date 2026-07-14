@@ -3,10 +3,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/repository/app/auth_repository.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/app/app_root.dart';
 import 'package:nox_app/presentation/widgets/shell/tab_bar_shell_widget.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+final l10nEn = AppLocalizationsEn();
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -27,7 +29,7 @@ void main() {
     await tester.pumpWidget(const AppRoot());
     await tester.pumpAndSettle();
     expect(find.byType(TabBarShell), findsOneWidget);
-    expect(find.text(TextConstants.loginSignIn), findsNothing);
+    expect(find.text(l10nEn.loginSignIn), findsNothing);
   });
 
   testWidgets('logout wipes the session and the spine returns to Login', (tester) async {
@@ -38,7 +40,7 @@ void main() {
     await getIt<AuthRepository>().logout();
     await tester.pumpAndSettle();
 
-    expect(find.text(TextConstants.loginSignIn), findsOneWidget);
+    expect(find.text(l10nEn.loginSignIn), findsOneWidget);
     expect(find.byType(TabBarShell), findsNothing);
   });
 }

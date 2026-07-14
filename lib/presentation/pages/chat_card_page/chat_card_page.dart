@@ -11,7 +11,7 @@ import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/formatters/file_size_formatter.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/pages/chat_card_page/bloc/chat_card_bloc.dart';
 import 'package:nox_app/presentation/pages/file_view_page/file_view_page.dart';
 import 'package:nox_app/presentation/widgets/chat/app_segmented_widget.dart';
@@ -92,7 +92,7 @@ class ChatCardPage extends StatelessWidget {
         return Scaffold(
           appBar: AppBar(
             leading: IconButton(
-              tooltip: TextConstants.tooltipBack,
+              tooltip: context.l10n.tooltipBack,
               icon: AppIconWidget(NoxIcons.arrowBack),
               onPressed: () => Navigator.of(context).maybePop(),
             ),
@@ -158,7 +158,7 @@ class _ChatCardBodyState extends State<ChatCardBody> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        AppPanelHeaderWidget(title: TextConstants.chatInfoTitle, onClose: () => Navigator.of(context).maybePop()),
+        AppPanelHeaderWidget(title: context.l10n.chatInfoTitle, onClose: () => Navigator.of(context).maybePop()),
         Divider(height: AppDimensionTokens.border.hairline),
       ],
     );
@@ -200,15 +200,15 @@ class _ChatCardBodyState extends State<ChatCardBody> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (initialized.isOffline) AppNoticeStripWidget(message: TextConstants.noConnection, icon: NoxIcons.wifiOff),
+        if (initialized.isOffline) AppNoticeStripWidget(message: context.l10n.noConnection, icon: NoxIcons.wifiOff),
         Padding(
           padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s0, AppSpacingTokens.s16, AppSpacingTokens.s12),
           child: Row(
             children: [
-              Expanded(child: Text(TextConstants.filesSectionTitle, style: Theme.of(context).textTheme.titleMedium)),
+              Expanded(child: Text(context.l10n.filesSectionTitle, style: Theme.of(context).textTheme.titleMedium)),
               if (initialized.files.isNotEmpty)
                 AppSegmentedWidget<FilesViewMode>(
-                  options: const {FilesViewMode.list: TextConstants.filesViewList, FilesViewMode.grid: TextConstants.filesViewGrid},
+                  options: {FilesViewMode.list: context.l10n.filesViewList, FilesViewMode.grid: context.l10n.filesViewGrid},
                   selected: initialized.viewMode,
                   onChanged: (mode) => _bloc.add(ChatCardEvent.viewModeChanged(mode)),
                 ),
@@ -224,8 +224,8 @@ class _ChatCardBodyState extends State<ChatCardBody> {
     if (state.files.isEmpty) {
       return AppEmptyContentWidget(
         illustration: Assets.svg.illustrations.emptyFiles,
-        title: TextConstants.filesEmptyTitle,
-        message: TextConstants.filesEmptyMessage,
+        title: context.l10n.filesEmptyTitle,
+        message: context.l10n.filesEmptyMessage,
       );
     }
     return state.viewMode == FilesViewMode.list ? _list(context, state.files) : _grid(context, state.files);

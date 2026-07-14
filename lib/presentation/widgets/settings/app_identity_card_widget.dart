@@ -3,7 +3,7 @@ import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/app_text_style_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_spinner_widget.dart';
 import 'package:nox_app/presentation/widgets/settings/app_qr_surface_widget.dart';
@@ -62,7 +62,7 @@ class AppIdentityCardWidget extends StatelessWidget {
               padding: EdgeInsets.symmetric(vertical: AppSpacingTokens.s12),
               child: Divider(height: AppDimensionTokens.border.hairline),
             ),
-            Text(TextConstants.loginIdLabel, style: textTheme.labelMedium?.copyWith(color: colorScheme.onSurfaceVariant)),
+            Text(context.l10n.loginIdLabel, style: textTheme.labelMedium?.copyWith(color: colorScheme.onSurfaceVariant)),
             SizedBox(height: AppSpacingTokens.s4),
             _idBlock(context),
             if (showInlineQr && !initialLoading) ...[
@@ -73,7 +73,7 @@ class AppIdentityCardWidget extends StatelessWidget {
               SizedBox(height: AppSpacingTokens.s8),
               Center(
                 child: Text(
-                  TextConstants.qrAccountCaption,
+                  context.l10n.qrAccountCaption,
                   textAlign: TextAlign.center,
                   style: textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
                 ),
@@ -92,7 +92,7 @@ class AppIdentityCardWidget extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(TextConstants.usernameLabel, style: textTheme.labelMedium?.copyWith(color: colorScheme.onSurfaceVariant)),
+        Text(context.l10n.usernameLabel, style: textTheme.labelMedium?.copyWith(color: colorScheme.onSurfaceVariant)),
         SizedBox(height: AppSpacingTokens.s2),
         Row(
           children: [
@@ -100,7 +100,7 @@ class AppIdentityCardWidget extends StatelessWidget {
               child: Text(name, style: textTheme.titleMedium?.copyWith(color: colorScheme.onSurface)),
             ),
             IconButton(
-              tooltip: TextConstants.settingsNameEditTooltip,
+              tooltip: context.l10n.settingsNameEditTooltip,
               icon: AppIconWidget(NoxIcons.edit, size: AppDimensionTokens.icon.lg),
               onPressed: onEditName,
             ),
@@ -134,17 +134,17 @@ class AppIdentityCardWidget extends StatelessWidget {
           children: [
             if (revealable)
               IconButton(
-                tooltip: idRevealed ? TextConstants.idHideTooltip : TextConstants.idShowTooltip,
+                tooltip: idRevealed ? context.l10n.idHideTooltip : context.l10n.idShowTooltip,
                 icon: AppIconWidget(idRevealed ? NoxIcons.visibilityOff : NoxIcons.visibility, size: AppDimensionTokens.icon.lg),
                 onPressed: onToggleReveal,
               ),
             IconButton(
-              tooltip: TextConstants.idCopyTooltip,
+              tooltip: context.l10n.idCopyTooltip,
               icon: AppIconWidget(NoxIcons.contentCopy, size: AppDimensionTokens.icon.lg),
               onPressed: onCopy,
             ),
             IconButton(
-              tooltip: TextConstants.idShowQrTooltip,
+              tooltip: context.l10n.idShowQrTooltip,
               icon: AppIconWidget(NoxIcons.qrCode, size: AppDimensionTokens.icon.lg),
               onPressed: onShowQr,
             ),

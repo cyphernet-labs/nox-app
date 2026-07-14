@@ -12,9 +12,9 @@ import 'package:nox_app/design/theme/nox_scrims.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/model/qr/camera_permission_status.dart';
 import 'package:nox_app/general/constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/general/nox_qr_envelope.dart';
 import 'package:nox_app/general/platform_utils.dart';
-import 'package:nox_app/general/text_constants.dart';
 import 'package:nox_app/presentation/pages/qr_scan_page/bloc/qr_scan_bloc.dart';
 import 'package:nox_app/presentation/widgets/onboarding/app_onboard_card_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
@@ -215,7 +215,7 @@ class _QrScanPageState extends State<QrScanPage> with WidgetsBindingObserver {
     if (state.invalid) {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
-        ..showSnackBar(const SnackBar(content: Text(TextConstants.qrInvalidSnackbar)));
+        ..showSnackBar(SnackBar(content: Text(context.l10n.qrInvalidSnackbar)));
       _bloc.add(const QrScanEvent.signalHandled());
     }
     // `fatal` (camera unavailable) is handled in-screen by the builder (the
@@ -267,7 +267,7 @@ class _QrScanPageState extends State<QrScanPage> with WidgetsBindingObserver {
 
   Widget _narrow(BuildContext context, QrScanState state) {
     final colorScheme = Theme.of(context).colorScheme;
-    final panel = _panelFor(state.status); // permission-denied / camera-unavailable surface
+    final panel = _panelFor(context, state.status); // permission-denied / camera-unavailable surface
     final scanning = state.status == QrScanStatus.scanning;
     return Scaffold(
       // Over-camera chrome only when there's no opaque panel.
@@ -282,12 +282,12 @@ class _QrScanPageState extends State<QrScanPage> with WidgetsBindingObserver {
         actions: scanning
             ? [
                 IconButton(
-                  tooltip: TextConstants.tooltipFlashlight,
+                  tooltip: context.l10n.tooltipFlashlight,
                   onPressed: _toggleTorch,
                   icon: AppIconWidget(_torchOn ? NoxIcons.flashlightOnFill : NoxIcons.flashlightOff, color: NoxBrand.white),
                 ),
                 IconButton(
-                  tooltip: TextConstants.tooltipSwitchCamera,
+                  tooltip: context.l10n.tooltipSwitchCamera,
                   onPressed: _switchCamera,
                   icon: AppIconWidget(NoxIcons.cameraswitch, color: NoxBrand.white),
                 ),
@@ -324,19 +324,19 @@ class _QrScanPageState extends State<QrScanPage> with WidgetsBindingObserver {
   /// The opaque surface for a non-scanning terminal state — permission-denied
   /// (Open settings) or camera-unavailable (Enter manually). `null` for the
   /// camera states (initializing / scanning).
-  Widget? _panelFor(QrScanStatus status) => switch (status) {
+  Widget? _panelFor(BuildContext context, QrScanStatus status) => switch (status) {
     QrScanStatus.permissionDenied => _QrStatePanel(
       icon: NoxIcons.noPhotography,
-      title: TextConstants.qrPermissionTitle,
-      message: TextConstants.qrPermissionMessage,
-      actionLabel: TextConstants.actionOpenSettings,
+      title: context.l10n.qrPermissionTitle,
+      message: context.l10n.qrPermissionMessage,
+      actionLabel: context.l10n.actionOpenSettings,
       onAction: _openSettings,
     ),
     QrScanStatus.fatal => _QrStatePanel(
       icon: NoxIcons.noPhotography,
-      title: TextConstants.qrUnavailableTitle,
-      message: TextConstants.qrUnavailableMessage,
-      actionLabel: TextConstants.qrEnterManually,
+      title: context.l10n.qrUnavailableTitle,
+      message: context.l10n.qrUnavailableMessage,
+      actionLabel: context.l10n.qrEnterManually,
       onAction: _enterManually,
     ),
     QrScanStatus.initializing || QrScanStatus.scanning => null,
@@ -354,7 +354,7 @@ class _QrScanPageState extends State<QrScanPage> with WidgetsBindingObserver {
         onTap: _enterManually,
         child: Padding(
           padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s20, vertical: AppSpacingTokens.s8),
-          child: Text(TextConstants.qrEnterManually, style: AppTextStyleTokens.labelLarge(color: NoxBrand.white)),
+          child: Text(context.l10n.qrEnterManually, style: AppTextStyleTokens.labelLarge(color: NoxBrand.white)),
         ),
       ),
     );
@@ -365,14 +365,14 @@ class _QrScanPageState extends State<QrScanPage> with WidgetsBindingObserver {
   Widget _wide(BuildContext context, QrScanState state) {
     final textTheme = Theme.of(context).textTheme;
     final colorScheme = Theme.of(context).colorScheme;
-    final panel = _panelFor(state.status);
+    final panel = _panelFor(context, state.status);
     final Widget content = panel != null
         ? AppOnboardCardWidget(child: panel)
         : Center(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(TextConstants.qrDesktopTitle, style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
+                Text(context.l10n.qrDesktopTitle, style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
                 SizedBox(height: AppSpacingTokens.s24),
                 SizedBox(
                   width: AppDimensionTokens.size.qrScanWindow,
@@ -393,11 +393,11 @@ class _QrScanPageState extends State<QrScanPage> with WidgetsBindingObserver {
                 ),
                 SizedBox(height: AppSpacingTokens.s16),
                 Text(
-                  TextConstants.qrDesktopHelper,
+                  context.l10n.qrDesktopHelper,
                   textAlign: TextAlign.center,
                   style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
                 ),
-                TextButton(onPressed: _enterManually, child: const Text(TextConstants.qrEnterManually)),
+                TextButton(onPressed: _enterManually, child: Text(context.l10n.qrEnterManually)),
               ],
             ),
           );

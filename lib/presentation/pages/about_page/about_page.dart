@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/pages/about_page/about_body.dart';
 import 'package:nox_app/presentation/widgets/shell/app_detail_scaffold_widget.dart';
 
@@ -16,6 +16,6 @@ class AboutPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AppDetailScaffoldWidget(title: TextConstants.settingsAboutTitle, body: const AboutBody());
+    return AppDetailScaffoldWidget(title: context.l10n.settingsAboutTitle, body: const AboutBody());
   }
 }

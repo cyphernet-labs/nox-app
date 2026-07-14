@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_spinner_widget.dart';
 
 /// Logout confirmation dialog (7.1). Self-contained: on confirm it shows a loading
@@ -35,16 +35,14 @@ class _AppLogoutDialogWidgetState extends State<AppLogoutDialogWidget> {
     return PopScope<Object?>(
       canPop: !_loading, // modal until the wipe completes
       child: AlertDialog(
-        title: const Text(TextConstants.logoutDialogTitle),
-        content: const Text(TextConstants.logoutDialogMessage),
+        title: Text(context.l10n.logoutDialogTitle),
+        content: Text(context.l10n.logoutDialogMessage),
         actions: [
-          TextButton(onPressed: _loading ? null : () => Navigator.of(context).pop(false), child: const Text(TextConstants.actionCancel)),
+          TextButton(onPressed: _loading ? null : () => Navigator.of(context).pop(false), child: Text(context.l10n.actionCancel)),
           TextButton(
             onPressed: _loading ? null : _confirm,
             style: TextButton.styleFrom(foregroundColor: colorScheme.error),
-            child: _loading
-                ? AppSpinnerWidget(size: AppDimensionTokens.icon.md, color: colorScheme.error)
-                : const Text(TextConstants.logoutRow),
+            child: _loading ? AppSpinnerWidget(size: AppDimensionTokens.icon.md, color: colorScheme.error) : Text(context.l10n.logoutRow),
           ),
         ],
       ),

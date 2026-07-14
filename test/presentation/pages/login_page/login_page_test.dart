@@ -1,15 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/general/qr_scanner_capability.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/pages/login_page/login_page.dart';
 import 'package:nox_app/presentation/pages/placeholder/route_placeholder_page.dart';
 import 'package:nox_app/presentation/pages/qr_scan_page/qr_scan_page.dart';
 
 import '../../../utils/pump_app.dart';
 
+final l10nEn = AppLocalizationsEn();
+
 void main() {
-  Finder signInButton() => find.widgetWithText(FilledButton, TextConstants.loginSignIn);
+  Finder signInButton() => find.widgetWithText(FilledButton, l10nEn.loginSignIn);
 
   testWidgets('Sign in is disabled when empty and enabled after typing', (tester) async {
     await pumpApp(tester, const LoginPage(demo: true));
@@ -40,8 +42,8 @@ void main() {
     QrScannerCapability.debugOverride = true;
     await pumpApp(tester, const LoginPage(demo: true));
 
-    expect(find.widgetWithText(TextButton, TextConstants.loginScanQr), findsOneWidget);
-    await tester.tap(find.widgetWithText(TextButton, TextConstants.loginScanQr));
+    expect(find.widgetWithText(TextButton, l10nEn.loginScanQr), findsOneWidget);
+    await tester.tap(find.widgetWithText(TextButton, l10nEn.loginScanQr));
     await tester.pumpAndSettle();
 
     expect(find.byType(QrScanPage), findsOneWidget);
@@ -52,6 +54,6 @@ void main() {
     QrScannerCapability.debugOverride = false;
     await pumpApp(tester, const LoginPage(demo: true));
 
-    expect(find.widgetWithText(TextButton, TextConstants.loginScanQr), findsNothing);
+    expect(find.widgetWithText(TextButton, l10nEn.loginScanQr), findsNothing);
   });
 }

@@ -18,10 +18,4 @@ abstract class LoginState with _$LoginState {
 
   /// `Sign in` is enabled for any non-empty input (no format validation, FR-011).
   bool get canSubmit => id.trim().isNotEmpty && status != LoginStatus.loading;
-
-  String? get errorText => switch (status) {
-    LoginStatus.errorFormat => TextConstants.loginInvalidId,
-    LoginStatus.errorNetwork => TextConstants.loginNetworkError,
-    _ => null,
-  };
 }

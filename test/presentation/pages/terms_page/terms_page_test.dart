@@ -1,10 +1,12 @@
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/pages/terms_page/terms_page.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../../utils/pump_app.dart';
+
+final l10nEn = AppLocalizationsEn();
 
 void main() {
   setUp(() {
@@ -24,11 +26,11 @@ void main() {
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await pumpApp(tester, const TermsPage());
 
-    expect(find.text(TextConstants.termsDocHeading), findsOneWidget);
-    expect(find.text(TextConstants.termsAcceptanceHeading), findsOneWidget);
-    expect(find.text(TextConstants.termsIdentityHeading), findsOneWidget);
-    expect(find.text(TextConstants.termsContentHeading), findsOneWidget);
-    expect(find.text(TextConstants.termsPrivacyHeading), findsOneWidget);
+    expect(find.text(l10nEn.termsDocHeading), findsOneWidget);
+    expect(find.text(l10nEn.termsAcceptanceHeading), findsOneWidget);
+    expect(find.text(l10nEn.termsIdentityHeading), findsOneWidget);
+    expect(find.text(l10nEn.termsContentHeading), findsOneWidget);
+    expect(find.text(l10nEn.termsPrivacyHeading), findsOneWidget);
     expect(find.text('26.1.1'), findsOneWidget); // footer (version only, no build)
   });
 }

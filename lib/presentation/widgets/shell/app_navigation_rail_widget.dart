@@ -5,7 +5,7 @@ import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_brand.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_avatar_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_bottom_bar_widget.dart';
@@ -62,9 +62,9 @@ class AppNavigationRailWidget extends StatelessWidget {
                 _createFab(context),
                 // Breathing room between the FAB and the destinations group (design: 22).
                 SizedBox(height: AppSpacingTokens.s24),
-                _destination(context, AppTab.chats, NoxIcons.forum, NoxIcons.forumFill, TextConstants.chats),
+                _destination(context, AppTab.chats, NoxIcons.forum, NoxIcons.forumFill, context.l10n.chats),
                 SizedBox(height: AppSpacingTokens.s12),
-                _destination(context, AppTab.settings, NoxIcons.settings, NoxIcons.settingsFill, TextConstants.settings),
+                _destination(context, AppTab.settings, NoxIcons.settings, NoxIcons.settingsFill, context.l10n.settings),
                 const Spacer(),
                 _accountAvatar(context),
               ],
@@ -80,7 +80,7 @@ class AppNavigationRailWidget extends StatelessWidget {
   Widget _createFab(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     return Tooltip(
-      message: TextConstants.tooltipCreateChat,
+      message: context.l10n.tooltipCreateChat,
       child: Material(
         color: colorScheme.primaryContainer,
         elevation: NoxElevation.level2,
@@ -140,7 +140,7 @@ class AppNavigationRailWidget extends StatelessWidget {
   Widget _accountAvatar(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     return Tooltip(
-      message: TextConstants.settingsAccountTitle,
+      message: context.l10n.settingsAccountTitle,
       child: InkResponse(
         onTap: onAccount,
         customBorder: const CircleBorder(),
