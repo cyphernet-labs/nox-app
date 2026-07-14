@@ -11,5 +11,16 @@
   "settingsAccountTitle": "Обліковий запис",
   "languageSystem": "Системна",
   "languageEnglish": "English",
-  "languageUkrainian": "Українська"
+  "languageUkrainian": "Українська",
+  "themeSystem": "Системна",
+  "themeSystemCaption": "Як на пристрої",
+  "themeLight": "Світла",
+  "themeLightCaption": "Завжди світла",
+  "themeDark": "Темна",
+  "themeDarkCaption": "Завжди темна",
+  "notificationsPushTitle": "Увімкнути сповіщення",
+  "notificationsPushSubtitle": "Лише для чатів, де ви є",
+  "notificationsDeniedTitle": "Сповіщення заблоковано",
+  "notificationsDeniedMessage": "Дозвольте сповіщення в системних налаштуваннях, щоб отримувати повідомлення з ваших чатів.",
+  "actionOpenSettings": "Відкрити налаштування"
 }

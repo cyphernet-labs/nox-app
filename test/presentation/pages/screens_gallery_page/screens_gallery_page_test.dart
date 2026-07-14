@@ -8,6 +8,7 @@ import 'package:nox_app/design/theme/app_theme.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/l10n/app_localizations.dart';
 import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
 import 'package:nox_app/presentation/pages/about_page/about_page.dart';
 import 'package:nox_app/presentation/pages/appearance_page/appearance_page.dart';
@@ -271,7 +272,13 @@ void main() {
         child: ScreenUtilInit(
           designSize: Constants.designSize,
           fontSizeResolver: AppTextStyleTokens.fontSizeResolver,
-          builder: (context, _) => MaterialApp(theme: AppTheme.light(), home: const ScreensGalleryPage()),
+          builder: (context, _) => MaterialApp(
+            theme: AppTheme.light(),
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: const ScreensGalleryPage(),
+          ),
         ),
       ),
     );

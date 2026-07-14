@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/widgets/settings/app_info_banner_widget.dart';
 import 'package:nox_app/presentation/widgets/settings/app_settings_group_widget.dart';
 import 'package:nox_app/presentation/widgets/settings/app_settings_switch_row_widget.dart';
@@ -35,17 +35,17 @@ class _NotificationsBodyState extends State<NotificationsBody> {
         if (!_granted)
           AppInfoBannerWidget(
             icon: NoxIcons.notificationsOff,
-            title: TextConstants.notificationsDeniedTitle,
-            message: TextConstants.notificationsDeniedMessage,
-            actionLabel: TextConstants.actionOpenSettings,
+            title: context.l10n.notificationsDeniedTitle,
+            message: context.l10n.notificationsDeniedMessage,
+            actionLabel: context.l10n.actionOpenSettings,
             onAction: () {}, // TODO(backend): deep-link to system settings (app_settings plugin)
           ),
         AppSettingsGroupWidget(
           children: [
             AppSettingsSwitchRowWidget(
               leadingIcon: NoxIcons.notifications,
-              title: TextConstants.notificationsPushTitle,
-              supportingText: TextConstants.notificationsPushSubtitle,
+              title: context.l10n.notificationsPushTitle,
+              supportingText: context.l10n.notificationsPushSubtitle,
               value: _granted && _enabled,
               onChanged: _granted ? (value) => setState(() => _enabled = value) : null,
             ),

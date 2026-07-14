@@ -47,5 +47,25 @@
   "languageUkrainian": "Українська",
   "@languageUkrainian": {
     "description": "Language picker: Ukrainian (endonym, same in every locale)"
-  }
+  },
+  "themeSystem": "System",
+  "@themeSystem": {
+    "description": "Appearance (7.3): follow the device theme"
+  },
+  "themeSystemCaption": "Match your device",
+  "themeLight": "Light",
+  "@themeLight": {
+    "description": "Appearance (7.3): always-light theme"
+  },
+  "themeLightCaption": "Always light",
+  "themeDark": "Dark",
+  "@themeDark": {
+    "description": "Appearance (7.3): always-dark theme"
+  },
+  "themeDarkCaption": "Always dark",
+  "notificationsPushTitle": "Enable notifications",
+  "notificationsPushSubtitle": "Only for chats you're in",
+  "notificationsDeniedTitle": "Notifications are blocked",
+  "notificationsDeniedMessage": "Allow notifications in system settings to receive messages from your chats.",
+  "actionOpenSettings": "Open settings"
 }

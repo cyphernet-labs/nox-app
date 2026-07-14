@@ -4,7 +4,7 @@ import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/theme/nox_brand.dart';
 import 'package:nox_app/design/theme/nox_color_scheme.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
 import 'package:nox_app/presentation/widgets/settings/app_theme_option_widget.dart';
 
@@ -15,30 +15,33 @@ import 'package:nox_app/presentation/widgets/settings/app_theme_option_widget.da
 class AppearanceBody extends StatelessWidget {
   const AppearanceBody({super.key});
 
-  static const List<(ThemeMode, String, String)> _options = [
-    (ThemeMode.system, TextConstants.themeSystem, TextConstants.themeSystemCaption),
-    (ThemeMode.light, TextConstants.themeLight, TextConstants.themeLightCaption),
-    (ThemeMode.dark, TextConstants.themeDark, TextConstants.themeDarkCaption),
-  ];
+  static const List<ThemeMode> _modes = [ThemeMode.system, ThemeMode.light, ThemeMode.dark];
+
+  /// Localized (label, caption) for a theme option — resolved in build() because
+  /// l10n needs a BuildContext (the copy can't live in a `static const`).
+  (String, String) _labels(BuildContext context, ThemeMode mode) => switch (mode) {
+    ThemeMode.system => (context.l10n.themeSystem, context.l10n.themeSystemCaption),
+    ThemeMode.light => (context.l10n.themeLight, context.l10n.themeLightCaption),
+    ThemeMode.dark => (context.l10n.themeDark, context.l10n.themeDarkCaption),
+  };
 
   @override
   Widget build(BuildContext context) {
     final current = context.watch<AppRootBloc>().state.themeMode;
-    return ListView(
-      padding: EdgeInsets.all(AppSpacingTokens.s16),
-      children: [
-        for (final (mode, label, caption) in _options)
-          Padding(
-            padding: EdgeInsets.only(bottom: AppSpacingTokens.s12),
-            child: AppThemeOptionWidget(
-              label: label,
-              caption: caption,
-              preview: _ThemePreview(mode: mode),
-              selected: current == mode,
-              onTap: () => context.read<AppRootBloc>().add(AppRootEvent.setTheme(themeMode: mode)),
-            ),
-          ),
-      ],
+    return ListView(padding: EdgeInsets.all(AppSpacingTokens.s16), children: [for (final mode in _modes) _option(context, current, mode)]);
+  }
+
+  Widget _option(BuildContext context, ThemeMode current, ThemeMode mode) {
+    final (label, caption) = _labels(context, mode);
+    return Padding(
+      padding: EdgeInsets.only(bottom: AppSpacingTokens.s12),
+      child: AppThemeOptionWidget(
+        label: label,
+        caption: caption,
+        preview: _ThemePreview(mode: mode),
+        selected: current == mode,
+        onTap: () => context.read<AppRootBloc>().add(AppRootEvent.setTheme(themeMode: mode)),
+      ),
     );
   }
 }

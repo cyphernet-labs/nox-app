@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/pages/notifications_page/notifications_body.dart';
 import 'package:nox_app/presentation/widgets/shell/app_detail_scaffold_widget.dart';
 
@@ -17,6 +17,6 @@ class NotificationsPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AppDetailScaffoldWidget(title: TextConstants.settingsNotificationsTitle, body: const NotificationsBody());
+    return AppDetailScaffoldWidget(title: context.l10n.settingsNotificationsTitle, body: const NotificationsBody());
   }
 }
