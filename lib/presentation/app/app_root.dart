@@ -5,8 +5,11 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:nox_app/design/app_text_style_tokens.dart';
 import 'package:nox_app/design/theme/app_theme.dart';
 import 'package:nox_app/domain/model/app/app_state_type.dart';
+import 'package:nox_app/general/app_language.dart';
 import 'package:nox_app/general/constants.dart';
+import 'package:nox_app/general/locale_controller.dart';
 import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/l10n/app_localizations.dart';
 import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
 import 'package:nox_app/presentation/helpers/app_feedback_helper.dart';
 import 'package:nox_app/presentation/pages/login_page/login_page.dart';
@@ -37,6 +40,9 @@ class _AppRootState extends State<AppRoot> {
   void initState() {
     super.initState();
     _bloc = AppRootBloc()..add(const AppRootEvent.initialize());
+    // Load the persisted UI language; nudges LocaleController.language, which
+    // re-renders MaterialApp via the ValueListenableBuilder in build().
+    LocaleController.instance.load();
   }
 
   @override
@@ -121,22 +127,33 @@ class _AppRootState extends State<AppRoot> {
                 // would be a dead no-op once a resolver is set). See the resolver doc.
                 fontSizeResolver: AppTextStyleTokens.fontSizeResolver,
                 builder: (context, child) {
-                  return MaterialApp(
-                    title: TextConstants.appName,
-                    navigatorKey: _navigatorKey,
-                    theme: AppTheme.light(),
-                    darkTheme: AppTheme.dark(),
-                    themeMode: state.themeMode,
-                    scrollBehavior: const MaterialScrollBehavior().copyWith(
-                      dragDevices: {PointerDeviceKind.mouse, PointerDeviceKind.touch, PointerDeviceKind.trackpad, PointerDeviceKind.stylus},
+                  return ValueListenableBuilder<AppLanguage>(
+                    valueListenable: LocaleController.instance.language,
+                    builder: (context, _, _) => MaterialApp(
+                      title: TextConstants.appName,
+                      navigatorKey: _navigatorKey,
+                      theme: AppTheme.light(),
+                      darkTheme: AppTheme.dark(),
+                      themeMode: state.themeMode,
+                      locale: LocaleController.instance.locale,
+                      localizationsDelegates: AppLocalizations.localizationsDelegates,
+                      supportedLocales: AppLocalizations.supportedLocales,
+                      scrollBehavior: const MaterialScrollBehavior().copyWith(
+                        dragDevices: {
+                          PointerDeviceKind.mouse,
+                          PointerDeviceKind.touch,
+                          PointerDeviceKind.trackpad,
+                          PointerDeviceKind.stylus,
+                        },
+                      ),
+                      // Inner MediaQuery re-pins TextScaler inside MaterialApp's subtree so the
+                      // OS font scale cannot leak back into AppBar/Scaffold/etc (blueprint 06 §3.2).
+                      builder: (context, child) => MediaQuery(
+                        data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(1.0)),
+                        child: child ?? const SizedBox.shrink(),
+                      ),
+                      home: const SplashPage(),
                     ),
-                    // Inner MediaQuery re-pins TextScaler inside MaterialApp's subtree so the
-                    // OS font scale cannot leak back into AppBar/Scaffold/etc (blueprint 06 §3.2).
-                    builder: (context, child) => MediaQuery(
-                      data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(1.0)),
-                      child: child ?? const SizedBox.shrink(),
-                    ),
-                    home: const SplashPage(),
                   );
                 },
               ),

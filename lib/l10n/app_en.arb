@@ -1,0 +1,51 @@
+{
+  "@@locale": "en",
+  "appName": "NOX",
+  "@appName": {
+    "description": "Product name / wordmark (brand-fixed, not translated)"
+  },
+  "chats": "Chats",
+  "@chats": {
+    "description": "Chats tab label in the app shell (FR-004)"
+  },
+  "settings": "Settings",
+  "@settings": {
+    "description": "Settings tab label in the app shell (FR-004)"
+  },
+  "settingsAppearanceTitle": "Appearance",
+  "@settingsAppearanceTitle": {
+    "description": "Settings > Appearance section title (7.3)"
+  },
+  "settingsLanguageTitle": "Language",
+  "@settingsLanguageTitle": {
+    "description": "Settings > Language section title (7.4)"
+  },
+  "settingsNotificationsTitle": "Notifications",
+  "@settingsNotificationsTitle": {
+    "description": "Settings > Notifications section title (7.2)"
+  },
+  "settingsTermsTitle": "Terms",
+  "@settingsTermsTitle": {
+    "description": "Settings > Terms section title (7.6)"
+  },
+  "settingsAboutTitle": "About",
+  "@settingsAboutTitle": {
+    "description": "Settings > About section title (7.7)"
+  },
+  "settingsAccountTitle": "Account",
+  "@settingsAccountTitle": {
+    "description": "Settings > Account section title (7.1, desktop list-detail menu item)"
+  },
+  "languageSystem": "System",
+  "@languageSystem": {
+    "description": "Language picker: follow the device language (7.4)"
+  },
+  "languageEnglish": "English",
+  "@languageEnglish": {
+    "description": "Language picker: English (endonym, same in every locale)"
+  },
+  "languageUkrainian": "Українська",
+  "@languageUkrainian": {
+    "description": "Language picker: Ukrainian (endonym, same in every locale)"
+  }
+}

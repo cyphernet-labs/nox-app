@@ -1,0 +1,15 @@
+{
+  "@@locale": "uk",
+  "appName": "NOX",
+  "chats": "Чати",
+  "settings": "Налаштування",
+  "settingsAppearanceTitle": "Вигляд",
+  "settingsLanguageTitle": "Мова",
+  "settingsNotificationsTitle": "Сповіщення",
+  "settingsTermsTitle": "Умови",
+  "settingsAboutTitle": "Про застосунок",
+  "settingsAccountTitle": "Обліковий запис",
+  "languageSystem": "Системна",
+  "languageEnglish": "English",
+  "languageUkrainian": "Українська"
+}

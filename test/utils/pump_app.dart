@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/design/app_text_style_tokens.dart';
 import 'package:nox_app/design/theme/app_theme.dart';
 import 'package:nox_app/general/constants.dart';
+import 'package:nox_app/l10n/app_localizations.dart';
 
 /// Pumps [child] inside the app's ScreenUtil + theme canvas so AppSpacingTokens /
 /// AppTextStyleTokens and `context.appColors` resolve as in production. Reused by
@@ -25,6 +26,10 @@ Future<void> pumpApp(
         theme: AppTheme.light(),
         darkTheme: AppTheme.dark(),
         themeMode: themeMode,
+        // Pin English so localized copy renders deterministically in tests/goldens.
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: Scaffold(body: child),
         // Clamp OS font scaling so text metrics match production (mirror AppRoot).
         builder: (context, widget) => MediaQuery(

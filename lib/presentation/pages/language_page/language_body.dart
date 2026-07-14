@@ -3,7 +3,8 @@ import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/general/app_language.dart';
-import 'package:nox_app/general/text_constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
+import 'package:nox_app/general/locale_controller.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 import 'package:nox_app/presentation/widgets/settings/app_settings_group_widget.dart';
 
@@ -20,13 +21,12 @@ class LanguageBody extends StatefulWidget {
 }
 
 class _LanguageBodyState extends State<LanguageBody> {
-  // TODO(backend): promote to an app-level LocaleController + l10n live re-render.
-  AppLanguage _selected = AppLanguage.system;
+  AppLanguage _selected = LocaleController.instance.language.value;
 
-  String _label(AppLanguage language) => switch (language) {
-    AppLanguage.system => TextConstants.languageSystem,
-    AppLanguage.english => TextConstants.languageEnglish,
-    AppLanguage.ukrainian => TextConstants.languageUkrainian,
+  String _label(BuildContext context, AppLanguage language) => switch (language) {
+    AppLanguage.system => context.l10n.languageSystem,
+    AppLanguage.english => context.l10n.languageEnglish,
+    AppLanguage.ukrainian => context.l10n.languageUkrainian,
   };
 
   /// 40dp round leading: a smartphone chip for System, the country flag otherwise.
@@ -54,7 +54,11 @@ class _LanguageBodyState extends State<LanguageBody> {
     final colorScheme = Theme.of(context).colorScheme;
     return RadioGroup<AppLanguage>(
       groupValue: _selected,
-      onChanged: (value) => setState(() => _selected = value ?? _selected),
+      onChanged: (value) {
+        if (value == null) return;
+        setState(() => _selected = value);
+        LocaleController.instance.set(value);
+      },
       child: ListView(
         children: [
           AppSettingsGroupWidget(
@@ -62,7 +66,7 @@ class _LanguageBodyState extends State<LanguageBody> {
               for (final language in AppLanguage.values)
                 RadioListTile<AppLanguage>(
                   value: language,
-                  title: Text(_label(language)),
+                  title: Text(_label(context, language)),
                   secondary: _leading(context, language),
                   controlAffinity: ListTileControlAffinity.trailing,
                   selected: _selected == language,
