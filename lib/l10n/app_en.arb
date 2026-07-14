@@ -1,71 +1,152 @@
 {
   "@@locale": "en",
   "appName": "NOX",
-  "@appName": {
-    "description": "Product name / wordmark (brand-fixed, not translated)"
-  },
   "chats": "Chats",
-  "@chats": {
-    "description": "Chats tab label in the app shell (FR-004)"
-  },
   "settings": "Settings",
-  "@settings": {
-    "description": "Settings tab label in the app shell (FR-004)"
-  },
-  "settingsAppearanceTitle": "Appearance",
-  "@settingsAppearanceTitle": {
-    "description": "Settings > Appearance section title (7.3)"
-  },
-  "settingsLanguageTitle": "Language",
-  "@settingsLanguageTitle": {
-    "description": "Settings > Language section title (7.4)"
-  },
-  "settingsNotificationsTitle": "Notifications",
-  "@settingsNotificationsTitle": {
-    "description": "Settings > Notifications section title (7.2)"
-  },
-  "settingsTermsTitle": "Terms",
-  "@settingsTermsTitle": {
-    "description": "Settings > Terms section title (7.6)"
-  },
-  "settingsAboutTitle": "About",
-  "@settingsAboutTitle": {
-    "description": "Settings > About section title (7.7)"
-  },
-  "settingsAccountTitle": "Account",
-  "@settingsAccountTitle": {
-    "description": "Settings > Account section title (7.1, desktop list-detail menu item)"
-  },
-  "languageSystem": "System",
-  "@languageSystem": {
-    "description": "Language picker: follow the device language (7.4)"
-  },
-  "languageEnglish": "English",
-  "@languageEnglish": {
-    "description": "Language picker: English (endonym, same in every locale)"
-  },
-  "languageUkrainian": "Українська",
-  "@languageUkrainian": {
-    "description": "Language picker: Ukrainian (endonym, same in every locale)"
-  },
-  "themeSystem": "System",
-  "@themeSystem": {
-    "description": "Appearance (7.3): follow the device theme"
-  },
-  "themeSystemCaption": "Match your device",
+  "errorGeneralTitle": "Something went wrong",
+  "errorFatalMessage": "An unexpected error occurred. Please try again.",
+  "errorNetworkMessage": "Could not connect. Check your connection and try again.",
+  "actionTryAgain": "Try again",
+  "noData": "Nothing here yet",
+  "comingSoon": "Coming soon",
+  "searchHint": "Search",
+  "composerHint": "Message",
+  "actionDismiss": "Dismiss",
+  "noConnection": "No connection",
+  "tooltipAttachFile": "Attach file",
+  "tooltipSend": "Send",
+  "tooltipCreateChat": "New chat",
+  "tooltipRemove": "Remove",
+  "tooltipToggleTheme": "Toggle theme",
+  "tooltipBack": "Back",
+  "uiKitTitle": "NOX UI Kit",
+  "uiKitSubtitle": "Browse every component in the design system.",
+  "actionOpenUiKit": "Open UI Kit",
   "themeLight": "Light",
-  "@themeLight": {
-    "description": "Appearance (7.3): always-light theme"
-  },
-  "themeLightCaption": "Always light",
   "themeDark": "Dark",
-  "@themeDark": {
-    "description": "Appearance (7.3): always-dark theme"
-  },
+  "screensGalleryTitle": "NOX Screens",
+  "actionOpenScreens": "Open Screens",
+  "settingsAppearanceTitle": "Appearance",
+  "themeSystem": "System",
+  "themeSystemCaption": "Match your device",
+  "themeLightCaption": "Always light",
   "themeDarkCaption": "Always dark",
+  "settingsLanguageTitle": "Language",
+  "languageSystem": "System",
+  "languageEnglish": "English",
+  "languageUkrainian": "Українська",
+  "settingsNotificationsTitle": "Notifications",
   "notificationsPushTitle": "Enable notifications",
   "notificationsPushSubtitle": "Only for chats you're in",
   "notificationsDeniedTitle": "Notifications are blocked",
   "notificationsDeniedMessage": "Allow notifications in system settings to receive messages from your chats.",
-  "actionOpenSettings": "Open settings"
+  "actionOpenSettings": "Open settings",
+  "settingsTermsTitle": "Terms",
+  "termsDocHeading": "Terms of Service",
+  "termsAcceptanceHeading": "Acceptance",
+  "termsAcceptanceBody": "By using NOX you accept these terms. If you do not agree, do not use the app.",
+  "termsIdentityHeading": "Your identity",
+  "termsIdentityBody": "Your account is an anonymous identifier and a display name — no phone number or email. Keep your identifier safe; anyone who has it can sign in as you.",
+  "termsContentHeading": "Content",
+  "termsContentBody": "Chats are an open shared space visible to everyone. You are responsible for what you send; do not post unlawful content.",
+  "termsPrivacyHeading": "Privacy",
+  "termsPrivacyBody": "NOX is end-to-end encrypted; the server never sees your message content.",
+  "versionLabel": "Version",
+  "settingsAboutTitle": "About",
+  "loginSignIn": "Sign in",
+  "loginIdLabel": "Your ID",
+  "loginIdHint": "Paste or enter your ID",
+  "actionPaste": "Paste",
+  "loginScanQr": "Scan QR",
+  "loginInvalidId": "Invalid identifier",
+  "loginNetworkError": "Could not sign in. Check your connection and try again.",
+  "onboardTitleSignIn": "NOX · Sign in",
+  "sessionExpiredMessage": "Your session expired",
+  "tooltipFlashlight": "Flashlight",
+  "tooltipSwitchCamera": "Switch camera",
+  "qrAimHint": "Aim your camera at a QR code",
+  "qrEnterManually": "Enter manually",
+  "qrPermissionTitle": "Camera access needed",
+  "qrPermissionMessage": "To scan a QR code, allow camera access in system settings.",
+  "qrUnavailableTitle": "Camera unavailable",
+  "qrUnavailableMessage": "No camera is available on this device. Enter your ID manually instead.",
+  "qrInvalidSnackbar": "This QR code is invalid. Try another one.",
+  "qrDesktopTitle": "Scan a QR code",
+  "qrDesktopHelper": "Point your webcam at a code, or enter the ID manually.",
+  "onboardTitleScanQr": "NOX · Scan QR",
+  "usernameLabel": "Name",
+  "usernameHint": "How others will see you",
+  "usernameHelper": "Others see this name. You can change it now or later in Settings.",
+  "usernameCharsetError": "Contains invalid characters (allowed: letters, digits, - _ .)",
+  "nameTakenError": "This name is taken",
+  "actionDone": "Done",
+  "actionSkip": "Skip",
+  "onboardTitleSetUp": "NOX · Set up",
+  "createChatTitle": "New chat",
+  "createChatNameLabel": "Chat name",
+  "createChatNameHint": "e.g. Random thoughts",
+  "createChatNetworkError": "Could not create chat. Check your connection and try again.",
+  "actionCreate": "Create",
+  "actionCancel": "Cancel",
+  "settingsAccountTitle": "Account",
+  "settingsNameEditTooltip": "Edit",
+  "idMask": "••••••••",
+  "idShowTooltip": "Show",
+  "idHideTooltip": "Hide",
+  "idCopyTooltip": "Copy",
+  "idShowQrTooltip": "Show QR",
+  "qrSheetTitle": "Your ID QR",
+  "qrAccountCaption": "Show this code to let someone add you",
+  "actionClose": "Close",
+  "copiedToClipboard": "Copied to clipboard",
+  "logoutRow": "Log out",
+  "logoutDialogTitle": "Log out?",
+  "logoutDialogMessage": "Your ID and local data will be removed from this device.",
+  "logoutError": "Could not log out. Please try again.",
+  "chatsEmptyTitle": "No chats yet",
+  "chatsEmptyMessage": "Tap + to create the first one.",
+  "chatsSearchEmpty": "No chats found",
+  "chatsLoadError": "Could not load chats. Pull to refresh.",
+  "chatsNoSelectionTitle": "Select a chat",
+  "chatsNoSelectionMessage": "Choose a conversation on the left, or press + to start a new one.",
+  "chatThreadPlaceholder": "Chat thread (5.2)",
+  "timeNow": "now",
+  "timeYesterday": "Yesterday",
+  "timeMinuteSuffix": "min",
+  "timeHourSuffix": "h",
+  "tooltipRetry": "Tap to retry",
+  "tooltipChatInfo": "Chat info",
+  "threadEmptyTitle": "No messages yet",
+  "threadEmptyMessage": "Send the first one.",
+  "dateToday": "Today",
+  "dateYesterday": "Yesterday",
+  "systemChatCreated": "Chat created by {username}",
+  "@systemChatCreated": {
+    "description": "System line at the top of a chat thread",
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "tooltipSave": "Save",
+  "savedToDownloads": "Saved to Downloads",
+  "fileDownloadError": "Could not download file. Check your connection and try again.",
+  "actionDownload": "Download",
+  "downloadingProgress": "Downloading… {percent}%",
+  "@downloadingProgress": {
+    "description": "File-view download progress",
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
+  "filesSectionTitle": "Files",
+  "filesViewList": "List",
+  "filesViewGrid": "Grid",
+  "filesEmptyTitle": "No files yet",
+  "filesEmptyMessage": "Files sent in this chat will appear here.",
+  "chatInfoTitle": "Details",
+  "chatInfoLoadError": "Could not load chat info. Check your connection and try again."
 }
