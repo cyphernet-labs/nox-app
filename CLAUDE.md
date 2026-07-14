@@ -77,7 +77,7 @@ Spec Kit `0.13.0` is installed (CLI `specify`; tracked under `.specify/` + `.cla
 
 ## Build / test / run
 
-The build system is in place: `pubspec.yaml` + a `Makefile` (wraps `fvm`) + FVM-pinned Flutter `3.44.1`. Background/rationale lives in `docs/blueprints/mobile/12-dev-commands.md` — but that doc has **drifted** from the real `Makefile` (missing golden targets, `--exclude-tags golden`, `FILE=`; lists nonexistent `build-android/ios` wrappers); the `Makefile` is the source of truth.
+The build system is in place: `pubspec.yaml` + a `Makefile` (wraps `fvm`) + FVM-pinned Flutter `3.44.1`. Background/rationale lives in `docs/blueprints/mobile/12-dev-commands.md` (reconciled with the real `Makefile` — golden targets, `--exclude-tags golden`, `FILE=`, and desktop-only build wrappers all match); the `Makefile` remains the source of truth.
 
 **⏸ CI TEMPORARILY DISABLED (2026-06-26) — local gate is MANDATORY.** GitHub Actions auto-runs (`ci.yml` + `compile-check.yml`) are paused (their `push`/`pull_request` triggers commented out, `workflow_dispatch`-only) to conserve scarce CI minutes during active development. **While paused, run `make gate` AND `make golden-verify` locally before EVERY commit/push** — they are the only place a regression is caught now. Re-enable later by restoring the triggers in both workflow files.
 
