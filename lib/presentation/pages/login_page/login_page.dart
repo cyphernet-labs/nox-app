@@ -11,7 +11,8 @@ import 'package:nox_app/presentation/pages/base/base_state_page.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page_params.dart';
 import 'package:nox_app/presentation/pages/login_page/bloc/login_bloc.dart';
-import 'package:nox_app/presentation/pages/placeholder/route_placeholder_page.dart';
+import 'package:nox_app/presentation/pages/set_username_page/set_username_page.dart';
+import 'package:nox_app/presentation/widgets/shell/tab_bar_shell_widget.dart';
 import 'package:nox_app/presentation/pages/qr_scan_page/qr_scan_page.dart';
 import 'package:nox_app/presentation/widgets/onboarding/app_id_field_widget.dart';
 import 'package:nox_app/presentation/widgets/onboarding/app_onboard_card_widget.dart';
@@ -106,10 +107,10 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
   void _onStatus(BuildContext context, LoginState state) {
     switch (state.status) {
       case LoginStatus.navNewId:
-        Navigator.of(context).push(RoutePlaceholderPage.route(destinationLabel: 'Set username (2.3)'));
+        Navigator.of(context).push(SetUsernamePage.route());
         _bloc.add(const LoginEvent.navigationHandled());
       case LoginStatus.navRegistered:
-        Navigator.of(context).push(RoutePlaceholderPage.route(destinationLabel: 'Chats (5.1)'));
+        Navigator.of(context).push(TabBarShell.route());
         _bloc.add(const LoginEvent.navigationHandled());
       case LoginStatus.navFatal:
         Navigator.of(context).push(AppErrorPage.route(params: ErrorPageParams.fatal()));

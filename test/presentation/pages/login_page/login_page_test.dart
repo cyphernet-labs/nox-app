@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:injectable/injectable.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:nox_app/general/qr_scanner_capability.dart';
 import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/pages/login_page/login_page.dart';
-import 'package:nox_app/presentation/pages/placeholder/route_placeholder_page.dart';
+import 'package:nox_app/presentation/pages/set_username_page/set_username_page.dart';
 import 'package:nox_app/presentation/pages/qr_scan_page/qr_scan_page.dart';
 
 import '../../../utils/pump_app.dart';
@@ -11,6 +15,16 @@ import '../../../utils/pump_app.dart';
 final l10nEn = AppLocalizationsEn();
 
 void main() {
+  setUp(() async {
+    FlutterSecureStorage.setMockInitialValues({});
+    SharedPreferences.setMockInitialValues({});
+    await configureDependencies(Environment.test);
+  });
+
+  tearDown(() async {
+    await getIt.reset();
+  });
+
   Finder signInButton() => find.widgetWithText(FilledButton, l10nEn.loginSignIn);
 
   testWidgets('Sign in is disabled when empty and enabled after typing', (tester) async {
@@ -33,8 +47,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
     await tester.pumpAndSettle();
 
-    expect(find.byType(RoutePlaceholderPage), findsOneWidget);
-    expect(find.text('Set username (2.3)'), findsOneWidget);
+    expect(find.byType(SetUsernamePage), findsOneWidget);
   });
 
   testWidgets('Scan QR opens the QR scanner (2.2) where the scanner exists', (tester) async {
