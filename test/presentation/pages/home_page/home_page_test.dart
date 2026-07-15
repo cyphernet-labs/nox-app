@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:injectable/injectable.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
 import 'package:nox_app/presentation/pages/home_page/home_page.dart';
@@ -12,6 +16,16 @@ import '../../../utils/pump_app.dart';
 final l10nEn = AppLocalizationsEn();
 
 void main() {
+  setUp(() async {
+    FlutterSecureStorage.setMockInitialValues({});
+    SharedPreferences.setMockInitialValues({});
+    await configureDependencies(Environment.test);
+  });
+
+  tearDown(() async {
+    await getIt.reset();
+  });
+
   testWidgets('HomePage shows the launcher and opens the UI kit', (tester) async {
     await pumpApp(tester, BlocProvider<AppRootBloc>(create: (_) => AppRootBloc(), child: const HomePage()));
 

@@ -93,6 +93,15 @@ class _AppRootState extends State<AppRoot> {
     });
   }
 
+  // Transient settings save-error notice: a theme persist failed and the bloc already
+  // reverted the theme; surface "Could not save. Try again." over the current screen.
+  void _onSettingsSaveError(BuildContext context, AppRootState state) {
+    final navigatorContext = _navigatorKey.currentContext;
+    if (navigatorContext != null && navigatorContext.mounted) {
+      showAppSnackBar(navigatorContext, text: navigatorContext.l10n.settingsSaveError, error: true);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return BlocProvider<AppRootBloc>.value(
@@ -113,6 +122,10 @@ class _AppRootState extends State<AppRoot> {
                 current.appliedAppState.sessionExpired &&
                 (previous.appliedAppState.state != AppStateType.unauthorized || !previous.appliedAppState.sessionExpired),
             listener: _onSessionExpired,
+          ),
+          BlocListener<AppRootBloc, AppRootState>(
+            listenWhen: (previous, current) => previous.settingsSaveErrorTick != current.settingsSaveErrorTick,
+            listener: _onSettingsSaveError,
           ),
         ],
         child: BlocBuilder<AppRootBloc, AppRootState>(

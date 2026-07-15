@@ -12,6 +12,9 @@ abstract class AppRootState with _$AppRootState {
     required AppStateModel lastAppState,
     required AppStateModel appliedAppState,
     @Default(false) bool isReady,
+    // Increments on each failed settings save (theme) so a listener can surface the
+    // "Could not save. Try again." notice; the theme itself is reverted on failure.
+    @Default(0) int settingsSaveErrorTick,
   }) = _AppRootState;
 
   factory AppRootState.initial() =>
