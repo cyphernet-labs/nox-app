@@ -148,5 +148,6 @@
   "filesEmptyTitle": "No files yet",
   "filesEmptyMessage": "Files sent in this chat will appear here.",
   "chatInfoTitle": "Details",
-  "chatInfoLoadError": "Could not load chat info. Check your connection and try again."
+  "chatInfoLoadError": "Could not load chat info. Check your connection and try again.",
+  "settingsSaveError": "Could not save. Try again."
 }

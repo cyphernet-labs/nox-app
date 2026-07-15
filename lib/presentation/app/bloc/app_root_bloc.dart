@@ -30,11 +30,26 @@ class AppRootBloc extends BaseBloc<AppRootEvent, AppRootState> {
   StreamSubscription<RepositoryResult<AppStateModel>>? _appStateSubscription;
 
   FutureOr<void> _onInitialize(Initialize event, Emitter<AppRootState> emit) async {
+    // Apply the persisted theme before wiring the app-state stream (defaults to
+    // system on a missing/unrecognized value — never errors).
+    final theme = await settingsRepository.readThemeMode();
+    theme.match<void>(
+      onData: (mode) => emit(state.copyWith(themeMode: mode)),
+      onError: (_) {},
+    );
     _appStateSubscription ??= appStateRepository.watchAppState().listen((result) => add(AppRootEvent.updateAppState(result: result)));
   }
 
   FutureOr<void> _onSetTheme(SetTheme event, Emitter<AppRootState> emit) async {
+    // Apply live (optimistic), then persist. On a save failure, revert to the prior
+    // theme and bump the error tick so AppRoot shows the save-error notice.
+    final previous = state.themeMode;
     emit(state.copyWith(themeMode: event.themeMode));
+    final result = await settingsRepository.setThemeMode(event.themeMode);
+    result.match<void>(
+      onData: (_) {},
+      onError: (_) => emit(state.copyWith(themeMode: previous, settingsSaveErrorTick: state.settingsSaveErrorTick + 1)),
+    );
   }
 
   FutureOr<void> _onUpdateAppState(UpdateAppState event, Emitter<AppRootState> emit) async {

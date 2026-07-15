@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:injectable/injectable.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
 import 'package:nox_app/presentation/pages/notifications_page/notifications_body.dart';
@@ -9,7 +13,6 @@ import 'package:nox_app/presentation/pages/settings_root_page/settings_root_page
 import 'package:nox_app/presentation/pages/splash_page/splash_page.dart';
 import 'package:nox_app/presentation/widgets/settings/app_identity_card_widget.dart';
 import 'package:nox_app/presentation/widgets/settings/app_qr_surface_widget.dart';
-import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/presentation/widgets/shell/app_list_detail_widget.dart';
 
 import '../../../utils/fake_session_repository.dart';
@@ -18,6 +21,16 @@ import '../../../utils/pump_app.dart';
 final l10nEn = AppLocalizationsEn();
 
 void main() {
+  setUp(() async {
+    FlutterSecureStorage.setMockInitialValues({});
+    SharedPreferences.setMockInitialValues({});
+    await configureDependencies(Environment.test);
+  });
+
+  tearDown(() async {
+    await getIt.reset();
+  });
+
   // The identity card loads the user's id from the session spine on init.
   setUp(registerFakeSession);
   tearDown(getIt.reset);

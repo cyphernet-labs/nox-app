@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:injectable/injectable.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
 import 'package:nox_app/presentation/pages/appearance_page/appearance_page.dart';
@@ -10,6 +14,16 @@ import '../../../utils/pump_app.dart';
 final l10nEn = AppLocalizationsEn();
 
 void main() {
+  setUp(() async {
+    FlutterSecureStorage.setMockInitialValues({});
+    SharedPreferences.setMockInitialValues({});
+    await configureDependencies(Environment.test);
+  });
+
+  tearDown(() async {
+    await getIt.reset();
+  });
+
   testWidgets('lists the three theme options and switches theme live', (tester) async {
     final bloc = AppRootBloc();
     addTearDown(bloc.close);

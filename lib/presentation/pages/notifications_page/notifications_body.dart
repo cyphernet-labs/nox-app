@@ -3,7 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
+import 'package:nox_app/di/global_aliases.dart';
+import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/general/l10n_extension.dart';
+import 'package:nox_app/presentation/helpers/app_feedback_helper.dart';
 import 'package:nox_app/presentation/widgets/settings/app_info_banner_widget.dart';
 import 'package:nox_app/presentation/widgets/settings/app_settings_group_widget.dart';
 import 'package:nox_app/presentation/widgets/settings/app_settings_switch_row_widget.dart';
@@ -23,10 +26,41 @@ class NotificationsBody extends StatefulWidget {
 
 class _NotificationsBodyState extends State<NotificationsBody> {
   bool _enabled = true;
-  // TODO(backend): real OS permission query + persistence + "own chats" push scope.
+  // TODO(backend): real OS permission query + "own chats" push scope.
   NotificationsPermission _permission = NotificationsPermission.granted;
 
   bool get _granted => _permission == NotificationsPermission.granted;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadEnabled();
+  }
+
+  Future<void> _loadEnabled() async {
+    final result = await settingsRepository.readNotificationsEnabled();
+    result.match<void>(
+      onData: (value) {
+        if (mounted) setState(() => _enabled = value);
+      },
+      onError: (_) {},
+    );
+  }
+
+  // Optimistic toggle: persist, and on a save failure revert the switch and show the
+  // "Could not save. Try again." notice.
+  Future<void> _setEnabled(bool value) async {
+    setState(() => _enabled = value);
+    final result = await settingsRepository.setNotificationsEnabled(value);
+    result.match<void>(
+      onData: (_) {},
+      onError: (_) {
+        if (!mounted) return;
+        setState(() => _enabled = !value);
+        showAppSnackBar(context, text: context.l10n.settingsSaveError, error: true);
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -47,7 +81,7 @@ class _NotificationsBodyState extends State<NotificationsBody> {
               title: context.l10n.notificationsPushTitle,
               supportingText: context.l10n.notificationsPushSubtitle,
               value: _granted && _enabled,
-              onChanged: _granted ? (value) => setState(() => _enabled = value) : null,
+              onChanged: _granted ? _setEnabled : null,
             ),
           ],
         ),

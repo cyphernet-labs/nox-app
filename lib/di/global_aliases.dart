@@ -5,6 +5,7 @@ import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/item/item_repository.dart';
 import 'package:nox_app/domain/repository/log_repository.dart';
 import 'package:nox_app/domain/repository/qr/camera_permission_service.dart';
+import 'package:nox_app/domain/repository/settings/settings_repository.dart';
 
 /// Convenience getters over the DI container.
 /// Cross-cutting
@@ -12,6 +13,7 @@ LogRepository get logRepository => getIt<LogRepository>();
 
 /// Repositories
 ItemRepository get itemRepository => getIt<ItemRepository>();
+SettingsRepository get settingsRepository => getIt<SettingsRepository>();
 
 /// App-state spine
 AppStateRepository get appStateRepository => getIt<AppStateRepository>();
