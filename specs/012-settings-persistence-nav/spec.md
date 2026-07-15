@@ -64,6 +64,14 @@
 - Онбординг: возврат с QR-скана без результата не должен терять ранее введённый на Login ID.
 - Desktop (`_wide`) и mobile (`_narrow`): настройки живут в общем Settings-теле (list-detail на десктопе, leaf-экраны на мобайле) — персистентность и inline-error одинаковы на обеих раскладках.
 
+## Clarifications
+
+### Session 2026-07-18 (self-resolved, автономно)
+
+- **Q: Где живёт персистентность настроек?** → Вводится доменный `SettingsRepository` (+ data-impl) поверх `shared_preferences` как единый локальный стор для **темы** и **уведомлений**. **Язык уже персистится** существующим `LocaleController` (из l10n-фичи) — переплюмбить его не обязательно; план может опционально маршрутизировать `LocaleController` через `SettingsRepository`, но FR-002 уже фактически выполнен. Идентификатор остаётся в `flutter_secure_storage` (вне scope).
+- **Q: Как онбординг-переходы становятся реальными?** → Переходы `2.1 → 2.3` (новый id) и `2.3 → 4.1` (успех) идут через **существующий app-state spine** (`AuthRepository`/`AppStateRepository` → `AppRoot` подмена корневого роута, фича 009): экраны триггерят смену app-state (`registrationPending`/`authorized`), а `AppRoot` делает навигацию — вместо локальных `RoutePlaceholderPage.push`. Переход `2.1 ↔ 2.2` (QR) — push/pop внутри Login (камера уже фидит sign-in путь, фича 010). Заглушки `RoutePlaceholderPage` в `login_page`/`set_username_page` удаляются; standalone-путь из галереи (`splash_page`) остаётся dev-only.
+- **Q: Как ведёт себя inline-error?** → Единообразно для всех трёх настроек: оптимистичное изменение UI, при ошибке сохранения — откат контрола к фактически сохранённому значению + неблокирующий snackbar `Could not save. Try again.` (через существующий `showAppSnackBar`). Сбой моделируется форс-путём в тестах (реальный локальный стор надёжен).
+
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
