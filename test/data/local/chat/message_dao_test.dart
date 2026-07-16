@@ -2,14 +2,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/data/entity/chat/message_entity.dart';
 import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/data/local/chat/message_dao.dart';
+import 'package:sembast/sembast.dart';
 
 void main() {
+  late AppDatabase appDb;
   late MessageDao dao;
 
   setUp(() async {
-    final db = AppDatabaseTest();
-    await db.clearEntireDatabase();
-    dao = MessageDao(db);
+    appDb = AppDatabaseTest();
+    await appDb.clearEntireDatabase();
+    dao = MessageDao(appDb);
   });
 
   MessageEntity msg(String id, String chatId, String iso) => MessageEntity(
@@ -45,5 +47,18 @@ void main() {
 
     await dao.cleanData();
     expect(await dao.countByChat('c1'), 0);
+  });
+
+  test('a corrupt record is skipped, not fatal', () async {
+    // Write a genuinely undecodable row straight into the store the DAO reads (missing
+    // the required fields MessageEntity.fromJson coerces), alongside a valid message in
+    // the same chat.
+    final db = await appDb.db;
+    await stringMapStoreFactory.store('messages').record('broken').put(db, <String, dynamic>{'chatId': 'c1', 'garbage': true});
+    await dao.upsert(msg('good', 'c1', '2026-06-01T00:00:00.000Z'));
+
+    // The decode guard drops the broken row and returns only the valid message — it
+    // does not throw and tear down the chat thread read.
+    expect((await dao.getByChatSorted('c1')).map((m) => m.id).toList(), ['good']);
   });
 }

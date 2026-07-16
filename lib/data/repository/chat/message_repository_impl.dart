@@ -54,8 +54,9 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
       final total = all.length;
       // page 1 = newest `pageSize`; each next page reaches further back in time.
       final end = total - (config.page - 1) * _pageSize;
-      if (end <= 0)
+      if (end <= 0) {
         return RepositoryResult<(List<MessageModel>, PageMetadata)>.success(data: (const <MessageModel>[], PageMetadata(total: total)));
+      }
       final start = (end - _pageSize) < 0 ? 0 : end - _pageSize;
       final slice = all.sublist(start, end);
       final hasMore = start > 0;

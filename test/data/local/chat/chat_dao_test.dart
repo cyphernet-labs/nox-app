@@ -2,14 +2,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/data/entity/chat/chat_entity.dart';
 import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/data/local/chat/chat_dao.dart';
+import 'package:sembast/sembast.dart';
 
 void main() {
+  late AppDatabase appDb;
   late ChatDao dao;
 
   setUp(() async {
-    final db = AppDatabaseTest();
-    await db.clearEntireDatabase();
-    dao = ChatDao(db);
+    appDb = AppDatabaseTest();
+    await appDb.clearEntireDatabase();
+    dao = ChatDao(appDb);
   });
 
   ChatEntity chat(String id, String name, String iso) =>
@@ -37,9 +39,14 @@ void main() {
   });
 
   test('a corrupt record is skipped, not fatal', () async {
+    // Write a genuinely undecodable row straight into the store the DAO reads (missing
+    // the required fields ChatEntity.fromJson coerces), alongside one valid chat.
+    final db = await appDb.db;
+    await stringMapStoreFactory.store('chats').record('broken').put(db, <String, dynamic>{'garbage': true});
     await dao.upsert(chat('good', 'Good', '2026-01-01T00:00:00.000Z'));
-    // A record that decodes fine plus, conceptually, a broken one: the decode guard
-    // returns only the valid rows.
-    expect((await dao.getAllSorted()).length, 1);
+
+    // The decode guard drops the broken row and returns only the valid one — it does
+    // not throw and tear down the whole list read.
+    expect((await dao.getAllSorted()).map((c) => c.id).toList(), ['good']);
   });
 }

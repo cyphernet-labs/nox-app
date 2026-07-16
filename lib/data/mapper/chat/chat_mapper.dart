@@ -13,7 +13,9 @@ class ChatMapper extends BaseMapper<ChatEntity, ChatModel, dynamic, dynamic> {
       id: entity.id,
       name: entity.name,
       lastMessagePreview: entity.lastMessagePreview,
-      lastMessageAt: DateTime.tryParse(entity.lastMessageAt)?.toUtc() ?? AppClock.now().toUtc(),
+      // Stored as UTC ISO; hand the domain/UI local wall-clock (the chats list reads
+      // lastMessageAt for relative time without a toLocal()).
+      lastMessageAt: DateTime.tryParse(entity.lastMessageAt)?.toLocal() ?? AppClock.now(),
       unreadCount: entity.unreadCount,
     );
   }

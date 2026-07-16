@@ -1,4 +1,5 @@
 import 'package:bloc_test/bloc_test.dart';
+import 'package:flutter/material.dart' show ThemeMode;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
@@ -6,7 +7,30 @@ import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/app/app_state_model.dart';
 import 'package:nox_app/domain/model/app/app_state_type.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
+import 'package:nox_app/domain/repository/settings/settings_repository.dart';
 import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
+
+/// Settings store with a configurable theme read and write outcome — drives the
+/// AppRootBloc theme-persistence branches (read-applied-on-Initialize, save-revert).
+class _StubSettingsRepository implements SettingsRepository {
+  _StubSettingsRepository({this.themeRead = ThemeMode.system, this.writeSucceeds = true});
+
+  final ThemeMode themeRead;
+  final bool writeSucceeds;
+
+  @override
+  Future<RepositoryResult<ThemeMode>> readThemeMode() async => RepositoryResult.success(data: themeRead);
+
+  @override
+  Future<RepositoryResult<bool>> setThemeMode(ThemeMode mode) async =>
+      writeSucceeds ? const RepositoryResult.success(data: true) : const RepositoryResult.error(exception: RepositoryException.unknown);
+
+  @override
+  Future<RepositoryResult<bool>> readNotificationsEnabled() async => const RepositoryResult.success(data: true);
+
+  @override
+  Future<RepositoryResult<bool>> setNotificationsEnabled(bool enabled) async => const RepositoryResult.success(data: true);
+}
 
 void main() {
   // The error branch of _onUpdateAppState logs via the global LogRepository, so the
@@ -62,6 +86,37 @@ void main() {
             .having((s) => s.lastAppState.state, 'lastAppState', AppStateType.unauthorized)
             // First emission → held behind the splash (not yet applied).
             .having((s) => s.appliedAppState.state, 'appliedAppState', AppStateType.init),
+      ],
+    );
+  });
+
+  group('AppRootBloc theme persistence', () {
+    blocTest<AppRootBloc, AppRootState>(
+      'applies the persisted theme on Initialize',
+      setUp: () {
+        getIt.allowReassignment = true;
+        getIt.registerSingleton<SettingsRepository>(_StubSettingsRepository(themeRead: ThemeMode.dark));
+      },
+      build: AppRootBloc.new,
+      act: (bloc) => bloc.add(const AppRootEvent.initialize()),
+      wait: const Duration(milliseconds: 100),
+      // The persisted theme survives later app-state emissions (copyWith preserves it).
+      verify: (bloc) => expect(bloc.state.themeMode, ThemeMode.dark),
+    );
+
+    blocTest<AppRootBloc, AppRootState>(
+      'a failed theme save reverts the theme and bumps the save-error tick',
+      setUp: () {
+        getIt.allowReassignment = true;
+        getIt.registerSingleton<SettingsRepository>(_StubSettingsRepository(writeSucceeds: false));
+      },
+      build: AppRootBloc.new,
+      act: (bloc) => bloc.add(const AppRootEvent.setTheme(themeMode: ThemeMode.dark)),
+      expect: () => [
+        // Optimistic apply — new theme, tick unchanged.
+        isA<AppRootState>().having((s) => s.themeMode, 'themeMode', ThemeMode.dark).having((s) => s.settingsSaveErrorTick, 'tick', 0),
+        // Save failed → revert to the previous theme and bump the tick.
+        isA<AppRootState>().having((s) => s.themeMode, 'themeMode', ThemeMode.system).having((s) => s.settingsSaveErrorTick, 'tick', 1),
       ],
     );
   });

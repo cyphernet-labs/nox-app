@@ -18,21 +18,24 @@ class MessageDao {
   /// Reactive stream of a chat's messages, chronological.
   Stream<List<MessageEntity>> watch(String chatId) async* {
     final db = await _appDatabase.db;
-    yield* _store.query(finder: Finder(filter: Filter.equals('chatId', chatId))).onSnapshots(db).map((s) => _sortChrono(_decode(s)));
+    yield* _store.query().onSnapshots(db).map((s) => _forChat(_decode(s), chatId));
   }
 
   /// All messages in a chat, chronological (oldest first); the repo paginates the
   /// newest batch first over this small local list.
   Future<List<MessageEntity>> getByChatSorted(String chatId) async {
     final db = await _appDatabase.db;
-    final finder = Finder(filter: Filter.equals('chatId', chatId));
-    return _sortChrono(_decode(await _store.query(finder: finder).getSnapshots(db)));
+    return _forChat(_decode(await _store.query().getSnapshots(db)), chatId);
   }
 
-  Future<int> countByChat(String chatId) async {
-    final db = await _appDatabase.db;
-    return _store.count(db, filter: Filter.equals('chatId', chatId));
-  }
+  Future<int> countByChat(String chatId) async => (await getByChatSorted(chatId)).length;
+
+  /// Filter by the typed entity field, then chronological order (small local store).
+  /// NB: filtering in Dart — not via a sembast Finder on the stored map — because
+  /// `field_rename: snake` persists `chatId` as `chat_id`, so a `Filter.equals('chatId', …)`
+  /// would never match the stored key and silently return nothing.
+  List<MessageEntity> _forChat(List<MessageEntity> messages, String chatId) =>
+      _sortChrono(messages.where((m) => m.chatId == chatId).toList());
 
   /// Atomically write/replace a batch (the one-time per-chat seed).
   Future<void> saveData(List<MessageEntity> messages) async {

@@ -1,10 +1,16 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:nox_app/general/formatters/date_formatter.dart';
 import 'package:nox_app/l10n/app_localizations_en.dart';
 
 final l10nEn = AppLocalizationsEn();
 
 void main() {
+  // The date tail is formatted per active locale (l10n.localeName). At runtime
+  // GlobalMaterialLocalizations initializes intl date symbols; here (a pure unit
+  // test with no widget tree) initialize them explicitly for the 'en' locale.
+  setUpAll(() => initializeDateFormatting(l10nEn.localeName));
+
   group('DateFormatter.relative', () {
     final now = DateTime(2026, 6, 20, 12);
 

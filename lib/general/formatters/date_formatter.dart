@@ -8,8 +8,6 @@ class DateFormatter {
 
   static final _short = DateFormat('MMM dd, yyyy', 'en_US');
   static final _time = DateFormat('HH:mm', 'en_US');
-  static final _dayMonth = DateFormat('d MMM', 'en_US');
-  static final _dayMonthYear = DateFormat('d MMM y', 'en_US');
 
   static String short(DateTime date) => _short.format(date);
 
@@ -30,7 +28,7 @@ class DateFormatter {
     final dayDiff = today.difference(thatDay).inDays;
     if (dayDiff == 0) return '${diff.inHours} ${l10n.timeHourSuffix}';
     if (dayDiff == 1) return l10n.timeYesterday;
-    return _dateTail(when, ref);
+    return _dateTail(when, ref, l10n);
   }
 
   /// Date-separator label for the chat thread (5.2): `Today` / `Yesterday` /
@@ -43,9 +41,14 @@ class DateFormatter {
     if (dayDiff == 0) return l10n.dateToday;
     if (dayDiff == 1) return l10n.dateYesterday;
     // A future-dated message (clock skew) falls through to its actual date, not Today.
-    return _dateTail(when, ref);
+    return _dateTail(when, ref, l10n);
   }
 
-  /// Shared date tail: `d MMM` within the same year, otherwise `d MMM y`.
-  static String _dateTail(DateTime when, DateTime ref) => when.year == ref.year ? _dayMonth.format(when) : _dayMonthYear.format(when);
+  /// Shared date tail: `d MMM` within the same year, otherwise `d MMM y`. Month names
+  /// are localized to the active UI locale (en → "8 Jun", uk → "8 черв.") — the tail
+  /// must match the surrounding relative-time words, which are already localized.
+  static String _dateTail(DateTime when, DateTime ref, AppLocalizations l10n) {
+    final pattern = when.year == ref.year ? 'd MMM' : 'd MMM y';
+    return DateFormat(pattern, l10n.localeName).format(when);
+  }
 }

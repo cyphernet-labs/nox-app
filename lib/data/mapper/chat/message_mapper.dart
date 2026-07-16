@@ -19,7 +19,9 @@ class MessageMapper extends BaseMapper<MessageEntity, MessageModel, dynamic, dyn
       authorId: entity.authorId,
       authorLabel: entity.authorLabel,
       text: entity.text,
-      sentAt: DateTime.tryParse(entity.sentAt)?.toUtc() ?? AppClock.now().toUtc(),
+      // Stored as UTC ISO; hand the domain/UI local wall-clock (the display layer
+      // reads sentAt's raw calendar fields without a toLocal()).
+      sentAt: DateTime.tryParse(entity.sentAt)?.toLocal() ?? AppClock.now(),
       status: MessageStatus.values.firstWhere((s) => s.name == entity.status, orElse: () => MessageStatus.none),
       isSystem: entity.isSystem,
       attachment: entity.attachmentId == null
