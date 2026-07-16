@@ -10,6 +10,12 @@ import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 abstract class ChatRepository {
   Future<RepositoryResult<(List<ChatModel>, PageMetadata)>> getChats({required GetChatsConfig config});
 
+  /// Reactive stream of the cached chats (newest first) for live-updating views.
+  Stream<List<ChatModel>> watchChats();
+
+  /// Create a chat locally and persist it; returns the created chat.
+  Future<RepositoryResult<ChatModel>> createChat({required String name});
+
   /// All files shared in a chat (5.4) — chat-owned, not paginated.
   Future<RepositoryResult<List<MessageAttachment>>> getChatFiles({required String chatId});
 

@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
+import 'package:nox_app/di/global_aliases.dart';
+import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/general/onboarding_mock_data.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
 import 'package:nox_app/presentation/base/bloc_transformers.dart';
@@ -50,11 +52,16 @@ class CreateChatBloc extends BaseBloc<CreateChatEvent, CreateChatState> {
     if (!state.canSubmit) return;
     emit(state.copyWith(status: CreateChatStatus.submitting, networkError: false));
     await executeLogic(() async {
-      // TODO(backend): real create; the outcome is a debug stand-in.
+      // The outcome selector still models network/fatal for previews; a `success`
+      // now persists the chat to the local DB via the cache-first repository.
       await Future<void>.delayed(const Duration(milliseconds: 400));
       switch (event.outcome) {
         case CreateChatOutcome.success:
-          emit(state.copyWith(status: CreateChatStatus.navSuccess));
+          final result = await chatRepository.createChat(name: state.name);
+          result.match<void>(
+            onData: (_) => emit(state.copyWith(status: CreateChatStatus.navSuccess)),
+            onError: (_) => emit(state.copyWith(status: CreateChatStatus.valid, networkError: true)),
+          );
         case CreateChatOutcome.network:
           emit(state.copyWith(status: CreateChatStatus.valid, networkError: true));
         case CreateChatOutcome.fatal:

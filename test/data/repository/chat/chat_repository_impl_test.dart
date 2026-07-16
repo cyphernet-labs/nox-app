@@ -1,48 +1,57 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
+import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
-  setUpAll(() async {
+  late ChatRepository repository;
+
+  setUp(() async {
+    SharedPreferences.setMockInitialValues({});
     await configureDependencies(Environment.test);
+    await getIt<AppDatabase>().clearEntireDatabase(); // fresh local DB per test
+    repository = getIt<ChatRepository>();
   });
 
-  tearDownAll(() async {
+  tearDown(() async {
     await getIt.reset();
   });
 
-  group('ChatRepositoryImpl (mock)', () {
-    late ChatRepository repository;
+  group('ChatRepositoryImpl (cache-first Sembast)', () {
+    test('first getChats seeds the mock set into the DB and returns a page + nextPage', () async {
+      final (chats, metadata) = (await repository.getChats(config: GetChatsConfig.firstPage())).data!;
 
-    setUp(() => repository = getIt<ChatRepository>());
-
-    test('first page returns a slice + nextPage metadata', () async {
-      final result = await repository.getChats(config: GetChatsConfig.firstPage());
-
-      expect(result.hasData, isTrue);
-      final (chats, metadata) = result.data!;
-      expect(chats, isNotEmpty);
       expect(chats.length, lessThanOrEqualTo(GetChatsConfig.pageSize));
-      expect(metadata.total, greaterThan(0));
-      expect(metadata.nextPage, isNotNull); // more than one page of mock data
+      expect(metadata.total, greaterThan(GetChatsConfig.pageSize)); // full mock set seeded
+      expect(metadata.nextPage, isNotNull);
     });
 
-    test('search filters by chat name', () async {
-      final result = await repository.getChats(config: GetChatsConfig.firstPage(search: 'design'));
+    test('search filters the persisted chats by name', () async {
+      final (matches, _) = (await repository.getChats(config: GetChatsConfig.firstPage(search: 'design'))).data!;
+      expect(matches, isNotEmpty);
+      expect(matches.every((c) => c.name.toLowerCase().contains('design')), isTrue);
 
-      final (chats, _) = result.data!;
-      expect(chats, isNotEmpty);
-      expect(chats.every((c) => c.name.toLowerCase().contains('design')), isTrue);
+      final (none, meta) = (await repository.getChats(config: GetChatsConfig.firstPage(search: 'zzzznomatch'))).data!;
+      expect(none, isEmpty);
+      expect(meta.total, 0);
     });
 
-    test('a non-matching search yields an empty page', () async {
-      final result = await repository.getChats(config: GetChatsConfig.firstPage(search: 'zzzznomatch'));
+    test('createChat persists a chat that appears at the top on re-query', () async {
+      await repository.getChats(config: GetChatsConfig.firstPage()); // seed
+      final created = await repository.createChat(name: 'Fresh chat');
+      expect(created.hasData, isTrue);
 
-      final (chats, metadata) = result.data!;
-      expect(chats, isEmpty);
-      expect(metadata.total, 0);
+      final (chats, _) = (await repository.getChats(config: GetChatsConfig.firstPage())).data!;
+      expect(chats.first.name, 'Fresh chat'); // created "now" → newest-first
+    });
+
+    test('re-querying reads from the DB without re-seeding', () async {
+      final first = (await repository.getChats(config: GetChatsConfig.firstPage())).data!.$2.total;
+      final second = (await repository.getChats(config: GetChatsConfig.firstPage())).data!.$2.total;
+      expect(second, first);
     });
   });
 }
