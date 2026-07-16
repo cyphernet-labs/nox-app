@@ -2,6 +2,7 @@ import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/repository/app/app_state_repository.dart';
 import 'package:nox_app/domain/repository/app/auth_repository.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
+import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/item/item_repository.dart';
 import 'package:nox_app/domain/repository/log_repository.dart';
 import 'package:nox_app/domain/repository/qr/camera_permission_service.dart';
@@ -14,6 +15,7 @@ LogRepository get logRepository => getIt<LogRepository>();
 /// Repositories
 ItemRepository get itemRepository => getIt<ItemRepository>();
 SettingsRepository get settingsRepository => getIt<SettingsRepository>();
+ChatRepository get chatRepository => getIt<ChatRepository>();
 
 /// App-state spine
 AppStateRepository get appStateRepository => getIt<AppStateRepository>();

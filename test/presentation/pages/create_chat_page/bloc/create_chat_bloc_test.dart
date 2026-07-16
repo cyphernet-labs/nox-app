@@ -1,8 +1,22 @@
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/local/app_database.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/presentation/pages/create_chat_page/bloc/create_chat_bloc.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  setUp(() async {
+    SharedPreferences.setMockInitialValues({});
+    await configureDependencies(Environment.test);
+    await getIt<AppDatabase>().clearEntireDatabase();
+  });
+
+  tearDown(() async {
+    await getIt.reset();
+  });
+
   group('CreateChatBloc', () {
     blocTest<CreateChatBloc, CreateChatState>(
       'empty name disables create',
