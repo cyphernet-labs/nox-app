@@ -62,6 +62,21 @@ void main() {
     expect(result.data!.state, AppStateType.unauthorized);
   });
 
+  test('preserves the last resolved state when a warm session read errors', () async {
+    // Cold start seeds authorized from a valid session.
+    stubSession(const SessionModel(identifier: 'abc', onboardingComplete: true));
+    final seeded = await repository.fetchAppState();
+    expect(seeded.data!.state, AppStateType.authorized);
+    expect(repository.currentState, AppStateType.authorized);
+
+    // A transient storage READ error must NOT log the user out — the warm
+    // onError branch keeps the previously resolved authorized state.
+    when(session.readSession()).thenAnswer((_) async => RepositoryResult<SessionModel?>.error(exception: RepositoryException.unknown));
+    final result = await repository.fetchAppState();
+    expect(result.data!.state, AppStateType.authorized);
+    expect(repository.currentState, AppStateType.authorized);
+  });
+
   test('watchAppState replays the latest resolved value to a new subscriber', () async {
     stubSession(const SessionModel(identifier: 'abc', onboardingComplete: true));
     await repository.fetchAppState();
