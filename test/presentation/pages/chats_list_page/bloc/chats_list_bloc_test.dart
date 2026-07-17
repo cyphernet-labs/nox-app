@@ -126,5 +126,51 @@ void main() {
         expect((bloc.state as Initialized).items, isNotEmpty);
       },
     );
+
+    blocTest<ChatsListBloc, ChatsListState>(
+      'a second page appends the remaining mock chats, then further loads are a no-op',
+      build: ChatsListBloc.new,
+      act: (bloc) async {
+        bloc.add(const ChatsListEvent.initialize());
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+        // Page 1: 20 of the 28 mock chats, more pages remain.
+        final page1 = bloc.state as Initialized;
+        expect(page1.items.length, 20);
+        expect(page1.pagingState.hasNextPage, isTrue);
+
+        bloc.add(const ChatsListEvent.loadChats(reset: false));
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+        // Page 2 appended: all 28 chats, no further pages.
+        final page2 = bloc.state as Initialized;
+        expect(page2.items.length, 28);
+        expect(page2.pagingState.hasNextPage, isFalse);
+
+        // With no next page, another load is a no-op (the list stays at 28).
+        bloc.add(const ChatsListEvent.loadChats(reset: false));
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+      },
+      wait: const Duration(milliseconds: 200),
+      verify: (bloc) {
+        final state = bloc.state as Initialized;
+        expect(state.items.length, 28);
+        expect(state.pagingState.hasNextPage, isFalse);
+      },
+    );
+
+    blocTest<ChatsListBloc, ChatsListState>(
+      'the inline-error scenario keeps the cached list and flags a load error',
+      build: ChatsListBloc.new,
+      act: (bloc) async {
+        bloc.add(const ChatsListEvent.initialize());
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+        bloc.add(const ChatsListEvent.setScenario(ChatsListScenario.inlineError));
+      },
+      wait: const Duration(milliseconds: 500),
+      verify: (bloc) {
+        final state = bloc.state as Initialized;
+        expect(state.hasLoadError, isTrue);
+        expect(state.items, isNotEmpty);
+      },
+    );
   });
 }
