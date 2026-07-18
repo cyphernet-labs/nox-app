@@ -39,7 +39,14 @@ DATE_FORMATS = [
     "%Y-%m-%dT%H:%M:%S",
     "%Y-%m-%dT%H:%M",
     "%Y-%m-%d",
+    # Dotted variants (e.g. '2026.07.13 08:00:00').
+    "%Y.%m.%d %H:%M:%S",
+    "%Y.%m.%d %H:%M",
+    "%Y.%m.%d",
 ]
+
+# Formats that carry no time component; matching one means midnight.
+DATE_ONLY_FORMATS = {"%Y-%m-%d", "%Y.%m.%d"}
 
 
 @dataclass(frozen=True)
@@ -92,14 +99,15 @@ def parse_date(value: str) -> dt.datetime:
     for fmt in DATE_FORMATS:
         try:
             parsed = dt.datetime.strptime(value, fmt)
-            if fmt == "%Y-%m-%d":
+            if fmt in DATE_ONLY_FORMATS:
                 parsed = parsed.replace(hour=0, minute=0, second=0)
             return parsed
         except ValueError:
             continue
     raise ScriptError(
         "Invalid date format: {!r}. Supported formats: YYYY-MM-DD, YYYY-MM-DD HH:MM, YYYY-MM-DD HH:MM:SS, "
-        "YYYY-MM-DDTHH:MM, YYYY-MM-DDTHH:MM:SS".format(value)
+        "YYYY-MM-DDTHH:MM, YYYY-MM-DDTHH:MM:SS, and the dotted variants YYYY.MM.DD[ HH:MM[:SS]]. "
+        "NOTE: quote any date that contains a space, e.g. --start-date '2026.07.13 08:00:00'.".format(value)
     )
 
 
