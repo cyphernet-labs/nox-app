@@ -1,15 +1,23 @@
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:injectable/injectable.dart';
+import 'package:injectable/injectable.dart' show Environment;
+import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/repository/chat/chat_repository.dart';
+import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/presentation/pages/chats_list_page/bloc/chats_list_bloc.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
-  setUpAll(() async {
+  // Per-test DB isolation — the reactive test mutates the DB (createChat), so each test
+  // starts from a clean, freshly-seeded store.
+  setUp(() async {
+    SharedPreferences.setMockInitialValues({});
     await configureDependencies(Environment.test);
+    await getIt<AppDatabase>().clearEntireDatabase();
   });
 
-  tearDownAll(() async {
+  tearDown(() async {
     await getIt.reset();
   });
 
@@ -172,5 +180,76 @@ void main() {
         expect(state.items, isNotEmpty);
       },
     );
+
+    blocTest<ChatsListBloc, ChatsListState>(
+      'a chat created in the DB live-refreshes into the list without a manual reload (US1)',
+      build: ChatsListBloc.new,
+      act: (bloc) async {
+        bloc.add(const ChatsListEvent.initialize());
+        await Future<void>.delayed(const Duration(milliseconds: 500)); // initial load + seed
+        await getIt<ChatRepository>().createChat(name: 'Zebra live chat');
+        await Future<void>.delayed(const Duration(milliseconds: 400)); // watchChats change-signal → refresh
+      },
+      wait: const Duration(milliseconds: 300),
+      verify: (bloc) {
+        final state = bloc.state as Initialized;
+        expect(state.loadedPageCount, 1); // a live refresh does not change the loaded page count
+        expect(state.items.any((c) => c.name == 'Zebra live chat'), isTrue); // appeared reactively, no manual reload
+      },
+    );
+
+    test('a simulated inbound increments a chat unread badge live in the list (US4/FR-010)', () async {
+      final bloc = ChatsListBloc()..add(const ChatsListEvent.initialize());
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 500)); // seed + load
+      final target = (bloc.state as Initialized).items.first;
+      final before = target.unreadCount;
+
+      await getIt<MessageRepository>().simulateIncoming(chatId: target.id);
+      await Future<void>.delayed(const Duration(milliseconds: 500)); // watchChats change-signal → refresh
+
+      final after = (bloc.state as Initialized).items.firstWhere((c) => c.id == target.id);
+      expect(after.unreadCount, before + 1); // badge incremented live, no manual reload
+    });
+
+    // Review finding (medium): the multi-page prefix re-read (pages 1..loadedPageCount) is the
+    // heart of the reactive refresh, but was only exercised at loadedPageCount==1. This loads
+    // page 2 first, then a live DB tick must re-fold BOTH pages, not collapse to page 1.
+    test('a live refresh with 2 pages loaded preserves all loaded pages (loadedPageCount > 1)', () async {
+      final bloc = ChatsListBloc()..add(const ChatsListEvent.initialize());
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      bloc.add(const ChatsListEvent.loadChats(reset: false)); // load page 2
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      expect((bloc.state as Initialized).items.length, 28);
+      expect((bloc.state as Initialized).loadedPageCount, 2);
+
+      await getIt<ChatRepository>().createChat(name: 'Prefix-preserve chat');
+      await Future<void>.delayed(const Duration(milliseconds: 500)); // debounced live refresh
+
+      final state = bloc.state as Initialized;
+      expect(state.loadedPageCount, 2); // pages not dropped by the refresh
+      expect(state.items.length, 29); // all 28 prior + the new one (no collapse to 20)
+      expect(state.items.any((c) => c.name == 'Prefix-preserve chat'), isTrue);
+    });
+
+    // Review finding (low): a live refresh while a search is active must re-query WITH the filter
+    // and preserve the query (covers _refresh's filtered path + the stale-guard).
+    test('a live refresh during an active search stays filtered and preserves the query', () async {
+      final bloc = ChatsListBloc()..add(const ChatsListEvent.initialize());
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      bloc.add(const ChatsListEvent.searchChanged('Design'));
+      await Future<void>.delayed(const Duration(milliseconds: 700));
+      expect((bloc.state as Initialized).items.every((c) => c.name.toLowerCase().contains('design')), isTrue);
+
+      await getIt<ChatRepository>().createChat(name: 'Design extra reactive');
+      await Future<void>.delayed(const Duration(milliseconds: 600)); // debounced refresh with the active query
+
+      final state = bloc.state as Initialized;
+      expect(state.query, 'Design'); // query preserved through the refresh
+      expect(state.items.every((c) => c.name.toLowerCase().contains('design')), isTrue); // stays filtered
+      expect(state.items.any((c) => c.name == 'Design extra reactive'), isTrue); // the matching new chat appears
+    });
   });
 }

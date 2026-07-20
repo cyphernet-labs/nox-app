@@ -35,6 +35,14 @@ class ChatDao {
     return chats;
   }
 
+  /// A single chat by id, or null if absent/undecodable. Record-key `get` (no Finder →
+  /// the global `field_rename:snake` camelCase-filter gotcha does not apply).
+  Future<ChatEntity?> getById(String id) async {
+    final db = await _appDatabase.db;
+    final value = await _store.record(id).get(db);
+    return value == null ? null : _tryDecode(value);
+  }
+
   Future<int> count() async {
     final db = await _appDatabase.db;
     return _store.count(db);

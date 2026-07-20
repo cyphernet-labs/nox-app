@@ -28,6 +28,9 @@ void main() {
     );
     provideDummy<RepositoryResult<MessageModel>>(RepositoryResult.error(exception: RepositoryException.unknown));
     repository = MockMessageRepository();
+    // The bloc subscribes to watchMessages() on init (Feature 014) — an empty stream
+    // means no live refresh, isolating the send-failure path under test.
+    when(repository.watchMessages(any)).thenAnswer((_) => Stream<List<MessageModel>>.empty());
     when(
       repository.getMessages(config: anyNamed('config')),
     ).thenAnswer((_) async => RepositoryResult<(List<MessageModel>, PageMetadata)>.success(data: (const [], const PageMetadata(total: 0))));

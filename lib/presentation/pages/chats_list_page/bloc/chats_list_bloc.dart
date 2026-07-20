@@ -15,6 +15,7 @@ import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
 import 'package:nox_app/presentation/base/bloc_transformers.dart';
 import 'package:nox_app/presentation/pagination/paging_state_ext.dart';
+import 'package:rxdart/rxdart.dart';
 
 part 'chats_list_bloc.freezed.dart';
 part 'chats_list_event.dart';
@@ -37,6 +38,12 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
 
   final ChatRepository _chatRepository = getIt<ChatRepository>();
 
+  // Live change-signal over the cache-first DB (Feature 014): a DB write (create / send /
+  // incoming / read) re-reads the loaded page prefix. The stream VALUE is ignored — the
+  // authoritative re-read goes through getChats so one projection path serves both loads
+  // and refreshes.
+  StreamSubscription<List<ChatModel>>? _chatsSub;
+
   // Debug-only stub scenario (offline / inline-error / fatal / empty), selected via
   // the dev control. `// TODO(backend):` real connectivity + error surfacing.
   ChatsListScenario _scenario = ChatsListScenario.normal;
@@ -44,6 +51,19 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
   FutureOr<void> _onInitialize(Initialize event, Emitter<ChatsListState> emit) async {
     emit(ChatsListState.initialized(pagingState: PagingState<String, ChatModel>()));
     add(const ChatsListEvent.loadChats(reset: true));
+    // skip(1) drops the initial snapshot the reset load already covers; debounceTime
+    // coalesces write bursts (e.g. a send's message + chat-row writes) into one refresh.
+    _chatsSub ??= _chatRepository
+        .watchChats()
+        .skip(1)
+        .debounceTime(const Duration(milliseconds: 100))
+        .listen((_) => add(const ChatsListEvent.loadChats(refresh: true)));
+  }
+
+  @override
+  Future<void> close() {
+    _chatsSub?.cancel();
+    return super.close();
   }
 
   void _onChatSelected(ChatSelected event, Emitter<ChatsListState> emit) {
@@ -70,6 +90,14 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
   FutureOr<void> _onLoadChats(LoadChats event, Emitter<ChatsListState> emit) async {
     final current = state;
     if (current is! Initialized) return;
+
+    // Live refresh: re-read the loaded prefix invisibly (serialised with reset/load-more
+    // on this same sequential() handler).
+    if (event.refresh) {
+      await _refresh(current, emit);
+      return;
+    }
+
     if (current.loadingInProgress) return;
 
     // Fatal short-circuits to the error state (3.1).
@@ -100,7 +128,16 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
             response: (const [], const PageMetadata(total: 0)),
             keyExtractor: (c) => c.id,
           );
-          emit(live.copyWith(items: const [], pagingState: r.pagingState, loadingInProgress: false, isOffline: false, hasLoadError: false));
+          emit(
+            live.copyWith(
+              items: const [],
+              pagingState: r.pagingState,
+              loadedPageCount: 1,
+              loadingInProgress: false,
+              isOffline: false,
+              hasLoadError: false,
+            ),
+          );
           return;
         }
 
@@ -119,6 +156,7 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
                 items: r.updatedList,
                 pagingState: r.pagingState,
                 nextPage: r.nextPage ?? live.nextPage,
+                loadedPageCount: isReset ? 1 : live.loadedPageCount + 1,
                 loadingInProgress: false,
                 // Offline shows the cached list under a banner; inline-error shows the
                 // cached list under a retry banner (both keep the data visible).
@@ -144,5 +182,32 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
         }
       },
     );
+  }
+
+  /// Invisible live re-read of the currently-loaded page prefix (no spinner, never a
+  /// full-screen Error). Re-queries pages 1..loadedPageCount and re-folds them onto the
+  /// LIVE state so query / selection / scroll / loaded-page-count all carry through.
+  Future<void> _refresh(Initialized live0, Emitter<ChatsListState> emit) async {
+    // Don't overwrite the stubbed debug scenarios.
+    if (_scenario == ChatsListScenario.fatal || _scenario == ChatsListScenario.empty) return;
+    final query = live0.query;
+    final search = query.isEmpty ? null : query;
+    final all = <ChatModel>[];
+    PageMetadata? lastMeta;
+    for (var page = GetChatsConfig.defaultPage; page < GetChatsConfig.defaultPage + live0.loadedPageCount; page++) {
+      final live = state;
+      if (live is! Initialized || live.query != query) return; // superseded by a newer search/reset
+      final result = await _chatRepository.getChats(
+        config: GetChatsConfig.nextPage(page: page, search: search),
+      );
+      if (!result.hasData) return; // swallow a background error — keep the current list
+      final (chats, meta) = result.data!;
+      all.addAll(chats);
+      lastMeta = meta;
+    }
+    final live = state;
+    if (live is! Initialized || live.query != query || lastMeta == null) return;
+    final r = PagingState<String, ChatModel>().applyPage(existingList: const [], response: (all, lastMeta), keyExtractor: (c) => c.id);
+    emit(live.copyWith(items: r.updatedList, pagingState: r.pagingState, nextPage: r.nextPage ?? live.nextPage));
   }
 }

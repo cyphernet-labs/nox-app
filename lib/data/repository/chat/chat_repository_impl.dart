@@ -86,6 +86,14 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
   }
 
   @override
+  Future<void> markChatRead({required String chatId}) async {
+    final chat = await _chatDao.getById(chatId);
+    // No-op when absent or already read — avoids a redundant write / watch emission.
+    if (chat == null || chat.unreadCount == 0) return;
+    await _chatDao.upsert(chat.copyWith(unreadCount: 0));
+  }
+
+  @override
   Future<void> clean() async {
     await _chatDao.cleanData();
   }

@@ -1,10 +1,13 @@
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:infinite_scroll_pagination/infinite_scroll_pagination.dart';
-import 'package:injectable/injectable.dart';
+import 'package:injectable/injectable.dart' show Environment;
+import 'package:nox_app/data/local/chat/chat_dao.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
 import 'package:nox_app/domain/model/chat/message_status.dart';
+import 'package:nox_app/domain/repository/chat/chat_repository.dart';
+import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 import 'package:nox_app/presentation/pages/chat_thread_page/bloc/chat_thread_bloc.dart';
 
 void main() {
@@ -207,5 +210,38 @@ void main() {
       act: (bloc) => bloc.add(const ChatThreadEvent.sendRetried('nope')),
       expect: () => const <ChatThreadState>[],
     );
+
+    blocTest<ChatThreadBloc, ChatThreadState>(
+      'a sent message shows exactly one bubble across pending -> sent and arrives live in items (US3)',
+      build: ChatThreadBloc.new,
+      act: (bloc) async {
+        bloc.add(const ChatThreadEvent.initialize('chat_0'));
+        await Future<void>.delayed(const Duration(milliseconds: 500)); // seed + load
+        bloc.add(const ChatThreadEvent.messageSent(text: 'Unique-US3-live-message'));
+        await Future<void>.delayed(const Duration(milliseconds: 700)); // ack + id adoption + watch refresh
+      },
+      wait: const Duration(milliseconds: 300),
+      verify: (bloc) {
+        final state = bloc.state as Initialized;
+        final matches = state.allMessages.where((m) => m.text == 'Unique-US3-live-message').toList();
+        expect(matches, hasLength(1)); // exactly one bubble — id adoption + dedup-by-id, no duplicate
+        expect(matches.first.status, MessageStatus.sent); // acked
+        // It also arrived in `items` via the live watch refresh, not only the optimistic outgoing list.
+        expect(state.items.any((m) => m.text == 'Unique-US3-live-message'), isTrue);
+      },
+    );
+
+    test('opening a chat thread marks it read — its unread count resets to 0 (US4)', () async {
+      await getIt<ChatRepository>().getChats(config: GetChatsConfig.firstPage()); // seed chat rows
+      final chatDao = getIt<ChatDao>();
+      final unread = (await chatDao.getAllSorted()).firstWhere((c) => c.unreadCount > 0);
+      expect(unread.unreadCount, greaterThan(0)); // precondition
+
+      final bloc = ChatThreadBloc()..add(ChatThreadEvent.initialize(unread.id));
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 400)); // init fires markChatRead
+
+      expect((await chatDao.getById(unread.id))!.unreadCount, 0);
+    });
   });
 }

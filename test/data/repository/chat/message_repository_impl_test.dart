@@ -1,10 +1,24 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
+import 'package:mockito/annotations.dart';
+import 'package:mockito/mockito.dart';
 import 'package:nox_app/data/local/app_database.dart';
+import 'package:nox_app/data/local/chat/chat_dao.dart';
+import 'package:nox_app/data/local/chat/message_dao.dart';
+import 'package:nox_app/data/mapper/chat/message_mapper.dart';
+import 'package:nox_app/data/remote/api/chat/get_messages_api.dart';
+import 'package:nox_app/data/remote/api/chat/send_message_api.dart';
+import 'package:nox_app/data/repository/chat/message_repository_impl.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/model/chat/message_attachment.dart';
+import 'package:nox_app/domain/model/file/file_type.dart';
+import 'package:nox_app/domain/repository/chat/chat_repository.dart';
+import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'message_repository_impl_test.mocks.dart';
 
 /// Seeds a chat's history (first getMessages) then grows it past a single page by
 /// sending messages until the thread reaches [target] total, returning the final
@@ -19,6 +33,7 @@ Future<int> _seedThenGrowTo(MessageRepository repo, {required String chatId, req
   return (await repo.getMessages(config: GetMessagesConfig.firstPage(chatId: chatId))).data!.$2.total;
 }
 
+@GenerateMocks([SendMessageApi])
 void main() {
   late MessageRepository repo;
 
@@ -105,6 +120,87 @@ void main() {
       expect(beyond.$1, isEmpty); // guarded empty slice
       expect(beyond.$2.total, total); // total is still reported on the empty page
       expect(beyond.$2.nextPage, isNull); // and there is nothing further back
+    });
+  });
+
+  group('sendMessage updates the parent chat row (US2)', () {
+    late ChatRepository chats;
+    late ChatDao chatDao;
+
+    setUp(() async {
+      chats = getIt<ChatRepository>();
+      chatDao = getIt<ChatDao>();
+      await chats.getChats(config: GetChatsConfig.firstPage()); // seed the chat rows into ChatDao
+    });
+
+    test('a text send sets the chat preview + time and reorders it newest-first', () async {
+      final before = await chatDao.getById('chat_5');
+      expect(before, isNotNull);
+      expect((await chatDao.getAllSorted()).first.id, isNot('chat_5')); // not the top row before
+
+      await repo.sendMessage(chatId: 'chat_5', text: 'Hello world');
+
+      final after = await chatDao.getById('chat_5');
+      expect(after!.lastMessagePreview, 'Hello world');
+      expect(DateTime.parse(after.lastMessageAt).isAfter(DateTime.parse(before!.lastMessageAt)), isTrue);
+      expect((await chatDao.getAllSorted()).first.id, 'chat_5'); // reordered to newest-first
+    });
+
+    test('an attachment-only send previews as "You: <filename>"', () async {
+      const att = MessageAttachment(id: 'a1', type: FileType.pdf, name: 'spec.pdf', sizeBytes: 10);
+      await repo.sendMessage(chatId: 'chat_0', attachment: att);
+      expect((await chatDao.getById('chat_0'))!.lastMessagePreview, 'You: spec.pdf');
+    });
+
+    test('an own send does not change the chat unread count', () async {
+      final before = (await chatDao.getById('chat_0'))!.unreadCount;
+      await repo.sendMessage(chatId: 'chat_0', text: 'x');
+      expect((await chatDao.getById('chat_0'))!.unreadCount, before);
+    });
+
+    test('a failed send leaves the parent chat row untouched (FR-004)', () async {
+      final before = await chatDao.getById('chat_0');
+      final failingApi = MockSendMessageApi();
+      when(
+        failingApi.execute(chatId: anyNamed('chatId'), text: anyNamed('text'), attachment: anyNamed('attachment')),
+      ).thenThrow(Exception('network down'));
+      final failingRepo = MessageRepositoryImpl(
+        getIt<MessageDao>(),
+        getIt<GetMessagesApi>(),
+        failingApi,
+        getIt<MessageMapper>(),
+        getIt<ChatDao>(),
+      );
+
+      final result = await failingRepo.sendMessage(chatId: 'chat_0', text: 'should not persist');
+
+      expect(result.hasData, isFalse);
+      final after = await chatDao.getById('chat_0');
+      expect(after!.lastMessagePreview, before!.lastMessagePreview); // unchanged
+      expect(after.lastMessageAt, before.lastMessageAt);
+    });
+  });
+
+  group('simulateIncoming (US4, debug)', () {
+    late ChatDao chatDao;
+
+    setUp(() async {
+      chatDao = getIt<ChatDao>();
+      await getIt<ChatRepository>().getChats(config: GetChatsConfig.firstPage()); // seed chat rows
+      await repo.getMessages(config: GetMessagesConfig.firstPage(chatId: 'chat_0')); // seed the thread
+    });
+
+    test('appends an inbound message (author != me) and increments the chat unread', () async {
+      final beforeUnread = (await chatDao.getById('chat_0'))!.unreadCount;
+      final beforeTotal = (await repo.getMessages(config: GetMessagesConfig.firstPage(chatId: 'chat_0'))).data!.$2.total;
+
+      await repo.simulateIncoming(chatId: 'chat_0');
+
+      expect((await chatDao.getById('chat_0'))!.unreadCount, beforeUnread + 1);
+      final (messages, meta) = (await repo.getMessages(config: GetMessagesConfig.firstPage(chatId: 'chat_0'))).data!;
+      expect(meta.total, beforeTotal + 1);
+      final inbound = messages.firstWhere((m) => m.text == 'Simulated incoming message');
+      expect(inbound.authorId, isNot('me')); // an inbound, not an own message
     });
   });
 }

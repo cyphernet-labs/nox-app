@@ -19,6 +19,10 @@ abstract class ChatRepository {
   /// All files shared in a chat (5.4) — chat-owned, not paginated.
   Future<RepositoryResult<List<MessageAttachment>>> getChatFiles({required String chatId});
 
+  /// Marks a chat read: resets its unread count to 0 (no-op when already 0). Called when
+  /// the chat's thread is viewed (Feature 014); the reactive list badge updates live.
+  Future<void> markChatRead({required String chatId});
+
   /// Resets any cached state (called on logout).
   Future<void> clean();
 }

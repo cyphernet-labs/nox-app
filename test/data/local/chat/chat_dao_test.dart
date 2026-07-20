@@ -49,4 +49,10 @@ void main() {
     // not throw and tear down the whole list read.
     expect((await dao.getAllSorted()).map((c) => c.id).toList(), ['good']);
   });
+
+  test('getById returns a stored chat and null for an absent id', () async {
+    await dao.upsert(chat('a', 'Alpha', '2026-01-01T00:00:00.000Z'));
+    expect((await dao.getById('a'))?.name, 'Alpha');
+    expect(await dao.getById('missing'), isNull);
+  });
 }
