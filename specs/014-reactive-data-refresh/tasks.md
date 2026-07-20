@@ -147,9 +147,13 @@ shows exactly one bubble across pending→sent.
   `lib/domain/repository/chat/message_repository.dart` + impl (upsert inbound `authorId != me`, `status:
   none`, `sentAt: AppClock.now()`, then `_touchChatRow(..., incrementUnread: true)`) in
   `lib/data/repository/chat/message_repository_impl.dart`.
-- [ ] T024 [US4] Add a `kDebugMode`-gated "Simulate incoming" action to the thread debug surface
-  (`ChatThreadScenario` dropdown) in `lib/presentation/widgets/chat/app_thread_view_widget.dart` (and/or
-  the chats-list debug control), wired to `simulateIncoming`.
+- [ ] T024 [US4] Add a `kDebugMode`-gated "Simulate incoming" control on the **chats-list** debug surface
+  that targets a chat OTHER than the currently-selected/open one, wired to
+  `messageRepository.simulateIncoming(chatId)`, in `lib/presentation/pages/chats_list_page/chats_list_page.dart`.
+  RATIONALE (analyze F1): a control only in the OPEN thread would land in the viewed chat and be reset
+  immediately by `markChatRead` (FR-009), so the FR-010 increment would never be observable in the UI — the
+  increment path MUST be exercisable against a NON-viewed chat. A thread-side "simulate into this chat"
+  action may ADDITIONALLY exist for the live-thread demo (US3), but is not sufficient for FR-010.
 - [ ] T025 [P] [US4] repo test: `markChatRead` resets to 0 and is a no-op at 0; `simulateIncoming`
   increments unread + appends the inbound, in `test/data/repository/chat/chat_repository_impl_test.dart` +
   `test/data/repository/chat/message_repository_impl_test.dart`.
@@ -172,6 +176,27 @@ shows exactly one bubble across pending→sent.
   `docs/blueprints/mobile/07-pagination.md`.
 - [ ] T029 Run `make gate` + `make golden-verify` green; after merging 014 into `develop`, tick R1/R2/R3/D2
   in `docs/mock-completion-plan.md` (§2 tracker + §6 journal).
+- [ ] T030 Desktop parity widget test (`_wide` list-detail) — analyze C1 / FR-011 / SC-006: a send /
+  `simulateIncoming` updates the selected chat's row AND its detail pane together with the selection
+  retained across the refresh, and a non-viewed chat's list badge increments live, in
+  `test/presentation/pages/chats_list_page/chats_list_page_test.dart` (or a dedicated `_wide` reactive
+  test). Runs after US1–US4 (cross-cutting; the bloc tests T010/T020/T026 are layout-agnostic).
+
+---
+
+## Analyze remediation (2026-07-24, read-only /speckit-analyze)
+
+- **F1 (MEDIUM) fixed** — T024 pins the debug "Simulate incoming" control to the chats-list surface
+  targeting a NON-viewed chat, so the FR-010 unread increment is observable (a thread-only control lands
+  in the viewed chat and self-resets).
+- **C1 (MEDIUM) fixed** — T030 adds explicit `_wide` desktop parity coverage (FR-011/SC-006); the
+  per-story bloc tests are layout-agnostic.
+- **U1 (LOW), accepted** — SC-001 (<1 s) is verified via the quickstart manual step; no build task
+  (reactivity is by design, not measurable infra).
+- **L1 (LOW), accepted** — the stored `"You:"` attachment-preview prefix is a data-layer literal per the
+  clarification (EN microcopy; untranslated-in-DB debt), documented in plan.md/research.md.
+- **I1 (LOW), accepted** — the 5.2 (thread) golden is absent (removed earlier; tracked as E1 in
+  `docs/mock-completion-plan.md`); the thread is covered here by bloc/widget tests (T020/T026/T030).
 
 ---
 
@@ -183,7 +208,8 @@ shows exactly one bubble across pending→sent.
 - **US2 (T012–T014)** — needs Foundational.
 - **US3 (T015–T020)** — independent of US1/US2 (own `watchMessages`); needs its own bloc only.
 - **US4 (T021–T026)** — needs US2 (`_touchChatRow`) + US3 (thread bloc subscription seam).
-- **Polish (T027–T029)** — after the stories.
+- **Polish (T027–T030)** — after the stories. T030 (desktop parity widget test) runs LAST — it needs
+  US1–US4 done.
 
 **Within a bloc file, tasks are sequential** (T007→T008, T016→T017→T018, T022 on the thread bloc).
 
