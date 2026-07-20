@@ -4,16 +4,20 @@ import 'package:nox_app/domain/repository/app/app_state_repository.dart';
 import 'package:nox_app/domain/repository/app/auth_repository.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
+import 'package:nox_app/domain/repository/chat/chat_repository.dart';
+import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/general/onboarding_mock_data.dart';
 
 /// Mutate source-of-truth (session) → re-derive app state. Single logout path;
 /// only forced logout passes `sessionExpired`. Sign-in is a stub (backend TBD).
 @LazySingleton(as: AuthRepository, env: [Environment.dev, Environment.prod, Environment.test])
 class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
-  AuthRepositoryImpl(this._sessionRepository, this._appStateRepository);
+  AuthRepositoryImpl(this._sessionRepository, this._appStateRepository, this._chatRepository, this._messageRepository);
 
   final SessionRepository _sessionRepository;
   final AppStateRepository _appStateRepository;
+  final ChatRepository _chatRepository;
+  final MessageRepository _messageRepository;
 
   @override
   Future<RepositoryResult<bool>> signIn({required String identifier}) {
@@ -35,16 +39,31 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
     // Gate the re-derive on a successful wipe: a failed clear() (e.g. a secure-storage
     // PlatformException) must NOT report success while the identifier survives —
     // otherwise the user silently stays authorized (Constitution I: logout fully wipes).
-    return _deriveAfter(_sessionRepository.clear, sessionExpired: forced);
+    // After the session is cleared, drop the cached chats + messages so a re-login as a
+    // different identity starts clean (Constitution I: full local wipe on identity switch).
+    return _deriveAfter(
+      _sessionRepository.clear,
+      sessionExpired: forced,
+      afterMutate: () async {
+        await _chatRepository.clean();
+        await _messageRepository.clean();
+      },
+    );
   }
 
   /// The single home of the "mutate the source of truth → re-derive app state"
-  /// contract: run [mutate]; on success re-derive via `fetchAppState`, on failure
-  /// propagate the mutation error unchanged (no re-derive, no false success).
-  Future<RepositoryResult<bool>> _deriveAfter(Future<RepositoryResult<bool>> Function() mutate, {bool sessionExpired = false}) {
+  /// contract: run [mutate]; on success run [afterMutate] then re-derive via
+  /// `fetchAppState`, on failure propagate the mutation error unchanged (no side
+  /// effects, no re-derive, no false success).
+  Future<RepositoryResult<bool>> _deriveAfter(
+    Future<RepositoryResult<bool>> Function() mutate, {
+    bool sessionExpired = false,
+    Future<void> Function()? afterMutate,
+  }) {
     return execute<bool>(() async {
       final mutated = await mutate();
       if (!mutated.hasData) return mutated;
+      if (afterMutate != null) await afterMutate();
       await _appStateRepository.fetchAppState(sessionExpired: sessionExpired);
       return const RepositoryResult<bool>.success(data: true);
     });

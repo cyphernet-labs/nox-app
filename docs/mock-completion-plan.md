@@ -48,7 +48,7 @@
 ### Фаза D — целостность данных и бизнес-правила
 | ID | Задача | Приор. | Eff. | Режим | Статус |
 |----|--------|:---:|:--:|:---:|:---:|
-| D1 | **Logout чистит чат/сообщения из Sembast** (`clean()` есть, но не вызывается) — утечка между identity (§5) | 🔴 | S/M | точечно | ☐ |
+| D1 | **Logout чистит чат/сообщения из Sembast** (`clean()` есть, но не вызывается) — утечка между identity (§5) | 🔴 | S/M | точечно | ☑ |
 | D2 | Unread-count: инкремент на новое сообщение, сброс при открытии чата (§4) | 🟠 | M | **SpecKit** | ☐ |
 | D3 | Единая идентичность: один источник (session label) кормит автора своих сообщений + Settings; переименование персистится в сессию (сейчас `_onNameSubmitted` — no-op) (§4, §5) | 🟠 | M | **SpecKit** | ☐ |
 | D4 | Уникальность имени чата — против накапливающейся БД, а не замороженного мок-сета | 🟡 | S/M | точечно | ☐ |
@@ -156,3 +156,5 @@
 ## 6. Журнал прогресса
 
 _(дописываем строкой на каждую закрытую задачу: `ID — дата — коммит — примечание`)_
+
+- D1 — 2026-07-24 — logout wipes chat/message Sembast on a successful session clear (`AuthRepositoryImpl` gains Chat/Message repo deps; not wiped on a failed clear). Widget logout tests wrapped in `tester.runAsync` (clean() is real DB I/O). Gate green (569).

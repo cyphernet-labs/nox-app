@@ -37,7 +37,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(TabBarShell), findsOneWidget);
 
-    await getIt<AuthRepository>().logout();
+    // logout() now wipes the chat/message Sembast caches (real DB I/O), so run it in
+    // the real async zone; a fake-async `await` would hang on the DB timers.
+    await tester.runAsync(() => getIt<AuthRepository>().logout());
     await tester.pumpAndSettle();
 
     expect(find.text(l10nEn.loginSignIn), findsOneWidget);

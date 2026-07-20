@@ -28,7 +28,9 @@ void main() {
     await tester.pumpWidget(const AppRoot());
     await tester.pumpAndSettle();
 
-    await getIt<AuthRepository>().logout(forced: true);
+    // logout() wipes the chat/message Sembast caches (real DB I/O) → run in the real
+    // async zone, else a fake-async await hangs on the DB timers.
+    await tester.runAsync(() => getIt<AuthRepository>().logout(forced: true));
     await tester.pump(); // app-state apply + routing push
     await tester.pump(); // post-frame callback → showSnackBar
     await tester.pump(const Duration(milliseconds: 200)); // snackbar enters (mid route-transition)
@@ -49,7 +51,7 @@ void main() {
     await tester.pumpWidget(const AppRoot());
     await tester.pumpAndSettle();
 
-    await getIt<AuthRepository>().logout();
+    await tester.runAsync(() => getIt<AuthRepository>().logout());
     await tester.pumpAndSettle();
 
     expect(find.text(l10nEn.loginSignIn), findsOneWidget);

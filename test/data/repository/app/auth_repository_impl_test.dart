@@ -7,22 +7,31 @@ import 'package:nox_app/domain/model/app/app_state_model.dart';
 import 'package:nox_app/domain/repository/app/app_state_repository.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
+import 'package:nox_app/domain/repository/chat/chat_repository.dart';
+import 'package:nox_app/domain/repository/chat/message_repository.dart';
 
 import 'auth_repository_impl_test.mocks.dart';
 
-@GenerateMocks([SessionRepository, AppStateRepository])
+@GenerateMocks([SessionRepository, AppStateRepository, ChatRepository, MessageRepository])
 void main() {
   provideDummy<RepositoryResult<bool>>(const RepositoryResult<bool>.success(data: true));
   provideDummy<RepositoryResult<AppStateModel>>(RepositoryResult<AppStateModel>.success(data: AppStateModel.init()));
 
   late MockSessionRepository session;
   late MockAppStateRepository appState;
+  late MockChatRepository chats;
+  late MockMessageRepository messages;
   late AuthRepositoryImpl repository;
 
   setUp(() {
     session = MockSessionRepository();
     appState = MockAppStateRepository();
-    repository = AuthRepositoryImpl(session, appState);
+    chats = MockChatRepository();
+    messages = MockMessageRepository();
+    repository = AuthRepositoryImpl(session, appState, chats, messages);
+
+    when(chats.clean()).thenAnswer((_) async {});
+    when(messages.clean()).thenAnswer((_) async {});
 
     when(
       session.saveIdentifier(
@@ -54,11 +63,21 @@ void main() {
     verify(session.saveIdentifier(identifier: 'registered', onboardingComplete: true)).called(1);
   });
 
-  test('logout propagates a clear() failure and does not re-derive app state', () async {
+  test('logout propagates a clear() failure and does not re-derive app state or wipe caches', () async {
     when(session.clear()).thenAnswer((_) async => RepositoryResult<bool>.error(exception: RepositoryException.unknown));
     final result = await repository.logout();
     expect(result.hasData, isFalse);
     verifyNever(appState.fetchAppState(sessionExpired: anyNamed('sessionExpired')));
+    // A failed wipe must not drop the caches (the user is still authorized).
+    verifyNever(chats.clean());
+    verifyNever(messages.clean());
+  });
+
+  test('logout wipes the chat + message caches after a successful clear (full local wipe)', () async {
+    await repository.logout();
+    verify(session.clear()).called(1);
+    verify(chats.clean()).called(1);
+    verify(messages.clean()).called(1);
   });
 
   test('completeOnboarding marks the flag and re-derives app state', () async {
