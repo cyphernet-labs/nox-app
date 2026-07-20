@@ -1,10 +1,13 @@
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:infinite_scroll_pagination/infinite_scroll_pagination.dart';
-import 'package:injectable/injectable.dart';
+import 'package:injectable/injectable.dart' show Environment;
+import 'package:nox_app/data/local/chat/chat_dao.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
 import 'package:nox_app/domain/model/chat/message_status.dart';
+import 'package:nox_app/domain/repository/chat/chat_repository.dart';
+import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 import 'package:nox_app/presentation/pages/chat_thread_page/bloc/chat_thread_bloc.dart';
 
 void main() {
@@ -227,5 +230,18 @@ void main() {
         expect(state.items.any((m) => m.text == 'Unique-US3-live-message'), isTrue);
       },
     );
+
+    test('opening a chat thread marks it read — its unread count resets to 0 (US4)', () async {
+      await getIt<ChatRepository>().getChats(config: GetChatsConfig.firstPage()); // seed chat rows
+      final chatDao = getIt<ChatDao>();
+      final unread = (await chatDao.getAllSorted()).firstWhere((c) => c.unreadCount > 0);
+      expect(unread.unreadCount, greaterThan(0)); // precondition
+
+      final bloc = ChatThreadBloc()..add(ChatThreadEvent.initialize(unread.id));
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 400)); // init fires markChatRead
+
+      expect((await chatDao.getById(unread.id))!.unreadCount, 0);
+    });
   });
 }

@@ -1,9 +1,10 @@
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:injectable/injectable.dart';
+import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
+import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/presentation/pages/chats_list_page/bloc/chats_list_bloc.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -196,5 +197,19 @@ void main() {
         expect(state.items.any((c) => c.name == 'Zebra live chat'), isTrue); // appeared reactively, no manual reload
       },
     );
+
+    test('a simulated inbound increments a chat unread badge live in the list (US4/FR-010)', () async {
+      final bloc = ChatsListBloc()..add(const ChatsListEvent.initialize());
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 500)); // seed + load
+      final target = (bloc.state as Initialized).items.first;
+      final before = target.unreadCount;
+
+      await getIt<MessageRepository>().simulateIncoming(chatId: target.id);
+      await Future<void>.delayed(const Duration(milliseconds: 500)); // watchChats change-signal → refresh
+
+      final after = (bloc.state as Initialized).items.firstWhere((c) => c.id == target.id);
+      expect(after.unreadCount, before + 1); // badge incremented live, no manual reload
+    });
   });
 }

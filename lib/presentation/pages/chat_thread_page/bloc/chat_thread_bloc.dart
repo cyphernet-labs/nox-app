@@ -11,6 +11,7 @@ import 'package:nox_app/domain/model/chat/message_status.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/domain/repository/base/page_metadata.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
+import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/general/identity_mock_data.dart';
@@ -38,6 +39,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   }
 
   final MessageRepository _messageRepository = getIt<MessageRepository>();
+  final ChatRepository _chatRepository = getIt<ChatRepository>();
 
   late String _chatId;
   ChatThreadScenario _scenario = ChatThreadScenario.normal;
@@ -52,6 +54,9 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     _chatId = event.chatId;
     emit(ChatThreadState.initialized(pagingState: PagingState<String, MessageModel>(), currentId: IdentityMockData.currentUserId));
     add(const ChatThreadEvent.loadMessages(reset: true));
+    // Viewing the thread marks the chat read (mobile push / desktop select) — resets the
+    // list badge live. No-op at 0.
+    unawaited(_chatRepository.markChatRead(chatId: _chatId));
     // skip(1) drops the initial snapshot the reset load already covers.
     _messagesSub ??= _messageRepository
         .watchMessages(_chatId)
@@ -227,6 +232,8 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   /// WITHOUT touching the optimistic `outgoing` / draft / loading state.
   Future<void> _refreshMessages(Initialized live0, Emitter<ChatThreadState> emit) async {
     if (_scenario == ChatThreadScenario.fatal || _scenario == ChatThreadScenario.empty) return;
+    // An inbound that lands in the currently-viewed chat stays read (no-op at 0 otherwise).
+    unawaited(_chatRepository.markChatRead(chatId: _chatId));
     final all = <MessageModel>[];
     PageMetadata? lastMeta;
     for (var page = GetMessagesConfig.defaultPage; page < GetMessagesConfig.defaultPage + live0.loadedPageCount; page++) {

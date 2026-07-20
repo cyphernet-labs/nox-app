@@ -9,11 +9,14 @@ import 'package:nox_app/data/remote/api/chat/get_messages_api.dart';
 import 'package:nox_app/data/remote/api/chat/send_message_api.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
+import 'package:nox_app/domain/model/chat/message_status.dart';
 import 'package:nox_app/domain/repository/base/page_metadata.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/general/app_clock.dart';
 import 'package:nox_app/general/formatters/chat_preview_formatter.dart';
+import 'package:uuid/uuid.dart';
 
 /// Cache-first chat thread (5.2) over the local Sembast DB. The deterministic mock
 /// ([GetMessagesApi]) seeds a chat's history ONCE on first open; thereafter the
@@ -31,6 +34,7 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
   final ChatDao _chatDao;
 
   static const int _pageSize = GetMessagesConfig.pageSize;
+  static const Uuid _uuid = Uuid();
 
   /// One-time seed of a chat's deterministic mock history into the DB (empty chat).
   Future<void> _seedChatIfEmpty(String chatId) async {
@@ -85,6 +89,22 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
       await _touchChatRow(chatId, message, incrementUnread: false);
       return RepositoryResult<MessageModel>.success(data: message);
     });
+  }
+
+  @override
+  Future<void> simulateIncoming({required String chatId}) async {
+    // Debug stand-in for a server push: an inbound message (author != me) + unread bump.
+    final message = MessageModel(
+      id: 'sim_${_uuid.v4()}',
+      chatId: chatId,
+      authorId: 'other:$chatId',
+      authorLabel: 'Someone',
+      text: 'Simulated incoming message',
+      sentAt: AppClock.now(),
+      status: MessageStatus.none,
+    );
+    await _messageDao.upsert(_mapper.toEntity(model: message));
+    await _touchChatRow(chatId, message, incrementUnread: true);
   }
 
   /// Updates the parent chat row after a message is persisted: last-message preview +

@@ -180,4 +180,27 @@ void main() {
       expect(after.lastMessageAt, before.lastMessageAt);
     });
   });
+
+  group('simulateIncoming (US4, debug)', () {
+    late ChatDao chatDao;
+
+    setUp(() async {
+      chatDao = getIt<ChatDao>();
+      await getIt<ChatRepository>().getChats(config: GetChatsConfig.firstPage()); // seed chat rows
+      await repo.getMessages(config: GetMessagesConfig.firstPage(chatId: 'chat_0')); // seed the thread
+    });
+
+    test('appends an inbound message (author != me) and increments the chat unread', () async {
+      final beforeUnread = (await chatDao.getById('chat_0'))!.unreadCount;
+      final beforeTotal = (await repo.getMessages(config: GetMessagesConfig.firstPage(chatId: 'chat_0'))).data!.$2.total;
+
+      await repo.simulateIncoming(chatId: 'chat_0');
+
+      expect((await chatDao.getById('chat_0'))!.unreadCount, beforeUnread + 1);
+      final (messages, meta) = (await repo.getMessages(config: GetMessagesConfig.firstPage(chatId: 'chat_0'))).data!;
+      expect(meta.total, beforeTotal + 1);
+      final inbound = messages.firstWhere((m) => m.text == 'Simulated incoming message');
+      expect(inbound.authorId, isNot('me')); // an inbound, not an own message
+    });
+  });
 }

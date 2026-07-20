@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/data/local/app_database.dart';
+import 'package:nox_app/data/local/chat/chat_dao.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
@@ -118,6 +119,21 @@ void main() {
       final latest = emissions.last;
       expect(latest, hasLength(seededCount + 1));
       expect(latest.any((c) => c.name == 'Watched chat'), isTrue);
+    });
+  });
+
+  group('markChatRead (US4)', () {
+    test('resets a chat unread count to 0 and is a no-op when already 0', () async {
+      await repository.getChats(config: GetChatsConfig.firstPage()); // seed the chat rows
+      final chatDao = getIt<ChatDao>();
+      final unread = (await chatDao.getAllSorted()).firstWhere((c) => c.unreadCount > 0);
+
+      await repository.markChatRead(chatId: unread.id);
+      expect((await chatDao.getById(unread.id))!.unreadCount, 0);
+
+      // Idempotent: a second call on an already-read chat leaves it at 0 (no throw).
+      await repository.markChatRead(chatId: unread.id);
+      expect((await chatDao.getById(unread.id))!.unreadCount, 0);
     });
   });
 }

@@ -6,6 +6,8 @@ import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/nox_icons.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/feature_flags.dart';
 import 'package:nox_app/general/formatters/date_formatter.dart';
@@ -340,18 +342,35 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
   Widget _scenarioControl() {
     return Padding(
       padding: EdgeInsets.all(AppSpacingTokens.s8),
-      child: DropdownButton<ChatsListScenario>(
-        value: _devScenario,
-        isExpanded: true,
-        onChanged: (selected) {
-          if (selected != null) {
-            setState(() => _devScenario = selected);
-            _bloc.add(ChatsListEvent.setScenario(selected));
-          }
-        },
-        items: [for (final s in ChatsListScenario.values) DropdownMenuItem(value: s, child: Text('scenario: ${s.name}'))],
+      child: Row(
+        children: [
+          Expanded(
+            child: DropdownButton<ChatsListScenario>(
+              value: _devScenario,
+              isExpanded: true,
+              onChanged: (selected) {
+                if (selected != null) {
+                  setState(() => _devScenario = selected);
+                  _bloc.add(ChatsListEvent.setScenario(selected));
+                }
+              },
+              items: [for (final s in ChatsListScenario.values) DropdownMenuItem(value: s, child: Text('scenario: ${s.name}'))],
+            ),
+          ),
+          // Debug-only (Feature 014, FR-010): push a mock inbound into a NON-selected chat
+          // so its unread badge increments live — a viewed chat would just reset to 0.
+          TextButton(onPressed: _simulateIncoming, child: const Text('Sim in')),
+        ],
       ),
     );
+  }
+
+  void _simulateIncoming() {
+    final state = _bloc.state;
+    if (state is! Initialized || state.items.isEmpty) return;
+    final selected = state.selectedChatId;
+    final target = state.items.firstWhere((c) => c.id != selected, orElse: () => state.items.first);
+    getIt<MessageRepository>().simulateIncoming(chatId: target.id);
   }
 
   ChatsListScenario _devScenario = ChatsListScenario.normal;

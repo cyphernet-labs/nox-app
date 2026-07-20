@@ -18,6 +18,11 @@ abstract class MessageRepository {
   /// One-shot send. Returns the accepted (server) message on success.
   Future<RepositoryResult<MessageModel>> sendMessage({required String chatId, String? text, MessageAttachment? attachment});
 
+  /// DEBUG ONLY (`kDebugMode`, Feature 014): persist an inbound message (author != me)
+  /// into a chat and bump its unread — the deterministic stand-in for a server push.
+  /// Callers MUST guard with `kDebugMode`.
+  Future<void> simulateIncoming({required String chatId});
+
   /// Resets any cached state (called on logout).
   Future<void> clean();
 }
