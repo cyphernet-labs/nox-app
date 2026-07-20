@@ -211,5 +211,45 @@ void main() {
       final after = (bloc.state as Initialized).items.firstWhere((c) => c.id == target.id);
       expect(after.unreadCount, before + 1); // badge incremented live, no manual reload
     });
+
+    // Review finding (medium): the multi-page prefix re-read (pages 1..loadedPageCount) is the
+    // heart of the reactive refresh, but was only exercised at loadedPageCount==1. This loads
+    // page 2 first, then a live DB tick must re-fold BOTH pages, not collapse to page 1.
+    test('a live refresh with 2 pages loaded preserves all loaded pages (loadedPageCount > 1)', () async {
+      final bloc = ChatsListBloc()..add(const ChatsListEvent.initialize());
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      bloc.add(const ChatsListEvent.loadChats(reset: false)); // load page 2
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      expect((bloc.state as Initialized).items.length, 28);
+      expect((bloc.state as Initialized).loadedPageCount, 2);
+
+      await getIt<ChatRepository>().createChat(name: 'Prefix-preserve chat');
+      await Future<void>.delayed(const Duration(milliseconds: 500)); // debounced live refresh
+
+      final state = bloc.state as Initialized;
+      expect(state.loadedPageCount, 2); // pages not dropped by the refresh
+      expect(state.items.length, 29); // all 28 prior + the new one (no collapse to 20)
+      expect(state.items.any((c) => c.name == 'Prefix-preserve chat'), isTrue);
+    });
+
+    // Review finding (low): a live refresh while a search is active must re-query WITH the filter
+    // and preserve the query (covers _refresh's filtered path + the stale-guard).
+    test('a live refresh during an active search stays filtered and preserves the query', () async {
+      final bloc = ChatsListBloc()..add(const ChatsListEvent.initialize());
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      bloc.add(const ChatsListEvent.searchChanged('Design'));
+      await Future<void>.delayed(const Duration(milliseconds: 700));
+      expect((bloc.state as Initialized).items.every((c) => c.name.toLowerCase().contains('design')), isTrue);
+
+      await getIt<ChatRepository>().createChat(name: 'Design extra reactive');
+      await Future<void>.delayed(const Duration(milliseconds: 600)); // debounced refresh with the active query
+
+      final state = bloc.state as Initialized;
+      expect(state.query, 'Design'); // query preserved through the refresh
+      expect(state.items.every((c) => c.name.toLowerCase().contains('design')), isTrue); // stays filtered
+      expect(state.items.any((c) => c.name == 'Design extra reactive'), isTrue); // the matching new chat appears
+    });
   });
 }
