@@ -12,10 +12,38 @@ mixin BaseRepositoryHelper {
       return await executionFunction();
     } on DioException catch (e, stackTrace) {
       logRepository.error(target: this, error: e, stackTrace: stackTrace);
-      return RepositoryResult<TD>.error(exception: RepositoryException.internal);
+      return RepositoryResult<TD>.error(exception: _mapDioException(e));
     } catch (e, stackTrace) {
       logRepository.error(target: this, error: e, stackTrace: stackTrace);
       return RepositoryResult<TD>.error(exception: RepositoryException.unknown);
+    }
+  }
+
+  /// Maps a transport error to a domain [RepositoryException] by connection type and
+  /// HTTP status. Enables error/offline/notFound BLoC states to be driven through the
+  /// real path once the backend lands (mock APIs never throw these today).
+  RepositoryException _mapDioException(DioException e) {
+    switch (e.type) {
+      case DioExceptionType.connectionTimeout:
+      case DioExceptionType.sendTimeout:
+      case DioExceptionType.receiveTimeout:
+      case DioExceptionType.connectionError:
+        return RepositoryException.connection;
+      case DioExceptionType.badResponse:
+        switch (e.response?.statusCode) {
+          case 401:
+            return RepositoryException.unauthenticated;
+          case 403:
+            return RepositoryException.authentication;
+          case 404:
+            return RepositoryException.notFound;
+          default:
+            return RepositoryException.internal;
+        }
+      case DioExceptionType.cancel:
+      case DioExceptionType.badCertificate:
+      case DioExceptionType.unknown:
+        return RepositoryException.internal;
     }
   }
 }

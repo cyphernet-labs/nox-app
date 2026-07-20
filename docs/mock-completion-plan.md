@@ -59,7 +59,7 @@
 |----|--------|:---:|:--:|:---:|:---:|
 | S1 | Интерфейсы `*RemoteDataSource` на фичу; моки реализуют их; репо зависят от интерфейса (P1) (§5.3) | 🟠 | M | **SpecKit** | ☐ |
 | S2 | DI-флип по `Environment`: mock↔real = конфиг, а не переписывание (P5) — после S1 (§5.3) | 🟡 | S/M | **SpecKit** | ☐ |
-| S3 | Маппинг HTTP-кодов → `RepositoryException` в `BaseRepositoryHelper` (энум-члены есть, но не производятся) (P3) (§5.3) | 🟡 | S | точечно | ☐ |
+| S3 | Маппинг HTTP-кодов → `RepositoryException` в `BaseRepositoryHelper` (энум-члены есть, но не производятся) (P3) (§5.3) | 🟡 | S | точечно | ☑ |
 | S4 | Провести live chat/message через `ResponseEntity` + `EntityConverter` (wire-DTO; наполнить пустой `EntityConverter`), как Item-harness (P2) (§5.3) | 🟡 | L | **SpecKit** | ☐ |
 | S5 | Auth/token + apiUrl seam: `AppConfig.apiUrl`, `getUserAuthIdToken`, `ApiClient` interceptor, `401→logout(forced)` (P4) (§5.3) | 🟡 | M | **SpecKit** | ☐ |
 
@@ -159,3 +159,5 @@ _(дописываем строкой на каждую закрытую зад�
 
 - D1 — 2026-07-24 — logout wipes chat/message Sembast on a successful session clear (`AuthRepositoryImpl` gains Chat/Message repo deps; not wiped on a failed clear). Widget logout tests wrapped in `tester.runAsync` (clean() is real DB I/O). Gate green (569).
 - N1+N2 — 2026-07-24 — Create chat pops with the created `ChatModel` (no more `RoutePlaceholderPage` dead-end); shell's `_onCreate` awaits it and signals the Chats list (new `openCreated` ValueNotifier) to reload + open the thread (mobile push / desktop select). Gate green (569). NOTE: reload-on-return is the intermediate; full watch-based reactivity is R1.
+- 014 — 2026-07-24 — `/speckit-specify` for the reactive-refresh slice (R1+R2+R3+D2). Spec on branch `014-reactive-data-refresh` (`d0eb2e7`); awaiting user for clarify/plan/analyze.
+- S3 — 2026-07-24 — `BaseRepositoryHelper` maps DioException by type/status → RepositoryException (401→unauthenticated, 403→authentication, 404→notFound, connection→connection, else internal). Behaviour-neutral on mocks (they never throw); locked by item_repo tests. Gate green (574).

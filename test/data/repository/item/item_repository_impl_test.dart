@@ -119,5 +119,45 @@ void main() {
       expect(result.hasData, isFalse);
       expect(result.exception, RepositoryException.unknown);
     });
+
+    // Status/connection mapping (S3): the enum members exist to carry these once a real
+    // backend lands; the mock APIs never emit them, so lock the mapping here.
+    Future<RepositoryException?> exceptionFor(DioException e) async {
+      when(api.execute(config: anyNamed('config'))).thenThrow(e);
+      return (await repository.getItems(config: GetItemsConfig.firstPage())).exception as RepositoryException?;
+    }
+
+    DioException badResponse(int code) => DioException(
+      requestOptions: RequestOptions(path: 'v1/items'),
+      type: DioExceptionType.badResponse,
+      response: Response<dynamic>(
+        requestOptions: RequestOptions(path: 'v1/items'),
+        statusCode: code,
+      ),
+    );
+
+    test('a 401 response maps to RepositoryException.unauthenticated', () async {
+      expect(await exceptionFor(badResponse(401)), RepositoryException.unauthenticated);
+    });
+
+    test('a 403 response maps to RepositoryException.authentication', () async {
+      expect(await exceptionFor(badResponse(403)), RepositoryException.authentication);
+    });
+
+    test('a 404 response maps to RepositoryException.notFound', () async {
+      expect(await exceptionFor(badResponse(404)), RepositoryException.notFound);
+    });
+
+    test('a 500 response maps to RepositoryException.internal', () async {
+      expect(await exceptionFor(badResponse(500)), RepositoryException.internal);
+    });
+
+    test('a connection error maps to RepositoryException.connection', () async {
+      final e = DioException(
+        requestOptions: RequestOptions(path: 'v1/items'),
+        type: DioExceptionType.connectionError,
+      );
+      expect(await exceptionFor(e), RepositoryException.connection);
+    });
   });
 }
