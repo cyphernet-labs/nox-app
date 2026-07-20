@@ -14,6 +14,9 @@ abstract class CreateChatState with _$CreateChatState {
     @Default('') String name,
     @Default(CreateChatStatus.empty) CreateChatStatus status,
     @Default(false) bool networkError,
+    // The chat created on a `navSuccess` outcome — handed back to the caller (the shell)
+    // so it can open the new thread / refresh the list. Null until a successful create.
+    ChatModel? createdChat,
   }) = _CreateChatState;
 
   bool get isChecking => status == CreateChatStatus.checking;

@@ -5,13 +5,13 @@ import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
+import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/pages/base/base_state_page.dart';
 import 'package:nox_app/presentation/pages/create_chat_page/bloc/create_chat_bloc.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page_params.dart';
-import 'package:nox_app/presentation/pages/placeholder/route_placeholder_page.dart';
 import 'package:nox_app/presentation/widgets/onboarding/app_labeled_field_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_spinner_widget.dart';
@@ -26,13 +26,15 @@ class CreateChatPage extends StatefulWidget {
 
   final bool demo;
 
-  static Route<void> route() => MaterialPageRoute<void>(
+  /// Pops with the created [ChatModel] on success (null on cancel) so the caller can
+  /// open the new thread and refresh the list.
+  static Route<ChatModel?> route() => MaterialPageRoute<ChatModel?>(
     builder: (_) => const CreateChatPage(),
     settings: const RouteSettings(name: '/create/chat'),
   );
 
   /// Gallery entry: adds the dev create-outcome selector.
-  static Route<void> routeDemo() => MaterialPageRoute<void>(
+  static Route<ChatModel?> routeDemo() => MaterialPageRoute<ChatModel?>(
     builder: (_) => const CreateChatPage(demo: true),
     settings: const RouteSettings(name: '/create/chat'),
   );
@@ -66,8 +68,10 @@ class _CreateChatPageState extends BaseStatePage<CreateChatPage> {
   void _onStatus(BuildContext context, CreateChatState state) {
     switch (state.status) {
       case CreateChatStatus.navSuccess:
-        Navigator.of(context).push(RoutePlaceholderPage.route(destinationLabel: 'Chat thread (5.2)'));
-        _bloc.add(const CreateChatEvent.navigationHandled());
+        // Close the Create screen and hand the created chat back to the caller (the
+        // shell), which opens the new thread (mobile push / desktop select) and
+        // refreshes the list. Was a RoutePlaceholderPage dead-end.
+        Navigator.of(context).pop(state.createdChat);
       case CreateChatStatus.navFatal:
         Navigator.of(context).push(AppErrorPage.route(params: ErrorPageParams.fatal()));
         _bloc.add(const CreateChatEvent.navigationHandled());

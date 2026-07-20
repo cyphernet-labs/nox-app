@@ -36,11 +36,23 @@ import 'package:nox_app/presentation/widgets/state/app_progress_widget.dart';
 /// network-only mock chats repository. `[inShell]` suppresses the back affordance
 /// when hosted as a shell tab; [scrollToTop] is bumped by the shell on Chats re-tap.
 class ChatsListPage extends StatefulWidget {
-  const ChatsListPage({super.key, this.demo = false, this.inShell = false, this.scrollToTop, this.forceWide, this.initialScenario});
+  const ChatsListPage({
+    super.key,
+    this.demo = false,
+    this.inShell = false,
+    this.scrollToTop,
+    this.openCreated,
+    this.forceWide,
+    this.initialScenario,
+  });
 
   final bool demo;
   final bool inShell;
   final ValueListenable<int>? scrollToTop;
+
+  /// Bumped by the shell with the chat just created via the `+` FAB → the list reloads
+  /// (so the new chat appears) and opens it (mobile push / desktop select).
+  final ValueListenable<ChatModel?>? openCreated;
 
   /// Test-only seam: seeds the debug [ChatsListScenario] on init so golden tests can
   /// render the empty / offline / inline-error / fatal states deterministically
@@ -82,11 +94,13 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
       _bloc.add(ChatsListEvent.setScenario(widget.initialScenario!));
     }
     widget.scrollToTop?.addListener(_onScrollToTop);
+    widget.openCreated?.addListener(_onOpenCreated);
   }
 
   @override
   void dispose() {
     widget.scrollToTop?.removeListener(_onScrollToTop);
+    widget.openCreated?.removeListener(_onOpenCreated);
     _searchController.dispose();
     _scrollController.dispose();
     _bloc.close();
@@ -113,6 +127,16 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
     } else {
       Navigator.of(context).push(ChatThreadPage.route(chat)); // mobile: push the real thread (5.2)
     }
+  }
+
+  // A chat was just created via the shell `+`: reload so it appears in the list, then
+  // open it (mobile pushes the thread, desktop selects it in the detail pane).
+  void _onOpenCreated() {
+    final chat = widget.openCreated?.value;
+    if (chat == null || !mounted) return;
+    _bloc.add(const ChatsListEvent.loadChats(reset: true));
+    final wide = widget.forceWide ?? (MediaQuery.of(context).size.width >= Constants.railBreakpoint);
+    _onTapChat(chat, wide: wide);
   }
 
   @override

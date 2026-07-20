@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:nox_app/di/global_aliases.dart';
+import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/general/onboarding_mock_data.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
@@ -59,7 +60,7 @@ class CreateChatBloc extends BaseBloc<CreateChatEvent, CreateChatState> {
         case CreateChatOutcome.success:
           final result = await chatRepository.createChat(name: state.name);
           result.match<void>(
-            onData: (_) => emit(state.copyWith(status: CreateChatStatus.navSuccess)),
+            onData: (chat) => emit(state.copyWith(status: CreateChatStatus.navSuccess, createdChat: chat)),
             onError: (_) => emit(state.copyWith(status: CreateChatStatus.valid, networkError: true)),
           );
         case CreateChatOutcome.network:

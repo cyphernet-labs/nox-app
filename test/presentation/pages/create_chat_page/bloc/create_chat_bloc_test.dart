@@ -73,7 +73,8 @@ void main() {
         predicate<CreateChatState>((s) => s.status == CreateChatStatus.checking),
         predicate<CreateChatState>((s) => s.status == CreateChatStatus.valid),
         predicate<CreateChatState>((s) => s.status == CreateChatStatus.submitting),
-        predicate<CreateChatState>((s) => s.status == CreateChatStatus.navSuccess),
+        // navSuccess carries the created chat so the caller can open its thread (N1).
+        predicate<CreateChatState>((s) => s.status == CreateChatStatus.navSuccess && s.createdChat != null),
       ],
     );
 

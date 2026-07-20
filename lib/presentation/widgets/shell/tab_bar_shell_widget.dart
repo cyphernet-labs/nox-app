@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/di/global_aliases.dart';
+import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/presentation/pages/chats_list_page/chats_list_page.dart';
@@ -62,6 +63,11 @@ class _TabBarShellState extends State<TabBarShell> {
   // previously selected and the tab's state was preserved).
   final ValueNotifier<int> _settingsJumpToAccount = ValueNotifier<int>(0);
 
+  // Carries the chat just created via the `+` FAB → the Chats list listens, reloads
+  // (so the new chat appears) and opens it (mobile pushes the thread, desktop selects
+  // it in the detail pane).
+  final ValueNotifier<ChatModel?> _chatsOpenCreated = ValueNotifier<ChatModel?>(null);
+
   // Account avatar label — seeded once from the session spine for the desktop rail
   // avatar. Falls back to the placeholder while loading / when no session label is
   // cached. NOTE: this is the session-cached label at shell mount; it does NOT
@@ -98,6 +104,7 @@ class _TabBarShellState extends State<TabBarShell> {
   void dispose() {
     _chatsScrollToTop.dispose();
     _settingsJumpToAccount.dispose();
+    _chatsOpenCreated.dispose();
     super.dispose();
   }
 
@@ -110,7 +117,14 @@ class _TabBarShellState extends State<TabBarShell> {
     setState(() => _active = tab);
   }
 
-  void _onCreate() => Navigator.of(context).push(CreateChatPage.route());
+  Future<void> _onCreate() async {
+    // Create chat (6.1) pops with the created chat on success. Hand it to the Chats
+    // tab to reload + open (mobile push / desktop select); null = cancelled.
+    final created = await Navigator.of(context).push(CreateChatPage.route());
+    if (created == null || !mounted) return;
+    if (_active != AppTab.chats) setState(() => _active = AppTab.chats);
+    _chatsOpenCreated.value = created;
+  }
 
   // Desktop rail account avatar → switch to Settings and land on the Account section.
   void _onAccount() {
@@ -125,7 +139,7 @@ class _TabBarShellState extends State<TabBarShell> {
     // Rebuilt each frame, but State (blocs / scroll) is preserved by widget type +
     // position; the scrollToTop notifier is a stable shell-owned field.
     final bodies = <Widget>[
-      ChatsListPage(inShell: true, demo: widget.demo, scrollToTop: _chatsScrollToTop, forceWide: useRail),
+      ChatsListPage(inShell: true, demo: widget.demo, scrollToTop: _chatsScrollToTop, openCreated: _chatsOpenCreated, forceWide: useRail),
       SettingsRootPage(inShell: true, demo: widget.demo, forceWide: useRail, jumpToAccount: _settingsJumpToAccount),
     ];
     return Stack(

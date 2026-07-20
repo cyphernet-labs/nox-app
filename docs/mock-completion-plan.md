@@ -30,8 +30,8 @@
 ### Фаза N — навигация и переходы (mobile + desktop)
 | ID | Задача | Приор. | Eff. | Режим | Статус |
 |----|--------|:---:|:--:|:---:|:---:|
-| N1 | Создание чата: убрать тупик `RoutePlaceholderPage`; на `navSuccess` закрыть Create и открыть тред созданного чата (mobile push / desktop select), блок эмитит созданный `ChatModel`/id (§3d) | 🟠 | M | точечно | ☐ |
-| N2 | Список чатов рефрешится после создания (await create → `loadChats(reset)` или `watchChats`; сейчас `push` без `.then`) — связано с R1 (§3d, §4) | 🟠 | M | точечно | ☐ |
+| N1 | Создание чата: убрать тупик `RoutePlaceholderPage`; на `navSuccess` закрыть Create и открыть тред созданного чата (mobile push / desktop select), блок эмитит созданный `ChatModel`/id (§3d) | 🟠 | M | точечно | ☑ |
+| N2 | Список чатов рефрешится после создания (await create → `loadChats(reset)` или `watchChats`; сейчас `push` без `.then`) — связано с R1 (§3d, §4) | 🟠 | M | точечно | ☑ |
 | N3 | Убрать двойную навигацию онбординга: `Login`/`SetUsername` не пушат `TabBarShell` сами, а двигают спину (`AppRoot` делает единственный swap) (§3e) | 🟡 | M | точечно | ☐ |
 | N4 | (опц.) Вход в `Settings/Account` с мобилки (на десктопе есть аватар в rail; на мобилке affordance нет) (§3c) | 🔵 | S | точечно | ☐ |
 | N5 | Десктопный `CreateChatPage` — настоящий `showDialog`, а не pushed-route (`// TODO(M3)`) (§3f) | 🔵 | S/M | точечно | ☐ |
@@ -158,3 +158,4 @@
 _(дописываем строкой на каждую закрытую задачу: `ID — дата — коммит — примечание`)_
 
 - D1 — 2026-07-24 — logout wipes chat/message Sembast on a successful session clear (`AuthRepositoryImpl` gains Chat/Message repo deps; not wiped on a failed clear). Widget logout tests wrapped in `tester.runAsync` (clean() is real DB I/O). Gate green (569).
+- N1+N2 — 2026-07-24 — Create chat pops with the created `ChatModel` (no more `RoutePlaceholderPage` dead-end); shell's `_onCreate` awaits it and signals the Chats list (new `openCreated` ValueNotifier) to reload + open the thread (mobile push / desktop select). Gate green (569). NOTE: reload-on-return is the intermediate; full watch-based reactivity is R1.
