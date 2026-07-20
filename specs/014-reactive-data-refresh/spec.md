@@ -124,6 +124,21 @@ Trigger a mock inbound message for a chat you are not viewing → its badge incr
 - Unread reset must not fire for a chat merely rendered in the desktop list pane; only opening/viewing
   the chat counts as reading.
 
+## Clarifications
+
+### Session 2026-07-24
+
+- Q: How is a "new inbound message" produced with the API mocked (no backend)? → A: A
+  debug-only "Simulate incoming" affordance (a `kDebugMode` dev control) inserts an inbound
+  message into the target chat's local store — deterministic and testable, mirroring the
+  existing debug-scenario pattern. No automatic/periodic generation.
+- Q: What marks a chat as read (resets unread), and what about the currently-viewed chat? → A:
+  Viewing the thread marks it read — mobile push / desktop select (its thread shows in the pane);
+  an inbound message that arrives in the currently-viewed chat stays read (no increment). Merely
+  rendering a chat's row in the list is NOT reading.
+- Q: What is the chats-list preview for an attachment-only message (no text)? → A: The attachment's
+  filename with the usual author prefix (e.g. "You: design-spec.pdf") — no new l10n string, no emoji.
+
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
@@ -133,8 +148,9 @@ Trigger a mock inbound message for a chat you are not viewing → its badge incr
   sourced from the local store.
 - **FR-002**: Sending a message MUST update its parent chat's last-message preview and last-activity
   timestamp in the local store, and MUST reorder the chat to newest-first.
-- **FR-003**: An attachment-only send MUST produce a non-empty, human-sensible last-message summary
-  for the chat row.
+- **FR-003**: An attachment-only send MUST set the chat's last-message summary to the attachment's
+  filename (with the usual author prefix, e.g. "You: design-spec.pdf") — never empty, no new l10n
+  string, no emoji.
 - **FR-004**: A failed send MUST NOT alter the parent chat's stored last-message summary or ordering.
 - **FR-005**: The live list MUST continue to honour the active search query and the existing
   incremental "load more" paging (a reactive update must not discard already-loaded pages or the
@@ -145,11 +161,14 @@ Trigger a mock inbound message for a chat you are not viewing → its badge incr
   and a message MUST NOT appear twice when the live store also begins to reflect it.
 - **FR-008**: Older-history paging in the thread (scroll up to load earlier messages) MUST continue to
   work alongside the live updates.
-- **FR-009**: Opening/viewing a chat MUST reset that chat's unread count to zero, reflected live in the
-  list badge.
+- **FR-009**: Viewing a chat's thread MUST reset that chat's unread count to zero, reflected live in
+  the list badge — on mobile this is pushing the thread, on desktop it is selecting the chat (its
+  thread renders in the detail pane). An inbound message that lands in the currently-viewed chat MUST
+  stay read (no increment). Merely rendering a chat's row in the list is NOT reading.
 - **FR-010**: A new inbound message for a chat the user is not viewing MUST increment that chat's
-  unread count, reflected live in the list badge (inbound is mock-simulated in this phase — see
-  Assumptions).
+  unread count, reflected live in the list badge. Inbound is produced only by a debug-only
+  "Simulate incoming" affordance (`kDebugMode` dev control) that persists an inbound message into
+  the target chat's local store; there is no automatic/periodic generation.
 - **FR-011**: All of the above MUST work identically on mobile (`_narrow`, single list / pushed thread)
   and desktop (`_wide`, list-detail with in-pane thread), preserving desktop selection across updates.
 - **FR-012**: All data MUST come from the existing cache-first local store; the network layer stays
