@@ -11,6 +11,10 @@ import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 abstract class MessageRepository {
   Future<RepositoryResult<(List<MessageModel>, PageMetadata)>> getMessages({required GetMessagesConfig config});
 
+  /// Reactive stream of a chat's messages (chronological) — a change-signal for the
+  /// live thread (Feature 014). Seeds the chat once if empty, then streams the cache.
+  Stream<List<MessageModel>> watchMessages(String chatId);
+
   /// One-shot send. Returns the accepted (server) message on success.
   Future<RepositoryResult<MessageModel>> sendMessage({required String chatId, String? text, MessageAttachment? attachment});
 

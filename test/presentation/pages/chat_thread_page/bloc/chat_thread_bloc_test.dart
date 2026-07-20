@@ -207,5 +207,25 @@ void main() {
       act: (bloc) => bloc.add(const ChatThreadEvent.sendRetried('nope')),
       expect: () => const <ChatThreadState>[],
     );
+
+    blocTest<ChatThreadBloc, ChatThreadState>(
+      'a sent message shows exactly one bubble across pending -> sent and arrives live in items (US3)',
+      build: ChatThreadBloc.new,
+      act: (bloc) async {
+        bloc.add(const ChatThreadEvent.initialize('chat_0'));
+        await Future<void>.delayed(const Duration(milliseconds: 500)); // seed + load
+        bloc.add(const ChatThreadEvent.messageSent(text: 'Unique-US3-live-message'));
+        await Future<void>.delayed(const Duration(milliseconds: 700)); // ack + id adoption + watch refresh
+      },
+      wait: const Duration(milliseconds: 300),
+      verify: (bloc) {
+        final state = bloc.state as Initialized;
+        final matches = state.allMessages.where((m) => m.text == 'Unique-US3-live-message').toList();
+        expect(matches, hasLength(1)); // exactly one bubble — id adoption + dedup-by-id, no duplicate
+        expect(matches.first.status, MessageStatus.sent); // acked
+        // It also arrived in `items` via the live watch refresh, not only the optimistic outgoing list.
+        expect(state.items.any((m) => m.text == 'Unique-US3-live-message'), isTrue);
+      },
+    );
   });
 }

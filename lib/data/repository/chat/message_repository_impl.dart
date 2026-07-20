@@ -70,6 +70,12 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
   }
 
   @override
+  Stream<List<MessageModel>> watchMessages(String chatId) async* {
+    await _seedChatIfEmpty(chatId);
+    yield* _messageDao.watch(chatId).map((entities) => entities.map((e) => _mapper.toModel(entity: e)).toList());
+  }
+
+  @override
   Future<RepositoryResult<MessageModel>> sendMessage({required String chatId, String? text, MessageAttachment? attachment}) {
     return execute<MessageModel>(() async {
       final message = await _sendMessageApi.execute(chatId: chatId, text: text, attachment: attachment);

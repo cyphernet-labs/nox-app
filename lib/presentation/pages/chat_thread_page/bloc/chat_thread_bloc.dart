@@ -43,15 +43,38 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   ChatThreadScenario _scenario = ChatThreadScenario.normal;
   int _localCounter = 0;
 
+  // Live change-signal over the cache-first DB (Feature 014): a new persisted message
+  // (own send / debug inbound) re-reads the loaded prefix. Value ignored — getMessages
+  // stays the single projection path.
+  StreamSubscription<List<MessageModel>>? _messagesSub;
+
   FutureOr<void> _onInitialize(Initialize event, Emitter<ChatThreadState> emit) async {
     _chatId = event.chatId;
     emit(ChatThreadState.initialized(pagingState: PagingState<String, MessageModel>(), currentId: IdentityMockData.currentUserId));
     add(const ChatThreadEvent.loadMessages(reset: true));
+    // skip(1) drops the initial snapshot the reset load already covers.
+    _messagesSub ??= _messageRepository
+        .watchMessages(_chatId)
+        .skip(1)
+        .listen((_) => add(const ChatThreadEvent.loadMessages(refresh: true)));
+  }
+
+  @override
+  Future<void> close() {
+    _messagesSub?.cancel();
+    return super.close();
   }
 
   FutureOr<void> _onLoadMessages(LoadMessages event, Emitter<ChatThreadState> emit) async {
     final current = state;
     if (current is! Initialized) return;
+
+    // Live refresh: re-read the loaded prefix invisibly (serialised on this handler).
+    if (event.refresh) {
+      await _refreshMessages(current, emit);
+      return;
+    }
+
     if (current.loadingInProgress) return;
 
     // Fatal short-circuits to the error state (3.1).
@@ -82,7 +105,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
             response: (const [], const PageMetadata(total: 0)),
             keyExtractor: (m) => m.id,
           );
-          emit(live.copyWith(items: const [], pagingState: r.pagingState, loadingInProgress: false, isOffline: false));
+          emit(live.copyWith(items: const [], pagingState: r.pagingState, loadedPageCount: 1, loadingInProgress: false, isOffline: false));
           return;
         }
 
@@ -101,6 +124,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
                 items: r.updatedList,
                 pagingState: r.pagingState,
                 nextPage: r.nextPage ?? live.nextPage,
+                loadedPageCount: isReset ? 1 : live.loadedPageCount + 1,
                 loadingInProgress: false,
                 isOffline: _scenario == ChatThreadScenario.offline,
               ),
@@ -164,7 +188,9 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
       }
       final result = await _messageRepository.sendMessage(chatId: _chatId, text: text, attachment: attachment);
       result.match<void>(
-        onData: (_) => _updateOutgoing(localId, MessageStatus.sent, emit),
+        // Adopt the persisted server message (srv_<uuid> id + sent) so the watch tick's
+        // copy is deduped by id in `allMessages` → exactly one bubble (no flicker).
+        onData: (persisted) => _adoptOutgoing(localId, persisted, emit),
         onError: (_) => _updateOutgoing(localId, MessageStatus.error, emit),
       );
     }, onError: (error, exception, stackTrace) => _updateOutgoing(localId, MessageStatus.error, emit));
@@ -181,6 +207,43 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
         ],
       ),
     );
+  }
+
+  /// Replace an optimistic outgoing entry with the persisted server message (id adoption).
+  void _adoptOutgoing(String localId, MessageModel persisted, Emitter<ChatThreadState> emit) {
+    final live = state;
+    if (live is! Initialized) return;
+    emit(
+      live.copyWith(
+        outgoing: [
+          for (final m in live.outgoing)
+            if (m.id == localId) persisted else m,
+        ],
+      ),
+    );
+  }
+
+  /// Invisible live re-read of the loaded page prefix — re-folds `items` via getMessages
+  /// WITHOUT touching the optimistic `outgoing` / draft / loading state.
+  Future<void> _refreshMessages(Initialized live0, Emitter<ChatThreadState> emit) async {
+    if (_scenario == ChatThreadScenario.fatal || _scenario == ChatThreadScenario.empty) return;
+    final all = <MessageModel>[];
+    PageMetadata? lastMeta;
+    for (var page = GetMessagesConfig.defaultPage; page < GetMessagesConfig.defaultPage + live0.loadedPageCount; page++) {
+      final live = state;
+      if (live is! Initialized) return;
+      final result = await _messageRepository.getMessages(
+        config: GetMessagesConfig.nextPage(chatId: _chatId, page: page),
+      );
+      if (!result.hasData) return; // swallow a background error — keep the current thread
+      final (messages, meta) = result.data!;
+      all.addAll(messages);
+      lastMeta = meta;
+    }
+    final live = state;
+    if (live is! Initialized || lastMeta == null) return;
+    final r = PagingState<String, MessageModel>().applyPage(existingList: const [], response: (all, lastMeta), keyExtractor: (m) => m.id);
+    emit(live.copyWith(items: r.updatedList, pagingState: r.pagingState, nextPage: r.nextPage ?? live.nextPage));
   }
 
   void _onAttachmentPicked(AttachmentPicked event, Emitter<ChatThreadState> emit) {

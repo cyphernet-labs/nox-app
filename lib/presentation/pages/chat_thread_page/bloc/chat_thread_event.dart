@@ -6,7 +6,9 @@ sealed class ChatThreadEvent with _$ChatThreadEvent {
   const factory ChatThreadEvent.initialize(String chatId) = Initialize;
 
   /// Load a page of history; [reset] restarts from page 1, otherwise pages OLDER.
-  const factory ChatThreadEvent.loadMessages({@Default(false) bool reset}) = LoadMessages;
+  /// [refresh] is a live change-signal (from `watchMessages`): re-reads the loaded page
+  /// prefix and re-folds `items` without touching the optimistic `outgoing` list.
+  const factory ChatThreadEvent.loadMessages({@Default(false) bool reset, @Default(false) bool refresh}) = LoadMessages;
 
   /// Send a message (optimistic): text and/or the current draft attachment.
   const factory ChatThreadEvent.messageSent({String? text, MessageAttachment? attachment}) = MessageSent;
