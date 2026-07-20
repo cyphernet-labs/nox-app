@@ -15,6 +15,7 @@ import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
 import 'package:nox_app/presentation/base/bloc_transformers.dart';
 import 'package:nox_app/presentation/pagination/paging_state_ext.dart';
+import 'package:rxdart/rxdart.dart';
 
 part 'chats_list_bloc.freezed.dart';
 part 'chats_list_event.dart';
@@ -50,9 +51,13 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
   FutureOr<void> _onInitialize(Initialize event, Emitter<ChatsListState> emit) async {
     emit(ChatsListState.initialized(pagingState: PagingState<String, ChatModel>()));
     add(const ChatsListEvent.loadChats(reset: true));
-    // skip(1) drops the initial snapshot the reset load already covers; later emissions
-    // are real changes → an invisible refresh.
-    _chatsSub ??= _chatRepository.watchChats().skip(1).listen((_) => add(const ChatsListEvent.loadChats(refresh: true)));
+    // skip(1) drops the initial snapshot the reset load already covers; debounceTime
+    // coalesces write bursts (e.g. a send's message + chat-row writes) into one refresh.
+    _chatsSub ??= _chatRepository
+        .watchChats()
+        .skip(1)
+        .debounceTime(const Duration(milliseconds: 100))
+        .listen((_) => add(const ChatsListEvent.loadChats(refresh: true)));
   }
 
   @override

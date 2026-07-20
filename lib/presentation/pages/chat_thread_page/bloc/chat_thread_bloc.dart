@@ -17,6 +17,7 @@ import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/general/identity_mock_data.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
 import 'package:nox_app/presentation/pagination/paging_state_ext.dart';
+import 'package:rxdart/rxdart.dart';
 
 part 'chat_thread_bloc.freezed.dart';
 part 'chat_thread_event.dart';
@@ -57,10 +58,12 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     // Viewing the thread marks the chat read (mobile push / desktop select) — resets the
     // list badge live. No-op at 0.
     unawaited(_chatRepository.markChatRead(chatId: _chatId));
-    // skip(1) drops the initial snapshot the reset load already covers.
+    // skip(1) drops the initial snapshot the reset load already covers; debounceTime
+    // coalesces write bursts into one refresh.
     _messagesSub ??= _messageRepository
         .watchMessages(_chatId)
         .skip(1)
+        .debounceTime(const Duration(milliseconds: 100))
         .listen((_) => add(const ChatThreadEvent.loadMessages(refresh: true)));
   }
 
