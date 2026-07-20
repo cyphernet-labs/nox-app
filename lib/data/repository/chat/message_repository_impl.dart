@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
+import 'package:nox_app/data/local/chat/chat_dao.dart';
 import 'package:nox_app/data/local/chat/message_dao.dart';
 import 'package:nox_app/data/mapper/chat/message_mapper.dart';
 import 'package:nox_app/data/remote/api/chat/get_messages_api.dart';
@@ -12,6 +13,7 @@ import 'package:nox_app/domain/repository/base/page_metadata.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/general/formatters/chat_preview_formatter.dart';
 
 /// Cache-first chat thread (5.2) over the local Sembast DB. The deterministic mock
 /// ([GetMessagesApi]) seeds a chat's history ONCE on first open; thereafter the
@@ -20,12 +22,13 @@ import 'package:nox_app/domain/repository/chat/message_repository.dart';
 /// seed/source swaps; the DB contract stays.
 @LazySingleton(as: MessageRepository, env: [Environment.dev, Environment.prod, Environment.test])
 class MessageRepositoryImpl with BaseRepositoryHelper implements MessageRepository {
-  MessageRepositoryImpl(this._messageDao, this._getMessagesApi, this._sendMessageApi, this._mapper);
+  MessageRepositoryImpl(this._messageDao, this._getMessagesApi, this._sendMessageApi, this._mapper, this._chatDao);
 
   final MessageDao _messageDao;
   final GetMessagesApi _getMessagesApi;
   final SendMessageApi _sendMessageApi;
   final MessageMapper _mapper;
+  final ChatDao _chatDao;
 
   static const int _pageSize = GetMessagesConfig.pageSize;
 
@@ -71,8 +74,27 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
     return execute<MessageModel>(() async {
       final message = await _sendMessageApi.execute(chatId: chatId, text: text, attachment: attachment);
       await _messageDao.upsert(_mapper.toEntity(model: message));
+      // Keep the chat row (list) consistent with the thread: update preview + time + order.
+      // A failed send returns an error before reaching here, so the row is never touched (FR-004).
+      await _touchChatRow(chatId, message, incrementUnread: false);
       return RepositoryResult<MessageModel>.success(data: message);
     });
+  }
+
+  /// Updates the parent chat row after a message is persisted: last-message preview +
+  /// timestamp (→ newest-first reorder), and optionally the unread count. Works at the
+  /// [ChatEntity] level via a record-key lookup ([ChatDao.getById]) — no mapper needed.
+  /// No-op if the chat row is absent.
+  Future<void> _touchChatRow(String chatId, MessageModel message, {required bool incrementUnread}) async {
+    final chat = await _chatDao.getById(chatId);
+    if (chat == null) return;
+    await _chatDao.upsert(
+      chat.copyWith(
+        lastMessagePreview: chatPreviewFor(message),
+        lastMessageAt: message.sentAt.toUtc().toIso8601String(),
+        unreadCount: incrementUnread ? chat.unreadCount + 1 : chat.unreadCount,
+      ),
+    );
   }
 
   @override
