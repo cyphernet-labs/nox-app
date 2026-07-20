@@ -93,7 +93,7 @@ The build system is in place: `pubspec.yaml` + a `Makefile` (wraps `fvm`) + FVM-
 
 **CI** (`.github/workflows/`): `ci.yml` (`gate` job, macOS) mirrors `make gate` minus goldens — `pub get` → `build_runner` → `dart format -l 140 --set-exit-if-changed` on tracked `lib`+`test` `.dart` → `analyze` → `flutter test --exclude-tags golden`. `compile-check.yml` runs 5 per-platform `--debug` compile-smoke builds. **CI uses bare `flutter`/`dart` (subosito action), not `fvm`** — locally always use `fvm`.
 
-There is **no l10n yet** (no `l10n.yaml`/`.arb`/`flutter gen-l10n`; UI strings are constants in `lib/general/text_constants.dart` — i18n is future work despite the planned EN+UK UI) and **no `integration_test/` directory** (the dev-dep is wired but unused).
+**l10n is wired (feature 012):** `flutter_localizations` + `l10n.yaml` + `lib/l10n/app_en.arb`/`app_uk.arb` via `flutter gen-l10n`; UI strings resolve through `context.l10n` with live EN+UK switching (`LocaleController` → `MaterialApp.locale`); the old `lib/general/text_constants.dart` was deleted. There is still **no `integration_test/` directory** (the dev-dep is wired but unused).
 
 ## Testing
 

@@ -76,7 +76,7 @@
 | E1 | Golden 5.2 (chat thread) — page-mobile + page-desktop | 🟡 | M | точечно | ☐ |
 | E2 | Golden 4.1 (собранный tab-bar shell) | 🔵 | M | точечно | ☐ |
 | E3 | `getChatFiles` выводить из персистентных вложений `MessageDao` (закрыть T009) | 🔵 | M | точечно | ☐ |
-| E4 | Сверка `roadmap-phase2.md` (012/013/l10n/clock сделаны) + удалить stale «no l10n»-комментарии (`LanguagePage`, CLAUDE.md) | 🟡 | S | точечно | ☐ |
+| E4 | Сверка `roadmap-phase2.md` (012/013/l10n/clock сделаны) + удалить stale «no l10n»-комментарии (`LanguagePage`, CLAUDE.md) | 🟡 | S | точечно | ☑ |
 
 **Рекомендуемый порядок:** N1→N2 (ваши примеры — «ведёт непонятно куда» + не рефрешится) → R1/R2 → D1 → D3/R4 → S1/S2/S3 → остальное. Крупные срезы (R1/R2/D2, D3/R4, S1/S2, S4, S5) — через Spec Kit.
 

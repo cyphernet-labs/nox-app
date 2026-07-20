@@ -10,7 +10,7 @@ import 'package:nox_app/presentation/widgets/settings/app_settings_group_widget.
 
 /// 7.4 Language content — System / English / Українська radio rows inside a settings
 /// group, each with a leading flag/glyph (smartphone chip / UK flag / UA flag) and a
-/// `primary`-tinted selected row (session-local). No Scaffold/AppBar so it embeds in
+/// `primary`-tinted selected row (persisted + live via LocaleController). No Scaffold/AppBar so it embeds in
 /// both the mobile leaf chrome (LanguagePage) and the desktop Settings list-detail
 /// pane (7.1). No own BLoC (UI-first exception).
 class LanguageBody extends StatefulWidget {
