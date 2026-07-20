@@ -14,6 +14,9 @@ sealed class ChatsListState with _$ChatsListState {
     required PagingState<String, ChatModel> pagingState,
     @Default([]) List<ChatModel> items,
     @Default(GetChatsConfig.defaultPage) int nextPage,
+    // How many pages are currently loaded — the span a live `refresh` re-reads and
+    // re-folds (reset→1, load-more→+1, refresh→unchanged).
+    @Default(1) int loadedPageCount,
     @Default(false) bool loadingInProgress,
     @Default('') String query,
     @Default(false) bool isOffline,

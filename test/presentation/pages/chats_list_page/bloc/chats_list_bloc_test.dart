@@ -1,15 +1,22 @@
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/presentation/pages/chats_list_page/bloc/chats_list_bloc.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
-  setUpAll(() async {
+  // Per-test DB isolation — the reactive test mutates the DB (createChat), so each test
+  // starts from a clean, freshly-seeded store.
+  setUp(() async {
+    SharedPreferences.setMockInitialValues({});
     await configureDependencies(Environment.test);
+    await getIt<AppDatabase>().clearEntireDatabase();
   });
 
-  tearDownAll(() async {
+  tearDown(() async {
     await getIt.reset();
   });
 
@@ -170,6 +177,23 @@ void main() {
         final state = bloc.state as Initialized;
         expect(state.hasLoadError, isTrue);
         expect(state.items, isNotEmpty);
+      },
+    );
+
+    blocTest<ChatsListBloc, ChatsListState>(
+      'a chat created in the DB live-refreshes into the list without a manual reload (US1)',
+      build: ChatsListBloc.new,
+      act: (bloc) async {
+        bloc.add(const ChatsListEvent.initialize());
+        await Future<void>.delayed(const Duration(milliseconds: 500)); // initial load + seed
+        await getIt<ChatRepository>().createChat(name: 'Zebra live chat');
+        await Future<void>.delayed(const Duration(milliseconds: 400)); // watchChats change-signal → refresh
+      },
+      wait: const Duration(milliseconds: 300),
+      verify: (bloc) {
+        final state = bloc.state as Initialized;
+        expect(state.loadedPageCount, 1); // a live refresh does not change the loaded page count
+        expect(state.items.any((c) => c.name == 'Zebra live chat'), isTrue); // appeared reactively, no manual reload
       },
     );
   });
