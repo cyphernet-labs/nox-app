@@ -18,6 +18,11 @@ abstract class MessageRepository {
   /// One-shot send. Returns the accepted (server) message on success.
   Future<RepositoryResult<MessageModel>> sendMessage({required String chatId, String? text, MessageAttachment? attachment});
 
+  /// Seeds a freshly-created chat with its opening system line ("Chat created by
+  /// {label}", authored by the signed-in label). Persisting it makes the new thread
+  /// non-empty, so the generic mock history is NOT seeded on first open (D5).
+  Future<void> seedCreatedChat({required String chatId});
+
   /// DEBUG ONLY (`kDebugMode`, Feature 014): persist an inbound message (author != me)
   /// into a chat and bump its unread — the deterministic stand-in for a server push.
   /// Callers MUST guard with `kDebugMode`.

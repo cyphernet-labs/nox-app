@@ -6,12 +6,14 @@ import 'package:nox_app/data/local/chat/chat_dao.dart';
 import 'package:nox_app/data/mapper/chat/chat_mapper.dart';
 import 'package:nox_app/data/remote/datasource/chat_files_remote_data_source.dart';
 import 'package:nox_app/data/remote/datasource/chat_remote_data_source.dart';
+import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/repository/base/page_metadata.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
+import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/general/app_clock.dart';
 import 'package:uuid/uuid.dart';
 
@@ -21,12 +23,13 @@ import 'package:uuid/uuid.dart';
 /// backend — when transport lands, only the data-source binding swaps; the DB contract stays.
 @LazySingleton(as: ChatRepository, env: [Environment.dev, Environment.prod, Environment.test])
 class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
-  ChatRepositoryImpl(this._chatDao, this._chatRemote, this._chatFilesRemote, this._mapper);
+  ChatRepositoryImpl(this._chatDao, this._chatRemote, this._chatFilesRemote, this._mapper, this._messageRepository);
 
   final ChatDao _chatDao;
   final ChatRemoteDataSource _chatRemote;
   final ChatFilesRemoteDataSource _chatFilesRemote;
   final ChatMapper _mapper;
+  final MessageRepository _messageRepository;
 
   static const int _pageSize = GetChatsConfig.pageSize;
   static const Uuid _uuid = Uuid();
@@ -73,6 +76,15 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
     return execute<ChatModel>(() async {
       final chat = ChatModel(id: _uuid.v4(), name: name, lastMessagePreview: '', lastMessageAt: AppClock.now());
       await _chatDao.upsert(_mapper.toEntity(model: chat));
+      // Seed the opening "Chat created by {label}" system line so the new thread shows
+      // its genesis instead of the generic mock history (D5). Best-effort: the chat is
+      // already committed, so a seeding failure MUST NOT fail the create (it would strand
+      // an orphan chat). On failure the thread just falls back to the generic seed.
+      try {
+        await _messageRepository.seedCreatedChat(chatId: chat.id);
+      } catch (error, stackTrace) {
+        logRepository.error(target: this, error: error, stackTrace: stackTrace);
+      }
       return RepositoryResult<ChatModel>.success(data: chat);
     });
   }

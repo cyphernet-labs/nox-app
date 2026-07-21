@@ -119,6 +119,27 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
   }
 
   @override
+  Future<void> seedCreatedChat({required String chatId}) async {
+    // Idempotent: only the genesis line, and only when the chat has no messages yet.
+    if (await _messageDao.countByChat(chatId) > 0) return;
+    // Don't bake the fallback label over a real session on a degraded read (mirrors
+    // _seedChatIfEmpty): skip the genesis line best-effort — a genuine no-session still
+    // succeeds (data == null → fallback label, which is correct).
+    final sessionResult = await _sessionRepository.readSession();
+    if (!sessionResult.hasData) return;
+    final identity = resolveIdentity(sessionResult.data);
+    final systemLine = MessageModel(
+      id: '${chatId}_sys',
+      chatId: chatId,
+      authorId: 'system',
+      authorLabel: identity.label, // renders "Chat created by {label}" via l10n.systemChatCreated
+      sentAt: AppClock.now(),
+      isSystem: true,
+    );
+    await _messageDao.upsert(_mapper.toEntity(model: systemLine));
+  }
+
+  @override
   Future<void> simulateIncoming({required String chatId}) async {
     // Debug stand-in for a server push: an inbound message (author != me) + unread bump.
     final message = MessageModel(
