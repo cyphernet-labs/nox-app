@@ -6,6 +6,7 @@ import 'package:nox_app/data/local/chat/chat_dao.dart';
 import 'package:nox_app/data/mapper/chat/chat_mapper.dart';
 import 'package:nox_app/data/remote/datasource/chat_files_remote_data_source.dart';
 import 'package:nox_app/data/remote/datasource/chat_remote_data_source.dart';
+import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/repository/base/page_metadata.dart';
@@ -76,8 +77,14 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
       final chat = ChatModel(id: _uuid.v4(), name: name, lastMessagePreview: '', lastMessageAt: AppClock.now());
       await _chatDao.upsert(_mapper.toEntity(model: chat));
       // Seed the opening "Chat created by {label}" system line so the new thread shows
-      // its genesis instead of the generic mock history (D5). Non-fatal if it fails.
-      await _messageRepository.seedCreatedChat(chatId: chat.id);
+      // its genesis instead of the generic mock history (D5). Best-effort: the chat is
+      // already committed, so a seeding failure MUST NOT fail the create (it would strand
+      // an orphan chat). On failure the thread just falls back to the generic seed.
+      try {
+        await _messageRepository.seedCreatedChat(chatId: chat.id);
+      } catch (error, stackTrace) {
+        logRepository.error(target: this, error: error, stackTrace: stackTrace);
+      }
       return RepositoryResult<ChatModel>.success(data: chat);
     });
   }

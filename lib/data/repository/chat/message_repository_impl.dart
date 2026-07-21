@@ -122,7 +122,12 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
   Future<void> seedCreatedChat({required String chatId}) async {
     // Idempotent: only the genesis line, and only when the chat has no messages yet.
     if (await _messageDao.countByChat(chatId) > 0) return;
-    final identity = await _identity();
+    // Don't bake the fallback label over a real session on a degraded read (mirrors
+    // _seedChatIfEmpty): skip the genesis line best-effort — a genuine no-session still
+    // succeeds (data == null → fallback label, which is correct).
+    final sessionResult = await _sessionRepository.readSession();
+    if (!sessionResult.hasData) return;
+    final identity = resolveIdentity(sessionResult.data);
     final systemLine = MessageModel(
       id: '${chatId}_sys',
       chatId: chatId,

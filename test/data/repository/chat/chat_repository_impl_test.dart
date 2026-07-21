@@ -6,6 +6,7 @@ import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/data/local/chat/chat_dao.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
+import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
@@ -147,6 +148,18 @@ void main() {
 
       final (messages, _) = (await getIt<MessageRepository>().getMessages(config: GetMessagesConfig.firstPage(chatId: created.id))).data!;
       expect(messages, hasLength(1)); // still just the one genesis line
+    });
+
+    test('the genesis line is authored by the signed-in session label when a session exists', () async {
+      await getIt<SessionRepository>().saveIdentifier(identifier: 'sess-nova', onboardingComplete: true, label: 'Nova');
+      addTearDown(() => getIt<SessionRepository>().clear()); // don't leak the session into sibling tests
+
+      final created = (await repository.createChat(name: 'Nova chat')).data!;
+
+      final (messages, _) = (await getIt<MessageRepository>().getMessages(config: GetMessagesConfig.firstPage(chatId: created.id))).data!;
+      // Renders "Chat created by Nova" — the real session label, NOT the fallback constant.
+      expect(messages.single.authorLabel, 'Nova');
+      expect(messages.single.authorLabel, isNot(Constants.defaultUserLabel));
     });
   });
 
