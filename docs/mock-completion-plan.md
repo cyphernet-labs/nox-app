@@ -39,9 +39,9 @@
 ### Фаза R — рефреш данных / реактивность
 | ID | Задача | Приор. | Eff. | Режим | Статус |
 |----|--------|:---:|:--:|:---:|:---:|
-| R1 | Список чатов → `watchChats()` реактивно (новый чат и новое сообщение отражаются живо: превью/порядок/unread) (§4) | 🟠 | M | **SpecKit** | ☐ |
-| R2 | `sendMessage` обновляет строку чата (`lastMessagePreview`/`lastMessageAt`/порядок) — часть среза R1 (§4) | 🟠 | S | **SpecKit** | ☐ |
-| R3 | Тред → `watchMessages(chatId)` реактивно (живой приём; своя отправка уже оптимистична) (§4) | 🟡 | M | **SpecKit** | ☐ |
+| R1 | Список чатов → `watchChats()` реактивно (новый чат и новое сообщение отражаются живо: превью/порядок/unread) (§4) | 🟠 | M | **SpecKit** | ☑ |
+| R2 | `sendMessage` обновляет строку чата (`lastMessagePreview`/`lastMessageAt`/порядок) — часть среза R1 (§4) | 🟠 | S | **SpecKit** | ☑ |
+| R3 | Тред → `watchMessages(chatId)` реактивно (живой приём; своя отправка уже оптимистична) (§4) | 🟡 | M | **SpecKit** | ☑ |
 | R4 | Аватар в шелле + Settings живо обновляются после переименования (broadcast label) — связано с D3 (§4) | 🟡 | S/M | **SpecKit** | ☐ |
 | R5 | Chat card (5.4) — файлы реактивно/из персистентных вложений — связано с E3 (§4) | 🔵 | M | точечно | ☐ |
 
@@ -49,7 +49,7 @@
 | ID | Задача | Приор. | Eff. | Режим | Статус |
 |----|--------|:---:|:--:|:---:|:---:|
 | D1 | **Logout чистит чат/сообщения из Sembast** (`clean()` есть, но не вызывается) — утечка между identity (§5) | 🔴 | S/M | точечно | ☑ |
-| D2 | Unread-count: инкремент на новое сообщение, сброс при открытии чата (§4) | 🟠 | M | **SpecKit** | ☐ |
+| D2 | Unread-count: инкремент на новое сообщение, сброс при открытии чата (§4) | 🟠 | M | **SpecKit** | ☑ |
 | D3 | Единая идентичность: один источник (session label) кормит автора своих сообщений + Settings; переименование персистится в сессию (сейчас `_onNameSubmitted` — no-op) (§4, §5) | 🟠 | M | **SpecKit** | ☐ |
 | D4 | Уникальность имени чата — против накапливающейся БД, а не замороженного мок-сета | 🟡 | S/M | точечно | ☐ |
 | D5 | Новый чат получает системную строку `Chat created by {label}` | 🟡 | S | точечно | ☐ |
@@ -161,3 +161,5 @@ _(дописываем строкой на каждую закрытую зад�
 - N1+N2 — 2026-07-24 — Create chat pops with the created `ChatModel` (no more `RoutePlaceholderPage` dead-end); shell's `_onCreate` awaits it and signals the Chats list (new `openCreated` ValueNotifier) to reload + open the thread (mobile push / desktop select). Gate green (569). NOTE: reload-on-return is the intermediate; full watch-based reactivity is R1.
 - 014 — 2026-07-24 — `/speckit-specify` for the reactive-refresh slice (R1+R2+R3+D2). Spec on branch `014-reactive-data-refresh` (`d0eb2e7`); awaiting user for clarify/plan/analyze.
 - S3 — 2026-07-24 — `BaseRepositoryHelper` maps DioException by type/status → RepositoryException (401→unauthenticated, 403→authentication, 404→notFound, connection→connection, else internal). Behaviour-neutral on mocks (they never throw); locked by item_repo tests. Gate green (574).
+- E4 — 2026-07-24 — un-stale l10n claims (CLAUDE.md + LanguagePage/LanguageBody comments) + roadmap reconciliation note. Comment/doc-only, analyze clean.
+- **R1+R2+R3+D2 (feature 014) — 2026-07-25 — MERGED into `develop`** (branch `014-reactive-data-refresh`, `--no-ff`). Full Spec Kit flow (specify→clarify→plan→tasks→analyze) + implementation by user story: US1 reactive chats list (watchChats change-signal + `refresh` re-fold of the loaded prefix, `loadedPageCount`, stale-guard, debounce), US2 sendMessage→chat-row (`_touchChatRow`, failed-send-safe), US3 reactive thread (watchMessages + server-id adoption + dedup-by-id, no double bubble), US4 unread (markChatRead on view + debug `simulateIncoming`). Adversarial code-review closed 2 test-coverage gaps (multi-page + search-active refresh). Post-merge gate green (586).
