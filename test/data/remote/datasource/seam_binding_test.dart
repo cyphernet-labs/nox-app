@@ -38,6 +38,7 @@ void main() {
     // Rebind the interface BEFORE the lazy ChatRepository is first resolved, so it is
     // constructed with the sentinel source (exactly what an env-scoped real binding does).
     getIt.allowReassignment = true;
+    addTearDown(() => getIt.allowReassignment = false); // don't leave the global flag flipped
     getIt.registerSingleton<ChatRemoteDataSource>(_SentinelChatRemoteDataSource());
 
     final chats = (await getIt<ChatRepository>().getChats(config: GetChatsConfig.firstPage())).data!;
