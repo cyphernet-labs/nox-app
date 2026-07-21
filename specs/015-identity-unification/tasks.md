@@ -76,9 +76,9 @@ Single Flutter package `nox_app`: source under `lib/`, tests deep-mirror under `
 
 ### Implementation
 
-- [ ] T015 [US2] In `lib/presentation/pages/settings_root_page/bloc/settings_root_bloc.dart` `_onInitialize`: set `name = resolveIdentity(session).label` from the loaded session (keep the `rawId` load unchanged, still degrading to empty on error). (depends on T003)
-- [ ] T016 [US2] Make `_onNameSubmitted` async in the same file: on `canSave`, `await sessionRepository.updateLabel(label: state.draftName)`; on success emit `copyWith(name: draftName, editing: false, status: idle)`; on error keep the edit open (do not show a saved name that failed to persist). Update the class doc TODO. (depends on T006)
-- [ ] T017 [P] [US2] Extend `test/presentation/pages/settings_root_page/bloc/settings_root_bloc_test.dart`: initialize loads the session label into `name`; a valid confirmed rename calls `updateLabel` and a subsequent `readSession` reflects it; an invalid/taken draft never reaches `updateLabel` (no persistence). (depends on T015, T016)
+- [X] T015 [US2] In `lib/presentation/pages/settings_root_page/bloc/settings_root_bloc.dart` `_onInitialize`: set `name = resolveIdentity(session).label` from the loaded session (keep the `rawId` load unchanged, still degrading to empty on error). (depends on T003)
+- [X] T016 [US2] Make `_onNameSubmitted` async in the same file: on `canSave`, `await sessionRepository.updateLabel(label: state.draftName)`; on success emit `copyWith(name: draftName, editing: false, status: idle)`; on error keep the edit open (do not show a saved name that failed to persist). Update the class doc TODO. (depends on T006)
+- [X] T017 [P] [US2] Extend `test/presentation/pages/settings_root_page/bloc/settings_root_bloc_test.dart`: initialize loads the session label into `name`; a valid confirmed rename calls `updateLabel` and a subsequent `readSession` reflects it; an invalid/taken draft never reaches `updateLabel` (no persistence). (depends on T015, T016)
 
 **Checkpoint**: US1 + US2 both work independently.
 

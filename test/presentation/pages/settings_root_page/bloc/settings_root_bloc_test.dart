@@ -1,6 +1,8 @@
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/presentation/pages/settings_root_page/bloc/settings_root_bloc.dart';
 
 import '../../../../utils/fake_session_repository.dart';
@@ -89,5 +91,61 @@ void main() {
       act: (bloc) => bloc.add(const SettingsRootEvent.idRevealToggled()),
       expect: () => [predicate<SettingsRootState>((s) => s.idRevealed)],
     );
+  });
+
+  // Feature 015 — the display label is loaded from and persisted to the REAL session
+  // (mock-backed store), so these use the test-env DI rather than the read-only fake.
+  group('identity label persistence (feature 015)', () {
+    setUp(() async => configureDependencies(Environment.test));
+    tearDown(getIt.reset);
+
+    Future<void> signIn(String label) async {
+      await getIt<SessionRepository>().saveIdentifier(identifier: 'sess-abc', onboardingComplete: true, label: label);
+    }
+
+    blocTest<SettingsRootBloc, SettingsRootState>(
+      'initialize loads the session display label into name',
+      setUp: () => signIn('Alice'),
+      build: SettingsRootBloc.new,
+      act: (bloc) => bloc.add(const SettingsRootEvent.initialize()),
+      wait: const Duration(milliseconds: 100),
+      verify: (bloc) {
+        expect(bloc.state.name, 'Alice'); // the chosen label, not the compile-time default
+        expect(bloc.state.rawId, 'sess-abc');
+      },
+    );
+
+    test('a valid confirmed rename persists the new label to the session', () async {
+      await signIn('Alice');
+      final bloc = SettingsRootBloc()..add(const SettingsRootEvent.initialize());
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      bloc.add(const SettingsRootEvent.nameEditStarted());
+      bloc.add(const SettingsRootEvent.nameChanged('Freename'));
+      await Future<void>.delayed(const Duration(milliseconds: 700)); // debounced availability → valid
+      expect(bloc.state.status, SettingsNameStatus.valid);
+
+      bloc.add(const SettingsRootEvent.nameSubmitted());
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+
+      expect(bloc.state.name, 'Freename'); // committed in the bloc
+      expect((await getIt<SessionRepository>().readSession()).data!.label, 'Freename'); // and persisted (survives restart)
+    });
+
+    test('an invalid draft is never persisted', () async {
+      await signIn('Alice');
+      final bloc = SettingsRootBloc()..add(const SettingsRootEvent.initialize());
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      bloc.add(const SettingsRootEvent.nameEditStarted());
+      bloc.add(const SettingsRootEvent.nameChanged('bad name!')); // invalid charset → not committable
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      bloc.add(const SettingsRootEvent.nameSubmitted()); // canSave == false → no-op
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      expect((await getIt<SessionRepository>().readSession()).data!.label, 'Alice'); // unchanged
+    });
   });
 }
