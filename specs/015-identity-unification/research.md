@@ -26,7 +26,7 @@ Phase 0 decisions. Each resolves an open choice from the spec Assumptions, groun
 
 ## R3 — How does seeded own-history stay "own" once the own-id comes from the session?
 
-**Decision**: **Reconcile at seed time.** `GetMessagesApi` keeps authoring own seed rows with the sentinel `me` (= `kFallbackOwnId`). `MessageRepositoryImpl._seedChatIfEmpty` rewrites any row whose `authorId == kFallbackOwnId` to the **resolved own-id** (`session?.identifier ?? kFallbackOwnId`) before persisting. The thread's `currentId` uses the *same* resolver, so seeded own rows and new own sends share one identifier.
+**Decision**: **Reconcile at seed time.** `GetMessagesApi` keeps authoring own seed rows with the sentinel `me` (= `IdentityMockData.fallbackOwnId`). `MessageRepositoryImpl._seedChatIfEmpty` rewrites any row whose `authorId == IdentityMockData.fallbackOwnId` to the **resolved own-id** (`session?.identifier ?? IdentityMockData.fallbackOwnId`) before persisting. The thread's `currentId` uses the *same* resolver, so seeded own rows and new own sends share one identifier.
 
 **Rationale**: The identifier is **stable for the life of the local DB**. It is written once at onboarding and only changes on logout; logout (feature D1) wipes the chat + message caches, so the next open re-seeds against the new identity. There is therefore no "seeded under identity A, later read under identity B" window in the real flow. Seed-time reconcile is both correct and cheap (one rewrite pass on first open).
 
@@ -36,7 +36,7 @@ Phase 0 decisions. Each resolves an open choice from the spec Assumptions, groun
 
 ## R4 — What are the fallbacks when no session exists (tests / degraded read)?
 
-**Decision**: `resolveIdentity(null)` returns `(id: kFallbackOwnId /* 'me' */, label: Constants.defaultUserLabel /* 'User7421' */)`. An empty stored label is treated as absent (→ default). The label fallback is unified to `Constants.defaultUserLabel`; the old thread label sentinel `You` is dropped.
+**Decision**: `resolveIdentity(null)` returns `(id: IdentityMockData.fallbackOwnId /* 'me' */, label: Constants.defaultUserLabel /* 'User7421' */)`. An empty stored label is treated as absent (→ default). The label fallback is unified to `Constants.defaultUserLabel`; the old thread label sentinel `You` is dropped.
 
 **Rationale**: Own-detection needs a stable non-empty id; `'me'` matches the un-reconciled seed, so a no-session thread still renders coherently (all tests without a seeded session keep passing). The scannable `Your ID` is a *separate* concern (`SettingsRootState.rawId`) and still degrades to empty on a failed read — a fabricated id must never flow into a real QR (Principle I).
 

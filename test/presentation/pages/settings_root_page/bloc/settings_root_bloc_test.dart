@@ -130,7 +130,30 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 150));
 
       expect(bloc.state.name, 'Freename'); // committed in the bloc
-      expect((await getIt<SessionRepository>().readSession()).data!.label, 'Freename'); // and persisted (survives restart)
+      expect((await getIt<SessionRepository>().readSession()).data!.label, 'Freename'); // and persisted
+
+      // Simulate a full restart: discard the DI graph and re-read through a FRESH
+      // repository over the persisted store — the renamed label is still there (FR-007/SC-002).
+      await getIt.reset();
+      await configureDependencies(Environment.test);
+      expect((await getIt<SessionRepository>().readSession()).data!.label, 'Freename');
+    });
+
+    test('a charset-valid but already-taken label is never persisted (FR-008)', () async {
+      await signIn('Alice');
+      final bloc = SettingsRootBloc()..add(const SettingsRootEvent.initialize());
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      bloc.add(const SettingsRootEvent.nameEditStarted());
+      bloc.add(const SettingsRootEvent.nameChanged('NOX')); // valid charset, but a taken label
+      await Future<void>.delayed(const Duration(milliseconds: 700)); // debounced uniqueness check → taken
+      expect(bloc.state.status, SettingsNameStatus.taken);
+
+      bloc.add(const SettingsRootEvent.nameSubmitted()); // canSave == false → no-op
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      expect((await getIt<SessionRepository>().readSession()).data!.label, 'Alice'); // unchanged
     });
 
     test('an invalid draft is never persisted', () async {

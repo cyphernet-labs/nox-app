@@ -10,7 +10,7 @@ The resolved signed-in identity handed to consumers. Not persisted; derived from
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `id` | `String` | The own-identity id used for own-vs-other detection and as `authorId` of own messages. `= session.identifier` when a session exists, else `kFallbackOwnId` (`'me'`). Stable for the life of the local DB. |
+| `id` | `String` | The own-identity id used for own-vs-other detection and as `authorId` of own messages. `= session.identifier` when a session exists, else `IdentityMockData.fallbackOwnId` (`'me'`). Stable for the life of the local DB. |
 | `label` | `String` | The display label. `= session.label` when non-empty, else `Constants.defaultUserLabel` (`'User7421'`). |
 
 Representation: a lightweight record `({String id, String label})` returned by `resolveIdentity`, or a small immutable `Identity` class in `lib/domain/model/app/identity.dart`. No Freezed/codegen needed (two final fields).
@@ -22,7 +22,7 @@ Representation: a lightweight record `({String id, String label})` returned by `
 ### Message authorship (existing `MessageModel`) — reconciled, not reshaped
 
 `MessageModel.authorId` / `authorLabel` are unchanged fields. What changes:
-- **Own seed rows**: authored with `kFallbackOwnId` by the mock, **rewritten to the resolved `id`** at seed time before persistence.
+- **Own seed rows**: authored with `IdentityMockData.fallbackOwnId` by the mock, **rewritten to the resolved `id`** at seed time before persistence.
 - **New own sends**: `authorId = resolved id`, `authorLabel = resolved label` (from the session at send time).
 - **Other rows**: untouched.
 
@@ -30,7 +30,7 @@ Representation: a lightweight record `({String id, String label})` returned by `
 
 ```
 resolveIdentity(SessionModel? s):
-    id    = (s?.identifier is non-empty) ? s.identifier : kFallbackOwnId
+    id    = (s?.identifier is non-empty) ? s.identifier : IdentityMockData.fallbackOwnId
     label = (s?.label      is non-empty) ? s.label      : Constants.defaultUserLabel
     return (id, label)
 ```
@@ -41,10 +41,10 @@ Consumed by: `ChatThreadBloc` (own `currentId` + optimistic author label) and `M
 
 | Name | Location | Value | Role |
 |------|----------|-------|------|
-| `kFallbackOwnId` | `IdentityMockData` (repurposed) | `'me'` | No-session own-id sentinel; also the mock seed's raw own-author. |
+| `IdentityMockData.fallbackOwnId` | `IdentityMockData` (repurposed) | `'me'` | No-session own-id sentinel; also the mock seed's raw own-author. |
 | label fallback | `Constants.defaultUserLabel` | `'User7421'` | Unified display fallback (replaces the dropped `You` label sentinel). |
 
-`IdentityMockData.currentUserId` / `currentLabel` are **removed** and replaced by `kFallbackOwnId`; references (`get_messages_api`, `chat_thread_bloc`, `send_message_api`, `message_model` doc) are updated.
+`IdentityMockData.currentUserId` / `currentLabel` are **removed** and replaced by `IdentityMockData.fallbackOwnId`; references (`get_messages_api`, `chat_thread_bloc`, `send_message_api`, `message_model` doc) are updated.
 
 ## State transitions
 

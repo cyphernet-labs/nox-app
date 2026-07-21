@@ -261,21 +261,34 @@ void main() {
         expect(state.items.any((m) => m.authorId == 'me'), isFalse); // no un-reconciled sentinel own rows
       });
 
-      test('a label rename does not change the own-id (identifier-keyed, rename-invariant)', () async {
+      test('own-detection keys on the identifier, not the label — a rename reclassifies nothing (FR-011/SC-006)', () async {
         await getIt<SessionRepository>().saveIdentifier(identifier: 'sess-def', onboardingComplete: true, label: 'Bob');
         addTearDown(() => getIt<SessionRepository>().clear());
 
         final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_identity_015b'));
         addTearDown(bloc.close);
         await Future<void>.delayed(const Duration(milliseconds: 500));
-        final before = (bloc.state as Initialized).currentId;
-        expect(before, 'sess-def');
+        final state0 = bloc.state as Initialized;
+
+        // Own-detection is IDENTIFIER-keyed: currentId is the technical identifier, not the
+        // display label — so it would be wrong if the code keyed classification on the label.
+        expect(state0.currentId, 'sess-def');
+        expect(state0.currentId, isNot('Bob'));
+        final ownBefore = state0.items.where((m) => m.authorId == state0.currentId).map((m) => m.id).toSet();
+        expect(ownBefore, isNotEmpty); // seeded own history is attributed to the identifier
+        expect(state0.items.every((m) => m.authorId != 'Bob'), isTrue); // nothing authored by the label
 
         await getIt<SessionRepository>().updateLabel(label: 'Bob-renamed');
-        await Future<void>.delayed(const Duration(milliseconds: 100));
+        await Future<void>.delayed(const Duration(milliseconds: 150));
 
-        // The own-id follows the identifier (rename-invariant) → classification never moves (FR-011/SC-006).
-        expect((bloc.state as Initialized).currentId, before);
+        final state1 = bloc.state as Initialized;
+        // The rename persisted (label changed) but the identifier — hence currentId and every
+        // message's own/other side — is untouched. No row is ever authored by the label.
+        expect((await getIt<SessionRepository>().readSession()).data!.label, 'Bob-renamed');
+        expect(state1.currentId, 'sess-def');
+        final ownAfter = state1.items.where((m) => m.authorId == state1.currentId).map((m) => m.id).toSet();
+        expect(ownAfter, ownBefore); // identical own set → 0 reclassifications (SC-006)
+        expect(state1.items.every((m) => m.authorId != 'Bob-renamed'), isTrue);
       });
     });
   });

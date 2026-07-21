@@ -49,7 +49,14 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
   /// Safe because the identifier is stable for the life of the local DB (logout wipes it).
   Future<void> _seedChatIfEmpty(String chatId) async {
     if (await _messageDao.countByChat(chatId) > 0) return;
-    final identity = await _identity();
+    // Own rows seed ONCE and stick for the DB's life. A FAILED session read must not
+    // bake them under the fallback id while a real session exists — that would mismatch
+    // a thread whose currentId resolved from a good read (own history rendered as a
+    // stranger, permanently). Defer seeding until the read succeeds; a genuine "no
+    // session" still succeeds (data == null) → fallback id, which is correct.
+    final sessionResult = await _sessionRepository.readSession();
+    if (!sessionResult.hasData) return;
+    final identity = resolveIdentity(sessionResult.data);
     final all = <MessageModel>[];
     var page = GetMessagesConfig.defaultPage;
     while (true) {
