@@ -8,6 +8,9 @@ import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
+import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
+import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/general/constants.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -119,6 +122,31 @@ void main() {
       final latest = emissions.last;
       expect(latest, hasLength(seededCount + 1));
       expect(latest.any((c) => c.name == 'Watched chat'), isTrue);
+    });
+  });
+
+  group('created chat genesis system line (D5)', () {
+    test('a created chat opens with only the "Chat created by {label}" system line, not the generic mock history', () async {
+      await repository.getChats(config: GetChatsConfig.firstPage()); // seed the mock chat set
+      final created = (await repository.createChat(name: 'Fresh D5 chat')).data!;
+
+      final (messages, _) = (await getIt<MessageRepository>().getMessages(config: GetMessagesConfig.firstPage(chatId: created.id))).data!;
+
+      // Only the genesis line — the generic Aria/Mox/Kit mock history is NOT seeded (countByChat>0 skips it).
+      expect(messages, hasLength(1));
+      final systemLine = messages.single;
+      expect(systemLine.isSystem, isTrue);
+      expect(systemLine.id, '${created.id}_sys');
+      expect(systemLine.authorLabel, Constants.defaultUserLabel); // no session in the test → the label fallback
+      expect(messages.any((m) => m.authorLabel == 'Aria'), isFalse); // generic mock history absent
+    });
+
+    test('seedCreatedChat is idempotent — a second call adds no duplicate line', () async {
+      final created = (await repository.createChat(name: 'Idempotent D5 chat')).data!;
+      await getIt<MessageRepository>().seedCreatedChat(chatId: created.id); // second call
+
+      final (messages, _) = (await getIt<MessageRepository>().getMessages(config: GetMessagesConfig.firstPage(chatId: created.id))).data!;
+      expect(messages, hasLength(1)); // still just the one genesis line
     });
   });
 
