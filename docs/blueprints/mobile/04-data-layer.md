@@ -8,6 +8,8 @@
 
 > **Reactive-канал не только над Sembast (Feature 015).** Тот же паттерн change-signal применим к не-Sembast источникам: `SessionRepository.watchLabel()` — это broadcast-`StreamController<String?>` над `shared_preferences`-меткой (не реактивной самой по себе). Он эмитит текущую метку при подписке (seed-then-live, как `watch()`-`async*`), затем каждое переименование (`updateLabel`) и `null` при `clear` (logout). Единый источник identity (технический идентификатор + label) резолвится чистой `resolveIdentity(SessionModel?)`; переименование меняет только label, идентификатор remain-invariant (own-detection в треде опирается на идентификатор). Живые surfaces (desktop rail-аватар) подписываются и обновляются без рестарта. См. `specs/015-identity-unification/`.
 
+> **RemoteDataSource seam (Feature 016).** Сетевая граница каждой data-фичи — абстрактный интерфейс `*RemoteDataSource` (`lib/data/remote/datasource/`: `ChatRemoteDataSource`/`ChatFilesRemoteDataSource`/`MessageRemoteDataSource`/`ItemRemoteDataSource`). Репо зависят **от интерфейса**, не от конкретного мока (dependency inversion). Мок-реализации (`Mock*RemoteDataSource`) делегируют неизменным `*Api`-генераторам и биндятся `@LazySingleton(as: Interface, env:[dev,prod,test])` — мок покрывает и `prod`, т.к. prod-флейвор бутается `Environment.prod`, а real-impl ещё нет. **Флип на бэкенд** (когда появится): зарегистрировать `RealXRemoteDataSource` на `[Environment.prod]`, сузить мок до `[dev,test]`, `make generate` — репо/DAO/мапперы/`RepositoryResult`/`PageMetadata`/UI не трогаются. `RepositoryResult`+catch-all `execute()` и HTTP→exception-маппинг (S3) остаются контрактом поверх seam. См. `specs/016-remote-datasource-seam/`.
+
 ---
 
 ## Обзор и зона ответственности

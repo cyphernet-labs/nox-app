@@ -7,8 +7,7 @@ import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/data/local/chat/chat_dao.dart';
 import 'package:nox_app/data/local/chat/message_dao.dart';
 import 'package:nox_app/data/mapper/chat/message_mapper.dart';
-import 'package:nox_app/data/remote/api/chat/get_messages_api.dart';
-import 'package:nox_app/data/remote/api/chat/send_message_api.dart';
+import 'package:nox_app/data/remote/datasource/message_remote_data_source.dart';
 import 'package:nox_app/data/repository/chat/message_repository_impl.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
@@ -35,7 +34,7 @@ Future<int> _seedThenGrowTo(MessageRepository repo, {required String chatId, req
   return (await repo.getMessages(config: GetMessagesConfig.firstPage(chatId: chatId))).data!.$2.total;
 }
 
-@GenerateMocks([SendMessageApi])
+@GenerateMocks([MessageRemoteDataSource])
 void main() {
   late MessageRepository repo;
 
@@ -163,9 +162,9 @@ void main() {
 
     test('a failed send leaves the parent chat row untouched (FR-004)', () async {
       final before = await chatDao.getById('chat_0');
-      final failingApi = MockSendMessageApi();
+      final failingRemote = MockMessageRemoteDataSource();
       when(
-        failingApi.execute(
+        failingRemote.sendMessage(
           chatId: anyNamed('chatId'),
           authorId: anyNamed('authorId'),
           authorLabel: anyNamed('authorLabel'),
@@ -175,8 +174,7 @@ void main() {
       ).thenThrow(Exception('network down'));
       final failingRepo = MessageRepositoryImpl(
         getIt<MessageDao>(),
-        getIt<GetMessagesApi>(),
-        failingApi,
+        failingRemote,
         getIt<MessageMapper>(),
         getIt<ChatDao>(),
         getIt<SessionRepository>(),
