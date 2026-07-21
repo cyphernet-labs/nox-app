@@ -4,8 +4,8 @@ import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/data/local/chat/chat_dao.dart';
 import 'package:nox_app/data/mapper/chat/chat_mapper.dart';
-import 'package:nox_app/data/remote/api/chat/get_chat_files_api.dart';
-import 'package:nox_app/data/remote/api/chat/get_chats_api.dart';
+import 'package:nox_app/data/remote/datasource/chat_files_remote_data_source.dart';
+import 'package:nox_app/data/remote/datasource/chat_remote_data_source.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/repository/base/page_metadata.dart';
@@ -15,17 +15,17 @@ import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 import 'package:nox_app/general/app_clock.dart';
 import 'package:uuid/uuid.dart';
 
-/// Cache-first chats list (5.1) over the local Sembast DB. The deterministic mock
-/// ([GetChatsApi]) seeds the store ONCE on first read; thereafter the list, search
+/// Cache-first chats list (5.1) over the local Sembast DB. The [ChatRemoteDataSource]
+/// (mock this phase) seeds the store ONCE on first read; thereafter the list, search
 /// and pagination are served from the DB, and [createChat] persists locally. No
-/// backend — when transport lands, only the seed/source swaps; the DB contract stays.
+/// backend — when transport lands, only the data-source binding swaps; the DB contract stays.
 @LazySingleton(as: ChatRepository, env: [Environment.dev, Environment.prod, Environment.test])
 class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
-  ChatRepositoryImpl(this._chatDao, this._getChatsApi, this._getChatFilesApi, this._mapper);
+  ChatRepositoryImpl(this._chatDao, this._chatRemote, this._chatFilesRemote, this._mapper);
 
   final ChatDao _chatDao;
-  final GetChatsApi _getChatsApi;
-  final GetChatFilesApi _getChatFilesApi;
+  final ChatRemoteDataSource _chatRemote;
+  final ChatFilesRemoteDataSource _chatFilesRemote;
   final ChatMapper _mapper;
 
   static const int _pageSize = GetChatsConfig.pageSize;
@@ -37,7 +37,7 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
     final all = <ChatModel>[];
     var page = GetChatsConfig.defaultPage;
     while (true) {
-      final (chats, meta) = await _getChatsApi.execute(config: GetChatsConfig.nextPage(page: page));
+      final (chats, meta) = await _chatRemote.getChats(config: GetChatsConfig.nextPage(page: page));
       all.addAll(chats);
       final next = meta.nextPage;
       if (next == null) break;
@@ -80,7 +80,7 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
   @override
   Future<RepositoryResult<List<MessageAttachment>>> getChatFiles({required String chatId}) {
     return execute<List<MessageAttachment>>(() async {
-      final files = await _getChatFilesApi.execute(chatId: chatId);
+      final files = await _chatFilesRemote.getChatFiles(chatId: chatId);
       return RepositoryResult<List<MessageAttachment>>.success(data: files);
     });
   }

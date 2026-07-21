@@ -5,8 +5,7 @@ import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/data/local/chat/chat_dao.dart';
 import 'package:nox_app/data/local/chat/message_dao.dart';
 import 'package:nox_app/data/mapper/chat/message_mapper.dart';
-import 'package:nox_app/data/remote/api/chat/get_messages_api.dart';
-import 'package:nox_app/data/remote/api/chat/send_message_api.dart';
+import 'package:nox_app/data/remote/datasource/message_remote_data_source.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
 import 'package:nox_app/domain/model/chat/message_status.dart';
@@ -21,18 +20,17 @@ import 'package:nox_app/general/identity/identity_resolver.dart';
 import 'package:nox_app/general/identity_mock_data.dart';
 import 'package:uuid/uuid.dart';
 
-/// Cache-first chat thread (5.2) over the local Sembast DB. The deterministic mock
-/// ([GetMessagesApi]) seeds a chat's history ONCE on first open; thereafter the
+/// Cache-first chat thread (5.2) over the local Sembast DB. The [MessageRemoteDataSource]
+/// (mock this phase) seeds a chat's history ONCE on first open; thereafter the
 /// thread is paginated FROM the DB (newest batch first), and [sendMessage] persists
 /// the accepted message locally. No backend — when transport lands, only the
-/// seed/source swaps; the DB contract stays.
+/// data-source binding swaps; the DB contract stays.
 @LazySingleton(as: MessageRepository, env: [Environment.dev, Environment.prod, Environment.test])
 class MessageRepositoryImpl with BaseRepositoryHelper implements MessageRepository {
-  MessageRepositoryImpl(this._messageDao, this._getMessagesApi, this._sendMessageApi, this._mapper, this._chatDao, this._sessionRepository);
+  MessageRepositoryImpl(this._messageDao, this._messageRemote, this._mapper, this._chatDao, this._sessionRepository);
 
   final MessageDao _messageDao;
-  final GetMessagesApi _getMessagesApi;
-  final SendMessageApi _sendMessageApi;
+  final MessageRemoteDataSource _messageRemote;
   final MessageMapper _mapper;
   final ChatDao _chatDao;
   final SessionRepository _sessionRepository;
@@ -60,7 +58,7 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
     final all = <MessageModel>[];
     var page = GetMessagesConfig.defaultPage;
     while (true) {
-      final (messages, meta) = await _getMessagesApi.execute(
+      final (messages, meta) = await _messageRemote.getMessages(
         config: GetMessagesConfig.nextPage(chatId: chatId, page: page),
       );
       all.addAll(messages);
@@ -105,7 +103,7 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
   Future<RepositoryResult<MessageModel>> sendMessage({required String chatId, String? text, MessageAttachment? attachment}) {
     return execute<MessageModel>(() async {
       final identity = await _identity();
-      final message = await _sendMessageApi.execute(
+      final message = await _messageRemote.sendMessage(
         chatId: chatId,
         authorId: identity.id,
         authorLabel: identity.label,

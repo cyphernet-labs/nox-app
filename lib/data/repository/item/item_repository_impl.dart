@@ -1,7 +1,7 @@
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/data/mapper/item/item_mapper.dart';
-import 'package:nox_app/data/remote/api/item/get_items_api.dart';
+import 'package:nox_app/data/remote/datasource/item_remote_data_source.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/item/item_model.dart';
 import 'package:nox_app/domain/repository/base/page_metadata.dart';
@@ -14,15 +14,15 @@ import 'package:nox_app/domain/repository/item/item_repository.dart';
 /// LogRepository, maps errors to RepositoryException).
 @LazySingleton(as: ItemRepository, env: [Environment.dev, Environment.prod, Environment.test])
 class ItemRepositoryImpl with BaseRepositoryHelper implements ItemRepository {
-  ItemRepositoryImpl(this._itemMapper, this._getItemsApi);
+  ItemRepositoryImpl(this._itemMapper, this._itemRemote);
 
   final ItemMapper _itemMapper;
-  final GetItemsApi _getItemsApi;
+  final ItemRemoteDataSource _itemRemote;
 
   @override
   Future<RepositoryResult<(List<ItemModel>, PageMetadata)>> getItems({required GetItemsConfig config}) {
     return execute<(List<ItemModel>, PageMetadata)>(() async {
-      final response = await _getItemsApi.execute(config: config);
+      final response = await _itemRemote.getItems(config: config);
       final entity = response.data;
       if (entity == null) {
         return RepositoryResult<(List<ItemModel>, PageMetadata)>.error(exception: RepositoryException.unknown);

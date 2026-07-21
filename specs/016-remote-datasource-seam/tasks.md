@@ -22,7 +22,7 @@ Single Flutter package `nox_app`: source under `lib/`, tests deep-mirror under `
 
 ## Phase 1: Setup
 
-- [ ] T001 Confirm the pre-work baseline is green on branch `016-remote-datasource-seam`: `make gate` (609) + `make golden-verify` (144); record counts so post-refactor deltas are attributable (target: identical counts — behaviour unchanged).
+- [X] T001 Confirm the pre-work baseline is green on branch `016-remote-datasource-seam`: `make gate` (609) + `make golden-verify` (144); record counts so post-refactor deltas are attributable (target: identical counts — behaviour unchanged).
 
 ---
 
@@ -32,10 +32,10 @@ Single Flutter package `nox_app`: source under `lib/`, tests deep-mirror under `
 
 **⚠️ CRITICAL**: no story work until these exist.
 
-- [ ] T002 [P] Add `lib/data/remote/datasource/chat_remote_data_source.dart`: `abstract class ChatRemoteDataSource { Future<(List<ChatModel>, PageMetadata)> getChats({required GetChatsConfig config}); }` (signature mirrors `GetChatsApi.execute`).
-- [ ] T003 [P] Add `lib/data/remote/datasource/chat_files_remote_data_source.dart`: `abstract class ChatFilesRemoteDataSource { Future<List<MessageAttachment>> getChatFiles({required String chatId}); }`.
-- [ ] T004 [P] Add `lib/data/remote/datasource/message_remote_data_source.dart`: `abstract class MessageRemoteDataSource` with `getMessages({required GetMessagesConfig config})` and `sendMessage({required String chatId, required String authorId, required String authorLabel, String? text, MessageAttachment? attachment})` (FR-009, mirrors `GetMessagesApi`/`SendMessageApi`).
-- [ ] T005 [P] Add `lib/data/remote/datasource/item_remote_data_source.dart`: `abstract class ItemRemoteDataSource { Future<ResponseEntity<ItemsEntity>> getItems({required GetItemsConfig config}); }`.
+- [X] T002 [P] Add `lib/data/remote/datasource/chat_remote_data_source.dart`: `abstract class ChatRemoteDataSource { Future<(List<ChatModel>, PageMetadata)> getChats({required GetChatsConfig config}); }` (signature mirrors `GetChatsApi.execute`).
+- [X] T003 [P] Add `lib/data/remote/datasource/chat_files_remote_data_source.dart`: `abstract class ChatFilesRemoteDataSource { Future<List<MessageAttachment>> getChatFiles({required String chatId}); }`.
+- [X] T004 [P] Add `lib/data/remote/datasource/message_remote_data_source.dart`: `abstract class MessageRemoteDataSource` with `getMessages({required GetMessagesConfig config})` and `sendMessage({required String chatId, required String authorId, required String authorLabel, String? text, MessageAttachment? attachment})` (FR-009, mirrors `GetMessagesApi`/`SendMessageApi`).
+- [X] T005 [P] Add `lib/data/remote/datasource/item_remote_data_source.dart`: `abstract class ItemRemoteDataSource { Future<ResponseEntity<ItemsEntity>> getItems({required GetItemsConfig config}); }`.
 
 **Checkpoint**: interfaces exist — mocks + repos can bind.
 
@@ -49,17 +49,17 @@ Single Flutter package `nox_app`: source under `lib/`, tests deep-mirror under `
 
 ### Implementation
 
-- [ ] T006 [P] [US1] Add `lib/data/remote/datasource/mock/mock_chat_remote_data_source.dart`: `MockChatRemoteDataSource implements ChatRemoteDataSource`, injects `GetChatsApi`, `getChats(config) => _api.execute(config: config)`, annotated `@LazySingleton(as: ChatRemoteDataSource, env: [Environment.dev, Environment.prod, Environment.test])`. Add a doc comment pointing to the flip recipe (`contracts/di-binding.md`).
-- [ ] T007 [P] [US1] Add `mock_chat_files_remote_data_source.dart`: `MockChatFilesRemoteDataSource` delegating to `GetChatFilesApi.execute(chatId:)`, same env annotation.
-- [ ] T008 [P] [US1] Add `mock_message_remote_data_source.dart`: `MockMessageRemoteDataSource` injecting `GetMessagesApi` + `SendMessageApi`, forwarding `getMessages`/`sendMessage`, same env annotation.
-- [ ] T009 [P] [US1] Add `mock_item_remote_data_source.dart`: `MockItemRemoteDataSource` delegating to `GetItemsApi.execute(config:)`, same env annotation.
-- [ ] T010 [US1] Repoint `lib/data/repository/chat/chat_repository_impl.dart`: constructor deps `GetChatsApi`/`GetChatFilesApi` → `ChatRemoteDataSource`/`ChatFilesRemoteDataSource`; call sites `_getChatsApi.execute(config:)` → `_chatRemote.getChats(config:)`, `_getChatFilesApi.execute(chatId:)` → `_chatFilesRemote.getChatFiles(chatId:)`. No logic change.
-- [ ] T011 [US1] Repoint `lib/data/repository/chat/message_repository_impl.dart`: replace the two deps `GetMessagesApi` + `SendMessageApi` with one `MessageRemoteDataSource`; call sites → `.getMessages(config:)` / `.sendMessage(...)`. (Session/DAO/mapper deps unchanged.)
-- [ ] T012 [US1] Repoint `lib/data/repository/item/item_repository_impl.dart`: dep `GetItemsApi` → `ItemRemoteDataSource`; call site → `.getItems(config:)`.
-- [ ] T013 [US1] Run `make generate` — regenerate `configure_dependencies.config.dart` (new `as:` bindings + repo constructor changes). Confirm the generated graph wires each repo to its mock impl via the interface. (depends on T006–T012)
-- [ ] T014 [US1] Retarget `test/data/repository/chat/message_repository_impl_test.dart` forced-failure case: `@GenerateMocks([MessageRemoteDataSource])`; stub `sendMessage(...)` to throw; construct `MessageRepositoryImpl` with the mock data source (constructor now takes one `MessageRemoteDataSource` instead of two `*Api`). Re-run `make generate` for the new `*.mocks.dart`.
-- [ ] T015 [US1] Retarget `test/data/repository/item/item_repository_impl_test.dart`: `@GenerateMocks([ItemRemoteDataSource])`; stub `getItems(...)`; construct `ItemRepositoryImpl(mapper, mockItemRemote)`. Re-run `make generate`.
-- [ ] T016 [US1] Verify SC-003: run the 5 `*Api` generator tests (`test/data/remote/api/**`) + repo happy-path tests + a broad slice — all green with NO behavioural assertion edits (only the two doubles above changed wiring).
+- [X] T006 [P] [US1] Add `lib/data/remote/datasource/mock/mock_chat_remote_data_source.dart`: `MockChatRemoteDataSource implements ChatRemoteDataSource`, injects `GetChatsApi`, `getChats(config) => _api.execute(config: config)`, annotated `@LazySingleton(as: ChatRemoteDataSource, env: [Environment.dev, Environment.prod, Environment.test])`. Add a doc comment pointing to the flip recipe (`contracts/di-binding.md`).
+- [X] T007 [P] [US1] Add `mock_chat_files_remote_data_source.dart`: `MockChatFilesRemoteDataSource` delegating to `GetChatFilesApi.execute(chatId:)`, same env annotation.
+- [X] T008 [P] [US1] Add `mock_message_remote_data_source.dart`: `MockMessageRemoteDataSource` injecting `GetMessagesApi` + `SendMessageApi`, forwarding `getMessages`/`sendMessage`, same env annotation.
+- [X] T009 [P] [US1] Add `mock_item_remote_data_source.dart`: `MockItemRemoteDataSource` delegating to `GetItemsApi.execute(config:)`, same env annotation.
+- [X] T010 [US1] Repoint `lib/data/repository/chat/chat_repository_impl.dart`: constructor deps `GetChatsApi`/`GetChatFilesApi` → `ChatRemoteDataSource`/`ChatFilesRemoteDataSource`; call sites `_getChatsApi.execute(config:)` → `_chatRemote.getChats(config:)`, `_getChatFilesApi.execute(chatId:)` → `_chatFilesRemote.getChatFiles(chatId:)`. No logic change.
+- [X] T011 [US1] Repoint `lib/data/repository/chat/message_repository_impl.dart`: replace the two deps `GetMessagesApi` + `SendMessageApi` with one `MessageRemoteDataSource`; call sites → `.getMessages(config:)` / `.sendMessage(...)`. (Session/DAO/mapper deps unchanged.)
+- [X] T012 [US1] Repoint `lib/data/repository/item/item_repository_impl.dart`: dep `GetItemsApi` → `ItemRemoteDataSource`; call site → `.getItems(config:)`.
+- [X] T013 [US1] Run `make generate` — regenerate `configure_dependencies.config.dart` (new `as:` bindings + repo constructor changes). Confirm the generated graph wires each repo to its mock impl via the interface. (depends on T006–T012)
+- [X] T014 [US1] Retarget `test/data/repository/chat/message_repository_impl_test.dart` forced-failure case: `@GenerateMocks([MessageRemoteDataSource])`; stub `sendMessage(...)` to throw; construct `MessageRepositoryImpl` with the mock data source (constructor now takes one `MessageRemoteDataSource` instead of two `*Api`). Re-run `make generate` for the new `*.mocks.dart`.
+- [X] T015 [US1] Retarget `test/data/repository/item/item_repository_impl_test.dart`: `@GenerateMocks([ItemRemoteDataSource])`; stub `getItems(...)`; construct `ItemRepositoryImpl(mapper, mockItemRemote)`. Re-run `make generate`.
+- [X] T016 [US1] Verify SC-003: run the 5 `*Api` generator tests (`test/data/remote/api/**`) + repo happy-path tests + a broad slice — all green with NO behavioural assertion edits (only the two doubles above changed wiring).
 
 **Checkpoint**: the seam is in place, behaviour unchanged.
 
@@ -73,8 +73,8 @@ Single Flutter package `nox_app`: source under `lib/`, tests deep-mirror under `
 
 ### Implementation
 
-- [ ] T017 [US2] Add `test/data/remote/datasource/seam_binding_test.dart`: with the test-env DI + a clean DB, register a `_FakeChatRemoteDataSource` (returns a sentinel `('SENTINEL' chat, PageMetadata)`) via `getIt.allowReassignment` + `registerSingleton<ChatRemoteDataSource>` BEFORE first resolving `ChatRepository`; assert `getIt<ChatRepository>().getChats(firstPage)` surfaces the sentinel — the repo routed through the rebound interface (SC-002).
-- [ ] T018 [US2] Confirm the env-scoping is production-safe: verify every mock impl is `env: [dev, prod, test]` (grep) and `flutter analyze` is clean (the prod flavor boots `Environment.prod` → must resolve the mock; FR-007). The ≤3-step flip recipe is already in `contracts/di-binding.md` + `quickstart.md`; ensure each mock impl's doc comment references it (SC-006).
+- [X] T017 [US2] Add `test/data/remote/datasource/seam_binding_test.dart`: with the test-env DI + a clean DB, register a `_FakeChatRemoteDataSource` (returns a sentinel `('SENTINEL' chat, PageMetadata)`) via `getIt.allowReassignment` + `registerSingleton<ChatRemoteDataSource>` BEFORE first resolving `ChatRepository`; assert `getIt<ChatRepository>().getChats(firstPage)` surfaces the sentinel — the repo routed through the rebound interface (SC-002).
+- [X] T018 [US2] Confirm the env-scoping is production-safe: verify every mock impl is `env: [dev, prod, test]` (grep) and `flutter analyze` is clean (the prod flavor boots `Environment.prod` → must resolve the mock; FR-007). The ≤3-step flip recipe is already in `contracts/di-binding.md` + `quickstart.md`; ensure each mock impl's doc comment references it (SC-006).
 
 **Checkpoint**: swappability proven, flip documented.
 

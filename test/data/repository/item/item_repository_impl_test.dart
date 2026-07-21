@@ -7,7 +7,7 @@ import 'package:mockito/mockito.dart';
 import 'package:nox_app/data/entity/base/response_entity.dart';
 import 'package:nox_app/data/entity/item/items_entity.dart';
 import 'package:nox_app/data/mapper/item/item_mapper.dart';
-import 'package:nox_app/data/remote/api/item/get_items_api.dart';
+import 'package:nox_app/data/remote/datasource/item_remote_data_source.dart';
 import 'package:nox_app/data/repository/item/item_repository_impl.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
@@ -18,9 +18,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'item_repository_impl_test.mocks.dart';
 
-// GetItemsApi is the network-only mock source; mocked here only to force the
-// error branches of BaseRepositoryHelper.execute.
-@GenerateMocks([GetItemsApi])
+// ItemRemoteDataSource is the network boundary (mock-backed via the DI-served
+// GetItemsApi generator); mocked here only to force the error branches of
+// BaseRepositoryHelper.execute.
+@GenerateMocks([ItemRemoteDataSource])
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -74,18 +75,18 @@ void main() {
     });
   });
 
-  // Error mapping: the impl is constructed DIRECTLY with a mocked GetItemsApi.
+  // Error mapping: the impl is constructed DIRECTLY with a mocked ItemRemoteDataSource.
   // The DI container is still booted because BaseRepositoryHelper.execute logs
   // via the logRepository global alias (getIt<LogRepository>()).
   group('ItemRepositoryImpl error mapping via BaseRepositoryHelper.execute', () {
-    late MockGetItemsApi api;
+    late MockItemRemoteDataSource api;
     late ItemRepositoryImpl repository;
 
     setUp(() async {
       SharedPreferences.setMockInitialValues(<String, Object>{});
       FlutterSecureStorage.setMockInitialValues(<String, String>{});
       await configureDependencies(Environment.test);
-      api = MockGetItemsApi();
+      api = MockItemRemoteDataSource();
       repository = ItemRepositoryImpl(getIt<ItemMapper>(), api);
     });
 
@@ -94,7 +95,7 @@ void main() {
     });
 
     test('a success envelope carrying a null payload collapses to RepositoryException.unknown', () async {
-      when(api.execute(config: anyNamed('config'))).thenAnswer((_) async => const ResponseEntity<ItemsEntity>(success: true));
+      when(api.getItems(config: anyNamed('config'))).thenAnswer((_) async => const ResponseEntity<ItemsEntity>(success: true));
 
       final result = await repository.getItems(config: GetItemsConfig.firstPage());
 
@@ -103,7 +104,7 @@ void main() {
     });
 
     test('a DioException from the API maps to RepositoryException.internal', () async {
-      when(api.execute(config: anyNamed('config'))).thenThrow(DioException(requestOptions: RequestOptions(path: 'v1/items')));
+      when(api.getItems(config: anyNamed('config'))).thenThrow(DioException(requestOptions: RequestOptions(path: 'v1/items')));
 
       final result = await repository.getItems(config: GetItemsConfig.firstPage());
 
@@ -112,7 +113,7 @@ void main() {
     });
 
     test('any other exception from the API maps to RepositoryException.unknown', () async {
-      when(api.execute(config: anyNamed('config'))).thenThrow(Exception('boom'));
+      when(api.getItems(config: anyNamed('config'))).thenThrow(Exception('boom'));
 
       final result = await repository.getItems(config: GetItemsConfig.firstPage());
 
@@ -123,7 +124,7 @@ void main() {
     // Status/connection mapping (S3): the enum members exist to carry these once a real
     // backend lands; the mock APIs never emit them, so lock the mapping here.
     Future<RepositoryException?> exceptionFor(DioException e) async {
-      when(api.execute(config: anyNamed('config'))).thenThrow(e);
+      when(api.getItems(config: anyNamed('config'))).thenThrow(e);
       return (await repository.getItems(config: GetItemsConfig.firstPage())).exception as RepositoryException?;
     }
 
