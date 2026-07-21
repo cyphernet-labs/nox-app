@@ -6,6 +6,7 @@ import 'package:nox_app/data/local/chat/chat_dao.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
 import 'package:nox_app/domain/model/chat/message_status.dart';
+import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 import 'package:nox_app/presentation/pages/chat_thread_page/bloc/chat_thread_bloc.dart';
@@ -242,6 +243,53 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 400)); // init fires markChatRead
 
       expect((await chatDao.getById(unread.id))!.unreadCount, 0);
+    });
+
+    group('signed-in identity (feature 015)', () {
+      test('currentId is the session identifier and seeded own history reconciles to it', () async {
+        await getIt<SessionRepository>().saveIdentifier(identifier: 'sess-abc', onboardingComplete: true, label: 'Alice');
+        addTearDown(() => getIt<SessionRepository>().clear());
+
+        // A fresh chat id so it seeds under the active session (not a chat seeded earlier without one).
+        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_identity_015'));
+        addTearDown(bloc.close);
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+
+        final state = bloc.state as Initialized;
+        expect(state.currentId, 'sess-abc'); // own-id sourced from the session, not the sentinel
+        expect(state.items.any((m) => m.authorId == 'sess-abc'), isTrue); // seeded own rows reconciled
+        expect(state.items.any((m) => m.authorId == 'me'), isFalse); // no un-reconciled sentinel own rows
+      });
+
+      test('own-detection keys on the identifier, not the label — a rename reclassifies nothing (FR-011/SC-006)', () async {
+        await getIt<SessionRepository>().saveIdentifier(identifier: 'sess-def', onboardingComplete: true, label: 'Bob');
+        addTearDown(() => getIt<SessionRepository>().clear());
+
+        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_identity_015b'));
+        addTearDown(bloc.close);
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        final state0 = bloc.state as Initialized;
+
+        // Own-detection is IDENTIFIER-keyed: currentId is the technical identifier, not the
+        // display label — so it would be wrong if the code keyed classification on the label.
+        expect(state0.currentId, 'sess-def');
+        expect(state0.currentId, isNot('Bob'));
+        final ownBefore = state0.items.where((m) => m.authorId == state0.currentId).map((m) => m.id).toSet();
+        expect(ownBefore, isNotEmpty); // seeded own history is attributed to the identifier
+        expect(state0.items.every((m) => m.authorId != 'Bob'), isTrue); // nothing authored by the label
+
+        await getIt<SessionRepository>().updateLabel(label: 'Bob-renamed');
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+
+        final state1 = bloc.state as Initialized;
+        // The rename persisted (label changed) but the identifier — hence currentId and every
+        // message's own/other side — is untouched. No row is ever authored by the label.
+        expect((await getIt<SessionRepository>().readSession()).data!.label, 'Bob-renamed');
+        expect(state1.currentId, 'sess-def');
+        final ownAfter = state1.items.where((m) => m.authorId == state1.currentId).map((m) => m.id).toSet();
+        expect(ownAfter, ownBefore); // identical own set → 0 reclassifications (SC-006)
+        expect(state1.items.every((m) => m.authorId != 'Bob-renamed'), isTrue);
+      });
     });
   });
 }

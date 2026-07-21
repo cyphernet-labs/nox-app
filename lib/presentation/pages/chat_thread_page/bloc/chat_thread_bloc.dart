@@ -9,12 +9,13 @@ import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
 import 'package:nox_app/domain/model/chat/message_status.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
+import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/base/page_metadata.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
-import 'package:nox_app/general/identity_mock_data.dart';
+import 'package:nox_app/general/identity/identity_resolver.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
 import 'package:nox_app/presentation/pagination/paging_state_ext.dart';
 import 'package:rxdart/rxdart.dart';
@@ -41,8 +42,12 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
 
   final MessageRepository _messageRepository = getIt<MessageRepository>();
   final ChatRepository _chatRepository = getIt<ChatRepository>();
+  final SessionRepository _sessionRepository = getIt<SessionRepository>();
 
   late String _chatId;
+  // The signed-in own-identity resolved from the session at thread init (feature 015).
+  // Own-detection uses `_identity.id`; own optimistic sends author with `_identity.label`.
+  Identity _identity = resolveIdentity(null);
   ChatThreadScenario _scenario = ChatThreadScenario.normal;
   int _localCounter = 0;
 
@@ -53,7 +58,11 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
 
   FutureOr<void> _onInitialize(Initialize event, Emitter<ChatThreadState> emit) async {
     _chatId = event.chatId;
-    emit(ChatThreadState.initialized(pagingState: PagingState<String, MessageModel>(), currentId: IdentityMockData.currentUserId));
+    // Resolve the signed-in own-identity from the session (fallback on absent/failed
+    // read — the thread still renders). Own rows in the DB were reconciled to this id
+    // at seed time, so own-detection is consistent (feature 015).
+    _identity = resolveIdentity((await _sessionRepository.readSession()).data);
+    emit(ChatThreadState.initialized(pagingState: PagingState<String, MessageModel>(), currentId: _identity.id));
     add(const ChatThreadEvent.loadMessages(reset: true));
     // Viewing the thread marks the chat read (mobile push / desktop select) — resets the
     // list badge live. No-op at 0.
@@ -164,7 +173,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
       id: localId,
       chatId: _chatId,
       authorId: current.currentId,
-      authorLabel: IdentityMockData.currentLabel,
+      authorLabel: _identity.label,
       text: text,
       attachment: event.attachment,
       sentAt: DateTime.now(),

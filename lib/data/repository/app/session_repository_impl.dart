@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
@@ -18,6 +20,14 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   static const String _kIdentifier = 'session.identifier';
   static const String _kOnboardingComplete = 'session.onboarding_complete';
   static const String _kLabel = 'session.label';
+
+  // Broadcast label change-signal (feature 015). A rename / onboarding label write
+  // emits the new label; clear (logout) emits null. Broadcast so N surfaces (shell
+  // avatar, future consumers) can listen. Never closed — a lazy singleton lives for
+  // the app; a broadcast controller with no listeners is harmless.
+  final StreamController<String?> _labelController = StreamController<String?>.broadcast();
+
+  void _emitLabel(String? label) => _labelController.add(label);
 
   @override
   Future<RepositoryResult<SessionModel?>> readSession() {
@@ -47,6 +57,7 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       await _prefs.setBool(_kOnboardingComplete, onboardingComplete);
       if (label != null) await _prefs.setString(_kLabel, label);
       await _secureStorage.write(key: _kIdentifier, value: identifier);
+      if (label != null) _emitLabel(label);
       return const RepositoryResult<bool>.success(data: true);
     });
   }
@@ -56,8 +67,27 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
     return execute<bool>(() async {
       await _prefs.setBool(_kOnboardingComplete, true);
       if (label != null) await _prefs.setString(_kLabel, label);
+      if (label != null) _emitLabel(label);
       return const RepositoryResult<bool>.success(data: true);
     });
+  }
+
+  @override
+  Future<RepositoryResult<bool>> updateLabel({required String label}) {
+    return execute<bool>(() async {
+      // Label only — the secure identifier is rename-invariant (FR-009).
+      await _prefs.setString(_kLabel, label);
+      _emitLabel(label);
+      return const RepositoryResult<bool>.success(data: true);
+    });
+  }
+
+  @override
+  Stream<String?> watchLabel() async* {
+    // Seed the current cached label so every new listener starts with the present
+    // value, then merge live changes (same shape as the cache-first watchChats).
+    yield _prefs.getString(_kLabel);
+    yield* _labelController.stream;
   }
 
   @override
@@ -66,6 +96,7 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       await _secureStorage.deleteAll();
       await _prefs.remove(_kOnboardingComplete);
       await _prefs.remove(_kLabel);
+      _emitLabel(null); // logout resets every label surface to the fallback
       return const RepositoryResult<bool>.success(data: true);
     });
   }

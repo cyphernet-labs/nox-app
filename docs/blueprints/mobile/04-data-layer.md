@@ -6,6 +6,8 @@
 
 > **`watchX()` как change-signal (Feature 014).** Реактивные Sembast-`watch()`-стримы репозитория (`watchChats`/`watchMessages`) используются презентацией как **сигнал об изменении** кэша, а не как источник проекции: их значение игнорируется, а BLoC перечитывает уже загруженный префикс через тот же `getX` (см. `07-pagination.md`). Мутации, меняющие несколько сущностей (напр. `sendMessage` → сообщение + строка чата), выполняются в data-слое, поэтому реактивный список обновляется без связей между BLoC. См. `specs/014-reactive-data-refresh/`.
 
+> **Reactive-канал не только над Sembast (Feature 015).** Тот же паттерн change-signal применим к не-Sembast источникам: `SessionRepository.watchLabel()` — это broadcast-`StreamController<String?>` над `shared_preferences`-меткой (не реактивной самой по себе). Он эмитит текущую метку при подписке (seed-then-live, как `watch()`-`async*`), затем каждое переименование (`updateLabel`) и `null` при `clear` (logout). Единый источник identity (технический идентификатор + label) резолвится чистой `resolveIdentity(SessionModel?)`; переименование меняет только label, идентификатор remain-invariant (own-detection в треде опирается на идентификатор). Живые surfaces (desktop rail-аватар) подписываются и обновляются без рестарта. См. `specs/015-identity-unification/`.
+
 ---
 
 ## Обзор и зона ответственности

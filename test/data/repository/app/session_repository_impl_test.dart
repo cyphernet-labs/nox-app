@@ -48,4 +48,36 @@ void main() {
     await repository.clear();
     expect((await repository.readSession()).data, isNull);
   });
+
+  group('updateLabel (feature 015)', () {
+    test('persists the new label and leaves the identifier untouched', () async {
+      await repository.saveIdentifier(identifier: 'abc', onboardingComplete: true, label: 'Alice');
+
+      await repository.updateLabel(label: 'Alice2');
+
+      final session = (await repository.readSession()).data!;
+      expect(session.label, 'Alice2'); // label persisted
+      expect(session.identifier, 'abc'); // identifier rename-invariant (FR-009)
+      expect(session.onboardingComplete, isTrue); // flag untouched
+    });
+  });
+
+  group('watchLabel (feature 015)', () {
+    test('emits the current cached label on listen, then the renamed label, then null on clear', () async {
+      await repository.saveIdentifier(identifier: 'abc', onboardingComplete: true, label: 'Alice');
+
+      final emitted = <String?>[];
+      final sub = repository.watchLabel().listen(emitted.add);
+      await Future<void>.delayed(Duration.zero); // let the seed emission land
+
+      expect(emitted, ['Alice']); // seeded with the current value
+
+      await repository.updateLabel(label: 'Zed');
+      await repository.clear();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(emitted, ['Alice', 'Zed', null]); // current → rename → logout reset
+      await sub.cancel();
+    });
+  });
 }

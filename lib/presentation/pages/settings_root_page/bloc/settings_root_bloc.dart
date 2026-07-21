@@ -5,6 +5,7 @@ import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/general/constants.dart';
+import 'package:nox_app/general/identity/identity_resolver.dart';
 import 'package:nox_app/general/username_rules.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
 import 'package:nox_app/presentation/base/bloc_transformers.dart';
@@ -16,9 +17,10 @@ part 'settings_root_state.dart';
 /// Settings-root form state (7.1): the identity card's inline name-edit reuses the
 /// exact 2.3 rules — immediate client charset validation + a debounced (~300ms),
 /// CASE-SENSITIVE uniqueness check against the mock dataset — plus the masked/raw
-/// identifier reveal. Identity values are stubs. Logout is handled by a
-/// self-contained dialog in the page (not here). `// TODO(backend):` real identity
-/// load + name persistence + uniqueness.
+/// identifier reveal. The display label is loaded from and persisted to the local
+/// session (feature 015); the uniqueness check is still mock-dataset-backed. Logout
+/// is handled by a self-contained dialog in the page (not here). `// TODO(backend):`
+/// real server uniqueness check.
 class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
   SettingsRootBloc() : super(const SettingsRootState()) {
     on<SettingsInitialize>(_onInitialize);
@@ -31,14 +33,17 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
   }
 
   Future<void> _onInitialize(SettingsInitialize event, Emitter<SettingsRootState> emit) async {
-    // Load the user's own identifier for Show QR (FR-014) from the 009 session spine.
-    // Empty/error never fabricates a fake id (that would flow into a real scannable
-    // QR) — it degrades to an empty rawId. Settings is authorized-only, so the id is
-    // normally present. TODO(backend): also load the real name when the identity
-    // endpoint lands.
+    // Load the user's own identifier for Show QR (FR-014) + the display label (7.1)
+    // from the 009 session spine. Empty/error never fabricates a fake id (that would
+    // flow into a real scannable QR) — it degrades to an empty rawId; the label
+    // degrades to the default via resolveIdentity. Settings is authorized-only, so the
+    // id/label are normally present.
     final result = await sessionRepository.readSession();
     result.match<void>(
-      onData: (session) => emit(state.copyWith(initialLoading: false, rawId: session?.identifier ?? '')),
+      // Load the real display label from the session (feature 015); a missing/empty
+      // label degrades to the default via resolveIdentity, matching the state default.
+      onData: (session) =>
+          emit(state.copyWith(initialLoading: false, rawId: session?.identifier ?? '', name: resolveIdentity(session).label)),
       onError: (_) => emit(state.copyWith(initialLoading: false, rawId: '')),
     );
   }
@@ -81,10 +86,19 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
     }, onError: (error, exception, stackTrace) => emit(state.copyWith(status: SettingsNameStatus.idle)));
   }
 
-  void _onNameSubmitted(NameSubmitted event, Emitter<SettingsRootState> emit) {
+  Future<void> _onNameSubmitted(NameSubmitted event, Emitter<SettingsRootState> emit) async {
     if (!state.canSave) return;
-    // TODO(backend): persist the new label. Empty drafts never reach here (canSave).
-    emit(state.copyWith(name: state.draftName, editing: false, status: SettingsNameStatus.idle));
+    // Persist the validated new label to the session (feature 015). Empty/invalid/taken
+    // drafts never reach here (canSave). The write broadcasts on watchLabel so live
+    // surfaces (desktop rail avatar) update without a restart.
+    final draft = state.draftName;
+    final result = await sessionRepository.updateLabel(label: draft);
+    result.match<void>(
+      onData: (_) => emit(state.copyWith(name: draft, editing: false, status: SettingsNameStatus.idle)),
+      // Keep the edit open on a persistence failure — never show a saved name that
+      // did not persist. The mock store never errors; defensive only.
+      onError: (_) {},
+    );
   }
 
   void _onNameEditCancelled(NameEditCancelled event, Emitter<SettingsRootState> emit) {

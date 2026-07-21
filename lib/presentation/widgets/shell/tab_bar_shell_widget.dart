@@ -5,7 +5,6 @@ import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
-import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/presentation/pages/chats_list_page/chats_list_page.dart';
 import 'package:nox_app/presentation/pages/create_chat_page/create_chat_page.dart';
@@ -68,40 +67,31 @@ class _TabBarShellState extends State<TabBarShell> {
   // it in the detail pane).
   final ValueNotifier<ChatModel?> _chatsOpenCreated = ValueNotifier<ChatModel?>(null);
 
-  // Account avatar label — seeded once from the session spine for the desktop rail
-  // avatar. Falls back to the placeholder while loading / when no session label is
-  // cached. NOTE: this is the session-cached label at shell mount; it does NOT
-  // live-update if the user edits their label in the Settings tab within the same
-  // session (label persistence is itself a backend TODO). A reactive label stream
-  // lands with the shell BLoC in the backend phase. // TODO(backend): live label.
+  // Account avatar label for the desktop rail avatar. Fed LIVE by the session's
+  // reactive label channel (feature 015): watchLabel emits the current cached label
+  // on listen, then every rename — so editing the label in the Settings tab updates
+  // the rail avatar within the same session, no restart. Falls back to the placeholder
+  // when no label is cached (or after logout, which emits null).
   //
-  // This one-shot repository read + setState stretches the blueprint 05 §5.1
-  // UI-first carve-out (which assumes NO repository/async). It is a deliberate,
-  // display-only convenience for this design pass; the shell's tab/label/jump state
-  // migrates into a shell value-BLoC (AppRootBloc, §6.1) once real tabs/data exist.
-  // TODO(blueprint-shell-bloc): move shell state into a value-BLoC.
+  // This subscription + setState stretches the blueprint 05 §5.1 UI-first carve-out
+  // (which assumes NO repository/async) — a deliberate, display-only convenience; the
+  // shell's tab/label/jump state migrates into a shell value-BLoC (AppRootBloc, §6.1)
+  // once real tabs/data exist. // TODO(blueprint-shell-bloc): move shell state into a value-BLoC.
   String _accountLabel = Constants.defaultUserLabel;
+  StreamSubscription<String?>? _labelSub;
 
   @override
   void initState() {
     super.initState();
-    unawaited(_loadAccountLabel());
-  }
-
-  Future<void> _loadAccountLabel() async {
-    final result = await sessionRepository.readSession();
-    if (!mounted) return;
-    result.match(
-      onData: (session) {
-        final label = session?.label;
-        if (label != null && label.isNotEmpty) setState(() => _accountLabel = label);
-      },
-      onError: (_) {},
-    );
+    _labelSub = sessionRepository.watchLabel().listen((label) {
+      if (!mounted) return;
+      setState(() => _accountLabel = (label != null && label.isNotEmpty) ? label : Constants.defaultUserLabel);
+    });
   }
 
   @override
   void dispose() {
+    _labelSub?.cancel();
     _chatsScrollToTop.dispose();
     _settingsJumpToAccount.dispose();
     _chatsOpenCreated.dispose();
