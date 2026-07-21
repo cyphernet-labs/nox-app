@@ -48,10 +48,10 @@ void main() {
   test('own messages are marked sent while every other author stays none', () async {
     final (messages, _) = await api.execute(config: const GetMessagesConfig(chatId: 'c1', page: 1));
 
-    final own = messages.where((m) => m.authorId == IdentityMockData.currentUserId).toList();
+    final own = messages.where((m) => m.authorId == IdentityMockData.fallbackOwnId).toList();
     expect(own, isNotEmpty);
     expect(own.every((m) => m.status == MessageStatus.sent), isTrue);
-    expect(messages.where((m) => m.authorId != IdentityMockData.currentUserId).every((m) => m.status == MessageStatus.none), isTrue);
+    expect(messages.where((m) => m.authorId != IdentityMockData.fallbackOwnId).every((m) => m.status == MessageStatus.none), isTrue);
   });
 
   test('exactly one message carries the pdf attachment', () async {

@@ -1,3 +1,4 @@
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
 import 'package:mockito/annotations.dart';
@@ -12,6 +13,7 @@ import 'package:nox_app/data/repository/chat/message_repository_impl.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
+import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
@@ -38,6 +40,7 @@ void main() {
   late MessageRepository repo;
 
   setUp(() async {
+    FlutterSecureStorage.setMockInitialValues({});
     SharedPreferences.setMockInitialValues({});
     await configureDependencies(Environment.test);
     await getIt<AppDatabase>().clearEntireDatabase();
@@ -162,7 +165,13 @@ void main() {
       final before = await chatDao.getById('chat_0');
       final failingApi = MockSendMessageApi();
       when(
-        failingApi.execute(chatId: anyNamed('chatId'), text: anyNamed('text'), attachment: anyNamed('attachment')),
+        failingApi.execute(
+          chatId: anyNamed('chatId'),
+          authorId: anyNamed('authorId'),
+          authorLabel: anyNamed('authorLabel'),
+          text: anyNamed('text'),
+          attachment: anyNamed('attachment'),
+        ),
       ).thenThrow(Exception('network down'));
       final failingRepo = MessageRepositoryImpl(
         getIt<MessageDao>(),
@@ -170,6 +179,7 @@ void main() {
         failingApi,
         getIt<MessageMapper>(),
         getIt<ChatDao>(),
+        getIt<SessionRepository>(),
       );
 
       final result = await failingRepo.sendMessage(chatId: 'chat_0', text: 'should not persist');
@@ -201,6 +211,44 @@ void main() {
       expect(meta.total, beforeTotal + 1);
       final inbound = messages.firstWhere((m) => m.text == 'Simulated incoming message');
       expect(inbound.authorId, isNot('me')); // an inbound, not an own message
+    });
+  });
+
+  group('signed-in identity (feature 015)', () {
+    Future<void> signInAs(String identifier, String label) async {
+      await getIt<SessionRepository>().saveIdentifier(identifier: identifier, onboardingComplete: true, label: label);
+    }
+
+    test('seeded own rows are reconciled to the session identifier (not the sentinel)', () async {
+      await signInAs('sess-abc', 'Alice');
+
+      final (messages, _) = (await repo.getMessages(config: GetMessagesConfig.firstPage(chatId: 'chat_0'))).data!;
+
+      // The mock seeds own rows with the "me" sentinel; with a session they are rewritten
+      // to the session identifier so own-detection follows the session.
+      expect(messages.any((m) => m.authorId == 'sess-abc'), isTrue); // own rows carry the session id
+      expect(messages.any((m) => m.authorId == 'me'), isFalse); // no un-reconciled sentinel left
+      // The reconciled own rows keep their sent status (own history).
+      expect(messages.where((m) => m.authorId == 'sess-abc').every((m) => m.status.name == 'sent'), isTrue);
+    });
+
+    test('sendMessage authors the persisted message with the session identity', () async {
+      await signInAs('sess-abc', 'Alice');
+      await repo.getMessages(config: GetMessagesConfig.firstPage(chatId: 'chat_0')); // seed
+
+      final sent = (await repo.sendMessage(chatId: 'chat_0', text: 'Mine')).data!;
+      expect(sent.authorId, 'sess-abc');
+      expect(sent.authorLabel, 'Alice');
+
+      final (messages, _) = (await repo.getMessages(config: GetMessagesConfig.firstPage(chatId: 'chat_0'))).data!;
+      final persisted = messages.firstWhere((m) => m.text == 'Mine');
+      expect(persisted.authorId, 'sess-abc'); // persisted with the session identity
+    });
+
+    test('without a session, own rows fall back to the sentinel id', () async {
+      // No saveIdentifier — readSession resolves to null → fallback own-id.
+      final (messages, _) = (await repo.getMessages(config: GetMessagesConfig.firstPage(chatId: 'chat_0'))).data!;
+      expect(messages.any((m) => m.authorId == 'me'), isTrue); // sentinel own rows remain recognisable
     });
   });
 }

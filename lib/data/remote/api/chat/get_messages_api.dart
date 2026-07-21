@@ -12,8 +12,9 @@ import 'package:nox_app/general/identity_mock_data.dart';
 
 /// Skeleton MOCK source for a chat thread (no real backend — UI phase). Synthesizes
 /// a deterministic history per `chatId`: an opening system line, a mix of own
-/// ([IdentityMockData.currentUserId]) and other authors with consecutive same-author
-/// groups, one attachment, spread across a few days. Paginates OLDER messages
+/// ([IdentityMockData.fallbackOwnId]) and other authors with consecutive same-author
+/// groups, one attachment, spread across a few days. Own rows are reconciled to the
+/// signed-in identity by the repository at seed time. Paginates OLDER messages
 /// (page 1 = newest batch). The real impl wraps a Dio request (path `v1/chats/{id}/messages`,
 /// query `page`/`page_size`) — example/TBD until the NOX backend is chosen. `// TODO(backend):`.
 @lazySingleton
@@ -75,7 +76,7 @@ class GetMessagesApi {
           authorLabel: authorLabel,
           text: text,
           sentAt: now.subtract(ago),
-          status: authorId == IdentityMockData.currentUserId ? MessageStatus.sent : MessageStatus.none,
+          status: authorId == IdentityMockData.fallbackOwnId ? MessageStatus.sent : MessageStatus.none,
         ),
       );
     }

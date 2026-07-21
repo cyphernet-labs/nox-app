@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
-import 'package:nox_app/general/identity_mock_data.dart';
+import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/pages/chat_thread_page/bloc/chat_thread_bloc.dart';
 import 'package:nox_app/presentation/widgets/chat/app_author_header_widget.dart';
@@ -47,7 +47,8 @@ void main() {
       // Leading system line ('Chat created by …') sits at the top of the thread.
       expect(find.byType(AppSystemLineWidget), findsOneWidget);
 
-      // Own vs other bubbles: 4 own ('You') + 9 other = 13 message rows.
+      // Own vs other bubbles: 4 own + 9 other = 13 message rows (no session in the
+      // test env → own-id resolves to the fallback sentinel, matching the seed).
       final ownBubbles = find.byWidgetPredicate((w) => w is AppMessageBubbleWidget && w.isOwn);
       final otherBubbles = find.byWidgetPredicate((w) => w is AppMessageBubbleWidget && !w.isOwn);
       expect(find.byType(AppMessageBubbleWidget), findsNWidgets(13));
@@ -59,7 +60,7 @@ void main() {
 
       // Author headers mark other-author group starts and are never emitted for own messages.
       expect(find.byType(AppAuthorHeaderWidget), findsWidgets);
-      expect(find.byWidgetPredicate((w) => w is AppAuthorHeaderWidget && w.label == IdentityMockData.currentLabel), findsNothing);
+      expect(find.byWidgetPredicate((w) => w is AppAuthorHeaderWidget && w.label == Constants.defaultUserLabel), findsNothing);
 
       // The error / empty branches are not taken while there is history.
       expect(find.byType(AppErrorWidget), findsNothing);

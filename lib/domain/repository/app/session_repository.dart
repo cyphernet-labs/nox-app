@@ -13,6 +13,16 @@ abstract class SessionRepository {
   /// Marks first-login onboarding complete (+ optionally caches the label).
   Future<RepositoryResult<bool>> setOnboardingComplete({String? label});
 
+  /// Persists a new display label (non-secret prefs) and broadcasts it on [watchLabel].
+  /// Does NOT touch the secure identifier. Caller guarantees the label already passed
+  /// validation (charset / uniqueness / ≤32).
+  Future<RepositoryResult<bool>> updateLabel({required String label});
+
+  /// Reactive display-label signal: emits the current cached label on listen, then
+  /// every subsequent change (rename → new label, logout/clear → null). Broadcast —
+  /// multiple surfaces (shell avatar, future consumers) may listen concurrently.
+  Stream<String?> watchLabel();
+
   /// Full wipe: secure storage deleteAll + remove prefs keys (logout).
   Future<RepositoryResult<bool>> clear();
 }

@@ -4,7 +4,6 @@ import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/message_status.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/general/app_clock.dart';
-import 'package:nox_app/general/identity_mock_data.dart';
 
 void main() {
   final api = SendMessageApi();
@@ -16,16 +15,14 @@ void main() {
   setUp(() => AppClock.freeze(frozen));
   tearDown(AppClock.reset);
 
-  test('text-only send echoes the ack contract under the frozen clock', () async {
-    final message = await api.execute(chatId: 'c1', text: 'hello');
+  test('text-only send echoes the caller-supplied identity + ack contract under the frozen clock', () async {
+    final message = await api.execute(chatId: 'c1', authorId: 'abc-id', authorLabel: 'Alice', text: 'hello');
 
     expect(message.chatId, 'c1');
     expect(message.text, 'hello');
     expect(message.attachment, isNull);
-    expect(message.authorId, IdentityMockData.currentUserId);
-    expect(message.authorId, 'me');
-    expect(message.authorLabel, IdentityMockData.currentLabel);
-    expect(message.authorLabel, 'You');
+    expect(message.authorId, 'abc-id'); // echoes the resolved signed-in identity (feature 015)
+    expect(message.authorLabel, 'Alice');
     expect(message.status, MessageStatus.sent);
     expect(message.sentAt, frozen);
     expect(message.id, startsWith('srv_'));
@@ -34,21 +31,21 @@ void main() {
   test('attachment-only send echoes the attachment with null text', () async {
     const attachment = MessageAttachment(id: 'a1', type: FileType.pdf, name: 'spec.pdf', sizeBytes: 2048);
 
-    final message = await api.execute(chatId: 'c2', attachment: attachment);
+    final message = await api.execute(chatId: 'c2', authorId: 'abc-id', authorLabel: 'Alice', attachment: attachment);
 
     expect(message.chatId, 'c2');
     expect(message.text, isNull);
     expect(message.attachment, attachment);
-    expect(message.authorId, 'me');
-    expect(message.authorLabel, 'You');
+    expect(message.authorId, 'abc-id');
+    expect(message.authorLabel, 'Alice');
     expect(message.status, MessageStatus.sent);
     expect(message.sentAt, frozen);
     expect(message.id, startsWith('srv_'));
   });
 
   test('two sequential sends under the frozen clock yield distinct ids', () async {
-    final first = await api.execute(chatId: 'c3', text: 'one');
-    final second = await api.execute(chatId: 'c3', text: 'two');
+    final first = await api.execute(chatId: 'c3', authorId: 'abc-id', authorLabel: 'Alice', text: 'one');
+    final second = await api.execute(chatId: 'c3', authorId: 'abc-id', authorLabel: 'Alice', text: 'two');
 
     // Both share the same clock-derived sentAt, proving the clock is frozen — so a
     // clock-derived id would collide. Distinct ids prove the id is NOT clock-derived.

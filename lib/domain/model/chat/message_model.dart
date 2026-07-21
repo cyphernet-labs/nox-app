@@ -5,8 +5,9 @@ import 'package:nox_app/domain/model/chat/message_status.dart';
 part 'message_model.freezed.dart';
 
 /// A message in a chat thread (5.2). Belonging ("own vs other") and group-by-author
-/// use the stable [authorId] (own = `authorId == IdentityMockData.currentUserId`),
-/// never the display [authorLabel] (re-fetched at render). [status] is meaningful
+/// use the stable [authorId] (own = `authorId ==` the signed-in identity resolved from
+/// the session, see `resolveIdentity`), never the display [authorLabel] (re-fetched at
+/// render). [status] is meaningful
 /// only for own messages; others are always [MessageStatus.none]. The opening
 /// "Chat created by …" line is a message with [isSystem] = true (not a real message).
 /// @freezed, no JSON (mock data in the UI phase).

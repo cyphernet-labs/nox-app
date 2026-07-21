@@ -27,7 +27,7 @@ Single Flutter package `nox_app`: source under `lib/`, tests deep-mirror under `
 
 **Purpose**: establish a clean, green baseline before touching code.
 
-- [ ] T001 Confirm the pre-work baseline is green on branch `015-identity-unification`: run `make gate` and `make golden-verify` (144 goldens) and record the passing test count so post-feature deltas are attributable.
+- [X] T001 Confirm the pre-work baseline is green on branch `015-identity-unification`: run `make gate` and `make golden-verify` (144 goldens) and record the passing test count so post-feature deltas are attributable.
 
 ---
 
@@ -37,12 +37,12 @@ Single Flutter package `nox_app`: source under `lib/`, tests deep-mirror under `
 
 **⚠️ CRITICAL**: no user story may begin until this phase is complete.
 
-- [ ] T002 Repurpose `lib/general/identity_mock_data.dart`: add `static const String fallbackOwnId = 'me';` and rewrite the doc-comment to describe the no-session sentinel + seed raw own-author role. Keep the existing `currentUserId`/`currentLabel` constants for now (removed in T012 once all refs migrate) so the tree keeps compiling.
-- [ ] T003 Add the pure resolver in `lib/general/identity/identity_resolver.dart`: `typedef Identity = ({String id, String label});` and `Identity resolveIdentity(SessionModel? session)` → `id = (session?.identifier non-empty) ? identifier : IdentityMockData.fallbackOwnId`, `label = (session?.label non-empty) ? label : Constants.defaultUserLabel`. Pure, no I/O. (depends on T002)
-- [ ] T004 [P] Unit test `test/general/identity/identity_resolver_test.dart`: null session → (`me`, `User7421`); full session → passthrough; empty label → default; empty identifier → fallback id; non-empty passthrough. (depends on T003)
-- [ ] T005 Extend the interface `lib/domain/repository/app/session_repository.dart`: add `Future<RepositoryResult<bool>> updateLabel({required String label});` and `Stream<String?> watchLabel();` with the doc from `contracts/session-repository.md`.
-- [ ] T006 Implement the broadcast in `lib/data/repository/app/session_repository_impl.dart`: a `StreamController<String?>.broadcast()` + private `_emitLabel`; `updateLabel` writes `preferences[label]` then emits; `watchLabel` is `async*` (yield current cached label, then `yield* controller.stream`); wire `clear` to emit `null` and `saveIdentifier`/`setOnboardingComplete` to emit the label when one is provided. Preserve the identifier write-order fail-safe. (depends on T005)
-- [ ] T007 [P] Repo test `test/data/repository/app/session_repository_impl_test.dart`: `updateLabel` persists (re-read reflects the new label) and does NOT touch the identifier; `watchLabel` emits the current label on listen, then the new label after `updateLabel`, then `null` after `clear`. (depends on T006)
+- [X] T002 Repurpose `lib/general/identity_mock_data.dart`: add `static const String fallbackOwnId = 'me';` and rewrite the doc-comment to describe the no-session sentinel + seed raw own-author role. Keep the existing `currentUserId`/`currentLabel` constants for now (removed in T012 once all refs migrate) so the tree keeps compiling.
+- [X] T003 Add the pure resolver in `lib/general/identity/identity_resolver.dart`: `typedef Identity = ({String id, String label});` and `Identity resolveIdentity(SessionModel? session)` → `id = (session?.identifier non-empty) ? identifier : IdentityMockData.fallbackOwnId`, `label = (session?.label non-empty) ? label : Constants.defaultUserLabel`. Pure, no I/O. (depends on T002)
+- [X] T004 [P] Unit test `test/general/identity/identity_resolver_test.dart`: null session → (`me`, `User7421`); full session → passthrough; empty label → default; empty identifier → fallback id; non-empty passthrough. (depends on T003)
+- [X] T005 Extend the interface `lib/domain/repository/app/session_repository.dart`: add `Future<RepositoryResult<bool>> updateLabel({required String label});` and `Stream<String?> watchLabel();` with the doc from `contracts/session-repository.md`.
+- [X] T006 Implement the broadcast in `lib/data/repository/app/session_repository_impl.dart`: a `StreamController<String?>.broadcast()` + private `_emitLabel`; `updateLabel` writes `preferences[label]` then emits; `watchLabel` is `async*` (yield current cached label, then `yield* controller.stream`); wire `clear` to emit `null` and `saveIdentifier`/`setOnboardingComplete` to emit the label when one is provided. Preserve the identifier write-order fail-safe. (depends on T005)
+- [X] T007 [P] Repo test `test/data/repository/app/session_repository_impl_test.dart`: `updateLabel` persists (re-read reflects the new label) and does NOT touch the identifier; `watchLabel` emits the current label on listen, then the new label after `updateLabel`, then `null` after `clear`. (depends on T006)
 
 **Checkpoint**: identity source + reactive label channel ready — stories can start.
 
@@ -56,13 +56,13 @@ Single Flutter package `nox_app`: source under `lib/`, tests deep-mirror under `
 
 ### Implementation
 
-- [ ] T008 [US1] Make `lib/data/remote/api/chat/send_message_api.dart` a dumb echo: add required `authorId` / `authorLabel` params to `execute`, use them in the returned `MessageModel`, and drop the `IdentityMockData` import.
-- [ ] T009 [US1] Wire the session into `lib/data/repository/chat/message_repository_impl.dart`: inject `SessionRepository`; resolve `identity = resolveIdentity((await sessionRepository.readSession()).dataOrNull)`; in `_seedChatIfEmpty` rewrite seed rows where `authorId == IdentityMockData.fallbackOwnId` to `identity.id` before persisting; in `sendMessage` pass `identity.id`/`identity.label` to `SendMessageApi.execute`. (constructor change → codegen in T012) (depends on T008, T003)
-- [ ] T010 [US1] In `lib/data/remote/api/chat/get_messages_api.dart` key the own `status` check on `IdentityMockData.fallbackOwnId` (the seed keeps its literal `me` own-author tuples).
-- [ ] T011 [US1] In `lib/presentation/pages/chat_thread_page/bloc/chat_thread_bloc.dart` `_onInitialize`: read the session, set `currentId = resolveIdentity(session).id` (fallback id on absent/failed read — thread still renders), and author the optimistic send with `resolveIdentity(session).label`; remove `IdentityMockData.currentUserId`/`currentLabel` usages. (depends on T003)
-- [ ] T012 [US1] Remove the now-unused `IdentityMockData.currentUserId`/`currentLabel` and refresh the `lib/domain/model/chat/message_model.dart` doc-comment (own = `authorId == resolved session id`). Run `make generate` (picks up the T009 constructor change). (depends on T009, T010, T011)
-- [ ] T013 [P] [US1] Extend `test/data/repository/chat/message_repository_impl_test.dart`: with a session present, first-open seed own rows carry the session identifier (not `me`); `sendMessage` authors the persisted message with the session identity. (depends on T009)
-- [ ] T014 [P] [US1] Extend `test/presentation/pages/chat_thread_page/bloc/chat_thread_bloc_test.dart`: `currentId` equals the session identifier when a session exists; own seed history + a new send both classify as own; a label change does NOT change any message's own/other side (identifier-keyed). (depends on T011)
+- [X] T008 [US1] Make `lib/data/remote/api/chat/send_message_api.dart` a dumb echo: add required `authorId` / `authorLabel` params to `execute`, use them in the returned `MessageModel`, and drop the `IdentityMockData` import.
+- [X] T009 [US1] Wire the session into `lib/data/repository/chat/message_repository_impl.dart`: inject `SessionRepository`; resolve `identity = resolveIdentity((await sessionRepository.readSession()).dataOrNull)`; in `_seedChatIfEmpty` rewrite seed rows where `authorId == IdentityMockData.fallbackOwnId` to `identity.id` before persisting; in `sendMessage` pass `identity.id`/`identity.label` to `SendMessageApi.execute`. (constructor change → codegen in T012) (depends on T008, T003)
+- [X] T010 [US1] In `lib/data/remote/api/chat/get_messages_api.dart` key the own `status` check on `IdentityMockData.fallbackOwnId` (the seed keeps its literal `me` own-author tuples).
+- [X] T011 [US1] In `lib/presentation/pages/chat_thread_page/bloc/chat_thread_bloc.dart` `_onInitialize`: read the session, set `currentId = resolveIdentity(session).id` (fallback id on absent/failed read — thread still renders), and author the optimistic send with `resolveIdentity(session).label`; remove `IdentityMockData.currentUserId`/`currentLabel` usages. (depends on T003)
+- [X] T012 [US1] Remove the now-unused `IdentityMockData.currentUserId`/`currentLabel` and refresh the `lib/domain/model/chat/message_model.dart` doc-comment (own = `authorId == resolved session id`). Run `make generate` (picks up the T009 constructor change). (depends on T009, T010, T011)
+- [X] T013 [P] [US1] Extend `test/data/repository/chat/message_repository_impl_test.dart`: with a session present, first-open seed own rows carry the session identifier (not `me`); `sendMessage` authors the persisted message with the session identity. (depends on T009)
+- [X] T014 [P] [US1] Extend `test/presentation/pages/chat_thread_page/bloc/chat_thread_bloc_test.dart`: `currentId` equals the session identifier when a session exists; own seed history + a new send both classify as own; a label change does NOT change any message's own/other side (identifier-keyed). (depends on T011)
 
 **Checkpoint**: US1 fully functional and independently testable.
 
