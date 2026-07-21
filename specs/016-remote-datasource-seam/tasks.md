@@ -83,7 +83,7 @@ Single Flutter package `nox_app`: source under `lib/`, tests deep-mirror under `
 ## Phase 5: Polish & Cross-Cutting
 
 - [X] T019 [P] Drift-fix docs (Principle II): update `docs/mock-completion-plan.md` §5.1 (inventory — repos now depend on `*RemoteDataSource`, not concrete mocks) + §5.2 (seam reality) and add a blueprint `docs/blueprints/mobile/04-data-layer.md` note on the remote-data-source seam + the flip recipe.
-- [ ] T020 [P] Update the tracker task table `docs/mock-completion-plan.md`: flip S1 + S2 to done (at merge) with a §6 journal entry (files, counts, "merged into develop, not pushed").
+- [X] T020 [P] Update the tracker task table `docs/mock-completion-plan.md`: flip S1 + S2 to done (at merge) with a §6 journal entry (files, counts, "merged into develop, not pushed").
 - [X] T021 Gate: `make gate` + `make golden-verify` (144 unchanged); grep to confirm SC-001 (0 repositories reference a concrete `*Api`). Walk `quickstart.md` checks.
 
 ---
