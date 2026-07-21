@@ -42,7 +42,7 @@
 | R1 | Список чатов → `watchChats()` реактивно (новый чат и новое сообщение отражаются живо: превью/порядок/unread) (§4) | 🟠 | M | **SpecKit** | ☑ |
 | R2 | `sendMessage` обновляет строку чата (`lastMessagePreview`/`lastMessageAt`/порядок) — часть среза R1 (§4) | 🟠 | S | **SpecKit** | ☑ |
 | R3 | Тред → `watchMessages(chatId)` реактивно (живой приём; своя отправка уже оптимистична) (§4) | 🟡 | M | **SpecKit** | ☑ |
-| R4 | Аватар в шелле + Settings живо обновляются после переименования (broadcast label) — связано с D3 (§4) | 🟡 | S/M | **SpecKit** | ☐ |
+| R4 | Аватар в шелле + Settings живо обновляются после переименования (broadcast label) — связано с D3 (§4) | 🟡 | S/M | **SpecKit** | ☑ |
 | R5 | Chat card (5.4) — файлы реактивно/из персистентных вложений — связано с E3 (§4) | 🔵 | M | точечно | ☐ |
 
 ### Фаза D — целостность данных и бизнес-правила
@@ -50,7 +50,7 @@
 |----|--------|:---:|:--:|:---:|:---:|
 | D1 | **Logout чистит чат/сообщения из Sembast** (`clean()` есть, но не вызывается) — утечка между identity (§5) | 🔴 | S/M | точечно | ☑ |
 | D2 | Unread-count: инкремент на новое сообщение, сброс при открытии чата (§4) | 🟠 | M | **SpecKit** | ☑ |
-| D3 | Единая идентичность: один источник (session label) кормит автора своих сообщений + Settings; переименование персистится в сессию (сейчас `_onNameSubmitted` — no-op) (§4, §5) | 🟠 | M | **SpecKit** | ☐ |
+| D3 | Единая идентичность: один источник (session label) кормит автора своих сообщений + Settings; переименование персистится в сессию (сейчас `_onNameSubmitted` — no-op) (§4, §5) | 🟠 | M | **SpecKit** | ☑ |
 | D4 | Уникальность имени чата — против накапливающейся БД, а не замороженного мок-сета | 🟡 | S/M | точечно | ☐ |
 | D5 | Новый чат получает системную строку `Chat created by {label}` | 🟡 | S | точечно | ☐ |
 
@@ -163,3 +163,4 @@ _(дописываем строкой на каждую закрытую зад�
 - S3 — 2026-07-24 — `BaseRepositoryHelper` maps DioException by type/status → RepositoryException (401→unauthenticated, 403→authentication, 404→notFound, connection→connection, else internal). Behaviour-neutral on mocks (they never throw); locked by item_repo tests. Gate green (574).
 - E4 — 2026-07-24 — un-stale l10n claims (CLAUDE.md + LanguagePage/LanguageBody comments) + roadmap reconciliation note. Comment/doc-only, analyze clean.
 - **R1+R2+R3+D2 (feature 014) — 2026-07-25 — MERGED into `develop`** (branch `014-reactive-data-refresh`, `--no-ff`). Full Spec Kit flow (specify→clarify→plan→tasks→analyze) + implementation by user story: US1 reactive chats list (watchChats change-signal + `refresh` re-fold of the loaded prefix, `loadedPageCount`, stale-guard, debounce), US2 sendMessage→chat-row (`_touchChatRow`, failed-send-safe), US3 reactive thread (watchMessages + server-id adoption + dedup-by-id, no double bubble), US4 unread (markChatRead on view + debug `simulateIncoming`). Adversarial code-review closed 2 test-coverage gaps (multi-page + search-active refresh). Post-merge gate green (586).
+- **D3+R4 (feature 015) — 2026-07-25 — MERGED into `develop`** (branch `015-identity-unification`, `--no-ff`). Full Spec Kit flow (specify→plan→tasks→analyze) + implementation by user story on the local session (no backend): the session is the single identity source. Foundational — pure `resolveIdentity(SessionModel?)→(id,label)` with no-session fallbacks (`IdentityMockData` repurposed to a `fallbackOwnId` sentinel) + a broadcast label channel on `SessionRepository` (`updateLabel`/`watchLabel`). **D3/US1** — chat thread resolves `currentId` from the session, own seed history is reconciled to that identifier at seed time (own-detection identifier-keyed, rename-invariant), new sends author with the session identity (`SendMessageApi` is now a dumb echo). **D3/US2** — Settings loads the session label and a validated rename persists via `updateLabel` (survives restart). **R4/US3** — `TabBarShell` subscribes to `watchLabel` so the desktop rail account avatar updates live on a rename, no restart. Removed the hardcoded `me`/`You` placeholders. Adversarial multi-agent code-review closed 6 findings (seed-defer on a failed session read; 3 test-strength/coverage; 2 spec-naming). Post-merge gate green (609 tests + 144 goldens).

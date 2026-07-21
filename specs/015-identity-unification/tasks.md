@@ -104,7 +104,7 @@ Single Flutter package `nox_app`: source under `lib/`, tests deep-mirror under `
 **Purpose**: drift-fixes (Principle II), tracker, and the final gate.
 
 - [X] T020 [P] Drift-fix docs & comments (same change-set): add a short note to `docs/blueprints/mobile/04-data-layer.md` (session label as a reactive change-signal) and reconcile the `TODO(backend): live label` comments in `tab_bar_shell_widget.dart` / `settings_root_bloc.dart` / `identity_mock_data.dart` to describe the now-real behaviour.
-- [ ] T021 [P] Update the tracker `docs/mock-completion-plan.md`: flip D3 + R4 to done (at merge) with a §6 journal entry (files touched, test/golden counts, "merged into develop, not pushed").
+- [X] T021 [P] Update the tracker `docs/mock-completion-plan.md`: flip D3 + R4 to done (at merge) with a §6 journal entry (files touched, test/golden counts, "merged into develop, not pushed").
 - [X] T022 Run the gate: `make gate` (generate → format changed paths `-l 140` → analyze zero-errors → test) and `make golden-verify` (must stay at 144 — no new goldens). Then walk `quickstart.md` US1/US2/US3 manual checks.
 
 ---
