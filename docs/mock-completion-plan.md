@@ -137,7 +137,7 @@
 `AppDatabase` — per-env Sembast-фабрика под DAO (не репо). `ApiClient` — голый `Dio` (таймауты, без baseUrl/interceptor), **никуда не инъектится**.
 
 ### 5.2 Seam — текущая реальность
-- Моки инъектятся **по конкретному типу** (`GetChatsApi` и т.д.), без интерфейса → «своп на реальный» = правка конструкторов репо, а не смена биндинга.
+- ~~Моки инъектятся **по конкретному типу** (`GetChatsApi` и т.д.), без интерфейса~~ → **закрыто фичей 016 (S1+S2):** репо зависят от интерфейсов `*RemoteDataSource` (`ChatRemoteDataSource`/`ChatFilesRemoteDataSource`/`MessageRemoteDataSource`/`ItemRemoteDataSource`, `lib/data/remote/datasource/`); моки (`Mock*RemoteDataSource`) делегируют неизменным `*Api`-генераторам и биндятся `@LazySingleton(as: Interface, env:[dev,prod,test])`. «Своп на реальный» = зарегистрировать real-impl на `[prod]` + сузить мок до `[dev,test]` + `make generate` (≤3 шага, репо/DAO/мапперы/UI не трогаются). См. `specs/016-remote-datasource-seam/contracts/di-binding.md`.
 - Через `ResponseEntity`+`EntityConverter` идёт **только Item**; chat/message возвращают **доменные модели напрямую** (entity-слой у них только под Sembast, не wire-shaped). `EntityConverter` — **пустой реестр**.
 - Ошибки: `BaseRepositoryHelper.execute` — только `DioException→internal` и `catch→unknown`; члены `authentication/connection/unauthenticated/notFound` объявлены, но **не производятся** (нет маппинга HTTP-кодов).
 - Auth/apiUrl seam **фактически отсутствует**: `ApiClient` без baseUrl/interceptor и не инъектится; в `AppConfig` нет `apiUrl`; нет `getUserAuthIdToken`; нет `401→logout(forced)`.
