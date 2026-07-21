@@ -92,8 +92,8 @@ Single Flutter package `nox_app`: source under `lib/`, tests deep-mirror under `
 
 ### Implementation
 
-- [ ] T018 [US3] In `lib/presentation/widgets/shell/tab_bar_shell_widget.dart` replace the one-shot `_loadAccountLabel` with a `sessionRepository.watchLabel()` subscription: on each emit `setState(_accountLabel = (label?.isNotEmpty == true) ? label! : Constants.defaultUserLabel)`; store the `StreamSubscription` and cancel it in `dispose`; update the `_accountLabel` doc-comment (now live, not one-shot). (depends on T006)
-- [ ] T019 [P] [US3] New widget test `test/presentation/widgets/shell/tab_bar_shell_identity_test.dart`: pump `TabBarShell` on a desktop-width surface with a session labelled `Alice`; assert the rail avatar shows `A`; call `getIt<SessionRepository>().updateLabel(label: 'Zed')`; pump; assert the rail avatar updates to `Z` without a rebuild of the whole app. (depends on T018)
+- [X] T018 [US3] In `lib/presentation/widgets/shell/tab_bar_shell_widget.dart` replace the one-shot `_loadAccountLabel` with a `sessionRepository.watchLabel()` subscription: on each emit `setState(_accountLabel = (label?.isNotEmpty == true) ? label! : Constants.defaultUserLabel)`; store the `StreamSubscription` and cancel it in `dispose`; update the `_accountLabel` doc-comment (now live, not one-shot). (depends on T006)
+- [X] T019 [P] [US3] New widget test `test/presentation/widgets/shell/tab_bar_shell_identity_test.dart`: pump `TabBarShell` on a desktop-width surface with a session labelled `Alice`; assert the rail avatar shows `A`; call `getIt<SessionRepository>().updateLabel(label: 'Zed')`; pump; assert the rail avatar updates to `Z` without a rebuild of the whole app. (depends on T018)
 
 **Checkpoint**: all three stories independently functional.
 
