@@ -53,9 +53,23 @@ void main() {
     );
 
     blocTest<CreateChatBloc, CreateChatState>(
-      'a taken name resolves to taken',
+      'a reserved name resolves to taken',
       build: CreateChatBloc.new,
       act: (bloc) => bloc.add(const CreateChatEvent.nameChanged('General')),
+      wait: const Duration(milliseconds: 700),
+      expect: () => [
+        predicate<CreateChatState>((s) => s.status == CreateChatStatus.checking),
+        predicate<CreateChatState>((s) => s.status == CreateChatStatus.taken),
+      ],
+    );
+
+    // D4: a name persisted in the DB (NOT in the reserved set) must resolve to taken
+    // through the real DB uniqueness path — proves the DB check, not just the reserved OR.
+    blocTest<CreateChatBloc, CreateChatState>(
+      'a name already persisted in the DB (not reserved) resolves to taken via the DB check',
+      setUp: () async => getIt<ChatRepository>().createChat(name: 'Persisted D4 name'),
+      build: CreateChatBloc.new,
+      act: (bloc) => bloc.add(const CreateChatEvent.nameChanged('Persisted D4 name')),
       wait: const Duration(milliseconds: 700),
       expect: () => [
         predicate<CreateChatState>((s) => s.status == CreateChatStatus.checking),

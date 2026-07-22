@@ -98,7 +98,13 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
       // delay on every keystroke. Dart-side filter over decoded entities — a Sembast
       // Finder on the camelCase `name` key would silently match nothing under the
       // global field_rename:snake.
-      final taken = (await _chatDao.getAllSorted()).any((c) => c.name == name); // case-sensitive
+      //
+      // CASE-INSENSITIVE, to match the case-insensitive list search (getChats): this
+      // stops two case-variant chats ('Design crit' / 'design crit') both surfacing
+      // under one search in the open shared space. (Chat names have no spec'd case
+      // rule — unlike the case-sensitive username/label.)
+      final needle = name.toLowerCase();
+      final taken = (await _chatDao.getAllSorted()).any((c) => c.name.toLowerCase() == needle);
       return RepositoryResult<bool>.success(data: taken);
     });
   }

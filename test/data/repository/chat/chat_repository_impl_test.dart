@@ -177,10 +177,11 @@ void main() {
       expect((await repository.isChatNameTaken(name: name)).data, isTrue); // now taken, straight from the DB
     });
 
-    test('the uniqueness check is case-sensitive', () async {
+    test('the uniqueness check is case-insensitive (matches the case-insensitive list search)', () async {
       await repository.createChat(name: 'CaseChat');
       expect((await repository.isChatNameTaken(name: 'CaseChat')).data, isTrue);
-      expect((await repository.isChatNameTaken(name: 'casechat')).data, isFalse);
+      expect((await repository.isChatNameTaken(name: 'casechat')).data, isTrue); // case-variant is taken
+      expect((await repository.isChatNameTaken(name: 'CASECHAT')).data, isTrue);
     });
   });
 
