@@ -91,6 +91,19 @@ void main() {
       expect(find.byType(CreateChatPage), findsOneWidget);
     });
 
+    testWidgets('rail + opens Create chat as a real modal Dialog on desktop (N5)', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1200, 900)); // wide → rail
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, const TabBarShell());
+
+      await tester.tap(find.byTooltip(l10nEn.tooltipCreateChat)); // the rail's + → _onCreate(desktop: true)
+      await tester.pumpAndSettle();
+
+      // A real showDialog modal (not a pushed route with a simulated scrim).
+      expect(find.byType(CreateChatPage), findsOneWidget);
+      expect(find.byType(Dialog), findsOneWidget);
+    });
+
     testWidgets('system back on a non-Chats tab returns to Chats instead of popping the shell', (tester) async {
       await tester.binding.setSurfaceSize(const Size(420, 800));
       addTearDown(() => tester.binding.setSurfaceSize(null));

@@ -107,10 +107,11 @@ class _TabBarShellState extends State<TabBarShell> {
     setState(() => _active = tab);
   }
 
-  Future<void> _onCreate() async {
-    // Create chat (6.1) pops with the created chat on success. Hand it to the Chats
-    // tab to reload + open (mobile push / desktop select); null = cancelled.
-    final created = await Navigator.of(context).push(CreateChatPage.route());
+  Future<void> _onCreate({required bool desktop}) async {
+    // Create chat (6.1) resolves with the created chat on success. Desktop shows a real
+    // modal dialog over the live list (N5); mobile pushes the full-screen form. Hand the
+    // result to the Chats tab to reload + open (mobile push / desktop select); null = cancelled.
+    final created = desktop ? await CreateChatPage.showAsDialog(context) : await Navigator.of(context).push(CreateChatPage.route());
     if (created == null || !mounted) return;
     if (_active != AppTab.chats) setState(() => _active = AppTab.chats);
     _chatsOpenCreated.value = created;
@@ -175,7 +176,7 @@ class _TabBarShellState extends State<TabBarShell> {
   Widget _mobile() {
     return Scaffold(
       body: _body(false),
-      floatingActionButton: AppCreateFabWidget(onPressed: _onCreate),
+      floatingActionButton: AppCreateFabWidget(onPressed: () => _onCreate(desktop: false)),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
       bottomNavigationBar: AppBottomBarWidget(active: _active, onSelect: _onSelect),
     );
@@ -194,7 +195,7 @@ class _TabBarShellState extends State<TabBarShell> {
                 AppNavigationRailWidget(
                   active: _active,
                   onSelect: _onSelect,
-                  onCreate: _onCreate,
+                  onCreate: () => _onCreate(desktop: true),
                   accountLabel: _accountLabel,
                   onAccount: _onAccount,
                 ),

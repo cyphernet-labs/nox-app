@@ -6,7 +6,6 @@ import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
-import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/pages/base/base_state_page.dart';
 import 'package:nox_app/presentation/pages/create_chat_page/bloc/create_chat_bloc.dart';
@@ -17,14 +16,18 @@ import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_spinner_widget.dart';
 
 /// 6.1 Create chat — a name form with debounced uniqueness (unrestricted charset).
-/// Mobile: a full-screen pushed screen (AppBar `New chat` + back). Desktop: a
-/// centered modal `Dialog` (≈460) over a scrim with `Cancel` + `Create`
-/// (corpus `07-create.md`). Real `showDialog` from the chats shell is a later
-/// milestone (`// TODO(M3)`). Owns [CreateChatBloc].
+/// Mobile: a full-screen pushed screen (AppBar `New chat` + back). Desktop: a real
+/// centered modal `Dialog` (≈460) with `Cancel` + `Create` (corpus `07-create.md`),
+/// shown via [showAsDialog] from the chats shell so it overlays the LIVE list (N5,
+/// was a pushed route with a simulated scrim). Owns [CreateChatBloc].
 class CreateChatPage extends StatefulWidget {
-  const CreateChatPage({super.key, this.demo = false});
+  const CreateChatPage({super.key, this.demo = false, this.dialog = false});
 
   final bool demo;
+
+  /// When true, render as a modal `Dialog` body (no full-screen Scaffold) — used by
+  /// [showAsDialog] on desktop. When false, the mobile full-screen form.
+  final bool dialog;
 
   /// Pops with the created [ChatModel] on success (null on cancel) so the caller can
   /// open the new thread and refresh the list.
@@ -32,6 +35,13 @@ class CreateChatPage extends StatefulWidget {
     builder: (_) => const CreateChatPage(),
     settings: const RouteSettings(name: '/create/chat'),
   );
+
+  /// Desktop entry: a real modal dialog over the current screen (the live chats list),
+  /// resolving with the created [ChatModel] (null on cancel). Mirrors [route]'s result.
+  /// `barrierDismissible: false` (like the logout dialog): the explicit Cancel button
+  /// is the only dismiss, so a barrier tap can't race a mid-submit create.
+  static Future<ChatModel?> showAsDialog(BuildContext context) =>
+      showDialog<ChatModel?>(context: context, barrierDismissible: false, builder: (_) => const CreateChatPage(dialog: true));
 
   /// Gallery entry: adds the dev create-outcome selector.
   static Route<ChatModel?> routeDemo() => MaterialPageRoute<ChatModel?>(
@@ -87,14 +97,7 @@ class _CreateChatPageState extends BaseStatePage<CreateChatPage> {
       child: BlocConsumer<CreateChatBloc, CreateChatState>(
         listenWhen: (previous, current) => previous.status != current.status,
         listener: _onStatus,
-        builder: (context, state) {
-          return LayoutBuilder(
-            builder: (context, constraints) {
-              final wide = constraints.maxWidth >= Constants.railBreakpoint;
-              return wide ? _wide(context, state) : _narrow(context, state);
-            },
-          );
-        },
+        builder: (context, state) => widget.dialog ? _dialog(context, state) : _narrow(context, state),
       ),
     );
   }
@@ -130,54 +133,41 @@ class _CreateChatPageState extends BaseStatePage<CreateChatPage> {
     );
   }
 
-  Widget _wide(BuildContext context, CreateChatState state) {
+  /// Desktop modal body (shown via [showAsDialog]): a real [Dialog] — showDialog owns
+  /// the scrim/barrier over the live list, so no simulated-scrim Scaffold is needed (N5).
+  Widget _dialog(BuildContext context, CreateChatState state) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-    return Scaffold(
-      // Simulated modal scrim — the scrim is the Scaffold background so the backdrop
-      // is well-defined. Real showDialog over the chats window is M3 (// TODO(M3)).
-      backgroundColor: colorScheme.scrim.withValues(alpha: 0.4),
-      body: Stack(
-        children: [
-          Positioned.fill(
-            child: GestureDetector(behavior: HitTestBehavior.opaque, onTap: _cancel),
-          ),
-          Center(
-            child: ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: AppDimensionTokens.layout.dialogMaxW),
-              child: Padding(
-                padding: EdgeInsets.all(AppSpacingTokens.s24),
-                child: Material(
-                  color: colorScheme.surfaceContainerHigh,
-                  elevation: NoxElevation.level5,
-                  borderRadius: BorderRadius.circular(NoxRadius.xl),
-                  child: Padding(
-                    padding: EdgeInsets.all(AppSpacingTokens.s24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Text(context.l10n.createChatTitle, style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
-                        SizedBox(height: AppSpacingTokens.s16),
-                        _field(context, state),
-                        SizedBox(height: AppSpacingTokens.s24),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.end,
-                          children: [
-                            TextButton(onPressed: state.isSubmitting ? null : _cancel, child: Text(context.l10n.actionCancel)),
-                            SizedBox(width: AppSpacingTokens.s8),
-                            _createButton(context, state),
-                          ],
-                        ),
-                        if (kDebugMode && widget.demo) _outcomeControl(),
-                      ],
-                    ),
-                  ),
-                ),
+    return Dialog(
+      backgroundColor: colorScheme.surfaceContainerHigh,
+      elevation: NoxElevation.level5,
+      insetPadding: EdgeInsets.all(AppSpacingTokens.s24),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(NoxRadius.xl)),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: AppDimensionTokens.layout.dialogMaxW),
+        child: Padding(
+          padding: EdgeInsets.all(AppSpacingTokens.s24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(context.l10n.createChatTitle, style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
+              SizedBox(height: AppSpacingTokens.s16),
+              _field(context, state),
+              SizedBox(height: AppSpacingTokens.s24),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(onPressed: state.isSubmitting ? null : _cancel, child: Text(context.l10n.actionCancel)),
+                  SizedBox(width: AppSpacingTokens.s8),
+                  _createButton(context, state),
+                ],
               ),
-            ),
+              // No demo outcome control here: the dialog is only ever shown via
+              // showAsDialog (demo:false), so the gallery preview uses _narrow instead.
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
