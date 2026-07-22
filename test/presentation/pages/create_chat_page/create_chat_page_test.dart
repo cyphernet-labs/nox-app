@@ -48,12 +48,13 @@ void main() {
     expect(find.text(l10nEn.nameTakenError), findsOneWidget);
   });
 
-  testWidgets('desktop: renders a modal dialog with Cancel and Create', (tester) async {
+  testWidgets('desktop: renders a modal Dialog with Cancel and Create', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1000, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
-    await pumpApp(tester, const CreateChatPage(), settle: false);
+    await pumpApp(tester, const CreateChatPage(dialog: true), settle: false);
 
+    expect(find.byType(Dialog), findsOneWidget); // a real Dialog body (N5), not a simulated scrim
     expect(find.widgetWithText(TextButton, l10nEn.actionCancel), findsOneWidget);
     expect(find.widgetWithText(FilledButton, l10nEn.actionCreate), findsOneWidget);
   });
