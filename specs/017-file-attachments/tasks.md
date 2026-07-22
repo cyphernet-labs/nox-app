@@ -1,0 +1,120 @@
+---
+description: "Task list for 017-file-attachments"
+---
+
+# Tasks: Real File Attachments
+
+**Input**: Design documents from `specs/017-file-attachments/`
+
+**Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/
+
+**Tests**: INCLUDED (blueprint mandate + plan R7). The picker is mocked via the `FilePickerService` seam (no OS dialog). The 5.4 files-view golden regenerates to the derived attachment; no picker golden.
+
+**Organization**: grouped by user story — US1 (F1 picker), US2 (E3 derived files), US3 (R5 reactive).
+
+## Format: `[ID] [P?] [Story] Description`
+
+## Path Conventions
+
+Single Flutter package `nox_app`: `lib/`, tests deep-mirror under `test/`.
+
+---
+
+## Phase 1: Setup
+
+- [ ] T001 Confirm the pre-work baseline green on `017-file-attachments`: `make gate` (620) + `make golden-verify` (152).
+- [ ] T002 Add the `file_picker` dependency: `fvm flutter pub add file_picker` (latest compatible with Flutter 3.44.1 / Dart >=3.12). Confirm `make deps` resolves and `flutter analyze` is clean.
+
+---
+
+## Phase 2: Foundational (Blocking Prerequisites)
+
+**Purpose**: the extension→type mapper + the picker seam. Block US1.
+
+- [ ] T003 [P] Extend `lib/domain/model/file/file_type.dart`: add `static FileType fromExtension(String? ext)` (case-insensitive; unknown/null → `other`) per the research R3 table (image/video/audio/pdf/doc/sheet/text/archive).
+- [ ] T004 [P] Unit test `test/domain/model/file/file_type_test.dart`: each class maps (e.g. `jpg→image`, `mp4→video`, `mp3→audio`, `pdf→pdf`, `docx→doc`, `xlsx→sheet`, `md→text`, `zip→archive`); unknown (`xyz`) and null/empty → `other`; case-insensitive (`PDF→pdf`). (depends on T003)
+- [ ] T005 Add `lib/domain/service/file_picker_service.dart`: `typedef PickedFile = ({String name, int sizeBytes, String? extension});` + `abstract class FilePickerService { Future<PickedFile?> pickFile(); }` (contract in `contracts/file-picker-service.md`).
+
+**Checkpoint**: mapper + seam ready.
+
+---
+
+## Phase 3: User Story 1 - Attach a real file (Priority: P1) 🎯 MVP
+
+**Goal**: the composer's attach opens the real picker; the chosen file's real name/size/type populate the draft (replacing the photo.jpg stub); cancel leaves it unchanged.
+
+**Independent Test**: mock the service to return a known file → draft matches; return null → composer unchanged.
+
+### Implementation
+
+- [ ] T006 [US1] Add `lib/data/service/mock_file_picker_service.dart`: `MockFilePickerService implements FilePickerService` `@LazySingleton(as: FilePickerService, env:[dev,prod,test])`; `pickFile()` = `FilePicker.platform.pickFiles(withData: false)` → map the single `PlatformFile` to `PickedFile`, `null` on cancel, `try/catch → null` on any plugin failure (defensive fallback, never throws).
+- [ ] T007 [US1] Add the macOS entitlement `com.apple.security.files.user-selected.read-only` (`<true/>`) to `macos/Runner/DebugProfile.entitlements` AND `macos/Runner/Release.entitlements`.
+- [ ] T008 [US1] In `lib/presentation/pages/chat_thread_page/bloc/chat_thread_bloc.dart`: inject `FilePickerService`; make `_onAttachmentPicked` async → `pickFile()`; on null return (composer unchanged); else `emit(copyWith(draftAttachment: MessageAttachment(id: uuid, name, sizeBytes, type: FileType.fromExtension(ext))))`. Remove the `photo.jpg` stub + its `// TODO(backend)`.
+- [ ] T009 [US1] Run `make generate` — DI for the new `FilePickerService` binding + the `ChatThreadBloc` field (getIt resolution). Confirm the config wires it.
+- [ ] T010 [P] [US1] Test `test/data/service/mock_file_picker_service_test.dart`: set `FilePicker.platform` to a fake returning a `FilePickerResult` (one `PlatformFile` name/size/extension) → `pickFile()` maps it; returns null → null; throws → null (fallback).
+- [ ] T011 [P] [US1] Extend `test/presentation/pages/chat_thread_page/bloc/chat_thread_bloc_test.dart`: register a fake `FilePickerService` (getIt); `attachmentPicked` with a known picked file → `draftAttachment` has that real name/size/type (`FileType.fromExtension`); a null-returning fake → `draftAttachment` unchanged. Update the old stub-`photo.jpg` assertion.
+
+**Checkpoint**: US1 functional — real picker → real draft.
+
+---
+
+## Phase 4: User Story 2 - Files view shows the real files (Priority: P1)
+
+**Goal**: the 5.4 files view derives from the chat's persisted attachments (newest-first); the fabricated remote source is removed.
+
+**Independent Test**: a chat with attachments → the view lists exactly them; empty chat → empty; per-chat isolation.
+
+### Implementation
+
+- [ ] T012 [US2] `lib/domain/repository/chat/message_repository.dart` + impl: add `Future<List<MessageAttachment>> chatFiles({required String chatId})`; impl `_seedChatIfEmpty` → `getByChatSorted` → collect non-null `attachment`, **reversed (newest-first)**.
+- [ ] T013 [US2] `lib/data/repository/chat/chat_repository_impl.dart`: `getChatFiles` delegates to `_messageRepository.chatFiles(chatId)` (wrapped in `execute`); drop the `_chatFilesRemote` field + constructor param + import.
+- [ ] T014 [US2] Delete `lib/data/remote/datasource/chat_files_remote_data_source.dart`, `lib/data/remote/datasource/mock/mock_chat_files_remote_data_source.dart`, `lib/data/remote/api/chat/get_chat_files_api.dart`, and `test/data/remote/api/chat/get_chat_files_api_test.dart`.
+- [ ] T015 [US2] Run `make generate` — DI regenerates without the removed ChatFiles bindings and with `ChatRepositoryImpl`'s new constructor (drops one dep). (depends on T012–T014)
+- [ ] T016 [P] [US2] Extend `test/data/repository/chat/message_repository_impl_test.dart`: `chatFiles` returns the seeded chat's attachment(s) newest-first; a chat with an added attachment lists it first; a chat whose messages have no attachments → empty; per-chat isolation.
+- [ ] T017 [P] [US2] Verify `test/presentation/pages/chat_card_page/bloc/chat_card_bloc_test.dart` still passes (files isNotEmpty holds — chat_0's seed has one attachment); adjust only if it asserted fabricated-specific files.
+- [ ] T018 [US2] Regenerate the 5.4 files-view golden (now the derived attachment, not the fabricated eight): `make golden-update FILE=test/presentation/pages/chat_card_page/chat_card_page_golden_test.dart`; verify determinism (re-run `golden-verify` twice) + eyeball the PNG.
+
+**Checkpoint**: US2 — real, per-chat files view.
+
+---
+
+## Phase 5: User Story 3 - Files view stays current (Priority: P2)
+
+**Goal**: a newly attached-and-sent file appears in the files view without a reload.
+
+**Independent Test**: with the view showing a chat's files, send an attachment → it appears.
+
+### Implementation
+
+- [ ] T019 [US3] `lib/presentation/pages/chat_card_page/bloc/chat_card_bloc.dart`: inject `MessageRepository`; on `_onInitialize` subscribe (once) to `watchMessages(_chatId).skip(1).debounceTime(100ms)` → `add(ChatCardEvent.initialize(_chatId))` (re-derive); cancel the subscription in `close()`. Scenario overrides unchanged.
+- [ ] T020 [P] [US3] Extend `test/presentation/pages/chat_card_page/bloc/chat_card_bloc_test.dart`: init for a chat (files present), then `getIt<MessageRepository>().sendMessage(chatId, attachment: <att>)` → after the debounce the files list grows and the new file is first (newest-first), no manual reload.
+
+**Checkpoint**: US3 — live files view.
+
+---
+
+## Phase 6: Polish & Cross-Cutting
+
+- [ ] T021 [P] Drift-fix (Principle II): update `docs/mock-completion-plan.md` §5.1/§5.2 + `docs/blueprints/mobile/04-data-layer.md` 016-seam note + `specs/016-*/data-model.md` reference — `ChatFilesRemoteDataSource` removed (chat files are a local derivation). Resolve the `_onAttachmentPicked`/`getChatFiles` `TODO`s.
+- [ ] T022 [P] Update the tracker `docs/mock-completion-plan.md`: flip F1 + E3 + R5 to done (at merge) with a §6 journal entry.
+- [ ] T023 Gate: `make gate` + `make golden-verify`; then the macOS native build check `make build-macos-stage` (verifies the file-access entitlement) + note iOS/Android/Windows/Linux for a CI build check. Walk `quickstart.md`.
+
+---
+
+## Dependencies & Execution Order
+
+- **Setup** → **Foundational (T003–T005)** blocks stories. T003/T004 (mapper) ∥ T005 (seam).
+- **US1** → after Foundational: T006 (impl) + T007 (entitlement) ∥; T008 (bloc) needs T005/T003; T009 generate after T006/T008; tests T010/T011 after.
+- **US2** → after Foundational (independent of US1): T012 → T013 → T014 → T015 generate; tests T016/T017; T018 golden.
+- **US3** → after US2 (needs the derived getChatFiles): T019 → T020.
+- **Polish** → after the stories. T021 ∥ T022.
+
+## Implementation Strategy
+
+MVP = US1 (real picker). US2 (also P1) makes the files view real; US3 (P2) makes it live. `make generate` runs twice (US1 service/bloc; US2 repo constructor + removed bindings). Each phase leaves `make gate` green. One commit per story/phase (local only, never pushed). After all: multi-agent code review, fix findings, merge `017-file-attachments` → `develop` (`--no-ff`, no push), tick F1/E3/R5 in the tracker.
+
+## Notes
+
+- `file_picker` is the one new package (blueprint-planned). macOS verified locally; other platform builds flagged for CI.
+- The picker seam returns `null` on cancel/failure → the composer is never corrupted and never crashes (FR-004/FR-009).
+- The 5.4 golden regenerates (source change 8-fabricated → real derived); it is NOT a layout change. Tests run locally only (CI paused).
