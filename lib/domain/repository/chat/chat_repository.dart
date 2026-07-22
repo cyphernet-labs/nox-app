@@ -16,6 +16,10 @@ abstract class ChatRepository {
   /// Create a chat locally and persist it; returns the created chat.
   Future<RepositoryResult<ChatModel>> createChat({required String name});
 
+  /// Whether a chat name is already taken, checked case-sensitively against the
+  /// ACCUMULATING local DB (seeded + user-created chats) — not a frozen mock set (D4).
+  Future<RepositoryResult<bool>> isChatNameTaken({required String name});
+
   /// All files shared in a chat (5.4) — chat-owned, not paginated.
   Future<RepositoryResult<List<MessageAttachment>>> getChatFiles({required String chatId});
 

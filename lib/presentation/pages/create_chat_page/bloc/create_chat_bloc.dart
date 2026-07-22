@@ -41,10 +41,15 @@ class CreateChatBloc extends BaseBloc<CreateChatEvent, CreateChatState> {
   Future<void> _onAvailabilityRequested(ChatAvailabilityRequested event, Emitter<CreateChatState> emit) async {
     if (state.name != event.name || state.status != CreateChatStatus.checking) return;
     await executeLogic(() async {
-      // TODO(backend): real server uniqueness check.
       await Future<void>.delayed(const Duration(milliseconds: 200));
       if (state.name != event.name) return;
-      final taken = OnboardingMockData.takenChatNames.contains(event.name);
+      // Uniqueness against the ACCUMULATING local DB (seeded + already-created chats,
+      // D4), OR a small reserved demo set. `// TODO(backend): real server check.`
+      // Fail-OPEN on a read error (onError → false): a transient store error must not
+      // block typing; the real (server) uniqueness check is the authority — the mock
+      // phase has no data-layer backstop (see _onCreateRequested).
+      final dbResult = await chatRepository.isChatNameTaken(name: event.name);
+      final taken = dbResult.match(onData: (t) => t, onError: (_) => false) || OnboardingMockData.takenChatNames.contains(event.name);
       emit(state.copyWith(status: taken ? CreateChatStatus.taken : CreateChatStatus.valid));
     }, onError: (error, exception, stackTrace) => emit(state.copyWith(status: CreateChatStatus.valid)));
   }
@@ -58,6 +63,11 @@ class CreateChatBloc extends BaseBloc<CreateChatEvent, CreateChatState> {
       await Future<void>.delayed(const Duration(milliseconds: 400));
       switch (event.outcome) {
         case CreateChatOutcome.success:
+          // Uniqueness is enforced by the debounced availability pre-check only; the
+          // mock createChat has NO data-layer backstop (it upserts by a fresh id), so a
+          // pre-check gap (read error / a check→submit race) could persist a local
+          // duplicate. Acceptable in the mock phase — the real server create is the
+          // uniqueness authority. `// TODO(backend): server-side unique enforcement.`
           final result = await chatRepository.createChat(name: state.name);
           result.match<void>(
             onData: (chat) => emit(state.copyWith(status: CreateChatStatus.navSuccess, createdChat: chat)),

@@ -163,6 +163,28 @@ void main() {
     });
   });
 
+  group('isChatNameTaken (D4)', () {
+    test('a seeded chat name is taken; a novel name is free', () async {
+      await repository.getChats(config: GetChatsConfig.firstPage()); // seed the mock chat set into the DB
+      expect((await repository.isChatNameTaken(name: 'Random thoughts')).data, isTrue); // a seeded mock chat
+      expect((await repository.isChatNameTaken(name: 'Totally novel name 12345')).data, isFalse);
+    });
+
+    test('a name becomes taken once a chat with it is created (accumulating DB, not a frozen set)', () async {
+      const name = 'D4 accumulating chat';
+      expect((await repository.isChatNameTaken(name: name)).data, isFalse); // not yet
+      await repository.createChat(name: name);
+      expect((await repository.isChatNameTaken(name: name)).data, isTrue); // now taken, straight from the DB
+    });
+
+    test('the uniqueness check is case-insensitive (matches the case-insensitive list search)', () async {
+      await repository.createChat(name: 'CaseChat');
+      expect((await repository.isChatNameTaken(name: 'CaseChat')).data, isTrue);
+      expect((await repository.isChatNameTaken(name: 'casechat')).data, isTrue); // case-variant is taken
+      expect((await repository.isChatNameTaken(name: 'CASECHAT')).data, isTrue);
+    });
+  });
+
   group('markChatRead (US4)', () {
     test('resets a chat unread count to 0 and is a no-op when already 0', () async {
       await repository.getChats(config: GetChatsConfig.firstPage()); // seed the chat rows
