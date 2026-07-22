@@ -16,11 +16,11 @@ abstract class FilePickerService {
 }
 ```
 
-## Real implementation (`lib/data/service/mock_file_picker_service.dart`)
+## Real implementation (`lib/data/service/file_picker_service_impl.dart`)
 
 ```dart
 @LazySingleton(as: FilePickerService, env: [Environment.dev, Environment.prod, Environment.test])
-class MockFilePickerService implements FilePickerService {
+class FilePickerServiceImpl implements FilePickerService {
   @override
   Future<PickedFile?> pickFile() async {
     try {

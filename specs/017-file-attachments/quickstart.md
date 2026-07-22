@@ -16,7 +16,7 @@ Targeted:
 
 ```bash
 make test FILE=test/domain/model/file/file_type_test.dart                 # extension → FileType
-make test FILE=test/data/service/mock_file_picker_service_test.dart       # seam (fake) — pick/cancel
+make test FILE=test/data/service/file_picker_service_impl_test.dart       # seam (fake) — pick/cancel
 make test FILE=test/presentation/pages/chat_thread_page/bloc/chat_thread_bloc_test.dart  # picker → draft
 make test FILE=test/data/repository/chat/message_repository_impl_test.dart # chatFiles derivation
 make test FILE=test/presentation/pages/chat_card_page/bloc/chat_card_bloc_test.dart      # reactive files

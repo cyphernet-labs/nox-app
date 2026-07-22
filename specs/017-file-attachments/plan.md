@@ -60,7 +60,7 @@ lib/
 │   ├── service/file_picker_service.dart        # NEW abstract FilePickerService + PickedFile
 │   └── model/file/file_type.dart               # EXTEND: FileType.fromExtension(String?)
 ├── data/
-│   ├── service/mock_file_picker_service.dart    # NEW real impl wrapping file_picker (all envs)
+│   ├── service/file_picker_service_impl.dart    # NEW real impl wrapping file_picker (all envs)
 │   ├── repository/chat/message_repository_impl.dart  # NEW chatFiles(chatId) + watch signal
 │   └── repository/chat/chat_repository_impl.dart      # getChatFiles → delegate; drop ChatFilesRemote dep
 ├── data/remote/datasource/                     # REMOVE chat_files_remote_data_source.dart + mock/

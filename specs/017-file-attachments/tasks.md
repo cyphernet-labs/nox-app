@@ -47,11 +47,11 @@ Single Flutter package `nox_app`: `lib/`, tests deep-mirror under `test/`.
 
 ### Implementation
 
-- [ ] T006 [US1] Add `lib/data/service/mock_file_picker_service.dart`: `MockFilePickerService implements FilePickerService` `@LazySingleton(as: FilePickerService, env:[dev,prod,test])`; `pickFile()` = `FilePicker.platform.pickFiles(withData: false)` → map the single `PlatformFile` to `PickedFile`, `null` on cancel, `try/catch → null` on any plugin failure (defensive fallback, never throws).
+- [ ] T006 [US1] Add `lib/data/service/file_picker_service_impl.dart`: `FilePickerServiceImpl implements FilePickerService` `@LazySingleton(as: FilePickerService, env:[dev,prod,test])`; `pickFile()` = `FilePicker.platform.pickFiles(withData: false)` → map the single `PlatformFile` to `PickedFile`, `null` on cancel, `try/catch → null` on any plugin failure (defensive fallback, never throws).
 - [ ] T007 [US1] Add the macOS entitlement `com.apple.security.files.user-selected.read-only` (`<true/>`) to `macos/Runner/DebugProfile.entitlements` AND `macos/Runner/Release.entitlements`.
 - [ ] T008 [US1] In `lib/presentation/pages/chat_thread_page/bloc/chat_thread_bloc.dart`: inject `FilePickerService`; make `_onAttachmentPicked` async → `pickFile()`; on null return (composer unchanged); else `emit(copyWith(draftAttachment: MessageAttachment(id: uuid, name, sizeBytes, type: FileType.fromExtension(ext))))`. Remove the `photo.jpg` stub + its `// TODO(backend)`.
 - [ ] T009 [US1] Run `make generate` — DI for the new `FilePickerService` binding + the `ChatThreadBloc` field (getIt resolution). Confirm the config wires it.
-- [ ] T010 [P] [US1] Test `test/data/service/mock_file_picker_service_test.dart`: set `FilePicker.platform` to a fake returning a `FilePickerResult` (one `PlatformFile` name/size/extension) → `pickFile()` maps it; returns null → null; throws → null (fallback).
+- [ ] T010 [P] [US1] Test `test/data/service/file_picker_service_impl_test.dart`: set `FilePicker.platform` to a fake returning a `FilePickerResult` (one `PlatformFile` name/size/extension) → `pickFile()` maps it; returns null → null; throws → null (fallback).
 - [ ] T011 [P] [US1] Extend `test/presentation/pages/chat_thread_page/bloc/chat_thread_bloc_test.dart`: register a fake `FilePickerService` (getIt); `attachmentPicked` with a known picked file → `draftAttachment` has that real name/size/type (`FileType.fromExtension`); a null-returning fake → `draftAttachment` unchanged. Update the old stub-`photo.jpg` assertion.
 
 **Checkpoint**: US1 functional — real picker → real draft.
@@ -72,7 +72,7 @@ Single Flutter package `nox_app`: `lib/`, tests deep-mirror under `test/`.
 - [ ] T015 [US2] Run `make generate` — DI regenerates without the removed ChatFiles bindings and with `ChatRepositoryImpl`'s new constructor (drops one dep). (depends on T012–T014)
 - [ ] T016 [P] [US2] Extend `test/data/repository/chat/message_repository_impl_test.dart`: `chatFiles` returns the seeded chat's attachment(s) newest-first; a chat with an added attachment lists it first; a chat whose messages have no attachments → empty; per-chat isolation.
 - [ ] T017 [P] [US2] Verify `test/presentation/pages/chat_card_page/bloc/chat_card_bloc_test.dart` still passes (files isNotEmpty holds — chat_0's seed has one attachment); adjust only if it asserted fabricated-specific files.
-- [ ] T018 [US2] Regenerate the 5.4 files-view golden (now the derived attachment, not the fabricated eight): `make golden-update FILE=test/presentation/pages/chat_card_page/chat_card_page_golden_test.dart`; verify determinism (re-run `golden-verify` twice) + eyeball the PNG.
+- [ ] T018 [US2] Update the 5.4 files-view golden. Two changes: (a) it renders `chat_0`, whose seeded thread has one attachment (`design-spec.pdf`), so the derived view is NON-empty — regenerate to that single real file (was the fabricated eight); (b) AFTER T019 makes `ChatCardBloc` reactive, the current `goldenTest`/`goldenTestDesktop` (pumpAndSettle) may hang on the watch subscription — convert `chat_card_page_golden_test.dart` to the BESPOKE bounded-pump harness (frozen clock + fonts + pinned surface + bounded pumps), mirroring `chat_thread_page_golden_test.dart`. Then `make golden-update` + verify determinism twice + eyeball. (ordering: do this after T019.)
 
 **Checkpoint**: US2 — real, per-chat files view.
 
@@ -87,7 +87,7 @@ Single Flutter package `nox_app`: `lib/`, tests deep-mirror under `test/`.
 ### Implementation
 
 - [ ] T019 [US3] `lib/presentation/pages/chat_card_page/bloc/chat_card_bloc.dart`: inject `MessageRepository`; on `_onInitialize` subscribe (once) to `watchMessages(_chatId).skip(1).debounceTime(100ms)` → `add(ChatCardEvent.initialize(_chatId))` (re-derive); cancel the subscription in `close()`. Scenario overrides unchanged.
-- [ ] T020 [P] [US3] Extend `test/presentation/pages/chat_card_page/bloc/chat_card_bloc_test.dart`: init for a chat (files present), then `getIt<MessageRepository>().sendMessage(chatId, attachment: <att>)` → after the debounce the files list grows and the new file is first (newest-first), no manual reload.
+- [ ] T020 [P] [US3] Extend `test/presentation/pages/chat_card_page/bloc/chat_card_bloc_test.dart`: init for a chat (files present), then `getIt<MessageRepository>().sendMessage(chatId, attachment: <att>)` — the send persists a message (with the attachment) into `MessageDao`, so `watchMessages` ticks → after the debounce the bloc re-derives, the files list grows and the new file is first (newest-first), with no manual reload. (Per-test DB isolation as the reactive bloc tests use.)
 
 **Checkpoint**: US3 — live files view.
 
