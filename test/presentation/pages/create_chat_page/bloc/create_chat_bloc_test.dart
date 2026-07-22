@@ -18,6 +18,9 @@ import 'create_chat_bloc_test.mocks.dart';
 void main() {
   setUpAll(() {
     provideDummy<RepositoryResult<ChatModel>>(const RepositoryResult<ChatModel>.error(exception: RepositoryException.unknown));
+    // D4: the availability check now calls chatRepository.isChatNameTaken; an unstubbed
+    // mock returns this dummy (not taken) so the mock-repo tests stay behaviour-stable.
+    provideDummy<RepositoryResult<bool>>(const RepositoryResult<bool>.success(data: false));
   });
 
   setUp(() async {

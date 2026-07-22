@@ -41,10 +41,12 @@ class CreateChatBloc extends BaseBloc<CreateChatEvent, CreateChatState> {
   Future<void> _onAvailabilityRequested(ChatAvailabilityRequested event, Emitter<CreateChatState> emit) async {
     if (state.name != event.name || state.status != CreateChatStatus.checking) return;
     await executeLogic(() async {
-      // TODO(backend): real server uniqueness check.
       await Future<void>.delayed(const Duration(milliseconds: 200));
       if (state.name != event.name) return;
-      final taken = OnboardingMockData.takenChatNames.contains(event.name);
+      // Uniqueness against the ACCUMULATING local DB (seeded + already-created chats,
+      // D4), OR a small reserved demo set. `// TODO(backend): real server check.`
+      final dbResult = await chatRepository.isChatNameTaken(name: event.name);
+      final taken = dbResult.match(onData: (t) => t, onError: (_) => false) || OnboardingMockData.takenChatNames.contains(event.name);
       emit(state.copyWith(status: taken ? CreateChatStatus.taken : CreateChatStatus.valid));
     }, onError: (error, exception, stackTrace) => emit(state.copyWith(status: CreateChatStatus.valid)));
   }

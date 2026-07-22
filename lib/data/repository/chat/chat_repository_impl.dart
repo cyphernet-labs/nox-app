@@ -90,6 +90,20 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
   }
 
   @override
+  Future<RepositoryResult<bool>> isChatNameTaken({required String name}) {
+    return execute<bool>(() async {
+      // Check the accumulating DB (seeded + created), not a frozen mock set (D4). No
+      // seed here — the chats list has already seeded the store before create-chat is
+      // reachable, and keeping this off the availability path avoids the mock seed
+      // delay on every keystroke. Dart-side filter over decoded entities — a Sembast
+      // Finder on the camelCase `name` key would silently match nothing under the
+      // global field_rename:snake.
+      final taken = (await _chatDao.getAllSorted()).any((c) => c.name == name); // case-sensitive
+      return RepositoryResult<bool>.success(data: taken);
+    });
+  }
+
+  @override
   Future<RepositoryResult<List<MessageAttachment>>> getChatFiles({required String chatId}) {
     return execute<List<MessageAttachment>>(() async {
       final files = await _chatFilesRemote.getChatFiles(chatId: chatId);
