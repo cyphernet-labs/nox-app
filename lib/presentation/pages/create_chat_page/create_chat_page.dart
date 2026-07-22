@@ -38,8 +38,10 @@ class CreateChatPage extends StatefulWidget {
 
   /// Desktop entry: a real modal dialog over the current screen (the live chats list),
   /// resolving with the created [ChatModel] (null on cancel). Mirrors [route]'s result.
+  /// `barrierDismissible: false` (like the logout dialog): the explicit Cancel button
+  /// is the only dismiss, so a barrier tap can't race a mid-submit create.
   static Future<ChatModel?> showAsDialog(BuildContext context) =>
-      showDialog<ChatModel?>(context: context, builder: (_) => const CreateChatPage(dialog: true));
+      showDialog<ChatModel?>(context: context, barrierDismissible: false, builder: (_) => const CreateChatPage(dialog: true));
 
   /// Gallery entry: adds the dev create-outcome selector.
   static Route<ChatModel?> routeDemo() => MaterialPageRoute<ChatModel?>(
@@ -161,7 +163,8 @@ class _CreateChatPageState extends BaseStatePage<CreateChatPage> {
                   _createButton(context, state),
                 ],
               ),
-              if (kDebugMode && widget.demo) _outcomeControl(),
+              // No demo outcome control here: the dialog is only ever shown via
+              // showAsDialog (demo:false), so the gallery preview uses _narrow instead.
             ],
           ),
         ),
