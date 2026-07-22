@@ -18,7 +18,14 @@ This feature makes attachments **real, end-to-end, on the client**:
 - **See the real files.** The chat card's shared-files view is derived from the messages actually sent in that chat, so it lists exactly the files that were shared there.
 - **Stay current.** When a new file is attached and sent, it appears in the files view without a manual reload.
 
-No file bytes are uploaded, downloaded, or stored — this is the UI-first phase, so only the attachment's **metadata** (name / size / type) matters; the real transfer lands with the backend. The picker is wired on all five target platforms, with a documented fallback for any platform that cannot present a picker (mirroring the existing QR desktop-fallback pattern).
+No file bytes are uploaded, downloaded, or stored — this is the UI-first phase, so only the attachment's **metadata** (name / size / type) matters; the real transfer lands with the backend. The picker is wired on all five target platforms; unlike the QR scanner (which genuinely lacks a camera on Windows/Linux), the chosen picker supports every target, so the attach action is available everywhere and the platform-fallback clause is a defensive, documented note rather than an active hidden affordance.
+
+## Clarifications
+
+### Session 2026-07-25
+
+- Q: In what order does the 5.4 shared-files view list a chat's files? → A: **Newest-first** — the most recently shared files appear at the top (consistent with chat recency).
+- Q: The picker library supports all five targets — is the attach action available on every platform, or hidden on some (as QR is on Windows/Linux)? → A: **Available on all five platforms**; the picker supports each target, so no affordance is hidden. The platform-fallback requirement is retained as a defensive, documented safeguard (non-crashing) rather than an active hide.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -50,7 +57,7 @@ As someone browsing a chat's shared files, I see exactly the files that were sen
 
 **Acceptance Scenarios**:
 
-1. **Given** a chat whose messages include attachments, **When** the files view is opened, **Then** it lists exactly those attachments (name/size/type), and nothing that was not sent in this chat.
+1. **Given** a chat whose messages include attachments, **When** the files view is opened, **Then** it lists exactly those attachments (name/size/type) newest-first, and nothing that was not sent in this chat.
 2. **Given** a chat with no attachments, **When** the files view is opened, **Then** it shows the empty state.
 3. **Given** two different chats with different attachments, **When** each files view is opened, **Then** each shows only its own chat's files.
 
@@ -73,7 +80,7 @@ As someone who just shared a file, when I look at the chat's files view it alrea
 
 ### Edge Cases
 
-- **Picker unsupported on a platform**: if a target platform cannot present a file picker, the attach action degrades gracefully (a documented fallback — e.g. the action is unavailable/hidden with a clear reason), never crashing; this mirrors the QR desktop-fallback pattern.
+- **Picker fails to present** (defensive — no target is expected to lack support): the attach action degrades gracefully (documented, non-crashing) rather than throwing. Unlike QR (no camera on Windows/Linux), the picker is available on all five targets, so this is a safeguard, not a routine hidden affordance.
 - **Picker cancelled / no selection**: leaves the composer exactly as it was.
 - **A file with no extension or an unknown extension**: is attached with the generic ("other") type rather than being rejected.
 - **Very large file / long file name**: the attachment records the real size and name; display formatting (size units, name truncation) is unchanged from today's file chip.
@@ -90,10 +97,10 @@ As someone who just shared a file, when I look at the chat's files view it alrea
 - **FR-003**: The attachment's type MUST be derived from the chosen file's extension, mapped to the existing file-type set (image, video, audio, pdf, doc, sheet, text, archive, other); an unknown/absent extension MUST map to the generic "other" type.
 - **FR-004**: Cancelling the picker (or selecting nothing) MUST leave the composer unchanged (no attachment added, existing draft/text preserved).
 - **FR-005**: A sent message MUST carry the chosen real attachment (name/size/type); no file bytes are uploaded, downloaded, or stored (metadata only, UI-first phase).
-- **FR-006**: The chat card's shared-files view MUST be derived from the chat's persisted message attachments — listing exactly the files sent in that chat — and MUST NOT show a fabricated/fixed list.
+- **FR-006**: The chat card's shared-files view MUST be derived from the chat's persisted message attachments — listing exactly the files sent in that chat, **newest-first** — and MUST NOT show a fabricated/fixed list.
 - **FR-007**: A chat with no attachments MUST show the files-view empty state; each chat's files view MUST show only that chat's files.
 - **FR-008**: The files view MUST stay current — a newly attached-and-sent file MUST appear without a manual reload (reactive, consistent with the app's existing reactive-refresh behaviour).
-- **FR-009**: The file picker MUST be wired on all five target platforms (iOS, Android, macOS, Windows, Linux) with the standard native configuration; any platform that cannot present a picker MUST have a documented, non-crashing fallback.
+- **FR-009**: The file picker MUST be wired and AVAILABLE on all five target platforms (iOS, Android, macOS, Windows, Linux) with the standard native configuration; the attach action is not hidden on any target. A documented, non-crashing fallback MUST exist as a defensive safeguard should a picker fail to present (but no target is expected to lack support).
 - **FR-010**: The picker MUST be reachable through a seam that keeps the calling logic testable without a real device dialog (the picker is mockable in tests).
 - **FR-011**: Behaviour that is not part of this feature MUST be unchanged — the attachment chip display (size/name/type glyph), send flow, and the deterministic mock seed (which keeps its one seeded attachment) are preserved.
 - **FR-012**: No new user-facing golden baseline is required for the native picker (an OS sheet); the existing 5.4 files-view coverage remains valid.
