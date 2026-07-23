@@ -140,6 +140,20 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
   }
 
   @override
+  Future<List<MessageAttachment>> chatFiles({required String chatId}) async {
+    // Derive the 5.4 shared-files view from the chat's persisted attachments, newest-first
+    // (feature 017). Seed first so the view is correct even if opened before the thread.
+    await _seedChatIfEmpty(chatId);
+    final messages = (await _messageDao.getByChatSorted(chatId)).map((e) => _mapper.toModel(entity: e)).toList();
+    final files = <MessageAttachment>[];
+    for (final message in messages.reversed) {
+      final attachment = message.attachment;
+      if (attachment != null) files.add(attachment);
+    }
+    return files;
+  }
+
+  @override
   Future<void> simulateIncoming({required String chatId}) async {
     // Debug stand-in for a server push: an inbound message (author != me) + unread bump.
     final message = MessageModel(

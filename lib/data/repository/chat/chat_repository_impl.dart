@@ -4,7 +4,6 @@ import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/data/local/chat/chat_dao.dart';
 import 'package:nox_app/data/mapper/chat/chat_mapper.dart';
-import 'package:nox_app/data/remote/datasource/chat_files_remote_data_source.dart';
 import 'package:nox_app/data/remote/datasource/chat_remote_data_source.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
@@ -23,11 +22,10 @@ import 'package:uuid/uuid.dart';
 /// backend — when transport lands, only the data-source binding swaps; the DB contract stays.
 @LazySingleton(as: ChatRepository, env: [Environment.dev, Environment.prod, Environment.test])
 class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
-  ChatRepositoryImpl(this._chatDao, this._chatRemote, this._chatFilesRemote, this._mapper, this._messageRepository);
+  ChatRepositoryImpl(this._chatDao, this._chatRemote, this._mapper, this._messageRepository);
 
   final ChatDao _chatDao;
   final ChatRemoteDataSource _chatRemote;
-  final ChatFilesRemoteDataSource _chatFilesRemote;
   final ChatMapper _mapper;
   final MessageRepository _messageRepository;
 
@@ -112,7 +110,9 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
   @override
   Future<RepositoryResult<List<MessageAttachment>>> getChatFiles({required String chatId}) {
     return execute<List<MessageAttachment>>(() async {
-      final files = await _chatFilesRemote.getChatFiles(chatId: chatId);
+      // Chat files are a local derivation from the persisted messages, not a remote
+      // fetch — the 016 ChatFilesRemoteDataSource is retired (feature 017 / E3).
+      final files = await _messageRepository.chatFiles(chatId: chatId);
       return RepositoryResult<List<MessageAttachment>>.success(data: files);
     });
   }

@@ -1,7 +1,10 @@
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:injectable/injectable.dart';
+import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/model/chat/message_attachment.dart';
+import 'package:nox_app/domain/model/file/file_type.dart';
+import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/presentation/pages/chat_card_page/bloc/chat_card_bloc.dart';
 
 void main() {
@@ -77,5 +80,21 @@ void main() {
       wait: const Duration(milliseconds: 300),
       verify: (bloc) => expect(bloc.state, isA<Error>()),
     );
+
+    test('a newly sent attachment appears in the files view without a reload (R5)', () async {
+      // A dedicated chat id (seeded fresh with the generic thread → one attachment).
+      final bloc = ChatCardBloc()..add(const ChatCardEvent.initialize('chat_r5'));
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 500)); // seed + derive
+      expect((bloc.state as Initialized).files, hasLength(1)); // seeded design-spec.pdf
+
+      const att = MessageAttachment(id: 'r5', type: FileType.image, name: 'live.png', sizeBytes: 50);
+      await getIt<MessageRepository>().sendMessage(chatId: 'chat_r5', attachment: att);
+      await Future<void>.delayed(const Duration(milliseconds: 500)); // watch tick + debounce + re-derive
+
+      final files = (bloc.state as Initialized).files;
+      expect(files, hasLength(2)); // grew live, no manual reload
+      expect(files.first.name, 'live.png'); // newest-first
+    });
   });
 }

@@ -249,4 +249,29 @@ void main() {
       expect(messages.any((m) => m.authorId == 'me'), isTrue); // sentinel own rows remain recognisable
     });
   });
+
+  group('chatFiles (E3)', () {
+    test('derives the chat attachments newest-first; a newly sent file leads', () async {
+      // The seeded thread carries one attachment (design-spec.pdf).
+      final seeded = await repo.chatFiles(chatId: 'chat_0');
+      expect(seeded, hasLength(1));
+      expect(seeded.first.name, 'design-spec.pdf');
+
+      // Sending a new attachment makes it the newest (first).
+      const att = MessageAttachment(id: 'a-new', type: FileType.image, name: 'shot.png', sizeBytes: 100);
+      await repo.sendMessage(chatId: 'chat_0', attachment: att);
+
+      final after = await repo.chatFiles(chatId: 'chat_0');
+      expect(after, hasLength(2));
+      expect(after.first.name, 'shot.png'); // newest-first
+      expect(after.last.name, 'design-spec.pdf');
+    });
+
+    test('a chat whose messages have no attachments yields an empty list, isolated per chat', () async {
+      // A created chat (D5) seeds only a system line — no attachment.
+      final created = (await getIt<ChatRepository>().createChat(name: 'No files chat')).data!;
+      expect(await repo.chatFiles(chatId: created.id), isEmpty);
+      expect(await repo.chatFiles(chatId: 'chat_0'), isNotEmpty); // the other chat is unaffected
+    });
+  });
 }
