@@ -4,20 +4,20 @@ Phase 0 decisions, grounded in the current `lib/` code + the target platforms.
 
 ## R1 — Picker plugin + how the bloc stays testable
 
-**Decision**: Use **`file_picker`** (blueprint-planned: named in the pubspec deps comment and the `_onAttachmentPicked` TODO) behind a domain **`FilePickerService`** interface. `ChatThreadBloc` depends on the interface, never the plugin, so it is mockable in `bloc_test` without an OS dialog — exactly the pattern feature-010 used for `CameraPermissionService`.
+**Decision**: Use **`file_selector`** (official flutter.dev plugin) behind a domain **`FilePickerService`** interface. `ChatThreadBloc` depends on the interface, never the plugin, so it is mockable in `bloc_test` without an OS dialog — exactly the pattern feature-010 used for `CameraPermissionService`.
 
-**Rationale**: Direct plugin calls in a bloc are untestable and couple presentation to a plugin. The service seam is the established NOX convention for platform plugins.
+**Rationale**: `file_picker` was the blueprint-named choice (pubspec comment + the `_onAttachmentPicked` TODO), but every modern `file_picker` (5.x–8.x) pins `win32 ^5.x`, which conflicts with the project's `package_info_plus ^10.1.0` (needs `win32 ^6.0.1`) — version solving fails (only the ancient, unmaintained `file_picker 3.0.4` resolves). `file_selector` (flutter.dev, all five targets, `XFile`-based) resolves cleanly and exposes name/size/extension. Wrapping either behind `FilePickerService` means the plugin is an implementation detail — the bloc is unaffected by the swap.
 
 **Alternatives considered**:
+- *`file_picker`* — the plan's first choice, but its `win32` constraint is incompatible with `package_info_plus ^10.1.0`. Rejected on the version conflict.
 - *`image_picker`* — photos/videos only; NOX attaches ANY file. Rejected.
-- *`file_selector`* — viable, but `file_picker` is the blueprint-named one and returns name/size/extension directly. Chosen for consistency with the plan.
 - *Call the plugin inline in the bloc* — untestable; rejected.
 
-## R2 — Metadata only (`withData: false`)
+## R2 — Metadata only (no bytes read)
 
-**Decision**: `FilePicker.platform.pickFiles(withData: false)` — capture `PlatformFile.name`, `.size`, `.extension` only; never read `.bytes`/`.path` content.
+**Decision**: `openFile()` (file_selector; no type groups → any file) → capture `XFile.name`, `await XFile.length()` (size), and the extension from the name; never call `readAsBytes()`/read the content.
 
-**Rationale**: The UI-first phase transfers nothing; `MessageAttachment` holds only name/size/type. `withData: false` also avoids loading large files into memory, keeping the UI responsive (SC perf). Constitution I: no bytes read/leave the device.
+**Rationale**: The UI-first phase transfers nothing; `MessageAttachment` holds only name/size/type. `XFile.length()` stats the size without loading the file, so large files never block the UI. Constitution I: no bytes read / leave the device.
 
 ## R3 — Extension → FileType mapping
 
@@ -59,11 +59,11 @@ Phase 0 decisions, grounded in the current `lib/` code + the target platforms.
 
 **Decision**:
 - **macOS**: add `com.apple.security.files.user-selected.read-only` to `DebugProfile.entitlements` + `Release.entitlements` (sandbox requires it to read a user-picked file's metadata).
-- **iOS**: `file_picker` uses `UIDocumentPickerViewController` for arbitrary files — no `Info.plist` usage string needed (that is only for the photo library / camera).
+- **iOS**: `file_selector` uses `UIDocumentPickerViewController` for arbitrary files — no `Info.plist` usage string needed (that is only for the photo library / camera).
 - **Android / Windows / Linux**: work with the plugin default (no extra config).
 - **Fallback**: the `FilePickerService` real impl returns `null` on any plugin exception, so the attach action never crashes; the attach affordance stays visible on all targets (the picker is supported everywhere — this is NOT the QR case where Windows/Linux lack a camera).
 
-**Rationale**: `file_picker` supports all five targets; only macOS's sandbox needs the read-only file entitlement. The `null`-on-failure contract is the defensive safeguard FR-009 asks for.
+**Rationale**: `file_selector` supports all five targets; only macOS's sandbox needs the read-only file entitlement. The `null`-on-failure contract is the defensive safeguard FR-009 asks for.
 
 **Verification gap**: macOS is verified locally (`mise run build:macos:stage` / `make build-macos-stage`). iOS/Android/Windows/Linux builds can't be run locally (CI paused); the config is the plugin-standard set, flagged for a build check when CI resumes.
 

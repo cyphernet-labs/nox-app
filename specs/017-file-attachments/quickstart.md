@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- `make deps` (adds `file_picker`), `make generate` (DI for the new service + repo/bloc constructor changes).
+- `make deps` (adds `file_selector`), `make generate` (DI for the new service + repo/bloc constructor changes).
 - Desktop run to try the real picker: `fvm flutter run -d macos --dart-define-from-file=config/stage.json`.
 
 ## Automated validation (the gate)

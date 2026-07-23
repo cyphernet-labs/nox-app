@@ -18,16 +18,23 @@ abstract class FilePickerService {
 
 ## Real implementation (`lib/data/service/file_picker_service_impl.dart`)
 
+Uses **`file_selector`** (official flutter.dev plugin). `file_picker` was the plan-named
+choice but its `win32` constraint conflicts with the project's `package_info_plus ^10.1.0`
+(win32 ^6.0.1); `file_selector` resolves cleanly and supports all five targets.
+
 ```dart
+import 'package:file_selector/file_selector.dart';
+
 @LazySingleton(as: FilePickerService, env: [Environment.dev, Environment.prod, Environment.test])
 class FilePickerServiceImpl implements FilePickerService {
   @override
   Future<PickedFile?> pickFile() async {
     try {
-      final result = await FilePicker.platform.pickFiles(withData: false); // metadata only
-      final f = result?.files.singleOrNull;
-      if (f == null) return null; // cancelled
-      return (name: f.name, sizeBytes: f.size, extension: f.extension);
+      final XFile? file = await openFile(); // any file; metadata only, no bytes read
+      if (file == null) return null; // cancelled
+      final name = file.name;
+      final ext = name.contains('.') ? name.split('.').last : null;
+      return (name: name, sizeBytes: await file.length(), extension: ext);
     } catch (_) {
       return null; // defensive fallback: no crash if the picker fails to present
     }
@@ -36,8 +43,8 @@ class FilePickerServiceImpl implements FilePickerService {
 ```
 
 Notes:
-- Named `Mock*` for env consistency with the other seams, but it is the REAL picker (the "mock" is the UI-first phase's absence of a backend, not the picker). It is bound for all envs; in `bloc_test` a fake `FilePickerService` is registered instead (no OS dialog).
-- `withData: false` → no bytes loaded (Constitution I + perf).
+- `openFile()` (no type groups) allows any file; `XFile.length()` stats the size without reading content, and `XFile.name` gives the display name — metadata only (Constitution I + perf).
+- The impl is the REAL picker (bound for all envs); in `bloc_test` a fake `FilePickerService` is registered instead (no OS dialog).
 - Returns `null` (not an exception) on cancel or failure → the caller leaves the composer unchanged (FR-004) and never crashes (FR-009 fallback).
 
 ## Behavioural contract

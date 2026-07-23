@@ -23,7 +23,7 @@ Single Flutter package `nox_app`: `lib/`, tests deep-mirror under `test/`.
 ## Phase 1: Setup
 
 - [ ] T001 Confirm the pre-work baseline green on `017-file-attachments`: `make gate` (620) + `make golden-verify` (152).
-- [ ] T002 Add the `file_picker` dependency: `fvm flutter pub add file_picker` (latest compatible with Flutter 3.44.1 / Dart >=3.12). Confirm `make deps` resolves and `flutter analyze` is clean.
+- [ ] T002 Add the picker dependency `fvm flutter pub add file_selector`. NOTE: the plan named `file_picker`, but its `win32` requirement conflicts with the project's `package_info_plus ^10.1.0` (needs win32 ^6.0.1) — `file_selector` (official flutter.dev, all five targets) resolves cleanly and is used instead. Confirm `make deps` + `flutter analyze` clean.
 
 ---
 
@@ -47,11 +47,11 @@ Single Flutter package `nox_app`: `lib/`, tests deep-mirror under `test/`.
 
 ### Implementation
 
-- [ ] T006 [US1] Add `lib/data/service/file_picker_service_impl.dart`: `FilePickerServiceImpl implements FilePickerService` `@LazySingleton(as: FilePickerService, env:[dev,prod,test])`; `pickFile()` = `FilePicker.platform.pickFiles(withData: false)` → map the single `PlatformFile` to `PickedFile`, `null` on cancel, `try/catch → null` on any plugin failure (defensive fallback, never throws).
+- [ ] T006 [US1] Add `lib/data/service/file_picker_service_impl.dart`: `FilePickerServiceImpl implements FilePickerService` `@LazySingleton(as: FilePickerService, env:[dev,prod,test])`; `pickFile()` = `openFile()` (file_selector, any file) → map the `XFile` to `PickedFile` (`name`, `await length()` for size, extension from the name), `null` on cancel, `try/catch → null` on any plugin failure (defensive fallback, never throws). See `contracts/file-picker-service.md`.
 - [ ] T007 [US1] Add the macOS entitlement `com.apple.security.files.user-selected.read-only` (`<true/>`) to `macos/Runner/DebugProfile.entitlements` AND `macos/Runner/Release.entitlements`.
 - [ ] T008 [US1] In `lib/presentation/pages/chat_thread_page/bloc/chat_thread_bloc.dart`: inject `FilePickerService`; make `_onAttachmentPicked` async → `pickFile()`; on null return (composer unchanged); else `emit(copyWith(draftAttachment: MessageAttachment(id: uuid, name, sizeBytes, type: FileType.fromExtension(ext))))`. Remove the `photo.jpg` stub + its `// TODO(backend)`.
 - [ ] T009 [US1] Run `make generate` — DI for the new `FilePickerService` binding + the `ChatThreadBloc` field (getIt resolution). Confirm the config wires it.
-- [ ] T010 [P] [US1] Test `test/data/service/file_picker_service_impl_test.dart`: set `FilePicker.platform` to a fake returning a `FilePickerResult` (one `PlatformFile` name/size/extension) → `pickFile()` maps it; returns null → null; throws → null (fallback).
+- [ ] T010 [P] [US1] Test `test/data/service/file_picker_service_impl_test.dart`: the mapping from a real `XFile` (name → PickedFile name/extension; length → sizeBytes) is exercised (via file_selector's test hook / a fake `XFile`, or a focused mapping helper); the cancel path (openFile → null → null) and the failure path (throws → null fallback) are covered. If file_selector's platform is not easily fakeable, extract the XFile→PickedFile mapping into a testable pure helper and unit-test that + the null/error guards.
 - [ ] T011 [P] [US1] Extend `test/presentation/pages/chat_thread_page/bloc/chat_thread_bloc_test.dart`: register a fake `FilePickerService` (getIt); `attachmentPicked` with a known picked file → `draftAttachment` has that real name/size/type (`FileType.fromExtension`); a null-returning fake → `draftAttachment` unchanged. Update the old stub-`photo.jpg` assertion.
 
 **Checkpoint**: US1 functional — real picker → real draft.
@@ -115,6 +115,6 @@ MVP = US1 (real picker). US2 (also P1) makes the files view real; US3 (P2) makes
 
 ## Notes
 
-- `file_picker` is the one new package (blueprint-planned). macOS verified locally; other platform builds flagged for CI.
+- `file_selector` is the one new package (blueprint-planned). macOS verified locally; other platform builds flagged for CI.
 - The picker seam returns `null` on cancel/failure → the composer is never corrupted and never crashes (FR-004/FR-009).
 - The 5.4 golden regenerates (source change 8-fabricated → real derived); it is NOT a layout change. Tests run locally only (CI paused).
