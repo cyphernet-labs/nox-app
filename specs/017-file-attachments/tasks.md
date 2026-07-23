@@ -96,8 +96,8 @@ Single Flutter package `nox_app`: `lib/`, tests deep-mirror under `test/`.
 ## Phase 6: Polish & Cross-Cutting
 
 - [X] T021 [P] Drift-fix (Principle II): update `docs/mock-completion-plan.md` §5.1/§5.2 + `docs/blueprints/mobile/04-data-layer.md` 016-seam note + `specs/016-*/data-model.md` reference — `ChatFilesRemoteDataSource` removed (chat files are a local derivation). Resolve the `_onAttachmentPicked`/`getChatFiles` `TODO`s.
-- [ ] T022 [P] Update the tracker `docs/mock-completion-plan.md`: flip F1 + E3 + R5 to done (at merge) with a §6 journal entry.
-- [ ] T023 Gate: `make gate` + `make golden-verify`; then the macOS native build check `make build-macos-stage` (verifies the file-access entitlement) + note iOS/Android/Windows/Linux for a CI build check. Walk `quickstart.md`.
+- [X] T022 [P] Update the tracker `docs/mock-completion-plan.md`: flip F1 + E3 + R5 to done (at merge) with a §6 journal entry.
+- [X] T023 Gate: `make gate` + `make golden-verify`; then the macOS native build check `make build-macos-stage` (verifies the file-access entitlement) + note iOS/Android/Windows/Linux for a CI build check. Walk `quickstart.md`.
 
 ---
 
