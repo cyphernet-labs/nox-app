@@ -85,6 +85,8 @@ dev_dependencies:
   # hand-crafted set in docs/design/system/nox-app-icons/; see contracts/flutter-launcher-icons.md).
   # Kept as the reproducible regen path for the final vector logo (then switch bg to brand #0C2424).
   flutter_launcher_icons: ^0.14.4
+  file_selector_platform_interface: ^2.7.0
+  plugin_platform_interface: ^2.1.8
 
 flutter:
   uses-material-design: true

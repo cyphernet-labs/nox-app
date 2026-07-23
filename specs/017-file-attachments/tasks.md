@@ -22,8 +22,8 @@ Single Flutter package `nox_app`: `lib/`, tests deep-mirror under `test/`.
 
 ## Phase 1: Setup
 
-- [ ] T001 Confirm the pre-work baseline green on `017-file-attachments`: `make gate` (620) + `make golden-verify` (152).
-- [ ] T002 Add the picker dependency `fvm flutter pub add file_selector`. NOTE: the plan named `file_picker`, but its `win32` requirement conflicts with the project's `package_info_plus ^10.1.0` (needs win32 ^6.0.1) — `file_selector` (official flutter.dev, all five targets) resolves cleanly and is used instead. Confirm `make deps` + `flutter analyze` clean.
+- [X] T001 Confirm the pre-work baseline green on `017-file-attachments`: `make gate` (620) + `make golden-verify` (152).
+- [X] T002 Add the picker dependency `fvm flutter pub add file_selector`. NOTE: the plan named `file_picker`, but its `win32` requirement conflicts with the project's `package_info_plus ^10.1.0` (needs win32 ^6.0.1) — `file_selector` (official flutter.dev, all five targets) resolves cleanly and is used instead. Confirm `make deps` + `flutter analyze` clean.
 
 ---
 
@@ -31,9 +31,9 @@ Single Flutter package `nox_app`: `lib/`, tests deep-mirror under `test/`.
 
 **Purpose**: the extension→type mapper + the picker seam. Block US1.
 
-- [ ] T003 [P] Extend `lib/domain/model/file/file_type.dart`: add `static FileType fromExtension(String? ext)` (case-insensitive; unknown/null → `other`) per the research R3 table (image/video/audio/pdf/doc/sheet/text/archive).
-- [ ] T004 [P] Unit test `test/domain/model/file/file_type_test.dart`: each class maps (e.g. `jpg→image`, `mp4→video`, `mp3→audio`, `pdf→pdf`, `docx→doc`, `xlsx→sheet`, `md→text`, `zip→archive`); unknown (`xyz`) and null/empty → `other`; case-insensitive (`PDF→pdf`). (depends on T003)
-- [ ] T005 Add `lib/domain/service/file_picker_service.dart`: `typedef PickedFile = ({String name, int sizeBytes, String? extension});` + `abstract class FilePickerService { Future<PickedFile?> pickFile(); }` (contract in `contracts/file-picker-service.md`).
+- [X] T003 [P] Extend `lib/domain/model/file/file_type.dart`: add `static FileType fromExtension(String? ext)` (case-insensitive; unknown/null → `other`) per the research R3 table (image/video/audio/pdf/doc/sheet/text/archive).
+- [X] T004 [P] Unit test `test/domain/model/file/file_type_test.dart`: each class maps (e.g. `jpg→image`, `mp4→video`, `mp3→audio`, `pdf→pdf`, `docx→doc`, `xlsx→sheet`, `md→text`, `zip→archive`); unknown (`xyz`) and null/empty → `other`; case-insensitive (`PDF→pdf`). (depends on T003)
+- [X] T005 Add `lib/domain/service/file_picker_service.dart`: `typedef PickedFile = ({String name, int sizeBytes, String? extension});` + `abstract class FilePickerService { Future<PickedFile?> pickFile(); }` (contract in `contracts/file-picker-service.md`).
 
 **Checkpoint**: mapper + seam ready.
 
@@ -47,12 +47,12 @@ Single Flutter package `nox_app`: `lib/`, tests deep-mirror under `test/`.
 
 ### Implementation
 
-- [ ] T006 [US1] Add `lib/data/service/file_picker_service_impl.dart`: `FilePickerServiceImpl implements FilePickerService` `@LazySingleton(as: FilePickerService, env:[dev,prod,test])`; `pickFile()` = `openFile()` (file_selector, any file) → map the `XFile` to `PickedFile` (`name`, `await length()` for size, extension from the name), `null` on cancel, `try/catch → null` on any plugin failure (defensive fallback, never throws). See `contracts/file-picker-service.md`.
-- [ ] T007 [US1] Add the macOS entitlement `com.apple.security.files.user-selected.read-only` (`<true/>`) to `macos/Runner/DebugProfile.entitlements` AND `macos/Runner/Release.entitlements`.
-- [ ] T008 [US1] In `lib/presentation/pages/chat_thread_page/bloc/chat_thread_bloc.dart`: inject `FilePickerService`; make `_onAttachmentPicked` async → `pickFile()`; on null return (composer unchanged); else `emit(copyWith(draftAttachment: MessageAttachment(id: uuid, name, sizeBytes, type: FileType.fromExtension(ext))))`. Remove the `photo.jpg` stub + its `// TODO(backend)`.
-- [ ] T009 [US1] Run `make generate` — DI for the new `FilePickerService` binding + the `ChatThreadBloc` field (getIt resolution). Confirm the config wires it.
-- [ ] T010 [P] [US1] Test `test/data/service/file_picker_service_impl_test.dart`: the mapping from a real `XFile` (name → PickedFile name/extension; length → sizeBytes) is exercised (via file_selector's test hook / a fake `XFile`, or a focused mapping helper); the cancel path (openFile → null → null) and the failure path (throws → null fallback) are covered. If file_selector's platform is not easily fakeable, extract the XFile→PickedFile mapping into a testable pure helper and unit-test that + the null/error guards.
-- [ ] T011 [P] [US1] Extend `test/presentation/pages/chat_thread_page/bloc/chat_thread_bloc_test.dart`: register a fake `FilePickerService` (getIt); `attachmentPicked` with a known picked file → `draftAttachment` has that real name/size/type (`FileType.fromExtension`); a null-returning fake → `draftAttachment` unchanged. Update the old stub-`photo.jpg` assertion.
+- [X] T006 [US1] Add `lib/data/service/file_picker_service_impl.dart`: `FilePickerServiceImpl implements FilePickerService` `@LazySingleton(as: FilePickerService, env:[dev,prod,test])`; `pickFile()` = `openFile()` (file_selector, any file) → map the `XFile` to `PickedFile` (`name`, `await length()` for size, extension from the name), `null` on cancel, `try/catch → null` on any plugin failure (defensive fallback, never throws). See `contracts/file-picker-service.md`.
+- [X] T007 [US1] Add the macOS entitlement `com.apple.security.files.user-selected.read-only` (`<true/>`) to `macos/Runner/DebugProfile.entitlements` AND `macos/Runner/Release.entitlements`.
+- [X] T008 [US1] In `lib/presentation/pages/chat_thread_page/bloc/chat_thread_bloc.dart`: inject `FilePickerService`; make `_onAttachmentPicked` async → `pickFile()`; on null return (composer unchanged); else `emit(copyWith(draftAttachment: MessageAttachment(id: uuid, name, sizeBytes, type: FileType.fromExtension(ext))))`. Remove the `photo.jpg` stub + its `// TODO(backend)`.
+- [X] T009 [US1] Run `make generate` — DI for the new `FilePickerService` binding + the `ChatThreadBloc` field (getIt resolution). Confirm the config wires it.
+- [X] T010 [P] [US1] Test `test/data/service/file_picker_service_impl_test.dart`: the mapping from a real `XFile` (name → PickedFile name/extension; length → sizeBytes) is exercised (via file_selector's test hook / a fake `XFile`, or a focused mapping helper); the cancel path (openFile → null → null) and the failure path (throws → null fallback) are covered. If file_selector's platform is not easily fakeable, extract the XFile→PickedFile mapping into a testable pure helper and unit-test that + the null/error guards.
+- [X] T011 [P] [US1] Extend `test/presentation/pages/chat_thread_page/bloc/chat_thread_bloc_test.dart`: register a fake `FilePickerService` (getIt); `attachmentPicked` with a known picked file → `draftAttachment` has that real name/size/type (`FileType.fromExtension`); a null-returning fake → `draftAttachment` unchanged. Update the old stub-`photo.jpg` assertion.
 
 **Checkpoint**: US1 functional — real picker → real draft.
 
