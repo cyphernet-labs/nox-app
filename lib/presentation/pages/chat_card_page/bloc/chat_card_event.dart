@@ -8,6 +8,11 @@ sealed class ChatCardEvent with _$ChatCardEvent {
   /// Toggle the files List ⇄ Grid view.
   const factory ChatCardEvent.viewModeChanged(FilesViewMode mode) = ViewModeChanged;
 
+  /// Invisible live re-derive of the files (feature 017 / R5): re-reads the chat's
+  /// attachments and swaps them in on the current [Initialized] state — WITHOUT the
+  /// loading flash or resetting the user's List/Grid choice (unlike a full re-init).
+  const factory ChatCardEvent.filesRefreshed() = FilesRefreshed;
+
   /// Debug-only: reproduce a scenario (empty / offline / fatal).
   const factory ChatCardEvent.setScenario(ChatCardScenario scenario) = SetScenario;
 }

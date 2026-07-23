@@ -96,5 +96,28 @@ void main() {
       expect(files, hasLength(2)); // grew live, no manual reload
       expect(files.first.name, 'live.png'); // newest-first
     });
+
+    test('the live re-derive preserves the Grid choice and never flashes the loading state (R5)', () async {
+      final emitted = <ChatCardState>[];
+      final bloc = ChatCardBloc()..add(const ChatCardEvent.initialize('chat_r5_grid'));
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 500)); // seed + derive
+
+      // User switches to Grid, then a new file lands — the reactive re-derive must NOT
+      // reset the view to List nor blink the spinner (regression: full re-init did both).
+      bloc.add(const ChatCardEvent.viewModeChanged(FilesViewMode.grid));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect((bloc.state as Initialized).viewMode, FilesViewMode.grid);
+
+      bloc.stream.listen(emitted.add); // capture only what the reactive refresh emits
+      const att = MessageAttachment(id: 'g5', type: FileType.image, name: 'shot.png', sizeBytes: 42);
+      await getIt<MessageRepository>().sendMessage(chatId: 'chat_r5_grid', attachment: att);
+      await Future<void>.delayed(const Duration(milliseconds: 500)); // watch tick + debounce + re-derive
+
+      final state = bloc.state as Initialized;
+      expect(state.viewMode, FilesViewMode.grid); // Grid survived the live refresh
+      expect(state.files.first.name, 'shot.png'); // and the new file is in, newest-first
+      expect(emitted.whereType<Initializing>(), isEmpty); // no loading flash during the refresh
+    });
   });
 }
