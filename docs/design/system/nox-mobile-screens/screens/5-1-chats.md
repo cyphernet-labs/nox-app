@@ -5,7 +5,7 @@
 **Purpose.** Browse and search all chats; entry point to threads and create.
 
 ## Anatomy
-App bar (wordmark) + persistent SearchBar + scrollable list of chat rows. Bottom bar + FAB.
+App bar (wordmark + trailing account avatar) + persistent SearchBar + scrollable list of chat rows. Bottom bar + FAB.
 
 ## States
 - `filled` — Filled
@@ -29,6 +29,7 @@ App bar (wordmark) + persistent SearchBar + scrollable list of chat rows. Bottom
 - Row → Chat thread (5.2).
 - + → Create chat (6.1).
 - Search → search view (same screen).
+- Account avatar (trailing, app bar) → Settings tab / Account section (the narrow-branch counterpart to the desktop rail avatar; N4).
 
 ## Copy (EN)
 - Search hint: Search
@@ -37,7 +38,7 @@ App bar (wordmark) + persistent SearchBar + scrollable list of chat rows. Bottom
 - Search empty: No chats found
 
 ## Design-system components
-- AppBar (wordmark)
+- AppBar (wordmark + account Avatar with ring)
 - SearchBar / SearchView
 - ChatListItem (unread Badge)
 - MaterialBanner
