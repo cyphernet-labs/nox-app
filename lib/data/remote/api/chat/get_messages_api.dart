@@ -1,12 +1,14 @@
 import 'dart:async';
 
 import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/entity/base/response_entity.dart';
+import 'package:nox_app/data/entity/chat/wire/messages_wire_entity.dart';
+import 'package:nox_app/data/mapper/chat/message_wire_mapper.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
 import 'package:nox_app/domain/model/chat/message_status.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/general/app_clock.dart';
-import 'package:nox_app/domain/repository/base/page_metadata.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 import 'package:nox_app/general/identity_mock_data.dart';
 
@@ -15,24 +17,44 @@ import 'package:nox_app/general/identity_mock_data.dart';
 /// ([IdentityMockData.fallbackOwnId]) and other authors with consecutive same-author
 /// groups, one attachment, spread across a few days. Own rows are reconciled to the
 /// signed-in identity by the repository at seed time. Paginates OLDER messages
-/// (page 1 = newest batch). The real impl wraps a Dio request (path `v1/chats/{id}/messages`,
-/// query `page`/`page_size`) — example/TBD until the NOX backend is chosen. `// TODO(backend):`.
+/// (page 1 = newest batch) and returns the reference `ResponseEntity<MessagesWireEntity>`
+/// envelope (feature 018/S4 — like `GetItemsApi`); the seed stays model-shaped and is
+/// mapped to wire at the boundary. The real impl wraps a Dio request (path
+/// `v1/chats/{id}/messages`, query `page`/`page_size`) — example/TBD until the NOX
+/// backend is chosen. `// TODO(backend):`.
 @lazySingleton
 class GetMessagesApi {
-  Future<(List<MessageModel>, PageMetadata)> execute({required GetMessagesConfig config}) async {
+  GetMessagesApi(this._wireMapper);
+
+  final MessageWireMapper _wireMapper;
+
+  Future<ResponseEntity<MessagesWireEntity>> execute({required GetMessagesConfig config}) async {
     await Future<void>.delayed(const Duration(milliseconds: 150));
 
     final all = _mockMessages(config.chatId); // chronological: oldest (system line) → newest
     final total = all.length;
     const pageSize = GetMessagesConfig.pageSize;
 
-    // page 1 = newest `pageSize`; each next page reaches further back in time.
+    // page 1 = newest `pageSize`; each next page reaches further back in time. The repo
+    // derives nextPage from page*pageSize < total — for this descending window that is
+    // exactly the old `start > 0`, so pagination is behavior-neutral.
     final end = total - (config.page - 1) * pageSize;
-    if (end <= 0) return (const <MessageModel>[], PageMetadata(total: total));
-    final start = (end - pageSize) < 0 ? 0 : end - pageSize;
-    final slice = all.sublist(start, end);
-    final hasMore = start > 0;
-    return (slice, PageMetadata(total: total, nextPage: hasMore ? config.page + 1 : null));
+    final List<MessageModel> slice;
+    if (end <= 0) {
+      slice = const <MessageModel>[];
+    } else {
+      final start = (end - pageSize) < 0 ? 0 : end - pageSize;
+      slice = all.sublist(start, end);
+    }
+    return ResponseEntity<MessagesWireEntity>(
+      success: true,
+      data: MessagesWireEntity(
+        items: _wireMapper.toListEntity(models: slice),
+        page: config.page,
+        pageSize: pageSize,
+        total: total,
+      ),
+    );
   }
 
   /// Deterministic history for a chat. Authors: `me` (own) + a few others; one

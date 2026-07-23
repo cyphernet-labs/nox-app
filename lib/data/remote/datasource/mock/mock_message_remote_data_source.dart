@@ -1,10 +1,11 @@
 import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/entity/base/response_entity.dart';
+import 'package:nox_app/data/entity/chat/wire/messages_wire_entity.dart';
 import 'package:nox_app/data/remote/api/chat/get_messages_api.dart';
 import 'package:nox_app/data/remote/api/chat/send_message_api.dart';
 import 'package:nox_app/data/remote/datasource/message_remote_data_source.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
-import 'package:nox_app/domain/repository/base/page_metadata.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 
 /// Mock [MessageRemoteDataSource] — aggregates the two thread generators
@@ -18,7 +19,7 @@ class MockMessageRemoteDataSource implements MessageRemoteDataSource {
   final SendMessageApi _sendMessageApi;
 
   @override
-  Future<(List<MessageModel>, PageMetadata)> getMessages({required GetMessagesConfig config}) => _getMessagesApi.execute(config: config);
+  Future<ResponseEntity<MessagesWireEntity>> getMessages({required GetMessagesConfig config}) => _getMessagesApi.execute(config: config);
 
   @override
   Future<MessageModel> sendMessage({

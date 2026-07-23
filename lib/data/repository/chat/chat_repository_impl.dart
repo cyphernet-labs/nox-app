@@ -4,6 +4,7 @@ import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/data/local/chat/chat_dao.dart';
 import 'package:nox_app/data/mapper/chat/chat_mapper.dart';
+import 'package:nox_app/data/mapper/chat/chat_wire_mapper.dart';
 import 'package:nox_app/data/remote/datasource/chat_remote_data_source.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
@@ -22,27 +23,33 @@ import 'package:uuid/uuid.dart';
 /// backend — when transport lands, only the data-source binding swaps; the DB contract stays.
 @LazySingleton(as: ChatRepository, env: [Environment.dev, Environment.prod, Environment.test])
 class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
-  ChatRepositoryImpl(this._chatDao, this._chatRemote, this._mapper, this._messageRepository);
+  ChatRepositoryImpl(this._chatDao, this._chatRemote, this._mapper, this._wireMapper, this._messageRepository);
 
   final ChatDao _chatDao;
   final ChatRemoteDataSource _chatRemote;
   final ChatMapper _mapper;
+  final ChatWireMapper _wireMapper;
   final MessageRepository _messageRepository;
 
   static const int _pageSize = GetChatsConfig.pageSize;
   static const Uuid _uuid = Uuid();
 
   /// One-time seed of the deterministic mock set into the local DB (empty store).
+  /// Unwraps the `ResponseEntity<ChatsWireEntity>` envelope per page (feature 018/S4),
+  /// mapping wire->model and paging via `page*pageSize < total` (equals the old hasMore).
+  /// A `data == null` / `success:false` envelope throws → the enclosing `execute()` in
+  /// getChats/watchChats maps it to `RepositoryResult.error` (mirrors `ItemRepositoryImpl`).
   Future<void> _seedIfEmpty() async {
     if (await _chatDao.count() > 0) return;
     final all = <ChatModel>[];
     var page = GetChatsConfig.defaultPage;
     while (true) {
-      final (chats, meta) = await _chatRemote.getChats(config: GetChatsConfig.nextPage(page: page));
-      all.addAll(chats);
-      final next = meta.nextPage;
-      if (next == null) break;
-      page = next;
+      final response = await _chatRemote.getChats(config: GetChatsConfig.nextPage(page: page));
+      final data = response.data;
+      if (data == null) throw StateError('chats envelope has no data (success=${response.success})');
+      all.addAll(_wireMapper.toListModel(entities: data.items));
+      if ((data.page * data.pageSize) >= data.total) break; // no next page
+      page = data.page + 1;
     }
     await _chatDao.saveData(all.map((c) => _mapper.toEntity(model: c)).toList());
   }
