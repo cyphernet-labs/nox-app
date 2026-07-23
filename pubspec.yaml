@@ -60,6 +60,7 @@ dependencies:
   mobile_scanner: ^7.2.0        # camera QR scan; iOS/Android/macOS only, NO Windows/Linux (capability-gated, build-safe)
   permission_handler: ^12.0.3   # camera permission status/request/openAppSettings; iOS/Android only (macOS unsupported)
   qr_flutter: ^4.1.0            # pure-Dart QR render (Show QR); all 5 platforms, no native plugin
+  file_selector: ^1.1.0
 
   # --- Feature-gated (mobile-only / activated with the corresponding blueprint doc) ---
   # firebase_core / firebase_messaging — push (mobile-only; desktop = disabled no-op)
@@ -84,6 +85,8 @@ dev_dependencies:
   # hand-crafted set in docs/design/system/nox-app-icons/; see contracts/flutter-launcher-icons.md).
   # Kept as the reproducible regen path for the final vector logo (then switch bg to brand #0C2424).
   flutter_launcher_icons: ^0.14.4
+  file_selector_platform_interface: ^2.7.0
+  plugin_platform_interface: ^2.1.8
 
 flutter:
   uses-material-design: true

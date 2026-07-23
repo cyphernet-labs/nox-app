@@ -23,6 +23,10 @@ abstract class MessageRepository {
   /// non-empty, so the generic mock history is NOT seeded on first open (D5).
   Future<void> seedCreatedChat({required String chatId});
 
+  /// The chat's shared files (5.4) — every attachment across its persisted messages,
+  /// newest-first. Derived from the local message cache, not a remote fetch (feature 017).
+  Future<List<MessageAttachment>> chatFiles({required String chatId});
+
   /// DEBUG ONLY (`kDebugMode`, Feature 014): persist an inbound message (author != me)
   /// into a chat and bump its unread — the deterministic stand-in for a server push.
   /// Callers MUST guard with `kDebugMode`.

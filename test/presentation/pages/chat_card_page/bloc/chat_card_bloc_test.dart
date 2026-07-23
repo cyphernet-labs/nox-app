@@ -1,7 +1,10 @@
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:injectable/injectable.dart';
+import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/model/chat/message_attachment.dart';
+import 'package:nox_app/domain/model/file/file_type.dart';
+import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/presentation/pages/chat_card_page/bloc/chat_card_bloc.dart';
 
 void main() {
@@ -77,5 +80,44 @@ void main() {
       wait: const Duration(milliseconds: 300),
       verify: (bloc) => expect(bloc.state, isA<Error>()),
     );
+
+    test('a newly sent attachment appears in the files view without a reload (R5)', () async {
+      // A dedicated chat id (seeded fresh with the generic thread → one attachment).
+      final bloc = ChatCardBloc()..add(const ChatCardEvent.initialize('chat_r5'));
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 500)); // seed + derive
+      expect((bloc.state as Initialized).files, hasLength(1)); // seeded design-spec.pdf
+
+      const att = MessageAttachment(id: 'r5', type: FileType.image, name: 'live.png', sizeBytes: 50);
+      await getIt<MessageRepository>().sendMessage(chatId: 'chat_r5', attachment: att);
+      await Future<void>.delayed(const Duration(milliseconds: 500)); // watch tick + debounce + re-derive
+
+      final files = (bloc.state as Initialized).files;
+      expect(files, hasLength(2)); // grew live, no manual reload
+      expect(files.first.name, 'live.png'); // newest-first
+    });
+
+    test('the live re-derive preserves the Grid choice and never flashes the loading state (R5)', () async {
+      final emitted = <ChatCardState>[];
+      final bloc = ChatCardBloc()..add(const ChatCardEvent.initialize('chat_r5_grid'));
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 500)); // seed + derive
+
+      // User switches to Grid, then a new file lands — the reactive re-derive must NOT
+      // reset the view to List nor blink the spinner (regression: full re-init did both).
+      bloc.add(const ChatCardEvent.viewModeChanged(FilesViewMode.grid));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect((bloc.state as Initialized).viewMode, FilesViewMode.grid);
+
+      bloc.stream.listen(emitted.add); // capture only what the reactive refresh emits
+      const att = MessageAttachment(id: 'g5', type: FileType.image, name: 'shot.png', sizeBytes: 42);
+      await getIt<MessageRepository>().sendMessage(chatId: 'chat_r5_grid', attachment: att);
+      await Future<void>.delayed(const Duration(milliseconds: 500)); // watch tick + debounce + re-derive
+
+      final state = bloc.state as Initialized;
+      expect(state.viewMode, FilesViewMode.grid); // Grid survived the live refresh
+      expect(state.files.first.name, 'shot.png'); // and the new file is in, newest-first
+      expect(emitted.whereType<Initializing>(), isEmpty); // no loading flash during the refresh
+    });
   });
 }

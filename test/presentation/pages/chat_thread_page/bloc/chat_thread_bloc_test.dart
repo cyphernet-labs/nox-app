@@ -6,10 +6,26 @@ import 'package:nox_app/data/local/chat/chat_dao.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
 import 'package:nox_app/domain/model/chat/message_status.dart';
+import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
+import 'package:nox_app/domain/service/file_picker_service.dart';
 import 'package:nox_app/presentation/pages/chat_thread_page/bloc/chat_thread_bloc.dart';
+
+/// A fake picker: returns a fixed [PickedFile] (or null on "cancel"). Registered into
+/// the test DI so `attachmentPicked` runs without an OS dialog (feature 017).
+class _FakePicker implements FilePickerService {
+  _FakePicker(this._result);
+  final PickedFile? _result;
+  @override
+  Future<PickedFile?> pickFile() async => _result;
+}
+
+void _usePicker(PickedFile? result) {
+  getIt.allowReassignment = true;
+  getIt.registerSingleton<FilePickerService>(_FakePicker(result));
+}
 
 void main() {
   setUpAll(() async {
@@ -71,18 +87,37 @@ void main() {
     );
 
     blocTest<ChatThreadBloc, ChatThreadState>(
-      'attachmentPicked sets a draft; attachmentRemoved clears it',
+      'attachmentPicked sets a draft from the real picked file (name/size/type); attachmentRemoved clears it',
+      setUp: () => _usePicker((name: 'report.pdf', sizeBytes: 2048, extension: 'pdf')),
       build: ChatThreadBloc.new,
       act: (bloc) async {
         bloc.add(const ChatThreadEvent.initialize('chat_0'));
         await Future<void>.delayed(const Duration(milliseconds: 400));
         bloc.add(const ChatThreadEvent.attachmentPicked());
-        await Future<void>.delayed(const Duration(milliseconds: 20));
-        expect((bloc.state as Initialized).draftAttachment, isNotNull);
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        final draft = (bloc.state as Initialized).draftAttachment;
+        expect(draft, isNotNull);
+        expect(draft!.name, 'report.pdf'); // real name, not the photo.jpg stub
+        expect(draft.sizeBytes, 2048);
+        expect(draft.type, FileType.pdf); // derived from the extension
         bloc.add(const ChatThreadEvent.attachmentRemoved());
       },
       wait: const Duration(milliseconds: 200),
       verify: (bloc) => expect((bloc.state as Initialized).draftAttachment, isNull),
+    );
+
+    blocTest<ChatThreadBloc, ChatThreadState>(
+      'attachmentPicked leaves the composer unchanged when the picker is cancelled',
+      setUp: () => _usePicker(null), // cancel / unsupported
+      build: ChatThreadBloc.new,
+      act: (bloc) async {
+        bloc.add(const ChatThreadEvent.initialize('chat_0'));
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+        bloc.add(const ChatThreadEvent.attachmentPicked());
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      },
+      wait: const Duration(milliseconds: 100),
+      verify: (bloc) => expect((bloc.state as Initialized).draftAttachment, isNull), // unchanged
     );
 
     blocTest<ChatThreadBloc, ChatThreadState>(

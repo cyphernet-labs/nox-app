@@ -43,7 +43,7 @@
 | R2 | `sendMessage` обновляет строку чата (`lastMessagePreview`/`lastMessageAt`/порядок) — часть среза R1 (§4) | 🟠 | S | **SpecKit** | ☑ |
 | R3 | Тред → `watchMessages(chatId)` реактивно (живой приём; своя отправка уже оптимистична) (§4) | 🟡 | M | **SpecKit** | ☑ |
 | R4 | Аватар в шелле + Settings живо обновляются после переименования (broadcast label) — связано с D3 (§4) | 🟡 | S/M | **SpecKit** | ☑ |
-| R5 | Chat card (5.4) — файлы реактивно/из персистентных вложений — связано с E3 (§4) | 🔵 | M | точечно | ☐ |
+| R5 | Chat card (5.4) — файлы реактивно/из персистентных вложений — связано с E3 (§4) | 🔵 | M | **SpecKit (017)** | ☑ |
 
 ### Фаза D — целостность данных и бизнес-правила
 | ID | Задача | Приор. | Eff. | Режим | Статус |
@@ -66,7 +66,7 @@
 ### Фаза F — мелкие флоу и заглушки
 | ID | Задача | Приор. | Eff. | Режим | Статус |
 |----|--------|:---:|:--:|:---:|:---:|
-| F1 | Реальный file picker для вложений (сейчас `_onAttachmentPicked` — хардкод `photo.jpg`) | 🟡 | S/M | точечно | ☐ |
+| F1 | Реальный file picker для вложений (`_onAttachmentPicked` — был хардкод `photo.jpg`, теперь `file_selector` → реальные name/size/type) | 🟡 | S/M | **SpecKit (017)** | ☑ |
 | F2 | File-view (5.3) Save — ~~мок-сохранение в локальную папку (сейчас no-op)~~ **проверено: уже мок-подтверждение** (`_save` → snackbar `savedToDownloads`, не no-op); реальный byte-I/O = Phase 2 (в UI-фазе у мок-вложения нет байтов — писать stub-файл в реальный Downloads = анти-фича) | 🔵 | S | точечно | ⏸ |
 | F3 | Достижимость error/empty/offline в реальном флоу — **заблокировано working-mode'ом** (бэкенд не интегрирован → моки не падают, реальный error-путь недостижим; станет актуально с реальным транспортом) — связано с S3 | 🟡 | M | точечно | ⏸ |
 
@@ -75,7 +75,7 @@
 |----|--------|:---:|:--:|:---:|:---:|
 | E1 | Golden 5.2 (chat thread) — page-mobile + page-desktop | 🟡 | M | точечно | ☑ |
 | E2 | Golden 4.1 (собранный tab-bar shell) | 🔵 | M | точечно | ☑ |
-| E3 | `getChatFiles` выводить из персистентных вложений `MessageDao` (закрыть T009) — **отложено: преждевременно** (см. журнал; регрессирует демо 5.4 при редких мок-вложениях; делать после F1) | 🔵 | M | точечно | ⏸ |
+| E3 | `getChatFiles` выводить из персистентных вложений `MessageDao` (newest-first) — сделано вместе с F1/R5 (реальный picker снял риск демо-регресса); `ChatFilesRemoteDataSource`-seam ретайрен | 🔵 | M | **SpecKit (017)** | ☑ |
 | E4 | Сверка `roadmap-phase2.md` (012/013/l10n/clock сделаны) + удалить stale «no l10n»-комментарии (`LanguagePage`, CLAUDE.md) | 🟡 | S | точечно | ☑ |
 
 **Рекомендуемый порядок:** N1→N2 (ваши примеры — «ведёт непонятно куда» + не рефрешится) → R1/R2 → D1 → D3/R4 → S1/S2/S3 → остальное. Крупные срезы (R1/R2/D2, D3/R4, S1/S2, S4, S5) — через Spec Kit.
@@ -123,7 +123,7 @@
 ### 5.1 Инвентарь
 | Интерфейс | Impl | Хранилище | DAO/entity/mapper | Мок-источник | Реактивен | Точка интеграции (что заменит бэкенд) | Fabricated vs persisted |
 |---|---|---|---|---|:--:|---|---|
-| `ChatRepository` | `ChatRepositoryImpl` | cache-first Sembast | `ChatDao`/`ChatEntity`/`ChatMapper` | `GetChatsApi`, `GetChatFilesApi` | да (`watchChats`) | `_seedIfEmpty→execute`; `getChatFiles→execute` | список/файлы фабрикуются → **персистятся**; `createChat` только локально |
+| `ChatRepository` | `ChatRepositoryImpl` | cache-first Sembast | `ChatDao`/`ChatEntity`/`ChatMapper` | `ChatRemoteDataSource` (list); файлы — не мок-источник, а деривация из `MessageDao` (017) | да (`watchChats`) | `_seedIfEmpty→execute`; `getChatFiles→execute`(делегирует `MessageRepository.chatFiles`) | список фабрикуется → **персистится**; файлы = реально отправленные вложения (`ChatFilesRemoteDataSource` ретайрен, 017); `createChat` только локально |
 | `MessageRepository` | `MessageRepositoryImpl` | cache-first Sembast | `MessageDao`/`MessageEntity`/`MessageMapper` | `GetMessagesApi`, `SendMessageApi` | DAO умеет `watch`, репо **не отдаёт** | `_seedChatIfEmpty→execute`; `sendMessage→execute`+upsert | история фабрикуется→персистится; send → `srv_<uuid>` sent |
 | `ItemRepository` | `ItemRepositoryImpl` | **network-only мок** (без DAO) | `ItemMapper` (`ItemDao`/`ItemEntity` не используются репо) | `GetItemsApi` (единственный через `ResponseEntity<ItemsEntity>`) | нет | `getItems→execute` — **референс DTO↔envelope** | всё фабрикуется, ничего не персистится |
 | `SettingsRepository` | impl | local-only prefs | — | — | нет | N/A (локальные преференсы) | персистится |
@@ -137,13 +137,13 @@
 `AppDatabase` — per-env Sembast-фабрика под DAO (не репо). `ApiClient` — голый `Dio` (таймауты, без baseUrl/interceptor), **никуда не инъектится**.
 
 ### 5.2 Seam — текущая реальность
-- ~~Моки инъектятся **по конкретному типу** (`GetChatsApi` и т.д.), без интерфейса~~ → **закрыто фичей 016 (S1+S2):** репо зависят от интерфейсов `*RemoteDataSource` (`ChatRemoteDataSource`/`ChatFilesRemoteDataSource`/`MessageRemoteDataSource`/`ItemRemoteDataSource`, `lib/data/remote/datasource/`); моки (`Mock*RemoteDataSource`) делегируют неизменным `*Api`-генераторам и биндятся `@LazySingleton(as: Interface, env:[dev,prod,test])`. «Своп на реальный» = зарегистрировать real-impl на `[prod]` + сузить мок до `[dev,test]` + `make generate` (≤3 шага, репо/DAO/мапперы/UI не трогаются). См. `specs/016-remote-datasource-seam/contracts/di-binding.md`.
+- ~~Моки инъектятся **по конкретному типу** (`GetChatsApi` и т.д.), без интерфейса~~ → **закрыто фичей 016 (S1+S2):** репо зависят от интерфейсов `*RemoteDataSource` (`ChatRemoteDataSource`/`MessageRemoteDataSource`/`ItemRemoteDataSource`, `lib/data/remote/datasource/`); моки (`Mock*RemoteDataSource`) делегируют неизменным `*Api`-генераторам и биндятся `@LazySingleton(as: Interface, env:[dev,prod,test])`. «Своп на реальный» = зарегистрировать real-impl на `[prod]` + сузить мок до `[dev,test]` + `make generate` (≤3 шага, репо/DAO/мапперы/UI не трогаются). См. `specs/016-remote-datasource-seam/contracts/di-binding.md`. _(Примечание: `ChatFilesRemoteDataSource` из 016 ретайрен фичей 017 — файлы чата теперь локальная деривация из `MessageDao`, а не сетевой источник.)_
 - Через `ResponseEntity`+`EntityConverter` идёт **только Item**; chat/message возвращают **доменные модели напрямую** (entity-слой у них только под Sembast, не wire-shaped). `EntityConverter` — **пустой реестр**.
 - Ошибки: `BaseRepositoryHelper.execute` — только `DioException→internal` и `catch→unknown`; члены `authentication/connection/unauthenticated/notFound` объявлены, но **не производятся** (нет маппинга HTTP-кодов).
 - Auth/apiUrl seam **фактически отсутствует**: `ApiClient` без baseUrl/interceptor и не инъектится; в `AppConfig` нет `apiUrl`; нет `getUserAuthIdToken`; нет `401→logout(forced)`.
 
 ### 5.3 Систематизация (seam only — реальный бэкенд не строим)
-- **P1 (→S1, M):** интерфейсы `ChatRemoteDataSource`/`MessageRemoteDataSource`/`ItemRemoteDataSource`/`ChatFilesRemoteDataSource`; моки их реализуют; репо зависят от интерфейса.
+- **P1 (→S1, M):** интерфейсы `ChatRemoteDataSource`/`MessageRemoteDataSource`/`ItemRemoteDataSource`; моки их реализуют; репо зависят от интерфейса. (016 также ввёл `ChatFilesRemoteDataSource`, но 017 его ретайрил — файлы деривируются из `MessageDao`.)
 - **P5 (→S2, S/M):** ре-регистрация data-source по `Environment` (mock `[dev,test]` / real `[prod]`) → mock↔real = флип конфига; репо/DAO/маппер не меняются.
 - **P3 (→S3, S):** в `BaseRepositoryHelper` маппинг `statusCode` → `RepositoryException` (`401→unauthenticated`, `403→authentication`, `404→notFound`, connection→`connection`).
 - **P2 (→S4, L):** wire-DTO для chat/message + `ResponseEntity`-путь как у Item; наполнить `EntityConverter`. Самый крупный сдвиг (сейчас возвращают доменные модели).

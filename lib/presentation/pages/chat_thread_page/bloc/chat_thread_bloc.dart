@@ -15,6 +15,7 @@ import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/service/file_picker_service.dart';
 import 'package:nox_app/general/identity/identity_resolver.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
 import 'package:nox_app/presentation/pagination/paging_state_ext.dart';
@@ -43,6 +44,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   final MessageRepository _messageRepository = getIt<MessageRepository>();
   final ChatRepository _chatRepository = getIt<ChatRepository>();
   final SessionRepository _sessionRepository = getIt<SessionRepository>();
+  final FilePickerService _filePickerService = getIt<FilePickerService>();
 
   late String _chatId;
   // The signed-in own-identity resolved from the session at thread init (feature 015).
@@ -265,13 +267,20 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     emit(live.copyWith(items: r.updatedList, pagingState: r.pagingState, nextPage: r.nextPage ?? live.nextPage));
   }
 
-  void _onAttachmentPicked(AttachmentPicked event, Emitter<ChatThreadState> emit) {
-    final current = state;
-    if (current is! Initialized) return;
-    // TODO(backend): real file picker (file_picker) — Phase 2. UI-phase stub.
+  Future<void> _onAttachmentPicked(AttachmentPicked event, Emitter<ChatThreadState> emit) async {
+    if (state is! Initialized) return;
+    // Real native file picker (feature 017) — metadata only, no bytes read.
+    final picked = await _filePickerService.pickFile();
+    final live = state;
+    if (live is! Initialized || picked == null) return; // cancelled / unsupported → composer unchanged
     emit(
-      current.copyWith(
-        draftAttachment: const MessageAttachment(id: 'draft', type: FileType.image, name: 'photo.jpg', sizeBytes: 1843200),
+      live.copyWith(
+        draftAttachment: MessageAttachment(
+          id: 'att_${_localCounter++}',
+          name: picked.name,
+          sizeBytes: picked.sizeBytes,
+          type: FileType.fromExtension(picked.extension),
+        ),
       ),
     );
   }

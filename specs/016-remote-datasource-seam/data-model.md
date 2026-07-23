@@ -1,5 +1,7 @@
 # Data Model: Remote-Data-Source Seam
 
+> **Superseded (Feature 017):** `ChatFilesRemoteDataSource` / `GetChatFilesApi` were **retired**. Chat files are not a network resource — they are a local derivation from the persisted `MessageDao` attachments (`MessageRepository.chatFiles(chatId)`, newest-first), so `ChatRepository.getChatFiles` delegates there. The rows below are the historical 016 catalog; ignore the `ChatFilesRemoteDataSource` entries.
+
 No persisted data, no domain entities. The "model" here is the **interface catalog** and the **DI binding table**. Method signatures mirror the current `*Api.execute(...)` exactly (byte-for-byte behaviour).
 
 ## Interface catalog (`lib/data/remote/datasource/`)
