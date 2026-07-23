@@ -29,7 +29,9 @@ class AppConfigRepositoryImpl implements AppConfigRepository {
 
   @override
   Future<String?> getUserAuthIdToken() async {
-    final token = await _secureStorage.read(key: _kAuthIdToken);
+    // Trim so a blank/whitespace-only stored value reads as absent (null) rather than
+    // producing a malformed `Bearer   ` header — matches the sibling signIn() trim.
+    final token = (await _secureStorage.read(key: _kAuthIdToken))?.trim();
     return (token == null || token.isEmpty) ? null : token;
   }
 

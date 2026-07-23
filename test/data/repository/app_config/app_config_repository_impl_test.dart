@@ -50,6 +50,11 @@ void main() {
       expect(await build().getUserAuthIdToken(), isNull);
     });
 
+    test('a whitespace-only stored token is treated as absent (null)', () async {
+      FlutterSecureStorage.setMockInitialValues({'auth_id_token': '   '});
+      expect(await build().getUserAuthIdToken(), isNull);
+    });
+
     test('isTestEnvironment reflects the injected env-keyed flag', () {
       expect(build(isTest: true).isTestEnvironment, isTrue);
       expect(build(isTest: false).isTestEnvironment, isFalse);
