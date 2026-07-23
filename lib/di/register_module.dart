@@ -30,4 +30,16 @@ abstract class RegisterModule {
 
   @preResolve
   Future<SharedPreferences> get sharedPreferences => SharedPreferences.getInstance();
+
+  // Env-keyed test-environment flag (feature S5) — true only under Environment.test.
+  // Injected into AppConfigRepositoryImpl.isTestEnvironment (the future hook for
+  // bypassing real auth in tests). The two getters cover disjoint environments.
+  @test
+  @Named('isTestEnvironment')
+  bool get isTestEnvironmentUnderTest => true;
+
+  @dev
+  @prod
+  @Named('isTestEnvironment')
+  bool get isTestEnvironmentReal => false;
 }

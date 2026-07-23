@@ -11,6 +11,7 @@ abstract class AuthRepository {
   Future<RepositoryResult<bool>> completeOnboarding({String? label});
 
   /// Single logout path. Only [forced] sets the one-shot `sessionExpired` flag.
-  /// `forceLogout` == `logout(forced: true)` (programmatic/dev; 401 trigger deferred).
+  /// `logout(forced: true)` is triggered programmatically/dev AND by the transport
+  /// seam's `AuthInterceptor` on a 401 (feature S5) — both reuse this one path.
   Future<RepositoryResult<bool>> logout({bool forced = false});
 }
