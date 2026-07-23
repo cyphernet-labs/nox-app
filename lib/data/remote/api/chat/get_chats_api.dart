@@ -1,19 +1,27 @@
 import 'dart:async';
 
 import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/entity/base/response_entity.dart';
+import 'package:nox_app/data/entity/chat/wire/chats_wire_entity.dart';
+import 'package:nox_app/data/mapper/chat/chat_wire_mapper.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/general/app_clock.dart';
-import 'package:nox_app/domain/repository/base/page_metadata.dart';
 import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 
 /// Skeleton MOCK source for the chats list (no real backend — UI phase). Synthesizes
 /// a deterministic set of chats (varied recency + unread counts incl. a 99+ cap and
-/// several with no badge), filters by `config.search` (name), and paginates. The real
-/// impl wraps a Dio request (path `v1/chats`, query `page`/`page_size`/`search`) —
-/// example/TBD until the NOX backend is chosen. `// TODO(backend):`.
+/// several with no badge), filters by `config.search` (name), paginates, and returns
+/// the reference `ResponseEntity<ChatsWireEntity>` envelope (feature 018/S4 — like
+/// `GetItemsApi`). The seed stays model-shaped; it is mapped to wire at the boundary.
+/// The real impl wraps a Dio request (path `v1/chats`, query `page`/`page_size`/`search`)
+/// — example/TBD until the NOX backend is chosen. `// TODO(backend):`.
 @lazySingleton
 class GetChatsApi {
-  Future<(List<ChatModel>, PageMetadata)> execute({required GetChatsConfig config}) async {
+  GetChatsApi(this._wireMapper);
+
+  final ChatWireMapper _wireMapper;
+
+  Future<ResponseEntity<ChatsWireEntity>> execute({required GetChatsConfig config}) async {
     await Future<void>.delayed(const Duration(milliseconds: 150));
 
     final all = _mockChats();
@@ -23,8 +31,17 @@ class GetChatsApi {
     const pageSize = GetChatsConfig.pageSize;
     final start = (config.page - 1) * pageSize;
     final slice = filtered.skip(start).take(pageSize).toList();
-    final hasMore = start + pageSize < filtered.length;
-    return (slice, PageMetadata(total: filtered.length, nextPage: hasMore ? config.page + 1 : null));
+    // Envelope: the repo derives PageMetadata from page/pageSize/total (page*pageSize < total),
+    // which equals the old hasMore (start + pageSize < total). Behavior-neutral.
+    return ResponseEntity<ChatsWireEntity>(
+      success: true,
+      data: ChatsWireEntity(
+        items: _wireMapper.toListEntity(models: slice),
+        page: config.page,
+        pageSize: pageSize,
+        total: filtered.length,
+      ),
+    );
   }
 
   /// 28 deterministic chats, newest first. Timestamps are relative to "now" so the

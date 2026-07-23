@@ -164,7 +164,7 @@ abstract class ResponseEntity<T> with _$ResponseEntity<T> {
 
 Это единственный кусок **ручной бухгалтерии** в архитектуре. `EntityConverter<E>` — `JsonConverter`, диспетчеризующий генерик `T` из `ResponseEntity<T>` в нужный entity. **Каждый entity, доступный через `ResponseEntity<T>`, ОБЯЗАН быть зарегистрирован в ОБОИХ цепочках — `fromJson` и `toJson`** — иначе бросается `ArgumentError('No converter found')`.
 
-В скелете Feature-001 реестр **пуст**: entity-ветки регистрируются вместе со своей фичей (US2 — `ItemEntity` / `ItemsEntity`). Ниже показана заполненная форма реестра — канон сопровождения; в коде сейчас на месте только `bool`-ветка и места под per-feature регистрацию.
+В скелете Feature-001 реестр был **пуст**; **наполнен фичей 018/S4**: зарегистрированы все wire-сущности, достижимые через `ResponseEntity<T>` — `ItemEntity`/`ItemsEntity` (референс) + `ChatWireEntity`/`ChatsWireEntity` + `MessageWireEntity`/`MessagesWireEntity` (`lib/data/entity/chat/wire/`), в обеих цепочках. Неизвестный тип по-прежнему бросает `ArgumentError`. С S4 chat-list и message-list на сетевой границе идут через конверт единообразно с Item (генератор мапит model→wire и возвращает `ResponseEntity<wire>`; репо разворачивает wire→model). Wire-форма — только сетевая граница; локальные Sembast-сущности не тронуты. Реальная wire-форма заменит example/TBD при выборе бэкенда. Ниже — заполненная форма реестра (канон сопровождения).
 
 `lib/data/entity/base/entity_converter.dart`:
 

@@ -5,8 +5,11 @@ import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/data/local/chat/chat_dao.dart';
+import 'package:nox_app/data/entity/base/response_entity.dart';
+import 'package:nox_app/data/entity/chat/wire/messages_wire_entity.dart';
 import 'package:nox_app/data/local/chat/message_dao.dart';
 import 'package:nox_app/data/mapper/chat/message_mapper.dart';
+import 'package:nox_app/data/mapper/chat/message_wire_mapper.dart';
 import 'package:nox_app/data/remote/datasource/message_remote_data_source.dart';
 import 'package:nox_app/data/repository/chat/message_repository_impl.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
@@ -176,6 +179,7 @@ void main() {
         getIt<MessageDao>(),
         failingRemote,
         getIt<MessageMapper>(),
+        getIt<MessageWireMapper>(),
         getIt<ChatDao>(),
         getIt<SessionRepository>(),
       );
@@ -210,6 +214,26 @@ void main() {
       final inbound = messages.firstWhere((m) => m.text == 'Simulated incoming message');
       expect(inbound.authorId, isNot('me')); // an inbound, not an own message
     });
+  });
+
+  test('a failed envelope (success:false / null data) surfaces as RepositoryResult.error (S4)', () async {
+    // A session must be present for _seedChatIfEmpty to reach the remote.
+    await getIt<SessionRepository>().saveIdentifier(identifier: 'sess-err', onboardingComplete: true, label: 'Err');
+    final errorRemote = MockMessageRemoteDataSource();
+    when(
+      errorRemote.getMessages(config: anyNamed('config')),
+    ).thenAnswer((_) async => const ResponseEntity<MessagesWireEntity>(success: false));
+    final errorRepo = MessageRepositoryImpl(
+      getIt<MessageDao>(),
+      errorRemote,
+      getIt<MessageMapper>(),
+      getIt<MessageWireMapper>(),
+      getIt<ChatDao>(),
+      getIt<SessionRepository>(),
+    );
+
+    final result = await errorRepo.getMessages(config: GetMessagesConfig.firstPage(chatId: 'chat_0'));
+    expect(result.hasData, isFalse); // null-data envelope → _seedChatIfEmpty throws → error
   });
 
   group('signed-in identity (feature 015)', () {

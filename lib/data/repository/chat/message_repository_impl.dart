@@ -5,6 +5,7 @@ import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/data/local/chat/chat_dao.dart';
 import 'package:nox_app/data/local/chat/message_dao.dart';
 import 'package:nox_app/data/mapper/chat/message_mapper.dart';
+import 'package:nox_app/data/mapper/chat/message_wire_mapper.dart';
 import 'package:nox_app/data/remote/datasource/message_remote_data_source.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
@@ -27,11 +28,12 @@ import 'package:uuid/uuid.dart';
 /// data-source binding swaps; the DB contract stays.
 @LazySingleton(as: MessageRepository, env: [Environment.dev, Environment.prod, Environment.test])
 class MessageRepositoryImpl with BaseRepositoryHelper implements MessageRepository {
-  MessageRepositoryImpl(this._messageDao, this._messageRemote, this._mapper, this._chatDao, this._sessionRepository);
+  MessageRepositoryImpl(this._messageDao, this._messageRemote, this._mapper, this._wireMapper, this._chatDao, this._sessionRepository);
 
   final MessageDao _messageDao;
   final MessageRemoteDataSource _messageRemote;
   final MessageMapper _mapper;
+  final MessageWireMapper _wireMapper;
   final ChatDao _chatDao;
   final SessionRepository _sessionRepository;
 
@@ -58,13 +60,17 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
     final all = <MessageModel>[];
     var page = GetMessagesConfig.defaultPage;
     while (true) {
-      final (messages, meta) = await _messageRemote.getMessages(
+      // Unwrap the ResponseEntity<MessagesWireEntity> envelope (feature 018/S4), mapping
+      // wire->model. A data==null / success:false envelope throws → the enclosing execute()
+      // maps it to error. Pagination via page*pageSize < total (equals the old nextPage).
+      final response = await _messageRemote.getMessages(
         config: GetMessagesConfig.nextPage(chatId: chatId, page: page),
       );
-      all.addAll(messages);
-      final next = meta.nextPage;
-      if (next == null) break;
-      page = next;
+      final data = response.data;
+      if (data == null) throw StateError('messages envelope has no data (success=${response.success})');
+      all.addAll(_wireMapper.toListModel(entities: data.items));
+      if ((data.page * data.pageSize) >= data.total) break; // no next page
+      page = data.page + 1;
     }
     final reconciled = all.map((m) {
       if (m.authorId != IdentityMockData.fallbackOwnId) return m;

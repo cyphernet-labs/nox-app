@@ -2,8 +2,14 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
+import 'package:nox_app/data/entity/base/response_entity.dart';
+import 'package:nox_app/data/entity/chat/wire/chats_wire_entity.dart';
 import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/data/local/chat/chat_dao.dart';
+import 'package:nox_app/data/mapper/chat/chat_mapper.dart';
+import 'package:nox_app/data/mapper/chat/chat_wire_mapper.dart';
+import 'package:nox_app/data/remote/datasource/chat_remote_data_source.dart';
+import 'package:nox_app/data/repository/chat/chat_repository_impl.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
@@ -13,6 +19,14 @@ import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+/// A [ChatRemoteDataSource] returning a failed envelope (success:false, data:null) —
+/// the shape a real backend error would take (feature 018/S4).
+class _ErrorChatRemoteDataSource implements ChatRemoteDataSource {
+  @override
+  Future<ResponseEntity<ChatsWireEntity>> getChats({required GetChatsConfig config}) async =>
+      const ResponseEntity<ChatsWireEntity>(success: false);
+}
 
 void main() {
   late ChatRepository repository;
@@ -35,6 +49,22 @@ void main() {
       expect(chats.length, lessThanOrEqualTo(GetChatsConfig.pageSize));
       expect(metadata.total, greaterThan(GetChatsConfig.pageSize)); // full mock set seeded
       expect(metadata.nextPage, isNotNull);
+    });
+
+    test('a failed envelope (success:false / null data) surfaces as RepositoryResult.error (S4)', () async {
+      // Construct the repo directly against the error source (mirrors the message repo's
+      // failingRepo pattern) — the empty DB makes getChats seed from the remote, whose
+      // null-data envelope makes _seedIfEmpty throw → execute() maps it to error.
+      final errorRepo = ChatRepositoryImpl(
+        getIt<ChatDao>(),
+        _ErrorChatRemoteDataSource(),
+        getIt<ChatMapper>(),
+        getIt<ChatWireMapper>(),
+        getIt<MessageRepository>(),
+      );
+
+      final result = await errorRepo.getChats(config: GetChatsConfig.firstPage());
+      expect(result.hasData, isFalse);
     });
 
     test('search filters the persisted chats by name', () async {
