@@ -67,6 +67,31 @@ void main() {
       expect(find.text(l10nEn.chatsSearchEmpty), findsOneWidget);
       expect(find.byType(AppChatItemWidget), findsNothing);
     });
+
+    testWidgets('mobile account affordance (N4): the app-bar avatar appears and taps through to onAccount', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(420, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      var accountTaps = 0;
+      await pumpApp(tester, ChatsListPage(inShell: true, accountLabel: 'Aria Vale', onAccount: () => accountTaps++));
+      await tester.pumpAndSettle();
+
+      // The avatar renders in the app bar (tooltip = the Account section title).
+      final avatar = find.byTooltip(l10nEn.settingsAccountTitle);
+      expect(avatar, findsOneWidget);
+
+      await tester.tap(avatar);
+      await tester.pump();
+      expect(accountTaps, 1); // hands off to the shell (switch to Settings + jump to Account)
+    });
+
+    testWidgets('mobile account affordance is absent when the shell supplies no account identity', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(420, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, const ChatsListPage(inShell: true)); // no accountLabel/onAccount
+      await tester.pumpAndSettle();
+
+      expect(find.byTooltip(l10nEn.settingsAccountTitle), findsNothing);
+    });
   });
 
   group('ChatsListPage (desktop)', () {

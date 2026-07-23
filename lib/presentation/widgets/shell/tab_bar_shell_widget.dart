@@ -130,7 +130,18 @@ class _TabBarShellState extends State<TabBarShell> {
     // Rebuilt each frame, but State (blocs / scroll) is preserved by widget type +
     // position; the scrollToTop notifier is a stable shell-owned field.
     final bodies = <Widget>[
-      ChatsListPage(inShell: true, demo: widget.demo, scrollToTop: _chatsScrollToTop, openCreated: _chatsOpenCreated, forceWide: useRail),
+      ChatsListPage(
+        inShell: true,
+        demo: widget.demo,
+        scrollToTop: _chatsScrollToTop,
+        openCreated: _chatsOpenCreated,
+        forceWide: useRail,
+        // Mobile-only account affordance (N4) — the app-bar avatar hands off to the
+        // same Settings/Account jump as the desktop rail avatar. The page renders it
+        // only on the narrow branch, so the desktop rail stays the wide entry point.
+        accountLabel: _accountLabel,
+        onAccount: _onAccount,
+      ),
       SettingsRootPage(inShell: true, demo: widget.demo, forceWide: useRail, jumpToAccount: _settingsJumpToAccount),
     ];
     return Stack(

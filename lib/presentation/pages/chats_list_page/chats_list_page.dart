@@ -5,6 +5,7 @@ import 'package:infinite_scroll_pagination/infinite_scroll_pagination.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
+import 'package:nox_app/design/theme/nox_brand.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
@@ -21,6 +22,7 @@ import 'package:nox_app/presentation/pages/file_view_page/file_view_page.dart';
 import 'package:nox_app/presentation/widgets/chat/app_chat_item_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_thread_view_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_search_field_widget.dart';
+import 'package:nox_app/presentation/widgets/primitives/app_avatar_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_list_detail_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_splash_hairline_widget.dart';
@@ -46,11 +48,21 @@ class ChatsListPage extends StatefulWidget {
     this.openCreated,
     this.forceWide,
     this.initialScenario,
+    this.accountLabel,
+    this.onAccount,
   });
 
   final bool demo;
   final bool inShell;
   final ValueListenable<int>? scrollToTop;
+
+  /// Account identity + jump callback for the MOBILE account affordance (N4): the
+  /// shell feeds the live session label and a tap handler that switches to the
+  /// Settings tab + lands on Account (the mobile counterpart to the desktop rail
+  /// avatar). Rendered only on the narrow branch, and only when both are supplied
+  /// (i.e. hosted in the shell) — desktop reaches Account through the rail.
+  final String? accountLabel;
+  final VoidCallback? onAccount;
 
   /// Bumped by the shell with the chat just created via the `+` FAB → the list reloads
   /// (so the new chat appears) and opens it (mobile push / desktop select).
@@ -169,6 +181,7 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
                 onPressed: () => Navigator.of(context).maybePop(),
               ),
         title: const AppWordmarkWidget(),
+        actions: [if (widget.accountLabel != null && widget.onAccount != null) _accountAvatar(context)],
         bottom: const AppSplashHairlineWidget(),
       ),
       body: Column(
@@ -178,6 +191,35 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
           Expanded(child: _list(context, state, wide: false)),
           if (kDebugMode && widget.demo) _scenarioControl(),
         ],
+      ),
+    );
+  }
+
+  // Mobile account affordance (N4): the app-bar counterpart to the desktop rail
+  // avatar — same generated avatar (hashed bg + account initials), tapping it hands
+  // off to the shell (switch to Settings + jump to Account). Wrapped in a ≥48 tap
+  // target (a11y). Guarded by the null-check at the call site (shell-only, mobile-only).
+  Widget _accountAvatar(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s8),
+      child: Tooltip(
+        message: context.l10n.settingsAccountTitle,
+        child: InkResponse(
+          onTap: widget.onAccount,
+          customBorder: const CircleBorder(),
+          // A 48x48 hit target around the 36 avatar (a11y FR-016 — the raw avatar is < 48).
+          child: SizedBox(
+            width: AppSpacingTokens.s48,
+            height: AppSpacingTokens.s48,
+            child: Center(
+              child: AppAvatarWidget(
+                name: widget.accountLabel!,
+                initials: noxAccountInitials(widget.accountLabel!),
+                size: AppDimensionTokens.size.avatarXs,
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

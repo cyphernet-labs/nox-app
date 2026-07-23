@@ -69,14 +69,32 @@ void main() {
     });
   });
 
-  group('TabBarShell account avatar (mobile)', () {
-    testWidgets('no account avatar is shown in the bottom-bar layout', (tester) async {
+  group('TabBarShell account avatar (mobile, N4)', () {
+    Future<void> pumpNarrow(WidgetTester tester) async {
       await tester.binding.setSurfaceSize(const Size(420, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await pumpApp(tester, const TabBarShell());
+      await tester.pumpAndSettle();
+    }
 
-      expect(find.byType(AppNavigationRailWidget), findsNothing);
-      expect(find.byTooltip(l10nEn.settingsAccountTitle), findsNothing);
+    testWidgets('renders an account avatar in the chats app bar (no rail)', (tester) async {
+      await pumpNarrow(tester);
+
+      expect(find.byType(AppNavigationRailWidget), findsNothing); // no rail on mobile
+      expect(find.byTooltip(l10nEn.settingsAccountTitle), findsOneWidget); // the app-bar avatar (N4)
+    });
+
+    testWidgets('tapping the avatar switches to the Settings tab (Account card at the top of the list)', (tester) async {
+      await pumpNarrow(tester);
+      expect(settingsTabOpacity(tester), 0.0); // Chats starts active, Settings inactive
+
+      await tester.tap(find.byTooltip(l10nEn.settingsAccountTitle));
+      await tester.pumpAndSettle();
+
+      expect(settingsTabOpacity(tester), 1.0); // Settings tab is now active
+      // Mobile Settings is a flat list with the Account identity card pinned at the top,
+      // so landing on the Settings tab lands the user on Account (the jump is a no-op there).
+      expect(find.byType(AppIdentityCardWidget), findsWidgets);
     });
   });
 }
