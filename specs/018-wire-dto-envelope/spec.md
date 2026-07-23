@@ -16,6 +16,14 @@ NOX сознательно **не выбрал** транспорт/проток
 
 **«Пользователь» этой фичи — разработчик/будущая интеграция бэкенда**, а не конечный пользователь: у фичи нет user-facing поведения (0 изменений UI).
 
+## Clarifications
+
+### Session 2026-07-25
+
+- Q: Несёт ли сетевая граница конверт — меняется ли сигнатура 016-интерфейсов `ChatRemoteDataSource`/`MessageRemoteDataSource` на возврат `ResponseEntity<wire>` (как `ItemRemoteDataSource`), или конверт заворачивается только внутри генератора? → A: **Да, граница несёт конверт.** `ChatRemoteDataSource.getChats` → `Future<ResponseEntity<ChatsWireEntity>>` и `MessageRemoteDataSource.getMessages` → `Future<ResponseEntity<MessagesWireEntity>>` (зеркалит `ItemRemoteDataSource.getItems → Future<ResponseEntity<ItemsEntity>>`); репозиторий разворачивает. Так все четыре data-source единообразны, а флип-на-бэкенд — истинная замена байндинга. `sendMessage` (одиночный POST-эхо) остаётся вне конверта в этой фиче — см. ниже.
+- Q: `sendMessage` (одиночная отправка, `MessageRemoteDataSource.sendMessage`) — тоже заворачивать в `ResponseEntity`? → A: **Нет, вне scope S4.** S4 покрывает пагинируемые LIST-боундери (chat-list, message-list), симметрично Item-harness (тоже list). `sendMessage` — одиночный echo-POST; его конверт-форма (одиночный `ResponseEntity<MessageWireEntity>`) — отдельная, меньшая задача, отложена, чтобы не расширять срез (документируем в Out of Scope).
+- Q: Где живут wire-сущности и как переиспользуется существующий seed? → A: **Plan-level:** wire-сущности в `lib/data/entity/chat/wire/` (видимо отдельно от локальных Sembast-сущностей); бидирекциональный `wire↔model`-маппер; генератор оставляет существующий model-shaped seed и мапит `model→wire` (round-trip доказывает маппер в обе стороны), репо разворачивает `wire→model`.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 — Chat-list идёт через референсный конверт (Priority: P1)
@@ -117,5 +125,6 @@ NOX сознательно **не выбрал** транспорт/проток
 ## Out of Scope
 
 - Реальный транспорт, сервер, auth-токен, apiUrl, HMAC/security-заголовки (S5 — отдельная фича).
+- `sendMessage` (одиночный echo-POST) через `ResponseEntity<MessageWireEntity>` — отложено (S4 покрывает пагинируемые LIST-боундери симметрично Item; одиночный POST-конверт — отдельная меньшая задача).
 - Изменение доменных моделей, локальных Sembast-сущностей, DAO, cache-first-семантики, seed-данных, UI/BLoC.
 - Новые голдены; изменение пользовательского поведения любого рода.
