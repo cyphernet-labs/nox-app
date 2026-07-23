@@ -66,13 +66,13 @@ Single Flutter package `nox_app`: `lib/`, tests deep-mirror under `test/`.
 
 ### Implementation
 
-- [ ] T012 [US2] `lib/domain/repository/chat/message_repository.dart` + impl: add `Future<List<MessageAttachment>> chatFiles({required String chatId})`; impl `_seedChatIfEmpty` → `getByChatSorted` → collect non-null `attachment`, **reversed (newest-first)**.
-- [ ] T013 [US2] `lib/data/repository/chat/chat_repository_impl.dart`: `getChatFiles` delegates to `_messageRepository.chatFiles(chatId)` (wrapped in `execute`); drop the `_chatFilesRemote` field + constructor param + import.
-- [ ] T014 [US2] Delete `lib/data/remote/datasource/chat_files_remote_data_source.dart`, `lib/data/remote/datasource/mock/mock_chat_files_remote_data_source.dart`, `lib/data/remote/api/chat/get_chat_files_api.dart`, and `test/data/remote/api/chat/get_chat_files_api_test.dart`.
-- [ ] T015 [US2] Run `make generate` — DI regenerates without the removed ChatFiles bindings and with `ChatRepositoryImpl`'s new constructor (drops one dep). (depends on T012–T014)
-- [ ] T016 [P] [US2] Extend `test/data/repository/chat/message_repository_impl_test.dart`: `chatFiles` returns the seeded chat's attachment(s) newest-first; a chat with an added attachment lists it first; a chat whose messages have no attachments → empty; per-chat isolation.
-- [ ] T017 [P] [US2] Verify `test/presentation/pages/chat_card_page/bloc/chat_card_bloc_test.dart` still passes (files isNotEmpty holds — chat_0's seed has one attachment); adjust only if it asserted fabricated-specific files.
-- [ ] T018 [US2] Update the 5.4 files-view golden. Two changes: (a) it renders `chat_0`, whose seeded thread has one attachment (`design-spec.pdf`), so the derived view is NON-empty — regenerate to that single real file (was the fabricated eight); (b) AFTER T019 makes `ChatCardBloc` reactive, the current `goldenTest`/`goldenTestDesktop` (pumpAndSettle) may hang on the watch subscription — convert `chat_card_page_golden_test.dart` to the BESPOKE bounded-pump harness (frozen clock + fonts + pinned surface + bounded pumps), mirroring `chat_thread_page_golden_test.dart`. Then `make golden-update` + verify determinism twice + eyeball. (ordering: do this after T019.)
+- [X] T012 [US2] `lib/domain/repository/chat/message_repository.dart` + impl: add `Future<List<MessageAttachment>> chatFiles({required String chatId})`; impl `_seedChatIfEmpty` → `getByChatSorted` → collect non-null `attachment`, **reversed (newest-first)**.
+- [X] T013 [US2] `lib/data/repository/chat/chat_repository_impl.dart`: `getChatFiles` delegates to `_messageRepository.chatFiles(chatId)` (wrapped in `execute`); drop the `_chatFilesRemote` field + constructor param + import.
+- [X] T014 [US2] Delete `lib/data/remote/datasource/chat_files_remote_data_source.dart`, `lib/data/remote/datasource/mock/mock_chat_files_remote_data_source.dart`, `lib/data/remote/api/chat/get_chat_files_api.dart`, and `test/data/remote/api/chat/get_chat_files_api_test.dart`.
+- [X] T015 [US2] Run `make generate` — DI regenerates without the removed ChatFiles bindings and with `ChatRepositoryImpl`'s new constructor (drops one dep). (depends on T012–T014)
+- [X] T016 [P] [US2] Extend `test/data/repository/chat/message_repository_impl_test.dart`: `chatFiles` returns the seeded chat's attachment(s) newest-first; a chat with an added attachment lists it first; a chat whose messages have no attachments → empty; per-chat isolation.
+- [X] T017 [P] [US2] Verify `test/presentation/pages/chat_card_page/bloc/chat_card_bloc_test.dart` still passes (files isNotEmpty holds — chat_0's seed has one attachment); adjust only if it asserted fabricated-specific files.
+- [X] T018 [US2] Update the 5.4 files-view golden. Two changes: (a) it renders `chat_0`, whose seeded thread has one attachment (`design-spec.pdf`), so the derived view is NON-empty — regenerate to that single real file (was the fabricated eight); (b) AFTER T019 makes `ChatCardBloc` reactive, the current `goldenTest`/`goldenTestDesktop` (pumpAndSettle) may hang on the watch subscription — convert `chat_card_page_golden_test.dart` to the BESPOKE bounded-pump harness (frozen clock + fonts + pinned surface + bounded pumps), mirroring `chat_thread_page_golden_test.dart`. Then `make golden-update` + verify determinism twice + eyeball. (ordering: do this after T019.)
 
 **Checkpoint**: US2 — real, per-chat files view.
 
@@ -86,8 +86,8 @@ Single Flutter package `nox_app`: `lib/`, tests deep-mirror under `test/`.
 
 ### Implementation
 
-- [ ] T019 [US3] `lib/presentation/pages/chat_card_page/bloc/chat_card_bloc.dart`: inject `MessageRepository`; on `_onInitialize` subscribe (once) to `watchMessages(_chatId).skip(1).debounceTime(100ms)` → `add(ChatCardEvent.initialize(_chatId))` (re-derive); cancel the subscription in `close()`. Scenario overrides unchanged.
-- [ ] T020 [P] [US3] Extend `test/presentation/pages/chat_card_page/bloc/chat_card_bloc_test.dart`: init for a chat (files present), then `getIt<MessageRepository>().sendMessage(chatId, attachment: <att>)` — the send persists a message (with the attachment) into `MessageDao`, so `watchMessages` ticks → after the debounce the bloc re-derives, the files list grows and the new file is first (newest-first), with no manual reload. (Per-test DB isolation as the reactive bloc tests use.)
+- [X] T019 [US3] `lib/presentation/pages/chat_card_page/bloc/chat_card_bloc.dart`: inject `MessageRepository`; on `_onInitialize` subscribe (once) to `watchMessages(_chatId).skip(1).debounceTime(100ms)` → `add(ChatCardEvent.initialize(_chatId))` (re-derive); cancel the subscription in `close()`. Scenario overrides unchanged.
+- [X] T020 [P] [US3] Extend `test/presentation/pages/chat_card_page/bloc/chat_card_bloc_test.dart`: init for a chat (files present), then `getIt<MessageRepository>().sendMessage(chatId, attachment: <att>)` — the send persists a message (with the attachment) into `MessageDao`, so `watchMessages` ticks → after the debounce the bloc re-derives, the files list grows and the new file is first (newest-first), with no manual reload. (Per-test DB isolation as the reactive bloc tests use.)
 
 **Checkpoint**: US3 — live files view.
 
@@ -95,7 +95,7 @@ Single Flutter package `nox_app`: `lib/`, tests deep-mirror under `test/`.
 
 ## Phase 6: Polish & Cross-Cutting
 
-- [ ] T021 [P] Drift-fix (Principle II): update `docs/mock-completion-plan.md` §5.1/§5.2 + `docs/blueprints/mobile/04-data-layer.md` 016-seam note + `specs/016-*/data-model.md` reference — `ChatFilesRemoteDataSource` removed (chat files are a local derivation). Resolve the `_onAttachmentPicked`/`getChatFiles` `TODO`s.
+- [X] T021 [P] Drift-fix (Principle II): update `docs/mock-completion-plan.md` §5.1/§5.2 + `docs/blueprints/mobile/04-data-layer.md` 016-seam note + `specs/016-*/data-model.md` reference — `ChatFilesRemoteDataSource` removed (chat files are a local derivation). Resolve the `_onAttachmentPicked`/`getChatFiles` `TODO`s.
 - [ ] T022 [P] Update the tracker `docs/mock-completion-plan.md`: flip F1 + E3 + R5 to done (at merge) with a §6 journal entry.
 - [ ] T023 Gate: `make gate` + `make golden-verify`; then the macOS native build check `make build-macos-stage` (verifies the file-access entitlement) + note iOS/Android/Windows/Linux for a CI build check. Walk `quickstart.md`.
 
