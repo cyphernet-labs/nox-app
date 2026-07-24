@@ -17,4 +17,7 @@ sealed class ChatsListEvent with _$ChatsListEvent {
 
   /// Debug-only: reproduce a load scenario (offline / inline-error / fatal / empty).
   const factory ChatsListEvent.setScenario(ChatsListScenario scenario) = SetScenario;
+
+  /// Live device-connectivity change (feature F3): drives the real Offline banner.
+  const factory ChatsListEvent.connectivityChanged(bool online) = ConnectivityChanged;
 }

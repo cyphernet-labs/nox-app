@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
@@ -5,6 +7,7 @@ import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/service/connectivity_service.dart';
 import 'package:nox_app/presentation/pages/chats_list_page/bloc/chats_list_bloc.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -252,4 +255,68 @@ void main() {
       expect(state.items.any((c) => c.name == 'Design extra reactive'), isTrue); // the matching new chat appears
     });
   });
+
+  group('offline banner from real connectivity (F3)', () {
+    void useConnectivity(ConnectivityService service) {
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<ConnectivityService>(service);
+    }
+
+    test('online connectivity keeps the offline banner down', () async {
+      // The test-env ConnectivityService is always-online (default).
+      final bloc = ChatsListBloc()..add(const ChatsListEvent.initialize());
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      expect((bloc.state as Initialized).isOffline, isFalse);
+    });
+
+    test('offline connectivity shows the banner while keeping the cached list visible', () async {
+      useConnectivity(_FakeConnectivity(false));
+      final bloc = ChatsListBloc()..add(const ChatsListEvent.initialize());
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+
+      final state = bloc.state as Initialized;
+      expect(state.isOffline, isTrue); // banner up
+      expect(state.items, isNotEmpty); // the cached list is still shown under it
+    });
+
+    test('going offline live flips the banner without a reload (no item change)', () async {
+      final conn = _FakeConnectivity(true);
+      useConnectivity(conn);
+      final bloc = ChatsListBloc()..add(const ChatsListEvent.initialize());
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      final before = (bloc.state as Initialized);
+      expect(before.isOffline, isFalse);
+
+      conn.emit(false); // device drops offline
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      final after = bloc.state as Initialized;
+      expect(after.isOffline, isTrue);
+      expect(after.items, before.items); // banner only — no reload, list unchanged
+    });
+  });
+}
+
+/// A controllable [ConnectivityService] for the F3 tests (seed-then-live).
+class _FakeConnectivity implements ConnectivityService {
+  _FakeConnectivity(this._online);
+  bool _online;
+  final StreamController<bool> _controller = StreamController<bool>.broadcast();
+
+  void emit(bool online) {
+    _online = online;
+    _controller.add(online);
+  }
+
+  @override
+  Future<bool> isOnline() async => _online;
+
+  @override
+  Stream<bool> watchOnline() async* {
+    yield _online;
+    yield* _controller.stream;
+  }
 }
