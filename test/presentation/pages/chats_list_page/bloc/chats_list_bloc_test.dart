@@ -290,12 +290,37 @@ void main() {
       final before = (bloc.state as Initialized);
       expect(before.isOffline, isFalse);
 
+      // Capture whether any spinner-visible reload happens during the flip. The
+      // connectivity handler emits an in-place copyWith (loadingInProgress stays false);
+      // a reset-reload would flip loadingInProgress true. (A stricter items-reference
+      // check is unreliable — the reactive watchChats refresh rebuilds the list
+      // reference asynchronously, unrelated to the connectivity change.)
+      var sawReloadSpinner = false;
+      final sub = bloc.stream.listen((s) {
+        if (s is Initialized && s.loadingInProgress) sawReloadSpinner = true;
+      });
+      addTearDown(sub.cancel);
+
       conn.emit(false); // device drops offline
-      await Future<void>.delayed(const Duration(milliseconds: 100));
+      await Future<void>.delayed(const Duration(milliseconds: 150));
 
       final after = bloc.state as Initialized;
       expect(after.isOffline, isTrue);
-      expect(after.items, before.items); // banner only — no reload, list unchanged
+      expect(after.items, before.items); // the list content is preserved under the banner
+      expect(sawReloadSpinner, isFalse); // banner flips in place — no reset-reload spinner
+    });
+
+    test('reconnecting clears the offline banner (recovery path)', () async {
+      final conn = _FakeConnectivity(false); // start offline
+      useConnectivity(conn);
+      final bloc = ChatsListBloc()..add(const ChatsListEvent.initialize());
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      expect((bloc.state as Initialized).isOffline, isTrue); // banner up
+
+      conn.emit(true); // device reconnects
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect((bloc.state as Initialized).isOffline, isFalse); // banner cleared
     });
   });
 }
