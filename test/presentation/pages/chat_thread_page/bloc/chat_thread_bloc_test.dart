@@ -20,6 +20,8 @@ class _FakePicker implements FilePickerService {
   final PickedFile? _result;
   @override
   Future<PickedFile?> pickFile() async => _result;
+  @override
+  Future<String?> pickSaveLocation({required String suggestedName}) async => null;
 }
 
 void _usePicker(PickedFile? result) {
@@ -88,7 +90,7 @@ void main() {
 
     blocTest<ChatThreadBloc, ChatThreadState>(
       'attachmentPicked sets a draft from the real picked file (name/size/type); attachmentRemoved clears it',
-      setUp: () => _usePicker((name: 'report.pdf', sizeBytes: 2048, extension: 'pdf')),
+      setUp: () => _usePicker((name: 'report.pdf', sizeBytes: 2048, extension: 'pdf', path: '/tmp/report.pdf')),
       build: ChatThreadBloc.new,
       act: (bloc) async {
         bloc.add(const ChatThreadEvent.initialize('chat_0'));

@@ -128,6 +128,8 @@ final class AppLayoutTokens {
   double get detailMaxW => 640; // settings/legal leaf content column
   double get fileChipMinW => 200;
   double get fileChipMaxW => 260;
+  double get imageThumbMaxW => 260; // inline image attachment thumbnail (F4)
+  double get imageThumbMaxH => 220; // inline image attachment thumbnail (F4)
   double get messageMaxW => 260; // empty-state message column
   double get errorMsgW => 300; // error-screen message column
   double get chatsListPaneW => 360; // chats master-detail list pane

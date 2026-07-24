@@ -132,6 +132,7 @@
   "tooltipSave": "Save",
   "savedToDownloads": "Saved to Downloads",
   "fileDownloadError": "Could not download file. Check your connection and try again.",
+  "imageUnavailable": "Image unavailable",
   "actionDownload": "Download",
   "downloadingProgress": "Downloading… {percent}%",
   "@downloadingProgress": {

@@ -1,6 +1,10 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/service/file_picker_service.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
@@ -98,9 +102,28 @@ class _FileViewPageState extends State<FileViewPage> with SingleTickerProviderSt
     _controller.forward(from: 0);
   }
 
-  void _save() {
-    // TODO(backend): copy the cached file to Downloads (file_saver/path_provider) — Phase 2.
-    showAppSnackBar(context, text: context.l10n.savedToDownloads);
+  Future<void> _save() async {
+    final path = widget.file.localPath;
+    // No real local file (seeded / backend-TBD / stale path after restart) → the honest
+    // UI-phase mock confirmation (there are no bytes to copy).
+    if (path == null || path.isEmpty || !File(path).existsSync()) {
+      showAppSnackBar(context, text: context.l10n.savedToDownloads);
+      return;
+    }
+    try {
+      // Real save (F2): the user picks a destination, then the file is copied there.
+      final dest = await getIt<FilePickerService>().pickSaveLocation(suggestedName: widget.file.name);
+      if (dest == null || !mounted) return; // cancelled
+      // Streamed copy — never materializes the whole file in RAM (Save is reachable for
+      // any type, incl. large video/archive attachments).
+      await File(path).copy(dest);
+      if (!mounted) return;
+      showAppSnackBar(context, text: context.l10n.savedToDownloads);
+    } catch (_) {
+      // Any IO failure degrades gracefully — never a crash.
+      if (!mounted) return;
+      showAppSnackBar(context, text: context.l10n.fileDownloadError, error: true);
+    }
   }
 
   void _simulateError() {

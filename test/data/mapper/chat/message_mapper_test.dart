@@ -27,6 +27,7 @@ void main() {
     String? attachmentType,
     String? attachmentName,
     int? attachmentSizeBytes,
+    String? attachmentLocalPath,
   }) => MessageEntity(
     id: id,
     chatId: chatId,
@@ -40,6 +41,7 @@ void main() {
     attachmentType: attachmentType,
     attachmentName: attachmentName,
     attachmentSizeBytes: attachmentSizeBytes,
+    attachmentLocalPath: attachmentLocalPath,
   );
 
   group('MessageMapper attachment coercion', () {
@@ -156,6 +158,27 @@ void main() {
 
       expect(model.text, 'hey there');
       expect(back.text, 'hey there');
+    });
+
+    test('the attachment localPath round-trips (persists in Sembast) — F4/F2', () {
+      final entity = buildEntity(
+        attachmentId: 'att1',
+        attachmentType: 'image',
+        attachmentName: 'shot.png',
+        attachmentSizeBytes: 2048,
+        attachmentLocalPath: '/tmp/shot.png',
+      );
+
+      final model = mapper.toModel(entity: entity);
+      expect(model.attachment!.localPath, '/tmp/shot.png'); // flat -> nested
+
+      final back = mapper.toEntity(model: model);
+      expect(back.attachmentLocalPath, '/tmp/shot.png'); // nested -> flat (survives restart)
+    });
+
+    test('an attachment without a localPath keeps it null (seeded/backend)', () {
+      final entity = buildEntity(attachmentId: 'a', attachmentType: 'pdf', attachmentName: 'd.pdf', attachmentSizeBytes: 1);
+      expect(mapper.toModel(entity: entity).attachment!.localPath, isNull);
     });
   });
 }

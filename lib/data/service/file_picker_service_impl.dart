@@ -17,16 +17,30 @@ class FilePickerServiceImpl implements FilePickerService {
     try {
       final XFile? file = await openFile(); // any file type; no bytes read
       if (file == null) return null; // cancelled
-      return pickedFileFrom(file.name, await file.length());
+      // XFile.path is the device-local path on native platforms (empty on web, which is
+      // out of scope); pass it through for the image thumbnail + real save (F4/F2).
+      return pickedFileFrom(file.name, await file.length(), file.path);
     } catch (_) {
       return null; // defensive fallback: never throws (FR-009)
     }
   }
 
+  @override
+  Future<String?> pickSaveLocation({required String suggestedName}) async {
+    try {
+      final FileSaveLocation? location = await getSaveLocation(suggestedName: suggestedName);
+      final path = location?.path;
+      return (path == null || path.isEmpty) ? null : path;
+    } catch (_) {
+      return null; // defensive fallback: never throws
+    }
+  }
+
   /// Pure mapping XFile metadata → [PickedFile], extracted so it is unit-testable
-  /// without the platform picker. Extension = the last dot-segment of the name (or null).
-  static PickedFile pickedFileFrom(String name, int sizeBytes) {
+  /// without the platform picker. Extension = the last dot-segment of the name (or null);
+  /// [path] is the device-local file path (empty → null).
+  static PickedFile pickedFileFrom(String name, int sizeBytes, [String? path]) {
     final ext = name.contains('.') ? name.split('.').last : null;
-    return (name: name, sizeBytes: sizeBytes, extension: ext);
+    return (name: name, sizeBytes: sizeBytes, extension: ext, path: (path == null || path.isEmpty) ? null : path);
   }
 }

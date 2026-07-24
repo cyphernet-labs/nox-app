@@ -31,6 +31,7 @@ class MessageMapper extends BaseMapper<MessageEntity, MessageModel, dynamic, dyn
               type: FileType.values.firstWhere((t) => t.name == entity.attachmentType, orElse: () => FileType.other),
               name: entity.attachmentName ?? '',
               sizeBytes: entity.attachmentSizeBytes ?? 0,
+              localPath: entity.attachmentLocalPath,
             ),
     );
   }
@@ -50,6 +51,7 @@ class MessageMapper extends BaseMapper<MessageEntity, MessageModel, dynamic, dyn
       attachmentType: model.attachment?.type.name,
       attachmentName: model.attachment?.name,
       attachmentSizeBytes: model.attachment?.sizeBytes,
+      attachmentLocalPath: model.attachment?.localPath,
     );
   }
 }
