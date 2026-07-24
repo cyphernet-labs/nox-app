@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -7,6 +9,7 @@ import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
+import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/general/formatters/date_formatter.dart';
 import 'package:nox_app/general/formatters/file_size_formatter.dart';
 import 'package:nox_app/general/l10n_extension.dart';
@@ -15,6 +18,8 @@ import 'package:nox_app/presentation/widgets/chat/app_author_header_widget.dart'
 import 'package:nox_app/presentation/widgets/chat/app_composer_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_date_separator_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_file_chip_widget.dart';
+import 'package:nox_app/presentation/widgets/chat/app_image_attachment_widget.dart';
+import 'package:nox_app/presentation/pages/image_viewer_page/image_viewer_page.dart';
 import 'package:nox_app/presentation/widgets/chat/app_message_bubble_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_system_line_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_thread_header_widget.dart';
@@ -190,16 +195,29 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
     final attachment = m.attachment;
     if (attachment != null) {
       final onColor = isOwn ? colorScheme.onPrimaryContainer : colorScheme.onSurface;
-      file = InkWell(
-        onTap: () => widget.onOpenFile?.call(attachment),
-        child: AppFileChipWidget(
-          type: attachment.type,
-          name: attachment.name,
-          size: FileSizeFormatter.format(attachment.sizeBytes),
-          inBubble: true,
-          onColor: onColor,
-        ),
-      );
+      final localPath = attachment.localPath;
+      // Image with a real local file → inline thumbnail (tap → full-screen viewer, F4);
+      // everything else (non-image / no path / missing file) → the type-icon chip.
+      final isImage = attachment.type == FileType.image && localPath != null && localPath.isNotEmpty && File(localPath).existsSync();
+      file = isImage
+          ? AppImageAttachmentWidget(
+              localPath: localPath,
+              type: attachment.type,
+              name: attachment.name,
+              size: FileSizeFormatter.format(attachment.sizeBytes),
+              onColor: onColor,
+              onTap: () => openImageViewer(context, localPath),
+            )
+          : InkWell(
+              onTap: () => widget.onOpenFile?.call(attachment),
+              child: AppFileChipWidget(
+                type: attachment.type,
+                name: attachment.name,
+                size: FileSizeFormatter.format(attachment.sizeBytes),
+                inBubble: true,
+                onColor: onColor,
+              ),
+            );
     }
     Widget bubble = AppMessageBubbleWidget(isOwn: isOwn, text: m.text, time: DateFormatter.time(m.sentAt), status: m.status, file: file);
     if (isOwn && m.status == MessageStatus.error) {

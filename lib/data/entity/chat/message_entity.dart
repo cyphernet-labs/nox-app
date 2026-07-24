@@ -24,6 +24,9 @@ abstract class MessageEntity with _$MessageEntity {
     required String? attachmentType, // FileType.name
     required String? attachmentName,
     required int? attachmentSizeBytes,
+    // Device-local file path (feature F4/F2). Optional (not `required`) so records
+    // written before this field existed still read back (absent key → null).
+    String? attachmentLocalPath,
   }) = _MessageEntity;
 
   factory MessageEntity.fromJson(Map<String, dynamic> json) => _$MessageEntityFromJson(json);

@@ -25,12 +25,23 @@ void main() {
 
   group('FilePickerServiceImpl.pickedFileFrom (pure mapping)', () {
     test('extracts the extension as the last dot-segment', () {
-      expect(FilePickerServiceImpl.pickedFileFrom('report.pdf', 2048), (name: 'report.pdf', sizeBytes: 2048, extension: 'pdf'));
+      expect(FilePickerServiceImpl.pickedFileFrom('report.pdf', 2048, '/tmp/report.pdf'), (
+        name: 'report.pdf',
+        sizeBytes: 2048,
+        extension: 'pdf',
+        path: '/tmp/report.pdf',
+      ));
       expect(FilePickerServiceImpl.pickedFileFrom('archive.tar.gz', 10).extension, 'gz'); // multi-dot → last segment
     });
 
     test('a name with no dot has a null extension', () {
       expect(FilePickerServiceImpl.pickedFileFrom('LICENSE', 99).extension, isNull);
+    });
+
+    test('the device-local path is carried, and an empty path maps to null (F4/F2)', () {
+      expect(FilePickerServiceImpl.pickedFileFrom('a.png', 1, '/tmp/a.png').path, '/tmp/a.png');
+      expect(FilePickerServiceImpl.pickedFileFrom('a.png', 1, '').path, isNull); // empty → null
+      expect(FilePickerServiceImpl.pickedFileFrom('a.png', 1).path, isNull); // absent → null
     });
   });
 
@@ -50,6 +61,7 @@ void main() {
       expect(picked!.name, 'notes.txt');
       expect(picked.sizeBytes, 512);
       expect(picked.extension, 'txt');
+      expect(picked.path, tmp.path); // the device-local path flows through (F4/F2)
     });
 
     test('returns null when the user cancels (openFile → null)', () async {

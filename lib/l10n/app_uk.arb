@@ -124,6 +124,7 @@
   "tooltipSave": "Зберегти",
   "savedToDownloads": "Збережено в Завантаження",
   "fileDownloadError": "Не вдалося завантажити файл. Перевірте з'єднання та спробуйте ще раз.",
+  "imageUnavailable": "Зображення недоступне",
   "actionDownload": "Завантажити",
   "downloadingProgress": "Завантаження… {percent}%",
   "filesSectionTitle": "Файли",

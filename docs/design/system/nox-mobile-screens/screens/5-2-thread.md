@@ -20,10 +20,11 @@ App bar (back + chat name). Message stream with date separators, author headers 
 - Date separators: Today / Yesterday / 12 May. A system line marks chat creation.
 - Empty: chat_bubble_outline empty-state. Offline: top banner + queued messages show pending.
 - Composer: attach + text + send. Send enables when there is text or an attachment; attachment shows a removable chip above the row.
+- Attachments in the feed: an IMAGE with a real local file renders an inline thumbnail (rounded, bubble-bounded); every other type — and an image with no/unavailable file — renders the type-icon chip (owner-revised F4).
 
 ## Navigation
 - Back → Chats list (5.1).
-- Attachment chip / file bubble → File view (5.3).
+- Attachment chip / file bubble → File view (5.3); an image thumbnail → full-screen image viewer (zoom / close) (F4).
 - (Header affordances to chat card exist on desktop; mobile reaches files via 5.4 entry.)
 
 ## Copy (EN)

@@ -280,6 +280,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
           name: picked.name,
           sizeBytes: picked.sizeBytes,
           type: FileType.fromExtension(picked.extension),
+          localPath: picked.path, // drives the image thumbnail + real save (F4/F2)
         ),
       ),
     );
