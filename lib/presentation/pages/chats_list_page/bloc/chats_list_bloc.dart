@@ -9,6 +9,7 @@ import 'package:nox_app/domain/exception/base_repository_exception.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/domain/repository/base/page_metadata.dart';
+import 'package:nox_app/domain/service/connectivity_service.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
@@ -34,9 +35,11 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
     on<SearchChanged>(_onSearchChanged, transformer: debounceRestartable());
     on<ChatSelected>(_onChatSelected);
     on<SetScenario>(_onSetScenario);
+    on<ConnectivityChanged>(_onConnectivityChanged);
   }
 
   final ChatRepository _chatRepository = getIt<ChatRepository>();
+  final ConnectivityService _connectivityService = getIt<ConnectivityService>();
 
   // Live change-signal over the cache-first DB (Feature 014): a DB write (create / send /
   // incoming / read) re-reads the loaded page prefix. The stream VALUE is ignored — the
@@ -44,9 +47,22 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
   // and refreshes.
   StreamSubscription<List<ChatModel>>? _chatsSub;
 
-  // Debug-only stub scenario (offline / inline-error / fatal / empty), selected via
-  // the dev control. `// TODO(backend):` real connectivity + error surfacing.
+  // Debug-only stub scenario (inline-error / fatal / empty), selected via the dev
+  // control. The `offline` scenario still forces the banner for previews/goldens, but
+  // real device connectivity now ALSO drives it (feature F3) — see `_isOffline`.
   ChatsListScenario _scenario = ChatsListScenario.normal;
+
+  // Live device-online state (feature F3): a real connectivity signal (connectivity_plus,
+  // seeded then live). The Offline banner is reachable in the real flow — go offline and
+  // the cached list shows under the "No connection" banner. NOTE: the mock phase is
+  // local-only (Sembast), so sends still succeed offline; the banner is informational
+  // until real sync lands. Backend reachability (vs device connectivity) is the eventual
+  // authority — this is the closest real-flow proxy for now.
+  StreamSubscription<bool>? _connSub;
+  bool _isDeviceOnline = true;
+
+  /// The Offline banner shows when the device is offline OR the debug scenario forces it.
+  bool _isOffline() => !_isDeviceOnline || _scenario == ChatsListScenario.offline;
 
   FutureOr<void> _onInitialize(Initialize event, Emitter<ChatsListState> emit) async {
     emit(ChatsListState.initialized(pagingState: PagingState<String, ChatModel>()));
@@ -58,12 +74,22 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
         .skip(1)
         .debounceTime(const Duration(milliseconds: 100))
         .listen((_) => add(const ChatsListEvent.loadChats(refresh: true)));
+    // Live connectivity → the Offline banner (seeded current value, then every change).
+    _connSub ??= _connectivityService.watchOnline().listen((online) => add(ChatsListEvent.connectivityChanged(online)));
   }
 
   @override
   Future<void> close() {
     _chatsSub?.cancel();
+    _connSub?.cancel();
     return super.close();
+  }
+
+  void _onConnectivityChanged(ConnectivityChanged event, Emitter<ChatsListState> emit) {
+    _isDeviceOnline = event.online;
+    final current = state;
+    // Update the banner in place (no reload) — like the reactive card's files re-derive.
+    if (current is Initialized) emit(current.copyWith(isOffline: _isOffline()));
   }
 
   void _onChatSelected(ChatSelected event, Emitter<ChatsListState> emit) {
@@ -159,8 +185,9 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
                 loadedPageCount: isReset ? 1 : live.loadedPageCount + 1,
                 loadingInProgress: false,
                 // Offline shows the cached list under a banner; inline-error shows the
-                // cached list under a retry banner (both keep the data visible).
-                isOffline: _scenario == ChatsListScenario.offline,
+                // cached list under a retry banner (both keep the data visible). Offline =
+                // real device connectivity OR the debug scenario (feature F3).
+                isOffline: _isOffline(),
                 hasLoadError: _scenario == ChatsListScenario.inlineError,
               ),
             );
