@@ -89,6 +89,24 @@ void main() {
       expect(dest.readAsBytesSync(), src.readAsBytesSync()); // real bytes copied
     });
 
+    testWidgets('an IO failure during copy degrades to the error snackbar (no crash)', (tester) async {
+      final src = File('${Directory.systemTemp.path}/nox_save_src3.png')..writeAsBytesSync(Uint8List.fromList([7]));
+      addTearDown(() => src.existsSync() ? src.deleteSync() : null);
+      useSaver('/no/such/dir/nox_dest.png'); // parent directory missing → File.copy throws
+      final file = MessageAttachment(id: 'i', type: FileType.image, name: 'x.png', sizeBytes: 1, localPath: src.path);
+
+      await tester.binding.setSurfaceSize(const Size(420, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, FileViewPage(file: file));
+
+      await tester.runAsync(() async {
+        await tester.tap(find.byTooltip(l10nEn.tooltipSave));
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+      await tester.pump();
+      expect(find.text(l10nEn.fileDownloadError), findsOneWidget); // graceful error, no crash
+    });
+
     testWidgets('a cancelled save writes nothing and does not crash', (tester) async {
       final src = File('${Directory.systemTemp.path}/nox_save_src2.png')..writeAsBytesSync(Uint8List.fromList([9]));
       addTearDown(() => src.existsSync() ? src.deleteSync() : null);

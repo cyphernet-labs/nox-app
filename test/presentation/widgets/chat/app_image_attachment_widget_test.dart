@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/presentation/widgets/chat/app_file_chip_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_image_attachment_widget.dart';
@@ -91,9 +92,30 @@ void main() {
       AppImageAttachmentWidget(localPath: tmp.path, type: FileType.image, name: 'thumb.png', size: '1 KB', onTap: () => taps++),
     );
 
-    expect(find.byType(Image), findsOneWidget); // the picture, not a type-icon chip
+    expect(find.byType(Image), findsOneWidget); // the picture...
+    expect(find.byType(AppFileChipWidget), findsNothing); // ...not the type-icon chip fallback
     await tester.tap(find.byType(Image));
     expect(taps, 1); // opens the full-screen viewer
+  });
+
+  group('canRender (thumbnail-vs-chip guard, F4)', () {
+    MessageAttachment att({required FileType type, required String name, String? localPath}) =>
+        MessageAttachment(id: 'a', type: type, name: name, sizeBytes: 1, localPath: localPath);
+
+    test('true only for an image in a natively-decodable raster format with an existing file', () {
+      final tmp = File('${Directory.systemTemp.path}/nox_canrender.png')..writeAsBytesSync(_png);
+      addTearDown(() => tmp.existsSync() ? tmp.deleteSync() : null);
+
+      expect(AppImageAttachmentWidget.canRender(att(type: FileType.image, name: 'a.png', localPath: tmp.path)), isTrue);
+      // svg is image-typed but Flutter can't decode it → chip (tap reaches the File view).
+      expect(AppImageAttachmentWidget.canRender(att(type: FileType.image, name: 'a.svg', localPath: tmp.path)), isFalse);
+      // non-image → chip.
+      expect(AppImageAttachmentWidget.canRender(att(type: FileType.pdf, name: 'a.pdf', localPath: tmp.path)), isFalse);
+      // image with no local path (seeded/backend) → chip.
+      expect(AppImageAttachmentWidget.canRender(att(type: FileType.image, name: 'a.png')), isFalse);
+      // image whose file does not exist (stale after restart) → chip.
+      expect(AppImageAttachmentWidget.canRender(att(type: FileType.image, name: 'a.png', localPath: '/no/such/x.png')), isFalse);
+    });
   });
 
   testWidgets('falls back to the file chip when the image cannot be decoded (F4/FR-007)', (tester) async {

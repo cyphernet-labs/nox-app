@@ -114,7 +114,9 @@ class _FileViewPageState extends State<FileViewPage> with SingleTickerProviderSt
       // Real save (F2): the user picks a destination, then the file is copied there.
       final dest = await getIt<FilePickerService>().pickSaveLocation(suggestedName: widget.file.name);
       if (dest == null || !mounted) return; // cancelled
-      await File(dest).writeAsBytes(await File(path).readAsBytes());
+      // Streamed copy — never materializes the whole file in RAM (Save is reachable for
+      // any type, incl. large video/archive attachments).
+      await File(path).copy(dest);
       if (!mounted) return;
       showAppSnackBar(context, text: context.l10n.savedToDownloads);
     } catch (_) {

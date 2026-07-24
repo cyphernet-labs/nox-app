@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -9,7 +7,6 @@ import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
-import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/general/formatters/date_formatter.dart';
 import 'package:nox_app/general/formatters/file_size_formatter.dart';
 import 'package:nox_app/general/l10n_extension.dart';
@@ -196,12 +193,12 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
     if (attachment != null) {
       final onColor = isOwn ? colorScheme.onPrimaryContainer : colorScheme.onSurface;
       final localPath = attachment.localPath;
-      // Image with a real local file → inline thumbnail (tap → full-screen viewer, F4);
-      // everything else (non-image / no path / missing file) → the type-icon chip.
-      final isImage = attachment.type == FileType.image && localPath != null && localPath.isNotEmpty && File(localPath).existsSync();
-      file = isImage
+      // Decodable image with a real local file → inline thumbnail (tap → full-screen
+      // viewer, F4); everything else (non-image / no path / missing file / non-decodable
+      // format like svg/heic) → the type-icon chip, whose tap reaches the File view.
+      file = AppImageAttachmentWidget.canRender(attachment)
           ? AppImageAttachmentWidget(
-              localPath: localPath,
+              localPath: localPath!,
               type: attachment.type,
               name: attachment.name,
               size: FileSizeFormatter.format(attachment.sizeBytes),

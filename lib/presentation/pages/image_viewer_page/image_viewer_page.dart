@@ -45,7 +45,24 @@ class ImageViewerPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (inDialog) return _viewer(context, maxHeightFactor: 0.8);
+    if (inDialog) {
+      // Desktop lightbox: the viewer + a visible close affordance (the Dialog is also
+      // barrier-dismissible, but a visible control matches showFileView's panel header).
+      return Stack(
+        children: [
+          _viewer(context, maxHeightFactor: 0.8),
+          Positioned(
+            top: AppSpacingTokens.s8,
+            right: AppSpacingTokens.s8,
+            child: IconButton(
+              tooltip: context.l10n.actionClose,
+              icon: AppIconWidget(NoxIcons.close),
+              onPressed: () => Navigator.of(context).maybePop(),
+            ),
+          ),
+        ],
+      );
+    }
     final colorScheme = Theme.of(context).colorScheme;
     return Scaffold(
       backgroundColor: colorScheme.scrim,
