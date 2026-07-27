@@ -10,7 +10,7 @@
 |:--:|----|--------|:--:|:---:|:--:|
 | 1 | connectivity-thread-card | Реальный `ConnectivityService` в `ChatThreadBloc`+`ChatCardBloc` (F3 parity — сейчас offline-баннер только в списке) | M | точечно | ☑ |
 | 2 | composer-draft-thumbnail | Миниатюра image для draft-вложения в композере (не только в отправленных бабблах) | S | точечно | ☑ |
-| 3 | inline-error-thread-golden | DoD-хвост: page-golden `Inline-error` (тред, send-error состояние) | S | точечно | ☐ |
+| 3 | inline-error-thread-golden | DoD-хвост: page-golden `Inline-error` (тред, send-error состояние) | S | точечно | ☑ |
 | 4 | fileview-skip-timer-local-path | 5.3 File-view: при наличии `localPath` пропустить мок-таймер «download», Save сразу активен | S | точечно | ☐ |
 | 5 | notifications-permission-service | Реальный OS-запрос permission уведомлений + `openAppSettings()` (device API, `permission_handler` уже есть) | M | **SpecKit** | ☐ |
 | 6 | s4-sendmessage-wire-envelope | `sendMessage` через `ResponseEntity<MessageWireEntity>` (S4-seam полиш, behavior-neutral) | S | точечно | ☐ |
@@ -42,5 +42,6 @@
 
 _(строка на закрытую задачу: `P# id — дата — merge — примечание`)_
 
+- **P3 inline-error-thread-golden — 2026-07-26 — merge (develop).** DoD-хвост «Inline-error»: page-golden send-error состояния треда (own-сообщение `MessageStatus.error` + retry-глиф), mobile+desktop, light+dark (4 голдена). Новый `@visibleForTesting` seam (`initialScenario`+`initialSendText`) на `AppThreadViewWidget`/`ChatThreadPage` рендерит его через bounded-pump-харнесс (инертен в prod). Оптимистичный send теперь через `AppClock.now()` (детерминизм в тестах, prod-нейтрально). Ревью: 0 находок. Гейт: 688 тестов + 156 голденов.
 - **P2 composer-draft-thumbnail — 2026-07-26 — merge (develop).** Draft-вложение в композере: декодируемое image рендерит компактную removable-миниатюру (тот же `canRender`/`localPath`, что и sent-bubble), прочие типы — чип. `AppImageAttachmentWidget` получил override размера + `onRemove`-×. Ревью: 4 находки исправлены (a11y tap-target ≥48 / dark-контраст через inverseSurface-пару / размер иконки / покрытие). Голдены не тронуты. Гейт: 688 тестов.
 - **P1 connectivity-thread-card — 2026-07-26 — merge `5310fe5`.** Реальная device-connectivity ведёт offline-баннер в треде (5.2) и карточке (5.4), не только в списке (F3 parity). Оба блока подписаны на `ConnectivityService.watchOnline()` → `ConnectivityChanged` флипает `isOffline` in-place; тред дополнительно ставит real-offline отправки в `pending` и передоставляет их на reconnect. Adversarial-ревью: 2 бага исправлены — (1) LOW debug-only: `_onSetScenario`-redeliver фаярил на любой выход из offline (empty/fatal тоже) → заскоуплен на `scenario==normal`; (2) MEDIUM dev/prod: несериализованный `_onConnectivityChanged` мог дважды передоставить при флаппинге → `transformer: sequential()` (передоставка ровно раз). Test-env always-online → существующие тесты/голдены не тронуты. Гейт: 687 тестов + 152 голдена.
