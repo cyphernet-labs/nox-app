@@ -8,6 +8,7 @@ import 'package:nox_app/domain/model/chat/message_model.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/service/connectivity_service.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
 import 'package:rxdart/rxdart.dart';
 
@@ -24,14 +25,24 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
     on<Initialize>(_onInitialize);
     on<ViewModeChanged>(_onViewModeChanged);
     on<FilesRefreshed>(_onFilesRefreshed);
+    on<ConnectivityChanged>(_onConnectivityChanged);
     on<SetScenario>(_onSetScenario);
   }
 
   final ChatRepository _chatRepository = getIt<ChatRepository>();
   final MessageRepository _messageRepository = getIt<MessageRepository>();
+  final ConnectivityService _connectivityService = getIt<ConnectivityService>();
 
   late String _chatId;
   ChatCardScenario _scenario = ChatCardScenario.normal;
+
+  // Live device-online state (P1): the offline banner is reachable in the real flow, not
+  // just via the debug scenario. Mirrors ChatsListBloc / ChatThreadBloc.
+  StreamSubscription<bool>? _connSub;
+  bool _deviceOnline = true;
+
+  /// The card is offline when the device is offline OR the debug scenario forces it.
+  bool _isOffline() => !_deviceOnline || _scenario == ChatCardScenario.offline;
 
   // Live change-signal (feature 017 / R5): a new attachment sent to this chat writes
   // to the message store → re-derive the files. Value ignored — getChatFiles stays the
@@ -42,6 +53,7 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
   @override
   Future<void> close() {
     _filesSub?.cancel();
+    _connSub?.cancel();
     return super.close();
   }
 
@@ -53,6 +65,8 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
         .skip(1)
         .debounceTime(const Duration(milliseconds: 100))
         .listen((_) => add(const ChatCardEvent.filesRefreshed()));
+    // Live connectivity → the offline banner (seeded current value, then every change).
+    _connSub ??= _connectivityService.watchOnline().listen((online) => add(ChatCardEvent.connectivityChanged(online)));
     emit(const ChatCardState.initializing());
 
     if (_scenario == ChatCardScenario.fatal) {
@@ -67,7 +81,7 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
       }
       final result = await _chatRepository.getChatFiles(chatId: _chatId);
       result.match<void>(
-        onData: (files) => emit(ChatCardState.initialized(files: files, isOffline: _scenario == ChatCardScenario.offline)),
+        onData: (files) => emit(ChatCardState.initialized(files: files, isOffline: _isOffline())),
         onError: (_) => emit(const ChatCardState.error()),
       );
     }, onError: (error, exception, stackTrace) => emit(const ChatCardState.error()));
@@ -94,6 +108,13 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
       },
       onError: (_) {}, // keep the current view — the refresh is invisible and best-effort
     );
+  }
+
+  void _onConnectivityChanged(ConnectivityChanged event, Emitter<ChatCardState> emit) {
+    _deviceOnline = event.online;
+    final current = state;
+    // Update the banner in place (no reload) — like the reactive files re-derive.
+    if (current is Initialized) emit(current.copyWith(isOffline: _isOffline()));
   }
 
   FutureOr<void> _onSetScenario(SetScenario event, Emitter<ChatCardState> emit) async {

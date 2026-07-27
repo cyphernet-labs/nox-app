@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
@@ -5,6 +7,7 @@ import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/service/connectivity_service.dart';
 import 'package:nox_app/presentation/pages/chat_card_page/bloc/chat_card_bloc.dart';
 
 void main() {
@@ -120,4 +123,62 @@ void main() {
       expect(emitted.whereType<Initializing>(), isEmpty); // no loading flash during the refresh
     });
   });
+
+  group('offline banner from real connectivity (P1)', () {
+    void useConnectivity(ConnectivityService service) {
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<ConnectivityService>(service);
+      // Restore the always-online default so later tests aren't affected (shared getIt).
+      addTearDown(() => getIt.registerSingleton<ConnectivityService>(_FakeConnectivity(true)));
+    }
+
+    test('offline connectivity flags the card offline (banner) while keeping the files', () async {
+      useConnectivity(_FakeConnectivity(false));
+      final bloc = ChatCardBloc()..add(const ChatCardEvent.initialize('chat_0'));
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+
+      final state = bloc.state as Initialized;
+      expect(state.isOffline, isTrue);
+      expect(state.files, isNotEmpty); // files still shown under the banner
+    });
+
+    test('going offline live flips the banner, reconnecting clears it (no reload)', () async {
+      final conn = _FakeConnectivity(true);
+      useConnectivity(conn);
+      final bloc = ChatCardBloc()..add(const ChatCardEvent.initialize('chat_0'));
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      expect((bloc.state as Initialized).isOffline, isFalse);
+
+      conn.emit(false);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect((bloc.state as Initialized).isOffline, isTrue); // banner up
+
+      conn.emit(true);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect((bloc.state as Initialized).isOffline, isFalse); // banner cleared
+    });
+  });
+}
+
+/// A controllable [ConnectivityService] for the P1 tests (seed-then-live).
+class _FakeConnectivity implements ConnectivityService {
+  _FakeConnectivity(this._online);
+  bool _online;
+  final StreamController<bool> _controller = StreamController<bool>.broadcast();
+
+  void emit(bool online) {
+    _online = online;
+    _controller.add(online);
+  }
+
+  @override
+  Future<bool> isOnline() async => _online;
+
+  @override
+  Stream<bool> watchOnline() async* {
+    yield _online;
+    yield* _controller.stream;
+  }
 }

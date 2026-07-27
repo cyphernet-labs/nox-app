@@ -13,6 +13,9 @@ sealed class ChatCardEvent with _$ChatCardEvent {
   /// loading flash or resetting the user's List/Grid choice (unlike a full re-init).
   const factory ChatCardEvent.filesRefreshed() = FilesRefreshed;
 
+  /// Live device-connectivity change (P1): drives the real offline banner.
+  const factory ChatCardEvent.connectivityChanged(bool online) = ConnectivityChanged;
+
   /// Debug-only: reproduce a scenario (empty / offline / fatal).
   const factory ChatCardEvent.setScenario(ChatCardScenario scenario) = SetScenario;
 }

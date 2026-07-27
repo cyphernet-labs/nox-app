@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:infinite_scroll_pagination/infinite_scroll_pagination.dart';
@@ -10,6 +12,9 @@ import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
+import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
+import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/service/connectivity_service.dart';
 import 'package:nox_app/domain/service/file_picker_service.dart';
 import 'package:nox_app/presentation/pages/chat_thread_page/bloc/chat_thread_bloc.dart';
 
@@ -328,5 +333,93 @@ void main() {
         expect(state1.items.every((m) => m.authorId != 'Bob-renamed'), isTrue);
       });
     });
+
+    group('offline banner + send-queue from real connectivity (P1)', () {
+      void useConnectivity(ConnectivityService service) {
+        getIt.allowReassignment = true;
+        getIt.registerSingleton<ConnectivityService>(service);
+        addTearDown(() => getIt.registerSingleton<ConnectivityService>(_FakeConnectivity(true))); // restore online
+      }
+
+      test('offline connectivity flags the thread offline (banner)', () async {
+        useConnectivity(_FakeConnectivity(false));
+        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_0'));
+        addTearDown(bloc.close);
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        expect((bloc.state as Initialized).isOffline, isTrue);
+      });
+
+      test('a send made while the device is offline stays pending, then re-delivers on reconnect', () async {
+        final conn = _FakeConnectivity(false); // start offline
+        useConnectivity(conn);
+        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_0'));
+        addTearDown(bloc.close);
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+
+        bloc.add(const ChatThreadEvent.messageSent(text: 'queued while really offline'));
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+        final pending = (bloc.state as Initialized).outgoing.firstWhere((m) => m.text == 'queued while really offline');
+        expect(pending.status, MessageStatus.pending); // held back by the offline guard
+
+        conn.emit(true); // device reconnects
+        await Future<void>.delayed(const Duration(milliseconds: 600)); // re-deliver + mock ack
+        final delivered = (bloc.state as Initialized).outgoing.firstWhere((m) => m.text == 'queued while really offline');
+        expect(delivered.status, MessageStatus.sent); // flushed on reconnect
+        expect((bloc.state as Initialized).isOffline, isFalse); // banner cleared
+      });
+
+      test('rapid reconnect flapping re-delivers a queued send exactly once (sequential, no duplicate)', () async {
+        final conn = _FakeConnectivity(false); // offline
+        useConnectivity(conn);
+        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_0'));
+        addTearDown(bloc.close);
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        bloc.add(const ChatThreadEvent.messageSent(text: 'flap-queued'));
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+
+        // Flap online→offline→online within the mock send-ack window — sequential() must
+        // stop two overlapping re-deliveries from double-posting the same message.
+        conn.emit(true);
+        conn.emit(false);
+        conn.emit(true);
+        await Future<void>.delayed(const Duration(milliseconds: 900));
+
+        final persisted = (await getIt<MessageRepository>().getMessages(config: GetMessagesConfig.firstPage(chatId: 'chat_0'))).data!.$1;
+        expect(persisted.where((m) => m.text == 'flap-queued'), hasLength(1)); // delivered exactly once
+      });
+
+      test('an offline→empty debug transition renders the empty state (not swallowed by re-deliver)', () async {
+        // Test env is always-online, so this exercises the offline→empty scenario path.
+        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_0'));
+        addTearDown(bloc.close);
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+        bloc.add(const ChatThreadEvent.setScenario(ChatThreadScenario.offline));
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        bloc.add(const ChatThreadEvent.setScenario(ChatThreadScenario.empty));
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+        expect((bloc.state as Initialized).items, isEmpty); // empty applied, not swallowed
+      });
+    });
   });
+}
+
+/// A controllable [ConnectivityService] for the P1 tests (seed-then-live).
+class _FakeConnectivity implements ConnectivityService {
+  _FakeConnectivity(this._online);
+  bool _online;
+  final StreamController<bool> _controller = StreamController<bool>.broadcast();
+
+  void emit(bool online) {
+    _online = online;
+    _controller.add(online);
+  }
+
+  @override
+  Future<bool> isOnline() async => _online;
+
+  @override
+  Stream<bool> watchOnline() async* {
+    yield _online;
+    yield* _controller.stream;
+  }
 }
