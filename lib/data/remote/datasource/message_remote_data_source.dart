@@ -1,7 +1,7 @@
 import 'package:nox_app/data/entity/base/response_entity.dart';
+import 'package:nox_app/data/entity/chat/wire/message_wire_entity.dart';
 import 'package:nox_app/data/entity/chat/wire/messages_wire_entity.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
-import 'package:nox_app/domain/model/chat/message_model.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 
 /// Network boundary for a chat thread (5.2), aggregating the feature's two
@@ -12,7 +12,7 @@ import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 abstract class MessageRemoteDataSource {
   Future<ResponseEntity<MessagesWireEntity>> getMessages({required GetMessagesConfig config});
 
-  Future<MessageModel> sendMessage({
+  Future<ResponseEntity<MessageWireEntity>> sendMessage({
     required String chatId,
     required String authorId,
     required String authorLabel,

@@ -109,13 +109,18 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
   Future<RepositoryResult<MessageModel>> sendMessage({required String chatId, String? text, MessageAttachment? attachment}) {
     return execute<MessageModel>(() async {
       final identity = await _identity();
-      final message = await _messageRemote.sendMessage(
+      // Unwrap the ResponseEntity<MessageWireEntity> echo envelope (P6 — uniform with the
+      // paged reads); data==null / success:false → throw → execute() maps it to error.
+      final response = await _messageRemote.sendMessage(
         chatId: chatId,
         authorId: identity.id,
         authorLabel: identity.label,
         text: text,
         attachment: attachment,
       );
+      final data = response.data;
+      if (data == null) throw StateError('send envelope has no data (success=${response.success})');
+      final message = _wireMapper.toModel(entity: data);
       await _messageDao.upsert(_mapper.toEntity(model: message));
       // Keep the chat row (list) consistent with the thread: update preview + time + order.
       // A failed send returns an error before reaching here, so the row is never touched (FR-004).
