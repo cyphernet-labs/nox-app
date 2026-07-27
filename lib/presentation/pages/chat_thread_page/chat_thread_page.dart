@@ -4,6 +4,7 @@ import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/pages/chat_card_page/chat_card_page.dart';
+import 'package:nox_app/presentation/pages/chat_thread_page/bloc/chat_thread_bloc.dart';
 import 'package:nox_app/presentation/pages/file_view_page/file_view_page.dart';
 import 'package:nox_app/presentation/widgets/chat/app_thread_view_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
@@ -14,10 +15,16 @@ import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 /// gallery it renders the thread pane (with the persistent header) full-window.
 /// The body ([AppThreadViewWidget]) owns the [ChatThreadBloc].
 class ChatThreadPage extends StatelessWidget {
-  const ChatThreadPage({super.key, required this.chat, this.demo = false});
+  const ChatThreadPage({super.key, required this.chat, this.demo = false, this.initialScenario, this.initialSendText});
 
   final ChatModel chat;
   final bool demo;
+
+  /// Test-only golden seams forwarded to [AppThreadViewWidget] (offline / send-error).
+  @visibleForTesting
+  final ChatThreadScenario? initialScenario;
+  @visibleForTesting
+  final String? initialSendText;
 
   static Route<void> route(ChatModel chat) => MaterialPageRoute<void>(
     builder: (_) => ChatThreadPage(chat: chat),
@@ -51,6 +58,8 @@ class ChatThreadPage extends StatelessWidget {
               showHeader: true,
               onInfo: () => showChatCard(context, chat),
               onOpenFile: (file) => showFileView(context, file),
+              initialScenario: initialScenario,
+              initialSendText: initialSendText,
             ),
           );
         }
@@ -64,7 +73,13 @@ class ChatThreadPage extends StatelessWidget {
             // Tapping the chat name opens the chat card (5.4).
             title: InkWell(onTap: () => showChatCard(context, chat), child: Text(chat.name)),
           ),
-          body: AppThreadViewWidget(chat: chat, demo: demo, onOpenFile: (file) => showFileView(context, file)),
+          body: AppThreadViewWidget(
+            chat: chat,
+            demo: demo,
+            onOpenFile: (file) => showFileView(context, file),
+            initialScenario: initialScenario,
+            initialSendText: initialSendText,
+          ),
         );
       },
     );

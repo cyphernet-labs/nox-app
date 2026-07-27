@@ -33,7 +33,16 @@ import 'package:nox_app/presentation/widgets/state/app_progress_widget.dart';
 /// line, plus an editable composer with optimistic send. [showHeader] adds the
 /// desktop [AppThreadHeaderWidget].
 class AppThreadViewWidget extends StatefulWidget {
-  const AppThreadViewWidget({super.key, required this.chat, this.demo = false, this.showHeader = false, this.onInfo, this.onOpenFile});
+  const AppThreadViewWidget({
+    super.key,
+    required this.chat,
+    this.demo = false,
+    this.showHeader = false,
+    this.onInfo,
+    this.onOpenFile,
+    this.initialScenario,
+    this.initialSendText,
+  });
 
   final ChatModel chat;
   final bool demo;
@@ -44,6 +53,16 @@ class AppThreadViewWidget extends StatefulWidget {
 
   /// Open the file view (5.3) for an attachment. Wired by callers; null → no-op.
   final void Function(MessageAttachment attachment)? onOpenFile;
+
+  /// Test-only seam: seed the debug [ChatThreadScenario] on init so golden tests can
+  /// render the offline / send-error states deterministically (mirrors ChatsListPage).
+  @visibleForTesting
+  final ChatThreadScenario? initialScenario;
+
+  /// Test-only seam: auto-send this text on init — paired with [initialScenario] =
+  /// sendError it renders the inline send-error bubble for the golden (no UI interaction).
+  @visibleForTesting
+  final String? initialSendText;
 
   @override
   State<AppThreadViewWidget> createState() => _AppThreadViewWidgetState();
@@ -59,6 +78,13 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
   void initState() {
     super.initState();
     _bloc = ChatThreadBloc()..add(ChatThreadEvent.initialize(widget.chat.id));
+    // Test-only: seed a debug scenario (+ optionally auto-send) so golden tests can lock
+    // the offline / send-error states. The events queue after initialize.
+    if (widget.initialScenario != null) {
+      _scenario = widget.initialScenario!;
+      _bloc.add(ChatThreadEvent.setScenario(widget.initialScenario!));
+      if (widget.initialSendText != null) _bloc.add(ChatThreadEvent.messageSent(text: widget.initialSendText));
+    }
     _scroll.addListener(_onScroll);
   }
 

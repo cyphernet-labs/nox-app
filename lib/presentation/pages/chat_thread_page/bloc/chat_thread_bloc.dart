@@ -17,6 +17,7 @@ import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/service/connectivity_service.dart';
 import 'package:nox_app/domain/service/file_picker_service.dart';
+import 'package:nox_app/general/app_clock.dart';
 import 'package:nox_app/general/identity/identity_resolver.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
 import 'package:nox_app/presentation/pagination/paging_state_ext.dart';
@@ -195,7 +196,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
       authorLabel: _identity.label,
       text: text,
       attachment: event.attachment,
-      sentAt: DateTime.now(),
+      sentAt: AppClock.now(), // AppClock (frozen in tests) → deterministic; real clock in prod
       status: MessageStatus.pending,
     );
     emit(current.copyWith(outgoing: [...current.outgoing, optimistic], draftAttachment: null));
