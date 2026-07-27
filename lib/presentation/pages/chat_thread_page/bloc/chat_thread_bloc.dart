@@ -39,7 +39,9 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     on<SendRetried>(_onSendRetried);
     on<AttachmentPicked>(_onAttachmentPicked);
     on<AttachmentRemoved>(_onAttachmentRemoved);
-    on<ConnectivityChanged>(_onConnectivityChanged);
+    // sequential() so a rapid connectivity flap can't run two overlapping re-deliveries
+    // of the same queued pending send (which would double-post in the open no-delete space).
+    on<ConnectivityChanged>(_onConnectivityChanged, transformer: sequential());
     on<SetScenario>(_onSetScenario);
   }
 
@@ -314,9 +316,11 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     if (event.scenario == ChatThreadScenario.sendError) return;
 
     final current = state;
-    // Offline → online via the debug scenario (only if the device is actually online):
+    // Offline → NORMAL via the debug scenario (only if the device is actually online):
     // re-deliver the messages queued as pending while offline, keeping the loaded history.
-    if (wasOffline && !_isOffline() && current is Initialized) {
+    // Scoped to `normal` so offline→empty / offline→fatal fall through to the reset branch
+    // below and render the target debug state (they are NOT a reconnect).
+    if (event.scenario == ChatThreadScenario.normal && wasOffline && !_isOffline() && current is Initialized) {
       await _redeliverQueued(emit);
       return;
     }

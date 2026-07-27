@@ -12,6 +12,8 @@ import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
+import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
+import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/service/connectivity_service.dart';
 import 'package:nox_app/domain/service/file_picker_service.dart';
 import 'package:nox_app/presentation/pages/chat_thread_page/bloc/chat_thread_bloc.dart';
@@ -364,6 +366,38 @@ void main() {
         final delivered = (bloc.state as Initialized).outgoing.firstWhere((m) => m.text == 'queued while really offline');
         expect(delivered.status, MessageStatus.sent); // flushed on reconnect
         expect((bloc.state as Initialized).isOffline, isFalse); // banner cleared
+      });
+
+      test('rapid reconnect flapping re-delivers a queued send exactly once (sequential, no duplicate)', () async {
+        final conn = _FakeConnectivity(false); // offline
+        useConnectivity(conn);
+        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_0'));
+        addTearDown(bloc.close);
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        bloc.add(const ChatThreadEvent.messageSent(text: 'flap-queued'));
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+
+        // Flap online→offline→online within the mock send-ack window — sequential() must
+        // stop two overlapping re-deliveries from double-posting the same message.
+        conn.emit(true);
+        conn.emit(false);
+        conn.emit(true);
+        await Future<void>.delayed(const Duration(milliseconds: 900));
+
+        final persisted = (await getIt<MessageRepository>().getMessages(config: GetMessagesConfig.firstPage(chatId: 'chat_0'))).data!.$1;
+        expect(persisted.where((m) => m.text == 'flap-queued'), hasLength(1)); // delivered exactly once
+      });
+
+      test('an offline→empty debug transition renders the empty state (not swallowed by re-deliver)', () async {
+        // Test env is always-online, so this exercises the offline→empty scenario path.
+        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_0'));
+        addTearDown(bloc.close);
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+        bloc.add(const ChatThreadEvent.setScenario(ChatThreadScenario.offline));
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        bloc.add(const ChatThreadEvent.setScenario(ChatThreadScenario.empty));
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+        expect((bloc.state as Initialized).items, isEmpty); // empty applied, not swallowed
       });
     });
   });
