@@ -9,6 +9,7 @@ import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/general/app_clock.dart';
 import 'package:nox_app/general/constants.dart';
+import 'package:nox_app/presentation/pages/chat_thread_page/bloc/chat_thread_bloc.dart';
 import 'package:nox_app/presentation/pages/chat_thread_page/chat_thread_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -83,6 +84,51 @@ void main() {
         await _settleThread(tester);
 
         await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/chat_thread_page_desktop_$suffix.png'));
+      });
+
+      // DoD 'Inline-error' tail: the send-error state — an own message that failed to send
+      // (MessageStatus.error, tinted + retry). Seeded via the sendError scenario + an
+      // auto-send (no UI interaction), settled through the same bounded-pump harness.
+      testWidgets('mobile inline-error matches the $suffix theme', (tester) async {
+        AppClock.freeze(kGoldenClock);
+        addTearDown(AppClock.reset);
+        tester.view.devicePixelRatio = 3.0;
+        tester.view.physicalSize = Constants.designSize * 3.0;
+        addTearDown(() {
+          tester.view.resetDevicePixelRatio();
+          tester.view.resetPhysicalSize();
+        });
+
+        await pumpApp(
+          tester,
+          ChatThreadPage(chat: _chat(), initialScenario: ChatThreadScenario.sendError, initialSendText: 'Ping the server'),
+          themeMode: mode,
+          settle: false,
+        );
+        await _settleThread(tester);
+
+        await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/chat_thread_page_inline_error_$suffix.png'));
+      });
+
+      testWidgets('desktop inline-error matches the $suffix theme', (tester) async {
+        AppClock.freeze(kGoldenClock);
+        addTearDown(AppClock.reset);
+        tester.view.devicePixelRatio = 2.0;
+        tester.view.physicalSize = kDesktopGoldenSize * 2.0;
+        addTearDown(() {
+          tester.view.resetDevicePixelRatio();
+          tester.view.resetPhysicalSize();
+        });
+
+        await pumpApp(
+          tester,
+          ChatThreadPage(chat: _chat(), initialScenario: ChatThreadScenario.sendError, initialSendText: 'Ping the server'),
+          themeMode: mode,
+          settle: false,
+        );
+        await _settleThread(tester);
+
+        await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/chat_thread_page_inline_error_desktop_$suffix.png'));
       });
     }
   });
