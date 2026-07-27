@@ -98,6 +98,16 @@ class _FileViewPageState extends State<FileViewPage> with SingleTickerProviderSt
   }
 
   void _startDownload() {
+    // A real local file (picked/sent, feature 020) already has its bytes on disk —
+    // there is nothing to fetch, so enable Save immediately (P4). Only a seeded /
+    // backend-sourced file with no local copy runs the timed mock "download", which
+    // stands in for the real network fetch (TBD until the backend lands).
+    final path = widget.file.localPath;
+    if (path != null && path.isNotEmpty && File(path).existsSync()) {
+      _controller.stop();
+      setState(() => _cached = true);
+      return;
+    }
     setState(() => _cached = false);
     _controller.forward(from: 0);
   }
