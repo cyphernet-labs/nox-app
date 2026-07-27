@@ -118,6 +118,29 @@ void main() {
     });
   });
 
+  testWidgets('the compact removable variant (composer draft, P2) shows a remove × that fires onRemove', (tester) async {
+    final tmp = File('${Directory.systemTemp.path}/nox_draft_test.png')..writeAsBytesSync(_png);
+    addTearDown(() => tmp.existsSync() ? tmp.deleteSync() : null);
+    var removed = 0;
+
+    await pumpApp(
+      tester,
+      AppImageAttachmentWidget(
+        localPath: tmp.path,
+        type: FileType.image,
+        name: 'draft.png',
+        size: '1 KB',
+        width: 72,
+        height: 72,
+        onRemove: () => removed++,
+      ),
+    );
+
+    expect(find.byType(Image), findsOneWidget); // the compact preview
+    await tester.tap(find.byType(IconButton)); // the remove ×
+    expect(removed, 1);
+  });
+
   testWidgets('falls back to the file chip when the image cannot be decoded (F4/FR-007)', (tester) async {
     await tester.runAsync(() async {
       await pumpApp(
