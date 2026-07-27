@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/nox_icons.dart';
@@ -237,6 +238,18 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
       onSend: _onSend,
       attachment: draft == null
           ? null
+          // A decodable image draft shows a compact removable thumbnail (P2); every other
+          // type stays the removable type-icon chip.
+          : AppImageAttachmentWidget.canRender(draft)
+          ? AppImageAttachmentWidget(
+              localPath: draft.localPath!,
+              type: draft.type,
+              name: draft.name,
+              size: FileSizeFormatter.format(draft.sizeBytes),
+              width: AppDimensionTokens.layout.imageThumbCompact,
+              height: AppDimensionTokens.layout.imageThumbCompact,
+              onRemove: () => _bloc.add(const ChatThreadEvent.attachmentRemoved()),
+            )
           : AppFileChipWidget(
               type: draft.type,
               name: draft.name,
