@@ -99,16 +99,17 @@ class AppImageAttachmentWidget extends StatelessWidget {
           Positioned(
             top: AppSpacingTokens.s4,
             right: AppSpacingTokens.s4,
+            // inverseSurface + onInverseSurface = a contrast-guaranteed pair in BOTH
+            // themes (over an unpredictable photo); a ≥48 tap target (a11y), which still
+            // fits the 72 box (4 + 48 = 52 < 72).
             child: Material(
-              color: colorScheme.scrim.withValues(alpha: 0.5),
+              color: colorScheme.inverseSurface.withValues(alpha: 0.6),
               shape: const CircleBorder(),
               clipBehavior: Clip.antiAlias,
               child: IconButton(
                 tooltip: context.l10n.tooltipRemove,
-                iconSize: AppDimensionTokens.icon.lg,
-                visualDensity: VisualDensity.compact,
                 onPressed: onRemove,
-                icon: AppIconWidget(NoxIcons.close, color: colorScheme.onInverseSurface),
+                icon: AppIconWidget(NoxIcons.close, size: AppDimensionTokens.icon.lg, color: colorScheme.onInverseSurface),
               ),
             ),
           ),

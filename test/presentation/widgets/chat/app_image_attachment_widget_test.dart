@@ -137,6 +137,9 @@ void main() {
     );
 
     expect(find.byType(Image), findsOneWidget); // the compact preview
+    final removeSize = tester.getSize(find.byType(IconButton));
+    expect(removeSize.width, greaterThanOrEqualTo(48)); // a11y tap target (FR-016)
+    expect(removeSize.height, greaterThanOrEqualTo(48));
     await tester.tap(find.byType(IconButton)); // the remove ×
     expect(removed, 1);
   });
