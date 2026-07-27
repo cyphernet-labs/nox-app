@@ -22,6 +22,9 @@ sealed class ChatThreadEvent with _$ChatThreadEvent {
   /// Remove the pending draft attachment.
   const factory ChatThreadEvent.attachmentRemoved() = AttachmentRemoved;
 
+  /// Live device-connectivity change (P1): drives the real offline banner + send-queue.
+  const factory ChatThreadEvent.connectivityChanged(bool online) = ConnectivityChanged;
+
   /// Debug-only: reproduce a thread scenario (empty / offline / fatal / send-error).
   const factory ChatThreadEvent.setScenario(ChatThreadScenario scenario) = SetScenario;
 }

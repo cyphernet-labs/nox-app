@@ -15,6 +15,7 @@ import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/service/connectivity_service.dart';
 import 'package:nox_app/domain/service/file_picker_service.dart';
 import 'package:nox_app/general/identity/identity_resolver.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
@@ -38,6 +39,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     on<SendRetried>(_onSendRetried);
     on<AttachmentPicked>(_onAttachmentPicked);
     on<AttachmentRemoved>(_onAttachmentRemoved);
+    on<ConnectivityChanged>(_onConnectivityChanged);
     on<SetScenario>(_onSetScenario);
   }
 
@@ -45,6 +47,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   final ChatRepository _chatRepository = getIt<ChatRepository>();
   final SessionRepository _sessionRepository = getIt<SessionRepository>();
   final FilePickerService _filePickerService = getIt<FilePickerService>();
+  final ConnectivityService _connectivityService = getIt<ConnectivityService>();
 
   late String _chatId;
   // The signed-in own-identity resolved from the session at thread init (feature 015).
@@ -57,6 +60,15 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   // (own send / debug inbound) re-reads the loaded prefix. Value ignored — getMessages
   // stays the single projection path.
   StreamSubscription<List<MessageModel>>? _messagesSub;
+
+  // Live device-online state (P1): the offline banner AND the offline send-queue are
+  // reachable in the real flow, not just via the debug scenario. Real offline keeps
+  // sends `pending`; reconnecting re-delivers them (mirrors the offline→normal scenario).
+  StreamSubscription<bool>? _connSub;
+  bool _deviceOnline = true;
+
+  /// The thread is offline when the device is offline OR the debug scenario forces it.
+  bool _isOffline() => !_deviceOnline || _scenario == ChatThreadScenario.offline;
 
   FutureOr<void> _onInitialize(Initialize event, Emitter<ChatThreadState> emit) async {
     _chatId = event.chatId;
@@ -76,11 +88,14 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
         .skip(1)
         .debounceTime(const Duration(milliseconds: 100))
         .listen((_) => add(const ChatThreadEvent.loadMessages(refresh: true)));
+    // Live connectivity → the offline banner + the offline send-queue (seed then live).
+    _connSub ??= _connectivityService.watchOnline().listen((online) => add(ChatThreadEvent.connectivityChanged(online)));
   }
 
   @override
   Future<void> close() {
     _messagesSub?.cancel();
+    _connSub?.cancel();
     return super.close();
   }
 
@@ -145,7 +160,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
                 nextPage: r.nextPage ?? live.nextPage,
                 loadedPageCount: isReset ? 1 : live.loadedPageCount + 1,
                 loadingInProgress: false,
-                isOffline: _scenario == ChatThreadScenario.offline,
+                isOffline: _isOffline(),
               ),
             );
           },
@@ -199,7 +214,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   /// Delivers an optimistic message: offline keeps it `pending`; send-error flips it
   /// to `error`; otherwise the (mock) repository ack marks it `sent`.
   Future<void> _deliver(String localId, {String? text, MessageAttachment? attachment, required Emitter<ChatThreadState> emit}) async {
-    if (_scenario == ChatThreadScenario.offline) return; // queued as pending until restored
+    if (_isOffline()) return; // offline (device or debug) → queued as pending until restored
     await executeLogic(() async {
       if (_scenario == ChatThreadScenario.sendError) {
         _updateOutgoing(localId, MessageStatus.error, emit);
@@ -293,19 +308,16 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   }
 
   FutureOr<void> _onSetScenario(SetScenario event, Emitter<ChatThreadState> emit) async {
-    final previous = _scenario;
+    final wasOffline = _isOffline();
     _scenario = event.scenario;
     // send-error only affects the next send.
     if (event.scenario == ChatThreadScenario.sendError) return;
 
     final current = state;
-    // Connectivity restored (offline → normal): re-deliver the messages that were
-    // queued as pending while offline, keeping the already-loaded history.
-    if (event.scenario == ChatThreadScenario.normal && previous == ChatThreadScenario.offline && current is Initialized) {
-      final queued = current.outgoing.where((message) => message.status == MessageStatus.pending).toList();
-      for (final message in queued) {
-        await _deliver(message.id, text: message.text, attachment: message.attachment, emit: emit);
-      }
+    // Offline → online via the debug scenario (only if the device is actually online):
+    // re-deliver the messages queued as pending while offline, keeping the loaded history.
+    if (wasOffline && !_isOffline() && current is Initialized) {
+      await _redeliverQueued(emit);
       return;
     }
 
@@ -313,5 +325,27 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     // previous scenario's sends don't leak into (e.g.) the empty state.
     if (current is Initialized) emit(current.copyWith(outgoing: const [], draftAttachment: null));
     add(state is Initialized ? const ChatThreadEvent.loadMessages(reset: true) : ChatThreadEvent.initialize(_chatId));
+  }
+
+  /// Re-deliver every message queued as `pending` while offline (own optimistic sends
+  /// held back by [_deliver]'s offline guard). Called on the offline→online transition.
+  Future<void> _redeliverQueued(Emitter<ChatThreadState> emit) async {
+    final current = state;
+    if (current is! Initialized) return;
+    final queued = current.outgoing.where((message) => message.status == MessageStatus.pending).toList();
+    for (final message in queued) {
+      await _deliver(message.id, text: message.text, attachment: message.attachment, emit: emit);
+    }
+  }
+
+  Future<void> _onConnectivityChanged(ConnectivityChanged event, Emitter<ChatThreadState> emit) async {
+    final wasOffline = _isOffline();
+    _deviceOnline = event.online;
+    final nowOffline = _isOffline();
+    if (wasOffline == nowOffline) return; // no effective change (a debug scenario may pin offline)
+    final current = state;
+    if (current is Initialized) emit(current.copyWith(isOffline: nowOffline)); // banner in place, no reload
+    // Reconnected → flush the offline send-queue.
+    if (!nowOffline) await _redeliverQueued(emit);
   }
 }
