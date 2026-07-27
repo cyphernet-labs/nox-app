@@ -31,6 +31,32 @@ class _FakeSaver implements FilePickerService {
 }
 
 void main() {
+  group('FileViewPage local file (P4)', () {
+    testWidgets('a file with a real local path skips the mock download and enables Save at once', (tester) async {
+      final src = File('${Directory.systemTemp.path}/nox_p4_src.png')..writeAsBytesSync(Uint8List.fromList([1, 2, 3]));
+      addTearDown(() => src.existsSync() ? src.deleteSync() : null);
+      final file = MessageAttachment(id: 'i', type: FileType.image, name: 'shot.png', sizeBytes: 3, localPath: src.path);
+
+      await tester.binding.setSurfaceSize(const Size(420, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      // settle:false + a single pump — do NOT wait for the 1s mock download timer.
+      await pumpApp(tester, FileViewPage(file: file), settle: false);
+      await tester.pump();
+
+      // No "download" progress bar (nothing to fetch — bytes are on disk); the size shows.
+      expect(find.byType(LinearProgressIndicator), findsNothing);
+      expect(find.textContaining('B'), findsWidgets); // formatted size, not a % caption
+    });
+
+    testWidgets('a seeded file with no local path still runs the timed mock download (backend stand-in)', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(420, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, const FileViewPage(file: _file), settle: false); // pdf, no localPath
+      await tester.pump();
+      expect(find.byType(LinearProgressIndicator), findsOneWidget); // the mock "download" is running
+    });
+  });
+
   group('FileViewPage (mobile)', () {
     testWidgets('shows the file glyph, name and size after the download finishes', (tester) async {
       await tester.binding.setSurfaceSize(const Size(420, 900));
