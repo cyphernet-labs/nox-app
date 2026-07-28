@@ -3,6 +3,9 @@
          (the Scan QR affordance is hidden by the capability flag, FR-016/FR-017). -->
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-feature android:name="android.hardware.camera" android:required="false"/>
+    <!-- Notifications (7.2). Android 13+ (API 33) POST_NOTIFICATIONS runtime permission;
+         permission_handler reads its status to drive the "blocked" banner + Open settings. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
         android:label="NOX"
         android:name="${applicationName}"
