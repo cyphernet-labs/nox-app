@@ -21,7 +21,12 @@ part 'chat_card_state.dart';
 /// (mock-backed, no pagination). Empty / offline / fatal are reproduced by
 /// [ChatCardScenario] (debug).
 class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
-  ChatCardBloc() : super(const ChatCardState.initializing()) {
+  /// [initialScenario] pins the debug scenario BEFORE the first [Initialize] so the very
+  /// first (and only) load reflects it — avoiding the setScenario re-init racing an
+  /// in-flight files re-derive (which would clobber `empty` with the real files). Runtime
+  /// leaves it null (→ normal); the demo dropdown still switches live via [SetScenario].
+  ChatCardBloc({ChatCardScenario? initialScenario}) : super(const ChatCardState.initializing()) {
+    if (initialScenario != null) _scenario = initialScenario;
     on<Initialize>(_onInitialize);
     on<ViewModeChanged>(_onViewModeChanged);
     on<FilesRefreshed>(_onFilesRefreshed);

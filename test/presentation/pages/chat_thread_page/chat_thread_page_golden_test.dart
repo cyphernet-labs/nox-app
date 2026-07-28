@@ -130,6 +130,55 @@ void main() {
 
         await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/chat_thread_page_inline_error_desktop_$suffix.png'));
       });
+
+      // The remaining debug scenarios (P10): offline (a NOTICE strip over the thread),
+      // empty (no messages) and fatal (full-screen error). Each seeded via initialScenario
+      // and locked on both the mobile (360) and desktop (`_wide` pane) surfaces.
+      for (final scenario in const [ChatThreadScenario.offline, ChatThreadScenario.empty, ChatThreadScenario.fatal]) {
+        final name = scenario.name;
+
+        testWidgets('mobile $name matches the $suffix theme', (tester) async {
+          AppClock.freeze(kGoldenClock);
+          addTearDown(AppClock.reset);
+          tester.view.devicePixelRatio = 3.0;
+          tester.view.physicalSize = Constants.designSize * 3.0;
+          addTearDown(() {
+            tester.view.resetDevicePixelRatio();
+            tester.view.resetPhysicalSize();
+          });
+
+          await pumpApp(
+            tester,
+            ChatThreadPage(chat: _chat(), initialScenario: scenario),
+            themeMode: mode,
+            settle: false,
+          );
+          await _settleThread(tester);
+
+          await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/chat_thread_page_${name}_$suffix.png'));
+        });
+
+        testWidgets('desktop $name matches the $suffix theme', (tester) async {
+          AppClock.freeze(kGoldenClock);
+          addTearDown(AppClock.reset);
+          tester.view.devicePixelRatio = 2.0;
+          tester.view.physicalSize = kDesktopGoldenSize * 2.0;
+          addTearDown(() {
+            tester.view.resetDevicePixelRatio();
+            tester.view.resetPhysicalSize();
+          });
+
+          await pumpApp(
+            tester,
+            ChatThreadPage(chat: _chat(), initialScenario: scenario),
+            themeMode: mode,
+            settle: false,
+          );
+          await _settleThread(tester);
+
+          await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/chat_thread_page_${name}_desktop_$suffix.png'));
+        });
+      }
     }
   });
 }
