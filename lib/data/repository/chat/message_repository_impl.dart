@@ -110,7 +110,7 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
     return execute<MessageModel>(() async {
       final identity = await _identity();
       // Unwrap the ResponseEntity<MessageWireEntity> echo envelope (P6 — uniform with the
-      // paged reads); data==null / success:false → throw → execute() maps it to error.
+      // paged reads); a failed envelope has null data → throw → execute() maps it to error.
       final response = await _messageRemote.sendMessage(
         chatId: chatId,
         authorId: identity.id,
