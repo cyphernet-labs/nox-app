@@ -9,6 +9,7 @@ import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/general/app_clock.dart';
 import 'package:nox_app/general/constants.dart';
+import 'package:nox_app/presentation/pages/chat_card_page/bloc/chat_card_bloc.dart';
 import 'package:nox_app/presentation/pages/chat_card_page/chat_card_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -80,6 +81,64 @@ void main() {
 
         await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/chat_card_page_desktop_$suffix.png'));
       });
+
+      // Debug scenarios + the grid view (P10). offline = a NOTICE strip over the files
+      // list; empty = the empty-files illustration; fatal = full-screen error; grid = the
+      // files GridView (normal scenario, forced via initialViewMode). Mobile + desktop.
+      for (final variant in _cardVariants) {
+        testWidgets('mobile ${variant.name} matches the $suffix theme', (tester) async {
+          AppClock.freeze(kGoldenClock);
+          addTearDown(AppClock.reset);
+          tester.view.devicePixelRatio = 3.0;
+          tester.view.physicalSize = Constants.designSize * 3.0;
+          addTearDown(() {
+            tester.view.resetDevicePixelRatio();
+            tester.view.resetPhysicalSize();
+          });
+
+          await pumpApp(
+            tester,
+            ChatCardPage(chat: _chat(), initialScenario: variant.scenario, initialViewMode: variant.viewMode),
+            themeMode: mode,
+            settle: false,
+          );
+          await _settleCard(tester);
+
+          await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/chat_card_page_${variant.name}_$suffix.png'));
+        });
+
+        testWidgets('desktop ${variant.name} matches the $suffix theme', (tester) async {
+          AppClock.freeze(kGoldenClock);
+          addTearDown(AppClock.reset);
+          tester.view.devicePixelRatio = 2.0;
+          tester.view.physicalSize = kDesktopGoldenSize * 2.0;
+          addTearDown(() {
+            tester.view.resetDevicePixelRatio();
+            tester.view.resetPhysicalSize();
+          });
+
+          await pumpApp(
+            tester,
+            ChatCardPage(chat: _chat(), initialScenario: variant.scenario, initialViewMode: variant.viewMode),
+            themeMode: mode,
+            settle: false,
+          );
+          await _settleCard(tester);
+
+          await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/chat_card_page_${variant.name}_desktop_$suffix.png'));
+        });
+      }
     }
   });
 }
+
+/// The card debug variants locked by P10. `scenario`/`viewMode` are set independently
+/// (a scenario re-initializes and would reset viewMode), so `grid` carries no scenario.
+typedef _CardVariant = ({String name, ChatCardScenario? scenario, FilesViewMode? viewMode});
+
+const List<_CardVariant> _cardVariants = [
+  (name: 'offline', scenario: ChatCardScenario.offline, viewMode: null),
+  (name: 'empty', scenario: ChatCardScenario.empty, viewMode: null),
+  (name: 'fatal', scenario: ChatCardScenario.fatal, viewMode: null),
+  (name: 'grid', scenario: null, viewMode: FilesViewMode.grid),
+];

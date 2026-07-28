@@ -41,10 +41,20 @@ Future<void> showChatCard(BuildContext context, ChatModel chat) {
 /// (Details header). No edit / mute / pin / report and no metadata. The body
 /// ([ChatCardBody]) owns the [ChatCardBloc].
 class ChatCardPage extends StatelessWidget {
-  const ChatCardPage({super.key, required this.chat, this.demo = false});
+  const ChatCardPage({super.key, required this.chat, this.demo = false, this.initialScenario, this.initialViewMode});
 
   final ChatModel chat;
   final bool demo;
+
+  /// Test-only seam: render a debug [ChatCardScenario] (offline / empty / fatal)
+  /// deterministically for goldens, without driving the demo dropdown.
+  @visibleForTesting
+  final ChatCardScenario? initialScenario;
+
+  /// Test-only seam: open in a specific [FilesViewMode] (e.g. grid) for goldens. Pair with
+  /// the normal scenario — the List/Grid toggle only shows when there are files to view.
+  @visibleForTesting
+  final FilesViewMode? initialViewMode;
 
   static Route<void> route(ChatModel chat) => MaterialPageRoute<void>(
     builder: (_) => ChatCardPage(chat: chat),
@@ -82,7 +92,13 @@ class ChatCardPage extends StatelessWidget {
                 Align(
                   alignment: Alignment.centerRight,
                   child: AppSideSheetPanel(
-                    child: ChatCardBody(chat: chat, demo: demo, isDrawer: true),
+                    child: ChatCardBody(
+                      chat: chat,
+                      demo: demo,
+                      isDrawer: true,
+                      initialScenario: initialScenario,
+                      initialViewMode: initialViewMode,
+                    ),
                   ),
                 ),
               ],
@@ -98,7 +114,7 @@ class ChatCardPage extends StatelessWidget {
             ),
             title: Text(chat.name, maxLines: 1, overflow: TextOverflow.ellipsis),
           ),
-          body: ChatCardBody(chat: chat, demo: demo),
+          body: ChatCardBody(chat: chat, demo: demo, initialScenario: initialScenario, initialViewMode: initialViewMode),
         );
       },
     );
@@ -108,11 +124,17 @@ class ChatCardPage extends StatelessWidget {
 /// The chat-card content (header + files). Owns the [ChatCardBloc]; hosted by the
 /// mobile [ChatCardPage] (Scaffold) and the desktop side-sheet.
 class ChatCardBody extends StatefulWidget {
-  const ChatCardBody({super.key, required this.chat, this.demo = false, this.isDrawer = false});
+  const ChatCardBody({super.key, required this.chat, this.demo = false, this.isDrawer = false, this.initialScenario, this.initialViewMode});
 
   final ChatModel chat;
   final bool demo;
   final bool isDrawer;
+
+  /// Test-only seams (see [ChatCardPage]): force a debug scenario / view mode on init.
+  @visibleForTesting
+  final ChatCardScenario? initialScenario;
+  @visibleForTesting
+  final FilesViewMode? initialViewMode;
 
   @override
   State<ChatCardBody> createState() => _ChatCardBodyState();
@@ -125,7 +147,21 @@ class _ChatCardBodyState extends State<ChatCardBody> {
   @override
   void initState() {
     super.initState();
-    _bloc = ChatCardBloc()..add(ChatCardEvent.initialize(widget.chat.id));
+    // Test-only seams (goldens): pin the debug scenario at construction (deterministic —
+    // no setScenario re-init race) and keep the demo dropdown in sync.
+    _bloc = ChatCardBloc(initialScenario: widget.initialScenario)..add(ChatCardEvent.initialize(widget.chat.id));
+    if (widget.initialScenario != null) _scenario = widget.initialScenario!;
+    if (widget.initialViewMode != null) {
+      // ViewModeChanged is a no-op until the bloc reaches Initialized (it can't copyWith an
+      // Initializing state); wait for the first loaded state, then flip the mode. catchError
+      // swallows the StateError if the bloc closes first (early dispose → no Initialized).
+      _bloc.stream
+          .firstWhere((state) => state is Initialized)
+          .then((_) {
+            if (mounted) _bloc.add(ChatCardEvent.viewModeChanged(widget.initialViewMode!));
+          })
+          .catchError((Object _) {});
+    }
   }
 
   @override

@@ -84,6 +84,25 @@ void main() {
       verify: (bloc) => expect(bloc.state, isA<Error>()),
     );
 
+    // The construction-time seam (P10): pinning the scenario BEFORE the first Initialize
+    // makes the load deterministic — unlike setScenario, no normal load runs first, so an
+    // in-flight files re-derive can't clobber `empty` back to the seeded file.
+    blocTest<ChatCardBloc, ChatCardState>(
+      'initialScenario: empty loads empty and stays empty (no re-derive clobber)',
+      build: () => ChatCardBloc(initialScenario: ChatCardScenario.empty),
+      act: (bloc) => bloc.add(const ChatCardEvent.initialize('chat_0')),
+      wait: const Duration(milliseconds: 600), // long enough for any watch tick + debounce
+      verify: (bloc) => expect((bloc.state as Initialized).files, isEmpty),
+    );
+
+    blocTest<ChatCardBloc, ChatCardState>(
+      'initialScenario: fatal emits Error on the first load',
+      build: () => ChatCardBloc(initialScenario: ChatCardScenario.fatal),
+      act: (bloc) => bloc.add(const ChatCardEvent.initialize('chat_0')),
+      wait: const Duration(milliseconds: 300),
+      verify: (bloc) => expect(bloc.state, isA<Error>()),
+    );
+
     test('a newly sent attachment appears in the files view without a reload (R5)', () async {
       // A dedicated chat id (seeded fresh with the generic thread → one attachment).
       final bloc = ChatCardBloc()..add(const ChatCardEvent.initialize('chat_r5'));
