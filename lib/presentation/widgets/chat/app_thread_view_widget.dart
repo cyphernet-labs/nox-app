@@ -222,7 +222,7 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
       final localPath = attachment.localPath;
       // Decodable image with a real local file → inline thumbnail (tap → full-screen
       // viewer, F4); everything else (non-image / no path / missing file / non-decodable
-      // format like svg/heic) → the type-icon chip, whose tap reaches the File view.
+      // format like svg, or heic off Apple) → the type-icon chip, whose tap reaches File view.
       file = AppImageAttachmentWidget.canRender(attachment)
           ? AppImageAttachmentWidget(
               localPath: localPath!,
