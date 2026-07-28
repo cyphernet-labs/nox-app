@@ -71,6 +71,19 @@ void main() {
     expect(messages.any((m) => m.text == 'Hello from test'), isTrue); // in the newest batch
   });
 
+  test('sendMessage preserves the attachment localPath through the wire echo (P6/F4)', () async {
+    await repo.getMessages(config: GetMessagesConfig.firstPage(chatId: 'chat_0')); // seed
+    const att = MessageAttachment(id: 'a', type: FileType.image, name: 'shot.png', sizeBytes: 3, localPath: '/tmp/shot.png');
+
+    final sent = (await repo.sendMessage(chatId: 'chat_0', attachment: att)).data!;
+    // The device-local path is re-attached after the (path-less) wire echo, so a sent
+    // image still previews/saves. It also survives to the DB (re-read below).
+    expect(sent.attachment?.localPath, '/tmp/shot.png');
+
+    final persisted = (await repo.getMessages(config: GetMessagesConfig.firstPage(chatId: 'chat_0'))).data!.$1;
+    expect(persisted.firstWhere((m) => m.attachment?.id == 'a').attachment?.localPath, '/tmp/shot.png');
+  });
+
   test('re-querying reads from the DB without re-seeding', () async {
     final first = (await repo.getMessages(config: GetMessagesConfig.firstPage(chatId: 'chat_0'))).data!.$2.total;
     final second = (await repo.getMessages(config: GetMessagesConfig.firstPage(chatId: 'chat_0'))).data!.$2.total;
