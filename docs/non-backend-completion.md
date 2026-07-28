@@ -18,8 +18,8 @@
 | 8 | image-viewer-page-goldens | Голдены `ImageViewerPage` (page-mobile + page-desktop) — 3-golden-categories | M | точечно | ☐ |
 | 9 | app-image-attachment-widget-golden | Widget-golden `AppImageAttachmentWidget` (миниатюра + fallback) | S | точечно | ☐ |
 | 10 | scenario-goldens-thread-card | Голдены уже-реализованных debug-сценариев треда/карточки (offline/empty/fatal/grid) | M | точечно | ☐ |
-| 11 | notice-strip-widget-golden | Widget-golden `AppNoticeStripWidget` (offline/notice-баннер) | S | точечно | ☐ |
-| 12 | remaining-appwidget-goldens | Widget-голдены остальных state-bearing `App*Widget` (theme-option/switch-row/logout-dialog/…) | M | точечно | ☐ |
+| 11 | notice-strip-widget-golden | Widget-golden `AppNoticeStripWidget` (offline/notice-баннер) | S | точечно | ☑ |
+| 12 | remaining-appwidget-goldens | Widget-голдены остальных state-bearing `App*Widget` (theme-option/switch-row/logout-dialog/…) | M | точечно | ☑ |
 | 14 | desktop-qr-image-decode | Windows/Linux: выбор QR-картинки + локальный декод → тот же sign-in (опц. parity) | M | **SpecKit** | ☐ |
 | 15 | desktop-native-window-chrome | Нативный desktop window chrome (`window_manager`: min/max/close, draggable, frameless splash) | L | **SpecKit** | ☐ |
 | 17 | linux-packaging | Linux-пакетирование (.deb/AppImage/flatpak + .desktop menu-интеграция) | M | точечно | ☐ |
@@ -42,6 +42,7 @@
 
 _(строка на закрытую задачу: `P# id — дата — merge — примечание`)_
 
+- **P11+P12 widget-goldens — 2026-07-27 — merge (develop).** Widget-голдены (категория 1, light+dark) для `AppNoticeStripWidget` (P11) + 8 state-bearing `App*Widget` без покрытия (P12): `AppThemeOptionWidget` (selected/unselected, full-width + IntrinsicHeight), `AppSettingsSwitchRowWidget` (on/off), `AppInfoBannerWidget` (IntrinsicHeight), `AppLogoutDialogWidget` (destructive), `AppSettingsNavRowWidget` (resting/selected/destructive), `AppSettingsGroupWidget`, `AppPanelHeaderWidget`, `AppWindowTitlebarWidget`. Проверка: eyeball всех 9 light-вариантов + стабильный verify-pass. Гейт: 692 теста + голдены зелёные. Не покрыто (задокументировано): `AppThreadViewWidget` (BLoC-owning → покрыт page-голденами), `AppImageAttachmentWidget` (image-decode → P9), `AppVersionTextWidget` (async PackageInfo). Ревью: golden-only → eyeball ЕСТЬ ревью (не может сломать прод-код).
 - **P7 heic-thumbnail-platform-aware — 2026-07-26 — merge (develop).** HEIC-вложения рендерят инлайн-миниатюру на Apple-таргетах (iOS/macOS — где нативный кодек Flutter декодит HEIC) и остаются чипом на Linux/Windows/Android. `canRender` platform-aware (`Platform.isIOS/isMacOS`); universal-raster-набор не тронут. Ревью: 0 находок. Голден-churn нет (ни один seed не несёт heic). Гейт: 692 теста + 156 голденов.
 - **P6 s4-sendmessage-wire-envelope — 2026-07-26 — merge (develop).** `sendMessage`-эхо теперь через `ResponseEntity<MessageWireEntity>` (единообразно с paged reads — ничто не обходит референс-конверт). Репо разворачивает wire→model и **ре-аттачит** client-local `localPath` (держим его ВНЕ backend-wire-контракта → отправленное image по-прежнему превьюится/сохраняется). Проактивно найдена и исправлена регрессия: S4-wire не нёс `localPath` → без ре-аттача отправленное image теряло путь. Behavior-neutral. Ревью: 0 подтверждённых (валидировало фикс). Гейт: 692 теста + 156 голденов.
 - **P4 fileview-skip-timer-local-path — 2026-07-26 — merge (develop).** File-view (5.3) при реальном локальном файле (picked/sent, 020) активирует Save сразу, без 1s мок-таймера «download»; сеяный/бэкенд-файл без локальной копии по-прежнему крутит таймер-стенд-ин. 2 теста. Ревью: 0 находок. Гейт: 690 тестов.
