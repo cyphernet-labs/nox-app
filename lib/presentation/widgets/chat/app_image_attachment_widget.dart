@@ -50,10 +50,10 @@ class AppImageAttachmentWidget extends StatelessWidget {
   final VoidCallback? onRemove;
 
   /// Raster formats Flutter's native codec decodes on ALL five targets. SVG (no native
-  /// support anywhere) and HEIC (fails on Linux/Windows/Android) are excluded so an
-  /// image-typed file that can't be decoded stays a normal, tappable file chip (→ File
-  /// view) rather than a thumbnail whose tap opens a viewer that can only fail.
-  static const Set<String> _decodableExtensions = {'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'};
+  /// support anywhere) is excluded so an image-typed file that can't be decoded stays a
+  /// normal, tappable file chip (→ File view) rather than a thumbnail whose tap opens a
+  /// viewer that can only fail. HEIC is handled separately (Apple-only), see [canRender].
+  static const Set<String> _universalDecodableExtensions = {'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'};
 
   /// Whether [attachment] should render as an inline thumbnail (vs the type-icon chip):
   /// an image whose local file exists and is in a natively-decodable raster format —
@@ -62,7 +62,11 @@ class AppImageAttachmentWidget extends StatelessWidget {
     final path = attachment.localPath;
     if (attachment.type != FileType.image || path == null || path.isEmpty || !File(path).existsSync()) return false;
     final ext = attachment.name.contains('.') ? attachment.name.split('.').last.toLowerCase() : '';
-    return _decodableExtensions.contains(ext);
+    if (_universalDecodableExtensions.contains(ext)) return true;
+    // HEIC: Flutter's native codec decodes it on Apple targets (iOS/macOS) but NOT on
+    // Linux/Windows/Android — so thumbnail it only there (P7); elsewhere it stays a chip.
+    if (ext == 'heic') return Platform.isIOS || Platform.isMacOS;
+    return false;
   }
 
   @override

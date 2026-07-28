@@ -109,6 +109,11 @@ void main() {
       expect(AppImageAttachmentWidget.canRender(att(type: FileType.image, name: 'a.png', localPath: tmp.path)), isTrue);
       // svg is image-typed but Flutter can't decode it → chip (tap reaches the File view).
       expect(AppImageAttachmentWidget.canRender(att(type: FileType.image, name: 'a.svg', localPath: tmp.path)), isFalse);
+      // heic decodes only on Apple targets (P7): thumbnail there, chip elsewhere.
+      expect(
+        AppImageAttachmentWidget.canRender(att(type: FileType.image, name: 'a.heic', localPath: tmp.path)),
+        Platform.isIOS || Platform.isMacOS,
+      );
       // non-image → chip.
       expect(AppImageAttachmentWidget.canRender(att(type: FileType.pdf, name: 'a.pdf', localPath: tmp.path)), isFalse);
       // image with no local path (seeded/backend) → chip.
