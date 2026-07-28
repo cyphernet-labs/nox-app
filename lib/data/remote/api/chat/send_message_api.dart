@@ -1,6 +1,9 @@
 import 'dart:async';
 
 import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/entity/base/response_entity.dart';
+import 'package:nox_app/data/entity/chat/wire/message_wire_entity.dart';
+import 'package:nox_app/data/mapper/chat/message_wire_mapper.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
 import 'package:nox_app/domain/model/chat/message_status.dart';
@@ -9,12 +12,17 @@ import 'package:uuid/uuid.dart';
 
 /// Skeleton MOCK one-shot send (no real backend — UI phase). Echoes the message
 /// back as accepted (`sent`) after a short delay, authored with the signed-in
-/// identity resolved by the caller (MessageRepositoryImpl, from the session). The
-/// real impl POSTs to `v1/chats/{id}/messages` — example/TBD until the backend is
-/// chosen. `// TODO(backend):` real send + server-assigned id/timestamp.
+/// identity resolved by the caller (MessageRepositoryImpl, from the session), wrapped
+/// in the reference `ResponseEntity<MessageWireEntity>` envelope (feature P6 — uniform
+/// with the paged reads / Item harness). The real impl POSTs to `v1/chats/{id}/messages`
+/// — example/TBD until the backend is chosen. `// TODO(backend):` real send + server id.
 @lazySingleton
 class SendMessageApi {
-  Future<MessageModel> execute({
+  SendMessageApi(this._wireMapper);
+
+  final MessageWireMapper _wireMapper;
+
+  Future<ResponseEntity<MessageWireEntity>> execute({
     required String chatId,
     required String authorId,
     required String authorLabel,
@@ -22,7 +30,7 @@ class SendMessageApi {
     MessageAttachment? attachment,
   }) async {
     await Future<void>.delayed(const Duration(milliseconds: 350));
-    return MessageModel(
+    final echoed = MessageModel(
       // A stable unique id (not clock-derived: under a frozen AppClock two sends
       // would otherwise collide and the DAO upsert would drop one). Only sentAt is
       // clock-based for deterministic display.
@@ -35,5 +43,6 @@ class SendMessageApi {
       sentAt: AppClock.now(),
       status: MessageStatus.sent,
     );
+    return ResponseEntity<MessageWireEntity>(success: true, data: _wireMapper.toEntity(model: echoed));
   }
 }

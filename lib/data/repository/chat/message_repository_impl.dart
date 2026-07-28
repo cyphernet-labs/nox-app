@@ -109,13 +109,25 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
   Future<RepositoryResult<MessageModel>> sendMessage({required String chatId, String? text, MessageAttachment? attachment}) {
     return execute<MessageModel>(() async {
       final identity = await _identity();
-      final message = await _messageRemote.sendMessage(
+      // Unwrap the ResponseEntity<MessageWireEntity> echo envelope (P6 — uniform with the
+      // paged reads); a failed envelope has null data → throw → execute() maps it to error.
+      final response = await _messageRemote.sendMessage(
         chatId: chatId,
         authorId: identity.id,
         authorLabel: identity.label,
         text: text,
         attachment: attachment,
       );
+      final data = response.data;
+      if (data == null) throw StateError('send envelope has no data (success=${response.success})');
+      var message = _wireMapper.toModel(entity: data);
+      // The wire echo is the (future) backend contract — it carries NO device-local path.
+      // Re-attach the client's localPath from the sent attachment so a sent image still
+      // previews/saves (F4/F2): the server owns id/timestamp, the client owns the file path.
+      final sentPath = attachment?.localPath;
+      if (sentPath != null && message.attachment != null) {
+        message = message.copyWith(attachment: message.attachment!.copyWith(localPath: sentPath));
+      }
       await _messageDao.upsert(_mapper.toEntity(model: message));
       // Keep the chat row (list) consistent with the thread: update preview + time + order.
       // A failed send returns an error before reaching here, so the row is never touched (FR-004).
