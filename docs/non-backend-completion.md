@@ -14,7 +14,7 @@
 | 4 | fileview-skip-timer-local-path | 5.3 File-view: при наличии `localPath` пропустить мок-таймер «download», Save сразу активен | S | точечно | ☑ |
 | 5 | notifications-permission-service | Реальный OS-запрос permission уведомлений + `openAppSettings()` (device API, `permission_handler` уже есть) | M | **SpecKit** | ☐ |
 | 6 | s4-sendmessage-wire-envelope | `sendMessage` через `ResponseEntity<MessageWireEntity>` (S4-seam полиш, behavior-neutral) | S | точечно | ☑ |
-| 7 | heic-thumbnail-platform-aware | HEIC-миниатюры на iOS/macOS (platform-aware, а не глобальное исключение) | S | точечно | ☐ |
+| 7 | heic-thumbnail-platform-aware | HEIC-миниатюры на iOS/macOS (platform-aware, а не глобальное исключение) | S | точечно | ☑ |
 | 8 | image-viewer-page-goldens | Голдены `ImageViewerPage` (page-mobile + page-desktop) — 3-golden-categories | M | точечно | ☐ |
 | 9 | app-image-attachment-widget-golden | Widget-golden `AppImageAttachmentWidget` (миниатюра + fallback) | S | точечно | ☐ |
 | 10 | scenario-goldens-thread-card | Голдены уже-реализованных debug-сценариев треда/карточки (offline/empty/fatal/grid) | M | точечно | ☐ |
@@ -42,6 +42,7 @@
 
 _(строка на закрытую задачу: `P# id — дата — merge — примечание`)_
 
+- **P7 heic-thumbnail-platform-aware — 2026-07-26 — merge (develop).** HEIC-вложения рендерят инлайн-миниатюру на Apple-таргетах (iOS/macOS — где нативный кодек Flutter декодит HEIC) и остаются чипом на Linux/Windows/Android. `canRender` platform-aware (`Platform.isIOS/isMacOS`); universal-raster-набор не тронут. Ревью: 0 находок. Голден-churn нет (ни один seed не несёт heic). Гейт: 692 теста + 156 голденов.
 - **P6 s4-sendmessage-wire-envelope — 2026-07-26 — merge (develop).** `sendMessage`-эхо теперь через `ResponseEntity<MessageWireEntity>` (единообразно с paged reads — ничто не обходит референс-конверт). Репо разворачивает wire→model и **ре-аттачит** client-local `localPath` (держим его ВНЕ backend-wire-контракта → отправленное image по-прежнему превьюится/сохраняется). Проактивно найдена и исправлена регрессия: S4-wire не нёс `localPath` → без ре-аттача отправленное image теряло путь. Behavior-neutral. Ревью: 0 подтверждённых (валидировало фикс). Гейт: 692 теста + 156 голденов.
 - **P4 fileview-skip-timer-local-path — 2026-07-26 — merge (develop).** File-view (5.3) при реальном локальном файле (picked/sent, 020) активирует Save сразу, без 1s мок-таймера «download»; сеяный/бэкенд-файл без локальной копии по-прежнему крутит таймер-стенд-ин. 2 теста. Ревью: 0 находок. Гейт: 690 тестов.
 - **P3 inline-error-thread-golden — 2026-07-26 — merge (develop).** DoD-хвост «Inline-error»: page-golden send-error состояния треда (own-сообщение `MessageStatus.error` + retry-глиф), mobile+desktop, light+dark (4 голдена). Новый `@visibleForTesting` seam (`initialScenario`+`initialSendText`) на `AppThreadViewWidget`/`ChatThreadPage` рендерит его через bounded-pump-харнесс (инертен в prod). Оптимистичный send теперь через `AppClock.now()` (детерминизм в тестах, prod-нейтрально). Ревью: 0 находок. Гейт: 688 тестов + 156 голденов.
