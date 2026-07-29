@@ -8,6 +8,7 @@ import 'package:nox_app/domain/repository/log_repository.dart';
 import 'package:nox_app/domain/repository/qr/camera_permission_service.dart';
 import 'package:nox_app/domain/repository/settings/settings_repository.dart';
 import 'package:nox_app/domain/service/notification_permission_service.dart';
+import 'package:nox_app/domain/service/qr_image_decode_service.dart';
 
 /// Convenience getters over the DI container.
 /// Cross-cutting
@@ -28,3 +29,6 @@ CameraPermissionService get cameraPermissionService => getIt<CameraPermissionSer
 
 /// Notifications (7.2) — OS notification-permission service resolved by the screen.
 NotificationPermissionService get notificationPermissionService => getIt<NotificationPermissionService>();
+
+/// QR sign-in from a picked image (2.1, Windows/Linux) — resolved by the Login screen.
+QrImageDecodeService get qrImageDecodeService => getIt<QrImageDecodeService>();

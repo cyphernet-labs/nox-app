@@ -58,6 +58,8 @@
   "loginIdHint": "Paste or enter your ID",
   "actionPaste": "Paste",
   "loginScanQr": "Scan QR",
+  "loginScanQrImage": "Sign in with QR image",
+  "loginQrImageError": "Couldn't read a NOX QR code from that image.",
   "loginInvalidId": "Invalid identifier",
   "loginNetworkError": "Could not sign in. Check your connection and try again.",
   "onboardTitleSignIn": "NOX · Sign in",
