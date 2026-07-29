@@ -60,6 +60,7 @@ dependencies:
   mobile_scanner: ^7.2.0        # camera QR scan; iOS/Android/macOS only, NO Windows/Linux (capability-gated, build-safe)
   permission_handler: ^12.0.3   # camera permission status/request/openAppSettings; iOS/Android only (macOS unsupported)
   qr_flutter: ^4.1.0            # pure-Dart QR render (Show QR); all 5 platforms, no native plugin
+  zxing2: ^0.2.3                # pure-Dart QR DECODE from a picked image (P14); Windows/Linux QR sign-in (no camera plugin there)
   file_selector: ^1.1.0
   connectivity_plus: ^7.3.1
 

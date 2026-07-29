@@ -4,9 +4,15 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/di/global_aliases.dart';
+import 'package:nox_app/domain/service/file_picker_service.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/l10n_extension.dart';
+import 'package:nox_app/general/nox_qr_envelope.dart';
+import 'package:nox_app/general/qr_image_sign_in_capability.dart';
 import 'package:nox_app/general/qr_scanner_capability.dart';
+import 'package:nox_app/presentation/helpers/app_feedback_helper.dart';
 import 'package:nox_app/presentation/pages/base/base_state_page.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page_params.dart';
@@ -99,6 +105,25 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
     // exact same path as manual entry (idChanged → submit → spine navigates).
     final id = await Navigator.of(context).push(QrScanPage.route());
     if (id == null || !mounted) return; // back / Enter manually → no submit, field kept (FR-013)
+    _controller.text = id;
+    _bloc.add(LoginEvent.idChanged(id));
+    _submit();
+  }
+
+  Future<void> _scanQrImage() async {
+    // Windows/Linux fallback (no camera scanner): pick an image, decode its QR locally,
+    // then feed the SAME sign-in path as a scan / manual entry. A cancelled pick keeps the
+    // field; an image with no valid NOX QR shows a notice and does not submit.
+    final picked = await getIt<FilePickerService>().pickFile();
+    final path = picked?.path;
+    if (path == null || !mounted) return;
+    final raw = await qrImageDecodeService.decodeQr(path);
+    final id = raw == null ? null : NoxQrEnvelope.decode(raw);
+    if (!mounted) return;
+    if (id == null) {
+      showAppSnackBar(context, text: context.l10n.loginQrImageError, error: true);
+      return;
+    }
     _controller.text = id;
     _bloc.add(LoginEvent.idChanged(id));
     _submit();
@@ -220,12 +245,19 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
           ),
         ),
         // `Scan QR` is shown only where the camera scanner exists (iOS/Android/macOS);
-        // on Windows/Linux it is hidden and 2.2 is unreachable (FR-016/FR-017).
+        // on Windows/Linux it is hidden. There, a "pick a QR image" fallback stands in so
+        // those desktops keep a QR sign-in at parity (P14; FR-016/FR-017).
         if (QrScannerCapability.isAvailable) ...[
           SizedBox(height: AppSpacingTokens.s8),
           SizedBox(
             width: double.infinity,
             child: TextButton(onPressed: state.isLoading ? null : _scanQr, child: Text(context.l10n.loginScanQr)),
+          ),
+        ] else if (QrImageSignInCapability.isAvailable) ...[
+          SizedBox(height: AppSpacingTokens.s8),
+          SizedBox(
+            width: double.infinity,
+            child: TextButton(onPressed: state.isLoading ? null : _scanQrImage, child: Text(context.l10n.loginScanQrImage)),
           ),
         ],
         if (kDebugMode && widget.demo) _OutcomeControl(value: _outcome, onChanged: (value) => setState(() => _outcome = value)),
