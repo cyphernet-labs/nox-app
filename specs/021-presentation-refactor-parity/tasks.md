@@ -26,7 +26,7 @@
 - [x] T004 [P] [US1] R3 — desktop titlebar subtitle через `context.l10n` и per-tab из `_active` в `lib/presentation/widgets/shell/tab_bar_shell_widget.dart` (+ subtitle-param в `app_window_titlebar_widget.dart` при необходимости); новый desktop-golden на Settings-таб
 - [x] T005 [P] [US1] R4 — `Semantics(button, selected, label)` на rail-destination в `lib/presentation/widgets/shell/app_navigation_rail_widget.dart`; a11y-тест в `test/presentation/widgets/accessibility_test.dart` (isButton+isSelected на rail)
 - [x] T006 [P] [US1] R5 — mobile create-chat: guard `_cancel`/`PopScope` по `state.isSubmitting` в `lib/presentation/pages/create_chat_page/create_chat_page.dart` (`_narrow`); widget-тест (при submit leading disabled / pop подавлен)
-- [ ] T007 [US1] R6 — desktop chats `_paneHeader` hairline в `lib/presentation/pages/chats_list_page/chats_list_page.dart` (сверить с `docs/design/system/nox-desktop-screens/screens/01-chats.md`; использовать E3 если T014 уже сделан, иначе inline `Divider(height: border.hairline)`); desktop chats golden
+- [x] T007 [US1] R6 — сверено с корпусом (`desktop-screens.jsx` `ChatsListPane`): desktop pane-header БЕЗ hairline by design (бренд-hairline — под window-titlebar; mobile — под AppBar). **НЕ дефект → код не менять**; отмечено ✔ intentional в review + parity-matrix. Существующий desktop chats golden уже фиксирует корректный header
 - [ ] T008 [P] [US1] R7 — подтвердить QR torch/switch mobile-only как намеренное: отметить ✔ в `docs/presentation-refactor-review.md` + `contracts/parity-matrix.md` (код НЕ менять)
 - [ ] T009 [P] [US1] R8 — подтвердить account reveal/QR split как намеренное (Принцип I): отметить ✔ в `docs/presentation-refactor-review.md` + `contracts/parity-matrix.md` (код НЕ менять)
 
