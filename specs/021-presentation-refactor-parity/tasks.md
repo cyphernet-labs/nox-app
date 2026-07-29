@@ -21,7 +21,7 @@
 
 **Goal**: закрыть 5 реальных паритет-дефектов; подтвердить 2 намеренных различия. **Independent test**: по каждой строке `contracts/parity-matrix.md` набор действий/состояний совпадает в `_narrow` и `_wide` (или отмечен ✔ intentional); каждый фикс имеет fail-first-тест.
 
-- [ ] T002 [P] [US1] R1 — `error_page.dart` `_wide` ветвление по `ErrorPageMode` (blocking → `PopScope(canPop:false)`, embedded → back-аффорданс, titlebar сохранить) в `lib/presentation/pages/error_page/error_page.dart`; fail-first widget-тест (`PopScope` в desktop-blocking-дереве) + desktop-golden на blocking
+- [x] T002 [P] [US1] R1 — `error_page.dart` `_wide` ветвление по `ErrorPageMode` (blocking → `PopScope(canPop:false)`, embedded → back-аффорданс, titlebar сохранить) в `lib/presentation/pages/error_page/error_page.dart`; fail-first widget-тест (`PopScope` в desktop-blocking-дереве) + desktop-golden на blocking
 - [ ] T003 [P] [US1] R2 — max-width message-bubble из локальной ширины панели (`LayoutBuilder`/`BoxConstraints`) в `lib/presentation/widgets/chat/app_message_bubble_widget.dart`; перегенерировать desktop thread page-golden + добавить golden на list-detail панель
 - [ ] T004 [P] [US1] R3 — desktop titlebar subtitle через `context.l10n` и per-tab из `_active` в `lib/presentation/widgets/shell/tab_bar_shell_widget.dart` (+ subtitle-param в `app_window_titlebar_widget.dart` при необходимости); новый desktop-golden на Settings-таб
 - [ ] T005 [P] [US1] R4 — `Semantics(button, selected, label)` на rail-destination в `lib/presentation/widgets/shell/app_navigation_rail_widget.dart`; a11y-тест в `test/presentation/widgets/accessibility_test.dart` (isButton+isSelected на rail)

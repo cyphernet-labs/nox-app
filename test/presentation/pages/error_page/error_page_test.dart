@@ -54,7 +54,7 @@ void main() {
     expect(find.text(l10nEn.actionTryAgain), findsOneWidget);
   });
 
-  testWidgets('wide window uses the desktop title bar instead of an app-bar back', (tester) async {
+  testWidgets('wide embedded error shows the desktop title bar AND a back affordance (R1 parity)', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1000, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await pumpApp(
@@ -65,6 +65,18 @@ void main() {
     );
 
     expect(find.byType(AppWindowTitlebarWidget), findsOneWidget);
-    expect(find.byTooltip(l10nEn.tooltipBack), findsNothing);
+    // R1: desktop embedded now offers a back affordance (parity with mobile embedded).
+    expect(find.byTooltip(l10nEn.tooltipBack), findsOneWidget);
+  });
+
+  testWidgets('wide BLOCKING error suppresses system back via PopScope — parity with mobile (R1)', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1280, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await pumpApp(tester, AppErrorPage(params: ErrorPageParams.fatal(mode: ErrorPageMode.blocking)));
+
+    // On mobile a blocking error is wrapped in PopScope(canPop:false); desktop MUST match
+    // so a fatal error is not escapable by the system back gesture.
+    expect(find.byWidgetPredicate((w) => w is PopScope && w.canPop == false), findsOneWidget);
+    expect(find.byTooltip(l10nEn.tooltipBack), findsNothing); // blocking has no back on either platform
   });
 }
