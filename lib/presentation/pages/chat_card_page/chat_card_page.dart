@@ -7,6 +7,7 @@ import 'package:nox_app/design/app_text_style_tokens.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
+import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/general/constants.dart';
@@ -15,6 +16,7 @@ import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/pages/chat_card_page/bloc/chat_card_bloc.dart';
 import 'package:nox_app/presentation/pages/file_view_page/file_view_page.dart';
 import 'package:nox_app/presentation/widgets/chat/app_segmented_widget.dart';
+import 'package:nox_app/presentation/widgets/chat/rename_chat_dialog/app_rename_chat_dialog_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_avatar_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_file_glyph_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
@@ -112,7 +114,13 @@ class ChatCardPage extends StatelessWidget {
               icon: AppIconWidget(NoxIcons.arrowBack),
               onPressed: () => Navigator.of(context).maybePop(),
             ),
-            title: Text(chat.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+            // Reactive like the body header: a rename from the header pencil updates the
+            // AppBar title live too (the two co-visible name surfaces must not disagree).
+            title: StreamBuilder<ChatModel?>(
+              stream: chatRepository.watchChat(chatId: chat.id),
+              initialData: chat,
+              builder: (context, snapshot) => Text((snapshot.data ?? chat).name, maxLines: 1, overflow: TextOverflow.ellipsis),
+            ),
           ),
           body: ChatCardBody(chat: chat, demo: demo, initialScenario: initialScenario, initialViewMode: initialViewMode),
         );
@@ -203,28 +211,46 @@ class _ChatCardBodyState extends State<ChatCardBody> {
   Widget _header(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-    return Padding(
-      padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s8, AppSpacingTokens.s16, AppSpacingTokens.s16),
-      child: Row(
-        children: [
-          Container(
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              boxShadow: [BoxShadow(color: colorScheme.onSurface.withValues(alpha: 0.06), spreadRadius: AppDimensionTokens.border.thick)],
-            ),
-            child: AppAvatarWidget(name: widget.chat.name, size: AppDimensionTokens.size.avatarLg),
+    // Reactive to the chat row: a rename updates the name AND the generated avatar here
+    // live (and, on desktop, in the thread behind the side-sheet). Falls back to the
+    // passed chat until the first snapshot.
+    return StreamBuilder<ChatModel?>(
+      stream: chatRepository.watchChat(chatId: widget.chat.id),
+      initialData: widget.chat,
+      builder: (context, snapshot) {
+        final chat = snapshot.data ?? widget.chat;
+        return Padding(
+          padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s8, AppSpacingTokens.s16, AppSpacingTokens.s16),
+          child: Row(
+            children: [
+              Container(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(color: colorScheme.onSurface.withValues(alpha: 0.06), spreadRadius: AppDimensionTokens.border.thick),
+                  ],
+                ),
+                child: AppAvatarWidget(name: chat.name, size: AppDimensionTokens.size.avatarLg),
+              ),
+              SizedBox(width: AppSpacingTokens.s16),
+              Expanded(
+                child: Text(
+                  chat.name,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: textTheme.headlineSmall?.copyWith(color: colorScheme.onSurface),
+                ),
+              ),
+              // Rename — open shared space, no owners, so anyone may rename (5.4).
+              IconButton(
+                tooltip: context.l10n.renameChatTitle,
+                icon: AppIconWidget(NoxIcons.edit, color: colorScheme.onSurfaceVariant),
+                onPressed: () => AppRenameChatDialogWidget.show(context, chatId: chat.id, currentName: chat.name),
+              ),
+            ],
           ),
-          SizedBox(width: AppSpacingTokens.s16),
-          Expanded(
-            child: Text(
-              widget.chat.name,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: textTheme.headlineSmall?.copyWith(color: colorScheme.onSurface),
-            ),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 

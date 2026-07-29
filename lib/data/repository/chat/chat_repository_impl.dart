@@ -77,6 +77,28 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
   }
 
   @override
+  Stream<ChatModel?> watchChat({required String chatId}) async* {
+    // No seed here (unlike watchChats): the card/thread pass the chat in as fallback and
+    // the row already exists once the list has loaded — watching one row must not drag in
+    // the mock chats-seed delay on every card/thread open.
+    yield* _chatDao.watchById(chatId).map((entity) => entity == null ? null : _mapper.toModel(entity: entity));
+  }
+
+  @override
+  Future<RepositoryResult<ChatModel>> updateChatName({required String chatId, required String name}) {
+    return execute<ChatModel>(() async {
+      final existing = await _chatDao.getById(chatId);
+      if (existing == null) throw StateError('chat $chatId not found');
+      // Persist the new name only; the reactive watch (list + watchChat) picks it up. No
+      // uniqueness backstop here — mirrors createChat: the debounced pre-check gates it and
+      // the real server is the authority. `// TODO(backend): server-side rename + unique.`
+      final updated = existing.copyWith(name: name);
+      await _chatDao.upsert(updated);
+      return RepositoryResult<ChatModel>.success(data: _mapper.toModel(entity: updated));
+    });
+  }
+
+  @override
   Future<RepositoryResult<ChatModel>> createChat({required String name}) {
     return execute<ChatModel>(() async {
       final chat = ChatModel(id: _uuid.v4(), name: name, lastMessagePreview: '', lastMessageAt: AppClock.now());
@@ -95,7 +117,7 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
   }
 
   @override
-  Future<RepositoryResult<bool>> isChatNameTaken({required String name}) {
+  Future<RepositoryResult<bool>> isChatNameTaken({required String name, String? excludeChatId}) {
     return execute<bool>(() async {
       // Check the accumulating DB (seeded + created), not a frozen mock set (D4). No
       // seed here — the chats list has already seeded the store before create-chat is
@@ -109,7 +131,9 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
       // under one search in the open shared space. (Chat names have no spec'd case
       // rule — unlike the case-sensitive username/label.)
       final needle = name.toLowerCase();
-      final taken = (await _chatDao.getAllSorted()).any((c) => c.name.toLowerCase() == needle);
+      // excludeChatId (rename): a chat never collides with its OWN current name — only a
+      // DIFFERENT chat holding the name counts as taken.
+      final taken = (await _chatDao.getAllSorted()).any((c) => c.id != excludeChatId && c.name.toLowerCase() == needle);
       return RepositoryResult<bool>.success(data: taken);
     });
   }

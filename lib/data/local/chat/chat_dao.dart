@@ -43,6 +43,14 @@ class ChatDao {
     return value == null ? null : _tryDecode(value);
   }
 
+  /// Reactive stream of one chat by id (record-key `onSnapshot` → same no-Finder,
+  /// field_rename-safe path as [getById]); emits null when the record is absent or
+  /// undecodable. Drives the live name/avatar after a rename.
+  Stream<ChatEntity?> watchById(String id) async* {
+    final db = await _appDatabase.db;
+    yield* _store.record(id).onSnapshot(db).map((snap) => snap == null ? null : _tryDecode(snap.value));
+  }
+
   Future<int> count() async {
     final db = await _appDatabase.db;
     return _store.count(db);

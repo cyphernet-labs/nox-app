@@ -5,6 +5,7 @@ import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/nox_icons.dart';
+import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
@@ -122,7 +123,14 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
         builder: (context, state) {
           return Column(
             children: [
-              if (widget.showHeader) AppThreadHeaderWidget(chat: widget.chat, onInfo: widget.onInfo ?? () {}),
+              // Reactive to the chat row so a rename (from the side-sheet card) updates the
+              // desktop header's name + avatar live.
+              if (widget.showHeader)
+                StreamBuilder<ChatModel?>(
+                  stream: chatRepository.watchChat(chatId: widget.chat.id),
+                  initialData: widget.chat,
+                  builder: (context, snapshot) => AppThreadHeaderWidget(chat: snapshot.data ?? widget.chat, onInfo: widget.onInfo ?? () {}),
+                ),
               if (state is Initialized && state.isOffline) AppNoticeStripWidget(message: context.l10n.noConnection, icon: NoxIcons.wifiOff),
               Expanded(child: _body(context, state)),
               if (state is Initialized) _composerBar(state),
