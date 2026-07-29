@@ -5,6 +5,13 @@
 **Status**: Draft
 **Input**: Рефакторинг `lib/presentation/`: вынос дублей в переиспользуемые виджеты, оптимизация/чистка, и — главный приоритет — закрытие паритет-разрывов mobile↔desktop. Всё behavior-preserving, кроме паритет-фиксов. Страховка — голдены page-mobile + page-desktop. Полный бэклог и анализ — `docs/presentation-refactor-review.md` (R1–R28).
 
+## Clarifications
+
+### Session 2026-07-28
+
+- Q: QR torch/switch-camera только на mobile (R7) — намеренно или закрыть как gap? → A: Оставить mobile-only (намеренно; desktop = windowed webcam, обычно без вспышки).
+- Q: Account reveal-raw-ID только mobile / inline-QR только desktop (R8) — намеренно или унифицировать? → A: Оставить намеренно (Принцип I: desktop shared-screen, минимизация раскрытия секрета).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 — Полный паритет функций mobile ↔ desktop (Priority: P1)
@@ -75,10 +82,10 @@ Magic-числа (opacity/геометрия) заменены дизайн-то
 - **FR-010**: extraction MUST следовать конвенциям проекта: `App*Widget` под `lib/presentation/widgets/` либо приватный `StatelessWidget`; только дизайн-токены (raw-color/opacity литералы — исключительно в `lib/design/theme/`).
 - **FR-011**: BLoC-логику MUST NOT переписывать; dev-only поверхности (`ui_kit_page`/`screens_gallery_page`/`item_list_page`) вне scope.
 
-**Подтверждения владельца (гейтят 2 задачи):**
+**Намеренные платформенные различия (подтверждены владельцем — НЕ паритет-дефекты, кода не меняем):**
 
-- **FR-012**: QR torch / switch-camera сейчас доступны только на mobile. [NEEDS CLARIFICATION: оставить намеренно (desktop macOS = windowed webcam, обычно без вспышки) или добавить camera-switch на desktop при нескольких камерах? (R7)]
-- **FR-013**: Account identity: «раскрыть сырой ID» доступно только mobile, inline account-QR только desktop. [NEEDS CLARIFICATION: оставить намеренно (Принцип I — desktop shared-screen, минимизация раскрытия секрета) или унифицировать оба layout? (R8)]
+- **FR-012**: QR torch / switch-camera остаются доступны только на mobile. Desktop-viewfinder (windowed webcam) их не показывает — подтверждено намеренным (R7). Не входит в scope изменений.
+- **FR-013**: Account identity сохраняет платформенный сплит: «раскрыть сырой ID» только на mobile, inline account-QR только на desktop (оба layout дают Copy + Show-QR). Подтверждено намеренным под Принципом I (desktop = shared screen, минимизация раскрытия секрета) (R8). Не входит в scope изменений.
 
 ### Key Entities
 
@@ -99,7 +106,7 @@ Magic-числа (opacity/геометрия) заменены дизайн-то
 ## Assumptions
 
 - Голдены обеих категорий (page-mobile + page-desktop) существуют для всех product-страниц и служат основной страховкой от регресса (проект-правило «3 golden-categories»).
-- FR-012/FR-013 предполагаются НАМЕРЕННЫМИ (текущее поведение сохраняется) до подтверждения владельцем в `/speckit-clarify`.
+- FR-012/FR-013 ПОДТВЕРЖДЕНЫ владельцем как намеренные платформенные различия (Session 2026-07-28) — код не меняется, R7/R8 закрываются как «confirmed intentional».
 - Полный обоснованный бэклог R1–R28 и первичный анализ — в `docs/presentation-refactor-review.md` (source of truth задач для `/speckit-tasks`).
 - Constitution Принцип II (design-system fidelity) и V (language discipline) соблюдаются; Принцип I (privacy) — контекст FR-013.
 - Работа НЕ зависит от бэкенда — целиком в рамках текущей UI-first фазы.

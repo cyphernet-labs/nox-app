@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain — **2 остаются намеренно (FR-012 R7, FR-013 R8) → `/speckit-clarify`**
+- [x] No [NEEDS CLARIFICATION] markers remain — *закрыто в Clarifications Session 2026-07-28 (FR-012/FR-013 подтверждены намеренными)*
 - [x] Requirements are testable and unambiguous (каждый FR ↔ acceptance/тест)
 - [x] Success criteria are measurable (SC-001…SC-005: количества, «голдены зелёные», «0 копий»)
 - [x] Success criteria are technology-agnostic (в терминах паритета/регресса/дублей; технические якоря — в FR как критерии приёмки)
