@@ -39,6 +39,36 @@ void main() {
     expect(tester.widget<FilledButton>(createButton()).onPressed, isNotNull);
   });
 
+  testWidgets('mobile: submitting disables the back button and blocks the system back (R5 parity)', (tester) async {
+    await pumpApp(tester, const CreateChatPage(), settle: false);
+
+    // The mobile app-bar back button.
+    IconButton back() => tester.widget<IconButton>(find.byWidgetPredicate((w) => w is IconButton && w.tooltip == l10nEn.tooltipBack));
+    // The page's own PopScope (nearest to the title, above any Navigator/root PopScope).
+    bool canPop() => tester
+        .widget<PopScope<dynamic>>(
+          find.ancestor(of: find.text(l10nEn.createChatTitle), matching: find.byWidgetPredicate((w) => w is PopScope)).first,
+        )
+        .canPop;
+
+    // Reach a valid name so Create is enabled.
+    await tester.enterText(find.byType(TextField), 'Fresh chat');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 700));
+    expect(back().onPressed, isNotNull, reason: 'back is enabled before submit');
+    expect(canPop(), isTrue, reason: 'system back is allowed before submit');
+
+    // Fire Create; the bloc emits submitting then awaits ~400ms — assert inside that window.
+    await tester.tap(createButton());
+    await tester.pump(); // process the event → submitting
+
+    expect(back().onPressed, isNull, reason: 'back must be disabled while a create is in flight');
+    expect(canPop(), isFalse, reason: 'the system back gesture must be suppressed while submitting');
+
+    // Let the create resolve so the page pops cleanly (no pending-timer failure).
+    await tester.pump(const Duration(milliseconds: 500));
+  });
+
   testWidgets('mobile: a taken name shows the taken error', (tester) async {
     await pumpApp(tester, const CreateChatPage(), settle: false);
 

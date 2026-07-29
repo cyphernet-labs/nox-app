@@ -103,31 +103,44 @@ class _CreateChatPageState extends BaseStatePage<CreateChatPage> {
   }
 
   Widget _narrow(BuildContext context, CreateChatState state) {
-    return Scaffold(
-      appBar: AppBar(
-        leading: IconButton(tooltip: context.l10n.tooltipBack, icon: AppIconWidget(NoxIcons.arrowBack), onPressed: _cancel),
-        title: Text(context.l10n.createChatTitle),
-      ),
-      body: SafeArea(
-        child: Column(
-          children: [
-            Expanded(
-              child: SingleChildScrollView(
-                padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s20, AppSpacingTokens.s16, AppSpacingTokens.s16),
-                child: _field(context, state),
+    // Parity with the desktop dialog (R5): there Cancel is disabled and the barrier is
+    // non-dismissible while submitting, so a create in flight can't be abandoned. The
+    // mobile form must match — disable the app-bar back AND block the system back
+    // gesture (PopScope) while submitting, so the create either completes or errors
+    // rather than the page popping mid-flight (the navSuccess listener firing into a
+    // dead route).
+    return PopScope(
+      canPop: !state.isSubmitting,
+      child: Scaffold(
+        appBar: AppBar(
+          leading: IconButton(
+            tooltip: context.l10n.tooltipBack,
+            icon: AppIconWidget(NoxIcons.arrowBack),
+            onPressed: state.isSubmitting ? null : _cancel,
+          ),
+          title: Text(context.l10n.createChatTitle),
+        ),
+        body: SafeArea(
+          child: Column(
+            children: [
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s20, AppSpacingTokens.s16, AppSpacingTokens.s16),
+                  child: _field(context, state),
+                ),
               ),
-            ),
-            Padding(
-              padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s16, AppSpacingTokens.s16, AppSpacingTokens.s24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  SizedBox(width: double.infinity, child: _createButton(context, state)),
-                  if (kDebugMode && widget.demo) _outcomeControl(),
-                ],
+              Padding(
+                padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s16, AppSpacingTokens.s16, AppSpacingTokens.s24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(width: double.infinity, child: _createButton(context, state)),
+                    if (kDebugMode && widget.demo) _outcomeControl(),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
