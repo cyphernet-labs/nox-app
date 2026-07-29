@@ -20,9 +20,19 @@
 | 10 | scenario-goldens-thread-card | Голдены уже-реализованных debug-сценариев треда/карточки (offline/empty/fatal/grid) | M | точечно | ☑ |
 | 11 | notice-strip-widget-golden | Widget-golden `AppNoticeStripWidget` (offline/notice-баннер) | S | точечно | ☑ |
 | 12 | remaining-appwidget-goldens | Widget-голдены остальных state-bearing `App*Widget` (theme-option/switch-row/logout-dialog/…) | M | точечно | ☑ |
-| 14 | desktop-qr-image-decode | Windows/Linux: выбор QR-картинки + локальный декод → тот же sign-in (опц. parity) | M | **SpecKit** | ☐ |
-| 15 | desktop-native-window-chrome | Нативный desktop window chrome (`window_manager`: min/max/close, draggable, frameless splash) | L | **SpecKit** | ☐ |
-| 17 | linux-packaging | Linux-пакетирование (.deb/AppImage/flatpak + .desktop menu-интеграция) | M | точечно | ☐ |
+| 14 | desktop-qr-image-decode | Windows/Linux: выбор QR-картинки + локальный декод → тот же sign-in (опц. parity) | M | **SpecKit** | ⏸ runtime |
+| 15 | desktop-native-window-chrome | Нативный desktop window chrome (`window_manager`: min/max/close, draggable, frameless splash) | L | **SpecKit** | ⏸ runtime |
+| 17 | linux-packaging | Linux-пакетирование (.deb/AppImage/flatpak + .desktop menu-интеграция) | M | точечно | ⏸ runtime |
+
+**Итог фазы 2 (2026-07-27): весь чисто-верифицируемый non-backend бэклог закрыт (P1–P12 + P5, 13/13, merged в `develop`).**
+
+## ⏸ Требуют реального таргет-раннера для верификации (hand-off — «трудные кейсы», которые владелец смотрит сам)
+
+Реализуемы без бэкенда, но их **нельзя честно верифицировать** в текущем headless-macOS-окружении (нет интерактивного Windows/Linux/desktop-рана + реального QR-изображения). Оставлены владельцу под его формулировку «более трудные кейсы тоже потом буду смотреть и фиксить». Могу собрать best-effort-скаффолд (compile-check only) по запросу — но runtime-поведение останется непроверенным.
+
+- **P14 · desktop-qr-image-decode** — `mobile_scanner` не поддерживает Windows/Linux (только mobile+macOS); нужен pure-dart QR-декодер + реальное QR-изображение для проверки декода. Логика envelope-парсинга уже есть (`NoxQrEnvelope`, feature 010).
+- **P15 · desktop-native-window-chrome** — `window_manager` (min/max/close, draggable, frameless splash). Компиляцию под macOS проверить можно; drag/кнопки/frameless — только интерактивно на каждом desktop-OS.
+- **P17 · linux-packaging** — `.deb`/AppImage/flatpak + `.desktop`. Требует Linux-build-окружения; на macOS собрать/проверить пакет нельзя.
 
 ## Заблокировано НЕ бэкендом, а внешним деливери (не могу породить сам)
 
