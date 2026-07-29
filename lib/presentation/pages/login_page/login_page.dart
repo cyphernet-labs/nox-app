@@ -57,6 +57,11 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
   final TextEditingController _controller = TextEditingController();
   LoginOutcome _outcome = LoginOutcome.auto;
 
+  /// In-flight guard for the QR-image pick+decode (P14). The camera `_scanQr` can't
+  /// re-enter (its route covers the page); the image pick leaves the page live, so without
+  /// this a second tap during the async decode would open a second picker + double-submit.
+  bool _pickingQrImage = false;
+
   @override
   void initState() {
     super.initState();
@@ -114,19 +119,25 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
     // Windows/Linux fallback (no camera scanner): pick an image, decode its QR locally,
     // then feed the SAME sign-in path as a scan / manual entry. A cancelled pick keeps the
     // field; an image with no valid NOX QR shows a notice and does not submit.
-    final picked = await getIt<FilePickerService>().pickFile();
-    final path = picked?.path;
-    if (path == null || !mounted) return;
-    final raw = await qrImageDecodeService.decodeQr(path);
-    final id = raw == null ? null : NoxQrEnvelope.decode(raw);
-    if (!mounted) return;
-    if (id == null) {
-      showAppSnackBar(context, text: context.l10n.loginQrImageError, error: true);
-      return;
+    if (_pickingQrImage) return; // a pick+decode is already running — ignore the re-tap
+    setState(() => _pickingQrImage = true);
+    try {
+      final picked = await getIt<FilePickerService>().pickFile();
+      final path = picked?.path;
+      if (path == null || !mounted) return;
+      final raw = await qrImageDecodeService.decodeQr(path);
+      final id = raw == null ? null : NoxQrEnvelope.decode(raw);
+      if (!mounted) return;
+      if (id == null) {
+        showAppSnackBar(context, text: context.l10n.loginQrImageError, error: true);
+        return;
+      }
+      _controller.text = id;
+      _bloc.add(LoginEvent.idChanged(id));
+      _submit();
+    } finally {
+      if (mounted) setState(() => _pickingQrImage = false);
     }
-    _controller.text = id;
-    _bloc.add(LoginEvent.idChanged(id));
-    _submit();
   }
 
   void _onStatus(BuildContext context, LoginState state) {
@@ -257,7 +268,10 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
           SizedBox(height: AppSpacingTokens.s8),
           SizedBox(
             width: double.infinity,
-            child: TextButton(onPressed: state.isLoading ? null : _scanQrImage, child: Text(context.l10n.loginScanQrImage)),
+            child: TextButton(
+              onPressed: (state.isLoading || _pickingQrImage) ? null : _scanQrImage,
+              child: Text(context.l10n.loginScanQrImage),
+            ),
           ),
         ],
         if (kDebugMode && widget.demo) _OutcomeControl(value: _outcome, onChanged: (value) => setState(() => _outcome = value)),

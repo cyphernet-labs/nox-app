@@ -36,16 +36,30 @@ class QrImageDecodeServiceImpl implements QrImageDecodeService {
   Future<String?> _decodeBytes(Uint8List bytes) async {
     final codec = await ui.instantiateImageCodec(bytes);
     final frame = await codec.getNextFrame();
-    final image = frame.image;
-    final width = image.width;
-    final height = image.height;
-    final rgbaData = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
-    image.dispose();
+    final decoded = frame.image;
+    final width = decoded.width;
+    final height = decoded.height;
+
+    // Composite onto opaque WHITE first. `rawRgba` is PREMULTIPLIED, and we drop alpha for
+    // luminance — so a transparent-background QR (a common export: dark modules, transparent
+    // light modules/quiet zone) would otherwise collapse to all-black and never decode.
+    // White-flattening turns transparent → white (the correct light value).
+    final recorder = ui.PictureRecorder();
+    final canvas = ui.Canvas(recorder);
+    canvas.drawRect(ui.Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()), ui.Paint()..color = const ui.Color(0xFFFFFFFF));
+    canvas.drawImage(decoded, ui.Offset.zero, ui.Paint());
+    final picture = recorder.endRecording();
+    final flat = await picture.toImage(width, height);
+    picture.dispose();
+    decoded.dispose();
     codec.dispose();
+
+    final rgbaData = await flat.toByteData(format: ui.ImageByteFormat.rawRgba);
+    flat.dispose();
     if (rgbaData == null) return null;
     final rgba = rgbaData.buffer.asUint8List();
 
-    // zxing2 wants one ARGB int per pixel; alpha is opaque (luminance ignores it).
+    // zxing2 wants one opaque ARGB int per pixel (the flattened image is fully opaque).
     final pixels = Int32List(width * height);
     for (var i = 0; i < pixels.length; i++) {
       final o = i * 4;

@@ -26,6 +26,20 @@ Future<String> _writeQrPng(String data, double size, String name) async {
   return file.path;
 }
 
+/// A QR with NO background fill — transparent light modules/quiet zone, like a common
+/// QR-generator PNG export. Locks the review fix: without white-flattening this would
+/// collapse to all-black (premultiplied alpha) and fail to decode.
+Future<String> _writeTransparentQrPng(String data, double size, String name) async {
+  final painter = QrPainter(data: data, version: QrVersions.auto, gapless: true);
+  final recorder = ui.PictureRecorder();
+  final canvas = Canvas(recorder);
+  painter.paint(canvas, Size(size, size)); // no white rect → transparent background
+  final image = await recorder.endRecording().toImage(size.toInt(), size.toInt());
+  final png = (await image.toByteData(format: ui.ImageByteFormat.png))!.buffer.asUint8List();
+  final file = File('${Directory.systemTemp.path}/$name')..writeAsBytesSync(png);
+  return file.path;
+}
+
 Future<String> _writeBlankPng(double size, String name) async {
   final recorder = ui.PictureRecorder();
   final canvas = Canvas(recorder);
@@ -63,6 +77,16 @@ void main() {
       final raw = await service.decodeQr(path);
       expect(raw, env); // the exact QR payload
       expect(NoxQrEnvelope.decode(raw!), id); // resolves back to the identifier
+    });
+  });
+
+  testWidgets('decodes a NOX QR from a TRANSPARENT-background image (review fix)', (tester) async {
+    const id = 'User9999-transparent.bg';
+    final env = NoxQrEnvelope.encode(id);
+    await tester.runAsync(() async {
+      final path = await _writeTransparentQrPng(env, 512, 'nox_qr_transparent.png');
+      temp.add(path);
+      expect(await service.decodeQr(path), env); // white-flattening keeps the transparent QR decodable
     });
   });
 

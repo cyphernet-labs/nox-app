@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -74,6 +76,24 @@ void main() {
 
     expect(find.text(l10nEn.loginQrImageError), findsOneWidget);
     expect(find.byType(SetUsernamePage), findsNothing);
+  });
+
+  testWidgets('a second tap while the first pick is still running is ignored (review fix)', (tester) async {
+    final gate = Completer<PickedFile?>();
+    when(filePicker.pickFile()).thenAnswer((_) => gate.future); // first pick hangs open
+    when(decoder.decodeQr(any)).thenAnswer((_) async => NoxQrEnvelope.encode('fresh-identifier'));
+
+    await pumpApp(tester, const LoginPage(demo: true));
+    await tester.tap(imageButton());
+    await tester.pump(); // pick in flight → guard set, button disabled
+    await tester.tap(imageButton(), warnIfMissed: false); // re-tap ignored
+    await tester.pump();
+
+    gate.complete((name: 'id.png', sizeBytes: 1, extension: 'png', path: '/tmp/id.png'));
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pumpAndSettle();
+
+    verify(filePicker.pickFile()).called(1); // exactly one picker opened
   });
 
   testWidgets('cancelling the picker is a no-op (no decode, no sign-in)', (tester) async {
