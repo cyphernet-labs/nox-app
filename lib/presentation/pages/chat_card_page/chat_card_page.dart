@@ -114,7 +114,13 @@ class ChatCardPage extends StatelessWidget {
               icon: AppIconWidget(NoxIcons.arrowBack),
               onPressed: () => Navigator.of(context).maybePop(),
             ),
-            title: Text(chat.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+            // Reactive like the body header: a rename from the header pencil updates the
+            // AppBar title live too (the two co-visible name surfaces must not disagree).
+            title: StreamBuilder<ChatModel?>(
+              stream: chatRepository.watchChat(chatId: chat.id),
+              initialData: chat,
+              builder: (context, snapshot) => Text((snapshot.data ?? chat).name, maxLines: 1, overflow: TextOverflow.ellipsis),
+            ),
           ),
           body: ChatCardBody(chat: chat, demo: demo, initialScenario: initialScenario, initialViewMode: initialViewMode),
         );

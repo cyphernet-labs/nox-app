@@ -32,7 +32,10 @@ class RenameChatBloc extends BaseBloc<RenameChatEvent, RenameChatState> {
   }
 
   void _onNameChanged(RenameNameChanged event, Emitter<RenameChatState> emit) {
-    final name = event.name;
+    // Trim once and validate/persist the trimmed value: rename's no-op guard is
+    // load-bearing, so a trailing-space "Foo " must read as unchanged (not a near-duplicate)
+    // and a whitespace-only name must read as empty.
+    final name = event.name.trim();
     if (name.isEmpty) {
       emit(state.copyWith(name: name, status: RenameChatStatus.empty, networkError: false));
       return;
@@ -53,9 +56,13 @@ class RenameChatBloc extends BaseBloc<RenameChatEvent, RenameChatState> {
       await Future<void>.delayed(const Duration(milliseconds: 200));
       if (state.name != event.name) return;
       // Exclude THIS chat (a rename never collides with its own name), OR a reserved demo
-      // name. Fail-OPEN on a read error (mirrors create-chat) — the server is the authority.
+      // name. The reserved check is self-excluded case-insensitively too — recapitalizing a
+      // chat's own name ('general' → 'General') must never read as taken. Fail-OPEN on a read
+      // error (mirrors create-chat) — the server is the authority.
       final dbResult = await chatRepository.isChatNameTaken(name: event.name, excludeChatId: chatId);
-      final taken = dbResult.match(onData: (t) => t, onError: (_) => false) || OnboardingMockData.takenChatNames.contains(event.name);
+      final ownVariant = event.name.toLowerCase() == state.initialName.toLowerCase();
+      final reserved = !ownVariant && OnboardingMockData.takenChatNames.contains(event.name);
+      final taken = dbResult.match(onData: (t) => t, onError: (_) => false) || reserved;
       emit(state.copyWith(status: taken ? RenameChatStatus.taken : RenameChatStatus.valid));
     }, onError: (error, exception, stackTrace) => emit(state.copyWith(status: RenameChatStatus.valid)));
   }

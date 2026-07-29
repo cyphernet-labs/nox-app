@@ -13,7 +13,9 @@ void main() {
   // cursor never settles. No DI needed: the bloc only touches the repo on a name change.
   goldenTest(
     'app_rename_chat_dialog_widget',
-    () => const Center(child: AppRenameChatDialogWidget(chatId: 'chat_0', currentName: 'Design crit')),
+    () => const Center(
+      child: AppRenameChatDialogWidget(chatId: 'chat_0', currentName: 'Design crit'),
+    ),
     settle: false,
   );
 }
