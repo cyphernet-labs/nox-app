@@ -13,12 +13,25 @@ abstract class ChatRepository {
   /// Reactive stream of the cached chats (newest first) for live-updating views.
   Stream<List<ChatModel>> watchChats();
 
+  /// Reactive stream of ONE chat by id (live name/avatar after a rename); emits null when
+  /// the chat is absent. Consumed by the chat card + thread header so a rename reflects
+  /// everywhere without manual propagation.
+  Stream<ChatModel?> watchChat({required String chatId});
+
   /// Create a chat locally and persist it; returns the created chat.
   Future<RepositoryResult<ChatModel>> createChat({required String name});
 
-  /// Whether a chat name is already taken, checked case-sensitively against the
+  /// Rename a chat: persists [name] to the chat row and returns the updated chat.
+  /// Uniqueness is enforced by the caller's debounced pre-check (mirrors [createChat] —
+  /// the mock has no data-layer backstop; the real server is the authority). Errors when
+  /// the chat is absent.
+  Future<RepositoryResult<ChatModel>> updateChatName({required String chatId, required String name});
+
+  /// Whether a chat name is already taken, checked case-INSENSITIVELY against the
   /// ACCUMULATING local DB (seeded + user-created chats) — not a frozen mock set (D4).
-  Future<RepositoryResult<bool>> isChatNameTaken({required String name});
+  /// [excludeChatId] omits one chat from the check (rename: a chat never collides with
+  /// its own current name).
+  Future<RepositoryResult<bool>> isChatNameTaken({required String name, String? excludeChatId});
 
   /// All files shared in a chat (5.4) — chat-owned, not paginated.
   Future<RepositoryResult<List<MessageAttachment>>> getChatFiles({required String chatId});

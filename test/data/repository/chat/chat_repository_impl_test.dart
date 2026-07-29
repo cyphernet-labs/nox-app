@@ -229,4 +229,50 @@ void main() {
       expect((await chatDao.getById(unread.id))!.unreadCount, 0);
     });
   });
+
+  group('updateChatName / watchChat (edit chat name)', () {
+    test('renames the chat, returns the updated model, and the reactive list reflects it', () async {
+      final created = (await repository.createChat(name: 'Old Name')).data!;
+
+      final result = await repository.updateChatName(chatId: created.id, name: 'New Name');
+
+      expect(result.hasData, isTrue);
+      expect(result.data!.name, 'New Name');
+      expect((await getIt<ChatDao>().getById(created.id))!.name, 'New Name');
+      final live = await repository.watchChats().first;
+      expect(live.firstWhere((c) => c.id == created.id).name, 'New Name');
+    });
+
+    test('watchChat emits the new name after a rename', () async {
+      final created = (await repository.createChat(name: 'Watched')).data!;
+      final emissions = <String?>[];
+      final sub = repository.watchChat(chatId: created.id).listen((c) => emissions.add(c?.name));
+      await Future<void>.delayed(const Duration(milliseconds: 50)); // initial snapshot
+
+      await repository.updateChatName(chatId: created.id, name: 'Renamed');
+      await Future<void>.delayed(const Duration(milliseconds: 50)); // rename snapshot
+      await sub.cancel();
+
+      expect(emissions.last, 'Renamed');
+    });
+
+    test('errors when the chat does not exist', () async {
+      final result = await repository.updateChatName(chatId: 'no-such-chat', name: 'X');
+      expect(result.hasData, isFalse);
+    });
+
+    test('excludeChatId lets a chat keep its own name (no self-collision), incl. case variants', () async {
+      final created = (await repository.createChat(name: 'Design crit')).data!;
+
+      // Without exclusion its own name reads as taken; excluding itself, it is free —
+      // for the exact name and a case variant (the check is case-insensitive).
+      expect((await repository.isChatNameTaken(name: 'Design crit')).data, isTrue);
+      expect((await repository.isChatNameTaken(name: 'Design crit', excludeChatId: created.id)).data, isFalse);
+      expect((await repository.isChatNameTaken(name: 'design crit', excludeChatId: created.id)).data, isFalse);
+
+      // A DIFFERENT chat holding the name is still taken even with the exclusion.
+      await repository.createChat(name: 'Taken Elsewhere');
+      expect((await repository.isChatNameTaken(name: 'Taken Elsewhere', excludeChatId: created.id)).data, isTrue);
+    });
+  });
 }
