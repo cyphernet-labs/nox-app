@@ -26,6 +26,7 @@ import 'package:nox_app/presentation/pages/set_username_page/set_username_page.d
 import 'package:nox_app/presentation/widgets/primitives/file_type.dart';
 import 'package:nox_app/presentation/widgets/shell/app_bottom_bar_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_create_fab_widget.dart';
+import 'package:nox_app/presentation/widgets/shell/app_navigation_rail_widget.dart';
 
 import '../../utils/pump_app.dart';
 
@@ -75,6 +76,25 @@ void main() {
         expect(size.width, greaterThanOrEqualTo(48));
         expect(size.height, greaterThanOrEqualTo(48));
       }
+    });
+
+    testWidgets('desktop rail destinations announce as selectable buttons (R4 parity with the bottom bar)', (tester) async {
+      await pumpApp(
+        tester,
+        AppNavigationRailWidget(active: AppTab.chats, onSelect: (_) {}, onCreate: () {}, accountLabel: 'Nova', onAccount: () {}),
+      );
+
+      // The custom rail supplies destination semantics itself (it is not Material's
+      // NavigationRail). Each destination must announce as a button carrying its
+      // selected state — the active Chats tab selected, Settings not. Asserting the
+      // Semantics widget's own properties (the config that drives the node) sidesteps
+      // the label collision with the destination's Text child.
+      Semantics dest(String label) => tester.widget<Semantics>(
+        find.byWidgetPredicate((w) => w is Semantics && w.properties.label == label && w.properties.button == true),
+      );
+
+      expect(dest(l10nEn.chats).properties.selected, isTrue); // active tab
+      expect(dest(l10nEn.settings).properties.selected, isFalse);
     });
 
     testWidgets('composer actions expose tooltips/semantics', (tester) async {
