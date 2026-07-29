@@ -5,14 +5,12 @@ import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
+import 'package:nox_app/domain/service/notification_permission_service.dart';
 import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/helpers/app_feedback_helper.dart';
 import 'package:nox_app/presentation/widgets/settings/app_info_banner_widget.dart';
 import 'package:nox_app/presentation/widgets/settings/app_settings_group_widget.dart';
 import 'package:nox_app/presentation/widgets/settings/app_settings_switch_row_widget.dart';
-
-/// Mocked OS push-permission state (real query/prompt is backend phase).
-enum NotificationsPermission { granted, denied }
 
 /// 7.2 Notifications content — push on/off switch + denied-permission banner. No
 /// Scaffold/AppBar, so it embeds in both the mobile leaf chrome (NotificationsPage)
@@ -26,15 +24,22 @@ class NotificationsBody extends StatefulWidget {
 
 class _NotificationsBodyState extends State<NotificationsBody> {
   bool _enabled = true;
-  // TODO(backend): real OS permission query + "own chats" push scope.
-  NotificationsPermission _permission = NotificationsPermission.granted;
+  // Real OS notification-permission (P5), queried on open; the push SCOPE ("own chats")
+  // still lands in the backend phase.
+  NotificationPermissionStatus _permission = NotificationPermissionStatus.granted;
 
-  bool get _granted => _permission == NotificationsPermission.granted;
+  bool get _granted => _permission == NotificationPermissionStatus.granted;
 
   @override
   void initState() {
     super.initState();
     _loadEnabled();
+    _loadPermission();
+  }
+
+  Future<void> _loadPermission() async {
+    final status = await notificationPermissionService.status();
+    if (mounted) setState(() => _permission = status);
   }
 
   Future<void> _loadEnabled() async {
@@ -72,7 +77,7 @@ class _NotificationsBodyState extends State<NotificationsBody> {
             title: context.l10n.notificationsDeniedTitle,
             message: context.l10n.notificationsDeniedMessage,
             actionLabel: context.l10n.actionOpenSettings,
-            onAction: () {}, // TODO(backend): deep-link to system settings (app_settings plugin)
+            onAction: () => notificationPermissionService.openSettings(),
           ),
         AppSettingsGroupWidget(
           children: [
@@ -85,7 +90,8 @@ class _NotificationsBodyState extends State<NotificationsBody> {
             ),
           ],
         ),
-        // Dev-only permission toggle (debug builds only); real OS permission is backend phase.
+        // Dev-only override to preview the denied state (real OS permission is queried on
+        // open); the push SCOPE ("own chats") still lands in the backend phase.
         if (kDebugMode) Divider(height: AppDimensionTokens.border.hairline),
         if (kDebugMode) _PermissionDevControl(status: _permission, onChanged: (status) => setState(() => _permission = status)),
       ],
@@ -93,12 +99,12 @@ class _NotificationsBodyState extends State<NotificationsBody> {
   }
 }
 
-/// Dev-only control to flip the mocked OS permission while previewing.
+/// Dev-only control to flip the OS-permission preview while designing.
 class _PermissionDevControl extends StatelessWidget {
   const _PermissionDevControl({required this.status, required this.onChanged});
 
-  final NotificationsPermission status;
-  final ValueChanged<NotificationsPermission> onChanged;
+  final NotificationPermissionStatus status;
+  final ValueChanged<NotificationPermissionStatus> onChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -111,10 +117,10 @@ class _PermissionDevControl extends StatelessWidget {
         children: [
           Text('System permission (preview)', style: textTheme.labelMedium?.copyWith(color: colorScheme.onSurfaceVariant)),
           SizedBox(height: AppSpacingTokens.s8),
-          SegmentedButton<NotificationsPermission>(
+          SegmentedButton<NotificationPermissionStatus>(
             segments: const [
-              ButtonSegment<NotificationsPermission>(value: NotificationsPermission.granted, label: Text('Granted')),
-              ButtonSegment<NotificationsPermission>(value: NotificationsPermission.denied, label: Text('Denied')),
+              ButtonSegment<NotificationPermissionStatus>(value: NotificationPermissionStatus.granted, label: Text('Granted')),
+              ButtonSegment<NotificationPermissionStatus>(value: NotificationPermissionStatus.denied, label: Text('Denied')),
             ],
             selected: {status},
             onSelectionChanged: (selection) => onChanged(selection.first),
