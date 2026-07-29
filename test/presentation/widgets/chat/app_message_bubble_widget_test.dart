@@ -14,6 +14,28 @@ void main() {
       expect(find.text('hello'), findsOneWidget);
     });
 
+    testWidgets('max-width derives from the LOCAL pane width, not the window (R2)', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1200, 800)); // wide window
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(
+        tester,
+        const SizedBox(
+          width: 400, // a narrow pane inside the wide window (like the desktop thread column)
+          child: AppMessageBubbleWidget(
+            isOwn: false,
+            text:
+                'A very long message that would exceed 80% of the pane if the cap were computed '
+                'from the window width instead of the local pane width available here',
+            time: '09:00',
+          ),
+        ),
+      );
+
+      final width = tester.getSize(find.descendant(of: find.byType(AppMessageBubbleWidget), matching: find.byType(Container)).first).width;
+      // 0.8 * 400 (local) = 320; from the window it would be 0.8 * 1200 = 960 (→ fills the 400 pane).
+      expect(width, lessThan(360.0));
+    });
+
     testWidgets('own + status renders a status glyph', (tester) async {
       await pumpApp(tester, const AppMessageBubbleWidget(isOwn: true, text: 'hi', time: '09:00', status: MessageStatus.sent));
 

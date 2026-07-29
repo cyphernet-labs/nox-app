@@ -38,6 +38,19 @@ class AppMessageBubbleWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // The 80% own/other "corridor" MUST be a fraction of the LOCAL available width (the
+    // thread pane / list-detail column), not the whole window — otherwise on desktop the
+    // cap exceeds the pane and bubbles fill it, losing the corridor (R2). LayoutBuilder
+    // reads the width the parent grants; unbounded (defensive) falls back to the window.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final available = constraints.maxWidth.isFinite ? constraints.maxWidth : MediaQuery.sizeOf(context).width;
+        return _bubble(context, available * _maxWidthFactor);
+      },
+    );
+  }
+
+  Widget _bubble(BuildContext context, double maxWidth) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     final background = isOwn ? colorScheme.primaryContainer : colorScheme.surfaceContainerHigh;
@@ -52,7 +65,7 @@ class AppMessageBubbleWidget extends StatelessWidget {
       alignment: isOwn ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
         margin: EdgeInsets.only(bottom: isLast ? 0 : AppSpacingTokens.s2),
-        constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * _maxWidthFactor),
+        constraints: BoxConstraints(maxWidth: maxWidth),
         padding: hasFileOnly
             ? EdgeInsets.all(AppSpacingTokens.s8)
             : EdgeInsets.symmetric(horizontal: AppSpacingTokens.s12, vertical: AppSpacingTokens.s8),
