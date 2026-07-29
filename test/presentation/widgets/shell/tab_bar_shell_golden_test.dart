@@ -9,6 +9,7 @@ import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/general/app_clock.dart';
 import 'package:nox_app/general/constants.dart';
+import 'package:nox_app/presentation/widgets/shell/app_navigation_rail_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/tab_bar_shell_widget.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -78,6 +79,28 @@ void main() {
         await _settleShell(tester);
 
         await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/tab_bar_shell_desktop_$suffix.png'));
+      });
+
+      // Settings tab active on desktop — locks the rail selected state, the Settings
+      // detail within the shell, and the R3 titlebar subtitle following the tab
+      // ('· Settings', not the hardcoded '· Chats' the strip previously always showed).
+      testWidgets('desktop Settings tab matches the $suffix theme', (tester) async {
+        AppClock.freeze(kGoldenClock);
+        addTearDown(AppClock.reset);
+        tester.view.devicePixelRatio = 2.0;
+        tester.view.physicalSize = kDesktopGoldenSize * 2.0;
+        addTearDown(() {
+          tester.view.resetDevicePixelRatio();
+          tester.view.resetPhysicalSize();
+        });
+
+        await pumpApp(tester, const TabBarShell(), themeMode: mode, settle: false);
+        await _settleShell(tester);
+        // Activate Settings via the rail destination (disambiguated from the settings body text).
+        await tester.tap(find.descendant(of: find.byType(AppNavigationRailWidget), matching: find.text('Settings')));
+        await _settleShell(tester);
+
+        await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/tab_bar_shell_settings_desktop_$suffix.png'));
       });
     }
   });

@@ -6,6 +6,7 @@ import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/general/constants.dart';
+import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/pages/chats_list_page/chats_list_page.dart';
 import 'package:nox_app/presentation/pages/create_chat_page/create_chat_page.dart';
 import 'package:nox_app/presentation/pages/settings_root_page/settings_root_page.dart';
@@ -178,7 +179,7 @@ class _TabBarShellState extends State<TabBarShell> {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final useRail = constraints.maxWidth >= Constants.railBreakpoint;
-          return useRail ? _desktop() : _mobile();
+          return useRail ? _desktop(context) : _mobile();
         },
       ),
     );
@@ -193,13 +194,20 @@ class _TabBarShellState extends State<TabBarShell> {
     );
   }
 
-  Widget _desktop() {
+  Widget _desktop(BuildContext context) {
+    // The titlebar screen-label tracks the active tab (R3 parity): on mobile the
+    // AppBar title already changes per tab, so the desktop strip must too — and via
+    // l10n, not a hardcoded English literal, so it localizes (EN/UK) like the rail.
+    final subtitle = switch (_active) {
+      AppTab.chats => context.l10n.chats,
+      AppTab.settings => context.l10n.settings,
+    };
     return Scaffold(
       body: Column(
         children: [
           // Branded window strip + brand-splash hairline at the top of the desktop
           // shell. Native min/max/close controls stay deferred (desktop-infra phase).
-          const AppWindowTitlebarWidget(subtitle: 'Chats'),
+          AppWindowTitlebarWidget(subtitle: subtitle),
           Expanded(
             child: Row(
               children: [
