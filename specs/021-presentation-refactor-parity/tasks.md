@@ -65,7 +65,7 @@
 - [ ] T025 [P] [US3] O3/R24 — hoisting `Theme.of` в один вызов: chats_list_page:360/379 (paged itemBuilder), app_identity_card_widget:89-90/114-115, shell-виджеты; goldens без churn
 - [ ] T026 [US3] O4/R25 — снять dead `inShell`-ветку `_backOrNull` + консолидировать третий back-button в `settings_root_page.dart`; settings goldens без churn
 - [ ] T027 [US3] O5/R26 — убрать двойной hairline rail↔body (один владелец края: rail-border ИЛИ `VerticalDivider` в `tab_bar_shell_widget.dart:213`); перегенерировать desktop shell golden (~1px)
-- [ ] T028 [P] [US3] O6/R27 — `_neutralSurface(ColorScheme)` в `qr_scan_page.dart` (4 `ColoredBox(surfaceContainerHighest)` + `Theme.of` один раз, убрать per-frame в `errorBuilder`); qr goldens без churn
+- [x] T028 [P] [US3] O6/R27 — `_neutralSurface(ColorScheme)` в `qr_scan_page.dart` (4 `ColoredBox(surfaceContainerHighest)` дедуп; `_cameraPreview` резолвит colorScheme ОДИН раз → errorBuilder больше не зовёт `Theme.of` per-frame); qr goldens без churn
 - [x] T029 [P] [US3] O7/R28 — mobile thread AppBar title `maxLines:1 + TextOverflow.ellipsis` в `chat_thread_page.dart` (длинные имена больше не переносятся); chat_thread golden без churn (короткое имя в golden)
 
 **Checkpoint US3**: SC-004 выполнен (0 raw-opacity вне `lib/design/theme/` в затронутых файлах).
