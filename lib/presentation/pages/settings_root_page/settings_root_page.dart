@@ -195,15 +195,22 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
           AppSettingsNavRowWidget(title: context.l10n.settingsAboutTitle, onTap: () => _openSection(AboutPage.route())),
           const AppHairlineDividerWidget(),
           AppSettingsNavRowWidget(title: context.l10n.logoutRow, color: Theme.of(context).colorScheme.error, onTap: _logout),
-          if (kDebugMode) AppSettingsNavRowWidget(title: 'Screens gallery (dev)', onTap: () => _openSection(ScreensGalleryPage.route())),
-          if (kDebugMode) AppSettingsNavRowWidget(title: 'UI kit (dev)', onTap: () => _openSection(UiKitPage.route())),
-          if (kDebugMode && !widget.demo)
-            AppSettingsNavRowWidget(title: 'Force logout (dev)', onTap: () => unawaited(authRepository.logout(forced: true))),
-          if (kDebugMode && widget.demo) _devControl(),
+          ..._devMenuRows(),
         ],
       ),
     );
   }
+
+  // Debug-only rows appended after Log out on both layouts (mobile flat list + desktop
+  // menu pane): the screens gallery, the UI-kit gallery, a forced logout, and — in the
+  // gallery preview — the dev state control. Empty in release (all kDebugMode-gated).
+  List<Widget> _devMenuRows() => [
+    if (kDebugMode) AppSettingsNavRowWidget(title: 'Screens gallery (dev)', onTap: () => _openSection(ScreensGalleryPage.route())),
+    if (kDebugMode) AppSettingsNavRowWidget(title: 'UI kit (dev)', onTap: () => _openSection(UiKitPage.route())),
+    if (kDebugMode && !widget.demo)
+      AppSettingsNavRowWidget(title: 'Force logout (dev)', onTap: () => unawaited(authRepository.logout(forced: true))),
+    if (kDebugMode && widget.demo) _devControl(),
+  ];
 
   // ---- Desktop: list-detail -------------------------------------------------
 
@@ -249,12 +256,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
               item(_Section.about, context.l10n.settingsAboutTitle),
               const Spacer(),
               AppSettingsNavRowWidget(title: context.l10n.logoutRow, color: colorScheme.error, onTap: _logout),
-              if (kDebugMode)
-                AppSettingsNavRowWidget(title: 'Screens gallery (dev)', onTap: () => _openSection(ScreensGalleryPage.route())),
-              if (kDebugMode) AppSettingsNavRowWidget(title: 'UI kit (dev)', onTap: () => _openSection(UiKitPage.route())),
-              if (kDebugMode && !widget.demo)
-                AppSettingsNavRowWidget(title: 'Force logout (dev)', onTap: () => unawaited(authRepository.logout(forced: true))),
-              if (kDebugMode && widget.demo) _devControl(),
+              ..._devMenuRows(),
             ],
           ),
         ),
