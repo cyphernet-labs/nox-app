@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:nox_app/presentation/widgets/primitives/app_ringed_avatar_widget.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:infinite_scroll_pagination/infinite_scroll_pagination.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
@@ -22,7 +23,6 @@ import 'package:nox_app/presentation/pages/file_view_page/file_view_page.dart';
 import 'package:nox_app/presentation/widgets/chat/app_chat_item_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_thread_view_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_search_field_widget.dart';
-import 'package:nox_app/presentation/widgets/primitives/app_avatar_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_list_detail_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_splash_hairline_widget.dart';
@@ -200,7 +200,6 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
   // off to the shell (switch to Settings + jump to Account). Wrapped in a ≥48 tap
   // target (a11y). Guarded by the null-check at the call site (shell-only, mobile-only).
   Widget _accountAvatar(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s8),
       child: Tooltip(
@@ -213,20 +212,10 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
             width: AppSpacingTokens.s48,
             height: AppSpacingTokens.s48,
             child: Center(
-              child: DecoratedBox(
-                // The subtle ring every NOX avatar carries (design: `0 0 0 2px onSurface@0.06`),
-                // matching the desktop rail account avatar + the chat-row avatars.
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(color: colorScheme.onSurface.withValues(alpha: 0.06), spreadRadius: AppDimensionTokens.border.thick),
-                  ],
-                ),
-                child: AppAvatarWidget(
-                  name: widget.accountLabel!,
-                  initials: noxAccountInitials(widget.accountLabel!),
-                  size: AppDimensionTokens.size.avatarXs,
-                ),
+              child: AppRingedAvatarWidget(
+                name: widget.accountLabel!,
+                initials: noxAccountInitials(widget.accountLabel!),
+                size: AppDimensionTokens.size.avatarXs,
               ),
             ),
           ),

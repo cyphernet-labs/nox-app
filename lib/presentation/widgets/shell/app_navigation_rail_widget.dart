@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/presentation/widgets/primitives/app_ringed_avatar_widget.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
@@ -6,7 +7,6 @@ import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_brand.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/general/l10n_extension.dart';
-import 'package:nox_app/presentation/widgets/primitives/app_avatar_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_bottom_bar_widget.dart';
 
@@ -149,19 +149,15 @@ class AppNavigationRailWidget extends StatelessWidget {
   }
 
   Widget _accountAvatar(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return Tooltip(
       message: context.l10n.settingsAccountTitle,
       child: InkResponse(
         onTap: onAccount,
         customBorder: const CircleBorder(),
-        child: Container(
-          // Subtle ring, matching the chat-row avatars (design: `0 0 0 2px onSurface@0.06`).
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            boxShadow: [BoxShadow(color: colorScheme.onSurface.withValues(alpha: 0.06), spreadRadius: AppDimensionTokens.border.thick)],
-          ),
-          child: AppAvatarWidget(name: accountLabel, initials: noxAccountInitials(accountLabel), size: AppDimensionTokens.size.avatarXs),
+        child: AppRingedAvatarWidget(
+          name: accountLabel,
+          initials: noxAccountInitials(accountLabel),
+          size: AppDimensionTokens.size.avatarXs,
         ),
       ),
     );

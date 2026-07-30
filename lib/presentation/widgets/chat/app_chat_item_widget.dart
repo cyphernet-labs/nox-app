@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/presentation/widgets/primitives/app_ringed_avatar_widget.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
-import 'package:nox_app/presentation/widgets/primitives/app_avatar_widget.dart';
 
 /// Chat row (5.1): avatar (subtle ring) + name + preview + time + unread badge.
 /// Unread emphasis — name w600, preview `onSurface`, time `primary`, badge shown.
@@ -32,13 +32,7 @@ class AppChatItemWidget extends StatelessWidget {
         padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s16, vertical: AppSpacingTokens.s12),
         child: Row(
           children: [
-            Container(
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                boxShadow: [BoxShadow(color: colorScheme.onSurface.withValues(alpha: 0.06), spreadRadius: AppDimensionTokens.border.thick)],
-              ),
-              child: AppAvatarWidget(name: name, size: _avatarSize),
-            ),
+            AppRingedAvatarWidget(name: name, size: _avatarSize),
             SizedBox(width: AppSpacingTokens.s16),
             Expanded(
               child: Column(
