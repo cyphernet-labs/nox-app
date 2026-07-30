@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/theme/nox_opacity.dart';
 import 'package:nox_app/presentation/widgets/app_dev_scenario_dropdown.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_ringed_avatar_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_hairline_divider_widget.dart';
@@ -87,7 +88,7 @@ class ChatCardPage extends StatelessWidget {
           // Standalone desktop preview: the side-sheet panel over a scrim.
           final colorScheme = Theme.of(context).colorScheme;
           return Scaffold(
-            backgroundColor: colorScheme.scrim.withValues(alpha: 0.5),
+            backgroundColor: colorScheme.scrim.withValues(alpha: NoxOpacity.scrim),
             body: Stack(
               children: [
                 Positioned.fill(
