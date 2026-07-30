@@ -7,8 +7,8 @@ import 'package:nox_app/design/app_text_style_tokens.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
-import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
+import 'package:nox_app/presentation/widgets/chat/watch_chat.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/formatters/file_size_formatter.dart';
@@ -116,10 +116,10 @@ class ChatCardPage extends StatelessWidget {
             ),
             // Reactive like the body header: a rename from the header pencil updates the
             // AppBar title live too (the two co-visible name surfaces must not disagree).
-            title: StreamBuilder<ChatModel?>(
-              stream: chatRepository.watchChat(chatId: chat.id),
-              initialData: chat,
-              builder: (context, snapshot) => Text((snapshot.data ?? chat).name, maxLines: 1, overflow: TextOverflow.ellipsis),
+            title: WatchChat(
+              chatId: chat.id,
+              initial: chat,
+              builder: (context, current) => Text(current.name, maxLines: 1, overflow: TextOverflow.ellipsis),
             ),
           ),
           body: ChatCardBody(chat: chat, demo: demo, initialScenario: initialScenario, initialViewMode: initialViewMode),
@@ -214,11 +214,10 @@ class _ChatCardBodyState extends State<ChatCardBody> {
     // Reactive to the chat row: a rename updates the name AND the generated avatar here
     // live (and, on desktop, in the thread behind the side-sheet). Falls back to the
     // passed chat until the first snapshot.
-    return StreamBuilder<ChatModel?>(
-      stream: chatRepository.watchChat(chatId: widget.chat.id),
-      initialData: widget.chat,
-      builder: (context, snapshot) {
-        final chat = snapshot.data ?? widget.chat;
+    return WatchChat(
+      chatId: widget.chat.id,
+      initial: widget.chat,
+      builder: (context, chat) {
         return Padding(
           padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s8, AppSpacingTokens.s16, AppSpacingTokens.s16),
           child: Row(

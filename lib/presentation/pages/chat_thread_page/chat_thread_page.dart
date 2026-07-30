@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:nox_app/design/nox_icons.dart';
-import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
+import 'package:nox_app/presentation/widgets/chat/watch_chat.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/pages/chat_card_page/chat_card_page.dart';
@@ -73,13 +73,10 @@ class ChatThreadPage extends StatelessWidget {
             ),
             // Tapping the chat name opens the chat card (5.4).
             // Reactive to the chat row so a rename (from the card) updates the title live.
-            title: StreamBuilder<ChatModel?>(
-              stream: chatRepository.watchChat(chatId: chat.id),
-              initialData: chat,
-              builder: (context, snapshot) {
-                final current = snapshot.data ?? chat;
-                return InkWell(onTap: () => showChatCard(context, current), child: Text(current.name));
-              },
+            title: WatchChat(
+              chatId: chat.id,
+              initial: chat,
+              builder: (context, current) => InkWell(onTap: () => showChatCard(context, current), child: Text(current.name)),
             ),
           ),
           body: AppThreadViewWidget(
