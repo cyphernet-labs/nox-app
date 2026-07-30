@@ -2,7 +2,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
-import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/pages/base/base_state_page.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page.dart';
@@ -10,11 +9,8 @@ import 'package:nox_app/presentation/pages/error_page/error_page_params.dart';
 import 'package:nox_app/presentation/widgets/shell/tab_bar_shell_widget.dart';
 import 'package:nox_app/presentation/pages/set_username_page/bloc/set_username_bloc.dart';
 import 'package:nox_app/presentation/widgets/onboarding/app_labeled_field_widget.dart';
-import 'package:nox_app/presentation/widgets/onboarding/app_onboard_card_widget.dart';
+import 'package:nox_app/presentation/widgets/onboarding/app_onboarding_scaffold_widget.dart';
 import 'package:nox_app/presentation/widgets/onboarding/app_primary_button_widget.dart';
-import 'package:nox_app/presentation/widgets/shell/app_splash_hairline_widget.dart';
-import 'package:nox_app/presentation/widgets/shell/app_window_titlebar_widget.dart';
-import 'package:nox_app/presentation/widgets/shell/app_wordmark_widget.dart';
 
 /// 2.3 Set username — optional rename of the public label, pre-filled with the
 /// server-assigned `User<random>`. Client charset validation + debounced
@@ -89,55 +85,8 @@ class _SetUsernamePageState extends BaseStatePage<SetUsernamePage> {
       child: BlocConsumer<SetUsernameBloc, SetUsernameState>(
         listenWhen: (previous, current) => previous.status != current.status,
         listener: _onStatus,
-        builder: (context, state) {
-          return LayoutBuilder(
-            builder: (context, constraints) {
-              final wide = constraints.maxWidth >= Constants.railBreakpoint;
-              return wide ? _wide(context, state) : _narrow(context, state);
-            },
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _narrow(BuildContext context, SetUsernameState state) {
-    return Scaffold(
-      appBar: AppBar(centerTitle: true, title: const AppWordmarkWidget(), bottom: const AppSplashHairlineWidget()),
-      body: SafeArea(
-        child: Column(
-          children: [
-            Expanded(
-              child: SingleChildScrollView(
-                padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s24, AppSpacingTokens.s16, 0),
-                child: _field(context, state),
-              ),
-            ),
-            Padding(padding: EdgeInsets.all(AppSpacingTokens.s16), child: _actions(context, state)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _wide(BuildContext context, SetUsernameState state) {
-    return Scaffold(
-      body: Column(
-        children: [
-          const AppWindowTitlebarWidget(subtitle: 'Set up'),
-          Expanded(
-            child: AppOnboardCardWidget(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _field(context, state),
-                  SizedBox(height: AppSpacingTokens.s24),
-                  _actions(context, state),
-                ],
-              ),
-            ),
-          ),
-        ],
+        builder: (context, state) =>
+            AppOnboardingScaffoldWidget(subtitle: 'Set up', field: _field(context, state), actions: _actions(context, state)),
       ),
     );
   }
