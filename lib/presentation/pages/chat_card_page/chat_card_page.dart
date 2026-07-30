@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:nox_app/presentation/widgets/primitives/app_hairline_divider_widget.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
@@ -203,7 +204,7 @@ class _ChatCardBodyState extends State<ChatCardBody> {
       mainAxisSize: MainAxisSize.min,
       children: [
         AppPanelHeaderWidget(title: context.l10n.chatInfoTitle, onClose: () => Navigator.of(context).maybePop()),
-        Divider(height: AppDimensionTokens.border.hairline),
+        const AppHairlineDividerWidget(),
       ],
     );
   }

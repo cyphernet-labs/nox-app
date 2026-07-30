@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/presentation/widgets/primitives/app_hairline_divider_widget.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
@@ -63,7 +64,7 @@ class AppThreadHeaderWidget extends StatelessWidget {
               ],
             ),
           ),
-          Divider(height: AppDimensionTokens.border.hairline),
+          const AppHairlineDividerWidget(),
         ],
       ),
     );

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/presentation/widgets/primitives/app_hairline_divider_widget.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/app_text_style_tokens.dart';
@@ -60,7 +61,7 @@ class AppIdentityCardWidget extends StatelessWidget {
             _nameBlock(context),
             Padding(
               padding: EdgeInsets.symmetric(vertical: AppSpacingTokens.s12),
-              child: Divider(height: AppDimensionTokens.border.hairline),
+              child: const AppHairlineDividerWidget(),
             ),
             Text(context.l10n.loginIdLabel, style: textTheme.labelMedium?.copyWith(color: colorScheme.onSurfaceVariant)),
             SizedBox(height: AppSpacingTokens.s4),

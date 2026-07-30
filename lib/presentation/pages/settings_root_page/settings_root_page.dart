@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:nox_app/presentation/widgets/primitives/app_hairline_divider_widget.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
@@ -192,7 +193,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
           AppSettingsNavRowWidget(title: context.l10n.settingsLanguageTitle, onTap: () => _openSection(LanguagePage.route())),
           AppSettingsNavRowWidget(title: context.l10n.settingsTermsTitle, onTap: () => _openSection(TermsPage.route())),
           AppSettingsNavRowWidget(title: context.l10n.settingsAboutTitle, onTap: () => _openSection(AboutPage.route())),
-          Divider(height: AppDimensionTokens.border.hairline),
+          const AppHairlineDividerWidget(),
           AppSettingsNavRowWidget(title: context.l10n.logoutRow, color: Theme.of(context).colorScheme.error, onTap: _logout),
           if (kDebugMode) AppSettingsNavRowWidget(title: 'Screens gallery (dev)', onTap: () => _openSection(ScreensGalleryPage.route())),
           if (kDebugMode) AppSettingsNavRowWidget(title: 'UI kit (dev)', onTap: () => _openSection(UiKitPage.route())),
@@ -235,7 +236,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
             ],
           ),
         ),
-        Divider(height: AppDimensionTokens.border.hairline),
+        const AppHairlineDividerWidget(),
         // Grouped nav items (Account / preferences / legal), with the destructive
         // Log out row pinned to the bottom via a Spacer.
         Expanded(
@@ -244,12 +245,12 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
             children: [
               // Group 1: Account.
               item(_Section.account, context.l10n.settingsAccountTitle),
-              Divider(height: AppDimensionTokens.border.hairline),
+              const AppHairlineDividerWidget(),
               // Group 2: Notifications, Appearance, Language.
               item(_Section.notifications, context.l10n.settingsNotificationsTitle),
               item(_Section.appearance, context.l10n.settingsAppearanceTitle),
               item(_Section.language, context.l10n.settingsLanguageTitle),
-              Divider(height: AppDimensionTokens.border.hairline),
+              const AppHairlineDividerWidget(),
               // Group 3: Terms, About.
               item(_Section.terms, context.l10n.settingsTermsTitle),
               item(_Section.about, context.l10n.settingsAboutTitle),
@@ -304,7 +305,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
             child: Text(_sectionTitle(_selected), style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
           ),
         ),
-        Divider(height: AppDimensionTokens.border.hairline),
+        const AppHairlineDividerWidget(),
         Expanded(
           child: Center(
             child: ConstrainedBox(

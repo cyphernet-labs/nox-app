@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/presentation/widgets/primitives/app_hairline_divider_widget.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:infinite_scroll_pagination/infinite_scroll_pagination.dart';
-import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/domain/model/item/item_model.dart';
 import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/pages/item_list_page/bloc/item_list_bloc.dart';
@@ -58,7 +58,7 @@ class _ItemListPageState extends State<ItemListPage> {
                 newPageProgressIndicatorBuilder: (_) => const Center(child: CircularProgressIndicator()),
                 noItemsFoundIndicatorBuilder: (_) => Center(child: Text(context.l10n.noData)),
               ),
-              separatorBuilder: (context, index) => Divider(height: AppDimensionTokens.border.hairline),
+              separatorBuilder: (context, index) => const AppHairlineDividerWidget(),
             ),
           };
         },
