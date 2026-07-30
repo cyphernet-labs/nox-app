@@ -1,30 +1,22 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:nox_app/presentation/helpers/adaptive_lightbox.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
-import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 
 /// Open the full-screen image viewer (feature F4) adaptively: mobile pushes a full
 /// screen; desktop shows a centered lightbox dialog (mirrors `showFileView`). The tap
 /// target is the inline image thumbnail in the chat thread (5.2).
-Future<void> openImageViewer(BuildContext context, String localPath) {
-  final wide = MediaQuery.sizeOf(context).width >= Constants.railBreakpoint;
-  if (wide) {
-    return showDialog<void>(
-      context: context,
-      builder: (_) => Dialog(
-        insetPadding: EdgeInsets.all(AppSpacingTokens.s24),
-        clipBehavior: Clip.antiAlias,
-        child: ImageViewerPage(localPath: localPath, inDialog: true),
-      ),
-    );
-  }
-  return Navigator.of(context).push(ImageViewerPage.route(localPath));
-}
+Future<void> openImageViewer(BuildContext context, String localPath) => showAdaptiveLightbox(
+  context,
+  dialogChild: () => ImageViewerPage(localPath: localPath, inDialog: true),
+  route: () => ImageViewerPage.route(localPath),
+  insetPadding: EdgeInsets.all(AppSpacingTokens.s24),
+);
 
 /// Full-screen image viewer (feature F4). Zoomable ([InteractiveViewer]) view of the
 /// picked/sent image at [localPath], with close/back. A missing/unreadable file shows a

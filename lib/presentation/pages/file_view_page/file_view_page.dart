@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:nox_app/presentation/helpers/adaptive_lightbox.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/service/file_picker_service.dart';
@@ -21,22 +22,12 @@ import 'package:nox_app/presentation/widgets/shell/app_panel_header_widget.dart'
 /// Open the file view (5.3) adaptively: mobile pushes the full screen; desktop
 /// shows a centered lightbox dialog (corpus `08-file`). The tap target lives in the
 /// chat thread (5.2) and the chat card (5.4).
-Future<void> showFileView(BuildContext context, MessageAttachment file) {
-  final wide = MediaQuery.sizeOf(context).width >= Constants.railBreakpoint;
-  if (wide) {
-    return showDialog<void>(
-      context: context,
-      builder: (_) => Dialog(
-        clipBehavior: Clip.antiAlias,
-        child: ConstrainedBox(
-          constraints: BoxConstraints(maxWidth: AppDimensionTokens.layout.contentMaxW),
-          child: FileViewPage(file: file, inDialog: true),
-        ),
-      ),
-    );
-  }
-  return Navigator.of(context).push(FileViewPage.route(file));
-}
+Future<void> showFileView(BuildContext context, MessageAttachment file) => showAdaptiveLightbox(
+  context,
+  dialogChild: () => FileViewPage(file: file, inDialog: true),
+  route: () => FileViewPage.route(file),
+  maxWidth: AppDimensionTokens.layout.contentMaxW,
+);
 
 /// 5.3 File view — inspect / download a file attachment. No content preview: only
 /// the type glyph, name and size. Auto-downloads to cache with a determinate
