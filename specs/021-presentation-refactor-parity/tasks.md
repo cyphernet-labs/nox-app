@@ -61,7 +61,7 @@
 **Goal**: magic-числа → токены, hoisting `Theme.of`, снятие дублей/мёртвого кода; поведение неизменно. **Independent test**: голдены зелёные; значения токенов равны прежним литералам.
 
 - [x] T023 [US3] O1/R22 — `NoxOpacity.{scrim=0.5,disabled=0.38,ring=0.06}` в `lib/design/theme/nox_opacity.dart`; заменены 6 magic-opacity (chat_card/file_view/side_sheet scrim + file_view/composer disabled + ringed_avatar ring); scrim 0.55→0.5 сведён (file_view desktop light+dark перегенерированы, только scrim-альфа, layout цел); прочие same-value → без churn
-- [ ] T024 [P] [US3] O2/R23 — именованные геометрия-const (`_loadMoreThreshold=200` в app_thread_view:106, `qrDesktopReticleFraction=0.78` в qr_scan_page:389, splash reveal-scale `0.85` в splash_page:51); goldens без churn
+- [x] T024 [P] [US3] O2/R23 — именованные геометрия-const: `_loadMoreThreshold=200` (app_thread_view scroll-prefetch) + `_reticleFraction=0.78` (`_QrDesktopViewfinder`); splash `_scaleFrom=0.85` УЖЕ именован (без изменений); goldens без churn
 - [ ] T025 [P] [US3] O3/R24 — hoisting `Theme.of` в один вызов: chats_list_page:360/379 (paged itemBuilder), app_identity_card_widget:89-90/114-115, shell-виджеты; goldens без churn
 - [ ] T026 [US3] O4/R25 — снять dead `inShell`-ветку `_backOrNull` + консолидировать третий back-button в `settings_root_page.dart`; settings goldens без churn
 - [ ] T027 [US3] O5/R26 — убрать двойной hairline rail↔body (один владелец края: rail-border ИЛИ `VerticalDivider` в `tab_bar_shell_widget.dart:213`); перегенерировать desktop shell golden (~1px)

@@ -71,6 +71,10 @@ class AppThreadViewWidget extends StatefulWidget {
 }
 
 class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
+  /// Distance (px) from the top of the reverse history at which the next page
+  /// prefetches — a screenful of runway before the user reaches the oldest message.
+  static const double _loadMoreThreshold = 200;
+
   late final ChatThreadBloc _bloc;
   final TextEditingController _composer = TextEditingController();
   final ScrollController _scroll = ScrollController();
@@ -104,7 +108,7 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
     final position = _scroll.position;
     // Reverse list: scrolling up (toward older history) approaches maxScrollExtent.
     // Guard on a real scrollable extent so a short (non-filling) list doesn't fire.
-    if (position.maxScrollExtent > 0 && position.pixels >= position.maxScrollExtent - 200) {
+    if (position.maxScrollExtent > 0 && position.pixels >= position.maxScrollExtent - _loadMoreThreshold) {
       _bloc.add(const ChatThreadEvent.loadMessages());
     }
   }

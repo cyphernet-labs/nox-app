@@ -472,6 +472,10 @@ class _QrStatePanel extends StatelessWidget {
 class _QrDesktopViewfinder extends StatelessWidget {
   const _QrDesktopViewfinder({required this.preview, required this.onEnterManually});
 
+  /// Reticle side as a fraction of the (smaller) desktop viewfinder window — a touch
+  /// larger than the mobile default since the desktop window is a fixed small square.
+  static const double _reticleFraction = 0.78;
+
   final Widget preview;
   final VoidCallback onEnterManually;
 
@@ -493,7 +497,7 @@ class _QrDesktopViewfinder extends StatelessWidget {
               child: Stack(
                 children: [
                   Positioned.fill(child: preview),
-                  const Positioned.fill(child: AppQrOverlayWidget(reticleFraction: 0.78, showInstruction: false)),
+                  const Positioned.fill(child: AppQrOverlayWidget(reticleFraction: _reticleFraction, showInstruction: false)),
                 ],
               ),
             ),
