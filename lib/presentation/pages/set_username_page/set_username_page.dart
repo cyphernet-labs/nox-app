@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:nox_app/presentation/widgets/app_dev_scenario_dropdown.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/general/l10n_extension.dart';
@@ -139,23 +140,11 @@ class _OutcomeControl extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: EdgeInsets.only(top: AppSpacingTokens.s8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Text('Outcome:'),
-          SizedBox(width: AppSpacingTokens.s8),
-          DropdownButton<UsernameOutcome>(
-            value: value,
-            onChanged: (selected) {
-              if (selected != null) onChanged(selected);
-            },
-            items: const [
-              DropdownMenuItem(value: UsernameOutcome.success, child: Text('success')),
-              DropdownMenuItem(value: UsernameOutcome.raceTaken, child: Text('race taken')),
-              DropdownMenuItem(value: UsernameOutcome.fatal, child: Text('fatal')),
-            ],
-          ),
-        ],
+      child: AppDevScenarioDropdown<UsernameOutcome>(
+        value: value,
+        label: 'Outcome:',
+        items: const {UsernameOutcome.success: 'success', UsernameOutcome.raceTaken: 'race taken', UsernameOutcome.fatal: 'fatal'},
+        onChanged: onChanged,
       ),
     );
   }

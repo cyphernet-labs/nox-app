@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:nox_app/presentation/widgets/app_dev_scenario_dropdown.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
@@ -232,26 +233,18 @@ class _OutcomeControl extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: EdgeInsets.only(top: AppSpacingTokens.s8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Text('Outcome:'),
-          SizedBox(width: AppSpacingTokens.s8),
-          DropdownButton<LoginOutcome>(
-            value: value,
-            onChanged: (selected) {
-              if (selected != null) onChanged(selected);
-            },
-            items: const [
-              DropdownMenuItem(value: LoginOutcome.auto, child: Text('auto')),
-              DropdownMenuItem(value: LoginOutcome.newId, child: Text('new id')),
-              DropdownMenuItem(value: LoginOutcome.registered, child: Text('registered')),
-              DropdownMenuItem(value: LoginOutcome.errorFormat, child: Text('format error')),
-              DropdownMenuItem(value: LoginOutcome.errorNetwork, child: Text('network error')),
-              DropdownMenuItem(value: LoginOutcome.fatal, child: Text('fatal')),
-            ],
-          ),
-        ],
+      child: AppDevScenarioDropdown<LoginOutcome>(
+        value: value,
+        label: 'Outcome:',
+        items: const {
+          LoginOutcome.auto: 'auto',
+          LoginOutcome.newId: 'new id',
+          LoginOutcome.registered: 'registered',
+          LoginOutcome.errorFormat: 'format error',
+          LoginOutcome.errorNetwork: 'network error',
+          LoginOutcome.fatal: 'fatal',
+        },
+        onChanged: onChanged,
       ),
     );
   }

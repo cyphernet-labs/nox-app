@@ -50,7 +50,7 @@
 - [x] T019 [P] [US2] E10 — приватный `_QrDesktopViewfinder{preview,onEnterManually}` вынесен из `_wide` в `qr_scan_page.dart`; camera-preview резолвится на call-site (ленивость сохранена); −1 textTheme local; qr goldens без churn
 - [x] T020 [P] [US2] E11 — rail sub-trees → приватные StatelessWidget (`_NavRailCreateFab`/`_NavRailDestination{icon,selectedIcon,label,selected,onTap}`/`_NavRailAccountAvatar`) в `app_navigation_rail_widget.dart`; методы→классы, render идентичен; desktop shell/rail goldens + a11y rail-тест без churn
 - [x] T021 [P] [US2] E12 — `_devMenuRows()` (List<Widget>, kDebug-gated) spread `..._devMenuRows()` в `_narrow` + `_menuPane` в `settings_root_page.dart`; идентичные строки, goldens без churn (тесты в debug-mode → dev-строки в goldens покрыты)
-- [ ] T022 [P] [US2] E13 — `AppDevScenarioDropdown<T extends Enum>{value,values,onChanged,label?}` в `lib/presentation/widgets/`; дедуп 6 debug-dropdown (thread/card/list/create/login/username) — ручная проверка demo
+- [x] T022 [P] [US2] E13 — `AppDevScenarioDropdown<T extends Enum>{value,items:Map<T,String>,onChanged,label?,isExpanded}` в `lib/presentation/widgets/`; дедуп ВСЕХ 6 debug-dropdown (thread/card/list scenario + login/username/create outcome); null-guard+items-map+label-Row внутри; 0 остаточных DropdownButton вне виджета; goldens без churn (demo-only, не в goldens)
 
 **Checkpoint US2**: SC-003 выполнен (0 копий по grep); все существующие goldens зелёные.
 

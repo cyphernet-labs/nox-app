@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:nox_app/presentation/widgets/app_dev_scenario_dropdown.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_ringed_avatar_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_hairline_divider_widget.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -350,16 +351,14 @@ class _ChatCardBodyState extends State<ChatCardBody> {
   Widget _scenarioControl() {
     return Padding(
       padding: EdgeInsets.all(AppSpacingTokens.s8),
-      child: DropdownButton<ChatCardScenario>(
+      child: AppDevScenarioDropdown<ChatCardScenario>(
         value: _scenario,
         isExpanded: true,
+        items: {for (final s in ChatCardScenario.values) s: 'scenario: ${s.name}'},
         onChanged: (selected) {
-          if (selected != null) {
-            setState(() => _scenario = selected);
-            _bloc.add(ChatCardEvent.setScenario(selected));
-          }
+          setState(() => _scenario = selected);
+          _bloc.add(ChatCardEvent.setScenario(selected));
         },
-        items: [for (final s in ChatCardScenario.values) DropdownMenuItem(value: s, child: Text('scenario: ${s.name}'))],
       ),
     );
   }

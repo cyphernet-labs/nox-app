@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:nox_app/presentation/widgets/app_dev_scenario_dropdown.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_ringed_avatar_widget.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:infinite_scroll_pagination/infinite_scroll_pagination.dart';
@@ -387,16 +388,14 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
       child: Row(
         children: [
           Expanded(
-            child: DropdownButton<ChatsListScenario>(
+            child: AppDevScenarioDropdown<ChatsListScenario>(
               value: _devScenario,
               isExpanded: true,
+              items: {for (final s in ChatsListScenario.values) s: 'scenario: ${s.name}'},
               onChanged: (selected) {
-                if (selected != null) {
-                  setState(() => _devScenario = selected);
-                  _bloc.add(ChatsListEvent.setScenario(selected));
-                }
+                setState(() => _devScenario = selected);
+                _bloc.add(ChatsListEvent.setScenario(selected));
               },
-              items: [for (final s in ChatsListScenario.values) DropdownMenuItem(value: s, child: Text('scenario: ${s.name}'))],
             ),
           ),
           // Debug-only (Feature 014, FR-010): push a mock inbound into a NON-selected chat

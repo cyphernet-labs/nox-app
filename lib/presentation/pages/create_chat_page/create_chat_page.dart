@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:nox_app/presentation/widgets/app_dev_scenario_dropdown.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
@@ -217,23 +218,11 @@ class _CreateChatPageState extends BaseStatePage<CreateChatPage> {
   Widget _outcomeControl() {
     return Padding(
       padding: EdgeInsets.only(top: AppSpacingTokens.s8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Text('Outcome:'),
-          SizedBox(width: AppSpacingTokens.s8),
-          DropdownButton<CreateChatOutcome>(
-            value: _outcome,
-            onChanged: (selected) {
-              if (selected != null) setState(() => _outcome = selected);
-            },
-            items: const [
-              DropdownMenuItem(value: CreateChatOutcome.success, child: Text('success')),
-              DropdownMenuItem(value: CreateChatOutcome.network, child: Text('network error')),
-              DropdownMenuItem(value: CreateChatOutcome.fatal, child: Text('fatal')),
-            ],
-          ),
-        ],
+      child: AppDevScenarioDropdown<CreateChatOutcome>(
+        value: _outcome,
+        label: 'Outcome:',
+        items: const {CreateChatOutcome.success: 'success', CreateChatOutcome.network: 'network error', CreateChatOutcome.fatal: 'fatal'},
+        onChanged: (selected) => setState(() => _outcome = selected),
       ),
     );
   }

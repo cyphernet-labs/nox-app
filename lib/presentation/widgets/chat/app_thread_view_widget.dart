@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:nox_app/presentation/widgets/app_dev_scenario_dropdown.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
@@ -307,16 +308,14 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
   Widget _scenarioControl() {
     return Padding(
       padding: EdgeInsets.all(AppSpacingTokens.s8),
-      child: DropdownButton<ChatThreadScenario>(
+      child: AppDevScenarioDropdown<ChatThreadScenario>(
         value: _scenario,
         isExpanded: true,
+        items: {for (final s in ChatThreadScenario.values) s: 'scenario: ${s.name}'},
         onChanged: (selected) {
-          if (selected != null) {
-            setState(() => _scenario = selected);
-            _bloc.add(ChatThreadEvent.setScenario(selected));
-          }
+          setState(() => _scenario = selected);
+          _bloc.add(ChatThreadEvent.setScenario(selected));
         },
-        items: [for (final s in ChatThreadScenario.values) DropdownMenuItem(value: s, child: Text('scenario: ${s.name}'))],
       ),
     );
   }
