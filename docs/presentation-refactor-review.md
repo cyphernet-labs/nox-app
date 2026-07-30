@@ -94,12 +94,18 @@ brand-hairline (`:185`), а desktop settings menu-pane ставит `Divider` п
 `qr_scan_page.dart:282-294` — camera actions только в mobile AppBar; desktop viewfinder их не даёт.
 Задокументировано как намеренное (header-doc «Desktop macOS: windowed viewfinder, no camera actions» + FR-005).
 - **Действие:** подтвердить намеренность (кода менять не требуется).
+- **РЕЗОЛЮЦИЯ (T008, 2026-07-28): подтверждено владельцем — намеренно, mobile-only.** (Clarification к spec 021,
+  FR-012: «Оставить mobile-only (намеренно)»; desktop использует системную webcam без torch/switch.) Код не менять;
+  ✔ intentional в parity-matrix (строка 7).
 
 ### PG-8 Account identity: reveal raw-ID только mobile, inline QR только desktop — ПОДТВЕРДИТЬ (намеренно)
 `settings_root_page.dart:188` (mobile `revealable:true, showInlineQr:false`) vs `:287` (desktop
 `revealable:false, showInlineQr:true`). Задокументировано под Принципом I (desktop = shared screen, сырой ID
 сознательно не показывается). Оба layout дают Copy + Show-QR.
 - **Действие:** подтвердить приватностный сплит (риск изменения high — не менять).
+- **РЕЗОЛЮЦИЯ (T009, 2026-07-28): подтверждено владельцем — намеренно (Принцип I).** (Clarification к spec 021,
+  FR-013: «Оставить намеренно (Принцип I)»; desktop — общий экран, сырой ID сознательно не раскрывается, но базовый
+  паритет Copy + Show-QR сохранён на обеих ветках.) Код не менять; ✔ intentional в parity-matrix (строка 8).
 
 ---
 

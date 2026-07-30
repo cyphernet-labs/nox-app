@@ -27,10 +27,10 @@
 - [x] T005 [P] [US1] R4 — `Semantics(button, selected, label)` на rail-destination в `lib/presentation/widgets/shell/app_navigation_rail_widget.dart`; a11y-тест в `test/presentation/widgets/accessibility_test.dart` (isButton+isSelected на rail)
 - [x] T006 [P] [US1] R5 — mobile create-chat: guard `_cancel`/`PopScope` по `state.isSubmitting` в `lib/presentation/pages/create_chat_page/create_chat_page.dart` (`_narrow`); widget-тест (при submit leading disabled / pop подавлен)
 - [x] T007 [US1] R6 — сверено с корпусом (`desktop-screens.jsx` `ChatsListPane`): desktop pane-header БЕЗ hairline by design (бренд-hairline — под window-titlebar; mobile — под AppBar). **НЕ дефект → код не менять**; отмечено ✔ intentional в review + parity-matrix. Существующий desktop chats golden уже фиксирует корректный header
-- [ ] T008 [P] [US1] R7 — подтвердить QR torch/switch mobile-only как намеренное: отметить ✔ в `docs/presentation-refactor-review.md` + `contracts/parity-matrix.md` (код НЕ менять)
-- [ ] T009 [P] [US1] R8 — подтвердить account reveal/QR split как намеренное (Принцип I): отметить ✔ в `docs/presentation-refactor-review.md` + `contracts/parity-matrix.md` (код НЕ менять)
+- [x] T008 [P] [US1] R7 — подтвердить QR torch/switch mobile-only как намеренное: отметить ✔ в `docs/presentation-refactor-review.md` + `contracts/parity-matrix.md` (код НЕ менять) — владелец подтвердил (FR-012)
+- [x] T009 [P] [US1] R8 — подтвердить account reveal/QR split как намеренное (Принцип I): отметить ✔ в `docs/presentation-refactor-review.md` + `contracts/parity-matrix.md` (код НЕ менять) — владелец подтвердил (FR-013)
 
-**Checkpoint US1**: строки 1–6 parity-matrix → ✅, 7–8 → ✔; SC-001/SC-005 выполнены.
+**Checkpoint US1**: строки 1–5 parity-matrix → ✅ (fail-first-тест + golden), 6–8 → ✔ confirmed-intentional (R6 переклассифицирован по сверке с корпусом); SC-001/SC-005 выполнены.
 
 ---
 
