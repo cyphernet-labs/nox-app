@@ -218,23 +218,16 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
   }
 
   Widget _menuPane(BuildContext context, SettingsRootState state) {
-    final textTheme = Theme.of(context).textTheme;
     final colorScheme = Theme.of(context).colorScheme;
     AppSettingsNavRowWidget item(_Section section, String title) =>
         AppSettingsNavRowWidget(title: title, selected: _selected == section, onTap: () => setState(() => _selected = section));
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s12, AppSpacingTokens.s8, AppSpacingTokens.s12),
-          child: Row(
-            children: [
-              if (!widget.inShell) _backOrNull(() => Navigator.of(context).maybePop()),
-              Expanded(
-                child: Text(context.l10n.settings, style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
-              ),
-            ],
-          ),
+        _SettingsPaneHeader(
+          title: context.l10n.settings,
+          leading: widget.inShell ? null : _backOrNull(() => Navigator.of(context).maybePop()),
+          trailingInset: AppSpacingTokens.s8,
         ),
         const AppHairlineDividerWidget(),
         // Grouped nav items (Account / preferences / legal), with the destructive
@@ -280,8 +273,6 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
   };
 
   Widget _detailPane(BuildContext context, SettingsRootState state) {
-    final textTheme = Theme.of(context).textTheme;
-    final colorScheme = Theme.of(context).colorScheme;
     final Widget body = switch (_selected) {
       _Section.account => ListView(
         padding: EdgeInsets.all(AppSpacingTokens.s16),
@@ -298,13 +289,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
       children: [
         // PaneHeader: names the selected section (the detail pane has no AppBar of
         // its own), aligned with the menu pane's header height/style.
-        Padding(
-          padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s12, AppSpacingTokens.s16, AppSpacingTokens.s12),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Text(_sectionTitle(_selected), style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
-          ),
-        ),
+        _SettingsPaneHeader(title: _sectionTitle(_selected)),
         const AppHairlineDividerWidget(),
         Expanded(
           child: Center(
@@ -367,6 +352,35 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
           onPressed: () => Navigator.of(context).push(AppErrorPage.route(params: ErrorPageParams.fatal())),
           child: const Text('Fatal (preview)'),
         ),
+      ),
+    );
+  }
+}
+
+/// Desktop settings pane header (`titleLarge` label with an optional [leading] back
+/// affordance) — shared by the menu pane (with the back button) and the detail pane
+/// (title only). [trailingInset] preserves the small delta between the two (the menu
+/// pane trims the right inset); it defaults to the detail pane's `s16`.
+class _SettingsPaneHeader extends StatelessWidget {
+  const _SettingsPaneHeader({required this.title, this.leading, this.trailingInset});
+
+  final String title;
+  final Widget? leading;
+  final double? trailingInset;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final colorScheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s12, trailingInset ?? AppSpacingTokens.s16, AppSpacingTokens.s12),
+      child: Row(
+        children: [
+          ?leading,
+          Expanded(
+            child: Text(title, style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
+          ),
+        ],
       ),
     );
   }
