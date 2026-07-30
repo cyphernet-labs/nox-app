@@ -107,31 +107,42 @@ class AppNavigationRailWidget extends StatelessWidget {
     final selected = active == tab;
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-    return InkWell(
-      onTap: () => onSelect(tab),
-      borderRadius: BorderRadius.circular(AppDimensionTokens.radius.md),
-      child: Padding(
-        padding: EdgeInsets.symmetric(vertical: AppSpacingTokens.s4),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: AppSpacingTokens.s56,
-              height: AppSpacingTokens.s32,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: selected ? colorScheme.secondaryContainer : Colors.transparent,
-                borderRadius: BorderRadius.circular(AppDimensionTokens.radius.pill),
+    // This is a custom rail (not Material's NavigationRail), so it must supply the
+    // destination semantics itself — mirror the mobile bottom bar's _Tab so a screen
+    // reader announces each destination as a selectable button with its selected
+    // state on desktop too (R4 parity; otherwise the rail reads as a plain tappable).
+    // NB: no explicit `label` here — the child Text(label) already contributes the
+    // accessible name to this node; re-setting it would concatenate into a duplicated
+    // "Chats\nChats" announcement.
+    return Semantics(
+      button: true,
+      selected: selected,
+      child: InkWell(
+        onTap: () => onSelect(tab),
+        borderRadius: BorderRadius.circular(AppDimensionTokens.radius.md),
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: AppSpacingTokens.s4),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: AppSpacingTokens.s56,
+                height: AppSpacingTokens.s32,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: selected ? colorScheme.secondaryContainer : Colors.transparent,
+                  borderRadius: BorderRadius.circular(AppDimensionTokens.radius.pill),
+                ),
+                child: AppIconWidget(
+                  selected ? selectedIcon : icon,
+                  size: AppDimensionTokens.icon.xl,
+                  color: selected ? colorScheme.onSecondaryContainer : colorScheme.onSurfaceVariant,
+                ),
               ),
-              child: AppIconWidget(
-                selected ? selectedIcon : icon,
-                size: AppDimensionTokens.icon.xl,
-                color: selected ? colorScheme.onSecondaryContainer : colorScheme.onSurfaceVariant,
-              ),
-            ),
-            SizedBox(height: AppSpacingTokens.s4),
-            Text(label, style: textTheme.labelMedium?.copyWith(color: selected ? colorScheme.onSurface : colorScheme.onSurfaceVariant)),
-          ],
+              SizedBox(height: AppSpacingTokens.s4),
+              Text(label, style: textTheme.labelMedium?.copyWith(color: selected ? colorScheme.onSurface : colorScheme.onSurfaceVariant)),
+            ],
+          ),
         ),
       ),
     );

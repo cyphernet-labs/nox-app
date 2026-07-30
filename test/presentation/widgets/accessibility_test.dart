@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/di/configure_dependencies.dart';
@@ -26,6 +27,7 @@ import 'package:nox_app/presentation/pages/set_username_page/set_username_page.d
 import 'package:nox_app/presentation/widgets/primitives/file_type.dart';
 import 'package:nox_app/presentation/widgets/shell/app_bottom_bar_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_create_fab_widget.dart';
+import 'package:nox_app/presentation/widgets/shell/app_navigation_rail_widget.dart';
 
 import '../../utils/pump_app.dart';
 
@@ -75,6 +77,29 @@ void main() {
         expect(size.width, greaterThanOrEqualTo(48));
         expect(size.height, greaterThanOrEqualTo(48));
       }
+    });
+
+    testWidgets('desktop rail destinations announce as selectable buttons, named once (R4 parity)', (tester) async {
+      final handle = tester.ensureSemantics();
+      await pumpApp(
+        tester,
+        AppNavigationRailWidget(active: AppTab.chats, onSelect: (_) {}, onCreate: () {}, accountLabel: 'Nova', onAccount: () {}),
+      );
+
+      // The COMPILED SemanticsNode names each destination exactly ONCE: the accessible
+      // name comes from the child Text, so the wrapper must not also set `label`, or
+      // Flutter concatenates a duplicated "Chats\nChats" (the R4 regression this locks).
+      SemanticsNode node(String label) => tester.getSemantics(find.ancestor(of: find.text(label), matching: find.byType(InkWell)).first);
+      expect(node(l10nEn.chats).label, l10nEn.chats, reason: 'named once, not "Chats\\nChats"');
+      expect(node(l10nEn.settings).label, l10nEn.settings);
+      handle.dispose(); // dispose in-body: the handle-leak check runs before addTearDown callbacks.
+
+      // Role + selected state: both destinations are buttons; only the active tab is selected.
+      Semantics wrapper(String label) => tester.widget<Semantics>(
+        find.ancestor(of: find.text(label), matching: find.byWidgetPredicate((w) => w is Semantics && w.properties.button == true)).first,
+      );
+      expect(wrapper(l10nEn.chats).properties.selected, isTrue); // the active tab
+      expect(wrapper(l10nEn.settings).properties.selected, isFalse);
     });
 
     testWidgets('composer actions expose tooltips/semantics', (tester) async {

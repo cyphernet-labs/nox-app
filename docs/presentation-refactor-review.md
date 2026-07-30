@@ -78,17 +78,34 @@ settings — все зовут `ErrorPageParams.fatal()`), а не космет�
 `chats_list_page.dart:259-279` — desktop `_paneHeader` без `Divider`/hairline, тогда как mobile header несёт
 brand-hairline (`:185`), а desktop settings menu-pane ставит `Divider` после header (`settings_root_page.dart:238`).
 - **Fix:** сверить с `nox-desktop-screens/screens/01-chats.md`; если hairline ожидается — добавить (питается R11).
+- **РЕЗОЛЮЦИЯ (T007, 2026-07-28): НЕ дефект — кода не менять.** Сверка с авторитетным корпусом
+  `docs/design/system/nox-desktop-screens/_src/desktop-screens.jsx` (`ChatsListPane`): pane-header — это
+  `<PaneHeader title="Chats" />` БЕЗ `border-bottom`; единственная граница панели — её `borderRight`
+  (шов список↔тред, уже есть через `AppListDetailWidget`). Бренд-hairline (`AppSplashHairlineWidget`) на desktop
+  живёт под **window-titlebar** (`desktop-shell.jsx:52` «signature brand-splash hairline — same motif as mobile
+  app bars»), а на mobile — под AppBar каждого экрана (`chats_list_page.dart:185`). Т.е. hairline присутствует на
+  обеих платформах, но на своём корпусном месте — это корректная per-platform адаптация, а не паритет-дефект.
+  Добавление hairline под desktop pane-header было бы дивергенцией от корпуса (Принцип IV). Существующий
+  desktop chats golden уже фиксирует корректный (без-hairline) header. Отметка ✔ intentional в parity-matrix.
+  (Замечание на будущее, вне scope R6: desktop settings pane-header в коде несёт `Divider` после себя —
+  стоит отдельно сверить с `SettingsListPane`, где такого шва под header тоже нет; это E6/O-территория.)
 
 ### PG-7 QR torch/switch-camera только на mobile — ПОДТВЕРДИТЬ (вероятно намеренно)
 `qr_scan_page.dart:282-294` — camera actions только в mobile AppBar; desktop viewfinder их не даёт.
 Задокументировано как намеренное (header-doc «Desktop macOS: windowed viewfinder, no camera actions» + FR-005).
 - **Действие:** подтвердить намеренность (кода менять не требуется).
+- **РЕЗОЛЮЦИЯ (T008, 2026-07-28): подтверждено владельцем — намеренно, mobile-only.** (Clarification к spec 021,
+  FR-012: «Оставить mobile-only (намеренно)»; desktop использует системную webcam без torch/switch.) Код не менять;
+  ✔ intentional в parity-matrix (строка 7).
 
 ### PG-8 Account identity: reveal raw-ID только mobile, inline QR только desktop — ПОДТВЕРДИТЬ (намеренно)
 `settings_root_page.dart:188` (mobile `revealable:true, showInlineQr:false`) vs `:287` (desktop
 `revealable:false, showInlineQr:true`). Задокументировано под Принципом I (desktop = shared screen, сырой ID
 сознательно не показывается). Оба layout дают Copy + Show-QR.
 - **Действие:** подтвердить приватностный сплит (риск изменения high — не менять).
+- **РЕЗОЛЮЦИЯ (T009, 2026-07-28): подтверждено владельцем — намеренно (Принцип I).** (Clarification к spec 021,
+  FR-013: «Оставить намеренно (Принцип I)»; desktop — общий экран, сырой ID сознательно не раскрывается, но базовый
+  паритет Copy + Show-QR сохранён на обеих ветках.) Код не менять; ✔ intentional в parity-matrix (строка 8).
 
 ---
 

@@ -29,4 +29,37 @@ void main() {
       ),
     ),
   );
+
+  // R2 lock: the 80% own/other corridor MUST be a fraction of the LOCAL pane, not
+  // the window. This renders long bubbles inside a narrow list-detail thread column
+  // (560px) on the WIDE desktop surface — so a regression to window-based sizing would
+  // let each bubble fill the whole 560 pane and collapse the corridor. The corridor
+  // visible here (bubbles capped well short of the pane edge) is the invariant.
+  goldenTestDesktop(
+    'app_message_bubble_widget_narrow_pane',
+    () => const Align(
+      alignment: Alignment.topLeft,
+      child: SizedBox(
+        width: 560, // a list-detail thread column inside the 1280 desktop window
+        child: Padding(
+          padding: EdgeInsets.all(16),
+          child: Column(
+            children: [
+              AppMessageBubbleWidget(
+                isOwn: false,
+                text: 'A fairly long incoming message that must stay within eighty percent of the pane, not the window.',
+                time: '09:00',
+              ),
+              AppMessageBubbleWidget(
+                isOwn: true,
+                text: 'And an equally long outgoing reply that also respects the eighty percent corridor of the local pane.',
+                time: '09:01',
+                status: MessageStatus.sent,
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
 }

@@ -10,6 +10,7 @@ import 'package:nox_app/presentation/widgets/shell/app_bottom_bar_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_create_fab_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_list_detail_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_navigation_rail_widget.dart';
+import 'package:nox_app/presentation/widgets/shell/app_window_titlebar_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/tab_bar_shell_widget.dart';
 
 import '../../../utils/pump_app.dart';
@@ -124,6 +125,24 @@ void main() {
       // On Chats the shell is now poppable (returns to gallery in the preview).
       final popScopeOnChats = tester.widget<PopScope<Object?>>(find.byWidgetPredicate((w) => w is PopScope<Object?>));
       expect(popScopeOnChats.canPop, isTrue);
+    });
+
+    testWidgets('desktop titlebar subtitle tracks the active tab (R3 parity)', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1200, 900)); // wide → rail + window titlebar
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, const TabBarShell());
+
+      String subtitle() => tester.widget<AppWindowTitlebarWidget>(find.byType(AppWindowTitlebarWidget)).subtitle!;
+
+      // On the default Chats tab the strip reads the localized Chats label (like the mobile AppBar title).
+      expect(subtitle(), l10nEn.chats);
+
+      // Switch to Settings via the rail destination (disambiguated from the settings body's own text).
+      await tester.tap(find.descendant(of: find.byType(AppNavigationRailWidget), matching: find.text(l10nEn.settings)));
+      await tester.pumpAndSettle();
+
+      // Regression guard: previously the subtitle was a hardcoded 'Chats' that never changed.
+      expect(subtitle(), l10nEn.settings);
     });
 
     testWidgets('re-tapping the active Chats tab is a no-op that does not throw', (tester) async {

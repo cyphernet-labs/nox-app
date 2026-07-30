@@ -73,14 +73,35 @@ class _AppErrorPageState extends State<AppErrorPage> {
           devControl: (kDebugMode && widget.demo) ? _modeControl() : null,
         );
         if (wide) {
-          return Scaffold(
+          // Desktop respects ErrorPageMode just like mobile (R1): embedded gets a back
+          // affordance (top-left, over the body — mirrors the mobile app-bar back), and
+          // blocking suppresses the system back via PopScope (a fatal error must not be
+          // escapable on ANY platform). The branded titlebar is kept in both cases.
+          final Widget content = _mode == ErrorPageMode.embedded
+              ? Stack(
+                  children: [
+                    Positioned.fill(child: body),
+                    Positioned(
+                      top: AppSpacingTokens.s8,
+                      left: AppSpacingTokens.s8,
+                      child: IconButton(
+                        tooltip: context.l10n.tooltipBack,
+                        icon: AppIconWidget(NoxIcons.arrowBack),
+                        onPressed: () => Navigator.of(context).maybePop(),
+                      ),
+                    ),
+                  ],
+                )
+              : body;
+          final scaffold = Scaffold(
             body: Column(
               children: [
                 const AppWindowTitlebarWidget(subtitle: 'Error'),
-                Expanded(child: body),
+                Expanded(child: content),
               ],
             ),
           );
+          return _mode == ErrorPageMode.blocking ? PopScope(canPop: false, child: scaffold) : scaffold;
         }
         if (_mode == ErrorPageMode.embedded) {
           return Scaffold(
