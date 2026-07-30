@@ -59,14 +59,26 @@ class AppNavigationRailWidget extends StatelessWidget {
             padding: EdgeInsets.fromLTRB(AppSpacingTokens.s8, AppSpacingTokens.s16, AppSpacingTokens.s8, AppSpacingTokens.s20),
             child: Column(
               children: [
-                _createFab(context),
+                _NavRailCreateFab(onCreate: onCreate),
                 // Breathing room between the FAB and the destinations group (design: 22).
                 SizedBox(height: AppSpacingTokens.s24),
-                _destination(context, AppTab.chats, NoxIcons.forum, NoxIcons.forumFill, context.l10n.chats),
+                _NavRailDestination(
+                  icon: NoxIcons.forum,
+                  selectedIcon: NoxIcons.forumFill,
+                  label: context.l10n.chats,
+                  selected: active == AppTab.chats,
+                  onTap: () => onSelect(AppTab.chats),
+                ),
                 SizedBox(height: AppSpacingTokens.s12),
-                _destination(context, AppTab.settings, NoxIcons.settings, NoxIcons.settingsFill, context.l10n.settings),
+                _NavRailDestination(
+                  icon: NoxIcons.settings,
+                  selectedIcon: NoxIcons.settingsFill,
+                  label: context.l10n.settings,
+                  selected: active == AppTab.settings,
+                  onTap: () => onSelect(AppTab.settings),
+                ),
                 const Spacer(),
-                _accountAvatar(context),
+                _NavRailAccountAvatar(accountLabel: accountLabel, onAccount: onAccount),
               ],
             ),
           ),
@@ -74,10 +86,17 @@ class AppNavigationRailWidget extends StatelessWidget {
       ),
     );
   }
+}
 
-  // Rounded-square create FAB (design: 56, radius lg, primaryContainer, elevation 2).
-  // The Material's borderRadius + antiAlias clip keeps the tap splash square-cornered.
-  Widget _createFab(BuildContext context) {
+/// Rounded-square create FAB (design: 56, radius lg, primaryContainer, elevation 2).
+/// The Material's borderRadius + antiAlias clip keeps the tap splash square-cornered.
+class _NavRailCreateFab extends StatelessWidget {
+  const _NavRailCreateFab({required this.onCreate});
+
+  final VoidCallback onCreate;
+
+  @override
+  Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     return Tooltip(
       message: context.l10n.tooltipCreateChat,
@@ -99,12 +118,28 @@ class AppNavigationRailWidget extends StatelessWidget {
       ),
     );
   }
+}
 
-  // Destination cell (icon-pill + label) — a rounded-square (radius md) ink target,
-  // so hover/press feedback is square-cornered; the selected icon sits in a pill
-  // indicator (radius full, secondaryContainer).
-  Widget _destination(BuildContext context, AppTab tab, SvgGenImage icon, SvgGenImage selectedIcon, String label) {
-    final selected = active == tab;
+/// Destination cell (icon-pill + label) — a rounded-square (radius md) ink target,
+/// so hover/press feedback is square-cornered; the selected icon sits in a pill
+/// indicator (radius full, secondaryContainer).
+class _NavRailDestination extends StatelessWidget {
+  const _NavRailDestination({
+    required this.icon,
+    required this.selectedIcon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final SvgGenImage icon;
+  final SvgGenImage selectedIcon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     // This is a custom rail (not Material's NavigationRail), so it must supply the
@@ -118,7 +153,7 @@ class AppNavigationRailWidget extends StatelessWidget {
       button: true,
       selected: selected,
       child: InkWell(
-        onTap: () => onSelect(tab),
+        onTap: onTap,
         borderRadius: BorderRadius.circular(AppDimensionTokens.radius.md),
         child: Padding(
           padding: EdgeInsets.symmetric(vertical: AppSpacingTokens.s4),
@@ -147,8 +182,18 @@ class AppNavigationRailWidget extends StatelessWidget {
       ),
     );
   }
+}
 
-  Widget _accountAvatar(BuildContext context) {
+/// Bottom account avatar — the ringed generated avatar; a tap routes to
+/// Settings / Account.
+class _NavRailAccountAvatar extends StatelessWidget {
+  const _NavRailAccountAvatar({required this.accountLabel, required this.onAccount});
+
+  final String accountLabel;
+  final VoidCallback onAccount;
+
+  @override
+  Widget build(BuildContext context) {
     return Tooltip(
       message: context.l10n.settingsAccountTitle,
       child: InkResponse(

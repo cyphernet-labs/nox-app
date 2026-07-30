@@ -48,7 +48,7 @@
 - [x] T017 [P] [US2] E8 — `showAdaptiveLightbox(context,{dialogChild,route,insetPadding?,maxWidth?})` в `lib/presentation/helpers/adaptive_lightbox.dart`; перевести `showFileView` (maxWidth=contentMaxW, default inset) + `openImageViewer` (insetPadding=all(s24)); Dialog строится без insetPadding-арг когда не задан (null≠default); −1 unused import; оба viewer goldens (mobile+desktop) без churn
 - [x] T018 [P] [US2] E9 — публичный `AppBannerShellWidget{padding,children,crossAxisAlignment?}` в `widgets/state/` (Material surfaceContainer/level3 + Padding + Row); notice-strip (center) + info-banner (start) переведены; −2 unused nox_tokens import; оба widget goldens без churn
 - [x] T019 [P] [US2] E10 — приватный `_QrDesktopViewfinder{preview,onEnterManually}` вынесен из `_wide` в `qr_scan_page.dart`; camera-preview резолвится на call-site (ленивость сохранена); −1 textTheme local; qr goldens без churn
-- [ ] T020 [P] [US2] E11 — rail sub-trees → приватные StatelessWidget (`_NavRailDestination`/`_NavRailCreateFab`/`_NavRailAccountAvatar`) в `app_navigation_rail_widget.dart`; desktop shell/rail goldens без churn
+- [x] T020 [P] [US2] E11 — rail sub-trees → приватные StatelessWidget (`_NavRailCreateFab`/`_NavRailDestination{icon,selectedIcon,label,selected,onTap}`/`_NavRailAccountAvatar`) в `app_navigation_rail_widget.dart`; методы→классы, render идентичен; desktop shell/rail goldens + a11y rail-тест без churn
 - [ ] T021 [P] [US2] E12 — `_devMenuRows()` spread в `_narrow`/`_wide` в `settings_root_page.dart` (kDebug — ручная проверка demo)
 - [ ] T022 [P] [US2] E13 — `AppDevScenarioDropdown<T extends Enum>{value,values,onChanged,label?}` в `lib/presentation/widgets/`; дедуп 6 debug-dropdown (thread/card/list/create/login/username) — ручная проверка demo
 
