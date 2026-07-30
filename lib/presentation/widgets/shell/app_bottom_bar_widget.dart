@@ -79,7 +79,8 @@ class _Tab extends StatelessWidget {
     return Semantics(
       button: true,
       selected: selected,
-      label: label,
+      // No explicit `label`: the child Text(label) already names this node; setting it
+      // here too would double the announcement ("Chats\nChats"). Keep role + selected.
       child: InkResponse(
         onTap: onTap,
         child: Column(

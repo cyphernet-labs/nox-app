@@ -111,10 +111,12 @@ class AppNavigationRailWidget extends StatelessWidget {
     // destination semantics itself — mirror the mobile bottom bar's _Tab so a screen
     // reader announces each destination as a selectable button with its selected
     // state on desktop too (R4 parity; otherwise the rail reads as a plain tappable).
+    // NB: no explicit `label` here — the child Text(label) already contributes the
+    // accessible name to this node; re-setting it would concatenate into a duplicated
+    // "Chats\nChats" announcement.
     return Semantics(
       button: true,
       selected: selected,
-      label: label,
       child: InkWell(
         onTap: () => onSelect(tab),
         borderRadius: BorderRadius.circular(AppDimensionTokens.radius.md),
