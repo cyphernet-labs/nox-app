@@ -1,6 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:nox_app/design/app_dimension_tokens.dart';
+import 'package:nox_app/presentation/widgets/primitives/app_hairline_divider_widget.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/di/global_aliases.dart';
@@ -92,7 +92,7 @@ class _NotificationsBodyState extends State<NotificationsBody> {
         ),
         // Dev-only override to preview the denied state (real OS permission is queried on
         // open); the push SCOPE ("own chats") still lands in the backend phase.
-        if (kDebugMode) Divider(height: AppDimensionTokens.border.hairline),
+        if (kDebugMode) const AppHairlineDividerWidget(),
         if (kDebugMode) _PermissionDevControl(status: _permission, onChanged: (status) => setState(() => _permission = status)),
       ],
     );

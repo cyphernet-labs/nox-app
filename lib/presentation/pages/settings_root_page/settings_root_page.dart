@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:nox_app/presentation/widgets/primitives/app_hairline_divider_widget.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
@@ -192,17 +193,24 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
           AppSettingsNavRowWidget(title: context.l10n.settingsLanguageTitle, onTap: () => _openSection(LanguagePage.route())),
           AppSettingsNavRowWidget(title: context.l10n.settingsTermsTitle, onTap: () => _openSection(TermsPage.route())),
           AppSettingsNavRowWidget(title: context.l10n.settingsAboutTitle, onTap: () => _openSection(AboutPage.route())),
-          Divider(height: AppDimensionTokens.border.hairline),
+          const AppHairlineDividerWidget(),
           AppSettingsNavRowWidget(title: context.l10n.logoutRow, color: Theme.of(context).colorScheme.error, onTap: _logout),
-          if (kDebugMode) AppSettingsNavRowWidget(title: 'Screens gallery (dev)', onTap: () => _openSection(ScreensGalleryPage.route())),
-          if (kDebugMode) AppSettingsNavRowWidget(title: 'UI kit (dev)', onTap: () => _openSection(UiKitPage.route())),
-          if (kDebugMode && !widget.demo)
-            AppSettingsNavRowWidget(title: 'Force logout (dev)', onTap: () => unawaited(authRepository.logout(forced: true))),
-          if (kDebugMode && widget.demo) _devControl(),
+          ..._devMenuRows(),
         ],
       ),
     );
   }
+
+  // Debug-only rows appended after Log out on both layouts (mobile flat list + desktop
+  // menu pane): the screens gallery, the UI-kit gallery, a forced logout, and — in the
+  // gallery preview — the dev state control. Empty in release (all kDebugMode-gated).
+  List<Widget> _devMenuRows() => [
+    if (kDebugMode) AppSettingsNavRowWidget(title: 'Screens gallery (dev)', onTap: () => _openSection(ScreensGalleryPage.route())),
+    if (kDebugMode) AppSettingsNavRowWidget(title: 'UI kit (dev)', onTap: () => _openSection(UiKitPage.route())),
+    if (kDebugMode && !widget.demo)
+      AppSettingsNavRowWidget(title: 'Force logout (dev)', onTap: () => unawaited(authRepository.logout(forced: true))),
+    if (kDebugMode && widget.demo) _devControl(),
+  ];
 
   // ---- Desktop: list-detail -------------------------------------------------
 
@@ -217,25 +225,18 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
   }
 
   Widget _menuPane(BuildContext context, SettingsRootState state) {
-    final textTheme = Theme.of(context).textTheme;
     final colorScheme = Theme.of(context).colorScheme;
     AppSettingsNavRowWidget item(_Section section, String title) =>
         AppSettingsNavRowWidget(title: title, selected: _selected == section, onTap: () => setState(() => _selected = section));
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s12, AppSpacingTokens.s8, AppSpacingTokens.s12),
-          child: Row(
-            children: [
-              if (!widget.inShell) _backOrNull(() => Navigator.of(context).maybePop()),
-              Expanded(
-                child: Text(context.l10n.settings, style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
-              ),
-            ],
-          ),
+        _SettingsPaneHeader(
+          title: context.l10n.settings,
+          leading: widget.inShell ? null : _backOrNull(() => Navigator.of(context).maybePop()),
+          trailingInset: AppSpacingTokens.s8,
         ),
-        Divider(height: AppDimensionTokens.border.hairline),
+        const AppHairlineDividerWidget(),
         // Grouped nav items (Account / preferences / legal), with the destructive
         // Log out row pinned to the bottom via a Spacer.
         Expanded(
@@ -244,23 +245,18 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
             children: [
               // Group 1: Account.
               item(_Section.account, context.l10n.settingsAccountTitle),
-              Divider(height: AppDimensionTokens.border.hairline),
+              const AppHairlineDividerWidget(),
               // Group 2: Notifications, Appearance, Language.
               item(_Section.notifications, context.l10n.settingsNotificationsTitle),
               item(_Section.appearance, context.l10n.settingsAppearanceTitle),
               item(_Section.language, context.l10n.settingsLanguageTitle),
-              Divider(height: AppDimensionTokens.border.hairline),
+              const AppHairlineDividerWidget(),
               // Group 3: Terms, About.
               item(_Section.terms, context.l10n.settingsTermsTitle),
               item(_Section.about, context.l10n.settingsAboutTitle),
               const Spacer(),
               AppSettingsNavRowWidget(title: context.l10n.logoutRow, color: colorScheme.error, onTap: _logout),
-              if (kDebugMode)
-                AppSettingsNavRowWidget(title: 'Screens gallery (dev)', onTap: () => _openSection(ScreensGalleryPage.route())),
-              if (kDebugMode) AppSettingsNavRowWidget(title: 'UI kit (dev)', onTap: () => _openSection(UiKitPage.route())),
-              if (kDebugMode && !widget.demo)
-                AppSettingsNavRowWidget(title: 'Force logout (dev)', onTap: () => unawaited(authRepository.logout(forced: true))),
-              if (kDebugMode && widget.demo) _devControl(),
+              ..._devMenuRows(),
             ],
           ),
         ),
@@ -279,8 +275,6 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
   };
 
   Widget _detailPane(BuildContext context, SettingsRootState state) {
-    final textTheme = Theme.of(context).textTheme;
-    final colorScheme = Theme.of(context).colorScheme;
     final Widget body = switch (_selected) {
       _Section.account => ListView(
         padding: EdgeInsets.all(AppSpacingTokens.s16),
@@ -297,14 +291,8 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
       children: [
         // PaneHeader: names the selected section (the detail pane has no AppBar of
         // its own), aligned with the menu pane's header height/style.
-        Padding(
-          padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s12, AppSpacingTokens.s16, AppSpacingTokens.s12),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Text(_sectionTitle(_selected), style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
-          ),
-        ),
-        Divider(height: AppDimensionTokens.border.hairline),
+        _SettingsPaneHeader(title: _sectionTitle(_selected)),
+        const AppHairlineDividerWidget(),
         Expanded(
           child: Center(
             child: ConstrainedBox(
@@ -366,6 +354,35 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
           onPressed: () => Navigator.of(context).push(AppErrorPage.route(params: ErrorPageParams.fatal())),
           child: const Text('Fatal (preview)'),
         ),
+      ),
+    );
+  }
+}
+
+/// Desktop settings pane header (`titleLarge` label with an optional [leading] back
+/// affordance) — shared by the menu pane (with the back button) and the detail pane
+/// (title only). [trailingInset] preserves the small delta between the two (the menu
+/// pane trims the right inset); it defaults to the detail pane's `s16`.
+class _SettingsPaneHeader extends StatelessWidget {
+  const _SettingsPaneHeader({required this.title, this.leading, this.trailingInset});
+
+  final String title;
+  final Widget? leading;
+  final double? trailingInset;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final colorScheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s12, trailingInset ?? AppSpacingTokens.s16, AppSpacingTokens.s12),
+      child: Row(
+        children: [
+          ?leading,
+          Expanded(
+            child: Text(title, style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
+          ),
+        ],
       ),
     );
   }

@@ -1,5 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:nox_app/presentation/widgets/app_dev_scenario_dropdown.dart';
+import 'package:nox_app/presentation/widgets/primitives/app_ringed_avatar_widget.dart';
+import 'package:nox_app/presentation/widgets/primitives/app_hairline_divider_widget.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
@@ -7,8 +10,8 @@ import 'package:nox_app/design/app_text_style_tokens.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
-import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
+import 'package:nox_app/presentation/widgets/chat/watch_chat.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/formatters/file_size_formatter.dart';
@@ -17,7 +20,6 @@ import 'package:nox_app/presentation/pages/chat_card_page/bloc/chat_card_bloc.da
 import 'package:nox_app/presentation/pages/file_view_page/file_view_page.dart';
 import 'package:nox_app/presentation/widgets/chat/app_segmented_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/rename_chat_dialog/app_rename_chat_dialog_widget.dart';
-import 'package:nox_app/presentation/widgets/primitives/app_avatar_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_file_glyph_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_panel_header_widget.dart';
@@ -116,10 +118,10 @@ class ChatCardPage extends StatelessWidget {
             ),
             // Reactive like the body header: a rename from the header pencil updates the
             // AppBar title live too (the two co-visible name surfaces must not disagree).
-            title: StreamBuilder<ChatModel?>(
-              stream: chatRepository.watchChat(chatId: chat.id),
-              initialData: chat,
-              builder: (context, snapshot) => Text((snapshot.data ?? chat).name, maxLines: 1, overflow: TextOverflow.ellipsis),
+            title: WatchChat(
+              chatId: chat.id,
+              initial: chat,
+              builder: (context, current) => Text(current.name, maxLines: 1, overflow: TextOverflow.ellipsis),
             ),
           ),
           body: ChatCardBody(chat: chat, demo: demo, initialScenario: initialScenario, initialViewMode: initialViewMode),
@@ -203,7 +205,7 @@ class _ChatCardBodyState extends State<ChatCardBody> {
       mainAxisSize: MainAxisSize.min,
       children: [
         AppPanelHeaderWidget(title: context.l10n.chatInfoTitle, onClose: () => Navigator.of(context).maybePop()),
-        Divider(height: AppDimensionTokens.border.hairline),
+        const AppHairlineDividerWidget(),
       ],
     );
   }
@@ -214,24 +216,15 @@ class _ChatCardBodyState extends State<ChatCardBody> {
     // Reactive to the chat row: a rename updates the name AND the generated avatar here
     // live (and, on desktop, in the thread behind the side-sheet). Falls back to the
     // passed chat until the first snapshot.
-    return StreamBuilder<ChatModel?>(
-      stream: chatRepository.watchChat(chatId: widget.chat.id),
-      initialData: widget.chat,
-      builder: (context, snapshot) {
-        final chat = snapshot.data ?? widget.chat;
+    return WatchChat(
+      chatId: widget.chat.id,
+      initial: widget.chat,
+      builder: (context, chat) {
         return Padding(
           padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s8, AppSpacingTokens.s16, AppSpacingTokens.s16),
           child: Row(
             children: [
-              Container(
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(color: colorScheme.onSurface.withValues(alpha: 0.06), spreadRadius: AppDimensionTokens.border.thick),
-                  ],
-                ),
-                child: AppAvatarWidget(name: chat.name, size: AppDimensionTokens.size.avatarLg),
-              ),
+              AppRingedAvatarWidget(name: chat.name, size: AppDimensionTokens.size.avatarLg),
               SizedBox(width: AppSpacingTokens.s16),
               Expanded(
                 child: Text(
@@ -358,16 +351,14 @@ class _ChatCardBodyState extends State<ChatCardBody> {
   Widget _scenarioControl() {
     return Padding(
       padding: EdgeInsets.all(AppSpacingTokens.s8),
-      child: DropdownButton<ChatCardScenario>(
+      child: AppDevScenarioDropdown<ChatCardScenario>(
         value: _scenario,
         isExpanded: true,
+        items: {for (final s in ChatCardScenario.values) s: 'scenario: ${s.name}'},
         onChanged: (selected) {
-          if (selected != null) {
-            setState(() => _scenario = selected);
-            _bloc.add(ChatCardEvent.setScenario(selected));
-          }
+          setState(() => _scenario = selected);
+          _bloc.add(ChatCardEvent.setScenario(selected));
         },
-        items: [for (final s in ChatCardScenario.values) DropdownMenuItem(value: s, child: Text('scenario: ${s.name}'))],
       ),
     );
   }

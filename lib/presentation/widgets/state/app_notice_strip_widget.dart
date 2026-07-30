@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/presentation/widgets/state/app_banner_shell_widget.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/nox_icons.dart';
-import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 
 /// Persistent inline notice strip (offline / inline-error) shown under the
@@ -26,22 +26,16 @@ class AppNoticeStripWidget extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-    return Material(
-      color: colorScheme.surfaceContainer,
-      elevation: NoxElevation.level3,
-      child: Padding(
-        padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s16, vertical: AppSpacingTokens.s8),
-        child: Row(
-          children: [
-            AppIconWidget(icon ?? NoxIcons.error, size: AppDimensionTokens.icon.lg, color: colorScheme.onSurfaceVariant),
-            SizedBox(width: AppSpacingTokens.s12),
-            Expanded(
-              child: Text(message, style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurface)),
-            ),
-            if (actionLabel != null) TextButton(onPressed: onAction, child: Text(actionLabel!)),
-          ],
+    return AppBannerShellWidget(
+      padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s16, vertical: AppSpacingTokens.s8),
+      children: [
+        AppIconWidget(icon ?? NoxIcons.error, size: AppDimensionTokens.icon.lg, color: colorScheme.onSurfaceVariant),
+        SizedBox(width: AppSpacingTokens.s12),
+        Expanded(
+          child: Text(message, style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurface)),
         ),
-      ),
+        if (actionLabel != null) TextButton(onPressed: onAction, child: Text(actionLabel!)),
+      ],
     );
   }
 }

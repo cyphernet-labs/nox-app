@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/presentation/widgets/primitives/app_hairline_divider_widget.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
@@ -29,7 +30,7 @@ class AppSettingsGroupWidget extends StatelessWidget {
   List<Widget> _interleaved() {
     final result = <Widget>[];
     for (var i = 0; i < children.length; i++) {
-      if (i > 0) result.add(Divider(height: AppDimensionTokens.border.hairline));
+      if (i > 0) result.add(const AppHairlineDividerWidget());
       result.add(children[i]);
     }
     return result;

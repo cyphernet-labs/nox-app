@@ -1,12 +1,13 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:nox_app/presentation/widgets/app_dev_scenario_dropdown.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/nox_icons.dart';
-import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
+import 'package:nox_app/presentation/widgets/chat/watch_chat.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
 import 'package:nox_app/general/formatters/date_formatter.dart';
@@ -126,10 +127,10 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
               // Reactive to the chat row so a rename (from the side-sheet card) updates the
               // desktop header's name + avatar live.
               if (widget.showHeader)
-                StreamBuilder<ChatModel?>(
-                  stream: chatRepository.watchChat(chatId: widget.chat.id),
-                  initialData: widget.chat,
-                  builder: (context, snapshot) => AppThreadHeaderWidget(chat: snapshot.data ?? widget.chat, onInfo: widget.onInfo ?? () {}),
+                WatchChat(
+                  chatId: widget.chat.id,
+                  initial: widget.chat,
+                  builder: (context, chat) => AppThreadHeaderWidget(chat: chat, onInfo: widget.onInfo ?? () {}),
                 ),
               if (state is Initialized && state.isOffline) AppNoticeStripWidget(message: context.l10n.noConnection, icon: NoxIcons.wifiOff),
               Expanded(child: _body(context, state)),
@@ -221,36 +222,58 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
     };
   }
 
+  // Image-thumbnail-or-type-chip preview for [attachment], shared by the read-only
+  // message bubble (tap → viewer / File view) and the composer draft (removable). A
+  // decodable image with a real local file renders inline; everything else (non-image
+  // / no path / missing file / non-decodable format like svg, heic off Apple) falls
+  // back to the type-icon chip. The distinct affordances are threaded in: [onImageTap]/
+  // [onChipTap] make it tappable (bubble), [onRemove] makes it removable (composer);
+  // a bubble chip (has [onChipTap]) also gets the in-bubble tint via [onColor].
+  Widget _attachmentPreview(
+    MessageAttachment attachment, {
+    Color? onColor,
+    double? imageSize,
+    VoidCallback? onImageTap,
+    VoidCallback? onChipTap,
+    VoidCallback? onRemove,
+  }) {
+    final size = FileSizeFormatter.format(attachment.sizeBytes);
+    if (AppImageAttachmentWidget.canRender(attachment)) {
+      return AppImageAttachmentWidget(
+        localPath: attachment.localPath!,
+        type: attachment.type,
+        name: attachment.name,
+        size: size,
+        onColor: onColor,
+        width: imageSize,
+        height: imageSize,
+        onTap: onImageTap,
+        onRemove: onRemove,
+      );
+    }
+    final chip = AppFileChipWidget(
+      type: attachment.type,
+      name: attachment.name,
+      size: size,
+      inBubble: onChipTap != null,
+      onColor: onColor,
+      removable: onRemove != null,
+      onRemove: onRemove,
+    );
+    return onChipTap != null ? InkWell(onTap: onChipTap, child: chip) : chip;
+  }
+
   Widget _bubble(BuildContext context, MessageModel m, bool isOwn) {
     final colorScheme = Theme.of(context).colorScheme;
-    Widget? file;
     final attachment = m.attachment;
-    if (attachment != null) {
-      final onColor = isOwn ? colorScheme.onPrimaryContainer : colorScheme.onSurface;
-      final localPath = attachment.localPath;
-      // Decodable image with a real local file → inline thumbnail (tap → full-screen
-      // viewer, F4); everything else (non-image / no path / missing file / non-decodable
-      // format like svg, or heic off Apple) → the type-icon chip, whose tap reaches File view.
-      file = AppImageAttachmentWidget.canRender(attachment)
-          ? AppImageAttachmentWidget(
-              localPath: localPath!,
-              type: attachment.type,
-              name: attachment.name,
-              size: FileSizeFormatter.format(attachment.sizeBytes),
-              onColor: onColor,
-              onTap: () => openImageViewer(context, localPath),
-            )
-          : InkWell(
-              onTap: () => widget.onOpenFile?.call(attachment),
-              child: AppFileChipWidget(
-                type: attachment.type,
-                name: attachment.name,
-                size: FileSizeFormatter.format(attachment.sizeBytes),
-                inBubble: true,
-                onColor: onColor,
-              ),
-            );
-    }
+    final Widget? file = attachment == null
+        ? null
+        : _attachmentPreview(
+            attachment,
+            onColor: isOwn ? colorScheme.onPrimaryContainer : colorScheme.onSurface,
+            onImageTap: () => openImageViewer(context, attachment.localPath!),
+            onChipTap: () => widget.onOpenFile?.call(attachment),
+          );
     Widget bubble = AppMessageBubbleWidget(isOwn: isOwn, text: m.text, time: DateFormatter.time(m.sentAt), status: m.status, file: file);
     if (isOwn && m.status == MessageStatus.error) {
       bubble = Tooltip(
@@ -270,25 +293,13 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
       controller: _composer,
       onAttach: () => _bloc.add(const ChatThreadEvent.attachmentPicked()),
       onSend: _onSend,
+      // A decodable image draft shows a compact removable thumbnail (P2); every other
+      // type stays the removable type-icon chip.
       attachment: draft == null
           ? null
-          // A decodable image draft shows a compact removable thumbnail (P2); every other
-          // type stays the removable type-icon chip.
-          : AppImageAttachmentWidget.canRender(draft)
-          ? AppImageAttachmentWidget(
-              localPath: draft.localPath!,
-              type: draft.type,
-              name: draft.name,
-              size: FileSizeFormatter.format(draft.sizeBytes),
-              width: AppDimensionTokens.layout.imageThumbCompact,
-              height: AppDimensionTokens.layout.imageThumbCompact,
-              onRemove: () => _bloc.add(const ChatThreadEvent.attachmentRemoved()),
-            )
-          : AppFileChipWidget(
-              type: draft.type,
-              name: draft.name,
-              size: FileSizeFormatter.format(draft.sizeBytes),
-              removable: true,
+          : _attachmentPreview(
+              draft,
+              imageSize: AppDimensionTokens.layout.imageThumbCompact,
               onRemove: () => _bloc.add(const ChatThreadEvent.attachmentRemoved()),
             ),
     );
@@ -297,16 +308,14 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
   Widget _scenarioControl() {
     return Padding(
       padding: EdgeInsets.all(AppSpacingTokens.s8),
-      child: DropdownButton<ChatThreadScenario>(
+      child: AppDevScenarioDropdown<ChatThreadScenario>(
         value: _scenario,
         isExpanded: true,
+        items: {for (final s in ChatThreadScenario.values) s: 'scenario: ${s.name}'},
         onChanged: (selected) {
-          if (selected != null) {
-            setState(() => _scenario = selected);
-            _bloc.add(ChatThreadEvent.setScenario(selected));
-          }
+          setState(() => _scenario = selected);
+          _bloc.add(ChatThreadEvent.setScenario(selected));
         },
-        items: [for (final s in ChatThreadScenario.values) DropdownMenuItem(value: s, child: Text('scenario: ${s.name}'))],
       ),
     );
   }

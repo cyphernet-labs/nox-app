@@ -363,43 +363,16 @@ class _QrScanPageState extends State<QrScanPage> with WidgetsBindingObserver {
   // --- Desktop (macOS): windowed viewfinder (corpus 06-qr.md) ----------------
 
   Widget _wide(BuildContext context, QrScanState state) {
-    final textTheme = Theme.of(context).textTheme;
     final colorScheme = Theme.of(context).colorScheme;
     final panel = _panelFor(context, state.status);
     final Widget content = panel != null
         ? AppOnboardCardWidget(child: panel)
-        : Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(context.l10n.qrDesktopTitle, style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
-                SizedBox(height: AppSpacingTokens.s24),
-                SizedBox(
-                  width: AppDimensionTokens.size.qrScanWindow,
-                  height: AppDimensionTokens.size.qrScanWindow,
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(AppDimensionTokens.radius.md),
-                    child: Stack(
-                      children: [
-                        Positioned.fill(
-                          child: state.status == QrScanStatus.scanning
-                              ? _cameraPreview(context)
-                              : ColoredBox(color: colorScheme.surfaceContainerHighest),
-                        ),
-                        const Positioned.fill(child: AppQrOverlayWidget(reticleFraction: 0.78, showInstruction: false)),
-                      ],
-                    ),
-                  ),
-                ),
-                SizedBox(height: AppSpacingTokens.s16),
-                Text(
-                  context.l10n.qrDesktopHelper,
-                  textAlign: TextAlign.center,
-                  style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
-                ),
-                TextButton(onPressed: _enterManually, child: Text(context.l10n.qrEnterManually)),
-              ],
-            ),
+        : _QrDesktopViewfinder(
+            // The camera feed is built only while scanning; otherwise a neutral fill.
+            preview: state.status == QrScanStatus.scanning
+                ? _cameraPreview(context)
+                : ColoredBox(color: colorScheme.surfaceContainerHighest),
+            onEnterManually: _enterManually,
           );
     final dev = _devControl();
     return Scaffold(
@@ -488,6 +461,52 @@ class _QrStatePanel extends StatelessWidget {
         SizedBox(height: AppSpacingTokens.s24),
         FilledButton(onPressed: onAction, child: Text(actionLabel)),
       ],
+    );
+  }
+}
+
+/// Desktop QR viewfinder (the `_wide` no-panel state): a titled square window with
+/// the reticle overlay over [preview] (the camera feed while scanning, or a neutral
+/// fill), a helper line and the manual-entry fallback. [preview] is resolved by the
+/// caller so the camera is built only while scanning.
+class _QrDesktopViewfinder extends StatelessWidget {
+  const _QrDesktopViewfinder({required this.preview, required this.onEnterManually});
+
+  final Widget preview;
+  final VoidCallback onEnterManually;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final colorScheme = Theme.of(context).colorScheme;
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(context.l10n.qrDesktopTitle, style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
+          SizedBox(height: AppSpacingTokens.s24),
+          SizedBox(
+            width: AppDimensionTokens.size.qrScanWindow,
+            height: AppDimensionTokens.size.qrScanWindow,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(AppDimensionTokens.radius.md),
+              child: Stack(
+                children: [
+                  Positioned.fill(child: preview),
+                  const Positioned.fill(child: AppQrOverlayWidget(reticleFraction: 0.78, showInstruction: false)),
+                ],
+              ),
+            ),
+          ),
+          SizedBox(height: AppSpacingTokens.s16),
+          Text(
+            context.l10n.qrDesktopHelper,
+            textAlign: TextAlign.center,
+            style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
+          ),
+          TextButton(onPressed: onEnterManually, child: Text(context.l10n.qrEnterManually)),
+        ],
+      ),
     );
   }
 }

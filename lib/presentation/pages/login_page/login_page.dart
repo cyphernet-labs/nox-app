@@ -1,13 +1,12 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:nox_app/presentation/widgets/app_dev_scenario_dropdown.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/service/file_picker_service.dart';
-import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/general/nox_qr_envelope.dart';
 import 'package:nox_app/general/qr_image_sign_in_capability.dart';
@@ -21,11 +20,8 @@ import 'package:nox_app/presentation/pages/set_username_page/set_username_page.d
 import 'package:nox_app/presentation/widgets/shell/tab_bar_shell_widget.dart';
 import 'package:nox_app/presentation/pages/qr_scan_page/qr_scan_page.dart';
 import 'package:nox_app/presentation/widgets/onboarding/app_id_field_widget.dart';
-import 'package:nox_app/presentation/widgets/onboarding/app_onboard_card_widget.dart';
-import 'package:nox_app/presentation/widgets/primitives/app_spinner_widget.dart';
-import 'package:nox_app/presentation/widgets/shell/app_splash_hairline_widget.dart';
-import 'package:nox_app/presentation/widgets/shell/app_window_titlebar_widget.dart';
-import 'package:nox_app/presentation/widgets/shell/app_wordmark_widget.dart';
+import 'package:nox_app/presentation/widgets/onboarding/app_onboarding_scaffold_widget.dart';
+import 'package:nox_app/presentation/widgets/onboarding/app_primary_button_widget.dart';
 
 /// 2.1 Login / ID entry — the onboarding entry screen. Mono multi-line ID field
 /// + `Paste` + `Sign in` (outcome via the mock dataset / debug selector) +
@@ -166,58 +162,12 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
       child: BlocConsumer<LoginBloc, LoginState>(
         listenWhen: (previous, current) => previous.status != current.status,
         listener: _onStatus,
-        builder: (context, state) {
-          return LayoutBuilder(
-            builder: (context, constraints) {
-              final wide = constraints.maxWidth >= Constants.railBreakpoint;
-              return wide ? _wide(context, state) : _narrow(context, state);
-            },
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _narrow(BuildContext context, LoginState state) {
-    return Scaffold(
-      appBar: AppBar(centerTitle: true, title: const AppWordmarkWidget(), bottom: const AppSplashHairlineWidget()),
-      body: SafeArea(
-        child: Column(
-          children: [
-            Expanded(
-              child: SingleChildScrollView(
-                padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s24, AppSpacingTokens.s16, 0),
-                child: _idField(context, state),
-              ),
-            ),
-            Padding(
-              padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s16, AppSpacingTokens.s16, AppSpacingTokens.s24),
-              child: _actions(context, state),
-            ),
-          ],
+        builder: (context, state) => AppOnboardingScaffoldWidget(
+          subtitle: 'Sign in',
+          mobileActionsPadding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s16, AppSpacingTokens.s16, AppSpacingTokens.s24),
+          field: _idField(context, state),
+          actions: _actions(context, state),
         ),
-      ),
-    );
-  }
-
-  Widget _wide(BuildContext context, LoginState state) {
-    return Scaffold(
-      body: Column(
-        children: [
-          const AppWindowTitlebarWidget(subtitle: 'Sign in'),
-          Expanded(
-            child: AppOnboardCardWidget(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _idField(context, state),
-                  SizedBox(height: AppSpacingTokens.s24),
-                  _actions(context, state),
-                ],
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -242,19 +192,10 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
   };
 
   Widget _actions(BuildContext context, LoginState state) {
-    final colorScheme = Theme.of(context).colorScheme;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        SizedBox(
-          width: double.infinity,
-          child: FilledButton(
-            onPressed: state.canSubmit ? _submit : null,
-            child: state.isLoading
-                ? AppSpinnerWidget(size: AppDimensionTokens.icon.md, color: colorScheme.onPrimary)
-                : Text(context.l10n.loginSignIn),
-          ),
-        ),
+        AppPrimaryButtonWidget(label: context.l10n.loginSignIn, onPressed: state.canSubmit ? _submit : null, loading: state.isLoading),
         // `Scan QR` is shown only where the camera scanner exists (iOS/Android/macOS);
         // on Windows/Linux it is hidden. There, a "pick a QR image" fallback stands in so
         // those desktops keep a QR sign-in at parity (P14; FR-016/FR-017).
@@ -292,26 +233,18 @@ class _OutcomeControl extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: EdgeInsets.only(top: AppSpacingTokens.s8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Text('Outcome:'),
-          SizedBox(width: AppSpacingTokens.s8),
-          DropdownButton<LoginOutcome>(
-            value: value,
-            onChanged: (selected) {
-              if (selected != null) onChanged(selected);
-            },
-            items: const [
-              DropdownMenuItem(value: LoginOutcome.auto, child: Text('auto')),
-              DropdownMenuItem(value: LoginOutcome.newId, child: Text('new id')),
-              DropdownMenuItem(value: LoginOutcome.registered, child: Text('registered')),
-              DropdownMenuItem(value: LoginOutcome.errorFormat, child: Text('format error')),
-              DropdownMenuItem(value: LoginOutcome.errorNetwork, child: Text('network error')),
-              DropdownMenuItem(value: LoginOutcome.fatal, child: Text('fatal')),
-            ],
-          ),
-        ],
+      child: AppDevScenarioDropdown<LoginOutcome>(
+        value: value,
+        label: 'Outcome:',
+        items: const {
+          LoginOutcome.auto: 'auto',
+          LoginOutcome.newId: 'new id',
+          LoginOutcome.registered: 'registered',
+          LoginOutcome.errorFormat: 'format error',
+          LoginOutcome.errorNetwork: 'network error',
+          LoginOutcome.fatal: 'fatal',
+        },
+        onChanged: onChanged,
       ),
     );
   }
