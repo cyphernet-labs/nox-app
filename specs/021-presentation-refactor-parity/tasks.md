@@ -38,7 +38,7 @@
 
 **Goal**: 13 дублей → единые виджеты, визуально без изменений. **Independent test**: голдены затронутых экранов (mobile+desktop) БАЙТ-в-байт зелёные до/после; grep подтверждает 0 остаточных копий.
 
-- [ ] T010 [P] [US2] E1 — `AppPrimaryButtonWidget{label,onPressed,loading}` в `lib/presentation/widgets/onboarding/app_primary_button_widget.dart`; заменить login_page:249 + set_username_page:172; widget-golden (idle+loading)
+- [x] T010 [P] [US2] E1 — `AppPrimaryButtonWidget{label,onPressed,loading}` в `lib/presentation/widgets/onboarding/app_primary_button_widget.dart`; заменить login_page:249 + set_username_page:172; widget-golden (idle+loading). onPressed pass-through (сохраняет разные enable-правила сайтов), убраны 2 ad-hoc Theme.of; login/username page-goldens БЕЗ churn
 - [ ] T011 [US2] E2 — `AppOnboardingScaffoldWidget{subtitle,field,actions,mobileActionsPadding?}` в `lib/presentation/widgets/onboarding/`; перевести login_page + set_username_page (зависит от T010); login/username mobile+desktop goldens без churn
 - [ ] T012 [P] [US2] E5 — `WatchChat{chatId,initial,builder}` виджет в `lib/presentation/widgets/chat/`; дедуп 4 `StreamBuilder<ChatModel?>` (app_thread_view:129, chat_thread_page:76, chat_card_page:119/217); thread/card goldens без churn
 - [ ] T013 [P] [US2] E4 — `AppRingedAvatarWidget{name,size,initials?}` в `lib/presentation/widgets/primitives/` (ring 0.06 локальной const до R22); заменить chat_card_page:226 + chats_list_page:216; goldens без churn

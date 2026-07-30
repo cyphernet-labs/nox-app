@@ -1,7 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/l10n_extension.dart';
@@ -12,7 +11,7 @@ import 'package:nox_app/presentation/widgets/shell/tab_bar_shell_widget.dart';
 import 'package:nox_app/presentation/pages/set_username_page/bloc/set_username_bloc.dart';
 import 'package:nox_app/presentation/widgets/onboarding/app_labeled_field_widget.dart';
 import 'package:nox_app/presentation/widgets/onboarding/app_onboard_card_widget.dart';
-import 'package:nox_app/presentation/widgets/primitives/app_spinner_widget.dart';
+import 'package:nox_app/presentation/widgets/onboarding/app_primary_button_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_splash_hairline_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_window_titlebar_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_wordmark_widget.dart';
@@ -165,18 +164,13 @@ class _SetUsernamePageState extends BaseStatePage<SetUsernamePage> {
   };
 
   Widget _actions(BuildContext context, SetUsernameState state) {
-    final colorScheme = Theme.of(context).colorScheme;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        SizedBox(
-          width: double.infinity,
-          child: FilledButton(
-            onPressed: state.canSubmit && !state.isSubmitting ? _done : null,
-            child: state.isSubmitting
-                ? AppSpinnerWidget(size: AppDimensionTokens.icon.md, color: colorScheme.onPrimary)
-                : Text(context.l10n.actionDone),
-          ),
+        AppPrimaryButtonWidget(
+          label: context.l10n.actionDone,
+          onPressed: state.canSubmit && !state.isSubmitting ? _done : null,
+          loading: state.isSubmitting,
         ),
         TextButton(onPressed: state.isSubmitting ? null : _skip, child: Text(context.l10n.actionSkip)),
         if (kDebugMode && widget.demo) _OutcomeControl(value: _outcome, onChanged: (value) => setState(() => _outcome = value)),

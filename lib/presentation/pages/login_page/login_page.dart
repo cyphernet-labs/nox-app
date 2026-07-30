@@ -2,7 +2,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/di/global_aliases.dart';
@@ -22,7 +21,7 @@ import 'package:nox_app/presentation/widgets/shell/tab_bar_shell_widget.dart';
 import 'package:nox_app/presentation/pages/qr_scan_page/qr_scan_page.dart';
 import 'package:nox_app/presentation/widgets/onboarding/app_id_field_widget.dart';
 import 'package:nox_app/presentation/widgets/onboarding/app_onboard_card_widget.dart';
-import 'package:nox_app/presentation/widgets/primitives/app_spinner_widget.dart';
+import 'package:nox_app/presentation/widgets/onboarding/app_primary_button_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_splash_hairline_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_window_titlebar_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_wordmark_widget.dart';
@@ -242,19 +241,10 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
   };
 
   Widget _actions(BuildContext context, LoginState state) {
-    final colorScheme = Theme.of(context).colorScheme;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        SizedBox(
-          width: double.infinity,
-          child: FilledButton(
-            onPressed: state.canSubmit ? _submit : null,
-            child: state.isLoading
-                ? AppSpinnerWidget(size: AppDimensionTokens.icon.md, color: colorScheme.onPrimary)
-                : Text(context.l10n.loginSignIn),
-          ),
-        ),
+        AppPrimaryButtonWidget(label: context.l10n.loginSignIn, onPressed: state.canSubmit ? _submit : null, loading: state.isLoading),
         // `Scan QR` is shown only where the camera scanner exists (iOS/Android/macOS);
         // on Windows/Linux it is hidden. There, a "pick a QR image" fallback stands in so
         // those desktops keep a QR sign-in at parity (P14; FR-016/FR-017).
