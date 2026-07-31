@@ -45,7 +45,12 @@ class AppNavigationRailWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    // FOREGROUND border: the rail owns its right hairline (design: NavRail borderRight),
+    // but a background BoxDecoration border sits BEHIND the opaque Material child and is
+    // painted over — invisible. Painting it in the foreground draws the 1px outlineVariant
+    // seam on top of the surface, so the rail↔list divider actually shows.
     return DecoratedBox(
+      position: DecorationPosition.foreground,
       decoration: BoxDecoration(
         border: Border(
           right: BorderSide(color: colorScheme.outlineVariant, width: AppDimensionTokens.border.hairline),
