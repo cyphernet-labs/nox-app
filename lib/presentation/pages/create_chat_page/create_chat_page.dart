@@ -165,7 +165,7 @@ class _CreateChatPageState extends BaseStatePage<CreateChatPage> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(context.l10n.createChatTitle, style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
+              Text(context.l10n.createChatTitle, style: textTheme.headlineSmall?.copyWith(color: colorScheme.onSurface)),
               SizedBox(height: AppSpacingTokens.s16),
               _field(context, state),
               SizedBox(height: AppSpacingTokens.s24),

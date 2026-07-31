@@ -157,7 +157,8 @@ void main() {
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await pumpApp(tester, const FileViewPage(file: _file));
 
-      expect(find.byType(AppFileGlyphWidget), findsOneWidget);
+      // Two glyphs on the desktop lightbox: the small leading one in the header + the hero one in the body.
+      expect(find.byType(AppFileGlyphWidget), findsNWidgets(2));
       expect(find.widgetWithText(FilledButton, l10nEn.actionDownload), findsOneWidget);
     });
   });

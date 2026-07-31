@@ -192,6 +192,9 @@ class _ChatCardBodyState extends State<ChatCardBody> {
             children: [
               if (widget.isDrawer) _drawerHeader(context),
               _header(context),
+              // Design (ChatInfoDrawer): a divider separates the identity block from
+              // the Files section — desktop drawer only (the mobile card is full-screen).
+              if (widget.isDrawer) const AppHairlineDividerWidget(),
               Expanded(child: _section(context, state)),
               if (kDebugMode && widget.demo) _scenarioControl(),
             ],
@@ -201,15 +204,10 @@ class _ChatCardBodyState extends State<ChatCardBody> {
     );
   }
 
-  Widget _drawerHeader(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        AppPanelHeaderWidget(title: context.l10n.chatInfoTitle, onClose: () => Navigator.of(context).maybePop()),
-        const AppHairlineDividerWidget(),
-      ],
-    );
-  }
+  // Desktop drawer 'Details' header (design: titleLarge). The bottom hairline is drawn
+  // by AppPanelHeaderWidget itself, so no extra divider is added here.
+  Widget _drawerHeader(BuildContext context) =>
+      AppPanelHeaderWidget(title: context.l10n.chatInfoTitle, largeTitle: true, onClose: () => Navigator.of(context).maybePop());
 
   Widget _header(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
