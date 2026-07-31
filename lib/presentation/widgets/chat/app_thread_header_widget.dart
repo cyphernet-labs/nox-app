@@ -5,8 +5,8 @@ import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/general/l10n_extension.dart';
-import 'package:nox_app/presentation/widgets/primitives/app_avatar_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
+import 'package:nox_app/presentation/widgets/primitives/app_ringed_avatar_widget.dart';
 
 /// Persistent thread header for the DESKTOP thread pane (5.2 in the 5.1 list-detail).
 /// Reconciled to the NOX model: avatar + chat name (tap → chat card) + an info action
@@ -19,7 +19,8 @@ class AppThreadHeaderWidget extends StatelessWidget {
   final ChatModel chat;
   final VoidCallback onInfo;
 
-  static double get _avatarSize => AppDimensionTokens.size.avatarXs;
+  // Design (ThreadHeader): a ringed avatar at avatarSm (40), not the plain avatarXs.
+  static double get _avatarSize => AppDimensionTokens.size.avatarSm;
 
   @override
   Widget build(BuildContext context) {
@@ -41,7 +42,7 @@ class AppThreadHeaderWidget extends StatelessWidget {
                       padding: EdgeInsets.all(AppSpacingTokens.s4),
                       child: Row(
                         children: [
-                          AppAvatarWidget(name: chat.name, size: _avatarSize),
+                          AppRingedAvatarWidget(name: chat.name, size: _avatarSize),
                           SizedBox(width: AppSpacingTokens.s12),
                           Expanded(
                             child: Text(

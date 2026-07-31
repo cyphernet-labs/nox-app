@@ -58,14 +58,20 @@ InputDecorationTheme noxInputDecorationTheme(ColorScheme cs) {
   );
 }
 
-SegmentedButtonThemeData noxSegmentedButtonTheme(ColorScheme cs) => SegmentedButtonThemeData(
-  style: ButtonStyle(shape: WidgetStatePropertyAll(RoundedRectangleBorder(borderRadius: BorderRadius.circular(NoxRadius.s)))),
+SegmentedButtonThemeData noxSegmentedButtonTheme(ColorScheme cs) => const SegmentedButtonThemeData(
+  // Design: the segmented control is a full stadium (pill), like the M3 default and the
+  // other NOX buttons — not the 8px rounded box we used to force.
+  style: ButtonStyle(shape: WidgetStatePropertyAll(StadiumBorder())),
 );
 
 SwitchThemeData noxSwitchTheme(ColorScheme cs) => SwitchThemeData(
   thumbColor: WidgetStateProperty.resolveWith((states) => states.contains(WidgetState.selected) ? cs.onPrimary : cs.outline),
   trackColor: WidgetStateProperty.resolveWith((states) => states.contains(WidgetState.selected) ? cs.primary : cs.surfaceContainerHighest),
   trackOutlineColor: WidgetStateProperty.resolveWith((states) => states.contains(WidgetState.selected) ? Colors.transparent : cs.outline),
+  // NOTE: the design shows a check glyph on the ON thumb, but `thumbIcon` only accepts a
+  // Material `Icon` (icon font) — and NOX is SVG-only (MaterialIcons is not loaded in the
+  // golden harness, so it renders as tofu). Left off deliberately; the teal track + thumb
+  // position already read ON/OFF unambiguously. (audit [24], intentionally skipped)
 );
 
 RadioThemeData noxRadioTheme(ColorScheme cs) => RadioThemeData(

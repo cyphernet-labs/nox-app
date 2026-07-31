@@ -231,7 +231,12 @@ class _FileViewPageState extends State<FileViewPage> with SingleTickerProviderSt
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        AppPanelHeaderWidget(title: widget.file.name, onClose: () => Navigator.of(context).maybePop()),
+        AppPanelHeaderWidget(
+          title: widget.file.name,
+          // Design: the lightbox header leads with the file-type glyph before the name.
+          leading: AppFileGlyphWidget(type: widget.file.type, iconSize: AppDimensionTokens.icon.md, box: AppSpacingTokens.s32),
+          onClose: () => Navigator.of(context).maybePop(),
+        ),
         if (!_cached) LinearProgressIndicator(value: _progress),
         Padding(padding: EdgeInsets.all(AppSpacingTokens.s24), child: _info(context)),
         Padding(

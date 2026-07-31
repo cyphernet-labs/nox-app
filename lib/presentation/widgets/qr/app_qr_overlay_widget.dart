@@ -72,27 +72,33 @@ class _ReticlePainter extends CustomPainter {
       ..fillType = PathFillType.evenOdd;
     canvas.drawPath(mask, Paint()..color = _mask);
 
-    // Reticle = four L-shaped corner brackets (not a full frame). Each corner is
-    // a horizontal + vertical leg meeting at the rect corner; round caps/joins
-    // keep the rounded-corner feel of the mask hole.
+    // Reticle = four corner brackets (not a full frame). Each corner is a vertical +
+    // horizontal leg joined by a quarter-circle arc of radius `r` (= the mask hole's
+    // corner radius), so the brackets trace the rounded corners of the hole exactly
+    // instead of meeting at a sharp right angle.
+    const r = NoxRadius.m;
     final leg = AppSpacingTokens.s40;
     final brackets = Path()
       // Top-left.
-      ..moveTo(rect.left, rect.top + leg)
-      ..lineTo(rect.left, rect.top)
-      ..lineTo(rect.left + leg, rect.top)
+      ..moveTo(rect.left, rect.top + r + leg)
+      ..lineTo(rect.left, rect.top + r)
+      ..arcToPoint(Offset(rect.left + r, rect.top), radius: const Radius.circular(r))
+      ..lineTo(rect.left + r + leg, rect.top)
       // Top-right.
-      ..moveTo(rect.right - leg, rect.top)
-      ..lineTo(rect.right, rect.top)
-      ..lineTo(rect.right, rect.top + leg)
+      ..moveTo(rect.right - r - leg, rect.top)
+      ..lineTo(rect.right - r, rect.top)
+      ..arcToPoint(Offset(rect.right, rect.top + r), radius: const Radius.circular(r))
+      ..lineTo(rect.right, rect.top + r + leg)
       // Bottom-right.
-      ..moveTo(rect.right, rect.bottom - leg)
-      ..lineTo(rect.right, rect.bottom)
-      ..lineTo(rect.right - leg, rect.bottom)
+      ..moveTo(rect.right, rect.bottom - r - leg)
+      ..lineTo(rect.right, rect.bottom - r)
+      ..arcToPoint(Offset(rect.right - r, rect.bottom), radius: const Radius.circular(r))
+      ..lineTo(rect.right - r - leg, rect.bottom)
       // Bottom-left.
-      ..moveTo(rect.left + leg, rect.bottom)
-      ..lineTo(rect.left, rect.bottom)
-      ..lineTo(rect.left, rect.bottom - leg);
+      ..moveTo(rect.left + r + leg, rect.bottom)
+      ..lineTo(rect.left + r, rect.bottom)
+      ..arcToPoint(Offset(rect.left, rect.bottom - r), radius: const Radius.circular(r))
+      ..lineTo(rect.left, rect.bottom - r - leg);
 
     canvas.drawPath(
       brackets,

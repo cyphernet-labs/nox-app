@@ -42,13 +42,25 @@ class AppSideSheetPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Theme.of(context).colorScheme.surface,
-      elevation: NoxElevation.level5,
-      child: SizedBox(
-        width: width ?? AppDimensionTokens.layout.sideSheetW,
-        height: double.infinity,
-        child: SafeArea(child: child),
+    final colorScheme = Theme.of(context).colorScheme;
+    // Design (ChatInfoDrawer): a subtle 1px outlineVariant left hairline + a softer
+    // elevation (level3), not the heavy level5 shadow bar. The border is painted in
+    // the FOREGROUND so the opaque Material surface doesn't cover it.
+    return DecoratedBox(
+      position: DecorationPosition.foreground,
+      decoration: BoxDecoration(
+        border: Border(
+          left: BorderSide(color: colorScheme.outlineVariant, width: AppDimensionTokens.border.hairline),
+        ),
+      ),
+      child: Material(
+        color: colorScheme.surface,
+        elevation: NoxElevation.level3,
+        child: SizedBox(
+          width: width ?? AppDimensionTokens.layout.sideSheetW,
+          height: double.infinity,
+          child: SafeArea(child: child),
+        ),
       ),
     );
   }

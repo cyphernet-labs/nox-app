@@ -16,7 +16,10 @@ class AppSplashHairlineWidget extends StatelessWidget implements PreferredSizeWi
   /// Bottom gap (dp) below the rule; `preferredSize.height` is `thickness + gap`.
   static double get gap => AppSpacingTokens.s14;
   static double get _radius => AppDimensionTokens.border.thick;
-  static const LinearGradient _gradient = LinearGradient(
+
+  /// The brand-splash gradient (teal→lime→gold→coral→red). Public so the onboarding
+  /// card's short accent pill reuses the exact same brand ramp.
+  static const LinearGradient gradient = LinearGradient(
     colors: [NoxBrand.teal, NoxBrand.lime, NoxBrand.gold, NoxBrand.coral, NoxBrand.red],
   );
 
@@ -31,7 +34,7 @@ class AppSplashHairlineWidget extends StatelessWidget implements PreferredSizeWi
       padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, 0, AppSpacingTokens.s16, gap),
       child: Container(
         height: thickness,
-        decoration: BoxDecoration(gradient: _gradient, borderRadius: BorderRadius.circular(_radius)),
+        decoration: BoxDecoration(gradient: gradient, borderRadius: BorderRadius.circular(_radius)),
       ),
     );
   }

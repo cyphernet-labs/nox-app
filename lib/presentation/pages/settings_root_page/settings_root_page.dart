@@ -179,10 +179,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
       appBar: AppBar(leading: widget.inShell ? null : _backButton(), title: Text(context.l10n.settings)),
       body: ListView(
         children: [
-          Padding(
-            padding: EdgeInsets.all(AppSpacingTokens.s16),
-            child: _identityCard(state, revealable: true, showInlineQr: false, wide: false),
-          ),
+          Padding(padding: EdgeInsets.all(AppSpacingTokens.s16), child: _identityCard(state, revealable: true, wide: false)),
           AppSettingsNavRowWidget(title: context.l10n.settingsNotificationsTitle, onTap: () => _openSection(NotificationsPage.route())),
           AppSettingsNavRowWidget(title: context.l10n.settingsAppearanceTitle, onTap: () => _openSection(AppearancePage.route())),
           AppSettingsNavRowWidget(title: context.l10n.settingsLanguageTitle, onTap: () => _openSection(LanguagePage.route())),
@@ -199,11 +196,12 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
   // Debug-only rows appended after Log out on both layouts (mobile flat list + desktop
   // menu pane): the screens gallery, the UI-kit gallery, a forced logout, and — in the
   // gallery preview — the dev state control. Empty in release (all kDebugMode-gated).
-  List<Widget> _devMenuRows() => [
-    if (kDebugMode) AppSettingsNavRowWidget(title: 'Screens gallery (dev)', onTap: () => _openSection(ScreensGalleryPage.route())),
-    if (kDebugMode) AppSettingsNavRowWidget(title: 'UI kit (dev)', onTap: () => _openSection(UiKitPage.route())),
+  List<Widget> _devMenuRows({bool menuPane = false}) => [
+    if (kDebugMode)
+      AppSettingsNavRowWidget(title: 'Screens gallery (dev)', menuPane: menuPane, onTap: () => _openSection(ScreensGalleryPage.route())),
+    if (kDebugMode) AppSettingsNavRowWidget(title: 'UI kit (dev)', menuPane: menuPane, onTap: () => _openSection(UiKitPage.route())),
     if (kDebugMode && !widget.demo)
-      AppSettingsNavRowWidget(title: 'Force logout (dev)', onTap: () => unawaited(authRepository.logout(forced: true))),
+      AppSettingsNavRowWidget(title: 'Force logout (dev)', menuPane: menuPane, onTap: () => unawaited(authRepository.logout(forced: true))),
     if (kDebugMode && widget.demo) _devControl(),
   ];
 
@@ -221,17 +219,22 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
 
   Widget _menuPane(BuildContext context, SettingsRootState state) {
     final colorScheme = Theme.of(context).colorScheme;
-    AppSettingsNavRowWidget item(_Section section, String title) =>
-        AppSettingsNavRowWidget(title: title, selected: _selected == section, onTap: () => setState(() => _selected = section));
+    AppSettingsNavRowWidget item(_Section section, String title) => AppSettingsNavRowWidget(
+      title: title,
+      selected: _selected == section,
+      menuPane: true,
+      onTap: () => setState(() => _selected = section),
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // No divider under the pane header — the design's PaneHeader is borderless
+        // (the section title sits directly over the list, seam only between groups).
         _SettingsPaneHeader(
           title: context.l10n.settings,
           leading: widget.inShell ? null : _backButton(),
           trailingInset: AppSpacingTokens.s8,
         ),
-        const AppHairlineDividerWidget(),
         // Grouped nav items (Account / preferences / legal), with the destructive
         // Log out row pinned to the bottom via a Spacer.
         Expanded(
@@ -250,8 +253,8 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
               item(_Section.terms, context.l10n.settingsTermsTitle),
               item(_Section.about, context.l10n.settingsAboutTitle),
               const Spacer(),
-              AppSettingsNavRowWidget(title: context.l10n.logoutRow, color: colorScheme.error, onTap: _logout),
-              ..._devMenuRows(),
+              AppSettingsNavRowWidget(title: context.l10n.logoutRow, color: colorScheme.error, menuPane: true, onTap: _logout),
+              ..._devMenuRows(menuPane: true),
             ],
           ),
         ),
@@ -273,7 +276,12 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
     final Widget body = switch (_selected) {
       _Section.account => ListView(
         padding: EdgeInsets.all(AppSpacingTokens.s16),
-        children: [_identityCard(state, revealable: false, showInlineQr: true, wide: true)],
+        children: [
+          _identityCard(state, revealable: false, wide: true),
+          // Design: the account QR + caption sit in a separate centred block BELOW the
+          // identity card, on the plain detail-pane background (not inside the card).
+          if (!state.editing && !state.initialLoading) _accountQrBlock(context, state.rawId),
+        ],
       ),
       _Section.notifications => const NotificationsBody(),
       _Section.appearance => const AppearanceBody(),
@@ -285,9 +293,9 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         // PaneHeader: names the selected section (the detail pane has no AppBar of
-        // its own), aligned with the menu pane's header height/style.
+        // its own), aligned with the menu pane's header height/style. Borderless like
+        // the design's PaneHeader (no hairline under the section title).
         _SettingsPaneHeader(title: _sectionTitle(_selected)),
-        const AppHairlineDividerWidget(),
         Expanded(
           child: Center(
             child: ConstrainedBox(
@@ -310,13 +318,12 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
     _ => null,
   };
 
-  Widget _identityCard(SettingsRootState state, {required bool revealable, required bool showInlineQr, required bool wide}) {
+  Widget _identityCard(SettingsRootState state, {required bool revealable, required bool wide}) {
     return AppIdentityCardWidget(
       name: state.name,
       maskedId: state.maskedId,
       rawId: state.rawId,
       revealable: revealable,
-      showInlineQr: showInlineQr,
       initialLoading: state.initialLoading,
       editing: state.editing,
       idRevealed: state.idRevealed,
@@ -337,6 +344,26 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
               onSubmitted: () => _bloc.add(const SettingsRootEvent.nameSubmitted()),
             )
           : null,
+    );
+  }
+
+  // The account QR + caption as a standalone centred block on the plain detail-pane
+  // background, shown below the identity card on desktop Account (design 02/07.1).
+  Widget _accountQrBlock(BuildContext context, String rawId) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: EdgeInsets.only(top: AppSpacingTokens.s16),
+      child: Column(
+        children: [
+          AppQrSurfaceWidget(data: rawId, size: AppDimensionTokens.size.qrSurface),
+          SizedBox(height: AppSpacingTokens.s8),
+          Text(
+            context.l10n.qrAccountCaption,
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          ),
+        ],
+      ),
     );
   }
 
