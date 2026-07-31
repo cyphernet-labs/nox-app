@@ -9,7 +9,7 @@
 
 ## Phase 1: Setup
 
-- [ ] T001 Зафиксировать baseline: прогнать `make gate` + `make golden-verify` на `develop`, убедиться, что всё зелёное (регресс-точка отсчёта для всех задач)
+- [x] T001 Зафиксировать baseline: прогнать `make gate` + `make golden-verify` на `develop`, убедиться, что всё зелёное (регресс-точка отсчёта для всех задач)
 
 ## Phase 2: Foundational
 
