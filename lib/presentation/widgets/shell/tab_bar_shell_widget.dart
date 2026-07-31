@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
@@ -211,6 +210,8 @@ class _TabBarShellState extends State<TabBarShell> {
           Expanded(
             child: Row(
               children: [
+                // No VerticalDivider here: the rail draws its OWN right hairline
+                // (AppNavigationRailWidget's border), so a divider would double the seam.
                 AppNavigationRailWidget(
                   active: _active,
                   onSelect: _onSelect,
@@ -218,7 +219,6 @@ class _TabBarShellState extends State<TabBarShell> {
                   accountLabel: _accountLabel,
                   onAccount: _onAccount,
                 ),
-                VerticalDivider(width: AppDimensionTokens.border.hairline),
                 Expanded(child: _body(true)),
               ],
             ),

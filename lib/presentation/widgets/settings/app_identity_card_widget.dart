@@ -50,8 +50,9 @@ class AppIdentityCardWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
     return Card(
       child: Padding(
         padding: EdgeInsets.all(AppSpacingTokens.s16),
@@ -87,8 +88,9 @@ class AppIdentityCardWidget extends StatelessWidget {
   }
 
   Widget _nameBlock(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
     if (editing && nameEditField != null) return nameEditField!;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -112,8 +114,9 @@ class AppIdentityCardWidget extends StatelessWidget {
   }
 
   Widget _idBlock(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
     if (initialLoading) {
       return Padding(
         padding: EdgeInsets.symmetric(vertical: AppSpacingTokens.s8),

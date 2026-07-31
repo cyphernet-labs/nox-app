@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/theme/nox_opacity.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/general/l10n_extension.dart';
@@ -79,7 +80,7 @@ class AppComposerWidget extends StatelessWidget {
                         tooltip: context.l10n.tooltipSend,
                         icon: AppIconWidget(
                           NoxIcons.sendFill,
-                          color: active ? colorScheme.primary : colorScheme.onSurface.withValues(alpha: 0.38),
+                          color: active ? colorScheme.primary : colorScheme.onSurface.withValues(alpha: NoxOpacity.disabled),
                         ),
                       );
                     },

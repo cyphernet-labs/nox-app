@@ -76,7 +76,10 @@ class ChatThreadPage extends StatelessWidget {
             title: WatchChat(
               chatId: chat.id,
               initial: chat,
-              builder: (context, current) => InkWell(onTap: () => showChatCard(context, current), child: Text(current.name)),
+              builder: (context, current) => InkWell(
+                onTap: () => showChatCard(context, current),
+                child: Text(current.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+              ),
             ),
           ),
           body: AppThreadViewWidget(

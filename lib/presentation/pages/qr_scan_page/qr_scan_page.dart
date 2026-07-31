@@ -242,11 +242,17 @@ class _QrScanPageState extends State<QrScanPage> with WidgetsBindingObserver {
     );
   }
 
+  /// Neutral fill behind/instead of the camera feed (demo / no camera / a frame error).
+  static Widget _neutralSurface(ColorScheme colorScheme) => ColoredBox(color: colorScheme.surfaceContainerHighest);
+
   /// The live camera (real runtime), a deterministic placeholder (goldens) or a
   /// neutral surface (demo / no camera).
   Widget _cameraPreview(BuildContext context) {
     if (widget.previewBuilder != null) return widget.previewBuilder!(context);
-    if (!_live) return ColoredBox(color: Theme.of(context).colorScheme.surfaceContainerHighest);
+    // Resolve once and reuse — the errorBuilder below runs per camera frame, so a
+    // Theme.of() there would re-look-up the theme on every frame.
+    final colorScheme = Theme.of(context).colorScheme;
+    if (!_live) return _neutralSurface(colorScheme);
     return MobileScanner(
       controller: _controller,
       fit: BoxFit.cover,
@@ -258,7 +264,7 @@ class _QrScanPageState extends State<QrScanPage> with WidgetsBindingObserver {
         // Errors that surface after start() (e.g. permission revoked mid-session)
         // funnel through the same recoverable handler as the explicit start failure.
         WidgetsBinding.instance.addPostFrameCallback((_) => _handleCameraError(error));
-        return ColoredBox(color: Theme.of(context).colorScheme.surfaceContainerHighest);
+        return _neutralSurface(colorScheme);
       },
     );
   }
@@ -302,7 +308,7 @@ class _QrScanPageState extends State<QrScanPage> with WidgetsBindingObserver {
               children: [
                 // The live camera is only mounted once permission is granted
                 // (scanning); during initializing show a neutral surface.
-                Positioned.fill(child: scanning ? _cameraPreview(context) : ColoredBox(color: colorScheme.surfaceContainerHighest)),
+                Positioned.fill(child: scanning ? _cameraPreview(context) : _neutralSurface(colorScheme)),
                 const Positioned.fill(child: AppQrOverlayWidget()),
                 Positioned(
                   left: 0,
@@ -369,9 +375,7 @@ class _QrScanPageState extends State<QrScanPage> with WidgetsBindingObserver {
         ? AppOnboardCardWidget(child: panel)
         : _QrDesktopViewfinder(
             // The camera feed is built only while scanning; otherwise a neutral fill.
-            preview: state.status == QrScanStatus.scanning
-                ? _cameraPreview(context)
-                : ColoredBox(color: colorScheme.surfaceContainerHighest),
+            preview: state.status == QrScanStatus.scanning ? _cameraPreview(context) : _neutralSurface(colorScheme),
             onEnterManually: _enterManually,
           );
     final dev = _devControl();
@@ -472,6 +476,10 @@ class _QrStatePanel extends StatelessWidget {
 class _QrDesktopViewfinder extends StatelessWidget {
   const _QrDesktopViewfinder({required this.preview, required this.onEnterManually});
 
+  /// Reticle side as a fraction of the (smaller) desktop viewfinder window — a touch
+  /// larger than the mobile default since the desktop window is a fixed small square.
+  static const double _reticleFraction = 0.78;
+
   final Widget preview;
   final VoidCallback onEnterManually;
 
@@ -493,7 +501,7 @@ class _QrDesktopViewfinder extends StatelessWidget {
               child: Stack(
                 children: [
                   Positioned.fill(child: preview),
-                  const Positioned.fill(child: AppQrOverlayWidget(reticleFraction: 0.78, showInstruction: false)),
+                  const Positioned.fill(child: AppQrOverlayWidget(reticleFraction: _reticleFraction, showInstruction: false)),
                 ],
               ),
             ),

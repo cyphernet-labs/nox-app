@@ -60,13 +60,13 @@
 
 **Goal**: magic-числа → токены, hoisting `Theme.of`, снятие дублей/мёртвого кода; поведение неизменно. **Independent test**: голдены зелёные; значения токенов равны прежним литералам.
 
-- [ ] T023 [US3] O1/R22 — `NoxOpacity.{scrim,disabled,ring}` в `lib/design/theme/nox_opacity.dart`; заменить magic-opacity (side-sheet/chat_card/file_view/composer/rail + E4-ring из T013); свести scrim 0.55→0.5, перегенерировать 1 desktop file-view baseline
-- [ ] T024 [P] [US3] O2/R23 — именованные геометрия-const (`_loadMoreThreshold=200` в app_thread_view:106, `qrDesktopReticleFraction=0.78` в qr_scan_page:389, splash reveal-scale `0.85` в splash_page:51); goldens без churn
-- [ ] T025 [P] [US3] O3/R24 — hoisting `Theme.of` в один вызов: chats_list_page:360/379 (paged itemBuilder), app_identity_card_widget:89-90/114-115, shell-виджеты; goldens без churn
-- [ ] T026 [US3] O4/R25 — снять dead `inShell`-ветку `_backOrNull` + консолидировать третий back-button в `settings_root_page.dart`; settings goldens без churn
-- [ ] T027 [US3] O5/R26 — убрать двойной hairline rail↔body (один владелец края: rail-border ИЛИ `VerticalDivider` в `tab_bar_shell_widget.dart:213`); перегенерировать desktop shell golden (~1px)
-- [ ] T028 [P] [US3] O6/R27 — `_neutralSurface(ColorScheme)` в `qr_scan_page.dart` (4 `ColoredBox(surfaceContainerHighest)` + `Theme.of` один раз, убрать per-frame в `errorBuilder`); qr goldens без churn
-- [ ] T029 [P] [US3] O7/R28 — mobile thread AppBar title `maxLines:1 + TextOverflow.ellipsis` в `chat_thread_page.dart:81`; chat_thread golden без churn
+- [x] T023 [US3] O1/R22 — `NoxOpacity.{scrim=0.5,disabled=0.38,ring=0.06}` в `lib/design/theme/nox_opacity.dart`; заменены 6 magic-opacity (chat_card/file_view/side_sheet scrim + file_view/composer disabled + ringed_avatar ring); scrim 0.55→0.5 сведён (file_view desktop light+dark перегенерированы, только scrim-альфа, layout цел); прочие same-value → без churn
+- [x] T024 [P] [US3] O2/R23 — именованные геометрия-const: `_loadMoreThreshold=200` (app_thread_view scroll-prefetch) + `_reticleFraction=0.78` (`_QrDesktopViewfinder`); splash `_scaleFrom=0.85` УЖЕ именован (без изменений); goldens без churn
+- [x] T025 [P] [US3] O3/R24 — hoisting `Theme.of`: chats_list paged itemBuilder (per-item `selectedFill` local вместо inline Theme.of), app_identity_card_widget (3 метода: 2 Theme.of→1 `theme`), bottom_bar `_Tab` (2→1); once-rendered search-empty оставлен как есть (незначимо); goldens без churn
+- [x] T026 [US3] O4/R25 — `_backOrNull` (dead `inShell`→SizedBox ветка) → `_backButton()` (всегда IconButton, maybePop вшит); 3 back-affordance (`_narrow` AppBar, `_menuPane` header, helper) сведены к одному `widget.inShell ? null : _backButton()`; settings goldens без churn
+- [x] T027 [US3] O5/R27 — убран двойной hairline rail↔body: снят `VerticalDivider` в `tab_bar_shell_widget` (rail сам рисует правый border — единственный владелец шва); −1 unused import; перегенерированы desktop shell + chats_list goldens (оба рендерят shell; ~1px сдвиг body, layout цел — заэйболено)
+- [x] T028 [P] [US3] O6/R27 — `_neutralSurface(ColorScheme)` в `qr_scan_page.dart` (4 `ColoredBox(surfaceContainerHighest)` дедуп; `_cameraPreview` резолвит colorScheme ОДИН раз → errorBuilder больше не зовёт `Theme.of` per-frame); qr goldens без churn
+- [x] T029 [P] [US3] O7/R28 — mobile thread AppBar title `maxLines:1 + TextOverflow.ellipsis` в `chat_thread_page.dart` (длинные имена больше не переносятся); chat_thread golden без churn (короткое имя в golden)
 
 **Checkpoint US3**: SC-004 выполнен (0 raw-opacity вне `lib/design/theme/` в затронутых файлах).
 
@@ -74,8 +74,8 @@
 
 ## Phase 6: Polish & cross-cutting
 
-- [ ] T030 Финальная сверка `contracts/parity-matrix.md`: все 16 строк ✅/✔; прогнать mobile+desktop goldens затронутых экранов рядом
-- [ ] T031 Финальный `make gate` + `make golden-verify` на `develop` после всех merge; отметить статусы R1–R28 в `docs/presentation-refactor-review.md`
+- [x] T030 Финальная сверка `contracts/parity-matrix.md`: все 16 строк ✅/✔ (rows 1–5 ✅, 6–8 ✔ intentional, 9–16 ✅ clean); page-goldens (mobile+desktop) затронутых экранов зелёные
+- [x] T031 Финальный `make gate` (732) + `make golden-verify` (216) на `develop` после merge US1/US2/US3; статусы R1–R28 отмечены ✅ в `docs/presentation-refactor-review.md` (§4)
 
 ---
 

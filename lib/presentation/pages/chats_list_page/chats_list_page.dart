@@ -344,10 +344,11 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
             // antiAlias clip hosts the row's InkWell, so hover/press feedback follows the
             // pill corners instead of overflowing as a rectangle; selection only swaps the
             // fill, so the row content never shifts horizontally when it becomes selected.
+            final selectedFill = Theme.of(context).colorScheme.secondaryContainer;
             return Padding(
               padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s8),
               child: Material(
-                color: chat.id == selectedId ? Theme.of(context).colorScheme.secondaryContainer : Colors.transparent,
+                color: chat.id == selectedId ? selectedFill : Colors.transparent,
                 borderRadius: BorderRadius.circular(AppDimensionTokens.radius.lg),
                 clipBehavior: Clip.antiAlias,
                 child: row,

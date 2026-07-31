@@ -73,8 +73,9 @@ class _Tab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
     final color = selected ? colorScheme.primary : colorScheme.onSurfaceVariant;
     return Semantics(
       button: true,

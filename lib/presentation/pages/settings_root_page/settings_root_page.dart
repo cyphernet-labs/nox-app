@@ -149,9 +149,13 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
 
   void _openSection(Route<void> route) => Navigator.of(context).push(route);
 
-  Widget _backOrNull(VoidCallback onPressed) => widget.inShell
-      ? const SizedBox.shrink()
-      : IconButton(tooltip: context.l10n.tooltipBack, icon: AppIconWidget(NoxIcons.arrowBack), onPressed: onPressed);
+  // The AppBar / pane-header back affordance. Only used on the standalone (non-shell)
+  // routes; the callers gate on `!inShell`, so this always returns a real button.
+  Widget _backButton() => IconButton(
+    tooltip: context.l10n.tooltipBack,
+    icon: AppIconWidget(NoxIcons.arrowBack),
+    onPressed: () => Navigator.of(context).maybePop(),
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -172,16 +176,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
 
   Widget _narrow(BuildContext context, SettingsRootState state) {
     return Scaffold(
-      appBar: AppBar(
-        leading: widget.inShell
-            ? null
-            : IconButton(
-                tooltip: context.l10n.tooltipBack,
-                icon: AppIconWidget(NoxIcons.arrowBack),
-                onPressed: () => Navigator.of(context).maybePop(),
-              ),
-        title: Text(context.l10n.settings),
-      ),
+      appBar: AppBar(leading: widget.inShell ? null : _backButton(), title: Text(context.l10n.settings)),
       body: ListView(
         children: [
           Padding(
@@ -233,7 +228,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
       children: [
         _SettingsPaneHeader(
           title: context.l10n.settings,
-          leading: widget.inShell ? null : _backOrNull(() => Navigator.of(context).maybePop()),
+          leading: widget.inShell ? null : _backButton(),
           trailingInset: AppSpacingTokens.s8,
         ),
         const AppHairlineDividerWidget(),

@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/theme/nox_opacity.dart';
 import 'package:nox_app/presentation/helpers/adaptive_lightbox.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
@@ -171,7 +172,10 @@ class _FileViewPageState extends State<FileViewPage> with SingleTickerProviderSt
           IconButton(
             tooltip: context.l10n.tooltipSave,
             onPressed: _cached ? _save : null,
-            icon: AppIconWidget(NoxIcons.download, color: _cached ? colorScheme.onSurface : colorScheme.onSurface.withValues(alpha: 0.38)),
+            icon: AppIconWidget(
+              NoxIcons.download,
+              color: _cached ? colorScheme.onSurface : colorScheme.onSurface.withValues(alpha: NoxOpacity.disabled),
+            ),
           ),
         ],
       ),
@@ -195,7 +199,7 @@ class _FileViewPageState extends State<FileViewPage> with SingleTickerProviderSt
   Widget _wide(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: colorScheme.scrim.withValues(alpha: 0.55),
+      backgroundColor: colorScheme.scrim.withValues(alpha: NoxOpacity.scrim),
       body: Stack(
         children: [
           Positioned.fill(

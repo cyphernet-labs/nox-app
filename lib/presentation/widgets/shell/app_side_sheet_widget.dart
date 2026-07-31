@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/theme/nox_opacity.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 
@@ -12,7 +13,7 @@ Future<T?> showRightSideSheet<T>(BuildContext context, {required Widget child, d
     context: context,
     barrierDismissible: true,
     barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
-    barrierColor: colorScheme.scrim.withValues(alpha: 0.5),
+    barrierColor: colorScheme.scrim.withValues(alpha: NoxOpacity.scrim),
     transitionDuration: NoxDuration.sheet,
     pageBuilder: (context, animation, secondaryAnimation) => Align(
       alignment: Alignment.centerRight,

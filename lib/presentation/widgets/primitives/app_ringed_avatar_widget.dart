@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/design/theme/nox_opacity.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_avatar_widget.dart';
 
@@ -21,7 +22,12 @@ class AppRingedAvatarWidget extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        boxShadow: [BoxShadow(color: colorScheme.onSurface.withValues(alpha: 0.06), spreadRadius: AppDimensionTokens.border.thick)],
+        boxShadow: [
+          BoxShadow(
+            color: colorScheme.onSurface.withValues(alpha: NoxOpacity.ring),
+            spreadRadius: AppDimensionTokens.border.thick,
+          ),
+        ],
       ),
       child: AppAvatarWidget(name: name, initials: initials, size: size),
     );
