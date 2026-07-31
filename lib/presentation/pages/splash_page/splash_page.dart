@@ -59,6 +59,7 @@ class _SplashPageState extends State<SplashPage> with SingleTickerProviderStateM
 
   static double get _logo => AppDimensionTokens.size.splashLogo;
   static const double _scaleFrom = 0.85;
+  static const double _wordmarkSize = 28;
 
   @override
   void initState() {
@@ -149,7 +150,8 @@ class _SplashPageState extends State<SplashPage> with SingleTickerProviderStateM
                     children: [
                       Assets.png.logo.image(width: _logo, height: _logo, fit: BoxFit.contain),
                       SizedBox(height: AppSpacingTokens.s16),
-                      const AppWordmarkWidget(color: NoxBrand.white),
+                      // Splash brand wordmark is larger than the default (design: 28 under the logo).
+                      const AppWordmarkWidget(color: NoxBrand.white, fontSize: _wordmarkSize),
                     ],
                   ),
                 ),

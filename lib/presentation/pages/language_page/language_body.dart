@@ -66,7 +66,9 @@ class _LanguageBodyState extends State<LanguageBody> {
               for (final language in AppLanguage.values)
                 RadioListTile<AppLanguage>(
                   value: language,
-                  title: Text(_label(context, language)),
+                  // Design: the selected row's title keeps the normal onSurface color (the
+                  // tile tint + radio show selection) — not the M3 default primary tint.
+                  title: Text(_label(context, language), style: TextStyle(color: colorScheme.onSurface)),
                   secondary: _leading(context, language),
                   controlAffinity: ListTileControlAffinity.trailing,
                   selected: _selected == language,

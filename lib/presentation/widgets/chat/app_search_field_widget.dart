@@ -23,7 +23,9 @@ class AppSearchFieldWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s16, vertical: AppSpacingTokens.s8),
+      // Design: the search field sits flush under the header — no extra top gap; only the
+      // bottom s8 separates it from the list below.
+      padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, 0, AppSpacingTokens.s16, AppSpacingTokens.s8),
       child: SearchBar(
         controller: controller,
         hintText: hint ?? context.l10n.searchHint,
