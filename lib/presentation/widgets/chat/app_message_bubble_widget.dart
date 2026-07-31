@@ -73,29 +73,39 @@ class AppMessageBubbleWidget extends StatelessWidget {
           color: background,
           borderRadius: NoxRadius.bubble(isOwn: isOwn),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (file != null)
-              Padding(
-                padding: EdgeInsets.only(bottom: hasText ? AppSpacingTokens.s8 : 0),
-                child: file,
-              ),
-            if (hasText) Text(text!, style: textTheme.bodyLarge?.copyWith(color: foreground)),
-            SizedBox(height: AppSpacingTokens.s2),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(time, style: textTheme.labelSmall?.copyWith(color: meta)),
-                if (statusIcon != null) ...[
-                  SizedBox(width: AppSpacingTokens.s4),
-                  AppIconWidget(statusIcon, size: _statusIconSize, color: statusColor),
+        // Design: the time (+ status) sits at the bubble's bottom-RIGHT, flush to the
+        // trailing edge whatever the bubble's content width. IntrinsicWidth shrink-wraps
+        // the column to its widest line (still capped at maxWidth), then `stretch` lets the
+        // meta Row fill that width so mainAxisAlignment.end pins it right. The file chip is
+        // wrapped in an Align so `stretch` doesn't blow it up to the full bubble width.
+        child: IntrinsicWidth(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (file != null)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Padding(
+                    padding: EdgeInsets.only(bottom: hasText ? AppSpacingTokens.s8 : 0),
+                    child: file,
+                  ),
+                ),
+              if (hasText) Text(text!, style: textTheme.bodyLarge?.copyWith(color: foreground)),
+              SizedBox(height: AppSpacingTokens.s2),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(time, style: textTheme.labelSmall?.copyWith(color: meta)),
+                  if (statusIcon != null) ...[
+                    SizedBox(width: AppSpacingTokens.s4),
+                    AppIconWidget(statusIcon, size: _statusIconSize, color: statusColor),
+                  ],
                 ],
-              ],
-            ),
-          ],
+              ),
+            ],
+          ),
         ),
       ),
     );

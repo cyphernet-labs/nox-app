@@ -64,7 +64,16 @@ class AppComposerWidget extends StatelessWidget {
                         style: textTheme.bodyLarge?.copyWith(color: colorScheme.onSurface),
                         decoration: InputDecoration(
                           isDense: true,
+                          // Design (NoxComposer): a flush, borderless field on the composer bar
+                          // — no outlined box. The global InputDecorationTheme sets an
+                          // enabled/focused OutlineInputBorder, so `border: none` alone is not
+                          // enough; every per-state border must be cleared here.
                           border: InputBorder.none,
+                          enabledBorder: InputBorder.none,
+                          focusedBorder: InputBorder.none,
+                          errorBorder: InputBorder.none,
+                          focusedErrorBorder: InputBorder.none,
+                          disabledBorder: InputBorder.none,
                           hintText: context.l10n.composerHint,
                           hintStyle: textTheme.bodyLarge?.copyWith(color: colorScheme.onSurfaceVariant),
                         ),
