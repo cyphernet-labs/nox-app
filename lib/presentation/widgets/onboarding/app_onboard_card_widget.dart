@@ -25,6 +25,9 @@ class AppOnboardCardWidget extends StatelessWidget {
 
   static double get _logoHeight => AppDimensionTokens.size.onboardLogoH;
 
+  /// Width of the short brand-accent gradient pill under the wordmark (design: 120).
+  static const double _gradientPillWidth = 120;
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -48,7 +51,18 @@ class AppOnboardCardWidget extends StatelessWidget {
                   Assets.png.logo.image(height: _logoHeight),
                   SizedBox(height: AppSpacingTokens.s16),
                   const AppWordmarkWidget(),
-                  const AppSplashHairlineWidget(),
+                  SizedBox(height: AppSpacingTokens.s12),
+                  // Short brand-accent pill under the wordmark (design OnboardCard: a
+                  // centred 120×3 gradient rule), NOT the full-width app-bar hairline.
+                  Container(
+                    width: _gradientPillWidth,
+                    height: AppSplashHairlineWidget.thickness,
+                    decoration: BoxDecoration(
+                      gradient: AppSplashHairlineWidget.gradient,
+                      borderRadius: BorderRadius.circular(AppDimensionTokens.border.thick),
+                    ),
+                  ),
+                  SizedBox(height: AppSpacingTokens.s16),
                   child,
                 ],
               ),

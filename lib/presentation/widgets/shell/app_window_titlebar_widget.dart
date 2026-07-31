@@ -20,6 +20,9 @@ class AppWindowTitlebarWidget extends StatelessWidget {
 
   static double get _height => AppDimensionTokens.size.windowTitlebarH;
 
+  /// Compact wordmark size for the window titlebar strip (design TitleBar: 13).
+  static const double _wordmarkSize = 13;
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -39,10 +42,13 @@ class AppWindowTitlebarWidget extends StatelessWidget {
             children: [
               Assets.png.logo.image(height: AppDimensionTokens.icon.md),
               SizedBox(width: AppSpacingTokens.s8),
-              const AppWordmarkWidget(),
+              // Compact titlebar wordmark (design TitleBar: 13px, +0.14em), smaller
+              // than the app-bar / card wordmark.
+              const AppWordmarkWidget(fontSize: _wordmarkSize, letterSpacingEm: 0.14),
               if (subtitle != null) ...[
                 SizedBox(width: AppSpacingTokens.s8),
-                Text('· $subtitle', style: textTheme.titleSmall?.copyWith(color: colorScheme.onSurfaceVariant)),
+                // Design: `— <label>` in bodyMedium regular (not middle-dot / titleSmall medium).
+                Text('— $subtitle', style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant)),
               ],
             ],
           ),
