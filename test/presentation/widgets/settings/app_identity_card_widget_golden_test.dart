@@ -20,7 +20,6 @@ void main() {
         maskedId: l10nEn.idMask,
         rawId: 'RAWID-0123456789',
         revealable: true,
-        showInlineQr: false,
         initialLoading: false,
         editing: false,
         onToggleReveal: () {},

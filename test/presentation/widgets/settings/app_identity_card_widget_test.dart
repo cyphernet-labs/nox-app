@@ -9,27 +9,21 @@ import '../../../utils/pump_app.dart';
 final l10nEn = AppLocalizationsEn();
 
 void main() {
-  AppIdentityCardWidget card({
-    bool revealable = true,
-    bool showInlineQr = false,
-    bool initialLoading = false,
-    bool editing = false,
-    bool idRevealed = false,
-  }) => AppIdentityCardWidget(
-    name: 'Aria',
-    maskedId: l10nEn.idMask,
-    rawId: 'RAWID-0123456789',
-    revealable: revealable,
-    showInlineQr: showInlineQr,
-    initialLoading: initialLoading,
-    editing: editing,
-    idRevealed: idRevealed,
-    onToggleReveal: () {},
-    onEditName: () {},
-    onCopy: () {},
-    onShowQr: () {},
-    nameEditField: editing ? const TextField(key: Key('edit')) : null,
-  );
+  AppIdentityCardWidget card({bool revealable = true, bool initialLoading = false, bool editing = false, bool idRevealed = false}) =>
+      AppIdentityCardWidget(
+        name: 'Aria',
+        maskedId: l10nEn.idMask,
+        rawId: 'RAWID-0123456789',
+        revealable: revealable,
+        initialLoading: initialLoading,
+        editing: editing,
+        idRevealed: idRevealed,
+        onToggleReveal: () {},
+        onEditName: () {},
+        onCopy: () {},
+        onShowQr: () {},
+        nameEditField: editing ? const TextField(key: Key('edit')) : null,
+      );
 
   group('AppIdentityCardWidget', () {
     testWidgets('mobile: shows the name, the masked ID and Show/Copy/Show-QR + edit actions', (tester) async {
@@ -63,12 +57,13 @@ void main() {
       expect(find.byKey(const Key('edit')), findsOneWidget);
     });
 
-    testWidgets('desktop: no reveal toggle, inline account QR instead', (tester) async {
-      await pumpApp(tester, card(revealable: false, showInlineQr: true));
+    testWidgets('desktop (non-revealable): no reveal toggle, and no QR inside the card', (tester) async {
+      await pumpApp(tester, card(revealable: false));
 
       expect(find.byTooltip(l10nEn.idShowTooltip), findsNothing);
       expect(find.byTooltip(l10nEn.idHideTooltip), findsNothing);
-      expect(find.byType(AppQrSurfaceWidget), findsOneWidget);
+      // The account QR now renders as a separate block below the card (settings_root_page), not inside it.
+      expect(find.byType(AppQrSurfaceWidget), findsNothing);
     });
   });
 }
