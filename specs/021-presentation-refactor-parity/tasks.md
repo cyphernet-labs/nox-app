@@ -74,8 +74,8 @@
 
 ## Phase 6: Polish & cross-cutting
 
-- [ ] T030 Финальная сверка `contracts/parity-matrix.md`: все 16 строк ✅/✔; прогнать mobile+desktop goldens затронутых экранов рядом
-- [ ] T031 Финальный `make gate` + `make golden-verify` на `develop` после всех merge; отметить статусы R1–R28 в `docs/presentation-refactor-review.md`
+- [x] T030 Финальная сверка `contracts/parity-matrix.md`: все 16 строк ✅/✔ (rows 1–5 ✅, 6–8 ✔ intentional, 9–16 ✅ clean); page-goldens (mobile+desktop) затронутых экранов зелёные
+- [x] T031 Финальный `make gate` (732) + `make golden-verify` (216) на `develop` после merge US1/US2/US3; статусы R1–R28 отмечены ✅ в `docs/presentation-refactor-review.md` (§4)
 
 ---
 

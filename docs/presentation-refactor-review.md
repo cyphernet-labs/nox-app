@@ -162,6 +162,15 @@ brand-hairline (`:185`), а desktop settings menu-pane ставит `Divider` п
 
 Порядок: паритет (реальные дефекты → confirm-only) → низкорисковые высокоценные выносы → оптимизации.
 
+> **✅ СТАТУС: ВЕСЬ БЭКЛОГ R1–R28 ЗАКРЫТ** (spec `021-presentation-refactor-parity`, ветка `021-…`, смёржено в `develop`).
+> Каждый пункт — отдельный коммит с fail-first/golden-страховкой; `make gate` (732 теста) + `make golden-verify` (216 goldens) зелёные; три адверсариальных ревью на границах US1/US2/US3 (16 агентов суммарно) — 1 подтверждённая находка (R4 a11y-дубль), исправлена.
+> - **R1–R5** — реальные паритет-дефекты, закрыты (US1 / T002–T006), каждый с fail-first-тестом + golden.
+> - **R6–R8** — подтверждены намеренными (R6 сверен с корпусом — pane-header без hairline by design; R7/R8 — владелец, FR-012/FR-013). Кода не менялось.
+> - **R9–R21 (E1–E13)** — 13 выносов в виджеты (US2 / T010–T022), behavior-preserving, page/widget-goldens байт-в-байт, 0 остаточных копий по grep.
+> - **R22–R28 (O1–O7)** — 7 оптимизаций (US3 / T023–T029): `NoxOpacity`-токены (scrim 0.55→0.5), именованные геометрия-const, hoisting `Theme.of`, `_neutralSurface`, снятие dead-кода/двойного hairline, ellipsis mobile-thread-title. 2 осознанных pixel-изменения (scrim, hairline ~1px) — перегенерированы и заэйболены; прочее без churn.
+>
+> Детализация по задачам: `specs/021-presentation-refactor-parity/tasks.md` (T001–T031, все `[x]`); паритет-контракт: `contracts/parity-matrix.md` (16/16 ✅/✔).
+
 | id | title | cat | eff | risk | safety net | acceptance |
 |---|---|:--:|:--:|:--:|---|---|
 | R1 | `error_page` `_wide` ветвится по `ErrorPageMode` (back / `PopScope`) | parity | M | med | desktop error-golden (blocking) + widget-тест на `PopScope` в wide | fatal на desktop неотменяем system-back; embedded имеет back |
