@@ -6,7 +6,7 @@ Generate a golden (snapshot) test for a `nox_app` page/widget.
 > - **Plain Flutter goldens** (`matchesGoldenFile`) — **no `alchemist`, no Docker, no Linux/amd64 image, no CI golden job.** (The migrated source project used a pinned Docker image for byte-stable cross-host goldens; we explicitly do **not**.)
 > - Baselines are **rendered and verified only on the developer's machine (Apple Silicon / macOS)**. They are a **local regression aid**, not a cross-platform gate. A teammate on another OS may see font/AA diffs — that is the accepted trade-off here (goldens are generated + checked solely on the owner's M1).
 > - Golden tests are **excluded from CI**: they carry `@Tags(['golden'])`; `.github/workflows/ci.yml` runs `flutter test --exclude-tags golden`, and `make test` does the same. They run **only** via `make golden-update` / `make golden-verify` (which pass `--tags golden`). `dart_test.yaml` declares the `golden` tag.
-> - Baseline `goldens/*.png` are **committable fixtures** (not gitignored — only `*.g.dart`/`*.freezed.dart`/`*.config.dart`/`*.mocks.dart` + `lib/design/gen/` are).
+> - Baseline `goldens/*.png` are **committable fixtures** — not gitignored. The ignored generated set is `*.g.dart`/`*.freezed.dart`/`*.config.dart`/`*.mocks.dart` + `lib/design/gen/` + the gen-l10n output `lib/l10n/app_localizations*.dart`, plus the golden-diff `**/failures/` dirs.
 > - **Determinism:** pump under `ScreenUtilInit(designSize: Constants.designSize)` (360×779) and pin the surface to that size, so the ScreenUtil scale is a deterministic 1:1 and design tokens render at design values. `AppSpacingTokens.sN` / `AppTextStyleTokens` read `ScreenUtil()` **live** on each access (no static cache), so they resolve correctly once `ScreenUtilInit` has run and the surface is fixed.
 >
 > **Three golden categories (project rule).** Goldens split into THREE kinds — the existing approach stays, the third is added:
@@ -18,7 +18,7 @@ Generate a golden (snapshot) test for a `nox_app` page/widget.
 
 $ARGUMENTS
 
-The first argument is the path to the widget file (e.g. `lib/presentation/pages/item_list_page/item_list_page.dart`).
+The first argument is the path to the widget file (e.g. `lib/presentation/pages/chats_list_page/chats_list_page.dart`).
 Any additional text describes specific visual scenarios to capture. If none are specified, generate reasonable defaults
 based on the widget's visual states (and both `light`/`dark` themes — the app ships both via `AppTheme.light()`/`dark()`).
 
@@ -27,19 +27,23 @@ based on the widget's visual states (and both `light`/`dark` themes — the app 
 1. **Read the target widget and its dependencies** (same as `/widget-test`): the widget, its BLoC trio if any
    (`bloc/*_bloc.dart` + Freezed `*_event.dart`/`*_state.dart`, **bare** substates `Initializing`/`Initialized`/`Error`),
    the test-env DI it relies on (`configureDependencies(Environment.test)`), domain models, and the strings it renders
-   (`TextConstants.*` from `lib/general/text_constants.dart` — there is no i18n).
+   (`context.l10n.*`, generated from `lib/l10n/app_en.arb` / `app_uk.arb`; `pumpApp` pins `Locale('en')`, so goldens always capture
+   the English bundle).
 
 2. **Identify visual states worth capturing:**
    - Light theme and dark theme (both ship via `AppTheme.light()`/`dark()` + `ThemeExtension<AppColors>`).
-   - Default/empty, populated, and error states if they meaningfully change the UI (e.g. `ItemListPage` renders a
-     `CircularProgressIndicator` while `Initializing`, a `PagedListView` of `ListTile`s when `Initialized`, and a
-     `TextConstants.errorGeneralTitle` + retry button on `Error`).
+   - Default/empty, populated, and error states if they meaningfully change the UI. Product pages expose a `@visibleForTesting`
+     scenario seam for exactly this — e.g. `ChatsListPage(initialScenario: ChatsListScenario.empty | .offline | .inlineError |
+     .fatal)` seeds the state on init, so each variant gets its own `goldenTest('<page>_<scenario>', …)` without driving the UI.
    - Distinct modes (create/edit, tabs) if present.
    - If scenarios are provided in the arguments, use those.
 
 3. **Use the `goldenTest()` helper** in `test/utils/golden.dart` — `goldenTest(name, build, {settle})`. It does everything:
-   loads real fonts (`loadNoxFonts`, so glyphs aren't the `flutter_test` placeholder box-font), fixes the surface to
-   `Constants.designSize`, and renders **both** light and dark (`goldens/<name>_light.png` + `_dark.png`) via `pumpApp`. You
+   loads real fonts (`loadNoxFonts`, so glyphs aren't the `flutter_test` placeholder box-font), freezes `AppClock` at
+   `kGoldenClock` (so relative-time copy like `Yesterday` is stable day-to-day) with a matching reset, pins the surface to
+   `Constants.designSize` by sizing `tester.view` directly at dpr 3 (`setSurfaceSize` would NOT reach the MediaQuery ScreenUtil
+   reads), precaches the brand logo on settled screens, and renders **both** light and dark (`goldens/<name>_light.png` +
+   `_dark.png`) via `pumpApp` — which additionally wraps the build thunk in a `Scaffold(body: …)` and pins `Locale('en')`. You
    supply only `name` and a `build` thunk. Pass `settle: false` for animated content (spinners/progress, or any page that renders
    one) — otherwise the internal `pumpAndSettle` hangs on the endless animation. Pure widgets need no DI; a page that needs a BLoC
    usually wraps it inline (`BlocProvider<AppRootBloc>(create: (_) => AppRootBloc(), child: ...)`) — only a page whose BLoC
@@ -54,8 +58,8 @@ based on the widget's visual states (and both `light`/`dark` themes — the app 
 
 4. **Generate the golden test file mirroring the lib/ path under `test/`** (nox-app convention — tests deep-mirror the source
    tree, NOT flat): `test/presentation/pages/<page>/<widget_name>_golden_test.dart` — e.g.
-   `lib/presentation/pages/item_list_page/item_list_page.dart` → `test/presentation/pages/item_list_page/item_list_page_golden_test.dart`
-   (consistent with the live `test/presentation/pages/item_list_page/item_list_bloc_test.dart`).
+   `lib/presentation/pages/chats_list_page/chats_list_page.dart` → `test/presentation/pages/chats_list_page/chats_list_page_golden_test.dart`
+   (consistent with the live `test/presentation/pages/settings_root_page/settings_root_page_golden_test.dart`).
 
 ## Test file conventions
 
@@ -119,16 +123,23 @@ void main() {
   The per-test titles (`'matches the light theme'`) are produced by the helper — never write `test_shouldMatchGolden_when{X}`.
 - **`settle: false`** for any animated content (spinner/progress) or a page that renders one — otherwise the internal
   `pumpAndSettle` never returns. Add a one-line comment saying why.
-- **DI:** pure widgets need none; a page wraps its own BLoC inline (`BlocProvider<…>(create: …, child: …)`). Only a page whose BLoC
+- **Reactive pages need a bespoke harness.** A page whose repository keeps a `watch*` subscription and mock seed delays in flight
+  works with neither `settle: true` (pumpAndSettle waits forever) nor `settle: false` (snapshots the spinner). Mirror
+  `test/presentation/pages/chat_thread_page/chat_thread_page_golden_test.dart`: same frozen clock / real fonts / pinned surface as
+  `golden.dart`, but settle with a bounded `for (…) await tester.pump(const Duration(milliseconds: 150))` loop.
+- **DI:** pure widgets need none; a page wraps its own BLoC inline (`BlocProvider<…>(create: …, child: …)`). A page whose BLoC
   self-creates from `getIt` needs `setUpAll(() async => configureDependencies(Environment.test))` +
-  `tearDownAll(() async => getIt.reset())` at `main()` level (there is no `flutter_test_config.dart`). Relative imports of test
-  helpers are allowed (test files are not in `lib/`).
+  `tearDownAll(() async => getIt.reset())` at `main()` level. `test/flutter_test_config.dart` is auto-loaded but only seeds the
+  `SharedPreferences` / `FlutterSecureStorage` mock backends — it does not build the container. A DB-backed page additionally needs
+  `await getIt<AppDatabase>().clearEntireDatabase()`; a page that reads the session spine (identity card / Show QR / account
+  avatar) needs `registerFakeSession()` from `test/utils/fake_session_repository.dart`. Relative imports of test helpers are
+  allowed (test files are not in `lib/`).
 - **Style:** line length **140**, single quotes, `const` wherever possible. Golden `.png` files are **committable fixtures** (not gitignored).
 
 5. **Generate baselines (locally, on your M1 — never in CI):**
    ```bash
    make golden-update                                                  # all golden tests
-   make golden-update FILE=test/presentation/pages/item_list_page/item_list_page_golden_test.dart   # one file
+   make golden-update FILE=test/presentation/pages/chats_list_page/chats_list_page_golden_test.dart   # one file
    ```
    This runs `fvm flutter test --tags golden --update-goldens` and writes the `goldens/*.png`. Run `make generate` first if the
    test needs `*.mocks.dart`/codegen.
@@ -139,15 +150,15 @@ void main() {
    ```
    On failure the runner writes `*_testImage.png` / `*_masterImage.png` diffs under a gitignored `failures/` dir next to the
    golden. A diff almost always means the widget changed — review, then regenerate with `make golden-update` if intended.
-   > Note: until **at least one** `@Tags(['golden'])` test exists, `make golden-verify` / `make golden-update` exit non-zero with
-   > "no tests ran" (`flutter test` exit 79) — that's expected on an empty golden set, not a failure.
+   > Note: a non-zero exit from `make golden-verify` is a REAL failure — the repo has a full golden set, so the old "no tests ran"
+   > (`flutter test` exit 79) escape hatch no longer applies. The only exception is a `FILE=` narrowing that matches no golden test.
 
-7. **Format the files you created/changed, with explicit paths** (never format the `goldens/*.png`):
+7. **Format the files you created/changed, with explicit paths** (never format the `goldens/*.png`, and never a file you did not touch):
    ```bash
-   fvm dart format -l 140 <test_file_path> test/utils/pump_app.dart
+   fvm dart format -l 140 <test_file_path>   # add test/utils/golden.dart only if you changed the harness
    ```
 
-8. **Remind the user** that `goldens/*.png` are fixtures (not codegen) and must be committed — stage them and let the owner commit
-   (repo no-auto-commit rule; on this branch commits go to `develop`). Goldens are **not** checked by CI, so **run
+8. **Remind the user** that `goldens/*.png` are fixtures (not codegen) and must be committed alongside the test (work lands on
+   `develop`; pushing to a remote stays an explicit owner decision). Goldens are **not** checked by CI, so **run
    `make golden-verify` locally before committing** — that is the only place a golden regression is caught. If the look changed on
    purpose, regenerate (`make golden-update`) and commit the new PNGs.
