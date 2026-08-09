@@ -162,8 +162,11 @@ Summarize the solution into `assets/preview-template.md` → `<slug>-preview.md`
 - **No document-level status apparatus.** Do NOT write a status badge, a readiness state, a risk rating, an
   estimate, a «Границы» line, a mode field or a «Что это»-style meta preamble. These are leftovers from
   ticket-tracking and they make a design document read like a task card. The document describes **how the thing
-  works**; what is unresolved belongs in the open-questions section, and what is out of scope belongs in the
-  out-of-scope section. Both already say it, better.
+  works**; what is unresolved belongs in the open-questions section, which says it better.
+- **The brief ends on the open questions.** No out-of-scope section either — that, like the absent connections and
+  the supporting evidence, is negative space: it tells the reader what the document is *not* about, which is the
+  solution doc's job (§8 there). A five-minute brief should close on what someone has to decide, not on a list of
+  things nobody was going to find here anyway.
 - **The «Открытые вопросы и блокеры» section is REQUIRED** — 🔴 blocker · 🟡 open question · 🟢 accepted assumption.
   Cross-reference the register by question id (Q1, Q7…) where one exists.
 - **No file-by-file map, no code.** If a repo file genuinely matters (e.g. «этот механизм уже есть в
