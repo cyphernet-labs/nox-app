@@ -1,6 +1,6 @@
 ---
 name: "prepare-preview"
-description: "Turns a design topic or architectural decision into two artifacts in one folder: a detailed editable SOLUTION working-doc and a short team PREVIEW brief (.md + a colored PDF with 🟢🟡🔴 markers and mermaid diagrams, via headless Chrome). Built for NOX's current phase, where there is no implementation yet: it describes top-level parts, how they talk to each other, formats and contracts, decisions and their alternatives, corner cases and open questions — and deliberately does NOT produce file-by-file change maps or code examples. Sources are the project's own docs (docs/research, docs/protocol, docs/design/spec, the open-questions register) plus the repo; web research only when explicitly asked. Runs in FRESH and UPDATE modes; UPDATE also reconciles decisions back into the open-questions register. Never guesses missing facts. The PREVIEW's required section is Open Questions & Blockers."
+description: "An instrument for reaching a design decision together and keeping it: turns a topic discussed in conversation into two artifacts in one folder — a detailed editable SOLUTION working-doc and a short team PREVIEW brief (.md + a colored PDF with 🟢🟡🔴 markers and mermaid diagrams, via headless Chrome). The input is a topic description plus the details given in the discussion — NEVER a ticket id; there is no tracker in this project. The conversation is a primary source alongside the project's own docs (docs/research, docs/protocol, docs/design/spec, the open-questions register) and the repo, and the documents must hold the whole context so a cold reader sees what was decided, what was rejected and what is still open without the chat history. Built for NOX's current phase, where there is no implementation yet: it describes top-level parts, how they talk, formats and contracts, decisions with their alternatives, corner cases and open questions — and deliberately produces NO file-by-file change maps, code, or document-level status apparatus. UPDATE is the normal working mode as the discussion moves on; it amends and never silently drops what was already recorded, and reconciles resolved questions back into the register."
 user-invocable: true
 disable-model-invocation: false
 ---
@@ -18,10 +18,30 @@ Prepares, per topic, **two artifacts in one folder**:
 
 Two modes:
 
-- **FRESH** — first pass: build the picture from the project docs + repo, write both artifacts.
-- **UPDATE** — the owner reviewed and has edits ("do it this way instead", "this part is wrong", "add the case
-  where X"): apply them to the EXISTING documents, re-verify anything the edits touch, rewrite both, regenerate
-  the PDF, and report exactly what changed.
+- **FRESH** — first pass: build the picture from the conversation + project docs + repo, write both artifacts.
+- **UPDATE** — the normal working mode. The owner reviewed, or the discussion moved on ("do it this way instead",
+  "this part is wrong", "we decided X"): apply it to the EXISTING documents, re-verify anything it touches,
+  rewrite both, regenerate the PDF, and report exactly what changed.
+
+## What this skill is FOR
+
+**It is an instrument for reaching a decision together, not a spec and not a task card.** The cycle is: discuss →
+write down what was agreed → the owner reads it and pushes back → update → discuss again. The documents are the
+place where the agreement accumulates, so that the next round starts from what was settled instead of
+re-deriving it.
+
+Three consequences that govern everything below:
+
+1. **The input is never a ticket.** There is no tracker in this project and none should be assumed. The input is
+   a description of the topic plus whatever key details the owner gave in the conversation. Do not ask for a
+   ticket id, do not name the documents after one, do not leave ticket-shaped fields in them.
+2. **The conversation is a primary source, on a par with the project's documents.** A decision the owner stated
+   in chat is a fact, and it is usually the freshest fact available — the docs may not have caught up yet. Record
+   it with its date and attribute it («решение владельца, <дата>»). Never quietly re-open something already
+   agreed, and never re-ask a question the conversation already answered.
+3. **The documents must hold the whole context.** They are the durable memory of a discussion that will span many
+   sessions. Anyone picking them up cold — the owner in a month, a teammate, a future session — must be able to
+   see what was decided, what was rejected and why, and what is still open, without reading the chat history.
 
 **Phase rule — this is a design skill, not a change-planning skill.** NOX currently has no implementation of the
 backend, protocol or transport. Therefore this skill MUST NOT produce: a file-by-file change map, "which files
@@ -39,8 +59,9 @@ When invoked, show a short intro:
 
 ## Step 0 — Input & mode
 
-Take the topic from the invocation (`/prepare-preview client-backend-connect`). If none was given, ask what the
-preview is about and agree a short kebab-case **slug** for the filenames. Capture any edit request given alongside.
+Take the topic from the invocation (`/prepare-preview client-backend-connect`) — a short kebab-case **slug**
+describing the subject, never a ticket id. If none was given, ask what the preview is about and agree a slug.
+Capture any edit request or newly agreed decision given alongside.
 
 Skim this skill's `assets/`: `solution-template.md`, `preview-template.md`, and the PDF recipe
 (`head.html` / `tail.html` / `render-pdf.sh`).
@@ -51,9 +72,10 @@ then ask). Found → **UPDATE** (confirm: «нашёл существующие 
 
 ## Step 1 — Source preflight (read before writing)
 
-There is no external ticket system in this project. **The project's own documents are the primary source**, the
-repo is the second, and the web is optional. Report what you actually read, ✅ / ⚠️ / ❌ — and if something the
-topic depends on does not exist yet, say so instead of inventing it.
+**The conversation and the project's own documents are the primary sources**, the repo is the second, and the web
+is optional. Where they disagree, the conversation is the most recent and usually wins — but say so in the
+document rather than silently overriding a written decision. Report what you actually read, ✅ / ⚠️ / ❌ — and if
+something the topic depends on does not exist yet, say so instead of inventing it.
 
 Read whatever the topic touches:
 
@@ -93,8 +115,19 @@ The spine of the analysis, in this order:
    network/machine/address changes. This section is what makes the document worth reading twice.
 6. **Scope boundary.** What this topic explicitly does not cover, and where that lives instead.
 
-In UPDATE mode, read the existing solution doc as the base, apply the edits surgically, and keep a short changelog
-entry saying what changed and why.
+In UPDATE mode, read the existing solution doc as the base and apply the edits surgically.
+
+**Nothing already recorded may quietly disappear.** An update adds and amends; it does not silently drop.
+
+- A decision that no longer holds is **marked as revised** with the date and the reason, not deleted — the reader
+  needs to know it was considered and why it changed.
+- An open question that got answered moves to a decision **and** is marked resolved in the register (Step 7); it
+  does not just vanish from the table.
+- A corner case that turned out to be a non-issue says so; an unexplained absence reads as an oversight.
+- Every round appends a changelog entry: what changed and why.
+
+This is what makes the document worth returning to. If an update makes it shorter by forgetting things, the skill
+has failed at its main job.
 
 ## Step 3 — Clarifying interview (ASK, don't assume — use AskUserQuestion)
 
@@ -119,6 +152,11 @@ Summarize the solution into `assets/preview-template.md` → `<slug>-preview.md`
 - **Diagrams are required, not decorative.** At least two: one **component/relationship** view (who the parts are
   and how they connect) and one **flow or sequence** view (the main path end to end). Add a state diagram when
   lifecycle matters. Keep each readable on one page — if a diagram needs more than ~10 nodes, split it.
+- **Do not list absent connections in the brief.** Naming what does NOT connect to what belongs in the solution
+  doc (§3), where there is room to explain it. In a 5-minute brief a list of negatives reads as noise — the
+  diagram already says what connects. Make the diagram unambiguous instead.
+- **Cut supporting evidence from the brief.** Which other projects reached the same conclusion, which sources
+  back a claim — that is the solution doc's job. The brief states the conclusion and moves on.
 - **Markers:** 🟢 · 🟡 · 🔴 · ⚠️ — used **inside** the content, where they carry meaning: what exists versus what
   does not, what is decided versus open, which corner case is unresolved.
 - **No document-level status apparatus.** Do NOT write a status badge, a readiness state, a risk rating, an
