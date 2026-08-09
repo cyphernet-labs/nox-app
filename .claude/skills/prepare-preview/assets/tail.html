@@ -1,0 +1,19 @@
+</script>
+<script type="module">
+  import { marked } from 'https://cdn.jsdelivr.net/npm/marked/lib/marked.esm.js';
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  const md = document.getElementById('src').textContent;
+  document.getElementById('content').innerHTML = marked.parse(md);
+  // marked emits ```mermaid as <pre><code class="language-mermaid">; convert to <div class="mermaid"> for mermaid.run.
+  document.querySelectorAll('code.language-mermaid').forEach((el) => {
+    const div = document.createElement('div');
+    div.className = 'mermaid';
+    div.textContent = el.textContent;
+    (el.closest('pre') || el).replaceWith(div);
+  });
+  mermaid.initialize({ startOnLoad: false, theme: 'default' });
+  await mermaid.run({ querySelector: '.mermaid' });
+  document.title = 'render-complete';
+</script>
+</body>
+</html>
