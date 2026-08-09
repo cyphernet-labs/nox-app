@@ -4,18 +4,15 @@
   Whole brief must be readable in ~5 minutes: tables and diagrams over prose.
 
   PHASE RULE: no file-by-file change map, no code, no migration/test plans — this describes the SOLUTION.
-  Markers: 🟢 new/decided · 🟡 changed/needs input · 🔴 removed/blocked · ⚠️ attention.
-  Badges: 🟢 Ready · 🟡 Needs input · 🔴 Blocked.
+  NO document-level status apparatus: no status badge, readiness, risk rating, estimate, «Границы» line, mode
+  field or «Что это» meta preamble. This reads as documentation of how the thing works. What is unresolved goes
+  in Open Questions; what is not covered goes in Out of Scope.
+  Markers 🟢 🟡 🔴 ⚠️ are used INSIDE the content, where they carry meaning (exists / partial / missing,
+  decided / open, resolved / unresolved).
   Diagrams are REQUIRED: at least one component view + one flow/sequence view. Keep each to ~10 nodes.
   Russian prose; identifiers, paths, formats and command names verbatim in English.
 -->
-# <Тема> — Preview для команды
-
-**Статус:** <🟢 Ready / 🟡 Needs input / 🔴 Blocked> · **Границы:** <что покрыто> · **Риск:** <низкий/средний/высокий> · **Ключевое решение:** <одна строка>
-
-> **Что это.** Верхнеуровневое описание решения: из каких частей состоит, как они разговаривают, что между ними
-> ходит, что уже решено и что ещё открыто. Реализации пока нет — это база для обсуждения и для последующей
-> спецификации, а не план изменений в коде.
+# <Тема>
 
 ---
 

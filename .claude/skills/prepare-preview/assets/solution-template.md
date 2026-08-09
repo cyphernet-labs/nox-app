@@ -9,11 +9,13 @@
   Ground every claim in a project document (docs/research, docs/protocol, docs/design/spec, the register) or in
   the repo with a real `path:line`. Never invent a path or a number. Keep unknowns as explicit open questions.
   Formats must be concrete: not «токен», but «16 байт, одноразовый, TTL 15 минут».
+  NO document-level status apparatus (no status/readiness/risk/mode field) — what is unresolved belongs in
+  Open Questions, what is not covered belongs in Out of Scope. A date line is fine; a status line is not.
   Delete these guidance comments when filling.
 -->
 # <Тема> — Solution (рабочая документация)
 
-**Slug:** `<slug>` · **Обновлён:** <дата> · **Режим:** <fresh / update> · **Статус:** <черновик / на ревью / принято>
+**Обновлён:** <дата>
 
 ## 0. Что прочитано
 

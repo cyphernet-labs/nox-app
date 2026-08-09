@@ -119,8 +119,13 @@ Summarize the solution into `assets/preview-template.md` → `<slug>-preview.md`
 - **Diagrams are required, not decorative.** At least two: one **component/relationship** view (who the parts are
   and how they connect) and one **flow or sequence** view (the main path end to end). Add a state diagram when
   lifecycle matters. Keep each readable on one page — if a diagram needs more than ~10 nodes, split it.
-- **Markers:** 🟢 new / decided · 🟡 changed / needs input · 🔴 removed / blocked · ⚠️ attention. Top badge:
-  🟢 Ready / 🟡 Needs input / 🔴 Blocked, plus one line of scope + risk + the headline decision.
+- **Markers:** 🟢 · 🟡 · 🔴 · ⚠️ — used **inside** the content, where they carry meaning: what exists versus what
+  does not, what is decided versus open, which corner case is unresolved.
+- **No document-level status apparatus.** Do NOT write a status badge, a readiness state, a risk rating, an
+  estimate, a «Границы» line, a mode field or a «Что это»-style meta preamble. These are leftovers from
+  ticket-tracking and they make a design document read like a task card. The document describes **how the thing
+  works**; what is unresolved belongs in the open-questions section, and what is out of scope belongs in the
+  out-of-scope section. Both already say it, better.
 - **The «Открытые вопросы и блокеры» section is REQUIRED** — 🔴 blocker · 🟡 open question · 🟢 accepted assumption.
   Cross-reference the register by question id (Q1, Q7…) where one exists.
 - **No file-by-file map, no code.** If a repo file genuinely matters (e.g. «этот механизм уже есть в
@@ -128,16 +133,17 @@ Summarize the solution into `assets/preview-template.md` → `<slug>-preview.md`
   the document into a change list.
 - Russian prose; code identifiers, paths, command names and formats verbatim in English.
 
-## Step 5 — Save location (MANDATORY — always ask, never assume)
+## Step 5 — Save location
 
-**ALWAYS ask via AskUserQuestion and WAIT for an answer BEFORE writing ANY file**, even if the folder already
-exists, even in UPDATE mode.
+**FRESH: ask via AskUserQuestion and WAIT for an answer BEFORE writing ANY file.**
 
 > Куда положить документы по <slug> (solution + preview + pdf, в одну папку)? Дефолт — `docs/preview/<slug>/`
 > (трекается в git, потому что бриф идёт команде). Для локального черновика назови нетрекаемую папку.
 
-All three artifacts go in the SAME folder. Default `docs/preview/<slug>/`; in UPDATE mode default to the existing
-folder but still confirm.
+**UPDATE: write back to the folder the documents already live in, without asking.** Re-asking on every review
+round is friction with no upside — the owner is iterating in place. Ask only if they requested a copy elsewhere.
+
+All three artifacts go in the SAME folder.
 
 ## Step 6 — Generate the PDF (headless Chrome)
 
@@ -156,8 +162,8 @@ in doubt, open the PDF or re-render after simplifying the diagram.
 1. **Update `docs/research/open-questions.md`** when this round resolved or created questions: a decision taken →
    mark the question solved with the date and the reason; a new fork surfaced → add it. This is what keeps the
    docs operable across rounds instead of drifting into a pile of one-off briefs.
-2. Report the folder and the three files, the status badge, and the open questions the team must resolve. In
-   UPDATE mode, list exactly what changed.
+2. Report the folder and the three files, plus the open questions the team must resolve. In UPDATE mode, list
+   exactly what changed.
 3. Note that the solution doc is the input for Spec Kit (`/speckit-specify`) or a protocol spec when the topic is
    ready to be built.
 4. Do not commit unless asked.
