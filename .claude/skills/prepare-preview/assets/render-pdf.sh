@@ -17,13 +17,31 @@ trap 'rm -rf "$TMP"' EXIT
 WRAP="$TMP/wrapper.html"
 { cat "$DIR/head.html"; cat "$MD"; cat "$DIR/tail.html"; } > "$WRAP"
 
-# task_policy_set warnings on macOS are harmless; the PDF is still written.
-"$CHROME" --headless=new --disable-gpu --no-pdf-header-footer --run-all-compositor-stages-before-draw \
-  --virtual-time-budget=20000 --print-to-pdf="$PDF" "file://$WRAP" >/dev/null 2>&1 || true
+rm -f "$PDF"
 
-if [ -s "$PDF" ]; then
-  echo "PDF written: $PDF ($(wc -c < "$PDF" | tr -d ' ') bytes)"
+# An isolated profile is REQUIRED: sharing the default user-data-dir with a running Chrome makes the print
+# silently emit a blank ~900-byte PDF. Chrome also often fails to exit after writing, so run it detached and
+# wait for the file instead of for the process.
+# task_policy_set warnings on macOS are harmless; the PDF is still written.
+"$CHROME" --headless=new --disable-gpu --user-data-dir="$TMP/profile" \
+  --no-pdf-header-footer --run-all-compositor-stages-before-draw \
+  --virtual-time-budget=20000 --print-to-pdf="$PDF" "file://$WRAP" >/dev/null 2>&1 &
+CHROME_PID=$!
+
+for _ in $(seq 1 60); do
+  sleep 1
+  [ -s "$PDF" ] && sleep 2 && break
+done
+kill "$CHROME_PID" 2>/dev/null || true
+wait "$CHROME_PID" 2>/dev/null || true
+
+SIZE=$([ -f "$PDF" ] && wc -c < "$PDF" | tr -d ' ' || echo 0)
+
+# A blank page is ~900 bytes; any real brief with embedded fonts is tens of KB. Treat blank as a failure.
+if [ "$SIZE" -gt 20000 ]; then
+  echo "PDF written: $PDF ($SIZE bytes)"
 else
-  echo "PDF generation FAILED — check that Chrome is installed and the machine has network for the CDN." >&2
+  echo "PDF generation FAILED — got $SIZE bytes (a blank page is ~900)." >&2
+  echo "Check: Chrome installed, network for the jsDelivr CDN, and no mermaid syntax error in the brief." >&2
   exit 1
 fi
