@@ -6,7 +6,7 @@
   parts, responsibilities, interactions, formats, decisions, corner cases. Do NOT write a file-by-file change map,
   code snippets, migration plans, or test plans for code that does not exist.
 
-  Ground every claim in a project document (docs/research, docs/protocol, docs/design/spec, the register) or in
+  Ground every claim in a project document (docs/client-backend, docs/design/spec) or in
   the repo with a real `path:line`. Never invent a path or a number. Keep unknowns as explicit open questions.
   Formats must be concrete: not «токен», but «16 байт, одноразовый, TTL 15 минут».
   NO document-level status apparatus (no status/readiness/risk/mode field) — what is unresolved belongs in
@@ -72,7 +72,7 @@
 ## 7. Открытые вопросы и блокеры
 
 <🔴 блокер (нельзя двигаться) · 🟡 открытый вопрос · 🟢 принятое допущение. Где есть вопрос в реестре
-`docs/research/open-questions.md` — ссылайся по id (Q1, Q7…), не дублируй содержание.>
+`docs/client-backend/open-questions.md` — ссылайся по id (Q1, Q7…), не дублируй содержание.>
 
 | | Вопрос / блокер | На ком / что нужно | Реестр |
 |---|---|---|---|

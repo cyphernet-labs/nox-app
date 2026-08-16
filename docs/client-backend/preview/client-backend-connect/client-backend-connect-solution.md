@@ -4,7 +4,7 @@
 
 ## 0. Источники
 
-**Документы проекта (первичны):** `docs/research/summary.md`, `docs/research/client-backend-deployment.md` (§3 связность, §6 TLS и спаривание, §7 площадки), `docs/research/snikket-fit.md` (§4 push, §5 что забрать), `docs/research/open-questions.md` (Q1, Q10, Q11, Q12), `docs/protocol/wire-surface.md` (инвентарь операций).
+**Документы проекта (первичны):** `docs/client-backend/summary.md`, `docs/client-backend/research/client-backend-deployment.md` (§3 связность, §6 TLS и спаривание, §7 площадки), `docs/client-backend/research/snikket-fit.md` (§4 push, §5 что забрать), `docs/client-backend/open-questions.md` (Q1, Q10, Q11, Q12), `docs/client-backend/protocol/wire-surface.md` (инвентарь операций).
 
 **Репозиторий:** `lib/general/nox_qr_envelope.dart` (существующий конверт `nox://id/`), `lib/data/remote/api_client.dart` и `lib/data/remote/interceptor/auth_interceptor.dart` (текущий REST-сеам, инертен), `lib/domain/service/connectivity_service.dart`, `lib/data/repository/app/session_repository_impl.dart`.
 
@@ -51,7 +51,7 @@ Client-сервер отдельно разговаривает с relay-сер�
 1. **Ключи живут в одном месте** — на relay-сервере. Не копируются в пользовательские инстансы даже в управляемом варианте.
 2. **Пуш физически не может идти по сокету:** приложение в этот момент убито, сокета не существует, будить его умеет только ОС через APNs/FCM.
 
-Это подтверждено разбором Snikket по их коду (`docs/research/snikket-fit.md` §4): их самостоятельно поднятый сервер **навсегда зависит** от двух хостов компании, и в quickstart об этом не сказано ни слова. К тому же выводу независимо пришли Zulip, Mattermost, Rocket.Chat, Prosody и Delta Chat.
+Это подтверждено разбором Snikket по их коду (`docs/client-backend/research/snikket-fit.md` §4): их самостоятельно поднятый сервер **навсегда зависит** от двух хостов компании, и в quickstart об этом не сказано ни слова. К тому же выводу независимо пришли Zulip, Mattermost, Rocket.Chat, Prosody и Delta Chat.
 
 Что при этом остаётся в нашей власти — **насколько релей слеп**: содержимое пуша шифруется, а на Android он вообще вырождается в контентно-пустой «звонок в дверь». Механика — там же, §4.3–4.5.
 
@@ -101,7 +101,7 @@ QR несёт **ту же самую ссылку** целиком, не отд�
 
 ### 4.5. Протокол после спаривания
 
-Постоянный WebSocket поверх TLS, модель publish/subscribe. Полный инвентарь — `docs/protocol/wire-surface.md`: **17 команд, 6 событий**. Конверт (корреляция команда↔ack, коды ошибок) не зафиксирован — зависит от Q1a.
+Постоянный WebSocket поверх TLS, модель publish/subscribe. Полный инвентарь — `docs/client-backend/protocol/wire-surface.md`: **17 команд, 6 событий**. Конверт (корреляция команда↔ack, коды ошибок) не зафиксирован — зависит от Q1a.
 
 Порт по умолчанию **443**: через него исходящие соединения проходят в корпоративных сетях, отелях и за captive-порталами. Публичный сертификат не нужен — ключ пинится из ссылки, значит на client-сервере достаточно самоподписанного. Ни домена, ни ACME, ни продления.
 
@@ -196,15 +196,15 @@ QR несёт **ту же самую ссылку** целиком, не отд�
 ## 9. Вне скоупа
 
 - Протокол «client-сервер ↔ relay-сервер» — другой контракт, другой инженер.
-- Конверт протокола и коды ошибок — `docs/protocol/`, после Q1a.
-- Push-уведомления — разобраны в `docs/research/snikket-fit.md` §4.
+- Конверт протокола и коды ошибок — `docs/client-backend/protocol/`, после Q1a.
+- Push-уведомления — разобраны в `docs/client-backend/research/snikket-fit.md` §4.
 - Файловый канал по HTTP — отдельный документ.
-- Экономика и юридический статус оператора — `docs/research/client-backend-deployment.md` §9, §10.
+- Экономика и юридический статус оператора — `docs/client-backend/research/client-backend-deployment.md` §9, §10.
 
 ## 10. Ссылки и changelog
 
 - **Бриф:** `client-backend-connect-preview.md` / `.pdf` (в этой же папке).
-- **Источники:** `docs/research/`, `docs/protocol/wire-surface.md`, реестр `docs/research/open-questions.md`.
+- **Источники:** `docs/client-backend/research/`, `docs/client-backend/protocol/wire-surface.md`, реестр `docs/client-backend/open-questions.md`.
 - **Changelog:**
   - 2026-08-09 — первая версия.
   - 2026-08-09 — связь client-сервер ↔ relay-сервер помечена как нерешённая: подпись на диаграмме «своя связь» → «протокол не выбран», добавлена строка в открытые вопросы, заведён Q13 в реестре. Документ на этот протокол не опирается — ему достаточно факта, что связь есть.

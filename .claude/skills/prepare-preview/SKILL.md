@@ -1,6 +1,6 @@
 ---
 name: "prepare-preview"
-description: "An instrument for reaching a design decision together and keeping it: turns a topic discussed in conversation into two artifacts in one folder — a detailed editable SOLUTION working-doc and a short team PREVIEW brief (.md + a colored PDF with 🟢🟡🔴 markers and mermaid diagrams, via headless Chrome). The input is a topic description plus the details given in the discussion — NEVER a ticket id; there is no tracker in this project. The conversation is a primary source alongside the project's own docs (docs/research, docs/protocol, docs/design/spec, the open-questions register) and the repo, and the documents must hold the whole context so a cold reader sees what was decided, what was rejected and what is still open without the chat history. Built for NOX's current phase, where there is no implementation yet: it describes top-level parts, how they talk, formats and contracts, decisions with their alternatives, corner cases and open questions — and deliberately produces NO file-by-file change maps, code, or document-level status apparatus. UPDATE is the normal working mode as the discussion moves on; it amends and never silently drops what was already recorded, and reconciles resolved questions back into the register."
+description: "An instrument for reaching a design decision together and keeping it: turns a topic discussed in conversation into two artifacts in one folder — a detailed editable SOLUTION working-doc and a short team PREVIEW brief (.md + a colored PDF with 🟢🟡🔴 markers and mermaid diagrams, via headless Chrome). The input is a topic description plus the details given in the discussion — NEVER a ticket id; there is no tracker in this project. The conversation is a primary source alongside the project's own docs (docs/client-backend — research, protocol and the open-questions register — plus docs/design/spec) and the repo, and the documents must hold the whole context so a cold reader sees what was decided, what was rejected and what is still open without the chat history. Built for NOX's current phase, where there is no implementation yet: it describes top-level parts, how they talk, formats and contracts, decisions with their alternatives, corner cases and open questions — and deliberately produces NO file-by-file change maps, code, or document-level status apparatus. UPDATE is the normal working mode as the discussion moves on; it amends and never silently drops what was already recorded, and reconciles resolved questions back into the register."
 user-invocable: true
 disable-model-invocation: false
 ---
@@ -53,8 +53,8 @@ implementation plan, that is Spec Kit's job (`/speckit-specify` → `plan` → `
 When invoked, show a short intro:
 
 > Соберу preview по теме: детальный solution-документ (рабочая база) + короткий team-бриф (.md + цветной PDF с
-> диаграммами). Источники — документы проекта (`docs/research/`, `docs/protocol/`, `docs/design/spec/`, реестр
-> открытых вопросов) и репозиторий. Скажи тему; если по ней уже есть документы — применю правки (update), иначе
+> диаграммами). Источники — сам разговор, документы проекта (`docs/client-backend/`, `docs/design/spec/`) и
+> репозиторий. Скажи тему; если по ней уже есть документы — применю правки (update), иначе
 > соберу с нуля (fresh). Сначала прочитаю релевантные доки и задам уточняющие вопросы.
 
 ## Step 0 — Input & mode
@@ -66,7 +66,7 @@ Capture any edit request or newly agreed decision given alongside.
 Skim this skill's `assets/`: `solution-template.md`, `preview-template.md`, and the PDF recipe
 (`head.html` / `tail.html` / `render-pdf.sh`).
 
-**Detect the mode.** Look for existing `<slug>-solution.md` / `<slug>-preview.md` (check `docs/preview/` first,
+**Detect the mode.** Look for existing `<slug>-solution.md` / `<slug>-preview.md` (check `docs/client-backend/preview/` first,
 then ask). Found → **UPDATE** (confirm: «нашёл существующие документы по <slug> — применяю правки, не пересобираю
 с нуля?»). Otherwise → **FRESH**.
 
@@ -79,10 +79,10 @@ something the topic depends on does not exist yet, say so instead of inventing i
 
 Read whatever the topic touches:
 
-- **`docs/research/`** — `summary.md` (state of play), `client-backend-deployment.md`, `snikket-fit.md`, and
-  **`open-questions.md`** (the register — always read it; a preview must not contradict or silently re-decide an
-  open question).
-- **`docs/protocol/`** — `wire-surface.md` and anything else already agreed there.
+- **`docs/client-backend/`** — `summary.md` (state of play), `research/` (`client-backend-deployment.md`,
+  `snikket-fit.md`), and **`open-questions.md`** — always read the register; a preview must not contradict or
+  silently re-decide an open question.
+- **`docs/client-backend/protocol/`** — `wire-surface.md` and anything else already agreed there.
 - **`docs/design/spec/`** — the authoritative UI/UX corpus, when the topic touches product behaviour;
   `docs/blueprints/mobile/` when it touches client architecture.
 - **The repo** — to ground any claim about how the app behaves today. Verify, never assume; cite `path:line` in
@@ -178,7 +178,7 @@ Summarize the solution into `assets/preview-template.md` → `<slug>-preview.md`
 
 **FRESH: ask via AskUserQuestion and WAIT for an answer BEFORE writing ANY file.**
 
-> Куда положить документы по <slug> (solution + preview + pdf, в одну папку)? Дефолт — `docs/preview/<slug>/`
+> Куда положить документы по <slug> (solution + preview + pdf, в одну папку)? Дефолт — `docs/client-backend/preview/<slug>/`
 > (трекается в git, потому что бриф идёт команде). Для локального черновика назови нетрекаемую папку.
 
 **UPDATE: write back to the folder the documents already live in, without asking.** Re-asking on every review
@@ -200,7 +200,7 @@ in doubt, open the PDF or re-render after simplifying the diagram.
 
 ## Step 7 — Reconcile the register, then summarize
 
-1. **Update `docs/research/open-questions.md`** when this round resolved or created questions: a decision taken →
+1. **Update `docs/client-backend/open-questions.md`** when this round resolved or created questions: a decision taken →
    mark the question solved with the date and the reason; a new fork surfaced → add it. This is what keeps the
    docs operable across rounds instead of drifting into a pile of one-off briefs.
 2. Report the folder and the three files, plus the open questions the team must resolve. In UPDATE mode, list

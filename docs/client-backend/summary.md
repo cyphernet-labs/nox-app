@@ -1,6 +1,6 @@
 # Где мы находимся и что дальше — краткое резюме
 
-> Короткая сводка по итогам двух исследований: [client-backend-deployment.md](client-backend-deployment.md) и [snikket-fit.md](snikket-fit.md). Открытые вопросы ведутся в [open-questions.md](open-questions.md).
+> Короткая сводка по итогам двух исследований: [client-backend-deployment.md](research/client-backend-deployment.md) и [snikket-fit.md](research/snikket-fit.md). Открытые вопросы ведутся в [open-questions.md](open-questions.md).
 >
 > Дата: 2026-08-04.
 
