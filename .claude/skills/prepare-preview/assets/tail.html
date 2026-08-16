@@ -12,7 +12,14 @@
     (el.closest('pre') || el).replaceWith(div);
   });
   mermaid.initialize({ startOnLoad: false, theme: 'default' });
-  await mermaid.run({ querySelector: '.mermaid' });
+  // Render one at a time with an explicit id. mermaid.run() derives the SVG id from a timestamp, so
+  // diagrams finishing in the same millisecond collide — and Chrome silently paints nothing for the
+  // duplicates when printing, leaving blank gaps in the PDF. Do not swap this back for mermaid.run().
+  const blocks = Array.from(document.querySelectorAll('.mermaid'));
+  for (let i = 0; i < blocks.length; i++) {
+    const { svg } = await mermaid.render('nox-diagram-' + i, blocks[i].textContent);
+    blocks[i].innerHTML = svg;
+  }
   document.title = 'render-complete';
 </script>
 </body>

@@ -195,8 +195,14 @@ bash .claude/skills/prepare-preview/assets/render-pdf.sh "<folder>/<slug>-previe
 Colored markers and mermaid render; needs network for the CDN on first run. The script leaves only `.md` + `.pdf`.
 If it reports FAILED, surface the reason — never claim a PDF exists when it does not.
 
-**Check the diagrams actually rendered.** A mermaid syntax error silently produces an empty block in the PDF. If
-in doubt, open the PDF or re-render after simplifying the diagram.
+**Check the diagrams actually rendered.** A mermaid syntax error silently produces an empty block in the PDF, and
+so do two print-only failures that leave a correctly-sized *blank gap* — the DOM looks fine, only the PDF is wrong.
+Read the PDF pages back (the Read tool renders them) rather than trusting the byte count.
+
+- **`stateDiagram-v2` does not paint in Chrome's print path.** It parses and renders to valid SVG in the DOM, then
+  comes out blank in the PDF. Use a `flowchart` with labelled edges instead — same information, and it prints.
+- Duplicate SVG ids used to blank every diagram after the first few; `tail.html` now renders each with an explicit
+  id, so do not swap that loop back for `mermaid.run()`.
 
 ## Step 7 — Reconcile the register, then summarize
 
