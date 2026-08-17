@@ -45,6 +45,7 @@
 | Документ | Назначение | Дата |
 |---|---|---|
 | [notification-delivery.md](architecture/notification-delivery.md) (+ `.pdf`) | Схема доставки уведомлений для бэкенд-разработчиков: действующие лица, топология, разделение relay и push-сервера, по одной диаграмме на каждую платформу, таблица «какие пакеты ходят» и буквальные форматы APNs/FCM | 2026-08-16 |
+| [client-backend-stack.md](architecture/client-backend-stack.md) (+ `.pdf`) | Язык и БД client-сервера: **Rust + SQLite** одним статическим бинарником; сравнение Python/Rust/Go/Dart по критериям, отказ от альтернатив, прецеденты | 2026-08-17 |
 
 ### protocol/
 
