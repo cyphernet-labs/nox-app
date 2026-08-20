@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gofmt:*)",
+      "Bash(go vet:*)",
+      "Bash(go build:*)",
+      "Bash(go test:*)",
+      "Bash(go mod tidy)"
+    ],
+    "deny": [
+      "Read(./app.db)",
+      "Read(./*.db)",
+      "Read(./*.db-wal)",
+      "Read(./*.db-shm)"
+    ]
+  }
+}
