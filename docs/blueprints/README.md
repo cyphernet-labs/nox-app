@@ -11,7 +11,7 @@
 | Блюпринт | Компонент | Статус |
 | --- | --- | --- |
 | [`mobile/`](mobile/) | `lib/` — кросс-платформенный Flutter-клиент `nox_app` (iOS, Android, Windows, Linux, macOS; web — вне scope) | **принят** как авторитетный референс (2026-06-08). 19 документов (`00`–`17` + `README`). Точка входа и **маршрутизатор «код-задача → документ»** — [`mobile/README.md`](mobile/README.md). |
-| [`client-backend/`](client-backend/) | `client_backend/` — Go-сервер круга (WebSocket-конверт v0 + REST + SQLite) | **принят** (2026-08-20). Один документ; контракт — [`../client-backend/protocol/contract-draft.md`](../client-backend/protocol/contract-draft.md); инварианты кода — `client_backend/CLAUDE.md` + скиллы `go-style`/`add-command`/`migrations`. |
+| [`client-backend/`](client-backend/) | `client_backend/` — Go-сервер круга (WebSocket-конверт v0 + REST + SQLite) | **принят** (2026-08-20). Один документ; контракт — [`../client-backend/protocol/contract-draft.md`](../client-backend/protocol/contract-draft.md); инварианты кода — `client_backend/CLAUDE.md` + скиллы `go-style`/`add-command`/`migrations` в корневом `.claude/skills/`. |
 
 ## Правила работы с блюпринтом
 
