@@ -15,7 +15,8 @@ accepted and ignored. Stage 2 (pairing per
 out of scope — do not add auth checks, token tables or crypto now.
 
 Architecture rationale lives in `docs/blueprints/client-backend/README.md`;
-Go style rules live in the `go-style` skill — read both before writing
+Go style rules live in the `go-style` skill; WebSocket/REST runtime
+machinery — in the `ws-rest-patterns` skill. Read them before writing
 code. Reference prototypes (same seq/outbox/replay architecture, simpler
 protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 
