@@ -15,7 +15,7 @@
 1. **Библиотека — `infinite_scroll_pagination` ^5.1.1 (v5).** В 5-й мажорной версии она stateless: `PagingState<K,T>` — это обычное иммутабельное значение, которое лежит внутри стейта BLoC и напрямую передаётся в `PagedListView(state:, fetchNextPage:)`. **Никаких `PagingController`** (это паттерн v4, он держит собственный стейт вне BLoC и ломает single source of truth) и никаких `addPageRequestListener`.
 2. **`PagingState<K,T>` — часть Freezed-стейта BLoC.** Лежит в варианте-наследнике `Initialized` (см. `05-presentation-layer.md` про Freezed-юнионы и канонические подсостояния `Initializing` / `Initialized` / `Error`). Пагинация прививается одинаково независимо от того, Freezed стейт или нет, — три поля (`pagingState`, плоский `items`, `nextPage`/`nextCursor`) просто живут в loaded-кейсе.
 3. **Плоский `List<T>` + производные `pages`.** В стейте храним **плоский** `List<T> items` для бизнес-логики (выбор, удаление, поиск), а `pages: List<List<T>>`, которого требует `PagedListView`, **пересчитываем** в helper'е. Хранить `pages: List<List<T>>` напрямую — антипаттерн.
-4. **OFFSET-модель по умолчанию.** OFFSET — основной flavor пагинации блюпринта (`page` + `page_size` + `total`; `nextPage` вычисляется клиентски), поэтому метаданные по умолчанию — `PageMetadata{int? nextPage, int total}`, `nextPage == null` ⇒ страниц больше нет. CURSOR-модель (`CursorPaginationMetadata{String? nextCursor}`) описана как документированная альтернатива для курсорных эндпоинтов. Конкретный контракт пагинации списка чатов фиксируется позже вместе с бэкендом NOX *(пример — бэкенд/протокол NOX ещё не выбран; заменить на реальный контракт)*.
+4. **Две контрактные модели пагинации (контракт v0, фаза 025).** Метаданные едины — `PageMetadata{required bool hasMore, int? nextPage}` (`hasMore` = wire `has_more`; `total` на проводе не существует). Список чатов — **страничный** путь (`page`/`page_size` в запросе, `nextPage` вычисляется клиентски, `hasMore` с провода); история сообщений — **курсорный** путь (`before_seq` от минимального загруженного `seq`, `limit`, порция по возрастанию `seq`; `nextPage` не используется). Серверный потолок порции — 100 c молчаливым клампингом.
 5. **`RepositoryResult` остаётся.** Репозиторий возвращает `RepositoryResult<(List<T>, PageMetadata)>` (envelope из `04-data-layer.md`), а не «голый» `Future` + `try/catch`. BLoC вызывает `result.match` / `result.hasData`, применяет helper, и пробрасывает `result.exception` в `pagingState.error` — для v5-билдеров ошибок. **Это ключевое правило:** мы НЕ используем «сырой» `Future + try/catch`, а всегда оборачиваем загрузку страницы в наш envelope.
 6. **Один helper `PagingStateExt.applyPage` на весь проект.** Инкапсулирует пересчёт `pages`/`keys`/`hasNextPage`, ветку «пустой результат», всё через `copyWith`. Юнит-тестируется отдельно.
 7. **Debounce обязателен** на событии загрузки — `PagedListView` дёргает `fetchNextPage` агрессивно.
@@ -43,7 +43,7 @@ dependencies:
    - `PagingState<String, ItemModel>` — для рендера в `PagedListView` (внутри уже есть `pages`, `keys`, `hasNextPage`, `isLoading`, `error`);
    - `List<ItemModel> items` — плоский список для бизнес-логики;
    - `int nextPage` (OFFSET) **или** `String? nextCursor` (CURSOR) — координата следующей страницы.
-3. Сервер возвращает метаданные пагинации (`page`, `page_size`, `total`); `nextPage` вычисляется клиентски (1-based: `hasMore = (page * page_size) < total; nextPage = hasMore ? page + 1 : null`, см. §4.3/§4.5). `nextPage == null` / `nextCursor == null` означает «страниц больше нет».
+3. Сервер возвращает `has_more` вместо `total` (контракт v0); на страничном пути `nextPage = hasMore ? page + 1 : null` (1-based, вычисляется клиентски), на курсорном — следующая порция запрашивается `before_seq = min(seq загруженного)`. `hasMore == false` означает «страниц больше нет».
 4. **Один** универсальный `LoadItems({required bool reset})` — делает и первую загрузку, и догрузку, и сброс после смены фильтра.
 5. Параметры запроса (search / sort / filter) читаем **из стейта, а не из event** — UI вызывает просто `add(LoadItems(reset: false))` без аргументов.
 6. Любое изменение фильтра/поиска/сортировки ⇒ `pagingState.reset()` (метод пакета) + очистка `items` + обнуление `nextPage` + `add(LoadItems(reset: true))`.
@@ -56,18 +56,18 @@ dependencies:
 
 ### 4.1 Метаданные пагинации — OFFSET (по умолчанию)
 
-`PageMetadata` — это **доменный** `@freezed`-тип (только `*.freezed.dart`, **без** JSON), который живёт в `lib/domain/repository/base/`. Маппинг ответа в `(List<ItemModel>, PageMetadata)` — задача **data**-слоя (реализация репозитория, см. §4.3 и §4.5, плюс канон `04-data-layer.md` §8). `nextPage == null` ⇒ это была последняя страница; `nextPage` — **1-based** индекс следующей страницы.
+`PageMetadata` — это **доменный** `@freezed`-тип (только `*.freezed.dart`, **без** JSON), который живёт в `lib/domain/repository/base/`. Маппинг ответа в `(List<ItemModel>, PageMetadata)` — задача **data**-слоя (реализация репозитория, см. §4.3 и §4.5, плюс канон `04-data-layer.md` §8). `hasMore == false` ⇒ это была последняя страница; `nextPage` — **1-based** индекс следующей страницы страничного пути (курсорный путь оставляет его `null`).
 
 ```dart
 // lib/domain/repository/base/page_metadata.dart
-/// Offset-style page metadata (default flavor). nextPage == null => last page.
+/// Contract-shaped page metadata: hasMore mirrors the wire has_more.
 /// JSON parsing lives in the data layer; this is the domain-side shape the
 /// repository returns alongside a page slice.
 @freezed
 abstract class PageMetadata with _$PageMetadata {
   const factory PageMetadata({
     /// Total item count across all pages.
-    required int total,
+    required bool hasMore,
 
     /// 1-based index of the next page, or null on the last page.
     int? nextPage,
@@ -75,11 +75,13 @@ abstract class PageMetadata with _$PageMetadata {
 }
 ```
 
-> **Замечание по контракту.** Точные имена полей контракта (`page` / `page_size` / `total`) и 1-based нумерацию сверяйте с реальным контрактом бэкенда NOX, когда он будет зафиксирован *(пример — бэкенд/протокол NOX ещё не выбран; заменить на реальный контракт)*. Парсинг JSON живёт в data-слое (entity + реализация репозитория), а не в доменной модели: `ItemsEntity{items, page, page_size, total}` (см. §4.3) распаковывается из тела ответа, а `nextPage` вычисляется клиентски в реализации репозитория (см. §4.5).
+> **Замечание по контракту (актуализировано фазой 025).** Реальные формы зафиксированы контрактом v0: страницы `{chats|messages, has_more}`, история — курсором `before_seq`/`limit` (порция по возрастанию `seq`, потолок 100 c клампингом). Живые кадры сервера закоммичены в `test/fixtures/wire/` и пиннят wire-слой. Мёртвый verification-срез `ItemsEntity{items, page, page_size, total}` сохраняет старую форму намеренно (не продукт).
 
 ### 4.2 Метаданные пагинации — CURSOR (альтернатива)
 
-Для курсорных эндпоинтов класс метаданных меняется на `CursorPaginationMetadata` — тоже `@freezed`, **без** JSON, в той же папке `lib/domain/repository/base/`. Всё остальное (BLoC, UI, helper) — идентично.
+**Реальный курсорный путь проекта — история сообщений (фаза 025) — обходится БЕЗ отдельного класса метаданных.** `GetMessagesConfig` несёт `{chatId, int? beforeSeq, int limit}` (статики `tail(...)` / `olderThan(...)`); репозиторий возвращает тот же `PageMetadata{hasMore}`; координату держит блок треда — `oldestLoadedSeq` в стейте, догрузка `olderThan(oldestLoadedSeq)`, оптимистичные отправки сортируются вниз сентинелом `kPendingSeq`. Тред при этом не использует `PagedListView`/`applyPage` — `reverse: true` `ListView.builder` + prefetch по `ScrollController` (см. `chat_thread_bloc.dart`).
+
+Класс `CursorPaginationMetadata` ниже остаётся документированной альтернативой для эндпоинтов со **строковым** непрозрачным курсором (в проекте пока не встречаются) — тоже `@freezed`, **без** JSON, в той же папке `lib/domain/repository/base/`. Всё остальное (BLoC, UI, helper) — идентично.
 
 ```dart
 // lib/domain/repository/base/cursor_pagination_metadata.dart
@@ -119,9 +121,9 @@ final nextPage = hasMore ? entity.page + 1 : null;
 
 - Выбрано всё (`page * page_size >= total`) ⇒ `hasMore == false` ⇒ `nextPage = null` — страниц больше нет.
 - Пустой `items` на запрошенной странице — штатное завершение списка (`nextPage = null`), не ошибка.
-- `total` для `PageMetadata` берётся из `entity.total` ответа.
+- `total` в `PageMetadata` не попадает — репозиторий сворачивает его в `hasMore` (контрактные обёртки v0 отдают `has_more` готовым, без `total`).
 
-> Бэкенд NOX может оборачивать ответ в унифицированный envelope вида `{data, timestamp, trace_id, meta}` (см. `04-data-layer.md`, `ResponseEntity<T>`) *(пример — бэкенд/протокол NOX ещё не выбран; заменить на реальный контракт)*. Распаковку envelope выполняет API-слой/`EntityConverter`; имена JSON-ключей (`page` / `page_size` / `total`) и сам путь запроса (`GetItemsApi`: path `v1/items`, query `page` / `page_size` / `search`) — пример/TBD до выбора бэкенда NOX, сверяются с реальным контрактом.
+> Envelope реален с фазы 025: `ResponseEntity<T>` несёт `data` + `error{code, message}` (контракт v0, §2.1), распаковка — `BaseRepositoryHelper.unwrapEnvelope` + `EntityConverter`. Имена ключей и путь запроса `GetItemsApi` (`v1/items`, query `page` / `page_size` / `search`) остаются примером мёртвого verification-среза; продуктовые формы — `{chats|messages, has_more}` (см. замечание по контракту в §4.1).
 
 ### 4.4 Конфиг запроса — `GetItemsConfig`
 
@@ -199,14 +201,14 @@ class ItemRepositoryImpl with BaseRepositoryHelper implements ItemRepository {
       }
       final models = _itemMapper.toListModel(entities: entity.items);
       final hasMore = (entity.page * entity.pageSize) < entity.total;
-      final metadata = PageMetadata(total: entity.total, nextPage: hasMore ? entity.page + 1 : null);
+      final metadata = PageMetadata(hasMore: hasMore, nextPage: hasMore ? entity.page + 1 : null);
       return RepositoryResult<(List<ItemModel>, PageMetadata)>.success(data: (models, metadata));
     });
   }
 }
 ```
 
-> **Канонический шаблон vs текущий harness (FR-013).** В `lib/` реальный `ItemRepository` — намеренно урезанный подмножество показанного контракта: только `getItems(...)` + `clean()` (network-only carve-out, без DAO/subject). Полный CRUD + cache-first `watchItem` (с `ItemDao` + `BehaviorSubject`) — это завершённый Item-пример блюпринта, который приходит вместе с фичей, которой нужно кэширование; см. `04-data-layer.md`. Реализация `getItems` выше — байт-в-байт с `lib/data/repository/item/item_repository_impl.dart`: конструктор `(this._itemMapper, this._getItemsApi)` (логирование наследуется через mixin `BaseRepositoryHelper`, без инъекции `LogRepository`-поля), null-payload ⇒ `RepositoryResult.error(exception: RepositoryException.unknown)`, маппинг через `_itemMapper.toListModel(entities: entity.items)`. В skeleton `GetItemsApi` — MOCK-источник (без реального бэкенда), его боевая версия оборачивает Dio-request-builder вокруг `ResponseEntity<ItemsEntity>` (path `v1/items`, query `page` / `page_size` / `search`) — пример/TBD до выбора бэкенда NOX.
+> **Канонический шаблон vs текущий harness (FR-013).** В `lib/` реальный `ItemRepository` — намеренно урезанный подмножество показанного контракта: только `getItems(...)` + `clean()` (network-only carve-out, без DAO/subject). Полный CRUD + cache-first `watchItem` (с `ItemDao` + `BehaviorSubject`) — это завершённый Item-пример блюпринта, который приходит вместе с фичей, которой нужно кэширование; см. `04-data-layer.md`. Реализация `getItems` выше — байт-в-байт с `lib/data/repository/item/item_repository_impl.dart`: конструктор `(this._itemMapper, this._getItemsApi)` (логирование наследуется через mixin `BaseRepositoryHelper`, без инъекции `LogRepository`-поля), null-payload ⇒ `RepositoryResult.error(exception: RepositoryException.unknown)`, маппинг через `_itemMapper.toListModel(entities: entity.items)`. В skeleton `GetItemsApi` — MOCK-источник (без реального бэкенда), его боевая версия оборачивает Dio-request-builder вокруг `ResponseEntity<ItemsEntity>` (path `v1/items`, query `page` / `page_size` / `search`) — пример verification-среза; продуктовый транспорт — WebSocket-конверт контракта v0 (фаза 027).
 
 ---
 
@@ -214,7 +216,7 @@ class ItemRepositoryImpl with BaseRepositoryHelper implements ItemRepository {
 
 **Это сердце всего подхода** — расширение над `PagingState<K,T>`, скрывающее пересчёт `pages`/`keys`/`hasNextPage` и ветку «пустой результат». Один на проект, юнит-тестируется отдельно.
 
-Ниже — OFFSET-вариант (по умолчанию). Запись `response` распаковывается через `final (incoming, meta) = response;`, где `meta` — `PageMetadata`; признак «последняя страница» — `meta.nextPage == null`, в record возвращается `int? nextPage`. CURSOR-вариант (§5.1) — тот же helper, но `meta` — `CursorPaginationMetadata` и возвращается `String? nextCursor`.
+Ниже — вариант для страничного пути. Запись `response` распаковывается через `final (incoming, meta) = response;`, где `meta` — `PageMetadata`; признак «последняя страница» — `!meta.hasMore` (фаза 025), в record возвращается `int? nextPage`. CURSOR-вариант (§5.1) — тот же helper, но `meta` — `CursorPaginationMetadata` и возвращается `String? nextCursor`.
 
 ```dart
 // lib/presentation/pagination/paging_state_ext.dart
@@ -231,7 +233,7 @@ extension PagingStateExt<K, T> on PagingState<K, T> {
   }) {
     final (incoming, meta) = response;
     final updatedList = [...existingList, ...incoming];
-    final isLastPage = meta.nextPage == null;
+    final isLastPage = !meta.hasMore;
     final pages = updatedList.map((e) => [e]).toList();
     final keys = updatedList.map(keyExtractor).toList();
     final isNoItems = updatedList.isEmpty && isLastPage;
@@ -278,7 +280,7 @@ extension PagingStateCursorExt<K, T> on PagingState<K, T> {
 }
 ```
 
-> В проекте по умолчанию подключаем **только** OFFSET-вариант. CURSOR-extension добавляется, лишь когда появляется реальный курсорный эндпоинт.
+> В проекте подключён **только** страничный вариант helper'а. Реальный курсорный путь (тред, seq-курсор `before_seq`) helper'ом не пользуется вовсе — см. §4.2; CURSOR-extension добавляется, лишь когда появится эндпоинт со строковым курсором.
 
 ---
 
@@ -288,7 +290,7 @@ BLoC построен по правилам `05-presentation-layer.md`: `@freeze
 
 ### 6.1 State (Freezed-юнион)
 
-Поля пагинации (`pagingState`, `items`, `nextPage`) живут в варианте `Initialized` плюс вспомогательные поля (`loadingInProgress`, `refreshInProgress`, `searchQuery`, `total`). Производный геттер `isAnyInProgress` — в extension, не в `@freezed`-теле. Имена членов юниона — **bare** (`Initializing` / `Initialized` / `Error`), как в боевом коде; префиксная форма (`ItemList<...>`) — допустимый вариант против коллизий имён, но канон блюпринта здесь — bare.
+Поля пагинации (`pagingState`, `items`, `nextPage`) живут в варианте `Initialized` плюс вспомогательные поля (`loadingInProgress`, `refreshInProgress`, `searchQuery`; `total` из стейтов удалён фазой 025 — его больше нет и в `PageMetadata`). Производный геттер `isAnyInProgress` — в extension, не в `@freezed`-теле. Имена членов юниона — **bare** (`Initializing` / `Initialized` / `Error`), как в боевом коде; префиксная форма (`ItemList<...>`) — допустимый вариант против коллизий имён, но канон блюпринта здесь — bare.
 
 ```dart
 // lib/presentation/pages/item_list_page/bloc/item_list_state.dart
@@ -301,7 +303,6 @@ sealed class ItemListState with _$ItemListState {
   const factory ItemListState.initialized({
     required PagingState<String, ItemModel> pagingState,
     @Default(<ItemModel>[]) List<ItemModel> items,
-    @Default(0) int total,
     @Default(GetItemsConfig.defaultPage) int nextPage,
     @Default(false) bool isLastPage,
     @Default(false) bool loadingInProgress,
@@ -480,8 +481,7 @@ class ItemListBloc extends BaseBloc<ItemListEvent, ItemListState> {
               items: applied.updatedList,
               pagingState: applied.pagingState,
               nextPage: applied.nextPage ?? updated.nextPage, // null => no more pages, keep coordinate
-              isLastPage: applied.nextPage == null,
-              total: meta.total,
+              isLastPage: !meta.hasMore,
               loadingInProgress: false,
               refreshInProgress: false,
             ));
@@ -563,7 +563,7 @@ class ItemListBloc extends BaseBloc<ItemListEvent, ItemListState> {
 
 > **Канонический шаблон vs текущий verification-harness (FR-013).** Показанный выше BLoC — это **аспирационный канон** блюпринта (поиск с debounce, pull-to-refresh с `Completer`, stale-guard, side-effect-стрим `navigateToDetails`). Реальный `lib/presentation/pages/item_list_page/bloc/item_list_bloc.dart` — намеренно урезанное подмножество:
 > - `ItemListEvent` = `{ initialize, loadItems({@Default(false) bool reset}) }` — без `refreshRequested` / `updateSearchQuery` / `showItemDetails` / `Completer`;
-> - `Initialized` = `{ pagingState, items, @Default(GetItemsConfig.defaultPage) int nextPage, isLastPage, total, loadingInProgress }` — без `searchQuery` / `refreshInProgress`; computed-геттеры в коде — `pagedItems` + `hasMore` (не `isAnyInProgress`);
+> - `Initialized` = `{ pagingState, items, @Default(GetItemsConfig.defaultPage) int nextPage, isLastPage, loadingInProgress }` — без `searchQuery` / `refreshInProgress`; computed-геттеры в коде — `pagedItems` + `hasMore` (не `isAnyInProgress`);
 > - только `sequential()` на `LoadItems`, без `restartable()`/поиска и без `PublishSubject`/`close()`;
 > - дополнительная ранняя защита `if (!isReset && !current.pagingState.hasNextPage) return;` — пропуск догрузки, когда страниц больше нет (полезный hardening-приём, который стоит перенять и в канон).
 >
@@ -573,7 +573,7 @@ class ItemListBloc extends BaseBloc<ItemListEvent, ItemListState> {
 
 ## 7. UI-слой (`PagedListView` + pull-to-refresh)
 
-`PagedListView` — обычный список, который читает `PagingState` и зовёт `fetchNextPage` при приближении к концу. Оборачиваем в `BlocSelector` по `pagingState`, чтобы не ребилдить список при изменении других полей (search text, total и т.д.). Pull-to-refresh — `AppRefreshIndicatorWidget` **над** `Scaffold`.
+`PagedListView` — обычный список, который читает `PagingState` и зовёт `fetchNextPage` при приближении к концу. Оборачиваем в `BlocSelector` по `pagingState`, чтобы не ребилдить список при изменении других полей (search text и т.д.). Pull-to-refresh — `AppRefreshIndicatorWidget` **над** `Scaffold`.
 
 ```dart
 // lib/presentation/pages/item_list_page/item_list_page.dart (_buildList fragment)
@@ -672,8 +672,8 @@ blocTest<ItemListBloc, ItemListState>(
     when(() => repository.getItems(config: any(named: 'config'))).thenAnswer(
       (_) async => RepositoryResult.success(
         data: (
-          // Full page (pageSize=20) with total=40 => by the §4.5 formula
-          // ((page * page_size) < total) more pages remain => nextPage != null.
+          // Full page (pageSize=20) of a 40-row source => hasMore is true
+          // and the client-computed nextPage advances (§4.5).
           List.generate(
             GetItemsConfig.pageSize,
             (i) => ItemModel(
@@ -684,7 +684,7 @@ blocTest<ItemListBloc, ItemListState>(
               createdAt: DateTime(2026),
             ),
           ),
-          const PageMetadata(nextPage: 2, total: 40), // 1-based: after page 1 the next is 2
+          const PageMetadata(hasMore: true, nextPage: 2), // 1-based: after page 1 the next is 2
         ),
       ),
     );
@@ -701,7 +701,6 @@ blocTest<ItemListBloc, ItemListState>(
     isA<Initialized>()
         .having((s) => s.items.length, 'items.length', GetItemsConfig.pageSize)
         .having((s) => s.nextPage, 'nextPage', 2)
-        .having((s) => s.total, 'total', 40)
         .having((s) => s.pagingState.hasNextPage, 'hasNextPage', true),
   ],
 );
@@ -711,7 +710,7 @@ blocTest<ItemListBloc, ItemListState>(
 - первая загрузка успешна;
 - догрузка добавляет в **конец** `items`, не затирает существующие;
 - смена `searchQuery` ⇒ `items` очищается, `nextPage` сбрасывается на `defaultPage`, `pagingState.reset()` применён;
-- ответ с `nextPage == null` (или `nextCursor == null`) ⇒ `hasNextPage: false`, `isLastPage: true`;
+- ответ с `hasMore == false` (или `nextCursor == null` в cursor-варианте) ⇒ `hasNextPage: false`, `isLastPage: true`;
 - ошибка догрузки ⇒ `pagingState.error` заполнен, `loadingInProgress: false`, экран НЕ уходит целиком в `Error`;
 - ошибка первой страницы при пустом списке ⇒ эмит `ItemListState.error`;
 - пустой первый ответ при пустом списке ⇒ `isNoItems`-ветка helper'а (пустой `pages`, `hasNextPage: false`).
@@ -726,7 +725,7 @@ blocTest<ItemListBloc, ItemListState>(
 2. Использовать общий доменный `PageMetadata` (`lib/domain/repository/base/`); маппинг `ItemsEntity{items, page, page_size, total}` → `(List<ItemModel>, PageMetadata)` (вычисление `nextPage` клиентски, 1-based) — в реализации репозитория по канону `04-data-layer.md` §8 (CURSOR-вариант — только если эндпоинт курсорный).
 3. Привести списочный метод репозитория к канонической сигнатуре `Future<RepositoryResult<(List<T>, PageMetadata)>> getItems({required GetItemsConfig config})` через `BaseRepositoryHelper.execute`.
 4. Подключить общий extension `PagingStateExt.applyPage` (один на проект; OFFSET по умолчанию).
-5. В Freezed-стейте `Initialized` хранить тройку: `PagingState<String, T>`, `List<T> items`, `int nextPage` (+ `total`, `loadingInProgress`, `refreshInProgress`, `searchQuery`). Производное — в extension-геттере (`isAnyInProgress`).
+5. В Freezed-стейте `Initialized` хранить тройку: `PagingState<String, T>`, `List<T> items`, `int nextPage` (+ `loadingInProgress`, `refreshInProgress`, `searchQuery`). Производное — в extension-геттере (`isAnyInProgress`).
 6. Сделать единый `LoadItems({required bool reset})`; debounce обязателен (`sequential()` для load + `restartable()` для поиска).
 7. Параметры запроса (search/sort/filter) — из `state`, не из event.
 8. Любое изменение фильтра/поиска/сортировки ⇒ `pagingState.reset()` + очистка `items` + обнуление `nextPage` + `add(LoadItems(reset: true))`.
@@ -754,10 +753,10 @@ blocTest<ItemListBloc, ItemListState>(
 ## Чеклист
 
 - [ ] Подключены `infinite_scroll_pagination ^5.1.1` (v5) + `bloc_concurrency` (+ опц. `rxdart`).
-- [ ] Создан `PageMetadata` (OFFSET, по умолчанию); `CursorPaginationMetadata` — только под курсорные эндпоинты; `nextPage` вычисляется клиентски в репозитории (канон `04-data-layer.md` §8).
+- [ ] Используется общий `PageMetadata{hasMore, nextPage?}`; `nextPage` вычисляется клиентски в репозитории (канон `04-data-layer.md` §8); seq-курсор сообщений идёт через `GetMessagesConfig.tail/olderThan` без отдельного класса метаданных.
 - [ ] Репозиторий возвращает `RepositoryResult<(List<T>, PageMetadata)>` через `BaseRepositoryHelper.execute` (никакого «сырого» `try/catch`).
 - [ ] Один общий `PagingStateExt.applyPage` (OFFSET) на проект; CURSOR-вариант — по необходимости.
-- [ ] Freezed-стейт `Initialized` хранит `PagingState` + плоский `items` + `nextPage` (+ `total`/`loadingInProgress`/`refreshInProgress`/`searchQuery`); производное — в extension-геттере.
+- [ ] Freezed-стейт `Initialized` хранит `PagingState` + плоский `items` + `nextPage` (+ `loadingInProgress`/`refreshInProgress`/`searchQuery`); производное — в extension-геттере.
 - [ ] Единый `LoadItems({required bool reset})`; debounce обязателен (`sequential()` + `restartable()` основной путь).
 - [ ] Параметры запроса читаются из `state`; reset-on-filter через `pagingState.reset()` + очистка + перезапуск.
 - [ ] `result.exception` пробрасывается в `pagingState.error` (догрузка) / `ItemListState.error` (первая страница при пустом списке).

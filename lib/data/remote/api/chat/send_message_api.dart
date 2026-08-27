@@ -15,8 +15,8 @@ import 'package:uuid/uuid.dart';
 /// back as accepted (`sent`) after a short delay, authored with the signed-in
 /// identity resolved by the caller (MessageRepositoryImpl, from the session), wrapped
 /// in the reference `ResponseEntity<MessageWireEntity>` envelope (feature P6 — uniform
-/// with the paged reads / Item harness). The real impl POSTs to `v1/chats/{id}/messages`
-/// — example/TBD until the backend is chosen. `// TODO(backend):` real send + server id.
+/// with the paged reads / Item harness). The echo carries the contract-v0 wire shape
+/// (feature 025); the real impl sends `message.send` over the WS envelope (feature 027).
 @lazySingleton
 class SendMessageApi {
   SendMessageApi(this._wireMapper);

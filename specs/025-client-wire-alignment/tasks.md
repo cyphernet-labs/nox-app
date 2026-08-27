@@ -62,9 +62,9 @@
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T021 [P] Update the blueprints per Principle III: docs/blueprints/mobile/07-pagination.md §4/§5 (offset canon → contract canon: hasMore metadata, cursor messages path, paged chats path) and 04-data-layer.md §1 page-wrapper note ({messages|chats, has_more} real shape replaces example/TBD)
-- [ ] T022 [P] Reconcile stale doc-comments touched by the phase (chat_repository.dart network-only header; GetMessagesConfig TODO(backend) cursor note now real) and verify no lib/ code references page/total semantics outside the dead Item slice
-- [ ] T023 Full local gate: `make gate` + `make golden-verify`; run the owner mock walkthrough from quickstart.md; mark phase 025 implemented in docs/client-backend/roadmap-client-track.md (status + journal row)
+- [x] T021 [P] Update the blueprints per Principle III: docs/blueprints/mobile/07-pagination.md §4/§5 (offset canon → contract canon: hasMore metadata, cursor messages path, paged chats path) and 04-data-layer.md §1 page-wrapper note ({messages|chats, has_more} real shape replaces example/TBD)
+- [x] T022 [P] Reconcile stale doc-comments touched by the phase (chat_repository.dart network-only header; GetMessagesConfig TODO(backend) cursor note now real) and verify no lib/ code references page/total semantics outside the dead Item slice
+- [x] T023 Full local gate: `make gate` + `make golden-verify`; run the owner mock walkthrough from quickstart.md; mark phase 025 implemented in docs/client-backend/roadmap-client-track.md (status + journal row) — automated validation green (763 tests + 216 goldens unregenerated); the ~5-min owner walkthrough from quickstart.md stays with the owner
 
 ## Dependencies & Execution Order
 

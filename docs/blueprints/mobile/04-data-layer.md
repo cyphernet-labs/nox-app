@@ -1044,7 +1044,7 @@ fvm dart run build_runner build --delete-conflicting-outputs
 
 ## Чеклист
 
-- [ ] `ItemEntity` использует **только базовые типы**, ровно пять полей `id`/`name`/`status` (String-`name`)/`createdAt` (ISO-8601 String)/`description` (required-nullable); никаких `tags`/`DateTime`/enum-как-enum. `ItemsEntity` — page wrapper `{items, page, page_size, total}` с `@JsonKey` (имена ключей — пример/TBD).
+- [ ] `ItemEntity` использует **только базовые типы**, ровно пять полей `id`/`name`/`status` (String-`name`)/`createdAt` (ISO-8601 String)/`description` (required-nullable); никаких `tags`/`DateTime`/enum-как-enum. `ItemsEntity` — page wrapper `{items, page, page_size, total}` с `@JsonKey` (verification-срез; ПРОДУКТОВЫЕ обёртки фиксированы контрактом v0: `{chats|has_more}` / `{messages|has_more}` — фаза 025, живые фикстуры в `test/fixtures/wire/`).
 - [ ] Все `part`-директивы стоят: entities имеют `.freezed.dart` **и** `.g.dart`; BLoC-типы и доменные модели (`ItemModel`) — только `.freezed.dart` (entity-слой — единственное место с `.g.dart`/`fromJson`).
 - [ ] `ResponseEntity<T>` envelope (пример/TBD) + `EntityConverter<E>` реестр на месте; **каждый** новый entity, проходящий через `ResponseEntity<T>`, добавлен в ОБЕ цепочки (`fromJson` + `toJson`) `entity_converter.dart` (в скелете реестр пуст — ветки регистрируются per-feature).
 - [ ] `ItemMapper` расширяет `BaseMapper` (4-арг, `dynamic, dynamic` для простого случая), коэрция enum через `name`/`firstWhere(orElse:)`, дата — защитно в UTC (`DateTime.tryParse(...)?.toUtc() ?? DateTime.now().toUtc()` / `.toUtc().toIso8601String()`); импортирует `item_status.dart`; дочерние мапперы инжектируются конструктором.

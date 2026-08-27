@@ -1,9 +1,9 @@
 import 'package:nox_app/domain/model/app_config/app_flavor_type.dart';
 
 /// Flavor-dependent runtime config. Carries the flavor and a nullable [apiUrl]
-/// (example/TBD — backend/protocol not chosen; `null` means no real requests are
-/// built this phase). Security headers / token source are wired via
-/// [AppConfigRepository], also TBD until the NOX backend is chosen.
+/// (`null` means no real requests are built this phase — the contract-v0 endpoint
+/// lands with the transport, feature 027). The token source is wired via
+/// [AppConfigRepository] (stage-2 auth; stage 1 runs without it).
 class AppConfig {
   const AppConfig({required this.flavor, this.apiUrl});
 

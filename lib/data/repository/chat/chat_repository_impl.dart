@@ -37,7 +37,7 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
 
   /// One-time seed of the deterministic mock set into the local DB (empty store).
   /// Unwraps the `ResponseEntity<ChatsWireEntity>` envelope per page (feature 018/S4),
-  /// mapping wire->model and paging via `page*pageSize < total` (equals the old hasMore).
+  /// mapping wire->model and walking pages until the wire `has_more` flag drops (025).
   /// A `data == null` / `success:false` envelope throws → the enclosing `execute()` in
   /// getChats/watchChats maps it to `RepositoryResult.error` (mirrors `ItemRepositoryImpl`).
   Future<void> _seedIfEmpty() async {
