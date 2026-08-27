@@ -183,6 +183,14 @@ cmp <(tail -c 5242880 /tmp/probe.bin) /tmp/tail.bin && echo resumed
 
 Использованный токен скачивания → 404. Файл с истёкшим сроком или физически пропавшими байтами → `attachment_gone` на `file.downloadBegin` (терминальное состояние экрана файла).
 
+### Панель файлов чата
+
+```bash
+{"id":30,"cmd":"chat.files","data":{"chat_id":"<CID>","limit":10}}
+# ← только записи-вложения {file_id,name,size,mime,expires_at,message_id,seq}, новые к старым
+# порциями; пагинация как у истории: before_seq, потолок 100, порция по возрастанию seq
+```
+
 ## Негативные проверки
 
 На подключении, где `session.hello` уже выполнен:
@@ -207,6 +215,15 @@ cmp <(tail -c 5242880 /tmp/probe.bin) /tmp/tail.bin && echo resumed
 {"id":41,"cmd":"chat.get","data":{"chat_id":"c_missing"}}                   # → not_found
 {"id":42,"cmd":"chat.rename","data":{"chat_id":"<CID2>","name":"KITCHEN"}}  # имя другого чата → name_taken
 {"id":43,"cmd":"messages.list","data":{"chat_id":"<CID1>","limit":0}}       # → invalid_request
+```
+
+Команды фазы 024:
+
+```bash
+{"id":50,"cmd":"file.uploadBegin","data":{"name":"big","size":999999999999,"mime":"x"}}  # → payload_too_large
+{"id":51,"cmd":"file.downloadBegin","data":{"file_id":"f_missing"}}                      # → not_found
+{"id":52,"cmd":"message.send","data":{"chat_id":"<CID>","client_message_id":"nn"}}       # ни body, ни attachment → invalid_request
+{"id":53,"cmd":"message.send","data":{"chat_id":"<CID>","client_message_id":"du","attachment":{"file_id":"<FID>"}}}  # файл уже привязан → invalid_request
 ```
 
 ## Автоматическая валидация

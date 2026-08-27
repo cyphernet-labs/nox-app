@@ -55,8 +55,8 @@
 
 - [x] T015 [US3] Add ListChatFiles in client_backend/internal/store/store.go per research R9 (JOIN projection, before_seq pattern, n+1 hasMore, ascending page) with store tests (mixed chat, empty chat, boundary exclusion)
 - [x] T016 [US3] Add the chat.files handler in client_backend/internal/server/files.go with 023 pagination rules (limit validation and clamp, not_found for unknown chat) and the dispatch case in client_backend/internal/server/ws.go for all three 024 commands
-- [ ] T017 [US3] Add story-3 integration tests in client_backend/internal/server/files_test.go: files-only projection over a mixed chat with paging until has_more false, empty chat, unknown chat -> not_found, limit 0 -> invalid_request, clamp observable over >100 attachments is NOT required (scale) — clamp covered by passing limit 500 over a small set expecting success
-- [ ] T018 [US3] Extend client_backend/README.md with the smoke Е «Панель файлов» section and the 024 negative checks block in sync with quickstart.md
+- [x] T017 [US3] Add story-3 integration tests in client_backend/internal/server/files_test.go: files-only projection over a mixed chat with paging until has_more false, empty chat, unknown chat -> not_found, limit 0 -> invalid_request, clamp observable over >100 attachments is NOT required (scale) — clamp covered by passing limit 500 over a small set expecting success
+- [x] T018 [US3] Extend client_backend/README.md with the smoke Е «Панель файлов» section and the 024 negative checks block in sync with quickstart.md
 
 **Checkpoint**: все три истории демонстрируемы; командный набор этапа 1 полон.
 

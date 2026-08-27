@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"nox.app/client-backend/internal/protocol"
+	"nox.app/client-backend/internal/store"
 )
 
 func uploadBegin(t *testing.T, c *wsClient, id int, name string, size int, mime string) (string, string) {
@@ -295,4 +296,61 @@ func TestStoryTwoDownloadWithResume(t *testing.T) {
 	}
 	bob.send(fmt.Sprintf(`{"id":8,"cmd":"file.downloadBegin","data":{"file_id":%q}}`, fileID))
 	bob.expectErr(8, protocol.ErrAttachmentGone)
+}
+
+func TestStoryThreeChatFilesPanel(t *testing.T) {
+	ts, _ := newTestServer(t)
+
+	c := dialWS(t, ts)
+	c.expectGreeting()
+	c.hello(1, `,"label":"Anna"`)
+	chatID := seedChat(t, c, "panel")
+
+	var fileIDs []string
+	for i := range 3 {
+		sendText(t, c, 100+i, chatID, fmt.Sprintf("t%d", i), "text between files")
+		fid, tok := uploadBegin(t, c, 200+i, fmt.Sprintf("doc%d.bin", i), 8, "application/octet-stream")
+		if code := putBytes(t, ts, tok, []byte("12345678")); code != http.StatusNoContent {
+			t.Fatalf("PUT %d = %d", i, code)
+		}
+		c.expectOKAfter(300+i, fmt.Sprintf(
+			`{"id":%d,"cmd":"message.send","data":{"chat_id":%q,"client_message_id":"p%d","attachment":{"file_id":%q}}}`, 300+i, chatID, i, fid))
+		fileIDs = append(fileIDs, fid)
+	}
+
+	reply := c.expectOKAfter(10, fmt.Sprintf(`{"id":10,"cmd":"chat.files","data":{"chat_id":%q,"limit":2}}`, chatID))
+	var page struct {
+		Files   []store.ChatFileEntry `json:"files"`
+		HasMore bool                  `json:"has_more"`
+	}
+	mustUnmarshal(t, reply["files"], &page.Files)
+	mustUnmarshal(t, reply["has_more"], &page.HasMore)
+	if !page.HasMore || len(page.Files) != 2 {
+		t.Fatalf("panel page = %d rows hasMore=%v", len(page.Files), page.HasMore)
+	}
+	if page.Files[0].FileID != fileIDs[1] || page.Files[1].FileID != fileIDs[2] {
+		t.Fatalf("panel order = %s, %s", page.Files[0].Name, page.Files[1].Name)
+	}
+	if page.Files[0].MessageID == "" || page.Files[0].Seq == 0 {
+		t.Fatalf("panel row lacks the message anchor: %+v", page.Files[0])
+	}
+
+	reply = c.expectOKAfter(11, fmt.Sprintf(`{"id":11,"cmd":"chat.files","data":{"chat_id":%q,"before_seq":%d,"limit":500}}`, chatID, page.Files[0].Seq))
+	mustUnmarshal(t, reply["files"], &page.Files)
+	mustUnmarshal(t, reply["has_more"], &page.HasMore)
+	if page.HasMore || len(page.Files) != 1 || page.Files[0].FileID != fileIDs[0] {
+		t.Fatalf("panel rest = %+v hasMore=%v", page.Files, page.HasMore)
+	}
+
+	// Empty chat, unknown chat, invalid limit.
+	empty := seedChat(t, c, "nofiles")
+	reply = c.expectOKAfter(12, fmt.Sprintf(`{"id":12,"cmd":"chat.files","data":{"chat_id":%q,"limit":10}}`, empty))
+	mustUnmarshal(t, reply["files"], &page.Files)
+	if len(page.Files) != 0 {
+		t.Fatalf("empty panel = %+v", page.Files)
+	}
+	c.send(`{"id":13,"cmd":"chat.files","data":{"chat_id":"c_missing","limit":10}}`)
+	c.expectErr(13, protocol.ErrNotFound)
+	c.send(fmt.Sprintf(`{"id":14,"cmd":"chat.files","data":{"chat_id":%q,"limit":0}}`, chatID))
+	c.expectErr(14, protocol.ErrInvalidRequest)
 }
