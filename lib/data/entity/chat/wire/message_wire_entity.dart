@@ -28,7 +28,7 @@ abstract class AttachmentWireEntity with _$AttachmentWireEntity {
 /// opaquely (the Q1 seam: the client must tolerate a future blob body).
 @freezed
 abstract class BodyWireEntity with _$BodyWireEntity {
-  const factory BodyWireEntity({required String type, String? text}) = _BodyWireEntity;
+  const factory BodyWireEntity({required String type, @JsonKey(includeIfNull: false) String? text}) = _BodyWireEntity;
 
   factory BodyWireEntity.fromJson(Map<String, dynamic> json) => _$BodyWireEntityFromJson(json);
 }
@@ -47,10 +47,10 @@ abstract class MessageWireEntity with _$MessageWireEntity {
     @JsonKey(name: 'chat_id') required String chatId,
     @JsonKey(name: 'author_id') required String authorId,
     @JsonKey(name: 'author_label') required String authorLabel,
-    @JsonKey(name: 'client_message_id') String? clientMessageId,
+    @JsonKey(name: 'client_message_id', includeIfNull: false) String? clientMessageId,
     @JsonKey(name: 'sent_at') required int sentAt, // unix seconds
-    BodyWireEntity? body,
-    AttachmentWireEntity? attachment,
+    @JsonKey(includeIfNull: false) BodyWireEntity? body,
+    @JsonKey(includeIfNull: false) AttachmentWireEntity? attachment,
   }) = _MessageWireEntity;
 
   factory MessageWireEntity.fromJson(Map<String, dynamic> json) => _$MessageWireEntityFromJson(json);

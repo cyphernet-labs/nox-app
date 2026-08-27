@@ -46,8 +46,7 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
     var page = GetChatsConfig.defaultPage;
     while (true) {
       final response = await _chatRemote.getChats(config: GetChatsConfig.nextPage(page: page));
-      final data = response.data;
-      if (data == null) throw StateError('chats envelope has no data (success=${response.success})');
+      final data = unwrapEnvelope(response, 'chats');
       all.addAll(_wireMapper.toListModel(entities: data.chats));
       if (!data.hasMore) break;
       page = page + 1;

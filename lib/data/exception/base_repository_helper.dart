@@ -1,5 +1,7 @@
 import 'package:dio/dio.dart';
+import 'package:nox_app/data/entity/base/response_entity.dart';
 import 'package:nox_app/di/global_aliases.dart';
+import 'package:nox_app/domain/exception/base_repository_exception.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 
@@ -10,6 +12,12 @@ mixin BaseRepositoryHelper {
   Future<RepositoryResult<TD>> execute<TD>(Function executionFunction) async {
     try {
       return await executionFunction();
+    } on BaseRepositoryException catch (e, stackTrace) {
+      // An already-mapped domain failure (e.g. a wire error code from
+      // unwrapEnvelope) passes through undiluted - never downgraded to
+      // `unknown` by the catch-all.
+      logRepository.error(target: this, error: e, stackTrace: stackTrace);
+      return RepositoryResult<TD>.error(exception: e);
     } on DioException catch (e, stackTrace) {
       logRepository.error(target: this, error: e, stackTrace: stackTrace);
       return RepositoryResult<TD>.error(exception: _mapDioException(e));
@@ -17,6 +25,18 @@ mixin BaseRepositoryHelper {
       logRepository.error(target: this, error: e, stackTrace: stackTrace);
       return RepositoryResult<TD>.error(exception: RepositoryException.unknown);
     }
+  }
+
+  /// Unwraps a data-source envelope: the payload when present, otherwise the
+  /// contract §2.1 error code mapped onto [RepositoryException] (an unknown
+  /// code degrades to `internal` per the evolution rule), otherwise a bare
+  /// StateError (malformed envelope) that the catch-all maps to `unknown`.
+  TD unwrapEnvelope<TD>(ResponseEntity<TD> response, String what) {
+    final data = response.data;
+    if (data != null) return data;
+    final error = response.error;
+    if (error != null) throw RepositoryException.fromWireCode(error.code);
+    throw StateError('$what envelope has no data (success=${response.success})');
   }
 
   /// Maps a transport error to a domain [RepositoryException] by connection type and

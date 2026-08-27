@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "cursor": 0,
+  "limits": {
+    "max_message_bytes": 65536,
+    "max_attachment_bytes": 104857600,
+    "max_frame_bytes": 131072
+  },
+  "identity": {
+    "id": "Anna",
+    "label": "Anna"
+  }
+}

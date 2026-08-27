@@ -1,0 +1,15 @@
+{
+  "message_id": "m_9573699d7b29a719",
+  "seq": 3,
+  "chat_id": "c_3b2a48bce50312ce",
+  "author_id": "Anna",
+  "author_label": "Anna",
+  "sent_at": 1787862781,
+  "attachment": {
+    "file_id": "f_3e377ec090cdcfaa",
+    "name": "design-spec.pdf",
+    "size": 9,
+    "mime": "application/pdf",
+    "expires_at": 2103222778
+  }
+}

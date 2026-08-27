@@ -3,6 +3,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
+import 'package:nox_app/data/entity/base/error_wire_entity.dart';
+import 'package:nox_app/data/entity/chat/wire/message_wire_entity.dart';
 import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/data/local/chat/chat_dao.dart';
 import 'package:nox_app/data/entity/base/response_entity.dart';
@@ -13,6 +15,8 @@ import 'package:nox_app/data/mapper/chat/message_wire_mapper.dart';
 import 'package:nox_app/data/remote/datasource/message_remote_data_source.dart';
 import 'package:nox_app/data/repository/chat/message_repository_impl.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/exception/base_repository_exception.dart';
+import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
@@ -257,6 +261,46 @@ void main() {
 
     final result = await errorRepo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0'));
     expect(result.hasData, isFalse); // null-data envelope → _seedChatIfEmpty throws → error
+  });
+
+  test('wire error codes surface as distinct RepositoryException values (SC-005/025)', () async {
+    await getIt<SessionRepository>().saveIdentifier(identifier: 'sess-err2', onboardingComplete: true, label: 'Err');
+
+    Future<BaseRepositoryException?> sendWith(String code) async {
+      final remote = MockMessageRemoteDataSource();
+      when(
+        remote.getMessages(config: anyNamed('config')),
+      ).thenAnswer((_) async => const ResponseEntity<MessagesWireEntity>(success: true, data: MessagesWireEntity(hasMore: false)));
+      when(
+        remote.sendMessage(
+          chatId: anyNamed('chatId'),
+          authorId: anyNamed('authorId'),
+          authorLabel: anyNamed('authorLabel'),
+          text: anyNamed('text'),
+          attachment: anyNamed('attachment'),
+        ),
+      ).thenAnswer(
+        (_) async => ResponseEntity<MessageWireEntity>(
+          success: false,
+          error: ErrorWireEntity(code: code, message: 'x'),
+        ),
+      );
+      final repo = MessageRepositoryImpl(
+        getIt<MessageDao>(),
+        remote,
+        getIt<MessageMapper>(),
+        getIt<MessageWireMapper>(),
+        getIt<ChatDao>(),
+        getIt<SessionRepository>(),
+      );
+      return (await repo.sendMessage(chatId: 'chat_0', text: 'x')).exception;
+    }
+
+    expect(await sendWith('payload_too_large'), RepositoryException.payloadTooLarge);
+    expect(await sendWith('attachment_gone'), RepositoryException.attachmentGone);
+    expect(await sendWith('name_taken'), RepositoryException.nameTaken);
+    expect(await sendWith('rate_limited'), RepositoryException.rateLimited);
+    expect(await sendWith('code_from_the_future'), RepositoryException.internal); // evolution rule
   });
 
   group('signed-in identity (feature 015)', () {

@@ -68,8 +68,7 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
       final response = await _messageRemote.getMessages(
         config: GetMessagesConfig(chatId: chatId, beforeSeq: beforeSeq, limit: GetMessagesConfig.pageSize),
       );
-      final data = response.data;
-      if (data == null) throw StateError('messages envelope has no data (success=${response.success})');
+      final data = unwrapEnvelope(response, 'messages');
       final batch = _wireMapper.toListModel(entities: data.messages);
       all.insertAll(0, batch);
       if (!data.hasMore || batch.isEmpty) break;
@@ -135,8 +134,7 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
         text: text,
         attachment: attachment,
       );
-      final data = response.data;
-      if (data == null) throw StateError('send envelope has no data (success=${response.success})');
+      final data = unwrapEnvelope(response, 'send');
       // The wire carries no statuses (§5): an echoed own message is locally
       // "accepted by server".
       var message = _wireMapper.toModel(entity: data).copyWith(status: MessageStatus.sent);
