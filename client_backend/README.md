@@ -116,6 +116,21 @@ Anna шлёт в CID1 ещё 4–5 сообщений (`a2`…), затем:
 
 `before_seq` не задан — сервер отдаёт хвост (самые свежие). В выдаче Anna её сообщения несут `client_message_id`; тот же запрос от Bob — без этого поля (правило §5: ключ идемпотентности виден только автору). Повтор `message.send` с использованным `client_message_id` строки не добавляет — история показывает сообщение один раз.
 
+### Переименование вживую
+
+Bob держит соединение открытым; Anna:
+
+```bash
+{"id":30,"cmd":"chat.nameAvailable","data":{"name":"Общий"}}                             # ← available:false
+{"id":31,"cmd":"chat.nameAvailable","data":{"name":"Общий","exclude_chat_id":"<CID2>"}}  # ← available:true
+{"id":32,"cmd":"chat.rename","data":{"chat_id":"<CID2>","name":"Новый общий"}}
+# ← ok с полной карточкой; у Bob мгновенно (< 1 с) кадр {"seq":N,"event":"chat.updated",...}
+{"id":33,"cmd":"chats.list","data":{"page":1,"page_size":10}}
+# ← порядок НЕ изменился: переименование не считается активностью
+```
+
+Уникальность имени — глобальная, без учёта регистра (включая кириллицу), с исключением самого чата. Переименование в то же самое имя — успех без события. После обрыва `chat.updated` досылается реплеем с `since` в общем порядке журнала.
+
 ## Негативные проверки
 
 На подключении, где `session.hello` уже выполнен:
@@ -131,6 +146,15 @@ Anna шлёт в CID1 ещё 4–5 сообщений (`a2`…), затем:
 ```bash
 {"id":1,"cmd":"session.hello","data":{"schema":99}}   # → unsupported_schema
 {"id":1,"cmd":"chat.create","data":{"name":"early"}}  # команда до hello → invalid_request
+```
+
+Команды фазы 023:
+
+```bash
+{"id":40,"cmd":"chats.list","data":{"page":0,"page_size":10}}               # → invalid_request
+{"id":41,"cmd":"chat.get","data":{"chat_id":"c_missing"}}                   # → not_found
+{"id":42,"cmd":"chat.rename","data":{"chat_id":"<CID2>","name":"KITCHEN"}}  # имя другого чата → name_taken
+{"id":43,"cmd":"messages.list","data":{"chat_id":"<CID1>","limit":0}}       # → invalid_request
 ```
 
 ## Автоматическая валидация

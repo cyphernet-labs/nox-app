@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -108,5 +109,134 @@ func TestStoryOneFirstPageLatencyOverLargeList(t *testing.T) {
 	}
 	if !page.HasMore || len(page.Chats) != 100 {
 		t.Fatalf("page = %d rows hasMore=%v", len(page.Chats), page.HasMore)
+	}
+}
+
+func TestStoryThreeRenameLiveNoReorderAndReplay(t *testing.T) {
+	ts, _ := newTestServer(t)
+
+	anna := dialWS(t, ts)
+	anna.expectGreeting()
+	anna.hello(1, `,"label":"Anna"`)
+	kitchen := seedChat(t, anna, "Kitchen")
+	target := anna.expectOKAfter(3, `{"id":3,"cmd":"chat.create","data":{"name":"Старое"}}`)
+	var targetChat protocol.Chat
+	mustUnmarshal(t, target["chat"], &targetChat)
+	sendText(t, anna, 4, kitchen, "m1", "keeps kitchen on top")
+
+	bob := dialWS(t, ts)
+	bob.expectGreeting()
+	bob.hello(1, `,"label":"Bob"`)
+
+	orderBefore := listChats(t, anna, 10, `{"page":1,"page_size":10}`)
+
+	// nameAvailable agrees with the upcoming rename outcomes.
+	avail := anna.expectOKAfter(11, `{"id":11,"cmd":"chat.nameAvailable","data":{"name":"kitchen"}}`)
+	var available bool
+	mustUnmarshal(t, avail["available"], &available)
+	if available {
+		t.Fatal("kitchen must be reported taken (case-insensitive)")
+	}
+	avail = anna.expectOKAfter(12, fmt.Sprintf(`{"id":12,"cmd":"chat.nameAvailable","data":{"name":"СТАРОЕ","exclude_chat_id":%q}}`, targetChat.ChatID))
+	mustUnmarshal(t, avail["available"], &available)
+	if !available {
+		t.Fatal("own name with exclusion must be available")
+	}
+
+	// Rename: live chat.updated with the full card on the second client.
+	before := time.Now()
+	renamed := anna.expectOKAfter(13, fmt.Sprintf(`{"id":13,"cmd":"chat.rename","data":{"chat_id":%q,"name":"Новое"}}`, targetChat.ChatID))
+	var renamedChat protocol.Chat
+	mustUnmarshal(t, renamed["chat"], &renamedChat)
+
+	seq, name, evData := bob.expectEvent()
+	if latency := time.Since(before); latency >= time.Second {
+		t.Fatalf("chat.updated latency = %v, want < 1s (SC-002)", latency)
+	}
+	if name != protocol.EventChatUpdated {
+		t.Fatalf("event = %s/%d, want chat.updated", name, seq)
+	}
+	raw, err := json.Marshal(evData)
+	if err != nil {
+		t.Fatalf("re-marshal event: %v", err)
+	}
+	var evChat protocol.Chat
+	if err := json.Unmarshal(raw, &evChat); err != nil || evChat != renamedChat {
+		t.Fatalf("event card = %+v err=%v, want %+v", evChat, err, renamedChat)
+	}
+
+	// The list order did not change: rename is not activity.
+	orderAfter := listChats(t, anna, 14, `{"page":1,"page_size":10}`)
+	if len(orderAfter.Chats) != len(orderBefore.Chats) {
+		t.Fatalf("row count changed: %d -> %d", len(orderBefore.Chats), len(orderAfter.Chats))
+	}
+	for i := range orderBefore.Chats {
+		if orderAfter.Chats[i].ChatID != orderBefore.Chats[i].ChatID {
+			t.Fatalf("position %d changed: %s -> %s", i, orderBefore.Chats[i].Name, orderAfter.Chats[i].Name)
+		}
+	}
+
+	// Cyrillic case-variant of another chat's name is taken.
+	anna.send(fmt.Sprintf(`{"id":15,"cmd":"chat.rename","data":{"chat_id":%q,"name":"KITCHEN"}}`, targetChat.ChatID))
+	anna.expectErr(15, protocol.ErrNameTaken)
+
+	// No-op rename: ok, and Bob receives no event - proven by the NEXT
+	// event Bob sees being the message below, not a chat.updated.
+	noop := anna.expectOKAfter(16, fmt.Sprintf(`{"id":16,"cmd":"chat.rename","data":{"chat_id":%q,"name":"Новое"}}`, targetChat.ChatID))
+	var noopChat protocol.Chat
+	mustUnmarshal(t, noop["chat"], &noopChat)
+	if noopChat != renamedChat {
+		t.Fatalf("no-op card = %+v, want unchanged %+v", noopChat, renamedChat)
+	}
+	sendText(t, anna, 17, kitchen, "m2", "probe")
+	if _, name, _ := bob.expectEvent(); name != protocol.EventMessageNew {
+		t.Fatalf("bob's next event = %s, want message.new (no-op must not emit chat.updated)", name)
+	}
+
+	// Replay: a reconnecting client receives chat.updated in log order.
+	lateBob := dialWS(t, ts)
+	lateBob.expectGreeting()
+	lateBob.hello(1, `,"label":"Late","since":0`)
+	var seenChatUpdated bool
+	for range 8 {
+		_, name, _ := lateBob.expectEvent()
+		if name == protocol.EventChatUpdated {
+			seenChatUpdated = true
+			break
+		}
+	}
+	if !seenChatUpdated {
+		t.Fatal("replay never delivered chat.updated")
+	}
+}
+
+func TestStoryThreeConcurrentRenameRace(t *testing.T) {
+	ts, _ := newTestServer(t)
+
+	c1 := dialWS(t, ts)
+	c1.expectGreeting()
+	c1.hello(1, ``)
+	c2 := dialWS(t, ts)
+	c2.expectGreeting()
+	c2.hello(1, ``)
+
+	a := seedChat(t, c1, "Alpha")
+	b := seedChat(t, c2, "Beta")
+
+	// Both rename their chat to the same fresh name concurrently.
+	c1.send(fmt.Sprintf(`{"id":9,"cmd":"chat.rename","data":{"chat_id":%q,"name":"Gamma"}}`, a))
+	c2.send(fmt.Sprintf(`{"id":9,"cmd":"chat.rename","data":{"chat_id":%q,"name":"gamma"}}`, b))
+
+	wins := 0
+	for _, c := range []*wsClient{c1, c2} {
+		reply := c.expectReply(9)
+		var ok bool
+		mustUnmarshal(t, reply["ok"], &ok)
+		if ok {
+			wins++
+		}
+	}
+	if wins != 1 {
+		t.Fatalf("concurrent rename wins = %d, want exactly 1", wins)
 	}
 }
