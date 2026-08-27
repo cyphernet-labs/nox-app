@@ -26,8 +26,8 @@
 - [x] T003 [US1] Implement ListChats in client_backend/internal/store/store.go per research R1/R2: read-pool query ordered by last_activity_at DESC, chat_id ASC; Unicode case-insensitive substring filter and page slicing in Go; returns page + hasMore; table tests in client_backend/internal/store/store_test.go (ordering, tiebreaker on equal activity, Cyrillic query, page beyond data → empty + hasMore false)
 - [x] T004 [US1] Implement GetChat in client_backend/internal/store/store.go (read pool, ErrChatNotFound sentinel reuse) with store tests for found and missing ids
 - [x] T005 [US1] Add chats.list and chat.get handlers in client_backend/internal/server/handlers.go plus dispatch cases in client_backend/internal/server/ws.go: page/page_size validation (<1 → invalid_request), silent clamp to 100 (research R6), query pass-through, not_found mapping; requests and replies shaped verbatim per contracts/README.md
-- [ ] T006 [US1] Add story-1 integration tests in client_backend/internal/server/chats_test.go: list ordering with preview after a send, Cyrillic case-insensitive search, page_size 500 clamped to ≤100 rows, page 0 → invalid_request, page past the end → empty + has_more false, chat.get full card and not_found, and first page over 250 seeded chats answered in < 1s (SC-001)
-- [ ] T007 [US1] Extend client_backend/README.md with the smoke Д «Список и поиск» section from specs/023-client-backend-chats-messages/quickstart.md, kept in sync
+- [x] T006 [US1] Add story-1 integration tests in client_backend/internal/server/chats_test.go: list ordering with preview after a send, Cyrillic case-insensitive search, page_size 500 clamped to ≤100 rows, page 0 → invalid_request, page past the end → empty + has_more false, chat.get full card and not_found, and first page over 250 seeded chats answered in < 1s (SC-001)
+- [x] T007 [US1] Extend client_backend/README.md with the smoke Д «Список и поиск» section from specs/023-client-backend-chats-messages/quickstart.md, kept in sync
 
 **Checkpoint**: US1 демонстрируема владельцем двумя терминалами; полный гейт зелёный.
 
