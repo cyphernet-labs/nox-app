@@ -14,6 +14,14 @@ abstract class MessageAttachment with _$MessageAttachment {
     required FileType type,
     required String name,
     required int sizeBytes,
+
+    /// MIME type from the wire (contract §7 metadata; declared by the
+    /// uploader, never sniffed from bytes). Null for locally-picked drafts.
+    String? mime,
+
+    /// Server retention deadline for the bytes (contract expires_at). Save
+    /// is gated in advance when past; null for locally-picked drafts.
+    DateTime? expiresAt,
     // Device-local file path of the picked/sent file (feature F4/F2). Drives the image
     // thumbnail + the real Save. Null for seeded / backend attachments (no local file →
     // type-icon chip / mock save). Persisted in Sembast; NOT carried on the S4 wire.

@@ -35,7 +35,7 @@ void main() {
     final response = await api.execute(chatId: 'c1', authorId: 'abc-id', authorLabel: 'Alice', text: 'hello');
     expect(response.success, isTrue);
     expect(response.data, isNotNull);
-    expect(response.data!.id, startsWith('srv_')); // wire echo
+    expect(response.data!.messageId, startsWith('srv_')); // wire echo
     expect(response.data!.chatId, 'c1');
   });
 
@@ -47,7 +47,7 @@ void main() {
     expect(message.attachment, isNull);
     expect(message.authorId, 'abc-id'); // echoes the resolved signed-in identity (feature 015)
     expect(message.authorLabel, 'Alice');
-    expect(message.status, MessageStatus.sent);
+    expect(message.status, MessageStatus.none); // the wire carries no statuses; the repo marks the echo sent
     expect(message.sentAt.toUtc(), frozen.toUtc());
     expect(message.id, startsWith('srv_'));
   });
@@ -64,7 +64,7 @@ void main() {
     expect(message.attachment?.name, attachment.name);
     expect(message.attachment?.sizeBytes, attachment.sizeBytes);
     expect(message.authorId, 'abc-id');
-    expect(message.status, MessageStatus.sent);
+    expect(message.status, MessageStatus.none); // the wire carries no statuses; the repo marks the echo sent
     expect(message.id, startsWith('srv_'));
   });
 

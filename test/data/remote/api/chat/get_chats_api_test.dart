@@ -5,21 +5,20 @@ import 'package:nox_app/data/remote/api/chat/get_chats_api.dart';
 import 'package:nox_app/domain/repository/base/page_metadata.dart';
 import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 import 'package:nox_app/general/app_clock.dart';
+import 'package:nox_app/general/chat_seed_mock_data.dart';
 
 void main() {
   final mapper = ChatWireMapper();
   final api = GetChatsApi(mapper);
 
-  // The generator now returns the ResponseEntity<ChatsWireEntity> envelope (feature 018/S4).
-  // Unwrap it + map wire->model here so the existing seed assertions (names, ids, ordering,
-  // unread) read off the domain model as before; the envelope's page/pageSize/total derive
-  // the same PageMetadata the repository computes (page*pageSize < total).
+  // The generator returns the contract-shaped ResponseEntity<ChatsWireEntity>
+  // page {chats, has_more}. Unwrap it + map wire->model here so the seed
+  // assertions (names, ids, ordering) read off the domain model.
   Future<(List<ChatModel>, PageMetadata)> exec(GetChatsConfig config) async {
     final response = await api.execute(config: config);
     final data = response.data!;
-    final chats = mapper.toListModel(entities: data.items);
-    final hasMore = (data.page * data.pageSize) < data.total;
-    return (chats, PageMetadata(total: data.total, nextPage: hasMore ? data.page + 1 : null));
+    final chats = mapper.toListModel(entities: data.chats);
+    return (chats, PageMetadata(hasMore: data.hasMore, nextPage: data.hasMore ? config.page + 1 : null));
   }
 
   // Seed facts read from lib/data/remote/api/chat/get_chats_api.dart.
@@ -35,9 +34,8 @@ void main() {
     final response = await api.execute(config: GetChatsConfig.firstPage());
     expect(response.success, isTrue);
     expect(response.data, isNotNull);
-    expect(response.data!.items, hasLength(pageSize)); // wire items
-    expect(response.data!.total, seedSize);
-    expect(response.data!.page, 1);
+    expect(response.data!.chats, hasLength(pageSize)); // wire rows
+    expect(response.data!.hasMore, isTrue); // 28 seeded > one page
   });
 
   group('pagination over the seed', () {
@@ -45,7 +43,7 @@ void main() {
       final (chats, meta) = await exec(GetChatsConfig.firstPage());
 
       expect(chats, hasLength(pageSize));
-      expect(meta.total, seedSize);
+      expect(meta.hasMore, isTrue);
       expect(meta.nextPage, 2);
     });
 
@@ -53,15 +51,15 @@ void main() {
       final (chats, meta) = await exec(GetChatsConfig.nextPage(page: 2));
 
       expect(chats, hasLength(tailSize));
-      expect(meta.total, seedSize);
+      expect(meta.hasMore, isFalse);
       expect(meta.nextPage, isNull);
     });
 
-    test('a page past the end returns an empty slice with the total unchanged', () async {
+    test('a page past the end returns an empty slice with no more pages', () async {
       final (chats, meta) = await exec(GetChatsConfig.nextPage(page: 3));
 
       expect(chats, isEmpty);
-      expect(meta.total, seedSize);
+      expect(meta.hasMore, isFalse);
       expect(meta.nextPage, isNull);
     });
 
@@ -78,28 +76,29 @@ void main() {
     test('an empty search returns the whole seed', () async {
       final (chats, meta) = await exec(GetChatsConfig.firstPage(search: ''));
 
-      expect(meta.total, seedSize);
+      expect(meta.hasMore, isTrue);
       expect(chats, hasLength(pageSize));
     });
 
     test('a whitespace-only search is trimmed and returns the whole seed', () async {
       final (_, meta) = await exec(GetChatsConfig.firstPage(search: '   '));
 
-      expect(meta.total, seedSize);
+      expect(meta.hasMore, isTrue);
     });
 
     test('a no-match search returns an empty slice with a zero total', () async {
       final (chats, meta) = await exec(GetChatsConfig.firstPage(search: 'zzz-no-such-chat'));
 
       expect(chats, isEmpty);
-      expect(meta.total, 0);
+      expect(meta.hasMore, isFalse);
       expect(meta.nextPage, isNull);
     });
 
-    test('a matching ASCII substring filters by name and totals only the matches', () async {
+    test('a matching ASCII substring filters by name to only the matches', () async {
       final (chats, meta) = await exec(GetChatsConfig.firstPage(search: 'garden'));
 
-      expect(meta.total, 2);
+      expect(chats, hasLength(2));
+      expect(meta.hasMore, isFalse);
       expect(chats.map((c) => c.name), containsAll(<String>['Garden', 'Gardening 2']));
     });
 
@@ -107,8 +106,8 @@ void main() {
       final (lower, lowerMeta) = await exec(GetChatsConfig.firstPage(search: 'design'));
       final (upper, upperMeta) = await exec(GetChatsConfig.firstPage(search: '  DESIGN  '));
 
-      expect(lowerMeta.total, 1);
-      expect(upperMeta.total, lowerMeta.total);
+      expect(lowerMeta.hasMore, isFalse);
+      expect(upperMeta.hasMore, lowerMeta.hasMore);
       expect(lower.single.name, 'Design crit');
       expect(upper.single.name, lower.single.name);
     });
@@ -128,16 +127,15 @@ void main() {
       }
     });
 
-    test('unread counts include a value above the 99+ cap and several zero rows', () async {
+    test('the wire carries no unread; the local seed overlay keeps the 99+ cap value', () async {
+      // Unread is device-local (contract §8.3): every wire row maps to 0 and
+      // the repository overlays ChatSeedMockData at seed time.
       final (firstChats, _) = await exec(GetChatsConfig.firstPage());
-      final (secondChats, _) = await exec(GetChatsConfig.nextPage(page: 2));
-      final counts = [
-        for (final c in [...firstChats, ...secondChats]) c.unreadCount,
-      ];
+      expect(firstChats.every((c) => c.unreadCount == 0), isTrue);
 
-      expect(counts, contains(142));
-      expect(counts.any((n) => n > 99), isTrue);
-      expect(counts.where((n) => n == 0).length, greaterThanOrEqualTo(3));
+      final overlay = ChatSeedMockData.unreadByChatId.values;
+      expect(overlay, contains(142)); // the 99+ cap case survives as local data
+      expect(overlay.any((n) => n > 99), isTrue);
     });
   });
 }

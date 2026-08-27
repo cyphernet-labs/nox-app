@@ -2,16 +2,17 @@ import 'package:freezed_annotation/freezed_annotation.dart';
 
 part 'page_metadata.freezed.dart';
 
-/// Offset-style page metadata (default flavor). nextPage == null => last page.
-/// JSON parsing lives in the data layer; this is the domain-side shape the
-/// repository returns alongside a page slice.
+/// Contract-shaped page metadata: the server reports only whether more rows
+/// exist beyond this slice (no totals on the wire). nextPage carries the
+/// 1-based next page index for the paged chats path; the cursor-paged
+/// messages path leaves it null and advances by before_seq instead.
 @freezed
 abstract class PageMetadata with _$PageMetadata {
   const factory PageMetadata({
-    /// Total item count across all pages.
-    required int total,
+    /// Whether rows exist beyond this slice (wire has_more).
+    required bool hasMore,
 
-    /// 1-based index of the next page, or null on the last page.
+    /// 1-based index of the next page (paged path only), null otherwise.
     int? nextPage,
   }) = _PageMetadata;
 }

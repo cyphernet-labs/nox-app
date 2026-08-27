@@ -24,16 +24,16 @@ void main() {
     await configureDependencies(Environment.test);
     // Mockito needs dummy values for the generic RepositoryResult return types.
     provideDummy<RepositoryResult<(List<MessageModel>, PageMetadata)>>(
-      RepositoryResult.success(data: (const [], const PageMetadata(total: 0))),
+      RepositoryResult.success(data: (const [], const PageMetadata(hasMore: false))),
     );
     provideDummy<RepositoryResult<MessageModel>>(RepositoryResult.error(exception: RepositoryException.unknown));
     repository = MockMessageRepository();
     // The bloc subscribes to watchMessages() on init (Feature 014) — an empty stream
     // means no live refresh, isolating the send-failure path under test.
     when(repository.watchMessages(any)).thenAnswer((_) => Stream<List<MessageModel>>.empty());
-    when(
-      repository.getMessages(config: anyNamed('config')),
-    ).thenAnswer((_) async => RepositoryResult<(List<MessageModel>, PageMetadata)>.success(data: (const [], const PageMetadata(total: 0))));
+    when(repository.getMessages(config: anyNamed('config'))).thenAnswer(
+      (_) async => RepositoryResult<(List<MessageModel>, PageMetadata)>.success(data: (const [], const PageMetadata(hasMore: false))),
+    );
     when(
       repository.sendMessage(chatId: anyNamed('chatId'), text: anyNamed('text'), attachment: anyNamed('attachment')),
     ).thenAnswer((_) async => RepositoryResult<MessageModel>.error(exception: RepositoryException.unknown));

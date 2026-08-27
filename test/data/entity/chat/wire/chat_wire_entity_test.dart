@@ -4,32 +4,65 @@ import 'package:nox_app/data/entity/chat/wire/chat_wire_entity.dart';
 import 'package:nox_app/data/entity/chat/wire/chats_wire_entity.dart';
 
 void main() {
-  const chat = ChatWireEntity(
-    id: 'chat_0',
-    name: 'Design crit',
-    lastMessagePreview: 'hi',
-    lastMessageAt: '2026-06-15T21:30:00.000Z',
-    unreadCount: 3,
-  );
-  const page = ChatsWireEntity(items: [chat], page: 1, pageSize: 20, total: 1);
+  final json = <String, dynamic>{
+    'chat_id': 'c_9f2',
+    'name': 'Kitchen talks',
+    'created_at': 1755600000,
+    'created_by_label': 'Anna',
+    'last_message_preview': 'see you there',
+    'last_activity_at': 1755600123,
+  };
 
-  test('ChatWireEntity JSON round-trips (fromJson∘toJson)', () {
-    expect(ChatWireEntity.fromJson(chat.toJson()), chat);
-    // snake_case keys are the wire contract.
-    expect(chat.toJson()['last_message_at'], '2026-06-15T21:30:00.000Z');
-    expect(chat.toJson()['unread_count'], 3);
+  group('ChatWireEntity (contract v0 §4)', () {
+    test('parses the full contract shape 1:1', () {
+      final entity = ChatWireEntity.fromJson(json);
+
+      expect(entity.chatId, 'c_9f2');
+      expect(entity.name, 'Kitchen talks');
+      expect(entity.createdAt, 1755600000);
+      expect(entity.createdByLabel, 'Anna');
+      expect(entity.lastMessagePreview, 'see you there');
+      expect(entity.lastActivityAt, 1755600123);
+    });
+
+    test('serializes back with the exact contract keys and no local fields', () {
+      final out = ChatWireEntity.fromJson(json).toJson();
+
+      expect(out['chat_id'], 'c_9f2');
+      expect(out['created_at'], 1755600000);
+      expect(out['created_by_label'], 'Anna');
+      expect(out['last_activity_at'], 1755600123);
+      // The unread counter is device-local (§8.3) - never on the wire.
+      expect(out.containsKey('unread_count'), isFalse);
+    });
+
+    test('unknown sibling fields are ignored (v0 evolves)', () {
+      final withExtra = Map<String, dynamic>.from(json)..['future_field'] = true;
+      expect(() => ChatWireEntity.fromJson(withExtra), returnsNormally);
+    });
   });
 
-  test('ChatsWireEntity JSON round-trips with its nested items', () {
-    expect(ChatsWireEntity.fromJson(page.toJson()), page);
-    expect(page.toJson()['page_size'], 20);
-  });
+  group('ChatsWireEntity page (contract v0 §4)', () {
+    test('parses {chats, has_more} and defaults an absent list to empty', () {
+      final page = ChatsWireEntity.fromJson(<String, dynamic>{
+        'chats': [json],
+        'has_more': true,
+      });
+      expect(page.chats.single.chatId, 'c_9f2');
+      expect(page.hasMore, isTrue);
 
-  test('ResponseEntity<ChatsWireEntity>.fromJson resolves data via the registry (not throwing)', () {
-    final envelope = ResponseEntity<ChatsWireEntity>(success: true, data: page);
-    final json = envelope.toJson();
-    final parsed = ResponseEntity<ChatsWireEntity>.fromJson(json);
-    expect(parsed.success, isTrue);
-    expect(parsed.data, page);
+      final empty = ChatsWireEntity.fromJson(<String, dynamic>{'has_more': false});
+      expect(empty.chats, isEmpty);
+      expect(empty.hasMore, isFalse);
+    });
+
+    test('round-trips through the ResponseEntity envelope registry', () {
+      final envelope = ResponseEntity<ChatsWireEntity>(
+        success: true,
+        data: ChatsWireEntity(chats: [ChatWireEntity.fromJson(json)], hasMore: false),
+      );
+      final parsed = ResponseEntity<ChatsWireEntity>.fromJson(envelope.toJson());
+      expect(parsed.data, envelope.data);
+    });
   });
 }

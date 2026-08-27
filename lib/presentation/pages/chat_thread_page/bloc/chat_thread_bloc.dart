@@ -123,7 +123,6 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     final isReset = event.reset;
     if (!isReset && !current.pagingState.hasNextPage) return;
 
-    final nextPageKey = isReset ? GetMessagesConfig.defaultPage : current.nextPage;
     final existingList = isReset ? <MessageModel>[] : current.items;
     final basePagingState = isReset
         ? PagingState<String, MessageModel>(isLoading: true)
@@ -139,14 +138,21 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
           if (live is! Initialized) return;
           final r = basePagingState.applyPage(
             existingList: const [],
-            response: (const [], const PageMetadata(total: 0)),
+            response: (const [], const PageMetadata(hasMore: false)),
             keyExtractor: (m) => m.id,
           );
-          emit(live.copyWith(items: const [], pagingState: r.pagingState, loadedPageCount: 1, loadingInProgress: false, isOffline: false));
+          emit(
+            live.copyWith(items: const [], pagingState: r.pagingState, oldestLoadedSeq: null, loadingInProgress: false, isOffline: false),
+          );
           return;
         }
 
-        final config = GetMessagesConfig.nextPage(chatId: _chatId, page: nextPageKey);
+        // Cursor request: the tail on reset/first load, otherwise the batch
+        // older than the oldest loaded seq.
+        final oldest = current.oldestLoadedSeq;
+        final config = isReset || oldest == null
+            ? GetMessagesConfig.tail(chatId: _chatId)
+            : GetMessagesConfig.olderThan(chatId: _chatId, beforeSeq: oldest);
         final result = await _messageRepository.getMessages(config: config);
 
         final live = state;
@@ -156,12 +162,20 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
           onData: (data) {
             final (messages, PageMetadata metadata) = data;
             final r = basePagingState.applyPage(existingList: existingList, response: (messages, metadata), keyExtractor: (m) => m.id);
+            // Batches ascend by seq, so their first row is their oldest.
+            final batchOldest = messages.isEmpty ? null : messages.first.seq;
+            final newOldest = isReset
+                ? batchOldest
+                : switch ((live.oldestLoadedSeq, batchOldest)) {
+                    (null, final b) => b,
+                    (final a, null) => a,
+                    (final a?, final b?) => a < b ? a : b,
+                  };
             emit(
               live.copyWith(
                 items: r.updatedList,
                 pagingState: r.pagingState,
-                nextPage: r.nextPage ?? live.nextPage,
-                loadedPageCount: isReset ? 1 : live.loadedPageCount + 1,
+                oldestLoadedSeq: newOldest,
                 loadingInProgress: false,
                 isOffline: _isOffline(),
               ),
@@ -260,29 +274,25 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     );
   }
 
-  /// Invisible live re-read of the loaded page prefix — re-folds `items` via getMessages
+  /// Invisible live re-read of the loaded span — one tail read sized to the
+  /// loaded item count plus a batch of headroom for fresh arrivals (the
+  /// cursor equivalent of the old page-prefix walk). Re-folds `items`
   /// WITHOUT touching the optimistic `outgoing` / draft / loading state.
   Future<void> _refreshMessages(Initialized live0, Emitter<ChatThreadState> emit) async {
     if (_scenario == ChatThreadScenario.fatal || _scenario == ChatThreadScenario.empty) return;
     // An inbound that lands in the currently-viewed chat stays read (no-op at 0 otherwise).
     unawaited(_chatRepository.markChatRead(chatId: _chatId));
-    final all = <MessageModel>[];
-    PageMetadata? lastMeta;
-    for (var page = GetMessagesConfig.defaultPage; page < GetMessagesConfig.defaultPage + live0.loadedPageCount; page++) {
-      final live = state;
-      if (live is! Initialized) return;
-      final result = await _messageRepository.getMessages(
-        config: GetMessagesConfig.nextPage(chatId: _chatId, page: page),
-      );
-      if (!result.hasData) return; // swallow a background error — keep the current thread
-      final (messages, meta) = result.data!;
-      all.addAll(messages);
-      lastMeta = meta;
-    }
+    final result = await _messageRepository.getMessages(
+      config: GetMessagesConfig.tail(chatId: _chatId, limit: live0.items.length + GetMessagesConfig.pageSize),
+    );
+    if (!result.hasData) return; // swallow a background error — keep the current thread
+    final (all, meta) = result.data!;
     final live = state;
-    if (live is! Initialized || lastMeta == null) return;
-    final r = PagingState<String, MessageModel>().applyPage(existingList: const [], response: (all, lastMeta), keyExtractor: (m) => m.id);
-    emit(live.copyWith(items: r.updatedList, pagingState: r.pagingState, nextPage: r.nextPage ?? live.nextPage));
+    if (live is! Initialized) return;
+    final r = PagingState<String, MessageModel>().applyPage(existingList: const [], response: (all, meta), keyExtractor: (m) => m.id);
+    emit(
+      live.copyWith(items: r.updatedList, pagingState: r.pagingState, oldestLoadedSeq: all.isEmpty ? live.oldestLoadedSeq : all.first.seq),
+    );
   }
 
   Future<void> _onAttachmentPicked(AttachmentPicked event, Emitter<ChatThreadState> emit) async {

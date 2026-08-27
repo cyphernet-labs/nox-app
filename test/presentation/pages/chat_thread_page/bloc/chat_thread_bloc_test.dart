@@ -384,7 +384,7 @@ void main() {
         conn.emit(true);
         await Future<void>.delayed(const Duration(milliseconds: 900));
 
-        final persisted = (await getIt<MessageRepository>().getMessages(config: GetMessagesConfig.firstPage(chatId: 'chat_0'))).data!.$1;
+        final persisted = (await getIt<MessageRepository>().getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0'))).data!.$1;
         expect(persisted.where((m) => m.text == 'flap-queued'), hasLength(1)); // delivered exactly once
       });
 

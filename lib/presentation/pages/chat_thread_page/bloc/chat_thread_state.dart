@@ -16,9 +16,9 @@ sealed class ChatThreadState with _$ChatThreadState {
     required String currentId,
     @Default([]) List<MessageModel> items,
     @Default([]) List<MessageModel> outgoing,
-    @Default(GetMessagesConfig.defaultPage) int nextPage,
-    // How many pages of history are loaded — the span a live `refresh` re-reads.
-    @Default(1) int loadedPageCount,
+    // The oldest loaded journal number - the before_seq cursor of the next
+    // older batch; null until the first tail load lands.
+    int? oldestLoadedSeq,
     @Default(false) bool loadingInProgress,
     @Default(false) bool isOffline,
     MessageAttachment? draftAttachment,
@@ -28,12 +28,22 @@ sealed class ChatThreadState with _$ChatThreadState {
 }
 
 extension ChatThreadInitializedExt on Initialized {
-  /// History + optimistic outgoing, oldest → newest (the system line sorts first).
-  /// Dedup-by-id (Feature 014): once an optimistic send is acked it adopts the persisted
-  /// `srv_<uuid>` id, and the live `items` also carry it — keep only one bubble.
+  /// History + optimistic outgoing, ascending by the journal seq (the genesis
+  /// line owns the chat's lowest seq; optimistic sends carry [kPendingSeq]
+  /// and stay at the newest end until acked). Dedup-by-id (Feature 014):
+  /// once an optimistic send is acked it adopts the persisted `srv_<uuid>`
+  /// id, and the live `items` also carry it — keep only one bubble.
   List<MessageModel> get allMessages {
     final itemIds = items.map((m) => m.id).toSet();
-    final merged = [...items, ...outgoing.where((m) => !itemIds.contains(m.id))]..sort((a, b) => a.sentAt.compareTo(b.sentAt));
+    final merged = [...items, ...outgoing.where((m) => !itemIds.contains(m.id))]
+      ..sort((a, b) {
+        final bySeq = a.seq.compareTo(b.seq);
+        if (bySeq != 0) return bySeq;
+        final byTime = a.sentAt.compareTo(b.sentAt);
+        // Deterministic under the frozen test clock: queued sends share the
+        // sentinel seq AND the frozen timestamp - fall back to the id.
+        return byTime != 0 ? byTime : a.id.compareTo(b.id);
+      });
     return merged;
   }
 

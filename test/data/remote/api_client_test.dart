@@ -3,6 +3,7 @@ import 'package:nox_app/data/remote/api_client.dart';
 import 'package:nox_app/data/remote/interceptor/auth_interceptor.dart';
 import 'package:nox_app/domain/model/app_config/app_config.dart';
 import 'package:nox_app/domain/model/app_config/app_flavor_type.dart';
+import 'package:nox_app/domain/model/app_config/server_limits.dart';
 import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
 
 /// Minimal fake exposing a configurable apiUrl (the only thing initBase reads).
@@ -18,6 +19,10 @@ class _FakeConfig implements AppConfigRepository {
   Future<String?> getUserAuthIdToken() async => null;
   @override
   bool get isTestEnvironment => true;
+  @override
+  ServerLimits get limits => ServerLimits.contractDefaults;
+  @override
+  void updateLimits(ServerLimits limits) {}
 }
 
 void main() {

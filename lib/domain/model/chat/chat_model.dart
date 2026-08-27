@@ -13,5 +13,12 @@ abstract class ChatModel with _$ChatModel {
     required String lastMessagePreview,
     required DateTime lastMessageAt,
     @Default(0) int unreadCount,
+
+    /// Chat creation time from the wire (contract created_at) - feeds the
+    /// future client-rendered genesis line. Null for legacy local rows.
+    DateTime? createdAt,
+
+    /// Creator's label from the wire (contract created_by_label).
+    String? createdByLabel,
   }) = _ChatModel;
 }

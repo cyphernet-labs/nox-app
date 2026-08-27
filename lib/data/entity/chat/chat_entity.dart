@@ -16,6 +16,10 @@ abstract class ChatEntity with _$ChatEntity {
     required String lastMessagePreview,
     required String lastMessageAt, // DateTime encoded as ISO-8601 String
     required int unreadCount,
+    // Wire creation metadata (contract §4). Optional: pre-025 records decode
+    // with null (the attachmentLocalPath back-compat pattern).
+    int? createdAt, // unix seconds
+    String? createdByLabel,
   }) = _ChatEntity;
 
   factory ChatEntity.fromJson(Map<String, dynamic> json) => _$ChatEntityFromJson(json);

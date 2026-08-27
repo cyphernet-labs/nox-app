@@ -14,7 +14,7 @@ void main() {
     test('first page append with a next page grows the list and rebuilds pages/keys one item per page', () {
       final result = base.applyPage(
         existingList: const ['a'],
-        response: (const ['b', 'c'], const PageMetadata(total: 3, nextPage: 2)),
+        response: (const ['b', 'c'], const PageMetadata(hasMore: true, nextPage: 2)),
         keyExtractor: keyOf,
       );
 
@@ -35,7 +35,7 @@ void main() {
     test('trailing page with a null next page appends and marks hasNextPage false', () {
       final result = base.applyPage(
         existingList: const ['a', 'b'],
-        response: (const ['c'], const PageMetadata(total: 3, nextPage: null)),
+        response: (const ['c'], const PageMetadata(hasMore: false, nextPage: null)),
         keyExtractor: keyOf,
       );
 
@@ -56,7 +56,7 @@ void main() {
     test('empty existing plus empty last page yields the no-items empty state', () {
       final result = base.applyPage(
         existingList: const <String>[],
-        response: (const <String>[], const PageMetadata(total: 0, nextPage: null)),
+        response: (const <String>[], const PageMetadata(hasMore: false, nextPage: null)),
         keyExtractor: keyOf,
       );
 

@@ -15,6 +15,7 @@ import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/general/app_clock.dart';
+import 'package:nox_app/general/chat_seed_mock_data.dart';
 import 'package:uuid/uuid.dart';
 
 /// Cache-first chats list (5.1) over the local Sembast DB. The [ChatRemoteDataSource]
@@ -47,11 +48,14 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
       final response = await _chatRemote.getChats(config: GetChatsConfig.nextPage(page: page));
       final data = response.data;
       if (data == null) throw StateError('chats envelope has no data (success=${response.success})');
-      all.addAll(_wireMapper.toListModel(entities: data.items));
-      if ((data.page * data.pageSize) >= data.total) break; // no next page
-      page = data.page + 1;
+      all.addAll(_wireMapper.toListModel(entities: data.chats));
+      if (!data.hasMore) break;
+      page = page + 1;
     }
-    await _chatDao.saveData(all.map((c) => _mapper.toEntity(model: c)).toList());
+    // Unread badges are device-local (contract §8.3, not on the wire): the
+    // mock world seeds them here as a local overlay.
+    final seeded = all.map((c) => c.copyWith(unreadCount: ChatSeedMockData.unreadFor(c.id)));
+    await _chatDao.saveData(seeded.map((c) => _mapper.toEntity(model: c)).toList());
   }
 
   @override
@@ -65,7 +69,7 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
       final slice = filtered.skip(start).take(_pageSize).toList();
       final hasMore = start + _pageSize < filtered.length;
       return RepositoryResult<(List<ChatModel>, PageMetadata)>.success(
-        data: (slice, PageMetadata(total: filtered.length, nextPage: hasMore ? config.page + 1 : null)),
+        data: (slice, PageMetadata(hasMore: hasMore, nextPage: hasMore ? config.page + 1 : null)),
       );
     });
   }

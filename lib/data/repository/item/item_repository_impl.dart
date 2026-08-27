@@ -29,7 +29,7 @@ class ItemRepositoryImpl with BaseRepositoryHelper implements ItemRepository {
       }
       final models = _itemMapper.toListModel(entities: entity.items);
       final hasMore = (entity.page * entity.pageSize) < entity.total;
-      final metadata = PageMetadata(total: entity.total, nextPage: hasMore ? entity.page + 1 : null);
+      final metadata = PageMetadata(hasMore: hasMore, nextPage: hasMore ? entity.page + 1 : null);
       return RepositoryResult<(List<ItemModel>, PageMetadata)>.success(data: (models, metadata));
     });
   }

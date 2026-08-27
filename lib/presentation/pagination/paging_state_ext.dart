@@ -11,7 +11,7 @@ extension PagingStateExt<K, T> on PagingState<K, T> {
   }) {
     final (incoming, meta) = response;
     final updatedList = [...existingList, ...incoming];
-    final isLastPage = meta.nextPage == null;
+    final isLastPage = !meta.hasMore;
     final pages = updatedList.map((e) => [e]).toList();
     final keys = updatedList.map(keyExtractor).toList();
     final isNoItems = updatedList.isEmpty && isLastPage;

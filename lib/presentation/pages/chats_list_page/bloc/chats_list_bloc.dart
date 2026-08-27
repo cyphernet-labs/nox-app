@@ -151,7 +151,7 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
           if (live is! Initialized) return;
           final r = basePagingState.applyPage(
             existingList: const [],
-            response: (const [], const PageMetadata(total: 0)),
+            response: (const [], const PageMetadata(hasMore: false)),
             keyExtractor: (c) => c.id,
           );
           emit(

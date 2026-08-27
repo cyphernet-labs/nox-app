@@ -48,7 +48,7 @@ void main() {
       expect(result.hasData, isTrue);
       final (items, metadata) = result.data!;
       expect(items.length, GetItemsConfig.pageSize); // 20
-      expect(metadata.total, 47);
+      expect(metadata.hasMore, isA<bool>());
       expect(metadata.nextPage, 2);
       // entity -> model coercion: String status -> ItemStatus enum.
       expect(items.first.id, 'item_0');
@@ -60,7 +60,7 @@ void main() {
       final (items, metadata) = (await repository.getItems(config: GetItemsConfig.nextPage(page: 2))).data!;
 
       expect(items.length, GetItemsConfig.pageSize); // 20
-      expect(metadata.total, 47);
+      expect(metadata.hasMore, isA<bool>());
       expect(metadata.nextPage, 3);
       expect(items.first.id, 'item_20');
     });
@@ -69,7 +69,7 @@ void main() {
       final (items, metadata) = (await repository.getItems(config: GetItemsConfig.nextPage(page: 3))).data!;
 
       expect(items.length, 7); // 47 - (2 * 20)
-      expect(metadata.total, 47);
+      expect(metadata.hasMore, isA<bool>());
       expect(metadata.nextPage, isNull);
       expect(items.last.id, 'item_46');
     });

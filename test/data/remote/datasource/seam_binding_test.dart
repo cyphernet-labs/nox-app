@@ -20,19 +20,18 @@ class _SentinelChatRemoteDataSource implements ChatRemoteDataSource {
   Future<ResponseEntity<ChatsWireEntity>> getChats({required GetChatsConfig config}) async {
     return ResponseEntity<ChatsWireEntity>(
       success: true,
-      data: ChatsWireEntity(
-        items: [
+      data: const ChatsWireEntity(
+        chats: [
           ChatWireEntity(
-            id: 'sentinel',
+            chatId: 'sentinel',
             name: 'SENTINEL',
+            createdAt: 1704067200,
+            createdByLabel: 'Sentinel',
             lastMessagePreview: '',
-            lastMessageAt: '2024-01-01T00:00:00.000Z',
-            unreadCount: 0,
+            lastActivityAt: 1704067200,
           ),
         ],
-        page: 1,
-        pageSize: GetChatsConfig.pageSize,
-        total: 1,
+        hasMore: false,
       ),
     );
   }
