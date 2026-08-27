@@ -226,3 +226,73 @@ func TestStoryOneUploadSurvivesRestart(t *testing.T) {
 		t.Fatalf("post-restart download = %d, %d bytes", code, len(got))
 	}
 }
+
+func TestStoryTwoDownloadWithResume(t *testing.T) {
+	ts, srv := newTestServer(t)
+
+	anna := dialWS(t, ts)
+	anna.expectGreeting()
+	anna.hello(1, `,"label":"Anna"`)
+	chatID := seedChat(t, anna, "dl")
+	payload := randomPayload(t, 262144)
+	fileID, token := uploadBegin(t, anna, 3, "movie.bin", len(payload), "application/octet-stream")
+	if code := putBytes(t, ts, token, payload); code != http.StatusNoContent {
+		t.Fatalf("PUT = %d", code)
+	}
+	anna.expectOKAfter(4, fmt.Sprintf(
+		`{"id":4,"cmd":"message.send","data":{"chat_id":%q,"client_message_id":"d1","attachment":{"file_id":%q}}}`, chatID, fileID))
+
+	bob := dialWS(t, ts)
+	bob.expectGreeting()
+	bob.hello(1, `,"label":"Bob"`)
+
+	// Full download, byte-identical (SC-001).
+	dl := downloadBegin(t, bob, 2, fileID)
+	code, full, hdr := doGet(t, ts, dl, "")
+	if code != http.StatusOK {
+		t.Fatalf("GET = %d, want 200", code)
+	}
+	if ct := hdr.Get("Content-Type"); ct != "application/octet-stream" {
+		t.Fatalf("Content-Type = %q", ct)
+	}
+	if !bytes.Equal(full, payload) {
+		t.Fatalf("full download mismatch: %d bytes", len(full))
+	}
+	// The token is one-shot.
+	if code, _, _ := doGet(t, ts, dl, ""); code != http.StatusNotFound {
+		t.Fatalf("reused download token = %d, want 404", code)
+	}
+
+	// Resume: a fresh token, Range from the middle -> exactly the remainder
+	// (SC-002), and the concatenation equals the original.
+	const cut = 131072
+	dl2 := downloadBegin(t, bob, 3, fileID)
+	code, tail, _ := doGet(t, ts, dl2, fmt.Sprintf("bytes=%d-", cut))
+	if code != http.StatusPartialContent {
+		t.Fatalf("range GET = %d, want 206", code)
+	}
+	if len(tail) != len(payload)-cut {
+		t.Fatalf("resumed %d bytes, want exactly %d", len(tail), len(payload)-cut)
+	}
+	if !bytes.Equal(append(payload[:cut:cut], tail...), payload) {
+		t.Fatal("resumed concatenation mismatch")
+	}
+
+	// Range beyond the size.
+	dl3 := downloadBegin(t, bob, 4, fileID)
+	if code, _, _ := doGet(t, ts, dl3, "bytes=99999999-"); code != http.StatusRequestedRangeNotSatisfiable {
+		t.Fatalf("out-of-range GET = %d, want 416", code)
+	}
+
+	// downloadBegin negatives: unknown, un-uploaded, physically gone.
+	bob.send(`{"id":5,"cmd":"file.downloadBegin","data":{"file_id":"f_missing"}}`)
+	bob.expectErr(5, protocol.ErrNotFound)
+	pendingID, _ := uploadBegin(t, bob, 6, "pending.bin", 10, "x/y")
+	bob.send(fmt.Sprintf(`{"id":7,"cmd":"file.downloadBegin","data":{"file_id":%q}}`, pendingID))
+	bob.expectErr(7, protocol.ErrInvalidRequest)
+	if err := os.Remove(filepath.Join(srv.cfg.FilesPath, fileID)); err != nil {
+		t.Fatalf("remove bytes: %v", err)
+	}
+	bob.send(fmt.Sprintf(`{"id":8,"cmd":"file.downloadBegin","data":{"file_id":%q}}`, fileID))
+	bob.expectErr(8, protocol.ErrAttachmentGone)
+}

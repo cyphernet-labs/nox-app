@@ -42,8 +42,8 @@
 **Independent Test**: quickstart, секция «Скачивание»: полный GET байт-в-байт, затем Range с середины → ровно остаток.
 
 - [x] T012 [US2] Add the file.downloadBegin handler and the GET /files/{token} endpoint in client_backend/internal/server/files.go per research R5/R10: unknown file_id -> not_found, not-yet-uploaded -> invalid_request, expired or bytes missing on disk -> attachment_gone, relative download_url, ServeContent with the stored mime, token consumed on first use, 404 for bad/used/expired tokens
-- [ ] T013 [US2] Add story-2 integration tests in client_backend/internal/server/files_test.go: second client downloads byte-identical content, Range request from the middle returns 206 with exactly the remainder and the concatenation matches the original (SC-002), reused download token -> 404, downloadBegin for unknown id -> not_found, for un-uploaded id -> invalid_request, for a file whose bytes were removed from disk -> attachment_gone, Range beyond the size -> 416
-- [ ] T014 [US2] Extend client_backend/README.md with the smoke Е «Скачивание с докачкой» section in sync with quickstart.md
+- [x] T013 [US2] Add story-2 integration tests in client_backend/internal/server/files_test.go: second client downloads byte-identical content, Range request from the middle returns 206 with exactly the remainder and the concatenation matches the original (SC-002), reused download token -> 404, downloadBegin for unknown id -> not_found, for un-uploaded id -> invalid_request, for a file whose bytes were removed from disk -> attachment_gone, Range beyond the size -> 416
+- [x] T014 [US2] Extend client_backend/README.md with the smoke Е «Скачивание с докачкой» section in sync with quickstart.md
 
 **Checkpoint**: DoD фазы (файл одного клиента скачан вторым с докачкой) демонстрируем вручную.
 

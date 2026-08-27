@@ -161,6 +161,28 @@ curl -sS -X PUT --data-binary @/tmp/probe.bin http://127.0.0.1:8080/files/<UT> -
 
 Токены одноразовые (10 минут): повторный `PUT` тем же токеном → 404. Заливка сверх заявленного размера → 413, меньше (обрыв) → 400 — в обоих случаях байты не сохраняются, цепочка начинается заново с `file.uploadBegin`.
 
+### Скачивание с докачкой
+
+Терминал Bob:
+
+```bash
+{"id":20,"cmd":"file.downloadBegin","data":{"file_id":"<FID>"}}
+# ← {"download_url":"/files/<DT>","download_token":"<DT>"}
+```
+
+```bash
+curl -sS http://127.0.0.1:8080/files/<DT> -o /tmp/got.bin && cmp /tmp/probe.bin /tmp/got.bin && echo identical
+```
+
+Докачка после обрыва: запросить новый токен (`<DT2>`) и передать Range со смещения — сервер отдаёт `206` и только остаток:
+
+```bash
+curl -sS -r 5242880- http://127.0.0.1:8080/files/<DT2> -o /tmp/tail.bin -w '%{http_code}\n'   # → 206
+cmp <(tail -c 5242880 /tmp/probe.bin) /tmp/tail.bin && echo resumed
+```
+
+Использованный токен скачивания → 404. Файл с истёкшим сроком или физически пропавшими байтами → `attachment_gone` на `file.downloadBegin` (терминальное состояние экрана файла).
+
 ## Негативные проверки
 
 На подключении, где `session.hello` уже выполнен:
