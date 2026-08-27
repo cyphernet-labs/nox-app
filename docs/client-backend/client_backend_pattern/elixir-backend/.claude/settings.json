@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mix format:*)",
+      "Bash(mix compile:*)",
+      "Bash(mix test:*)",
+      "Bash(mix deps.get)",
+      "Bash(mix deps.compile:*)"
+    ],
+    "deny": [
+      "Read(./app.db)",
+      "Read(./*.db)",
+      "Read(./*.db-wal)",
+      "Read(./*.db-shm)"
+    ]
+  }
+}
