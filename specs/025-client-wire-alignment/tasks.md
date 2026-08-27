@@ -55,10 +55,10 @@
 
 **Independent Test**: курсор переживает рестарт и гибнет с логаутом; просроченное вложение гасит Save.
 
-- [ ] T017 [US3] Add the sync store: lib/data/local/sync/sync_dao.dart (single-record store 'state', field since) + lib/domain/repository/sync/sync_repository.dart + lib/data/repository/sync/sync_repository_impl.dart (getCursor/advanceCursor monotonic max/clear) with DI registration; DAO+repo tests incl. restart persistence over the same in-memory db instance
-- [ ] T018 [US3] Wire cursor writers per research R6: _seedChatIfEmpty advances to the max seeded seq, sendMessage advances to the echo seq, simulateIncoming advances; AuthRepositoryImpl.logout afterMutate adds syncRepository.clear(); update auth_repository_impl_test.dart (wipe order) and message_repository tests (cursor advance)
-- [ ] T019 [US3] Add attachment expiry per data-model.md: MessageAttachment {mime, expiresAt}, MessageEntity attachment fields, both storage/wire mappers, mock attachment gains far expires_at; FileViewPage Save gating — disabled when expiresAt is past (AppClock), carve-out docstring extended; widget test with an expired fixture in test/presentation/pages/file_view_page/ (no golden changes — stage-1 dates are far future)
-- [ ] T020 [US3] Run `make gate` + `make golden-verify`; commit checkpoint
+- [x] T017 [US3] Add the sync store: lib/data/local/sync/sync_dao.dart (single-record store 'state', field since) + lib/domain/repository/sync/sync_repository.dart + lib/data/repository/sync/sync_repository_impl.dart (getCursor/advanceCursor monotonic max/clear) with DI registration; DAO+repo tests incl. restart persistence over the same in-memory db instance
+- [x] T018 [US3] Wire cursor writers per research R6: _seedChatIfEmpty advances to the max seeded seq, sendMessage advances to the echo seq, simulateIncoming advances; AuthRepositoryImpl.logout afterMutate adds syncRepository.clear(); update auth_repository_impl_test.dart (wipe order) and message_repository tests (cursor advance)
+- [x] T019 [US3] Add attachment expiry per data-model.md: MessageAttachment {mime, expiresAt}, MessageEntity attachment fields, both storage/wire mappers, mock attachment gains far expires_at; FileViewPage Save gating — disabled when expiresAt is past (AppClock), carve-out docstring extended; widget test with an expired fixture in test/presentation/pages/file_view_page/ (no golden changes — stage-1 dates are far future)
+- [x] T020 [US3] Run `make gate` + `make golden-verify`; commit checkpoint
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 

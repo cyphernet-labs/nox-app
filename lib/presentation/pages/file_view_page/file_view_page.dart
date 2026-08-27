@@ -11,6 +11,7 @@ import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
+import 'package:nox_app/general/app_clock.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/formatters/file_size_formatter.dart';
@@ -33,8 +34,12 @@ Future<void> showFileView(BuildContext context, MessageAttachment file) => showA
 /// 5.3 File view — inspect / download a file attachment. No content preview: only
 /// the type glyph, name and size. Auto-downloads to cache with a determinate
 /// progress bar, then enables Save (to Downloads). UI-phase stub: the progress is
-/// timer-driven and Save is a no-op + snackbar (`// TODO(backend):`). Local state
-/// only — no BLoC (blueprint 05 §5.1 carve-out for a presentational screen).
+/// timer-driven and Save is a no-op + snackbar (`// TODO(backend):`). Save is
+/// additionally gated by the attachment's server retention deadline
+/// (`expiresAt`, contract §5/025): an expired file cannot be saved - the
+/// bytes are gone server-side (terminal `attachment_gone` state). Local state
+/// only — no BLoC (blueprint 05 §5.1 carve-out for a presentational screen;
+/// the expiry gate is one derived flag and keeps the carve-out).
 class FileViewPage extends StatefulWidget {
   const FileViewPage({super.key, required this.file, this.demo = false, this.inDialog = false});
 
@@ -70,6 +75,13 @@ class FileViewPage extends StatefulWidget {
 class _FileViewPageState extends State<FileViewPage> with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
   bool _cached = false;
+
+  /// Contract §5: the client persists expires_at and disables Save in
+  /// advance - the server no longer stores the bytes past this instant.
+  bool get _expired {
+    final expiresAt = widget.file.expiresAt;
+    return expiresAt != null && !AppClock.now().isBefore(expiresAt);
+  }
 
   @override
   void initState() {
@@ -171,7 +183,7 @@ class _FileViewPageState extends State<FileViewPage> with SingleTickerProviderSt
         actions: [
           IconButton(
             tooltip: context.l10n.tooltipSave,
-            onPressed: _cached ? _save : null,
+            onPressed: (_cached && !_expired) ? _save : null,
             icon: AppIconWidget(
               NoxIcons.download,
               color: _cached ? colorScheme.onSurface : colorScheme.onSurface.withValues(alpha: NoxOpacity.disabled),
@@ -244,7 +256,7 @@ class _FileViewPageState extends State<FileViewPage> with SingleTickerProviderSt
           child: SizedBox(
             width: double.infinity,
             child: FilledButton(
-              onPressed: _cached ? _save : null,
+              onPressed: (_cached && !_expired) ? _save : null,
               child: Text(_cached ? context.l10n.actionDownload : context.l10n.downloadingProgress(_percent)),
             ),
           ),

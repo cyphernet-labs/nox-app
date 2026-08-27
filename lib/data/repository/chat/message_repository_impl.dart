@@ -16,6 +16,7 @@ import 'package:nox_app/domain/repository/base/page_metadata.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_app/general/app_clock.dart';
 import 'package:nox_app/general/formatters/chat_preview_formatter.dart';
 import 'package:nox_app/general/identity/identity_resolver.dart';
@@ -31,7 +32,15 @@ import 'package:uuid/uuid.dart';
 /// data-source binding swaps; the DB contract stays.
 @LazySingleton(as: MessageRepository, env: [Environment.dev, Environment.prod, Environment.test])
 class MessageRepositoryImpl with BaseRepositoryHelper implements MessageRepository {
-  MessageRepositoryImpl(this._messageDao, this._messageRemote, this._mapper, this._wireMapper, this._chatDao, this._sessionRepository);
+  MessageRepositoryImpl(
+    this._messageDao,
+    this._messageRemote,
+    this._mapper,
+    this._wireMapper,
+    this._chatDao,
+    this._sessionRepository,
+    this._syncRepository,
+  );
 
   final MessageDao _messageDao;
   final MessageRemoteDataSource _messageRemote;
@@ -39,6 +48,7 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
   final MessageWireMapper _wireMapper;
   final ChatDao _chatDao;
   final SessionRepository _sessionRepository;
+  final SyncRepository _syncRepository;
 
   static const Uuid _uuid = Uuid();
 
@@ -93,6 +103,11 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
       sentAt: AppClock.now().subtract(ChatSeedMockData.genesisAge),
     );
     await _messageDao.saveData([genesis, ...reconciled].map((m) => _mapper.toEntity(model: m)).toList());
+    // The cursor's promise is "everything up to seq is applied locally"
+    // (§9.4) - seeding applies the whole batch at once.
+    if (reconciled.isNotEmpty) {
+      await _syncRepository.advanceCursor(reconciled.map((m) => m.seq).reduce(max));
+    }
   }
 
   @override
@@ -149,6 +164,7 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
       // Keep the chat row (list) consistent with the thread: update preview + time + order.
       // A failed send returns an error before reaching here, so the row is never touched (FR-004).
       await _touchChatRow(chatId, message, incrementUnread: false);
+      await _syncRepository.advanceCursor(message.seq);
       return RepositoryResult<MessageModel>.success(data: message);
     });
   }
@@ -204,6 +220,7 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
     );
     await _messageDao.upsert(_mapper.toEntity(model: message));
     await _touchChatRow(chatId, message, incrementUnread: true);
+    await _syncRepository.advanceCursor(message.seq);
   }
 
   /// Updates the parent chat row after a message is persisted: last-message preview +

@@ -8,6 +8,7 @@ import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/domain/service/file_picker_service.dart';
+import 'package:nox_app/general/app_clock.dart';
 import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/pages/file_view_page/file_view_page.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_file_glyph_widget.dart';
@@ -54,6 +55,47 @@ void main() {
       await pumpApp(tester, const FileViewPage(file: _file), settle: false); // pdf, no localPath
       await tester.pump();
       expect(find.byType(LinearProgressIndicator), findsOneWidget); // the mock "download" is running
+    });
+  });
+
+  group('FileViewPage expires_at Save gating (025)', () {
+    testWidgets('an expired attachment keeps Save disabled even after the download settles', (tester) async {
+      AppClock.freeze(DateTime(2026, 6, 15, 21, 30));
+      addTearDown(AppClock.reset);
+      final expired = MessageAttachment(
+        id: 'f-exp',
+        type: FileType.pdf,
+        name: 'old-spec.pdf',
+        sizeBytes: 1024,
+        expiresAt: AppClock.now().subtract(const Duration(days: 1)),
+      );
+      await tester.binding.setSurfaceSize(const Size(420, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, FileViewPage(file: expired)); // settles the mock download
+
+      final saveButton = tester.widget<IconButton>(
+        find.ancestor(of: find.byTooltip(l10nEn.tooltipSave), matching: find.byType(IconButton)).first,
+      );
+      expect(saveButton.onPressed, isNull); // gated in advance - bytes are gone server-side
+    });
+
+    testWidgets('a far-future expiry (stage-1 retention) leaves Save enabled as before', (tester) async {
+      AppClock.freeze(DateTime(2026, 6, 15, 21, 30));
+      addTearDown(AppClock.reset);
+      final valid = MessageAttachment(
+        id: 'f-ok',
+        type: FileType.pdf,
+        name: 'fresh-spec.pdf',
+        sizeBytes: 1024,
+        expiresAt: AppClock.now().add(const Duration(days: 3650)),
+      );
+      await tester.binding.setSurfaceSize(const Size(420, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, FileViewPage(file: valid));
+
+      await tester.tap(find.byTooltip(l10nEn.tooltipSave));
+      await tester.pump();
+      expect(find.text(l10nEn.savedToDownloads), findsOneWidget);
     });
   });
 

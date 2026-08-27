@@ -2,7 +2,6 @@ import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/entity/chat/wire/chat_wire_entity.dart';
 import 'package:nox_app/data/mapper/base_mapper.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
-import 'package:nox_app/general/app_clock.dart';
 
 /// Wire<->domain coercion for a chat, 1:1 with contract v0 §4. `toModel` =
 /// wire->ChatModel (the repo, after unwrapping the envelope); `toEntity` =

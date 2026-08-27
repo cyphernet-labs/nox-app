@@ -24,6 +24,7 @@ import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'message_repository_impl_test.mocks.dart';
@@ -208,6 +209,7 @@ void main() {
         getIt<MessageWireMapper>(),
         getIt<ChatDao>(),
         getIt<SessionRepository>(),
+        getIt<SyncRepository>(),
       );
 
       final result = await failingRepo.sendMessage(chatId: 'chat_0', text: 'should not persist');
@@ -257,6 +259,7 @@ void main() {
       getIt<MessageWireMapper>(),
       getIt<ChatDao>(),
       getIt<SessionRepository>(),
+      getIt<SyncRepository>(),
     );
 
     final result = await errorRepo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0'));
@@ -292,6 +295,7 @@ void main() {
         getIt<MessageWireMapper>(),
         getIt<ChatDao>(),
         getIt<SessionRepository>(),
+        getIt<SyncRepository>(),
       );
       return (await repo.sendMessage(chatId: 'chat_0', text: 'x')).exception;
     }
