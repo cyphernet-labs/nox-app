@@ -8,7 +8,7 @@
 |---|---|---|
 | Кадры `srv` / команда / ответ / событие | §2 | Полностью; «ровно один ответ на `id`» |
 | Коды ошибок | §2.1 | Подмножество: `invalid_request`, `name_taken`, `payload_too_large`, `internal`, `unsupported_schema` |
-| `session.hello` + replay | §3 | Полностью, включая поле этапа 1 `label`, семантику первого подключения и правило «догнан»; `device_key`/`signature` принимаются и игнорируются |
+| `session.hello` + replay | §3 | Полностью, включая поле этапа 1 `label`, семантику первого подключения и правило «догнан»; `device_key`/`signature` принимаются и игнорируются. **Заглушка этапа 1: `identity.id` = label** (симметрично `author_id` в data-model; настоящий формат — за Q11) |
 | `chat.create` | §4 | Правила `name` (trim, непустое, ≤64, регистронезависимая уникальность) |
 | `message.send` | §5 | `body` обязателен (вложений в 022 нет); идемпотентность по `client_message_id`; эхо и `message.new` своих сообщений несут `client_message_id` |
 | События `chat.created`, `message.new` | §6 | Полные wire-модели; свёртка превью §6 |

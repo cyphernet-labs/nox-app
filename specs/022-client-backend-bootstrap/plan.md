@@ -22,7 +22,7 @@
 
 **Target Platform**: локальный запуск владельца — macOS (arm64) и Linux; сборка `CGO_ENABLED=0`, loopback, без TLS (этап 1).
 
-**Project Type**: single-binary server (`client_backend/` — отдельный Go-модуль в монорепо).
+**Project Type**: single-binary server (`client_backend/` — отдельный Go-модуль в монорепо; имя модуля — `nox.app/client-backend`).
 
 **Performance Goals**: доставка события второму клиенту < 1 с локально (SC-002); от чистого клона до работающего смоука ≤ 10 минут по README (SC-001); shutdown ≤ 10 с (SC-005).
 

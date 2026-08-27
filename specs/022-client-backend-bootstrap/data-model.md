@@ -50,4 +50,4 @@
 
 - `Chat`, `Message` — контракт §4/§5 (в 022 `Message` без `attachment`; `client_message_id` присутствует в эхо и в `message.new` собственных сообщений).
 - Кадры и коды ошибок — контракт §2/§2.1; из кодов в 022 задействованы: `invalid_request`, `name_taken`, `payload_too_large`, `internal`, `unsupported_schema`.
-- Identity-заглушка — `label` из hello (контракт §3, поле этапа 1).
+- Identity-заглушка — `label` из hello (контракт §3, поле этапа 1); в ответе hello `identity.id` = label (та же заглушка, что `author_id`; настоящий формат — за Q11).
