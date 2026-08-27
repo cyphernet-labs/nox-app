@@ -1,0 +1,426 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/coder/websocket"
+
+	"nox.app/client-backend/internal/protocol"
+)
+
+// wsClient is a test-side protocol client over one connection.
+type wsClient struct {
+	t    *testing.T
+	conn *websocket.Conn
+	ctx  context.Context
+}
+
+func dialWS(t *testing.T, ts *httptest.Server) *wsClient {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	t.Cleanup(cancel)
+	conn, _, err := websocket.Dial(ctx, ts.URL+"/ws", nil)
+	if err != nil {
+		t.Fatalf("websocket.Dial: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close(websocket.StatusNormalClosure, "") })
+	conn.SetReadLimit(1 << 20)
+	return &wsClient{t: t, conn: conn, ctx: ctx}
+}
+
+func (c *wsClient) send(frame string) {
+	c.t.Helper()
+	if err := c.conn.Write(c.ctx, websocket.MessageText, []byte(frame)); err != nil {
+		c.t.Fatalf("write frame: %v", err)
+	}
+}
+
+func (c *wsClient) read() map[string]json.RawMessage {
+	c.t.Helper()
+	rctx, cancel := context.WithTimeout(c.ctx, 5*time.Second)
+	defer cancel()
+	_, raw, err := c.conn.Read(rctx)
+	if err != nil {
+		c.t.Fatalf("read frame: %v", err)
+	}
+	var frame map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &frame); err != nil {
+		c.t.Fatalf("frame is not a JSON object: %v (%s)", err, raw)
+	}
+	return frame
+}
+
+// expectGreeting consumes the srv greeting frame.
+func (c *wsClient) expectGreeting() {
+	c.t.Helper()
+	frame := c.read()
+	if _, ok := frame["srv"]; !ok {
+		c.t.Fatalf("first frame is not a greeting: %v", frame)
+	}
+}
+
+// hello performs session.hello and returns the reply data.
+func (c *wsClient) hello(id int, extra string) map[string]json.RawMessage {
+	c.t.Helper()
+	c.send(fmt.Sprintf(`{"id":%d,"cmd":"session.hello","data":{"schema":1%s}}`, id, extra))
+	return c.expectOK(id)
+}
+
+// expectOK reads frames until the reply for id arrives (skipping events) and
+// asserts ok:true, returning its data object.
+func (c *wsClient) expectOK(id int) map[string]json.RawMessage {
+	c.t.Helper()
+	reply := c.expectReply(id)
+	var ok bool
+	mustUnmarshal(c.t, reply["ok"], &ok)
+	if !ok {
+		c.t.Fatalf("reply %d not ok: %v", id, rawString(reply["error"]))
+	}
+	var data map[string]json.RawMessage
+	mustUnmarshal(c.t, reply["data"], &data)
+	return data
+}
+
+// expectErr reads the reply for id and asserts the error code.
+func (c *wsClient) expectErr(id int, code string) {
+	c.t.Helper()
+	reply := c.expectReply(id)
+	var ok bool
+	mustUnmarshal(c.t, reply["ok"], &ok)
+	if ok {
+		c.t.Fatalf("reply %d unexpectedly ok", id)
+	}
+	var wireErr protocol.WireError
+	mustUnmarshal(c.t, reply["error"], &wireErr)
+	if wireErr.Code != code {
+		c.t.Fatalf("error code = %q, want %q", wireErr.Code, code)
+	}
+}
+
+func (c *wsClient) expectReply(id int) map[string]json.RawMessage {
+	c.t.Helper()
+	for range 50 {
+		frame := c.read()
+		if _, isEvent := frame["event"]; isEvent {
+			continue
+		}
+		var gotID int
+		mustUnmarshal(c.t, frame["id"], &gotID)
+		if gotID != id {
+			c.t.Fatalf("reply id = %d, want %d", gotID, id)
+		}
+		return frame
+	}
+	c.t.Fatalf("no reply for id %d", id)
+	return nil
+}
+
+// expectEvent reads frames until an event arrives and returns (seq, type, data).
+func (c *wsClient) expectEvent() (int64, string, map[string]json.RawMessage) {
+	c.t.Helper()
+	for range 50 {
+		frame := c.read()
+		if _, isEvent := frame["event"]; !isEvent {
+			continue
+		}
+		var seq int64
+		var name string
+		var data map[string]json.RawMessage
+		mustUnmarshal(c.t, frame["seq"], &seq)
+		mustUnmarshal(c.t, frame["event"], &name)
+		mustUnmarshal(c.t, frame["data"], &data)
+		return seq, name, data
+	}
+	c.t.Fatal("no event frame arrived")
+	return 0, "", nil
+}
+
+func mustUnmarshal(t *testing.T, raw json.RawMessage, v any) {
+	t.Helper()
+	if raw == nil {
+		t.Fatal("missing expected JSON field")
+	}
+	if err := json.Unmarshal(raw, v); err != nil {
+		t.Fatalf("unmarshal %s: %v", raw, err)
+	}
+}
+
+func rawString(raw json.RawMessage) string {
+	if raw == nil {
+		return "<nil>"
+	}
+	return string(raw)
+}
+
+func TestStoryOneLiveExchange(t *testing.T) {
+	ts, _ := newTestServer(t)
+
+	anna := dialWS(t, ts)
+	anna.expectGreeting()
+	helloData := anna.hello(1, `,"label":"Anna"`)
+
+	var ident identity
+	mustUnmarshal(t, helloData["identity"], &ident)
+	if ident.Label != "Anna" || ident.ID != "Anna" {
+		t.Fatalf("identity = %+v, want stage-1 stub Anna/Anna", ident)
+	}
+
+	bob := dialWS(t, ts)
+	bob.expectGreeting()
+	bob.hello(1, `,"label":"Bob"`)
+
+	createData := anna.expectOKAfter(2, `{"id":2,"cmd":"chat.create","data":{"name":"smoke"}}`)
+	var chat protocol.Chat
+	mustUnmarshal(t, createData["chat"], &chat)
+	if chat.CreatedByLabel != "Anna" || chat.Name != "smoke" {
+		t.Fatalf("chat = %+v", chat)
+	}
+
+	seq, name, evData := bob.expectEvent()
+	if name != protocol.EventChatCreated || seq != 1 {
+		t.Fatalf("bob got event %s seq %d, want chat.created seq 1", name, seq)
+	}
+	var evChat protocol.Chat
+	mustUnmarshal(t, evData["chat_id"], &evChat.ChatID)
+	if evChat.ChatID != chat.ChatID {
+		t.Fatalf("event chat_id = %s, want %s", evChat.ChatID, chat.ChatID)
+	}
+
+	sendFrame := fmt.Sprintf(
+		`{"id":3,"cmd":"message.send","data":{"chat_id":%q,"client_message_id":"a1","body":{"type":"text","text":"hello"}}}`,
+		chat.ChatID)
+	before := time.Now()
+	sendData := anna.expectOKAfter(3, sendFrame)
+
+	var echo protocol.Message
+	mustUnmarshal(t, sendData["message"], &echo)
+	if echo.ClientMessageID != "a1" || echo.AuthorLabel != "Anna" || echo.Seq != 2 {
+		t.Fatalf("echo = %+v", echo)
+	}
+
+	seq, name, evData = bob.expectEvent()
+	latency := time.Since(before)
+	if name != protocol.EventMessageNew || seq != 2 {
+		t.Fatalf("bob got event %s seq %d, want message.new seq 2", name, seq)
+	}
+	if latency >= time.Second {
+		t.Fatalf("event delivery took %v, want < 1s (SC-002)", latency)
+	}
+	var evMsgID string
+	mustUnmarshal(t, evData["message_id"], &evMsgID)
+	if evMsgID != echo.MessageID {
+		t.Fatalf("event message_id = %s, want %s", evMsgID, echo.MessageID)
+	}
+}
+
+// expectOKAfter sends a frame and returns the OK reply data for id.
+func (c *wsClient) expectOKAfter(id int, frame string) map[string]json.RawMessage {
+	c.t.Helper()
+	c.send(frame)
+	return c.expectOK(id)
+}
+
+func TestStoryOneDuplicateSendIsIdempotent(t *testing.T) {
+	ts, _ := newTestServer(t)
+
+	anna := dialWS(t, ts)
+	anna.expectGreeting()
+	anna.hello(1, ``)
+	createData := anna.expectOKAfter(2, `{"id":2,"cmd":"chat.create","data":{"name":"dup"}}`)
+	var chat protocol.Chat
+	mustUnmarshal(t, createData["chat"], &chat)
+
+	send := func(id int) protocol.Message {
+		data := anna.expectOKAfter(id, fmt.Sprintf(
+			`{"id":%d,"cmd":"message.send","data":{"chat_id":%q,"client_message_id":"same","body":{"type":"text","text":"x"}}}`,
+			id, chat.ChatID))
+		var msg protocol.Message
+		mustUnmarshal(t, data["message"], &msg)
+		return msg
+	}
+
+	first := send(3)
+	second := send(4)
+	if first.MessageID != second.MessageID || first.Seq != second.Seq {
+		t.Fatalf("duplicate send produced a different message: %+v vs %+v", first, second)
+	}
+
+	// A watcher connected afterwards replays exactly two events: chat.created
+	// and ONE message.new - the duplicate produced none.
+	watcher := dialWS(t, ts)
+	watcher.expectGreeting()
+	watcher.hello(1, `,"since":0`)
+	if seq, name, _ := watcher.expectEvent(); name != protocol.EventChatCreated || seq != 1 {
+		t.Fatalf("replay[0] = %s/%d", name, seq)
+	}
+	if seq, name, _ := watcher.expectEvent(); name != protocol.EventMessageNew || seq != 2 {
+		t.Fatalf("replay[1] = %s/%d", name, seq)
+	}
+}
+
+func TestStoryOneNameTakenCaseInsensitiveAndConcurrentRace(t *testing.T) {
+	ts, _ := newTestServer(t)
+
+	anna := dialWS(t, ts)
+	anna.expectGreeting()
+	anna.hello(1, ``)
+	anna.expectOKAfter(2, `{"id":2,"cmd":"chat.create","data":{"name":"General"}}`)
+
+	anna.send(`{"id":3,"cmd":"chat.create","data":{"name":"general"}}`)
+	anna.expectErr(3, protocol.ErrNameTaken)
+	anna.send(`{"id":4,"cmd":"chat.create","data":{"name":"GENERAL"}}`)
+	anna.expectErr(4, protocol.ErrNameTaken)
+
+	// Concurrent same-name creates from two connections: exactly one wins.
+	c1 := dialWS(t, ts)
+	c1.expectGreeting()
+	c1.hello(1, ``)
+	c2 := dialWS(t, ts)
+	c2.expectGreeting()
+	c2.hello(1, ``)
+
+	results := make(chan bool, 2)
+	var wg sync.WaitGroup
+	for _, c := range []*wsClient{c1, c2} {
+		wg.Add(1)
+		go func(c *wsClient) {
+			defer wg.Done()
+			c.send(`{"id":9,"cmd":"chat.create","data":{"name":"Race"}}`)
+			reply := c.expectReply(9)
+			var ok bool
+			mustUnmarshal(c.t, reply["ok"], &ok)
+			results <- ok
+		}(c)
+	}
+	wg.Wait()
+	close(results)
+
+	wins := 0
+	for ok := range results {
+		if ok {
+			wins++
+		}
+	}
+	if wins != 1 {
+		t.Fatalf("concurrent create wins = %d, want exactly 1", wins)
+	}
+}
+
+func TestStoryOneProtocolNegatives(t *testing.T) {
+	ts, _ := newTestServer(t)
+
+	t.Run("command before hello is rejected", func(t *testing.T) {
+		c := dialWS(t, ts)
+		c.expectGreeting()
+		c.send(`{"id":1,"cmd":"chat.create","data":{"name":"early"}}`)
+		c.expectErr(1, protocol.ErrInvalidRequest)
+	})
+
+	t.Run("unknown command", func(t *testing.T) {
+		c := dialWS(t, ts)
+		c.expectGreeting()
+		c.hello(1, ``)
+		c.send(`{"id":2,"cmd":"nope","data":{}}`)
+		c.expectErr(2, protocol.ErrInvalidRequest)
+	})
+
+	t.Run("duplicate hello", func(t *testing.T) {
+		c := dialWS(t, ts)
+		c.expectGreeting()
+		c.hello(1, ``)
+		c.send(`{"id":2,"cmd":"session.hello","data":{"schema":1}}`)
+		c.expectErr(2, protocol.ErrInvalidRequest)
+	})
+
+	t.Run("schema mismatch", func(t *testing.T) {
+		c := dialWS(t, ts)
+		c.expectGreeting()
+		c.send(`{"id":1,"cmd":"session.hello","data":{"schema":99}}`)
+		c.expectErr(1, protocol.ErrUnsupportedSchema)
+	})
+
+	t.Run("oversized body", func(t *testing.T) {
+		c := dialWS(t, ts)
+		c.expectGreeting()
+		c.hello(1, ``)
+		data := c.expectOKAfter(2, `{"id":2,"cmd":"chat.create","data":{"name":"big"}}`)
+		var chat protocol.Chat
+		mustUnmarshal(t, data["chat"], &chat)
+		big := strings.Repeat("x", 70000)
+		c.send(fmt.Sprintf(
+			`{"id":3,"cmd":"message.send","data":{"chat_id":%q,"client_message_id":"b1","body":{"type":"text","text":%q}}}`,
+			chat.ChatID, big))
+		c.expectErr(3, protocol.ErrPayloadTooLarge)
+	})
+
+	t.Run("send to missing chat", func(t *testing.T) {
+		c := dialWS(t, ts)
+		c.expectGreeting()
+		c.hello(1, ``)
+		c.send(`{"id":2,"cmd":"message.send","data":{"chat_id":"c_missing","client_message_id":"m1","body":{"type":"text","text":"x"}}}`)
+		c.expectErr(2, protocol.ErrNotFound)
+	})
+
+	t.Run("unparseable frame closes the connection, server survives", func(t *testing.T) {
+		c := dialWS(t, ts)
+		c.expectGreeting()
+		c.send(`[not, an, object]`)
+		waitClosed(t, c, websocket.StatusProtocolError)
+		assertHealthy(t, ts)
+	})
+
+	t.Run("read-limit overflow closes the connection, server survives", func(t *testing.T) {
+		c := dialWS(t, ts)
+		c.expectGreeting()
+		huge := strings.Repeat("a", 200000) // above max_frame_bytes 131072
+		_ = c.conn.Write(c.ctx, websocket.MessageText, []byte(`{"id":1,"cmd":"session.hello","data":{"schema":1,"label":"`+huge+`"}}`))
+		waitClosedAny(t, c)
+		assertHealthy(t, ts)
+	})
+}
+
+func waitClosed(t *testing.T, c *wsClient, want websocket.StatusCode) {
+	t.Helper()
+	rctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for {
+		_, _, err := c.conn.Read(rctx)
+		if err != nil {
+			if got := websocket.CloseStatus(err); got != want {
+				t.Fatalf("close status = %v, want %v", got, want)
+			}
+			return
+		}
+	}
+}
+
+func waitClosedAny(t *testing.T, c *wsClient) {
+	t.Helper()
+	rctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for {
+		if _, _, err := c.conn.Read(rctx); err != nil {
+			return
+		}
+	}
+}
+
+func assertHealthy(t *testing.T, ts *httptest.Server) {
+	t.Helper()
+	resp, err := http.Get(ts.URL + "/health")
+	if err != nil {
+		t.Fatalf("health after failure: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("health status = %d", resp.StatusCode)
+	}
+}
