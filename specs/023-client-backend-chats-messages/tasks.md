@@ -60,9 +60,9 @@
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T017 [P] Audit new code against Principle I in client_backend/internal: slog must not log chat names, search queries, message bodies or labels — only cmd names, codes, seq, counts, durations; extend existing log lines for the new commands accordingly
-- [ ] T018 [P] Reconcile the wire contract with the owner-clarified rules per Principle VII: update docs/client-backend/protocol/contract-draft.md §4–§5 with the unified cap 100 + silent clamp, ascending in-page order for messages.list, the stable chat_id tiebreaker, and the no-op rename rule (success without an event)
-- [ ] T019 Run the full local gate and the 13 CLAUDE.md invariants check, validate specs/023-client-backend-chats-messages/quickstart.md end-to-end as the owner would (fresh build, smoke Д + negatives, ≤10 min per SC-006), reconcile README/quickstart wording, then mark phase 023 implemented in docs/client-backend/roadmap-stage1.md (status + journal row)
+- [x] T017 [P] Audit new code against Principle I in client_backend/internal: slog must not log chat names, search queries, message bodies or labels — only cmd names, codes, seq, counts, durations; extend existing log lines for the new commands accordingly
+- [x] T018 [P] Reconcile the wire contract with the owner-clarified rules per Principle VII: update docs/client-backend/protocol/contract-draft.md §4–§5 with the unified cap 100 + silent clamp, ascending in-page order for messages.list, the stable chat_id tiebreaker, and the no-op rename rule (success without an event)
+- [x] T019 Run the full local gate and the 13 CLAUDE.md invariants check, validate specs/023-client-backend-chats-messages/quickstart.md end-to-end as the owner would (fresh build, smoke Д + negatives, ≤10 min per SC-006), reconcile README/quickstart wording, then mark phase 023 implemented in docs/client-backend/roadmap-stage1.md (status + journal row)
 
 ## Dependencies & Execution Order
 
