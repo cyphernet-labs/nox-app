@@ -25,11 +25,13 @@ import (
 
 const (
 	defaultPingInterval = 25 * time.Second
-	writeTimeout        = 5 * time.Second
+	defaultWriteTimeout = 5 * time.Second
 	shutdownTimeout     = 5 * time.Second
+	readHeaderTimeout   = 5 * time.Second
 	// outBuffer is the per-connection outbound queue (replies + replay +
-	// forwarded live events). Overflow means a slow consumer: the connection
-	// is closed and heals via replay.
+	// forwarded live events). Overflow on the LIVE path means a slow
+	// consumer: the connection is closed and heals via replay. The read
+	// goroutine's own frames (replies, replay) block instead of dropping.
 	outBuffer = 64
 )
 
@@ -41,12 +43,19 @@ type Server struct {
 	logger *slog.Logger
 
 	pingInterval time.Duration
+	writeTimeout time.Duration
 	userSeq      atomic.Int64
 
-	// mu guards conns. Infrastructure-only lock for shutdown draining
+	// kick wakes the event dispatcher after a committed mutation; capacity 1
+	// coalesces bursts (the dispatcher drains the log until it is current).
+	kick chan struct{}
+
+	// mu guards conns; wg tracks connection handlers so shutdown can wait
+	// for hijacked connections. Infrastructure-only synchronization
 	// (ws-rest-patterns §5); business state stays goroutine-owned.
 	mu    sync.Mutex
 	conns map[*client]struct{}
+	wg    sync.WaitGroup
 }
 
 // New builds a Server over an opened store and a running hub.
@@ -57,7 +66,58 @@ func New(cfg config.Config, st *store.Store, h *hub.Hub, logger *slog.Logger) *S
 		hub:          h,
 		logger:       logger,
 		pingInterval: defaultPingInterval,
+		writeTimeout: defaultWriteTimeout,
+		kick:         make(chan struct{}, 1),
 		conns:        make(map[*client]struct{}),
+	}
+}
+
+// kickDispatcher signals the dispatcher that new events are committed.
+func (s *Server) kickDispatcher() {
+	select {
+	case s.kick <- struct{}{}:
+	default:
+	}
+}
+
+// runDispatcher broadcasts committed events in strict seq order. Handlers
+// never broadcast themselves: two connections committing seq N and N+1
+// concurrently could otherwise reach the hub out of order, and a client
+// whose cursor jumped to N+1 would lose N forever. A single reader of the
+// committed log makes the order authoritative. Events committed before
+// startup are replay-only.
+func (s *Server) runDispatcher(ctx context.Context) error {
+	last, err := s.store.Cursor(ctx)
+	if err != nil {
+		return fmt.Errorf("dispatcher cursor: %w", err)
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-s.kick:
+		}
+		for {
+			events, err := s.store.EventsSince(ctx, last)
+			if err != nil {
+				// Transient read failure: the next kick retries from last.
+				s.logger.Error("dispatcher read failed", "err", err, "after_seq", last)
+				break
+			}
+			if len(events) == 0 {
+				break
+			}
+			for _, ev := range events {
+				env, err := eventEnvelope(ev)
+				if err != nil {
+					s.logger.Error("dispatcher marshal failed", "err", err, "seq", ev.Seq)
+					last = ev.Seq
+					continue
+				}
+				s.hub.Broadcast(env)
+				last = ev.Seq
+			}
+		}
 	}
 }
 
@@ -81,6 +141,23 @@ func (s *Server) CloseConnections() {
 	s.mu.Unlock()
 	for _, c := range clients {
 		c.close(websocket.StatusGoingAway, "server shutting down")
+	}
+}
+
+// WaitConnections blocks until every connection handler has returned or ctx
+// expires. http.Server.Shutdown never waits for hijacked connections, so the
+// shutdown path calls this between Shutdown and stopping the hub.
+func (s *Server) WaitConnections(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -127,7 +204,7 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 	h := hub.New()
 	srv := New(cfg, store.New(dbs.Read, dbs.Write), h, logger)
 
-	httpServer := &http.Server{Addr: cfg.Addr, Handler: srv.Handler()}
+	httpServer := &http.Server{Addr: cfg.Addr, Handler: srv.Handler(), ReadHeaderTimeout: readHeaderTimeout}
 	httpServer.RegisterOnShutdown(srv.CloseConnections)
 
 	hubCtx, stopHub := context.WithCancel(context.Background())
@@ -137,6 +214,9 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 	g.Go(func() error {
 		h.Run(hubCtx)
 		return nil
+	})
+	g.Go(func() error {
+		return srv.runDispatcher(gctx)
 	})
 	g.Go(func() error {
 		logger.Info("listening", "addr", cfg.Addr)
@@ -150,6 +230,12 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 		shCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
 		err := httpServer.Shutdown(shCtx)
+		// Shutdown ignores hijacked connections; wait for their handlers so
+		// the going-away close frames flush and nothing touches the store
+		// after the database closes (invariant 9).
+		if waitErr := srv.WaitConnections(shCtx); waitErr != nil {
+			logger.Warn("connections still draining at shutdown deadline", "err", waitErr)
+		}
 		stopHub()
 		if err != nil {
 			return fmt.Errorf("shutdown: %w", err)

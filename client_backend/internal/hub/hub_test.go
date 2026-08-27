@@ -23,18 +23,22 @@ func runHub(t *testing.T) *Hub {
 	return h
 }
 
-func recv(t *testing.T, s *Subscriber) []byte {
+func recv(t *testing.T, s *Subscriber) Envelope {
 	t.Helper()
 	select {
-	case frame, ok := <-s.C():
+	case env, ok := <-s.C():
 		if !ok {
 			t.Fatal("subscriber channel closed unexpectedly")
 		}
-		return frame
+		return env
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for frame")
 	}
-	return nil
+	return Envelope{}
+}
+
+func env(s string) Envelope {
+	return Envelope{Stripped: []byte(s)}
 }
 
 func TestBroadcastReachesAllSubscribers(t *testing.T) {
@@ -44,13 +48,27 @@ func TestBroadcastReachesAllSubscribers(t *testing.T) {
 	h.Register(a)
 	h.Register(b)
 
-	h.Broadcast([]byte("one"))
+	h.Broadcast(env("one"))
 
-	if got := string(recv(t, a)); got != "one" {
+	if got := string(recv(t, a).Stripped); got != "one" {
 		t.Fatalf("a got %q", got)
 	}
-	if got := string(recv(t, b)); got != "one" {
+	if got := string(recv(t, b).Stripped); got != "one" {
 		t.Fatalf("b got %q", got)
+	}
+}
+
+func TestEnvelopeFrameForSelectsVariantByAuthor(t *testing.T) {
+	e := Envelope{AuthorID: "Anna", Full: []byte("full"), Stripped: []byte("stripped")}
+	if got := string(e.FrameFor("Anna")); got != "full" {
+		t.Fatalf("author variant = %q", got)
+	}
+	if got := string(e.FrameFor("Bob")); got != "stripped" {
+		t.Fatalf("other variant = %q", got)
+	}
+	shared := Envelope{Stripped: []byte("same")}
+	if got := string(shared.FrameFor("")); got != "same" {
+		t.Fatalf("anonymous recipient of shared envelope = %q", got)
 	}
 }
 
@@ -65,12 +83,19 @@ func TestSlowSubscriberIsDroppedOthersKeepReceiving(t *testing.T) {
 
 	// Overflow the slow subscriber: its buffer holds subscriberBuffer frames.
 	for range subscriberBuffer + 1 {
-		h.Broadcast([]byte("x"))
+		h.Broadcast(env("x"))
 		recv(t, fast)
 	}
 
-	if !dropped.Load() {
-		t.Fatal("slow subscriber was not dropped")
+	// Fan-out order over the map is arbitrary, so the fast subscriber may
+	// receive the last frame before the hub reaches the slow one - poll.
+	deadlineDrop := time.After(time.Second)
+	for !dropped.Load() {
+		select {
+		case <-deadlineDrop:
+			t.Fatal("slow subscriber was not dropped")
+		case <-time.After(5 * time.Millisecond):
+		}
 	}
 	// Its channel must be closed by the hub.
 	deadline := time.After(time.Second)
@@ -120,7 +145,7 @@ func TestOperationsAfterStopDoNotBlock(t *testing.T) {
 	go func() {
 		defer close(finished)
 		h.Register(NewSubscriber(func() {}))
-		h.Broadcast([]byte("x"))
+		h.Broadcast(env("x"))
 		h.Unregister(NewSubscriber(func() {}))
 	}()
 	select {

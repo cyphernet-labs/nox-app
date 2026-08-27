@@ -74,12 +74,20 @@ func TestCreateChatNameTakenCaseInsensitiveLeavesNoEvent(t *testing.T) {
 		t.Fatalf("err = %v, want ErrNameTaken", err)
 	}
 
+	// Case folding must be Unicode-aware, not SQLite's ASCII-only lower().
+	if _, _, err := s.CreateChat(ctx, "Общий", "Anna", 102); err != nil {
+		t.Fatalf("Cyrillic CreateChat: %v", err)
+	}
+	if _, _, err := s.CreateChat(ctx, "оБЩИЙ", "Bob", 103); !errors.Is(err, ErrNameTaken) {
+		t.Fatalf("Cyrillic duplicate err = %v, want ErrNameTaken", err)
+	}
+
 	events, err := s.EventsSince(ctx, 0)
 	if err != nil {
 		t.Fatalf("EventsSince: %v", err)
 	}
-	if len(events) != 1 {
-		t.Fatalf("events = %d, want 1 (failed create must leave no event)", len(events))
+	if len(events) != 2 {
+		t.Fatalf("events = %d, want 2 (failed creates must leave no event)", len(events))
 	}
 }
 

@@ -6,8 +6,14 @@ package protocol
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 )
+
+// ErrMissingCmd marks a frame that parsed as a JSON object but carries no
+// command name. The frame's id (if any) is still returned, so the caller can
+// answer invalid_request instead of dropping the connection.
+var ErrMissingCmd = errors.New("missing cmd")
 
 // SchemaVersion is the contract schema this server speaks.
 const SchemaVersion = 1
@@ -100,16 +106,17 @@ func MarshalFrame(frame any) ([]byte, error) {
 	return raw, nil
 }
 
-// ParseCommand decodes an incoming frame into a Command. It fails when the
-// frame is not a JSON object or lacks a command name; unknown sibling fields
-// are ignored.
+// ParseCommand decodes an incoming frame into a Command. A frame that is not
+// a JSON object fails outright; a JSON object without a command name returns
+// ErrMissingCmd together with the parsed Command (id preserved) so the caller
+// can still answer it. Unknown sibling fields are ignored.
 func ParseCommand(raw []byte) (Command, error) {
 	var cmd Command
 	if err := json.Unmarshal(raw, &cmd); err != nil {
 		return Command{}, fmt.Errorf("parse command frame: %w", err)
 	}
 	if cmd.Cmd == "" {
-		return Command{}, fmt.Errorf("parse command frame: missing cmd")
+		return cmd, fmt.Errorf("parse command frame: %w", ErrMissingCmd)
 	}
 	return cmd, nil
 }

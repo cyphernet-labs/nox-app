@@ -53,6 +53,15 @@ func openStack(t *testing.T, path string) (*httptest.Server, *Server, func()) {
 	cfg := config.Config{Addr: "127.0.0.1:0", DBPath: path, Limits: config.DefaultLimits()}
 	srv := New(cfg, store.New(dbs.Read, dbs.Write), h, logger)
 	srv.pingInterval = 50 * time.Millisecond
+	// Long write timeout keeps slow-consumer tests deterministic: the
+	// overflow drop (policy violation) must win over a ping/write timeout.
+	srv.writeTimeout = 30 * time.Second
+
+	dispDone := make(chan struct{})
+	go func() {
+		defer close(dispDone)
+		_ = srv.runDispatcher(hubCtx)
+	}()
 
 	ts := httptest.NewServer(srv.Handler())
 	ts.Config.RegisterOnShutdown(srv.CloseConnections)
@@ -60,6 +69,7 @@ func openStack(t *testing.T, path string) (*httptest.Server, *Server, func()) {
 		ts.Close()
 		stopHub()
 		<-hubDone
+		<-dispDone
 		_ = dbs.Close()
 	}
 	return ts, srv, closeAll

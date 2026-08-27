@@ -89,9 +89,12 @@ func (s *Store) CreateChat(ctx context.Context, name, creatorLabel string, now i
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	// Uniqueness is checked against the Go-lowercased name: SQLite's lower()
+	// folds ASCII only, so relying on it would admit non-Latin duplicates.
+	nameCI := strings.ToLower(name)
 	var taken int
 	err = tx.QueryRowContext(ctx,
-		"SELECT COUNT(1) FROM chats WHERE lower(name) = lower(?)", name).Scan(&taken)
+		"SELECT COUNT(1) FROM chats WHERE name_ci = ?", nameCI).Scan(&taken)
 	if err != nil {
 		return protocol.Chat{}, StoredEvent{}, fmt.Errorf("check chat name: %w", err)
 	}
@@ -107,8 +110,8 @@ func (s *Store) CreateChat(ctx context.Context, name, creatorLabel string, now i
 		LastActivityAt: now,
 	}
 	_, err = tx.ExecContext(ctx,
-		"INSERT INTO chats (chat_id, name, created_at, created_by_label, last_activity_at, last_message_preview) VALUES (?, ?, ?, ?, ?, '')",
-		chat.ChatID, chat.Name, chat.CreatedAt, chat.CreatedByLabel, chat.LastActivityAt)
+		"INSERT INTO chats (chat_id, name, name_ci, created_at, created_by_label, last_activity_at, last_message_preview) VALUES (?, ?, ?, ?, ?, ?, '')",
+		chat.ChatID, chat.Name, nameCI, chat.CreatedAt, chat.CreatedByLabel, chat.LastActivityAt)
 	if err != nil {
 		return protocol.Chat{}, StoredEvent{}, fmt.Errorf("insert chat: %w", err)
 	}

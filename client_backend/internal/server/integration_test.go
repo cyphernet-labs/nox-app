@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -219,6 +218,10 @@ func TestStoryOneLiveExchange(t *testing.T) {
 	if evMsgID != echo.MessageID {
 		t.Fatalf("event message_id = %s, want %s", evMsgID, echo.MessageID)
 	}
+	// Contract §5: client_message_id belongs to the author's own frames only.
+	if _, leaked := evData["client_message_id"]; leaked {
+		t.Fatal("bob's message.new carries the author's client_message_id")
+	}
 }
 
 // expectOKAfter sends a frame and returns the OK reply data for id.
@@ -280,6 +283,8 @@ func TestStoryOneNameTakenCaseInsensitiveAndConcurrentRace(t *testing.T) {
 	anna.expectErr(4, protocol.ErrNameTaken)
 
 	// Concurrent same-name creates from two connections: exactly one wins.
+	// Both frames are written before either reply is read, so the server
+	// processes them concurrently; reads stay on the test goroutine.
 	c1 := dialWS(t, ts)
 	c1.expectGreeting()
 	c1.hello(1, ``)
@@ -287,24 +292,14 @@ func TestStoryOneNameTakenCaseInsensitiveAndConcurrentRace(t *testing.T) {
 	c2.expectGreeting()
 	c2.hello(1, ``)
 
-	results := make(chan bool, 2)
-	var wg sync.WaitGroup
-	for _, c := range []*wsClient{c1, c2} {
-		wg.Add(1)
-		go func(c *wsClient) {
-			defer wg.Done()
-			c.send(`{"id":9,"cmd":"chat.create","data":{"name":"Race"}}`)
-			reply := c.expectReply(9)
-			var ok bool
-			mustUnmarshal(c.t, reply["ok"], &ok)
-			results <- ok
-		}(c)
-	}
-	wg.Wait()
-	close(results)
+	c1.send(`{"id":9,"cmd":"chat.create","data":{"name":"Race"}}`)
+	c2.send(`{"id":9,"cmd":"chat.create","data":{"name":"Race"}}`)
 
 	wins := 0
-	for ok := range results {
+	for _, c := range []*wsClient{c1, c2} {
+		reply := c.expectReply(9)
+		var ok bool
+		mustUnmarshal(t, reply["ok"], &ok)
 		if ok {
 			wins++
 		}
@@ -377,14 +372,35 @@ func TestStoryOneProtocolNegatives(t *testing.T) {
 		assertHealthy(t, ts)
 	})
 
+	t.Run("frame with id but no cmd gets invalid_request, connection survives", func(t *testing.T) {
+		c := dialWS(t, ts)
+		c.expectGreeting()
+		c.send(`{"id":7,"data":{}}`)
+		c.expectErr(7, protocol.ErrInvalidRequest)
+		c.hello(8, ``)
+	})
+
 	t.Run("read-limit overflow closes the connection, server survives", func(t *testing.T) {
 		c := dialWS(t, ts)
 		c.expectGreeting()
 		huge := strings.Repeat("a", 200000) // above max_frame_bytes 131072
 		_ = c.conn.Write(c.ctx, websocket.MessageText, []byte(`{"id":1,"cmd":"session.hello","data":{"schema":1,"label":"`+huge+`"}}`))
-		waitClosedAny(t, c)
+		waitClosed(t, c, websocket.StatusMessageTooBig)
 		assertHealthy(t, ts)
 	})
+}
+
+func TestStoryOneDefaultLabelFallback(t *testing.T) {
+	ts, _ := newTestServer(t)
+
+	c := dialWS(t, ts)
+	c.expectGreeting()
+	data := c.hello(1, ``)
+	var ident identity
+	mustUnmarshal(t, data["identity"], &ident)
+	if ident.Label != "User1" || ident.ID != "User1" {
+		t.Fatalf("identity = %+v, want the User1 fallback", ident)
+	}
 }
 
 func waitClosed(t *testing.T, c *wsClient, want websocket.StatusCode) {
@@ -397,17 +413,6 @@ func waitClosed(t *testing.T, c *wsClient, want websocket.StatusCode) {
 			if got := websocket.CloseStatus(err); got != want {
 				t.Fatalf("close status = %v, want %v", got, want)
 			}
-			return
-		}
-	}
-}
-
-func waitClosedAny(t *testing.T, c *wsClient) {
-	t.Helper()
-	rctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	for {
-		if _, _, err := c.conn.Read(rctx); err != nil {
 			return
 		}
 	}

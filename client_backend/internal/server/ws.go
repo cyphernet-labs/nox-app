@@ -15,6 +15,9 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		s.logger.Warn("websocket accept failed", "err", err)
 		return
 	}
+	// Track the hijacked connection so shutdown can wait for it (invariant 9).
+	s.wg.Add(1)
+	defer s.wg.Done()
 	conn.SetReadLimit(s.cfg.Limits.MaxFrameBytes)
 
 	logger := s.logger.With("conn", randomConnID())
@@ -32,7 +35,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		c.close(websocket.StatusInternalError, "internal error")
 		return
 	}
-	c.enqueueFrame(protocol.Greeting{Srv: protocol.GreetingBody{
+	c.sendFrame(protocol.Greeting{Srv: protocol.GreetingBody{
 		SchemaMax: protocol.SchemaVersion,
 		Challenge: challenge,
 	}})
@@ -56,8 +59,14 @@ func (c *client) readLoop() {
 
 		cmd, err := protocol.ParseCommand(raw)
 		if err != nil {
-			// An unparseable stream has no id to answer; drop the connection
-			// (spec edge case) rather than guess.
+			// A JSON object without cmd still has an id to answer - reply
+			// invalid_request and keep the connection. Anything that is not
+			// even a JSON object has no id; drop the connection (spec edge
+			// case) rather than guess.
+			if errors.Is(err, protocol.ErrMissingCmd) {
+				c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "missing cmd"))
+				continue
+			}
 			c.logger.Warn("unparseable frame", "err", err)
 			c.close(websocket.StatusProtocolError, "unparseable frame")
 			return
@@ -69,7 +78,7 @@ func (c *client) readLoop() {
 
 func (c *client) dispatch(cmd protocol.Command) {
 	if !c.helloDone && cmd.Cmd != protocol.CmdSessionHello {
-		c.enqueueFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "session.hello must be the first command"))
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "session.hello must be the first command"))
 		return
 	}
 
@@ -81,7 +90,7 @@ func (c *client) dispatch(cmd protocol.Command) {
 	case protocol.CmdMessageSend:
 		c.handleMessageSend(cmd)
 	default:
-		c.enqueueFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "unknown command"))
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "unknown command"))
 	}
 	c.logger.Info("command handled", "cmd", cmd.Cmd, "id", cmd.ID)
 }

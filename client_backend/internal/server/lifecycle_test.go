@@ -121,16 +121,20 @@ func TestStoryThreeRestartIntegrity(t *testing.T) {
 
 	var chatID string
 	for i := range cycles {
-		ts, _, closeAll := openStack(t, path)
-		c := dialWS(t, ts)
-		c.expectGreeting()
-		c.hello(1, ``)
-		if i == 0 {
-			chatID = seedChat(t, c, "restart")
-		}
-		sendText(t, c, 3, chatID, fmt.Sprintf("cycle-%d", i), fmt.Sprintf("message %d", i))
-		_ = c.conn.Close(websocket.StatusNormalClosure, "cycle done")
-		closeAll()
+		// The closure guarantees the stack is released even when an
+		// assertion fails mid-cycle (Fatalf runs deferred calls via Goexit).
+		func() {
+			ts, _, closeAll := openStack(t, path)
+			defer closeAll()
+			c := dialWS(t, ts)
+			c.expectGreeting()
+			c.hello(1, ``)
+			if i == 0 {
+				chatID = seedChat(t, c, "restart")
+			}
+			sendText(t, c, 3, chatID, fmt.Sprintf("cycle-%d", i), fmt.Sprintf("message %d", i))
+			_ = c.conn.Close(websocket.StatusNormalClosure, "cycle done")
+		}()
 	}
 
 	// Final cycle: a fresh process replays the whole history in order.

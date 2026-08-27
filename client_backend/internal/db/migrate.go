@@ -26,11 +26,18 @@ func Migrate(ctx context.Context, write *sql.DB, fsys fs.FS) (int, error) {
 	}
 	sort.Strings(names)
 
+	seen := make(map[int]string, len(names))
 	for _, name := range names {
 		num, err := migrationNumber(name)
 		if err != nil {
 			return 0, err
 		}
+		// A duplicate number below user_version would otherwise be skipped
+		// silently, leaving one of the two files never applied.
+		if prev, dup := seen[num]; dup {
+			return 0, fmt.Errorf("migration %s: number %d already used by %s", name, num, prev)
+		}
+		seen[num] = name
 		if num <= version {
 			continue
 		}
