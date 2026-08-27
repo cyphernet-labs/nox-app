@@ -18,7 +18,19 @@ import (
 	"nox.app/client-backend/internal/store"
 )
 
-const maxChatNameRunes = 64
+const (
+	maxChatNameRunes = 64
+	// maxPageSize is the contract's server-side page cap for both
+	// pagination commands; larger requested sizes are silently clamped.
+	maxPageSize = 100
+)
+
+// validChatName applies the contract §4 name rules and returns the trimmed
+// name; every command taking a name goes through it.
+func validChatName(raw string) (string, bool) {
+	name := strings.TrimSpace(raw)
+	return name, name != "" && utf8.RuneCountInString(name) <= maxChatNameRunes
+}
 
 // helloRequest mirrors contract §3. device_key and signature are accepted and
 // ignored on stage 1 (constitution VII: no authentication yet).
@@ -122,7 +134,9 @@ type chatCreateRequest struct {
 	Name string `json:"name"`
 }
 
-type chatCreateReply struct {
+// chatReply is the shared {chat: Chat} reply of chat.create / chat.get /
+// chat.rename.
+type chatReply struct {
 	Chat protocol.Chat `json:"chat"`
 }
 
@@ -133,8 +147,8 @@ func (c *client) handleChatCreate(cmd protocol.Command) {
 		return
 	}
 
-	name := strings.TrimSpace(req.Name)
-	if name == "" || utf8.RuneCountInString(name) > maxChatNameRunes {
+	name, ok := validChatName(req.Name)
+	if !ok {
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest,
 			fmt.Sprintf("name must be non-empty and at most %d characters", maxChatNameRunes)))
 		return
@@ -151,9 +165,181 @@ func (c *client) handleChatCreate(cmd protocol.Command) {
 		return
 	}
 
-	c.sendFrame(protocol.OKReply(cmd.ID, chatCreateReply{Chat: chat}))
+	c.sendFrame(protocol.OKReply(cmd.ID, chatReply{Chat: chat}))
 	c.srv.kickDispatcher()
 	c.logger.Info("chat created", "seq", event.Seq)
+}
+
+type chatsListRequest struct {
+	Page     int    `json:"page"`
+	PageSize int    `json:"page_size"`
+	Query    string `json:"query"`
+}
+
+type chatsListReply struct {
+	Chats   []protocol.Chat `json:"chats"`
+	HasMore bool            `json:"has_more"`
+}
+
+func (c *client) handleChatsList(cmd protocol.Command) {
+	var req chatsListRequest
+	if err := json.Unmarshal(cmd.Data, &req); err != nil {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "malformed chats.list data"))
+		return
+	}
+	if req.Page < 1 || req.PageSize < 1 {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "page and page_size must be at least 1"))
+		return
+	}
+
+	chats, hasMore, err := c.srv.store.ListChats(c.ctx, req.Page, min(req.PageSize, maxPageSize), req.Query)
+	if err != nil {
+		c.logger.Error("list chats failed", "err", err)
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to list chats"))
+		return
+	}
+	c.sendFrame(protocol.OKReply(cmd.ID, chatsListReply{Chats: chats, HasMore: hasMore}))
+}
+
+type chatGetRequest struct {
+	ChatID string `json:"chat_id"`
+}
+
+func (c *client) handleChatGet(cmd protocol.Command) {
+	var req chatGetRequest
+	if err := json.Unmarshal(cmd.Data, &req); err != nil || req.ChatID == "" {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "chat_id is required"))
+		return
+	}
+
+	chat, err := c.srv.store.GetChat(c.ctx, req.ChatID)
+	switch {
+	case errors.Is(err, store.ErrChatNotFound):
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrNotFound, "chat does not exist"))
+		return
+	case err != nil:
+		c.logger.Error("get chat failed", "err", err)
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to get chat"))
+		return
+	}
+	c.sendFrame(protocol.OKReply(cmd.ID, chatReply{Chat: chat}))
+}
+
+type chatRenameRequest struct {
+	ChatID string `json:"chat_id"`
+	Name   string `json:"name"`
+}
+
+func (c *client) handleChatRename(cmd protocol.Command) {
+	var req chatRenameRequest
+	if err := json.Unmarshal(cmd.Data, &req); err != nil || req.ChatID == "" {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "chat_id is required"))
+		return
+	}
+	name, ok := validChatName(req.Name)
+	if !ok {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest,
+			fmt.Sprintf("name must be non-empty and at most %d characters", maxChatNameRunes)))
+		return
+	}
+
+	chat, event, changed, err := c.srv.store.RenameChat(c.ctx, req.ChatID, name)
+	switch {
+	case errors.Is(err, store.ErrChatNotFound):
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrNotFound, "chat does not exist"))
+		return
+	case errors.Is(err, store.ErrNameTaken):
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrNameTaken, "Chat name already exists"))
+		return
+	case err != nil:
+		c.logger.Error("rename chat failed", "err", err)
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to rename chat"))
+		return
+	}
+
+	c.sendFrame(protocol.OKReply(cmd.ID, chatReply{Chat: chat}))
+	if changed {
+		c.srv.kickDispatcher()
+		c.logger.Info("chat renamed", "seq", event.Seq)
+	}
+}
+
+type nameAvailableRequest struct {
+	Name          string `json:"name"`
+	ExcludeChatID string `json:"exclude_chat_id"`
+}
+
+type nameAvailableReply struct {
+	Available bool `json:"available"`
+}
+
+func (c *client) handleChatNameAvailable(cmd protocol.Command) {
+	var req nameAvailableRequest
+	if err := json.Unmarshal(cmd.Data, &req); err != nil {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "malformed chat.nameAvailable data"))
+		return
+	}
+	name, ok := validChatName(req.Name)
+	if !ok {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest,
+			fmt.Sprintf("name must be non-empty and at most %d characters", maxChatNameRunes)))
+		return
+	}
+
+	available, err := c.srv.store.NameAvailable(c.ctx, name, req.ExcludeChatID)
+	if err != nil {
+		c.logger.Error("name availability check failed", "err", err)
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to check name"))
+		return
+	}
+	c.sendFrame(protocol.OKReply(cmd.ID, nameAvailableReply{Available: available}))
+}
+
+type messagesListRequest struct {
+	ChatID    string `json:"chat_id"`
+	BeforeSeq int64  `json:"before_seq"`
+	Limit     int    `json:"limit"`
+}
+
+type messagesListReply struct {
+	Messages []protocol.Message `json:"messages"`
+	HasMore  bool               `json:"has_more"`
+}
+
+func (c *client) handleMessagesList(cmd protocol.Command) {
+	var req messagesListRequest
+	if err := json.Unmarshal(cmd.Data, &req); err != nil || req.ChatID == "" {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "chat_id is required"))
+		return
+	}
+	if req.Limit < 1 {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "limit must be at least 1"))
+		return
+	}
+
+	if _, err := c.srv.store.GetChat(c.ctx, req.ChatID); err != nil {
+		if errors.Is(err, store.ErrChatNotFound) {
+			c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrNotFound, "chat does not exist"))
+			return
+		}
+		c.logger.Error("list messages failed", "err", err)
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to list messages"))
+		return
+	}
+
+	messages, hasMore, err := c.srv.store.ListMessages(c.ctx, req.ChatID, req.BeforeSeq, min(req.Limit, maxPageSize))
+	if err != nil {
+		c.logger.Error("list messages failed", "err", err)
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to list messages"))
+		return
+	}
+	// Contract §5: client_message_id belongs to the author's own frames only.
+	for i := range messages {
+		if messages[i].AuthorID != c.label {
+			messages[i].ClientMessageID = ""
+		}
+	}
+	c.sendFrame(protocol.OKReply(cmd.ID, messagesListReply{Messages: messages, HasMore: hasMore}))
 }
 
 type messageSendRequest struct {

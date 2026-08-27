@@ -61,17 +61,23 @@ type Event struct {
 	Data  json.RawMessage `json:"data"`
 }
 
-// Event type names of the 022 slice.
+// Event type names of the stage-1 slice.
 const (
 	EventChatCreated = "chat.created"
+	EventChatUpdated = "chat.updated"
 	EventMessageNew  = "message.new"
 )
 
-// Command names of the 022 slice.
+// Command names of the stage-1 slice (022 + 023).
 const (
-	CmdSessionHello = "session.hello"
-	CmdChatCreate   = "chat.create"
-	CmdMessageSend  = "message.send"
+	CmdSessionHello      = "session.hello"
+	CmdChatsList         = "chats.list"
+	CmdChatGet           = "chat.get"
+	CmdChatCreate        = "chat.create"
+	CmdChatRename        = "chat.rename"
+	CmdChatNameAvailable = "chat.nameAvailable"
+	CmdMessagesList      = "messages.list"
+	CmdMessageSend       = "message.send"
 )
 
 // Chat is the wire model of contract §4 (022: preview served but unused by

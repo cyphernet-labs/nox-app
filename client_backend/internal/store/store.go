@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"nox.app/client-backend/internal/protocol"
@@ -42,6 +43,37 @@ type Store struct {
 // New builds a Store over the opened pools.
 func New(read, write *sql.DB) *Store {
 	return &Store{read: read, write: write}
+}
+
+// chatColumns is the single authoritative projection of a chats row onto the
+// wire model; every chat read goes through it and scanChat so the commands
+// can never drift apart field-wise.
+const chatColumns = "chat_id, name, created_at, created_by_label, last_message_preview, last_activity_at"
+
+// foldCase maps every rune to the canonical representative of its Unicode
+// simple case-folding orbit. Plain ToLower is a lowercase MAPPING, not a
+// folding: pairs like the Greek final sigma vs sigma survive it and would
+// slip through both name uniqueness and the search filter.
+func foldCase(s string) string {
+	return strings.Map(func(r rune) rune {
+		least := r
+		for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+			if f < least {
+				least = f
+			}
+		}
+		return least
+	}, s)
+}
+
+func scanChat(row interface{ Scan(...any) error }) (protocol.Chat, error) {
+	var chat protocol.Chat
+	err := row.Scan(&chat.ChatID, &chat.Name, &chat.CreatedAt, &chat.CreatedByLabel,
+		&chat.LastMessagePreview, &chat.LastActivityAt)
+	if err != nil {
+		return protocol.Chat{}, err
+	}
+	return chat, nil
 }
 
 // Cursor returns the current maximum event seq (0 for an empty log).
@@ -79,6 +111,189 @@ func (s *Store) EventsSince(ctx context.Context, since int64) ([]StoredEvent, er
 	return events, nil
 }
 
+// ListChats returns one page of the chat list ordered by last activity
+// (newest first, chat_id as the stable tiebreaker) with an optional
+// case-insensitive substring filter on the name. Unicode case folding and
+// page slicing happen in Go: SQLite's lower()/LIKE fold ASCII only, and the
+// table is small by design (research R1/R2). page is 1-based; pageSize must
+// arrive validated and clamped by the caller.
+func (s *Store) ListChats(ctx context.Context, page, pageSize int, query string) ([]protocol.Chat, bool, error) {
+	rows, err := s.read.QueryContext(ctx,
+		"SELECT "+chatColumns+" FROM chats ORDER BY last_activity_at DESC, chat_id ASC")
+	if err != nil {
+		return nil, false, fmt.Errorf("query chats: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	needle := foldCase(strings.TrimSpace(query))
+	var matched []protocol.Chat
+	for rows.Next() {
+		chat, err := scanChat(rows)
+		if err != nil {
+			return nil, false, fmt.Errorf("scan chat: %w", err)
+		}
+		if needle != "" && !strings.Contains(foldCase(chat.Name), needle) {
+			continue
+		}
+		matched = append(matched, chat)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("iterate chats: %w", err)
+	}
+
+	// Guard BEFORE the multiplication: with an attacker-sized page the
+	// product (page-1)*pageSize wraps negative and the slice expression
+	// panics. page-1 >= len already means an empty page (pageSize >= 1),
+	// and past this guard the product is bounded by len*pageSize.
+	if page-1 >= len(matched) {
+		return []protocol.Chat{}, false, nil
+	}
+	start := (page - 1) * pageSize
+	if start >= len(matched) {
+		return []protocol.Chat{}, false, nil
+	}
+	end := min(start+pageSize, len(matched))
+	return matched[start:end], end < len(matched), nil
+}
+
+// GetChat returns one chat card or ErrChatNotFound.
+func (s *Store) GetChat(ctx context.Context, chatID string) (protocol.Chat, error) {
+	chat, err := scanChat(s.read.QueryRowContext(ctx,
+		"SELECT "+chatColumns+" FROM chats WHERE chat_id = ?", chatID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return protocol.Chat{}, ErrChatNotFound
+	}
+	if err != nil {
+		return protocol.Chat{}, fmt.Errorf("get chat: %w", err)
+	}
+	return chat, nil
+}
+
+// ListMessages returns one backward page of a chat's history: up to limit
+// messages with seq below beforeSeq (0 = from the tail), ascending inside
+// the page (research R3). hasMore reports whether older messages remain.
+// The chat must exist - callers check with GetChat for the not_found reply.
+func (s *Store) ListMessages(ctx context.Context, chatID string, beforeSeq int64, limit int) ([]protocol.Message, bool, error) {
+	q := "SELECT message_id, seq, chat_id, author_id, author_label, client_message_id, sent_at, body FROM messages WHERE chat_id = ?"
+	args := []any{chatID}
+	if beforeSeq > 0 {
+		q += " AND seq < ?"
+		args = append(args, beforeSeq)
+	}
+	q += " ORDER BY seq DESC LIMIT ?"
+	args = append(args, limit+1)
+
+	rows, err := s.read.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, false, fmt.Errorf("query messages: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var newestFirst []protocol.Message
+	for rows.Next() {
+		var msg protocol.Message
+		var body string
+		if err := rows.Scan(&msg.MessageID, &msg.Seq, &msg.ChatID, &msg.AuthorID,
+			&msg.AuthorLabel, &msg.ClientMessageID, &msg.SentAt, &body); err != nil {
+			return nil, false, fmt.Errorf("scan message: %w", err)
+		}
+		msg.Body = json.RawMessage(body)
+		newestFirst = append(newestFirst, msg)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("iterate messages: %w", err)
+	}
+
+	hasMore := len(newestFirst) > limit
+	if hasMore {
+		newestFirst = newestFirst[:limit]
+	}
+	page := make([]protocol.Message, 0, len(newestFirst))
+	for i := len(newestFirst) - 1; i >= 0; i-- {
+		page = append(page, newestFirst[i])
+	}
+	return page, hasMore, nil
+}
+
+// NameAvailable reports whether a chat name is free under the Unicode
+// case-insensitive uniqueness rule, optionally ignoring one chat (the rename
+// form). Advisory only: the authoritative check lives inside the mutation
+// transactions (research R5).
+func (s *Store) NameAvailable(ctx context.Context, name, excludeChatID string) (bool, error) {
+	q := "SELECT COUNT(1) FROM chats WHERE name_ci = ?"
+	args := []any{foldCase(name)}
+	if excludeChatID != "" {
+		q += " AND chat_id != ?"
+		args = append(args, excludeChatID)
+	}
+	var taken int
+	if err := s.read.QueryRowContext(ctx, q, args...).Scan(&taken); err != nil {
+		return false, fmt.Errorf("check name availability: %w", err)
+	}
+	return taken == 0, nil
+}
+
+// RenameChat renames a chat and inserts its chat.updated event atomically.
+// The name must arrive validated. An exact no-op (the stored name equals the
+// new one) returns the current card with changed=false and writes nothing;
+// a case-only change is a real rename. last_activity_at is deliberately
+// untouched: renaming is not activity (contract §4).
+func (s *Store) RenameChat(ctx context.Context, chatID, name string) (protocol.Chat, StoredEvent, bool, error) {
+	tx, err := s.write.BeginTx(ctx, nil)
+	if err != nil {
+		return protocol.Chat{}, StoredEvent{}, false, fmt.Errorf("begin rename chat: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	chat, err := scanChat(tx.QueryRowContext(ctx,
+		"SELECT "+chatColumns+" FROM chats WHERE chat_id = ?", chatID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return protocol.Chat{}, StoredEvent{}, false, ErrChatNotFound
+	}
+	if err != nil {
+		return protocol.Chat{}, StoredEvent{}, false, fmt.Errorf("read chat: %w", err)
+	}
+	if chat.Name == name {
+		return chat, StoredEvent{}, false, nil
+	}
+
+	nameCI := foldCase(name)
+	var taken int
+	err = tx.QueryRowContext(ctx,
+		"SELECT COUNT(1) FROM chats WHERE name_ci = ? AND chat_id != ?", nameCI, chatID).Scan(&taken)
+	if err != nil {
+		return protocol.Chat{}, StoredEvent{}, false, fmt.Errorf("check chat name: %w", err)
+	}
+	if taken > 0 {
+		return protocol.Chat{}, StoredEvent{}, false, ErrNameTaken
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE chats SET name = ?, name_ci = ? WHERE chat_id = ?", name, nameCI, chatID); err != nil {
+		return protocol.Chat{}, StoredEvent{}, false, fmt.Errorf("update chat name: %w", err)
+	}
+	chat.Name = name
+
+	payload, err := json.Marshal(chat)
+	if err != nil {
+		return protocol.Chat{}, StoredEvent{}, false, fmt.Errorf("marshal chat payload: %w", err)
+	}
+	res, err := tx.ExecContext(ctx,
+		"INSERT INTO events (type, payload) VALUES (?, ?)", protocol.EventChatUpdated, string(payload))
+	if err != nil {
+		return protocol.Chat{}, StoredEvent{}, false, fmt.Errorf("insert chat.updated event: %w", err)
+	}
+	seq, err := res.LastInsertId()
+	if err != nil {
+		return protocol.Chat{}, StoredEvent{}, false, fmt.Errorf("event seq: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return protocol.Chat{}, StoredEvent{}, false, fmt.Errorf("commit rename chat: %w", err)
+	}
+	return chat, StoredEvent{Seq: seq, Type: protocol.EventChatUpdated, Payload: payload}, true, nil
+}
+
 // CreateChat inserts a chat and its chat.created event atomically. The name
 // must arrive validated (trimmed, non-empty, <=64 runes); uniqueness is
 // case-insensitive and returns ErrNameTaken.
@@ -89,9 +304,9 @@ func (s *Store) CreateChat(ctx context.Context, name, creatorLabel string, now i
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Uniqueness is checked against the Go-lowercased name: SQLite's lower()
+	// Uniqueness is checked against the Go-case-folded name: SQLite's lower()
 	// folds ASCII only, so relying on it would admit non-Latin duplicates.
-	nameCI := strings.ToLower(name)
+	nameCI := foldCase(name)
 	var taken int
 	err = tx.QueryRowContext(ctx,
 		"SELECT COUNT(1) FROM chats WHERE name_ci = ?", nameCI).Scan(&taken)

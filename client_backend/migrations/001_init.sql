@@ -1,4 +1,4 @@
--- name_ci is the Unicode-lowercased name computed in Go: SQLite's own
+-- name_ci is the Unicode case-folded name computed in Go: SQLite's own
 -- lower() folds ASCII only, which would let Cyrillic duplicates through.
 CREATE TABLE chats (
     chat_id TEXT PRIMARY KEY,

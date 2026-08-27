@@ -85,8 +85,18 @@ func (c *client) dispatch(cmd protocol.Command) {
 	switch cmd.Cmd {
 	case protocol.CmdSessionHello:
 		c.handleSessionHello(cmd)
+	case protocol.CmdChatsList:
+		c.handleChatsList(cmd)
+	case protocol.CmdChatGet:
+		c.handleChatGet(cmd)
 	case protocol.CmdChatCreate:
 		c.handleChatCreate(cmd)
+	case protocol.CmdChatRename:
+		c.handleChatRename(cmd)
+	case protocol.CmdChatNameAvailable:
+		c.handleChatNameAvailable(cmd)
+	case protocol.CmdMessagesList:
+		c.handleMessagesList(cmd)
 	case protocol.CmdMessageSend:
 		c.handleMessageSend(cmd)
 	default:
