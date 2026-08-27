@@ -180,9 +180,9 @@ Tests deep-mirror `lib/` under `test/` (not flat); BLoC tests live in the page's
 - **Accessibility (FR-016)** is covered by two files: `test/presentation/widgets/accessibility_test.dart` (cross-widget) and `test/presentation/pages/m1_settings_accessibility_test.dart` (screen-level); both exercise `pumpApp(..., textScale: 2.0)` and assert ≥48×48 tap targets plus tooltips on icon-only actions.
 
 <!-- SPECKIT START -->
-Active feature: **none in-flight**; the next Spec Kit features are the client_backend stage-1 slices (see `docs/client-backend/roadmap-stage1.md`).
+Active feature: the **client track** (app ↔ live server, features 025–028 per `docs/client-backend/roadmap-client-track.md`); server stage 1 (022–024) is complete and merged (`docs/client-backend/roadmap-stage1.md`).
 
-**Working mode (updated 2026-08-20): the Flutter app stays on mocks; the Go client server is built in parallel.** The app keeps mock repositories over the real Sembast DB (cache-first per blueprint `04`) — no app-side integration yet; the network layer swaps in later via the 016 DI flip once the server implements contract v0 and the client-side transitional requirements (contract §9) are done. Server work happens in `client_backend/` per its own CLAUDE.md; stage 1 is infrastructure without authentication.
+**Working mode (updated 2026-08-27): the client track has begun.** The Go server implements the whole of contract v0 minus authentication (stage 1, features 022–024 merged); the Flutter app is now being connected to it per contract §9: wire alignment and the persistent outbox first (mocks stay, UI behavior frozen by goldens), then the WebSocket transport with session phases, then the 016 DI flip. Server work continues in `client_backend/` per its own CLAUDE.md.
 
 **Feature history — 001–021, all merged to `develop`.** `tasks.md` tick counts are **not** a reliable completion signal (005/006/007/010/014 show zero ticked yet are merged; 008 has one deliberate residual, T018 on-device icon verification).
 
