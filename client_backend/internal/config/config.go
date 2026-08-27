@@ -19,9 +19,10 @@ type Limits struct {
 
 // Config is the validated process configuration.
 type Config struct {
-	Addr   string
-	DBPath string
-	Limits Limits
+	Addr      string
+	DBPath    string
+	FilesPath string
+	Limits    Limits
 }
 
 // DefaultLimits mirrors the contract v0 §3 example values.
@@ -34,7 +35,9 @@ func DefaultLimits() Limits {
 }
 
 // Load parses args (without the program name) into a Config. Flag values win
-// over NOX_ADDR / NOX_DB environment variables, which win over defaults.
+// over NOX_ADDR / NOX_DB / NOX_FILES environment variables, which win over
+// defaults. The files directory defaults to "<db>-files" next to the
+// database so backup and relocation stay a two-neighbor affair.
 func Load(args []string, getenv func(string) string) (Config, error) {
 	defAddr := getenv("NOX_ADDR")
 	if defAddr == "" {
@@ -44,10 +47,12 @@ func Load(args []string, getenv func(string) string) (Config, error) {
 	if defDB == "" {
 		defDB = "nox.db"
 	}
+	defFiles := getenv("NOX_FILES")
 
 	fs := flag.NewFlagSet("noxd", flag.ContinueOnError)
 	addr := fs.String("addr", defAddr, "listen address (host:port)")
 	dbPath := fs.String("db", defDB, "path to the SQLite database file")
+	filesPath := fs.String("files", defFiles, "attachment bytes directory (default <db>-files)")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, fmt.Errorf("parse flags: %w", err)
 	}
@@ -58,6 +63,10 @@ func Load(args []string, getenv func(string) string) (Config, error) {
 	if *dbPath == "" {
 		return Config{}, fmt.Errorf("-db must not be empty")
 	}
+	files := *filesPath
+	if files == "" {
+		files = *dbPath + "-files"
+	}
 
-	return Config{Addr: *addr, DBPath: *dbPath, Limits: DefaultLimits()}, nil
+	return Config{Addr: *addr, DBPath: *dbPath, FilesPath: files, Limits: DefaultLimits()}, nil
 }

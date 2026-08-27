@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"nox.app/client-backend/internal/blob"
 	"nox.app/client-backend/internal/config"
 	"nox.app/client-backend/internal/db"
 	"nox.app/client-backend/internal/hub"
@@ -49,9 +50,14 @@ func openStack(t *testing.T, path string) (*httptest.Server, *Server, func()) {
 		h.Run(hubCtx)
 	}()
 
+	bl, err := blob.Open(path + "-files")
+	if err != nil {
+		t.Fatalf("blob.Open: %v", err)
+	}
+
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	cfg := config.Config{Addr: "127.0.0.1:0", DBPath: path, Limits: config.DefaultLimits()}
-	srv := New(cfg, store.New(dbs.Read, dbs.Write), h, logger)
+	cfg := config.Config{Addr: "127.0.0.1:0", DBPath: path, FilesPath: path + "-files", Limits: config.DefaultLimits()}
+	srv := New(cfg, store.New(dbs.Read, dbs.Write), h, bl, logger)
 	srv.pingInterval = 50 * time.Millisecond
 	// Long write timeout keeps slow-consumer tests deterministic: the
 	// overflow drop (policy violation) must win over a ping/write timeout.
@@ -70,6 +76,7 @@ func openStack(t *testing.T, path string) (*httptest.Server, *Server, func()) {
 		stopHub()
 		<-hubDone
 		<-dispDone
+		_ = bl.Close()
 		_ = dbs.Close()
 	}
 	return ts, srv, closeAll

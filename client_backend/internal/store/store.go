@@ -23,7 +23,15 @@ import (
 var (
 	ErrNameTaken    = errors.New("chat name already taken")
 	ErrChatNotFound = errors.New("chat not found")
+	ErrFileNotFound = errors.New("file not found")
+	ErrFileNotReady = errors.New("file bytes not uploaded")
+	ErrFileTaken    = errors.New("file already bound to a message")
 )
+
+// attachmentLifetimeSeconds is the stage-1 "indefinite" retention (owner
+// decision, 024 clarifications): expires_at must exist on the wire, so it is
+// set ten years out. A real TTL arrives in a later phase.
+const attachmentLifetimeSeconds = 10 * 365 * 24 * 3600
 
 // StoredEvent is one events row, ready to be framed for delivery or replay.
 type StoredEvent struct {
@@ -174,13 +182,13 @@ func (s *Store) GetChat(ctx context.Context, chatID string) (protocol.Chat, erro
 // the page (research R3). hasMore reports whether older messages remain.
 // The chat must exist - callers check with GetChat for the not_found reply.
 func (s *Store) ListMessages(ctx context.Context, chatID string, beforeSeq int64, limit int) ([]protocol.Message, bool, error) {
-	q := "SELECT message_id, seq, chat_id, author_id, author_label, client_message_id, sent_at, body FROM messages WHERE chat_id = ?"
+	q := "SELECT " + messageColumns + " FROM messages m LEFT JOIN files f ON m.file_id = f.file_id WHERE m.chat_id = ?"
 	args := []any{chatID}
 	if beforeSeq > 0 {
-		q += " AND seq < ?"
+		q += " AND m.seq < ?"
 		args = append(args, beforeSeq)
 	}
-	q += " ORDER BY seq DESC LIMIT ?"
+	q += " ORDER BY m.seq DESC LIMIT ?"
 	args = append(args, limit+1)
 
 	rows, err := s.read.QueryContext(ctx, q, args...)
@@ -191,13 +199,10 @@ func (s *Store) ListMessages(ctx context.Context, chatID string, beforeSeq int64
 
 	var newestFirst []protocol.Message
 	for rows.Next() {
-		var msg protocol.Message
-		var body string
-		if err := rows.Scan(&msg.MessageID, &msg.Seq, &msg.ChatID, &msg.AuthorID,
-			&msg.AuthorLabel, &msg.ClientMessageID, &msg.SentAt, &body); err != nil {
+		msg, err := scanMessage(rows)
+		if err != nil {
 			return nil, false, fmt.Errorf("scan message: %w", err)
 		}
-		msg.Body = json.RawMessage(body)
 		newestFirst = append(newestFirst, msg)
 	}
 	if err := rows.Err(); err != nil {
@@ -209,6 +214,151 @@ func (s *Store) ListMessages(ctx context.Context, chatID string, beforeSeq int64
 		newestFirst = newestFirst[:limit]
 	}
 	page := make([]protocol.Message, 0, len(newestFirst))
+	for i := len(newestFirst) - 1; i >= 0; i-- {
+		page = append(page, newestFirst[i])
+	}
+	return page, hasMore, nil
+}
+
+// FileInfo is one files row: the wire attachment plus lifecycle state.
+type FileInfo struct {
+	Attachment protocol.Attachment
+	Uploaded   bool
+	MessageID  string
+}
+
+// CreateUpload registers a declared upload and returns its wire attachment.
+// Size must arrive validated against the limit by the caller.
+func (s *Store) CreateUpload(ctx context.Context, name string, size int64, mime string, now int64) (protocol.Attachment, error) {
+	att := protocol.Attachment{
+		FileID:    "f_" + randomID(),
+		Name:      name,
+		Size:      size,
+		Mime:      mime,
+		ExpiresAt: now + attachmentLifetimeSeconds,
+	}
+	_, err := s.write.ExecContext(ctx,
+		"INSERT INTO files (file_id, name, size, mime, created_at, expires_at, uploaded, message_id) VALUES (?, ?, ?, ?, ?, ?, 0, NULL)",
+		att.FileID, att.Name, att.Size, att.Mime, now, att.ExpiresAt)
+	if err != nil {
+		return protocol.Attachment{}, fmt.Errorf("insert file: %w", err)
+	}
+	return att, nil
+}
+
+// MarkUploaded flips the file to uploaded after its bytes are finalized on
+// disk. The disk write happens FIRST: the database never promises bytes
+// that do not exist.
+func (s *Store) MarkUploaded(ctx context.Context, fileID string) error {
+	res, err := s.write.ExecContext(ctx,
+		"UPDATE files SET uploaded = 1 WHERE file_id = ? AND uploaded = 0", fileID)
+	if err != nil {
+		return fmt.Errorf("mark uploaded: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil || n == 0 {
+		return fmt.Errorf("mark uploaded %s: %w", fileID, ErrFileNotFound)
+	}
+	return nil
+}
+
+// FileByID returns one files row or ErrFileNotFound.
+func (s *Store) FileByID(ctx context.Context, fileID string) (FileInfo, error) {
+	var info FileInfo
+	var messageID sql.NullString
+	err := s.read.QueryRowContext(ctx,
+		"SELECT file_id, name, size, mime, expires_at, uploaded, message_id FROM files WHERE file_id = ?", fileID,
+	).Scan(&info.Attachment.FileID, &info.Attachment.Name, &info.Attachment.Size,
+		&info.Attachment.Mime, &info.Attachment.ExpiresAt, &info.Uploaded, &messageID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return FileInfo{}, ErrFileNotFound
+	}
+	if err != nil {
+		return FileInfo{}, fmt.Errorf("get file: %w", err)
+	}
+	info.MessageID = messageID.String
+	return info, nil
+}
+
+// OrphanFiles lists uploads never bound to a message and declared before
+// cutoff - the only garbage under indefinite retention. The caller removes
+// the bytes first, then calls DeleteFiles: a crash in between leaves rows
+// that the next sweep retries, never bytes without rows.
+func (s *Store) OrphanFiles(ctx context.Context, cutoff int64) ([]string, error) {
+	rows, err := s.read.QueryContext(ctx,
+		"SELECT file_id FROM files WHERE message_id IS NULL AND created_at < ?", cutoff)
+	if err != nil {
+		return nil, fmt.Errorf("query orphans: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan orphan: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate orphans: %w", err)
+	}
+	return ids, nil
+}
+
+// DeleteFiles removes files rows by id (bytes are already gone).
+func (s *Store) DeleteFiles(ctx context.Context, ids []string) error {
+	for _, id := range ids {
+		if _, err := s.write.ExecContext(ctx, "DELETE FROM files WHERE file_id = ?", id); err != nil {
+			return fmt.Errorf("delete file %s: %w", id, err)
+		}
+	}
+	return nil
+}
+
+// ChatFileEntry is one chat.files row: the attachment plus its message
+// anchor (contract §4).
+type ChatFileEntry struct {
+	protocol.Attachment
+	MessageID string `json:"message_id"`
+	Seq       int64  `json:"seq"`
+}
+
+// ListChatFiles returns one backward page of a chat's attachments using the
+// messages.list pagination rules (023). The chat's existence is checked by
+// the caller.
+func (s *Store) ListChatFiles(ctx context.Context, chatID string, beforeSeq int64, limit int) ([]ChatFileEntry, bool, error) {
+	q := `SELECT m.seq, m.message_id, f.file_id, f.name, f.size, f.mime, f.expires_at
+		FROM messages m JOIN files f ON m.file_id = f.file_id WHERE m.chat_id = ?`
+	args := []any{chatID}
+	if beforeSeq > 0 {
+		q += " AND m.seq < ?"
+		args = append(args, beforeSeq)
+	}
+	q += " ORDER BY m.seq DESC LIMIT ?"
+	args = append(args, limit+1)
+
+	rows, err := s.read.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, false, fmt.Errorf("query chat files: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var newestFirst []ChatFileEntry
+	for rows.Next() {
+		var e ChatFileEntry
+		if err := rows.Scan(&e.Seq, &e.MessageID, &e.FileID, &e.Name, &e.Size, &e.Mime, &e.ExpiresAt); err != nil {
+			return nil, false, fmt.Errorf("scan chat file: %w", err)
+		}
+		newestFirst = append(newestFirst, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("iterate chat files: %w", err)
+	}
+
+	hasMore := len(newestFirst) > limit
+	if hasMore {
+		newestFirst = newestFirst[:limit]
+	}
+	page := make([]ChatFileEntry, 0, len(newestFirst))
 	for i := len(newestFirst) - 1; i >= 0; i-- {
 		page = append(page, newestFirst[i])
 	}
@@ -351,10 +501,13 @@ func (s *Store) CreateChat(ctx context.Context, name, creatorLabel string, now i
 	return chat, StoredEvent{Seq: seq, Type: protocol.EventChatCreated, Payload: payload}, nil
 }
 
-// SendMessage inserts a message and its message.new event atomically, updates
-// the chat's activity and preview, and is idempotent by clientMessageID: a
-// replay returns the original message with created=false and no new event.
-func (s *Store) SendMessage(ctx context.Context, chatID, clientMessageID, authorID, authorLabel string, body json.RawMessage, now int64) (protocol.Message, StoredEvent, bool, error) {
+// SendMessage inserts a message and its message.new event atomically, binds
+// the optional attachment file inside the same transaction, updates the
+// chat's activity and preview, and is idempotent by clientMessageID: a
+// replay returns the original message (attachment included) with
+// created=false and no new event. fileID "" means no attachment; validation
+// that at least one of body/attachment is present belongs to the caller.
+func (s *Store) SendMessage(ctx context.Context, chatID, clientMessageID, authorID, authorLabel string, body json.RawMessage, fileID string, now int64) (protocol.Message, StoredEvent, bool, error) {
 	tx, err := s.write.BeginTx(ctx, nil)
 	if err != nil {
 		return protocol.Message{}, StoredEvent{}, false, fmt.Errorf("begin send message: %w", err)
@@ -376,6 +529,31 @@ func (s *Store) SendMessage(ctx context.Context, chatID, clientMessageID, author
 		return protocol.Message{}, StoredEvent{}, false, ErrChatNotFound
 	}
 
+	// Attachment binding is part of the same transaction: the single-writer
+	// pool serializes it, so uploaded/unbound checks are race-free.
+	var att *protocol.Attachment
+	if fileID != "" {
+		var a protocol.Attachment
+		var uploaded int
+		var boundTo sql.NullString
+		err := tx.QueryRowContext(ctx,
+			"SELECT file_id, name, size, mime, expires_at, uploaded, message_id FROM files WHERE file_id = ?", fileID,
+		).Scan(&a.FileID, &a.Name, &a.Size, &a.Mime, &a.ExpiresAt, &uploaded, &boundTo)
+		if errors.Is(err, sql.ErrNoRows) {
+			return protocol.Message{}, StoredEvent{}, false, ErrFileNotFound
+		}
+		if err != nil {
+			return protocol.Message{}, StoredEvent{}, false, fmt.Errorf("check file: %w", err)
+		}
+		if uploaded == 0 {
+			return protocol.Message{}, StoredEvent{}, false, ErrFileNotReady
+		}
+		if boundTo.Valid {
+			return protocol.Message{}, StoredEvent{}, false, ErrFileTaken
+		}
+		att = &a
+	}
+
 	res, err := tx.ExecContext(ctx,
 		"INSERT INTO events (type, payload) VALUES (?, '')", protocol.EventMessageNew)
 	if err != nil {
@@ -395,6 +573,7 @@ func (s *Store) SendMessage(ctx context.Context, chatID, clientMessageID, author
 		ClientMessageID: clientMessageID,
 		SentAt:          now,
 		Body:            body,
+		Attachment:      att,
 	}
 	payload, err := json.Marshal(msg)
 	if err != nil {
@@ -405,16 +584,30 @@ func (s *Store) SendMessage(ctx context.Context, chatID, clientMessageID, author
 		return protocol.Message{}, StoredEvent{}, false, fmt.Errorf("fill event payload: %w", err)
 	}
 
+	var fileVal any
+	if fileID != "" {
+		fileVal = fileID
+	}
 	_, err = tx.ExecContext(ctx,
-		"INSERT INTO messages (message_id, seq, chat_id, author_id, author_label, client_message_id, sent_at, body) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-		msg.MessageID, msg.Seq, msg.ChatID, msg.AuthorID, msg.AuthorLabel, msg.ClientMessageID, msg.SentAt, string(msg.Body))
+		"INSERT INTO messages (message_id, seq, chat_id, author_id, author_label, client_message_id, sent_at, body, file_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		msg.MessageID, msg.Seq, msg.ChatID, msg.AuthorID, msg.AuthorLabel, msg.ClientMessageID, msg.SentAt, string(msg.Body), fileVal)
 	if err != nil {
 		return protocol.Message{}, StoredEvent{}, false, fmt.Errorf("insert message: %w", err)
 	}
+	if att != nil {
+		if _, err := tx.ExecContext(ctx,
+			"UPDATE files SET message_id = ? WHERE file_id = ?", msg.MessageID, fileID); err != nil {
+			return protocol.Message{}, StoredEvent{}, false, fmt.Errorf("bind file: %w", err)
+		}
+	}
 
+	attName := ""
+	if att != nil {
+		attName = att.Name
+	}
 	_, err = tx.ExecContext(ctx,
 		"UPDATE chats SET last_activity_at = ?, last_message_preview = ? WHERE chat_id = ?",
-		now, previewFromBody(body), chatID)
+		now, previewFor(body, attName), chatID)
 	if err != nil {
 		return protocol.Message{}, StoredEvent{}, false, fmt.Errorf("touch chat: %w", err)
 	}
@@ -425,33 +618,61 @@ func (s *Store) SendMessage(ctx context.Context, chatID, clientMessageID, author
 	return msg, StoredEvent{Seq: seq, Type: protocol.EventMessageNew, Payload: payload}, true, nil
 }
 
-func messageByClientID(ctx context.Context, tx *sql.Tx, clientMessageID string) (protocol.Message, error) {
+// messageColumns joins the optional attachment; every message read shares it.
+const messageColumns = `m.message_id, m.seq, m.chat_id, m.author_id, m.author_label,
+	m.client_message_id, m.sent_at, m.body, f.file_id, f.name, f.size, f.mime, f.expires_at`
+
+type rowScanner interface{ Scan(...any) error }
+
+func scanMessage(row rowScanner) (protocol.Message, error) {
 	var msg protocol.Message
 	var body string
-	err := tx.QueryRowContext(ctx,
-		"SELECT message_id, seq, chat_id, author_id, author_label, client_message_id, sent_at, body FROM messages WHERE client_message_id = ?",
-		clientMessageID,
-	).Scan(&msg.MessageID, &msg.Seq, &msg.ChatID, &msg.AuthorID, &msg.AuthorLabel, &msg.ClientMessageID, &msg.SentAt, &body)
+	var fID, fName, fMime sql.NullString
+	var fSize, fExpires sql.NullInt64
+	err := row.Scan(&msg.MessageID, &msg.Seq, &msg.ChatID, &msg.AuthorID, &msg.AuthorLabel,
+		&msg.ClientMessageID, &msg.SentAt, &body, &fID, &fName, &fSize, &fMime, &fExpires)
 	if err != nil {
 		return protocol.Message{}, err
 	}
 	msg.Body = json.RawMessage(body)
+	if fID.Valid {
+		msg.Attachment = &protocol.Attachment{
+			FileID:    fID.String,
+			Name:      fName.String,
+			Size:      fSize.Int64,
+			Mime:      fMime.String,
+			ExpiresAt: fExpires.Int64,
+		}
+	}
 	return msg, nil
 }
 
-// previewFromBody folds an open-text body into the single-line <=120-rune
-// preview of contract §6. Server-side preview exists only while Q1 keeps the
-// body open (contract §4); any other body shape yields an empty preview.
-func previewFromBody(body json.RawMessage) string {
+func messageByClientID(ctx context.Context, tx *sql.Tx, clientMessageID string) (protocol.Message, error) {
+	return scanMessage(tx.QueryRowContext(ctx,
+		"SELECT "+messageColumns+" FROM messages m LEFT JOIN files f ON m.file_id = f.file_id WHERE m.client_message_id = ?",
+		clientMessageID))
+}
+
+// previewFor folds a message into the single-line <=120-rune preview of
+// contract §6: the text body when present, otherwise the attachment's file
+// name (one shared formula, so server snapshot and client updates agree).
+// Server-side preview exists only while Q1 keeps the body open (contract §4).
+func previewFor(body json.RawMessage, fileName string) string {
 	var parsed struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	}
-	if err := json.Unmarshal(body, &parsed); err != nil || parsed.Type != "text" {
-		return ""
+	if err := json.Unmarshal(body, &parsed); err == nil && parsed.Type == "text" {
+		if folded := foldLine(parsed.Text); folded != "" {
+			return folded
+		}
 	}
-	fields := strings.Fields(parsed.Text)
-	folded := strings.Join(fields, " ")
+	return foldLine(fileName)
+}
+
+// foldLine collapses whitespace into one line and truncates to 120 runes.
+func foldLine(s string) string {
+	folded := strings.Join(strings.Fields(s), " ")
 	if utf8.RuneCountInString(folded) <= 120 {
 		return folded
 	}

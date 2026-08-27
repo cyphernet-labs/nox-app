@@ -68,7 +68,7 @@ const (
 	EventMessageNew  = "message.new"
 )
 
-// Command names of the stage-1 slice (022 + 023).
+// Command names of the stage-1 slice (022 + 023 + 024).
 const (
 	CmdSessionHello      = "session.hello"
 	CmdChatsList         = "chats.list"
@@ -76,8 +76,11 @@ const (
 	CmdChatCreate        = "chat.create"
 	CmdChatRename        = "chat.rename"
 	CmdChatNameAvailable = "chat.nameAvailable"
+	CmdChatFiles         = "chat.files"
 	CmdMessagesList      = "messages.list"
 	CmdMessageSend       = "message.send"
+	CmdFileUploadBegin   = "file.uploadBegin"
+	CmdFileDownloadBegin = "file.downloadBegin"
 )
 
 // Chat is the wire model of contract §4 (022: preview served but unused by
@@ -91,7 +94,17 @@ type Chat struct {
 	LastActivityAt     int64  `json:"last_activity_at"`
 }
 
-// Message is the wire model of contract §5 (022: no attachment).
+// Attachment is the wire model of contract §5/§7: metadata comes from
+// file.uploadBegin, never from the bytes.
+type Attachment struct {
+	FileID    string `json:"file_id"`
+	Name      string `json:"name"`
+	Size      int64  `json:"size"`
+	Mime      string `json:"mime"`
+	ExpiresAt int64  `json:"expires_at"`
+}
+
+// Message is the wire model of contract §5.
 type Message struct {
 	MessageID       string          `json:"message_id"`
 	Seq             int64           `json:"seq"`
@@ -100,7 +113,8 @@ type Message struct {
 	AuthorLabel     string          `json:"author_label"`
 	ClientMessageID string          `json:"client_message_id,omitempty"`
 	SentAt          int64           `json:"sent_at"`
-	Body            json.RawMessage `json:"body"`
+	Body            json.RawMessage `json:"body,omitempty"`
+	Attachment      *Attachment     `json:"attachment,omitempty"`
 }
 
 // MarshalFrame encodes any outbound frame as a single JSON object.

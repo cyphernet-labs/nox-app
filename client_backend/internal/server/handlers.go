@@ -342,10 +342,15 @@ func (c *client) handleMessagesList(cmd protocol.Command) {
 	c.sendFrame(protocol.OKReply(cmd.ID, messagesListReply{Messages: messages, HasMore: hasMore}))
 }
 
+type attachmentRef struct {
+	FileID string `json:"file_id"`
+}
+
 type messageSendRequest struct {
 	ChatID          string          `json:"chat_id"`
 	ClientMessageID string          `json:"client_message_id"`
 	Body            json.RawMessage `json:"body"`
+	Attachment      *attachmentRef  `json:"attachment"`
 }
 
 type messageSendReply struct {
@@ -358,9 +363,20 @@ func (c *client) handleMessageSend(cmd protocol.Command) {
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "malformed message.send data"))
 		return
 	}
-	if req.ChatID == "" || req.ClientMessageID == "" || len(req.Body) == 0 {
+	if req.ChatID == "" || req.ClientMessageID == "" {
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest,
-			"chat_id, client_message_id and body are required"))
+			"chat_id and client_message_id are required"))
+		return
+	}
+	// Contract §5: at least one of body/attachment (the attachment half of
+	// the rule activates in the 024 slice).
+	fileID := ""
+	if req.Attachment != nil {
+		fileID = req.Attachment.FileID
+	}
+	if len(req.Body) == 0 && fileID == "" {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest,
+			"at least one of body and attachment is required"))
 		return
 	}
 	if int64(len(req.Body)) > c.srv.cfg.Limits.MaxMessageBytes {
@@ -370,10 +386,14 @@ func (c *client) handleMessageSend(cmd protocol.Command) {
 	}
 
 	msg, event, created, err := c.srv.store.SendMessage(
-		c.ctx, req.ChatID, req.ClientMessageID, c.label, c.label, req.Body, time.Now().Unix())
+		c.ctx, req.ChatID, req.ClientMessageID, c.label, c.label, req.Body, fileID, time.Now().Unix())
 	switch {
 	case errors.Is(err, store.ErrChatNotFound):
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrNotFound, "chat does not exist"))
+		return
+	case errors.Is(err, store.ErrFileNotFound), errors.Is(err, store.ErrFileNotReady), errors.Is(err, store.ErrFileTaken):
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest,
+			"attachment file_id must reference an uploaded, unbound file"))
 		return
 	case err != nil:
 		c.logger.Error("send message failed", "err", err)

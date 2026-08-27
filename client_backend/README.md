@@ -131,6 +131,36 @@ Bob держит соединение открытым; Anna:
 
 Уникальность имени — глобальная, без учёта регистра (включая кириллицу), с исключением самого чата. Переименование в то же самое имя — успех без события. После обрыва `chat.updated` досылается реплеем с `since` в общем порядке журнала.
 
+## Смоук Е — файлы (фаза 024)
+
+Байты живут в каталоге рядом с базой (`<db>-files`; флаг `-files` / `NOX_FILES`). Тестовый файл: `dd if=/dev/urandom of=/tmp/probe.bin bs=1m count=10`.
+
+### Отправка вложения
+
+Терминал Anna:
+
+```bash
+{"id":10,"cmd":"file.uploadBegin","data":{"name":"probe.bin","size":10485760,"mime":"application/octet-stream"}}
+# ← {"file_id":"<FID>","upload_url":"/files/<UT>","upload_token":"<UT>","max_attachment_bytes":104857600}
+```
+
+Заливка байтов (обычный терминал):
+
+```bash
+curl -sS -X PUT --data-binary @/tmp/probe.bin http://127.0.0.1:8080/files/<UT> -o /dev/null -w '%{http_code}\n'   # → 204
+```
+
+Сообщение-вложение (текст необязателен, но хотя бы одно из двух — обязательно):
+
+```bash
+{"id":11,"cmd":"message.send","data":{"chat_id":"<CID>","client_message_id":"f1","attachment":{"file_id":"<FID>"}}}
+# ← эхо с attachment{file_id,name,size,mime,expires_at}; у второго клиента — message.new с тем же объектом
+{"id":12,"cmd":"chats.list","data":{"page":1,"page_size":10}}
+# ← превью чата = "probe.bin" (нет текста → имя файла)
+```
+
+Токены одноразовые (10 минут): повторный `PUT` тем же токеном → 404. Заливка сверх заявленного размера → 413, меньше (обрыв) → 400 — в обоих случаях байты не сохраняются, цепочка начинается заново с `file.uploadBegin`.
+
 ## Негативные проверки
 
 На подключении, где `session.hello` уже выполнен:

@@ -16,7 +16,7 @@ func TestLoad(t *testing.T) {
 			name:   "defaults apply when nothing is provided",
 			args:   nil,
 			getenv: noEnv,
-			want:   Config{Addr: "127.0.0.1:8080", DBPath: "nox.db", Limits: DefaultLimits()},
+			want:   Config{Addr: "127.0.0.1:8080", DBPath: "nox.db", FilesPath: "nox.db-files", Limits: DefaultLimits()},
 		},
 		{
 			name: "environment overrides defaults",
@@ -30,7 +30,7 @@ func TestLoad(t *testing.T) {
 				}
 				return ""
 			},
-			want: Config{Addr: "127.0.0.1:9999", DBPath: "/tmp/env.db", Limits: DefaultLimits()},
+			want: Config{Addr: "127.0.0.1:9999", DBPath: "/tmp/env.db", FilesPath: "/tmp/env.db-files", Limits: DefaultLimits()},
 		},
 		{
 			name: "flags win over environment",
@@ -41,7 +41,7 @@ func TestLoad(t *testing.T) {
 				}
 				return ""
 			},
-			want: Config{Addr: "127.0.0.1:7777", DBPath: "flag.db", Limits: DefaultLimits()},
+			want: Config{Addr: "127.0.0.1:7777", DBPath: "flag.db", FilesPath: "flag.db-files", Limits: DefaultLimits()},
 		},
 		{
 			name:    "address without port is rejected",
@@ -73,5 +73,34 @@ func TestLoad(t *testing.T) {
 				t.Fatalf("Load() = %+v, want %+v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestFilesPathDefaultsAndOverrides(t *testing.T) {
+	noEnv := func(string) string { return "" }
+
+	cfg, err := Load([]string{"-db", "/data/nox.db"}, noEnv)
+	if err != nil || cfg.FilesPath != "/data/nox.db-files" {
+		t.Fatalf("default files path = %q err=%v, want <db>-files", cfg.FilesPath, err)
+	}
+
+	cfg, err = Load([]string{"-files", "/mnt/blob"}, noEnv)
+	if err != nil || cfg.FilesPath != "/mnt/blob" {
+		t.Fatalf("flag files path = %q err=%v", cfg.FilesPath, err)
+	}
+
+	env := func(k string) string {
+		if k == "NOX_FILES" {
+			return "/env/blob"
+		}
+		return ""
+	}
+	cfg, err = Load(nil, env)
+	if err != nil || cfg.FilesPath != "/env/blob" {
+		t.Fatalf("env files path = %q err=%v", cfg.FilesPath, err)
+	}
+	cfg, err = Load([]string{"-files", "/flag/blob"}, env)
+	if err != nil || cfg.FilesPath != "/flag/blob" {
+		t.Fatalf("flag-over-env files path = %q err=%v", cfg.FilesPath, err)
 	}
 }
