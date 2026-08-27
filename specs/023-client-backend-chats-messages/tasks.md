@@ -39,8 +39,8 @@
 
 - [x] T008 [US2] Implement ListMessages in client_backend/internal/store/store.go per research R3: read pool, optional beforeSeq, ORDER BY seq DESC LIMIT n+1, reverse to ascending in Go, hasMore; store tests (tail, middle page, oldest page, empty chat, before_seq boundary excluded)
 - [x] T009 [US2] Add the messages.list handler in client_backend/internal/server/handlers.go plus the dispatch case in client_backend/internal/server/ws.go: chat existence → not_found, limit validation (<1 → invalid_request) and silent clamp to 100, per-recipient client_message_id stripping in the reply (field kept only where author_id equals the session label, per contracts/README.md §5 rule); confirm message.send keeps requiring body (no code change, covered by test)
-- [ ] T010 [US2] Add story-2 integration tests in client_backend/internal/server/history_test.go: full backward walk over 25 messages with no gaps or duplicates until has_more false, ascending order inside each page, empty chat → empty page + has_more false, unknown chat → not_found, limit 0 → invalid_request, author sees client_message_id while a second client does not, duplicate send appears exactly once in history, and the tail page of a 1000-message chat answered in < 1s (SC-001)
-- [ ] T011 [US2] Extend client_backend/README.md with the smoke Д «История» section in sync with quickstart.md
+- [x] T010 [US2] Add story-2 integration tests in client_backend/internal/server/history_test.go: full backward walk over 25 messages with no gaps or duplicates until has_more false, ascending order inside each page, empty chat → empty page + has_more false, unknown chat → not_found, limit 0 → invalid_request, author sees client_message_id while a second client does not, duplicate send appears exactly once in history, and the tail page of a 1000-message chat answered in < 1s (SC-001)
+- [x] T011 [US2] Extend client_backend/README.md with the smoke Д «История» section in sync with quickstart.md
 
 **Checkpoint**: US1 + US2 вместе — read-сторона фазы полностью демонстрируема.
 
