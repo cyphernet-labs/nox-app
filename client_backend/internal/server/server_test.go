@@ -21,14 +21,23 @@ import (
 // running httptest server plus the Server for direct inspection.
 func newTestServer(t *testing.T) (*httptest.Server, *Server) {
 	t.Helper()
+	ts, srv, closeAll := openStack(t, filepath.Join(t.TempDir(), "test.db"))
+	t.Cleanup(closeAll)
+	return ts, srv
+}
 
-	path := filepath.Join(t.TempDir(), "test.db")
+// openStack assembles db + hub + server over the given database file and
+// returns an explicit close function, so lifecycle tests can stop and restart
+// the whole stack against the same file.
+func openStack(t *testing.T, path string) (*httptest.Server, *Server, func()) {
+	t.Helper()
+
 	dbs, err := db.Open(path)
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}
-	t.Cleanup(func() { _ = dbs.Close() })
 	if _, err := db.Migrate(context.Background(), dbs.Write, os.DirFS("../../migrations")); err != nil {
+		_ = dbs.Close()
 		t.Fatalf("db.Migrate: %v", err)
 	}
 
@@ -47,12 +56,13 @@ func newTestServer(t *testing.T) (*httptest.Server, *Server) {
 
 	ts := httptest.NewServer(srv.Handler())
 	ts.Config.RegisterOnShutdown(srv.CloseConnections)
-	t.Cleanup(func() {
+	closeAll := func() {
 		ts.Close()
 		stopHub()
 		<-hubDone
-	})
-	return ts, srv
+		_ = dbs.Close()
+	}
+	return ts, srv, closeAll
 }
 
 func TestHealthServes200(t *testing.T) {

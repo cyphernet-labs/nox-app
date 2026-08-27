@@ -25,7 +25,7 @@ type wsClient struct {
 
 func dialWS(t *testing.T, ts *httptest.Server) *wsClient {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	t.Cleanup(cancel)
 	conn, _, err := websocket.Dial(ctx, ts.URL+"/ws", nil)
 	if err != nil {

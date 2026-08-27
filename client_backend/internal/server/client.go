@@ -46,11 +46,14 @@ func newClient(srv *Server, conn *websocket.Conn, parent context.Context, logger
 	}
 }
 
-// close terminates the connection exactly once with the given status.
+// close terminates the connection exactly once with the given status. The
+// close handshake runs BEFORE the context is cancelled: cancelling first
+// aborts the pending read, which tears the transport down and the peer sees
+// a bare EOF instead of the status code.
 func (c *client) close(code websocket.StatusCode, reason string) {
 	c.closeOnce.Do(func() {
-		c.cancel()
 		_ = c.conn.Close(code, reason)
+		c.cancel()
 	})
 }
 

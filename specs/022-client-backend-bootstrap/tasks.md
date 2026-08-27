@@ -55,9 +55,9 @@
 
 **Independent Test**: quickstart.md смоук C; тесты drop/shutdown/restart.
 
-- [ ] T018 [US3] Wire keepalive and slow-client closure in client_backend/internal/server/client.go: ping ticker ~25s in the write pump, hub drop signal → Close(StatusPolicyViolation, "slow consumer"), read-limit violation closes the connection
-- [ ] T019 [US3] Add story-3 tests in client_backend/internal/server/lifecycle_test.go: slow client dropped with policy-violation code while the second client keeps receiving (latency assertion, SC-006), server Shutdown delivers StatusGoingAway to open connections and exits within timeout, restart integrity loop per SC-005 — 100 cycles of start → write → stop against the same db (reduced N under testing.Short) with data intact and replay correct after the final cycle — plus a goroutine leak check
-- [ ] T020 [US3] Extend client_backend/README.md with the smoke C section (slow client, Ctrl+C semantics, restart) in sync with quickstart.md
+- [x] T018 [US3] Wire keepalive and slow-client closure in client_backend/internal/server/client.go: ping ticker ~25s in the write pump, hub drop signal → Close(StatusPolicyViolation, "slow consumer"), read-limit violation closes the connection
+- [x] T019 [US3] Add story-3 tests in client_backend/internal/server/lifecycle_test.go: slow client dropped with policy-violation code while the second client keeps receiving (latency assertion, SC-006), server Shutdown delivers StatusGoingAway to open connections and exits within timeout, restart integrity loop per SC-005 — 100 cycles of start → write → stop against the same db (reduced N under testing.Short) with data intact and replay correct after the final cycle — plus a goroutine leak check
+- [x] T020 [US3] Extend client_backend/README.md with the smoke C section (slow client, Ctrl+C semantics, restart) in sync with quickstart.md
 
 **Checkpoint**: смоук C проходит; все три истории закрыты.
 
