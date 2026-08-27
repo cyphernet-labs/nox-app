@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -353,4 +354,61 @@ func TestStoryThreeChatFilesPanel(t *testing.T) {
 	c.expectErr(13, protocol.ErrNotFound)
 	c.send(fmt.Sprintf(`{"id":14,"cmd":"chat.files","data":{"chat_id":%q,"limit":0}}`, chatID))
 	c.expectErr(14, protocol.ErrInvalidRequest)
+}
+
+func TestOrphanSweepRemovesAbandonedUploads(t *testing.T) {
+	ts, srv := newTestServer(t)
+
+	c := dialWS(t, ts)
+	c.expectGreeting()
+	c.hello(1, `,"label":"Anna"`)
+	chatID := seedChat(t, c, "sweep")
+
+	// Bound file: the full chain - must survive any sweep.
+	boundID, boundTok := uploadBegin(t, c, 3, "bound.bin", 5, "x/y")
+	if code := putBytes(t, ts, boundTok, []byte("bytes")); code != http.StatusNoContent {
+		t.Fatalf("PUT = %d", code)
+	}
+	c.expectOKAfter(4, fmt.Sprintf(
+		`{"id":4,"cmd":"message.send","data":{"chat_id":%q,"client_message_id":"s1","attachment":{"file_id":%q}}}`, chatID, boundID))
+
+	// Old orphan: declared and uploaded long ago, never sent (seeded through
+	// the store to control created_at; bytes written to the blob directly).
+	oldAtt, err := srv.store.CreateUpload(t.Context(), "old.bin", 3, "x/y", 100)
+	if err != nil {
+		t.Fatalf("CreateUpload: %v", err)
+	}
+	up, err := srv.blob.Create(oldAtt.FileID)
+	if err != nil {
+		t.Fatalf("blob.Create: %v", err)
+	}
+	if _, err := up.Write([]byte("old")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := up.Finalize(); err != nil {
+		t.Fatalf("finalize: %v", err)
+	}
+	if err := srv.store.MarkUploaded(t.Context(), oldAtt.FileID); err != nil {
+		t.Fatalf("MarkUploaded: %v", err)
+	}
+
+	// Fresh orphan: declared over the wire just now - must survive.
+	freshID, _ := uploadBegin(t, c, 5, "fresh.bin", 5, "x/y")
+
+	if err := srv.sweepOrphans(t.Context(), 1000); err != nil {
+		t.Fatalf("sweepOrphans: %v", err)
+	}
+
+	if srv.blob.Exists(oldAtt.FileID) {
+		t.Fatal("old orphan bytes survived the sweep")
+	}
+	if _, err := srv.store.FileByID(t.Context(), oldAtt.FileID); !errors.Is(err, store.ErrFileNotFound) {
+		t.Fatalf("old orphan row = %v, want gone", err)
+	}
+	if !srv.blob.Exists(boundID) {
+		t.Fatal("bound file bytes were swept")
+	}
+	if _, err := srv.store.FileByID(t.Context(), freshID); err != nil {
+		t.Fatalf("fresh upload swept: %v", err)
+	}
 }

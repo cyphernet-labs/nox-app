@@ -62,10 +62,10 @@
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T019 [P] Add the startup orphan sweep per research R10: SweepOrphans in client_backend/internal/store/store.go (rows without message_id older than 24h) wired with blob removal in Run/openStack before endpoints open, .part leftovers removed; tests (orphan swept with bytes, bound file untouched, fresh upload untouched)
-- [ ] T020 [P] Audit logging against Principle I in client_backend/internal: no file names, mime types or bodies in slog — only file_id, sizes, codes, seq, durations; extend request logging for the new HTTP endpoints without leaking tokens (log path as /files/<redacted> or method+status only)
-- [ ] T021 [P] Reconcile the wire contract per Principle VII: update docs/client-backend/protocol/contract-draft.md §7 with the owner-clarified rules (indefinite stage-1 retention with the far expires_at, 10-minute one-shot tokens, relative URLs, startup sweep, 404-for-all token failures, exact-size PUT rule) and §4 chat.files pagination reference to the 023 rules
-- [ ] T022 Run the full local gate and the 13 CLAUDE.md invariants check, validate specs/024-client-backend-files/quickstart.md end-to-end as the owner would (fresh build, smoke Е with real curl Range resume, ≤10 min per SC-007), reconcile README/quickstart wording, then mark phase 024 implemented in docs/client-backend/roadmap-stage1.md (status + journal row)
+- [x] T019 [P] Add the startup orphan sweep per research R10: SweepOrphans in client_backend/internal/store/store.go (rows without message_id older than 24h) wired with blob removal in Run/openStack before endpoints open, .part leftovers removed; tests (orphan swept with bytes, bound file untouched, fresh upload untouched)
+- [x] T020 [P] Audit logging against Principle I in client_backend/internal: no file names, mime types or bodies in slog — only file_id, sizes, codes, seq, durations; extend request logging for the new HTTP endpoints without leaking tokens (log path as /files/<redacted> or method+status only)
+- [x] T021 [P] Reconcile the wire contract per Principle VII: update docs/client-backend/protocol/contract-draft.md §7 with the owner-clarified rules (indefinite stage-1 retention with the far expires_at, 10-minute one-shot tokens, relative URLs, startup sweep, 404-for-all token failures, exact-size PUT rule) and §4 chat.files pagination reference to the 023 rules
+- [x] T022 Run the full local gate and the 13 CLAUDE.md invariants check, validate specs/024-client-backend-files/quickstart.md end-to-end as the owner would (fresh build, smoke Е with real curl Range resume, ≤10 min per SC-007), reconcile README/quickstart wording, then mark phase 024 implemented in docs/client-backend/roadmap-stage1.md (status + journal row)
 
 ## Dependencies & Execution Order
 
