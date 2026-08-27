@@ -63,9 +63,9 @@
 
 ## Final Phase: Polish & cross-cutting
 
-- [ ] T021 [P] Audit logging against Principle I in client_backend/internal: slog never logs message bodies, labels or frame payloads — only cmd names, error codes, seq, durations; add a request-log middleware for REST and connection-scoped logger fields
-- [ ] T022 [P] Run the full local gate and fix findings: gofmt -l . empty, go vet ./..., go test -race ./... green in client_backend/; verify the 13 CLAUDE.md invariants against the final code and reconcile any drift in the same change-set
-- [ ] T023 Validate quickstart end-to-end as the owner would (fresh build, all three smokes + negative checks, ≤10 min per SC-001) and reconcile README/quickstart wording; then mark phase 022 done in docs/client-backend/roadmap-stage1.md (status + journal row)
+- [x] T021 [P] Audit logging against Principle I in client_backend/internal: slog never logs message bodies, labels or frame payloads — only cmd names, error codes, seq, durations; add a request-log middleware for REST and connection-scoped logger fields
+- [x] T022 [P] Run the full local gate and fix findings: gofmt -l . empty, go vet ./..., go test -race ./... green in client_backend/; verify the 13 CLAUDE.md invariants against the final code and reconcile any drift in the same change-set
+- [x] T023 Validate quickstart end-to-end as the owner would (fresh build, all three smokes + negative checks, ≤10 min per SC-001) and reconcile README/quickstart wording; then mark phase 022 done in docs/client-backend/roadmap-stage1.md (status + journal row)
 
 ## Dependencies
 
