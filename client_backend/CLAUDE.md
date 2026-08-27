@@ -46,10 +46,13 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
    using the write handle (`SetMaxOpenConns(1)` + `_txlock=immediate`);
    reads use the read pool. Never `Exec` a mutation on the read handle;
    never add a second write handle; never write outside `internal/store`.
-3. **Transactional outbox.** Every mutation inserts its `events` row in
-   the SAME transaction; `hub.Broadcast` runs only AFTER `Commit`
-   returns. Never broadcast inside a transaction; never mutate without
-   an event.
+3. **Transactional outbox.** Every mutation visible on the wire as an
+   event inserts its `events` row in the SAME transaction; broadcasting
+   happens only AFTER `Commit` returns (via the dispatcher). Never
+   broadcast inside a transaction. The file-metadata lifecycle
+   (upload registration, mark-uploaded, orphan sweep) is deliberately
+   event-less: files surface to other clients only through
+   `message.send`.
 4. **Write transactions are milliseconds.** No network I/O, no WebSocket
    sends, no sleeping between `BeginTx` and `Commit`.
 5. **`seq` is a strictly increasing total order** (single writer +
@@ -82,7 +85,11 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 12. **Migrations are append-only** numbered `.sql` in `migrations/`,
     embedded via `embed.FS`, applied by `PRAGMA user_version` at startup
     before endpoints open. Never edit an applied file — see the
-    `migrations` skill.
+    `migrations` skill. **Pre-release exception (owner, 2026-08-27):**
+    until the first release the whole schema lives in the single
+    `001_init.sql` and schema changes edit it in place — no deployed
+    databases exist yet. Append-only numbering starts with the first
+    release.
 13. **Pragmas are fixed** in `internal/db` (busy_timeout(5000) first,
     then WAL, synchronous(NORMAL), foreign_keys(1)) for every
     connection. Do not vary per-call.

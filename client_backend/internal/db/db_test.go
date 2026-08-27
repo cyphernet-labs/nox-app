@@ -32,7 +32,7 @@ func TestMigrateFromZeroSetsVersionAndSchema(t *testing.T) {
 		t.Fatalf("user_version = %d, want 1", version)
 	}
 
-	for _, table := range []string{"chats", "messages", "events"} {
+	for _, table := range []string{"chats", "messages", "events", "files"} {
 		var name string
 		err := d.Read.QueryRow(
 			"SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", table,
@@ -80,5 +80,24 @@ func TestSplitStatements(t *testing.T) {
 	got := splitStatements(script)
 	if len(got) != 2 {
 		t.Fatalf("statements = %d, want 2: %q", len(got), got)
+	}
+}
+
+func TestSchemaHasFilesLinkage(t *testing.T) {
+	d := openMigrated(t)
+
+	// messages gained the file_id column.
+	var cnt int
+	err := d.Read.QueryRow(
+		"SELECT COUNT(1) FROM pragma_table_info('messages') WHERE name = 'file_id'").Scan(&cnt)
+	if err != nil || cnt != 1 {
+		t.Fatalf("messages.file_id present = %d err=%v", cnt, err)
+	}
+	// The partial unique index guarding one-file-one-message exists.
+	var name string
+	err = d.Read.QueryRow(
+		"SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_messages_file'").Scan(&name)
+	if err != nil || name != "idx_messages_file" {
+		t.Fatalf("idx_messages_file = %q err=%v", name, err)
 	}
 }

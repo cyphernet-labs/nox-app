@@ -95,10 +95,16 @@ func (c *client) dispatch(cmd protocol.Command) {
 		c.handleChatRename(cmd)
 	case protocol.CmdChatNameAvailable:
 		c.handleChatNameAvailable(cmd)
+	case protocol.CmdChatFiles:
+		c.handleChatFiles(cmd)
 	case protocol.CmdMessagesList:
 		c.handleMessagesList(cmd)
 	case protocol.CmdMessageSend:
 		c.handleMessageSend(cmd)
+	case protocol.CmdFileUploadBegin:
+		c.handleFileUploadBegin(cmd)
+	case protocol.CmdFileDownloadBegin:
+		c.handleFileDownloadBegin(cmd)
 	default:
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "unknown command"))
 	}

@@ -42,7 +42,7 @@ func TestStoryOneChatsListOrderSearchAndGet(t *testing.T) {
 	// A later message into Kitchen makes it the most recent and sets its
 	// preview.
 	if _, _, _, err := srv.store.SendMessage(t.Context(), kitchen, "c1", "Anna", "Anna",
-		[]byte(`{"type":"text","text":"fresh preview"}`), 300); err != nil {
+		[]byte(`{"type":"text","text":"fresh preview"}`), "", 300); err != nil {
 		t.Fatalf("seed message: %v", err)
 	}
 
@@ -165,7 +165,7 @@ func TestStoryThreeRenameLiveNoReorderAndReplay(t *testing.T) {
 		t.Fatalf("seed target: %v", err)
 	}
 	if _, _, _, err := srv.store.SendMessage(t.Context(), kitchen, "m1", "Anna", "Anna",
-		[]byte(`{"type":"text","text":"keeps kitchen on top"}`), 300); err != nil {
+		[]byte(`{"type":"text","text":"keeps kitchen on top"}`), "", 300); err != nil {
 		t.Fatalf("seed message: %v", err)
 	}
 

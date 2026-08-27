@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/coder/websocket"
 	"golang.org/x/sync/errgroup"
 
+	"nox.app/client-backend/internal/blob"
 	"nox.app/client-backend/internal/config"
 	"nox.app/client-backend/internal/db"
 	"nox.app/client-backend/internal/hub"
@@ -40,6 +42,8 @@ type Server struct {
 	cfg    config.Config
 	store  *store.Store
 	hub    *hub.Hub
+	blob   *blob.Store
+	tokens *tokenStore
 	logger *slog.Logger
 
 	pingInterval time.Duration
@@ -58,12 +62,14 @@ type Server struct {
 	wg    sync.WaitGroup
 }
 
-// New builds a Server over an opened store and a running hub.
-func New(cfg config.Config, st *store.Store, h *hub.Hub, logger *slog.Logger) *Server {
+// New builds a Server over an opened store, a running hub and a blob store.
+func New(cfg config.Config, st *store.Store, h *hub.Hub, bl *blob.Store, logger *slog.Logger) *Server {
 	return &Server{
 		cfg:          cfg,
 		store:        st,
 		hub:          h,
+		blob:         bl,
+		tokens:       newTokenStore(),
 		logger:       logger,
 		pingInterval: defaultPingInterval,
 		writeTimeout: defaultWriteTimeout,
@@ -126,6 +132,8 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("GET /ws", s.handleWS)
+	mux.HandleFunc("PUT /files/{token}", s.handlePutFile)
+	mux.HandleFunc("GET /files/{token}", s.handleGetFile)
 	return s.logRequests(mux)
 }
 
@@ -177,9 +185,17 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		next.ServeHTTP(w, r)
+		// Transfer tokens are one-shot capabilities - they never reach
+		// logs. Contains, not HasPrefix: uncleaned request paths like
+		// "//files/<token>" reach this middleware before the mux's
+		// canonicalization redirect.
+		path := r.URL.Path
+		if strings.Contains(path, "/files/") {
+			path = "/files/*"
+		}
 		s.logger.Info("http request",
 			"method", r.Method,
-			"path", r.URL.Path,
+			"path", path,
 			"duration_ms", time.Since(start).Milliseconds(),
 		)
 	})
@@ -201,8 +217,20 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 	}
 	logger.Info("database ready", "path", cfg.DBPath, "schema_version", version)
 
+	bl, err := blob.Open(cfg.FilesPath)
+	if err != nil {
+		return fmt.Errorf("open files dir: %w", err)
+	}
+	defer func() { _ = bl.Close() }()
+
 	h := hub.New()
-	srv := New(cfg, store.New(dbs.Read, dbs.Write), h, logger)
+	srv := New(cfg, store.New(dbs.Read, dbs.Write), h, bl, logger)
+
+	// Startup sweep before endpoints open (research R10): abandoned uploads
+	// older than a day are the only garbage under indefinite retention.
+	if err := srv.sweepOrphans(ctx, time.Now().Add(-24*time.Hour).Unix()); err != nil {
+		return fmt.Errorf("sweep orphans: %w", err)
+	}
 
 	httpServer := &http.Server{Addr: cfg.Addr, Handler: srv.Handler(), ReadHeaderTimeout: readHeaderTimeout}
 	httpServer.RegisterOnShutdown(srv.CloseConnections)
