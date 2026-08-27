@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"nox.app/client-backend/internal/protocol"
@@ -48,6 +49,22 @@ func New(read, write *sql.DB) *Store {
 // wire model; every chat read goes through it and scanChat so the commands
 // can never drift apart field-wise.
 const chatColumns = "chat_id, name, created_at, created_by_label, last_message_preview, last_activity_at"
+
+// foldCase maps every rune to the canonical representative of its Unicode
+// simple case-folding orbit. Plain ToLower is a lowercase MAPPING, not a
+// folding: pairs like the Greek final sigma vs sigma survive it and would
+// slip through both name uniqueness and the search filter.
+func foldCase(s string) string {
+	return strings.Map(func(r rune) rune {
+		least := r
+		for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+			if f < least {
+				least = f
+			}
+		}
+		return least
+	}, s)
+}
 
 func scanChat(row interface{ Scan(...any) error }) (protocol.Chat, error) {
 	var chat protocol.Chat
@@ -108,14 +125,14 @@ func (s *Store) ListChats(ctx context.Context, page, pageSize int, query string)
 	}
 	defer func() { _ = rows.Close() }()
 
-	needle := strings.ToLower(strings.TrimSpace(query))
+	needle := foldCase(strings.TrimSpace(query))
 	var matched []protocol.Chat
 	for rows.Next() {
 		chat, err := scanChat(rows)
 		if err != nil {
 			return nil, false, fmt.Errorf("scan chat: %w", err)
 		}
-		if needle != "" && !strings.Contains(strings.ToLower(chat.Name), needle) {
+		if needle != "" && !strings.Contains(foldCase(chat.Name), needle) {
 			continue
 		}
 		matched = append(matched, chat)
@@ -124,6 +141,13 @@ func (s *Store) ListChats(ctx context.Context, page, pageSize int, query string)
 		return nil, false, fmt.Errorf("iterate chats: %w", err)
 	}
 
+	// Guard BEFORE the multiplication: with an attacker-sized page the
+	// product (page-1)*pageSize wraps negative and the slice expression
+	// panics. page-1 >= len already means an empty page (pageSize >= 1),
+	// and past this guard the product is bounded by len*pageSize.
+	if page-1 >= len(matched) {
+		return []protocol.Chat{}, false, nil
+	}
 	start := (page - 1) * pageSize
 	if start >= len(matched) {
 		return []protocol.Chat{}, false, nil
@@ -197,7 +221,7 @@ func (s *Store) ListMessages(ctx context.Context, chatID string, beforeSeq int64
 // transactions (research R5).
 func (s *Store) NameAvailable(ctx context.Context, name, excludeChatID string) (bool, error) {
 	q := "SELECT COUNT(1) FROM chats WHERE name_ci = ?"
-	args := []any{strings.ToLower(name)}
+	args := []any{foldCase(name)}
 	if excludeChatID != "" {
 		q += " AND chat_id != ?"
 		args = append(args, excludeChatID)
@@ -233,7 +257,7 @@ func (s *Store) RenameChat(ctx context.Context, chatID, name string) (protocol.C
 		return chat, StoredEvent{}, false, nil
 	}
 
-	nameCI := strings.ToLower(name)
+	nameCI := foldCase(name)
 	var taken int
 	err = tx.QueryRowContext(ctx,
 		"SELECT COUNT(1) FROM chats WHERE name_ci = ? AND chat_id != ?", nameCI, chatID).Scan(&taken)
@@ -280,9 +304,9 @@ func (s *Store) CreateChat(ctx context.Context, name, creatorLabel string, now i
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Uniqueness is checked against the Go-lowercased name: SQLite's lower()
+	// Uniqueness is checked against the Go-case-folded name: SQLite's lower()
 	// folds ASCII only, so relying on it would admit non-Latin duplicates.
-	nameCI := strings.ToLower(name)
+	nameCI := foldCase(name)
 	var taken int
 	err = tx.QueryRowContext(ctx,
 		"SELECT COUNT(1) FROM chats WHERE name_ci = ?", nameCI).Scan(&taken)

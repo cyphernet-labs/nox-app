@@ -11,7 +11,7 @@ cd client_backend
 go build -o noxd . && ./noxd -addr 127.0.0.1:8080 -db /tmp/nox-smoke-023.db
 ```
 
-Терминалы 1 (Anna) и 2 (Bob): `websocat ws://127.0.0.1:8080/ws`, в каждом `session.hello` со своим `label`. Anna создаёт два чата и пишет в первый:
+Терминалы 1 (Anna) и 2 (Bob): `websocat ws://127.0.0.1:8080/ws`, в каждом `session.hello` со своим `label`. Anna создаёт два чата и пишет в первый (между шагами — пауза ~1 с: активность секундной гранулярности, в одной секунде порядок решает `chat_id`):
 
 ```bash
 {"id":2,"cmd":"chat.create","data":{"name":"Kitchen"}}

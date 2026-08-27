@@ -103,6 +103,22 @@ func TestStoryTwoHistoryEdges(t *testing.T) {
 	c.expectErr(11, protocol.ErrNotFound)
 	c.send(fmt.Sprintf(`{"id":12,"cmd":"messages.list","data":{"chat_id":%q,"limit":0}}`, chatID))
 	c.expectErr(12, protocol.ErrInvalidRequest)
+
+	// message.send without a body is rejected in the 023 slice.
+	c.send(fmt.Sprintf(`{"id":13,"cmd":"message.send","data":{"chat_id":%q,"client_message_id":"nb"}}`, chatID))
+	c.expectErr(13, protocol.ErrInvalidRequest)
+
+	// before_seq beyond the tail behaves like the tail; a non-positive
+	// before_seq means "from the tail" as well.
+	sendText(t, c, 14, chatID, "e1", "only message")
+	beyond := listMessages(t, c, 15, fmt.Sprintf(`{"chat_id":%q,"before_seq":999999,"limit":10}`, chatID))
+	if beyond.HasMore || len(beyond.Messages) != 1 {
+		t.Fatalf("beyond-tail page = %+v", beyond)
+	}
+	negative := listMessages(t, c, 16, fmt.Sprintf(`{"chat_id":%q,"before_seq":-5,"limit":10}`, chatID))
+	if negative.HasMore || len(negative.Messages) != 1 {
+		t.Fatalf("negative before_seq page = %+v", negative)
+	}
 }
 
 func TestStoryTwoTailLatencyOverLargeHistory(t *testing.T) {
@@ -129,5 +145,12 @@ func TestStoryTwoTailLatencyOverLargeHistory(t *testing.T) {
 	}
 	if !page.HasMore || len(page.Messages) != 100 {
 		t.Fatalf("tail = %d rows hasMore=%v", len(page.Messages), page.HasMore)
+	}
+
+	// The limit clamp is observable over 1000 rows: a request for 500 comes
+	// back with exactly 100 rows and has_more.
+	clamped := listMessages(t, c, 3, fmt.Sprintf(`{"chat_id":%q,"limit":500}`, chat.ChatID))
+	if !clamped.HasMore || len(clamped.Messages) != 100 {
+		t.Fatalf("clamped page = %d rows hasMore=%v, want exactly 100 + more", len(clamped.Messages), clamped.HasMore)
 	}
 }

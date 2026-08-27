@@ -10,7 +10,7 @@
 |---|---|---|
 | `chat_id` | `chats.chat_id` | PK |
 | `name` | `chats.name` | отображаемое имя; правила поля из §4 |
-| — | `chats.name_ci` | внутренняя: Go-`strings.ToLower(name)`; уникальность и `nameAvailable` |
+| — | `chats.name_ci` | внутренняя: Go-кейс-фолдинг имени (`unicode.SimpleFold`); уникальность и `nameAvailable` |
 | `created_at` | `chats.created_at` | unix-секунды |
 | `created_by_label` | `chats.created_by_label` | генезис-строка клиента |
 | `last_message_preview` | `chats.last_message_preview` | серверный снапшот для страниц `chats.list` |
@@ -38,5 +38,5 @@
 
 - `seq` — глобальный, строго возрастающий; `chat.updated` получает номер из того же журнала (инвариант 5).
 - Каждая мутация — ровно одна immediate-транзакция с событием внутри (инварианты 2–4); read-команды не открывают транзакций и не касаются writer-пула.
-- `chats.name_ci` всегда равно Go-lowercase от `name` — обе записи (`CreateChat`, `RenameChat`) обновляют пару атомарно.
+- `chats.name_ci` всегда равно Go-кейс-фолдингу от `name` — обе записи (`CreateChat`, `RenameChat`) обновляют пару атомарно.
 - `messages` не мутируются этой фазой вовсе; `chats.last_activity_at`/`last_message_preview` мутируются только путями 022 (send/create).

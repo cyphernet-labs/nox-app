@@ -434,3 +434,56 @@ func TestNameAvailable(t *testing.T) {
 func mustString(i int) string {
 	return string(mustJSON(i))
 }
+
+func TestListChatsHugePageDoesNotPanic(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+
+	if _, _, err := s.CreateChat(ctx, "victim", "Anna", 100); err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	// (page-1)*pageSize wraps negative without the guard; the slice
+	// expression then panics (review finding, remote-triggerable).
+	page, hasMore, err := s.ListChats(ctx, 92233720368547760, 100, "")
+	if err != nil || hasMore || len(page) != 0 {
+		t.Fatalf("huge page = %d rows hasMore=%v err=%v, want empty", len(page), hasMore, err)
+	}
+}
+
+func TestNameUniquenessUsesCaseFoldingNotLowercase(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+
+	// Greek final sigma: ToLower keeps sigma and final sigma distinct, so a
+	// lowercase-based check would admit this duplicate.
+	if _, _, err := s.CreateChat(ctx, "ΒΌΛΟΣ", "Anna", 100); err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	if _, _, err := s.CreateChat(ctx, "βόλος", "Bob", 101); !errors.Is(err, ErrNameTaken) {
+		t.Fatalf("final-sigma duplicate err = %v, want ErrNameTaken", err)
+	}
+	if free, err := s.NameAvailable(ctx, "βόλος", ""); err != nil || free {
+		t.Fatalf("NameAvailable sigma = %v err=%v, want taken", free, err)
+	}
+	// The search filter shares the same folding.
+	found, _, err := s.ListChats(ctx, 1, 10, "βόλος")
+	if err != nil || len(found) != 1 {
+		t.Fatalf("sigma search = %d rows err=%v", len(found), err)
+	}
+}
+
+func TestListChatsQueryOfSpacesMeansNoFilter(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+
+	if _, _, err := s.CreateChat(ctx, "one", "Anna", 100); err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	if _, _, err := s.CreateChat(ctx, "two", "Anna", 200); err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	page, _, err := s.ListChats(ctx, 1, 10, "   ")
+	if err != nil || len(page) != 2 {
+		t.Fatalf("spaces query = %d rows err=%v, want all 2", len(page), err)
+	}
+}
