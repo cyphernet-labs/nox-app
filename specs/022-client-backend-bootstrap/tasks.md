@@ -43,9 +43,9 @@
 
 **Independent Test**: quickstart.md смоук B; replay-тесты.
 
-- [ ] T015 [US2] Implement the replay path in client_backend/internal/server/handlers.go: subscribe → hello reply → EventsSince(since) replayed in seq order → live interleave per ws-rest-patterns §4; omitted since = no replay; since > cursor edge (empty replay, slog warning per spec edge case)
-- [ ] T016 [US2] Add story-2 integration tests in client_backend/internal/server/replay_test.go: kill-reconnect-catchup flow (N events missed, all delivered in order), duplicate-at-boundary tolerance (live event during replay), since==cursor immediate caught-up, since>cursor deterministic behavior, replay repeatability (same since twice → same events)
-- [ ] T017 [US2] Extend client_backend/README.md with the smoke B section (reconnect with since, caught-up rule seq ≥ cursor) in sync with quickstart.md
+- [x] T015 [US2] Implement the replay path in client_backend/internal/server/handlers.go: subscribe → hello reply → EventsSince(since) replayed in seq order → live interleave per ws-rest-patterns §4; omitted since = no replay; since > cursor edge (empty replay, slog warning per spec edge case)
+- [x] T016 [US2] Add story-2 integration tests in client_backend/internal/server/replay_test.go: kill-reconnect-catchup flow (N events missed, all delivered in order), duplicate-at-boundary tolerance (live event during replay), since==cursor immediate caught-up, since>cursor deterministic behavior, replay repeatability (same since twice → same events)
+- [x] T017 [US2] Extend client_backend/README.md with the smoke B section (reconnect with since, caught-up rule seq ≥ cursor) in sync with quickstart.md
 
 **Checkpoint**: смоук B проходит; курсорная синхронизация доказана.
 
