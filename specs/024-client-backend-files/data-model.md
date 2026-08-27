@@ -1,6 +1,6 @@
 # Data Model: client-backend-files (фаза 024)
 
-**Миграция 002** — первая после 001, append-only:
+**Схема** — расширение единой миграции `001_init.sql` (правило владельца: до первого релиза вся схема живёт в одной миграции и правится на месте — развёрнутых баз ещё нет; append-only начинается с релиза). Добавленное:
 
 ```sql
 CREATE TABLE files (
@@ -14,7 +14,8 @@ CREATE TABLE files (
     message_id TEXT
 ) STRICT;
 
-ALTER TABLE messages ADD COLUMN file_id TEXT REFERENCES files (file_id);
+-- в CREATE TABLE messages добавлена колонка:
+--   file_id TEXT REFERENCES files (file_id)
 
 CREATE UNIQUE INDEX idx_messages_file ON messages (file_id) WHERE file_id IS NOT NULL;
 ```

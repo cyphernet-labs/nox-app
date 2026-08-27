@@ -10,7 +10,15 @@ embedded into the binary and applied at startup by `PRAGMA user_version`
 (runner in `internal/db`). The migration history is the audited
 schema record.
 
-## Procedure
+**Pre-release mode (owner rule, 2026-08-27, in force until the first
+release):** the whole schema lives in the single `001_init.sql` and every
+schema change EDITS that file in place — do NOT create a new numbered
+file. No deployed databases exist yet, so there is nothing to migrate;
+extra files would only fake a history. The append-only procedure below
+activates with the first release (when databases exist that cannot be
+recreated). Tests keep asserting `user_version = 1` until then.
+
+## Procedure (from the first release on)
 
 1. Find the highest existing prefix; create `migrations/NNN_short_name.sql`
    with the next zero-padded number. One concern per file.

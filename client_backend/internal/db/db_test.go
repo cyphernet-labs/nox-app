@@ -28,8 +28,8 @@ func TestMigrateFromZeroSetsVersionAndSchema(t *testing.T) {
 	if err := d.Read.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatalf("user_version: %v", err)
 	}
-	if version != 2 {
-		t.Fatalf("user_version = %d, want 2", version)
+	if version != 1 {
+		t.Fatalf("user_version = %d, want 1", version)
 	}
 
 	for _, table := range []string{"chats", "messages", "events", "files"} {
@@ -50,8 +50,8 @@ func TestMigrateIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second Migrate: %v", err)
 	}
-	if version != 2 {
-		t.Fatalf("version after re-run = %d, want 2", version)
+	if version != 1 {
+		t.Fatalf("version after re-run = %d, want 1", version)
 	}
 }
 
@@ -83,7 +83,7 @@ func TestSplitStatements(t *testing.T) {
 	}
 }
 
-func TestMigration002AddsFilesLinkage(t *testing.T) {
+func TestSchemaHasFilesLinkage(t *testing.T) {
 	d := openMigrated(t)
 
 	// messages gained the file_id column.

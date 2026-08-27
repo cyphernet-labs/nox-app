@@ -2,11 +2,11 @@
 
 Решения Phase 0. Все «неизвестные» Technical Context закрыты.
 
-## R1. Миграция 002 — таблица `files` + связка с сообщениями
+## R1. Схема — таблица `files` + связка с сообщениями (правкой единой миграции 001)
 
-**Decision**: `002_files.sql`: таблица `files` (file_id PK, name, size, mime, created_at, expires_at, uploaded INTEGER 0/1, message_id TEXT NULL) STRICT; `ALTER TABLE messages ADD COLUMN file_id TEXT REFERENCES files(file_id)`; частичный уникальный индекс `ON messages(file_id) WHERE file_id IS NOT NULL` — «один файл — одно сообщение» на уровне схемы.
+**Decision**: правка `001_init.sql` (до релиза схема живёт в одной миграции — правило владельца): таблица `files` (file_id PK, name, size, mime, created_at, expires_at, uploaded INTEGER 0/1, message_id TEXT NULL) STRICT; колонка `file_id TEXT REFERENCES files(file_id)` в `messages`; частичный уникальный индекс `ON messages(file_id) WHERE file_id IS NOT NULL` — «один файл — одно сообщение» на уровне схемы.
 
-**Rationale**: метаданные нужны и до отправки сообщения (между uploadBegin и send), поэтому отдельная таблица, а не колонки в messages; частичный индекс закрывает повторную привязку конструктивно; append-only дисциплина миграций соблюдена (001 не трогается).
+**Rationale**: метаданные нужны и до отправки сообщения (между uploadBegin и send), поэтому отдельная таблица, а не колонки в messages; частичный индекс закрывает повторную привязку конструктивно.
 
 **Alternatives considered**: метаданные в messages — не живут до send; JSON-блоб вложения в messages — не даёт `chat.files` и уникальности file_id.
 

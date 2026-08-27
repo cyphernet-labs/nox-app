@@ -6,7 +6,7 @@
 
 ## Summary
 
-Фаза 024 замыкает этап 1: файловая цепочка контракта §7 (`file.uploadBegin` → `PUT /files/{token}` → `message.send {attachment}` → эхо/событие с полным объектом вложения; `file.downloadBegin` → `GET /files/{token}` с Range) плюс `chat.files` (§4) и код `attachment_gone`. Байты живут вне сокета и вне БД — в каталоге данных под серверным `file_id` (доступ через `os.Root`); метаданные — в новой таблице `files` (**миграция 002**, первая после 001). Одноразовые токены с TTL 10 минут — эфемерное состояние процесса (in-memory, рестарт гасит их безвредно: клиент запрашивает новые). Хранение на этапе 1 бессрочное; стартовая зачистка убирает только загрузки, не привязанные к сообщению за сутки.
+Фаза 024 замыкает этап 1: файловая цепочка контракта §7 (`file.uploadBegin` → `PUT /files/{token}` → `message.send {attachment}` → эхо/событие с полным объектом вложения; `file.downloadBegin` → `GET /files/{token}` с Range) плюс `chat.files` (§4) и код `attachment_gone`. Байты живут вне сокета и вне БД — в каталоге данных под серверным `file_id` (доступ через `os.Root`); метаданные — в новой таблице `files` (правка единой миграции 001 — до релиза схема живёт в одном файле, правило владельца). Одноразовые токены с TTL 10 минут — эфемерное состояние процесса (in-memory, рестарт гасит их безвредно: клиент запрашивает новые). Хранение на этапе 1 бессрочное; стартовая зачистка убирает только загрузки, не привязанные к сообщению за сутки.
 
 ## Technical Context
 
@@ -14,7 +14,7 @@
 
 **Primary Dependencies**: без новых — stdlib закрывает всё (`http.MaxBytesReader`, `http.ServeContent` с Range из коробки, `os.Root` для confinement каталога)
 
-**Storage**: SQLite — миграция `002_files.sql` (таблица `files` + колонка `messages.file_id` с частичным UNIQUE-индексом «один файл — одно сообщение»); байты — файлы `<files-dir>/<file_id>` (`.part` на время заливки, rename по завершении)
+**Storage**: SQLite — таблица `files` + колонка `messages.file_id` с частичным UNIQUE-индексом «один файл — одно сообщение» (правкой единой миграции 001); байты — файлы `<files-dir>/<file_id>` (`.part` на время заливки, rename по завершении)
 
 **Testing**: `go test -race ./...`; интеграционные тесты websocket + `http.Client` против httptest (PUT/GET с Range) на харнесе 022/023
 
@@ -26,7 +26,7 @@
 
 **Constraints**: контракт §7/§4 — закон; байты никогда не буферизуются в память целиком (стриминг PUT → диск, `ServeContent` ← диск); лимит `max_attachment_bytes` действует на обоих рубежах (uploadBegin и PUT); токены одноразовые, 10 минут, непредсказуемые; имя файла не участвует в путях; сервер по-прежнему не заглядывает в байты (метаданные только из uploadBegin)
 
-**Scale/Scope**: 3 новые команды, 2 HTTP-endpoint'а, 1 миграция, 1 новый пакет (`internal/blob`), расширение `message.send`/превью/wire-модели `Message`
+**Scale/Scope**: 3 новые команды, 2 HTTP-endpoint'а, расширение схемы (единая миграция 001), 1 новый пакет (`internal/blob`), расширение `message.send`/превью/wire-модели `Message`
 
 ## Constitution Check
 
@@ -54,7 +54,7 @@ Go-гейт: `gofmt -l .` пусто → `go vet ./...` → `go test -race ./...
 specs/024-client-backend-files/
 ├── plan.md              # этот файл
 ├── research.md          # Phase 0: решения R1–R10
-├── data-model.md        # Phase 1: миграция 002, таблица files, связка сообщений
+├── data-model.md        # Phase 1: таблица files, связка сообщений (правка единой миграции 001)
 ├── quickstart.md        # Phase 1: смоук Е (websocat + curl, Range-докачка)
 ├── contracts/README.md  # Phase 1: срез контракта фазы 024
 └── tasks.md             # Phase 2 (/speckit-tasks)
@@ -64,7 +64,7 @@ specs/024-client-backend-files/
 
 ```text
 client_backend/
-├── migrations/002_files.sql   # NEW: files + messages.file_id + частичный UNIQUE
+├── migrations/001_init.sql    # + files, messages.file_id, частичный UNIQUE (единая миграция до релиза)
 ├── internal/blob/             # NEW: байты на диске через os.Root (Create/Open/Remove/Stat по id)
 │   ├── blob.go
 │   └── blob_test.go

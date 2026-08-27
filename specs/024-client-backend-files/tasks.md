@@ -12,7 +12,7 @@
 
 ## Phase 2: Foundational (blocking prerequisites)
 
-- [x] T001 Add migration client_backend/migrations/002_files.sql per data-model.md: files STRICT table, messages.file_id column, partial unique index idx_messages_file; extend the migration tests in client_backend/internal/db/db_test.go for version 2 and the new schema objects
+- [x] T001 Extend the single pre-release migration client_backend/migrations/001_init.sql per data-model.md (owner rule: one migration until the first release): files STRICT table, messages.file_id column, partial unique index idx_messages_file; extend the schema tests in client_backend/internal/db/db_test.go for version 2 and the new schema objects
 - [x] T002 [P] Create the blob package in client_backend/internal/blob/blob.go per research R2: Open(dir) over os.Root, Create(id) writing <id>.part with atomic finalize-rename, Open/Remove/Size by id, RemovePart for sweep; table tests in client_backend/internal/blob/blob_test.go (roundtrip, partial file invisible until finalize, remove, size, traversal-shaped ids rejected by os.Root)
 - [x] T003 [P] Add the files directory to client_backend/internal/config/config.go: -files flag / NOX_FILES env with default <db>-files, validated non-empty; extend client_backend/internal/config/config_test.go
 - [x] T004 [P] Add the 024 protocol surface to client_backend/internal/protocol/frames.go: CmdFileUploadBegin, CmdFileDownloadBegin, CmdChatFiles constants, Attachment wire struct {file_id,name,size,mime,expires_at} and Message.Attachment *Attachment omitempty
