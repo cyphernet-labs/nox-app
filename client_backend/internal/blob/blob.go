@@ -55,8 +55,15 @@ func (u *Upload) Write(p []byte) (int, error) {
 	return u.f.Write(p)
 }
 
-// Finalize closes the part file and atomically renames it into place.
+// Finalize flushes the part file to stable storage, closes it and atomically
+// renames it into place. The fsync matters: rename is metadata and can be
+// journaled before the data blocks land, so a power loss could otherwise
+// leave the finalized name holding truncated bytes that the database already
+// promises (uploaded=1 commits right after this returns).
 func (u *Upload) Finalize() error {
+	if err := u.f.Sync(); err != nil {
+		return fmt.Errorf("sync part for %s: %w", u.id, err)
+	}
 	if err := u.f.Close(); err != nil {
 		return fmt.Errorf("close part for %s: %w", u.id, err)
 	}

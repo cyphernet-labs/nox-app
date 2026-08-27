@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -10,7 +11,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/coder/websocket"
 
 	"nox.app/client-backend/internal/protocol"
 	"nox.app/client-backend/internal/store"
@@ -20,9 +24,13 @@ func uploadBegin(t *testing.T, c *wsClient, id int, name string, size int, mime 
 	t.Helper()
 	data := c.expectOKAfter(id, fmt.Sprintf(
 		`{"id":%d,"cmd":"file.uploadBegin","data":{"name":%q,"size":%d,"mime":%q}}`, id, name, size, mime))
-	var fileID, token string
+	var fileID, token, uploadURL string
 	mustUnmarshal(t, data["file_id"], &fileID)
 	mustUnmarshal(t, data["upload_token"], &token)
+	mustUnmarshal(t, data["upload_url"], &uploadURL)
+	if uploadURL != "/files/"+token {
+		t.Fatalf("upload_url = %q, want relative /files/<token>", uploadURL)
+	}
 	var limit int64
 	mustUnmarshal(t, data["max_attachment_bytes"], &limit)
 	if limit != 104857600 {
@@ -50,8 +58,12 @@ func downloadBegin(t *testing.T, c *wsClient, id int, fileID string) string {
 	t.Helper()
 	data := c.expectOKAfter(id, fmt.Sprintf(
 		`{"id":%d,"cmd":"file.downloadBegin","data":{"file_id":%q}}`, id, fileID))
-	var token string
+	var token, downloadURL string
 	mustUnmarshal(t, data["download_token"], &token)
+	mustUnmarshal(t, data["download_url"], &downloadURL)
+	if downloadURL != "/files/"+token {
+		t.Fatalf("download_url = %q, want relative /files/<token>", downloadURL)
+	}
 	return token
 }
 
@@ -123,10 +135,21 @@ func TestStoryOneAttachmentChain(t *testing.T) {
 		echo.Attachment.Size != int64(len(payload)) || echo.Attachment.Mime != "application/pdf" || echo.Attachment.ExpiresAt == 0 {
 		t.Fatalf("echo attachment = %+v", echo.Attachment)
 	}
-	// ...and in the second client's event, without client_message_id.
-	_, name, evData := bob.expectEvent()
-	if name != protocol.EventMessageNew {
-		t.Fatalf("bob event = %s", name)
+	// ...and in the second client's event, without client_message_id. The
+	// dispatcher may flush the pre-subscription chat.created first - read
+	// until the message arrives.
+	var evData map[string]json.RawMessage
+	gotMsg := false
+	for range 5 {
+		_, name, data := bob.expectEvent()
+		if name == protocol.EventMessageNew {
+			evData = data
+			gotMsg = true
+			break
+		}
+	}
+	if !gotMsg {
+		t.Fatal("bob never received message.new")
 	}
 	var evAtt protocol.Attachment
 	mustUnmarshal(t, evData["attachment"], &evAtt)
@@ -183,12 +206,42 @@ func TestStoryOneAttachmentChain(t *testing.T) {
 	if code := putBytes(t, ts, token3, randomPayload(t, 2000)); code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("oversized PUT = %d, want 413", code)
 	}
-	_, token4 := uploadBegin(t, anna, 27, "short.bin", 1000, "application/octet-stream")
+	fileID4, token4 := uploadBegin(t, anna, 27, "short.bin", 1000, "application/octet-stream")
 	if code := putBytes(t, ts, token4, randomPayload(t, 500)); code != http.StatusBadRequest {
 		t.Fatalf("short PUT = %d, want 400", code)
 	}
-	if srv.blob.Exists(fileID3) {
-		t.Fatal("oversized upload left bytes behind")
+	if srv.blob.Exists(fileID3) || srv.blob.Exists(fileID4) {
+		t.Fatal("failed uploads left bytes behind")
+	}
+
+	// New 024 validation negatives: JSON-null body, empty attachment object,
+	// oversized metadata.
+	anna.send(fmt.Sprintf(`{"id":30,"cmd":"message.send","data":{"chat_id":%q,"client_message_id":"n5","body":null}}`, chatID))
+	anna.expectErr(30, protocol.ErrInvalidRequest)
+	anna.send(fmt.Sprintf(`{"id":31,"cmd":"message.send","data":{"chat_id":%q,"client_message_id":"n6","body":{"type":"text","text":"x"},"attachment":{}}}`, chatID))
+	anna.expectErr(31, protocol.ErrInvalidRequest)
+	longName := strings.Repeat("n", 256)
+	anna.send(fmt.Sprintf(`{"id":32,"cmd":"file.uploadBegin","data":{"name":%q,"size":10,"mime":"x/y"}}`, longName))
+	anna.expectErr(32, protocol.ErrInvalidRequest)
+
+	// L: the duplicate produced no event - Bob's next two events are the
+	// notes.txt attachment message and the probe below, with nothing in
+	// between.
+	sendText(t, anna, 33, chatID, "probe1", "after dup probe")
+	_, _, ev2 := bob.expectEvent()
+	var att2 protocol.Attachment
+	mustUnmarshal(t, ev2["attachment"], &att2)
+	if att2.Name != "notes.txt" {
+		t.Fatalf("bob's second event attachment = %+v, want notes.txt", att2)
+	}
+	_, _, ev3 := bob.expectEvent()
+	var probeMsg protocol.Message
+	raw, err := json.Marshal(ev3)
+	if err != nil {
+		t.Fatalf("re-marshal: %v", err)
+	}
+	if err := json.Unmarshal(raw, &probeMsg); err != nil || probeMsg.Attachment != nil {
+		t.Fatalf("bob's third event = %+v err=%v, want the plain probe (no duplicate attachment event)", probeMsg, err)
 	}
 }
 
@@ -197,6 +250,12 @@ func TestStoryOneUploadSurvivesRestart(t *testing.T) {
 	path := filepath.Join(dir, "restart.db")
 
 	ts, _, closeAll := openStack(t, path)
+	firstClosed := false
+	defer func() {
+		if !firstClosed {
+			closeAll()
+		}
+	}()
 	c := dialWS(t, ts)
 	c.expectGreeting()
 	c.hello(1, `,"label":"Anna"`)
@@ -206,7 +265,9 @@ func TestStoryOneUploadSurvivesRestart(t *testing.T) {
 	if code := putBytes(t, ts, token, payload); code != http.StatusNoContent {
 		t.Fatalf("PUT = %d", code)
 	}
+	_ = c.conn.Close(websocket.StatusNormalClosure, "restarting")
 	closeAll()
+	firstClosed = true
 
 	// A fresh process over the same db and files dir: the upload is intact
 	// and still sendable, and the bytes download byte-identically.
@@ -284,6 +345,25 @@ func TestStoryTwoDownloadWithResume(t *testing.T) {
 	dl3 := downloadBegin(t, bob, 4, fileID)
 	if code, _, _ := doGet(t, ts, dl3, "bytes=99999999-"); code != http.StatusRequestedRangeNotSatisfiable {
 		t.Fatalf("out-of-range GET = %d, want 416", code)
+	}
+
+	// HEAD must not burn the one-shot token (an accidental curl -I would
+	// otherwise kill the link): 405, and the token still downloads.
+	dl4 := downloadBegin(t, bob, 9, fileID)
+	headReq, err := http.NewRequest(http.MethodHead, ts.URL+"/files/"+dl4, nil)
+	if err != nil {
+		t.Fatalf("build HEAD: %v", err)
+	}
+	headResp, err := ts.Client().Do(headReq)
+	if err != nil {
+		t.Fatalf("HEAD: %v", err)
+	}
+	_ = headResp.Body.Close()
+	if headResp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("HEAD = %d, want 405", headResp.StatusCode)
+	}
+	if code, body, _ := doGet(t, ts, dl4, ""); code != http.StatusOK || !bytes.Equal(body, payload) {
+		t.Fatalf("GET after HEAD = %d, %d bytes - the token must survive a HEAD", code, len(body))
 	}
 
 	// downloadBegin negatives: unknown, un-uploaded, physically gone.
@@ -364,11 +444,27 @@ func TestOrphanSweepRemovesAbandonedUploads(t *testing.T) {
 	c.hello(1, `,"label":"Anna"`)
 	chatID := seedChat(t, c, "sweep")
 
-	// Bound file: the full chain - must survive any sweep.
-	boundID, boundTok := uploadBegin(t, c, 3, "bound.bin", 5, "x/y")
-	if code := putBytes(t, ts, boundTok, []byte("bytes")); code != http.StatusNoContent {
-		t.Fatalf("PUT = %d", code)
+	// Bound file seeded with an OLD created_at: it must survive the sweep
+	// because it is bound, not because it is fresh (a wall-clock-based
+	// assertion would pass for the wrong reason).
+	boundAtt, err := srv.store.CreateUpload(t.Context(), "bound.bin", 5, "x/y", 100)
+	if err != nil {
+		t.Fatalf("CreateUpload bound: %v", err)
 	}
+	boundUp, err := srv.blob.Create(boundAtt.FileID)
+	if err != nil {
+		t.Fatalf("blob.Create bound: %v", err)
+	}
+	if _, err := boundUp.Write([]byte("bytes")); err != nil {
+		t.Fatalf("write bound: %v", err)
+	}
+	if err := boundUp.Finalize(); err != nil {
+		t.Fatalf("finalize bound: %v", err)
+	}
+	if err := srv.store.MarkUploaded(t.Context(), boundAtt.FileID); err != nil {
+		t.Fatalf("MarkUploaded bound: %v", err)
+	}
+	boundID := boundAtt.FileID
 	c.expectOKAfter(4, fmt.Sprintf(
 		`{"id":4,"cmd":"message.send","data":{"chat_id":%q,"client_message_id":"s1","attachment":{"file_id":%q}}}`, chatID, boundID))
 

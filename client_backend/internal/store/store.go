@@ -1,7 +1,10 @@
 // Package store is the only code that reads or writes the database. Every
-// mutation inserts its events row in the same immediate transaction
-// (transactional outbox, CLAUDE.md invariants 2-4); event payloads are built
-// at write time so replay never depends on later state.
+// mutation VISIBLE ON THE WIRE AS AN EVENT inserts its events row in the
+// same immediate transaction (transactional outbox, CLAUDE.md invariants
+// 2-4); event payloads are built at write time so replay never depends on
+// later state. The file-metadata lifecycle (upload registration,
+// mark-uploaded, orphan sweep) is deliberately event-less: files surface to
+// other clients only through message.send.
 package store
 
 import (

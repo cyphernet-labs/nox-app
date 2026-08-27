@@ -368,12 +368,24 @@ func (c *client) handleMessageSend(cmd protocol.Command) {
 			"chat_id and client_message_id are required"))
 		return
 	}
-	// Contract §5: at least one of body/attachment (the attachment half of
-	// the rule activates in the 024 slice).
+	// JSON null is not a body: without this a {"body": null} frame with no
+	// attachment would smuggle a contentless message past the rule below.
+	if string(req.Body) == "null" {
+		req.Body = nil
+	}
+	// An attachment object without file_id is a malformed request, not a
+	// silent no-attachment: dropping the intent would store a text-only
+	// message the client believes carries a file.
 	fileID := ""
 	if req.Attachment != nil {
-		fileID = req.Attachment.FileID
+		fileID = strings.TrimSpace(req.Attachment.FileID)
+		if fileID == "" {
+			c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "attachment.file_id is required"))
+			return
+		}
 	}
+	// Contract §5: at least one of body/attachment (the attachment half of
+	// the rule activates in the 024 slice).
 	if len(req.Body) == 0 && fileID == "" {
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest,
 			"at least one of body and attachment is required"))

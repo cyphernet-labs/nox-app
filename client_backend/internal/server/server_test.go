@@ -42,6 +42,12 @@ func openStack(t *testing.T, path string) (*httptest.Server, *Server, func()) {
 		t.Fatalf("db.Migrate: %v", err)
 	}
 
+	bl, err := blob.Open(path + "-files")
+	if err != nil {
+		_ = dbs.Close()
+		t.Fatalf("blob.Open: %v", err)
+	}
+
 	h := hub.New()
 	hubCtx, stopHub := context.WithCancel(context.Background())
 	hubDone := make(chan struct{})
@@ -50,11 +56,6 @@ func openStack(t *testing.T, path string) (*httptest.Server, *Server, func()) {
 		h.Run(hubCtx)
 	}()
 
-	bl, err := blob.Open(path + "-files")
-	if err != nil {
-		t.Fatalf("blob.Open: %v", err)
-	}
-
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	cfg := config.Config{Addr: "127.0.0.1:0", DBPath: path, FilesPath: path + "-files", Limits: config.DefaultLimits()}
 	srv := New(cfg, store.New(dbs.Read, dbs.Write), h, bl, logger)
@@ -62,6 +63,10 @@ func openStack(t *testing.T, path string) (*httptest.Server, *Server, func()) {
 	// Long write timeout keeps slow-consumer tests deterministic: the
 	// overflow drop (policy violation) must win over a ping/write timeout.
 	srv.writeTimeout = 30 * time.Second
+	// Mirror Run's startup order: the orphan sweep runs before endpoints open.
+	if err := srv.sweepOrphans(context.Background(), time.Now().Add(-24*time.Hour).Unix()); err != nil {
+		t.Fatalf("startup sweep: %v", err)
+	}
 
 	dispDone := make(chan struct{})
 	go func() {

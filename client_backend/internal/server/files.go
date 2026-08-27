@@ -5,15 +5,31 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"nox.app/client-backend/internal/protocol"
 	"nox.app/client-backend/internal/store"
 )
 
 // --- socket commands (contract §7, §4) ---
+
+const (
+	// Metadata caps (contract §7): unbounded names would be baked into
+	// permanent event payloads and amplified into every list page and
+	// replay - a poisoned frame could exceed max_frame_bytes forever.
+	maxFileNameRunes = 255
+	maxMimeRunes     = 128
+	// transferTimeout is the per-request deadline for PUT/GET bodies.
+	// Generous enough for max_attachment_bytes over a slow link; without
+	// it a trickling client pins a goroutine and an fd indefinitely
+	// (global server timeouts would cap legitimate long transfers and are
+	// deliberately absent).
+	transferTimeout = 15 * time.Minute
+)
 
 type uploadBeginRequest struct {
 	Name string `json:"name"`
@@ -35,9 +51,15 @@ func (c *client) handleFileUploadBegin(cmd protocol.Command) {
 		return
 	}
 	name := strings.TrimSpace(req.Name)
-	if name == "" || strings.TrimSpace(req.Mime) == "" || req.Size < 1 {
+	mime := strings.TrimSpace(req.Mime)
+	if name == "" || mime == "" || req.Size < 1 {
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest,
 			"name, mime and a positive size are required"))
+		return
+	}
+	if utf8.RuneCountInString(name) > maxFileNameRunes || utf8.RuneCountInString(mime) > maxMimeRunes {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest,
+			fmt.Sprintf("name is capped at %d and mime at %d characters", maxFileNameRunes, maxMimeRunes)))
 		return
 	}
 	if req.Size > c.srv.cfg.Limits.MaxAttachmentBytes {
@@ -46,7 +68,7 @@ func (c *client) handleFileUploadBegin(cmd protocol.Command) {
 		return
 	}
 
-	att, err := c.srv.store.CreateUpload(c.ctx, name, req.Size, strings.TrimSpace(req.Mime), time.Now().Unix())
+	att, err := c.srv.store.CreateUpload(c.ctx, name, req.Size, mime, time.Now().Unix())
 	if err != nil {
 		c.logger.Error("create upload failed", "err", err)
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to register upload"))
@@ -92,8 +114,10 @@ func (c *client) handleFileDownloadBegin(cmd protocol.Command) {
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "file bytes are not uploaded yet"))
 		return
 	}
-	// Terminal: expired by TTL or the bytes are physically gone.
-	if time.Now().Unix() >= info.Attachment.ExpiresAt || !c.srv.blob.Exists(req.FileID) {
+	// Terminal: expired by TTL, bytes physically gone, or bytes torn (a
+	// size mismatch means a crash beat the flush - never serve them).
+	size, sizeErr := c.srv.blob.Size(req.FileID)
+	if time.Now().Unix() >= info.Attachment.ExpiresAt || sizeErr != nil || size != info.Attachment.Size {
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrAttachmentGone, "attachment bytes are no longer stored"))
 		return
 	}
@@ -163,6 +187,9 @@ func (s *Server) handlePutFile(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	// Per-request deadline: a trickling body must not pin the goroutine and
+	// the .part fd forever (see transferTimeout).
+	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(transferTimeout))
 
 	up, err := s.blob.Create(fileID)
 	if err != nil {
@@ -179,7 +206,15 @@ func (s *Server) handlePutFile(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "attachment exceeds the declared size", http.StatusRequestEntityTooLarge)
 			return
 		}
-		s.logger.Warn("upload stream failed", "file", fileID, "received", n)
+		// A write-side failure (disk full, I/O error) is the server's
+		// fault, not the client's - do not answer it as 400.
+		var pathErr *fs.PathError
+		if errors.As(err, &pathErr) {
+			s.logger.Error("upload write failed", "err", err, "file", fileID, "received", n)
+			http.Error(w, "storage failure", http.StatusInternalServerError)
+			return
+		}
+		s.logger.Warn("upload stream failed", "err", err, "file", fileID, "received", n)
 		http.Error(w, "upload interrupted", http.StatusBadRequest)
 		return
 	}
@@ -205,6 +240,13 @@ func (s *Server) handlePutFile(w http.ResponseWriter, r *http.Request) {
 // handleGetFile serves attachment bytes for a one-shot download token.
 // ServeContent brings Range/416 semantics for resumable downloads.
 func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
+	// The mux routes HEAD through GET patterns; a HEAD would burn the
+	// one-shot token without delivering a byte (an accidental curl -I
+	// would kill the link). Reject it before consuming.
+	if r.Method == http.MethodHead {
+		http.Error(w, "HEAD is not supported for one-shot links", http.StatusMethodNotAllowed)
+		return
+	}
 	fileID, ok := s.tokens.consume(r.PathValue("token"), opDownload)
 	if !ok {
 		http.NotFound(w, r)
@@ -227,6 +269,8 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "storage failure", http.StatusInternalServerError)
 		return
 	}
+	// Per-request deadline: a non-reading client must not pin the fd forever.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(transferTimeout))
 	w.Header().Set("Content-Type", info.Attachment.Mime)
 	http.ServeContent(w, r, "", stat.ModTime(), f)
 }

@@ -185,9 +185,12 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		next.ServeHTTP(w, r)
-		// Transfer tokens are one-shot capabilities - they never reach logs.
+		// Transfer tokens are one-shot capabilities - they never reach
+		// logs. Contains, not HasPrefix: uncleaned request paths like
+		// "//files/<token>" reach this middleware before the mux's
+		// canonicalization redirect.
 		path := r.URL.Path
-		if strings.HasPrefix(path, "/files/") {
+		if strings.Contains(path, "/files/") {
 			path = "/files/*"
 		}
 		s.logger.Info("http request",

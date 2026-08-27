@@ -6,8 +6,8 @@
 
 | Команда | `data` запроса | `data` ответа | Ошибки |
 |---|---|---|---|
-| `file.uploadBegin` | `{name, size, mime}` | `{file_id, upload_url, upload_token, max_attachment_bytes}` | `invalid_request` (пустое имя/mime; size < 1), `payload_too_large` (size > лимита), `internal` |
-| `file.downloadBegin` | `{file_id}` | `{download_url, download_token}` | `invalid_request` (пустой id; байты ещё не залиты), `not_found` (id неизвестен), `attachment_gone` (срок истёк или байты физически отсутствуют), `internal` |
+| `file.uploadBegin` | `{name, size, mime}` | `{file_id, upload_url, upload_token, max_attachment_bytes}` | `invalid_request` (пустое имя/mime; `name` > 255 или `mime` > 128 символов; size < 1), `payload_too_large` (size > лимита), `internal` |
+| `file.downloadBegin` | `{file_id}` | `{download_url, download_token}` | `invalid_request` (пустой id; байты ещё не залиты), `not_found` (id неизвестен), `attachment_gone` (срок истёк, байты физически отсутствуют или их размер не совпадает с заявленным — повреждение), `internal` |
 | `chat.files` | `{chat_id, before_seq?, limit}` | `{files: [{file_id, name, size, mime, expires_at, message_id, seq}], has_more}` | `invalid_request` (пустой chat_id; limit < 1), `not_found` (чат), `internal` |
 
 Правила пагинации `chat.files` — фазы 023: потолок 100 с молчаливым клампингом, порция по возрастанию `seq`, `before_seq` не задан → хвост.
