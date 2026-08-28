@@ -4,6 +4,7 @@ import 'package:injectable/injectable.dart' show Environment;
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nox_app/data/entity/base/error_wire_entity.dart';
+import 'package:nox_app/data/entity/chat/message_entity.dart';
 import 'package:nox_app/data/entity/chat/wire/message_wire_entity.dart';
 import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/data/local/chat/chat_dao.dart';
@@ -152,6 +153,79 @@ void main() {
       )).data!;
       expect(beyond.$1, isEmpty); // guarded empty slice
       expect(beyond.$2.hasMore, isFalse); // nothing further back
+    });
+  });
+
+  group('sync cursor writers (US3/SC-004)', () {
+    late SyncRepository sync;
+
+    setUp(() {
+      sync = getIt<SyncRepository>();
+    });
+
+    test('seeding advances the cursor to the max seeded seq', () async {
+      expect(await sync.getCursor(), 0); // cold DB
+      final (messages, _) = (await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0', limit: 100))).data!;
+
+      final maxSeeded = messages.where((m) => !m.isSystem).map((m) => m.seq).reduce((a, b) => a > b ? a : b);
+      expect(await sync.getCursor(), maxSeeded); // "everything up to seq is applied here" (§9.4)
+    });
+
+    test('sendMessage advances the cursor to the echo seq; a lower seq never moves it back', () async {
+      await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0'));
+      final sent = (await repo.sendMessage(chatId: 'chat_0', text: 'cursor probe')).data!;
+      expect(await sync.getCursor(), sent.seq); // runtime seq is above every seeded base
+
+      await sync.advanceCursor(sent.seq - 5); // duplicate/out-of-order application
+      expect(await sync.getCursor(), sent.seq); // monotonic max held
+    });
+
+    test('simulateIncoming advances the cursor to the injected seq', () async {
+      await getIt<ChatRepository>().getChats(config: GetChatsConfig.firstPage()); // chat rows for the touch
+      await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0'));
+      final before = await sync.getCursor();
+
+      await repo.simulateIncoming(chatId: 'chat_0');
+      expect(await sync.getCursor(), greaterThan(before)); // the push stand-in is "applied here" too
+    });
+  });
+
+  group('legacy pre-025 rows (upgraded-in-place DB)', () {
+    test('null-seq rows are backfilled below the real seqs so the cursor window still reaches all history', () async {
+      // A pre-025 store: rows persisted with NO seq field at all (upgraded DB,
+      // store non-empty -> the seed never runs).
+      for (var i = 0; i < 30; i++) {
+        await messageDao.upsert(
+          MessageEntity(
+            id: 'leg_${i.toString().padLeft(2, '0')}',
+            chatId: 'chat_legacy',
+            authorId: 'u_old',
+            authorLabel: 'Old',
+            text: 'legacy #$i',
+            sentAt: DateTime.utc(2026, 5, 1, 12, i).toIso8601String(),
+            status: 'none',
+            isSystem: false,
+            attachmentId: null,
+            attachmentType: null,
+            attachmentName: null,
+            attachmentSizeBytes: null,
+          ),
+        );
+      }
+
+      // Tail then walk older: pre-fix a legacy seq==0 cursor trimmed the whole
+      // window and stranded the older history; the backfill makes seqs unique.
+      final tail = (await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_legacy'))).data!;
+      expect(tail.$1.length, GetMessagesConfig.pageSize);
+      expect(tail.$2.hasMore, isTrue);
+
+      final older = (await repo.getMessages(
+        config: GetMessagesConfig.olderThan(chatId: 'chat_legacy', beforeSeq: tail.$1.first.seq),
+      )).data!;
+      expect(older.$1.length, 10); // the remainder is reachable, not stranded
+      expect(older.$2.hasMore, isFalse);
+      final ids = {...tail.$1.map((m) => m.id), ...older.$1.map((m) => m.id)};
+      expect(ids.length, 30); // full coverage, no duplicates across the windows
     });
   });
 

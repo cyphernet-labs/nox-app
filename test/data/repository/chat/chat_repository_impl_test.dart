@@ -17,6 +17,7 @@ import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/general/chat_seed_mock_data.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -49,6 +50,17 @@ void main() {
       expect(chats.length, lessThanOrEqualTo(GetChatsConfig.pageSize));
       expect(metadata.hasMore, isTrue); // full mock set seeded - more than one page
       expect(metadata.nextPage, isNotNull);
+    });
+
+    test('seeding overlays the device-local unread badges (wire rows carry 0, contract §8.3)', () async {
+      final (chats, _) = (await repository.getChats(config: GetChatsConfig.firstPage())).data!;
+
+      // The overlay path itself: every seeded row carries exactly the local
+      // ChatSeedMockData value (0 for absent ids), incl. the 99+ cap case.
+      for (final chat in chats) {
+        expect(chat.unreadCount, ChatSeedMockData.unreadFor(chat.id), reason: '${chat.id} unread overlay');
+      }
+      expect(chats.firstWhere((c) => c.id == 'chat_4').unreadCount, 142); // the 99+ cap case, end to end
     });
 
     test('a failed envelope (success:false / null data) surfaces as RepositoryResult.error (S4)', () async {

@@ -5,7 +5,6 @@ import 'package:nox_app/data/remote/api/chat/get_chats_api.dart';
 import 'package:nox_app/domain/repository/base/page_metadata.dart';
 import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 import 'package:nox_app/general/app_clock.dart';
-import 'package:nox_app/general/chat_seed_mock_data.dart';
 
 void main() {
   final mapper = ChatWireMapper();
@@ -127,15 +126,11 @@ void main() {
       }
     });
 
-    test('the wire carries no unread; the local seed overlay keeps the 99+ cap value', () async {
-      // Unread is device-local (contract §8.3): every wire row maps to 0 and
-      // the repository overlays ChatSeedMockData at seed time.
+    test('the wire carries no unread: every generated row maps to 0', () async {
+      // Unread is device-local (contract §8.3) — the repository overlays
+      // ChatSeedMockData at seed time (asserted in chat_repository_impl_test).
       final (firstChats, _) = await exec(GetChatsConfig.firstPage());
       expect(firstChats.every((c) => c.unreadCount == 0), isTrue);
-
-      final overlay = ChatSeedMockData.unreadByChatId.values;
-      expect(overlay, contains(142)); // the 99+ cap case survives as local data
-      expect(overlay.any((n) => n > 99), isTrue);
     });
   });
 }

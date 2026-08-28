@@ -12,6 +12,7 @@ import 'package:nox_app/general/app_clock.dart';
 import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/pages/file_view_page/file_view_page.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_file_glyph_widget.dart';
+import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../utils/pump_app.dart';
@@ -77,6 +78,11 @@ void main() {
         find.ancestor(of: find.byTooltip(l10nEn.tooltipSave), matching: find.byType(IconButton)).first,
       );
       expect(saveButton.onPressed, isNull); // gated in advance - bytes are gone server-side
+
+      // The icon dims with the SAME predicate: a dead button must not render
+      // at full onSurface intensity (mobile parity with the desktop FilledButton).
+      final icon = tester.widget<AppIconWidget>(find.descendant(of: find.byWidget(saveButton), matching: find.byType(AppIconWidget)));
+      expect(icon.color?.a, lessThan(1.0)); // disabled alpha, not full intensity
     });
 
     testWidgets('a far-future expiry (stage-1 retention) leaves Save enabled as before', (tester) async {

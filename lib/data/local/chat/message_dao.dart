@@ -6,7 +6,7 @@ import 'package:nox_app/data/local/app_database.dart';
 import 'package:sembast/sembast.dart';
 
 /// Sembast store for chat messages (5.2) — cache-first, keyed by id, chat-scoped and
-/// chronological (oldest first) by ISO-8601 `sentAt`. A corrupt record is skipped.
+/// ordered by the server journal `seq` (sentAt/id tiebreak). A corrupt record is skipped.
 @lazySingleton
 class MessageDao {
   MessageDao(this._appDatabase);
@@ -62,8 +62,18 @@ class MessageDao {
     });
   }
 
+  /// The server journal number (seq) is the authoritative order (contract §5);
+  /// sentAt breaks ties for legacy pre-025 rows (seq null → 0, a whole-chat
+  /// block on an upgraded-in-place DB) and the id makes the order total, so
+  /// same-second wire timestamps (unix-second precision) can never reorder
+  /// rows against their seq via an unstable sort.
   List<MessageEntity> _sortChrono(List<MessageEntity> messages) {
-    messages.sort((a, b) => a.sentAt.compareTo(b.sentAt));
+    messages.sort((a, b) {
+      final bySeq = (a.seq ?? 0).compareTo(b.seq ?? 0);
+      if (bySeq != 0) return bySeq;
+      final byTime = a.sentAt.compareTo(b.sentAt);
+      return byTime != 0 ? byTime : a.id.compareTo(b.id);
+    });
     return messages;
   }
 

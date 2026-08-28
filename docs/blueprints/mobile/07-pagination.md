@@ -2,7 +2,7 @@
 
 > **Назначение:** зафиксировать единственный канонический стандарт постраничной подгрузки списков в приложении NOX — библиотека `infinite_scroll_pagination` ^5.1.1 (v5, stateless), `PagingState<K,T>` внутри Freezed-стейта BLoC, переиспользуемый extension `PagingStateExt.applyPage`, OFFSET-модель как основной flavor по умолчанию и CURSOR как документированная альтернатива. **Когда читать:** перед реализацией любого экрана со списком, который сервер отдаёт постранично (первый реальный кейс — список чатов: общий открытый список чатов, который сам по себе server-owned и network-only), а также при ревью BLoC, отдающего `PagingState`. **Связанные документы:** `05-presentation-layer.md` (BLoC = Freezed, `BaseBloc`, страницы, `state.when`), `04-data-layer.md` (`RepositoryResult`, `ResponseEntity`, mapper, network-only списки), `03-domain-layer.md` (доменные модели `@freezed`, `RepositoryException`), `06-theming.md` (токены для индикаторов/разделителей), `10-code-templates.md` (полные шаблоны), `08-conventions-and-constitution.md` (правила слоёв).
 
-> **Реактивный рефреш поверх пагинации (Feature 014).** `PagingState` + `applyPage` + `getX` остаются **единственной проекцией** списка; реактивность добавляется как **change-signal**: подписка на `watchX()` (значение игнорируется) диспатчит `loadX(refresh: true)`, который заново читает уже загруженный префикс страниц (`1..loadedPageCount`) через тот же `getX`/`applyPage` и складывает результат в live-стейт (без спиннера, сохраняя scroll/поиск/desktop-выбор). При появлении бэкенда `watchX()` становится стримом изменений над локально-кэшированными загруженными страницами, а `getX` бьёт в сервер — форма не меняется. См. `specs/014-reactive-data-refresh/`.
+> **Реактивный рефреш поверх пагинации (Feature 014).** `PagingState` + `applyPage` + `getX` остаются **единственной проекцией** списка; реактивность добавляется как **change-signal**: подписка на `watchX()` (значение игнорируется) диспатчит `loadX(refresh: true)`, который перечитывает уже загруженное через тот же `getX`/`applyPage` и складывает результат в live-стейт (без спиннера, сохраняя scroll/поиск/desktop-выбор). Форма перечитывания зависит от пути: список чатов заново читает префикс страниц `1..loadedPageCount`; тред с фазы 025 делает ОДИН tail-запрос `limit = items.length + pageSize` (курсорный путь не имеет номеров страниц). При появлении бэкенда `watchX()` становится стримом изменений над локально-кэшированными загруженными страницами, а `getX` бьёт в сервер — форма не меняется. См. `specs/014-reactive-data-refresh/`.
 
 ---
 
@@ -60,16 +60,17 @@ dependencies:
 
 ```dart
 // lib/domain/repository/base/page_metadata.dart
-/// Contract-shaped page metadata: hasMore mirrors the wire has_more.
-/// JSON parsing lives in the data layer; this is the domain-side shape the
-/// repository returns alongside a page slice.
+/// Contract-shaped page metadata: the server reports only whether more rows
+/// exist beyond this slice (no totals on the wire). nextPage carries the
+/// 1-based next page index for the paged chats path; the cursor-paged
+/// messages path leaves it null and advances by before_seq instead.
 @freezed
 abstract class PageMetadata with _$PageMetadata {
   const factory PageMetadata({
-    /// Total item count across all pages.
+    /// Whether rows exist beyond this slice (wire has_more).
     required bool hasMore,
 
-    /// 1-based index of the next page, or null on the last page.
+    /// 1-based index of the next page (paged path only), null otherwise.
     int? nextPage,
   }) = _PageMetadata;
 }
@@ -79,7 +80,7 @@ abstract class PageMetadata with _$PageMetadata {
 
 ### 4.2 Метаданные пагинации — CURSOR (альтернатива)
 
-**Реальный курсорный путь проекта — история сообщений (фаза 025) — обходится БЕЗ отдельного класса метаданных.** `GetMessagesConfig` несёт `{chatId, int? beforeSeq, int limit}` (статики `tail(...)` / `olderThan(...)`); репозиторий возвращает тот же `PageMetadata{hasMore}`; координату держит блок треда — `oldestLoadedSeq` в стейте, догрузка `olderThan(oldestLoadedSeq)`, оптимистичные отправки сортируются вниз сентинелом `kPendingSeq`. Тред при этом не использует `PagedListView`/`applyPage` — `reverse: true` `ListView.builder` + prefetch по `ScrollController` (см. `chat_thread_bloc.dart`).
+**Реальный курсорный путь проекта — история сообщений (фаза 025) — обходится БЕЗ отдельного класса метаданных.** `GetMessagesConfig` несёт `{chatId, int? beforeSeq, int limit}` (статики `tail(...)` / `olderThan(...)`); репозиторий возвращает тот же `PageMetadata{hasMore}`; координату держит блок треда — `oldestLoadedSeq` в стейте, догрузка `olderThan(oldestLoadedSeq)`, оптимистичные отправки сортируются вниз сентинелом `kPendingSeq`. Тред при этом не использует `PagedListView` — `reverse: true` `ListView.builder` + prefetch по `ScrollController`; но `applyPage` он ВЫЗЫВАЕТ для сборки `PagingState` (учёт `hasNextPage`, см. `chat_thread_bloc.dart`).
 
 Класс `CursorPaginationMetadata` ниже остаётся документированной альтернативой для эндпоинтов со **строковым** непрозрачным курсором (в проекте пока не встречаются) — тоже `@freezed`, **без** JSON, в той же папке `lib/domain/repository/base/`. Всё остальное (BLoC, UI, helper) — идентично.
 
@@ -280,7 +281,7 @@ extension PagingStateCursorExt<K, T> on PagingState<K, T> {
 }
 ```
 
-> В проекте подключён **только** страничный вариант helper'а. Реальный курсорный путь (тред, seq-курсор `before_seq`) helper'ом не пользуется вовсе — см. §4.2; CURSOR-extension добавляется, лишь когда появится эндпоинт со строковым курсором.
+> В проекте подключён **только** страничный вариант helper'а — им пользуется и реальный курсорный путь (тред, seq-курсор `before_seq`): `applyPage` собирает его `PagingState`, а координату держит `oldestLoadedSeq` в стейте, не `nextPage` (см. §4.2). CURSOR-extension добавляется, лишь когда появится эндпоинт со строковым курсором.
 
 ---
 

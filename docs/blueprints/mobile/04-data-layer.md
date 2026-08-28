@@ -17,7 +17,7 @@
 Слой данных отвечает за:
 
 - **Entities (DTO)** — `@freezed` + `json_serializable`, **только базовые типы** (`String`/`int`/`double`/`bool` + их `List`). Enum хранится как `.name` (String), `DateTime` — как ISO-8601 String. Любая коэрция отложена в маппер.
-- **`ResponseEntity<T>` + `EntityConverter<E>`** — генерик-конверт REST-ответа (бэкенд отдаёт единый envelope `{data, timestamp, trace_id, meta}` — *пример контракта, заменить на реальный backend NOX*) + ручной реестр типов, резолвящий генерик `T` в конкретный entity.
+- **`ResponseEntity<T>` + `EntityConverter<E>`** — генерик-конверт ответа (контракт v0: `success` зеркалит `ok` reply-кадра, `error` — объект `{code, message}` §2.1) + ручной реестр типов, резолвящий генерик `T` в конкретный entity.
 - **Мапперы** — двунаправленная конвертация `Entity <-> Model` (`BaseMapper`), где происходит ВСЯ коэрция типов (enum, `DateTime`, nullable-нормализация). Композиция дочерних мапперов через конструктор.
 - **Обработка ошибок** — единственный механизм `BaseRepositoryHelper.execute<TD>()`: тонкий guarded try/catch, который **обязательно** логирует через `LogRepository` и возвращает `RepositoryResult.error(...)`. Маппинг коэрсный: `DioException` → `RepositoryException.internal`, любой другой `catch` → `RepositoryException.unknown`. **Нет типизированной транспортной иерархии** (`ApiException` / `DaoException` / `BaseDomainExceptionHelper` намеренно отсутствуют — правило этого блюпринта), но есть **маркер** `BaseRepositoryException`, который реализует каждая доменная ошибка: общий enum `RepositoryException` и любые feature-специфичные enum'ы реализуют этот маркер (см. §5 и `03-domain-layer.md`). Конкретный доменный код возвращает сам callback явным `return RepositoryResult.error(...)`.
 - **DAO (Sembast)** — реактивное локальное хранилище: `onSnapshots()`/`onSnapshot()`, атомарные `db.transaction()`, env-scoped `AppDatabase` (Dev/Prod = IO, Test = memory).
@@ -134,29 +134,30 @@ abstract class ItemsEntity with _$ItemsEntity {
 
 ## 2. `ResponseEntity<T>` — генерик-конверт REST-ответа
 
-Каждый JSON-ответ бэкенда обёрнут в единый envelope `{data, timestamp, trace_id, meta}` (*пример контракта, заменить на реальный backend NOX*: бэкенд/протокол NOX ещё не выбран). `ResponseEntity<T>` — генерик-обёртка над ним; аннотация `@EntityConverter()` резолвит генерик `T` в `fromJson`/`toJson` конкретного entity.
+Конверт реален с фазы 025 (контракт v0): `success` зеркалит `ok` reply-кадра, `error` несёт объект `{code, message}` (§2.1), полезная нагрузка — в `data`. `ResponseEntity<T>` — генерик-обёртка над ним; аннотация `@EntityConverter()` резолвит генерик `T` в `fromJson`/`toJson` конкретного entity.
 
 `lib/data/entity/base/response_entity.dart`:
 
 ```dart
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:nox_app/data/entity/base/entity_converter.dart';
+import 'package:nox_app/data/entity/base/error_wire_entity.dart';
 
 part 'response_entity.freezed.dart';
 part 'response_entity.g.dart';
 
-/// Unified backend envelope (example — backend/protocol not chosen; replace with
-/// the real contract). The load-bearing mechanism is the generic `T?` resolved
-/// by EntityConverter.
+/// Unified data-source envelope over contract v0 replies: success mirrors the
+/// wire `ok`, [error] carries the contract `{code, message}` object of a
+/// failed reply, and the generic `T?` payload is resolved by EntityConverter.
 @freezed
 abstract class ResponseEntity<T> with _$ResponseEntity<T> {
-  const factory ResponseEntity({@Default(false) bool success, String? error, @EntityConverter() T? data}) = _ResponseEntity<T>;
+  const factory ResponseEntity({@Default(false) bool success, ErrorWireEntity? error, @EntityConverter() T? data}) = _ResponseEntity<T>;
 
   factory ResponseEntity.fromJson(Map<String, dynamic> json) => _$ResponseEntityFromJson(json);
 }
 ```
 
-> Поля `success` / `error` / `data` подгоняются под реальный envelope бэкенда NOX (*пример контракта, заменить на реальный backend NOX*; протокол ещё не выбран). На деле envelope-пример кладёт полезную нагрузку в `data`, а служебное — в `timestamp` / `trace_id` / `meta`; если они нужны на клиенте, добавь соответствующие nullable-поля. Механизм, который надо сохранить, — генерик `T?`, резолвимый `JsonConverter`'ом.
+> Ошибка конверта — типизированный `ErrorWireEntity {code, message}` (фаза 025); её код мапится в `RepositoryException.fromWireCode` (незнакомый код → `internal`, правило эволюции §2.1), а `BaseRepositoryHelper.unwrapEnvelope` бросает её сквозь `execute()` без переупаковки. Механизм, который надо сохранить, — генерик `T?`, резолвимый `JsonConverter`'ом.
 
 ---
 
@@ -750,7 +751,7 @@ class ItemRepositoryImpl with BaseRepositoryHelper implements ItemRepository {
       }
       final models = _itemMapper.toListModel(entities: entity.items);
       final hasMore = (entity.page * entity.pageSize) < entity.total;
-      final metadata = PageMetadata(total: entity.total, nextPage: hasMore ? entity.page + 1 : null);
+      final metadata = PageMetadata(hasMore: hasMore, nextPage: hasMore ? entity.page + 1 : null);
       return RepositoryResult<(List<ItemModel>, PageMetadata)>.success(data: (models, metadata));
     });
   }
@@ -765,7 +766,7 @@ class ItemRepositoryImpl with BaseRepositoryHelper implements ItemRepository {
 - **`@LazySingleton(as: ItemRepository, env: [Environment.dev, Environment.prod, Environment.test])`** — env-список load-bearing (Sembast-база env-scoped; пропуск env оставит репозиторий без биндинга базы в этом окружении), даже у network-only-репозитория.
 - **`with BaseRepositoryHelper`** (без `on`-ограничения) + каждый публичный метод обёрнут в `execute<TD>()`; callback **сам возвращает уже-обёрнутый** `RepositoryResult<TD>`.
 - **Пустой payload → `RepositoryException.unknown` прямо в callback'е** (так в коде: `if (entity == null) return ...error(unknown)` — без `throw StateError`). Логирования здесь нет: `unknown` — нормальный доменный исход; необработанные исключения логирует и коэрцирует сам `execute`.
-- **`PageMetadata` из обёртки страницы:** `hasMore = (page * pageSize) < total`; `nextPage = hasMore ? page + 1 : null`; `total = entity.total`. Это канон для всех серверных пагинированных списков (см. подсекцию «network-only carve-out» ниже и `07-pagination.md`) — никакой эвристики «по длине страницы».
+- **`PageMetadata` из обёртки страницы:** контрактные обёртки v0 (`{chats|messages, has_more}`) отдают `hasMore` готовым; verification-срез Item сворачивает offset-математику сам (`hasMore = (page * pageSize) < total`). В обоих случаях `nextPage = hasMore ? page + 1 : null` на страничном пути; `total` в `PageMetadata` не существует (фаза 025). Это канон для всех серверных пагинированных списков (см. подсекцию «network-only carve-out» ниже и `07-pagination.md`) — никакой эвристики «по длине страницы».
 - **`clean()`** в скелете — no-op (`Future<void>.value()` через `async {}`); в полной форме он отменяет подписку и чистит DAO/subject.
 
 ### 8.1. Полная форма — кэш-first реактивный репозиторий (TARGET)
@@ -919,7 +920,7 @@ class ItemRepositoryImpl with BaseRepositoryHelper implements ItemRepository {
       }
       final models = _itemMapper.toListModel(entities: entity.items);
       final hasMore = (entity.page * entity.pageSize) < entity.total;
-      final metadata = PageMetadata(total: entity.total, nextPage: hasMore ? entity.page + 1 : null);
+      final metadata = PageMetadata(hasMore: hasMore, nextPage: hasMore ? entity.page + 1 : null);
       return RepositoryResult<(List<ItemModel>, PageMetadata)>.success(data: (models, metadata));
     });
   }
@@ -1005,13 +1006,13 @@ Future<RepositoryResult<(List<ItemModel>, PageMetadata)>> getItems({required Get
     }
     final models = _itemMapper.toListModel(entities: entity.items);
     final hasMore = (entity.page * entity.pageSize) < entity.total;
-    final metadata = PageMetadata(total: entity.total, nextPage: hasMore ? entity.page + 1 : null);
+    final metadata = PageMetadata(hasMore: hasMore, nextPage: hasMore ? entity.page + 1 : null);
     return RepositoryResult<(List<ItemModel>, PageMetadata)>.success(data: (models, metadata));
   });
 }
 ```
 
-> Первая реальная фича — **список чатов** (открытое общее пространство) — именно такая: это серверный, network-only пагинированный список, потому она идёт по network-only ветке (`getItems`). Дефолтный флавор пагинации — OFFSET (срез страницы + `page` + `page_size` + `total`), альтернатива — CURSOR; **конкретный контракт пагинации списка чатов финализируется позже вместе с бэкендом NOX** (бэкенд/протокол ещё не выбраны — имена ключей `page`/`page_size`/`total` пример/TBD). Канон вычисления `PageMetadata` (`hasMore = (page * pageSize) < total`, `nextPage = hasMore ? page + 1 : null`) — здесь, в §8; `07-pagination.md` описывает presentation-сторону поверх этого канона (дефолтный OFFSET-флавор `PageMetadata{int total, int? nextPage}`, альтернативный CURSOR, `PagingStateExt.applyPage`, проброс `result.exception` в `pagingState.error`). Не заводи DAO/subject для серверных пагинированных списков.
+> Первая реальная фича — **список чатов** (открытое общее пространство) — именно такая: это серверный, network-only пагинированный список, потому она идёт по network-only ветке (`getItems`). Контракт пагинации списка чатов **зафиксирован контрактом v0 (фаза 025)**: страничный запрос (`page`/`page_size`) с ответом `{chats, has_more}`; история сообщений — курсорный путь `before_seq`/`limit` с ответом `{messages, has_more}`. Канон вычисления `PageMetadata{hasMore, nextPage?}` — здесь, в §8 (`hasMore` с провода или сворачиванием offset-математики verification-среза; `nextPage = hasMore ? page + 1 : null` на страничном пути); `07-pagination.md` описывает presentation-сторону поверх этого канона (страничный флавор, реальный seq-курсорный путь треда в его §4.2, `PagingStateExt.applyPage`, проброс `result.exception` в `pagingState.error`). Не заводи DAO/subject для серверных пагинированных списков.
 
 ---
 
@@ -1044,7 +1045,7 @@ fvm dart run build_runner build --delete-conflicting-outputs
 
 ## Чеклист
 
-- [ ] `ItemEntity` использует **только базовые типы**, ровно пять полей `id`/`name`/`status` (String-`name`)/`createdAt` (ISO-8601 String)/`description` (required-nullable); никаких `tags`/`DateTime`/enum-как-enum. `ItemsEntity` — page wrapper `{items, page, page_size, total}` с `@JsonKey` (verification-срез; ПРОДУКТОВЫЕ обёртки фиксированы контрактом v0: `{chats|has_more}` / `{messages|has_more}` — фаза 025, живые фикстуры в `test/fixtures/wire/`).
+- [ ] `ItemEntity` использует **только базовые типы**, ровно пять полей `id`/`name`/`status` (String-`name`)/`createdAt` (ISO-8601 String)/`description` (required-nullable); никаких `tags`/`DateTime`/enum-как-enum. `ItemsEntity` — page wrapper `{items, page, page_size, total}` с `@JsonKey` (verification-срез; ПРОДУКТОВЫЕ обёртки фиксированы контрактом v0: `{chats, has_more}` / `{messages, has_more}` — фаза 025, живые фикстуры в `test/fixtures/wire/`).
 - [ ] Все `part`-директивы стоят: entities имеют `.freezed.dart` **и** `.g.dart`; BLoC-типы и доменные модели (`ItemModel`) — только `.freezed.dart` (entity-слой — единственное место с `.g.dart`/`fromJson`).
 - [ ] `ResponseEntity<T>` envelope (пример/TBD) + `EntityConverter<E>` реестр на месте; **каждый** новый entity, проходящий через `ResponseEntity<T>`, добавлен в ОБЕ цепочки (`fromJson` + `toJson`) `entity_converter.dart` (в скелете реестр пуст — ветки регистрируются per-feature).
 - [ ] `ItemMapper` расширяет `BaseMapper` (4-арг, `dynamic, dynamic` для простого случая), коэрция enum через `name`/`firstWhere(orElse:)`, дата — защитно в UTC (`DateTime.tryParse(...)?.toUtc() ?? DateTime.now().toUtc()` / `.toUtc().toIso8601String()`); импортирует `item_status.dart`; дочерние мапперы инжектируются конструктором.

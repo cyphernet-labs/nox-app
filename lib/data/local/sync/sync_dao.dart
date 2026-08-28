@@ -27,6 +27,19 @@ class SyncDao {
     await _store.record(_kStateKey).put(db, {_kSinceField: since});
   }
 
+  /// Atomically raises `since` to [seq] when higher — the read and the
+  /// conditional write share one transaction, so concurrent advances can never
+  /// interleave and persist a lower value after a higher one.
+  Future<void> advanceSince(int seq) async {
+    final db = await _database.db;
+    await db.transaction((txn) async {
+      final record = await _store.record(_kStateKey).get(txn);
+      final current = record?[_kSinceField];
+      final since = current is int ? current : 0;
+      if (seq > since) await _store.record(_kStateKey).put(txn, {_kSinceField: seq});
+    });
+  }
+
   Future<void> cleanData() async {
     final db = await _database.db;
     await _store.record(_kStateKey).delete(db);

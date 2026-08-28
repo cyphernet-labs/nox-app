@@ -1,8 +1,10 @@
 {
-  "chat_id": "c_3b2a48bce50312ce",
-  "name": "Fixtures renamed",
-  "created_at": 1787862777,
-  "created_by_label": "Anna",
-  "last_message_preview": "design-spec.pdf",
-  "last_activity_at": 1787862781
+  "chat": {
+    "chat_id": "c_3b2a48bce50312ce",
+    "name": "Fixtures renamed",
+    "created_at": 1787862777,
+    "created_by_label": "Anna",
+    "last_message_preview": "design-spec.pdf",
+    "last_activity_at": 1787862781
+  }
 }

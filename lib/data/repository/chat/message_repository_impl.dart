@@ -110,10 +110,33 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
     }
   }
 
+  /// Chats already checked for pre-025 rows this process (cheap memo — the
+  /// backfill itself is one-time per DB).
+  final Set<String> _legacySeqChecked = <String>{};
+
+  /// One-time per-chat backfill for rows persisted before 025 (no `seq` field):
+  /// assigns ascending synthetic seqs in stored (sentAt) order BELOW every real
+  /// seq in the chat, so the value cursor in [getMessages] stays sound on an
+  /// upgraded-in-place DB (a legacy `seq == 0` cursor would otherwise trim the
+  /// whole window and strand the older history). Device-local numbering only —
+  /// these rows never travel back to the wire.
+  Future<void> _backfillLegacySeqIfNeeded(String chatId) async {
+    if (!_legacySeqChecked.add(chatId)) return;
+    final entities = await _messageDao.getByChatSorted(chatId);
+    final legacy = entities.where((e) => e.seq == null).toList();
+    if (legacy.isEmpty) return;
+    final realSeqs = entities.map((e) => e.seq).whereType<int>();
+    // The block lands directly below the chat's lowest real seq (or at 1..n on
+    // an all-legacy chat), preserving the stored order.
+    var next = realSeqs.isEmpty ? 1 : realSeqs.reduce(min) - legacy.length;
+    await _messageDao.saveData([for (final e in legacy) e.copyWith(seq: next++)]);
+  }
+
   @override
   Future<RepositoryResult<(List<MessageModel>, PageMetadata)>> getMessages({required GetMessagesConfig config}) {
     return execute<(List<MessageModel>, PageMetadata)>(() async {
       await _seedChatIfEmpty(config.chatId);
+      await _backfillLegacySeqIfNeeded(config.chatId);
       final all = (await _messageDao.getByChatSorted(config.chatId)).map((e) => _mapper.toModel(entity: e)).toList();
       // Cursor window over the seq-ascending list: everything strictly older
       // than beforeSeq (or the whole list for the tail), newest `limit` rows.
@@ -133,6 +156,7 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
   @override
   Stream<List<MessageModel>> watchMessages(String chatId) async* {
     await _seedChatIfEmpty(chatId);
+    await _backfillLegacySeqIfNeeded(chatId);
     yield* _messageDao.watch(chatId).map((entities) => entities.map((e) => _mapper.toModel(entity: e)).toList());
   }
 

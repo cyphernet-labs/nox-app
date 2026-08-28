@@ -14,9 +14,9 @@ class SyncRepositoryImpl implements SyncRepository {
   @override
   Future<void> advanceCursor(int seq) async {
     // Monotonic max: duplicates at the replay/live boundary (contract §3)
-    // and out-of-order applications never move the cursor backwards.
-    if (seq <= await _dao.readSince()) return;
-    await _dao.writeSince(seq);
+    // and out-of-order applications never move the cursor backwards. The
+    // check-then-write is atomic inside the DAO's transaction.
+    await _dao.advanceSince(seq);
   }
 
   @override

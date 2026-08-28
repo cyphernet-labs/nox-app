@@ -31,6 +31,13 @@ void main() {
     expect(await repo.getCursor(), 101);
   });
 
+  test('concurrent advances resolve to the max (the check-then-write is transactional)', () async {
+    // Unawaited interleaved advances: without the DAO-level transaction the
+    // read-then-write pairs could interleave and persist a lower value last.
+    await Future.wait([repo.advanceCursor(10), repo.advanceCursor(300), repo.advanceCursor(200), repo.advanceCursor(40)]);
+    expect(await repo.getCursor(), 300);
+  });
+
   test('clear resets the cursor to zero (the logout wipe)', () async {
     await repo.advanceCursor(9000);
     await repo.clear();

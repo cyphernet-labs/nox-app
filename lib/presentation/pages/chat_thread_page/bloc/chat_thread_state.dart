@@ -35,14 +35,18 @@ extension ChatThreadInitializedExt on Initialized {
   /// id, and the live `items` also carry it — keep only one bubble.
   List<MessageModel> get allMessages {
     final itemIds = items.map((m) => m.id).toSet();
+    final queueIndex = <String, int>{for (var i = 0; i < outgoing.length; i++) outgoing[i].id: i};
     final merged = [...items, ...outgoing.where((m) => !itemIds.contains(m.id))]
       ..sort((a, b) {
         final bySeq = a.seq.compareTo(b.seq);
         if (bySeq != 0) return bySeq;
         final byTime = a.sentAt.compareTo(b.sentAt);
-        // Deterministic under the frozen test clock: queued sends share the
-        // sentinel seq AND the frozen timestamp - fall back to the id.
-        return byTime != 0 ? byTime : a.id.compareTo(b.id);
+        if (byTime != 0) return byTime;
+        // Queued sends share the sentinel seq AND (under a frozen clock) the
+        // timestamp: their tiebreak is the queue position — a lexicographic id
+        // compare would put 'local_10' before 'local_2' past nine queued sends.
+        final byQueue = (queueIndex[a.id] ?? -1).compareTo(queueIndex[b.id] ?? -1);
+        return byQueue != 0 ? byQueue : a.id.compareTo(b.id);
       });
     return merged;
   }

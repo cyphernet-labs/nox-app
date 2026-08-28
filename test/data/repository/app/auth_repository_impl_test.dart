@@ -80,10 +80,10 @@ void main() {
 
   test('logout wipes the chat + message caches after a successful clear (full local wipe)', () async {
     await repository.logout();
-    verify(session.clear()).called(1);
-    verify(chats.clean()).called(1);
-    verify(messages.clean()).called(1);
-    verify(sync.clear()).called(1); // the cursor dies with the local data
+    // The cursor goes FIRST: a crash mid-wipe must leave it behind the stores
+    // (safe), never ahead of an emptied store (a stale high `since` would skip
+    // replayed history forever under the monotonic guard).
+    verifyInOrder([session.clear(), sync.clear(), chats.clean(), messages.clean()]);
   });
 
   test('completeOnboarding marks the flag and re-derives app state', () async {

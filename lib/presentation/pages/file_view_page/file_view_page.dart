@@ -186,7 +186,9 @@ class _FileViewPageState extends State<FileViewPage> with SingleTickerProviderSt
             onPressed: (_cached && !_expired) ? _save : null,
             icon: AppIconWidget(
               NoxIcons.download,
-              color: _cached ? colorScheme.onSurface : colorScheme.onSurface.withValues(alpha: NoxOpacity.disabled),
+              // Dim with the SAME predicate that disables onPressed: an expired
+              // attachment must read as gated, not as a live control (FR-006).
+              color: (_cached && !_expired) ? colorScheme.onSurface : colorScheme.onSurface.withValues(alpha: NoxOpacity.disabled),
             ),
           ),
         ],

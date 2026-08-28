@@ -53,12 +53,13 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
       _sessionRepository.clear,
       sessionExpired: forced,
       afterMutate: () async {
+        // The cursor goes FIRST: a crash mid-wipe must leave it behind the
+        // stores (safe - replay re-applies idempotently), never ahead of an
+        // emptied store (a stale high `since` would skip every row below it
+        // and the monotonic guard would keep it stuck forever).
+        await _syncRepository.clear();
         await _chatRepository.clean();
         await _messageRepository.clean();
-        // The cursor promises "applied locally up to seq" - once the local
-        // data is gone the promise must go with it (a fresh login replays
-        // from since = 0).
-        await _syncRepository.clear();
       },
     );
   }

@@ -22,10 +22,21 @@ void main() {
   final messageMapper = MessageWireMapper();
   final chatMapper = ChatWireMapper();
 
+  /// Unwraps a command-reply `data` payload: chat.create/chat.rename replies
+  /// wrap the entity as `{chat: ...}` and message.send as `{message: ...}`
+  /// (contract §4/§5, noxd `chatReply`/`messageSendReply`) — events and list
+  /// pages are flat. Asserts the wrapper carries EXACTLY the one key, so a
+  /// contract drift in the reply shell fails here, not in phase 027.
+  Map<String, dynamic> unwrapReply(Map<String, dynamic> raw, String key) {
+    expect(raw.keys, [key], reason: 'a command reply wraps the entity as {$key: ...} and nothing else');
+    return raw[key] as Map<String, dynamic>;
+  }
+
   /// Parses [name] as a Message frame, maps it to the domain and back, and
   /// asserts the reserialized wire JSON matches the live frame field-exactly.
-  MessageWireEntity expectMessageRoundTrip(String name, {bool expectClientMessageId = false}) {
-    final raw = fixture(name);
+  /// [replyWrapped] unwraps the `{message: ...}` command-reply shell first.
+  MessageWireEntity expectMessageRoundTrip(String name, {bool expectClientMessageId = false, bool replyWrapped = false}) {
+    final raw = replyWrapped ? unwrapReply(fixture(name), 'message') : fixture(name);
     final entity = MessageWireEntity.fromJson(raw);
 
     final out = entity.toJson();
@@ -53,7 +64,9 @@ void main() {
 
     for (final name in ['chat_create_echo.json', 'chat_rename_echo.json', 'chat_created_event.json', 'chat_updated_event.json']) {
       test('$name: the Chat model parses and reserializes 1:1', () {
-        final raw = fixture(name);
+        // Command echoes arrive wrapped as {chat: ...}; events are flat (§6).
+        final wrapped = name.endsWith('_echo.json');
+        final raw = wrapped ? unwrapReply(fixture(name), 'chat') : fixture(name);
         final entity = ChatWireEntity.fromJson(raw);
         expect(entity.toJson(), raw, reason: '$name must reserialize field-exactly');
 
@@ -65,7 +78,7 @@ void main() {
     }
 
     test('message_send_echo.json: the author echo carries client_message_id and a text body', () {
-      final entity = expectMessageRoundTrip('message_send_echo.json', expectClientMessageId: true);
+      final entity = expectMessageRoundTrip('message_send_echo.json', expectClientMessageId: true, replyWrapped: true);
       final model = messageMapper.toModel(entity: entity);
       expect(model.text, 'hello from the fixture');
       expect(model.seq, entity.seq);
@@ -73,7 +86,7 @@ void main() {
     });
 
     test('message_send_attachment_echo.json: the attachment assembles with the derived category', () {
-      final entity = expectMessageRoundTrip('message_send_attachment_echo.json', expectClientMessageId: true);
+      final entity = expectMessageRoundTrip('message_send_attachment_echo.json', expectClientMessageId: true, replyWrapped: true);
       final model = messageMapper.toModel(entity: entity);
       expect(model.text, isNull); // attachment-only: no body on the wire
       expect(model.attachment!.id, entity.attachment!.fileId);

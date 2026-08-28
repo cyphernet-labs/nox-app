@@ -12,7 +12,7 @@
 | `ServerLimits` (NEW) | `{int maxMessageBytes, int maxAttachmentBytes, int maxFrameBytes}` + const контрактные дефолты; доступ через `AppConfigRepository.limits` |
 | `PageMetadata` | `{required int total, int? nextPage}` → `{required bool hasMore, int? nextPage}` (`nextPage` — только страничный путь чатов) |
 | `GetMessagesConfig` | `{chatId, page}` → `{chatId, int? beforeSeq, int limit}`; фабрики `tail(chatId)` / `olderThan(chatId, beforeSeq)`; `pageSize` остаётся 20 |
-| `RepositoryException` | + `invalidRequest, nameTaken, payloadTooLarge, attachmentGone, rateLimited, unsupportedSchema`; маппер `wireCodeToException` (неизвестный → `internal`) |
+| `RepositoryException` | + `invalidRequest, nameTaken, payloadTooLarge, attachmentGone, rateLimited, unsupportedSchema`; маппер `RepositoryException.fromWireCode` (неизвестный → `internal`) |
 | `SyncRepository` (NEW) | `getCursor() → int`, `advanceCursor(int seq)` (монотонный max), `clear()` |
 
 ## Sembast (все новые поля — необязательные, паттерн `attachmentLocalPath`)

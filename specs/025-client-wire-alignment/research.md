@@ -36,7 +36,7 @@
 
 ## R5. Envelope-ошибка — `{code, message}` и маппинг в коды репозитория
 
-**Decision**: `ResponseEntity.error` меняет тип `String?` → `ErrorWireEntity? {code, message}`; `RepositoryException` расширяется значениями `invalidRequest, nameTaken, payloadTooLarge, attachmentGone, rateLimited, unsupportedSchema`; хелпер `wireCodeToException(code)` (неизвестный код → `internal` — правило эволюции §2.1); репозитории при `success == false`/`error != null` бросают маппированное значение (вместо `StateError` → `unknown`).
+**Decision**: `ResponseEntity.error` меняет тип `String?` → `ErrorWireEntity? {code, message}`; `RepositoryException` расширяется значениями `invalidRequest, nameTaken, payloadTooLarge, attachmentGone, rateLimited, unsupportedSchema`; хелпер `RepositoryException.fromWireCode(code)` (неизвестный код → `internal` — правило эволюции §2.1); репозитории при `success == false`/`error != null` бросают маппированное значение (вместо `StateError` → `unknown`).
 
 **Rationale**: §9.5; сегодняшний путь схлопывает всё в `unknown`, а мок-генераторы никогда не бросают `DioException` — код провода обязан доезжать до `RepositoryResult.error`.
 
