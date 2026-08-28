@@ -27,9 +27,10 @@ import 'package:uuid/uuid.dart';
 
 /// Cache-first chat thread (5.2) over the local Sembast DB. The [MessageRemoteDataSource]
 /// (mock this phase) seeds a chat's history ONCE on first open; thereafter the
-/// thread is paginated FROM the DB (newest batch first), and [sendMessage] persists
-/// the accepted message locally. No backend — when transport lands, only the
-/// data-source binding swaps; the DB contract stays.
+/// thread is paginated FROM the DB by the seq cursor (newest batch first, older
+/// batches by `before_seq` — contract §5), and [sendMessage] persists the accepted
+/// message locally. When the transport lands (027) and the binding flips (028),
+/// only the data source swaps; the DB contract and the wire shapes stay.
 @LazySingleton(as: MessageRepository, env: [Environment.dev, Environment.prod, Environment.test])
 class MessageRepositoryImpl with BaseRepositoryHelper implements MessageRepository {
   MessageRepositoryImpl(

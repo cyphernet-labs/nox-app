@@ -28,10 +28,11 @@ part 'chat_thread_bloc.freezed.dart';
 part 'chat_thread_event.dart';
 part 'chat_thread_state.dart';
 
-/// Chat thread (5.2) — the second blueprint network-only feature after the chats
-/// list. PagingState-in-state (older history paged in on scroll-up via sequential()),
+/// Chat thread (5.2) over the cache-first message repository. PagingState-in-state
+/// with a SEQ CURSOR rather than page numbers (feature 025): [Initialized.oldestLoadedSeq]
+/// is the `before_seq` of the next older batch, pulled in on scroll-up via sequential();
 /// plus an `outgoing` list for optimistic sends (pending → sent / error + retry).
-/// Resolves [MessageRepository] from DI (mock-backed in the UI phase). Offline /
+/// Resolves [MessageRepository] from DI (mock-backed until the 016 flip). Offline /
 /// empty / fatal / send-error are reproduced by [ChatThreadScenario] (debug).
 class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   ChatThreadBloc() : super(const ChatThreadState.initializing()) {

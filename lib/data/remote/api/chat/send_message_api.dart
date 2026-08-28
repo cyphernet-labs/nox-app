@@ -11,7 +11,7 @@ import 'package:nox_app/general/app_clock.dart';
 import 'package:nox_app/general/mock_seq.dart';
 import 'package:uuid/uuid.dart';
 
-/// Skeleton MOCK one-shot send (no real backend — UI phase). Echoes the message
+/// MOCK one-shot send standing in for the server until phase 028. Echoes the message
 /// back as accepted (`sent`) after a short delay, authored with the signed-in
 /// identity resolved by the caller (MessageRepositoryImpl, from the session), wrapped
 /// in the reference `ResponseEntity<MessageWireEntity>` envelope (feature P6 — uniform

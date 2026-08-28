@@ -14,8 +14,10 @@ make golden-verify   # 216 baseline — UI-поведение заморожен
 ```bash
 cd client_backend && go build -o noxd . && ./noxd -addr 127.0.0.1:8080 -db /tmp/nox-fixtures.db
 # websocat: hello → chat.create → message.send (текст и вложение через curl PUT) → chats.list → messages.list → chat.files
-# payload'ы ответов/событий (поле data) сохраняются в test/fixtures/wire/*.json как есть
+# поле data кадра сохраняется в test/fixtures/wire/*.json ЦЕЛИКОМ, без раздевания
 ```
+
+Важно: `data` ответа на команду несёт обёртку — `{"chat": {…}}` у `chat.create`/`chat.rename`, `{"message": {…}}` у `message.send` (контракт §4/§5, серверные `chatReply`/`messageSendReply`); события и страницы плоские. Сохраняй кадр как есть — снятая обёртка спрячет реальную форму ответа до самой фазы 027.
 
 Расхождение фикстуры и DTO чинится **в коде клиента** (Принцип VII), фикстура не редактируется.
 

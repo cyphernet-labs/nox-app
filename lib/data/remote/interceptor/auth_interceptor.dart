@@ -11,7 +11,8 @@ import 'package:nox_app/domain/repository/app_config/app_config_repository.dart'
 /// [AuthRepository] is resolved LAZILY at 401 time (via the `authRepository` top-level
 /// alias), never held as a constructor reference — this breaks any potential
 /// `ApiClient → AuthInterceptor → AuthRepository → repositories` DI cycle. The
-/// `Bearer` scheme is an example/TBD placeholder until the NOX backend is chosen.
+/// `Bearer` scheme is a placeholder until stage-2 authentication is specified —
+/// stage 1 of the contract runs without auth, so nothing writes the token yet.
 class AuthInterceptor extends Interceptor {
   AuthInterceptor(this._config);
 

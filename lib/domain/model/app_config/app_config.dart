@@ -9,8 +9,9 @@ class AppConfig {
 
   final AppFlavorType flavor;
 
-  /// Base URL for the (future) backend. `null` = TBD placeholder → the transport
-  /// stays inert (the app runs on the local Sembast DB). A per-flavor real URL lands
-  /// with the backend (feature S5 wires only the plumbing).
+  /// Base URL of the client server. `null` while the app runs on mocks → the
+  /// transport stays inert (everything is served from the local Sembast DB). The
+  /// per-flavor real URL lands with the WebSocket transport (phase 027);
+  /// feature S5 wired only the plumbing.
   final String? apiUrl;
 }

@@ -40,8 +40,9 @@ mixin BaseRepositoryHelper {
   }
 
   /// Maps a transport error to a domain [RepositoryException] by connection type and
-  /// HTTP status. Enables error/offline/notFound BLoC states to be driven through the
-  /// real path once the backend lands (mock APIs never throw these today).
+  /// HTTP status — the HTTP path (blob upload/download, phase 028). Envelope errors
+  /// take the other route: [unwrapEnvelope] throws the code-mapped exception and the
+  /// `on BaseRepositoryException` branch re-emits it unchanged.
   RepositoryException _mapDioException(DioException e) {
     switch (e.type) {
       case DioExceptionType.connectionTimeout:

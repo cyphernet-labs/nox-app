@@ -38,7 +38,8 @@ import 'package:nox_app/presentation/widgets/state/app_progress_widget.dart';
 /// chat opens the (M4) thread placeholder. Desktop: a list-detail (rail provided by
 /// the shell) — a 360 list pane + a thread pane that highlights the selected row
 /// without a push (thread content = M4 placeholder). Owns [ChatsListBloc] over the
-/// network-only mock chats repository. `[inShell]` suppresses the back affordance
+/// cache-first chats repository (mock-backed until the 016 flip). `[inShell]`
+/// suppresses the back affordance
 /// when hosted as a shell tab; [scrollToTop] is bumped by the shell on Chats re-tap.
 class ChatsListPage extends StatefulWidget {
   const ChatsListPage({

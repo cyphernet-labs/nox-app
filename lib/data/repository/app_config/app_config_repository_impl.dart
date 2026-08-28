@@ -25,8 +25,9 @@ class AppConfigRepositoryImpl implements AppConfigRepository {
 
   @override
   Future<void> initialize({required AppFlavorType flavorType}) async {
-    // apiUrl is a TBD placeholder (null → no real requests); a per-flavor real URL
-    // lands with the backend. Token/security-header bootstrap is example/TBD.
+    // apiUrl stays null while the app runs on mocks (no real requests); the
+    // per-flavor URL lands with the transport (027). The token bootstrap waits
+    // on stage-2 auth — stage 1 of the contract has no authentication.
     _config = AppConfig(flavor: flavorType);
   }
 

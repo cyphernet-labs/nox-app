@@ -45,7 +45,7 @@
 
 - [x] T014 [US2] Capture live frames from a local noxd per quickstart.md and commit them under test/fixtures/wire/ (hello, chat_create_echo, chat_created_event, chat_updated_event, message_send_echo, message_new_attachment_event, chats_list_page, messages_list_page, chat_files_page)
 - [x] T015 [US2] Add fixture round-trip tests in test/data/entity/chat/wire/wire_fixtures_test.dart: parse payload → domain mapping asserts → serialize back → field-exact map comparison; unknown-field tolerance (inject an extra key) and non-text body tolerance cases; hello limits → ServerLimits parse
-- [x] T016 [US2] Map envelope errors in repositories: on success==false/error!=null throw RepositoryException.fromWireCode(code) inside execute paths of ChatRepositoryImpl/MessageRepositoryImpl (replacing StateError-only), and extend a mock-generator seam to produce an error envelope for tests; repository tests assert nameTaken/payloadTooLarge/attachmentGone surface as distinct RepositoryException values (SC-005)
+- [x] T016 [US2] Map envelope errors in repositories: on success==false/error!=null throw RepositoryException.fromWireCode(code) inside execute paths of ChatRepositoryImpl/MessageRepositoryImpl (replacing StateError-only), repository tests inject a mockito `Mock*RemoteDataSource` returning error envelopes and assert nameTaken/payloadTooLarge/attachmentGone surface as distinct RepositoryException values (SC-005)
 
 **Checkpoint**: SC-001/SC-005 закрыты.
 

@@ -20,8 +20,9 @@ import 'package:uuid/uuid.dart';
 
 /// Cache-first chats list (5.1) over the local Sembast DB. The [ChatRemoteDataSource]
 /// (mock this phase) seeds the store ONCE on first read; thereafter the list, search
-/// and pagination are served from the DB, and [createChat] persists locally. No
-/// backend — when transport lands, only the data-source binding swaps; the DB contract stays.
+/// and pagination are served from the DB, and [createChat] persists locally. When the
+/// transport lands (027) and the binding flips (028), only the data source swaps —
+/// the DB contract and the paged wire shape `{chats, has_more}` (§4) stay.
 @LazySingleton(as: ChatRepository, env: [Environment.dev, Environment.prod, Environment.test])
 class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
   ChatRepositoryImpl(this._chatDao, this._chatRemote, this._mapper, this._wireMapper, this._messageRepository);

@@ -44,7 +44,7 @@
 
 ## R6. Курсор `since` — Sembast-store `sync`, гибнет с логаутом
 
-**Decision**: новый одно-записный store `sync` (`SyncDao`, record key `state`, поле `since`); `SyncRepository {getCursor, advanceCursor(seq), clear}`; `advanceCursor` — монотонный max; писатели на моках: сид сообщений (максимальный сидовый `seq`), send-эхо, `simulateIncoming`; `AuthRepositoryImpl.logout.afterMutate` дополняется `syncRepository.clear()`.
+**Decision**: новый одно-записный store `sync` (`SyncDao`, record key `state`, поле `since`); `SyncRepository {getCursor, advanceCursor(seq), clear}`; `advanceCursor` — монотонный max, причём проверка-и-запись выполняются **в одной транзакции** DAO (иначе конкурентные продвижения могут записать меньшее значение последним); писатели на моках: сид сообщений (максимальный сидовый `seq`), send-эхо, `simulateIncoming`; в `AuthRepositoryImpl.logout.afterMutate` очистка курсора идёт **первой**, до сторов чатов и сообщений — падение посреди вайпа должно оставить курсор позади данных (replay идемпотентен), а не впереди опустошённого стора.
 
 **Rationale**: §9.4; жизненный цикл курсора обязан совпадать с локальными сообщениями (вместе пишутся — вместе гибнут), поэтому Sembast, а не prefs; писатели-моки дают честную семантику «максимальный применённый seq» до появления транспорта.
 

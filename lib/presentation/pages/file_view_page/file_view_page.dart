@@ -33,8 +33,9 @@ Future<void> showFileView(BuildContext context, MessageAttachment file) => showA
 
 /// 5.3 File view — inspect / download a file attachment. No content preview: only
 /// the type glyph, name and size. Auto-downloads to cache with a determinate
-/// progress bar, then enables Save (to Downloads). UI-phase stub: the progress is
-/// timer-driven and Save is a no-op + snackbar (`// TODO(backend):`). Save is
+/// progress bar, then enables Save (to Downloads). The progress is still timer-driven
+/// (the real `file.downloadBegin` → GET-with-Range chain lands in 028), but Save is
+/// REAL since feature 020: it picks a destination and copies the bytes. Save is
 /// additionally gated by the attachment's server retention deadline
 /// (`expiresAt`, contract §5/025): an expired file cannot be saved - the
 /// bytes are gone server-side (terminal `attachment_gone` state). Local state

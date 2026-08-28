@@ -22,10 +22,11 @@ part 'chats_list_bloc.freezed.dart';
 part 'chats_list_event.dart';
 part 'chats_list_state.dart';
 
-/// Chats list (5.1) — the open shared space. Network-only paginated list mirroring
-/// [ItemListBloc] (PagingState-in-state, sequential() loads, executeLogic + onError).
-/// Resolves [ChatRepository] from DI (mock-backed in the UI phase). Search filters
-/// server-side via [GetChatsConfig.search] (debounced); offline / inline-error /
+/// Chats list (5.1) — the open shared space. Paginated list mirroring [ItemListBloc]
+/// (PagingState-in-state, sequential() loads, executeLogic + onError) over the
+/// cache-first chat repository, kept live by a `watchChats()` change-signal.
+/// Resolves [ChatRepository] from DI (mock-backed until the 016 flip). Search filters
+/// via [GetChatsConfig.search] (debounced); offline / inline-error /
 /// fatal / empty states are reproduced by [ChatsListScenario] (debug). Desktop
 /// list-detail selection (`selectedChatId`) is view-state, not a navigation push.
 class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
