@@ -4,6 +4,7 @@ import 'package:nox_app/data/mapper/base_mapper.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
+import 'package:nox_app/domain/model/file/mime_types.dart';
 import 'package:nox_app/general/app_clock.dart';
 
 /// Wire<->domain coercion for a message, 1:1 with contract v0 §5. `toModel` =
@@ -34,7 +35,7 @@ class MessageWireMapper extends BaseMapper<MessageWireEntity, MessageModel, dyna
           ? null
           : MessageAttachment(
               id: attachment.fileId,
-              type: FileType.fromExtension(_extensionOf(attachment.name)),
+              type: FileType.fromExtension(MimeTypes.extensionOf(attachment.name)),
               name: attachment.name,
               sizeBytes: attachment.size,
               mime: attachment.mime,
@@ -61,18 +62,13 @@ class MessageWireMapper extends BaseMapper<MessageWireEntity, MessageModel, dyna
               fileId: attachment.id,
               name: attachment.name,
               size: attachment.sizeBytes,
-              // Drafts picked locally have no wire metadata yet; the mock
-              // echo needs concrete values, mirroring what a real server
-              // assembles from uploadBegin.
-              mime: attachment.mime ?? 'application/octet-stream',
+              // A locally picked draft carries no server metadata yet: the mime
+              // is DERIVED from the name extension (contract §7 — the client
+              // owns that derivation and the picker never reads bytes), which
+              // is exactly what a real uploadBegin would be told.
+              mime: attachment.mime ?? MimeTypes.forFileName(attachment.name),
               expiresAt: (attachment.expiresAt ?? AppClock.now().add(const Duration(days: 3650))).toUtc().millisecondsSinceEpoch ~/ 1000,
             ),
     );
-  }
-
-  static String? _extensionOf(String name) {
-    final dot = name.lastIndexOf('.');
-    if (dot <= 0 || dot == name.length - 1) return null;
-    return name.substring(dot + 1);
   }
 }

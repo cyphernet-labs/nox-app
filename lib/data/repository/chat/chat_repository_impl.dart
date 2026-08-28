@@ -48,7 +48,9 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
       final response = await _chatRemote.getChats(config: GetChatsConfig.nextPage(page: page));
       final data = unwrapEnvelope(response, 'chats');
       all.addAll(_wireMapper.toListModel(entities: data.chats));
-      if (!data.hasMore) break;
+      // An empty page ends the walk even if has_more stayed true: a desynced
+      // server must not spin this loop forever (mirrors the messages seed).
+      if (!data.hasMore || data.chats.isEmpty) break;
       page = page + 1;
     }
     // Unread badges are device-local (contract §8.3, not on the wire): the

@@ -9,6 +9,7 @@ import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
 import 'package:nox_app/domain/model/chat/message_status.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
+import 'package:nox_app/domain/model/file/mime_types.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/base/page_metadata.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
@@ -278,6 +279,13 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   /// loaded item count plus a batch of headroom for fresh arrivals (the
   /// cursor equivalent of the old page-prefix walk). Re-folds `items`
   /// WITHOUT touching the optimistic `outgoing` / draft / loading state.
+  ///
+  /// NOTE for phase 027 (transport): this read is served locally today, so the
+  /// requested limit is unbounded. Against the real server the contract caps a
+  /// batch at 100 with a SILENT clamp (§5) — past ~80 loaded rows a single tail
+  /// read would come back truncated and the loaded span would shrink. When the
+  /// remote source lands, this must walk the cursor (or refresh only the newest
+  /// batch) instead of asking for the whole span at once.
   Future<void> _refreshMessages(Initialized live0, Emitter<ChatThreadState> emit) async {
     if (_scenario == ChatThreadScenario.fatal || _scenario == ChatThreadScenario.empty) return;
     // An inbound that lands in the currently-viewed chat stays read (no-op at 0 otherwise).
@@ -308,6 +316,9 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
           name: picked.name,
           sizeBytes: picked.sizeBytes,
           type: FileType.fromExtension(picked.extension),
+          // Derived client-side from the extension (contract §7) — this is the
+          // value file.uploadBegin is told; the picker never reads bytes.
+          mime: MimeTypes.forExtension(picked.extension),
           localPath: picked.path, // drives the image thumbnail + real save (F4/F2)
         ),
       ),
