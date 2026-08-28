@@ -28,7 +28,7 @@ secrets/<flavor>.enc.yaml   (SOPS+age encrypted, committed)
 String.fromEnvironment('API_URL') / AppFlavor.getFlavor() / configureDependencies(env)
 ```
 
-> **Состояние скелета (Feature-001).** Поток выше — **целевая** форма. На сегодня в репозитории **нет** ни `secrets/`-бандлов, ни `secrets:decrypt`-задач, ни age-ключа: флейвор инжектится только закоммиченным `config/<flavor>.json` (`{"app.flavor": "stage|prod"}`), а сборки идут в `--debug` на всех пяти платформах (см. §4, §8). SOPS+age-конвейер ниже описан как конвенция, которая включается с первой реальной потребностью в секретах (бэкенд/протокол NOX ещё не выбран).
+> **Состояние сборочной инфраструктуры.** Поток выше — **целевая** форма. Приложение при этом давно не скелет: это законченный продукт на моках поверх реальной локальной Sembast-БД (фичи 001–021 смёржены), а серверный этап 1 (022–024) готов в `client_backend/`. Отстаёт именно сборочный контур: в репозитории **нет** ни `secrets/`-бандлов, ни `secrets:decrypt`-задач, ни age-ключа — флейвор инжектится только закоммиченным `config/<flavor>.json` (`{"app.flavor": "stage|prod"}`), а сборки идут в `--debug` на всех пяти платформах (см. §4, §8). SOPS+age-конвейер ниже описан как конвенция, которая включается с первой реальной потребностью в секретах. Бэкенд **выбран** (Go-сервер `noxd` + встроенный SQLite, контракт v0, транспорт wss:443 с пиннингом ключа), но конкретный per-flavor набор `apiUrl`/секретов приходит вместе с транспортом (фаза 027), а токен — со stage-2-аутентификацией (этап 1 контракта работает без неё).
 
 ---
 
@@ -246,16 +246,20 @@ run = "$FLUTTER build linux --dart-define-from-file=config/prod.json"
 - Decrypt пишет **и** `dart-define.json`, **и** нативные конфиги туда, где их ждёт IDE/Gradle/Xcode для one-click переключения флейворов.
 - Сборки резолвят Flutter через симлинк FVM (`$FLUTTER`), передают `--dart-define=app.flavor=<flavor>` + `--dart-define-from-file=...`, и сначала делают `flutter clean`.
 - `--obfuscate --split-debug-info=build/symbols` включён для релизных сборок (символы для дешифровки стек-трейсов в observability-бэкенде — см. `OBSERVABILITY_DSN` в env-наборе; **конкретный observability-вендор не зафиксирован**, DSN env-gated в `prod`/`stage`; см. `17-analytics.md` про vendor-neutral / opt-in модель).
-- `jq '{ ... }'` явно перечисляет только те ключи, которые должны попасть в `dart-define` — это allowlist, а не «весь YAML». Набор ключей (`API_URL`, `SUPPORT_EMAIL`, `OBSERVABILITY_DSN`) — **пример** (бэкенд/протокол NOX ещё не выбран; замените на реальный контракт). Добавляя новую переменную в `dart-define`, расширьте этот список **в обоих** флейворах.
+- `jq '{ ... }'` явно перечисляет только те ключи, которые должны попасть в `dart-define` — это allowlist, а не «весь YAML». Набор ключей (`API_URL`, `SUPPORT_EMAIL`, `OBSERVABILITY_DSN`) — **пример**: бэкенд и протокол выбраны (Go-сервер `noxd`, контракт v0), но конкретный per-flavor набор секретов ещё не зафиксирован — реальный адрес сервера приходит с транспортом (фаза 027), токен — со stage-2-аутентификацией, а observability-вендор до сих пор не выбран. Добавляя новую переменную в `dart-define`, расширьте этот список **в обоих** флейворах.
 
 ### 4.1 dart-define-контракт — состояние и TBD
 
-Единственный закоммиченный dart-define-ключ сегодня — **`app.flavor`** (`config/<flavor>.json` несёт только его). Его читает `AppFlavor.getFlavor()` через `String.fromEnvironment('app.flavor')`; пустое/неизвестное значение → `prod` (безопасный дефолт). Скелетный конфиг-объект — это плоский value-object **`AppConfig`** (`lib/domain/model/app_config/app_config.dart`), который сегодня несёт **только** `flavor`:
+Единственный закоммиченный dart-define-ключ сегодня — **`app.flavor`** (`config/<flavor>.json` несёт только его). Его читает `AppFlavor.getFlavor()` через `String.fromEnvironment('app.flavor')`; пустое/неизвестное значение → `prod` (безопасный дефолт). Конфиг-объект — это плоский value-object **`AppConfig`** (`lib/domain/model/app_config/app_config.dart`) из двух полей: `flavor` и nullable `apiUrl`, который **во всех флейворах равен `null`** (фича 019 завела только проводку; реальный per-flavor адрес приходит с транспортом, фаза 027):
 
 ```dart
 class AppConfig {
-  const AppConfig({required this.flavor});
-  final AppFlavorType flavor; // TODAY carries ONLY flavor
+  const AppConfig({required this.flavor, this.apiUrl});
+
+  final AppFlavorType flavor;
+
+  /// Base URL of the client server. `null` while the app runs on mocks.
+  final String? apiUrl;
 }
 ```
 
@@ -265,23 +269,42 @@ class AppConfig {
 abstract class AppConfigRepository {
   Future<void> initialize({required AppFlavorType flavorType});
   AppConfig get config;
+
+  /// Auth token for the `Authorization` header (secure key `auth_id_token`).
+  /// No writer yet — stage-2 sign-in will persist it; stage 1 runs without auth.
+  Future<String?> getUserAuthIdToken();
+
+  /// Server payload bounds from the last session.hello (contract §3);
+  /// contract defaults until the transport (027) stores a live handshake.
+  ServerLimits get limits;
+  void updateLimits(ServerLimits limits);
+
+  bool get isTestEnvironment;
 }
 
 @LazySingleton(as: AppConfigRepository, env: [Environment.dev, Environment.prod, Environment.test])
 class AppConfigRepositoryImpl implements AppConfigRepository {
+  AppConfigRepositoryImpl(this._secureStorage, @Named('isTestEnvironment') this._isTestEnvironment);
+
   AppConfig? _config;
+
   @override
   Future<void> initialize({required AppFlavorType flavorType}) async {
+    // apiUrl stays null while the app runs on mocks; the per-flavor URL lands
+    // with the transport (027).
     _config = AppConfig(flavor: flavorType);
   }
+
   @override
   AppConfig get config => _config ?? (throw StateError('AppConfigRepository.initialize was not called'));
+
+  // … getUserAuthIdToken / limits / updateLimits / isTestEnvironment
 }
 ```
 
-Скелет vs целевой: **скелетный `AppConfig` несёт только `flavor`**. Никаких полей, читающих `API_URL` / signature-key (`apiSignatureKey`) / observability-DSN, в коде сегодня **нет** — это **целевые поля `AppConfig` (пример/TBD)**, которые добавляются, когда выберут бэкенд/протокол NOX. Файл помечен комментарием «token source / apiUrl / security headers are example/TBD (backend not chosen)».
+Сегодня vs целевое: `AppConfig` несёт `flavor` и всегда-`null` `apiUrl`; **ни одно из полей не читается из dart-define** — `initialize(...)` собирает объект из одного лишь флейвора. Полей под signature-key (`apiSignatureKey`) / observability-DSN в коде **нет** — это по-прежнему **целевые поля (пример/TBD)**. Актуальный doc-комментарий файла фиксирует ровно это: «`null` means no real requests are built this phase — the contract-v0 endpoint lands with the transport, feature 027».
 
-**Секрето-несущий набор dart-define-ключей — пример/TBD** (бэкенд/протокол NOX ещё не выбран). Иллюстративный allowlist (`API_URL`, `SUPPORT_EMAIL`, `OBSERVABILITY_DSN`) из §4 — это **пример** будущего контракта, а не зафиксированный набор. Когда контракт появится, добавьте соответствующие целевые поля в `AppConfig` (и заполняйте их в `AppConfigRepositoryImpl.initialize(...)`) и расширьте `jq`-allowlist синхронно.
+**Секрето-несущий набор dart-define-ключей — по-прежнему пример/TBD**, но по другой причине, чем раньше: wire-контракт **зафиксирован** (`docs/client-backend/protocol/contract-draft.md`, v0 — WebSocket на `wss:443` + REST только под блобы), а вот per-flavor набор секретов под него — нет. Иллюстративный allowlist (`API_URL`, `SUPPORT_EMAIL`, `OBSERVABILITY_DSN`) из §4 остаётся **примером**. Когда набор зафиксируют (адрес сервера + пиннутый ключ — с транспортом, фаза 027; токен — со stage-2-аутентификацией), добавьте соответствующие поля в `AppConfig` (и заполняйте их в `AppConfigRepositoryImpl.initialize(...)`) и расширьте `jq`-allowlist синхронно.
 
 > **Пустой ключ = выключенная фича, а не ошибка.** Когда секрето-несущие ключи появятся, пустое значение должно означать no-op, а не падение: `dev` без observability-DSN ⇒ `OBSERVABILITY_DSN=''` ⇒ телеметрия молчит (см. `17-analytics.md` — аналитика по умолчанию **выключена** до согласия пользователя). Флейвор передаётся **отдельным** ключом `app.flavor` (не из секретов).
 
@@ -632,7 +655,7 @@ jobs:
 
 Замечания:
 - Smoke-сборки запускаются в `--debug` и **не требуют секретов** — мы не вызываем decrypt и не используем секрето-несущий `--dart-define-from-file`. Это компайл-чек, а не релиз. Все пять джобов единообразно передают `--dart-define-from-file=config/stage.json` (только `app.flavor=stage`); iOS добавляет `--no-codesign`; Linux ставит `ninja-build libgtk-3-dev libsecret-1-dev libjsoncpp-dev` (GTK-тулчейн для desktop-эмбеддера + **build-time** зависимости плагина `flutter_secure_storage_linux`: его `CMakeLists.txt` делает `pkg_check_modules` на `libsecret-1`/`jsoncpp`, иначе `flutter build linux` падает на конфигурации CMake — `required packages were not found: libsecret-1`).
-- Этот compile-check покрывает все **5 целевых платформ** (конституция v1.1.0): Android + iOS + macOS + Windows + Linux. Desktop compile-smoke **включён**; упаковка/подпись (packaging/signing) — **на будущее** (§11a). Никаких desktop/Rust/FFI-шагов сверх этого нет.
+- Этот compile-check покрывает все **5 целевых платформ** (конституция v1.3.0, принцип VI — паритет mobile↔desktop): Android + iOS + macOS + Windows + Linux. Desktop compile-smoke **включён**; упаковка/подпись (packaging/signing) — **на будущее** (§11a). Никаких desktop/Rust/FFI-шагов сверх этого нет.
 
 **Platform support matrix (minimum OS).** Минимальные версии берутся из дефолтов `flutter create` под Flutter `3.44.1`. Пиннинг конкретных таргетов и подбор Linux apt-deps — **на будущее**.
 
@@ -687,7 +710,7 @@ echo "version: $(date -u +%y.%-m.%-d)+${BUILD_NUMBER}"
 
 > **NOX CD отложен.** `nox_app-cd-{stage,prod}.yml` пока **не активирован** — до появления Apple Developer / Google Play аккаунтов и desktop-сертификатов. Версионирование (`pubspec.yaml::version`, CalVer + shifted-epoch выше) и тэг-формат готовы; CD активируется при онбординге дистрибуции. До этого локально собирают через `mise run build:<platform>:<flavor>` (§4) / `make build-*` для проверки, без публикации.
 
-> **Версия — всегда закоммиченное значение.** CI может писать `pubspec.yaml::version`, но **только** через коммит — никогда runtime-инъекцией вида `flutter build --build-number=$GITHUB_RUN_NUMBER`. API-версионирование (например `/api/v1/` — **пример**, бэкенд/протокол NOX ещё не выбран; заменить на реальный контракт) — отдельная ось от версии артефакта.
+> **Версия — всегда закоммиченное значение.** CI может писать `pubspec.yaml::version`, но **только** через коммит — никогда runtime-инъекцией вида `flutter build --build-number=$GITHUB_RUN_NUMBER`. Версионирование протокола — **отдельная ось** от версии артефакта: у NOX это контракт v0 со схемой, согласуемой в приветствии сокета (`srv.schema_max`), а не путевой префикс вида `/api/vN` — REST-поверхность несёт только `PUT|GET /files/{token}` и `GET /health` (см. `docs/client-backend/protocol/contract-draft.md` §1–§2).
 
 ---
 
@@ -748,14 +771,14 @@ lib/design/gen/
 - [ ] `pubspec.yaml` объявляет `sdk: '>=3.12.0 <4.0.0'` и `flutter: 3.44.1`; `version` = закоммиченный `YY.M.D+SHIFTED_EPOCH` (в скелете placeholder `26.1.1+0`).
 - [ ] `config/stage.json` / `config/prod.json` несут только `{"app.flavor": "..."}`; используются единообразно на всех пяти платформах в скелете (desktop — постоянно).
 - [ ] `.mise.toml` пинит `sops 3.9` / `age 1.2`, `SOPS_AGE_KEY_FILE` → приватный ключ, `FLUTTER` → `.fvm/flutter_sdk`; скелетные `build:<platform>:<flavor>` = `$FLUTTER build … --debug --dart-define-from-file=config/<flavor>.json` (10 комбинаций; **нет** `secrets:*`).
-- [ ] `.sops.yaml` содержит creation rule + (placeholder) командный публичный age-ключ; `secrets/` и decrypt-задачи — конвенция на будущее (бэкенд не выбран).
+- [ ] `.sops.yaml` содержит creation rule + (placeholder) командный публичный age-ключ; `secrets/` и decrypt-задачи — конвенция на будущее (бэкенд выбран, но per-flavor набор секретов приходит с транспортом — фаза 027, токен — со stage-2-аутентификацией).
 - [ ] Decrypt-задачи (когда появятся) атомарны (`.tmp` + `mv`), пишут `dart-define.json` (jq-allowlist, vendor-neutral `OBSERVABILITY_DSN`) + нативные конфиги; набор ключей — пример/TBD.
 - [ ] `Makefile`: `deps`/`generate`/`format`/`analyze`/`test` (+ локальные golden-цели `golden-update`/`golden-verify`) + композитный `gate`; рекомендованный сплит `format` (mutating) vs `format-check` (non-mutating CI-гейт); build-обёртки делегируют в `mise run build:*`; **нет** `make release-*`.
 - [ ] Gradle (target): dimension `app` (`stage`/`prod`), per-flavor `applicationId` (`com.cyphernetlabs.noxapp[.stage]`), детект флейвора, выбор keystore, secrets-хук на `pre<Flavor><BuildType>Build`. Скелет: флейворов/подписи/хука нет, namespace `com.cyphernetlabs.nox_app` (underscore) vs applicationId `com.cyphernetlabs.noxapp`, compile/minSdk из `flutter.*`, label `NOX`, release на debug-ключах.
 - [ ] iOS (target): `Stage.xcconfig` / `Prod.xcconfig` + схемы `stage`/`prod`; Firebase plist через `secrets:decrypt`; fastlane на будущее. Скелет: флейворы не заведены.
 - [ ] Desktop-идентичность (§7a): macOS `PRODUCT_NAME=NOX` + bundle id `com.cyphernetlabs.noxapp`; Windows `ProductName "NOX"` / `BINARY_NAME "nox_app"`; Linux `APPLICATION_ID com.cyphernetlabs.noxapp` / `BINARY_NAME nox_app`; только prod-идентичность.
 - [ ] `.github/workflows/ci.yml`: один джоб `gate` на `macos-latest`, ветки `[develop, master]`, pub get → один кодоген → non-mutating format-check (`git ls-files lib test`) → analyze → test; `subosito/flutter-action` `3.44.1`; без `working-directory`.
-- [ ] `.github/workflows/compile-check.yml`: пять джобов (Android/iOS/macOS/Windows/Linux), ветки `[develop, master]` + `workflow_dispatch`, каждый `--dart-define-from-file=config/stage.json` (iOS `--no-codesign`; Linux ставит `ninja-build libgtk-3-dev`); все 5 целевых платформ (конституция v1.1.0).
+- [ ] `.github/workflows/compile-check.yml`: пять джобов (Android/iOS/macOS/Windows/Linux), ветки `[develop, master]` + `workflow_dispatch`, каждый `--dart-define-from-file=config/stage.json` (iOS `--no-codesign`; Linux ставит `ninja-build libgtk-3-dev`); все 5 целевых платформ (конституция v1.3.0, принцип VI).
 - [ ] Релизы — one-dispatch (`release-stage.yml`/`release-production.yml`); **нет** `make release-*` / `script_*.sh`; CD (`nox_app-cd-{stage,prod}.yml`) отложен до Apple/Play/desktop-сертификатов.
 - [ ] `.gitignore` исключает `.secrets-runtime/`, `.fvm/flutter_sdk`, `**/*.enc.yaml.dec`, расшифрованные нативные конфиги/keystores и Generated-блок (`*.g.dart`/`*.freezed.dart`/`*.config.dart`/`lib/design/gen/`).
 - [ ] Упаковка/подпись desktop задокументированы как «на будущее» (§11a); compile-smoke для desktop — есть (§8.2).

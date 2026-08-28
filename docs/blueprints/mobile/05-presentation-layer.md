@@ -1,7 +1,7 @@
 # 05 — Слой представления (BLoC)
 
 > **Назначение:** задать канонический скелет слоя представления (`lib/presentation/`) для приложения `nox_app`: Freezed-BLoC (sealed State/Event unions), тонкий `BaseBloc<E,S>`, `BaseStatePage<T>`, паттерн страницы, app-shell (`AppRoot` + `AppRootBloc` + адаптивный `AppShell`), каналы side-эффектов, дисциплину конкурентности и потребление `RepositoryResult<T>`.
-> **Когда читать:** когда вы создаёте любой экран, BLoC или app-shell-виджет, либо проводите связку «page → BLoC → repository». Первая реальная фича — список чатов (открытые общие пространства) — строится ровно по этому паттерну: это серверный, network-only пагинированный список (carve-out network-only применим к нему напрямую).
+> **Когда читать:** когда вы создаёте любой экран, BLoC или app-shell-виджет, либо проводите связку «page → BLoC → repository». Первая реальная фича — список чатов (открытые общие пространства) — строится ровно по этому паттерну: пагинированный список поверх **cache-first** репозитория (`ChatRepositoryImpl` + `ChatDao` над Sembast, реактивный `watchChats()`), а не network-only carve-out — network-only остался только у верификационного `Item`-харнесса.
 > **Связанные документы:** `00-architecture-overview.md` (карта слоёв), `02-dependency-injection.md` (`getIt`, `configureDependencies`), `03-domain-layer.md` (`RepositoryResult<T>`, контракты репозиториев), `04-data-layer.md` (откуда приходят данные), `06-theming.md` (`ThemeExtension<AppColors>`, `context.appColors`, токены spacing/typography), `07-pagination.md` (полный контракт `PagingState`-in-bloc, `PagingStateExt.applyPage`), `08-conventions-and-constitution.md` (нейминг, формат, конституция), `10-code-templates.md` (готовые шаблоны), `11-scaffolding-plan.md` (порядок создания файлов).
 
 ---
@@ -47,7 +47,7 @@ lib/
 │       └── app_colors.dart                  # context.appColors (ThemeExtension<AppColors>)
 ├── general/
 │   ├── constants.dart                        # Constants.designSize, Constants.railBreakpoint=840
-│   ├── text_constants.dart                   # все строки для пользователя
+│   ├── text_constants.dart                   # УДАЛЁН: строки живут в lib/l10n/*.arb (context.l10n)
 │   └── bloc_concurrency/                     # FUTURE: продвинутые transformer'ы (§5.8)
 │       ├── debounce.dart                      #   debounce transformer (advanced)
 │       └── debounce_if.dart                   #   debounceIf transformer (advanced)
@@ -102,7 +102,7 @@ lib/
 - Event и State — `@freezed sealed class` unions, **никогда** `Equatable`, **никогда** `fromJson`.
 - State реализует подсостояния `Initializing` / `Initialized` / `Error` как `const factory`-конструкторы; вычисляемые значения — в `extension`-геттерах.
 - BLoC получают репозитории через `getIt<XxxRepository>()`; `StreamSubscription` хранятся в полях и отменяются в `close()`.
-- Все строки для пользователя — из `TextConstants` (в `lib/general/text_constants.dart`); ни одной голой строки в виджетах.
+- Все строки для пользователя — из локализации; ни одной голой строки в виджетах. **Соответствие коду (drift-fix, Принцип III):** `lib/general/text_constants.dart` удалён — канон это ARB-локализация (`lib/l10n/app_en.arb` + `app_uk.arb`, EN+UK, доступ через `context.l10n`); `TextConstants` в снипетах ниже — историческое имя из скелета Feature-001.
 - Цвета/отступы/типографика — только через токены / `context.appColors` (см. `06-theming.md`); ни одного голого `Color` / `EdgeInsets` / `TextStyle` в коде фич.
 
 > Десктопная multi-window-маршрутизация (`desktop_multi_window`, `WindowsConfig`, `MultiWindowHelper`) намеренно опущена — приложение использует только single-window `Navigator`. Это подтверждено и для десктопных таргетов (Windows, Linux, macOS): single-window `Navigator` — единый канон на всех пяти платформах, `desktop_multi_window` не используется. `window_manager` (минимальный размер окна, кастомный title bar) — опциональный FUTURE, **не** входит в скелет. Сама оболочка size-driven (`AppShell`, §6.5), поэтому корректна при любом размере окна — отдельной десктопной маршрутизации не требуется.
@@ -212,7 +212,6 @@ sealed class ItemListState with _$ItemListState {
   const factory ItemListState.initialized({
     @Default(<ItemModel>[]) List<ItemModel> items,
     required PagingState<String, ItemModel> pagingState,
-    @Default(0) int total,
     @Default(GetItemsConfig.defaultPage) int nextPage,
     @Default(false) bool isLastPage,
     @Default(false) bool loadingInProgress,
@@ -235,13 +234,15 @@ extension InitializedExt on Initialized {
 ```
 
 > Это **полный (aspirational) worked-example** State реальной фичи (с `searchQuery`/`refreshInProgress`); шипнутый Item-харнесс — лёгкое подмножество с extension `ItemListStateExt` (геттеры `pagedItems`/`hasMore`) и без полей поиска/refresh. Сверка скелет ↔ полный паттерн — в §3.5.
+>
+> **Поля «тотал» в стейте нет** — и не должно появляться: `PageMetadata` (`lib/domain/repository/base/page_metadata.dart`) — это ровно `{required bool hasMore, int? nextPage}`, ответы контракта v0 несут `has_more` и никогда не несут total (см. §5.5).
 
 Ключевые отличия от исходного подхода, которые нужно держать в голове:
 
 - **`copyWith` сгенерирован Freezed** — рукописный `copyWith()` на каждом варианте больше не нужен.
 - **`when()` сгенерирован Freezed** — прежний рукописный exhaustive-matcher удалён.
 - **Равенство — глубокое value-equality от Freezed** — `props`-список из `Equatable` больше не пишется. Именно это глубокое равенство разблокирует гранулярные ребилды (§5.4).
-- **`PagingState<String, ItemModel>`** — ключ `K` у нас `String` = id элемента (one-item-per-page: ключи — это id элементов; OFFSET-флейвор отслеживается через `PageMetadata.nextPage` (`int`) в state, а не через `K`). См. §5.5 и `07-pagination.md`.
+- **`PagingState<String, ItemModel>`** — ключ `K` у нас `String` = id элемента (one-item-per-page: ключи — это id элементов; координату следующей порции держит state, а не `K`: страничный путь — `PageMetadata.nextPage` (`int`), seq-курсорный путь треда — `oldestLoadedSeq` (`int?`)). См. §5.5 и `07-pagination.md`.
 
 > **Очистка nullable-поля через Freezed `copyWith`.** Сгенерированный `copyWith({Type? field})` не различает «не передано» и «передано `null`». Для полей, которые надо явно сбрасывать в `null`, в Freezed используйте `copyWith(field: null)` напрямую при опущенном объекте — Freezed-`copyWith` корректно ставит `null`, потому что генерирует sentinel-логику. Если поле обязательно nullable и должно очищаться вместе с другими, эмитьте новый вариант через фабрику `ItemListState.initialized(...)`. (Прежний хак `clearXxx`-флага на Freezed не нужен.)
 
@@ -340,9 +341,8 @@ class ItemListBloc extends BaseBloc<ItemListEvent, ItemListState> {
       emit(updated.copyWith(
         items: r.updatedList,
         pagingState: r.pagingState,
-        total: meta.total,
         nextPage: r.nextPage ?? updated.nextPage,
-        isLastPage: meta.nextPage == null,
+        isLastPage: !meta.hasMore,
         loadingInProgress: false,
         refreshInProgress: false,
       ));
@@ -399,9 +399,15 @@ class ItemListBloc extends BaseBloc<ItemListEvent, ItemListState> {
         case RepositoryException.authentication:
           return TextConstants.errorAccess;
         case RepositoryException.notFound:
+        case RepositoryException.attachmentGone:
           return TextConstants.errorNotFound;
         case RepositoryException.unknown:
         case RepositoryException.internal:
+        case RepositoryException.invalidRequest:
+        case RepositoryException.nameTaken:
+        case RepositoryException.payloadTooLarge:
+        case RepositoryException.rateLimited:
+        case RepositoryException.unsupportedSchema:
           return TextConstants.errorGeneralMessage;
       }
     }
@@ -414,7 +420,7 @@ class ItemListBloc extends BaseBloc<ItemListEvent, ItemListState> {
 
 - `result.data!` здесь допустим **только** под защитой `if (result.hasData)` — это не нарушение правила «никогда `result.data!`», а распаковка record-кортежа `(List<ItemModel>, PageMetadata)` после явной проверки. Альтернативный, более чистый способ — `result.match(...)` (см. §5.7).
 - `PagingStateExt.applyPage` — переиспользуемое расширение из `07-pagination.md`; не реализуйте склейку страниц вручную в каждом BLoC.
-- `_translate` предпереводит исключение в строку **до** показа snackbar'а — никогда не показываем сырой текст исключения (правило AlertDialogHelper, §8).
+- `_translate` предпереводит исключение в строку **до** показа snackbar'а — никогда не показываем сырой текст исключения (правило AlertDialogHelper, §8). `RepositoryException` — enum из 12 значений (к базовым добавлены wire-коды контракта v0 §2.1: `invalidRequest`, `nameTaken`, `payloadTooLarge`, `attachmentGone`, `rateLimited`, `unsupportedSchema`; маппинг кода — `RepositoryException.fromWireCode`), поэтому `switch` обязан оставаться исчерпывающим, иначе он не скомпилируется.
 
 ### 3.4 Пустой скелет (`<Page>`)
 
@@ -459,7 +465,7 @@ class <Page>Bloc extends BaseBloc<<Page>Event, <Page>State> {
 Worked-example выше (§3.1–§3.3) — это **полный (aspirational) канон**: он учит поиску, pull-to-refresh, side-эффект-стримам и конкурентности, которые понадобятся реальным фичам (например, списку чатов). Шипнутый в Feature-001 `Item`-харнесс — сознательно **лёгкое подмножество** (verification-only, FR-013; см. [11-scaffolding-plan.md](11-scaffolding-plan.md)). Отличия скелета от полного паттерна:
 
 - **Event** (`item_list_event.dart`) — только `initialize()` + `loadItems({@Default(false) bool reset})`. Нет `refreshRequested` / `updateSearchQuery` / `showItemDetails`.
-- **State** (`item_list_state.dart`) — поля `pagingState` (`required`, первым), `items`, `nextPage` (`@Default(GetItemsConfig.defaultPage)`, **1-based**), `isLastPage`, `total`, `loadingInProgress`. Нет `refreshInProgress` / `searchQuery`. Extension — `ItemListStateExt on ItemListState` с геттерами `pagedItems` / `hasMore` (а не `InitializedExt.isAnyInProgress`/`isEmpty` из полного примера).
+- **State** (`item_list_state.dart`) — поля `pagingState` (`required`, первым), `items`, `nextPage` (`@Default(GetItemsConfig.defaultPage)`, **1-based**), `isLastPage`, `loadingInProgress`. Нет `refreshInProgress` / `searchQuery`, нет и «тотала». Extension — `ItemListStateExt on ItemListState` с геттерами `pagedItems` / `hasMore` (а не `InitializedExt.isAnyInProgress`/`isEmpty` из полного примера).
 - **BLoC** (`item_list_bloc.dart`) — `on<LoadItems>(_onLoadItems, transformer: sequential())`; тело завёрнуто в `executeLogic(onError:)`, ветвление через `result.match<void>(onData:, onError:)`. Нет rxdart `PublishSubject`-стримов, нет `_translate`, нет `restartable()`-поиска.
 - **`ItemModel`** (`domain/model/item/item_model.dart`) — поля `id`, `name`, `required String? description`, `required ItemStatus status`, `required DateTime createdAt`; extension-геттеры `isArchived` + `displayName` (см. `03-domain-layer.md`).
 - **Страница-харнесс как tab-body.** Шипнутый `ItemListPage` рендерится телом вкладки внутри `AppShell` (без собственного `Scaffold`), поэтому `_ItemListPageState extends State<ItemListPage>`, а **не** `BaseStatePage<ItemListPage>`. `BaseStatePage<T>` (§4) обязателен для **навигируемых** страниц, владеющих собственным `Scaffold` (с `routeName`/`route()`) — именно такую каноническую форму показывает worked-example §5. Placeholder-страница (`SettingsPlaceholderPage`) — `StatelessWidget` по той же причине (тело вкладки без Scaffold).
@@ -543,7 +549,7 @@ abstract class BaseStatePage<T extends StatefulWidget> extends State<T> {
 
 > **Это не опционально (Принцип 5.1, [08](08-conventions-and-constitution.md)).** ЛЮБАЯ навигируемая страница (есть `routeName` + `route()`) **обязана** владеть собственным BLoC. Если бизнес-логики нет — страница всё равно получает минимальный BLoC: трио `Initializing`/`Initialized`/`Error` из §3.4 либо одновариантный value-BLoC как `AppRootBloc` (§6.1). Непавигируемые переиспользуемые **виджеты** (`lib/presentation/widgets/`, page-private `widgets/`) BLoC **не требуют** — их состоянием управляет страница-владелец.
 >
-> **Исключение — UI-first фаза (до бэкенда), санкционировано владельцем 2026-06-20.** Пока бэкенд/протокол NOX не выбраны и у навигируемого экрана НЕТ ни репозитория, ни реальной асинхронной логики, ни нетривиального изменяемого доменного состояния, такой **чисто презентационный** экран допускается как `StatelessWidget`/локальный `StatefulWidget` **без** BLoC. Под это подпадают shipped лаунчер/галерея (`HomePage`, `UiKitPage`, `ScreensGalleryPage`) и экраны UI-этапа M1 (`docs/archive/roadmap-phase1.md` / `specs/004-splash-simple-screens/`): splash, универсальный экран ошибки, About, Terms, Appearance, Language, Notifications — они рендерят заглушки и локальное эфемерное состояние. **Как только к экрану подключается реальный репозиторий/async (backend-фаза), он получает свой Freezed-BLoC** по правилу выше. Это узкий, фазово-ограниченный carve-out (резолюция дрейфа по Принципу III — правится блюпринт, а не код), а НЕ отмена 5.1 для экранов с реальным состоянием.
+> **Исключение — UI-first фаза (до бэкенда), санкционировано владельцем 2026-06-20.** Пока у навигируемого экрана НЕТ ни репозитория, ни реальной асинхронной логики, ни нетривиального изменяемого доменного состояния, такой **чисто презентационный** экран допускается как `StatelessWidget`/локальный `StatefulWidget` **без** BLoC. Под это подпадают shipped лаунчер/галерея (`HomePage`, `UiKitPage`, `ScreensGalleryPage`) и экраны UI-этапа M1 (`docs/archive/roadmap-phase1.md` / `specs/004-splash-simple-screens/`): splash, универсальный экран ошибки, About, Terms, Appearance, Language, Notifications — они рендерят заглушки и локальное эфемерное состояние. **Как только к экрану подключается реальный репозиторий/async (клиентский трек 025–028), он получает свой Freezed-BLoC** по правилу выше. Это узкий, фазово-ограниченный carve-out (резолюция дрейфа по Принципу III — правится блюпринт, а не код), а НЕ отмена 5.1 для экранов с реальным состоянием.
 
 ### 5.1 Worked example
 
@@ -691,6 +697,8 @@ class ItemDetailsPage extends StatefulWidget {
 
 Базовый способ — сгенерированный Freezed-`when()` (как в `build()` выше): тело страницы — это `state.when(initializing:, initialized:, error:)`. Так исходная конструкция `body: state.when(...)` переносится без изменений (но теперь `when` сгенерирован, а не рукописный).
 
+> **Сверка с кодом.** Под `freezed ^3.2.5` `when()`/`whenOrNull()` по-прежнему генерируются, но callback подсостояния принимает его поля **позиционно** (`initialized: (pagingState, items, nextPage, isLastPage, loadingInProgress) => …`), а не сам объект `Initialized`. В шипнутом `lib/` вызовов `.when(` **нет ни одного**: все страницы рендерятся через Dart 3 `switch (state)` (`app_root.dart`, `qr_scan_page.dart`, `item_list_page.dart`). Поэтому `switch` — рабочий канон, а `state.when(...)` в сниппетах этого документа читается как «ветвление по подсостояниям».
+
 Для чистых **виджетов-проекций** (которые только проецируют состояние и не владеют BLoC) предпочтителен Dart 3 exhaustive `switch` с деструктуризацией — он короче и компилятор гарантирует полноту:
 
 ```dart
@@ -731,7 +739,12 @@ BlocBuilder<ItemListBloc, ItemListState>(
 
 ### 5.5 Пагинация — `PagingState`-in-bloc (v5)
 
-Проект на **v5 `PagingState` API** пакета `infinite_scroll_pagination ^5.1.1`: BLoC строит неизменяемый `PagingState<PageKey, Item>` внутри `Initialized`; виджет потребляет его через `PagedListView(state:, fetchNextPage:)`. **Нет** widget-owned `PagingController`, нет `addPageRequestListener`. Учёт страниц живёт в состоянии BLoC. Дефолтный флейвор — **OFFSET** (`PageMetadata{int? nextPage, int total}`), страницы **1-based** (`GetItemsConfig.defaultPage = 1`, `hasMore = (page*pageSize) < total`, `nextPage = hasMore ? page+1 : null`); CURSOR-альтернатива (`CursorPaginationMetadata{String? nextCursor}`) задокументирована как альтернатива. Конкретный контракт пагинации списка чатов фиксируется позже вместе с бэкендом NOX (бэкенд/протокол NOX ещё не выбран). Полный контракт — `PagingStateExt.applyPage`, error-builder'ы v5, CURSOR-альтернатива — в `07-pagination.md`. Здесь — только связка: BLoC кладёт `PagingState` в `Initialized`, страница рендерит `PagedListView`, `result.exception` прокидывается в `pagingState.error` для v5-error-builder'ов.
+Проект на **v5 `PagingState` API** пакета `infinite_scroll_pagination ^5.1.1`: BLoC строит неизменяемый `PagingState<PageKey, Item>` внутри `Initialized`. **Нет** widget-owned `PagingController`, нет `addPageRequestListener`. Учёт порций живёт в состоянии BLoC. Общий доменный тип метаданных — `PageMetadata{required bool hasMore, int? nextPage}` (тотала на проводе нет). В контракте v0 **два реальных пути** (фаза 025), и оба собирают `PagingState` одним и тем же `PagingStateExt.applyPage` — признак конца списка в нём один: `!meta.hasMore`.
+
+- **Страничный (paged) — список чатов.** Запрос `page` + `page_size`, страницы **1-based** (`GetChatsConfig.defaultPage = 1`); ответ `{chats, has_more}`, `nextPage = hasMore ? page + 1 : null` вычисляется **на клиенте**. UI — `PagedListView(state:, fetchNextPage:)`, координата следующей порции — `nextPage` в стейте.
+- **Seq-курсорный — история сообщений.** Запрос `before_seq` + `limit` (`GetMessagesConfig.tail()` / `.olderThan()`), ответ `{messages, has_more}`, батч идёт по возрастанию `seq`, сервер молча зажимает `limit` до 100. Стейт треда держит `oldestLoadedSeq` (`int?`), а не номер страницы, и **не** использует `PagedListView`: это `reverse: true` `ListView.builder` с догрузкой старой истории из слушателя `ScrollController`.
+
+`CursorPaginationMetadata{String? nextCursor}` остаётся задокументированной опцией — только на случай эндпоинта со **строковым** непрозрачным курсором; в проекте такого нет. Полный контракт — `PagingStateExt.applyPage`, error-builder'ы v5, курсорный вариант helper'а — в `07-pagination.md`. Здесь — только связка: BLoC кладёт `PagingState` в `Initialized`, страница рендерит список, `result.exception` прокидывается в `pagingState.error` для v5-error-builder'ов.
 
 ### 5.6 Side-эффекты — три способа, и когда что
 
@@ -768,7 +781,7 @@ result.match<void>(
   onData: (page) {
     final (items, meta) = page;
     final current = this.state;
-    if (current is Initialized) emit(current.copyWith(items: items, total: meta.total));
+    if (current is Initialized) emit(current.copyWith(items: items, isLastPage: !meta.hasMore));
   },
   onError: (exception) => emit(ItemListState.error(exception: exception)),
 );
@@ -862,7 +875,7 @@ class AppRootBloc extends BaseBloc<AppRootEvent, AppRootState> {
 }
 ```
 
-> **Auth/splash-флоу — реализован в Feature-009 (`specs/009-app-state-flow/`).** `AppRoot` оборачивает `MaterialApp` в `BlocListener`, swap'ающий корневой маршрут через `_navigatorKey.currentState!.pushReplacement(...)` (первый переход со splash) либо `pushAndRemoveUntil(..., (_) => false)` (последующие — обнуляют стек через авторизационную границу) при смене **применённой** фазы app-state. Несущие части: `AppStateRepository` (in-memory `BehaviorSubject`-**проекция** сигналов сессии, **без DAO**) → расширенный `AppRootState` с **двухфазным применением** (`lastAppState`/`appliedAppState`/`isReady`: первый переход удержан за splash-анимацией, последующие применяются немедленно) + события `UpdateAppState`/`ApplyAppState`, питаемые подпиской `_onInitialize` на `watchAppState()`. Состояния NOX: `init` / `unauthorized` / `registrationPending` (first-login `Set username`) / `authorized`. Сигналы сессии — `SessionModel { identifier, label?, onboardingComplete }` (`identifier` → `flutter_secure_storage`, флаги → `shared_preferences`); мутации оркеструет `AuthRepository` по контракту «мутируй → `fetchAppState()`». One-shot `sessionExpired`-snackbar — через `AppFeedbackHelper.showAppSnackBar(error: true)` (post-frame, navigator context). Реальный сетевой sign-in и 401-перехватчик — TBD (бэкенд не выбран). Первый переход различается по `previous.appliedAppState == init` (без `NavigatorObserver`). Полная мотивация — `docs/app-state-flow-migration.md`.
+> **Auth/splash-флоу — реализован в Feature-009 (`specs/009-app-state-flow/`).** `AppRoot` оборачивает `MaterialApp` в `BlocListener`, swap'ающий корневой маршрут через `_navigatorKey.currentState!.pushReplacement(...)` (первый переход со splash) либо `pushAndRemoveUntil(..., (_) => false)` (последующие — обнуляют стек через авторизационную границу) при смене **применённой** фазы app-state. Несущие части: `AppStateRepository` (in-memory `BehaviorSubject`-**проекция** сигналов сессии, **без DAO**) → расширенный `AppRootState` с **двухфазным применением** (`lastAppState`/`appliedAppState`/`isReady`: первый переход удержан за splash-анимацией, последующие применяются немедленно) + события `UpdateAppState`/`ApplyAppState`, питаемые подпиской `_onInitialize` на `watchAppState()`. Состояния NOX: `init` / `unauthorized` / `registrationPending` (first-login `Set username`) / `authorized`. Сигналы сессии — `SessionModel { identifier, label?, onboardingComplete }` (`identifier` → `flutter_secure_storage`, флаги → `shared_preferences`); мутации оркеструет `AuthRepository` по контракту «мутируй → `fetchAppState()`». One-shot `sessionExpired`-snackbar — через `AppFeedbackHelper.showAppSnackBar(error: true)` (post-frame, navigator context). 401-перехватчик в коде уже есть (feature 019: `AuthInterceptor` → `authRepository.logout(forced: true)`), но контур **инертен** — `AppConfig.apiUrl` пуст во всех флейворах; реальный сетевой sign-in ждёт аутентификации stage 2 (WebSocket-транспорт — фаза 027, флип DI на реальные data-source'ы — фаза 028). Первый переход различается по `previous.appliedAppState == init` (без `NavigatorObserver`). Полная мотивация — `docs/app-state-flow-migration.md`.
 
 ### 6.2 `AppRoot` — корневой `MaterialApp`
 
@@ -873,6 +886,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:nox_app/design/app_text_style_tokens.dart';
 import 'package:nox_app/design/theme/app_theme.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/text_constants.dart';
@@ -916,8 +930,10 @@ class _AppRootState extends State<AppRoot> {
             // 2) Инициализируем глобальный ScreenUtil от дизайн-канвы 360×779.
             child: ScreenUtilInit(
               designSize: Constants.designSize, // Size(360, 779) — lib/general/constants.dart
-              // текст адаптируется по меньшему из факторов width/height
-              minTextAdapt: true,
+              // Clamps `.sp` to 0.90..1.00 so type never grows on a wide window.
+              // Mandatory in every ScreenUtilInit (app and test harness alike);
+              // `minTextAdapt` is a dead no-op once a resolver is set.
+              fontSizeResolver: AppTextStyleTokens.fontSizeResolver,
               builder: (context, child) {
                 return MaterialApp(
                   title: TextConstants.appName,
@@ -954,9 +970,9 @@ class _AppRootState extends State<AppRoot> {
 }
 ```
 
-> **Скелет `_AppRootState` здесь намеренно минимален и совпадает с шипнутым кодом** (`lib/presentation/app/app_root.dart`): `AppRootBloc` + `ScreenUtilInit` + `home: AppShell`. Он опускает `WidgetsBindingObserver` (lifecycle-observer, resume → превентивный refresh) и подписку на `ConnectivityRepository.watchIsOnline()` — обе части app-root, привязанные к auth-контуру и сети. Поскольку бэкенд/протокол NOX ещё не выбран, эти подсистемы (как и весь auth-флоу из [14-networking-and-auth.md](14-networking-and-auth.md)) — **TBD**; их канон — в [§6.4](#64-app-lifecycle-observer-resume--превентивный-refresh), и они подмешиваются в **тот же** `_AppRootState` с появлением первого потребителя (auth/connectivity), а не раньше.
+> **Снипет выше — скелетная (Feature-001) форма `_AppRootState`, а не текущий шипнутый код.** Шипнутый `lib/presentation/app/app_root.dart` — тот же каркас (`AppRootBloc` + `ScreenUtilInit` + двойной `MediaQuery`), но с `home: const SplashPage()` и `MultiBlocListener`, свапающим корневой маршрут по app-state-спине (§6.1), плюс `LocaleController` (live EN/UK). Он по-прежнему опускает `WidgetsBindingObserver` (lifecycle-observer, resume → превентивный refresh) и подписку на состояние сети: connectivity в коде есть (`ConnectivityService.watchOnline()`, `lib/domain/service/connectivity_service.dart`), но её слушают BLoC'и фич (список чатов, тред, карточка чата) — офлайн-баннер локальный, не app-root. Auth-контур из [14-networking-and-auth.md](14-networking-and-auth.md) остаётся **TBD** не потому, что «бэкенд не выбран» (Go-сервер `noxd` + контракт v0 приняты, stage 1 смержен; транспорт — фаза 027, флип DI — 028), а потому, что аутентификация stage 2 ещё не спроектирована. Их канон — в [§6.4](#64-app-lifecycle-observer-resume--превентивный-refresh), и они подмешиваются в **тот же** `_AppRootState` с появлением первого потребителя, а не раньше.
 
-> **UI-скейл — «дизайн выглядит ~одинаково на всех устройствах».** Обёртка `ScreenUtilInit(designSize: Constants.designSize=Size(360,779), minTextAdapt: true)` + двойной `MediaQuery` (внешний `TextScaler.noScaling`, внутренний `TextScaler.linear(1.0)`) — это **ядро** решения по адаптивности: системный масштаб шрифта полностью нейтрализован, а все размеры (`AppSpacingTokens.sN`, `AppTextStyleTokens`) выводятся из дизайн-скейла `ScreenUtil`. Полное описание механизма и токенов — в [06-theming.md](06-theming.md) §3.2.
+> **UI-скейл — «дизайн выглядит ~одинаково на всех устройствах».** Обёртка `ScreenUtilInit(designSize: Constants.designSize=Size(360,779), fontSizeResolver: AppTextStyleTokens.fontSizeResolver)` + двойной `MediaQuery` (внешний `TextScaler.noScaling`, внутренний `TextScaler.linear(1.0)`) — это **ядро** решения по адаптивности: системный масштаб шрифта полностью нейтрализован, а все размеры (`AppSpacingTokens.sN`, `AppTextStyleTokens`) выводятся из дизайн-скейла `ScreenUtil`. Полное описание механизма и токенов — в [06-theming.md](06-theming.md) §3.2.
 
 ### 6.3 `main.dart` — точка входа
 
@@ -1012,9 +1028,9 @@ void main() {
 
 ### 6.4 App-lifecycle observer (resume → превентивный refresh)
 
-> **TBD (бэкенд/протокол NOX ещё не выбран).** Весь auth-контур ниже (`AuthBloc`, `AppResumed`, refresh access-токена, реакция на `401`) — пример целевого устройства; конкретика появляется вместе с выбранным бэкендом NOX. В скелете этого слоя нет.
+> **TBD (аутентификация stage 2 ещё не спроектирована).** Бэкенд выбран и stage 1 смержен (Go-сервер `noxd`, контракт v0 без auth), но весь auth-контур ниже (`AuthBloc`, `AppResumed`, refresh access-токена, реакция на `401`) — пример целевого устройства; конкретика появится вместе с моделью аутентификации stage 2 (`docs/client-backend/architecture/authentication.md`). В коде этого слоя нет.
 
-App-root `State` (`_AppRootState`, §6.2) подмешивает `WidgetsBindingObserver` и на `AppLifecycleState.resumed` дёргает `getIt<AuthBloc>().add(const AppResumed())` — превентивный refresh access-токена **до** первого запроса после долгого background (полный контракт + обязательный re-entrancy guard — в [14-networking-and-auth.md](14-networking-and-auth.md) §5.4; `AuthBloc` — часть auth-флоу `14` §4, появляется с auth-контуром). Канон: подписка в `initState`, отписка в `dispose`. Observer ставится **один раз** на app-root, а не на каждой странице, и НЕ реализует refresh сам — лишь триггерит тот же код auth-контура, что отрабатывает реактивно на `401`. Тот же `State` подписывается на `ConnectivityRepository.watchIsOnline()` (UX-баннер «нет сети») — см. `14` §5.
+App-root `State` (`_AppRootState`, §6.2) подмешивает `WidgetsBindingObserver` и на `AppLifecycleState.resumed` дёргает `getIt<AuthBloc>().add(const AppResumed())` — превентивный refresh access-токена **до** первого запроса после долгого background (полный контракт + обязательный re-entrancy guard — в [14-networking-and-auth.md](14-networking-and-auth.md) §5.4; `AuthBloc` — часть auth-флоу `14` §4, появляется с auth-контуром). Канон: подписка в `initState`, отписка в `dispose`. Observer ставится **один раз** на app-root, а не на каждой странице, и НЕ реализует refresh сам — лишь триггерит тот же код auth-контура, что отрабатывает реактивно на `401`. Тот же `State` мог бы подписаться на состояние сети (UX-баннер «нет сети») — см. `14` §5; в коде это `ConnectivityService.watchOnline()` (`lib/domain/service/`), и сегодня его слушают BLoC'и фич, а не app-root (§6.2).
 
 ```dart
 class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
@@ -1025,7 +1041,7 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
     super.initState();
     _bloc = AppRootBloc()..add(const AppRootEvent.initialize());
     WidgetsBinding.instance.addObserver(this);
-    // + подписка на ConnectivityRepository.watchIsOnline() → AuthBloc (UX-баннер; см. 14 §5.4)
+    // + подписка на ConnectivityService.watchOnline() → AuthBloc (UX-баннер; см. 14 §5.4)
   }
 
   @override
@@ -1084,7 +1100,7 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
 
 ## 7. Общие виджеты `App*Widget` (stateless)
 
-Три переиспользуемых stateless-виджета рендерят стандартные подсостояния. Используются внутри `state.when(...)`. Все строки — из `TextConstants`, отступы — из `AppSpacingTokens`, цвета — через `context.appColors` (см. `06-theming.md`).
+Три переиспользуемых stateless-виджета рендерят стандартные подсостояния. Используются внутри `state.when(...)` / `switch (state)`. Все строки — из `context.l10n` (`TextConstants` в снипетах ниже — историческое имя скелета Feature-001, см. §5), отступы — из `AppSpacingTokens` / `AppDimensionTokens`, цвета — из `Theme.of(context).colorScheme` (+ `NoxBrand`/`NoxScrims`/`NoxOpacity`); `context.appColors` — двухполевой skeleton, в фичах не вызывается (см. `06-theming.md` §2).
 
 ### 7.1 `AppProgressWidget`
 
@@ -1256,7 +1272,7 @@ initState()                 _bloc = ItemListBloc()..add(ItemListEvent.initialize
   → _onInitialize           emit(Initialized(pagingState: PagingState())); add(LoadItems(reset: true))
   → _onLoadItems            getIt<ItemRepository>().getItems(config:)
   → RepositoryResult<T>     result.hasData / result.match(onData:, onError:)
-  → emit                    Initialized(items:, pagingState:, total:) | Error(exception:)
+  → emit                    Initialized(items:, pagingState:, nextPage:, isLastPage:) | Error(exception:)
   → BlocBuilder             state.when(initializing:, initialized:, error:)
   → виджеты                 AppProgressWidget | PagedListView/AppEmptyContentWidget | AppErrorWidget
   → side-эффекты            errorMessages → AlertDialogHelper; navigateToDetails → Navigator.push
@@ -1278,11 +1294,11 @@ dispose()                   _navSub.cancel(); _errorSub.cancel(); _bloc.close()
 - [ ] BLoC потребляют `RepositoryResult<T>` через `match()` / `hasData` — никакого `result.data!` без guard'а.
 - [ ] Side-эффекты: дефолт — `PublishSubject`-стримы (`errorMessages` / `navigateToDetails`); state-carried one-shot и `BlocListener` — по таблице §5.6.
 - [ ] Конкурентность: дефолт — stale-guard (перечитать `this.state` после `await`) + `restartable()` для поиска; продвинутый toolkit (epoch-guard + `debounce`/`debounceIf` + `executeLogic`) — для tree/representation BLoC.
-- [ ] Пагинация — `PagingState`-in-bloc (v5), OFFSET-флейвор по умолчанию; детали в `07-pagination.md`.
+- [ ] Пагинация — `PagingState`-in-bloc (v5); два пути контракта v0 через один `PagingStateExt.applyPage` (конец списка — `!meta.hasMore`, тотала на проводе нет): страничный (`page`/`page_size`, `nextPage` считается клиентски) для списка чатов и seq-курсорный (`before_seq`/`limit`, `oldestLoadedSeq` в стейте, без `PagedListView`) для истории сообщений; детали в `07-pagination.md`.
 - [ ] Страница: `static const String routeName`, `static Route route(...)`, `State extends BaseStatePage<T>`, `late final` BLoC в `initState()` и `close()` в `dispose()`, side-эффект-подписки в `initState`/`dispose`, `BlocProvider` + `BlocBuilder` + `state.when(...)`. **BLoC обязателен для ЛЮБОЙ навигируемой страницы (`routeName`/`route()`) — даже logic-less (минимальный trio или value-BLoC, Принцип 5.1); переиспользуемые виджеты BLoC не требуют.**
 - [ ] App-shell: `AppRootBloc` (`@freezed abstract` одно состояние с `themeMode` + `copyWith`, **не** trio), `AppRoot` (`GlobalKey<NavigatorState>`, тема из `AppRootBloc`, `home: const AppShell()`).
 - [ ] Адаптивная оболочка `AppShell` (`lib/presentation/app/widgets/app_shell.dart`): width-driven `LayoutBuilder` на `Constants.railBreakpoint = 840` (а **не** `Platform`); mobile — `BottomAppBar` (`CircularNotchedRectangle`) + centerDocked `+` FAB; desktop — `NavigationRail` (leading `+` FAB) + `VerticalDivider` + `Expanded(body)`; ровно 2 destination'ы (`Chats`/`Settings`), `body` = `IndexedStack`, без profile-аватара, single-window; корректна на всех пяти таргетах (§6.5).
-- [ ] UI-скейл: `MaterialApp` обёрнут в `ScreenUtilInit(designSize: Constants.designSize` = `Size(360, 779)`, `minTextAdapt: true)` + двойной `MediaQuery` (`TextScaler.noScaling` снаружи, `TextScaler.linear(1.0)` внутри `builder`) — OS-масштаб шрифта отключён, размеры выводятся из дизайн-скейла (§6.2; механизм — `06-theming.md` §3.2).
+- [ ] UI-скейл: `MaterialApp` обёрнут в `ScreenUtilInit(designSize: Constants.designSize` = `Size(360, 779)`, `fontSizeResolver: AppTextStyleTokens.fontSizeResolver)` + двойной `MediaQuery` (`TextScaler.noScaling` снаружи, `TextScaler.linear(1.0)` внутри `builder`) — OS-масштаб шрифта отключён, размеры выводятся из дизайн-скейла (§6.2; механизм — `06-theming.md` §3.2).
 - [ ] `main.dart` в `runZonedGuarded`, `configureDependencies(env)` → `getIt.allReady()` → `runApp(AppRoot)`.
 - [ ] Общие виджеты `AppProgressWidget` / `AppErrorWidget` / `AppEmptyContentWidget` (stateless, copy из `TextConstants`, spacing из `AppSpacingTokens`).
 - [ ] `AlertDialogHelper` — единственный канал snackbar'ов (цвета через `context.appColors`); `AppErrorWidget` — для in-body error-ветки.

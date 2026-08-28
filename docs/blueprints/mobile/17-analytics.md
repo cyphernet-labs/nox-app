@@ -24,7 +24,7 @@
 
 ## 1. Связь с Конституцией NOX (Принцип I — Приватность и E2EE)
 
-Якорь этого слоя — **Принцип I** конституции NOX (`.specify/memory/constitution.md`, v1.1.0, пять принципов: приватность/E2EE, спецификации-источник-истины, обязательный архитектурный блюпринт, верность дизайн-системе, языковая дисциплина). Принцип I прямо требует: клиентская аналитика **никогда** не содержит PII, содержимого сообщений, идентификаторов пользователей или имён чатов, и она **строго opt-in (по умолчанию выключена)**. Этот документ — реализация этого требования на уровне слоя. Вторично слой опирается на **Принцип III** (обязательный архитектурный блюпринт): форма repository-слоя, `RepositoryResult`, обязательный `LogRepository`, codegen-first — едины для всех областей и применяются здесь так же.
+Якорь этого слоя — **Принцип I** конституции NOX (`.specify/memory/constitution.md`, v1.3.0, семь принципов: приватность/E2EE, спецификации и дизайн-корпус — источник истины, обязательный архитектурный блюпринт, верность дизайн-системе, языковая дисциплина, паритет платформ mobile ↔ desktop, контракт провода — закон). Принцип I прямо требует: клиентская аналитика **никогда** не содержит PII, содержимого сообщений, идентификаторов пользователей или имён чатов, и она **строго opt-in (по умолчанию выключена)**. Этот документ — реализация этого требования на уровне слоя. Вторично слой опирается на **Принцип III** (обязательный архитектурный блюпринт): форма repository-слоя, `RepositoryResult`, обязательный `LogRepository`, codegen-first — едины для всех областей и применяются здесь так же.
 
 > **Приватность — первичный гейт (NOX).** В NOX любая capture-логика подчинена Принципу I: фиксация поведенческого сигнала не оправдывает сбор PII, содержимого сообщений или метаданных, идентифицирующих переписку. Аналитика опциональна (opt-in), поведенческая и обезличенная — см. §6.
 
@@ -33,7 +33,7 @@
 - **Поведенческая аналитика — клиентская по природе.** Серверные данные бэкенда NOX фиксируют *состояние* (сущность создана, операция перешла в терминальный статус), но не *поведение* (где пользователь нажал, на каком шаге воронки отвалился). Отсюда — **зачем** клиенту нужен отдельный analytics-слой: это источник продуктовых воронок, которые из серверного состояния не восстановить.
 - **Точки трекинга закладываются на этапе дизайна, а не доклеиваются потом.** Каждый значимый пользовательский шаг (экран, действие в воронке, успех/ошибка длинной операции) получает точку трекинга **на этапе дизайна экрана/BLoC**. Аналитика — первоклассный компонент, а не afterthought.
 - **No speculative events.** Заводим интерфейс и стартовый таксоном (§5), но **конкретный финальный список событий — продуктовое решение** (см. §5). Не плодим события «на всякий случай».
-- **Mirror-инвариант идентификатора.** Где у фичи есть и серверная запись, и клиентское событие — идентификатор пользователя должен совпадать: analytics `distinct_id` ← opaque user id бэкенда NOX (TBD — backend/протокол NOX ещё не выбран). Это связывает поведенческую воронку с серверной записью при кросс-анализе. (В NOX `distinct_id` — всегда opaque-идентификатор, никогда не телефон/email/имя; см. §6.)
+- **Mirror-инвариант идентификатора.** Где у фичи есть и серверная запись, и клиентское событие — идентификатор пользователя должен совпадать: analytics `distinct_id` ← публичный id автора бэкенда NOX. Бэкенд выбран (Go-сервер `noxd` + контракт провода v0); открыт лишь **вид** этого публичного id — вопрос Q11 реестра `docs/client-backend/open-questions.md`. Это связывает поведенческую воронку с серверной записью при кросс-анализе. (В NOX `distinct_id` — всегда opaque-идентификатор, никогда не телефон/email/имя; см. §6.)
 
 > **Где именно «момент первой записи» на клиенте.** Для парных длинных операций (создание сущности и т.п.) трекинг — это `_started` в начале и `_succeeded`/`_failed` в исходе (см. §5). Это даёт магнитуды/счётчики, а не один boolean: воронка `started → succeeded/failed` показывает drop-off, который «готово/нет» не покажет.
 
@@ -85,7 +85,7 @@ abstract interface class AnalyticsRepository {
   /// Best-effort: пустой token (dev / opt-out) => no-op success.
   Future<RepositoryResult<bool>> initialize();
 
-  /// Связывает события с пользователем. distinct_id == opaque user id бэкенда NOX (TBD).
+  /// Связывает события с пользователем. distinct_id == публичный id автора бэкенда NOX (его вид — открытый вопрос Q11).
   Future<RepositoryResult<bool>> identify(String userId);
 
   /// Обновляет свойства профиля пользователя (people-properties). Без PII.
@@ -232,7 +232,7 @@ class AnalyticsRepositoryImpl with BaseRepositoryHelper implements AnalyticsRepo
 
   @override
   Future<RepositoryResult<bool>> identify(String userId) => execute(() async {
-        // distinct_id == opaque user id бэкенда NOX (TBD — backend/протокол не выбран).
+        // distinct_id == the public author id of the NOX backend (open: Q11).
         await _client?.identify(userId);
         return RepositoryResult.success(data: _client != null);
       });
@@ -280,7 +280,7 @@ class AnalyticsRepositoryImpl with BaseRepositoryHelper implements AnalyticsRepo
 
 > **Super-properties ≠ идентичность.** Super-properties — это **только поведенческий контекст**: `platform` / `app_version` / `build` / `environment` (категориальные поля, клеятся ко всем событиям). Идентификатор пользователя в их число **не входит** — идентичность задаётся отдельно через `identify(...)`, который выставляет `distinct_id`, зеркалящий opaque user id бэкенда NOX (mirror-инвариант §1). Это два разных механизма: контекст vs идентичность; не смешивать в `registerSuperProperties`.
 
-> **Поле `platform` — пять платформ.** В NOX `cfg.platform` принимает значения `ios | android | windows | linux | macos` (web вне области): аналитика должна различать все пять целевых платформ, включая desktop (Windows/Linux/macOS — обязательны по Constitution v1.1.0). Значение выводится из `Platform.isIOS/isAndroid/isWindows/isMacOS/isLinux`. Не сужать таксоном `platform` до `ios|android`.
+> **Поле `platform` — пять платформ.** В NOX `cfg.platform` принимает значения `ios | android | windows | linux | macos` (web вне области): аналитика должна различать все пять целевых платформ, включая desktop (Windows/Linux/macOS — обязательны по Принципу VI конституции, v1.3.0). Значение выводится из `Platform.isIOS/isAndroid/isWindows/isMacOS/isLinux`. Не сужать таксоном `platform` до `ios|android`.
 
 ### Проекты analytics-провайдера
 
@@ -322,9 +322,9 @@ class AnalyticsRepositoryImpl with BaseRepositoryHelper implements AnalyticsRepo
 
 Эти события закрывают поведенческие воронки уровня `started → succeeded/failed` и retention 30/90 дней — **без** содержимого сообщений и без имён/идентификаторов чатов (§6).
 
-> **Первая реальная поверхность — список чатов.** Первый реальный экран NOX — список чатов общего пространства (shared-space): это server-owned, network-only пагинируемый список (применяется network-only carve-out — без локального кеша). Его аналитика-точки (`chats_list_viewed` и т.п.) трекают только обезличенные магнитуды (диапазон количества, а не имена/идентификаторы чатов).
+> **Первая реальная поверхность — список чатов.** Первый реальный экран NOX — список чатов общего пространства (shared-space): это server-owned пагинируемый список, который на клиенте обслуживается cache-first поверх Sembast (`ChatRepositoryImpl` + `ChatDao`). Network-only carve-out для продуктовых репозиториев отменён и остаётся только в замороженном верификационном слайсе `Item`. Его аналитика-точки (`chats_list_viewed` и т.п.) трекают только обезличенные магнитуды (диапазон количества, а не имена/идентификаторы чатов).
 
-> **Связь events ↔ deep links.** Если NOX введёт deep-link-входы (см. [13-deep-links.md](13-deep-links.md)), соответствующее событие трекается в app-bloc на ветке маршрутизации deep-link-модели — там же, где навигация по типу ссылки. Конкретный deep-link-контракт NOX — TBD-with-backend; пока это плейсхолдер.
+> **Связь events ↔ deep links.** Если NOX введёт deep-link-входы (см. [13-deep-links.md](13-deep-links.md)), соответствующее событие трекается в app-bloc на ветке маршрутизации deep-link-модели — там же, где навигация по типу ссылки. Конкретный deep-link-контракт NOX ещё не зафиксирован (deep links — открытый пункт, в приложении не реализованы); пока это плейсхолдер.
 
 ---
 
@@ -350,7 +350,7 @@ Analytics — сквозной сервис; вызовы живут в presenta
 
 **(2) `identify` / `reset` — на границах auth-флоу** ([14-networking-and-auth.md](14-networking-and-auth.md)):
 
-- после **успешного login/register** → `identify(noxUserId)` + `setUserProperties(...)`. `noxUserId` — это opaque user id пользователя бэкенда NOX (TBD — backend/протокол не выбран), тот же, что зеркалит `distinct_id` (mirror-инвариант §1);
+- после **успешного login/register** → `identify(noxUserId)` + `setUserProperties(...)`. `noxUserId` — это публичный id автора бэкенда NOX (его форма — открытый вопрос Q11, реестр `docs/client-backend/open-questions.md`), тот же, что зеркалит `distinct_id` (mirror-инвариант §1);
 - после **logout** → `reset()` (разрывает связь с `distinct_id`, чтобы события следующего гостя не приклеились к предыдущему пользователю).
 
 **(3) `trackEvent` — на ключевых переходах**, из соответствующего BLoC (worked-пример на нейтральной модели `Item`):
@@ -392,7 +392,7 @@ result.match(
 - [ ] `lib/data/repository/analytics/analytics_repository_impl.dart` — `@LazySingleton(as: AnalyticsRepository)`, `with BaseRepositoryHelper`, методы через `execute(...)`; nullable handle SDK (пустой token ⇒ тихий no-op).
 - [ ] Token — из `AppConfigRepository.config.analyticsProjectToken` per-флейвор (НЕ хардкод); `dev` = пустая строка; stage/prod — разные токены = разные проекты у провайдера.
 - [ ] super-properties (`platform`/`app_version`/`build`/`environment`) регистрируются в `initialize()`; `platform` различает пять платформ (`ios|android|windows|linux|macos`); **без PII**.
-- [ ] `identify(noxUserId)` после login/register (`distinct_id` = opaque user id бэкенда NOX (TBD), Принцип I); `reset()` после logout.
+- [ ] `identify(noxUserId)` после login/register (`distinct_id` = публичный id автора бэкенда NOX, его вид — открытый вопрос Q11; Принцип I); `reset()` после logout.
 - [ ] Точки `trackEvent` заложены на этапе дизайна BLoC ключевых экранов/воронок; вызовы best-effort fire-and-forget — не блокируют переход состояния и не уводят BLoC в `Error`.
 - [ ] **opt-in по умолчанию (NOX):** трекинг выключен (`_enabled = false`), пока пользователь явно не включил; toggle на экране приватности по умолчанию off.
 - [ ] opt-out: `setTrackingEnabled(false)` → `optOutTracking()`, состояние персистится и применяется на старте; экран приватности дёргает toggle.
