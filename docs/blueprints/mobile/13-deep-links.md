@@ -2,7 +2,7 @@
 
 > **Назначение:** зафиксировать единый, **обобщённый** механизм обработки **любой** входящей ссылки в приложении NOX — не только «классических» deep links, но и universal/app links и любых внешних URL, которые должны открыть/направить приложение. Пайплайн: ОС отдаёт ссылку → `app_links` → `DeepLinkRepository` парсит сырой URI в **типизированную** доменную модель → app-root маршрутизирует по типу. Механизм следует конвенциям блюпринта (single-package, `@freezed`-модели, Freezed-BLoC).
 > **Когда читать:** перед реализацией любого сценария «пользователь пришёл по ссылке» (верификация email, сброс пароля, открытие расшаренного объекта, OAuth-callback и т.п.), а также при добавлении нового типа линка.
-> **Связанные документы:** [03-domain-layer.md](03-domain-layer.md) (`RepositoryResult`, `RepositoryConfig`, `BaseMapper`-контракт), [04-data-layer.md](04-data-layer.md) (`BaseMapper`, `BaseRepositoryHelper`, DI-репозиториев), [05-presentation-layer.md](05-presentation-layer.md) (`AppRoot` + `AppRootBloc`, страницы, Freezed-BLoC), [02-dependency-injection.md](02-dependency-injection.md) (регистрация репозитория), [01-stack-and-tooling.md](01-stack-and-tooling.md) (`app_links`), [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md) (флейворы host/URL), [14-networking-and-auth.md](14-networking-and-auth.md) (verify-email/reset-password дёргают auth-endpoint'ы; web-deep-link endpoint'ы не подписываются HMAC).
+> **Связанные документы:** [03-domain-layer.md](03-domain-layer.md) (`RepositoryResult`, `RepositoryConfig`, `BaseMapper`-контракт), [04-data-layer.md](04-data-layer.md) (`BaseMapper`, `BaseRepositoryHelper`, DI-репозиториев), [05-presentation-layer.md](05-presentation-layer.md) (`AppRoot` + `AppRootBloc`, страницы, Freezed-BLoC), [02-dependency-injection.md](02-dependency-injection.md) (регистрация репозитория), [01-stack-and-tooling.md](01-stack-and-tooling.md) (`app_links`), [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md) (флейворы host/URL), [14-networking-and-auth.md](14-networking-and-auth.md) (verify-email/reset-password дёргают auth-endpoint'ы; исключение «web-deep-link endpoint'ы не подписываются HMAC» — часть **размеченного примера** §4, а не контракта v0: модель аутентификации stage 2 ещё не финализирована).
 
 ---
 
@@ -42,7 +42,7 @@
 - **Полиморфизм — интерфейсный, а не Freezed-union.** `BaseDeepLinkModel` — рукописный `abstract`-интерфейс (`data`, `source`-геттеры); каждый тип линка — отдельный `@freezed`-класс, **реализующий** этот интерфейс. Никакого `.when`/`.map` — потребитель различает типы через `is`-проверки.
 - **Один маршрутизатор.** Решение «какой тип линка → какой экран» живёт **в одном месте** — в `AppRootBloc._onOnDeepLink`. Добавление типа = одна `if (deepLink is X)`-ветка там.
 - **`watchDeepLink()` отдаёт `Stream<BaseDeepLinkModel?>`** (nullable): `null` — «нет/сброшен». После обработки вызывается `cleanDeepLink()`, чтобы один и тот же линк не отработал дважды.
-- **Двухфазный старт.** Виджет подписывается на **выход** (`watchDeepLink`) рано (в `initState`); BLoC включает **вход** (нативные слушатели через `initialize()`) тогда, когда приложение готово (после DI/после ухода из init-состояния, если есть auth-флоу). Репозиторий буферизует cold-start-ссылку (`BehaviorSubject`), пока потребитель не готов.
+- **Двухфазный старт.** Виджет подписывается на **выход** (`watchDeepLink`) рано (в `initState`); BLoC включает **вход** (нативные слушатели через `initialize()`) тогда, когда приложение готово (после DI и после того, как app-state-спина ушла из `init` — у NOX этот флоу реализован в Feature-009: `SplashPage` диспатчит `ApplyAppState`). Репозиторий буферизует cold-start-ссылку (`BehaviorSubject`), пока потребитель не готов.
 - **Все мутации репозитория возвращают `RepositoryResult<bool>`** (`success(data: true)`), как и весь остальной слой данных.
 
 ---
@@ -51,7 +51,7 @@
 
 Без нативной декларации `app_links` ссылки **не дойдут** до приложения. Для **HTTPS universal/app links** (рекомендуется) нужны и нативные декларации, и файлы-ассоциации на домене.
 
-**Хост.** Берётся из deep-link-URL'ов бэкенда NOX (например `<VERIFY_URL>` / `<RESET_URL>` / `<SHARE_URL>` — *пример; бэкенд/протокол NOX ещё не выбран, заменить на реальные имена переменных контракта*, см. [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md)) — по флейвору: prod-хост и stage-хост. Ниже плейсхолдеры `<prod_host>` / `<stage_host>`.
+**Хост.** Берётся из deep-link-URL'ов бэкенда NOX (например `<VERIFY_URL>` / `<RESET_URL>` / `<SHARE_URL>` — *пример: бэкенд и wire-контракт выбраны (Go-сервер `noxd`, контракт v0 — `docs/client-backend/protocol/contract-draft.md`), но **deep-link-URL'ов контракт v0 не описывает вовсе** — заменить на реальные имена переменных, когда их определят*, см. [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md)) — по флейвору: prod-хост и stage-хост. Ниже плейсхолдеры `<prod_host>` / `<stage_host>`.
 
 ### Android — `android/app/src/main/AndroidManifest.xml`
 
@@ -88,13 +88,13 @@
 
 ### Desktop (macOS / Windows / Linux) — нативная регистрация схемы — FUTURE
 
-`app_links` поддерживает все три desktop-платформы (macOS, Windows, Linux), так что слой данных пайплайна (`stringLinkStream` / `getInitialLinkString()`) кросс-платформенный без изменений (см. § Desktop fallback ниже). Но **нативная регистрация custom-scheme `nox://` на desktop — это FUTURE**: она вносится **вместе с самой deep-link-фичей**, а не в скелете (Feature-001). Когда дойдёт до неё, регистрировать по платформам:
+`app_links` поддерживает все три desktop-платформы (macOS, Windows, Linux), так что слой данных пайплайна (`stringLinkStream` / `getInitialLinkString()`) кросс-платформенный без изменений (см. § Desktop fallback ниже). Но **нативная регистрация custom-scheme `nox://` на desktop — это FUTURE**: она вносится **вместе с самой deep-link-фичей**. Когда дойдёт до неё, регистрировать по платформам:
 
 - **macOS** — `macos/Runner/Info.plist` → `CFBundleURLTypes` (аналог iOS-fallback'а: `CFBundleURLSchemes` со значением `nox`).
 - **Windows** — ключ реестра `HKCU\Software\Classes\nox\shell\open\command` (значение — путь к исполняемому файлу с `"%1"`), плюс `URL Protocol` на `HKCU\Software\Classes\nox`.
 - **Linux** — `.desktop`-файл с `MimeType=x-scheme-handler/nox;` (регистрация через `xdg-mime default <app>.desktop x-scheme-handler/nox`).
 
-> Эти три регистрации (как и iOS/Android intent-filter/associated-domains выше) — часть change-set'а deep-link-фичи, **не** скелета.
+> Эти три регистрации (как и iOS/Android intent-filter/associated-domains выше) — часть change-set'а deep-link-фичи; сегодня в репозитории не задана **ни одна** из них (нет ни `CFBundleURLTypes`, ни intent-filter'а с `autoVerify`, ни `associated-domains`, ни `x-scheme-handler/nox`).
 
 ---
 
@@ -181,8 +181,9 @@ class VerifyEmailDeepLinkEntity {
   final String userId;
   final String secret;
 
-  // Базовый URL = verify-URL бэкенда NOX (по флейвору). СВЕРИТЬ формат с бэкендом NOX
-  // (пример — бэкенд/протокол NOX ещё не выбран; заменить на реальный контракт).
+  // Base URL = the NOX web deep-link host, per flavor. EXAMPLE ONLY: the backend is
+  // chosen (Go `noxd`, contract v0) but contract v0 defines no deep-link URLs at all -
+  // replace these with the real ones once the deep-link contract exists.
   static const _verifyStage = 'https://<stage_host>/verify-email';
   static const _verifyProd = 'https://<prod_host>/verify-email';
 
@@ -248,6 +249,14 @@ class VerifyEmailDeepLinkMapper extends BaseMapper<VerifyEmailDeepLinkEntity, Ve
 ```dart
 @LazySingleton(as: DeepLinkRepository, env: [Environment.dev, Environment.prod, Environment.test])
 class DeepLinkRepositoryImpl with BaseRepositoryHelper implements DeepLinkRepository {
+  // Mappers come in through the constructor - the canon of lib/data/repository/**
+  // (injectable wires the @lazySingleton mappers, like ChatRepositoryImpl does).
+  DeepLinkRepositoryImpl(this._verifyEmailMapper, this._resetPasswordMapper, this._shareItemMapper);
+
+  final VerifyEmailDeepLinkMapper _verifyEmailMapper;
+  final ResetPasswordDeepLinkMapper _resetPasswordMapper;
+  final ShareItemDeepLinkMapper _shareItemMapper;
+
   final _appLinks = AppLinks();
   final _deepLinksStreamController = BehaviorSubject<BaseDeepLinkModel?>();
   StreamSubscription<String>? _appLinksSubscription;
@@ -315,22 +324,22 @@ class DeepLinkRepositoryImpl with BaseRepositoryHelper implements DeepLinkReposi
 
         if (VerifyEmailDeepLinkEntity.isValid(link)) {
           final e = await VerifyEmailDeepLinkEntity.parse(link);
-          return RepositoryResult.success(data: verifyEmailDeepLinkMapper.toModel(entity: e, ad: (_) => config.source));
+          return RepositoryResult.success(data: _verifyEmailMapper.toModel(entity: e, ad: (_) => config.source));
         }
         if (ResetPasswordDeepLinkEntity.isValid(link)) {
           final e = await ResetPasswordDeepLinkEntity.parse(link);
-          return RepositoryResult.success(data: resetPasswordDeepLinkMapper.toModel(entity: e, ad: (_) => config.source));
+          return RepositoryResult.success(data: _resetPasswordMapper.toModel(entity: e, ad: (_) => config.source));
         }
         if (ShareItemDeepLinkEntity.isValid(link)) {
           final e = await ShareItemDeepLinkEntity.parse(link);
-          return RepositoryResult.success(data: shareItemDeepLinkMapper.toModel(entity: e, ad: (_) => config.source));
+          return RepositoryResult.success(data: _shareItemMapper.toModel(entity: e, ad: (_) => config.source));
         }
         return RepositoryResult.error(exception: RepositoryException.unknown);
       });
 }
 ```
 
-> Мапперы резолвятся через `global_aliases.dart`-геттеры (`verifyEmailDeepLinkMapper` и т.п.) или `getIt<T>()` (см. [02-dependency-injection.md](02-dependency-injection.md)). `BaseRepositoryHelper.execute<T>()` логирует через обязательный `LogRepository` (см. [04-data-layer.md](04-data-layer.md)) — это касается и нераспознанной ссылки (`RepositoryException.unknown`).
+> Мапперы инжектятся **конструктором** — так устроены все реальные репозитории (`ChatRepositoryImpl(this._chatDao, this._chatRemote, this._mapper, this._wireMapper, …)`, `ItemRepositoryImpl(this._itemMapper, this._itemRemote)`), см. [02-dependency-injection.md](02-dependency-injection.md); `global_aliases.dart` сегодня держит только репозитории и сервисы — мапперных геттеров в нём нет. `BaseRepositoryHelper.execute<T>()` логирует через обязательный `LogRepository` (см. [04-data-layer.md](04-data-layer.md)) — это касается и нераспознанной ссылки (`RepositoryException.unknown`).
 
 ---
 
@@ -370,8 +379,12 @@ void dispose() {
 ```dart
 @freezed
 sealed class AppRootEvent with _$AppRootEvent {
+  // Existing cases, as in lib/presentation/app/bloc/app_root_event.dart today.
   const factory AppRootEvent.initialize() = Initialize;
   const factory AppRootEvent.setTheme({required ThemeMode themeMode}) = SetTheme;
+  const factory AppRootEvent.updateAppState({required RepositoryResult<AppStateModel> result}) = UpdateAppState;
+  const factory AppRootEvent.applyAppState() = ApplyAppState;
+  // Added by the deep-link feature.
   const factory AppRootEvent.initializeDeepLinks() = InitializeDeepLinks;
   const factory AppRootEvent.onDeepLink({required NavigatorState navigator, required BaseDeepLinkModel deepLink}) = OnDeepLink;
 }
@@ -406,7 +419,7 @@ FutureOr<void> _onOnDeepLink(OnDeepLink event, Emitter<AppRootState> emit) async
 - Диспатч — **плоская последовательность `is`-проверок** по конкретному подтипу (не `switch` по `DeepLinkSource`, не exhaustive). Нераспознанный тип игнорируется.
 - `cleanDeepLink()` — **первым** действием, до навигации.
 - Навигация — через `NavigatorState` из события (не `BuildContext`-в-bloc).
-- `InitializeDeepLinks` диспатчится из `AppRoot` после готовности (например, в `_onInitialize` → `add(const AppRootEvent.initializeDeepLinks())`, либо по сигналу app-state, если позже появится auth/splash-флоу — см. [05-presentation-layer.md](05-presentation-layer.md) §6.1 «Опциональный auth/splash-флоу»).
+- `InitializeDeepLinks` диспатчится из `AppRoot` после готовности (например, в `_onInitialize` → `add(const AppRootEvent.initializeDeepLinks())`, либо по сигналу app-state — auth/splash-флоу у NOX уже реализован, Feature-009: применённое состояние уходит из `init` по `ApplyAppState` со splash, см. [05-presentation-layer.md](05-presentation-layer.md) §6.1).
 
 ### 5.3 `ValidateDeepLinkPage` — серверная валидация token-линков
 
@@ -460,13 +473,13 @@ FutureOr<void> _onInitialize(Initialize event, Emitter<ValidateDeepLinkState> em
 
 Тело страницы рендерится через `state.when(initializing: ..., error: ...)`: прогресс-плейсхолдер на `Initializing` и `ValidateDeepLinkErrorWidget` на `Error`. Валидация стартует сразу в `initState` (`..add(ValidateDeepLinkEvent.initialize(context: context))`).
 
-> **Не каждый тип проходит через ValidateDeepLinkPage.** `ResetPassword` (в примере несёт `userId`/`secret` — *точная форма токена сброса зависит от ещё не выбранного бэкенда NOX*) уходит **сразу** на экран смены пароля, который сам дёргает API при отправке формы (`verify_reset_password`). Серверную валидацию `ValidateDeepLinkPage` проходят только линки, которые надо подтвердить до показа экрана (verify-email и т.п.).
+> **Не каждый тип проходит через ValidateDeepLinkPage.** `ResetPassword` (в примере несёт `userId`/`secret` — *контракт v0 таких ссылок не описывает, а идентичность NOX анонимная (ID + label, без email/пароля), так что форму токена определят вместе с самим deep-link-контрактом*) уходит **сразу** на экран смены пароля, который сам дёргает API при отправке формы (`verify_reset_password`). Серверную валидацию `ValidateDeepLinkPage` проходят только линки, которые надо подтвердить до показа экрана (verify-email и т.п.).
 
 ---
 
 ## 6. Типы линков NOX (под бэкенд)
 
-Конкретный набор — под deep-link-URL'ы бэкенда NOX. **URL/имена query-параметров сверить с бэкендом перед реализацией** (например `<VERIFY_URL>` / `<RESET_URL>` / `<SHARE_URL>`). Таблица ниже — **пример; бэкенд/протокол NOX ещё не выбран, заменить на реальный контракт** (форма токена верификации/восстановления — здесь показана как `userId` + `secret` — зависит от выбранного бэкенда).
+Конкретный набор — под deep-link-URL'ы бэкенда NOX. **URL/имена query-параметров сверить с бэкендом перед реализацией** (например `<VERIFY_URL>` / `<RESET_URL>` / `<SHARE_URL>`). Таблица ниже — **пример из импортированного референса, а не контракт NOX**: бэкенд выбран (Go-сервер `noxd`, контракт v0), но **deep-link-URL'ов контракт v0 не описывает вовсе**, и идентичность NOX анонимная (ID + label, без email/телефона/пароля) — то есть verify-email / reset-password в таком виде к NOX неприменимы; форма токена (здесь показана как `userId` + `secret`) определится вместе с самим deep-link-контрактом.
 
 | Модель | URL-паттерн (host по флейвору) | Поля | Назначение |
 |---|---|---|---|
@@ -474,7 +487,7 @@ FutureOr<void> _onInitialize(Initialize event, Emitter<ValidateDeepLinkState> em
 | `ResetPasswordDeepLinkModel` | `https://<host>/reset-password?userId=…&secret=…` | `userId`, `secret` | напрямую на экран смены пароля → `verify_reset_password` |
 | `ShareItemDeepLinkModel` | `https://<host>/s/<item_id>` | `itemId` | открыть расшаренный объект (`<SHARE_URL>`) |
 
-> Это **cross-project контракт** (mobile ↔ бэкенд NOX). Точный формат URL и параметров фиксируется совместно с владельцем бэкенда; таблица выше — пример/стартовая, не финальная (бэкенд/протокол NOX ещё не выбран). Эндпоинты `verify_email` / `verify_reset_password` — web-deep-link (`requiresWebDeepLink = true`): **не** подписываются HMAC и не несут security-заголовков (см. [14-networking-and-auth.md](14-networking-and-auth.md) §4.2) — запрос от `ValidateDeepLinkPage` / экрана смены пароля идёт без security-interceptor'а.
+> Это **cross-project контракт** (mobile ↔ бэкенд NOX). Точный формат URL и параметров фиксируется совместно с владельцем бэкенда; таблица выше — пример/стартовая, не финальная (deep links — открытый пункт: в контракте v0 их нет). Эндпоинты `verify_email` / `verify_reset_password` и правило «web-deep-link (`requiresWebDeepLink = true`) не подписывается HMAC и не несёт security-заголовков» — часть **размеченного примера** схемы авторизации (см. [14-networking-and-auth.md](14-networking-and-auth.md) §4.2, где и сама HMAC-схема помечена как пример/TBD до модели аутентификации stage 2), а не действующий контракт: сегодня в коде живёт только `Bearer` в `AuthInterceptor`, никакого security-interceptor'а нет.
 
 > **⚠ Перед боевым деплоем (native association — иначе ссылки молча уходят в браузер).** §2 даёт каркас intent-filter / Associated Domains, но для прода обязательно добить: (1) **Android `https://<host>/.well-known/assetlinks.json`** с `delegate_permission/common.handle_all_urls`, `package_name` и SHA-256-fingerprint'ами **upload-key И Play App Signing key** (Google пере-подписывает APK — без его fingerprint App Links не верифицируются в проде; самый частый провал); (2) **iOS AASA `apple-app-site-association`** в новом формате `applinks.details[].appIDs` (`<TeamID>.<BundleID>`) + `components`, отдаётся как `application/json` без редиректа и без `.json`-расширения + capability **Associated Domains** в Xcode-таргете; (3) **реальные хосты NOX**: deep-link host (`<VERIFY_URL>`/`<RESET_URL>`/`<SHARE_URL>`) — это **web-хост писем/шары** (`<prod_host>` / `<stage_host>`), а **не** API-хост — сверить с владельцем, где публикуются ссылки и `.well-known/*`; (4) опц. **custom-scheme fallback** (`CFBundleURLTypes` / Android scheme intent-filter) для приёма до подтверждения App Links; (5) **тест-план верификации** (Android `adb shell am start -W -a android.intent.action.VIEW -d "https://<host>/verify-email?..." <app_id>` + `pm verify-app-links`; iOS — AASA через `app-site-association.cdn-apple.com/a/v1/<host>` + тап из Notes); (6) гейтинг **share-link при неавторизованном пользователе** (redirect на login → возврат к отложенному deep-link).
 
@@ -488,7 +501,7 @@ FutureOr<void> _onInitialize(Initialize event, Emitter<ValidateDeepLinkState> em
 4. **Ветка парсинга** — добавить `if (XEntity.isValid(link)) → parse → mapper.toModel` в `DeepLinkRepositoryImpl._internalParseLink`.
 5. **Ветка маршрутизации** — добавить `if (deepLink is XModel)` в `AppRootBloc._onOnDeepLink` (+ страница-назначение).
 6. **Нативка** — если появился новый host/pathPrefix: добавить Android intent-filter + iOS associated-domain + обновить `assetlinks.json` / AASA (§2).
-7. **Кодоген + DI** — `fvm dart run build_runner build` (Freezed/DI), при необходимости `global_aliases.dart`-геттер маппера.
+7. **Кодоген + DI** — `make generate` (`build_runner` + `gen-l10n`; Freezed/injectable), новый маппер добавить в конструктор `DeepLinkRepositoryImpl`.
 
 ---
 
@@ -507,9 +520,9 @@ FutureOr<void> _onInitialize(Initialize event, Emitter<ValidateDeepLinkState> em
 
 ---
 
-## 9. Desktop fallback (скелет и single-window)
+## 9. Desktop fallback (текущее состояние и single-window)
 
-- **В скелете (Feature-001) deep links — no-op.** Feature-001 — скелет без реальных продуктовых фич: `DeepLinkRepository` **не регистрируется** в DI, а `AppRoot` **не подписан** на `watchDeepLink()` (нет `_deepLinkSub`, нет `OnDeepLink`-диспатча; `AppRootEvent` несёт только `Initialize`/`SetTheme`). Весь пайплайн § 3–§ 5 вносится **позже**, вместе с deep-link-фичей (см. FR-013). Скелет компилируется на всех пяти платформах (iOS, Android, Windows, Linux, macOS), но входящие ссылки в нём не обрабатываются. (`AppRoot` уже держит `_navigatorKey` = `MaterialApp.navigatorKey` — это шов, в который позже подключится подписка.)
+- **Сегодня deep links — no-op (фичи 001–021 смержены, идёт клиентский трек 025+).** Пайплайн не реализован **ни в каком виде**: `lib/domain/model/deep_link/` и `DeepLinkRepository`(+`Impl`) не существуют и в DI не регистрируются; `app_links: ^7.1.1` объявлен в `pubspec.yaml`, но в `lib/` **ни одного импорта** нет; `AppRoot` **не подписан** на `watchDeepLink()` (нет `_deepLinkSub`, нет `OnDeepLink`-диспатча), а реальный `AppRootEvent` (`lib/presentation/app/bloc/app_root_event.dart`) несёт четыре кейса app-state-спины — `Initialize` / `SetTheme` / `UpdateAppState` / `ApplyAppState` — и ни одного deep-link-кейса. Весь пайплайн § 3–§ 5 вносится **позже**, вместе с deep-link-фичей (см. FR-013): в контракте v0 deep links не описаны, это открытый пункт. Приложение собирается на всех пяти платформах (iOS, Android, Windows, Linux, macOS), но входящие ссылки не обрабатываются. (`AppRoot` уже держит `_navigatorKey` = `MaterialApp.navigatorKey` — это шов, в который позже подключится подписка.)
 - **Single-window подтверждён.** NOX — single-window-приложение на desktop: «тёплая» ссылка будит **то же самое** окно через `app_links` `stringLinkStream` (`DeepLinkSource.foreground`), **без** открытия второго окна и **без** второго `Navigator`. Маршрутизация остаётся в единственном `AppRootBloc._onOnDeepLink` поверх единственного `MaterialApp.navigatorKey` (§ 5) — desktop тут ничем не отличается от mobile.
 - **`app_links` кросс-компилируется на desktop.** Пакет собирается на macOS/Windows/Linux из коробки — **гейтить его по платформе не нужно** (ни условный импорт, ни platform-специфичная зависимость в `pubspec.yaml`). Один и тот же код слоя данных работает на всех пяти платформах; платформо-зависима лишь нативная регистрация схемы (§ 2, FUTURE).
 
@@ -527,4 +540,4 @@ FutureOr<void> _onInitialize(Initialize event, Emitter<ValidateDeepLinkState> em
 - [ ] `AppRoot` подписан на `watchDeepLink()` → `OnDeepLink(navigator, deepLink)`; отписка в `dispose`; `InitializeDeepLinks` после готовности приложения.
 - [ ] `AppRootBloc` dispatch-table (`cleanDeepLink()` первым; `is`-ветки на каждый тип → страница).
 - [ ] `ValidateDeepLinkPage` (page-folder + Freezed-BLoC `Initializing`/`Error`) для token-линков; успех = `pop`, ошибка = `ValidateDeepLinkErrorWidget`.
-- [ ] URL-контракт типов линков сверён с бэкендом NOX (например `<VERIFY_URL>`/`<RESET_URL>`/`<SHARE_URL>`; бэкенд/протокол NOX ещё не выбран — финализировать контракт позже).
+- [ ] URL-контракт типов линков сверён с бэкендом NOX (например `<VERIFY_URL>`/`<RESET_URL>`/`<SHARE_URL>`; контракт v0 deep-link-URL'ов не описывает — финализировать их вместе с владельцем `noxd` перед реализацией).

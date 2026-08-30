@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
@@ -15,20 +16,32 @@ import 'package:nox_app/domain/repository/base/page_metadata.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_app/general/app_clock.dart';
 import 'package:nox_app/general/formatters/chat_preview_formatter.dart';
 import 'package:nox_app/general/identity/identity_resolver.dart';
+import 'package:nox_app/general/chat_seed_mock_data.dart';
 import 'package:nox_app/general/identity_mock_data.dart';
+import 'package:nox_app/general/mock_seq.dart';
 import 'package:uuid/uuid.dart';
 
 /// Cache-first chat thread (5.2) over the local Sembast DB. The [MessageRemoteDataSource]
 /// (mock this phase) seeds a chat's history ONCE on first open; thereafter the
-/// thread is paginated FROM the DB (newest batch first), and [sendMessage] persists
-/// the accepted message locally. No backend — when transport lands, only the
-/// data-source binding swaps; the DB contract stays.
+/// thread is paginated FROM the DB by the seq cursor (newest batch first, older
+/// batches by `before_seq` — contract §5), and [sendMessage] persists the accepted
+/// message locally. When the transport lands (027) and the binding flips (028),
+/// only the data source swaps; the DB contract and the wire shapes stay.
 @LazySingleton(as: MessageRepository, env: [Environment.dev, Environment.prod, Environment.test])
 class MessageRepositoryImpl with BaseRepositoryHelper implements MessageRepository {
-  MessageRepositoryImpl(this._messageDao, this._messageRemote, this._mapper, this._wireMapper, this._chatDao, this._sessionRepository);
+  MessageRepositoryImpl(
+    this._messageDao,
+    this._messageRemote,
+    this._mapper,
+    this._wireMapper,
+    this._chatDao,
+    this._sessionRepository,
+    this._syncRepository,
+  );
 
   final MessageDao _messageDao;
   final MessageRemoteDataSource _messageRemote;
@@ -36,8 +49,8 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
   final MessageWireMapper _wireMapper;
   final ChatDao _chatDao;
   final SessionRepository _sessionRepository;
+  final SyncRepository _syncRepository;
 
-  static const int _pageSize = GetMessagesConfig.pageSize;
   static const Uuid _uuid = Uuid();
 
   /// The signed-in own-identity resolved from the session (fallbacks when absent).
@@ -58,50 +71,93 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
     if (!sessionResult.hasData) return;
     final identity = resolveIdentity(sessionResult.data);
     final all = <MessageModel>[];
-    var page = GetMessagesConfig.defaultPage;
+    int? beforeSeq;
     while (true) {
-      // Unwrap the ResponseEntity<MessagesWireEntity> envelope (feature 018/S4), mapping
-      // wire->model. A data==null / success:false envelope throws → the enclosing execute()
-      // maps it to error. Pagination via page*pageSize < total (equals the old nextPage).
+      // Walk the contract cursor backward: the tail first, then batches older
+      // than the oldest received seq, until has_more says stop. A data==null
+      // envelope throws → the enclosing execute() maps it to error.
       final response = await _messageRemote.getMessages(
-        config: GetMessagesConfig.nextPage(chatId: chatId, page: page),
+        config: GetMessagesConfig(chatId: chatId, beforeSeq: beforeSeq, limit: GetMessagesConfig.pageSize),
       );
-      final data = response.data;
-      if (data == null) throw StateError('messages envelope has no data (success=${response.success})');
-      all.addAll(_wireMapper.toListModel(entities: data.items));
-      if ((data.page * data.pageSize) >= data.total) break; // no next page
-      page = data.page + 1;
+      final data = unwrapEnvelope(response, 'messages');
+      final batch = _wireMapper.toListModel(entities: data.messages);
+      all.insertAll(0, batch);
+      if (!data.hasMore || batch.isEmpty) break;
+      beforeSeq = batch.first.seq;
     }
     final reconciled = all.map((m) {
       if (m.authorId != IdentityMockData.fallbackOwnId) return m;
-      return m.copyWith(authorId: identity.id, authorLabel: identity.label);
-    });
-    await _messageDao.saveData(reconciled.map((m) => _mapper.toEntity(model: m)).toList());
+      // Own seed rows follow the signed-in identity and carry the local
+      // "accepted by server" status (the wire has no statuses - §5).
+      return m.copyWith(authorId: identity.id, authorLabel: identity.label, status: MessageStatus.sent);
+    }).toList();
+    // The genesis line is client-synthesized (contract §4: no system messages
+    // on the wire): position 0 of the chat's seq range, rendered from the
+    // seed persona - byte-identical to the pre-025 seeded line.
+    final genesis = MessageModel(
+      id: '${chatId}_sys',
+      seq: reconciled.isEmpty ? 0 : reconciled.map((m) => m.seq).reduce(min) - 1,
+      chatId: chatId,
+      authorId: 'system',
+      authorLabel: ChatSeedMockData.genesisAuthorLabel,
+      isSystem: true,
+      sentAt: AppClock.now().subtract(ChatSeedMockData.genesisAge),
+    );
+    await _messageDao.saveData([genesis, ...reconciled].map((m) => _mapper.toEntity(model: m)).toList());
+    // The cursor's promise is "everything up to seq is applied locally"
+    // (§9.4) - seeding applies the whole batch at once.
+    if (reconciled.isNotEmpty) {
+      await _syncRepository.advanceCursor(reconciled.map((m) => m.seq).reduce(max));
+    }
+  }
+
+  /// Chats already checked for pre-025 rows this process (cheap memo — the
+  /// backfill itself is one-time per DB).
+  final Set<String> _legacySeqChecked = <String>{};
+
+  /// One-time per-chat backfill for rows persisted before 025 (no `seq` field):
+  /// assigns ascending synthetic seqs in stored (sentAt) order BELOW every real
+  /// seq in the chat, so the value cursor in [getMessages] stays sound on an
+  /// upgraded-in-place DB (a legacy `seq == 0` cursor would otherwise trim the
+  /// whole window and strand the older history). Device-local numbering only —
+  /// these rows never travel back to the wire.
+  Future<void> _backfillLegacySeqIfNeeded(String chatId) async {
+    if (!_legacySeqChecked.add(chatId)) return;
+    final entities = await _messageDao.getByChatSorted(chatId);
+    final legacy = entities.where((e) => e.seq == null).toList();
+    if (legacy.isEmpty) return;
+    final realSeqs = entities.map((e) => e.seq).whereType<int>();
+    // The block lands directly below the chat's lowest real seq (or at 1..n on
+    // an all-legacy chat), preserving the stored order.
+    var next = realSeqs.isEmpty ? 1 : realSeqs.reduce(min) - legacy.length;
+    await _messageDao.saveData([for (final e in legacy) e.copyWith(seq: next++)]);
   }
 
   @override
   Future<RepositoryResult<(List<MessageModel>, PageMetadata)>> getMessages({required GetMessagesConfig config}) {
     return execute<(List<MessageModel>, PageMetadata)>(() async {
       await _seedChatIfEmpty(config.chatId);
+      await _backfillLegacySeqIfNeeded(config.chatId);
       final all = (await _messageDao.getByChatSorted(config.chatId)).map((e) => _mapper.toModel(entity: e)).toList();
-      final total = all.length;
-      // page 1 = newest `pageSize`; each next page reaches further back in time.
-      final end = total - (config.page - 1) * _pageSize;
-      if (end <= 0) {
-        return RepositoryResult<(List<MessageModel>, PageMetadata)>.success(data: (const <MessageModel>[], PageMetadata(total: total)));
+      // Cursor window over the seq-ascending list: everything strictly older
+      // than beforeSeq (or the whole list for the tail), newest `limit` rows.
+      var end = all.length;
+      final beforeSeq = config.beforeSeq;
+      if (beforeSeq != null) {
+        while (end > 0 && all[end - 1].seq >= beforeSeq) {
+          end--;
+        }
       }
-      final start = (end - _pageSize) < 0 ? 0 : end - _pageSize;
+      final start = (end - config.limit) < 0 ? 0 : end - config.limit;
       final slice = all.sublist(start, end);
-      final hasMore = start > 0;
-      return RepositoryResult<(List<MessageModel>, PageMetadata)>.success(
-        data: (slice, PageMetadata(total: total, nextPage: hasMore ? config.page + 1 : null)),
-      );
+      return RepositoryResult<(List<MessageModel>, PageMetadata)>.success(data: (slice, PageMetadata(hasMore: start > 0)));
     });
   }
 
   @override
   Stream<List<MessageModel>> watchMessages(String chatId) async* {
     await _seedChatIfEmpty(chatId);
+    await _backfillLegacySeqIfNeeded(chatId);
     yield* _messageDao.watch(chatId).map((entities) => entities.map((e) => _mapper.toModel(entity: e)).toList());
   }
 
@@ -118,9 +174,10 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
         text: text,
         attachment: attachment,
       );
-      final data = response.data;
-      if (data == null) throw StateError('send envelope has no data (success=${response.success})');
-      var message = _wireMapper.toModel(entity: data);
+      final data = unwrapEnvelope(response, 'send');
+      // The wire carries no statuses (§5): an echoed own message is locally
+      // "accepted by server".
+      var message = _wireMapper.toModel(entity: data).copyWith(status: MessageStatus.sent);
       // The wire echo is the (future) backend contract — it carries NO device-local path.
       // Re-attach the client's localPath from the sent attachment so a sent image still
       // previews/saves (F4/F2): the server owns id/timestamp, the client owns the file path.
@@ -132,6 +189,7 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
       // Keep the chat row (list) consistent with the thread: update preview + time + order.
       // A failed send returns an error before reaching here, so the row is never touched (FR-004).
       await _touchChatRow(chatId, message, incrementUnread: false);
+      await _syncRepository.advanceCursor(message.seq);
       return RepositoryResult<MessageModel>.success(data: message);
     });
   }
@@ -148,6 +206,7 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
     final identity = resolveIdentity(sessionResult.data);
     final systemLine = MessageModel(
       id: '${chatId}_sys',
+      seq: MockSeq.next(),
       chatId: chatId,
       authorId: 'system',
       authorLabel: identity.label, // renders "Chat created by {label}" via l10n.systemChatCreated
@@ -176,6 +235,7 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
     // Debug stand-in for a server push: an inbound message (author != me) + unread bump.
     final message = MessageModel(
       id: 'sim_${_uuid.v4()}',
+      seq: MockSeq.next(),
       chatId: chatId,
       authorId: 'other:$chatId',
       authorLabel: 'Someone',
@@ -185,6 +245,7 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
     );
     await _messageDao.upsert(_mapper.toEntity(model: message));
     await _touchChatRow(chatId, message, incrementUnread: true);
+    await _syncRepository.advanceCursor(message.seq);
   }
 
   /// Updates the parent chat row after a message is persisted: last-message preview +

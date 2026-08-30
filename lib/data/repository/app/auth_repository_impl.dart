@@ -6,18 +6,26 @@ import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_app/general/onboarding_mock_data.dart';
 
 /// Mutate source-of-truth (session) → re-derive app state. Single logout path;
 /// only forced logout passes `sessionExpired`. Sign-in is a stub (backend TBD).
 @LazySingleton(as: AuthRepository, env: [Environment.dev, Environment.prod, Environment.test])
 class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
-  AuthRepositoryImpl(this._sessionRepository, this._appStateRepository, this._chatRepository, this._messageRepository);
+  AuthRepositoryImpl(
+    this._sessionRepository,
+    this._appStateRepository,
+    this._chatRepository,
+    this._messageRepository,
+    this._syncRepository,
+  );
 
   final SessionRepository _sessionRepository;
   final AppStateRepository _appStateRepository;
   final ChatRepository _chatRepository;
   final MessageRepository _messageRepository;
+  final SyncRepository _syncRepository;
 
   @override
   Future<RepositoryResult<bool>> signIn({required String identifier}) {
@@ -45,6 +53,11 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
       _sessionRepository.clear,
       sessionExpired: forced,
       afterMutate: () async {
+        // The cursor goes FIRST: a crash mid-wipe must leave it behind the
+        // stores (safe - replay re-applies idempotently), never ahead of an
+        // emptied store (a stale high `since` would skip every row below it
+        // and the monotonic guard would keep it stuck forever).
+        await _syncRepository.clear();
         await _chatRepository.clean();
         await _messageRepository.clean();
       },

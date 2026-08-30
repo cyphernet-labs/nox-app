@@ -14,18 +14,25 @@ void main() {
   test('every registered wire entity resolves via fromJson (feature 018/S4)', () {
     const item = ItemEntity(id: 'i', name: 'n', status: 'active', createdAt: '2026-01-01T00:00:00.000Z', description: null);
     const items = ItemsEntity(items: [item], page: 1, pageSize: 20, total: 1);
-    const chat = ChatWireEntity(id: 'c', name: 'n', lastMessagePreview: '', lastMessageAt: '2026-01-01T00:00:00.000Z', unreadCount: 0);
-    const chats = ChatsWireEntity(items: [chat], page: 1, pageSize: 20, total: 1);
+    const chat = ChatWireEntity(
+      chatId: 'c',
+      name: 'n',
+      createdAt: 1755600000,
+      createdByLabel: 'Anna',
+      lastMessagePreview: '',
+      lastActivityAt: 1755600123,
+    );
+    const chats = ChatsWireEntity(chats: [chat], hasMore: false);
     const msg = MessageWireEntity(
-      id: 'm',
+      messageId: 'm',
+      seq: 1,
       chatId: 'c',
       authorId: 'a',
       authorLabel: 'l',
-      sentAt: '2026-01-01T00:00:00.000Z',
-      status: 'none',
-      isSystem: false,
+      sentAt: 1755600123,
+      body: BodyWireEntity(type: 'text', text: 'hi'),
     );
-    const msgs = MessagesWireEntity(items: [msg], page: 1, pageSize: 20, total: 1);
+    const msgs = MessagesWireEntity(messages: [msg], hasMore: true);
 
     expect(const EntityConverter<ItemEntity>().fromJson(item.toJson()), item);
     expect(const EntityConverter<ItemsEntity>().fromJson(items.toJson()), items);
@@ -36,7 +43,7 @@ void main() {
   });
 
   test('toJson is symmetric for each registered type', () {
-    const chats = ChatsWireEntity(page: 1, pageSize: 20, total: 0);
+    const chats = ChatsWireEntity(hasMore: false);
     final json = const EntityConverter<ChatsWireEntity>().toJson(chats);
     expect(json, chats.toJson());
   });

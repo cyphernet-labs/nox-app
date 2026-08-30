@@ -9,10 +9,11 @@ import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 
 import 'auth_repository_impl_test.mocks.dart';
 
-@GenerateMocks([SessionRepository, AppStateRepository, ChatRepository, MessageRepository])
+@GenerateMocks([SessionRepository, AppStateRepository, ChatRepository, MessageRepository, SyncRepository])
 void main() {
   provideDummy<RepositoryResult<bool>>(const RepositoryResult<bool>.success(data: true));
   provideDummy<RepositoryResult<AppStateModel>>(RepositoryResult<AppStateModel>.success(data: AppStateModel.init()));
@@ -21,6 +22,7 @@ void main() {
   late MockAppStateRepository appState;
   late MockChatRepository chats;
   late MockMessageRepository messages;
+  late MockSyncRepository sync;
   late AuthRepositoryImpl repository;
 
   setUp(() {
@@ -28,10 +30,12 @@ void main() {
     appState = MockAppStateRepository();
     chats = MockChatRepository();
     messages = MockMessageRepository();
-    repository = AuthRepositoryImpl(session, appState, chats, messages);
+    sync = MockSyncRepository();
+    repository = AuthRepositoryImpl(session, appState, chats, messages, sync);
 
     when(chats.clean()).thenAnswer((_) async {});
     when(messages.clean()).thenAnswer((_) async {});
+    when(sync.clear()).thenAnswer((_) async {});
 
     when(
       session.saveIdentifier(
@@ -71,13 +75,15 @@ void main() {
     // A failed wipe must not drop the caches (the user is still authorized).
     verifyNever(chats.clean());
     verifyNever(messages.clean());
+    verifyNever(sync.clear());
   });
 
   test('logout wipes the chat + message caches after a successful clear (full local wipe)', () async {
     await repository.logout();
-    verify(session.clear()).called(1);
-    verify(chats.clean()).called(1);
-    verify(messages.clean()).called(1);
+    // The cursor goes FIRST: a crash mid-wipe must leave it behind the stores
+    // (safe), never ahead of an emptied store (a stale high `since` would skip
+    // replayed history forever under the monotonic guard).
+    verifyInOrder([session.clear(), sync.clear(), chats.clean(), messages.clean()]);
   });
 
   test('completeOnboarding marks the flag and re-derives app state', () async {

@@ -15,12 +15,14 @@ import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/general/app_clock.dart';
+import 'package:nox_app/general/chat_seed_mock_data.dart';
 import 'package:uuid/uuid.dart';
 
 /// Cache-first chats list (5.1) over the local Sembast DB. The [ChatRemoteDataSource]
 /// (mock this phase) seeds the store ONCE on first read; thereafter the list, search
-/// and pagination are served from the DB, and [createChat] persists locally. No
-/// backend — when transport lands, only the data-source binding swaps; the DB contract stays.
+/// and pagination are served from the DB, and [createChat] persists locally. When the
+/// transport lands (027) and the binding flips (028), only the data source swaps —
+/// the DB contract and the paged wire shape `{chats, has_more}` (§4) stay.
 @LazySingleton(as: ChatRepository, env: [Environment.dev, Environment.prod, Environment.test])
 class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
   ChatRepositoryImpl(this._chatDao, this._chatRemote, this._mapper, this._wireMapper, this._messageRepository);
@@ -36,7 +38,7 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
 
   /// One-time seed of the deterministic mock set into the local DB (empty store).
   /// Unwraps the `ResponseEntity<ChatsWireEntity>` envelope per page (feature 018/S4),
-  /// mapping wire->model and paging via `page*pageSize < total` (equals the old hasMore).
+  /// mapping wire->model and walking pages until the wire `has_more` flag drops (025).
   /// A `data == null` / `success:false` envelope throws → the enclosing `execute()` in
   /// getChats/watchChats maps it to `RepositoryResult.error` (mirrors `ItemRepositoryImpl`).
   Future<void> _seedIfEmpty() async {
@@ -45,13 +47,17 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
     var page = GetChatsConfig.defaultPage;
     while (true) {
       final response = await _chatRemote.getChats(config: GetChatsConfig.nextPage(page: page));
-      final data = response.data;
-      if (data == null) throw StateError('chats envelope has no data (success=${response.success})');
-      all.addAll(_wireMapper.toListModel(entities: data.items));
-      if ((data.page * data.pageSize) >= data.total) break; // no next page
-      page = data.page + 1;
+      final data = unwrapEnvelope(response, 'chats');
+      all.addAll(_wireMapper.toListModel(entities: data.chats));
+      // An empty page ends the walk even if has_more stayed true: a desynced
+      // server must not spin this loop forever (mirrors the messages seed).
+      if (!data.hasMore || data.chats.isEmpty) break;
+      page = page + 1;
     }
-    await _chatDao.saveData(all.map((c) => _mapper.toEntity(model: c)).toList());
+    // Unread badges are device-local (contract §8.3, not on the wire): the
+    // mock world seeds them here as a local overlay.
+    final seeded = all.map((c) => c.copyWith(unreadCount: ChatSeedMockData.unreadFor(c.id)));
+    await _chatDao.saveData(seeded.map((c) => _mapper.toEntity(model: c)).toList());
   }
 
   @override
@@ -65,7 +71,7 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
       final slice = filtered.skip(start).take(_pageSize).toList();
       final hasMore = start + _pageSize < filtered.length;
       return RepositoryResult<(List<ChatModel>, PageMetadata)>.success(
-        data: (slice, PageMetadata(total: filtered.length, nextPage: hasMore ? config.page + 1 : null)),
+        data: (slice, PageMetadata(hasMore: hasMore, nextPage: hasMore ? config.page + 1 : null)),
       );
     });
   }

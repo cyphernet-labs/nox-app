@@ -60,6 +60,43 @@ void main() {
     );
 
     blocTest<ChatThreadBloc, ChatThreadState>(
+      'LoadMessages walks the seq cursor: the older batch appends without duplicates and oldestLoadedSeq folds down',
+      setUp: () async {
+        // Grow chat_5 (used by this test only) past one window so the tail
+        // leaves an older remainder for the cursor prefetch.
+        final repo = getIt<MessageRepository>();
+        await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_5'));
+        var count = ((await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_5', limit: 100))).data!.$1).length;
+        while (count < GetMessagesConfig.pageSize + 5) {
+          await repo.sendMessage(chatId: 'chat_5', text: 'grow #$count');
+          count++;
+        }
+      },
+      build: ChatThreadBloc.new,
+      act: (bloc) async {
+        bloc.add(const ChatThreadEvent.initialize('chat_5'));
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        final tail = bloc.state as Initialized;
+        // The tail window: a full page, more history behind it, and the cursor
+        // pinned at the batch's lowest journal number.
+        expect(tail.items.length, GetMessagesConfig.pageSize);
+        expect(tail.pagingState.hasNextPage, isTrue);
+        expect(tail.oldestLoadedSeq, tail.items.map((m) => m.seq).reduce((a, b) => a < b ? a : b));
+        bloc.add(const ChatThreadEvent.loadMessages()); // scroll-up prefetch -> olderThan(oldestLoadedSeq)
+      },
+      wait: const Duration(milliseconds: 500),
+      verify: (bloc) {
+        final state = bloc.state as Initialized;
+        // The older batch appended: every row exactly once, the cursor folded
+        // down to the new minimum, and the thread bottomed out.
+        expect(state.items.length, GetMessagesConfig.pageSize + 5);
+        expect(state.items.map((m) => m.id).toSet().length, state.items.length);
+        expect(state.oldestLoadedSeq, state.items.map((m) => m.seq).reduce((a, b) => a < b ? a : b));
+        expect(state.pagingState.hasNextPage, isFalse);
+      },
+    );
+
+    blocTest<ChatThreadBloc, ChatThreadState>(
       'an optimistic send goes pending → sent',
       build: ChatThreadBloc.new,
       act: (bloc) async {
@@ -137,8 +174,10 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 250));
         bloc.add(const ChatThreadEvent.messageSent(text: 'queued offline'));
         await Future<void>.delayed(const Duration(milliseconds: 100));
-        // While offline the message stays pending.
+        // While offline the message stays pending, and the kPendingSeq sentinel
+        // keeps the queued bubble at the newest end of the merged thread.
         expect((bloc.state as Initialized).outgoing.first.status, MessageStatus.pending);
+        expect((bloc.state as Initialized).allMessages.last.text, 'queued offline');
         bloc.add(const ChatThreadEvent.setScenario(ChatThreadScenario.normal));
       },
       wait: const Duration(milliseconds: 800),
@@ -384,7 +423,7 @@ void main() {
         conn.emit(true);
         await Future<void>.delayed(const Duration(milliseconds: 900));
 
-        final persisted = (await getIt<MessageRepository>().getMessages(config: GetMessagesConfig.firstPage(chatId: 'chat_0'))).data!.$1;
+        final persisted = (await getIt<MessageRepository>().getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0'))).data!.$1;
         expect(persisted.where((m) => m.text == 'flap-queued'), hasLength(1)); // delivered exactly once
       });
 

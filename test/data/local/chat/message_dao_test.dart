@@ -14,9 +14,10 @@ void main() {
     dao = MessageDao(appDb);
   });
 
-  MessageEntity msg(String id, String chatId, String iso) => MessageEntity(
+  MessageEntity msg(String id, String chatId, String iso, {int? seq}) => MessageEntity(
     id: id,
     chatId: chatId,
+    seq: seq,
     authorId: 'u',
     authorLabel: 'U',
     text: 't',
@@ -39,6 +40,31 @@ void main() {
     expect((await dao.getByChatSorted('c1')).map((m) => m.id).toList(), ['a', 'b']); // oldest first
     expect(await dao.countByChat('c1'), 2);
     expect(await dao.countByChat('c2'), 1);
+  });
+
+  test('seq is the primary order: same-second sentAt ties can never reorder rows against their seq', () async {
+    // Unix-second wire precision makes same-second sentAt strings identical;
+    // insertion order is adversarial (higher seq first) to prove the sort does
+    // not fall back to store/insertion order (FR-001 / US1 scenario 3).
+    const iso = '2026-06-15T21:30:00.000Z';
+    await dao.saveData([
+      msg('srv_b', 'c1', iso, seq: 1011),
+      msg('srv_a', 'c1', iso, seq: 1010),
+      msg('srv_c', 'c1', '2026-06-15T21:29:00.000Z', seq: 1012), // seq beats an EARLIER sentAt too
+    ]);
+
+    expect((await dao.getByChatSorted('c1')).map((m) => m.seq).toList(), [1010, 1011, 1012]);
+  });
+
+  test('legacy pre-025 rows (no seq) order by sentAt before real-seq rows and ties total-order by id', () async {
+    const iso = '2026-06-01T00:00:00.000Z';
+    await dao.saveData([
+      msg('new', 'c1', '2026-06-02T00:00:00.000Z', seq: 500),
+      msg('leg_b', 'c1', iso), // seq null -> 0: the legacy block sorts first,
+      msg('leg_a', 'c1', iso), // by sentAt, then by id for a deterministic tie
+    ]);
+
+    expect((await dao.getByChatSorted('c1')).map((m) => m.id).toList(), ['leg_a', 'leg_b', 'new']);
   });
 
   test('upsert adds a message and cleanData empties the store', () async {

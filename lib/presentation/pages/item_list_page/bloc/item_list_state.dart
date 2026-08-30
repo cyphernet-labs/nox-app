@@ -9,7 +9,6 @@ sealed class ItemListState with _$ItemListState {
     @Default(<ItemModel>[]) List<ItemModel> items,
     @Default(GetItemsConfig.defaultPage) int nextPage,
     @Default(false) bool isLastPage,
-    @Default(0) int total,
     @Default(false) bool loadingInProgress,
   }) = Initialized;
 

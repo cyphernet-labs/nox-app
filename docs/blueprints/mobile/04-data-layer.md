@@ -2,13 +2,13 @@
 
 > **Назначение:** дать копипаст-готовые шаблоны слоя данных (`lib/data/`) — сущности (entities), генерик-конверт `ResponseEntity<T>` + ручной реестр `EntityConverter<E>`, мапперы, типизированные исключения, реактивные Sembast-DAO, REST-слой (Dio `ApiClient` + `RequestBuilder`/`RequestBuilderHelper` + API-классы) и реализации репозиториев. Слой данных **реализует** контракты из `03-domain-layer.md`.
 > **Когда читать:** когда поднимаешь папку `lib/data/` или подключаешь конкретный `ItemRepositoryImpl` к его DAO + мапперу + REST-клиенту. Это авторитетный дом всех шаблонов слоя данных.
-> **Связанные документы:** `03-domain-layer.md` (контракты, которые здесь реализуются), `05-presentation-layer.md` (потребляет репозитории), `02-dependency-injection.md` (`AppDatabase`, env-scoped провайдеры, `getIt`), `06-theming.md`, `07-pagination.md` (network-only пагинация), `08-conventions-and-constitution.md` (правила именования и инвариантов), `10-code-templates.md` (индекс шаблонов), `12-dev-commands.md` (build_runner).
+> **Связанные документы:** `03-domain-layer.md` (контракты, которые здесь реализуются), `05-presentation-layer.md` (потребляет репозитории), `02-dependency-injection.md` (`AppDatabase`, env-scoped провайдеры, `getIt`), `06-theming.md`, `07-pagination.md` (страничный путь списка чатов + seq-курсорный путь истории сообщений), `08-conventions-and-constitution.md` (правила именования и инвариантов), `10-code-templates.md` (индекс шаблонов), `12-dev-commands.md` (build_runner).
 
 > **`watchX()` как change-signal (Feature 014).** Реактивные Sembast-`watch()`-стримы репозитория (`watchChats`/`watchMessages`) используются презентацией как **сигнал об изменении** кэша, а не как источник проекции: их значение игнорируется, а BLoC перечитывает уже загруженный префикс через тот же `getX` (см. `07-pagination.md`). Мутации, меняющие несколько сущностей (напр. `sendMessage` → сообщение + строка чата), выполняются в data-слое, поэтому реактивный список обновляется без связей между BLoC. См. `specs/014-reactive-data-refresh/`.
 
 > **Reactive-канал не только над Sembast (Feature 015).** Тот же паттерн change-signal применим к не-Sembast источникам: `SessionRepository.watchLabel()` — это broadcast-`StreamController<String?>` над `shared_preferences`-меткой (не реактивной самой по себе). Он эмитит текущую метку при подписке (seed-then-live, как `watch()`-`async*`), затем каждое переименование (`updateLabel`) и `null` при `clear` (logout). Единый источник identity (технический идентификатор + label) резолвится чистой `resolveIdentity(SessionModel?)`; переименование меняет только label, идентификатор remain-invariant (own-detection в треде опирается на идентификатор). Живые surfaces (desktop rail-аватар) подписываются и обновляются без рестарта. См. `specs/015-identity-unification/`.
 
-> **RemoteDataSource seam (Feature 016).** Сетевая граница каждой data-фичи — абстрактный интерфейс `*RemoteDataSource` (`lib/data/remote/datasource/`: `ChatRemoteDataSource`/`MessageRemoteDataSource`/`ItemRemoteDataSource`). Репо зависят **от интерфейса**, не от конкретного мока (dependency inversion). Мок-реализации (`Mock*RemoteDataSource`) делегируют неизменным `*Api`-генераторам и биндятся `@LazySingleton(as: Interface, env:[dev,prod,test])` — мок покрывает и `prod`, т.к. prod-флейвор бутается `Environment.prod`, а real-impl ещё нет. **Флип на бэкенд** (когда появится): зарегистрировать `RealXRemoteDataSource` на `[Environment.prod]`, сузить мок до `[dev,test]`, `make generate` — репо/DAO/мапперы/`RepositoryResult`/`PageMetadata`/UI не трогаются. `RepositoryResult`+catch-all `execute()` и HTTP→exception-маппинг (S3) остаются контрактом поверх seam. См. `specs/016-remote-datasource-seam/`. _(Feature 017 ретайрил `ChatFilesRemoteDataSource`: файлы чата — не сетевой ресурс, а локальная деривация из уже персистентных вложений `MessageDao` (`MessageRepository.chatFiles(chatId)`, newest-first). У файлов нет собственной сетевой границы — они появляются вместе с сообщениями, а сообщения уже проходят через `MessageRemoteDataSource`.)_
+> **RemoteDataSource seam (Feature 016).** Сетевая граница каждой data-фичи — абстрактный интерфейс `*RemoteDataSource` (`lib/data/remote/datasource/`: `ChatRemoteDataSource`/`MessageRemoteDataSource`/`ItemRemoteDataSource`). Репо зависят **от интерфейса**, не от конкретного мока (dependency inversion). Мок-реализации (`Mock*RemoteDataSource`) делегируют неизменным `*Api`-генераторам и биндятся `@LazySingleton(as: Interface, env:[dev,prod,test])` — мок покрывает и `prod`, т.к. prod-флейвор бутается `Environment.prod`, а real-impl ещё нет. **Флип на бэкенд** (фаза 028, после транспорта 027): зарегистрировать `RealXRemoteDataSource` на `[Environment.prod]`, сузить мок до `[dev,test]`, `make generate` — репо/DAO/мапперы/`RepositoryResult`/`PageMetadata`/UI не трогаются. `RepositoryResult`+catch-all `execute()` и HTTP→exception-маппинг (S3) остаются контрактом поверх seam. См. `specs/016-remote-datasource-seam/`. _(Feature 017 ретайрил `ChatFilesRemoteDataSource`: файлы чата — не сетевой ресурс, а локальная деривация из уже персистентных вложений `MessageDao` (`MessageRepository.chatFiles(chatId)`, newest-first). У файлов нет собственной сетевой границы — они появляются вместе с сообщениями, а сообщения уже проходят через `MessageRemoteDataSource`.)_
 
 ---
 
@@ -17,11 +17,11 @@
 Слой данных отвечает за:
 
 - **Entities (DTO)** — `@freezed` + `json_serializable`, **только базовые типы** (`String`/`int`/`double`/`bool` + их `List`). Enum хранится как `.name` (String), `DateTime` — как ISO-8601 String. Любая коэрция отложена в маппер.
-- **`ResponseEntity<T>` + `EntityConverter<E>`** — генерик-конверт REST-ответа (бэкенд отдаёт единый envelope `{data, timestamp, trace_id, meta}` — *пример контракта, заменить на реальный backend NOX*) + ручной реестр типов, резолвящий генерик `T` в конкретный entity.
+- **`ResponseEntity<T>` + `EntityConverter<E>`** — генерик-конверт ответа (контракт v0: `success` зеркалит `ok` reply-кадра, `error` — объект `{code, message}` §2.1) + ручной реестр типов, резолвящий генерик `T` в конкретный entity.
 - **Мапперы** — двунаправленная конвертация `Entity <-> Model` (`BaseMapper`), где происходит ВСЯ коэрция типов (enum, `DateTime`, nullable-нормализация). Композиция дочерних мапперов через конструктор.
-- **Обработка ошибок** — единственный механизм `BaseRepositoryHelper.execute<TD>()`: тонкий guarded try/catch, который **обязательно** логирует через `LogRepository` и возвращает `RepositoryResult.error(...)`. Маппинг коэрсный: `DioException` → `RepositoryException.internal`, любой другой `catch` → `RepositoryException.unknown`. **Нет типизированной транспортной иерархии** (`ApiException` / `DaoException` / `BaseDomainExceptionHelper` намеренно отсутствуют — правило этого блюпринта), но есть **маркер** `BaseRepositoryException`, который реализует каждая доменная ошибка: общий enum `RepositoryException` и любые feature-специфичные enum'ы реализуют этот маркер (см. §5 и `03-domain-layer.md`). Конкретный доменный код возвращает сам callback явным `return RepositoryResult.error(...)`.
+- **Обработка ошибок** — единственный механизм `BaseRepositoryHelper.execute<TD>()`: тонкий guarded try/catch, который **обязательно** логирует через `LogRepository` и возвращает `RepositoryResult.error(...)`. Три ветки: `on BaseRepositoryException` (уже доменная ошибка — пробрасывается **как есть**, не понижается до `unknown`), `on DioException` (маппинг по типу/статусу через `_mapDioException`), общий `catch` → `RepositoryException.unknown`. Там же живёт `unwrapEnvelope<TD>(ResponseEntity<TD>, String what)` — разворачивание конверта: payload, иначе `RepositoryException.fromWireCode(error.code)`, иначе `StateError`. **Нет типизированной транспортной иерархии** (`ApiException` / `DaoException` / `BaseDomainExceptionHelper` намеренно отсутствуют — правило этого блюпринта), но есть **маркер** `BaseRepositoryException`, который реализует каждая доменная ошибка: общий enum `RepositoryException` и любые feature-специфичные enum'ы реализуют этот маркер (см. §5 и `03-domain-layer.md`). Конкретный доменный код возвращает сам callback явным `return RepositoryResult.error(...)`.
 - **DAO (Sembast)** — реактивное локальное хранилище: `onSnapshots()`/`onSnapshot()`, атомарные `db.transaction()`, env-scoped `AppDatabase` (Dev/Prod = IO, Test = memory).
-- **Репозитории** — реализуют контракты домена; кэш-first реактивная форма (подписка на DAO-поток + один `BehaviorSubject<RepositoryResult<...>>`). **Явный carve-out:** пагинированные серверные списки и one-shot POST — **network-only** (без DAO и subject), см. `07-pagination.md`.
+- **Репозитории** — реализуют контракты домена; **кэш-first — форма по умолчанию**: либо прямая подписка на DAO-поток (продуктовые `ChatRepositoryImpl`/`MessageRepositoryImpl`, фича 013), либо один `BehaviorSubject<RepositoryResult<...>>` (канон реактивного **одиночного** ресурса, §8.1). **Carve-out «пагинированный серверный список = network-only» ретайрен для продуктовых фич:** список чатов и история сообщений — кэш-first с DAO. Network-only (без DAO и subject) остаётся только у **замороженного верификационного среза `Item`** и у того, что действительно не кэшируется (см. §8 и `07-pagination.md`).
 
 Направление зависимостей: `data` **реализует** контракты `domain`. `domain` не импортирует `data`. Конвертация между базово-типизированными entities и богатыми доменными моделями живёт исключительно в мапперах.
 
@@ -34,6 +34,7 @@ lib/data/
   entity/
     base/response_entity.dart
     base/entity_converter.dart
+    base/error_wire_entity.dart  # контрактный {code, message} (§2.1)
     item/item_entity.dart
     item/items_entity.dart
   mapper/
@@ -45,9 +46,12 @@ lib/data/
     app_database.dart            # см. 02-dependency-injection.md (env-scoped провайдеры)
     item/item_dao.dart
   remote/
-    api_client.dart              # SKELETON: тонкий @lazySingleton Dio-обёртка (см. §7а)
-    api/item/get_items_api.dart  # SKELETON: mock-источник (FR-013)
-    # --- TARGET-форма REST-слоя (приходит с реальным бэкендом NOX) ---
+    api_client.dart              # тонкий @lazySingleton Dio-обёртка + initBase() (см. §7а)
+    interceptor/auth_interceptor.dart   # Bearer-заголовок + 401 -> forced logout (019/S5)
+    datasource/item_remote_data_source.dart      # сетевая граница фичи (016)
+    datasource/mock/mock_item_remote_data_source.dart
+    api/item/get_items_api.dart  # mock-генератор верификационного среза (FR-013)
+    # --- TARGET-форма request-builder-обвязки REST (ещё не построена) ---
     # api/base/base_api_repository.dart
     # request_builder/base/request_builder.dart
     # request_builder/base/request_builder_helper.dart
@@ -58,7 +62,7 @@ lib/data/
     log_repository_impl.dart
 ```
 
-> **SKELETON vs полный блюпринт.** В скелете Feature-001 реально присутствуют только закомментированные «SKELETON»-файлы выше: тонкий `ApiClient` (`remote/api_client.dart`), mock-`GetItemsApi` (`remote/api/item/get_items_api.dart`) и network-only `ItemRepositoryImpl`. Папка `remote/request_builder/`, `BaseApiRepository` и per-feature DAO-обвязка — это **TARGET-форма**, к которой слой растёт по мере появления реального бэкенда NOX и первой кэшируемой фичи (см. §6, §7, §8). Блюпринт даёт обе формы; пометки SKELETON/TARGET показывают, что уже построено, а что — канон-к-построению.
+> **SKELETON vs полный блюпринт.** Из перечисленного выше `remote/request_builder/` и `BaseApiRepository` — единственная **TARGET-форма**: в коде их нет. Всё остальное построено: тонкий `ApiClient` с `initBase()` + `AuthInterceptor` (019/S5), `Mock*RemoteDataSource` за интерфейсом (016), network-only `ItemRepositoryImpl` верификационного среза, а кэш-first DAO-обвязка реализована для продуктовых фич (`local/chat/chat_dao.dart`, `message_dao.dart`, `local/sync/sync_dao.dart`, фичи 013–025). Пометки SKELETON/TARGET по тексту показывают, что уже построено, а что — канон-к-построению; **`Item`-срез заморожен** как верификационный harness и не является продуктовым каноном.
 
 > `path_provider` — обязательная зависимость `pubspec.yaml`: файловый бэкенд Sembast (`databaseFactoryIo`) резолвит путь к базе через `getApplicationDocumentsDirectory()`.
 
@@ -68,7 +72,7 @@ lib/data/
 
 Entities — `@freezed` **и** `json_serializable`: имеют обе `part`-директивы (`.freezed.dart` и `.g.dart`) и фабрику `fromJson`. Поля используют **только базовые типы**: `String`, `int`, `double`, `bool` и их `List`. Никаких enum-как-enum, никаких `DateTime`, никакого `BigInt`. `status`-enum хранится как его `name` (String); `created_at` — как ISO-8601 String. Nullable там, где API отдаёт nullable. **Вся** коэрция выполняется в маппере (§4).
 
-> **`Item` — нейтральный blueprint-шаблон, не реальная сущность.** `ItemEntity` / `ItemModel` / `ItemRepository` по всему документу — это обобщённый плейсхолдер, демонстрирующий форму слоя; они НЕ описывают конкретный домен. Контракт реальных сущностей (поля, форма envelope, статусы) **бэкенд/протокол NOX ещё не выбран** и появится вместе с первой фичей реализации. Настоящие модели (например сущность чата для первой реальной фичи — списка чатов) появляются как результат **первой фичи реализации**, а не вписываются в blueprint — здесь фиксируется только паттерн, по которому они строятся.
+> **`Item` — нейтральный blueprint-шаблон, не реальная сущность.** `ItemEntity` / `ItemModel` / `ItemRepository` по всему документу — это обобщённый плейсхолдер, демонстрирующий форму слоя; они НЕ описывают конкретный домен, и срез **заморожен намеренно** (верификационный harness Feature-001, включая его offset-обёртку и путь `v1/items`). Контракт реальных сущностей зафиксирован **wire-контрактом v0** (`docs/client-backend/protocol/contract-draft.md`) и реализован в `lib/data/entity/chat/wire/` (`ChatWireEntity`/`ChatsWireEntity`/`MessageWireEntity`/`MessagesWireEntity`, фаза 025). Здесь фиксируется только паттерн, по которому такие сущности строятся.
 
 `lib/data/entity/item/item_entity.dart`:
 
@@ -98,7 +102,7 @@ abstract class ItemEntity with _$ItemEntity {
 
 ### Entity-обёртка страницы (page wrapper)
 
-Серверный список-эндпойнт отдаёт **срез страницы плюс offset-метаданные**: `items` + `page` + `page_size` + `total`. Это и есть форма ответа `GetItemsApi` (через network-only `getItems`, §8). Та же обёртка пригодна как single-record store, если DAO решит держать список в одной записи (альтернативный вариант DAO, §6).
+Обёртка **замороженного верификационного среза `Item`** отдаёт **срез страницы плюс offset-метаданные**: `items` + `page` + `page_size` + `total`. Это форма ответа `GetItemsApi` (через network-only `getItems`, §8), **а не продуктовый канон**: контрактные обёртки v0 несут только `has_more` (`{chats, has_more}` / `{messages, has_more}`, §4–5 контракта) и `total` на проводе не существует. Та же обёртка пригодна как single-record store, если DAO решит держать список в одной записи (альтернативный вариант DAO, §6).
 
 `lib/data/entity/item/items_entity.dart`:
 
@@ -126,7 +130,7 @@ abstract class ItemsEntity with _$ItemsEntity {
 }
 ```
 
-> Имена JSON-ключей (`page` / `page_size` / `total`) — **пример; бэкенд/протокол NOX ещё не выбран**, заменить на реальный контракт. Load-bearing — это форма обёртки (срез + offset-метаданные), а не конкретные имена. Канон вычисления `PageMetadata` из этой обёртки (`hasMore = (page * pageSize) < total`) — в §8.
+> Имена JSON-ключей (`page` / `page_size` / `total`) — **заморожены вместе с верификационным срезом `Item`**; докстринг в самом файле всё ещё несёт до-025-ную формулировку «backend not chosen» — это остаточный текст harness'а, а не действующее утверждение. Продуктовый провод описан контрактом v0: `{chats, has_more}` / `{messages, has_more}`, без `page`-математики и без `total` в ответе. Load-bearing здесь — не имена, а то, что **вся** страничная арифметика сворачивается в `PageMetadata` в репозитории: для `Item`-среза `hasMore = (page * pageSize) < total` (§8), для контрактных обёрток `hasMore` приходит готовым.
 
 > **Гарантия round-trip:** `toEntity(model: toModel(entity: e))` должно воспроизвести `e` точно, и наоборот. Базовые типы entity-слоя делают это детерминированным — все «лоссы» (enum → дефолт, нормализация пустой строки в `null`) живут в маппере и обязаны быть симметричны.
 
@@ -134,29 +138,30 @@ abstract class ItemsEntity with _$ItemsEntity {
 
 ## 2. `ResponseEntity<T>` — генерик-конверт REST-ответа
 
-Каждый JSON-ответ бэкенда обёрнут в единый envelope `{data, timestamp, trace_id, meta}` (*пример контракта, заменить на реальный backend NOX*: бэкенд/протокол NOX ещё не выбран). `ResponseEntity<T>` — генерик-обёртка над ним; аннотация `@EntityConverter()` резолвит генерик `T` в `fromJson`/`toJson` конкретного entity.
+Конверт реален с фазы 025 (контракт v0): `success` зеркалит `ok` reply-кадра, `error` несёт объект `{code, message}` (§2.1), полезная нагрузка — в `data`. `ResponseEntity<T>` — генерик-обёртка над ним; аннотация `@EntityConverter()` резолвит генерик `T` в `fromJson`/`toJson` конкретного entity.
 
 `lib/data/entity/base/response_entity.dart`:
 
 ```dart
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:nox_app/data/entity/base/entity_converter.dart';
+import 'package:nox_app/data/entity/base/error_wire_entity.dart';
 
 part 'response_entity.freezed.dart';
 part 'response_entity.g.dart';
 
-/// Unified backend envelope (example — backend/protocol not chosen; replace with
-/// the real contract). The load-bearing mechanism is the generic `T?` resolved
-/// by EntityConverter.
+/// Unified data-source envelope over contract v0 replies: success mirrors the
+/// wire `ok`, [error] carries the contract `{code, message}` object of a
+/// failed reply, and the generic `T?` payload is resolved by EntityConverter.
 @freezed
 abstract class ResponseEntity<T> with _$ResponseEntity<T> {
-  const factory ResponseEntity({@Default(false) bool success, String? error, @EntityConverter() T? data}) = _ResponseEntity<T>;
+  const factory ResponseEntity({@Default(false) bool success, ErrorWireEntity? error, @EntityConverter() T? data}) = _ResponseEntity<T>;
 
   factory ResponseEntity.fromJson(Map<String, dynamic> json) => _$ResponseEntityFromJson(json);
 }
 ```
 
-> Поля `success` / `error` / `data` подгоняются под реальный envelope бэкенда NOX (*пример контракта, заменить на реальный backend NOX*; протокол ещё не выбран). На деле envelope-пример кладёт полезную нагрузку в `data`, а служебное — в `timestamp` / `trace_id` / `meta`; если они нужны на клиенте, добавь соответствующие nullable-поля. Механизм, который надо сохранить, — генерик `T?`, резолвимый `JsonConverter`'ом.
+> Ошибка конверта — типизированный `ErrorWireEntity {code, message}` (фаза 025); её код мапится в `RepositoryException.fromWireCode` (незнакомый код → `internal`, правило эволюции §2.1), а `BaseRepositoryHelper.unwrapEnvelope` бросает её сквозь `execute()` без переупаковки. Механизм, который надо сохранить, — генерик `T?`, резолвимый `JsonConverter`'ом.
 
 ---
 
@@ -164,7 +169,7 @@ abstract class ResponseEntity<T> with _$ResponseEntity<T> {
 
 Это единственный кусок **ручной бухгалтерии** в архитектуре. `EntityConverter<E>` — `JsonConverter`, диспетчеризующий генерик `T` из `ResponseEntity<T>` в нужный entity. **Каждый entity, доступный через `ResponseEntity<T>`, ОБЯЗАН быть зарегистрирован в ОБОИХ цепочках — `fromJson` и `toJson`** — иначе бросается `ArgumentError('No converter found')`.
 
-В скелете Feature-001 реестр был **пуст**; **наполнен фичей 018/S4**: зарегистрированы все wire-сущности, достижимые через `ResponseEntity<T>` — `ItemEntity`/`ItemsEntity` (референс) + `ChatWireEntity`/`ChatsWireEntity` + `MessageWireEntity`/`MessagesWireEntity` (`lib/data/entity/chat/wire/`), в обеих цепочках. Неизвестный тип по-прежнему бросает `ArgumentError`. С S4 chat-list и message-list на сетевой границе идут через конверт единообразно с Item (генератор мапит model→wire и возвращает `ResponseEntity<wire>`; репо разворачивает wire→model). Wire-форма — только сетевая граница; локальные Sembast-сущности не тронуты. Реальная wire-форма заменит example/TBD при выборе бэкенда. Ниже — заполненная форма реестра (канон сопровождения).
+В скелете Feature-001 реестр был **пуст**; **наполнен фичей 018/S4**: зарегистрированы все wire-сущности, достижимые через `ResponseEntity<T>` — `ItemEntity`/`ItemsEntity` (референс) + `ChatWireEntity`/`ChatsWireEntity` + `MessageWireEntity`/`MessagesWireEntity` (`lib/data/entity/chat/wire/`), в обеих цепочках. Неизвестный тип по-прежнему бросает `ArgumentError`. С S4 chat-list и message-list на сетевой границе идут через конверт единообразно с Item (генератор мапит model→wire и возвращает `ResponseEntity<wire>`; репо разворачивает wire→model). Wire-форма — только сетевая граница; локальные Sembast-сущности не тронуты. С фазы 025 wire-сущности выровнены по **контракту v0** (обёртки `{chats, has_more}` / `{messages, has_more}`), так что это уже не example/TBD. Ниже — заполненная форма реестра (канон сопровождения).
 
 `lib/data/entity/base/entity_converter.dart`:
 
@@ -311,44 +316,93 @@ class ItemMapper extends BaseMapper<ItemEntity, ItemModel, dynamic, dynamic> {
 
 ```dart
 import 'package:dio/dio.dart';
+import 'package:nox_app/data/entity/base/response_entity.dart';
 import 'package:nox_app/di/global_aliases.dart';
+import 'package:nox_app/domain/exception/base_repository_exception.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 
 /// Wraps a repository operation in try/catch, ALWAYS logs via LogRepository,
 /// and coarsely maps framework errors to a domain RepositoryException.
-/// Exactly two catch branches; no typed Dao/ApiException hierarchy.
 mixin BaseRepositoryHelper {
   Future<RepositoryResult<TD>> execute<TD>(Function executionFunction) async {
     try {
       return await executionFunction();
+    } on BaseRepositoryException catch (e, stackTrace) {
+      // An already-mapped domain failure (e.g. a wire error code from
+      // unwrapEnvelope) passes through undiluted - never downgraded to
+      // `unknown` by the catch-all.
+      logRepository.error(target: this, error: e, stackTrace: stackTrace);
+      return RepositoryResult<TD>.error(exception: e);
     } on DioException catch (e, stackTrace) {
       logRepository.error(target: this, error: e, stackTrace: stackTrace);
-      return RepositoryResult<TD>.error(exception: RepositoryException.internal);
+      return RepositoryResult<TD>.error(exception: _mapDioException(e));
     } catch (e, stackTrace) {
       logRepository.error(target: this, error: e, stackTrace: stackTrace);
       return RepositoryResult<TD>.error(exception: RepositoryException.unknown);
     }
   }
+
+  /// Unwraps a data-source envelope: the payload when present, otherwise the
+  /// contract §2.1 error code mapped onto [RepositoryException] (an unknown
+  /// code degrades to `internal` per the evolution rule), otherwise a bare
+  /// StateError (malformed envelope) that the catch-all maps to `unknown`.
+  TD unwrapEnvelope<TD>(ResponseEntity<TD> response, String what) {
+    final data = response.data;
+    if (data != null) return data;
+    final error = response.error;
+    if (error != null) throw RepositoryException.fromWireCode(error.code);
+    throw StateError('$what envelope has no data (success=${response.success})');
+  }
+
+  /// Maps a transport error to a domain [RepositoryException] by connection type and
+  /// HTTP status — the HTTP path (blob upload/download, phase 028). Envelope errors
+  /// take the other route: [unwrapEnvelope] throws the code-mapped exception and the
+  /// `on BaseRepositoryException` branch re-emits it unchanged.
+  RepositoryException _mapDioException(DioException e) {
+    switch (e.type) {
+      case DioExceptionType.connectionTimeout:
+      case DioExceptionType.sendTimeout:
+      case DioExceptionType.receiveTimeout:
+      case DioExceptionType.connectionError:
+        return RepositoryException.connection;
+      case DioExceptionType.badResponse:
+        switch (e.response?.statusCode) {
+          case 401:
+            return RepositoryException.unauthenticated;
+          case 403:
+            return RepositoryException.authentication;
+          case 404:
+            return RepositoryException.notFound;
+          default:
+            return RepositoryException.internal;
+        }
+      case DioExceptionType.cancel:
+      case DioExceptionType.badCertificate:
+      case DioExceptionType.unknown:
+        return RepositoryException.internal;
+    }
+  }
 }
 ```
 
-> `DioException` — пример транспортной ошибки: ветка `on DioException` существует в коде, но **транспорт NOX ещё не выбран**. Когда бэкенд/протокол определят, набор «транспортных» исключений в первой catch-ветке скорректируют под реальный клиент; load-bearing — это сам паттерн «две ветки → коэрсный маппинг в `RepositoryException`», а не конкретно `DioException`.
+> `DioException` — транспортная ветка для REST-поверхности. Транспорт **выбран**: контракт v0 идёт WebSocket-конвертом поверх `wss:443` с key pinning (приходит фазой 027), а REST остаётся только для blob upload/download (`file.uploadBegin` → `PUT`, `file.downloadBegin` → `GET` с `Range`). Ветка `on BaseRepositoryException` — это путь доменных кодов, поднятых из конверта `unwrapEnvelope`; load-bearing здесь — «три ветки: уже-доменная ошибка сквозь, транспорт по типу/статусу, всё остальное → `unknown`». _(В самом файле над `mixin` уцелела до-025-ная строка докстринга «Exactly two catch branches» — веток три; устарел комментарий, не поведение.)_
 
 Ключевое:
 
 - **`executionFunction` возвращает уже-обёрнутый `RepositoryResult<TD>`** (не «голые» данные). Каждый call-site внутри `execute` сам строит результат: `return RepositoryResult.success(data: …)` на успехе, или `return RepositoryResult.error(exception: RepositoryException.<code>)` для конкретного доменного кода. `execute` лишь перехватывает **необработанные** исключения.
-- **Две catch-ветки:** `DioException` (пример транспорта) → `RepositoryException.internal`; любой другой `catch` → `RepositoryException.unknown`. Никаких `ApiException` / `DaoException` / `BaseDomainExceptionHelper` — минимальная обработка, конкретику решает сам callback.
+- **Три catch-ветки:** `BaseRepositoryException` → пробрасывается **как есть** (доменный код из `unwrapEnvelope` не размывается); `DioException` → `_mapDioException` (таймауты/`connectionError` → `connection`; 401 → `unauthenticated`; 403 → `authentication`; 404 → `notFound`; иначе `internal`); любой другой `catch` → `RepositoryException.unknown`. Никаких `ApiException` / `DaoException` / `BaseDomainExceptionHelper` — минимальная обработка, конкретику решает сам callback.
+- **Разворачивание конверта — `unwrapEnvelope<TD>(response, what)`** того же mixin'а: вернуть `data`, иначе бросить `RepositoryException.fromWireCode(error.code)` (незнакомый код → `internal`), иначе `StateError` про кривой конверт. Бросок ловит первая ветка `execute` и отдаёт тот же доменный код наружу.
 - **Логирование ОБЯЗАТЕЛЬНО** в каждой ветке (через `logRepository` — алиас из `lib/di/global_aliases.dart`, см. [02-dependency-injection.md](02-dependency-injection.md)), ПЕРЕД возвратом. Никакого сырого `print`.
 - Импл подмешивает **`with BaseRepositoryHelper`** (без `on`-ограничения) и оборачивает каждый публичный метод в `execute<T>()`.
 
-> **Конкретные доменные коды — в callback'е, не в catch.** Если нужен код точнее, чем `internal`/`unknown` (например `notFound` при cache-miss, `unauthenticated` при 401), верни его **внутри** `executionFunction` явным `return RepositoryResult.error(exception: RepositoryException.<code>)` (проверив `response.statusCode` или отсутствие записи). Пример — `fetchItem` в §8 (полная форма). `RepositoryException` (`unknown` / `internal` / `authentication` / `connection` / `unauthenticated` / `notFound`) определён в [03-domain-layer.md](03-domain-layer.md) и реализует маркер `BaseRepositoryException`.
+> **Конкретные доменные коды — в callback'е, не в catch.** Если нужен код точнее, чем `internal`/`unknown` (например `notFound` при cache-miss, `unauthenticated` при 401), верни его **внутри** `executionFunction` явным `return RepositoryResult.error(exception: RepositoryException.<code>)` (проверив `response.statusCode` или отсутствие записи). Пример — `fetchItem` в §8 (полная форма). `RepositoryException` (`unknown` / `internal` / `authentication` / `connection` / `unauthenticated` / `notFound` + контрактные коды §2.1 `invalidRequest` / `nameTaken` / `payloadTooLarge` / `attachmentGone` / `rateLimited` / `unsupportedSchema`, плюс статический `RepositoryException.fromWireCode(String)`) определён в [03-domain-layer.md](03-domain-layer.md) и реализует маркер `BaseRepositoryException`.
 
 ---
 
 ## 6. Sembast DAO (реактивный)
 
-> **Локальная БД — Sembast (OQ-1 закрыт 2026-06-08).** Документная NoSQL, **schema-less** (хранит JSON-maps → миграций как класса нет: новые/отсутствующие поля гасятся дефолтами в маппере), чистый Dart без codegen, реактивные стримы (`onSnapshots`). Набор: `sembast` + `shared_preferences` (флаги/`themeMode`) + `flutter_secure_storage` (секреты, *например refresh-токен — бэкенд/протокол NOX ещё не выбран*). **Единый подход на все платформы, включая web:** mobile/desktop — `sembast_io` (`databaseFactoryIo`), Test — `databaseFactoryMemory`, **web (будущий клиент)** — `sembast_web` (`databaseFactoryWeb`, IndexedDB/WASM); код DAO/репозиториев не меняется — за абстракцией `AppDatabase` подменяется только фабрика. Отвергнуты: ObjectBox/Realm (нет web), Drift/PowerSync (реляционные), Isar (web только через community-форк + типизированная схема требует миграций). Контракты репозиториев (`03-domain-layer.md`) и потребители от БД не зависят.
+> **Локальная БД — Sembast (OQ-1 закрыт 2026-06-08).** Документная NoSQL, **schema-less** (хранит JSON-maps → миграций как класса нет: новые/отсутствующие поля гасятся дефолтами в маппере), чистый Dart без codegen, реактивные стримы (`onSnapshots`). Набор: `sembast` + `shared_preferences` (флаги/`themeMode`) + `flutter_secure_storage` (секреты: технический идентификатор `session.identifier`; ключ `auth_id_token` заведён под `Authorization`-токен, но **писателя ещё нет** — он приходит со stage-2 аутентификацией, стадия 1 контракта работает без auth). **Единый подход на все платформы, включая web:** mobile/desktop — `sembast_io` (`databaseFactoryIo`), Test — `databaseFactoryMemory`, **web (будущий клиент)** — `sembast_web` (`databaseFactoryWeb`, IndexedDB/WASM); код DAO/репозиториев не меняется — за абстракцией `AppDatabase` подменяется только фабрика. Отвергнуты: ObjectBox/Realm (нет web), Drift/PowerSync (реляционные), Isar (web только через community-форк + типизированная схема требует миграций). Контракты репозиториев (`03-domain-layer.md`) и потребители от БД не зависят.
 
 DAO используют `StoreRef<String, Map<String, dynamic>>`, отдают реактивные потоки через `onSnapshots()` / `onSnapshot()` и поддерживают атомарные записи через `db.transaction()`. **Типизированного `DaoException` нет** — при сбое хранилища исключения самого Sembast **пробрасываются наружу** (DAO их не оборачивает в свой тип), а ловит их catch-all ветка `execute()` репозитория → `RepositoryException.unknown`. Cache-miss / not-found — это **не** забота DAO: DAO просто отдаёт `null` / пустой список, а проверку отсутствия и `RepositoryException.notFound` решает callback репозитория (полная форма, §8). Битые записи **пропускаются** при декодировании (`_tryDecode` → `null`), а не убивают поток.
 
@@ -455,6 +509,8 @@ class ItemDao {
 }
 ```
 
+> **Докстринг `ItemDao` — текст замороженного harness'а, не продуктовое правило.** Фраза «Network-only carve-out … the paginated `getItems` list … does NOT use this DAO» приведена дословно как в коде и относится **только** к `Item`-срезу. Продуктовые списки давно наоборот: у чатов и истории сообщений DAO есть (`ChatDao`/`MessageDao`, фича 013), и обе пагинации обслуживаются из кэша. Load-bearing в этом файле — форма DAO (per-ID store, `watch()`, `_tryDecode`), а не его комментарий про carve-out.
+
 > **Сигнатуры — позиционные, без обёртки в `StateError`.** `saveData(List<ItemEntity>)` / `upsert(ItemEntity)` / `removeById(String)` принимают позиционный аргумент; `cleanData()` чистит store целиком в транзакции. DAO **не** оборачивает сбои хранилища в `StateError` — исключения Sembast летят наружу и попадают в catch-all `execute()` репозитория. `_tryDecode` гасит битую запись в `null`, а `_decode` её пропускает: один сбойный документ не валит долгоживущий `watch()`-поток.
 
 **Альтернативный вариант DAO — single-record «коллекционный» store.** Когда весь список удобнее хранить одной записью (`ItemsEntity`-в-одной-записи), используй `StoreRef<String, Map<String, dynamic>>.main()` с фиксированным ключом и singular `_store.record(key).onSnapshot(db)` для стриминга. Атомарный read-modify-write — канонический примитив мутации:
@@ -490,73 +546,82 @@ Future<void> mutate({
 
 ### 7а. Dio `ApiClient`
 
-**SKELETON (реальный код).** Один host, один экземпляр Dio. Сейчас `ApiClient` — тонкий `@lazySingleton` с единственным полем `dio` (только таймауты). Base URL, auth-interceptor, HMAC/security-заголовки и источник токена — **пример/TBD: бэкенд/протокол NOX ещё не выбран**.
+**Реальный код (seam 019/S5, пока инертен).** Один host, один экземпляр Dio. `ApiClient` — `@lazySingleton`, инжектирующий `AppConfigRepository`; идемпотентный `initBase()` ставит base URL из `AppConfig.apiUrl` и **один раз** навешивает `AuthInterceptor`. Seam инертен: `apiUrl` равен `null` во всех флейворах, `initBase()` из кода приложения не вызывается (только тесты), и ни один data source не инжектирует `ApiClient` — эта разводка приходит с DI-флипом (фаза 028), а сам транспорт контракта v0 — WS-конверт (фаза 027); REST остаётся за blob upload/download.
 
 `lib/data/remote/api_client.dart`:
 
 ```dart
 import 'package:dio/dio.dart';
 import 'package:injectable/injectable.dart';
-
-/// Thin Dio wrapper. Base URL, auth interceptor, HMAC/security headers and the
-/// token source are example/TBD (backend & protocol not chosen) — see
-/// contracts/build-flavors.md and blueprint 14-networking-and-auth.md.
-@lazySingleton
-class ApiClient {
-  ApiClient() : dio = Dio(BaseOptions(connectTimeout: const Duration(seconds: 30), receiveTimeout: const Duration(seconds: 30)));
-
-  final Dio dio;
-}
-```
-
-**TARGET-форма (приходит с реальным бэкендом NOX).** Когда бэкенд выберут, `ApiClient` дорастает до фабрики, навешивающей auth-interceptor, который читает токен **асинхронно** из `AppConfigRepository` на каждом запросе (расширяй interceptor, а не добавляй заголовки по-API). Модель токенов (Bearer / access-refresh) и геттеры `config.apiUrl` / `getUserAuthIdToken` — **пример; в текущем `AppConfigRepository` их ещё нет**:
-
-```dart
-// TARGET (example/TBD — backend not chosen). File would live at
-// remote/api/base/api_client.dart alongside BaseApiRepository.
-import 'package:dio/dio.dart';
-import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/data/remote/interceptor/auth_interceptor.dart';
 import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
 
+/// Thin Dio wrapper. [initBase] configures the base URL from [AppConfig.apiUrl] and
+/// installs the [AuthInterceptor] (feature S5). Inert while `apiUrl` is null (the
+/// contract-v0 transport is a WS envelope arriving with feature 027; REST stays for
+/// blob upload/download): no base URL is set, so no real requests are built, though
+/// the interceptor is installed and ready. Not yet injected into the data sources
+/// (the mocks don't use it) — that binding lands with the 016 DI flip (feature 028).
+@lazySingleton
 class ApiClient {
-  static Dio initBase({String? contentType}) {
-    final appConfigRepository = getIt<AppConfigRepository>();
-    final baseOptions = BaseOptions(
-      baseUrl: '${appConfigRepository.config.apiUrl}/api/', // example/TBD: config.apiUrl not yet present
-      connectTimeout: const Duration(seconds: 30),
-      receiveTimeout: const Duration(seconds: 30),
-      contentType: contentType ?? 'application/json',
-      responseType: ResponseType.json,
-    );
-    final dio = Dio(baseOptions);
+  ApiClient(this._config)
+    : dio = Dio(BaseOptions(connectTimeout: const Duration(seconds: 30), receiveTimeout: const Duration(seconds: 30)));
 
-    dio.interceptors.add(InterceptorsWrapper(
-      onRequest: (options, handler) async {
-        final token = await appConfigRepository.getUserAuthIdToken; // example/TBD: token source not yet present
-        if (token != null) {
-          options.headers['Authorization'] = 'Bearer $token';
-        } else {
-          options.headers.remove('Authorization');
-        }
-        return handler.next(options);
-      },
-      onResponse: (response, handler) => handler.next(response),
-      onError: (e, handler) => handler.next(e),
-    ));
-    return dio;
+  final AppConfigRepository _config;
+  final Dio dio;
+
+  /// Idempotent: sets the base URL (when `apiUrl` is non-empty) and installs the auth
+  /// interceptor exactly once (a second call is a no-op).
+  void initBase() {
+    final apiUrl = _config.config.apiUrl;
+    if (apiUrl != null && apiUrl.isNotEmpty) {
+      dio.options.baseUrl = apiUrl;
+    }
+    if (dio.interceptors.whereType<AuthInterceptor>().isEmpty) {
+      dio.interceptors.add(AuthInterceptor(_config));
+    }
   }
 }
 ```
 
-> На non-2xx Dio бросает `DioException`, который **пробрасывается до** `BaseRepositoryHelper.execute()` и попадает в его ветку `on DioException` → `RepositoryException.internal`. API-класс **не** маппит ошибку в типизированный `ApiException` (его в проекте нет).
+Auth-заголовок — отдельный `AuthInterceptor` (`remote/interceptor/auth_interceptor.dart`), а не заголовки по-API: `onRequest` читает токен **асинхронно** на каждом запросе через `AppConfigRepository.getUserAuthIdToken()` (оба члена — `config.apiUrl` и `getUserAuthIdToken()` — в контракте репозитория **есть** с фичи 019) и ставит `Authorization: Bearer <token>` только для непустого значения; `onError` на 401 делает forced logout через **ленивый** алиас `authRepository` (это и разрывает DI-цикл `ApiClient → AuthInterceptor → AuthRepository → repositories`) и **всегда** пробрасывает ошибку дальше. Что здесь ещё открыто — не наличие seam'а, а **stage-2 аутентификация**: писателя `auth_id_token` нет, схема `Bearer` — плейсхолдер до утверждения модели pairing/авторизации.
+
+```dart
+// Real AuthInterceptor (feature 019/S5), abridged.
+class AuthInterceptor extends Interceptor {
+  AuthInterceptor(this._config);
+
+  final AppConfigRepository _config;
+
+  @override
+  Future<void> onRequest(RequestOptions options, RequestInterceptorHandler handler) async {
+    final token = await _config.getUserAuthIdToken();
+    if (token != null && token.isNotEmpty) {
+      options.headers['Authorization'] = 'Bearer $token';
+    }
+    handler.next(options);
+  }
+
+  @override
+  Future<void> onError(DioException err, ErrorInterceptorHandler handler) async {
+    // Lazy AuthRepository resolution breaks the DI cycle; the error always propagates.
+    if (err.response?.statusCode == 401) {
+      await authRepository.logout(forced: true);
+    }
+    handler.next(err);
+  }
+}
+```
+
+> На non-2xx Dio бросает `DioException`, который **пробрасывается до** `BaseRepositoryHelper.execute()` и там маппится `_mapDioException` по типу/статусу (401 → `unauthenticated`, 403 → `authentication`, 404 → `notFound`, таймауты/`connectionError` → `connection`, иначе `internal`). API-класс **не** маппит ошибку в типизированный `ApiException` (его в проекте нет).
 
 > **Хук наблюдаемости.** Подключай HTTP-трекинг наблюдаемости в эти interceptor'ы (`onRequest`/`onResponse`/`onError`).
 >
-> **HMAC/безопасность (пример — бэкенд/протокол NOX ещё не выбран; заменить на реальный контракт).** Если бэкенд NOX потребует подписанные запросы (*пример*: `x-request-timestamp` + HMAC-SHA256 + security-заголовки), эти заголовки — тоже зона interceptor'а: добавь отдельный `InterceptorsWrapper`, считающий подпись по каноническому формату (*в этом примере* серверный канонический verb — это `ApiRequestMethod.<lowercase>`, не `GET`/`POST`). Точная формула строки подписи (включая хеш тела запроса) — в [14-networking-and-auth.md](14-networking-and-auth.md) §4 (тоже размеченный пример). Это **архитектурный контракт** — конкретную схему подписи и security-заголовки определяй вместе с реальным бэкендом NOX перед реализацией, не выбирай молча.
+> **HMAC/подпись запросов — контрактом v0 НЕ требуется.** Транспортная защита — `wss:443` с key pinning, а REST-поверхность (blob upload/download) авторизуется одноразовыми 10-минутными токенами из `file.uploadBegin` / `file.downloadBegin`, а не подписью. Описанная дальше схема остаётся **гипотетическим примером** на случай, если такое требование появится: подписанные запросы (*пример*: `x-request-timestamp` + HMAC-SHA256 + security-заголовки) — тоже зона interceptor'а, отдельным `InterceptorsWrapper`, считающим подпись по каноническому формату (*в этом примере* серверный канонический verb — это `ApiRequestMethod.<lowercase>`, не `GET`/`POST`). Формула строки подписи (включая хеш тела запроса) — в [14-networking-and-auth.md](14-networking-and-auth.md) §4 (тоже размеченный пример). Не вводи подпись молча — это изменение контракта.
 
 ### 7б. `BaseApiRepository` (TARGET)
 
-> **TARGET-форма.** `BaseApiRepository` появляется вместе с request-builder-обвязкой и реальным бэкендом NOX; в скелете его ещё нет (API-классы пока не наследуют общий базовый, а mock-`GetItemsApi` — обычный `@lazySingleton`).
+> **TARGET-форма.** `BaseApiRepository` появляется вместе с request-builder-обвязкой; в коде его нет (API-классы не наследуют общий базовый, а mock-`GetItemsApi` — обычный `@lazySingleton`). Он и не обязателен: контракт v0 идёт WS-конвертом (фаза 027), а REST-поверхность сводится к blob upload/download — если request-builder-обвязку и построят, то под неё. Сигнатура ниже — сама TARGET-форма: реальный `ApiClient.initBase()` — это **инстанс-метод `void`** на `@lazySingleton` (§7а), поэтому базовый класс придётся привязать к инжектированному `ApiClient`, а не к статической фабрике.
 
 `lib/data/remote/api/base/base_api_repository.dart`:
 
@@ -569,11 +634,11 @@ abstract class BaseApiRepository {
 }
 ```
 
-> **Свежий `Dio` на каждый доступ к `baseClient` — намеренное правило этого блюпринта, не дефект.** Геттер вызывает `ApiClient.initBase()` при каждом обращении, поэтому новый экземпляр создаётся на запрос. Токен всё равно читается асинхронно в interceptor'е **на каждый** запрос (§7а), так что свежесть авторизации обеспечена interceptor'ом, а не переиспользованием клиента. Это сознательное решение — не «оптимизируй» в singleton-Dio без согласования.
+> **Свежий `Dio` на каждый доступ к `baseClient` — намеренное правило этого блюпринта, не дефект.** В TARGET-наброске геттер вызывает `ApiClient.initBase()` при каждом обращении, поэтому новый экземпляр создаётся на запрос. Токен всё равно читается асинхронно в `AuthInterceptor` **на каждый** запрос (§7а), так что свежесть авторизации обеспечена interceptor'ом, а не переиспользованием клиента. _(Реальный `ApiClient` пошёл другим путём — один `@lazySingleton`-`Dio` с идемпотентным `initBase()`; если request-builder-обвязку будут строить, выбор между «свежий Dio на запрос» и singleton нужно принять явно, а не унаследовать молча.)_
 
 ### 7в. `RequestBuilder` + `RequestBuilderHelper` (TARGET)
 
-> **TARGET-форма.** Папки `remote/request_builder/` в скелете ещё нет — она приходит с реальным бэкендом NOX. Ниже — канон-к-построению.
+> **TARGET-форма.** Папки `remote/request_builder/` в коде нет и не появилось с бэкендом: контракт v0 идёт WS-конвертом (фаза 027), REST — только blob upload/download. Ниже — канон-к-построению, если REST-поверхность вырастет.
 
 `RequestBuilder<T>` строит `body`/`path`/`headers` из доменного конфига; `RequestBuilderHelper<T>` — mixin, резолвящий конкретный builder из `getIt` и форвардящий вызовы (API-класс остаётся свободным от ручной разводки билдеров).
 
@@ -612,7 +677,7 @@ mixin RequestBuilderHelper<T extends RequestBuilder> {
 
 ### 7г. API-класс + его request builder
 
-**SKELETON (реальный код).** `GetItemsApi` — `@lazySingleton` **mock-источник** (верификационный harness, FR-013): отдаёт 47 фейковых `ItemEntity` с задержкой 150 мс и **сам строит** `ResponseEntity<ItemsEntity>` напрямую (без Dio, без request-builder'а). Это и есть текущее состояние REST-слоя по `getItems`.
+**SKELETON (реальный код, заморожен).** `GetItemsApi` — `@lazySingleton` **mock-генератор** (верификационный harness, FR-013): отдаёт 47 фейковых `ItemEntity` с задержкой 150 мс и **сам строит** `ResponseEntity<ItemsEntity>` напрямую (без Dio, без request-builder'а). Репозиторий с фичи 016 **не вызывает его напрямую** — он зависит от интерфейса `ItemRemoteDataSource`, а `MockItemRemoteDataSource` делегирует этому генератору. Докстринг файла всё ещё несёт до-025-ную формулировку «until the NOX backend is chosen» — остаточный текст замороженного harness'а.
 
 `lib/data/remote/api/item/get_items_api.dart`:
 
@@ -636,7 +701,7 @@ class GetItemsApi {
   Future<ResponseEntity<ItemsEntity>> execute({required GetItemsConfig config}) async {
     await Future<void>.delayed(const Duration(milliseconds: 150));
     const pageSize = GetItemsConfig.pageSize;
-    final start = (config.page - 1) * pageSize; // 1-based page (defaultPage = 1)
+    final start = (config.page - 1) * pageSize;
     final now = DateTime.now().toUtc().toIso8601String();
     final items = <ItemEntity>[
       for (var i = start; i < start + pageSize && i < _mockTotal; i++)
@@ -650,7 +715,7 @@ class GetItemsApi {
 }
 ```
 
-**TARGET-форма (приходит с реальным бэкендом NOX).** Именование API: `{verb}_{resource}_api.dart`. Класс расширяет `BaseApiRepository` и подмешивает `RequestBuilderHelper<TheBuilder>`. Форма: построить path → вызвать Dio → завернуть `response.data` в `ResponseEntity<T>.fromJson`. На non-2xx Dio бросает `DioException` — его **не** перехватывают и **не** маппят на типизированный `ApiException`: исключение пробрасывается до `BaseRepositoryHelper.execute()`, где ветка `on DioException` отдаёт `RepositoryException.internal`.
+**TARGET-форма (если REST-поверхность вырастет за пределы blob upload/download).** Именование API: `{verb}_{resource}_api.dart`. Класс расширяет `BaseApiRepository` и подмешивает `RequestBuilderHelper<TheBuilder>`. Форма: построить path → вызвать Dio → завернуть `response.data` в `ResponseEntity<T>.fromJson`. На non-2xx Dio бросает `DioException` — его **не** перехватывают и **не** маппят на типизированный `ApiException`: исключение пробрасывается до `BaseRepositoryHelper.execute()`, где ветка `on DioException` маппит его через `_mapDioException` (по типу/статусу).
 
 `lib/data/remote/request_builder/item/get_items_api_request_builder.dart`:
 
@@ -683,7 +748,7 @@ class GetItemsApiRequestBuilder extends RequestBuilder<GetItemsConfig> {
 ```
 
 ```dart
-// TARGET get_items_api.dart (Dio + request-builder form; example/TBD — backend not chosen).
+// TARGET get_items_api.dart (Dio + request-builder form; not built).
 import 'dart:async';
 
 import 'package:injectable/injectable.dart';
@@ -699,22 +764,22 @@ class GetItemsApi extends BaseApiRepository with RequestBuilderHelper<GetItemsAp
   Future<ResponseEntity<ItemsEntity>> execute({required GetItemsConfig config}) async {
     // No try/catch: on non-2xx Dio throws DioException, which propagates
     // up to BaseRepositoryHelper.execute() -> RepositoryException.internal.
-    final path = await buildPath(config, 'v1/items'); // path 'v1/items' is an example — endpoint TBD with NOX backend
+    final path = await buildPath(config, 'v1/items'); // frozen Item verification slice, not a contract v0 endpoint
     final response = await baseClient.get(path);
     return ResponseEntity<ItemsEntity>.fromJson(response.data);
   }
 }
 ```
 
-> **REST-поток (TARGET):** `RequestBuilder` превращает доменный конфиг в `body`/`path`/`headers` → `RequestBuilderHelper` резолвит builder из `getIt` → API-класс шлёт через `baseClient`, оборачивает `response.data` в `ResponseEntity<T>.fromJson` (генерик `T` резолвится `EntityConverter`'ом) → на non-2xx Dio бросает `DioException`, который не перехватывается на уровне API. Репозиторий оборачивает вызов в `execute<T>()`, где ветка `on DioException` логирует и отдаёт `RepositoryResult.error(exception: RepositoryException.internal)`. В скелете весь этот поток сжат в mock-`GetItemsApi` выше; форма ответа (`ResponseEntity<ItemsEntity>` со срезом + offset-метаданными) сохраняется и в mock'е, и в TARGET.
+> **REST-поток (TARGET):** `RequestBuilder` превращает доменный конфиг в `body`/`path`/`headers` → `RequestBuilderHelper` резолвит builder из `getIt` → API-класс шлёт через `baseClient`, оборачивает `response.data` в `ResponseEntity<T>.fromJson` (генерик `T` резолвится `EntityConverter`'ом) → на non-2xx Dio бросает `DioException`, который не перехватывается на уровне API. Репозиторий оборачивает вызов в `execute<T>()`, где ветка `on DioException` логирует и отдаёт `RepositoryResult.error(...)` с кодом из `_mapDioException`. В верификационном срезе весь этот поток сжат в mock-`GetItemsApi` выше; форма ответа (`ResponseEntity<ItemsEntity>` со срезом + offset-метаданными) сохраняется и в mock'е, и в TARGET — но это форма **`Item`-среза**, а не контрактных обёрток `{chats|messages, has_more}`.
 
 ---
 
 ## 8. Реализация репозитория
 
-### 8.0. SKELETON — network-only `ItemRepositoryImpl` (реальный код)
+### 8.0. SKELETON — network-only `ItemRepositoryImpl` замороженного `Item`-среза (реальный код)
 
-В скелете Feature-001 `ItemRepository` сознательно **узкий**: контракт `03-domain-layer.md` для harness'а экспонирует **только** `getItems(...)` (network-only carve-out) + `clean()`; полный кэш-first CRUD (`watchItem`/`fetchItem`/`createItem`/`updateItem`/`deleteItem` + `ItemDao` + `BehaviorSubject`) — это **полная форма блюпринта** (§8.1), которая приходит с первой кэшируемой фичей. Так что реальный `ItemRepositoryImpl` инжектирует только маппер + (mock-)API, без DAO, без subject, без `dispose`:
+В скелете Feature-001 `ItemRepository` сознательно **узкий**: контракт `03-domain-layer.md` для harness'а экспонирует **только** `getItems(...)` (network-only — свойство этого замороженного harness'а, **не** продуктовое правило) + `clean()`; полный кэш-first CRUD (`watchItem`/`fetchItem`/`createItem`/`updateItem`/`deleteItem` + `ItemDao` + `BehaviorSubject`) — это **полная форма блюпринта** (§8.1), и для `Item` она так и не была построена: кэш-first пришёл фичей 013 к продуктовым репозиториям и в другой форме (прямая подписка на DAO-`watch()`, без промежуточного subject — §8.1). Так что реальный `ItemRepositoryImpl` инжектирует только маппер + `ItemRemoteDataSource` (интерфейс, а не конкретный мок — seam 016), без DAO, без subject, без `dispose`:
 
 `lib/data/repository/item/item_repository_impl.dart`:
 
@@ -722,7 +787,7 @@ class GetItemsApi extends BaseApiRepository with RequestBuilderHelper<GetItemsAp
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/data/mapper/item/item_mapper.dart';
-import 'package:nox_app/data/remote/api/item/get_items_api.dart';
+import 'package:nox_app/data/remote/datasource/item_remote_data_source.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/item/item_model.dart';
 import 'package:nox_app/domain/repository/base/page_metadata.dart';
@@ -735,22 +800,22 @@ import 'package:nox_app/domain/repository/item/item_repository.dart';
 /// LogRepository, maps errors to RepositoryException).
 @LazySingleton(as: ItemRepository, env: [Environment.dev, Environment.prod, Environment.test])
 class ItemRepositoryImpl with BaseRepositoryHelper implements ItemRepository {
-  ItemRepositoryImpl(this._itemMapper, this._getItemsApi);
+  ItemRepositoryImpl(this._itemMapper, this._itemRemote);
 
   final ItemMapper _itemMapper;
-  final GetItemsApi _getItemsApi;
+  final ItemRemoteDataSource _itemRemote;
 
   @override
   Future<RepositoryResult<(List<ItemModel>, PageMetadata)>> getItems({required GetItemsConfig config}) {
     return execute<(List<ItemModel>, PageMetadata)>(() async {
-      final response = await _getItemsApi.execute(config: config);
+      final response = await _itemRemote.getItems(config: config);
       final entity = response.data;
       if (entity == null) {
         return RepositoryResult<(List<ItemModel>, PageMetadata)>.error(exception: RepositoryException.unknown);
       }
       final models = _itemMapper.toListModel(entities: entity.items);
       final hasMore = (entity.page * entity.pageSize) < entity.total;
-      final metadata = PageMetadata(total: entity.total, nextPage: hasMore ? entity.page + 1 : null);
+      final metadata = PageMetadata(hasMore: hasMore, nextPage: hasMore ? entity.page + 1 : null);
       return RepositoryResult<(List<ItemModel>, PageMetadata)>.success(data: (models, metadata));
     });
   }
@@ -764,13 +829,13 @@ class ItemRepositoryImpl with BaseRepositoryHelper implements ItemRepository {
 
 - **`@LazySingleton(as: ItemRepository, env: [Environment.dev, Environment.prod, Environment.test])`** — env-список load-bearing (Sembast-база env-scoped; пропуск env оставит репозиторий без биндинга базы в этом окружении), даже у network-only-репозитория.
 - **`with BaseRepositoryHelper`** (без `on`-ограничения) + каждый публичный метод обёрнут в `execute<TD>()`; callback **сам возвращает уже-обёрнутый** `RepositoryResult<TD>`.
-- **Пустой payload → `RepositoryException.unknown` прямо в callback'е** (так в коде: `if (entity == null) return ...error(unknown)` — без `throw StateError`). Логирования здесь нет: `unknown` — нормальный доменный исход; необработанные исключения логирует и коэрцирует сам `execute`.
-- **`PageMetadata` из обёртки страницы:** `hasMore = (page * pageSize) < total`; `nextPage = hasMore ? page + 1 : null`; `total = entity.total`. Это канон для всех серверных пагинированных списков (см. подсекцию «network-only carve-out» ниже и `07-pagination.md`) — никакой эвристики «по длине страницы».
+- **Пустой payload → `RepositoryException.unknown` прямо в callback'е** (так в замороженном `Item`-срезе: `if (entity == null) return ...error(unknown)` — без `throw StateError`). Логирования здесь нет: `unknown` — нормальный доменный исход; необработанные исключения логирует и коэрцирует сам `execute`. **Продуктовые репозитории** (`ChatRepositoryImpl`/`MessageRepositoryImpl`) разворачивают конверт через `unwrapEnvelope(response, 'chats'|'messages'|'send')`: он поднимает точный код §2.1 (`fromWireCode`) или `StateError`, и `execute` отдаёт его наружу — так `name_taken`/`payload_too_large` доходят до BLoC неразмытыми.
+- **`PageMetadata` из обёртки страницы:** контрактные обёртки v0 (`{chats|messages, has_more}`) отдают `hasMore` готовым; verification-срез Item сворачивает offset-математику сам (`hasMore = (page * pageSize) < total`). В обоих случаях `nextPage = hasMore ? page + 1 : null` на страничном пути; `total` в `PageMetadata` не существует (фаза 025). Это канон для всех пагинированных списков — и кэш-first, и network-only (см. подсекцию «Когда network-only всё ещё уместен» ниже и `07-pagination.md`); никакой эвристики «по длине страницы».
 - **`clean()`** в скелете — no-op (`Future<void>.value()` через `async {}`); в полной форме он отменяет подписку и чистит DAO/subject.
 
 ### 8.1. Полная форма — кэш-first реактивный репозиторий (TARGET)
 
-> **TARGET-форма (приходит с первой кэшируемой фичей).** Ниже — флагманский паттерн для user-scoped watchable-ресурсов. Это **канон-к-построению**, а не текущий скелет: `ItemDao`, `BehaviorSubject`, `watchItem`/`fetchItem`/CRUD и `GetItemConfig` (single-resource config) в коде пока **отсутствуют** — они появляются вместе с фичей, которой нужно кэширование. Network-only `getItems` (§8.0) остаётся в этой же полной форме без изменений.
+> **TARGET-форма (для `Item`-среза — канон-к-построению).** Ниже — флагманский паттерн для user-scoped watchable-ресурсов. Применительно к `Item` это по-прежнему канон, а не код: `ItemDao` в репозитории **файл существует** (`local/item/item_dao.dart`, `@lazySingleton`), но им пользуется только собственный тест — сам `ItemRepositoryImpl` его не инжектирует, а `BehaviorSubject`, `watchItem`/`fetchItem`/CRUD и `GetItemConfig` (single-resource config) в коде отсутствуют. Кэш-first как таковой **построен** — фичей 013 для продуктовых репозиториев (`ChatRepositoryImpl` + `ChatDao`, `MessageRepositoryImpl` + `MessageDao`), но в другой форме: они подписываются на DAO-`watch()`-поток напрямую, без промежуточного `BehaviorSubject`, и один раз засеивают store из remote data source. Subject-вариант ниже остаётся каноном для реактивного **одиночного** ресурса. Network-only `getItems` **замороженного `Item`-среза** (§8.0) переносится в эту полную форму без изменений — как свойство harness'а, а не как образец для продуктового списка.
 
 Полная форма `ItemRepositoryImpl` реализует расширенный контракт `ItemRepository` (`watchItem`/`fetchItem`/`getItems`/`createItem`/`updateItem`/`deleteItem`/`clean`) и:
 
@@ -793,7 +858,8 @@ import 'package:nox_app/data/entity/item/item_entity.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/data/local/item/item_dao.dart';
 import 'package:nox_app/data/mapper/item/item_mapper.dart';
-import 'package:nox_app/data/remote/api/item/get_items_api.dart';
+import 'package:nox_app/data/remote/datasource/item_remote_data_source.dart';
+import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/item/item_model.dart';
 import 'package:nox_app/domain/repository/base/page_metadata.dart';
@@ -804,13 +870,13 @@ import 'package:nox_app/domain/repository/item/item_repository.dart';
 
 @LazySingleton(as: ItemRepository, env: [Environment.dev, Environment.prod, Environment.test])
 class ItemRepositoryImpl with BaseRepositoryHelper implements ItemRepository {
-  ItemRepositoryImpl(this._itemDao, this._itemMapper, this._getItemsApi) {
+  ItemRepositoryImpl(this._itemDao, this._itemMapper, this._itemRemote) {
     _initSubscription();
   }
 
   final ItemDao _itemDao;
   final ItemMapper _itemMapper;
-  final GetItemsApi _getItemsApi;
+  final ItemRemoteDataSource _itemRemote;
 
   final _itemsStreamController = BehaviorSubject<RepositoryResult<List<ItemModel>>>();
   StreamSubscription<List<ItemEntity>>? _itemsSubscription;
@@ -898,7 +964,7 @@ class ItemRepositoryImpl with BaseRepositoryHelper implements ItemRepository {
   /// Network fetch + saveData; the DAO onSnapshots() stream re-emits to the subject.
   /// An empty payload throws raw -> execute()'s catch-all maps it to unknown.
   Future<void> _refreshFromNetwork() async {
-    final response = await _getItemsApi.execute(config: GetItemsConfig.firstPage());
+    final response = await _itemRemote.getItems(config: GetItemsConfig.firstPage());
     final page = response.data;
     if (page == null) {
       throw StateError('Empty response payload');
@@ -906,20 +972,21 @@ class ItemRepositoryImpl with BaseRepositoryHelper implements ItemRepository {
     await _itemDao.saveData(page.items); // positional arg matches the per-ID DAO
   }
 
-  // --- Paginated server-owned list (network-only carve-out) ------------------
+  // --- Frozen Item slice: paginated list, network-only -----------------------
 
   @override
   Future<RepositoryResult<(List<ItemModel>, PageMetadata)>> getItems({required GetItemsConfig config}) {
-    // NETWORK-ONLY: no DAO, no BehaviorSubject. See 07-pagination.md.
+    // NETWORK-ONLY here only because the frozen Item harness caches nothing:
+    // no DAO, no BehaviorSubject. Product lists are cache-first (013).
     return execute<(List<ItemModel>, PageMetadata)>(() async {
-      final response = await _getItemsApi.execute(config: config);
+      final response = await _itemRemote.getItems(config: config);
       final entity = response.data;
       if (entity == null) {
         return RepositoryResult<(List<ItemModel>, PageMetadata)>.error(exception: RepositoryException.unknown);
       }
       final models = _itemMapper.toListModel(entities: entity.items);
       final hasMore = (entity.page * entity.pageSize) < entity.total;
-      final metadata = PageMetadata(total: entity.total, nextPage: hasMore ? entity.page + 1 : null);
+      final metadata = PageMetadata(hasMore: hasMore, nextPage: hasMore ? entity.page + 1 : null);
       return RepositoryResult<(List<ItemModel>, PageMetadata)>.success(data: (models, metadata));
     });
   }
@@ -989,29 +1056,31 @@ Future<RepositoryResult<void>> _mutateItem({
 }
 ```
 
-### Когда НЕ использовать кэш-first: network-only carve-out
+### Когда network-only всё ещё уместен (ретайренный carve-out)
 
-**Пагинированные серверные списки и one-shot POST — явное исключение из реактивного паттерна.** Они **network-only**: без DAO, без `BehaviorSubject`, без подписки. Это и есть метод `getItems({required GetItemsConfig config})` из контракта — он реализован прямо в `ItemRepositoryImpl` (и в скелетной §8.0, и в полной §8.1 форме одинаково): репозиторий просто бьёт по REST и возвращает `RepositoryResult<(List<ItemModel>, PageMetadata)>`. Никакого отдельного `getItemsPage`/`watchItems` для списка — пагинированный список это **`getItems`**.
+**Старая формулировка «пагинированный серверный список = network-only» ретайрена.** Она была правилом до фичи 013; сегодня продуктовые пагинированные списки — **кэш-first**: и список чатов, и история сообщений засеиваются в Sembast один раз и дальше режутся из DAO. Network-only остаётся ровно у двух вещей: у **замороженного верификационного среза `Item`** (harness не кэширует ничего по построению) и у операций, которые кэшировать нечего — one-shot команды без локальной проекции. Кэш-first — форма **по умолчанию**; network-only теперь нужно обосновывать, а не наоборот.
+
+Что от carve-out'а осталось неизменным — **форма контракта**: метод `getItems({required GetItemsConfig config})` возвращает `RepositoryResult<(List<ItemModel>, PageMetadata)>` и реализован прямо в `ItemRepositoryImpl` (в скелетной §8.0 и в полной §8.1 форме одинаково). Никакого отдельного `getItemsPage`/`watchItems` для списка — пагинированный список это **`getItems`**, независимо от того, кэш-first он или network-only.
 
 ```dart
-// Paginated server-owned list: network-only, NO DAO, NO BehaviorSubject.
+// Frozen Item slice: paginated list, network-only - NO DAO, NO BehaviorSubject.
 @override
 Future<RepositoryResult<(List<ItemModel>, PageMetadata)>> getItems({required GetItemsConfig config}) {
   return execute<(List<ItemModel>, PageMetadata)>(() async {
-    final response = await _getItemsApi.execute(config: config);
+    final response = await _itemRemote.getItems(config: config);
     final entity = response.data;
     if (entity == null) {
       return RepositoryResult<(List<ItemModel>, PageMetadata)>.error(exception: RepositoryException.unknown);
     }
     final models = _itemMapper.toListModel(entities: entity.items);
     final hasMore = (entity.page * entity.pageSize) < entity.total;
-    final metadata = PageMetadata(total: entity.total, nextPage: hasMore ? entity.page + 1 : null);
+    final metadata = PageMetadata(hasMore: hasMore, nextPage: hasMore ? entity.page + 1 : null);
     return RepositoryResult<(List<ItemModel>, PageMetadata)>.success(data: (models, metadata));
   });
 }
 ```
 
-> Первая реальная фича — **список чатов** (открытое общее пространство) — именно такая: это серверный, network-only пагинированный список, потому она идёт по network-only ветке (`getItems`). Дефолтный флавор пагинации — OFFSET (срез страницы + `page` + `page_size` + `total`), альтернатива — CURSOR; **конкретный контракт пагинации списка чатов финализируется позже вместе с бэкендом NOX** (бэкенд/протокол ещё не выбраны — имена ключей `page`/`page_size`/`total` пример/TBD). Канон вычисления `PageMetadata` (`hasMore = (page * pageSize) < total`, `nextPage = hasMore ? page + 1 : null`) — здесь, в §8; `07-pagination.md` описывает presentation-сторону поверх этого канона (дефолтный OFFSET-флавор `PageMetadata{int total, int? nextPage}`, альтернативный CURSOR, `PagingStateExt.applyPage`, проброс `result.exception` в `pagingState.error`). Не заводи DAO/subject для серверных пагинированных списков.
+> **Как это разошлось с реальностью для чатов.** Список чатов планировался как network-only, но фичей 013 он стал **кэш-first**: `ChatRepositoryImpl` один раз засеивает Sembast-store из `ChatRemoteDataSource` (проходя страницы, пока `has_more` не упадёт), а дальше отдаёт срезы, поиск и `PageMetadata` локально — из DAO. То же у истории сообщений. Carve-out как правило снят; network-only остаётся в силе для замороженного `Item`-среза и для того, что действительно не кэшируется; форма возврата (`RepositoryResult<(List<Model>, PageMetadata)>`, никакого отдельного `getItemsPage`/`watchItems`) одинакова на обеих ветках. Контракт пагинации списка чатов **зафиксирован контрактом v0 (фаза 025)**: страничный запрос (`page`/`page_size`) с ответом `{chats, has_more}`; история сообщений — курсорный путь `before_seq`/`limit` с ответом `{messages, has_more}`. Канон вычисления `PageMetadata{hasMore, nextPage?}` — здесь, в §8 (`hasMore` с провода или сворачиванием offset-математики verification-среза; `nextPage = hasMore ? page + 1 : null` на страничном пути); `07-pagination.md` описывает presentation-сторону поверх этого канона (страничный флавор, реальный seq-курсорный путь треда в его §4.2, `PagingStateExt.applyPage`, проброс `result.exception` в `pagingState.error`). Правило теперь обратное прежнему: для продуктового пагинированного списка **заводи DAO** и кэш-first-путь, а network-only оставляй только там, где кэшировать нечего.
 
 ---
 
@@ -1027,8 +1096,10 @@ Future<RepositoryResult<(List<ItemModel>, PageMetadata)>> getItems({required Get
 | `BaseRepositoryHelper` | `exception/base_repository_helper.dart` | mixin |
 | `AppDatabaseDev/Prod/Test` | `local/app_database.dart` | `@LazySingleton(as: AppDatabase, env: [...])` (см. `02-dependency-injection.md`) |
 | `ItemDao` | `local/item/item_dao.dart` | `@lazySingleton` |
-| `ApiClient` (SKELETON) | `remote/api_client.dart` | `@lazySingleton` (тонкий Dio-обёртка) |
-| `GetItemsApi` (SKELETON, mock) | `remote/api/item/get_items_api.dart` | `@lazySingleton` |
+| `ApiClient` | `remote/api_client.dart` | `@lazySingleton` (Dio + `initBase()`, инжектирует `AppConfigRepository`) |
+| `AuthInterceptor` | `remote/interceptor/auth_interceptor.dart` | без DI — создаётся в `ApiClient.initBase()` |
+| `ItemRemoteDataSource` / `MockItemRemoteDataSource` | `remote/datasource/item_remote_data_source.dart`, `datasource/mock/...` | `@LazySingleton(as: ItemRemoteDataSource, env: [dev, prod, test])` |
+| `GetItemsApi` (mock-генератор, заморожен) | `remote/api/item/get_items_api.dart` | `@lazySingleton` |
 | `ItemRepositoryImpl` | `repository/item/item_repository_impl.dart` | `@LazySingleton(as: ItemRepository, env: [dev, prod, test])` |
 | `BaseApiRepository` (TARGET) | `remote/api/base/base_api_repository.dart` | абстрактный базовый (ещё нет в коде) |
 | `RequestBuilder` / `RequestBuilderHelper` (TARGET) | `remote/request_builder/base/...` | базовый / mixin (ещё нет в коде) |
@@ -1044,15 +1115,15 @@ fvm dart run build_runner build --delete-conflicting-outputs
 
 ## Чеклист
 
-- [ ] `ItemEntity` использует **только базовые типы**, ровно пять полей `id`/`name`/`status` (String-`name`)/`createdAt` (ISO-8601 String)/`description` (required-nullable); никаких `tags`/`DateTime`/enum-как-enum. `ItemsEntity` — page wrapper `{items, page, page_size, total}` с `@JsonKey` (имена ключей — пример/TBD).
+- [ ] `ItemEntity` использует **только базовые типы**, ровно пять полей `id`/`name`/`status` (String-`name`)/`createdAt` (ISO-8601 String)/`description` (required-nullable); никаких `tags`/`DateTime`/enum-как-enum. `ItemsEntity` — page wrapper `{items, page, page_size, total}` с `@JsonKey` (verification-срез; ПРОДУКТОВЫЕ обёртки фиксированы контрактом v0: `{chats, has_more}` / `{messages, has_more}` — фаза 025, живые фикстуры в `test/fixtures/wire/`).
 - [ ] Все `part`-директивы стоят: entities имеют `.freezed.dart` **и** `.g.dart`; BLoC-типы и доменные модели (`ItemModel`) — только `.freezed.dart` (entity-слой — единственное место с `.g.dart`/`fromJson`).
-- [ ] `ResponseEntity<T>` envelope (пример/TBD) + `EntityConverter<E>` реестр на месте; **каждый** новый entity, проходящий через `ResponseEntity<T>`, добавлен в ОБЕ цепочки (`fromJson` + `toJson`) `entity_converter.dart` (в скелете реестр пуст — ветки регистрируются per-feature).
+- [ ] `ResponseEntity<T>` = `{success (зеркало wire-`ok`), ErrorWireEntity? error {code, message}, @EntityConverter() T? data}` + `EntityConverter<E>` реестр на месте; **каждый** новый entity, проходящий через `ResponseEntity<T>`, добавлен в ОБЕ цепочки (`fromJson` + `toJson`) `entity_converter.dart` (реестр наполнен с 018/S4: Item + chat/message wire-сущности; неизвестный тип → `ArgumentError`).
 - [ ] `ItemMapper` расширяет `BaseMapper` (4-арг, `dynamic, dynamic` для простого случая), коэрция enum через `name`/`firstWhere(orElse:)`, дата — защитно в UTC (`DateTime.tryParse(...)?.toUtc() ?? DateTime.now().toUtc()` / `.toUtc().toIso8601String()`); импортирует `item_status.dart`; дочерние мапперы инжектируются конструктором.
-- [ ] **Нет** транспортной иерархии `DaoException` / `ApiException` / `BaseDomainExceptionHelper`; есть **маркер** `BaseRepositoryException`, который реализует `RepositoryException` (enum `{unknown, internal, authentication, connection, unauthenticated, notFound}`) и любые feature-enum'ы; `RepositoryResult.error` всегда несёт подтип маркера. Единственный коэрсный механизм — `mixin BaseRepositoryHelper` с `execute<TD>(Function executionFunction)`; импл подмешивает **только** `with BaseRepositoryHelper` (без `on`-ограничения).
-- [ ] `BaseRepositoryHelper.execute<T>()` имеет **ровно две** `catch`-ветки — `on DioException` (пример транспорта) → `RepositoryException.internal`, общий `catch` → `RepositoryException.unknown`; **обязательно** логирует через `LogRepository` в каждой ветке (никакого `print`) перед возвратом `RepositoryResult.error(...)`. Callback `executionFunction` сам возвращает уже-обёрнутый `RepositoryResult`; конкретный доменный код (`notFound`/`unknown` при пустом payload) — внутри callback'а, не в catch.
+- [ ] **Нет** транспортной иерархии `DaoException` / `ApiException` / `BaseDomainExceptionHelper`; есть **маркер** `BaseRepositoryException`, который реализует `RepositoryException` (enum `{unknown, internal, authentication, connection, unauthenticated, notFound, invalidRequest, nameTaken, payloadTooLarge, attachmentGone, rateLimited, unsupportedSchema}` + статический `fromWireCode(String)`, незнакомый код → `internal`) и любые feature-enum'ы; `RepositoryResult.error` всегда несёт подтип маркера. Единственный коэрсный механизм — `mixin BaseRepositoryHelper` с `execute<TD>(Function executionFunction)`; импл подмешивает **только** `with BaseRepositoryHelper` (без `on`-ограничения).
+- [ ] `BaseRepositoryHelper.execute<T>()` имеет **ровно три** `catch`-ветки — `on BaseRepositoryException` (пробрасывается как есть, не понижается до `unknown`), `on DioException` → `_mapDioException` (таймауты/`connectionError` → `connection`; 401 → `unauthenticated`; 403 → `authentication`; 404 → `notFound`; иначе `internal`), общий `catch` → `RepositoryException.unknown`; **обязательно** логирует через `LogRepository` в каждой ветке (никакого `print`) перед возвратом `RepositoryResult.error(...)`. Тот же mixin даёт `unwrapEnvelope<TD>(ResponseEntity<TD>, String what)`: payload, иначе `fromWireCode(error.code)`, иначе `StateError`. Callback `executionFunction` сам возвращает уже-обёрнутый `RepositoryResult`; конкретный доменный код (`notFound`/`unknown` при пустом payload) — внутри callback'а, не в catch.
 - [ ] `AppDatabase` env-scoped (интерфейс `db` + `clearEntireDatabase()`; `Dev`/`Prod` = `databaseFactoryIo`, `Test` = `databaseFactoryMemory`); `path_provider` — зависимость пакета; env-список в репозитории полный.
 - [ ] `ItemDao` (PRIMARY) — **per-ID records store** `stringMapStoreFactory.store('items')`, ключ = `item.id`: `watch()` как `Stream<List<ItemEntity>> async*`, `getById(String)`, позиционные `saveData(List)`/`upsert(ItemEntity)`/`removeById(String)`/`cleanData()`, `_decode`/`_tryDecode` пропускают битую запись (`null`). DAO **не** оборачивает сбои в `StateError` — исключения Sembast летят в catch-all `execute()`. Cache-miss/not-found решает callback репозитория. Single-record collection store — альтернативный вариант.
-- [ ] **SKELETON `ItemRepositoryImpl`** реализует **узкий** контракт `ItemRepository` (`getItems({GetItemsConfig config}) -> (List, PageMetadata)` + `clean() -> Future<void>`): инжектирует только маппер + (mock-)API, без DAO/subject/dispose; пустой payload → `RepositoryException.unknown` в callback'е; `PageMetadata` через `hasMore = (page * pageSize) < total`, `nextPage = hasMore ? page + 1 : null`; `clean()` — no-op. **Полный** env-список `@LazySingleton`. Полная (TARGET) форма добавляет `watchItem`/`fetchItem`/CRUD + `ItemDao` + ОДИН `BehaviorSubject` (подписка раз в конструкторе) + `@disposeMethod`, читает через `hasData`/`match` (не `result.data!`).
-- [ ] REST **SKELETON**: тонкий `@lazySingleton ApiClient` (`remote/api_client.dart`) + mock-`GetItemsApi` (FR-013) строит `ResponseEntity<ItemsEntity>` напрямую. **TARGET**: `ApiClient.initBase()` (auth-interceptor, токен из `AppConfigRepository` асинхронно — пример/TBD) + `BaseApiRepository` + `RequestBuilder`/`RequestBuilderHelper`; API-класс оборачивает `response.data` в `ResponseEntity<T>.fromJson`; на non-2xx Dio бросает `DioException`, не перехватываемый на уровне API → `execute()` → `RepositoryException.internal` (никакого `ApiException`). Wire-параметр поиска — `search` (не `q`); `page` 1-based (`defaultPage = 1`).
-- [ ] **Carve-out соблюдён:** пагинированные серверные списки + one-shot POST — network-only (без DAO, без subject), возвращают `RepositoryResult<(List<Model>, PageMetadata)>` (см. `07-pagination.md`). Первая реальная фича — список чатов; контракт пагинации финализируется с бэкендом NOX.
+- [ ] **`ItemRepositoryImpl` (замороженный верификационный срез)** реализует **узкий** контракт `ItemRepository` (`getItems({GetItemsConfig config}) -> (List, PageMetadata)` + `clean() -> Future<void>`): инжектирует только маппер + `ItemRemoteDataSource` (интерфейс, seam 016), без DAO/subject/dispose; пустой payload → `RepositoryException.unknown` в callback'е; `PageMetadata` сворачивается из offset-обёртки среза (`hasMore = (page * pageSize) < total`, `nextPage = hasMore ? page + 1 : null`) — **в самой `PageMetadata` полей `total`/`pageSize` нет**, только `{hasMore, nextPage?}`; `clean()` — no-op. **Полный** env-список `@LazySingleton`. Полная (TARGET) форма добавляет `watchItem`/`fetchItem`/CRUD + `ItemDao` + ОДИН `BehaviorSubject` (подписка раз в конструкторе) + `@disposeMethod`, читает через `hasData`/`match` (не `result.data!`).
+- [ ] REST **построенное**: `@lazySingleton ApiClient` (`remote/api_client.dart`) с идемпотентным `initBase()` (base URL из `AppConfig.apiUrl` + однократная установка `AuthInterceptor`, который асинхронно читает `AppConfigRepository.getUserAuthIdToken()` и на 401 делает forced logout через ленивый алиас) — seam инертен: `apiUrl` = `null`, `initBase()` из кода приложения не зовётся, data sources его не инжектируют (разводка — DI-флип фазы 028). Транспорт контракта v0 — WS-конверт (фаза 027); REST остаётся за blob upload/download. **TARGET (не построено)**: `BaseApiRepository` + `RequestBuilder`/`RequestBuilderHelper`; API-класс оборачивает `response.data` в `ResponseEntity<T>.fromJson`; на non-2xx Dio бросает `DioException`, не перехватываемый на уровне API → `execute()` → `_mapDioException` (никакого `ApiException`). В замороженном `Item`-срезе wire-параметр поиска — `search` (не `q`); `page` 1-based (`defaultPage = 1`).
+- [ ] **Кэш-first — форма по умолчанию; carve-out «пагинированный список = network-only» ретайрен.** Список чатов и история сообщений — кэш-first (013): один seed в Sembast, дальше срезы/поиск/`PageMetadata` из DAO. Network-only (без DAO, без subject) допустим только там, где кэшировать нечего: замороженный `Item`-срез и one-shot команды без локальной проекции — и это обосновывается, а не предполагается. Форма возврата на обеих ветках одна — `RepositoryResult<(List<Model>, PageMetadata)>`, без отдельного `getItemsPage`/`watchItems` (см. `07-pagination.md`). Контракт пагинации зафиксирован v0: `{chats, has_more}` по `page`/`page_size`, `{messages, has_more}` по `before_seq`/`limit`.
 - [ ] `build_runner` перезапущен один раз в корне пакета после изменений аннотаций.

@@ -17,6 +17,8 @@ class ChatMapper extends BaseMapper<ChatEntity, ChatModel, dynamic, dynamic> {
       // lastMessageAt for relative time without a toLocal()).
       lastMessageAt: DateTime.tryParse(entity.lastMessageAt)?.toLocal() ?? AppClock.now(),
       unreadCount: entity.unreadCount,
+      createdAt: entity.createdAt == null ? null : DateTime.fromMillisecondsSinceEpoch(entity.createdAt! * 1000, isUtc: true).toLocal(),
+      createdByLabel: entity.createdByLabel,
     );
   }
 
@@ -28,6 +30,8 @@ class ChatMapper extends BaseMapper<ChatEntity, ChatModel, dynamic, dynamic> {
       lastMessagePreview: model.lastMessagePreview,
       lastMessageAt: model.lastMessageAt.toUtc().toIso8601String(),
       unreadCount: model.unreadCount,
+      createdAt: model.createdAt == null ? null : model.createdAt!.toUtc().millisecondsSinceEpoch ~/ 1000,
+      createdByLabel: model.createdByLabel,
     );
   }
 }

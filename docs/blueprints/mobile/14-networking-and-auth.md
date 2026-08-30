@@ -1,8 +1,8 @@
 # 14 — Сеть и авторизация
 
-> **Назначение:** зафиксировать сетевой слой приложения NOX — как поднимается HTTP-клиент (`ApiClient` на Dio), откуда он берёт `baseUrl` и токен (`AppConfigRepository`), и как это стыкуется с REST-слоем из [04-data-layer.md](04-data-layer.md) (`RequestBuilder` → API-класс → `ResponseEntity<T>`). Базовая часть (§1–3) — **канон-паттерн блюпринта**: один Dio с одним auth-`InterceptorsWrapper`, читающим `getUserAuthIdToken` → `Bearer`. У NOX **один** (ещё не выбранный) бэкенд — второго хоста нет. Поверх этого §4 описывает **возможную адаптацию под бэкенд NOX** в виде размеченного примера: собственная токен-модель (короткий access-JWT + opaque refresh) И подписанные запросы (HMAC-SHA256 + security-заголовки + replay-окно + build-gate). §4 даёт **структуру** интерсепторов, а конкретный контракт подписи/токенов помечен как пример (бэкенд/протокол NOX ещё не выбран — заменить на реальную схему авторизации, когда определят).
+> **Назначение:** зафиксировать сетевой слой приложения NOX — как поднимается HTTP-клиент (`ApiClient` на Dio), откуда он берёт `baseUrl` и токен (`AppConfigRepository`), и как это стыкуется с REST-слоем из [04-data-layer.md](04-data-layer.md) (`RequestBuilder` → API-класс → `ResponseEntity<T>`). Базовая часть (§1–3) — **канон-паттерн блюпринта**: один Dio с одним auth-`InterceptorsWrapper`, читающим `getUserAuthIdToken()` → `Bearer`. У NOX **один** бэкенд — Go-сервер `noxd` (`client_backend/`, встроенный SQLite), второго хоста нет. Основной транспорт контракта v0 — **WebSocket-конверт поверх wss:443 с пиннингом ключа** (приходит в фазе 027); REST остаётся только под blob-обмен (`file.uploadBegin` → `PUT` → `message.send{attachment:{file_id}}`; `file.downloadBegin` → `GET` с `Range`, одноразовые 10-минутные токены), поэтому §1–3 описывают именно REST-плечо. Поверх этого §4 описывает **возможную схему аутентификации** в виде размеченного примера: собственная токен-модель (короткий access-JWT + opaque refresh) И подписанные запросы (HMAC-SHA256 + security-заголовки + replay-окно + build-gate). §4 даёт **структуру** интерсепторов, а конкретный контракт подписи/токенов помечен как пример: stage 1 контракта v0 работает **без авторизации**, а модель аутентификации/пейринга stage 2 ещё не финализирована — её и надо будет подставить вместо примера.
 > **Когда читать:** перед поднятием `lib/data/remote/` (Dio-клиент, auth-interceptor), перед подключением `AppConfigRepository` к `ApiClient` и `main.dart`, и обязательно — перед реализацией auth-флоу (login / refresh / logout) и security-pipeline'а клиента.
-> **Связанные документы:** [03-domain-layer.md](03-domain-layer.md) (`RepositoryResult`, `RepositoryException`), [04-data-layer.md](04-data-layer.md) (`ApiClient`/`BaseApiRepository`/`RequestBuilder`/`ResponseEntity`/`EntityConverter`, `BaseRepositoryHelper`), [02-dependency-injection.md](02-dependency-injection.md) (`AppFlavorType`, `AppConfig`, `configureDependencies`, bootstrap `main.dart`), [13-deep-links.md](13-deep-links.md) (входные web-deep-link ссылки — какие пути могут обходить подпись; конкретный набор зависит от ещё не выбранного бэкенда/протокола NOX), [01-stack-and-tooling.md](01-stack-and-tooling.md) (`dio`, `flutter_secure_storage`), [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md) (`apiUrl`/`apiSignatureKey` per флейвор из зашифрованных секретов — пример TBD-полей конфига, бэкенд ещё не выбран).
+> **Связанные документы:** [03-domain-layer.md](03-domain-layer.md) (`RepositoryResult`, `RepositoryException`), [04-data-layer.md](04-data-layer.md) (`ApiClient`/`BaseApiRepository`/`RequestBuilder`/`ResponseEntity`/`EntityConverter`, `BaseRepositoryHelper`), [02-dependency-injection.md](02-dependency-injection.md) (`AppFlavorType`, `AppConfig`, `configureDependencies`, bootstrap `main.dart`), [13-deep-links.md](13-deep-links.md) (входные web-deep-link ссылки — какие пути могут обходить подпись; deep links в приложении не реализованы, конкретный набор таких путей — открытый вопрос), [01-stack-and-tooling.md](01-stack-and-tooling.md) (`dio`, `flutter_secure_storage`), [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md) (`apiUrl` per флейвор из зашифрованных секретов; `apiSignatureKey` — пример/TBD-поле схемы §4).
 
 ---
 
@@ -14,19 +14,19 @@
 2. **Откуда `baseUrl` и токен** — `AppConfigRepository` (флейвор-резолвед конфиг + источник bearer-токена). Эта зависимость раньше фигурировала в [04-data-layer.md](04-data-layer.md) как используемая, но не определённая — здесь её контракт фиксируется. §2.
 3. **Как это стыкуется с REST-слоем** — `RequestBuilder` / `RequestBuilderHelper` и envelope `ResponseEntity<T>` / `EntityConverter<E>` (полные шаблоны — в [04-data-layer.md](04-data-layer.md), здесь — краткий мост). §3.
 
-§4 — **обязательная до релиза** адаптация под реальный бэкенд NOX, приведённая как **размеченный пример** схемы авторизации (HMAC-подпись + security-заголовки + собственная токен-модель с ротацией). Бэкенд/протокол NOX ещё не выбран — конкретный контракт §4 надо заменить на реальную схему авторизации, когда её определят. §5 — сетевое состояние и lifecycle-driven refresh. §6 — чеклист.
+§4 — **обязательная до релиза** авторизация, приведённая как **размеченный пример** схемы (HMAC-подпись + security-заголовки + собственная токен-модель с ротацией). Бэкенд и wire-контракт выбраны (Go-сервер `noxd`, контракт v0), но **stage 1 контракта работает без авторизации**, а модель stage 2 (аутентификация/пейринг) ещё не финализирована — конкретный контракт §4 надо заменить на неё, когда её определят. §5 — сетевое состояние и lifecycle-driven refresh. §6 — чеклист.
 
 > **Единый пакет.** Все пути — `lib/...` внутри одного пакета `nox_app` (worked example, согласован с блюпринтом). Импорты — полные `package:nox_app/...`.
 >
-> **Скелет Feature-001 vs целевой паттерн.** §1–4 описывают **целевой** сетевой контракт. В скелете Feature-001 он намеренно тоньше: `ApiClient` живёт плоско в `lib/data/remote/api_client.dart` (не `lib/data/remote/api/base/...`) и пока это просто `@lazySingleton`-обёртка над `Dio` с одним полем `final Dio dio;` и 30-сек таймаутами — без `initBase()`-фабрики, без auth-interceptor'а, без `/api/`-base-URL и без §4-security-pipeline'а. Doc-comment самого класса фиксирует это прямо: «Base URL, auth interceptor, HMAC/security headers and the token source are example/TBD (backend & protocol not chosen)». Структура `lib/data/remote/api/base/api_client.dart` + `BaseApiRepository` ниже — это **целевой** REST-каркас (один хост — у NOX один бэкенд); он встанет на место плоского `api_client.dart`, когда определят бэкенд. Единственный сейчас API-класс — `GetItemsApi` (мок, см. §3) — оба этих каркаса обходит.
+> **Реальный код vs целевой паттерн.** §1–4 описывают **целевой** сетевой контракт. Реальный `ApiClient` намеренно тоньше: он живёт плоско в `lib/data/remote/api_client.dart` (не `lib/data/remote/api/base/...`), это `@lazySingleton` с конструктором `ApiClient(this._config)` (`AppConfigRepository`), двумя полями (`_config` + `final Dio dio`) и 30-сек таймаутами. `initBase()` у него — **идемпотентный метод экземпляра**, а не статическая фабрика: он ставит `dio.options.baseUrl` из `AppConfig.apiUrl` (когда тот непустой, **без** суффикса `/api/`) и один раз навешивает `AuthInterceptor` (§4-security-pipeline'а нет). Сейчас всё это **инертно**: `apiUrl` равен `null` во всех флейворах, `initBase()` из кода приложения не вызывается (только из тестов), и ни один data source не инжектит `ApiClient` — эта связка приезжает с DI-флипом 016 (фаза 028). Doc-comment самого класса фиксирует это прямо: «Inert while `apiUrl` is null (the contract-v0 transport is a WS envelope arriving with feature 027; REST stays for blob upload/download)». Структура `lib/data/remote/api/base/api_client.dart` + `BaseApiRepository` ниже — это **целевой** REST-каркас (один хост — у NOX один бэкенд). Все четыре сегодняшних API-класса — `GetItemsApi`, `GetChatsApi`, `GetMessagesApi`, `SendMessageApi` (моки, см. §3) — оба этих каркаса обходят.
 
 ---
 
 ## 1. `ApiClient` (канон-паттерн блюпринта)
 
-Один экземпляр Dio: `initBase()` — основной (и единственный) API, авторизованный одним auth-`InterceptorsWrapper`. У NOX **один** (ещё не выбранный) бэкенд — второго хоста нет. `baseUrl` берётся из `AppConfigRepository.config.apiUrl` (см. §2), к нему добавляется `/api/`. Таймауты — 30 с, `Content-Type: application/json`, `ResponseType.json`.
+Один экземпляр Dio: `initBase()` — основной (и единственный) API, авторизованный одним auth-`InterceptorsWrapper`. У NOX **один** бэкенд (`noxd`) — второго хоста нет. `baseUrl` берётся из `AppConfigRepository.config.apiUrl` (см. §2), к нему добавляется `/api/`. Таймауты — 30 с, `Content-Type: application/json`, `ResponseType.json`.
 
-`lib/data/remote/api/base/api_client.dart` (целевая структура — в скелете это плоский `lib/data/remote/api_client.dart`, см. §0):
+`lib/data/remote/api/base/api_client.dart` (целевая структура — в реальном коде это плоский `lib/data/remote/api_client.dart` с методом `initBase()` и без суффикса `/api/`, см. §0):
 
 ```dart
 import 'package:dio/dio.dart';
@@ -47,7 +47,7 @@ class ApiClient {
 
     dio.interceptors.add(InterceptorsWrapper(
       onRequest: (options, handler) async {
-        final token = await appConfigRepository.getUserAuthIdToken;
+        final token = await appConfigRepository.getUserAuthIdToken();
         if (token != null) {
           options.headers['Authorization'] = 'Bearer $token';
         } else {
@@ -65,15 +65,15 @@ class ApiClient {
 
 Ключевое в каноне:
 
-- **Один auth-interceptor, читающий токен асинхронно на каждом запросе.** Токен не кешируется в interceptor'е — `await appConfigRepository.getUserAuthIdToken` дёргается per request, поэтому ротация/обновление токена видны сразу. `null`-токен → заголовок `Authorization` **снимается** (не остаётся протухший).
-- **`onResponse` / `onError` — пасс-тру.** Это место под debug-логи/трекинг; ошибки **не** перехватываются здесь и **не** мапятся в типизированные исключения — на non-2xx Dio просто бросает `DioException`, который ловится выше (см. §3 и [04-data-layer.md](04-data-layer.md) §5: `DioException → RepositoryException.internal`).
-- **Один хост.** У NOX единственный (ещё не выбранный) бэкенд — отдельного второго хоста (search/etc.) нет. `apiUrl` приходит из `AppConfig` (§2), per флейвор.
+- **Один auth-interceptor, читающий токен асинхронно на каждом запросе.** Токен не кешируется в interceptor'е — `await appConfigRepository.getUserAuthIdToken()` дёргается per request, поэтому ротация/обновление токена видны сразу. `null`-токен → заголовок `Authorization` **снимается** (не остаётся протухший). *Реальный `AuthInterceptor` (`lib/data/remote/interceptor/auth_interceptor.dart`) заголовок не снимает, а просто не ставит: `RequestOptions` собирается на каждый запрос заново, протухшему заголовку взяться неоткуда.*
+- **`onResponse` / `onError` — пасс-тру.** Это место под debug-логи/трекинг; ошибки **не** перехватываются здесь и **не** мапятся в типизированные исключения — на non-2xx Dio просто бросает `DioException`, который ловится выше (см. §3 и [04-data-layer.md](04-data-layer.md) §5: `DioException` мапится по типу/статусу). *Одно исключение в реальном коде: `AuthInterceptor.onError` на `401` дёргает `authRepository.logout(forced: true)` (ленивый резолв через алиас — рвёт цикл `ApiClient → AuthInterceptor → AuthRepository → repositories`) и **всегда** пробрасывает ошибку дальше — он её не глотает.*
+- **Один хост.** У NOX единственный бэкенд (`noxd`, `client_backend/`) — отдельного второго хоста (search/etc.) нет. `apiUrl` приходит из `AppConfig` (§2), per флейвор.
 
 ### `BaseApiRepository`
 
 База всех API-классов отдаёт единственный клиент как геттер — у NOX один хост.
 
-`lib/data/remote/api/base/base_api_repository.dart` (целевой каркас — в скелете Feature-001 файла ещё нет, единственный API-класс `GetItemsApi` его не наследует, см. §3):
+`lib/data/remote/api/base/base_api_repository.dart` (целевой каркас — в реальном коде файла ещё нет, ни один из четырёх мок-API-классов его не наследует, см. §3):
 
 ```dart
 import 'package:dio/dio.dart' as dio;
@@ -86,7 +86,7 @@ abstract class BaseApiRepository {
 
 > Каждый вызов геттера поднимает свежий `Dio` (interceptor'ы навешиваются заново). Это **намеренный** выбор паттерна, а не оплошность: токен читается **из репозитория на лету** при каждом запросе, поэтому отдельный долгоживущий синглтон-Dio не обязателен — ротация/обновление токена видны мгновенно.
 >
-> **Что значит «один Dio».** Формулировка «один экземпляр Dio» в §1 — буквальна: у NOX один (ещё не выбранный) бэкенд, поэтому один клиент (`baseClient`, авторизованный). Имеется в виду, что клиент **не** singleton-инстанс: свежий `Dio` на каждый вызов геттера остаётся каноном. Если профилирование покажет, что пересборка interceptor'ов на запрос дорога́ (актуально с тяжёлым security-interceptor'ом §4.2 — HMAC + сбор UA), допустимая оптимизация — поднять `baseClient` как `@lazySingleton Dio` и навесить interceptor'ы один раз; токен при этом всё равно читается per request внутри `onRequest`, так что семантика «токен на лету» сохраняется. Это опциональная perf-добавка, а не требование.
+> **Что значит «один Dio».** Формулировка «один экземпляр Dio» в §1 — буквальна: у NOX один бэкенд, поэтому один клиент (`baseClient`, авторизованный). Имеется в виду, что клиент **не** singleton-инстанс: свежий `Dio` на каждый вызов геттера остаётся каноном. Если профилирование покажет, что пересборка interceptor'ов на запрос дорога́ (актуально с тяжёлым security-interceptor'ом §4.2 — HMAC + сбор UA), допустимая оптимизация — поднять `baseClient` как `@lazySingleton Dio` и навесить interceptor'ы один раз; токен при этом всё равно читается per request внутри `onRequest`, так что семантика «токен на лету» сохраняется. Это опциональная perf-добавка, а не требование.
 
 ---
 
@@ -94,80 +94,102 @@ abstract class BaseApiRepository {
 
 `ApiClient` (§1) и bootstrap в `main.dart` (см. [02-dependency-injection.md](02-dependency-injection.md)) ссылаются на `AppConfigRepository` — в [04-data-layer.md](04-data-layer.md)/[02-dependency-injection.md](02-dependency-injection.md) он упоминается как используемый, но его **контракт нигде не был выписан**. Здесь он фиксируется. Observability у NOX идёт через `LogRepository` (см. [04-data-layer.md](04-data-layer.md)).
 
-> **Скелет Feature-001 vs целевой контракт.** Ниже выписан **целевой** интерфейс `AppConfigRepository` (5 членов). В скелете Feature-001 он намеренно тоньше — содержит только два члена: `Future<void> initialize({required AppFlavorType flavorType})` и `AppConfig get config` ([lib/domain/repository/app_config/app_config_repository.dart](../../../lib/domain/repository/app_config/app_config_repository.dart)). Геттеры `baseApiUrl` / `getUserAuthIdToken` / `isTestEnvironment` появятся вместе с auth-флоу (FR-013, бэкенд ещё не выбран). Сам конфиг — это класс `AppConfig` (`lib/domain/model/app_config/app_config.dart`), несущий **только** `final AppFlavorType flavor`; полей `apiUrl`/`apiSignatureKey` в коде сейчас нет — это пример/TBD-поля самого `AppConfig`, которые добавятся с реальным бэкендом. Doc-comment самих файлов фиксирует это: «Token source / apiUrl are example/TBD».
+> **Реальный контракт (6 членов).** Ниже выписан **фактический** интерфейс `AppConfigRepository` ([lib/domain/repository/app_config/app_config_repository.dart](../../../lib/domain/repository/app_config/app_config_repository.dart)). Две поправки к канон-паттерну блюпринта: (1) `getUserAuthIdToken()` — **метод**, а не геттер (он читает secure storage, поэтому вызывается со скобками); (2) отдельного геттера `baseApiUrl` **нет** — `apiUrl` берут через `config.apiUrl`. Сам конфиг — это класс `AppConfig` (`lib/domain/model/app_config/app_config.dart`), несущий `final AppFlavorType flavor` **и** `final String? apiUrl` (`null` во всех флейворах — реальный URL приезжает с транспортом, фаза 027); поля `apiSignatureKey` в коде нет — это пример/TBD-поле схемы §4. Поверх auth-seam'а фичи 019 контракт дорос парой `limits` / `updateLimits(ServerLimits)` — границы полезной нагрузки из `session.hello` (контракт v0 §3, выравнивание по проводу — фаза 025): до фазы 027 отдаются `ServerLimits.contractDefaults` (`maxMessageBytes` 65536, `maxAttachmentBytes` 104857600, `maxFrameBytes` 131072), писателя пока нет.
 
 `lib/domain/repository/app_config/app_config_repository.dart`:
 
 ```dart
 import 'package:nox_app/domain/model/app_config/app_config.dart';
+import 'package:nox_app/domain/model/app_config/server_limits.dart';
 import 'package:nox_app/domain/model/app_config/app_flavor_type.dart';
 
+/// Holds flavor-dependent config, initialized once after the DI container is ready,
+/// plus the auth-token source for the transport seam. `apiUrl` stays null until the
+/// transport (027); the token writer is stage-2 auth.
 abstract class AppConfigRepository {
-  /// Флейвор-резолвед конфиг. Сегодня несёт только `flavor`; поля apiUrl,
-  /// apiSignatureKey, … — пример/TBD (бэкенд NOX ещё не выбран).
-  AppConfig get config;
-
-  /// Базовый API-URL (синоним config.apiUrl, удобный геттер).
-  String get baseApiUrl;
-
-  /// Поднять конфиг под выбранный флейвор.
-  /// Вызывается в main.dart после готового DI-контейнера.
   Future<void> initialize({required AppFlavorType flavorType});
 
-  /// Источник bearer-токена для auth-interceptor'а (§1). null → запрос идёт без Authorization.
-  Future<String?> get getUserAuthIdToken;
+  AppConfig get config;
 
-  /// true под test-флейвором/окружением
-  /// (например, чтобы отключить часть сетевой логики в тестах).
+  /// The signed-in user's auth token for the `Authorization` header. Read from secure
+  /// storage (key `auth_id_token`); null/empty in the mock phase (no writer yet — the
+  /// stage-2 sign-in will persist it; stage 1 of the contract runs without auth).
+  Future<String?> getUserAuthIdToken();
+
+  /// Server payload bounds from the last session.hello (contract v0 §3), the preflight
+  /// seam for the composer/picker. Contract defaults until the transport (027).
+  ServerLimits get limits;
+
+  /// Stores the limits of a live handshake (writer arrives with phase 027).
+  void updateLimits(ServerLimits limits);
+
+  /// True under the test environment — the future hook for bypassing real auth in tests.
   bool get isTestEnvironment;
 }
 ```
 
 Реализация — `@LazySingleton(as: AppConfigRepository, env: [Environment.dev, Environment.prod, Environment.test])` (полный env-список: репозиторий нужен во всех окружениях, иначе `getIt<AppConfigRepository>()` в `ApiClient` упадёт под недостающим env).
 
-`lib/data/repository/app_config/app_config_repository_impl.dart` (целевая форма — расширенная; код Feature-001 содержит только `initialize`+`config`, без `BaseRepositoryHelper`):
+`lib/data/repository/app_config/app_config_repository_impl.dart` (фактическая форма):
 
 ```dart
 @LazySingleton(as: AppConfigRepository, env: [Environment.dev, Environment.prod, Environment.test])
 class AppConfigRepositoryImpl implements AppConfigRepository {
+  AppConfigRepositoryImpl(this._secureStorage, @Named('isTestEnvironment') this._isTestEnvironment);
+
+  final FlutterSecureStorage _secureStorage;
+  final bool _isTestEnvironment;
+
   AppConfig? _config;
+
+  /// In-memory handshake limits: contract defaults until the transport (027) stores a
+  /// live hello. In-memory is deliberate - a fresh handshake arrives on every connection.
+  ServerLimits _limits = ServerLimits.contractDefaults;
+
+  /// Secure-storage key for the (future) auth token. No writer yet — a real sign-in
+  /// will persist it (stage-2 auth); read-only plumbing this phase.
+  static const String _kAuthIdToken = 'auth_id_token';
+
+  @override
+  Future<void> initialize({required AppFlavorType flavorType}) async {
+    // apiUrl is a TBD placeholder (null → no real requests); a per-flavor real URL
+    // lands with the transport (027).
+    _config = AppConfig(flavor: flavorType);
+  }
 
   @override
   AppConfig get config => _config ?? (throw StateError('AppConfigRepository.initialize was not called'));
 
   @override
-  String get baseApiUrl => config.apiUrl; // apiUrl — пример/TBD-поле AppConfig (бэкенд ещё не выбран)
-
-  @override
-  Future<void> initialize({required AppFlavorType flavorType}) async {
-    // Собрать флейвор-зависимый AppConfig. Сегодня — только flavor; в целевой
-    // форме сюда добавятся apiUrl/apiSignatureKey/… (пример/TBD: прогреть
-    // Remote-Config-подобные значения, проверить доступность бэкенда и т.п.,
-    // бэкенд/протокол NOX ещё не выбран).
-    _config = AppConfig(flavor: flavorType);
+  Future<String?> getUserAuthIdToken() async {
+    // Trim so a blank/whitespace-only stored value reads as absent (null) rather than
+    // producing a malformed `Bearer   ` header.
+    final token = (await _secureStorage.read(key: _kAuthIdToken))?.trim();
+    return (token == null || token.isEmpty) ? null : token;
   }
 
   @override
-  Future<String?> get getUserAuthIdToken async {
-    // §4 (пример схемы): вернуть access-токен из AuthRepository
-    // (flutter_secure_storage); null если разлогинен.
-    // TODO(backend-tbd): подключить AuthRepository, когда определят схему авторизации NOX.
-    return null;
+  ServerLimits get limits => _limits;
+
+  @override
+  void updateLimits(ServerLimits limits) {
+    _limits = limits;
   }
 
   @override
-  bool get isTestEnvironment => false;
+  bool get isTestEnvironment => _isTestEnvironment;
 }
 ```
 
-> **Код Feature-001 (факт скелета).** Фактический `AppConfigRepositoryImpl` не подмешивает `BaseRepositoryHelper` (для конфигурации, не ходящей в сеть, он ничего не добавляет), хранит конфиг лениво (`AppConfig? _config`) и собирает его прямо в `initialize` как `_config = AppConfig(flavor: flavorType)`, а на чтение `config` до `initialize` бросает `StateError('AppConfigRepository.initialize was not called')`. Расширенный скелет выше — целевая форма под будущий auth/бэкенд.
+> **Факты реализации.** `AppConfigRepositoryImpl` не подмешивает `BaseRepositoryHelper` (для конфигурации, не ходящей в сеть, он ничего не добавляет), хранит конфиг лениво (`AppConfig? _config`) и собирает его прямо в `initialize` как `_config = AppConfig(flavor: flavorType)`, а на чтение `config` до `initialize` бросает `StateError('AppConfigRepository.initialize was not called')`. Токен читается из `flutter_secure_storage` по ключу `auth_id_token` — **писателя пока нет** (его даст sign-in stage 2), поэтому фактически всегда `null` → запрос уходит без `Authorization`. `isTestEnvironment` приходит из DI (`@Named('isTestEnvironment')`, env-keyed в `RegisterModule`), а не захардкожен.
 
 Связи:
 
-- **`config` — флейвор-резолвед.** Конфиг — это класс `AppConfig` (`lib/domain/model/app_config/app_config.dart`), который сегодня несёт **только** `flavor`; его производит `AppConfigRepositoryImpl.initialize()` и читают через `AppConfigRepository.config` (`@LazySingleton(as: AppConfigRepository, env:[dev,prod,test])`, см. [02-dependency-injection.md](02-dependency-injection.md)). Целевые поля `AppConfig` — `apiUrl` (+`apiSignatureKey`/…) per флейвор (prod/stage) — пример/TBD-набор; бэкенд ещё не выбран. Значения придут из зашифрованных секретов через `dart-define-from-file` ([09-build-and-secrets-infra.md](09-build-and-secrets-infra.md)). `ApiClient` (§1) читает `apiUrl` отсюда.
+- **`config` — флейвор-резолвед.** Конфиг — это класс `AppConfig` (`lib/domain/model/app_config/app_config.dart`), который несёт `flavor` и nullable `apiUrl`; его производит `AppConfigRepositoryImpl.initialize()` и читают через `AppConfigRepository.config` (`@LazySingleton(as: AppConfigRepository, env:[dev,prod,test])`, см. [02-dependency-injection.md](02-dependency-injection.md)). `apiUrl` сегодня `null` во всех флейворах — реальный per-флейвор URL приезжает с транспортом (фаза 027); `apiSignatureKey` — пример/TBD-поле схемы §4, в коде его нет. Значения придут из зашифрованных секретов через `dart-define-from-file` ([09-build-and-secrets-infra.md](09-build-and-secrets-infra.md)). `ApiClient` (§1) читает `apiUrl` отсюда.
 - **`initialize(flavorType:)`** вызывается в `main.dart` **после** `getIt.allReady()` (контейнер уже собран) — см. bootstrap-последовательность в [02-dependency-injection.md](02-dependency-injection.md) §«main.dart» и [05-presentation-layer.md](05-presentation-layer.md). Это место «поднять конфиг/observability после готового DI».
-- **`getUserAuthIdToken`** — единственная точка, откуда auth-interceptor берёт токен. Под NOX её бэкендит `AuthRepository` поверх `flutter_secure_storage` (§4, пример схемы — бэкенд/протокол ещё не выбран).
-- Резолв везде через `getIt<AppConfigRepository>()` **напрямую** — конфиг-репозиторий **не** алиасится в `global_aliases.dart` (там ровно два алиаса — `logRepository`/`itemRepository`; см. [02-dependency-injection.md](02-dependency-injection.md) §8).
+- **`getUserAuthIdToken()`** — единственная точка, откуда auth-interceptor берёт токен; сегодня он читает secure storage напрямую (ключ `auth_id_token`, писателя нет). Под целевую схему §4 его бэкендит `AuthRepository` поверх того же `flutter_secure_storage` (пример схемы — модель аутентификации stage 2 ещё не финализирована).
+- **`limits` / `updateLimits`** — сюда транспорт (027) кладёт границы из `session.hello`; композер/пикер делают по ним preflight, вместо того чтобы ловить `payload_too_large` на отправке.
+- Резолв везде через `getIt<AppConfigRepository>()` **напрямую** — конфиг-репозиторий **не** алиасится в `global_aliases.dart` (там алиасы `logRepository`, `itemRepository`, `settingsRepository`, `chatRepository`, `appStateRepository`, `authRepository`, `sessionRepository` и три сервиса; см. [02-dependency-injection.md](02-dependency-injection.md) §8).
 
 ---
 
@@ -176,38 +198,38 @@ class AppConfigRepositoryImpl implements AppConfigRepository {
 Полные шаблоны REST-слоя — в [04-data-layer.md](04-data-layer.md) §7. Здесь — короткий мост, чтобы §1–2 замкнулись на реальный путь запроса.
 
 - **`RequestBuilder<T>` / `RequestBuilderHelper<T>`** ([04-data-layer.md](04-data-layer.md) §7в) — `RequestBuilder` превращает доменный конфиг в `body`/`path`/`headers`; `RequestBuilderHelper` (mixin) резолвит конкретный builder из `getIt` и форвардит вызовы, чтобы API-класс не разводил билдеры руками. API-класс расширяет `BaseApiRepository` (§1) и подмешивает `RequestBuilderHelper<TheBuilder>`.
-- **Envelope `ResponseEntity<T>` + `EntityConverter<E>`** ([04-data-layer.md](04-data-layer.md) §2–3) — каждый ответ бэкенда обёрнут в единый envelope; `ResponseEntity<T>` — генерик-обёртка, `@EntityConverter()` резолвит `T` в конкретный entity. Конкретная форма envelope ниже — **пример** (бэкенд/протокол NOX ещё не выбран; заменить на реальный контракт, когда определят):
+- **Envelope `ResponseEntity<T>` + `EntityConverter<E>`** ([04-data-layer.md](04-data-layer.md) §2–3) — каждый ответ data source'а обёрнут в единый envelope; `ResponseEntity<T>` — генерик-обёртка, `@EntityConverter()` резолвит `T` в конкретный entity. Фактическая форма (`lib/data/entity/base/response_entity.dart`), выровненная по контракту v0: `success` зеркалит проводной `ok`, `error` — объект `{code, message}` из §2.1 контракта:
 
 ```dart
 @freezed
 abstract class ResponseEntity<T> with _$ResponseEntity<T> {
-  const factory ResponseEntity({
-    @Default(false) bool success,
-    String? error,
-    @EntityConverter() T? data,
-  }) = _ResponseEntity<T>;
+  const factory ResponseEntity({@Default(false) bool success, ErrorWireEntity? error, @EntityConverter() T? data}) = _ResponseEntity<T>;
 
   factory ResponseEntity.fromJson(Map<String, dynamic> json) => _$ResponseEntityFromJson(json);
 }
 ```
 
+  `ErrorWireEntity` (`lib/data/entity/base/error_wire_entity.dart`) — это ровно `{required String code, required String message}`.
+
   `EntityConverter<E>` — рукописный реестр типов (`_isType<E, XxxEntity>()`-цепочки `fromJson` + зеркальные `object is XxxEntity` в `toJson`, иначе `throw ArgumentError('No converter found for type $E')`). Каждый entity, ходящий через `ResponseEntity<T>`, обязан быть в **обеих** цепочках. Полный шаблон + правило сопровождения — [04-data-layer.md](04-data-layer.md) §3.
 
-- **Поток запроса:** доменный конфиг → `RequestBuilder` (`path`/`body`/`headers`) → API-класс шлёт через `baseClient` (§1) → `ResponseEntity<T>.fromJson(response.data)` → репозиторий заворачивает в `RepositoryResult` через `BaseRepositoryHelper.execute<T>()`. На non-2xx Dio бросает `DioException` → ветка `execute` мапит его в `RepositoryException.internal` (см. [04-data-layer.md](04-data-layer.md) §5; **нет** `ApiException`/`DaoException` — это правило блюпринта). Конкретный код (`unauthenticated` на 401, `notFound` на 404) — это **явный** `return RepositoryResult.error(...)` внутри callback'а после проверки `response.statusCode`.
+- **Поток запроса:** доменный конфиг → `RequestBuilder` (`path`/`body`/`headers`) → API-класс шлёт через `baseClient` (§1) → `ResponseEntity<T>.fromJson(response.data)` → репозиторий распаковывает через `BaseRepositoryHelper.unwrapEnvelope<T>(response, what)` и заворачивает в `RepositoryResult` через `BaseRepositoryHelper.execute<T>()`. У `execute` **три** catch-ветки (см. [04-data-layer.md](04-data-layer.md) §5; **нет** `ApiException`/`DaoException` — это правило блюпринта): `on BaseRepositoryException` — уже смапленный доменный сбой проходит насквозь и **не** разжижается в `unknown`; `on DioException` — маппинг по типу/статусу (таймауты и `connectionError` → `connection`; 401 → `unauthenticated`; 403 → `authentication`; 404 → `notFound`; остальное → `internal`); catch-all → `unknown`. Конкретный код ошибки приходит **не** из ручной проверки `response.statusCode`, а из `unwrapEnvelope` → `RepositoryException.fromWireCode(error.code)` (`invalid_request`, `name_taken`, `payload_too_large`, `attachment_gone`, `rate_limited`, `unsupported_schema`, …; неизвестный клиенту код деградирует в `internal` по правилу эволюции контракта).
 
 > **`BaseMapper`** живёт в `lib/data/mapper/base_mapper.dart` (не `mapper/base/`), см. [04-data-layer.md](04-data-layer.md) §4 — упоминается здесь только чтобы зафиксировать путь, REST-слой его не трогает напрямую.
 >
-> **Скелет Feature-001: `GetItemsApi` — мок.** Единственный API-класс скелета — `GetItemsApi` ([lib/data/remote/api/item/get_items_api.dart](../../../lib/data/remote/api/item/get_items_api.dart)) — это `@lazySingleton`-**мок**: он **не** наследует `BaseApiRepository` и **не** использует `RequestBuilder`/`RequestBuilderHelper`, а синхронно собирает и возвращает `ResponseEntity<ItemsEntity>` напрямую (with `Future.delayed`). Целевой REST-каркас (`BaseApiRepository` + `RequestBuilder`) встанет на место мока с первой реальной фичей. Конкретика мока: путь `v1/items` (без ведущего слеша), query-ключи `page`/`page_size`/`search`, пагинация **1-based** (`(config.page - 1) * pageSize`) — пример контракта, бэкенд-специфика помечена TBD.
+> **Мок-API-классы.** Ни один из четырёх сегодняшних API-классов не наследует `BaseApiRepository` и не использует `RequestBuilder`/`RequestBuilderHelper`: каждый — `@lazySingleton`-**мок**, собирающий `ResponseEntity<T>` напрямую (через `Future.delayed`). `GetChatsApi` / `GetMessagesApi` / `SendMessageApi` уже отдают **проводные формы контракта v0** (`ChatsWireEntity{chats, has_more}`, `MessageWireEntity`, фича 025); реальная отправка пойдёт командой `message.send` по WS-конверту (фаза 027), а DI-флип на реальные источники — фаза 028.
+>
+> **`GetItemsApi` — намеренно замороженная верификационная нарезка**, а не продуктовый канон. `GetItemsApi` ([lib/data/remote/api/item/get_items_api.dart](../../../lib/data/remote/api/item/get_items_api.dart)) сохраняет **offset-пример** проводной обёртки `ItemsEntity{items, page, page_size, total}` и путь `v1/items` (без ведущего слеша), query-ключи `page`/`page_size`/`search`, пагинация **1-based** (`(config.page - 1) * pageSize`). Это исторический пример, который специально не трогают; **`total` живёт только в нём**: доменная `PageMetadata` поля `total` не имеет, и `ItemRepositoryImpl` сворачивает ответ в `PageMetadata(hasMore: hasMore, nextPage: hasMore ? entity.page + 1 : null)`. Продуктовые пути — paged (`page`/`page_size` → `{chats, has_more}`) для списка чатов и seq-курсор (`before_seq` + `limit` → `{messages, has_more}`) для истории сообщений.
 
 ---
 
-## 4. Адаптация под бэкенд NOX (ОБЯЗАТЕЛЬНО до релиза)
+## 4. Авторизация клиента (ОБЯЗАТЕЛЬНО до релиза)
 
-> **Это размеченный пример схемы авторизации, не финальный контракт.** Бэкенд/протокол NOX ещё не выбран — заменить на реальную схему авторизации, когда определят. Ниже приведена **одна возможная** схема: бэкенд требует не просто Bearer-токен, а собственную токен-модель (короткий access-JWT + opaque refresh) И подписанные запросы, по **двум** осям сразу — и токен-модель отдельная, и каждый запрос обязан быть подписан. Главное здесь — **структура интерсепторов**, которую надстраивают над `ApiClient` (§1) и `AppConfigRepository` (§2); её можно переиспользовать под любую финальную схему. **Конкретные** имена заголовков, формат строки подписи, алгоритм HMAC и контракт токен-эндпоинтов — **пример/TBD**: их надо заменить на реальную схему авторизации NOX, когда её определят, и не изобретать схему подписи «на глаз» здесь. Это согласуется с doc-comment'ом самого кода (`ApiClient`): «HMAC/security headers and the token source are example/TBD (backend & protocol not chosen)».
+> **Это размеченный пример схемы авторизации, не финальный контракт.** Бэкенд и wire-контракт выбраны (Go-сервер `noxd`, контракт v0), но **stage 1 контракта работает без авторизации**, а модель аутентификации/пейринга stage 2 ещё не финализирована — заменить пример на неё, когда определят. Ниже приведена **одна возможная** схема: сервер требует не просто Bearer-токен, а собственную токен-модель (короткий access-JWT + opaque refresh) И подписанные запросы, по **двум** осям сразу — и токен-модель отдельная, и каждый запрос обязан быть подписан. Главное здесь — **структура интерсепторов**, которую надстраивают над `ApiClient` (§1) и `AppConfigRepository` (§2); её можно переиспользовать под любую финальную схему. **Конкретные** имена заголовков, формат строки подписи, алгоритм HMAC и контракт токен-эндпоинтов — **пример/TBD**: их надо заменить на реальную схему аутентификации stage 2, когда её определят, и не изобретать схему подписи «на глаз» здесь. Сегодня в коде живёт только простой `Bearer` в `AuthInterceptor`, помеченный там как example/TBD-заглушка, и никакого §4-pipeline'а (формулировка того doc-comment'а — «until the NOX backend is chosen» — устарела: бэкенд выбран, не определена именно схема аутентификации stage 2).
 
 ### 4.1 Пример: две оси требований к запросу
 
-(Пример — бэкенд/протокол NOX ещё не выбран; заменить на реальный контракт. Ниже — одна возможная форма требований.)
+(Пример — схема аутентификации stage 2 ещё не определена; заменить на реальный контракт. Ниже — одна возможная форма требований.)
 
 | Ось | Простой Bearer | Пример: бэкенд NOX |
 |---|---|---|
@@ -216,7 +238,7 @@ abstract class ResponseEntity<T> with _$ResponseEntity<T> {
 | Подпись запроса | нет | **обязательна** на (почти) каждом запросе — без неё `403` ещё до исполнения endpoint'а |
 | Force-update | нет | невалидный/неполный `x-user-agent` → `403` ДО проверки timestamp/подписи; валидный UA с `buildNumber < min_build_number` → `426 Upgrade Required` (`error.code: upgrade_required`) |
 
-То есть надстраиваем **две** вещи: (a) дополнительные request-интерсепторы (подпись + security-заголовки + timestamp + build-UA), и (b) `getUserAuthIdToken`, бэкенднутый `AuthRepository` поверх `flutter_secure_storage` с refresh→rotate→retry на 401.
+То есть надстраиваем **две** вещи: (a) дополнительные request-интерсепторы (подпись + security-заголовки + timestamp + build-UA), и (b) `getUserAuthIdToken()`, бэкенднутый `AuthRepository` поверх `flutter_secure_storage` с refresh→rotate→retry на 401.
 
 ### 4.2 (a) Дополнительные request-интерсепторы — HMAC + security-заголовки + timestamp + build-UA
 
@@ -231,7 +253,7 @@ abstract class ResponseEntity<T> with _$ResponseEntity<T> {
 
 #### `UserAgentModel` — определение (источник `x-user-agent`)
 
-Выше `UserAgentModel` цитировался как канон формата — здесь его контракт фиксируется (пример формы — финальный формат `x-user-agent` зависит от ещё не выбранного бэкенда). Модель собирает 6 сегментов значения `x-user-agent`, склеиваемых через `/` строго в этом порядке: `{os}/{appVersion}/{buildNumber}/{deviceModel}/{osVersion}/{isPhysical}`.
+Выше `UserAgentModel` цитировался как канон формата — здесь его контракт фиксируется (пример формы — финальный формат `x-user-agent` задаст схема аутентификации stage 2). Модель собирает 6 сегментов значения `x-user-agent`, склеиваемых через `/` строго в этом порядке: `{os}/{appVersion}/{buildNumber}/{deviceModel}/{osVersion}/{isPhysical}`.
 
 | Сегмент | Тип | Источник | Правило |
 |---|---|---|---|
@@ -242,9 +264,9 @@ abstract class ResponseEntity<T> with _$ResponseEntity<T> {
 | `osVersion` | `String` | плагин device-info (per-OS-ветка: версия ОС по платформе — точный источник пример/TBD) | напр. `17.0` |
 | `isPhysical` | `bool` | плагин device-info (физическое устройство vs симулятор/эмулятор; на десктопе — `true`/example-TBD) | `true` — реальное устройство, `false` — симулятор/эмулятор |
 
-> `package_info_plus` (пиннится в [01-stack-and-tooling.md](01-stack-and-tooling.md), `^10`) даёт только `appVersion`+`buildNumber`; `deviceModel`+`osVersion`+`isPhysical` приходят из отдельного плагина device-info (конкретный пакет ещё не выбран и в скелете Feature-001 не подключён — пример/TBD; запиннить в [01-stack-and-tooling.md](01-stack-and-tooling.md) при подключении первым консьюмером). На десктопе (Windows/macOS/Linux) такой плагин имеет свои per-OS-ветки; точное соответствие сегментов десктопным полям — пример/TBD, финализируется вместе с бэкендом.
+> `package_info_plus` (пиннится в [01-stack-and-tooling.md](01-stack-and-tooling.md), `^10`) даёт только `appVersion`+`buildNumber`; `deviceModel`+`osVersion`+`isPhysical` приходят из отдельного плагина device-info (конкретный пакет ещё не выбран и в `pubspec.yaml` не подключён — пример/TBD; запиннить в [01-stack-and-tooling.md](01-stack-and-tooling.md) при подключении первым консьюмером). На десктопе (Windows/macOS/Linux) такой плагин имеет свои per-OS-ветки; точное соответствие сегментов десктопным полям — пример/TBD, финализируется вместе со схемой аутентификации stage 2.
 
-`lib/domain/model/user_agent/user_agent_model.dart` (скелет — Freezed-модель с фабрикой и `toHeaderValue()`):
+`lib/domain/model/user_agent/user_agent_model.dart` (целевой скелет — Freezed-модель с фабрикой и `toHeaderValue()`; в коде этого файла ещё нет):
 
 ```dart
 @freezed
@@ -266,7 +288,7 @@ abstract class UserAgentModel with _$UserAgentModel {
     // os := по 5 платформам: Platform.isIOS/isAndroid/isWindows/isMacOS/isLinux → ios/android/windows/macos/linux
     // appVersion/buildNumber := PackageInfo.fromPlatform()
     // deviceModel/osVersion/isPhysical := плагин device-info — per-OS ветка (ios/android/windows/macos/linux)
-    throw UnimplementedError('TODO(backend-tbd): собрать из package_info_plus + плагина device-info (5 платформ)');
+    throw UnimplementedError('TODO(auth-stage2): build from package_info_plus + a device-info plugin (5 platforms)');
   }
 
   /// Значение заголовка x-user-agent — ровно 6 сегментов через '/'.
@@ -282,7 +304,7 @@ abstract class UserAgentModel with _$UserAgentModel {
 
 > **`x-device-id` НЕ участвует в подписи.** Строка подписи — `METHOD\nPATH\nBODY_SHA256\nTIMESTAMP` (ниже); `x-device-id` в неё **не** входит. Поэтому смена/ротация device-id **не** ломает HMAC-подпись — запрос всё равно подписан корректно и проходит security-pipeline. Реальное последствие неправильного/«плавающего» device-id — **не** ошибка авторизации, а **осиротевший push-токен**: при смене id сервер дедупит push-строку по fallback-ключу и создаёт новую строку вместо обновления старой (старая остаётся сиротой), плюс теряется различение устройств. Поэтому id обязан быть стабильным и непустым — см. [15-push-notifications.md](15-push-notifications.md) §6.4.
 
-Пример формы `signature_input` (бэкенд/протокол NOX ещё не выбран — заменить на реальную схему авторизации, когда определят) — конкатенация через `\n`:
+Пример формы `signature_input` (схема аутентификации stage 2 ещё не определена — заменить на неё, когда финализируют) — конкатенация через `\n`:
 
 ```
 signature_input = METHOD + "\n" + PATH + "\n" + BODY_SHA256 + "\n" + TIMESTAMP
@@ -301,10 +323,10 @@ x-request-signature = hex(HMAC-SHA256(signing_key, signature_input))
 Скелет (имена/формат — placeholder под сверку):
 
 ```dart
-// lib/data/remote/api/base/security_interceptor.dart — СТРУКТУРА, не финал.
-// TODO(backend-tbd): бэкенд/протокол NOX ещё не выбран — заменить имена заголовков,
-// порядок и формат signature_input на реальную схему авторизации NOX.
-// Не хардкодить схему «на глаз».
+// lib/data/remote/api/base/security_interceptor.dart — STRUCTURE, not final.
+// TODO(auth-stage2): the stage-2 authentication scheme is not finalized yet —
+// replace the header names, order and signature_input format with the real one.
+// Do not hardcode a signing scheme by guesswork.
 InterceptorsWrapper buildSecurityInterceptor(AppConfigRepository appConfig) {
   return InterceptorsWrapper(
     onRequest: (options, handler) async {
@@ -328,17 +350,17 @@ InterceptorsWrapper buildSecurityInterceptor(AppConfigRepository appConfig) {
 }
 ```
 
-> **Web-deep-link исключение (пример/TBD).** Если у финальной схемы появятся endpoint'ы, открываемые по входящей web-ссылке в браузере (`requiresWebDeepLink = true`), такие пути HMAC/security-заголовки **не требуют** и не подписываются — их обрабатывает [13-deep-links.md](13-deep-links.md). Учесть при разводке interceptor'а (пропускать подпись для этих путей). Конкретный набор таких endpoint'ов зависит от ещё не выбранного бэкенда/протокола NOX — у NOX идентичность анонимная (ID + label, без email/телефона), поэтому email-verification / password-reset ссылки здесь неприменимы.
+> **Web-deep-link исключение (пример/TBD).** Если у финальной схемы появятся endpoint'ы, открываемые по входящей web-ссылке в браузере (`requiresWebDeepLink = true`), такие пути HMAC/security-заголовки **не требуют** и не подписываются — их обрабатывает [13-deep-links.md](13-deep-links.md). Учесть при разводке interceptor'а (пропускать подпись для этих путей). Конкретный набор таких endpoint'ов — открытый вопрос (deep links в приложении не реализованы) — у NOX идентичность анонимная (ID + label, без email/телефона), поэтому email-verification / password-reset ссылки здесь неприменимы.
 
-### 4.3 (b) `getUserAuthIdToken` поверх `AuthRepository` + refresh→rotate→retry
+### 4.3 (b) `getUserAuthIdToken()` поверх `AuthRepository` + refresh→rotate→retry
 
-`AppConfigRepository.getUserAuthIdToken` (§2) под NOX отдаёт **access-JWT** из `AuthRepository`. Структура (пример — бэкенд/протокол NOX ещё не выбран; заменить на реальную схему авторизации, когда определят):
+`AppConfigRepository.getUserAuthIdToken()` (§2) в этой схеме отдавал бы **access-JWT** из `AuthRepository` (сегодня он читает secure storage напрямую, писателя нет). Структура (пример — схема аутентификации stage 2 ещё не определена; заменить на неё, когда финализируют):
 
 - **`AuthRepository`** хранит пару `access` + `refresh` в **`flutter_secure_storage`** ([01-stack-and-tooling.md](01-stack-and-tooling.md)); контракт — `RepositoryResult`-форма ([03-domain-layer.md](03-domain-layer.md)), как у остального слоя данных. Десктоп-бэкенд хранилища refresh-токена под будущий auth-флоу — Keychain (macOS) / DPAPI/wincreds (Windows) / libsecret (Linux), см. ниже «Secure storage — desktop backends & local wipe».
-- **`getUserAuthIdToken`** возвращает текущий access-JWT (или `null`, если разлогинен → запрос идёт без `Authorization`, §1).
+- **`getUserAuthIdToken()`** возвращает текущий access-JWT (или `null`, если разлогинен → запрос идёт без `Authorization`, §1).
 - **refresh-on-401**: отдельный response-interceptor (или обёртка в `AuthRepository`): при `401` (token expired) — дёрнуть refresh-эндпоинт (в примере — `POST /api/v1/auth/token/refresh/`) с `refresh_token` → получить **новую** пару → перезаписать в secure storage → **повторить** исходный запрос. В примере сервер делает **ротацию** refresh-токена и **reuse-detection**: предъявление уже отозванного refresh блэклистит всю сессию — поэтому клиент обязан хранить только **последнюю** выданную пару и не гонять параллельные refresh'и (нужен single-flight lock на refresh, иначе можно сжечь собственную сессию).
 
-Контракт токен-эндпоинта (пример — заменить на реальную схему авторизации NOX, когда определят):
+Контракт токен-эндпоинта (пример — заменить на реальную схему аутентификации stage 2, когда её финализируют):
 
 | Поле ответа | Смысл |
 |---|---|
@@ -349,11 +371,11 @@ InterceptorsWrapper buildSecurityInterceptor(AppConfigRepository appConfig) {
 
 Алгоритм клиента: использовать access до `access_token_valid_timestamp`; на истечении (или на `401 token_expired`) — refresh → rotate → retry. При провале refresh (refresh истёк / блэклистнут) — разлогин → экран входа.
 
-> **Secure storage — desktop backends & local wipe.** `flutter_secure_storage` (`^10`) кросс-платформен и покрывает все 5 целевых платформ (iOS, Android, Windows, Linux, macOS): на macOS — Keychain, на Windows — DPAPI/wincreds, на Linux — libsecret/gnome-keyring (или KWallet). Продуктовое правило «one identity per device» опирается на этот ОС-keystore — он есть на всех 5 платформах. «Full local wipe на Logout» = `secureStorage.deleteAll()` + очистка Sembast/`shared_preferences` — **единый путь без платформенных веток** (один и тот же вызов на всех 5). Linux-нюанс: рабочий keyring (libsecret/gnome-keyring или KWallet) — **рантайм-предусловие** и **known-risk** именно для launch-deferred платформ Windows/Linux (их desktop-запуск отложен; в CI — только compile-smoke на всех трёх десктопах). В скелете Feature-001 secure storage **не подключается** — нет `AuthRepository` (FR-013); этот бэкенд активируется вместе с будущим auth-флоу.
+> **Secure storage — desktop backends & local wipe.** `flutter_secure_storage` (`^10`) кросс-платформен и покрывает все 5 целевых платформ (iOS, Android, Windows, Linux, macOS): на macOS — Keychain, на Windows — DPAPI/wincreds, на Linux — libsecret/gnome-keyring (или KWallet). Продуктовое правило «one identity per device» опирается на этот ОС-keystore — он есть на всех 5 платформах. «Full local wipe на Logout» = `secureStorage.deleteAll()` + очистка Sembast/`shared_preferences` — **единый путь без платформенных веток** (один и тот же вызов на всех 5). Linux-нюанс: рабочий keyring (libsecret/gnome-keyring или KWallet) — **рантайм-предусловие** и **known-risk** именно для launch-deferred платформ Windows/Linux (их desktop-запуск отложен; в CI — только compile-smoke на всех трёх десктопах). В реальном коде secure storage уже подключён: `SessionRepositoryImpl` хранит там анонимный идентификатор (`session.identifier`), `AppConfigRepositoryImpl` читает оттуда `auth_id_token` (писателя нет), а `AuthRepositoryImpl.logout({forced})` выполняет описанный выше wipe: сначала `SessionRepository.clear()` (`secureStorage.deleteAll()` + удаление двух ключей prefs), и только на его успехе — очистка sembast-сторов, где `sync`-курсор сбрасывается **первым**, до чатов и сообщений. Не хватает только токен-модели §4 (access + refresh с ротацией) — она приезжает со схемой аутентификации stage 2.
 
 ### 4.4 Обработка статусов: 503 «initializing», 429, 426 build-gate
 
-Клиент обязан понимать стартовые/защитные коды сервера (форма — пример; бэкенд/протокол NOX ещё не выбран, заменить на реальный контракт, когда определят). Сами мeханики обработки (где принимается решение о повторе, лимит попыток, раздельные ветки) — переносимы под любую финальную схему:
+Клиент обязан понимать стартовые/защитные коды сервера (форма — пример из чужой схемы; в контракте v0 эти состояния приходят кодами ошибок §2.1, например `rate_limited`, которые уже мапятся через `RepositoryException.fromWireCode`). Сами мeханики обработки (где принимается решение о повторе, лимит попыток, раздельные ветки) — переносимы под любую финальную схему:
 
 - **`503 service_unavailable` («initializing»)** — в примере сразу после деплоя на свежую БД сервер отдаёт retryable-503, пока идёт out-of-band provisioning схемы. Это семантически **retryable**, **но** retry **НЕ** делается автоматически внутри interceptor'а — `503 initializing` пробрасывается наверх и **возвращается в `BLoC`** как ошибка. Решение «повторить» (короткий backoff + повтор) принимает уже слой презентации/`BLoC` (например, splash/initialisation-экран показывает спиннер и ретраит), а не сетевой interceptor. Так первый «холодный» запрос не зависает в transparent-retry-цикле, скрытом от UI. (Это согласуется с инвариантом §5.5: решение о повторе принадлежит презентации/`BLoC`.)
 - **`429 Too Many Requests`** — в примере превышен per-category rate-limit (auth 10 req/60s и т.п.). Источник retry-инфо зависит от транспорта (пример/TBD): либо HTTP-заголовок `Retry-After`, либо поле `error.details.retry_after` (int, секунды) в JSON body — реальный бэкенд NOX может уметь одно или другое. **Контракт повтора (переносим):** при наличии retry-after-значения — ждать ровно столько секунд перед повтором; при **отсутствии** — экспоненциальный backoff (с потолком **5 минут**). В обоих случаях — **не более 3 попыток на одно пользовательское действие**; после исчерпания попыток ошибка отдаётся в `BLoC`/UI. Не долбить сервер чаще, чем разрешает retry-after.
@@ -361,18 +383,18 @@ InterceptorsWrapper buildSecurityInterceptor(AppConfigRepository appConfig) {
 
 ### 4.5 Правила этой схемы (пример)
 
-- **Собственная токен-модель, не внешний identity-провайдер.** В этом примере NOX не использует чужой identity-токен как bearer — токен-модель собственная (§4.3). `AppConfigRepository.getUserAuthIdToken` бэкендит `AuthRepository`, а не сторонний auth-SDK. (Это согласуется с продуктовой моделью NOX: анонимная идентичность ID + label, без телефона/email — никакого внешнего identity-провайдера на клиенте.)
+- **Собственная токен-модель, не внешний identity-провайдер.** В этом примере NOX не использует чужой identity-токен как bearer — токен-модель собственная (§4.3). `AppConfigRepository.getUserAuthIdToken()` бэкендит `AuthRepository`, а не сторонний auth-SDK. (Это согласуется с продуктовой моделью NOX: анонимная идентичность ID + label, без телефона/email — никакого внешнего identity-провайдера на клиенте.)
 - **Подписанные запросы.** В этом примере без HMAC-подписи запрос отвергается `403` до исполнения — interceptor §4.2 обязателен.
 
-> **FLAG (бэкенд/протокол NOX ещё не выбран).** §4.2–4.3 описывают **структуру** на примере одной схемы. Конкретные имена заголовков, формат `signature_input`, конкретный HMAC-вариант, путь и тело токен-эндпоинта — **не финальны в этом документе**: их надо заменить на реальную схему авторизации NOX, когда её определят (и согласовать с бэкендом). В коде оставить `TODO(backend-tbd)`, как в скелете §4.2.
+> **FLAG (схема аутентификации stage 2 ещё не финализирована).** §4.2–4.3 описывают **структуру** на примере одной схемы. Конкретные имена заголовков, формат `signature_input`, конкретный HMAC-вариант, путь и тело токен-эндпоинта — **не финальны в этом документе**: их надо заменить на реальную схему аутентификации stage 2, когда её определят (и согласовать с `client_backend/` + контрактом v0). В коде оставить `TODO(auth-stage2)`, как в скелете §4.2.
 
 ---
 
 ## 5. Сетевое состояние и lifecycle-driven refresh
 
-> **Зачем эта секция.** Сетевой контур из §1–4 (HMAC + custom access/refresh JWT, `ApiClient`-интерсепторы, `401 → refresh`) описывает поведение *в момент запроса*. Здесь добавляются два ортогональных наблюдателя, питающих этот контур контекстом: (1) `ConnectivityRepository` — реактивный поток «онлайн/офлайн» для UX-деградации и (2) app-lifecycle observer, который на возврате приложения из background инициирует превентивную проверку/refresh access-токена. Оба — best-effort слой поверх обязательного контура; ни один не заменяет реактивную обработку ошибок в `ApiClient`.
+> **Зачем эта секция.** Сетевой контур из §1–4 (HMAC + custom access/refresh JWT, `ApiClient`-интерсепторы, `401 → refresh`) описывает поведение *в момент запроса*. Здесь добавляются два ортогональных наблюдателя, питающих этот контур контекстом: (1) `ConnectivityService` — реактивный поток «онлайн/офлайн» для UX-деградации и (2) app-lifecycle observer, который на возврате приложения из background инициирует превентивную проверку/refresh access-токена. Оба — best-effort слой поверх обязательного контура; ни один не заменяет реактивную обработку ошибок в `ApiClient`.
 
-> **Форма из блюпринта.** Оба слоя следуют уже зафиксированным формам: (1) форма репозитория (`with BaseRepositoryHelper`, `execute(...) → RepositoryResult`, `@LazySingleton(as: Interface)`, `rxdart`-поток) — ровно как `DeepLinkRepositoryImpl`; (2) форма lifecycle-наблюдателя (`WidgetsBindingObserver` → `bloc.add(AppResumed())` с re-entrancy guard) — ровно как app-root-страница блюпринта.
+> **Форма из блюпринта.** Оба слоя следуют уже зафиксированным формам: (1) форма сервиса-обёртки над плагином (`@LazySingleton(as: Interface, env: [dev, prod])` + мок под `[test]`, потоковый геттер) — ровно как `CameraPermissionService` / `FilePickerService`; (2) форма lifecycle-наблюдателя (`WidgetsBindingObserver` → `bloc.add(AppResumed())` с re-entrancy guard) — ровно как app-root-страница блюпринта.
 
 > **Forward-ref.** `AuthBloc` / `AuthRepository.ensureFreshAccessToken()` — часть auth-реализации §4 (обязательна **до релиза**); здесь они уже используются как делегаты. До поднятия auth-флоу observer можно подключать только под connectivity-сигнал.
 
@@ -383,53 +405,56 @@ InterceptorsWrapper buildSecurityInterceptor(AppConfigRepository appConfig) {
 | Слой | Источник истины | Что решает |
 |---|---|---|
 | `ApiClient`-интерсепторы (§1–4) | фактический ответ/ошибка от backend | `401 → refresh`, маппинг `DioException → RepositoryException`, реальная «нет сети» |
-| `ConnectivityRepository` (5.2) | состояние сетевого интерфейса ОС | UX-баннер «нет подключения», подавление заведомо-провальных ретраев |
+| `ConnectivityService` (5.2) | состояние сетевого интерфейса ОС | UX-баннер «нет подключения», подавление заведомо-провальных ретраев |
 | app-lifecycle observer (5.4) | переход `paused → resumed` | превентивный refresh access-токена до первого запроса после долгого background |
 
-> **Инвариант.** `ConnectivityRepository.watchIsOnline()` НЕ управляет авторизацией и НЕ решает, делать ли запрос — он только красит UX. Финальное решение «запрос провалился» всегда принимает `ApiClient` по фактической `DioException`. Не городить «офлайн-гейт», который блокирует запрос до проверки connectivity — это даёт ложные негативы (интерфейс «none», но VPN/прокси работает) и расходится с источником истины.
+> **Инвариант.** `ConnectivityService.watchOnline()` НЕ управляет авторизацией и НЕ решает, делать ли запрос — он только красит UX. Финальное решение «запрос провалился» всегда принимает `ApiClient` по фактической `DioException`. Не городить «офлайн-гейт», который блокирует запрос до проверки connectivity — это даёт ложные негативы (интерфейс «none», но VPN/прокси работает) и расходится с источником истины.
 
-### 5.2 `ConnectivityRepository` — доменный контракт
+### 5.2 `ConnectivityService` — доменный контракт
 
-Пакет: `connectivity_plus` (линейка `^6.x`; точную версию пинить в [01-stack-and-tooling.md](01-stack-and-tooling.md)).
+Пакет: `connectivity_plus` (пиннится в `pubspec.yaml`, сейчас `^7.3.1`; см. [01-stack-and-tooling.md](01-stack-and-tooling.md)). Seam оформлен **сервисом**, а не репозиторием (рядом с `CameraPermissionService` / `FilePickerService`): у него нет ни кеша, ни доменной модели — только обёртка над плагином, чтобы блоки оставались тестируемыми.
 
-`lib/domain/repository/connectivity/connectivity_repository.dart`:
+`lib/domain/service/connectivity_service.dart`:
 
 ```dart
-abstract class ConnectivityRepository {
-  /// Реактивный поток текущего состояния сетевого интерфейса.
-  /// `true` — хотя бы один не-`none` интерфейс поднят. UX-only (см. инвариант 5.1).
-  Stream<bool> watchIsOnline();
+/// Domain seam over device connectivity. "Online" = the device reports at least one
+/// active network. This is a PROXY for the design's Offline state: real reachability
+/// becomes a session phase (no socket → connecting → catching-up → live) with the
+/// transport in phase 027, which is what these consumers move onto.
+abstract class ConnectivityService {
+  /// The current online state (one-shot).
+  Future<bool> isOnline();
 
-  /// Разовый снимок состояния интерфейса на момент вызова.
-  Future<RepositoryResult<bool>> isOnline();
+  /// Emits the CURRENT online state on listen (seed), then a value on every change.
+  Stream<bool> watchOnline();
 }
 ```
 
-> **Гарантия типов.** Метод-запрос возвращает `RepositoryResult<bool>` (data-XOR-exception, см. [03-domain-layer.md](03-domain-layer.md)) — единый контракт со всеми репозиториями. Поток же отдаёт «голый» `bool`: это горячий UX-сигнал без режима ошибки (отсутствие интерфейса — не исключение, а валидное состояние `false`).
+> **Гарантия типов.** Оба члена отдают «голый» `bool`, без `RepositoryResult`: это горячий UX-сигнал без режима ошибки (отсутствие интерфейса — не исключение, а валидное состояние `false`), и seam — сервис, а не репозиторий, поэтому контракт `data-XOR-exception` из [03-domain-layer.md](03-domain-layer.md) здесь не применяется.
 
-### 5.3 `ConnectivityRepositoryImpl` — реализация
+### 5.3 `ConnectivityServiceImpl` — реализация
 
-`lib/data/repository/connectivity/connectivity_repository_impl.dart`:
+`lib/data/service/connectivity_service_impl.dart`:
 
 ```dart
-@LazySingleton(as: ConnectivityRepository)
-class ConnectivityRepositoryImpl with BaseRepositoryHelper implements ConnectivityRepository {
-  final _connectivity = Connectivity();
+@LazySingleton(as: ConnectivityService, env: [Environment.dev, Environment.prod])
+class ConnectivityServiceImpl implements ConnectivityService {
+  final Connectivity _connectivity = Connectivity();
 
-  bool _isOnline(List<ConnectivityResult> results) => results.any((r) => r != ConnectivityResult.none);
-
-  @override
-  Stream<bool> watchIsOnline() => _connectivity.onConnectivityChanged.map(_isOnline).distinct();
+  bool _online(List<ConnectivityResult> results) => results.any((r) => r != ConnectivityResult.none);
 
   @override
-  Future<RepositoryResult<bool>> isOnline() => execute(() async {
-        final results = await _connectivity.checkConnectivity();
-        return RepositoryResult.success(data: _isOnline(results));
-      });
+  Future<bool> isOnline() async => _online(await _connectivity.checkConnectivity());
+
+  @override
+  Stream<bool> watchOnline() async* {
+    yield await isOnline(); // seed the current value (onConnectivityChanged does not replay it)
+    yield* _connectivity.onConnectivityChanged.map(_online).distinct();
+  }
 }
 ```
 
-`connectivity_plus` отдаёт `List<ConnectivityResult>` (устройство может держать несколько интерфейсов одновременно); правило online = «список содержит хотя бы один не-`none`». `.distinct()` гасит дубли — поток эмитит только при фактической смене online↔offline. Метод `isOnline()` обёрнут в `execute(...)` ради единообразия контракта; платформенная реализация `checkConnectivity()` практически не бросает, поэтому ветка ошибки — формальность (`RepositoryException.unknown` через `BaseRepositoryHelper`). DI — без ручной регистрации: `@LazySingleton(as: ConnectivityRepository)` подхватывается генератором `configureDependencies(env)` ([02-dependency-injection.md](02-dependency-injection.md)).
+`connectivity_plus` отдаёт `List<ConnectivityResult>` (устройство может держать несколько интерфейсов одновременно); правило online = «список содержит хотя бы один не-`none`». `.distinct()` гасит дубли — поток эмитит только при фактической смене online↔offline, а первый `yield` подсевает текущее значение, которого `onConnectivityChanged` не реплеит. **DI env-split обязателен:** реальная импл биндится на `[dev, prod]`, а под `[test]` работает `MockConnectivityService` (`lib/data/service/mock/`, всегда online) — плагину нужен platform channel, иначе падают widget/BLoC-тесты. Ручной регистрации нет: аннотации подхватывает генератор `configureDependencies(env)` ([02-dependency-injection.md](02-dependency-injection.md)).
 
 ### 5.4 App-lifecycle observer — превентивный refresh на resume
 
@@ -437,7 +462,7 @@ class ConnectivityRepositoryImpl with BaseRepositoryHelper implements Connectivi
 
 `lib/presentation/app/app_root.dart` (фрагмент `_AppRootState`):
 
-Это **дельта поверх существующего** `_AppRootState` (05 §6.2 + 13 §5.1), а не замещающий класс: уже присутствуют `_bloc` (`AppRootBloc`), `_navigatorKey` (= `MaterialApp.navigatorKey`) и `_deepLinkSub` — их жизненный цикл (`_bloc.close()`, `_deepLinkSub?.cancel()` в `dispose`) **сохраняется**; добавляются только `with WidgetsBindingObserver`, connectivity-подписка и lifecycle-хук.
+Это **дельта поверх существующего** `_AppRootState` (05 §6.2 + 13 §5.1), а не замещающий класс: уже присутствуют `_bloc` (`AppRootBloc`) и `_navigatorKey` (= `MaterialApp.navigatorKey`), а `_deepLinkSub` появится вместе с deep links (13 §5.1, в коде их пока нет) — жизненный цикл всех трёх (`_bloc.close()`, `_deepLinkSub?.cancel()` в `dispose`) **сохраняется**; добавляются только `with WidgetsBindingObserver`, connectivity-подписка и lifecycle-хук. Сегодня `_AppRootState` connectivity не слушает вовсе: сигнал потребляют сами блоки (`ChatsListBloc` / `ChatThreadBloc` держат по подписке на `connectivityService.watchOnline()` под офлайн-баннер и флаш очереди отправки) — app-root-подписка нужна именно как триггер auth-контура §4.
 
 ```dart
 class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
@@ -445,7 +470,7 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
   // final _navigatorKey = GlobalKey<NavigatorState>(); // из 05 §6.2 (MaterialApp.navigatorKey)
   // StreamSubscription<DeepLink>? _deepLinkSub;    // из 13 §5.1
   late final AuthBloc _authBloc = getIt<AuthBloc>();
-  late final ConnectivityRepository _connectivity = getIt<ConnectivityRepository>();
+  late final ConnectivityService _connectivity = getIt<ConnectivityService>();
   StreamSubscription<bool>? _connectivitySub;
 
   @override
@@ -453,7 +478,7 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
     super.initState();
     // _bloc = AppRootBloc()..add(...);  _deepLinkSub = _deepLinkRepository.watchDeepLink().listen(...);  // 05 §6.2 / 13 §5.1
     WidgetsBinding.instance.addObserver(this);
-    _connectivitySub = _connectivity.watchIsOnline().listen(
+    _connectivitySub = _connectivity.watchOnline().listen(
           (online) => _authBloc.add(ConnectivityChanged(isOnline: online)),
         );
   }
@@ -505,27 +530,27 @@ Future<void> _onAppResumed(AppResumed event, Emitter<AuthState> emit) async {
 
 Правила деградации в офлайне (best-effort, **без** очереди-демона):
 
-1. **Не блокировать запрос по connectivity.** Запрос уходит в `ApiClient` всегда; если интерфейса нет — `Dio` бросит `DioException` (`connectionError`/таймаут), `BaseRepositoryHelper.execute` смаппит его в `RepositoryException.internal` ([04-data-layer.md](04-data-layer.md)), презентация покажет понятную ошибку. Это и есть «корректная деградация» — единый путь ошибки, без спец-кейса.
+1. **Не блокировать запрос по connectivity.** Запрос уходит в `ApiClient` всегда; если интерфейса нет — `Dio` бросит `DioException` (`connectionError`/таймаут), `BaseRepositoryHelper.execute` смаппит его в `RepositoryException.connection` (именно `connection`, а не `internal` — маппинг идёт по типу/статусу, см. §3 и [04-data-layer.md](04-data-layer.md)), презентация покажет понятную ошибку. Это и есть «корректная деградация» — единый путь ошибки, без спец-кейса.
 2. **`401 ≠ офлайн`.** Офлайн даёт `connectionError`/таймаут, а не `401`. Поэтому refresh-интерсептор (§4) НЕ должен срабатывать на сетевую ошибку — refresh запускается строго на `401 unauthenticated` от backend. Зацикливание «офлайн → 401 → refresh → офлайн» исключено по построению.
-3. **UX-баннер — единственная роль connectivity.** Поток `watchIsOnline()` гасит/показывает баннер и может дизейблить кнопки отправки на экранах; на транспортный слой он не влияет.
-4. **Ретраи — реактивные, не по таймеру.** При возврате онлайна не запускать «слив очереди»: пользователь повторяет действие сам (pull-to-refresh / повторный тап). Полноценная offline-очередь — нескоупленная фича (отдельный документ, не этот слой).
+3. **UX-баннер — основная роль connectivity.** Поток `watchOnline()` гасит/показывает баннер и может дизейблить кнопки отправки на экранах; на транспортный слой он не влияет.
+4. **Ретраи — реактивные, не по таймеру.** Не крутить фоновый ретрай-демон: чтение пользователь повторяет сам (pull-to-refresh / повторный тап). Одно исключение уже в коде: `ChatThreadBloc` на фронте `offline → online` переотправляет свои `pending`-сообщения (`_redeliverQueued`) — это **in-memory** очередь одного открытого треда, а не общий демон. Durable-очередь отправки (persistent outbox) — работа клиентского трека (фазы 025–027), в `lib/` её пока нет.
 
-> **Итог.** `ConnectivityRepository` и lifecycle-observer — два тонких UX/превентивных слоя поверх обязательного auth-контура; источник истины о доступности API остаётся за `ApiClient` и его интерсепторами (`401 → refresh`, `DioException → ошибка`). Любая логика, которая *решает*, делать ли запрос, на основе connectivity — анти-паттерн в этом проекте.
+> **Итог.** `ConnectivityService` и lifecycle-observer — два тонких UX/превентивных слоя поверх обязательного auth-контура; источник истины о доступности API остаётся за `ApiClient` и его интерсепторами (`401 → refresh`, `DioException → ошибка`). Любая логика, которая *решает*, делать ли запрос, на основе connectivity — анти-паттерн в этом проекте.
 
 ---
 
 ## 6. Чеклист
 
-- [ ] **§5 connectivity/lifecycle:** `ConnectivityRepository` (`watchIsOnline()` UX-only + `isOnline()` → `RepositoryResult`, `@LazySingleton(as:)`, `connectivity_plus`); app-lifecycle observer на `_AppRootState` (`WidgetsBindingObserver`, `resumed → AppResumed` превентивный refresh, **re-entrancy guard** в `AuthBloc`); connectivity НЕ гейтит запрос — источник истины остаётся за `ApiClient`.
-- [ ] `ApiClient.initBase()` (целевой) — Dio, `baseUrl = ${config.apiUrl}/api/`, 30-сек таймауты, JSON; **один** auth-`InterceptorsWrapper`, читающий `getUserAuthIdToken` async per request → `Bearer` (null → снять `Authorization`); `onResponse`/`onError` — пасс-тру (debug). В скелете Feature-001 `ApiClient` — плоский `lib/data/remote/api_client.dart`, тонкая `@lazySingleton`-обёртка над `Dio` (одно поле `dio`), без фабрик/interceptor'ов/`/api/` (base URL/auth/HMAC — пример/TBD).
-- [ ] **Один хост.** У NOX единственный (ещё не выбранный) бэкенд — отдельного второго хоста (search/etc.) нет; `apiUrl` приходит из `AppConfig`, per флейвор (пример/TBD).
-- [ ] `BaseApiRepository` (целевой) отдаёт единственный `baseClient` геттером; API-классы наследуют его. В скелете файла ещё нет — единственный API-класс `GetItemsApi` — мок (`ResponseEntity<ItemsEntity>` напрямую, путь `v1/items`, query `page`/`page_size`/`search`, 1-based), без `BaseApiRepository`/`RequestBuilder`.
-- [ ] `AppConfigRepository` — **целевой** контракт: `config` / `baseApiUrl` / `initialize(flavorType:)` / `getUserAuthIdToken` / `isTestEnvironment` в `domain/`; импл — `@LazySingleton(as: AppConfigRepository, env:[dev,prod,test])`; резолв через `getIt<AppConfigRepository>()` напрямую (не алиасится — в `global_aliases.dart` ровно два алиаса). В скелете Feature-001 интерфейс содержит только `initialize`+`config`; импл — без `BaseRepositoryHelper`, конфиг — класс `AppConfig` с единственным полем `flavor`, `StateError` на чтение до `initialize` (остальное — auth-флоу/FR-013).
-- [ ] `AppConfig` сегодня несёт **только** `flavor`; целевые поля `apiUrl` (+`apiSignatureKey`) per флейвор ([02-dependency-injection.md](02-dependency-injection.md), [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md)) — пример/TBD, бэкенд ещё не выбран; собирается в `AppConfigRepositoryImpl.initialize(flavorType:)`, который вызывается в `main.dart` после `getIt.allReady()`.
-- [ ] REST-мост: `RequestBuilder`/`RequestBuilderHelper` + `ResponseEntity<T>`/`EntityConverter<E>` — по [04-data-layer.md](04-data-layer.md) §2–3, §7; на non-2xx Dio бросает `DioException` → `RepositoryException.internal` через `BaseRepositoryHelper.execute` (нет `ApiException`/`DaoException`); конкретный код (`unauthenticated`/`notFound`) — явный `return RepositoryResult.error(...)` в callback'е.
+- [ ] **§5 connectivity/lifecycle:** `ConnectivityService` (`watchOnline()` со seed'ом + `isOnline()`, оба «голый» `bool`; `@LazySingleton(as: ConnectivityService, env:[dev,prod])` + `MockConnectivityService` под `[test]`, `connectivity_plus`); app-lifecycle observer на `_AppRootState` (`WidgetsBindingObserver`, `resumed → AppResumed` превентивный refresh, **re-entrancy guard** в `AuthBloc`); connectivity НЕ гейтит запрос — источник истины остаётся за `ApiClient`.
+- [ ] `ApiClient.initBase()` (целевой) — Dio, `baseUrl = ${config.apiUrl}/api/`, 30-сек таймауты, JSON; **один** auth-`InterceptorsWrapper`, читающий `getUserAuthIdToken()` async per request → `Bearer` (null → снять `Authorization`); `onResponse`/`onError` — пасс-тру (debug). В коде `ApiClient` — плоский `lib/data/remote/api_client.dart`: `@lazySingleton` с `AppConfigRepository` в конструкторе, полями `_config`+`dio` и **идемпотентным методом** `initBase()`, который ставит `baseUrl` из `apiUrl` (**без** `/api/`) и один раз навешивает `AuthInterceptor`; §4-pipeline'а нет, и всё инертно (`apiUrl == null`, `initBase()` зовут только тесты, ни один data source его не инжектит — это DI-флип 016, фаза 028).
+- [ ] **Один хост.** У NOX единственный бэкенд — Go-сервер `noxd` (`client_backend/`), отдельного второго хоста (search/etc.) нет; `apiUrl` приходит из `AppConfig`, per флейвор (сегодня `null` во всех, реальный URL — фаза 027).
+- [ ] `BaseApiRepository` (целевой) отдаёт единственный `baseClient` геттером; API-классы наследуют его. В коде файла ещё нет — все четыре API-класса (`GetItemsApi`, `GetChatsApi`, `GetMessagesApi`, `SendMessageApi`) — моки, собирающие `ResponseEntity<T>` напрямую, без `BaseApiRepository`/`RequestBuilder`. `GetItemsApi` — намеренно замороженная верификационная нарезка (`ItemsEntity{items, page, page_size, total}`, путь `v1/items`, 1-based); её `total` **не** попадает в доменную `PageMetadata{hasMore, nextPage}`.
+- [ ] `AppConfigRepository` — фактический контракт (6 членов): `initialize(flavorType:)` / `config` / `getUserAuthIdToken()` (**метод**) / `limits` / `updateLimits(ServerLimits)` / `isTestEnvironment` в `domain/`; геттера `baseApiUrl` нет; импл — `@LazySingleton(as: AppConfigRepository, env:[dev,prod,test])` с `FlutterSecureStorage` + `@Named('isTestEnvironment')` в конструкторе, без `BaseRepositoryHelper`, `StateError` на чтение `config` до `initialize`; резолв через `getIt<AppConfigRepository>()` напрямую (в `global_aliases.dart` не алиасится).
+- [ ] `AppConfig` несёт `flavor` + nullable `apiUrl` (`null` во всех флейворах до фазы 027, [02-dependency-injection.md](02-dependency-injection.md), [09-build-and-secrets-infra.md](09-build-and-secrets-infra.md)); `apiSignatureKey` — пример/TBD-поле схемы §4, в коде его нет; собирается в `AppConfigRepositoryImpl.initialize(flavorType:)`, который вызывается в `main.dart` после `getIt.allReady()`.
+- [ ] REST-мост: `RequestBuilder`/`RequestBuilderHelper` + `ResponseEntity<T>`/`EntityConverter<E>` — по [04-data-layer.md](04-data-layer.md) §2–3, §7; envelope = `{success, ErrorWireEntity? error, T? data}` (контракт v0, `error` = `{code, message}`); распаковка — `unwrapEnvelope`, у `execute` три catch-ветки (`BaseRepositoryException` насквозь → `DioException` по типу/статусу → catch-all `unknown`), нет `ApiException`/`DaoException`; конкретный код ошибки даёт `RepositoryException.fromWireCode(error.code)`, а не ручная проверка `statusCode`.
 - [ ] **§4 (до релиза, схема — пример/TBD):** дополнительный security-interceptor — в примере ровно 5 security-заголовков: `x-request-timestamp` (epoch ms, ±5 мин), `x-request-signature`, `x-user-agent`, `x-device-id`, `x-trace-id` (отсутствие любого → `403` до проверки HMAC); `x-user-agent` — 6 slash-сегментов `'{os}/{appVersion}/{buildNumber}/{deviceModel}/{osVersion}/{isPhysical}'` (канон `UserAgentModel`); `x-request-signature` — HMAC-SHA256 по `METHOD\nPATH\nBODY_SHA256\nTIMESTAMP` (METHOD = `ApiRequestMethod.<verb>`, **не** uppercase; PATH — в примере **с** query); пропуск подписи для web-deep-link endpoint'ов.
-- [ ] **§4 (до релиза, схема — пример/TBD):** `getUserAuthIdToken` бэкендит `AuthRepository` поверх `flutter_secure_storage` (access-JWT + opaque refresh); refresh→rotate→retry на 401 через refresh-эндпоинт (в примере — `POST /api/v1/auth/token/refresh/`); single-flight lock на refresh (reuse-detection блэклистит сессию); разлогин при провале refresh; десктоп-бэкенды хранилища — Keychain/DPAPI/libsecret, local wipe = `secureStorage.deleteAll()` + Sembast/`shared_preferences` (единый путь, 5 платформ); в скелете Feature-001 не подключено (FR-013).
+- [ ] **§4 (до релиза, схема — пример/TBD):** `getUserAuthIdToken()` бэкендит `AuthRepository` поверх `flutter_secure_storage` (access-JWT + opaque refresh); refresh→rotate→retry на 401 через refresh-эндпоинт (в примере — `POST /api/v1/auth/token/refresh/`); single-flight lock на refresh (reuse-detection блэклистит сессию); разлогин при провале refresh; десктоп-бэкенды хранилища — Keychain/DPAPI/libsecret, local wipe = `secureStorage.deleteAll()` + Sembast/`shared_preferences` (единый путь, 5 платформ). В коде уже есть secure storage, `AuthRepositoryImpl.logout({forced})` с полным wipe и чтение ключа `auth_id_token` (писателя нет) — не хватает именно токен-модели stage 2.
 - [ ] **§4 (до релиза, схема — пример/TBD):** `UserAgentModel` определён (6 сегментов `os`/`appVersion`/`buildNumber`/`deviceModel`/`osVersion`/`isPhysical`; `package_info_plus` → appVersion+buildNumber, плагин device-info → deviceModel+osVersion+isPhysical с per-OS-ветками; `os` по 5 платформам `ios`/`android`/`windows`/`macos`/`linux` — набор пример/TBD; `buildNumber` int, `isPhysical` bool); собирается **один раз** в DI-бутстрапе (синглтон/`DeviceContext`), interceptor берёт готовую строку.
 - [ ] **§4 (до релиза, схема — пример/TBD):** `x-device-id` стабильный — генерируется uuid v4 **один раз** на первом запуске, persist в `flutter_secure_storage` (ключ `_device_id`, см. [15-push-notifications.md](15-push-notifications.md) §6.4); **НЕ** входит в `signature_input` (его смена не ломает подпись; последствие неправильного id — осиротевший push-токен, не auth-fail).
 - [ ] **§4 (до релиза, схема — пример/TBD):** обработка `503 initializing` — **не** авторетраить в interceptor'е, отдать в `BLoC` (повтор решает презентация); `429` — ждать retry-after-значение (заголовок `Retry-After` или поле `error.details.retry_after` — транспорт пример/TBD), при отсутствии — экспоненциальный backoff (потолок 5 мин), **макс 3 попытки на одно пользовательское действие**; `403` невалидного/неполного UA, `426 upgrade_required` build-gate при `build < min_build_number` (force-update-экран — отдельная ветка от `403`).
-- [ ] **FLAG:** точный контракт HMAC (имена заголовков, `signature_input`, алгоритм) и токен-эндпоинта **заменены на реальную схему авторизации NOX** (бэкенд/протокол ещё не выбран) до реализации; в коде — `TODO(backend-tbd)`, не изобретать схему здесь.
+- [ ] **FLAG:** точный контракт HMAC (имена заголовков, `signature_input`, алгоритм) и токен-эндпоинта **заменены на реальную схему аутентификации stage 2** (stage 1 контракта v0 работает без авторизации, модель stage 2 не финализирована) до реализации; в коде — `TODO(auth-stage2)`, не изобретать схему здесь.

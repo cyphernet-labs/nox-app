@@ -6,9 +6,10 @@ import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 
 /// Network boundary for a chat thread (5.2), aggregating the feature's two
 /// operations — read history + send — behind one interface (feature 016). The
-/// repository depends on this, not on the concrete mock generators. `getMessages`
-/// carries the reference `ResponseEntity<MessagesWireEntity>` envelope (feature 018/S4);
-/// `sendMessage` stays a single echo POST (envelope out of scope for S4).
+/// repository depends on this, not on the concrete mock generators. BOTH operations
+/// carry the `ResponseEntity<...>` envelope (feature 018, wire shapes aligned to
+/// contract v0 in 025): a page `{messages, has_more}` for the cursor read, and the
+/// accepted message for the send echo.
 abstract class MessageRemoteDataSource {
   Future<ResponseEntity<MessagesWireEntity>> getMessages({required GetMessagesConfig config});
 

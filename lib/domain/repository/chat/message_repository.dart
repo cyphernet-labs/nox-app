@@ -4,10 +4,11 @@ import 'package:nox_app/domain/repository/base/page_metadata.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 
-/// Chat thread repository (5.2) — the blueprint's second **network-only** feature
-/// after the chats list. A paginated history (older messages paged in as the user
-/// scrolls up) plus a one-shot send (optimistic on the caller side). UI-phase impl
-/// is mock-backed (no real transport/cache).
+/// Chat thread repository (5.2) — cache-first over the local Sembast store (013),
+/// seeded once per chat from the remote data source. History is CURSOR-paginated by
+/// the server journal number (`before_seq`, contract §5, feature 025); send is
+/// one-shot (optimistic on the caller side). The impl stays mock-backed until the
+/// 016 DI flip swaps in the real transport.
 abstract class MessageRepository {
   Future<RepositoryResult<(List<MessageModel>, PageMetadata)>> getMessages({required GetMessagesConfig config});
 

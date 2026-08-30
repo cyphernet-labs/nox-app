@@ -5,18 +5,21 @@ import 'package:freezed_annotation/freezed_annotation.dart';
 part 'chat_wire_entity.freezed.dart';
 part 'chat_wire_entity.g.dart';
 
-/// Wire DTO for one chat (network boundary — feature 018/S4). @freezed +
-/// json_serializable, BASIC TYPES ONLY (DateTime as ISO-8601 String); all coercion
-/// lives in `ChatWireMapper`. DISTINCT from the local Sembast `ChatEntity` (storage
-/// shape). JSON keys are an example — backend/protocol not chosen (TBD).
+/// Wire DTO for one chat, 1:1 with contract v0 §4: `{chat_id, name,
+/// created_at, created_by_label, last_message_preview, last_activity_at}`.
+/// BASIC TYPES ONLY (unix seconds as int); coercion lives in
+/// `ChatWireMapper`. `unread_count` deliberately DOES NOT exist on the wire —
+/// the unread counter is device-local (contract §8.3). DISTINCT from the
+/// local Sembast `ChatEntity` (storage shape).
 @freezed
 abstract class ChatWireEntity with _$ChatWireEntity {
   const factory ChatWireEntity({
-    required String id,
+    @JsonKey(name: 'chat_id') required String chatId,
     required String name,
+    @JsonKey(name: 'created_at') required int createdAt, // unix seconds
+    @JsonKey(name: 'created_by_label') required String createdByLabel,
     @JsonKey(name: 'last_message_preview') required String lastMessagePreview,
-    @JsonKey(name: 'last_message_at') required String lastMessageAt, // DateTime as ISO-8601 String
-    @JsonKey(name: 'unread_count') required int unreadCount,
+    @JsonKey(name: 'last_activity_at') required int lastActivityAt, // unix seconds
   }) = _ChatWireEntity;
 
   factory ChatWireEntity.fromJson(Map<String, dynamic> json) => _$ChatWireEntityFromJson(json);

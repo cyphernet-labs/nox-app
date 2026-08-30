@@ -3,9 +3,10 @@ import 'package:nox_app/domain/repository/base/repository_config.dart';
 
 part 'get_chats_config.freezed.dart';
 
-/// Per-call config for the chats list (5.1). Mirrors `GetItemsConfig`: a 1-based
-/// `page` + an optional `search` query (server-side filter; the UI-phase mock
-/// filters by chat name). `// TODO(backend):` real server search semantics.
+/// Per-call config for the chats list (5.1) — the PAGED path of contract v0 §4:
+/// a 1-based `page` (+ `page_size`) plus an optional `search` query. The reply
+/// carries `has_more`, never a total. Server-side search semantics are the
+/// server's; the mock filters by chat name locally.
 @freezed
 abstract class GetChatsConfig with _$GetChatsConfig implements RepositoryConfig {
   const GetChatsConfig._();

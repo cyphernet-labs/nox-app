@@ -2,36 +2,32 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 
 void main() {
-  group('GetMessagesConfig constants', () {
-    test('exposes the fixed pageSize and defaultPage', () {
+  group('GetMessagesConfig (cursor request, contract §5)', () {
+    test('exposes the fixed batch size', () {
       expect(GetMessagesConfig.pageSize, 20);
-      expect(GetMessagesConfig.defaultPage, 1);
     });
-  });
 
-  group('GetMessagesConfig.firstPage', () {
-    test('sets page to defaultPage and preserves chatId', () {
-      final config = GetMessagesConfig.firstPage(chatId: 'c1');
+    test('tail requests the newest batch: no beforeSeq, default limit', () {
+      final config = GetMessagesConfig.tail(chatId: 'c1');
 
-      expect(config.page, GetMessagesConfig.defaultPage);
-      expect(config.page, 1);
       expect(config.chatId, 'c1');
+      expect(config.beforeSeq, isNull);
+      expect(config.limit, GetMessagesConfig.pageSize);
     });
-  });
 
-  group('GetMessagesConfig.nextPage', () {
-    test('sets page to the requested page and preserves chatId', () {
-      final config = GetMessagesConfig.nextPage(chatId: 'c2', page: 3);
+    test('tail accepts an explicit limit (the refresh window)', () {
+      final config = GetMessagesConfig.tail(chatId: 'c1', limit: 55);
 
-      expect(config.page, 3);
+      expect(config.beforeSeq, isNull);
+      expect(config.limit, 55);
+    });
+
+    test('olderThan carries the exclusive cursor verbatim', () {
+      final config = GetMessagesConfig.olderThan(chatId: 'c2', beforeSeq: 1042);
+
       expect(config.chatId, 'c2');
-    });
-
-    test('carries the requested page verbatim for arbitrary values', () {
-      final config = GetMessagesConfig.nextPage(chatId: 'c3', page: 42);
-
-      expect(config.page, 42);
-      expect(config.chatId, 'c3');
+      expect(config.beforeSeq, 1042);
+      expect(config.limit, GetMessagesConfig.pageSize);
     });
   });
 }

@@ -1,8 +1,8 @@
 # 03 — Доменный слой
 
-> **Назначение:** описать доменный слой (`lib/domain/`) единого Dart-пакета `nox_app` так, чтобы по нему можно было собрать его с нуля и реализовать любую фичу: Freezed-модели без JSON, контракты репозиториев, обёртку `RepositoryResult<T>`, иерархию исключений и per-call конфиги. Доменный слой — чистый: он не зависит ни от чего, кроме аннотаций Freezed, и сам не импортирует ни `lib/data`, ни `lib/presentation`.
+> **Назначение:** описать доменный слой (`lib/domain/`) единого Dart-пакета `nox_app` так, чтобы по нему можно было собрать его с нуля и реализовать любую фичу: Freezed-модели без JSON, контракты репозиториев, обёртку `RepositoryResult<T>`, иерархию исключений и per-call конфиги. Доменный слой — чистый: он не зависит ни от чего, кроме аннотаций Freezed, и сам не импортирует ни `lib/data`, ни `lib/presentation`. Единственное отступление в собранном коде — `repository/settings/settings_repository.dart` с точечным `import 'package:flutter/material.dart' show ThemeMode;`: тип темы взят из фреймворка вместо собственного доменного enum'а.
 >
-> **Когда читать:** когда создаёте доменный слой, добавляете новую доменную модель, объявляете контракт репозитория или подключаете инфраструктуру `RepositoryResult` / исключений / конфигов. Первая реальная фича, которую предстоит построить поверх этих шаблонов, — список чатов (открытые общие пространства); это server-owned, network-only пагинированный список, поэтому к нему применим network-only carve-out. Шаблоны ниже даны на нейтральном примере `Item`, но списочные/пагинированные конфиги вынесены в `07-pagination.md`.
+> **Когда читать:** когда создаёте доменный слой, добавляете новую доменную модель, объявляете контракт репозитория или подключаете инфраструктуру `RepositoryResult` / исключений / конфигов. Первая реальная фича, построенная поверх этих шаблонов, — список чатов (открытые общие пространства): пагинированный список, который в собранном коде реализован **cache-first** над локальным Sembast (`ChatRepository.getChats` + `watchChats`), а не network-only; network-only carve-out остался только у замороженного verification-среза `Item`. Шаблоны ниже даны на нейтральном примере `Item`, но списочные/пагинированные конфиги вынесены в `07-pagination.md`.
 >
 > **Связанные документы:** `00-architecture-overview.md` (раскладка пакета, направление зависимостей), `01-stack-and-tooling.md` (Freezed, build_runner, скрипты кодогенерации), `02-dependency-injection.md` (`configureDependencies`, `getIt`, окружения), `04-data-layer.md` (entity, DAO, mapper, реализации репозиториев, `BaseRepositoryHelper.execute`, `LogRepository`), `05-presentation-layer.md` (BLoC, потребляющий `RepositoryResult` через `match`), `07-pagination.md` (полный контракт пагинации, `PageMetadata`, `firstPage`/`nextPage`-конфиги), `10-code-templates.md` (сводные копипаст-шаблоны).
 
@@ -29,7 +29,7 @@ lib/domain/
 │   │   ├── item_model.dart
 │   │   └── item_status.dart      # мелкие enum'ы рядом с моделью
 │   └── app_config/              # рантайм-конфиг, зависящий от flavor (см. 02, 09)
-│       ├── app_config.dart       # plain-класс AppConfig({ required AppFlavorType flavor })
+│       ├── app_config.dart       # plain-класс AppConfig({ required AppFlavorType flavor, String? apiUrl })
 │       ├── app_flavor.dart       # AppFlavor.getFlavor() из --dart-define app.flavor
 │       └── app_flavor_type.dart  # enum AppFlavorType { prod, stage }
 ├── exception/
@@ -41,7 +41,7 @@ lib/domain/
     │   ├── repository_config.dart
     │   ├── repository_result.dart
     │   ├── repository_result_handling.dart
-    │   └── page_metadata.dart    # PageMetadata{ total, nextPage? } (контракт — 07-pagination.md)
+    │   └── page_metadata.dart    # PageMetadata{ hasMore, nextPage? } (контракт — 07-pagination.md)
     ├── log_repository.dart       # единственный канал логирования (FR-011); impl — в lib/data
     ├── app_config/
     │   └── app_config_repository.dart  # контракт flavor-конфига (реализация — lib/data, см. 02/09)
@@ -50,7 +50,7 @@ lib/domain/
         └── get_items_config.dart # get_item_config.dart появится с кэшируемой фичей (§5.3)
 ```
 
-> **О составе дерева.** Доменный слой кроме рабочего примера `Item` несёт три кросс-слойных контракта/модели, которые задают границу домена для остальных частей: `repository/log_repository.dart` — единственный канал логирования (FR-011: голый `print`/`debugPrint` в `lib/` запрещён, всё идёт через `LogRepository`; реализация `LoggerLogRepository` — в `lib/data`, см. `02-dependency-injection.md`); `model/app_config/{app_config,app_flavor,app_flavor_type}.dart` + `repository/app_config/app_config_repository.dart` — flavor-зависимый рантайм-конфиг (`AppConfig` несёт только `flavor`; token source / apiUrl / security headers — пример/TBD, бэкенд NOX ещё не выбран; см. `02-dependency-injection.md` и `09-build-and-secrets-infra.md`); `repository/base/base.dart` — barrel-файл, реэкспортирующий `repository_config.dart` + `repository_result.dart` + `repository_result_handling.dart` ради одной строки импорта на стороне потребителя.
+> **О составе дерева.** Доменный слой кроме рабочего примера `Item` несёт три кросс-слойных контракта/модели, которые задают границу домена для остальных частей: `repository/log_repository.dart` — единственный канал логирования (FR-011: голый `print`/`debugPrint` в `lib/` запрещён, всё идёт через `LogRepository`; реализация `LoggerLogRepository` — в `lib/data`, см. `02-dependency-injection.md`); `model/app_config/{app_config,app_flavor,app_flavor_type}.dart` + `repository/app_config/app_config_repository.dart` — flavor-зависимый рантайм-конфиг (`AppConfig` несёт `flavor` + nullable `apiUrl`; `apiUrl` остаётся `null` до транспорта — WebSocket-конверт контракта v0 приходит фазой 027, DI-флип на реальные data source'ы — фазой 028; источник auth-токена ждёт stage-2-аутентификацию, она ещё не спроектирована; см. `02-dependency-injection.md` и `09-build-and-secrets-infra.md`); `repository/base/base.dart` — barrel-файл, реэкспортирующий `repository_config.dart` + `repository_result.dart` + `repository_result_handling.dart` ради одной строки импорта на стороне потребителя. Само дерево выше — **скелетная** раскладка блюпринта, а не опись сегодняшнего кода: в реальном `lib/domain/` рядом с `item/` уже живут `model/{app,chat,file,qr}`, `model/app_config/server_limits.dart`, `repository/{app,chat,settings,sync}` и папка `service/` (`ConnectivityService`, `FilePickerService`, …) — форма та же, состав шире.
 
 > **Правило раскладки.** Доменный слой — **не** отдельный пакет: **один пакет, слои = папки**, направление зависимостей строго `data -> domain` (домен не знает про data); цикла `domain <-> data` быть не должно. В доменном слое **нет** `DataConverter` / `ExceptionConverter` / `JsonMappers` / кастомных `JsonConverter` / `fromJson` на доменных типах — всё это живёт в entity-слое (`04-data-layer.md`). Доменные конфиги — **по одному классу на вызов**, а не sealed-union на фичу.
 
@@ -201,19 +201,48 @@ enum RepositoryException implements BaseRepositoryException {
   connection,
   unauthenticated,
   notFound,
+  invalidRequest,
+  nameTaken,
+  payloadTooLarge,
+  attachmentGone,
+  rateLimited,
+  unsupportedSchema;
+
+  /// Maps a contract v0 §2.1 wire error code onto an enum value. Evolution rule:
+  /// a code unknown to this client build degrades to [internal], never a crash.
+  static RepositoryException fromWireCode(String code) => switch (code) {
+        'invalid_request' => invalidRequest,
+        'not_found' => notFound,
+        'name_taken' => nameTaken,
+        'payload_too_large' => payloadTooLarge,
+        'attachment_gone' => attachmentGone,
+        'rate_limited' => rateLimited,
+        'unauthenticated' => unauthenticated,
+        'unsupported_schema' => unsupportedSchema,
+        'internal' => internal,
+        _ => internal,
+      };
 }
 ```
 
-Типизированной иерархии `ApiException` / `DaoException` **нет** — это сознательное решение (подтверждено комментарием в `repository_exception.dart`). Data-слой маппит необработанные ошибки прямо в этот enum внутри `BaseRepositoryHelper.execute`: `DioException → RepositoryException.internal`, прочее → `unknown` (конкретика `DioException` — пример, транспорт NOX ещё не выбран; см. `04-data-layer.md` §5):
+Типизированной иерархии `ApiException` / `DaoException` **нет** — это сознательное решение (подтверждено комментарием в `repository_exception.dart`). Хвост значений зеркалит коды ошибок контракта v0 §2.1, чтобы отказ команды оставался различимым end-to-end; статический `RepositoryException.fromWireCode(String)` — единственная точка маппинга кода с провода, и незнакомый этой сборке код деградирует в `internal` (правило эволюции), а не роняет клиент.
+
+Data-слой маппит необработанные ошибки прямо в этот enum внутри `BaseRepositoryHelper.execute`, у которого **три** catch-ветки: `on BaseRepositoryException` (уже смаппленный доменный отказ — например код с провода из `unwrapEnvelope` — проходит насквозь и **не** размывается в `unknown`), затем `on DioException` (таймауты/`connectionError` → `connection`, 401 → `unauthenticated`, 403 → `authentication`, 404 → `notFound`, прочее → `internal`), затем catch-all → `unknown`. Подробности — `04-data-layer.md` §5.
 
 | Значение | Смысл |
 |---|---|
 | `unknown` | Обобщённая / немаппнутая ошибка (а также fallback по умолчанию). |
-| `internal` | Невосстановимое внутреннее состояние или серверная ошибка (5xx). |
+| `internal` | Невосстановимое внутреннее состояние или серверная ошибка (5xx); сюда же деградирует незнакомый код с провода. |
 | `authentication` | Неверные учётные данные / провал аутентификации (неправильный логин/пароль). |
 | `connection` | Сетевой/I-O сбой, таймаут, недостижимый сервер. |
-| `unauthenticated` | Вызывающий не аутентифицирован (токен истёк, нужен повторный вход) — 401. |
-| `notFound` | Запрошенный ресурс не существует — 404. |
+| `unauthenticated` | Вызывающий не аутентифицирован (токен истёк, нужен повторный вход) — 401 / `unauthenticated`. |
+| `notFound` | Запрошенный ресурс не существует — 404 / `not_found`. |
+| `invalidRequest` | Запрос не прошёл валидацию сервера — `invalid_request`. |
+| `nameTaken` | Имя чата или label уже занято — `name_taken`. |
+| `payloadTooLarge` | Payload больше объявленных сервером лимитов — `payload_too_large`. |
+| `attachmentGone` | Загруженный blob истёк или уже собран — `attachment_gone`. |
+| `rateLimited` | Сервер притормозил клиента — `rate_limited`. |
+| `unsupportedSchema` | Версия схемы конверта не поддерживается — `unsupported_schema`. |
 
 ### 3.3 Feature-specific исключения
 
@@ -240,9 +269,9 @@ enum PaymentsRepositoryException implements BaseRepositoryException {
 
 | Префикс | Возвращает | Смысл |
 |---|---|---|
-| `watch*()` | `Stream<RepositoryResult<T>>` | Живой стрим; в реализации backed `BehaviorSubject`. Реплеит последнее значение, затем live-обновления. |
+| `watch*()` | `Stream<RepositoryResult<T>>` | Живой стрим; в реализации backed `BehaviorSubject`. Реплеит последнее значение, затем live-обновления. В собранном коде реактивные чат-каналы — исключение: `watchChats()`/`watchMessages()`/`watchChat()` отдают голый `Stream<List<T>>` (`Stream<ChatModel?>`) поверх Sembast `onSnapshot` как change-сигнал. |
 | `fetch*()` | `Future<RepositoryResult<T>>` | Одноразовое чтение одиночного ресурса (часто пушит результат в `watch`-стрим того же ресурса). |
-| `get*()` | `Future<RepositoryResult<T>>` | Параметризованное чтение / список (network-only для server-owned списков). |
+| `get*()` | `Future<RepositoryResult<T>>` | Параметризованное чтение / страница списка (у продуктовых списков — cache-first поверх Sembast; network-only остался у среза `Item`). |
 | `create*` / `update*` | `Future<RepositoryResult<T>>` | Сайд-эффектные записи; возвращают итоговую модель. |
 | `delete*` | `Future<RepositoryResult<void>>` | Сайд-эффектное удаление без payload. |
 | `clean()` | `Future<void>` | Сброс кэша / subject'ов; вызывается на logout. |
@@ -250,10 +279,10 @@ enum PaymentsRepositoryException implements BaseRepositoryException {
 Правила:
 
 - Класс называется `<Feature>Repository`.
-- Возврат — **всегда** `Future<RepositoryResult<T>>` или `Stream<RepositoryResult<T>>`, никогда голый `Future<T>`.
+- Возврат — **всегда** `Future<RepositoryResult<T>>` или `Stream<RepositoryResult<T>>`, никогда голый `Future<T>`. Осознанные исключения в собранном коде: реактивные change-сигналы (`watchChats`/`watchMessages`) и fire-and-forget `Future<void>` (`clean`, `markChatRead`, `seedCreatedChat`) — они идут мимо `BaseRepositoryHelper.execute`, а значит гарантии «никогда не бросает» на них **не** распространяется, и вызывающий обязан ловить сам.
 - **Watchable-ресурсы экспонируют пару:** `watchXxx()` (Stream, backed `BehaviorSubject`) + `fetchXxx()` (Future, пушит на тот же стрим). Это касается одиночных кэшируемых ресурсов и реактивных коллекций.
-- **Carve-out (важно).** Пагинированные server-owned списки и одноразовые POST'ы — **network-only**: у них нет DAO/subject, только `get*` / `fetch*` / `create*`-метод, который ходит в сеть и возвращает результат напрямую. Не заводите `watch*`-пару для серверного пагинированного списка (см. `04-data-layer.md` про carve-out и `07-pagination.md` про контракт пагинации).
-- Списочные методы возвращают слайс страницы в паре с метаданными пагинации: `(List<T>, PageMetadata)` (offset-flavor — дефолт; курсорный flavor задокументирован как альтернатива, конкретный контракт пагинации списка чатов фиксируется позже с бэкендом NOX). Полный контракт — `07-pagination.md`.
+- **Carve-out (важно, и он сузился).** Network-only — то есть без DAO/subject, только `get*` / `fetch*` / `create*`, который ходит в сеть и возвращает результат напрямую — остаётся формой для одноразовых команд и для замороженного verification-среза `Item`. **Продуктовые пагинированные списки так НЕ устроены:** и `ChatRepository`, и `MessageRepository` — cache-first поверх Sembast (013) и экспонируют пагинированный `get*` **вместе** с реактивным `watch*` (`getChats` + `watchChats`/`watchChat`, `getMessages` + `watchMessages`); `watch*`-канал там отдаёт голый `Stream<List<T>>`-сигнал, а страницы всегда перечитываются через `get*`. См. `04-data-layer.md` про carve-out и `07-pagination.md` про контракт пагинации.
+- Списочные методы возвращают слайс страницы в паре с метаданными пагинации: `(List<T>, PageMetadata)`. В контракте v0 путей ровно два: **paged** (чаты — `page` + `page_size`, ответ `{chats, has_more}`) и **seq-курсор** (история сообщений — `before_seq` + `limit`, ответ `{messages, has_more}`, батч по возрастанию `seq`, сервер молча зажимает `limit` до 100). Полный контракт — `07-pagination.md`.
 - `clean()` сбрасывает кэш/subject'ы (вызывается на logout).
 
 ### 4.2 Рабочий пример: `ItemRepository`
@@ -276,9 +305,9 @@ abstract class ItemRepository {
   /// One-shot read of the single resource (pushes onto the watch stream).
   Future<RepositoryResult<ItemModel>> fetchItem({required GetItemConfig config});
 
-  /// Paginated server-owned list (NETWORK-ONLY — no DAO/subject).
-  /// Returns the page slice paired with offset pagination metadata.
-  /// Full pagination contract: see 07-pagination.md.
+  /// Paginated server-owned list (NETWORK-ONLY — no DAO/subject; the frozen
+  /// Item slice only, product lists are cache-first). Returns the page slice
+  /// paired with PageMetadata. Full pagination contract: see 07-pagination.md.
   Future<RepositoryResult<(List<ItemModel>, PageMetadata)>> getItems({required GetItemsConfig config});
 
   /// Side-effecting create; returns the resulting model.
@@ -295,7 +324,7 @@ abstract class ItemRepository {
 }
 ```
 
-> `PageMetadata` — offset-flavor (`{required int total, int? nextPage}`, где `nextPage` — **1-based** индекс следующей страницы, `null` на последней): offset (`page` + `page_size` + `total`/`count`) — дефолтный flavor. Курсорный flavor (`CursorPaginationMetadata{String? nextCursor}`) задокументирован как альтернатива в `07-pagination.md`; конкретный контракт пагинации списка чатов фиксируется позже с бэкендом NOX (пример — бэкенд/протокол NOX ещё не выбран; заменить на реальный контракт). Сам тип `PageMetadata` объявлен в `lib/domain/repository/base/page_metadata.dart` и описан в `07-pagination.md`.
+> `PageMetadata` — **contract-shaped**: `{required bool hasMore, int? nextPage}` и **никакого `total`** (сервер тоталов на проводе не отдаёт). `hasMore` приходит с провода как `has_more`; `nextPage` — **1-based** индекс следующей страницы, он считается на клиенте (`hasMore ? page + 1 : null`) и заполняется только на paged-пути (чаты). Курсорный путь истории сообщений оставляет `nextPage` пустым и двигается по `before_seq`; тред держит `oldestLoadedSeq`, а не номера страниц. `CursorPaginationMetadata{String? nextCursor}` остаётся в `07-pagination.md` **только** как задокументированный вариант для гипотетического строкового курсора — в коде его нет. Сам тип `PageMetadata` объявлен в `lib/domain/repository/base/page_metadata.dart` и описан в `07-pagination.md`.
 
 > **Сверка со скелетом (Feature-001).** Собранный `ItemRepository` — это **урезанный** verification-harness: он экспонирует **только** network-only список + `clean()`:
 > ```dart
@@ -304,7 +333,7 @@ abstract class ItemRepository {
 >   Future<void> clean();
 > }
 > ```
-> Полный CRUD и cache-first `watchItem`/`fetchItem` (с `ItemDao` + `BehaviorSubject`) — это эталон-цель, который приходит с первой фичей, которой нужно кэширование (так и сказано в doc-комментарии `item_repository.dart`). Соответственно `get_item_config.dart` (см. §5.3) в коде сегодня **отсутствует** — импорт в примере выше forward-looking.
+> Полный CRUD и cache-first `watchItem`/`fetchItem` (с `ItemDao` + `BehaviorSubject`) — это эталон-цель блюпринта. Кэширование в приложение уже пришло (013), но легло в `ChatRepository`/`MessageRepository`, а срез `Item` сознательно **заморожен** как verification-harness и остаётся list-only: он не product canon, а живой пример network-only-формы. Соответственно `get_item_config.dart` (см. §5.3) в коде сегодня **отсутствует** — импорт в примере выше forward-looking.
 
 ### 4.3 Пустой скелет
 
@@ -401,7 +430,7 @@ abstract class GetItemConfig with _$GetItemConfig implements RepositoryConfig {
 
 ### 5.4 Семантика `cacheOnly` (tri-state)
 
-Поле `cacheOnly` несут конфиги одиночных кэшируемых ресурсов (`GetItemConfig`). Server-owned пагинированный список (`GetItemsConfig`) — network-only, поэтому `cacheOnly` в нём нет (только `page` + `search`). Там, где поле присутствует, оно трёхзначное:
+Поле `cacheOnly` несут конфиги одиночных кэшируемых ресурсов (`GetItemConfig`). Списочные конфиги его не несут: `GetItemsConfig` и `GetChatsConfig` — это `page` + `search`, а `GetMessagesConfig` — `chatId` + `beforeSeq` + `limit`; выбирать кэш или сеть — дело реализации репозитория, а не запроса страницы. Там, где поле присутствует, оно трёхзначное:
 
 | Значение | Поведение |
 |---|---|
@@ -524,9 +553,9 @@ ItemRepository                   GetItemConfig               RepositoryResult<It
               (BaseRepositoryHelper.execute + LogRepository)
 ```
 
-Доменный слой задаёт **словарь** (модели, конфиги, исключения) и **контракт** (`ItemRepository`) плюс **форму возврата** (`RepositoryResult` + `match`). Data-слой исполняет контракт (мапит entity -> model, маппит необработанные ошибки -> `RepositoryException` (пример: `DioException → internal`, прочее → `unknown`; транспорт NOX ещё не выбран) внутри `BaseRepositoryHelper.execute`, логирует через обязательный `LogRepository`). Presentation-слой потребляет результат через `match()` / `hasData`.
+Доменный слой задаёт **словарь** (модели, конфиги, исключения) и **контракт** (`ItemRepository`) плюс **форму возврата** (`RepositoryResult` + `match`). Data-слой исполняет контракт (мапит entity -> model, маппит необработанные ошибки -> `RepositoryException` внутри `BaseRepositoryHelper.execute` — три ветки: доменное исключение насквозь, `DioException` по типу/статусу, catch-all → `unknown`; логирует через обязательный `LogRepository`). Presentation-слой потребляет результат через `match()` / `hasData`.
 
-> Диаграмма выше показывает **полный** контракт `ItemRepository` (эталон-цель). В собранном скелете Feature-001 присутствуют только `getItems(GetItemsConfig)` + `clean()` (network-only carve-out); `watchItem`/`fetchItem`/CRUD и `GetItemConfig` приходят с первой кэшируемой фичей — см. §4.2.
+> Диаграмма выше показывает **полный** контракт `ItemRepository` (эталон-цель). В коде у замороженного среза `Item` присутствуют только `getItems(GetItemsConfig)` + `clean()` (network-only carve-out); `watchItem`/`fetchItem`/CRUD и `GetItemConfig` в нём так и не появились — cache-first-форму смотрите на живых `ChatRepository`/`MessageRepository`, см. §4.2.
 
 ---
 
@@ -535,17 +564,17 @@ ItemRepository                   GetItemConfig               RepositoryResult<It
 После применения этого документа должно существовать и проходить анализ:
 
 - [ ] `lib/domain/exception/base_repository_exception.dart` — однострочный маркер `abstract class BaseRepositoryException {}` (без JSON-методов).
-- [ ] `lib/domain/exception/repository_exception.dart` — enum `RepositoryException` (`unknown`, `internal`, `authentication`, `connection`, `unauthenticated`, `notFound`), реализующий маркер.
+- [ ] `lib/domain/exception/repository_exception.dart` — enum `RepositoryException` (`unknown`, `internal`, `authentication`, `connection`, `unauthenticated`, `notFound` + коды контракта v0 §2.1: `invalidRequest`, `nameTaken`, `payloadTooLarge`, `attachmentGone`, `rateLimited`, `unsupportedSchema`), реализующий маркер, плюс статический `fromWireCode(String)` (незнакомый код → `internal`).
 - [ ] `lib/domain/repository/base/repository_result.dart` — `@freezed sealed class RepositoryResult<T>` с публичными вариантами `RepositoryResultSuccess<T>` / `RepositoryResultError<T>`, **взаимоисключающими** именованными фабриками `success({required data})` / `error({required exception})`, геттером `hasData`, **только `.freezed.dart`** (нет `.g.dart`, нет `fromJson`).
 - [ ] `lib/domain/repository/base/repository_result_handling.dart` — `extension RepositoryResultMatch` с тримнутым `match<R>({onData, onError})` через `switch` по публичным вариантам (без `onPartial`/`onEmpty`).
 - [ ] `lib/domain/repository/base/repository_config.dart` — маркер `abstract class RepositoryConfig {}`.
 - [ ] Нигде в коде нет прямого `result.data!` — весь доступ через `match()` или guard по `hasData`.
-- [ ] Хотя бы один контракт `<Feature>Repository`, где каждое чтение/запись возвращает `RepositoryResult` / `Stream<RepositoryResult>`; watchable-ресурсы имеют пару `watchXxx()`/`fetchXxx()`; серверный пагинированный список — network-only (`getItems`, без `watch`-пары); записи — `createXxx`/`updateXxx`/`deleteXxx` (delete → `RepositoryResult<void>`); есть `clean()` → `Future<void>`.
+- [ ] Хотя бы один контракт `<Feature>Repository`, где каждое чтение/запись возвращает `RepositoryResult` / `Stream<RepositoryResult>`; watchable-ресурсы имеют пару `watchXxx()`/`fetchXxx()`; продуктовый пагинированный список — cache-first, то есть `getXxx(config)` **вместе** с реактивным `watchXxx()` (как `ChatRepository`/`MessageRepository`), и только замороженный срез `Item` остаётся network-only (`getItems`, без `watch`-пары); записи — `createXxx`/`updateXxx`/`deleteXxx` (delete → `RepositoryResult<void>`); есть `clean()` → `Future<void>`.
 - [ ] По одному `@freezed`-конфигу **на вызов**, реализующему `RepositoryConfig`. У пагинированного `GetItemsConfig` — поля `{page, search?}`, фабрики `firstPage`/`nextPage` + константы `pageSize = 20` / `defaultPage = 1`, **без** `cacheOnly`. У одиночного `GetItemConfig` (эталон-шаблон; в скелете ещё нет) — tri-state `cacheOnly`. **Только `.freezed.dart`**.
-- [ ] `lib/domain/repository/base/page_metadata.dart` — `@freezed PageMetadata{ required int total, int? nextPage }` (`nextPage` — 1-based, `null` на последней странице); полный контракт — `07-pagination.md`.
+- [ ] `lib/domain/repository/base/page_metadata.dart` — `@freezed PageMetadata{ required bool hasMore, int? nextPage }`, **без** `total` (`hasMore` — с провода `has_more`; `nextPage` — 1-based, считается на клиенте и заполняется только на paged-пути, `null` на последней странице и на seq-курсорном пути истории); полный контракт — `07-pagination.md`.
 - [ ] `lib/domain/repository/base/base.dart` — barrel, реэкспортирующий `repository_config.dart` + `repository_result.dart` + `repository_result_handling.dart`.
 - [ ] `lib/domain/repository/log_repository.dart` — абстрактный `LogRepository` (`debug({Object? target, required String message})` / `error({Object? target, required Object error, StackTrace? stackTrace})`), единственный канал логирования (FR-011; реализация — `lib/data`, см. `02-dependency-injection.md`).
-- [ ] `lib/domain/model/app_config/{app_config,app_flavor,app_flavor_type}.dart` + `lib/domain/repository/app_config/app_config_repository.dart` — flavor-зависимый рантайм-конфиг (`AppConfig({ required AppFlavorType flavor })`, `enum AppFlavorType { prod, stage }`; token source/apiUrl/security headers — пример/TBD; см. `02`/`09`).
+- [ ] `lib/domain/model/app_config/{app_config,app_flavor,app_flavor_type}.dart` + `lib/domain/repository/app_config/app_config_repository.dart` — flavor-зависимый рантайм-конфиг (`AppConfig({ required AppFlavorType flavor, String? apiUrl })`, `enum AppFlavorType { prod, stage }`; `apiUrl` = `null` до транспорта фазы 027, источник auth-токена ждёт stage-2-аутентификацию; см. `02`/`09`).
 - [ ] Хотя бы одна `@freezed`-модель (`ItemModel`) с одной `part '*.freezed.dart'`-директивой, **без** `fromJson`/`.g.dart`; производная логика — во внешнем `extension <Model>ModelExt` (для `ItemModel` — `isArchived` / `displayName`); мелкие enum'ы — в отдельном `*_status.dart` рядом.
 - [ ] Доменный слой **ничего** не импортирует из `lib/data` / `lib/presentation`; импорты — полные `package:nox_app/...`, без относительных `../` (кроме `part`).
 - [ ] `fvm dart run build_runner build --delete-conflicting-outputs` (или `make generate`) перегенерирует все `*.freezed.dart` без ошибок; `fvm flutter analyze` по доменному слою чист.

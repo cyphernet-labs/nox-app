@@ -15,6 +15,9 @@ class MessageMapper extends BaseMapper<MessageEntity, MessageModel, dynamic, dyn
   MessageModel toModel({required MessageEntity entity, dynamic Function(dynamic entity)? ad}) {
     return MessageModel(
       id: entity.id,
+      // Legacy pre-025 records carry no seq; 0 keeps them decodable and the
+      // sentAt tiebreaker keeps their order until the mock world reseeds.
+      seq: entity.seq ?? 0,
       chatId: entity.chatId,
       authorId: entity.authorId,
       authorLabel: entity.authorLabel,
@@ -31,6 +34,10 @@ class MessageMapper extends BaseMapper<MessageEntity, MessageModel, dynamic, dyn
               type: FileType.values.firstWhere((t) => t.name == entity.attachmentType, orElse: () => FileType.other),
               name: entity.attachmentName ?? '',
               sizeBytes: entity.attachmentSizeBytes ?? 0,
+              mime: entity.attachmentMime,
+              expiresAt: entity.attachmentExpiresAt == null
+                  ? null
+                  : DateTime.fromMillisecondsSinceEpoch(entity.attachmentExpiresAt! * 1000, isUtc: true).toLocal(),
               localPath: entity.attachmentLocalPath,
             ),
     );
@@ -40,6 +47,7 @@ class MessageMapper extends BaseMapper<MessageEntity, MessageModel, dynamic, dyn
   MessageEntity toEntity({required MessageModel model, dynamic Function(dynamic entity)? ad}) {
     return MessageEntity(
       id: model.id,
+      seq: model.seq,
       chatId: model.chatId,
       authorId: model.authorId,
       authorLabel: model.authorLabel,
@@ -52,6 +60,8 @@ class MessageMapper extends BaseMapper<MessageEntity, MessageModel, dynamic, dyn
       attachmentName: model.attachment?.name,
       attachmentSizeBytes: model.attachment?.sizeBytes,
       attachmentLocalPath: model.attachment?.localPath,
+      attachmentMime: model.attachment?.mime,
+      attachmentExpiresAt: model.attachment?.expiresAt == null ? null : model.attachment!.expiresAt!.toUtc().millisecondsSinceEpoch ~/ 1000,
     );
   }
 }

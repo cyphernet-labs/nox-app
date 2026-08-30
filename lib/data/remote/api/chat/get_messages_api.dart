@@ -12,16 +12,17 @@ import 'package:nox_app/general/app_clock.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 import 'package:nox_app/general/identity_mock_data.dart';
 
-/// Skeleton MOCK source for a chat thread (no real backend — UI phase). Synthesizes
-/// a deterministic history per `chatId`: an opening system line, a mix of own
-/// ([IdentityMockData.fallbackOwnId]) and other authors with consecutive same-author
-/// groups, one attachment, spread across a few days. Own rows are reconciled to the
-/// signed-in identity by the repository at seed time. Paginates OLDER messages
-/// (page 1 = newest batch) and returns the reference `ResponseEntity<MessagesWireEntity>`
-/// envelope (feature 018/S4 — like `GetItemsApi`); the seed stays model-shaped and is
-/// mapped to wire at the boundary. The real impl wraps a Dio request (path
-/// `v1/chats/{id}/messages`, query `page`/`page_size`) — example/TBD until the NOX
-/// backend is chosen. `// TODO(backend):`.
+/// Skeleton MOCK source for a chat thread. Synthesizes a deterministic
+/// contract-shaped history per `chatId`: a mix of own
+/// ([IdentityMockData.fallbackOwnId]) and other authors with consecutive
+/// same-author groups, one attachment, spread across a few days. Journal
+/// numbers are minted deterministically — `seq = chatBase + position` with
+/// position 1.. over the chronological order (position 0 is reserved for the
+/// locally-synthesized genesis line: the wire carries NO system messages,
+/// contract §4). Serves cursor batches per §5 (`before_seq`/`has_more`,
+/// ascending inside a batch) in the `ResponseEntity<MessagesWireEntity>`
+/// envelope. Own rows are reconciled to the signed-in identity (and their
+/// local `sent` status) by the repository at seed time.
 @lazySingleton
 class GetMessagesApi {
   GetMessagesApi(this._wireMapper);
@@ -31,30 +32,40 @@ class GetMessagesApi {
   Future<ResponseEntity<MessagesWireEntity>> execute({required GetMessagesConfig config}) async {
     await Future<void>.delayed(const Duration(milliseconds: 150));
 
-    final all = _mockMessages(config.chatId); // chronological: oldest (system line) → newest
-    final total = all.length;
-    const pageSize = GetMessagesConfig.pageSize;
-
-    // page 1 = newest `pageSize`; each next page reaches further back in time. The repo
-    // derives nextPage from page*pageSize < total — for this descending window that is
-    // exactly the old `start > 0`, so pagination is behavior-neutral.
-    final end = total - (config.page - 1) * pageSize;
-    final List<MessageModel> slice;
-    if (end <= 0) {
-      slice = const <MessageModel>[];
-    } else {
-      final start = (end - pageSize) < 0 ? 0 : end - pageSize;
-      slice = all.sublist(start, end);
+    final all = _mockMessages(config.chatId); // ascending by seq (== chronological)
+    final beforeSeq = config.beforeSeq;
+    // end = one past the newest message inside the window (seq < beforeSeq).
+    var end = all.length;
+    if (beforeSeq != null) {
+      while (end > 0 && all[end - 1].seq >= beforeSeq) {
+        end--;
+      }
     }
+    final start = (end - config.limit) < 0 ? 0 : end - config.limit;
+    final slice = all.sublist(start, end);
     return ResponseEntity<MessagesWireEntity>(
       success: true,
       data: MessagesWireEntity(
-        items: _wireMapper.toListEntity(models: slice),
-        page: config.page,
-        pageSize: pageSize,
-        total: total,
+        messages: _wireMapper.toListEntity(models: slice),
+        hasMore: start > 0,
       ),
     );
+  }
+
+  /// Deterministic per-chat seq base: seeded `chat_N` ids get `(N+1)*1000`;
+  /// arbitrary ids (tests) get a stable code-unit-sum base. Position 0 is
+  /// reserved for the repository-synthesized genesis line.
+  static int chatSeqBase(String chatId) {
+    const prefix = 'chat_';
+    if (chatId.startsWith(prefix)) {
+      final n = int.tryParse(chatId.substring(prefix.length));
+      if (n != null) return (n + 1) * 1000;
+    }
+    var sum = 0;
+    for (final unit in chatId.codeUnits) {
+      sum = (sum + unit) % 100000;
+    }
+    return (sum + 1) * 1000;
   }
 
   /// Deterministic history for a chat. Authors: `me` (own) + a few others; one
@@ -62,16 +73,7 @@ class GetMessagesApi {
   /// separators (Today / Yesterday / date) read consistently.
   List<MessageModel> _mockMessages(String chatId) {
     final now = AppClock.now();
-    final messages = <MessageModel>[
-      MessageModel(
-        id: '${chatId}_sys',
-        chatId: chatId,
-        authorId: 'system',
-        authorLabel: 'Aria',
-        sentAt: now.subtract(const Duration(days: 2, hours: 6)),
-        isSystem: true,
-      ),
-    ];
+    final messages = <MessageModel>[];
 
     // (authorId, authorLabel, text, ago) — chronological oldest → newest.
     const seed = <(String, String, String, Duration)>[
@@ -111,12 +113,26 @@ class GetMessagesApi {
         chatId: chatId,
         authorId: 'u_kit',
         authorLabel: 'Kit',
-        attachment: const MessageAttachment(id: 'att_spec', type: FileType.pdf, name: 'design-spec.pdf', sizeBytes: 2516582),
+        attachment: MessageAttachment(
+          id: 'att_spec',
+          type: FileType.pdf,
+          name: 'design-spec.pdf',
+          sizeBytes: 2516582,
+          mime: 'application/pdf',
+          // Stage-1 indefinite retention: ten years out, deterministic under
+          // the frozen golden clock.
+          expiresAt: now.add(const Duration(days: 3650)),
+        ),
         sentAt: now.subtract(const Duration(days: 1, hours: 2, minutes: 1)),
       ),
     );
 
     messages.sort((a, b) => a.sentAt.compareTo(b.sentAt));
-    return messages;
+    final base = chatSeqBase(chatId);
+    return [
+      // Positions start at 1: position 0 (base + 0) is the genesis line the
+      // repository synthesizes locally (no system messages on the wire).
+      for (final (index, message) in messages.indexed) message.copyWith(seq: base + index + 1),
+    ];
   }
 }

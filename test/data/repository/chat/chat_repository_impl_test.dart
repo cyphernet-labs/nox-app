@@ -17,6 +17,7 @@ import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/general/chat_seed_mock_data.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -47,8 +48,19 @@ void main() {
       final (chats, metadata) = (await repository.getChats(config: GetChatsConfig.firstPage())).data!;
 
       expect(chats.length, lessThanOrEqualTo(GetChatsConfig.pageSize));
-      expect(metadata.total, greaterThan(GetChatsConfig.pageSize)); // full mock set seeded
+      expect(metadata.hasMore, isTrue); // full mock set seeded - more than one page
       expect(metadata.nextPage, isNotNull);
+    });
+
+    test('seeding overlays the device-local unread badges (wire rows carry 0, contract §8.3)', () async {
+      final (chats, _) = (await repository.getChats(config: GetChatsConfig.firstPage())).data!;
+
+      // The overlay path itself: every seeded row carries exactly the local
+      // ChatSeedMockData value (0 for absent ids), incl. the 99+ cap case.
+      for (final chat in chats) {
+        expect(chat.unreadCount, ChatSeedMockData.unreadFor(chat.id), reason: '${chat.id} unread overlay');
+      }
+      expect(chats.firstWhere((c) => c.id == 'chat_4').unreadCount, 142); // the 99+ cap case, end to end
     });
 
     test('a failed envelope (success:false / null data) surfaces as RepositoryResult.error (S4)', () async {
@@ -74,7 +86,7 @@ void main() {
 
       final (none, meta) = (await repository.getChats(config: GetChatsConfig.firstPage(search: 'zzzznomatch'))).data!;
       expect(none, isEmpty);
-      expect(meta.total, 0);
+      expect(meta.hasMore, isFalse);
     });
 
     test('createChat persists a chat that appears at the top on re-query', () async {
@@ -87,8 +99,8 @@ void main() {
     });
 
     test('re-querying reads from the DB without re-seeding', () async {
-      final first = (await repository.getChats(config: GetChatsConfig.firstPage())).data!.$2.total;
-      final second = (await repository.getChats(config: GetChatsConfig.firstPage())).data!.$2.total;
+      final first = (await repository.getChats(config: GetChatsConfig.firstPage())).data!.$1.length;
+      final second = (await repository.getChats(config: GetChatsConfig.firstPage())).data!.$1.length;
       expect(second, first);
     });
   });
@@ -101,31 +113,28 @@ void main() {
 
       final (page2, meta2) = (await repository.getChats(config: GetChatsConfig.nextPage(page: 2))).data!;
       expect(page2, isNotEmpty);
-      expect(meta2.total, meta1.total); // total is stable across pages
+      expect(meta2.hasMore, isFalse); // the mock set fits in two pages
       expect(meta2.nextPage, isNull); // the mock set fits in two pages → page 2 is last
 
       final page1Ids = page1.map((c) => c.id).toSet();
       final page2Ids = page2.map((c) => c.id).toSet();
       expect(page1Ids.intersection(page2Ids), isEmpty); // the two slices do not overlap
-      expect(page1.length + page2.length, meta1.total); // the two pages cover the whole set
+      expect(page1.length + page2.length, greaterThan(GetChatsConfig.pageSize)); // both slices carry rows
     });
 
     test('walking pages to the end yields every chat exactly once and terminates at nextPage null', () async {
       final seenIds = <String>[];
       var config = GetChatsConfig.firstPage();
-      int? total;
 
       while (true) {
         final (chats, meta) = (await repository.getChats(config: config)).data!;
         seenIds.addAll(chats.map((c) => c.id));
-        total = meta.total;
         final next = meta.nextPage;
         if (next == null) break; // reached the final page
         config = GetChatsConfig.nextPage(page: next);
       }
 
-      expect(total, greaterThan(GetChatsConfig.pageSize)); // more than one page was walked
-      expect(seenIds, hasLength(total)); // no missing/duplicate rows across pages
+      expect(seenIds.length, greaterThan(GetChatsConfig.pageSize)); // more than one page was walked
       expect(seenIds.toSet(), hasLength(seenIds.length)); // every id is unique (disjoint slices)
     });
   });
@@ -161,7 +170,7 @@ void main() {
       await repository.getChats(config: GetChatsConfig.firstPage()); // seed the mock chat set
       final created = (await repository.createChat(name: 'Fresh D5 chat')).data!;
 
-      final (messages, _) = (await getIt<MessageRepository>().getMessages(config: GetMessagesConfig.firstPage(chatId: created.id))).data!;
+      final (messages, _) = (await getIt<MessageRepository>().getMessages(config: GetMessagesConfig.tail(chatId: created.id))).data!;
 
       // Only the genesis line — the generic Aria/Mox/Kit mock history is NOT seeded (countByChat>0 skips it).
       expect(messages, hasLength(1));
@@ -176,7 +185,7 @@ void main() {
       final created = (await repository.createChat(name: 'Idempotent D5 chat')).data!;
       await getIt<MessageRepository>().seedCreatedChat(chatId: created.id); // second call
 
-      final (messages, _) = (await getIt<MessageRepository>().getMessages(config: GetMessagesConfig.firstPage(chatId: created.id))).data!;
+      final (messages, _) = (await getIt<MessageRepository>().getMessages(config: GetMessagesConfig.tail(chatId: created.id))).data!;
       expect(messages, hasLength(1)); // still just the one genesis line
     });
 
@@ -186,7 +195,7 @@ void main() {
 
       final created = (await repository.createChat(name: 'Nova chat')).data!;
 
-      final (messages, _) = (await getIt<MessageRepository>().getMessages(config: GetMessagesConfig.firstPage(chatId: created.id))).data!;
+      final (messages, _) = (await getIt<MessageRepository>().getMessages(config: GetMessagesConfig.tail(chatId: created.id))).data!;
       // Renders "Chat created by Nova" — the real session label, NOT the fallback constant.
       expect(messages.single.authorLabel, 'Nova');
       expect(messages.single.authorLabel, isNot(Constants.defaultUserLabel));

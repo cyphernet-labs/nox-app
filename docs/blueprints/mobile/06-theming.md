@@ -1,6 +1,6 @@
 # 06 — Темизация и дизайн-токены
 
-> **Назначение:** канонический контракт темизации NOX — светлая и тёмная темы поверх Material 3 `ColorScheme`, сборка `AppTheme.light()/dark()`, набор классов дизайн-токенов (отзывчивые отступы на `flutter_screenutil`, цвето-инъецирующие текстовые стили, overlay-стили, пути ассетов) и поддерживающий слой `lib/general/` (Constants, PlatformUtils, форматтеры, UI-микрокопи, фиче-флаги). Цвет приходит из M3 `ColorScheme` (через `Theme.of(context).colorScheme`) и семантических доп-ролей `AppColors`-расширения темы (`context.appColors`); все прочие токены — статические классы. Сырые `Color`/`EdgeInsets`/`TextStyle`/`SystemUiOverlayStyle` в коде фич запрещены.
+> **Назначение:** канонический контракт темизации NOX — светлая и тёмная темы поверх Material 3 `ColorScheme`, сборка `AppTheme.light()/dark()`, набор классов дизайн-токенов (отзывчивый числовой масштаб на `flutter_screenutil`, семантические размерные роли, цвето-инъецирующие текстовые стили, overlay-стили) и поддерживающий слой `lib/general/` (Constants, PlatformUtils, форматтеры, доступ к l10n, фиче-флаги). Цвет приходит из M3 `ColorScheme` (через `Theme.of(context).colorScheme`) и семантических доп-ролей `AppColors`-расширения темы (`context.appColors`); все прочие токены — статические классы. Сырые `Color`/`EdgeInsets`/`TextStyle`/`SystemUiOverlayStyle` в коде фич запрещены.
 > **Когда читать:** при настройке внешнего вида приложения — сборка темы для `MaterialApp`, подключение токенов вместо «магических» значений, форматирование чисел и дат; перед реализацией любого экрана (первый реальный экран — список чатов).
 > **Связанные документы:** `05-presentation-layer.md` (где `AppTheme.light()/dark()` потребляются `MaterialApp` под управлением `AppRootBloc`, и где живёт `AppRootBloc` с `themeMode`), `00-architecture-overview.md` (раскладка single-package), `01-stack-and-tooling.md` (зависимости `flutter_screenutil`, `intl`, `flutter_svg`, `flutter_gen_runner`), `02-dependency-injection.md` (регистрация `@lazySingleton ValueFormatter`), `08-conventions-and-constitution.md` (дисциплина именования и правило «только токены»).
 >
@@ -15,8 +15,9 @@
 ```
 lib/
 ├── design/
-│   ├── app_spacing_tokens.dart         # ОТЗЫВЧИВЫЙ sN-масштаб на flutter_screenutil (.w/.h)
-│   ├── app_text_style_tokens.dart      # цвето-инъецирующие фабрики полной M3-шкалы (9 ролей, .sp)
+│   ├── app_spacing_tokens.dart         # ОТЗЫВЧИВЫЙ sN-масштаб на flutter_screenutil (.w/.h); _scale КЛАМПится 0.85–1.2
+│   ├── app_dimension_tokens.dart       # СЕМАНТИЧЕСКИЙ слой поверх sN: space/radius/border/icon/size/layout
+│   ├── app_text_style_tokens.dart      # фабрики M3-шкалы (9 ролей + monoBody, .sp) + fontSizeResolver (кламп 0.90–1.00)
 │   ├── app_overlay_style_tokens.dart   # static const SystemUiOverlayStyle (status-bar)
 │   ├── nox_icons.dart                  # семантический icon-реестр (NoxIcons → Assets.svg.icons.*)
 │   ├── gen/
@@ -27,11 +28,15 @@ lib/
 │       ├── nox_color_scheme.dart       # GENERATED: const ColorScheme noxLightScheme / noxDarkScheme
 │       ├── nox_text_theme.dart         # GENERATED: const TextTheme noxTextTheme (Roboto / Roboto Mono)
 │       ├── nox_tokens.dart             # GENERATED: NoxSpacing / NoxRadius(+bubble) / NoxElevation / NoxDuration / NoxEasing
-│       └── nox_brand.dart              # GENERATED: NoxBrand (brand-fixed colors) + noxAvatarColor / noxInitials
+│       ├── nox_brand.dart              # GENERATED-база: NoxBrand + noxAvatarColor / noxInitials; noxAccountInitials ДОПИСАН руками
+│       ├── nox_component_themes.dart   # РУКОПИСНЫЙ: per-component M3 sub-themes (AppBar / Button / TextField / …)
+│       ├── nox_opacity.dart            # РУКОПИСНЫЙ: NoxOpacity — scrim / disabled / ring
+│       └── nox_scrims.dart             # РУКОПИСНЫЙ: NoxScrims — brand-fixed чёрные скримы над живым QR-превью
 └── general/
     ├── constants.dart                  # final class Constants: конфиг, regex, размеры, railBreakpoint
     ├── platform_utils.dart             # PlatformUtils.isDesktop / isMobile / per-OS геттеры
-    ├── text_constants.dart             # abstract final TextConstants: вся UI-микрокопи (English)
+    ├── l10n_extension.dart             # extension L10nExtension on BuildContext → context.l10n (ARB, EN + UK)
+    ├── locale_controller.dart          # LocaleController: активная локаль приложения (live-переключение EN↔UK)
     ├── feature_flags.dart              # abstract final FeatureFlags: compile-time тогглы
     └── formatters/
         ├── value_formatter.dart        # @lazySingleton: locale-aware форматирование чисел (intl)
@@ -41,9 +46,9 @@ lib/
 Архитектурное решение по темизации в NOX — **generated-handoff поверх Material 3 + точечное `ThemeExtension`-расширение**:
 
 - **Палитра и типографика — не «семя» (`seed`), а явные сгенерированные схемы.** `AppTheme` собирает `ThemeData` из готового `const ColorScheme` (`noxLightScheme`/`noxDarkScheme` в `nox_color_scheme.dart`) и `const TextTheme` (`noxTextTheme` в `nox_text_theme.dart`) — оба генерируются из токенов NOX (`docs/design/system/nox-handoff/tokens`). Это **не** `ColorScheme.fromSeed`: роли вручную дотюнены под бренд (seed-teal `Color(0xFF12B4B4)` использовался только как отправная точка генерации; финальные роли — точные значения из токенов). См. §1.
-- **Семантические доп-роли, которых нет в стоковом `ColorScheme`,** живут в `ThemeExtension<AppColors>` (`app_colors.dart`) и читаются через `context.appColors`. См. §2.
-- **Не-цветовые измерения** (отзывчивые отступы, текстовые фабрики, overlay-стили, пути ассетов) — статические классы-токены `App*Tokens`. См. §4–§7.
-- **Generated non-color токены** (фиксированные dp-сетки spacing/radius/elevation + длительности/кривые анимаций) — `nox_tokens.dart`; брендовые фикс-цвета и логика аватаров — `nox_brand.dart`. См. §1.1 и §4.1.
+- **Семантические доп-роли, которых нет в стоковом `ColorScheme`,** живут в `ThemeExtension<AppColors>` (`app_colors.dart`) и читаются через `context.appColors` — **на практике это до сих пор двухполевой skeleton**. См. §2.
+- **Не-цветовые измерения** — статические классы-токены `App*Tokens`, ровно четыре: `AppSpacingTokens` (сырой отзывчивый `sN`-масштаб), `AppDimensionTokens` (семантические размерные роли поверх него), `AppTextStyleTokens` (текстовые фабрики + `fontSizeResolver`), `AppOverlayStyleTokens` (overlay-стили). См. §4–§6. **`AppImagesTokens` не существует** — пути к ассетам идут только через сгенерированный `Assets.*` (flutter_gen) и реестр `NoxIcons` (§7).
+- **Generated non-color токены** (фиксированные dp-сетки spacing/radius/elevation + длительности/кривые анимаций) — `nox_tokens.dart`; брендовые фикс-цвета и логика аватаров — `nox_brand.dart`. См. §1.1 и §4.2.
 
 > **Где живёт цвет.** Два канала: (1) **роли M3** — `Theme.of(context).colorScheme.primary/surface/...` (приходят из сгенерированного `noxLightScheme`/`noxDarkScheme`); (2) **семантические доп-роли NOX** — `context.appColors.xxx` (`AppColors`-расширение темы). Сырые `Color`-литералы в коде фич запрещены — они объявляются **только** внутри сгенерированных файлов темы (`nox_*.dart`), `app_colors.dart` (skeleton-литералы доп-ролей) и файлов токенов (`app_overlay_style_tokens.dart` с его `const Color`-литералами). Брендовые фикс-цвета (splash-фон, QR-поверхность) — отдельный случай, см. §1.1.
 
@@ -209,7 +214,7 @@ extension AppColorsExtension on BuildContext {
 }
 ```
 
-> **Состояние и план.** Текущий `AppColors` — намеренный **skeleton** с двумя полями (`surfaceMuted`, `dividerSubtle`) и raw-`Color`-литералами прямо в `Light/DarkAppColors`. Полный семантический набор доп-ролей, выведенный из `docs/design/system/nox-handoff/`, **прилетает в US4** (отмечено в комментарии кода). До тех пор большинство цветов берётся из стокового `ColorScheme` (`Theme.of(context).colorScheme`), а `AppColors` покрывает только то, чего в нём нет.
+> **Состояние (по факту кода).** `AppColors` так и остался **двухполевым skeleton'ом** (`surfaceMuted`, `dividerSubtle`) с raw-`Color`-литералами в `Light/DarkAppColors`; комментарий в коде всё ещё обещает полный набор «в US4», но полная token-driven палитра **не поставлена и владельца не имеет — на неё не планируют**. Практически расширение мертво: `context.appColors` не вызывается нигде, кроме собственного файла и `AppTheme`. Семантический цвет берут из `Theme.of(context).colorScheme`, `NoxBrand` (§1.1), `NoxScrims` и `NoxOpacity`.
 
 Для новой семантической роли добавляйте поле в `AppColors`, соответствующий параметр `copyWith`, строку в `lerp` и значения в `super(...)` обоих подклассов — **все четыре места в едином шаге**. Пропуск любого ломает либо компиляцию, либо анимацию темы. Регистрация в `ThemeData` — через `extensions:` (см. §3).
 
@@ -217,7 +222,7 @@ extension AppColorsExtension on BuildContext {
 
 ## 3. Сборка темы — `AppTheme`
 
-Один класс с приватным конструктором строит `light()` и `dark()` `ThemeData` через общий приватный `_build`. Каждая тема стартует от Material 3 базы (`useMaterial3: true`), берёт сгенерированный `ColorScheme` (§1) и `TextTheme` (§1), задаёт `scaffoldBackgroundColor` из `scheme.surface` и **регистрирует** соответствующий вариант `AppColors` (§2) через `extensions: [...]`.
+Один класс с приватным конструктором строит `light()` и `dark()` `ThemeData` через общий приватный `_build`. Каждая тема стартует от Material 3 базы (`useMaterial3: true`), берёт сгенерированный `ColorScheme` (§1) и `TextTheme` (§1), задаёт `scaffoldBackgroundColor` из `scheme.surface`, подключает **18 per-component M3 sub-тем** из рукописного `nox_component_themes.dart` и **регистрирует** соответствующий вариант `AppColors` (§2) через `extensions: [...]`.
 
 **Файл:** `lib/design/theme/app_theme.dart`
 
@@ -225,13 +230,19 @@ extension AppColorsExtension on BuildContext {
 import 'package:flutter/material.dart';
 import 'package:nox_app/design/theme/app_colors.dart';
 import 'package:nox_app/design/theme/nox_color_scheme.dart';
+import 'package:nox_app/design/theme/nox_component_themes.dart';
 import 'package:nox_app/design/theme/nox_text_theme.dart';
 
-/// NOX Material 3 theme. The `ColorScheme` and `TextTheme` come from the
+/// NOX Material 3 theme. The `ColorScheme` and base `TextTheme` come from the
 /// token-generated design-system handoff (`lib/design/theme/nox_*.dart`,
 /// regenerated from `docs/design/system/nox-handoff/tokens` — never hand-edited),
 /// so the palette is the hand-tuned NOX teal scheme, not a raw `fromSeed`.
 /// Semantic, mode-dependent extras ride along via the AppColors ThemeExtension.
+///
+/// Built FRESH each call (NOT cached): the per-component sub-themes pull responsive
+/// sizes/radii from `AppDimensionTokens`, which are only valid under `ScreenUtilInit`
+/// and must recompute per surface. `Theme.textTheme` deliberately stays the fixed-px
+/// `noxTextTheme` — responsive text is opt-in via `AppTextStyleTokens`.
 class AppTheme {
   const AppTheme._();
 
@@ -245,11 +256,20 @@ class AppTheme {
       colorScheme: scheme,
       textTheme: noxTextTheme,
       scaffoldBackgroundColor: scheme.surface,
+      // 18 stock-widget M3 sub-themes from nox_component_themes.dart:
+      appBarTheme: noxAppBarTheme(scheme),
+      filledButtonTheme: noxFilledButtonTheme(scheme),
+      inputDecorationTheme: noxInputDecorationTheme(scheme),
+      // … textButton / iconButton / segmentedButton / switch / radio / listTile /
+      //   progressIndicator / dialog / bottomSheet / card / snackBar / searchBar /
+      //   banner / badge / navigationRail
       extensions: <ThemeExtension<dynamic>>[appColors],
     );
   }
 }
 ```
+
+> **`AppTheme.light()/dark()` НЕ кэшируются.** Каждый вызов собирает `ThemeData` заново, потому что 18 sub-тем читают отзывчивые токены (`AppDimensionTokens`, зависящие от `ScreenUtil`) — закэшированный инстанс замёрзнет на размерах первой отрисованной поверхности. `nox_component_themes.dart` — **рукописный** файл (в отличие от `nox_*.dart`-генерации), собранный по `nox-handoff-2/spec/components.md`; из хэндофа его не перезаписывают.
 
 Правило синхронности светлой и тёмной темы: каждое кастомное `ThemeExtension` регистрируется в **обоих** методах (`Light*` в `light()`, `Dark*` в `dark()`). Забыть один вариант — значит получить рантайм-исключение `context.appColors` в этом режиме (из-за намеренного `!`, §2).
 
@@ -295,7 +315,7 @@ MediaQuery(                                          // (1) снаружи: уб
   data: MediaQuery.of(context).copyWith(textScaler: TextScaler.noScaling),
   child: ScreenUtilInit(                             // (2) инициализируем глобальный ScreenUtil
     designSize: Constants.designSize,                //     Size(360, 779)
-    minTextAdapt: true,                              //     текст адаптируется по меньшему фактору
+    fontSizeResolver: AppTextStyleTokens.fontSizeResolver, // (2a) ОБЯЗАТЕЛЬНО: кламп `.sp` 0.90–1.00
     builder: (context, child) => MaterialApp(
       // theme / darkTheme / themeMode / onGenerateRoute ...
       builder: (context, child) => MediaQuery(       // (3) внутри: повторно пиним textScaler = 1.0
@@ -307,18 +327,18 @@ MediaQuery(                                          // (1) снаружи: уб
 )
 ```
 
-Зачем **двойной** `MediaQuery`:
+Зачем **двойной** `MediaQuery` и обязательный резолвер:
 
 - **(1) внешний `TextScaler.noScaling`** — отключает системную настройку «размер шрифта» (OS accessibility) для всего поддерева: размер текста задаёт только наш дизайн-скейл, а не ОС. Без этого пользователь с крупным системным шрифтом ломал бы вёрстку.
+- **(2a) `fontSizeResolver: AppTextStyleTokens.fontSizeResolver`** — **обязателен на КАЖДОМ `ScreenUtilInit`: и в приложении (`AppRoot`), и в тестовом харнессе (`test/utils/pump_app.dart` + голден-хелперы).** Дефолтный резолвер `flutter_screenutil` считает масштаб **только по ширине и без верхней границы**: при дизайн-ширине 360 окно 1440 даёт фактор 4.0, и `16.sp` отрисуется ~64dp — «десктопный шар». Наш резолвер берёт то же усреднённое `(scaleWidth + scaleHeight) / 2`, что и `AppSpacingTokens`, но зажимает его в `[0.90, 1.00]`. `minTextAdapt` при заданном резолвере — **мёртвый no-op**, его не выставляют.
 - **(3) внутренний `TextScaler.linear(1.0)`** — `MaterialApp` переустанавливает `MediaQuery` для своего поддерева, поэтому масштаб `1.0` пинится ещё раз уже **внутри** `MaterialApp.builder`, чтобы OS-масштаб не «вернулся» ни на одном экране.
-- **`minTextAdapt: true`** — заставляет `ScreenUtil().scaleText` брать меньший из факторов width/height (а не только width), чтобы текст не раздувался на узких/высоких экранах.
 
-**Два источника скейла** (умышленно разные):
+**Два источника скейла** (умышленно разные, оба зажаты):
 
-| Токены | Источник `_scale` | Почему так |
-|---|---|---|
-| `AppSpacingTokens.sN` (§4) | `(1.w + 1.h) / 2` — **среднее** факторов width и height | отступы/размеры контейнеров масштабируются сбалансированно по обеим осям |
-| `AppTextStyleTokens` (§5) | `.sp` (учитывает `minTextAdapt`) | типографика масштабируется консервативнее, по меньшему фактору |
+| Токены | Источник `_scale` | Кламп | Почему так |
+|---|---|---|---|
+| `AppSpacingTokens.sN` (§4) | `(1.w + 1.h) / 2` — **среднее** факторов width и height | `0.85–1.2` | отступы/размеры контейнеров масштабируются сбалансированно по обеим осям, но не раздуваются на широком окне |
+| `AppTextStyleTokens` (§5) | `.sp` через `fontSizeResolver` (то же усреднение) | `0.90–1.00` | потолок ровно `1.0`: типографика **никогда не растёт** на широком окне и сходится с фикс-px `noxTextTheme` |
 
 > **Важно.** `_scale` валиден только **после** того, как `ScreenUtilInit` отработал в дереве, поэтому к `AppSpacingTokens.sN` / `AppTextStyleTokens.xxx()` обращаются только внутри `build`-методов под `AppRoot` — никогда в top-level `static`-инициализаторах или до `runApp`. Поэтому токен-классы используют **геттеры** (`static double get sN`), а не `static const`-поля.
 
@@ -330,44 +350,72 @@ MediaQuery(                                          // (1) снаружи: уб
 
 ## 4. Дизайн-токены — отзывчивые отступы (`AppSpacingTokens`)
 
-Токены отступов — **отзывчивый `sN`-масштаб**: каждое значение умножается на `_scale`, выведенный из `flutter_screenutil` (среднее `1.w` и `1.h`; полный механизм скейла — §3.2). Это даёт пропорциональные отступы на разных размерах экранов при дизайн-размере `360x779`. Именование: `sN`, где `N` — базовое пиксельное значение. Все `EdgeInsets`/`SizedBox`/`gap` в коде фич ссылаются на токен, а не на литерал. Класс — `abstract final class` с приватным `const`-конструктором и **геттерами** (значения вычисляются лениво при каждом обращении, уже после `ScreenUtilInit`).
+Токены отступов — **отзывчивый `sN`-масштаб**: каждое значение умножается на `_scale`, выведенный из `flutter_screenutil` (среднее `1.w` и `1.h`, **зажатое в `0.85–1.2`**; полный механизм скейла — §3.2). Кламп несущий: сырой фактор мобиле-центричен (дизайн-ширина 360), поэтому на десктопном окне 1280 `1.w ≈ 3.6` раздуло бы каждый токен примерно в 2.4 раза. На дизайн-канве 360 масштаб равен `1.0` (голдены не двигаются). Это даёт пропорциональные отступы на разных размерах экранов при дизайн-размере `360x779`. Именование: `sN`, где `N` — базовое пиксельное значение. Все `EdgeInsets`/`SizedBox`/`gap` в коде фич ссылаются на токен, а не на литерал. Класс — `abstract final class` с приватным `const`-конструктором и **геттерами** (значения вычисляются лениво при каждом обращении, уже после `ScreenUtilInit`).
 
 **Файл:** `lib/design/app_spacing_tokens.dart`
 
 ```dart
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
-/// Responsive spacing scale. Each step is the design-px value scaled by
-/// flutter_screenutil (`.w`/`.h`), so it adapts to device width.
+/// Responsive numeric scale. Each step is the design-px value scaled by
+/// flutter_screenutil, so it adapts to device size. The semantic layer
+/// (`AppDimensionTokens`) references these by name — UI code should prefer the
+/// semantic roles and use raw `sN` only for one-off gaps.
 abstract final class AppSpacingTokens {
   const AppSpacingTokens._();
 
   // Mean of width/height scale factors, so spacing stays balanced on extreme
   // aspect ratios (desktop/landscape), not just width-driven (blueprint 06 §4).
-  static double get _scale => (1.w + 1.h) / 2;
+  // CLAMPED: the raw ScreenUtil factor is mobile-centric (designSize 360 wide),
+  // so on a wide desktop window `1.w` blows up and would balloon every token.
+  static double get _scale => ((1.w + 1.h) / 2).clamp(0.85, 1.2).toDouble();
 
+  static double get s0 => 0;
+  static double get s1 => 1 * _scale;
+  static double get s1_5 => 1.5 * _scale;
   static double get s4 => 4 * _scale;
   static double get s8 => 8 * _scale;
-  static double get s12 => 12 * _scale;
   static double get s16 => 16 * _scale;
-  static double get s24 => 24 * _scale;
-  static double get s28 => 28 * _scale;
-  static double get s32 => 32 * _scale;
+  // … непрерывная лестница до s300 (см. lib/design/app_spacing_tokens.dart)
+
+  /// Fully-rounded radius marker (radius.pill) — a large UNSCALED constant.
+  static double get s999 => 999;
 }
 ```
 
-Использование:
+Использование — **предпочтительно через семантический слой** (§4.1), сырой `sN` только для разовых зазоров:
 
 ```dart
 Padding(
-  padding: EdgeInsets.all(AppSpacingTokens.s16),
+  padding: EdgeInsets.all(AppDimensionTokens.space.lg),
   child: SizedBox(height: AppSpacingTokens.s32),
 );
 ```
 
-> Текущий набор намеренно узкий (`s4`..`s32`). Шаги добавляются по мере появления реальных макетов — не «про запас».
+> Набор разросся вместе с реальными макетами (`s0`, `s1`, `s1_5`, `s2` … `s300` плюс немасштабируемый маркер `s999`). Новые шаги добавляются по факту появления макета — не «про запас».
 
-### 4.1 Generated non-color токены — `nox_tokens.dart`
+### 4.1 Семантический слой размеров — `AppDimensionTokens`
+
+`AppSpacingTokens` — это **сырая лестница чисел**; смысл размерам придаёт `lib/design/app_dimension_tokens.dart`. Каждая семантическая роль ссылается на шаг `sN` **по имени** (никаких свободных чисел), доступ — сгруппированный: `AppDimensionTokens.space.md`, `.radius.lg`, `.border.hairline`, `.icon.base`, `.size.hitTarget`, `.layout.sideSheetW`. Роли — геттеры (значения отзывчивые), поэтому обращаться к ним можно только внутри `build` под `ScreenUtilInit`.
+
+**Файл:** `lib/design/app_dimension_tokens.dart`
+
+```dart
+abstract final class AppDimensionTokens {
+  const AppDimensionTokens._();
+
+  static const AppSpaceTokens space = AppSpaceTokens._();
+  static const AppRadiusTokens radius = AppRadiusTokens._();
+  static const AppBorderTokens border = AppBorderTokens._();
+  static const AppIconTokens icon = AppIconTokens._();
+  static const AppSizeTokens size = AppSizeTokens._();
+  static const AppLayoutTokens layout = AppLayoutTokens._();
+}
+```
+
+> **`layout.*` — намеренное исключение: НЕ масштабируется.** В отличие от остальных групп роли `AppLayoutTokens` (`dialogMaxW` 460, `sideSheetW` 380, `settingsMaxW` 680, `threadReadingColumnW` 980, `chatsListPaneW` 360, …) — это плоские дизайн-px константы: они ограничивают длину строки и ширину панелей ради читаемости, и рост на широком экране убил бы их смысл.
+
+### 4.2 Generated non-color токены — `nox_tokens.dart`
 
 Параллельно `App*Tokens` существует сгенерированный из дизайн-токенов набор **фиксированных (не-скейленных)** не-цветовых констант — `nox_tokens.dart`. Они генерируются из `tokens/{spacing,shape,elevation,motion}.tokens.json` и **не редактируются руками**.
 
@@ -404,13 +452,13 @@ abstract final class NoxEasing    { /* standard / emphasized / emphasizedDeceler
 
 `NoxRadius.bubble({required bool isOwn})` — NOX-специфика: бабл сообщения скругляется ассиметрично (нижний правый угол у своих, нижний левый у чужих клипуется до `xs`) вместо «хвостика». `NoxDuration`/`NoxEasing` — M3-длительности и кривые (splash — one-shot, без зацикленных анимаций).
 
-> **`NoxSpacing` (фиксированные dp) vs `AppSpacingTokens` (отзывчивые `.w/.h`) — два параллельных набора.** `NoxSpacing` несёт «сырые» дизайн-значения на 4dp-сетке (плюс семантику `screenPadding`/`minTapTarget`), `AppSpacingTokens` — те же шаги, но домноженные на `_scale` для адаптива. В коде фич канонический отступной канал — `AppSpacingTokens` (адаптив). `NoxSpacing` уместен для контекстов, где скейл нежелателен (например, `minTapTarget` — гарантированные 48dp). Эта дубликация (одни и те же базовые шаги в двух классах) — **точка, которую нужно свести** при разрастании UI; до тех пор выбирайте по правилу выше. Радиусы/elevation/motion-токены конфликта не имеют — они только в `nox_tokens.dart`.
+> **`NoxSpacing` (фиксированные dp) vs `AppSpacingTokens` (отзывчивые `.w/.h`) — два параллельных набора.** `NoxSpacing` несёт «сырые» дизайн-значения на 4dp-сетке (плюс семантику `screenPadding`/`minTapTarget`), `AppSpacingTokens` — те же шаги, но домноженные на зажатый `_scale` для адаптива. В коде фич канонический отступной канал — семантические роли `AppDimensionTokens.*` (§4.1) поверх `AppSpacingTokens`. `NoxSpacing` уместен для контекстов, где скейл нежелателен (например, `minTapTarget` — гарантированные 48dp). Эта дубликация (одни и те же базовые шаги в двух классах) — **точка, которую нужно свести** при разрастании UI; до тех пор выбирайте по правилу выше. Радиусы/elevation/motion-токены конфликта не имеют — они только в `nox_tokens.dart`.
 
 ---
 
 ## 5. Дизайн-токены — текстовые стили (`AppTextStyleTokens`)
 
-Канонический type scale NOX — это сгенерированный `noxTextTheme` (§1), доступный через `Theme.of(context).textTheme.*` (`bodyMedium`, `titleMedium`, …). `AppTextStyleTokens` — **фабрики цвето-инъекции** поверх него: по фабрике на каждую из 9 ролей M3-шкалы (`displaySmall`, `headlineSmall`, `titleLarge`, `titleMedium`, `bodyLarge`, `bodyMedium`, `labelLarge`, `labelMedium`, `labelSmall`), где удобнее задать цвет на месте вызова: каждый метод принимает обязательный `Color color` и масштабирует `fontSize` через `.sp` (учитывает `minTextAdapt`, §3.2). Цвет не зашит в стиль — он передаётся на месте вызова (обычно из `context.appColors.xxx` или `Theme.of(context).colorScheme.*`), что делает стиль независимым от темы. Класс — `abstract final class` с приватным `const`-конструктором.
+Канонический type scale NOX — это сгенерированный `noxTextTheme` (§1), доступный через `Theme.of(context).textTheme.*` (`bodyMedium`, `titleMedium`, …). `AppTextStyleTokens` — **фабрики цвето-инъекции** поверх него: по фабрике на каждую из 9 ролей M3-шкалы (`displaySmall`, `headlineSmall`, `titleLarge`, `titleMedium`, `bodyLarge`, `bodyMedium`, `labelLarge`, `labelMedium`, `labelSmall`), где удобнее задать цвет на месте вызова: плюс отдельная фабрика `monoBody` (Roboto Mono — длинная строка идентификатора). Каждый метод принимает обязательный `Color color` и масштабирует `fontSize` через `.sp`, который глобально зажат `fontSizeResolver`-ом этого же класса (§3.2). Цвет не зашит в стиль — он передаётся на месте вызова (обычно из `context.appColors.xxx` или `Theme.of(context).colorScheme.*`), что делает стиль независимым от темы. Класс — `abstract final class` с приватным `const`-конструктором.
 
 **Файл:** `lib/design/app_text_style_tokens.dart`
 
@@ -424,12 +472,26 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 abstract final class AppTextStyleTokens {
   const AppTextStyleTokens._();
 
+  /// Clamp band for the global font scale. The ceiling is 1.0 — type NEVER grows on a
+  /// wide window — so the `.sp` tokens converge with the fixed-px noxTextTheme there.
+  static const double fontScaleMin = 0.90;
+  static const double fontScaleMax = 1.00;
+
+  /// Register on EVERY ScreenUtilInit (app + test harness). screenutil's DEFAULT
+  /// resolver is width-only with NO upper bound: at design width 360 a 1440-wide
+  /// window yields 4.0, so `16.sp` would render at 64dp — the desktop "balloon".
+  static double fontSizeResolver(num fontSize, ScreenUtil instance) {
+    final scale = ((instance.scaleWidth + instance.scaleHeight) / 2).clamp(fontScaleMin, fontScaleMax);
+    return (fontSize * scale).toDouble();
+  }
+
   static TextStyle displaySmall({required Color color}) =>
       TextStyle(fontSize: 36.sp, fontWeight: FontWeight.w400, letterSpacing: 0, color: color);
   static TextStyle titleMedium({required Color color}) =>
       TextStyle(fontSize: 16.sp, fontWeight: FontWeight.w500, letterSpacing: 0.15, color: color);
   // … 9 roles: displaySmall/headlineSmall/titleLarge/titleMedium/bodyLarge/bodyMedium/
-  //   labelLarge/labelMedium/labelSmall — see lib/design/app_text_style_tokens.dart
+  //   labelLarge/labelMedium/labelSmall + monoBody (fontFamily: noxMonoFamily)
+  //   — see lib/design/app_text_style_tokens.dart
 }
 ```
 
@@ -442,9 +504,9 @@ Text(item.displayName, style: AppTextStyleTokens.bodyMedium(color: context.appCo
 Text(item.displayName, style: Theme.of(context).textTheme.bodyMedium);
 ```
 
-> **Семейства шрифтов.** Реальная типографика NOX — `Roboto` (sans) и `Roboto Mono` (моноширинный, для ID/ключей) — приходит из сгенерированного `noxTextTheme` (§1). Фабрики `AppTextStyleTokens` семейство явно не задают (наследуют дефолт темы); для моноширинных мест используйте слот темы либо `fontFamily: noxMonoFamily` из `nox_text_theme.dart`. Семейства **забандлены** (`Roboto` 400/500/700 + `Roboto Mono` 400) в секции `fonts:` `pubspec.yaml` — см. `01-stack-and-tooling.md`.
+> **Семейства шрифтов.** Реальная типографика NOX — `Roboto` (sans) и `Roboto Mono` (моноширинный, для ID/ключей) — приходит из сгенерированного `noxTextTheme` (§1). Фабрики `AppTextStyleTokens` семейство явно не задают (наследуют дефолт темы) — **единственное исключение — `monoBody`**, которое ставит `fontFamily: noxMonoFamily` из `nox_text_theme.dart` для длинной строки идентификатора. Семейства **забандлены** (`Roboto` 400/500/700 + `Roboto Mono` 400) в секции `fonts:` `pubspec.yaml` — см. `01-stack-and-tooling.md`.
 >
-> **План.** Набор покрывает все 9 ролей `noxTextTheme`; дополнительные хелперы (`extension on TextStyle` с `withMonospace`/`withPrimaryColor` и т.п.) добавляются при появлении реальной потребности.
+> **План.** Набор покрывает все 9 ролей `noxTextTheme` плюс `monoBody`; дополнительные хелперы (`extension on TextStyle` с `withMonospace`/`withPrimaryColor` и т.п.) добавляются при появлении реальной потребности.
 
 ---
 
@@ -491,14 +553,14 @@ abstract final class AppOverlayStyleTokens {
 
 **Забандленные наборы (`assets/`, перечислены в `pubspec.yaml::flutter.assets`):**
 
-- `assets/svg/icons/` — 37 SVG Material Symbols Rounded (`currentColor`); семантический доступ — `NoxIcons` (§7.1).
+- `assets/svg/icons/` — 43 SVG Material Symbols Rounded (`currentColor`); семантический доступ — `NoxIcons` (§7.1). Бандл ушёл вперёд корпуса `nox-assets/` (его README и `manifest.json` всё ещё говорят про 37) — считайте по факту содержимого `assets/`.
 - `assets/svg/illustrations/` — 3 плейсхолдера пустых состояний (`Assets.svg.illustrations.emptyChats` / `.emptyMessages` / `.emptyFiles`).
 - `assets/png/logo.png` — бренд-логотип (растровый плейсхолдер, splash) — `Assets.png.logo`.
 - `assets/fonts/*.ttf` — `Roboto` 400/500/700 + `Roboto Mono` 400 (объявлены в `fonts:`, см. §1/§5).
 
 ### 7.1 Семантический icon-реестр — `NoxIcons`
 
-**Файл (рукописный):** `lib/design/nox_icons.dart`. `abstract final class NoxIcons` с именованными геттерами, **ссылающимися** на flutter_gen-аксессоры `Assets.svg.icons.*` (без сырых строк путей). Несёт семантику и ось FILL из `nox-assets/icons/icons.json`: outlined/filled — это `name.svg` / `name-fill.svg` (`forum`/`forumFill`, `settings`/`settingsFill`, `sendFill`, `flashlightOnFill`/`flashlightOff`, …). Покрывает 35 используемых глифов; 2 забандленных-но-неиспользуемых outlined-варианта (`flashlight_on.svg`, `send.svg` — их единственная используемая форма — filled) доступны через `Assets.svg.icons.*`, но в реестр не входят. Иконки перекрашиваются цветом темы на месте вызова (`currentColor`, цвет не зашит):
+**Файл (рукописный):** `lib/design/nox_icons.dart`. `abstract final class NoxIcons` с именованными геттерами, **ссылающимися** на flutter_gen-аксессоры `Assets.svg.icons.*` (без сырых строк путей). Несёт семантику и ось FILL из `nox-assets/icons/icons.json`: outlined/filled — это `name.svg` / `name-fill.svg` (`forum`/`forumFill`, `settings`/`settingsFill`, `sendFill`, `flashlightOnFill`/`flashlightOff`, …). Из 43 забандленных SVG реестр выставляет 41 геттер; оставшиеся outlined-варианты, чья используемая форма — filled (`flashlight_on.svg`, `send.svg`), доступны через `Assets.svg.icons.*`, но в реестр не входят. Иконки перекрашиваются цветом темы на месте вызова (`currentColor`, цвет не зашит):
 
 ```dart
 NoxIcons.forum.svg(colorFilter: ColorFilter.mode(cs.onSurfaceVariant, BlendMode.srcIn));
@@ -529,6 +591,11 @@ final class Constants {
   static const databaseName = 'nox_app_db';
   static const defaultLocale = 'en_US';
 
+  /// Placeholder display label assigned before a real one is known (the server
+  /// assigns `User<random>` at first login). Single source for the shell avatar,
+  /// Settings and the Set-username default — keep these in lockstep.
+  static const String defaultUserLabel = 'User7421';
+
   /// UI
   static const defaultNavTransitionTimeMilliseconds = 300;
   static const preventDoubleNavDelayMilliseconds = 300;
@@ -549,7 +616,7 @@ final class Constants {
 
 ### 8.2 PlatformUtils
 
-Оборачивает проверки `dart:io` `Platform` за маленьким статическим хелпером — платформенное ветвление централизовано и легко грепается. На мобильных таргетах основной путь — `isMobile`; десктоп-геттеры (`isDesktop` / `isMacOS` / …) используются на десктопных таргетах (Windows/Linux/macOS), которые входят в scope (конституция v1.1.0).
+Оборачивает проверки `dart:io` `Platform` за маленьким статическим хелпером — платформенное ветвление централизовано и легко грепается. На мобильных таргетах основной путь — `isMobile`; десктоп-геттеры (`isDesktop` / `isMacOS` / …) используются на десктопных таргетах (Windows/Linux/macOS), которые входят в scope (конституция v1.3.0, принцип VI — паритет mobile↔desktop).
 
 **Файл:** `lib/general/platform_utils.dart`
 
@@ -573,33 +640,32 @@ class PlatformUtils {
 
 ### 8.3 UI-микрокопи и фиче-флаги
 
-#### 8.3.0 TextConstants — единый источник UI-строк (English)
+#### 8.3.0 UI-строки — ARB + `context.l10n` (`TextConstants` УДАЛЁН)
 
-Вся пользовательская микрокопи держится в одном `abstract final class` — никаких строковых литералов копи в виджетах. Класс **migration-ready** под ARB + `flutter_localizations` (отдельная i18n-фича). По языковой дисциплине NOX UI-строки — **English** даже в этом русскоязычном документе (языки приложения — English + Ukrainian; русский UI-языком не бывает).
+Вся пользовательская микрокопи живёт в ARB-файлах и достаётся через сгенерированный `AppLocalizations`. **Рукописного `lib/general/text_constants.dart` больше нет** — класс `TextConstants` удалён вместе с миграцией на l10n; любой упоминающий его код или док устарел. Строковых литералов копи в виджетах по-прежнему нет.
 
-**Файл:** `lib/general/text_constants.dart`
+- **Источник:** `lib/l10n/app_en.arb` + `lib/l10n/app_uk.arb` — **140 ключей с идентичными наборами ключей**; новая строка обязана появиться в **обоих** файлах.
+- **Конфиг:** `flutter: generate: true` в `pubspec.yaml` + `l10n.yaml` (`arb-dir: lib/l10n`, template `app_en.arb`, `output-class: AppLocalizations`, `nullable-getter: false`). Сгенерированный `app_localizations*.dart` — **gitignored**, поэтому после правки ARB и на свежем клоне обязателен `fvm flutter gen-l10n` (входит в `make generate`).
+- **Доступ:** `lib/general/l10n_extension.dart` даёт `extension L10nExtension on BuildContext` → виджеты читают копи как `context.l10n.chats`.
+- **Живое переключение:** `LocaleController` (`lib/general/locale_controller.dart`) держит активный язык и через `MaterialApp.locale` переключает EN↔UK без рестарта.
+
+**Файл:** `lib/general/l10n_extension.dart`
 
 ```dart
-/// All user-facing strings (English). No literal copy in widgets.
-/// Migration-ready for ARB + flutter_localizations (separate i18n feature).
-abstract final class TextConstants {
-  const TextConstants._();
+import 'package:flutter/widgets.dart';
+import 'package:nox_app/l10n/app_localizations.dart';
 
-  static const String appName = 'NOX';
-
-  // App shell destinations (FR-004)
-  static const String chats = 'Chats';
-  static const String settings = 'Settings';
-
-  // Generic states
-  static const String errorGeneralTitle = 'Something went wrong';
-  static const String actionTryAgain = 'Try again';
-  static const String noData = 'Nothing here yet';
-  static const String comingSoon = 'Coming soon';
+/// Shorthand for `AppLocalizations.of(context)` so widgets read localized copy as
+/// `context.l10n.chats`. All user-facing strings live in the ARB (`lib/l10n/*.arb`,
+/// EN + UK) and are reached through these generated getters.
+extension L10nExtension on BuildContext {
+  AppLocalizations get l10n => AppLocalizations.of(this);
 }
 ```
 
-`chats`/`settings` — лейблы двух destination'ов оболочки NOX (нижний бар / `NavigationRail`), профиля-экрана нет (см. NOX product model).
+Языки приложения — ровно `en` и `uk` (системный по умолчанию, фолбэк на английский); **русский UI-языком не бывает** — он только язык внутренних доков и спек. `context.l10n.chats` / `context.l10n.settings` — лейблы двух destination'ов оболочки NOX (нижний бар / `NavigationRail`), профиля-экрана нет (см. NOX product model).
+
+В тестах копи проверяется через файловый `final l10nEn = AppLocalizationsEn();`, а `pumpApp` пинит `locale: Locale('en')` — никаких сырых литералов в ассертах.
 
 #### 8.3.1 FeatureFlags — compile-time тогглы
 
@@ -761,14 +827,15 @@ void main() {
 
 В коде фич (`lib/presentation/`) **запрещены** сырые конструкции внешнего вида:
 
-- сырой `Color(...)` / `Colors.xxx` → только `Theme.of(context).colorScheme.xxx` (роли M3) или `context.appColors.xxx` (семантические доп-роли) — единственные каналы цвета;
-- сырой `EdgeInsets`/`SizedBox` с числовым литералом → только `AppSpacingTokens.sN` (или фиксированные `NoxSpacing.*`, где скейл нежелателен);
+- сырой `Color(...)` / `Colors.xxx` → только `Theme.of(context).colorScheme.xxx` (роли M3), `NoxBrand.*` (бренд-фикс), `NoxScrims.*` (скримы над QR-камерой), `NoxOpacity.*` (альфы поверх ролей) или `context.appColors.xxx` (двухполевой skeleton, §2) — единственные каналы цвета;
+- сырой `EdgeInsets`/`SizedBox` с числовым литералом → только семантические роли `AppDimensionTokens.*` (предпочтительно), сырой шаг `AppSpacingTokens.sN` для разовых зазоров, или фиксированные `NoxSpacing.*`, где скейл нежелателен;
 - сырой `TextStyle(...)` → только `Theme.of(context).textTheme.*` (`noxTextTheme`) или фабрики `AppTextStyleTokens.xxx(...)`;
 - сырой `SystemUiOverlayStyle(...)` → только `AppOverlayStyleTokens.xxx` (по канону §6.1);
-- строковый путь ассета прямо в `Image.asset('...')` → только сгенерированный `Assets.*` (flutter_gen, канонический) либо `AppImagesTokens.xxx` (переходный, §7);
+- строковый путь ассета прямо в `Image.asset('...')` → только сгенерированный `Assets.*` (flutter_gen) либо семантический `NoxIcons.*` (§7); **`AppImagesTokens` не существует** — это правило проверяется тестом-гардом, который валит сборку на любой сырой строке `'assets/…'` в `lib/` вне `design/gen/`;
+- сырая копи в виджете (`Text('Chats')`) → только `context.l10n.<key>` (ARB EN + UK, §8.3.0);
 - `.sp`/`.w`/`.h`/`.r`-extension'ы `flutter_screenutil` напрямую в коде фич — **нет**; только внутри классов-токенов.
 
-Единственные легитимные места объявления сырых значений цвета — сгенерированные файлы темы (`lib/design/theme/nox_*.dart`), файл доп-ролей (`app_colors.dart` — skeleton-литералы) и файлы токенов (`lib/design/app_*_tokens.dart`, например `AppOverlayStyleTokens` с его `const Color`-литералами). Это правило закреплено в `08-conventions-and-constitution.md` и проверяется на ревью.
+Единственные легитимные места объявления сырых значений цвета — сгенерированные файлы темы (`lib/design/theme/nox_*.dart`), файл доп-ролей (`app_colors.dart` — skeleton-литералы) и файлы токенов (`lib/design/app_*_tokens.dart`, например `AppOverlayStyleTokens` с его `const Color`-литералами). Это правило закреплено в `08-conventions-and-constitution.md`, проверяется на ревью, а его ассетная часть — тестом `test/design/single_channel_guard_test.dart`.
 
 ---
 
@@ -778,7 +845,7 @@ void main() {
 
 ```dart
 import 'package:flutter/material.dart';
-import 'package:nox_app/design/app_spacing_tokens.dart';
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_text_style_tokens.dart';
 import 'package:nox_app/design/theme/app_colors.dart';
 import 'package:nox_app/general/formatters/date_formatter.dart';
@@ -789,7 +856,7 @@ import 'package:nox_app/domain/model/item/item_model.dart';
 Widget buildItemRow(BuildContext context, ItemModel item) {
   final scheme = Theme.of(context).colorScheme;
   return Container(
-    padding: EdgeInsets.all(AppSpacingTokens.s12),
+    padding: EdgeInsets.all(AppDimensionTokens.space.md),
     decoration: BoxDecoration(
       color: context.appColors.surfaceMuted,
       border: Border(bottom: BorderSide(color: context.appColors.dividerSubtle)),
@@ -797,16 +864,16 @@ Widget buildItemRow(BuildContext context, ItemModel item) {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(item.displayName, style: AppTextStyleTokens.title(color: scheme.onSurface)),
-        SizedBox(height: AppSpacingTokens.s8),
+        Text(item.displayName, style: AppTextStyleTokens.titleMedium(color: scheme.onSurface)),
+        SizedBox(height: AppDimensionTokens.space.sm),
         Text(
           getIt<ValueFormatter>().format(value: 1234.5, precision: 2),
-          style: AppTextStyleTokens.body(color: scheme.onSurface),
+          style: AppTextStyleTokens.bodyMedium(color: scheme.onSurface),
         ),
-        SizedBox(height: AppSpacingTokens.s4),
+        SizedBox(height: AppDimensionTokens.space.micro),
         Text(
           DateFormatter.short(item.createdAt),
-          style: AppTextStyleTokens.caption(color: scheme.onSurfaceVariant),
+          style: AppTextStyleTokens.labelSmall(color: scheme.onSurfaceVariant),
         ),
       ],
     ),
@@ -814,7 +881,7 @@ Widget buildItemRow(BuildContext context, ItemModel item) {
 }
 ```
 
-(`item.displayName` — extension-getter `ItemModelExt` поверх `@freezed ItemModel`; см. `03-domain-layer.md`.)
+(`item.displayName` — extension-getter `ItemModelExt` поверх `@freezed ItemModel`; см. `03-domain-layer.md`. **`ItemModel` — это замороженный верификационный слайс `Item`, а не продуктовая модель**: он взят здесь только как нейтральный носитель полей для примера токенов; продуктовые экраны строятся на `ChatModel`/`MessageModel`.)
 
 ---
 
@@ -827,17 +894,19 @@ Widget buildItemRow(BuildContext context, ItemModel item) {
 - [ ] `lib/design/theme/nox_tokens.dart` (GENERATED): `NoxSpacing` (4dp + `screenPadding`/`minTapTarget`), `NoxRadius` (none..full + `bubble({required bool isOwn})`), `NoxElevation` (level0..level5), `NoxDuration`, `NoxEasing`.
 - [ ] `lib/design/theme/nox_brand.dart` (GENERATED): `NoxBrand` (brand-fixed: teal/canvasDark/qrSurface/qrInk/…), `noxAvatarPalette` (8), `noxAvatarColor`/`noxInitials`; продуктовые исключения — splash всегда тёмный (`canvasDark`), QR всегда светлый (`qrSurface`/`qrInk`).
 - [ ] `lib/design/theme/app_colors.dart`: `AppColors extends ThemeExtension<AppColors>` (skeleton `{surfaceMuted, dividerSubtle}`, полный набор — US4), `copyWith` + `lerp` (пролерплено КАЖДОЕ поле), `LightAppColors`/`DarkAppColors`, `extension AppColorsExtension on BuildContext` с намеренным `!`; НЕТ публичного `AppColorsTokens`.
-- [ ] `lib/design/theme/app_theme.dart`: `const AppTheme._()` + `static ThemeData light()/dark()` через `_build(ColorScheme scheme, AppColors appColors)` (`useMaterial3: true`, `colorScheme: scheme`, `textTheme: noxTextTheme`, `scaffoldBackgroundColor: scheme.surface`, `extensions: [appColors]`); НЕТ `colorSchemeSeed`/`_PaletteColors`.
+- [ ] `lib/design/theme/app_theme.dart`: `const AppTheme._()` + `static ThemeData light()/dark()` через `_build(ColorScheme scheme, AppColors appColors)` (`useMaterial3: true`, `colorScheme: scheme`, `textTheme: noxTextTheme`, `scaffoldBackgroundColor: scheme.surface`, 18 sub-тем из `nox_component_themes.dart`, `extensions: [appColors]`); собирается **заново на каждый вызов** (не кэшируется); НЕТ `colorSchemeSeed`/`_PaletteColors`.
 - [ ] Инвариант: единая M3 тема из одного teal-seed на всех 5 платформах (iOS/Android/Windows/Linux/macOS); `yaru`/desktop-темы не используются. Desktop `NavigationRail` берёт цвета из стокового `secondaryContainer`/`onSecondaryContainer`.
 - [ ] `MaterialApp` подключён: `theme: AppTheme.light()`, `darkTheme: AppTheme.dark()`, `themeMode: state.themeMode` из `AppRootBloc` (одновариантный `@freezed AppRootState` с полем `themeMode`, см. `05-presentation-layer.md`).
-- [ ] `lib/design/app_spacing_tokens.dart`: `abstract final class` с приватным `const`-ctor, геттеры `s4`..`s32` = `N * _scale`, `_scale => (1.w + 1.h) / 2`.
-- [ ] `lib/design/app_text_style_tokens.dart`: `abstract final class` с приватным `const`-ctor, фабрики `body`/`title`/`caption({required Color color})` через `.sp`; канонический type scale — `noxTextTheme` из темы.
-- [ ] UI-скейл (§3.2): `AppRoot` оборачивает `MaterialApp` в `ScreenUtilInit(designSize: Constants.designSize` = `Size(360, 779)`, `minTextAdapt: true)` + двойной `MediaQuery` (`TextScaler.noScaling` снаружи + `TextScaler.linear(1.0)` внутри `builder`); `.sp`/`.w`/`.h`/`.r` — только внутри токен-классов, не в коде фич; `flutter_screenutil: 5.9.3`.
+- [ ] `lib/design/app_spacing_tokens.dart`: `abstract final class` с приватным `const`-ctor, геттеры `sN = N * _scale` (лестница `s0`…`s300` + немасштабируемый `s999`), `_scale => ((1.w + 1.h) / 2).clamp(0.85, 1.2).toDouble()` — **кламп обязателен**, без него десктопное окно раздувает все токены.
+- [ ] `lib/design/app_dimension_tokens.dart`: семантический слой поверх `sN` — группы `space`/`radius`/`border`/`icon`/`size`/`layout`, каждая роль ссылается на шаг **по имени**; `layout.*` намеренно **не масштабируется** (плоские дизайн-px кэпы ширины). **`AppImagesTokens` не существует** — четвёртый токен-класс это `AppDimensionTokens`.
+- [ ] `lib/design/app_text_style_tokens.dart`: `abstract final class` с приватным `const`-ctor, фабрики на все 9 ролей M3 (`displaySmall`…`labelSmall`) + `monoBody`, каждая `({required Color color})` через `.sp`; плюс `fontSizeResolver` и полоса `fontScaleMin` 0.90 / `fontScaleMax` 1.00; канонический type scale — `noxTextTheme` из темы.
+- [ ] UI-скейл (§3.2): `AppRoot` оборачивает `MaterialApp` в `ScreenUtilInit(designSize: Constants.designSize` = `Size(360, 779)`, `fontSizeResolver: AppTextStyleTokens.fontSizeResolver)` + двойной `MediaQuery` (`TextScaler.noScaling` снаружи + `TextScaler.linear(1.0)` внутри `builder`); `.sp`/`.w`/`.h`/`.r` — только внутри токен-классов, не в коде фич; `flutter_screenutil: 5.9.3`.
+- [ ] **`fontSizeResolver` передан на КАЖДОМ `ScreenUtilInit`** — и в `AppRoot`, и в тестовом харнессе (`test/utils/pump_app.dart` + голден-хелперы). Без него дефолтный width-only резолвер отрисует `16.sp` ~64dp в окне 1440. `minTextAdapt` при заданном резолвере — мёртвый no-op, не выставляется.
 - [ ] `lib/design/app_overlay_style_tokens.dart`: `abstract final class`, `static const SystemUiOverlayStyle light`/`dark` — **только** поля статус-бара (нав-бар Android-specific, опущен); применяются по канону §6.1 (глобально в `AppRoot` по `Brightness`, `AnnotatedRegion` — задокументированное исключение).
-- [ ] Картиночные ассеты: `lib/design/gen/assets.gen.dart` (flutter_gen, gitignored, `Assets.png/.svg/.animation`) — канонический канал, подключён в `pubspec.yaml::flutter_gen` + CI; рукописный `AppImagesTokens` (`_base = 'assets/png'`, `logo`/`emptyState`) сосуществует как переходный (дрейф к сведению, §7); директории — в `pubspec.yaml::flutter.assets`.
-- [ ] `lib/general/constants.dart`: `final class Constants` с приватным ctor — `databaseName = 'nox_app_db'`, `defaultLocale`, `designSize`, `railBreakpoint = 840` (единственный источник брейкпоинта оболочки), regex.
-- [ ] `lib/general/platform_utils.dart`: `PlatformUtils` с `isMobile`/`isDesktop` (desktop в scope, конституция v1.1.0) и per-OS геттерами, приватный ctor.
-- [ ] `lib/general/text_constants.dart`: `abstract final TextConstants` — вся UI-микрокопи (English, ARB-ready), destination'ы оболочки `Chats`/`Settings`.
+- [ ] Картиночные ассеты: `lib/design/gen/assets.gen.dart` (flutter_gen, gitignored, `Assets.png/.svg/.animation`) — **единственный** канал, подключён в `pubspec.yaml::flutter_gen`; семантика иконок — `NoxIcons` (§7.1); рукописного `AppImagesTokens` **нет**, гард — `test/design/single_channel_guard_test.dart`; директории — в `pubspec.yaml::flutter.assets`.
+- [ ] `lib/general/constants.dart`: `final class Constants` с приватным ctor — `databaseName = 'nox_app_db'`, `defaultLocale`, `defaultUserLabel = 'User7421'`, `designSize`, `railBreakpoint = 840` (единственный источник брейкпоинта оболочки), regex.
+- [ ] `lib/general/platform_utils.dart`: `PlatformUtils` с `isMobile`/`isDesktop` (desktop в scope, конституция v1.3.0, принцип VI) и per-OS геттерами, приватный ctor.
+- [ ] UI-строки: ARB `lib/l10n/app_en.arb` + `app_uk.arb` (идентичные наборы ключей, 140 шт.), `flutter: generate: true` + `l10n.yaml`, доступ через `context.l10n` (`lib/general/l10n_extension.dart`), живое переключение — `LocaleController`; локали ровно `en` + `uk`. **`lib/general/text_constants.dart` / `TextConstants` НЕ существует** — упоминание в коде или доке значит устаревший источник.
 - [ ] `lib/general/feature_flags.dart`: `abstract final FeatureFlags` — compile-time тогглы (`enableSearch`, `enablePullToRefresh`).
 - [ ] `lib/general/formatters/value_formatter.dart`: `@lazySingleton`, текущий скелет (no-arg ctor, дефолт `Constants.defaultLocale`), `intl` `NumberFormat`; settings-coupled вариант (`SettingsRepository` + `RepositoryResult.match`) — задокументированный план.
 - [ ] `lib/general/formatters/date_formatter.dart`: статические `short(...)` (`MMM dd, yyyy`) / `time(...)` (`HH:mm`), приватный ctor; богатый набор — план.
@@ -845,5 +914,4 @@ Widget buildItemRow(BuildContext context, ItemModel item) {
 - [ ] `context.appColors` резолвится в светлом И тёмном режиме (нет throw из-за отсутствующего расширения) — проверено переключением `themeMode`.
 - [ ] У каждого класса-токена и утилиты явный приватный конструктор `._()`.
 - [ ] `flutter analyze` чист для `lib/design/` и `lib/general/`; тест форматтера проходит.
-- [ ] Дисциплина «только токены» соблюдена: нет сырого `Color`/`EdgeInsets`/`TextStyle`/`SystemUiOverlayStyle`/строкового пути ассета/`.sp`-`.w`-`.h`-`.r` в `lib/presentation/` вне файлов токенов и темы (§9).
-```
+- [ ] Дисциплина «только токены» соблюдена: нет сырого `Color`/`EdgeInsets`/`TextStyle`/`SystemUiOverlayStyle`/строкового пути ассета/сырой UI-копи/`.sp`-`.w`-`.h`-`.r` в `lib/presentation/` вне файлов токенов и темы (§9).

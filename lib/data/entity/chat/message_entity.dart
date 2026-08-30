@@ -27,6 +27,12 @@ abstract class MessageEntity with _$MessageEntity {
     // Device-local file path (feature F4/F2). Optional (not `required`) so records
     // written before this field existed still read back (absent key → null).
     String? attachmentLocalPath,
+    // Global journal number (contract seq) - the ordering key. Optional like
+    // attachmentLocalPath: pre-025 records decode with null (mapped to 0).
+    int? seq,
+    // Attachment wire metadata (contract §7). Optional for the same reason.
+    String? attachmentMime,
+    int? attachmentExpiresAt, // unix seconds
   }) = _MessageEntity;
 
   factory MessageEntity.fromJson(Map<String, dynamic> json) => _$MessageEntityFromJson(json);

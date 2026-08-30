@@ -2,7 +2,10 @@ import 'package:infinite_scroll_pagination/infinite_scroll_pagination.dart';
 import 'package:nox_app/domain/repository/base/page_metadata.dart';
 
 /// Encapsulates v5 PagingState assembly (page-of-pages + keys + hasNextPage).
-/// Generic over K; OFFSET default (K = item id, one item per page).
+/// Generic over K (K = item id, one item per page). Used by BOTH contract-v0
+/// paths: the paged chats list and the seq-cursor thread — the end of the list
+/// is `!meta.hasMore`, while the next coordinate (`nextPage` or `before_seq`)
+/// is the caller's business.
 extension PagingStateExt<K, T> on PagingState<K, T> {
   ({List<T> updatedList, PagingState<K, T> pagingState, int? nextPage}) applyPage({
     required List<T> existingList,
@@ -11,7 +14,7 @@ extension PagingStateExt<K, T> on PagingState<K, T> {
   }) {
     final (incoming, meta) = response;
     final updatedList = [...existingList, ...incoming];
-    final isLastPage = meta.nextPage == null;
+    final isLastPage = !meta.hasMore;
     final pages = updatedList.map((e) => [e]).toList();
     final keys = updatedList.map(keyExtractor).toList();
     final isNoItems = updatedList.isEmpty && isLastPage;

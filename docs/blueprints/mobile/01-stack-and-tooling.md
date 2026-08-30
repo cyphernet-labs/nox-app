@@ -35,7 +35,7 @@ fvm install   # читает .fvmrc, скачивает Flutter 3.44.1 в gitign
 
 Полный файл ниже — готов к копированию. Имя пакета — `nox_app`, все импорты вида `package:nox_app/...`. Пины версий и inline-комментарии сохранены: они кодируют разрешённые конфликты — не трогайте без причины.
 
-> **Соответствие актуальному скелету.** Блок ниже — канонический «полный» манифест. В реально закоммиченном `pubspec.yaml` (Feature-001) часть позиций пока **отсутствует или закомментирована**: feature-gated зависимости (`firebase_*`, `permission_handler`, `file_picker`, `image_picker`, `connectivity_plus`, vendor-SDK аналитики) лежат закомментированными плейсхолдерами и раскомментируются при активации соответствующего дока; `fonts:`-блок ещё **не объявлен** (`AppFont` — шаблон-плейсхолдер, появляется когда приедут реальные шрифтовые ассеты). Версии-пины держим здесь, потому что доки 14/15/16/17 ссылаются за ними сюда.
+> **Соответствие актуальному скелету.** Блок ниже — канонический «полный» манифест, сверенный с реально закоммиченным `pubspec.yaml`. Помимо базового набора там **активны**: `permission_handler` (камера фичи 010 + системный пермишен уведомлений), `file_selector` (пикер вложений, фича 017), `connectivity_plus` (офлайн-баннер, фичи 014/015), `zxing2` (pure-Dart QR-декод из картинки на Windows/Linux), `flutter_localizations` + `flutter: generate: true` (l10n EN+UK, конфиг — `l10n.yaml`); `fonts:`-блок **объявлен** (Roboto + Roboto Mono с фичи 002). Закомментированными плейсхолдерами остаются только `firebase_*` (push — док 15), `image_picker` (док 16) и vendor-SDK аналитики (док 17) — раскомментируются при активации соответствующего дока. Версии-пины держим здесь, потому что доки 14/15/16/17 ссылаются за ними сюда.
 
 ```yaml
 name: nox_app
@@ -52,6 +52,8 @@ environment:
 
 dependencies:
   flutter:
+    sdk: flutter
+  flutter_localizations:      # gen-l10n delegates; UI languages are English + Ukrainian (see l10n.yaml)
     sdk: flutter
   cupertino_icons: ^1.0.9     # iOS-style icons
 
@@ -87,7 +89,7 @@ dependencies:
 
   # --- Local store ---
   shared_preferences: ^2.5.5       # простой key/value (флаги, themeMode)
-  # flutter_secure_storage: шифрованное хранилище (refresh-токен); кросс-платформен — macOS Keychain /
+  # flutter_secure_storage: session secrets (session.identifier today, auth_id_token seam); macOS Keychain /
   # Windows DPAPI / Linux libsecret. ВАЖНО: на Linux это и BUILD-TIME зависимость — flutter_secure_storage_linux
   # требует dev-пакеты libsecret-1-dev + libjsoncpp-dev (CMake pkg_check_modules), поэтому CI compile-linux ставит
   # их (см. 09); рантайм libsecret-1-0 — packaging concern (FUTURE; см. 14 secure-storage-нота).
@@ -109,15 +111,23 @@ dependencies:
   qr_flutter: ^4.1.0             # pure-Dart рендер QR (Show QR 7.1); все 5 платформ, без нативного плагина.
   permission_handler: ^12.0.3    # Permission.camera (status/request/openAppSettings); iOS/Android only
                                  # (macOS НЕ поддерживается — там пермишен ведёт mobile_scanner-контроллер).
+                                 # Also backs Permission.notification (notification permission service).
+  zxing2: ^0.2.3                 # pure-Dart QR decode from a picked image; Windows/Linux sign-in path,
+                                 # where no camera plugin exists (capability-gated like mobile_scanner).
+
+  # --- Files / network state (АКТИВНЫ: 017-file-attachments, 014/015 offline banner) ---
+  file_selector: ^1.1.0          # cross-platform picker behind the FilePickerService seam; never reads bytes.
+                                 # DO NOT swap for file_picker: it pins win32 ^5.x and conflicts with
+                                 # package_info_plus ^10 (win32 ^6). See 16-file-upload.md.
+  connectivity_plus: ^7.3.1      # online/offline state; real impl for [dev, prod], mock for [test]
+                                 # (platform channel) - see 14-networking-and-auth.md §5.
 
   # --- Feature-gated (в актуальном скелете ЗАКОММЕНТИРОВАНЫ; раскомментируются при активации
   #     соответствующего дока; major-пины ПРОВИЗОРНЫ — сверить latest stable перед реализацией) ---
   # firebase_*: push/FCM (mobile-only: нет desktop-impl; desktop push = disabled no-op — см. 15 §Desktop fallback).
   # firebase_core: ^4.0.0        # push/FCM bootstrap — см. 15-push-notifications.md
   # firebase_messaging: ^16.0.0  # device-токен, foreground/background handlers — 15
-  # file_picker: ^8.0.0          # выбор документов (pdf/docx) — см. 16-file-upload.md
   # image_picker: ^1.1.0         # камера/галерея — 16
-  # connectivity_plus: ^6.1.0    # сетевое состояние (онлайн/офлайн) — см. 14-networking-and-auth.md §5
   # клиентская аналитика — vendor-neutral, opt-in; SDK не выбран (пример: mixpanel_flutter), см. 17-analytics.md:
   # <analytics_sdk>: ^x.y.z
 
@@ -136,26 +146,37 @@ dev_dependencies:
   mockito: ^5.6.4   # 5.6.5+ тянет analyzer ^13, конфликтующий с injectable_generator (analyzer <13)
   bloc_test: ^10.0.0          # blocTest-хелперы
 
+  flutter_launcher_icons: ^0.14.4   # MUST NOT be run: it would overwrite the hand-crafted per-platform
+                                    # icon set of 008-app-icons and does not cover Linux. Kept as the
+                                    # reproducible regen path for the future vector master.
+  file_selector_platform_interface: ^2.7.0   # fake picker platform in tests
+  plugin_platform_interface: ^2.1.8
+
 flutter:
   uses-material-design: true
+  generate: true              # gen-l10n: generated AppLocalizations is gitignored, run `fvm flutter gen-l10n`
   assets:
-    - assets/
     - assets/png/
-    - assets/svg/
+    - assets/svg/icons/
+    - assets/svg/illustrations/
+    - assets/svg/flags/
     - assets/animation/
 
-  # fonts:-блок в актуальном скелете НЕ объявлен (AppFont — шаблон-плейсхолдер).
-  # Раскомментируйте + переименуйте + положите файлы под assets/fonts/,
-  # когда приедут реальные шрифты:
-  # fonts:
-  #   - family: AppFont
-  #     fonts:
-  #       - asset: assets/fonts/app_font/Regular.otf
-  #         weight: 400
-  #       - asset: assets/fonts/app_font/Medium.otf
-  #         weight: 500
-  #       - asset: assets/fonts/app_font/Semibold.otf
-  #         weight: 600
+  # Real design-system fonts, shipped since 002-design-system-assets.
+  # Roboto Mono is used for the long identifier string only (see 06-theming.md).
+  fonts:
+    - family: Roboto
+      fonts:
+        - asset: assets/fonts/Roboto-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/Roboto-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Roboto-Bold.ttf
+          weight: 700
+    - family: Roboto Mono
+      fonts:
+        - asset: assets/fonts/RobotoMono-Regular.ttf
+          weight: 400
 
 flutter_gen:
   output: lib/design/gen/
@@ -182,7 +203,7 @@ flutter_gen:
 
 > **Не тянем (desktop-shell).** Адаптивный shell строится на **кастомном breakpoint** (`NavigationBar`↔`NavigationRail`, ширина-триггер `840dp` = `Constants.railBreakpoint`; single-window; центрально-докнутый `+` FAB; 2 destination — Chats/Settings; `IndexedStack`-body; без profile-экрана), **без** `flutter_adaptive_scaffold` / `custom_adaptive_scaffold`. В скелете также **не добавляются** `window_manager` / `bitsdojo_window` / `desktop_multi_window` / `yaru`: дефолтный single-window runner, нативный оконный chrome платформы и единый Material 3 без desktop-специфичных пакетов. Любой из них вводится только когда появится конкретная потребность (custom window chrome, multi-window и т.п.), не «на всякий случай».
 
-> **Feature-gated зависимости.** `firebase_core`/`firebase_messaging` (push — `15`), `file_picker`/`image_picker` (upload — `16`), `connectivity_plus` (`14` §5), vendor-SDK аналитики (`17`) вынесены отдельной группой выше и в актуальном скелете **закомментированы** (`permission_handler` — уже **активна** с фичи 010 для камеры, не для push) — они вводятся **при активации соответствующей фичи**, не нужны для скелета. **Major-версии ПРОВИЗОРНЫ**: перед реализацией сверить latest stable (pub.dev) и согласовать с владельцем. Доки 15/16/17/14 ссылаются сюда за версиями — поэтому пины живут тут, а не дублируются в каждом доке. Push-зависимости (`firebase_*`) — **mobile-only**: desktop-impl нет, desktop push = disabled no-op, вводится с первым desktop-консьюмером (см. 15 §Desktop fallback).
+> **Feature-gated зависимости.** `firebase_core`/`firebase_messaging` (push — `15`), `image_picker` (`16`), vendor-SDK аналитики (`17`) вынесены отдельной группой выше и в актуальном скелете **закомментированы** — они вводятся **при активации соответствующей фичи**, не нужны для скелета. Уже **активны** и из этой группы выведены: `permission_handler` (камера с фичи 010 **и** системный пермишен уведомлений; сама push-доставка при этом не реализована), `file_selector` вместо `file_picker` (вложения, фича 017) и `connectivity_plus` (офлайн-баннер, фичи 014/015). **Major-версии ПРОВИЗОРНЫ**: перед реализацией сверить latest stable (pub.dev) и согласовать с владельцем. Доки 15/16/17/14 ссылаются сюда за версиями — поэтому пины живут тут, а не дублируются в каждом доке. Push-зависимости (`firebase_*`) — **mobile-only**: desktop-impl нет, desktop push = disabled no-op, вводится с первым desktop-консьюмером (см. 15 §Desktop fallback).
 
 > **Аналитика — vendor-neutral, opt-in.** Конкретный SDK аналитики **не выбран**: в манифесте он стоит плейсхолдером-комментарием, `mixpanel_flutter` приведён лишь как **пример** вендора. NOX — E2EE-продукт: аналитика **opt-in** (выключена до явного согласия), без PII. Детали — `17-analytics.md`. Не хардкодьте конкретного вендора в зависимостях скелета.
 
@@ -195,17 +216,17 @@ flutter_gen:
 | `json_annotation` (+ dev `json_serializable`) | сериализация **entity-слоя** (`*.g.dart`). Доменные модели JSON не несут. См. `04-data-layer.md`. |
 | `rxdart` | `BehaviorSubject<RepositoryResult<...>>` в репозиториях поверх реактивного Sembast-DAO. |
 | `injectable` + `get_it` (+ dev `injectable_generator`) | единый `configureDependencies(String env)` + `$initGetIt`. См. `02-dependency-injection.md`. |
-| `dio` | HTTP-клиент к бэкенду NOX (эндпойнты вроде `/api/v1/...` — пример; бэкенд/протокол NOX ещё не выбран, заменить на реальный контракт). |
+| `dio` | HTTP-клиент **REST-поверхности** client-сервера (`noxd`, Go + встроенный SQLite): `PUT /files/{upload_token}` и `GET /files/{download_token}` c Range — контракт v0 §1/§7. Основной канал команд и событий — не HTTP, а WebSocket-конверт поверх `wss:443` с пиннингом ключа (фаза 027), поэтому dio остаётся только на файловой цепочке. |
 | `infinite_scroll_pagination` 5.1.1 | stateless `PagingState`-в-bloc (без `PagingController`). См. `07-pagination.md`. |
 | `flutter_screenutil` 5.9.3 | адаптивные spacing/typography токены, design size 360×779. См. `06-theming.md`. |
 | `skeletonizer` | shimmer-плейсхолдеры для загрузки. |
 | `cached_network_image` / `flutter_svg` | растровые картинки (например, аватары) и векторные ассеты. |
 | `sembast` + `path_provider` | cache-first DAO; env-scoped `AppDatabase` (Dev/Prod = IO `databaseFactoryIo` на mobile/desktop, Test = memory). См. `04`. |
 | `shared_preferences` | простые флаги, `themeMode`. |
-| `flutter_secure_storage` | шифрованное хранилище refresh-токена; кросс-платформенно (macOS Keychain / Windows DPAPI / Linux libsecret). |
+| `flutter_secure_storage` | шифрованное хранилище секретов сессии: сегодня — ключ `session.identifier`, плюс шов `auth_id_token` для Dio-интерцептора (писателя ещё нет — токены появятся с аутентификацией этапа 2, она пока открыта). Кросс-платформенно (macOS Keychain / Windows DPAPI / Linux libsecret). |
 | `logger` | реализация обязательного `LogRepository` (единый канал, без raw `print`). |
 | `package_info_plus` | версия/билд приложения (регистрируется в DI-бутстрапе первым консьюмером). |
-| `app_links` | приём входящих ссылок (deep / universal links) — cold-start + warm-поток; парсятся в `DeepLinkRepository`. См. `13-deep-links.md`. |
+| `app_links` | приём входящих ссылок (deep / universal links) — cold-start + warm-поток; парсятся в `DeepLinkRepository`. **План**: зависимость объявлена, но в `lib/` пока не импортируется — deep links не реализованы и остаются открытым вопросом. См. `13-deep-links.md`. |
 
 ---
 
@@ -245,7 +266,7 @@ targets:
 
 > `explicit_to_json: true` — load-bearing настройка: вложенные entity внутри конверта `data` сериализуются собственным `toJson()`. `field_rename: snake` соответствует snake_case-payload'ам бэкенда (точечные исключения — через `@JsonKey(name: ...)`).
 
-> Пример: бэкенд возвращает unified-конверт `{data, timestamp, trace_id, meta}`; entity-слой парсит его через `ResponseEntity<T>` + `EntityConverter<E>` (см. `04-data-layer.md`). (Форма конверта — пример: бэкенд/протокол NOX ещё не выбран, заменить на реальный контракт; сам паттерн `ResponseEntity<T>` + `EntityConverter<E>` сохраняется независимо от формы.)
+> Конверт ответа — из контракта v0 (§2): `{"id": 7, "ok": true, "data": {…}}` на успех и `{"id": 7, "ok": false, "error": {"code": "name_taken", "message": "…"}}` на ошибку. Entity-слой отражает его как `ResponseEntity<T>({bool success, ErrorWireEntity? error, @EntityConverter() T? data})`: `success` — это провод `ok`, а `ErrorWireEntity` = `{code, message}` (§2.1); генерик `T` резолвится ручным реестром `EntityConverter<E>` — новая entity, доходящая через `data`, обязана быть зарегистрирована **в обеих** цепочках (`fromJson` и `toJson`), иначе `ArgumentError`. См. `04-data-layer.md`.
 
 ### Запуск кодгена
 
@@ -302,9 +323,11 @@ formatter:
 - [ ] `.fvmrc` закоммичен со значением `{"flutter": "3.44.1"}`; `.fvm/` в `.gitignore`; `fvm install` отработал.
 - [ ] Один `pubspec.yaml` с `name: nox_app`, `description: "NOX secure messenger."`, `sdk: '>=3.12.0 <4.0.0'`, `flutter: 3.44.1`.
 - [ ] Рантайм-набор присутствует целиком: `flutter_bloc`, `bloc_concurrency`, `rxdart`, `freezed_annotation`, `json_annotation`, `get_it`, `injectable`, `dio`, `infinite_scroll_pagination: 5.1.1`, `flutter_screenutil: 5.9.3`, `skeletonizer`, `cached_network_image`, `flutter_svg`, `url_launcher`, `app_links`, `intl`, `uuid`, `collection`, `logger`, `path_provider`, `shared_preferences`, `flutter_secure_storage`, `sembast`, `package_info_plus` (^10), `cupertino_icons`.
-- [ ] Camera/QR (фича 010): `mobile_scanner: ^7.2.0` (iOS/Android/macOS only), `qr_flutter: ^4.1.0` (все 5), `permission_handler: ^12.0.3` (iOS/Android) — АКТИВНЫ.
-- [ ] Feature-gated зависимости (`firebase_*`, `file_picker`, `image_picker`, `connectivity_plus`, vendor-SDK аналитики) — закомментированы; раскомментируются при активации дока 14/15/16/17.
-- [ ] `dev_dependencies` содержит `build_runner`, `freezed`, `json_serializable`, `injectable_generator`, `flutter_gen_runner`, `flutter_lints: 6.0.0`, `mockito: ^5.6.4` (с комментарием про конфликт analyzer/injectable_generator), `bloc_test`, `integration_test`, `flutter_test`.
+- [ ] Camera/QR: `mobile_scanner: ^7.2.0` (iOS/Android/macOS only), `qr_flutter: ^4.1.0` (все 5), `permission_handler: ^12.0.3` (iOS/Android), `zxing2: ^0.2.3` (QR-декод из картинки на Windows/Linux) — АКТИВНЫ.
+- [ ] Файлы/сеть: `file_selector: ^1.1.0` (НЕ `file_picker` — конфликт `win32` с `package_info_plus ^10`) и `connectivity_plus: ^7.3.1` — АКТИВНЫ.
+- [ ] l10n: `flutter_localizations` (sdk) + `flutter: generate: true` + `l10n.yaml`; `fonts:`-блок объявлен (Roboto, Roboto Mono).
+- [ ] Feature-gated зависимости (`firebase_*`, `image_picker`, vendor-SDK аналитики) — закомментированы; раскомментируются при активации дока 15/16/17.
+- [ ] `dev_dependencies` содержит `build_runner`, `freezed`, `json_serializable`, `injectable_generator`, `flutter_gen_runner`, `flutter_lints: 6.0.0`, `mockito: ^5.6.4` (с комментарием про конфликт analyzer/injectable_generator), `bloc_test`, `integration_test`, `flutter_test`, `flutter_launcher_icons` (объявлен, но генератор НЕ запускается — перетрёт ручной набор иконок 008), `file_selector_platform_interface` + `plugin_platform_interface` (фейк пикера в тестах).
 - [ ] `dependency_overrides` отсутствует (или содержит только реально необходимые из-за конфликта резолва).
 - [ ] `build.yaml` создан минимальным: `field_rename: snake`, `explicit_to_json: true`, `create_to_json: true`; `flutter_gen` пишет в `lib/design/gen/`.
 - [ ] `analysis_options.yaml` = стандартный `flutter_lints` + `formatter: page_width: 140` + минимальная `errors`-карта (`invalid_annotation_target: ignore`); из анализа исключены `*.g.dart`/`*.freezed.dart`/`*.config.dart`/`lib/design/gen/**`/`docs/**`/`build/**`.

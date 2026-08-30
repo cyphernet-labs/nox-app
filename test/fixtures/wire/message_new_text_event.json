@@ -1,0 +1,12 @@
+{
+  "message_id": "m_a67861402ddb3af3",
+  "seq": 2,
+  "chat_id": "c_3b2a48bce50312ce",
+  "author_id": "Anna",
+  "author_label": "Anna",
+  "sent_at": 1787862780,
+  "body": {
+    "type": "text",
+    "text": "hello from the fixture"
+  }
+}

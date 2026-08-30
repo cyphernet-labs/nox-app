@@ -4,9 +4,10 @@ import 'package:nox_app/domain/repository/base/page_metadata.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 
-/// Chats list repository (5.1) — the open chats list is the blueprint's first real
-/// **network-only** server-owned paginated feature. Returns a page slice paired
-/// with offset metadata. UI-phase impl is mock-backed (no real transport/cache).
+/// Chats list repository (5.1) — cache-first over the local Sembast store (013),
+/// seeded once from the remote data source. Returns a page slice paired with
+/// contract-shaped metadata (`hasMore`, feature 025); the impl is mock-backed
+/// until the 016 DI flip swaps in the real transport.
 abstract class ChatRepository {
   Future<RepositoryResult<(List<ChatModel>, PageMetadata)>> getChats({required GetChatsConfig config});
 

@@ -24,7 +24,6 @@ void main() {
       final state = bloc.state;
       expect(state, isA<Initialized>());
       expect((state as Initialized).items, isNotEmpty);
-      expect(state.total, greaterThan(0));
       expect(state.loadingInProgress, isFalse); // page load settled
     },
   );
@@ -39,7 +38,6 @@ void main() {
     verify: (bloc) {
       final state = bloc.state as Initialized;
       expect(state.items, hasLength(20));
-      expect(state.total, 47);
       expect(state.isLastPage, isFalse);
       expect(state.hasMore, isTrue); // hasMore == !isLastPage (state extension)
       expect(state.loadingInProgress, isFalse);
@@ -78,7 +76,6 @@ void main() {
     verify: (bloc) {
       final state = bloc.state as Initialized;
       expect(state.items, hasLength(47));
-      expect(state.total, 47);
       expect(state.isLastPage, isTrue);
       expect(state.hasMore, isFalse);
       expect(state.loadingInProgress, isFalse);
