@@ -8,7 +8,8 @@ import 'package:nox_app/domain/model/chat/message_model.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
-import 'package:nox_app/domain/service/connectivity_service.dart';
+import 'package:nox_app/domain/model/session/session_phase.dart';
+import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
 import 'package:rxdart/rxdart.dart';
 
@@ -36,14 +37,14 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
 
   final ChatRepository _chatRepository = getIt<ChatRepository>();
   final MessageRepository _messageRepository = getIt<MessageRepository>();
-  final ConnectivityService _connectivityService = getIt<ConnectivityService>();
+  final SessionPhaseService _sessionPhaseService = getIt<SessionPhaseService>();
 
   late String _chatId;
   ChatCardScenario _scenario = ChatCardScenario.normal;
 
   // Live device-online state (P1): the offline banner is reachable in the real flow, not
   // just via the debug scenario. Mirrors ChatsListBloc / ChatThreadBloc.
-  StreamSubscription<bool>? _connSub;
+  StreamSubscription<SessionPhase>? _connSub;
   bool _deviceOnline = true;
 
   /// The card is offline when the device is offline OR the debug scenario forces it.
@@ -71,7 +72,10 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
         .debounceTime(const Duration(milliseconds: 100))
         .listen((_) => add(const ChatCardEvent.filesRefreshed()));
     // Live connectivity → the offline banner (seeded current value, then every change).
-    _connSub ??= _connectivityService.watchOnline().listen((online) => add(ChatCardEvent.connectivityChanged(online)));
+    // The session phase, not raw device connectivity, is what says whether the
+    // data on screen is current: a device can be online while the socket is
+    // down, and the socket can be open while replay is still running (FR-005).
+    _connSub ??= _sessionPhaseService.watchPhase().listen((phase) => add(ChatCardEvent.connectivityChanged(phase.isCurrent)));
     emit(const ChatCardState.initializing());
 
     if (_scenario == ChatCardScenario.fatal) {

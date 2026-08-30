@@ -21,4 +21,10 @@ class SyncRepositoryImpl implements SyncRepository {
 
   @override
   Future<void> clear() => _dao.cleanData();
+
+  @override
+  Future<String?> getEpoch() => _dao.readEpoch();
+
+  @override
+  Future<void> setEpoch(String epoch) => _dao.writeEpoch(epoch);
 }

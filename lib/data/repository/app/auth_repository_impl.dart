@@ -1,4 +1,6 @@
 import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/sync/live_session_starter.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/domain/repository/app/app_state_repository.dart';
 import 'package:nox_app/domain/repository/app/auth_repository.dart';
@@ -53,7 +55,11 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
       _sessionRepository.clear,
       sessionExpired: forced,
       afterMutate: () async {
-        // The cursor goes FIRST: a crash mid-wipe must leave it behind the
+        // Close the live channel BEFORE emptying anything: an event applied
+        // mid-wipe would repopulate the stores this is in the middle of
+        // clearing, leaving a logged-out device holding someone's messages.
+        if (getIt.isRegistered<LiveSessionStarter>()) await getIt<LiveSessionStarter>().stop();
+        // The cursor goes next: a crash mid-wipe must leave it behind the
         // stores (safe - replay re-applies idempotently), never ahead of an
         // emptied store (a stale high `since` would skip every row below it
         // and the monotonic guard would keep it stuck forever).

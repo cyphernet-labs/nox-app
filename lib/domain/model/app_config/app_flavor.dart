@@ -14,4 +14,13 @@ class AppFlavor {
       _ => AppFlavorType.prod,
     };
   }
+
+  /// Base URL of the client server, from `--dart-define=app.apiUrl=<url>`.
+  ///
+  /// Empty means "no server": the app keeps serving mock data and the transport
+  /// never opens a socket. Only the stage flavor ships a value today.
+  static String? getApiUrl() {
+    const raw = String.fromEnvironment('app.apiUrl');
+    return raw.isEmpty ? null : raw;
+  }
 }

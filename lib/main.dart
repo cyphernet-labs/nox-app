@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/sync/live_session_starter.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/app_config/app_flavor.dart';
 import 'package:nox_app/domain/model/app_config/app_flavor_type.dart';
@@ -24,6 +25,10 @@ void main() {
       ]);
       await getIt.allReady();
       await getIt<AppConfigRepository>().initialize(flavorType: flavor);
+      // Bring the live channel up before the first screen resolves: the world
+      // check and the applier subscription both have to precede the greeting,
+      // and only the dev environment binds a starter at all.
+      if (getIt.isRegistered<LiveSessionStarter>()) await getIt<LiveSessionStarter>().start();
 
       runApp(const AppRoot());
     },

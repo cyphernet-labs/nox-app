@@ -30,6 +30,15 @@ class MessageDao {
 
   Future<int> countByChat(String chatId) async => (await getByChatSorted(chatId)).length;
 
+  /// One message by id, or null. Record-key lookup, so it is unaffected by the
+  /// `field_rename: snake` gotcha that makes a Finder on a camelCase key match
+  /// nothing.
+  Future<MessageEntity?> getById(String id) async {
+    final db = await _appDatabase.db;
+    final value = await _store.record(id).get(db);
+    return value == null ? null : _tryDecode(value);
+  }
+
   /// Filter by the typed entity field, then chronological order (small local store).
   /// NB: filtering in Dart — not via a sembast Finder on the stored map — because
   /// `field_rename: snake` persists `chatId` as `chat_id`, so a `Filter.equals('chatId', …)`

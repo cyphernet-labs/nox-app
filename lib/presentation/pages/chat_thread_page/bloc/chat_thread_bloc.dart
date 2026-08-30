@@ -16,7 +16,8 @@ import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
-import 'package:nox_app/domain/service/connectivity_service.dart';
+import 'package:nox_app/domain/model/session/session_phase.dart';
+import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/domain/service/file_picker_service.dart';
 import 'package:nox_app/general/app_clock.dart';
 import 'package:nox_app/general/identity/identity_resolver.dart';
@@ -53,7 +54,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   final ChatRepository _chatRepository = getIt<ChatRepository>();
   final SessionRepository _sessionRepository = getIt<SessionRepository>();
   final FilePickerService _filePickerService = getIt<FilePickerService>();
-  final ConnectivityService _connectivityService = getIt<ConnectivityService>();
+  final SessionPhaseService _sessionPhaseService = getIt<SessionPhaseService>();
 
   late String _chatId;
   // The signed-in own-identity resolved from the session at thread init (feature 015).
@@ -70,7 +71,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   // Live device-online state (P1): the offline banner AND the offline send-queue are
   // reachable in the real flow, not just via the debug scenario. Real offline keeps
   // sends `pending`; reconnecting re-delivers them (mirrors the offline→normal scenario).
-  StreamSubscription<bool>? _connSub;
+  StreamSubscription<SessionPhase>? _connSub;
   bool _deviceOnline = true;
 
   /// The thread is offline when the device is offline OR the debug scenario forces it.
@@ -95,7 +96,10 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
         .debounceTime(const Duration(milliseconds: 100))
         .listen((_) => add(const ChatThreadEvent.loadMessages(refresh: true)));
     // Live connectivity → the offline banner + the offline send-queue (seed then live).
-    _connSub ??= _connectivityService.watchOnline().listen((online) => add(ChatThreadEvent.connectivityChanged(online)));
+    // The session phase, not raw device connectivity, is what says whether the
+    // data on screen is current: a device can be online while the socket is
+    // down, and the socket can be open while replay is still running (FR-005).
+    _connSub ??= _sessionPhaseService.watchPhase().listen((phase) => add(ChatThreadEvent.connectivityChanged(phase.isCurrent)));
   }
 
   @override

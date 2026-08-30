@@ -12,13 +12,12 @@ import 'package:nox_app/general/onboarding_mock_data.dart';
 import 'package:uuid/uuid.dart';
 
 /// Mock [ChatRemoteDataSource] — stands in for the server on the mock-backed
-/// flavors. Still bound for every environment until `RealChatRemoteDataSource`
-/// exists; the dev binding narrows to `[prod, test]` in the DI flip step
-/// (`specs/016-remote-datasource-seam/contracts/di-binding.md`).
+/// flavors `[prod, test]`. The dev flavor resolves `RealChatRemoteDataSource`
+/// instead (`specs/016-remote-datasource-seam/contracts/di-binding.md`).
 ///
 /// It mints ids and echoes writes the way a server would, so the repository
 /// runs the SAME code on both paths — the only difference is the binding.
-@LazySingleton(as: ChatRemoteDataSource, env: [Environment.dev, Environment.prod, Environment.test])
+@LazySingleton(as: ChatRemoteDataSource, env: [Environment.prod, Environment.test])
 class MockChatRemoteDataSource implements ChatRemoteDataSource {
   MockChatRemoteDataSource(this._api);
 

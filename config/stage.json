@@ -1,3 +1,4 @@
 {
-  "app.flavor": "stage"
+  "app.flavor": "stage",
+  "app.apiUrl": "http://127.0.0.1:8080"
 }

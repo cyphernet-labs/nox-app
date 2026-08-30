@@ -1,6 +1,7 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/domain/model/app_config/app_config.dart';
+import 'package:nox_app/domain/model/app_config/app_flavor.dart';
 import 'package:nox_app/domain/model/app_config/app_flavor_type.dart';
 import 'package:nox_app/domain/model/app_config/server_limits.dart';
 import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
@@ -25,10 +26,10 @@ class AppConfigRepositoryImpl implements AppConfigRepository {
 
   @override
   Future<void> initialize({required AppFlavorType flavorType}) async {
-    // apiUrl stays null while the app runs on mocks (no real requests); the
-    // per-flavor URL lands with the transport (027). The token bootstrap waits
-    // on stage-2 auth — stage 1 of the contract has no authentication.
-    _config = AppConfig(flavor: flavorType);
+    // The address comes from the build define, so a build with no server
+    // configured keeps working on mocks rather than failing to start. The token
+    // bootstrap still waits on stage-2 auth — stage 1 has no authentication.
+    _config = AppConfig(flavor: flavorType, apiUrl: AppFlavor.getApiUrl());
   }
 
   @override
