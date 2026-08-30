@@ -1,6 +1,6 @@
 # Tasks: client-live-exchange
 
-**Input**: Design documents from `/specs/026-client-live-exchange/` (plan.md, research.md R1–R13, data-model.md, contracts/README.md, quickstart.md)
+**Input**: Design documents from `/specs/026-client-live-exchange/` (plan.md, research.md R1–R15, data-model.md, contracts/README.md, quickstart.md)
 
 **Prerequisites**: ветка ответвлена от 025; `make gate` + `make golden-verify` зелёные на старте (эталон заморозки); `noxd` собирается.
 
@@ -24,7 +24,7 @@
 - [ ] T007 Expose the phase to the domain: lib/domain/service/session_phase_service.dart + its data-layer implementation reading the socket's phase stream; register in DI for `[Environment.dev]` with an always-`live` stub for `[Environment.prod, Environment.test]` so existing tests are unaffected (mirrors the ConnectivityService env split)
 - [ ] T008 Add the data-source epoch to the sync store (research R8, FR-009): `getEpoch`/`setEpoch` on lib/domain/repository/sync/sync_repository.dart + impl + SyncDao field; on boot compare the current source identity (`mock` vs `live:<apiUrl>`) and, when it differs, wipe the chats store, the messages store and the cursor exactly once, then persist the new epoch; tests in test/data/repository/sync/ proving the wipe fires once and not on an unchanged epoch
 - [ ] T009 Wire the server address: add `app.apiUrl` to config/stage.json, read it in AppConfig/AppFlavor, and derive the socket URL from it (`http→ws`, `https→wss`, path `/ws`, research R12); unit test the derivation
-- [ ] T010 Run `make gate` and fix all fallout; commit the foundation
+- [ ] T010 Run `make gate` AND `make golden-verify` (the constitution requires both before every commit touching Dart while CI is paused) and fix all fallout; commit the foundation
 
 **Checkpoint**: транспорт подключается к живому серверу и переживает обрыв; продуктовые экраны всё ещё на моках.
 
@@ -38,7 +38,7 @@
 - [ ] T012 [US1] Reshape the message boundary per research R7: `sendMessage({chatId, clientMessageId, text, attachment})` in lib/data/remote/datasource/message_remote_data_source.dart (drop authorId/authorLabel), update the mock and MessageRepositoryImpl which now mints the `client_message_id`
 - [ ] T013 [P] [US1] Implement lib/data/remote/datasource/real/real_chat_remote_data_source.dart over the socket (`chats.list`, `chat.create`, `chat.rename`, `chat.nameAvailable`), returning `ResponseEntity` so the 025 error path is reused verbatim; tests over a fake socket asserting the reply wrapper `{chat: …}` is unwrapped and `name_taken` surfaces as the typed exception
 - [ ] T014 [P] [US1] Implement lib/data/remote/datasource/real/real_message_remote_data_source.dart over the socket (`messages.list`, `message.send`), unwrapping `{message: …}`; tests over a fake socket incl. a clamped `limit`
-- [ ] T015 [US1] Flip the DI bindings three-step per specs/016-remote-datasource-seam/contracts/di-binding.md: register `Real*` for `[Environment.dev]`, narrow the mocks to `[Environment.prod, Environment.test]`, run `make generate`; update test/di/seam_binding_test.dart to assert the split
+- [ ] T015 [US1] Flip the DI bindings three-step per specs/016-remote-datasource-seam/contracts/di-binding.md: register `Real*` for `[Environment.dev]`, narrow the mocks to `[Environment.prod, Environment.test]`, run `make generate`; update test/data/remote/datasource/seam_binding_test.dart to assert the split (`Real*` under Environment.dev, `Mock*` under prod and test)
 - [ ] T016 [US1] Rework `ChatThreadBloc._refreshMessages` to read only the newest batch instead of the whole loaded span (research R9): the loaded history cannot change under contract v0, and asking for more than 100 would silently truncate; update chat_thread_bloc tests
 - [ ] T016a [US1] Convert both seeds to read-through-by-page (research R14, FR-016): `ChatRepositoryImpl._seedIfEmpty` and `MessageRepositoryImpl._seedChatIfEmpty` stop walking every page and fetch only the requested slice, persisting it and taking `has_more` from the wire; the genesis line and the unread overlay stay device-local; update the repository tests to assert a single remote call per page instead of a full walk
 - [ ] T017 [US1] Run `make gate` AND `make golden-verify` — 216 baselines must pass unregenerated (SC-005) — then validate US1 live per quickstart.md; commit
@@ -102,4 +102,4 @@ Polish:       T026 [P] ∥ T027 [P] → T028
 
 Затем US2 (T018–T021) — собственно обмен, ради которого фаза и выбрана, и US3 (T022–T025) — устойчивость.
 
-Коммит на историю; `make gate` перед каждым коммитом, `make golden-verify` на чек-пойнтах T017/T021/T025/T028. Живая проверка по `quickstart.md` — на тех же чек-пойнтах, потому что автоматический набор идёт на моках и живую вертикаль не покрывает.
+Коммит на историю; **`make gate` + `make golden-verify` перед каждым коммитом, затрагивающим Dart-код** (нормативное требование конституции, пока CI на паузе); чисто документационные задачи T026/T027 от гейта освобождены. Живая проверка по `quickstart.md` — на тех же чек-пойнтах, потому что автоматический набор идёт на моках и живую вертикаль не покрывает.

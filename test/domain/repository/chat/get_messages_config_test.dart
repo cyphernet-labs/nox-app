@@ -30,4 +30,20 @@ void main() {
       expect(config.limit, GetMessagesConfig.pageSize);
     });
   });
+
+  group('the contract limit ceiling (026)', () {
+    test('a request above the server ceiling is clamped, not sent as asked', () {
+      // The server clamps silently: an unclamped 500 would come back as 100
+      // rows while the caller still believed it had asked for 500, and the
+      // loaded span would quietly shrink.
+      expect(GetMessagesConfig.tail(chatId: 'c', limit: 500).limit, GetMessagesConfig.maxLimit);
+      expect(GetMessagesConfig.olderThan(chatId: 'c', beforeSeq: 42, limit: 500).limit, GetMessagesConfig.maxLimit);
+    });
+
+    test('a request at or below the ceiling passes through untouched', () {
+      expect(GetMessagesConfig.tail(chatId: 'c', limit: GetMessagesConfig.maxLimit).limit, GetMessagesConfig.maxLimit);
+      expect(GetMessagesConfig.tail(chatId: 'c').limit, GetMessagesConfig.pageSize);
+      expect(GetMessagesConfig.olderThan(chatId: 'c', beforeSeq: 42, limit: 7).limit, 7);
+    });
+  });
 }
