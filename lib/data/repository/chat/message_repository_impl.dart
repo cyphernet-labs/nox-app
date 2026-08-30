@@ -20,7 +20,6 @@ import 'package:nox_app/domain/repository/base/page_metadata.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
-import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_app/general/app_clock.dart';
 import 'package:nox_app/general/formatters/chat_preview_formatter.dart';
 import 'package:nox_app/general/identity/identity_resolver.dart';
@@ -37,15 +36,7 @@ import 'package:uuid/uuid.dart';
 /// only the data source swaps; the DB contract and the wire shapes stay.
 @LazySingleton(as: MessageRepository, env: [Environment.dev, Environment.prod, Environment.test])
 class MessageRepositoryImpl with BaseRepositoryHelper implements MessageRepository {
-  MessageRepositoryImpl(
-    this._messageDao,
-    this._messageRemote,
-    this._mapper,
-    this._wireMapper,
-    this._chatDao,
-    this._sessionRepository,
-    this._syncRepository,
-  );
+  MessageRepositoryImpl(this._messageDao, this._messageRemote, this._mapper, this._wireMapper, this._chatDao, this._sessionRepository);
 
   final MessageDao _messageDao;
   final MessageRemoteDataSource _messageRemote;
@@ -53,7 +44,6 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
   final MessageWireMapper _wireMapper;
   final ChatDao _chatDao;
   final SessionRepository _sessionRepository;
-  final SyncRepository _syncRepository;
 
   static const Uuid _uuid = Uuid();
 
@@ -96,7 +86,11 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
     }
     await _messageDao.saveData(rows);
     await _ensureGenesis(config.chatId, batch);
-    await _syncRepository.advanceCursor(batch.map((m) => m.seq).reduce(max));
+    // The cursor is deliberately NOT advanced here. It promises "every event up
+    // to this seq is applied", and fetching one chat's window says nothing about
+    // another chat's events with lower numbers — advancing past them would make
+    // the next catch-up skip them, losing messages silently. Only an applied
+    // event (SyncService) and the first greeting may move it.
   }
 
   /// The opening "chat created by X" line is client-side: the contract has no
@@ -212,7 +206,6 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
       // Keep the chat row (list) consistent with the thread: update preview + time + order.
       // A failed send returns an error before reaching here, so the row is never touched (FR-004).
       await _touchChatRow(chatId, message, incrementUnread: false);
-      await _syncRepository.advanceCursor(message.seq);
       return RepositoryResult<MessageModel>.success(data: message);
     });
   }
@@ -277,7 +270,6 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
     );
     await _messageDao.upsert(_mapper.toEntity(model: message));
     await _touchChatRow(chatId, message, incrementUnread: true);
-    await _syncRepository.advanceCursor(message.seq);
   }
 
   /// Updates the parent chat row after a message is persisted: last-message preview +

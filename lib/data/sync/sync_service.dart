@@ -12,6 +12,7 @@ import 'package:nox_app/data/mapper/chat/message_wire_mapper.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/remote/socket/server_frame.dart';
 import 'package:nox_app/di/global_aliases.dart';
+import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_app/general/formatters/chat_preview_formatter.dart';
 
@@ -49,6 +50,7 @@ class SyncService {
   final MessageWireMapper _messageWireMapper;
 
   StreamSubscription<ServerEvent>? _subscription;
+  StreamSubscription<SessionPhase>? _phaseSubscription;
 
   /// Serialises applies. The stream does not await the handler, so a replay
   /// burst would otherwise run every apply concurrently and the read-modify-
@@ -58,6 +60,11 @@ class SyncService {
   /// Set when an apply fails. The cursor takes the MAX of what it is given, so
   /// letting later events keep advancing it would step straight over the failed
   /// one and it would never be redelivered — the opposite of the guarantee.
+  ///
+  /// Cleared when a new catch-up begins: the cursor never moved past the gap,
+  /// so the replay redelivers the failed event and applying can resume. Without
+  /// that reset a single transient write error would silence this device for
+  /// the rest of the process.
   bool _halted = false;
 
   /// Starts applying events. Must be subscribed BEFORE the socket connects, or
@@ -67,11 +74,19 @@ class SyncService {
       (event) => _queue = _queue.then((_) => _apply(event)),
       onError: (Object e, StackTrace s) => logRepository.error(target: this, error: e, stackTrace: s),
     );
+    _phaseSubscription ??= _socket.phase.listen((phase) {
+      if (phase == SessionPhase.catchingUp && _halted) {
+        logRepository.debug(target: this, message: 'sync: resuming, the replay redelivers what failed');
+        _halted = false;
+      }
+    });
   }
 
   Future<void> stop() async {
     await _subscription?.cancel();
     _subscription = null;
+    await _phaseSubscription?.cancel();
+    _phaseSubscription = null;
     _halted = false;
   }
 

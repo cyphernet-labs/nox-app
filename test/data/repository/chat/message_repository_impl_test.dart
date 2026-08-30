@@ -164,41 +164,34 @@ void main() {
     });
   });
 
-  group('sync cursor writers (US3/SC-004)', () {
+  group('the sync cursor is not moved by reads or sends (SC-004)', () {
     late SyncRepository sync;
 
-    setUp(() {
-      sync = getIt<SyncRepository>();
+    setUp(() => sync = getIt<SyncRepository>());
+
+    test('fetching a window leaves the cursor alone', () async {
+      expect(await sync.getCursor(), 0);
+      await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0', limit: 100));
+
+      // The cursor promises "every event up to this seq is applied HERE". One
+      // chat's window says nothing about another chat's events with lower
+      // numbers, so advancing it would make the next catch-up skip them — the
+      // messages would be lost with no error anywhere.
+      expect(await sync.getCursor(), 0);
     });
 
-    test('seeding advances the cursor to the max seeded seq', () async {
-      expect(await sync.getCursor(), 0); // cold DB
-      final (messages, _) = (await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0', limit: 100))).data!;
-
-      final maxSeeded = messages.where((m) => !m.isSystem).map((m) => m.seq).reduce((a, b) => a > b ? a : b);
-      expect(await sync.getCursor(), maxSeeded); // "everything up to seq is applied here" (§9.4)
-    });
-
-    test('sendMessage advances the cursor to the echo seq; a lower seq never moves it back', () async {
+    test('sending a message leaves the cursor alone', () async {
       await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0'));
-      final sent = (await repo.sendMessage(
-        chatId: 'chat_0',
-        clientMessageId: 'cmid-${DateTime.now().microsecondsSinceEpoch}',
-        text: 'cursor probe',
-      )).data!;
-      expect(await sync.getCursor(), sent.seq); // runtime seq is above every seeded base
+      await repo.sendMessage(chatId: 'chat_0', clientMessageId: 'cmid-cursor', text: 'cursor probe');
 
-      await sync.advanceCursor(sent.seq - 5); // duplicate/out-of-order application
-      expect(await sync.getCursor(), sent.seq); // monotonic max held
+      // Own send at a high seq is not proof that everything below it arrived.
+      expect(await sync.getCursor(), 0);
     });
 
-    test('simulateIncoming advances the cursor to the injected seq', () async {
-      await getIt<ChatRepository>().getChats(config: GetChatsConfig.firstPage()); // chat rows for the touch
-      await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0'));
-      final before = await sync.getCursor();
-
-      await repo.simulateIncoming(chatId: 'chat_0');
-      expect(await sync.getCursor(), greaterThan(before)); // the push stand-in is "applied here" too
+    test('the cursor still refuses to move backwards when it is moved', () async {
+      await sync.advanceCursor(100);
+      await sync.advanceCursor(50); // a stale duplicate at the replay boundary
+      expect(await sync.getCursor(), 100);
     });
   });
 
@@ -301,7 +294,6 @@ void main() {
         getIt<MessageWireMapper>(),
         getIt<ChatDao>(),
         getIt<SessionRepository>(),
-        getIt<SyncRepository>(),
       );
 
       final result = await failingRepo.sendMessage(
@@ -355,7 +347,6 @@ void main() {
       getIt<MessageWireMapper>(),
       getIt<ChatDao>(),
       getIt<SessionRepository>(),
-      getIt<SyncRepository>(),
     );
 
     final result = await errorRepo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0'));
@@ -390,7 +381,6 @@ void main() {
         getIt<MessageWireMapper>(),
         getIt<ChatDao>(),
         getIt<SessionRepository>(),
-        getIt<SyncRepository>(),
       );
       return (await repo.sendMessage(
         chatId: 'chat_0',

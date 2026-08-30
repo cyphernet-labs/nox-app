@@ -179,4 +179,32 @@ void main() {
     // The wire has no localPath; losing it would break preview and save.
     expect((await messageDao.getById('m_att'))?.attachmentLocalPath, '/tmp/shot.png');
   });
+
+  test('a failed apply halts the tail, and a fresh catch-up resumes it', () async {
+    final socket = await connected(cursor: 0);
+    // Close the database under the applier so the write fails for real.
+    await getIt<AppDatabase>().clearEntireDatabase();
+    await chatDao.upsert(
+      const ChatEntity(id: 'c_1', name: 'Chat', lastMessagePreview: '', lastMessageAt: '2026-01-01T00:00:00.000Z', unreadCount: 0),
+    );
+
+    // A malformed payload fails to parse inside the apply.
+    socket.pushEvent(seq: 30, data: const {'message_id': 'bad'});
+    await settle();
+    final afterFailure = await sync.getCursor();
+
+    // The tail is held: a later event must NOT move the cursor past the gap,
+    // or the failed one would never be redelivered.
+    socket.pushEvent(seq: 31, data: messageFrame('m_31', 'c_1', seq: 31));
+    await settle();
+    expect(await sync.getCursor(), afterFailure);
+
+    // A reconnect starts a new catch-up, which redelivers the gap — applying
+    // has to resume, or one transient failure would silence the device forever.
+    await socketClient.stop();
+    final second = await connected(cursor: 0);
+    second.pushEvent(seq: 31, data: messageFrame('m_31', 'c_1', seq: 31));
+    await settle();
+    expect(await sync.getCursor(), 31);
+  });
 }
