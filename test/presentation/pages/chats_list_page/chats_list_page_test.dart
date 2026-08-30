@@ -29,6 +29,12 @@ void main() {
       await tester.binding.setSurfaceSize(const Size(420, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await pumpApp(tester, const ChatsListPage());
+      // The list now fetches its page on every open (read-through), so the test
+      // has to wait out the mock's latency the way it would a real server's.
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 300)); // the thread fetches on open
+      await tester.pumpAndSettle();
     }
 
     testWidgets('shows the NOX wordmark, the search field and chat rows', (tester) async {
@@ -44,6 +50,8 @@ void main() {
 
       await tester.tap(find.byType(AppChatItemWidget).first);
       await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 300)); // the thread fetches on open
+      await tester.pumpAndSettle();
 
       expect(find.byType(ChatThreadPage), findsOneWidget);
     });
@@ -52,6 +60,8 @@ void main() {
       await pumpMobile(tester);
 
       await tester.enterText(find.byType(AppSearchFieldWidget), 'Design');
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 300)); // the thread fetches on open
       await tester.pumpAndSettle();
 
       expect(find.text('Design crit'), findsOneWidget);
@@ -63,6 +73,8 @@ void main() {
 
       await tester.enterText(find.byType(AppSearchFieldWidget), 'zzzznomatch');
       await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 300)); // the thread fetches on open
+      await tester.pumpAndSettle();
 
       expect(find.text(l10nEn.chatsSearchEmpty), findsOneWidget);
       expect(find.byType(AppChatItemWidget), findsNothing);
@@ -73,6 +85,8 @@ void main() {
       addTearDown(() => tester.binding.setSurfaceSize(null));
       var accountTaps = 0;
       await pumpApp(tester, ChatsListPage(inShell: true, accountLabel: 'Aria Vale', onAccount: () => accountTaps++));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 300)); // the thread fetches on open
       await tester.pumpAndSettle();
 
       // The avatar renders in the app bar (tooltip = the Account section title).
@@ -89,6 +103,8 @@ void main() {
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await pumpApp(tester, const ChatsListPage(inShell: true)); // no accountLabel/onAccount
       await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 300)); // the thread fetches on open
+      await tester.pumpAndSettle();
 
       expect(find.byTooltip(l10nEn.settingsAccountTitle), findsNothing);
     });
@@ -99,6 +115,12 @@ void main() {
       await tester.binding.setSurfaceSize(const Size(1200, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await pumpApp(tester, const ChatsListPage());
+      // The list now fetches its page on every open (read-through), so the test
+      // has to wait out the mock's latency the way it would a real server's.
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 300)); // the thread fetches on open
+      await tester.pumpAndSettle();
     }
 
     testWidgets('renders the list-detail with a no-selection placeholder', (tester) async {
@@ -113,6 +135,8 @@ void main() {
 
       await tester.tap(find.byType(AppChatItemWidget).first);
       await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 300)); // the thread fetches on open
+      await tester.pumpAndSettle();
 
       // No-selection placeholder is gone (the thread pane swapped) and no push happened.
       expect(find.text(l10nEn.chatsNoSelectionTitle), findsNothing);
@@ -125,6 +149,8 @@ void main() {
       await pumpDesktop(tester);
 
       await tester.tap(find.byType(AppChatItemWidget).first);
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 300)); // the thread fetches on open
       await tester.pumpAndSettle();
 
       final scheme = Theme.of(tester.element(find.byType(AppChatItemWidget).first)).colorScheme;

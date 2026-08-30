@@ -9,7 +9,8 @@ import 'package:nox_app/domain/exception/base_repository_exception.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/domain/repository/base/page_metadata.dart';
-import 'package:nox_app/domain/service/connectivity_service.dart';
+import 'package:nox_app/domain/model/session/session_phase.dart';
+import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
@@ -40,7 +41,7 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
   }
 
   final ChatRepository _chatRepository = getIt<ChatRepository>();
-  final ConnectivityService _connectivityService = getIt<ConnectivityService>();
+  final SessionPhaseService _sessionPhaseService = getIt<SessionPhaseService>();
 
   // Live change-signal over the cache-first DB (Feature 014): a DB write (create / send /
   // incoming / read) re-reads the loaded page prefix. The stream VALUE is ignored — the
@@ -59,7 +60,7 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
   // local-only (Sembast), so sends still succeed offline; the banner is informational
   // until real sync lands. Backend reachability (vs device connectivity) is the eventual
   // authority — this is the closest real-flow proxy for now.
-  StreamSubscription<bool>? _connSub;
+  StreamSubscription<SessionPhase>? _connSub;
   bool _isDeviceOnline = true;
 
   /// The Offline banner shows when the device is offline OR the debug scenario forces it.
@@ -76,7 +77,10 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
         .debounceTime(const Duration(milliseconds: 100))
         .listen((_) => add(const ChatsListEvent.loadChats(refresh: true)));
     // Live connectivity → the Offline banner (seeded current value, then every change).
-    _connSub ??= _connectivityService.watchOnline().listen((online) => add(ChatsListEvent.connectivityChanged(online)));
+    // The session phase, not raw device connectivity, is what says whether the
+    // data on screen is current: a device can be online while the socket is
+    // down, and the socket can be open while replay is still running (FR-005).
+    _connSub ??= _sessionPhaseService.watchPhase().listen((phase) => add(ChatsListEvent.connectivityChanged(phase.isCurrent)));
   }
 
   @override
@@ -218,15 +222,22 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
   Future<void> _refresh(Initialized live0, Emitter<ChatsListState> emit) async {
     // Don't overwrite the stubbed debug scenarios.
     if (_scenario == ChatsListScenario.fatal || _scenario == ChatsListScenario.empty) return;
+    // Read the loaded window from the CURRENT state, not from the snapshot this
+    // refresh was queued with: a load-more that landed in between would other-
+    // wise be undone, silently shrinking the list back to one page.
+    final queued = state;
+    final loadedPages = queued is Initialized ? queued.loadedPageCount : live0.loadedPageCount;
     final query = live0.query;
     final search = query.isEmpty ? null : query;
     final all = <ChatModel>[];
     PageMetadata? lastMeta;
-    for (var page = GetChatsConfig.defaultPage; page < GetChatsConfig.defaultPage + live0.loadedPageCount; page++) {
+    for (var page = GetChatsConfig.defaultPage; page < GetChatsConfig.defaultPage + loadedPages; page++) {
       final live = state;
       if (live is! Initialized || live.query != query) return; // superseded by a newer search/reset
+      // Cache-only: events keep the store current, so the tick re-projects it
+      // instead of firing one command per loaded page every time anything moves.
       final result = await _chatRepository.getChats(
-        config: GetChatsConfig.nextPage(page: page, search: search),
+        config: GetChatsConfig.nextPage(page: page, search: search).copyWith(cachedOnly: true),
       );
       if (!result.hasData) return; // swallow a background error — keep the current list
       final (chats, meta) = result.data!;

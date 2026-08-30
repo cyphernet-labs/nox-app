@@ -34,6 +34,8 @@ void main() {
       await tester.binding.setSurfaceSize(const Size(420, 800));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await pumpApp(tester, const TabBarShell());
+      await tester.pump(const Duration(milliseconds: 300)); // the chats tab fetches its page
+      await tester.pumpAndSettle();
 
       expect(find.byType(AppBottomBarWidget), findsOneWidget);
       expect(find.byType(AppCreateFabWidget), findsOneWidget);
@@ -44,6 +46,8 @@ void main() {
       await tester.binding.setSurfaceSize(const Size(1200, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await pumpApp(tester, const TabBarShell());
+      await tester.pump(const Duration(milliseconds: 300)); // the chats tab fetches its page
+      await tester.pumpAndSettle();
 
       expect(find.byType(AppNavigationRailWidget), findsOneWidget);
       expect(find.byType(AppBottomBarWidget), findsNothing);
@@ -55,6 +59,8 @@ void main() {
       await tester.binding.setSurfaceSize(const Size(880, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await pumpApp(tester, const TabBarShell());
+      await tester.pump(const Duration(milliseconds: 300)); // the chats tab fetches its page
+      await tester.pumpAndSettle();
 
       expect(find.byType(AppNavigationRailWidget), findsOneWidget);
       // Both tab bodies use the desktop list-detail container (not the mobile chrome).
@@ -66,6 +72,8 @@ void main() {
       await tester.binding.setSurfaceSize(const Size(420, 800));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await pumpApp(tester, const TabBarShell());
+      await tester.pump(const Duration(milliseconds: 300)); // the chats tab fetches its page
+      await tester.pumpAndSettle();
 
       // Both bodies are always mounted (IndexedStack-like preservation, FR-021).
       expect(find.byType(ChatsListPage), findsOneWidget);
@@ -85,6 +93,8 @@ void main() {
       await tester.binding.setSurfaceSize(const Size(420, 800));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await pumpApp(tester, const TabBarShell());
+      await tester.pump(const Duration(milliseconds: 300)); // the chats tab fetches its page
+      await tester.pumpAndSettle();
 
       await tester.tap(find.byType(AppCreateFabWidget));
       await tester.pumpAndSettle();
@@ -96,6 +106,8 @@ void main() {
       await tester.binding.setSurfaceSize(const Size(1200, 900)); // wide → rail
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await pumpApp(tester, const TabBarShell());
+      await tester.pump(const Duration(milliseconds: 300)); // the chats tab fetches its page
+      await tester.pumpAndSettle();
 
       await tester.tap(find.byTooltip(l10nEn.tooltipCreateChat)); // the rail's + → _onCreate(desktop: true)
       await tester.pumpAndSettle();
@@ -109,6 +121,8 @@ void main() {
       await tester.binding.setSurfaceSize(const Size(420, 800));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await pumpApp(tester, const TabBarShell());
+      await tester.pump(const Duration(milliseconds: 300)); // the chats tab fetches its page
+      await tester.pumpAndSettle();
 
       // Go to Settings.
       await tester.tap(find.descendant(of: find.byType(AppBottomBarWidget), matching: find.text(l10nEn.settings)));
@@ -131,6 +145,8 @@ void main() {
       await tester.binding.setSurfaceSize(const Size(1200, 900)); // wide → rail + window titlebar
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await pumpApp(tester, const TabBarShell());
+      await tester.pump(const Duration(milliseconds: 300)); // the chats tab fetches its page
+      await tester.pumpAndSettle();
 
       String subtitle() => tester.widget<AppWindowTitlebarWidget>(find.byType(AppWindowTitlebarWidget)).subtitle!;
 
@@ -149,6 +165,8 @@ void main() {
       await tester.binding.setSurfaceSize(const Size(420, 800));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await pumpApp(tester, const TabBarShell());
+      await tester.pump(const Duration(milliseconds: 300)); // the chats tab fetches its page
+      await tester.pumpAndSettle();
 
       await tester.tap(find.descendant(of: find.byType(AppBottomBarWidget), matching: find.text(l10nEn.chats)));
       await tester.pumpAndSettle();

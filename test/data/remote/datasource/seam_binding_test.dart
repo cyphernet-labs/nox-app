@@ -3,6 +3,7 @@ import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/data/entity/base/response_entity.dart';
 import 'package:nox_app/data/entity/chat/wire/chat_wire_entity.dart';
 import 'package:nox_app/data/entity/chat/wire/chats_wire_entity.dart';
+import 'package:nox_app/data/entity/chat/wire/name_availability_wire_entity.dart';
 import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/data/remote/datasource/chat_remote_data_source.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
@@ -35,6 +36,20 @@ class _SentinelChatRemoteDataSource implements ChatRemoteDataSource {
       ),
     );
   }
+
+  @override
+  Future<ResponseEntity<ChatWireEntity>> getChat({required String chatId}) async => const ResponseEntity<ChatWireEntity>(success: false);
+
+  @override
+  Future<ResponseEntity<ChatWireEntity>> createChat({required String name}) async => const ResponseEntity<ChatWireEntity>(success: false);
+
+  @override
+  Future<ResponseEntity<ChatWireEntity>> renameChat({required String chatId, required String name}) async =>
+      const ResponseEntity<ChatWireEntity>(success: false);
+
+  @override
+  Future<ResponseEntity<NameAvailabilityWireEntity>> isNameAvailable({required String name, String? excludeChatId}) async =>
+      const ResponseEntity<NameAvailabilityWireEntity>(success: false);
 }
 
 void main() {

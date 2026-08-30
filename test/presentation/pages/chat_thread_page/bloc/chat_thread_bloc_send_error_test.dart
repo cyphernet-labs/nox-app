@@ -35,7 +35,12 @@ void main() {
       (_) async => RepositoryResult<(List<MessageModel>, PageMetadata)>.success(data: (const [], const PageMetadata(hasMore: false))),
     );
     when(
-      repository.sendMessage(chatId: anyNamed('chatId'), text: anyNamed('text'), attachment: anyNamed('attachment')),
+      repository.sendMessage(
+        chatId: anyNamed('chatId'),
+        clientMessageId: anyNamed('clientMessageId'),
+        text: anyNamed('text'),
+        attachment: anyNamed('attachment'),
+      ),
     ).thenAnswer((_) async => RepositoryResult<MessageModel>.error(exception: RepositoryException.unknown));
     getIt.allowReassignment = true;
     getIt.registerSingleton<MessageRepository>(repository);

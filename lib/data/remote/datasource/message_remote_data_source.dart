@@ -13,10 +13,20 @@ import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 abstract class MessageRemoteDataSource {
   Future<ResponseEntity<MessagesWireEntity>> getMessages({required GetMessagesConfig config});
 
+  /// Sends one message.
+  ///
+  /// The author is NOT passed: the server knows who sent the command
+  /// (contract §5). [clientMessageId] is the idempotency key — the caller owns
+  /// it and must reuse it on every retry of the same message, which is what
+  /// makes a resend after a lost reply safe.
+  ///
+  /// [attachment] stays in the signature for the mock path. On the live path
+  /// there is no `file_id` until the file chain lands (phase 028), so a send
+  /// carrying one is refused before it reaches the wire rather than silently
+  /// dropping the file.
   Future<ResponseEntity<MessageWireEntity>> sendMessage({
     required String chatId,
-    required String authorId,
-    required String authorLabel,
+    required String clientMessageId,
     String? text,
     MessageAttachment? attachment,
   });

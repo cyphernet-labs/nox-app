@@ -13,4 +13,13 @@ abstract class SyncRepository {
 
   /// Drops the cursor with the rest of the local data (logout wipe).
   Future<void> clear();
+
+  /// Which world the cached data came from — `mock`, or `live:<address>`.
+  ///
+  /// Mock and server journals are not comparable: mock seqs are minted from the
+  /// clock (~1.8e15) while a server counts from 1, so carrying a cursor across
+  /// would ask for history from the future and silently receive nothing.
+  Future<String?> getEpoch();
+
+  Future<void> setEpoch(String epoch);
 }

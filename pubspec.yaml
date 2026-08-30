@@ -34,6 +34,9 @@ dependencies:
 
   # --- Network ---
   dio: ^5.9.2
+  # Contract v0 travels over a WebSocket envelope (feature 026). Pinned to the
+  # version already present transitively so promoting it moves no other package.
+  web_socket_channel: 3.0.3
 
   # --- Pagination / UI list ---
   infinite_scroll_pagination: 5.1.1

@@ -49,10 +49,12 @@ void main() {
       build: ChatCardBloc.new,
       act: (bloc) async {
         bloc.add(const ChatCardEvent.initialize('chat_0'));
-        await Future<void>.delayed(const Duration(milliseconds: 300));
+        // The first derive now reaches the source, so give it time to land
+        // before switching scenarios — otherwise the assertion races it.
+        await Future<void>.delayed(const Duration(milliseconds: 500));
         bloc.add(const ChatCardEvent.setScenario(ChatCardScenario.empty));
       },
-      wait: const Duration(milliseconds: 300),
+      wait: const Duration(milliseconds: 500),
       verify: (bloc) => expect((bloc.state as Initialized).files, isEmpty),
     );
 
@@ -104,14 +106,16 @@ void main() {
     );
 
     test('a newly sent attachment appears in the files view without a reload (R5)', () async {
-      // A dedicated chat id (seeded fresh with the generic thread → one attachment).
-      final bloc = ChatCardBloc()..add(const ChatCardEvent.initialize('chat_r5'));
+      // A chat the generator knows, so it carries the generic thread with its
+      // one attachment; ids it does not know answer empty, as a server would
+      // for a brand-new chat.
+      final bloc = ChatCardBloc()..add(const ChatCardEvent.initialize('chat_12'));
       addTearDown(bloc.close);
       await Future<void>.delayed(const Duration(milliseconds: 500)); // seed + derive
       expect((bloc.state as Initialized).files, hasLength(1)); // seeded design-spec.pdf
 
       const att = MessageAttachment(id: 'r5', type: FileType.image, name: 'live.png', sizeBytes: 50);
-      await getIt<MessageRepository>().sendMessage(chatId: 'chat_r5', attachment: att);
+      await getIt<MessageRepository>().sendMessage(chatId: 'chat_12', clientMessageId: 'cmid-r5', attachment: att);
       await Future<void>.delayed(const Duration(milliseconds: 500)); // watch tick + debounce + re-derive
 
       final files = (bloc.state as Initialized).files;
@@ -121,7 +125,7 @@ void main() {
 
     test('the live re-derive preserves the Grid choice and never flashes the loading state (R5)', () async {
       final emitted = <ChatCardState>[];
-      final bloc = ChatCardBloc()..add(const ChatCardEvent.initialize('chat_r5_grid'));
+      final bloc = ChatCardBloc()..add(const ChatCardEvent.initialize('chat_13'));
       addTearDown(bloc.close);
       await Future<void>.delayed(const Duration(milliseconds: 500)); // seed + derive
 
@@ -133,7 +137,7 @@ void main() {
 
       bloc.stream.listen(emitted.add); // capture only what the reactive refresh emits
       const att = MessageAttachment(id: 'g5', type: FileType.image, name: 'shot.png', sizeBytes: 42);
-      await getIt<MessageRepository>().sendMessage(chatId: 'chat_r5_grid', attachment: att);
+      await getIt<MessageRepository>().sendMessage(chatId: 'chat_13', clientMessageId: 'cmid-r5-grid', attachment: att);
       await Future<void>.delayed(const Duration(milliseconds: 500)); // watch tick + debounce + re-derive
 
       final state = bloc.state as Initialized;

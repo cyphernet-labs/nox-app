@@ -15,6 +15,12 @@ class SyncDao {
   static const String _kStateKey = 'state';
   static const String _kSinceField = 'since';
 
+  /// A SEPARATE record, not another field on `state`: the cursor writers replace
+  /// the whole `state` map, so an epoch stored alongside `since` would be wiped
+  /// by the next advance and re-trigger the one-time wipe forever.
+  static const String _kEpochKey = 'epoch';
+  static const String _kEpochField = 'source';
+
   Future<int> readSince() async {
     final db = await _database.db;
     final record = await _store.record(_kStateKey).get(db);
@@ -40,6 +46,20 @@ class SyncDao {
     });
   }
 
+  Future<String?> readEpoch() async {
+    final db = await _database.db;
+    final record = await _store.record(_kEpochKey).get(db);
+    final value = record?[_kEpochField];
+    return value is String ? value : null;
+  }
+
+  Future<void> writeEpoch(String epoch) async {
+    final db = await _database.db;
+    await _store.record(_kEpochKey).put(db, {_kEpochField: epoch});
+  }
+
+  /// Drops the cursor. The epoch deliberately SURVIVES: it describes which world
+  /// the local data came from, and a logout does not change that world.
   Future<void> cleanData() async {
     final db = await _database.db;
     await _store.record(_kStateKey).delete(db);

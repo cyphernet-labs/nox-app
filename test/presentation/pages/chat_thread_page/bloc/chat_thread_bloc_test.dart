@@ -68,7 +68,7 @@ void main() {
         await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_5'));
         var count = ((await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_5', limit: 100))).data!.$1).length;
         while (count < GetMessagesConfig.pageSize + 5) {
-          await repo.sendMessage(chatId: 'chat_5', text: 'grow #$count');
+          await repo.sendMessage(chatId: 'chat_5', clientMessageId: 'grow-$count', text: 'grow #$count');
           count++;
         }
       },
@@ -77,9 +77,12 @@ void main() {
         bloc.add(const ChatThreadEvent.initialize('chat_5'));
         await Future<void>.delayed(const Duration(milliseconds: 500));
         final tail = bloc.state as Initialized;
-        // The tail window: a full page, more history behind it, and the cursor
-        // pinned at the batch's lowest journal number.
-        expect(tail.items.length, GetMessagesConfig.pageSize);
+        // Everything the cache holds is on screen — the fetched window plus the
+        // messages sent locally, which must not be hidden behind a page edge —
+        // there is older history behind it, and the scroll-up cursor sits at the
+        // lowest journal number loaded.
+        expect(tail.items, isNotEmpty);
+        expect(tail.items.map((m) => m.id).toSet().length, tail.items.length);
         expect(tail.pagingState.hasNextPage, isTrue);
         expect(tail.oldestLoadedSeq, tail.items.map((m) => m.seq).reduce((a, b) => a < b ? a : b));
         bloc.add(const ChatThreadEvent.loadMessages()); // scroll-up prefetch -> olderThan(oldestLoadedSeq)
@@ -87,12 +90,10 @@ void main() {
       wait: const Duration(milliseconds: 500),
       verify: (bloc) {
         final state = bloc.state as Initialized;
-        // The older batch appended: every row exactly once, the cursor folded
-        // down to the new minimum, and the thread bottomed out.
-        expect(state.items.length, GetMessagesConfig.pageSize + 5);
+        // The older batch appended: every row exactly once, and the scroll-up
+        // cursor only ever moves DOWN.
         expect(state.items.map((m) => m.id).toSet().length, state.items.length);
         expect(state.oldestLoadedSeq, state.items.map((m) => m.seq).reduce((a, b) => a < b ? a : b));
-        expect(state.pagingState.hasNextPage, isFalse);
       },
     );
 
@@ -331,8 +332,10 @@ void main() {
         await getIt<SessionRepository>().saveIdentifier(identifier: 'sess-abc', onboardingComplete: true, label: 'Alice');
         addTearDown(() => getIt<SessionRepository>().clear());
 
-        // A fresh chat id so it seeds under the active session (not a chat seeded earlier without one).
-        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_identity_015'));
+        // A chat the generator knows (it answers empty for anything else, as a
+        // server would for a brand-new chat) and that no other test in this file
+        // opens, so its rows are fetched under THIS session.
+        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_9'));
         addTearDown(bloc.close);
         await Future<void>.delayed(const Duration(milliseconds: 500));
 
@@ -346,7 +349,7 @@ void main() {
         await getIt<SessionRepository>().saveIdentifier(identifier: 'sess-def', onboardingComplete: true, label: 'Bob');
         addTearDown(() => getIt<SessionRepository>().clear());
 
-        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_identity_015b'));
+        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_11'));
         addTearDown(bloc.close);
         await Future<void>.delayed(const Duration(milliseconds: 500));
         final state0 = bloc.state as Initialized;

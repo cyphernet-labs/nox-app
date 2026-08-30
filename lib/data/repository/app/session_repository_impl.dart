@@ -29,6 +29,10 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
 
   void _emitLabel(String? label) => _labelController.add(label);
 
+  /// The author id the server assigned; open data, so prefs rather than the
+  /// keychain — the login identifier is the secret, this is not.
+  static const String _kAuthorId = 'session.author_id';
+
   @override
   Future<RepositoryResult<SessionModel?>> readSession() {
     return execute<SessionModel?>(() async {
@@ -40,6 +44,7 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
         data: SessionModel(
           identifier: identifier,
           label: _prefs.getString(_kLabel),
+          authorId: _prefs.getString(_kAuthorId),
           onboardingComplete: _prefs.getBool(_kOnboardingComplete) ?? false,
         ),
       );
@@ -73,6 +78,21 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   }
 
   @override
+  Future<RepositoryResult<bool>> adoptServerIdentity({required String authorId, required String label}) {
+    return execute<bool>(() async {
+      await _prefs.setString(_kAuthorId, authorId);
+      final changed = _prefs.getString(_kLabel) != label;
+      if (changed) {
+        await _prefs.setString(_kLabel, label);
+        // Only announce a real change: a reconnect that confirms the current
+        // name should not ripple through every surface that renders it.
+        _emitLabel(label);
+      }
+      return const RepositoryResult<bool>.success(data: true);
+    });
+  }
+
+  @override
   Future<RepositoryResult<bool>> updateLabel({required String label}) {
     return execute<bool>(() async {
       // Label only — the secure identifier is rename-invariant (FR-009).
@@ -96,6 +116,10 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       await _secureStorage.deleteAll();
       await _prefs.remove(_kOnboardingComplete);
       await _prefs.remove(_kLabel);
+      // The server-assigned author id belongs to the identity being logged out.
+      // Leaving it behind would let the next sign-in inherit it and mark that
+      // stranger's messages as its own until the next greeting overwrote it.
+      await _prefs.remove(_kAuthorId);
       _emitLabel(null); // logout resets every label surface to the fallback
       return const RepositoryResult<bool>.success(data: true);
     });

@@ -16,13 +16,15 @@ import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
-import 'package:nox_app/domain/service/connectivity_service.dart';
+import 'package:nox_app/domain/model/session/session_phase.dart';
+import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/domain/service/file_picker_service.dart';
 import 'package:nox_app/general/app_clock.dart';
 import 'package:nox_app/general/identity/identity_resolver.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
 import 'package:nox_app/presentation/pagination/paging_state_ext.dart';
 import 'package:rxdart/rxdart.dart';
+import 'package:uuid/uuid.dart';
 
 part 'chat_thread_bloc.freezed.dart';
 part 'chat_thread_event.dart';
@@ -52,7 +54,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   final ChatRepository _chatRepository = getIt<ChatRepository>();
   final SessionRepository _sessionRepository = getIt<SessionRepository>();
   final FilePickerService _filePickerService = getIt<FilePickerService>();
-  final ConnectivityService _connectivityService = getIt<ConnectivityService>();
+  final SessionPhaseService _sessionPhaseService = getIt<SessionPhaseService>();
 
   late String _chatId;
   // The signed-in own-identity resolved from the session at thread init (feature 015).
@@ -69,7 +71,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   // Live device-online state (P1): the offline banner AND the offline send-queue are
   // reachable in the real flow, not just via the debug scenario. Real offline keeps
   // sends `pending`; reconnecting re-delivers them (mirrors the offline→normal scenario).
-  StreamSubscription<bool>? _connSub;
+  StreamSubscription<SessionPhase>? _connSub;
   bool _deviceOnline = true;
 
   /// The thread is offline when the device is offline OR the debug scenario forces it.
@@ -94,7 +96,10 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
         .debounceTime(const Duration(milliseconds: 100))
         .listen((_) => add(const ChatThreadEvent.loadMessages(refresh: true)));
     // Live connectivity → the offline banner + the offline send-queue (seed then live).
-    _connSub ??= _connectivityService.watchOnline().listen((online) => add(ChatThreadEvent.connectivityChanged(online)));
+    // The session phase, not raw device connectivity, is what says whether the
+    // data on screen is current: a device can be online while the socket is
+    // down, and the socket can be open while replay is still running (FR-005).
+    _connSub ??= _sessionPhaseService.watchPhase().listen((phase) => add(ChatThreadEvent.connectivityChanged(phase.isCurrent)));
   }
 
   @override
@@ -204,7 +209,11 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     final text = (event.text != null && event.text!.trim().isNotEmpty) ? event.text!.trim() : null;
     if (text == null && event.attachment == null) return; // nothing to send
 
-    final localId = 'local_${_localCounter++}';
+    // The optimistic row's id doubles as the contract's idempotency key, so it
+    // must be globally unique — NOT a per-bloc counter, which restarts with
+    // every thread open and would collide across chats and sessions, making two
+    // different messages look like a retry of each other to the server.
+    final localId = 'local_${const Uuid().v4()}';
     final optimistic = MessageModel(
       id: localId,
       chatId: _chatId,
@@ -239,7 +248,17 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
         _updateOutgoing(localId, MessageStatus.error, emit);
         return;
       }
-      final result = await _messageRepository.sendMessage(chatId: _chatId, text: text, attachment: attachment);
+      // localId is stable across retries (RetrySend re-delivers the same one),
+      // so it doubles as the contract's idempotency key: a resend after a lost
+      // reply is recognised by the server instead of stored twice.
+      final result = await _messageRepository.sendMessage(
+        chatId: _chatId,
+        // Stable across retries (RetrySend and the queue flush re-deliver the
+        // same localId), and globally unique — the two properties the key needs.
+        clientMessageId: localId,
+        text: text,
+        attachment: attachment,
+      );
       result.match<void>(
         // Adopt the persisted server message (srv_<uuid> id + sent) so the watch tick's
         // copy is deduped by id in `allMessages` → exactly one bubble (no flicker).
@@ -276,31 +295,51 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     );
   }
 
-  /// Invisible live re-read of the loaded span — one tail read sized to the
-  /// loaded item count plus a batch of headroom for fresh arrivals (the
-  /// cursor equivalent of the old page-prefix walk). Re-folds `items`
-  /// WITHOUT touching the optimistic `outgoing` / draft / loading state.
+  /// Invisible live re-read of the loaded span, served from the CACHE.
   ///
-  /// NOTE for phase 027 (transport): this read is served locally today, so the
-  /// requested limit is unbounded. Against the real server the contract caps a
-  /// batch at 100 with a SILENT clamp (§5) — past ~80 loaded rows a single tail
-  /// read would come back truncated and the loaded span would shrink. When the
-  /// remote source lands, this must walk the cursor (or refresh only the newest
-  /// batch) instead of asking for the whole span at once.
+  /// Reading locally is what makes it safe to ask for the whole span: the wire
+  /// ceiling is a wire concern, and events have already put everything new into
+  /// the cache. Fetching here instead would persist, wake the change-signal
+  /// that triggered this refresh, and fetch again — a loop that never settles.
+  ///
+  /// Re-folds `items` WITHOUT touching the optimistic `outgoing`, the draft or
+  /// the loading state, and merges rather than replaces so the loaded span can
+  /// only grow.
   Future<void> _refreshMessages(Initialized live0, Emitter<ChatThreadState> emit) async {
     if (_scenario == ChatThreadScenario.fatal || _scenario == ChatThreadScenario.empty) return;
     // An inbound that lands in the currently-viewed chat stays read (no-op at 0 otherwise).
     unawaited(_chatRepository.markChatRead(chatId: _chatId));
+    // Only the newest batch: asking for the whole loaded span would exceed the
+    // contract's ceiling past ~100 rows and come back CLAMPED, collapsing the
+    // thread the refresh was meant to keep current. Older rows cannot change —
+    // contract v0 has neither edit nor delete — so re-reading them buys nothing.
     final result = await _messageRepository.getMessages(
-      config: GetMessagesConfig.tail(chatId: _chatId, limit: live0.items.length + GetMessagesConfig.pageSize),
+      config: GetMessagesConfig.tail(chatId: _chatId, limit: live0.items.length + GetMessagesConfig.pageSize, cachedOnly: true),
     );
     if (!result.hasData) return; // swallow a background error — keep the current thread
     final (all, meta) = result.data!;
     final live = state;
     if (live is! Initialized) return;
-    final r = PagingState<String, MessageModel>().applyPage(existingList: const [], response: (all, meta), keyExtractor: (m) => m.id);
+    // MERGE onto what is already loaded rather than replacing it: the batch is
+    // the newest window, and dropping the rest would shrink the thread and jump
+    // the scroll-up cursor forward.
+    final byId = {for (final m in live.items) m.id: m};
+    for (final m in all) {
+      byId[m.id] = m;
+    }
+    final merged = byId.values.toList()..sort((a, b) => a.seq.compareTo(b.seq));
+    final r = PagingState<String, MessageModel>().applyPage(
+      existingList: const [],
+      response: (merged, PageMetadata(hasMore: live.pagingState.hasNextPage)),
+      keyExtractor: (m) => m.id,
+    );
     emit(
-      live.copyWith(items: r.updatedList, pagingState: r.pagingState, oldestLoadedSeq: all.isEmpty ? live.oldestLoadedSeq : all.first.seq),
+      live.copyWith(
+        items: r.updatedList,
+        pagingState: r.pagingState,
+        // The scroll-up cursor only ever moves DOWN.
+        oldestLoadedSeq: merged.isEmpty ? live.oldestLoadedSeq : merged.first.seq,
+      ),
     );
   }
 

@@ -102,6 +102,10 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(row);
     await tester.pumpAndSettle();
+    // The card pulls its files window on open (read-through), so wait it out
+    // the way the test would wait on a real server.
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pumpAndSettle();
 
     expect(find.byType(ChatCardPage), findsOneWidget);
   });

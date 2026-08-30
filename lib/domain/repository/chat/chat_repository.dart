@@ -35,7 +35,7 @@ abstract class ChatRepository {
   Future<RepositoryResult<bool>> isChatNameTaken({required String name, String? excludeChatId});
 
   /// All files shared in a chat (5.4) — chat-owned, not paginated.
-  Future<RepositoryResult<List<MessageAttachment>>> getChatFiles({required String chatId});
+  Future<RepositoryResult<List<MessageAttachment>>> getChatFiles({required String chatId, bool refresh = false});
 
   /// Marks a chat read: resets its unread count to 0 (no-op when already 0). Called when
   /// the chat's thread is viewed (Feature 014); the reactive list badge updates live.

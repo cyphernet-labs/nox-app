@@ -2,11 +2,14 @@ import 'dart:async';
 
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
+import 'package:nox_app/data/remote/socket/socket_channel_factory.dart';
+import 'package:nox_app/data/entity/chat/chat_entity.dart';
 import 'package:nox_app/data/local/chat/chat_dao.dart';
 import 'package:nox_app/data/mapper/chat/chat_mapper.dart';
 import 'package:nox_app/data/mapper/chat/chat_wire_mapper.dart';
 import 'package:nox_app/data/remote/datasource/chat_remote_data_source.dart';
 import 'package:nox_app/di/global_aliases.dart';
+import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/repository/base/page_metadata.dart';
@@ -14,15 +17,19 @@ import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
-import 'package:nox_app/general/app_clock.dart';
 import 'package:nox_app/general/chat_seed_mock_data.dart';
-import 'package:uuid/uuid.dart';
 
-/// Cache-first chats list (5.1) over the local Sembast DB. The [ChatRemoteDataSource]
-/// (mock this phase) seeds the store ONCE on first read; thereafter the list, search
-/// and pagination are served from the DB, and [createChat] persists locally. When the
-/// transport lands (027) and the binding flips (028), only the data source swaps —
-/// the DB contract and the paged wire shape `{chats, has_more}` (§4) stay.
+/// Chats list (5.1): read-through cache over the local Sembast DB.
+///
+/// Each page is fetched from the [ChatRemoteDataSource] and persisted, so the
+/// store is a CACHE of what has been seen rather than a claim to hold
+/// everything. That matters against a live server: the previous design walked
+/// every page on first read, which is fine for a 28-chat mock world and an
+/// unbounded preload against a shared space of unknown size (FR-016).
+///
+/// Writes go to the server too — it owns chat ids and name uniqueness (§4) — and
+/// what comes back is MERGED onto the stored row, never written over it: the
+/// wire does not carry the device-local unread count (§6, §8.3).
 @LazySingleton(as: ChatRepository, env: [Environment.dev, Environment.prod, Environment.test])
 class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
   ChatRepositoryImpl(this._chatDao, this._chatRemote, this._mapper, this._wireMapper, this._messageRepository);
@@ -34,51 +41,74 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
   final MessageRepository _messageRepository;
 
   static const int _pageSize = GetChatsConfig.pageSize;
-  static const Uuid _uuid = Uuid();
 
-  /// One-time seed of the deterministic mock set into the local DB (empty store).
-  /// Unwraps the `ResponseEntity<ChatsWireEntity>` envelope per page (feature 018/S4),
-  /// mapping wire->model and walking pages until the wire `has_more` flag drops (025).
-  /// A `data == null` / `success:false` envelope throws → the enclosing `execute()` in
-  /// getChats/watchChats maps it to `RepositoryResult.error` (mirrors `ItemRepositoryImpl`).
-  Future<void> _seedIfEmpty() async {
-    if (await _chatDao.count() > 0) return;
-    final all = <ChatModel>[];
-    var page = GetChatsConfig.defaultPage;
-    while (true) {
-      final response = await _chatRemote.getChats(config: GetChatsConfig.nextPage(page: page));
-      final data = unwrapEnvelope(response, 'chats');
-      all.addAll(_wireMapper.toListModel(entities: data.chats));
-      // An empty page ends the walk even if has_more stayed true: a desynced
-      // server must not spin this loop forever (mirrors the messages seed).
-      if (!data.hasMore || data.chats.isEmpty) break;
-      page = page + 1;
+  /// Writes wire rows into the cache WITHOUT clobbering device-local state.
+  ///
+  /// Unread lives only on this device (§8.3) — a wire row carries no such
+  /// field, so overwriting the stored row would silently clear the badge. A row
+  /// seen for the first time takes the mock world's unread overlay; a row that
+  /// already exists keeps whatever count it had.
+  /// Returns the rows as they now stand in the cache — NOT the wire rows: the
+  /// caller must render the merged result, or the device-local unread count
+  /// would be missing from the very page that just refreshed it.
+  Future<List<ChatModel>> _persistWire(List<ChatModel> wire) async {
+    if (wire.isEmpty) return const <ChatModel>[];
+    final merged = <ChatEntity>[];
+    for (final chat in wire) {
+      final existing = await _chatDao.getById(chat.id);
+      final unread = existing?.unreadCount ?? ChatSeedMockData.unreadFor(chat.id);
+      merged.add(_mapper.toEntity(model: chat.copyWith(unreadCount: unread)));
     }
-    // Unread badges are device-local (contract §8.3, not on the wire): the
-    // mock world seeds them here as a local overlay.
-    final seeded = all.map((c) => c.copyWith(unreadCount: ChatSeedMockData.unreadFor(c.id)));
-    await _chatDao.saveData(seeded.map((c) => _mapper.toEntity(model: c)).toList());
+    await _chatDao.saveData(merged);
+    return merged.map((e) => _mapper.toModel(entity: e)).toList();
+  }
+
+  /// Serves one page out of the cache — the answer when the channel is down.
+  Future<(List<ChatModel>, PageMetadata)> _cachedPage(GetChatsConfig config) async {
+    final all = (await _chatDao.getAllSorted()).map((e) => _mapper.toModel(entity: e)).toList();
+    final search = config.search?.trim().toLowerCase() ?? '';
+    final filtered = search.isEmpty ? all : all.where((c) => c.name.toLowerCase().contains(search)).toList();
+    final start = (config.page - 1) * _pageSize;
+    final slice = filtered.skip(start).take(_pageSize).toList();
+    // The cache cannot know what the server still holds, so a FULL page means
+    // "possibly more" and a short one means "this is all there is". Deriving it
+    // from the cache size instead would tell the list there are no more pages
+    // the moment it refreshed, permanently disabling load-more.
+    final hasMore = slice.length == _pageSize;
+    return (slice, PageMetadata(hasMore: hasMore, nextPage: hasMore ? config.page + 1 : null));
   }
 
   @override
   Future<RepositoryResult<(List<ChatModel>, PageMetadata)>> getChats({required GetChatsConfig config}) {
     return execute<(List<ChatModel>, PageMetadata)>(() async {
-      await _seedIfEmpty();
-      final all = (await _chatDao.getAllSorted()).map((e) => _mapper.toModel(entity: e)).toList();
-      final search = config.search?.trim().toLowerCase() ?? '';
-      final filtered = search.isEmpty ? all : all.where((c) => c.name.toLowerCase().contains(search)).toList();
-      final start = (config.page - 1) * _pageSize;
-      final slice = filtered.skip(start).take(_pageSize).toList();
-      final hasMore = start + _pageSize < filtered.length;
-      return RepositoryResult<(List<ChatModel>, PageMetadata)>.success(
-        data: (slice, PageMetadata(hasMore: hasMore, nextPage: hasMore ? config.page + 1 : null)),
-      );
+      // A cache-only read never reaches the wire (the live refresh tick).
+      if (config.cachedOnly) {
+        return RepositoryResult<(List<ChatModel>, PageMetadata)>.success(data: await _cachedPage(config));
+      }
+      try {
+        // Search goes to the server: once pages are fetched on demand the cache
+        // holds only what has been scrolled, and filtering it locally would
+        // quietly turn "search the shared space" into "search what I loaded".
+        final response = await _chatRemote.getChats(config: config);
+        final data = unwrapEnvelope(response, 'chats');
+        final page = await _persistWire(_wireMapper.toListModel(entities: data.chats));
+        return RepositoryResult<(List<ChatModel>, PageMetadata)>.success(
+          data: (page, PageMetadata(hasMore: data.hasMore, nextPage: data.hasMore ? config.page + 1 : null)),
+        );
+      } on SocketUnavailableException {
+        // A dead channel falls back to the cache; a typed refusal from the
+        // server is an answer, not an outage, and must reach the caller.
+        logRepository.debug(target: this, message: 'chats: serving page ${config.page} from cache (channel down)');
+        return RepositoryResult<(List<ChatModel>, PageMetadata)>.success(data: await _cachedPage(config));
+      }
     });
   }
 
   @override
   Stream<List<ChatModel>> watchChats() async* {
-    await _seedIfEmpty();
+    // A pure projection of the cache: fetching belongs to the paged read, which
+    // is the only path that knows WHICH page is wanted. A cold store simply
+    // emits empty until the first page lands.
     yield* _chatDao.watch().map((entities) => entities.map((e) => _mapper.toModel(entity: e)).toList());
   }
 
@@ -93,21 +123,27 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
   @override
   Future<RepositoryResult<ChatModel>> updateChatName({required String chatId, required String name}) {
     return execute<ChatModel>(() async {
+      // The server decides whether the rename is allowed (uniqueness, §4) and a
+      // taken name comes back as the typed `name_taken` failure the create/rename
+      // screens render at the field.
+      final response = await _chatRemote.renameChat(chatId: chatId, name: name);
+      final wire = _wireMapper.toModel(entity: unwrapEnvelope(response, 'chat'));
+      // Merge, never replace: the reply carries no unread count.
       final existing = await _chatDao.getById(chatId);
-      if (existing == null) throw StateError('chat $chatId not found');
-      // Persist the new name only; the reactive watch (list + watchChat) picks it up. No
-      // uniqueness backstop here — mirrors createChat: the debounced pre-check gates it and
-      // the real server is the authority. `// TODO(backend): server-side rename + unique.`
-      final updated = existing.copyWith(name: name);
-      await _chatDao.upsert(updated);
-      return RepositoryResult<ChatModel>.success(data: _mapper.toModel(entity: updated));
+      final merged = _mapper.toEntity(model: wire.copyWith(unreadCount: existing?.unreadCount ?? 0));
+      await _chatDao.upsert(merged);
+      return RepositoryResult<ChatModel>.success(data: _mapper.toModel(entity: merged));
     });
   }
 
   @override
   Future<RepositoryResult<ChatModel>> createChat({required String name}) {
     return execute<ChatModel>(() async {
-      final chat = ChatModel(id: _uuid.v4(), name: name, lastMessagePreview: '', lastMessageAt: AppClock.now());
+      // The id comes from the server, not from here: a locally minted uuid would
+      // name a chat nobody else can address, and the server's own row would then
+      // arrive as a second, duplicate entry.
+      final response = await _chatRemote.createChat(name: name);
+      final chat = _wireMapper.toModel(entity: unwrapEnvelope(response, 'chat'));
       await _chatDao.upsert(_mapper.toEntity(model: chat));
       // Seed the opening "Chat created by {label}" system line so the new thread shows
       // its genesis instead of the generic mock history (D5). Best-effort: the chat is
@@ -139,17 +175,36 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
       final needle = name.toLowerCase();
       // excludeChatId (rename): a chat never collides with its OWN current name — only a
       // DIFFERENT chat holding the name counts as taken.
-      final taken = (await _chatDao.getAllSorted()).any((c) => c.id != excludeChatId && c.name.toLowerCase() == needle);
-      return RepositoryResult<bool>.success(data: taken);
+      final stored = await _chatDao.getAllSorted();
+      // Renaming a chat to its OWN name (any case variant) is always allowed —
+      // answered here rather than on the wire, because the server would only see
+      // a name that is indeed taken and could not know it is taken by the very
+      // chat being renamed.
+      if (excludeChatId != null && stored.any((c) => c.id == excludeChatId && c.name.toLowerCase() == needle)) {
+        return const RepositoryResult<bool>.success(data: false);
+      }
+      final localHit = stored.any((c) => c.id != excludeChatId && c.name.toLowerCase() == needle);
+      // A local hit is already an answer and costs no round trip. Otherwise ask
+      // the server, which is the authority and sees names this device has never
+      // paged in; a dead channel falls back to the local answer rather than
+      // blocking the keystroke.
+      if (localHit) return const RepositoryResult<bool>.success(data: true);
+      try {
+        final response = await _chatRemote.isNameAvailable(name: name, excludeChatId: excludeChatId);
+        return RepositoryResult<bool>.success(data: !unwrapEnvelope(response, 'availability').available);
+      } on RepositoryException catch (e) {
+        if (e != RepositoryException.connection) rethrow;
+        return const RepositoryResult<bool>.success(data: false);
+      }
     });
   }
 
   @override
-  Future<RepositoryResult<List<MessageAttachment>>> getChatFiles({required String chatId}) {
+  Future<RepositoryResult<List<MessageAttachment>>> getChatFiles({required String chatId, bool refresh = false}) {
     return execute<List<MessageAttachment>>(() async {
       // Chat files are a local derivation from the persisted messages, not a remote
       // fetch — the 016 ChatFilesRemoteDataSource is retired (feature 017 / E3).
-      final files = await _messageRepository.chatFiles(chatId: chatId);
+      final files = await _messageRepository.chatFiles(chatId: chatId, refresh: refresh);
       return RepositoryResult<List<MessageAttachment>>.success(data: files);
     });
   }

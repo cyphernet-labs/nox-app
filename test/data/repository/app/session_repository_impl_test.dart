@@ -80,4 +80,17 @@ void main() {
       await sub.cancel();
     });
   });
+
+  test('logout removes the server-assigned author id along with the rest (026)', () async {
+    await repository.saveIdentifier(identifier: 'sess-1', onboardingComplete: true, label: 'Anna');
+    await repository.adoptServerIdentity(authorId: 'srv-anna', label: 'Anna');
+    expect((await repository.readSession()).data?.authorId, 'srv-anna');
+
+    await repository.clear();
+    await repository.saveIdentifier(identifier: 'sess-2', onboardingComplete: true);
+
+    // Left behind, the previous identity's author id would mark a stranger's
+    // messages as this user's own until the next greeting overwrote it.
+    expect((await repository.readSession()).data?.authorId, isNull);
+  });
 }

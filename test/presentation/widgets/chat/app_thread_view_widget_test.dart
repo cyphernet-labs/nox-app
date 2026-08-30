@@ -21,8 +21,7 @@ final l10nEn = AppLocalizationsEn();
 
 // A single fixed chat id so the mock repository seeds one deterministic history
 // (14 messages: 1 system line + 13 bubbles) that every test in the file reads.
-ChatModel _sampleChat() =>
-    ChatModel(id: 'chat_thread_view', name: 'Design crit', lastMessagePreview: '', lastMessageAt: DateTime(2024, 1, 1));
+ChatModel _sampleChat() => ChatModel(id: 'chat_3', name: 'Design crit', lastMessagePreview: '', lastMessageAt: DateTime(2024, 1, 1));
 
 // Drive the debug-only ChatThreadScenario dropdown (kDebugMode is true under
 // `flutter test`, so `demo: true` renders it).
@@ -107,6 +106,8 @@ void main() {
 
       // Try-again re-runs initialize → the fatal scenario short-circuits back to the error state.
       await tester.tap(find.text(l10nEn.actionTryAgain));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 300)); // the thread fetches on open
       await tester.pumpAndSettle();
       expect(find.byType(AppErrorWidget), findsOneWidget);
     });

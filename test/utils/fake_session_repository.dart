@@ -30,6 +30,9 @@ class FakeSessionRepository implements SessionRepository {
   }
 
   @override
+  Future<RepositoryResult<bool>> adoptServerIdentity({required String authorId, required String label}) => throw UnimplementedError();
+
+  @override
   Future<RepositoryResult<bool>> updateLabel({required String label}) async {
     _label = label;
     _labelController.add(label);
