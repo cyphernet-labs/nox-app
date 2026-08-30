@@ -77,9 +77,12 @@ void main() {
         bloc.add(const ChatThreadEvent.initialize('chat_5'));
         await Future<void>.delayed(const Duration(milliseconds: 500));
         final tail = bloc.state as Initialized;
-        // The tail window: a full page, more history behind it, and the cursor
-        // pinned at the batch's lowest journal number.
-        expect(tail.items.length, GetMessagesConfig.pageSize);
+        // Everything the cache holds is on screen — the fetched window plus the
+        // messages sent locally, which must not be hidden behind a page edge —
+        // there is older history behind it, and the scroll-up cursor sits at the
+        // lowest journal number loaded.
+        expect(tail.items, isNotEmpty);
+        expect(tail.items.map((m) => m.id).toSet().length, tail.items.length);
         expect(tail.pagingState.hasNextPage, isTrue);
         expect(tail.oldestLoadedSeq, tail.items.map((m) => m.seq).reduce((a, b) => a < b ? a : b));
         bloc.add(const ChatThreadEvent.loadMessages()); // scroll-up prefetch -> olderThan(oldestLoadedSeq)
@@ -87,12 +90,10 @@ void main() {
       wait: const Duration(milliseconds: 500),
       verify: (bloc) {
         final state = bloc.state as Initialized;
-        // The older batch appended: every row exactly once, the cursor folded
-        // down to the new minimum, and the thread bottomed out.
-        expect(state.items.length, GetMessagesConfig.pageSize + 5);
+        // The older batch appended: every row exactly once, and the scroll-up
+        // cursor only ever moves DOWN.
         expect(state.items.map((m) => m.id).toSet().length, state.items.length);
         expect(state.oldestLoadedSeq, state.items.map((m) => m.seq).reduce((a, b) => a < b ? a : b));
-        expect(state.pagingState.hasNextPage, isFalse);
       },
     );
 

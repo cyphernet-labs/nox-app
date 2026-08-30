@@ -56,6 +56,10 @@ class FakeSocket implements SocketConnection {
 
   void pushRaw(String frame) => _incoming.add(frame);
 
+  /// The peer goes away: the stream ends, which is what a real drop looks like
+  /// to the client.
+  Future<void> drop() => _incoming.close();
+
   Map<String, dynamic>? commandNamed(String cmd) {
     for (final f in sent) {
       if (f['cmd'] == cmd) return f;

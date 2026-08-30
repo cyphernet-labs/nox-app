@@ -40,16 +40,19 @@ abstract class GetMessagesConfig with _$GetMessagesConfig implements RepositoryC
 
   /// The newest tail of the thread (initial load and refresh).
   static GetMessagesConfig tail({required String chatId, int limit = pageSize, bool cachedOnly = false}) =>
-      GetMessagesConfig(chatId: chatId, limit: _clamp(limit), cachedOnly: cachedOnly);
+      GetMessagesConfig(chatId: chatId, limit: limit, cachedOnly: cachedOnly);
 
   /// The batch preceding the oldest loaded message (scroll-up prefetch).
   static GetMessagesConfig olderThan({required String chatId, required int beforeSeq, int limit = pageSize}) =>
-      GetMessagesConfig(chatId: chatId, beforeSeq: beforeSeq, limit: _clamp(limit));
+      GetMessagesConfig(chatId: chatId, beforeSeq: beforeSeq, limit: limit);
 
   static int _clamp(int limit) => limit > maxLimit ? maxLimit : limit;
 
-  /// The value actually safe to put on the wire. Built directly rather than
-  /// through the factories, a config can still carry an over-large [limit] —
-  /// the server would clamp it silently, so the data source reads this instead.
+  /// Whether this config is asking for more than one wire batch can carry.
+
+  /// The value safe to put on the wire. The ceiling is the SERVER's, so it is
+  /// applied here rather than in the factories: a cache-only read is served
+  /// locally and may legitimately ask for a wider window — clamping it there
+  /// would leave rows the cache holds unreachable.
   int get wireLimit => _clamp(limit);
 }

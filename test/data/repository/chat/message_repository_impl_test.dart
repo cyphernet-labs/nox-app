@@ -441,7 +441,7 @@ void main() {
   group('chatFiles (E3)', () {
     test('derives the chat attachments newest-first; a newly sent file leads', () async {
       // The seeded thread carries one attachment (design-spec.pdf).
-      final seeded = await repo.chatFiles(chatId: 'chat_0');
+      final seeded = await repo.chatFiles(refresh: true, chatId: 'chat_0');
       expect(seeded, hasLength(1));
       expect(seeded.first.name, 'design-spec.pdf');
 
@@ -449,7 +449,7 @@ void main() {
       const att = MessageAttachment(id: 'a-new', type: FileType.image, name: 'shot.png', sizeBytes: 100);
       await repo.sendMessage(chatId: 'chat_0', clientMessageId: 'cmid-${DateTime.now().microsecondsSinceEpoch}', attachment: att);
 
-      final after = await repo.chatFiles(chatId: 'chat_0');
+      final after = await repo.chatFiles(refresh: true, chatId: 'chat_0');
       expect(after, hasLength(2));
       expect(after.first.name, 'shot.png'); // newest-first
       expect(after.last.name, 'design-spec.pdf');
@@ -458,8 +458,35 @@ void main() {
     test('a chat whose messages have no attachments yields an empty list, isolated per chat', () async {
       // A created chat (D5) seeds only a system line — no attachment.
       final created = (await getIt<ChatRepository>().createChat(name: 'No files chat')).data!;
-      expect(await repo.chatFiles(chatId: created.id), isEmpty);
-      expect(await repo.chatFiles(chatId: 'chat_0'), isNotEmpty); // the other chat is unaffected
+      expect(await repo.chatFiles(refresh: true, chatId: created.id), isEmpty);
+      expect(await repo.chatFiles(refresh: true, chatId: 'chat_0'), isNotEmpty); // the other chat is unaffected
+    });
+  });
+
+  group('pagination answers come from the source, not the cache (fix review)', () {
+    test('has_more is taken from the wire, so scroll-up does not stop at the edge of the cache', () async {
+      // The cache holds only what has been read; deciding "no more history"
+      // from its size would strand everything the window did not cover.
+      final tail = (await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0', limit: 3))).data!;
+      expect(tail.$1, hasLength(3));
+      expect(tail.$2.hasMore, isTrue, reason: 'the source still holds older messages');
+    });
+
+    test('the opening line stays at the top as older history arrives', () async {
+      await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_2', limit: 3));
+      final afterTail = (await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_2', limit: 100, cachedOnly: true))).data!.$1;
+      expect(afterTail.first.isSystem, isTrue);
+
+      // Pull a window older than the one the line was first anchored against.
+      final oldest = afterTail.where((m) => !m.isSystem).first.seq;
+      await repo.getMessages(
+        config: GetMessagesConfig.olderThan(chatId: 'chat_2', beforeSeq: oldest),
+      );
+      final afterOlder = (await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_2', limit: 100, cachedOnly: true))).data!.$1;
+
+      // Re-anchored, not stranded in the middle of the thread.
+      expect(afterOlder.first.isSystem, isTrue);
+      expect(afterOlder.where((m) => m.isSystem), hasLength(1));
     });
   });
 }

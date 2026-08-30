@@ -29,6 +29,17 @@ void main() {
   late ChatDao chatDao;
   late MessageDao messageDao;
 
+  /// Waits for a condition instead of a fixed pause: applies run through an
+  /// async queue and several store writes, and a hard-coded delay is exactly
+  /// the kind of test that passes on a quiet machine and flakes under load.
+  Future<void> waitUntil(Future<bool> Function() done, {String reason = ''}) async {
+    for (var i = 0; i < 200; i++) {
+      if (await done()) return;
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    fail('condition never became true${reason.isEmpty ? '' : ': $reason'}');
+  }
+
   Future<void> settle() => Future<void>.delayed(const Duration(milliseconds: 20));
 
   Map<String, dynamic> chatFrame(String id, {String name = 'Live chat', int at = 1788000000}) => {
@@ -92,10 +103,9 @@ void main() {
   test('a new chat event lands in the store and the cursor follows it', () async {
     final socket = await connected();
     socket.pushEvent(seq: 5, event: 'chat.created', data: chatFrame('c_1'));
-    await settle();
+    await waitUntil(() async => await sync.getCursor() == 5, reason: 'the chat event is applied');
 
     expect((await chatDao.getById('c_1'))?.name, 'Live chat');
-    expect(await sync.getCursor(), 5);
   });
 
   test('applying a chat event keeps the unread badge, which the wire does not carry', () async {
@@ -121,7 +131,7 @@ void main() {
     );
     final socket = await connected();
     socket.pushEvent(seq: 7, data: messageFrame('m_1', 'c_1', seq: 7, text: 'ping'));
-    await settle();
+    await waitUntil(() async => await messageDao.getById('m_1') != null);
 
     expect((await messageDao.getById('m_1'))?.text, 'ping');
     final chat = await chatDao.getById('c_1');

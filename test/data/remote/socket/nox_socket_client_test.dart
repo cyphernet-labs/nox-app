@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
+import 'package:nox_app/data/remote/socket/socket_channel_factory.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
@@ -151,5 +152,45 @@ void main() {
     await sub.cancel();
 
     expect(seen, [1, 2]);
+  });
+
+  group('the handshake gate', () {
+    test('a command issued before the greeting waits for it instead of racing ahead', () async {
+      await client.start(url: url);
+      final socket = factory.latest;
+      // The channel accepts writes the moment it is constructed, long before the
+      // handshake finishes. Sending now would reach the server ahead of
+      // session.hello, which refuses it as malformed (contract §3).
+      final pending = client.send('chats.list', {'page': 1});
+      await settle();
+      expect(socket.commandNamed('chats.list'), isNull, reason: 'held back until greeted');
+
+      socket.pushGreeting();
+      await settle();
+      socket.replyToHello(cursor: 0);
+      await settle();
+
+      // Released in the right order: the greeting went first.
+      expect(socket.sent.first['cmd'], 'session.hello');
+      expect(socket.commandNamed('chats.list'), isNotNull);
+
+      socket.reply(socket.sent.indexWhere((f) => f['cmd'] == 'chats.list'), data: {'chats': const [], 'has_more': false});
+      expect((await pending).ok, isTrue);
+    });
+
+    test('a command issued with no connection at all fails fast instead of hanging', () async {
+      // Nothing started: there is no channel and no handshake to wait for.
+      await expectLater(client.send('chats.list', {'page': 1}), throwsA(isA<SocketUnavailableException>()));
+    });
+
+    test('a drop while waiting for the greeting releases the caller with a failure', () async {
+      await client.start(url: url);
+      final socket = factory.latest;
+      final pending = client.send('chats.list', {'page': 1});
+      await settle();
+
+      await socket.drop(); // the peer goes away before greeting us
+      await expectLater(pending, throwsA(isA<SocketUnavailableException>()));
+    });
   });
 }

@@ -116,6 +116,10 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       await _secureStorage.deleteAll();
       await _prefs.remove(_kOnboardingComplete);
       await _prefs.remove(_kLabel);
+      // The server-assigned author id belongs to the identity being logged out.
+      // Leaving it behind would let the next sign-in inherit it and mark that
+      // stranger's messages as its own until the next greeting overwrote it.
+      await _prefs.remove(_kAuthorId);
       _emitLabel(null); // logout resets every label surface to the fallback
       return const RepositoryResult<bool>.success(data: true);
     });

@@ -15,7 +15,6 @@ import 'package:nox_app/domain/model/chat/message_model.dart';
 import 'package:nox_app/domain/model/chat/message_status.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/data/entity/chat/message_entity.dart';
-import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/repository/base/page_metadata.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
@@ -56,15 +55,20 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
   ///
   /// Merging matters as much as fetching: the wire carries no local delivery
   /// status and no device file path, so a row already stored keeps both.
-  Future<void> _fetchWindow(GetMessagesConfig config) async {
+  /// Returns the source's `has_more` for this window, or null when nothing was
+  /// fetched. The cache cannot answer that question — it only knows what it
+  /// holds — so discarding it would stop scroll-up at the edge of the cache and
+  /// strand the rest of the history.
+  Future<bool?> _fetchWindow(GetMessagesConfig config) async {
     final sessionResult = await _sessionRepository.readSession();
     // A failed session read must not bake own rows under the fallback identity
     // while a real session exists — they would render as a stranger's forever.
-    if (!sessionResult.hasData) return;
+    if (!sessionResult.hasData) return null;
     final identity = resolveIdentity(sessionResult.data);
     final response = await _messageRemote.getMessages(config: config);
-    final batch = _wireMapper.toListModel(entities: unwrapEnvelope(response, 'messages').messages);
-    if (batch.isEmpty) return;
+    final page = unwrapEnvelope(response, 'messages');
+    final batch = _wireMapper.toListModel(entities: page.messages);
+    if (batch.isEmpty) return page.hasMore;
 
     final rows = <MessageEntity>[];
     for (final wire in batch) {
@@ -86,6 +90,7 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
     }
     await _messageDao.saveData(rows);
     await _ensureGenesis(config.chatId, batch);
+    return page.hasMore;
     // The cursor is deliberately NOT advanced here. It promises "every event up
     // to this seq is applied", and fetching one chat's window says nothing about
     // another chat's events with lower numbers — advancing past them would make
@@ -99,14 +104,24 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
   /// the seq below the batch so it stays at the top of the thread.
   Future<void> _ensureGenesis(String chatId, List<MessageModel> batch) async {
     final id = '${chatId}_sys';
-    if (await _messageDao.getById(id) != null) return;
+    final lowest = batch.map((m) => m.seq).reduce(min);
+    final existing = await _messageDao.getById(id);
+    if (existing != null) {
+      // Already below everything loaded — leave it where it is.
+      if ((existing.seq ?? 0) < lowest) return;
+      // Scrolling up brought history older than the window this line was first
+      // anchored against. Without re-anchoring it would sit in the MIDDLE of
+      // the thread, and could even collide with a real message's seq.
+      await _messageDao.upsert(existing.copyWith(seq: lowest - 1));
+      return;
+    }
     final chat = await _chatDao.getById(chatId);
     final label = (chat?.createdByLabel?.isNotEmpty ?? false) ? chat!.createdByLabel! : ChatSeedMockData.genesisAuthorLabel;
     await _messageDao.upsert(
       _mapper.toEntity(
         model: MessageModel(
           id: id,
-          seq: batch.map((m) => m.seq).reduce(min) - 1,
+          seq: lowest - 1,
           chatId: chatId,
           authorId: 'system',
           authorLabel: label,
@@ -143,9 +158,10 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
   Future<RepositoryResult<(List<MessageModel>, PageMetadata)>> getMessages({required GetMessagesConfig config}) {
     return execute<(List<MessageModel>, PageMetadata)>(() async {
       await _backfillLegacySeqIfNeeded(config.chatId);
+      bool? sourceHasMore;
       try {
         // A cache-only read never reaches the wire (the live refresh tick).
-        if (!config.cachedOnly) await _fetchWindow(config);
+        if (!config.cachedOnly) sourceHasMore = await _fetchWindow(config);
       } on SocketUnavailableException {
         // A dead channel falls back to what is cached; a typed refusal is an
         // answer and must reach the caller.
@@ -163,7 +179,14 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
       }
       final start = (end - config.limit) < 0 ? 0 : end - config.limit;
       final slice = all.sublist(start, end);
-      return RepositoryResult<(List<MessageModel>, PageMetadata)>.success(data: (slice, PageMetadata(hasMore: start > 0)));
+      // There is more to load if EITHER side says so. The source knows about
+      // history this device never fetched; the cache knows about rows outside
+      // this window (a locally sent message, an older window pulled earlier).
+      // Trusting one alone either stops scroll-up at the edge of the cache or
+      // claims the thread is exhausted while it is not.
+      return RepositoryResult<(List<MessageModel>, PageMetadata)>.success(
+        data: (slice, PageMetadata(hasMore: (sourceHasMore ?? false) || start > 0)),
+      );
     });
   }
 
@@ -241,10 +264,12 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
     // newest-first (feature 017). Pull the newest window first so the view is
     // useful even when the files panel is opened before the thread; a dead
     // channel just shows what is cached.
-    try {
-      await _fetchWindow(GetMessagesConfig.tail(chatId: chatId));
-    } on RepositoryException catch (e) {
-      if (e != RepositoryException.connection) rethrow;
+    if (refresh) {
+      try {
+        await _fetchWindow(GetMessagesConfig.tail(chatId: chatId));
+      } on SocketUnavailableException {
+        // The cached view is the right answer while the channel is down.
+      }
     }
     final messages = (await _messageDao.getByChatSorted(chatId)).map((e) => _mapper.toModel(entity: e)).toList();
     final files = <MessageAttachment>[];

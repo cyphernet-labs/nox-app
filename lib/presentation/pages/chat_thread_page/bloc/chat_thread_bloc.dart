@@ -295,17 +295,16 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     );
   }
 
-  /// Invisible live re-read of the loaded span — one tail read sized to the
-  /// loaded item count plus a batch of headroom for fresh arrivals (the
-  /// cursor equivalent of the old page-prefix walk). Re-folds `items`
-  /// WITHOUT touching the optimistic `outgoing` / draft / loading state.
+  /// Invisible live re-read of the loaded span, served from the CACHE.
   ///
-  /// NOTE for phase 027 (transport): this read is served locally today, so the
-  /// requested limit is unbounded. Against the real server the contract caps a
-  /// batch at 100 with a SILENT clamp (§5) — past ~80 loaded rows a single tail
-  /// read would come back truncated and the loaded span would shrink. When the
-  /// remote source lands, this must walk the cursor (or refresh only the newest
-  /// batch) instead of asking for the whole span at once.
+  /// Reading locally is what makes it safe to ask for the whole span: the wire
+  /// ceiling is a wire concern, and events have already put everything new into
+  /// the cache. Fetching here instead would persist, wake the change-signal
+  /// that triggered this refresh, and fetch again — a loop that never settles.
+  ///
+  /// Re-folds `items` WITHOUT touching the optimistic `outgoing`, the draft or
+  /// the loading state, and merges rather than replaces so the loaded span can
+  /// only grow.
   Future<void> _refreshMessages(Initialized live0, Emitter<ChatThreadState> emit) async {
     if (_scenario == ChatThreadScenario.fatal || _scenario == ChatThreadScenario.empty) return;
     // An inbound that lands in the currently-viewed chat stays read (no-op at 0 otherwise).
@@ -314,7 +313,9 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     // contract's ceiling past ~100 rows and come back CLAMPED, collapsing the
     // thread the refresh was meant to keep current. Older rows cannot change —
     // contract v0 has neither edit nor delete — so re-reading them buys nothing.
-    final result = await _messageRepository.getMessages(config: GetMessagesConfig.tail(chatId: _chatId, cachedOnly: true));
+    final result = await _messageRepository.getMessages(
+      config: GetMessagesConfig.tail(chatId: _chatId, limit: live0.items.length + GetMessagesConfig.pageSize, cachedOnly: true),
+    );
     if (!result.hasData) return; // swallow a background error — keep the current thread
     final (all, meta) = result.data!;
     final live = state;
