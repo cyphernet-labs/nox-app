@@ -53,9 +53,6 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
 
   static const Uuid _uuid = Uuid();
 
-  /// The signed-in own-identity resolved from the session (fallbacks when absent).
-  Future<Identity> _identity() async => resolveIdentity((await _sessionRepository.readSession()).data);
-
   /// One-time seed of a chat's deterministic mock history into the DB (empty chat).
   /// The mock seeds own rows with [IdentityMockData.fallbackOwnId]; they are reconciled
   /// to the signed-in identity here so own-detection follows the session (feature 015).
@@ -162,15 +159,18 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
   }
 
   @override
-  Future<RepositoryResult<MessageModel>> sendMessage({required String chatId, String? text, MessageAttachment? attachment}) {
+  Future<RepositoryResult<MessageModel>> sendMessage({
+    required String chatId,
+    required String clientMessageId,
+    String? text,
+    MessageAttachment? attachment,
+  }) {
     return execute<MessageModel>(() async {
-      final identity = await _identity();
       // Unwrap the ResponseEntity<MessageWireEntity> echo envelope (P6 — uniform with the
       // paged reads); a failed envelope has null data → throw → execute() maps it to error.
       final response = await _messageRemote.sendMessage(
         chatId: chatId,
-        authorId: identity.id,
-        authorLabel: identity.label,
+        clientMessageId: clientMessageId,
         text: text,
         attachment: attachment,
       );

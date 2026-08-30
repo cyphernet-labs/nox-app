@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/data/entity/base/response_entity.dart';
+import 'package:nox_app/data/entity/chat/wire/chat_wire_entity.dart';
 import 'package:nox_app/data/entity/chat/wire/chats_wire_entity.dart';
+import 'package:nox_app/data/entity/chat/wire/name_availability_wire_entity.dart';
 import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/data/local/chat/chat_dao.dart';
 import 'package:nox_app/data/mapper/chat/chat_mapper.dart';
@@ -27,6 +29,22 @@ class _ErrorChatRemoteDataSource implements ChatRemoteDataSource {
   @override
   Future<ResponseEntity<ChatsWireEntity>> getChats({required GetChatsConfig config}) async =>
       const ResponseEntity<ChatsWireEntity>(success: false);
+
+  @override
+  Future<ResponseEntity<ChatWireEntity>> getChat({required String chatId}) async =>
+      const ResponseEntity<ChatWireEntity>(success: false);
+
+  @override
+  Future<ResponseEntity<ChatWireEntity>> createChat({required String name}) async =>
+      const ResponseEntity<ChatWireEntity>(success: false);
+
+  @override
+  Future<ResponseEntity<ChatWireEntity>> renameChat({required String chatId, required String name}) async =>
+      const ResponseEntity<ChatWireEntity>(success: false);
+
+  @override
+  Future<ResponseEntity<NameAvailabilityWireEntity>> isNameAvailable({required String name, String? excludeChatId}) async =>
+      const ResponseEntity<NameAvailabilityWireEntity>(success: false);
 }
 
 void main() {
@@ -140,7 +158,11 @@ void main() {
   });
 
   group('ChatRepositoryImpl watchChats', () {
-    test('seeds then emits the persisted list and re-emits after a createChat', () async {
+    test('projects the cache and re-emits after a createChat', () async {
+      // watchChats no longer fetches: pulling a page is the paged read's job,
+      // which is the only caller that knows WHICH page is wanted. The stream is
+      // a pure projection, so the first page has to land before it has content.
+      await repository.getChats(config: GetChatsConfig.firstPage());
       final emissions = <List<ChatModel>>[];
       final firstEmission = Completer<void>();
       final secondEmission = Completer<void>();
@@ -152,15 +174,17 @@ void main() {
       });
       addTearDown(subscription.cancel);
 
-      await firstEmission.future; // the one-time seed lands, then the persisted list is emitted
-      final seededCount = emissions.first.length;
-      expect(seededCount, greaterThan(GetChatsConfig.pageSize)); // full mock set seeded into the DB
+      await firstEmission.future; // the fetched page is in the cache and projects out
+      final cachedCount = emissions.first.length;
+      // Exactly the page that was fetched — the cache holds what has been read,
+      // not the whole shared space (read-through, FR-016).
+      expect(cachedCount, GetChatsConfig.pageSize);
 
       await repository.createChat(name: 'Watched chat');
       await secondEmission.future; // the store change re-emits on the same stream
 
       final latest = emissions.last;
-      expect(latest, hasLength(seededCount + 1));
+      expect(latest, hasLength(cachedCount + 1));
       expect(latest.any((c) => c.name == 'Watched chat'), isTrue);
     });
   });

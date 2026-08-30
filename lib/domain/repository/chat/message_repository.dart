@@ -17,7 +17,18 @@ abstract class MessageRepository {
   Stream<List<MessageModel>> watchMessages(String chatId);
 
   /// One-shot send. Returns the accepted (server) message on success.
-  Future<RepositoryResult<MessageModel>> sendMessage({required String chatId, String? text, MessageAttachment? attachment});
+  ///
+  /// [clientMessageId] is the idempotency key and belongs to the CALLER: a
+  /// retry of the same message must carry the same key, which is what lets the
+  /// server recognise a resend after a lost reply instead of storing it twice
+  /// (contract §5). Minting it here would defeat that — every retry would look
+  /// like a new message.
+  Future<RepositoryResult<MessageModel>> sendMessage({
+    required String chatId,
+    required String clientMessageId,
+    String? text,
+    MessageAttachment? attachment,
+  });
 
   /// Seeds a freshly-created chat with its opening system line ("Chat created by
   /// {label}", authored by the signed-in label). Persisting it makes the new thread

@@ -23,6 +23,7 @@ import 'package:nox_app/general/identity/identity_resolver.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
 import 'package:nox_app/presentation/pagination/paging_state_ext.dart';
 import 'package:rxdart/rxdart.dart';
+import 'package:uuid/uuid.dart';
 
 part 'chat_thread_bloc.freezed.dart';
 part 'chat_thread_event.dart';
@@ -204,7 +205,11 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     final text = (event.text != null && event.text!.trim().isNotEmpty) ? event.text!.trim() : null;
     if (text == null && event.attachment == null) return; // nothing to send
 
-    final localId = 'local_${_localCounter++}';
+    // The optimistic row's id doubles as the contract's idempotency key, so it
+    // must be globally unique — NOT a per-bloc counter, which restarts with
+    // every thread open and would collide across chats and sessions, making two
+    // different messages look like a retry of each other to the server.
+    final localId = 'local_${const Uuid().v4()}';
     final optimistic = MessageModel(
       id: localId,
       chatId: _chatId,
@@ -239,7 +244,17 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
         _updateOutgoing(localId, MessageStatus.error, emit);
         return;
       }
-      final result = await _messageRepository.sendMessage(chatId: _chatId, text: text, attachment: attachment);
+      // localId is stable across retries (RetrySend re-delivers the same one),
+      // so it doubles as the contract's idempotency key: a resend after a lost
+      // reply is recognised by the server instead of stored twice.
+      final result = await _messageRepository.sendMessage(
+        chatId: _chatId,
+        // Stable across retries (RetrySend and the queue flush re-deliver the
+        // same localId), and globally unique — the two properties the key needs.
+        clientMessageId: localId,
+        text: text,
+        attachment: attachment,
+      );
       result.match<void>(
         // Adopt the persisted server message (srv_<uuid> id + sent) so the watch tick's
         // copy is deduped by id in `allMessages` → exactly one bubble (no flicker).

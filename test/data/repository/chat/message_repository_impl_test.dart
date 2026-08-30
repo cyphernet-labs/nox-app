@@ -40,7 +40,7 @@ Future<int> _seedThenGrowTo(MessageRepository repo, MessageDao dao, {required St
   await repo.getMessages(config: GetMessagesConfig.tail(chatId: chatId));
   final seeded = await dao.countByChat(chatId);
   for (var i = seeded; i < target; i++) {
-    await repo.sendMessage(chatId: chatId, text: 'grow #$i');
+    await repo.sendMessage(chatId: chatId, clientMessageId: 'cmid-${DateTime.now().microsecondsSinceEpoch}', text: 'grow #$i');
   }
   return dao.countByChat(chatId);
 }
@@ -73,7 +73,7 @@ void main() {
     await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0')); // seed
     final before = await messageDao.countByChat('chat_0');
 
-    final sent = await repo.sendMessage(chatId: 'chat_0', text: 'Hello from test');
+    final sent = await repo.sendMessage(chatId: 'chat_0', clientMessageId: 'cmid-${DateTime.now().microsecondsSinceEpoch}', text: 'Hello from test');
     expect(sent.hasData, isTrue);
 
     expect(await messageDao.countByChat('chat_0'), before + 1);
@@ -85,7 +85,7 @@ void main() {
     await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0')); // seed
     const att = MessageAttachment(id: 'a', type: FileType.image, name: 'shot.png', sizeBytes: 3, localPath: '/tmp/shot.png');
 
-    final sent = (await repo.sendMessage(chatId: 'chat_0', attachment: att)).data!;
+    final sent = (await repo.sendMessage(chatId: 'chat_0', clientMessageId: 'cmid-${DateTime.now().microsecondsSinceEpoch}', attachment: att)).data!;
     // The device-local path is re-attached after the (path-less) wire echo, so a sent
     // image still previews/saves. It also survives to the DB (re-read below).
     expect(sent.attachment?.localPath, '/tmp/shot.png');
@@ -173,7 +173,7 @@ void main() {
 
     test('sendMessage advances the cursor to the echo seq; a lower seq never moves it back', () async {
       await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0'));
-      final sent = (await repo.sendMessage(chatId: 'chat_0', text: 'cursor probe')).data!;
+      final sent = (await repo.sendMessage(chatId: 'chat_0', clientMessageId: 'cmid-${DateTime.now().microsecondsSinceEpoch}', text: 'cursor probe')).data!;
       expect(await sync.getCursor(), sent.seq); // runtime seq is above every seeded base
 
       await sync.advanceCursor(sent.seq - 5); // duplicate/out-of-order application
@@ -244,7 +244,7 @@ void main() {
       expect(before, isNotNull);
       expect((await chatDao.getAllSorted()).first.id, isNot('chat_5')); // not the top row before
 
-      await repo.sendMessage(chatId: 'chat_5', text: 'Hello world');
+      await repo.sendMessage(chatId: 'chat_5', clientMessageId: 'cmid-${DateTime.now().microsecondsSinceEpoch}', text: 'Hello world');
 
       final after = await chatDao.getById('chat_5');
       expect(after!.lastMessagePreview, 'Hello world');
@@ -254,13 +254,13 @@ void main() {
 
     test('an attachment-only send previews as "You: <filename>"', () async {
       const att = MessageAttachment(id: 'a1', type: FileType.pdf, name: 'spec.pdf', sizeBytes: 10);
-      await repo.sendMessage(chatId: 'chat_0', attachment: att);
+      await repo.sendMessage(chatId: 'chat_0', clientMessageId: 'cmid-${DateTime.now().microsecondsSinceEpoch}', attachment: att);
       expect((await chatDao.getById('chat_0'))!.lastMessagePreview, 'You: spec.pdf');
     });
 
     test('an own send does not change the chat unread count', () async {
       final before = (await chatDao.getById('chat_0'))!.unreadCount;
-      await repo.sendMessage(chatId: 'chat_0', text: 'x');
+      await repo.sendMessage(chatId: 'chat_0', clientMessageId: 'cmid-${DateTime.now().microsecondsSinceEpoch}', text: 'x');
       expect((await chatDao.getById('chat_0'))!.unreadCount, before);
     });
 
@@ -270,8 +270,7 @@ void main() {
       when(
         failingRemote.sendMessage(
           chatId: anyNamed('chatId'),
-          authorId: anyNamed('authorId'),
-          authorLabel: anyNamed('authorLabel'),
+          clientMessageId: anyNamed('clientMessageId'),
           text: anyNamed('text'),
           attachment: anyNamed('attachment'),
         ),
@@ -286,7 +285,7 @@ void main() {
         getIt<SyncRepository>(),
       );
 
-      final result = await failingRepo.sendMessage(chatId: 'chat_0', text: 'should not persist');
+      final result = await failingRepo.sendMessage(chatId: 'chat_0', clientMessageId: 'cmid-${DateTime.now().microsecondsSinceEpoch}', text: 'should not persist');
 
       expect(result.hasData, isFalse);
       final after = await chatDao.getById('chat_0');
@@ -351,8 +350,7 @@ void main() {
       when(
         remote.sendMessage(
           chatId: anyNamed('chatId'),
-          authorId: anyNamed('authorId'),
-          authorLabel: anyNamed('authorLabel'),
+          clientMessageId: anyNamed('clientMessageId'),
           text: anyNamed('text'),
           attachment: anyNamed('attachment'),
         ),
@@ -371,7 +369,7 @@ void main() {
         getIt<SessionRepository>(),
         getIt<SyncRepository>(),
       );
-      return (await repo.sendMessage(chatId: 'chat_0', text: 'x')).exception;
+      return (await repo.sendMessage(chatId: 'chat_0', clientMessageId: 'cmid-${DateTime.now().microsecondsSinceEpoch}', text: 'x')).exception;
     }
 
     expect(await sendWith('payload_too_large'), RepositoryException.payloadTooLarge);
@@ -403,7 +401,7 @@ void main() {
       await signInAs('sess-abc', 'Alice');
       await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0')); // seed
 
-      final sent = (await repo.sendMessage(chatId: 'chat_0', text: 'Mine')).data!;
+      final sent = (await repo.sendMessage(chatId: 'chat_0', clientMessageId: 'cmid-${DateTime.now().microsecondsSinceEpoch}', text: 'Mine')).data!;
       expect(sent.authorId, 'sess-abc');
       expect(sent.authorLabel, 'Alice');
 
@@ -428,7 +426,7 @@ void main() {
 
       // Sending a new attachment makes it the newest (first).
       const att = MessageAttachment(id: 'a-new', type: FileType.image, name: 'shot.png', sizeBytes: 100);
-      await repo.sendMessage(chatId: 'chat_0', attachment: att);
+      await repo.sendMessage(chatId: 'chat_0', clientMessageId: 'cmid-${DateTime.now().microsecondsSinceEpoch}', attachment: att);
 
       final after = await repo.chatFiles(chatId: 'chat_0');
       expect(after, hasLength(2));

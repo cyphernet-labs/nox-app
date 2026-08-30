@@ -23,7 +23,7 @@ abstract class SocketChannelFactory {
 /// [IOWebSocketChannel] is used rather than `WebSocketChannel.connect` because
 /// only it exposes `pingInterval`. NOX ships on five IO platforms (web is out
 /// of scope), so binding to the IO implementation costs nothing.
-@LazySingleton(as: SocketChannelFactory, env: [Environment.dev, Environment.prod])
+@LazySingleton(as: SocketChannelFactory, env: [Environment.dev])
 class WebSocketChannelFactory implements SocketChannelFactory {
   /// Contract §9: ~25s, because cellular NATs drop an idle flow at ~30s. A
   /// missed pong surfaces as a socket close, which is the disconnect signal.

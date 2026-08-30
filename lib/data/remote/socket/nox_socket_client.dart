@@ -22,7 +22,10 @@ import 'package:rxdart/rxdart.dart';
 ///
 /// Logging follows FR-019: phases, retries, failure codes and applied `seq`
 /// are recorded; message bodies and user labels never are.
-@lazySingleton
+/// Registered only for the flavor that actually talks to a server: the mock
+/// flavors have no socket, and registering one there would leave a dependency
+/// with nothing to resolve.
+@LazySingleton(env: [Environment.dev])
 class NoxSocketClient {
   NoxSocketClient(this._factory, this._syncRepository);
 

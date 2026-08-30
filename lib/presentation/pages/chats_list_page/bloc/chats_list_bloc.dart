@@ -218,15 +218,22 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
   Future<void> _refresh(Initialized live0, Emitter<ChatsListState> emit) async {
     // Don't overwrite the stubbed debug scenarios.
     if (_scenario == ChatsListScenario.fatal || _scenario == ChatsListScenario.empty) return;
+    // Read the loaded window from the CURRENT state, not from the snapshot this
+    // refresh was queued with: a load-more that landed in between would other-
+    // wise be undone, silently shrinking the list back to one page.
+    final queued = state;
+    final loadedPages = queued is Initialized ? queued.loadedPageCount : live0.loadedPageCount;
     final query = live0.query;
     final search = query.isEmpty ? null : query;
     final all = <ChatModel>[];
     PageMetadata? lastMeta;
-    for (var page = GetChatsConfig.defaultPage; page < GetChatsConfig.defaultPage + live0.loadedPageCount; page++) {
+    for (var page = GetChatsConfig.defaultPage; page < GetChatsConfig.defaultPage + loadedPages; page++) {
       final live = state;
       if (live is! Initialized || live.query != query) return; // superseded by a newer search/reset
+      // Cache-only: events keep the store current, so the tick re-projects it
+      // instead of firing one command per loaded page every time anything moves.
       final result = await _chatRepository.getChats(
-        config: GetChatsConfig.nextPage(page: page, search: search),
+        config: GetChatsConfig.nextPage(page: page, search: search).copyWith(cachedOnly: true),
       );
       if (!result.hasData) return; // swallow a background error — keep the current list
       final (chats, meta) = result.data!;
