@@ -48,7 +48,10 @@ class MockChatRemoteDataSource implements ChatRemoteDataSource {
       if (config.page == GetChatsConfig.defaultPage) ...created,
       ...page.chats.map((c) => overrides[c.chatId] ?? c).where(matches),
     ];
-    return ResponseEntity<ChatsWireEntity>(success: true, data: ChatsWireEntity(chats: merged, hasMore: page.hasMore));
+    return ResponseEntity<ChatsWireEntity>(
+      success: true,
+      data: ChatsWireEntity(chats: merged, hasMore: page.hasMore),
+    );
   }
 
   void _remember(ChatWireEntity chat) {
@@ -60,7 +63,10 @@ class MockChatRemoteDataSource implements ChatRemoteDataSource {
   Future<ResponseEntity<ChatWireEntity>> getChat({required String chatId}) async {
     // The mock world has no chat the local store does not already hold, so a
     // lookup can only be for something that does not exist.
-    return const ResponseEntity<ChatWireEntity>(success: false, error: ErrorWireEntity(code: 'not_found', message: 'unknown chat'));
+    return const ResponseEntity<ChatWireEntity>(
+      success: false,
+      error: ErrorWireEntity(code: 'not_found', message: 'unknown chat'),
+    );
   }
 
   @override
@@ -84,7 +90,10 @@ class MockChatRemoteDataSource implements ChatRemoteDataSource {
     // ids are the generator's `chat_N` plus whatever this mock created.
     final known = _written.any((c) => c.chatId == chatId) || RegExp(r'^chat_\d+$').hasMatch(chatId);
     if (!known) {
-      return const ResponseEntity<ChatWireEntity>(success: false, error: ErrorWireEntity(code: 'not_found', message: 'unknown chat'));
+      return const ResponseEntity<ChatWireEntity>(
+        success: false,
+        error: ErrorWireEntity(code: 'not_found', message: 'unknown chat'),
+      );
     }
     final now = AppClock.now().toUtc().millisecondsSinceEpoch ~/ 1000;
     // Only the wire-owned fields; the repository merges this onto the stored

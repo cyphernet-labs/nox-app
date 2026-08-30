@@ -31,12 +31,10 @@ class _ErrorChatRemoteDataSource implements ChatRemoteDataSource {
       const ResponseEntity<ChatsWireEntity>(success: false);
 
   @override
-  Future<ResponseEntity<ChatWireEntity>> getChat({required String chatId}) async =>
-      const ResponseEntity<ChatWireEntity>(success: false);
+  Future<ResponseEntity<ChatWireEntity>> getChat({required String chatId}) async => const ResponseEntity<ChatWireEntity>(success: false);
 
   @override
-  Future<ResponseEntity<ChatWireEntity>> createChat({required String name}) async =>
-      const ResponseEntity<ChatWireEntity>(success: false);
+  Future<ResponseEntity<ChatWireEntity>> createChat({required String name}) async => const ResponseEntity<ChatWireEntity>(success: false);
 
   @override
   Future<ResponseEntity<ChatWireEntity>> renameChat({required String chatId, required String name}) async =>

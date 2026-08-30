@@ -35,6 +35,8 @@ void main() {
       await tester.binding.setSurfaceSize(const Size(1200, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await pumpApp(tester, const TabBarShell());
+      await tester.pump(const Duration(milliseconds: 300)); // the chats tab fetches its page
+      await tester.pumpAndSettle();
     }
 
     testWidgets('renders an account avatar at the bottom of the rail', (tester) async {
@@ -74,6 +76,8 @@ void main() {
       await tester.binding.setSurfaceSize(const Size(420, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await pumpApp(tester, const TabBarShell());
+      await tester.pump(const Duration(milliseconds: 300)); // the chats tab fetches its page
+      await tester.pumpAndSettle();
       await tester.pumpAndSettle();
     }
 

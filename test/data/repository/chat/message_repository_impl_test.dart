@@ -73,7 +73,11 @@ void main() {
     await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0')); // seed
     final before = await messageDao.countByChat('chat_0');
 
-    final sent = await repo.sendMessage(chatId: 'chat_0', clientMessageId: 'cmid-${DateTime.now().microsecondsSinceEpoch}', text: 'Hello from test');
+    final sent = await repo.sendMessage(
+      chatId: 'chat_0',
+      clientMessageId: 'cmid-${DateTime.now().microsecondsSinceEpoch}',
+      text: 'Hello from test',
+    );
     expect(sent.hasData, isTrue);
 
     expect(await messageDao.countByChat('chat_0'), before + 1);
@@ -85,7 +89,11 @@ void main() {
     await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0')); // seed
     const att = MessageAttachment(id: 'a', type: FileType.image, name: 'shot.png', sizeBytes: 3, localPath: '/tmp/shot.png');
 
-    final sent = (await repo.sendMessage(chatId: 'chat_0', clientMessageId: 'cmid-${DateTime.now().microsecondsSinceEpoch}', attachment: att)).data!;
+    final sent = (await repo.sendMessage(
+      chatId: 'chat_0',
+      clientMessageId: 'cmid-${DateTime.now().microsecondsSinceEpoch}',
+      attachment: att,
+    )).data!;
     // The device-local path is re-attached after the (path-less) wire echo, so a sent
     // image still previews/saves. It also survives to the DB (re-read below).
     expect(sent.attachment?.localPath, '/tmp/shot.png');
@@ -173,7 +181,11 @@ void main() {
 
     test('sendMessage advances the cursor to the echo seq; a lower seq never moves it back', () async {
       await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0'));
-      final sent = (await repo.sendMessage(chatId: 'chat_0', clientMessageId: 'cmid-${DateTime.now().microsecondsSinceEpoch}', text: 'cursor probe')).data!;
+      final sent = (await repo.sendMessage(
+        chatId: 'chat_0',
+        clientMessageId: 'cmid-${DateTime.now().microsecondsSinceEpoch}',
+        text: 'cursor probe',
+      )).data!;
       expect(await sync.getCursor(), sent.seq); // runtime seq is above every seeded base
 
       await sync.advanceCursor(sent.seq - 5); // duplicate/out-of-order application
@@ -285,7 +297,11 @@ void main() {
         getIt<SyncRepository>(),
       );
 
-      final result = await failingRepo.sendMessage(chatId: 'chat_0', clientMessageId: 'cmid-${DateTime.now().microsecondsSinceEpoch}', text: 'should not persist');
+      final result = await failingRepo.sendMessage(
+        chatId: 'chat_0',
+        clientMessageId: 'cmid-${DateTime.now().microsecondsSinceEpoch}',
+        text: 'should not persist',
+      );
 
       expect(result.hasData, isFalse);
       final after = await chatDao.getById('chat_0');
@@ -369,7 +385,11 @@ void main() {
         getIt<SessionRepository>(),
         getIt<SyncRepository>(),
       );
-      return (await repo.sendMessage(chatId: 'chat_0', clientMessageId: 'cmid-${DateTime.now().microsecondsSinceEpoch}', text: 'x')).exception;
+      return (await repo.sendMessage(
+        chatId: 'chat_0',
+        clientMessageId: 'cmid-${DateTime.now().microsecondsSinceEpoch}',
+        text: 'x',
+      )).exception;
     }
 
     expect(await sendWith('payload_too_large'), RepositoryException.payloadTooLarge);
@@ -401,7 +421,11 @@ void main() {
       await signInAs('sess-abc', 'Alice');
       await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0')); // seed
 
-      final sent = (await repo.sendMessage(chatId: 'chat_0', clientMessageId: 'cmid-${DateTime.now().microsecondsSinceEpoch}', text: 'Mine')).data!;
+      final sent = (await repo.sendMessage(
+        chatId: 'chat_0',
+        clientMessageId: 'cmid-${DateTime.now().microsecondsSinceEpoch}',
+        text: 'Mine',
+      )).data!;
       expect(sent.authorId, 'sess-abc');
       expect(sent.authorLabel, 'Alice');
 

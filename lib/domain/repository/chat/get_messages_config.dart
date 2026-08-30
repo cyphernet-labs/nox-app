@@ -31,8 +31,7 @@ abstract class GetMessagesConfig with _$GetMessagesConfig implements RepositoryC
   static const int maxLimit = 100;
 
   /// The newest tail of the thread (initial load and refresh).
-  static GetMessagesConfig tail({required String chatId, int limit = pageSize}) =>
-      GetMessagesConfig(chatId: chatId, limit: _clamp(limit));
+  static GetMessagesConfig tail({required String chatId, int limit = pageSize}) => GetMessagesConfig(chatId: chatId, limit: _clamp(limit));
 
   /// The batch preceding the oldest loaded message (scroll-up prefetch).
   static GetMessagesConfig olderThan({required String chatId, required int beforeSeq, int limit = pageSize}) =>

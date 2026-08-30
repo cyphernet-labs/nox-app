@@ -69,7 +69,11 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
     final filtered = search.isEmpty ? all : all.where((c) => c.name.toLowerCase().contains(search)).toList();
     final start = (config.page - 1) * _pageSize;
     final slice = filtered.skip(start).take(_pageSize).toList();
-    final hasMore = start + _pageSize < filtered.length;
+    // The cache cannot know what the server still holds, so a FULL page means
+    // "possibly more" and a short one means "this is all there is". Deriving it
+    // from the cache size instead would tell the list there are no more pages
+    // the moment it refreshed, permanently disabling load-more.
+    final hasMore = slice.length == _pageSize;
     return (slice, PageMetadata(hasMore: hasMore, nextPage: hasMore ? config.page + 1 : null));
   }
 
@@ -171,7 +175,15 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
       final needle = name.toLowerCase();
       // excludeChatId (rename): a chat never collides with its OWN current name — only a
       // DIFFERENT chat holding the name counts as taken.
-      final localHit = (await _chatDao.getAllSorted()).any((c) => c.id != excludeChatId && c.name.toLowerCase() == needle);
+      final stored = await _chatDao.getAllSorted();
+      // Renaming a chat to its OWN name (any case variant) is always allowed —
+      // answered here rather than on the wire, because the server would only see
+      // a name that is indeed taken and could not know it is taken by the very
+      // chat being renamed.
+      if (excludeChatId != null && stored.any((c) => c.id == excludeChatId && c.name.toLowerCase() == needle)) {
+        return const RepositoryResult<bool>.success(data: false);
+      }
+      final localHit = stored.any((c) => c.id != excludeChatId && c.name.toLowerCase() == needle);
       // A local hit is already an answer and costs no round trip. Otherwise ask
       // the server, which is the authority and sees names this device has never
       // paged in; a dead channel falls back to the local answer rather than

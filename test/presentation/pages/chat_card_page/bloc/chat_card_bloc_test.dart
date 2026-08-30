@@ -111,7 +111,7 @@ void main() {
       expect((bloc.state as Initialized).files, hasLength(1)); // seeded design-spec.pdf
 
       const att = MessageAttachment(id: 'r5', type: FileType.image, name: 'live.png', sizeBytes: 50);
-      await getIt<MessageRepository>().sendMessage(chatId: 'chat_r5', attachment: att);
+      await getIt<MessageRepository>().sendMessage(chatId: 'chat_r5', clientMessageId: 'cmid-r5', attachment: att);
       await Future<void>.delayed(const Duration(milliseconds: 500)); // watch tick + debounce + re-derive
 
       final files = (bloc.state as Initialized).files;
@@ -133,7 +133,7 @@ void main() {
 
       bloc.stream.listen(emitted.add); // capture only what the reactive refresh emits
       const att = MessageAttachment(id: 'g5', type: FileType.image, name: 'shot.png', sizeBytes: 42);
-      await getIt<MessageRepository>().sendMessage(chatId: 'chat_r5_grid', attachment: att);
+      await getIt<MessageRepository>().sendMessage(chatId: 'chat_r5_grid', clientMessageId: 'cmid-r5-grid', attachment: att);
       await Future<void>.delayed(const Duration(milliseconds: 500)); // watch tick + debounce + re-derive
 
       final state = bloc.state as Initialized;

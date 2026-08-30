@@ -29,6 +29,10 @@ void main() {
       await tester.binding.setSurfaceSize(const Size(420, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await pumpApp(tester, const ChatsListPage());
+      // The list now fetches its page on every open (read-through), so the test
+      // has to wait out the mock's latency the way it would a real server's.
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
     }
 
     testWidgets('shows the NOX wordmark, the search field and chat rows', (tester) async {
@@ -99,6 +103,10 @@ void main() {
       await tester.binding.setSurfaceSize(const Size(1200, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await pumpApp(tester, const ChatsListPage());
+      // The list now fetches its page on every open (read-through), so the test
+      // has to wait out the mock's latency the way it would a real server's.
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
     }
 
     testWidgets('renders the list-detail with a no-selection placeholder', (tester) async {

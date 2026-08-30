@@ -36,12 +36,6 @@ class MockMessageRemoteDataSource implements MessageRemoteDataSource {
     // told. Reading it from the session keeps own-message authorship (feature
     // 015) working exactly as before the author left the wire.
     final identity = resolveIdentity((await _sessionRepository.readSession()).data);
-    return _sendMessageApi.execute(
-      chatId: chatId,
-      authorId: identity.id,
-      authorLabel: identity.label,
-      text: text,
-      attachment: attachment,
-    );
+    return _sendMessageApi.execute(chatId: chatId, authorId: identity.id, authorLabel: identity.label, text: text, attachment: attachment);
   }
 }

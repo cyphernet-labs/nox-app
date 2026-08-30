@@ -68,7 +68,7 @@ void main() {
         await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_5'));
         var count = ((await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_5', limit: 100))).data!.$1).length;
         while (count < GetMessagesConfig.pageSize + 5) {
-          await repo.sendMessage(chatId: 'chat_5', text: 'grow #$count');
+          await repo.sendMessage(chatId: 'chat_5', clientMessageId: 'grow-$count', text: 'grow #$count');
           count++;
         }
       },
