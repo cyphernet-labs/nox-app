@@ -331,8 +331,10 @@ void main() {
         await getIt<SessionRepository>().saveIdentifier(identifier: 'sess-abc', onboardingComplete: true, label: 'Alice');
         addTearDown(() => getIt<SessionRepository>().clear());
 
-        // A fresh chat id so it seeds under the active session (not a chat seeded earlier without one).
-        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_identity_015'));
+        // A chat the generator knows (it answers empty for anything else, as a
+        // server would for a brand-new chat) and that no other test in this file
+        // opens, so its rows are fetched under THIS session.
+        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_9'));
         addTearDown(bloc.close);
         await Future<void>.delayed(const Duration(milliseconds: 500));
 
@@ -346,7 +348,7 @@ void main() {
         await getIt<SessionRepository>().saveIdentifier(identifier: 'sess-def', onboardingComplete: true, label: 'Bob');
         addTearDown(() => getIt<SessionRepository>().clear());
 
-        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_identity_015b'));
+        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_11'));
         addTearDown(bloc.close);
         await Future<void>.delayed(const Duration(milliseconds: 500));
         final state0 = bloc.state as Initialized;

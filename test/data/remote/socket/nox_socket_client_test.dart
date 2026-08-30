@@ -40,7 +40,7 @@ void main() {
 
   /// Connects and greets, returning the fake the client is talking to.
   Future<FakeSocket> connect({int cursor = 0, String? label}) async {
-    await client.start(url: url, label: label);
+    await client.start(url: url, labelProvider: label == null ? null : () async => label);
     final socket = factory.latest;
     socket.pushGreeting();
     await settle();

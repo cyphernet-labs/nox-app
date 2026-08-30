@@ -88,7 +88,15 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
         emit(const ChatCardState.initialized(files: []));
         return;
       }
-      final result = await _chatRepository.getChatFiles(chatId: _chatId);
+      // Opening the card pulls the newest window; the live re-derive below does not.
+      final result = await _chatRepository.getChatFiles(chatId: _chatId, refresh: true);
+      // Stale-guard: the read is no longer instant (it may reach the server), so
+      // the debug scenario can have changed while it was in flight. Emitting the
+      // late result would overwrite the state the user just selected.
+      if (_scenario == ChatCardScenario.empty) {
+        emit(const ChatCardState.initialized(files: []));
+        return;
+      }
       result.match<void>(
         onData: (files) => emit(ChatCardState.initialized(files: files, isOffline: _isOffline())),
         onError: (_) => emit(const ChatCardState.error()),

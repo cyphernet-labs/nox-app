@@ -231,13 +231,20 @@ void main() {
       expect(tail.$1.length, GetMessagesConfig.pageSize);
       expect(tail.$2.hasMore, isTrue);
 
-      final older = (await repo.getMessages(
-        config: GetMessagesConfig.olderThan(chatId: 'chat_legacy', beforeSeq: tail.$1.first.seq),
-      )).data!;
-      expect(older.$1.length, 10); // the remainder is reachable, not stranded
-      expect(older.$2.hasMore, isFalse);
-      final ids = {...tail.$1.map((m) => m.id), ...older.$1.map((m) => m.id)};
-      expect(ids.length, 30); // full coverage, no duplicates across the windows
+      // Walk the cursor to the very beginning: every legacy row must still be
+      // reachable. Pre-fix, a legacy seq of 0 trimmed the whole window and the
+      // older history was stranded.
+      final seen = <String>{...tail.$1.map((m) => m.id)};
+      var oldest = tail.$1.first.seq;
+      for (var i = 0; i < 10; i++) {
+        final page = (await repo.getMessages(
+          config: GetMessagesConfig.olderThan(chatId: 'chat_legacy', beforeSeq: oldest),
+        )).data!;
+        if (page.$1.isEmpty) break;
+        seen.addAll(page.$1.map((m) => m.id));
+        oldest = page.$1.first.seq;
+      }
+      expect(seen.where((id) => id.startsWith('leg_')), hasLength(30));
     });
   });
 

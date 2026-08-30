@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
+import 'package:nox_app/data/remote/socket/socket_channel_factory.dart';
 import 'package:nox_app/data/entity/chat/chat_entity.dart';
 import 'package:nox_app/data/local/chat/chat_dao.dart';
 import 'package:nox_app/data/mapper/chat/chat_mapper.dart';
@@ -94,10 +95,9 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
         return RepositoryResult<(List<ChatModel>, PageMetadata)>.success(
           data: (page, PageMetadata(hasMore: data.hasMore, nextPage: data.hasMore ? config.page + 1 : null)),
         );
-      } on RepositoryException catch (e) {
-        // Only a dead channel falls back to the cache. A typed refusal from the
+      } on SocketUnavailableException {
+        // A dead channel falls back to the cache; a typed refusal from the
         // server is an answer, not an outage, and must reach the caller.
-        if (e != RepositoryException.connection) rethrow;
         logRepository.debug(target: this, message: 'chats: serving page ${config.page} from cache (channel down)');
         return RepositoryResult<(List<ChatModel>, PageMetadata)>.success(data: await _cachedPage(config));
       }
@@ -200,11 +200,11 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
   }
 
   @override
-  Future<RepositoryResult<List<MessageAttachment>>> getChatFiles({required String chatId}) {
+  Future<RepositoryResult<List<MessageAttachment>>> getChatFiles({required String chatId, bool refresh = false}) {
     return execute<List<MessageAttachment>>(() async {
       // Chat files are a local derivation from the persisted messages, not a remote
       // fetch — the 016 ChatFilesRemoteDataSource is retired (feature 017 / E3).
-      final files = await _messageRepository.chatFiles(chatId: chatId);
+      final files = await _messageRepository.chatFiles(chatId: chatId, refresh: refresh);
       return RepositoryResult<List<MessageAttachment>>.success(data: files);
     });
   }

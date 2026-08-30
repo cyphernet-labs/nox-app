@@ -23,7 +23,10 @@ class GetChatsApi {
   final ChatWireMapper _wireMapper;
 
   Future<ResponseEntity<ChatsWireEntity>> execute({required GetChatsConfig config}) async {
-    await Future<void>.delayed(const Duration(milliseconds: 150));
+    // No artificial latency: reads happen on every open now (read-through), so a
+    // fake delay here made every widget and golden test race the clock for no
+    // gain — the loading states the delay once demonstrated are covered by the
+    // explicit debug scenarios instead.
 
     final all = _mockChats();
     final search = config.search?.trim().toLowerCase() ?? '';

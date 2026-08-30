@@ -26,6 +26,12 @@ void main() {
       await tester.binding.setSurfaceSize(const Size(420, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await pumpApp(tester, ChatThreadPage(chat: _sampleChat()));
+      // The thread fetches its window on open (read-through), so the test has to
+      // wait out the mock's latency the way it would a real server's.
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 300)); // the thread fetches on open
+      await tester.pumpAndSettle();
     }
 
     testWidgets('shows the chat name, message bubbles and the composer', (tester) async {
@@ -43,6 +49,8 @@ void main() {
       await tester.pump();
       await tester.tap(find.byType(IconButton).last); // send
       await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 300)); // the thread fetches on open
+      await tester.pumpAndSettle();
 
       expect(find.text('Hi from the test'), findsOneWidget);
     });
@@ -53,6 +61,12 @@ void main() {
       await tester.binding.setSurfaceSize(const Size(1200, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await pumpApp(tester, ChatThreadPage(chat: _sampleChat()));
+      // The thread fetches its window on open (read-through), so the test has to
+      // wait out the mock's latency the way it would a real server's.
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 300)); // the thread fetches on open
+      await tester.pumpAndSettle();
 
       expect(find.byType(AppThreadHeaderWidget), findsOneWidget);
       expect(find.byType(AppComposerWidget), findsOneWidget);

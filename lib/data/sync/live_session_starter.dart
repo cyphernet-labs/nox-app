@@ -48,8 +48,20 @@ class LiveSessionStarter {
     _phaseSub ??= _socket.phase.listen((phase) {
       if (phase == SessionPhase.catchingUp || phase == SessionPhase.live) unawaited(_adoptGreeting());
     });
-    final label = (await _session.readSession()).data?.label;
-    await _socket.start(url: _socketUrl(apiUrl), label: label);
+    await _socket.start(
+      url: _socketUrl(apiUrl),
+      // Read at every greeting: a reconnect that forgot the name would be given
+      // a fresh server-minted one, renaming the user behind their back.
+      labelProvider: () async => (await _session.readSession()).data?.label,
+    );
+  }
+
+  /// Brings the channel back after a sign-in. Logout stops it, and without
+  /// this a re-login in the same process would leave the device permanently
+  /// disconnected until the app is restarted.
+  Future<void> restart() async {
+    await stop();
+    await start();
   }
 
   /// Tears the channel down. Called before the logout wipe so live events
@@ -69,9 +81,12 @@ class LiveSessionStarter {
     final limits = _socket.limits;
     if (limits != null) _config.updateLimits(limits);
     final identity = _socket.identity;
-    if (identity == null || identity.label.isEmpty) return;
-    final current = (await _session.readSession()).data?.label;
-    if (current != identity.label) await _session.updateLabel(label: identity.label);
+    if (identity == null || identity.id.isEmpty) return;
+    // BOTH halves matter. The label is what the user sees; the author id is what
+    // the server stamps on every message, so own-vs-other detection is wrong
+    // without it — every message the user sent would come back looking like
+    // someone else's.
+    await _session.adoptServerIdentity(authorId: identity.id, label: identity.label);
   }
 
   /// The cached rows and the cursor describe ONE world. Mock seqs are minted

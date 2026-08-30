@@ -38,15 +38,15 @@ void main() {
   const total = 13;
 
   test('the tail returns the whole sub-page-size history in one batch', () async {
-    final (messages, hasMore) = await exec(GetMessagesConfig.tail(chatId: 'c1'));
+    final (messages, hasMore) = await exec(GetMessagesConfig.tail(chatId: 'chat_1'));
 
     expect(messages, hasLength(total));
     expect(hasMore, isFalse);
   });
 
   test('every message carries a deterministic seq: chatBase + ascending position from 1', () async {
-    final (messages, _) = await exec(GetMessagesConfig.tail(chatId: 'c1'));
-    final base = GetMessagesApi.chatSeqBase('c1');
+    final (messages, _) = await exec(GetMessagesConfig.tail(chatId: 'chat_1'));
+    final base = GetMessagesApi.chatSeqBase('chat_1');
 
     expect(messages.first.seq, base + 1);
     expect(messages.last.seq, base + total);
@@ -61,21 +61,21 @@ void main() {
   test('seeded chat_N ids get the (N+1)*1000 base; arbitrary ids get a stable base', () {
     expect(GetMessagesApi.chatSeqBase('chat_0'), 1000);
     expect(GetMessagesApi.chatSeqBase('chat_27'), 28000);
-    expect(GetMessagesApi.chatSeqBase('c1'), GetMessagesApi.chatSeqBase('c1')); // stable
-    expect(GetMessagesApi.chatSeqBase('c1'), isNot(GetMessagesApi.chatSeqBase('c2')));
+    expect(GetMessagesApi.chatSeqBase('chat_1'), GetMessagesApi.chatSeqBase('chat_1')); // stable
+    expect(GetMessagesApi.chatSeqBase('chat_1'), isNot(GetMessagesApi.chatSeqBase('chat_2')));
   });
 
   test('a beforeSeq cursor returns the strictly-older batch with has_more for the rest', () async {
-    final base = GetMessagesApi.chatSeqBase('c1');
-    final (older, hasMore) = await exec(GetMessagesConfig.olderThan(chatId: 'c1', beforeSeq: base + 6, limit: 3));
+    final base = GetMessagesApi.chatSeqBase('chat_1');
+    final (older, hasMore) = await exec(GetMessagesConfig.olderThan(chatId: 'chat_1', beforeSeq: base + 6, limit: 3));
 
     expect(older.map((m) => m.seq).toList(), [base + 3, base + 4, base + 5]); // ascending, exclusive bound
     expect(hasMore, isTrue); // seqs base+1..base+2 remain older
   });
 
   test('a cursor at the oldest message returns an empty batch with no more history', () async {
-    final base = GetMessagesApi.chatSeqBase('c1');
-    final (older, hasMore) = await exec(GetMessagesConfig.olderThan(chatId: 'c1', beforeSeq: base + 1));
+    final base = GetMessagesApi.chatSeqBase('chat_1');
+    final (older, hasMore) = await exec(GetMessagesConfig.olderThan(chatId: 'chat_1', beforeSeq: base + 1));
 
     expect(older, isEmpty);
     expect(hasMore, isFalse);
@@ -83,24 +83,24 @@ void main() {
 
   test('walking the cursor to the end covers the history exactly once', () async {
     final seen = <int>[];
-    GetMessagesConfig config = GetMessagesConfig.tail(chatId: 'c1', limit: 4);
+    GetMessagesConfig config = GetMessagesConfig.tail(chatId: 'chat_1', limit: 4);
     while (true) {
       final (batch, hasMore) = await exec(config);
       seen.insertAll(0, batch.map((m) => m.seq));
       if (!hasMore || batch.isEmpty) break;
-      config = GetMessagesConfig.olderThan(chatId: 'c1', beforeSeq: batch.first.seq, limit: 4);
+      config = GetMessagesConfig.olderThan(chatId: 'chat_1', beforeSeq: batch.first.seq, limit: 4);
     }
     expect(seen.toSet(), hasLength(total)); // no duplicates
     expect(seen, hasLength(total)); // no gaps
   });
 
   test('the seed mixes own and other authors and carries the attachment message', () async {
-    final (messages, _) = await exec(GetMessagesConfig.tail(chatId: 'c1'));
+    final (messages, _) = await exec(GetMessagesConfig.tail(chatId: 'chat_1'));
 
     expect(messages.any((m) => m.authorId == IdentityMockData.fallbackOwnId), isTrue);
     expect(messages.any((m) => m.authorId != IdentityMockData.fallbackOwnId), isTrue);
     final withFile = messages.singleWhere((m) => m.attachment != null);
-    expect(withFile.id, 'c1_file');
+    expect(withFile.id, 'chat_1_file');
     expect(withFile.attachment!.type, FileType.pdf);
     expect(withFile.attachment!.name, 'design-spec.pdf');
     expect(withFile.attachment!.mime, 'application/pdf');
@@ -108,7 +108,7 @@ void main() {
   });
 
   test('no system line rides the wire - the genesis is client-synthesized (contract §4)', () async {
-    final (messages, _) = await exec(GetMessagesConfig.tail(chatId: 'c1'));
+    final (messages, _) = await exec(GetMessagesConfig.tail(chatId: 'chat_1'));
     expect(messages.any((m) => m.isSystem), isFalse);
     expect(messages.any((m) => m.id == 'c1_sys'), isFalse);
   });

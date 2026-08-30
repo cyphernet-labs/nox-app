@@ -52,7 +52,7 @@ void main() {
     final socket = NoxSocketClient(WebSocketChannelFactory(), _MemoryCursor());
     addTearDown(socket.stop);
 
-    await socket.start(url: Uri.parse('ws://127.0.0.1:8080/ws'), label: 'AppProbe');
+    await socket.start(url: Uri.parse('ws://127.0.0.1:8080/ws'), labelProvider: () async => 'AppProbe');
     await Future<void>.delayed(const Duration(seconds: 2));
     expect(socket.identity, isNotNull, reason: 'the greeting must have been answered');
     expect(socket.limits, isNotNull);

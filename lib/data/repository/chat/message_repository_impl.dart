@@ -3,15 +3,19 @@ import 'dart:math';
 
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
+import 'package:nox_app/data/remote/socket/socket_channel_factory.dart';
 import 'package:nox_app/data/local/chat/chat_dao.dart';
 import 'package:nox_app/data/local/chat/message_dao.dart';
 import 'package:nox_app/data/mapper/chat/message_mapper.dart';
 import 'package:nox_app/data/mapper/chat/message_wire_mapper.dart';
 import 'package:nox_app/data/remote/datasource/message_remote_data_source.dart';
+import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
 import 'package:nox_app/domain/model/chat/message_status.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
+import 'package:nox_app/data/entity/chat/message_entity.dart';
+import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/repository/base/page_metadata.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
@@ -53,59 +57,70 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
 
   static const Uuid _uuid = Uuid();
 
-  /// One-time seed of a chat's deterministic mock history into the DB (empty chat).
-  /// The mock seeds own rows with [IdentityMockData.fallbackOwnId]; they are reconciled
-  /// to the signed-in identity here so own-detection follows the session (feature 015).
-  /// Safe because the identifier is stable for the life of the local DB (logout wipes it).
-  Future<void> _seedChatIfEmpty(String chatId) async {
-    if (await _messageDao.countByChat(chatId) > 0) return;
-    // Own rows seed ONCE and stick for the DB's life. A FAILED session read must not
-    // bake them under the fallback id while a real session exists — that would mismatch
-    // a thread whose currentId resolved from a good read (own history rendered as a
-    // stranger, permanently). Defer seeding until the read succeeds; a genuine "no
-    // session" still succeeds (data == null) → fallback id, which is correct.
+  /// Fetches ONE batch from the source and merges it into the cache.
+  ///
+  /// Not a seed: the previous design walked a chat's entire history on first
+  /// open, which is fine for a dozen mock rows and an unbounded download
+  /// against a real chat (FR-016). Each call brings exactly the window the
+  /// caller asked for.
+  ///
+  /// Merging matters as much as fetching: the wire carries no local delivery
+  /// status and no device file path, so a row already stored keeps both.
+  Future<void> _fetchWindow(GetMessagesConfig config) async {
     final sessionResult = await _sessionRepository.readSession();
+    // A failed session read must not bake own rows under the fallback identity
+    // while a real session exists — they would render as a stranger's forever.
     if (!sessionResult.hasData) return;
     final identity = resolveIdentity(sessionResult.data);
-    final all = <MessageModel>[];
-    int? beforeSeq;
-    while (true) {
-      // Walk the contract cursor backward: the tail first, then batches older
-      // than the oldest received seq, until has_more says stop. A data==null
-      // envelope throws → the enclosing execute() maps it to error.
-      final response = await _messageRemote.getMessages(
-        config: GetMessagesConfig(chatId: chatId, beforeSeq: beforeSeq, limit: GetMessagesConfig.pageSize),
-      );
-      final data = unwrapEnvelope(response, 'messages');
-      final batch = _wireMapper.toListModel(entities: data.messages);
-      all.insertAll(0, batch);
-      if (!data.hasMore || batch.isEmpty) break;
-      beforeSeq = batch.first.seq;
+    final response = await _messageRemote.getMessages(config: config);
+    final batch = _wireMapper.toListModel(entities: unwrapEnvelope(response, 'messages').messages);
+    if (batch.isEmpty) return;
+
+    final rows = <MessageEntity>[];
+    for (final wire in batch) {
+      final existing = await _messageDao.getById(wire.id);
+      var model = wire;
+      // The mock source stamps own rows with a fixed fallback id; follow the
+      // signed-in identity so own-detection matches the session (feature 015).
+      if (model.authorId == IdentityMockData.fallbackOwnId) {
+        model = model.copyWith(authorId: identity.id, authorLabel: identity.label);
+      }
+      if (model.authorId == identity.id) model = model.copyWith(status: MessageStatus.sent);
+      if (existing != null) {
+        model = model.copyWith(
+          attachment: model.attachment?.copyWith(localPath: existing.attachmentLocalPath),
+          status: _mapper.toModel(entity: existing).status,
+        );
+      }
+      rows.add(_mapper.toEntity(model: model));
     }
-    final reconciled = all.map((m) {
-      if (m.authorId != IdentityMockData.fallbackOwnId) return m;
-      // Own seed rows follow the signed-in identity and carry the local
-      // "accepted by server" status (the wire has no statuses - §5).
-      return m.copyWith(authorId: identity.id, authorLabel: identity.label, status: MessageStatus.sent);
-    }).toList();
-    // The genesis line is client-synthesized (contract §4: no system messages
-    // on the wire): position 0 of the chat's seq range, rendered from the
-    // seed persona - byte-identical to the pre-025 seeded line.
-    final genesis = MessageModel(
-      id: '${chatId}_sys',
-      seq: reconciled.isEmpty ? 0 : reconciled.map((m) => m.seq).reduce(min) - 1,
-      chatId: chatId,
-      authorId: 'system',
-      authorLabel: ChatSeedMockData.genesisAuthorLabel,
-      isSystem: true,
-      sentAt: AppClock.now().subtract(ChatSeedMockData.genesisAge),
+    await _messageDao.saveData(rows);
+    await _ensureGenesis(config.chatId, batch);
+    await _syncRepository.advanceCursor(batch.map((m) => m.seq).reduce(max));
+  }
+
+  /// The opening "chat created by X" line is client-side: the contract has no
+  /// system messages on the wire (§4). Authored from the CHAT's own creator so
+  /// a real chat names its real creator rather than a mock persona, and given
+  /// the seq below the batch so it stays at the top of the thread.
+  Future<void> _ensureGenesis(String chatId, List<MessageModel> batch) async {
+    final id = '${chatId}_sys';
+    if (await _messageDao.getById(id) != null) return;
+    final chat = await _chatDao.getById(chatId);
+    final label = (chat?.createdByLabel?.isNotEmpty ?? false) ? chat!.createdByLabel! : ChatSeedMockData.genesisAuthorLabel;
+    await _messageDao.upsert(
+      _mapper.toEntity(
+        model: MessageModel(
+          id: id,
+          seq: batch.map((m) => m.seq).reduce(min) - 1,
+          chatId: chatId,
+          authorId: 'system',
+          authorLabel: label,
+          isSystem: true,
+          sentAt: AppClock.now().subtract(ChatSeedMockData.genesisAge),
+        ),
+      ),
     );
-    await _messageDao.saveData([genesis, ...reconciled].map((m) => _mapper.toEntity(model: m)).toList());
-    // The cursor's promise is "everything up to seq is applied locally"
-    // (§9.4) - seeding applies the whole batch at once.
-    if (reconciled.isNotEmpty) {
-      await _syncRepository.advanceCursor(reconciled.map((m) => m.seq).reduce(max));
-    }
   }
 
   /// Chats already checked for pre-025 rows this process (cheap memo — the
@@ -133,8 +148,15 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
   @override
   Future<RepositoryResult<(List<MessageModel>, PageMetadata)>> getMessages({required GetMessagesConfig config}) {
     return execute<(List<MessageModel>, PageMetadata)>(() async {
-      await _seedChatIfEmpty(config.chatId);
       await _backfillLegacySeqIfNeeded(config.chatId);
+      try {
+        // A cache-only read never reaches the wire (the live refresh tick).
+        if (!config.cachedOnly) await _fetchWindow(config);
+      } on SocketUnavailableException {
+        // A dead channel falls back to what is cached; a typed refusal is an
+        // answer and must reach the caller.
+        logRepository.debug(target: this, message: 'thread: serving from cache (channel down)');
+      }
       final all = (await _messageDao.getByChatSorted(config.chatId)).map((e) => _mapper.toModel(entity: e)).toList();
       // Cursor window over the seq-ascending list: everything strictly older
       // than beforeSeq (or the whole list for the tail), newest `limit` rows.
@@ -153,7 +175,8 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
 
   @override
   Stream<List<MessageModel>> watchMessages(String chatId) async* {
-    await _seedChatIfEmpty(chatId);
+    // A pure projection: fetching belongs to the paged read, which is the only
+    // caller that knows WHICH window is wanted.
     await _backfillLegacySeqIfNeeded(chatId);
     yield* _messageDao.watch(chatId).map((entities) => entities.map((e) => _mapper.toModel(entity: e)).toList());
   }
@@ -206,7 +229,10 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
     final identity = resolveIdentity(sessionResult.data);
     final systemLine = MessageModel(
       id: '${chatId}_sys',
-      seq: MockSeq.next(),
+      // Below every server seq (which start at 1): the opening line belongs at
+      // the top of the thread, and MockSeq's clock-derived value would pin it
+      // to the bottom of a live chat forever.
+      seq: 0,
       chatId: chatId,
       authorId: 'system',
       authorLabel: identity.label, // renders "Chat created by {label}" via l10n.systemChatCreated
@@ -217,10 +243,16 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
   }
 
   @override
-  Future<List<MessageAttachment>> chatFiles({required String chatId}) async {
-    // Derive the 5.4 shared-files view from the chat's persisted attachments, newest-first
-    // (feature 017). Seed first so the view is correct even if opened before the thread.
-    await _seedChatIfEmpty(chatId);
+  Future<List<MessageAttachment>> chatFiles({required String chatId, bool refresh = false}) async {
+    // Derive the 5.4 shared-files view from the chat's persisted attachments,
+    // newest-first (feature 017). Pull the newest window first so the view is
+    // useful even when the files panel is opened before the thread; a dead
+    // channel just shows what is cached.
+    try {
+      await _fetchWindow(GetMessagesConfig.tail(chatId: chatId));
+    } on RepositoryException catch (e) {
+      if (e != RepositoryException.connection) rethrow;
+    }
     final messages = (await _messageDao.getByChatSorted(chatId)).map((e) => _mapper.toModel(entity: e)).toList();
     final files = <MessageAttachment>[];
     for (final message in messages.reversed) {

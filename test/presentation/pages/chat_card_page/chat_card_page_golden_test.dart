@@ -27,7 +27,10 @@ import '../../../utils/pump_app.dart';
 ChatModel _chat() => ChatModel(id: 'chat_0', name: 'Design crit', lastMessagePreview: '', lastMessageAt: DateTime(2024, 1, 1));
 
 Future<void> _settleCard(WidgetTester tester) async {
-  for (var i = 0; i < 14; i++) {
+  // Opening the card now pulls its files window from the source (read-through),
+  // so the loop has to outlast that round trip as well as the reactive
+  // re-derive it triggers.
+  for (var i = 0; i < 24; i++) {
     await tester.pump(const Duration(milliseconds: 150));
   }
 }

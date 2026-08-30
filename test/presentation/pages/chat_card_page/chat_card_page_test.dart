@@ -38,6 +38,10 @@ void main() {
         tester.view.resetPhysicalSize();
       });
       await pumpApp(tester, ChatCardPage(chat: _sampleChat()));
+      // The thread fetches its window on open (read-through), so the test has to
+      // wait out the mock's latency the way it would a real server's.
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
     }
 
     testWidgets('shows the header, the Files toggle and file rows', (tester) async {
@@ -73,6 +77,10 @@ void main() {
       await tester.binding.setSurfaceSize(const Size(1200, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await pumpApp(tester, ChatCardPage(chat: _sampleChat()));
+      // The thread fetches its window on open (read-through), so the test has to
+      // wait out the mock's latency the way it would a real server's.
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
 
       expect(find.text(l10nEn.chatInfoTitle), findsOneWidget);
       expect(find.byType(AppFileGlyphWidget), findsWidgets);

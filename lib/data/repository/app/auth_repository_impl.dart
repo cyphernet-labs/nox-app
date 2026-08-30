@@ -36,7 +36,14 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
     // "registered\n"). This is normalization, not format validation (FR-011).
     final id = identifier.trim();
     final onboardingComplete = OnboardingMockData.registeredIds.contains(id);
-    return _deriveAfter(() => _sessionRepository.saveIdentifier(identifier: id, onboardingComplete: onboardingComplete));
+    return _deriveAfter(
+      () => _sessionRepository.saveIdentifier(identifier: id, onboardingComplete: onboardingComplete),
+      // Logout closed the channel; a sign-in in the same process has to open it
+      // again, or the device stays disconnected until the app is restarted.
+      afterMutate: () async {
+        if (getIt.isRegistered<LiveSessionStarter>()) await getIt<LiveSessionStarter>().restart();
+      },
+    );
   }
 
   @override

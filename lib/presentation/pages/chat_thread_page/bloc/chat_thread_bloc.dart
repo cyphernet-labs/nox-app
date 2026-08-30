@@ -310,16 +310,35 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     if (_scenario == ChatThreadScenario.fatal || _scenario == ChatThreadScenario.empty) return;
     // An inbound that lands in the currently-viewed chat stays read (no-op at 0 otherwise).
     unawaited(_chatRepository.markChatRead(chatId: _chatId));
-    final result = await _messageRepository.getMessages(
-      config: GetMessagesConfig.tail(chatId: _chatId, limit: live0.items.length + GetMessagesConfig.pageSize),
-    );
+    // Only the newest batch: asking for the whole loaded span would exceed the
+    // contract's ceiling past ~100 rows and come back CLAMPED, collapsing the
+    // thread the refresh was meant to keep current. Older rows cannot change —
+    // contract v0 has neither edit nor delete — so re-reading them buys nothing.
+    final result = await _messageRepository.getMessages(config: GetMessagesConfig.tail(chatId: _chatId, cachedOnly: true));
     if (!result.hasData) return; // swallow a background error — keep the current thread
     final (all, meta) = result.data!;
     final live = state;
     if (live is! Initialized) return;
-    final r = PagingState<String, MessageModel>().applyPage(existingList: const [], response: (all, meta), keyExtractor: (m) => m.id);
+    // MERGE onto what is already loaded rather than replacing it: the batch is
+    // the newest window, and dropping the rest would shrink the thread and jump
+    // the scroll-up cursor forward.
+    final byId = {for (final m in live.items) m.id: m};
+    for (final m in all) {
+      byId[m.id] = m;
+    }
+    final merged = byId.values.toList()..sort((a, b) => a.seq.compareTo(b.seq));
+    final r = PagingState<String, MessageModel>().applyPage(
+      existingList: const [],
+      response: (merged, PageMetadata(hasMore: live.pagingState.hasNextPage)),
+      keyExtractor: (m) => m.id,
+    );
     emit(
-      live.copyWith(items: r.updatedList, pagingState: r.pagingState, oldestLoadedSeq: all.isEmpty ? live.oldestLoadedSeq : all.first.seq),
+      live.copyWith(
+        items: r.updatedList,
+        pagingState: r.pagingState,
+        // The scroll-up cursor only ever moves DOWN.
+        oldestLoadedSeq: merged.isEmpty ? live.oldestLoadedSeq : merged.first.seq,
+      ),
     );
   }
 

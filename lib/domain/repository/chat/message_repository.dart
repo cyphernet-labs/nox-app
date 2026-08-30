@@ -37,7 +37,13 @@ abstract class MessageRepository {
 
   /// The chat's shared files (5.4) — every attachment across its persisted messages,
   /// newest-first. Derived from the local message cache, not a remote fetch (feature 017).
-  Future<List<MessageAttachment>> chatFiles({required String chatId});
+  /// The chat's shared files, newest-first.
+  ///
+  /// [refresh] pulls the newest window from the source first, which is what an
+  /// OPEN wants. The live re-derive must leave it false: fetching there would
+  /// persist, wake the change-signal, and fetch again — a loop that never
+  /// settles.
+  Future<List<MessageAttachment>> chatFiles({required String chatId, bool refresh = false});
 
   /// DEBUG ONLY (`kDebugMode`, Feature 014): persist an inbound message (author != me)
   /// into a chat and bump its unread — the deterministic stand-in for a server push.

@@ -29,6 +29,10 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
 
   void _emitLabel(String? label) => _labelController.add(label);
 
+  /// The author id the server assigned; open data, so prefs rather than the
+  /// keychain — the login identifier is the secret, this is not.
+  static const String _kAuthorId = 'session.author_id';
+
   @override
   Future<RepositoryResult<SessionModel?>> readSession() {
     return execute<SessionModel?>(() async {
@@ -40,6 +44,7 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
         data: SessionModel(
           identifier: identifier,
           label: _prefs.getString(_kLabel),
+          authorId: _prefs.getString(_kAuthorId),
           onboardingComplete: _prefs.getBool(_kOnboardingComplete) ?? false,
         ),
       );
@@ -68,6 +73,21 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       await _prefs.setBool(_kOnboardingComplete, true);
       if (label != null) await _prefs.setString(_kLabel, label);
       if (label != null) _emitLabel(label);
+      return const RepositoryResult<bool>.success(data: true);
+    });
+  }
+
+  @override
+  Future<RepositoryResult<bool>> adoptServerIdentity({required String authorId, required String label}) {
+    return execute<bool>(() async {
+      await _prefs.setString(_kAuthorId, authorId);
+      final changed = _prefs.getString(_kLabel) != label;
+      if (changed) {
+        await _prefs.setString(_kLabel, label);
+        // Only announce a real change: a reconnect that confirms the current
+        // name should not ripple through every surface that renders it.
+        _emitLabel(label);
+      }
       return const RepositoryResult<bool>.success(data: true);
     });
   }

@@ -30,7 +30,10 @@ class GetMessagesApi {
   final MessageWireMapper _wireMapper;
 
   Future<ResponseEntity<MessagesWireEntity>> execute({required GetMessagesConfig config}) async {
-    await Future<void>.delayed(const Duration(milliseconds: 150));
+    // No artificial latency: reads happen on every open now (read-through), so a
+    // fake delay here made every widget and golden test race the clock for no
+    // gain — the loading states the delay once demonstrated are covered by the
+    // explicit debug scenarios instead.
 
     final all = _mockMessages(config.chatId); // ascending by seq (== chronological)
     final beforeSeq = config.beforeSeq;
@@ -71,7 +74,14 @@ class GetMessagesApi {
   /// Deterministic history for a chat. Authors: `me` (own) + a few others; one
   /// message carries an attachment. Timestamps are relative to "now" so the date
   /// separators (Today / Yesterday / date) read consistently.
+  /// The generator only knows the chats it seeds (`chat_0`..`chat_N`). Anything
+  /// else — a chat the user just created — has no history, exactly as a real
+  /// server would answer for a brand-new chat. Returning the generic history
+  /// for every id would bury a fresh chat under someone else's conversation.
+  static bool knowsChat(String chatId) => RegExp(r'^chat_\d+$').hasMatch(chatId);
+
   List<MessageModel> _mockMessages(String chatId) {
+    if (!knowsChat(chatId)) return const <MessageModel>[];
     final now = AppClock.now();
     final messages = <MessageModel>[];
 

@@ -59,12 +59,26 @@ class NoxSocketClient {
   int _nextId = 1;
   bool _started = false;
 
+  /// Completes when the greeting has been answered on the CURRENT connection.
+  ///
+  /// The channel accepts writes the instant it is constructed, well before the
+  /// handshake finishes, so without this gate a command issued in that window
+  /// reaches the server before `session.hello` and is refused as malformed
+  /// (contract §3, and the server enforces it) — surfacing to the user as a
+  /// hard error rather than as "not connected yet".
+  Completer<void>? _greeted;
+
   /// The cursor the server reported in the greeting. Catching up ends when an
   /// event with `seq >= _helloCursor` has been applied (contract §3).
   int _helloCursor = 0;
 
   Uri? _url;
-  String? _desiredLabel;
+
+  /// Asked for the current label at every greeting rather than handed one at
+  /// start: stage 1 does not persist identities, so a reconnect that greeted
+  /// without a name would be assigned a fresh `User<n>` — silently renaming the
+  /// user, and renaming them again on the next drop.
+  Future<String?> Function()? _labelProvider;
 
   /// Last greeting's identity and limits — the server is the authority on both.
   ServerIdentity? identity;
@@ -75,9 +89,9 @@ class NoxSocketClient {
   Stream<ServerEvent> get events => _events.stream;
 
   /// Opens the connection and keeps it open until [stop]. Safe to call twice.
-  Future<void> start({required Uri url, String? label}) async {
+  Future<void> start({required Uri url, Future<String?> Function()? labelProvider}) async {
     _url = url;
-    _desiredLabel = label;
+    _labelProvider = labelProvider;
     if (_started) return;
     _started = true;
     await _openOnce();
@@ -105,7 +119,18 @@ class NoxSocketClient {
     }
   }
 
-  Future<CommandReply> _sendOnce(String cmd, Map<String, dynamic> data) async {
+  Future<CommandReply> _sendOnce(String cmd, Map<String, dynamic> data, {bool isGreeting = false}) async {
+    if (!isGreeting) {
+      final greeted = _greeted;
+      if (greeted == null) throw const SocketUnavailableException('no connection');
+      // Wait for the handshake rather than racing it — but never longer than a
+      // command is allowed to take.
+      try {
+        await greeted.future.timeout(sendTimeout);
+      } on TimeoutException {
+        throw const SocketUnavailableException('handshake did not complete');
+      }
+    }
     final connection = _connection;
     if (connection == null) throw const SocketUnavailableException('no connection');
     final id = _nextId++;
@@ -125,6 +150,12 @@ class NoxSocketClient {
     final url = _url;
     if (!_started || url == null) return;
     _phase.add(SessionPhase.connecting);
+    final greeted = Completer<void>();
+    // Nobody may be waiting when the handshake fails, and an unobserved error
+    // on a completer is reported as a crash. This marks it handled without
+    // affecting callers that DO await it.
+    greeted.future.ignore();
+    _greeted = greeted;
     try {
       final connection = _factory.connect(url);
       _connection = connection;
@@ -174,10 +205,11 @@ class NoxSocketClient {
     try {
       final since = await _syncRepository.getCursor();
       final firstEver = since == 0;
-      final reply = await _sendOnce('session.hello', <String, dynamic>{
+      final label = await _labelProvider?.call();
+      final reply = await _sendOnce(isGreeting: true, 'session.hello', <String, dynamic>{
         'schema': 1,
         if (!firstEver) 'since': since,
-        if (_desiredLabel != null && _desiredLabel!.isNotEmpty) 'label': _desiredLabel,
+        'label': ?label,
       });
       if (!reply.ok) {
         logRepository.debug(target: this, message: 'socket: greeting refused: code=${reply.errorCode}');
@@ -205,6 +237,8 @@ class NoxSocketClient {
       }
       // The ladder resets HERE — a greeting is the first proof the peer is real.
       _backoff = _minBackoff;
+      // Commands may flow from here: the server has accepted this connection.
+      if (_greeted?.isCompleted == false) _greeted!.complete();
       _phase.add(SessionPhase.catchingUp);
       logRepository.debug(target: this, message: 'socket: greeted: first=$firstEver cursor=$_helloCursor');
       if (firstEver) {
@@ -245,6 +279,9 @@ class NoxSocketClient {
       if (!completer.isCompleted) completer.completeError(const SocketUnavailableException('connection lost'));
     }
     _pending.clear();
+    // Callers waiting on the handshake must not hang past the drop.
+    if (_greeted?.isCompleted == false) _greeted!.completeError(const SocketUnavailableException('connection lost'));
+    _greeted = null;
     if (_phase.value != next) _phase.add(next);
   }
 

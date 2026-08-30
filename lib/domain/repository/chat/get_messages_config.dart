@@ -20,6 +20,14 @@ abstract class GetMessagesConfig with _$GetMessagesConfig implements RepositoryC
 
     /// Batch size. Always within [maxLimit] — the factories clamp it.
     @Default(GetMessagesConfig.pageSize) int limit,
+
+    /// Serve this window from the local cache without touching the server.
+    ///
+    /// The live change-signal fires on every persisted row, so a refresh that
+    /// fetched would persist, wake the signal and fetch again — a loop that
+    /// never settles. Events already keep the cache current; the tick only
+    /// needs to re-project it.
+    @Default(false) bool cachedOnly,
   }) = _GetMessagesConfig;
 
   static const int pageSize = 20;
@@ -31,7 +39,8 @@ abstract class GetMessagesConfig with _$GetMessagesConfig implements RepositoryC
   static const int maxLimit = 100;
 
   /// The newest tail of the thread (initial load and refresh).
-  static GetMessagesConfig tail({required String chatId, int limit = pageSize}) => GetMessagesConfig(chatId: chatId, limit: _clamp(limit));
+  static GetMessagesConfig tail({required String chatId, int limit = pageSize, bool cachedOnly = false}) =>
+      GetMessagesConfig(chatId: chatId, limit: _clamp(limit), cachedOnly: cachedOnly);
 
   /// The batch preceding the oldest loaded message (scroll-up prefetch).
   static GetMessagesConfig olderThan({required String chatId, required int beforeSeq, int limit = pageSize}) =>

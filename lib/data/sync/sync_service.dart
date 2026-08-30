@@ -50,11 +50,21 @@ class SyncService {
 
   StreamSubscription<ServerEvent>? _subscription;
 
+  /// Serialises applies. The stream does not await the handler, so a replay
+  /// burst would otherwise run every apply concurrently and the read-modify-
+  /// write of a chat row would lose updates.
+  Future<void> _queue = Future<void>.value();
+
+  /// Set when an apply fails. The cursor takes the MAX of what it is given, so
+  /// letting later events keep advancing it would step straight over the failed
+  /// one and it would never be redelivered — the opposite of the guarantee.
+  bool _halted = false;
+
   /// Starts applying events. Must be subscribed BEFORE the socket connects, or
   /// the replay that follows the greeting would arrive with nobody listening.
   void start() {
     _subscription ??= _socket.events.listen(
-      _apply,
+      (event) => _queue = _queue.then((_) => _apply(event)),
       onError: (Object e, StackTrace s) => logRepository.error(target: this, error: e, stackTrace: s),
     );
   }
@@ -62,9 +72,13 @@ class SyncService {
   Future<void> stop() async {
     await _subscription?.cancel();
     _subscription = null;
+    _halted = false;
   }
 
   Future<void> _apply(ServerEvent event) async {
+    // Once an apply has failed, everything after it waits for the next
+    // catch-up: applying later events would advance the cursor past the gap.
+    if (_halted) return;
     try {
       // Duplicates are allowed at the replay/live boundary (§3) — the cursor is
       // what tells them apart, so anything at or below it has been applied.
@@ -81,8 +95,10 @@ class SyncService {
       }
       await _syncRepository.advanceCursor(event.seq);
     } catch (error, stackTrace) {
-      // A failed apply must NOT advance the cursor: the event will be
-      // redelivered on the next catch-up, which is the safe direction.
+      // A failed apply must NOT advance the cursor, and nothing after it may
+      // either: the whole tail is redelivered on the next catch-up, which is
+      // the safe direction.
+      _halted = true;
       logRepository.error(target: this, error: error, stackTrace: stackTrace);
     }
   }

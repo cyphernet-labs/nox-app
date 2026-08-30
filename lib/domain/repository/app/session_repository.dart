@@ -18,6 +18,11 @@ abstract class SessionRepository {
   /// validation (charset / uniqueness / ≤32).
   Future<RepositoryResult<bool>> updateLabel({required String label});
 
+  /// Records the identity the server declared at greeting time (contract §3):
+  /// its author id, and the label it considers current. Both are the server's
+  /// to decide — the label may have been changed from another device.
+  Future<RepositoryResult<bool>> adoptServerIdentity({required String authorId, required String label});
+
   /// Reactive display-label signal: emits the current cached label on listen, then
   /// every subsequent change (rename → new label, logout/clear → null). Broadcast —
   /// multiple surfaces (shell avatar, future consumers) may listen concurrently.
