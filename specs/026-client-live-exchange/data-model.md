@@ -37,6 +37,15 @@
 | `RealChatRemoteDataSource` (NEW) | Поверх `NoxSocketClient`: `chats.list`, `chat.create`, `chat.rename`, `chat.nameAvailable` |
 | `RealMessageRemoteDataSource` (NEW) | Поверх `NoxSocketClient`: `messages.list`, `message.send` |
 
+## Репозитории: чтение сквозь кэш (R14)
+
+| Метод | Было (мок-мир) | Стало |
+|---|---|---|
+| `ChatRepositoryImpl.getChats` | `_seedIfEmpty` обходит **все** страницы, потом срез из локального стора | запрашивает у датасорса **ровно запрошенную страницу**, сохраняет её и отдаёт; `hasMore` — с провода |
+| `MessageRepositoryImpl.getMessages` | `_seedChatIfEmpty` обходит **всю** историю чата назад по курсору | запрашивает **одну порцию** по курсору (`before_seq`/`limit`), сохраняет и отдаёт |
+
+Локальный стор остаётся кэшем: он обслуживает офлайн-показ и реактивные `watch*`-стримы, а генезис-строка и наложение непрочитанного (обе — устройство-локальные) сохраняются как есть.
+
 ## Конфигурация
 
 | Что | Дельта |

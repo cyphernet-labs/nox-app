@@ -40,6 +40,7 @@
 - [ ] T014 [P] [US1] Implement lib/data/remote/datasource/real/real_message_remote_data_source.dart over the socket (`messages.list`, `message.send`), unwrapping `{message: …}`; tests over a fake socket incl. a clamped `limit`
 - [ ] T015 [US1] Flip the DI bindings three-step per specs/016-remote-datasource-seam/contracts/di-binding.md: register `Real*` for `[Environment.dev]`, narrow the mocks to `[Environment.prod, Environment.test]`, run `make generate`; update test/di/seam_binding_test.dart to assert the split
 - [ ] T016 [US1] Rework `ChatThreadBloc._refreshMessages` to read only the newest batch instead of the whole loaded span (research R9): the loaded history cannot change under contract v0, and asking for more than 100 would silently truncate; update chat_thread_bloc tests
+- [ ] T016a [US1] Convert both seeds to read-through-by-page (research R14, FR-016): `ChatRepositoryImpl._seedIfEmpty` and `MessageRepositoryImpl._seedChatIfEmpty` stop walking every page and fetch only the requested slice, persisting it and taking `has_more` from the wire; the genesis line and the unread overlay stay device-local; update the repository tests to assert a single remote call per page instead of a full walk
 - [ ] T017 [US1] Run `make gate` AND `make golden-verify` — 216 baselines must pass unregenerated (SC-005) — then validate US1 live per quickstart.md; commit
 
 **Checkpoint**: приложение читает живой сервер; отправка ещё не проверена.
@@ -53,6 +54,8 @@
 - [ ] T018 [US2] Implement lib/data/sync/sync_service.dart (research R10): subscribe to the socket's event stream, apply `chat.created`/`chat.updated` through ChatDao and `message.new` through MessageDao, advance the cursor ONLY after a successful write (FR-008), and drop any event whose `seq <= cursor` (dedup, FR-007); register it in DI for `[Environment.dev]` and start it with the connection
 - [ ] T019 [US2] Handle an event for a chat that is not in the local store (spec edge case): fetch the chat row on demand or persist from the event payload, so an incoming message never lands orphaned; test it
 - [ ] T020 [US2] Persist the identity from the hello reply into the session on every connect (FR-012, research R11) so the existing `watchLabel` channel repaints both account avatars; test that a label changed server-side propagates
+- [ ] T020a [US2] Send the device's stored label in the hello and treat the reply's identity as authoritative, overwriting the local one (FR-020); test that a label changed elsewhere wins on reconnect
+- [ ] T020b [US2] Apply the 10s send timeout per contract §5 (FR-017): an unanswered send becomes the existing in-thread error state with retry, and the retry reuses the same idempotency key; test over the fake socket that no second copy is created
 - [ ] T021 [US2] Run `make gate` + `make golden-verify`, then validate US2 live per quickstart.md with two clients; commit
 
 **Checkpoint**: живой обмен работает — это и есть результат, ради которого владелец выбрал вертикаль.
@@ -66,6 +69,8 @@
 - [ ] T022 [US3] Route the three existing connectivity consumers through the session phase instead of raw device connectivity (FR-005, research R3): `online = phase == live` at the seam, so ChatsListBloc/ChatThreadBloc/ChatCardBloc keep their `connectivityChanged(bool)` event and NO new UI state appears; update their tests
 - [ ] T023 [US3] Flush the pending send queue on entering `live` rather than on the device coming online, and verify a send issued while disconnected leaves with the SAME `client_message_id` so the server dedupes it (FR-007, contract idempotency)
 - [ ] T024 [US3] Prove the catch-up rule end to end in a test over the fake socket: replay delivers events below the hello cursor, the phase flips to `live` at `seq >= cursor`, duplicates across the replay/live boundary are dropped, and the cursor never moves backwards
+- [ ] T024a [US3] Retry `rate_limited` inside the transport with a growing pause and never surface it as a user-facing error (FR-018); test that the command eventually succeeds without reaching the bloc as an error
+- [ ] T024b [US3] Route connection logging through LogRepository (FR-019): phase changes, reconnect attempts, failure codes and applied event `seq` — and assert in a test that no message body and no user label reaches the log
 - [ ] T025 [US3] Run `make gate` + `make golden-verify`, then validate US3 live per quickstart.md (kill the server mid-session, send from the second client, restart); commit
 
 ## Phase 6: Polish & Cross-Cutting Concerns
@@ -79,9 +84,9 @@
 ```text
 Setup:        T001 → T002
 Foundational: T003 [P] ∥ T004 [P] → T005 → T006 → T007 → T008 → T009 → T010
-US1 (P1):     T011 → T012 → (T013 [P] ∥ T014 [P]) → T015 → T016 → T017
-US2 (P2):     T018 → T019 → T020 → T021          (после US1: нужны реальные датасорсы)
-US3 (P3):     T022 → T023 → T024 → T025          (после US2: догон проверяется на реальных событиях)
+US1 (P1):     T011 → T012 → (T013 [P] ∥ T014 [P]) → T015 → T016 → T016a → T017
+US2 (P2):     T018 → T019 → T020 → T020a → T020b → T021   (после US1: нужны реальные датасорсы)
+US3 (P3):     T022 → T023 → T024 → T024a → T024b → T025   (после US2: догон проверяется на реальных событиях)
 Polish:       T026 [P] ∥ T027 [P] → T028
 ```
 
