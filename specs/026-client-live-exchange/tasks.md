@@ -10,8 +10,8 @@
 
 ## Phase 1: Setup
 
-- [ ] T001 Verify the freeze baseline: run `make gate` and `make golden-verify`, and record the current test count as the number the phase must not reduce
-- [ ] T002 Promote `web_socket_channel` to a direct dependency in pubspec.yaml pinned to the already-locked 3.0.3 (research R1), then `make deps` and confirm pubspec.lock shows no other version movement
+- [x] T001 Verify the freeze baseline: run `make gate` and `make golden-verify`, and record the current test count as the number the phase must not reduce
+- [x] T002 Promote `web_socket_channel` to a direct dependency in pubspec.yaml pinned to the already-locked 3.0.3 (research R1), then `make deps` and confirm pubspec.lock shows no other version movement
 
 ## Phase 2: Foundational (blocking prerequisites)
 
