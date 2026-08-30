@@ -1,0 +1,43 @@
+# Contracts: срез фазы 026 (клиент ↔ живой сервер)
+
+Источник — контракт v0 §1–§6, §9. Фаза подключает приложение к серверу; формы кадров уже разобраны фазой 025 и подтверждены 12 живыми фикстурами в `test/fixtures/wire/`.
+
+## Кадры, которые клиент отправляет
+
+| Команда | `data` запроса | Ответ | Кто зовёт |
+|---|---|---|---|
+| `session.hello` | `{schema: 1, since, label?}` | `{schema, cursor, limits, identity}` | `NoxSocketClient` сразу после открытия сокета |
+| `chats.list` | `{page, page_size, query?}` | `{chats, has_more}` | `RealChatRemoteDataSource.getChats` |
+| `chat.create` | `{name}` | `{chat}` | `RealChatRemoteDataSource.createChat` |
+| `chat.rename` | `{chat_id, name}` | `{chat}` | `RealChatRemoteDataSource.renameChat` |
+| `chat.nameAvailable` | `{name, exclude_chat_id?}` | `{available}` | `RealChatRemoteDataSource.isNameAvailable` |
+| `messages.list` | `{chat_id, before_seq?, limit}` | `{messages, has_more}` | `RealMessageRemoteDataSource.getMessages` |
+| `message.send` | `{chat_id, client_message_id, body?}` | `{message}` | `RealMessageRemoteDataSource.sendMessage` |
+
+**Обёртки ответов** (проверено живым прогоном и закреплено фикстурами 025): ответ на команду **оборачивает** сущность — `{chat: …}` у `chat.*`, `{message: …}` у `message.send`; страницы плоские — `{chats|messages, has_more}`; события плоские.
+
+## Кадры, которые клиент принимает
+
+| Событие | `data` | Что делает клиент |
+|---|---|---|
+| `chat.created` | `Chat` | запись в `ChatDao` → список чатов обновляется сам |
+| `chat.updated` | `Chat` | запись в `ChatDao` (переименование, превью, порядок) |
+| `message.new` | `Message` **без** `client_message_id` | запись в `MessageDao` + обновление строки чата |
+
+Приветствие сервера `{"srv": {...}}` приходит **один раз** до любых команд; `challenge` на этапе 1 не подписывается.
+
+## Инварианты, которые фаза обязана соблюсти
+
+1. **Идемпотентность отправки.** `client_message_id` генерируется клиентом; повтор с тем же ключом обязан вернуть **прежнее** эхо. Проверено на живом сервере: повтор `cmid-001` вернул тот же `seq`, дубля не создалось.
+2. **Правило «догнан».** Клиент в догоне, пока не применил событие с `seq >= cursor` из приветствия. При `since == cursor` — сразу `live`.
+3. **Дедупликация.** Событие с `seq <= сохранённого курсора` отбрасывается: на границе догона и живого потока одно и то же событие может прийти дважды.
+4. **Курсор двигается после применения.** Сначала запись в стор, потом продвижение `since` — обрыв между ними приводит к повторной доставке (безобидной), а не к потере.
+5. **Потолок порции.** `limit` в `messages.list` клампится к 100 на стороне клиента: сервер обрезает молча.
+6. **Автор не передаётся.** `message.send` не несёт `author_id`/`author_label` — сервер знает отправителя; эхо автора несёт `client_message_id`, копия получателя — нет (§5).
+7. **Ошибки — по кодам.** `ok:false` → `error {code, message}` → `RepositoryException.fromWireCode` (готово с 025); незнакомый код → `internal`.
+
+## Что НЕ трогаем в этой фазе
+
+- `file.uploadBegin` / `file.downloadBegin` / `chat.files` — фаза 028; вложения продолжают идти локальным путём.
+- Аутентификация: `device_key`/`signature` в приветствии не отправляются (этап 1 их не проверяет).
+- `chat.get` — не нужен: одиночный чат приложение читает из локального стора (`watchChat`).
