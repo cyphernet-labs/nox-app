@@ -202,6 +202,36 @@ void main() {
       },
     );
 
+    test('an unsent message comes back on a NEW bloc — the queue outlives the screen', () async {
+      // A fresh bloc over the same store is the closest a unit test gets to
+      // relaunching the app: before 027 the queue lived in bloc state and this
+      // simply lost the message.
+      final offline = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_0'));
+      addTearDown(offline.close);
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      offline.add(const ChatThreadEvent.setScenario(ChatThreadScenario.offline));
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      offline.add(const ChatThreadEvent.messageSent(text: 'survives a restart'));
+      offline.add(const ChatThreadEvent.messageSent(text: 'and keeps its place'));
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      final queuedIds = (offline.state as Initialized).outgoing.map((m) => m.id).toList();
+      expect(queuedIds, hasLength(2));
+      await offline.close(); // the screen goes away
+
+      final reopened = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_0'));
+      addTearDown(reopened.close);
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+
+      final restored = (reopened.state as Initialized).outgoing;
+      // Same messages, same keys, same order — the keys matter most: a new key
+      // would make the server store a second copy on the next attempt.
+      expect(restored.map((m) => m.text).toList(), ['survives a restart', 'and keeps its place']);
+      expect(restored.map((m) => m.id).toList(), queuedIds);
+      expect(restored.every((m) => m.status == MessageStatus.pending), isTrue);
+
+      await getIt<OutboxRepository>().clean();
+    });
+
     blocTest<ChatThreadBloc, ChatThreadState>(
       'the empty scenario yields no real messages',
       build: ChatThreadBloc.new,
