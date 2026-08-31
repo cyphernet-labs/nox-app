@@ -248,10 +248,13 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
 
     // Render the bubble NOW rather than waiting for the queue's own tick:
     // waiting would put its appearance at the mercy of the scheduler, and the
-    // send goldens pump a bounded number of frames. The tick arrives moments
-    // later and re-projects the same row under the same key, so the state it
-    // produces is equal and the bloc drops it.
-    emit(live.copyWith(outgoing: [...live.outgoing, _project(entry)], draftAttachment: null));
+    // send goldens pump a bounded number of frames.
+    //
+    // The tick can also arrive FIRST, during the enqueue await, in which case
+    // the row is already projected — appending blindly would draw the same
+    // message twice. Keyed by the idempotency key, so the check is exact.
+    final alreadyProjected = live.outgoing.any((m) => m.id == entry.clientMessageId);
+    emit(live.copyWith(outgoing: alreadyProjected ? live.outgoing : [...live.outgoing, _project(entry)], draftAttachment: null));
 
     if (_scenario == ChatThreadScenario.sendError) {
       // Debug-only: reproduce the failed-send state without a real refusal.

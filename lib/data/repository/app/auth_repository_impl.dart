@@ -78,6 +78,11 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         // The outgoing drain closes with it, and for the same reason: a pass
         // still in flight would persist a message into the store being emptied.
         if (getIt.isRegistered<OutboxService>()) await getIt<OutboxService>().stop();
+        // The queue goes FIRST of the stores. It holds message texts that were
+        // never sent, and a crash later in the wipe would leave them for the
+        // next identity — who would then have them sent, under their name, by
+        // the drain that re-arms at the next sign-in.
+        await _outboxRepository.clean();
         // The cursor goes next: a crash mid-wipe must leave it behind the
         // stores (safe - replay re-applies idempotently), never ahead of an
         // emptied store (a stale high `since` would skip every row below it
@@ -85,9 +90,6 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         await _syncRepository.clear();
         await _chatRepository.clean();
         await _messageRepository.clean();
-        // The queue holds message TEXTS, so it dies with them: leaving it would
-        // keep someone's unsent words on a device that has been logged out.
-        await _outboxRepository.clean();
       },
     );
   }

@@ -73,11 +73,12 @@ void main() {
     expect((await dao.watch().first).single.clientMessageId, 'waiting');
   });
 
-  test('update rewrites a record in place and remove drops exactly one', () async {
+  test('updateIfPresent rewrites a record in place and remove drops exactly one', () async {
     final stored = await dao.enqueue(entry('e'));
     await dao.enqueue(entry('keep'));
 
-    await dao.update(stored.copyWith(status: 'error', attempts: 3, lastErrorCode: 'payloadTooLarge'));
+    final applied = await dao.updateIfPresent('e', (c) => c.copyWith(status: 'error', attempts: 3, lastErrorCode: 'payloadTooLarge'));
+    expect(applied, isTrue);
     final read = await dao.getById('e');
     expect(read?.status, 'error');
     expect(read?.attempts, 3);
@@ -85,6 +86,27 @@ void main() {
 
     await dao.remove('e');
     expect((await dao.getAllSorted()).map((e) => e.clientMessageId).toList(), ['keep']);
+  });
+
+  test('updateIfPresent will not resurrect a record that was discarded', () async {
+    // A plain get-then-put would write the row back and the drain would send a
+    // message the user was already told is gone.
+    await dao.enqueue(entry('discarded'));
+    await dao.remove('discarded');
+
+    final applied = await dao.updateIfPresent('discarded', (c) => c.copyWith(status: 'error'));
+
+    expect(applied, isFalse);
+    expect(await dao.getAllSorted(), isEmpty);
+  });
+
+  test('two concurrent enqueues get two different positions', () async {
+    // The max-scan and the write share a transaction precisely so that this
+    // cannot hand both callers the same ordinal and leave the order undefined.
+    final placed = await Future.wait([dao.enqueue(entry('a')), dao.enqueue(entry('b')), dao.enqueue(entry('c'))]);
+
+    expect(placed.map((e) => e.ordinal).toSet(), hasLength(3));
+    expect((await dao.getAllSorted()), hasLength(3));
   });
 
   test('removeForChat drops one chat\'s queue and leaves the others alone', () async {

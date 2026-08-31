@@ -110,8 +110,11 @@ void main() {
     wait: const Duration(milliseconds: 400),
     verify: (bloc) async {
       expect((bloc.state as Initialized).outgoing, isEmpty);
-      // Gone from the store too, so a restart cannot resurrect it.
-      expect(await getIt<OutboxRepository>().pending(), isEmpty);
+      // Gone from the store too, so a restart cannot resurrect it. Read the
+      // WHOLE queue, not just the pending slice: a discarded entry that had
+      // been marked `error` would be invisible to pending() and the assertion
+      // would pass on a record that is still there.
+      expect(await getIt<OutboxRepository>().watchQueue().first, isEmpty);
     },
   );
 }

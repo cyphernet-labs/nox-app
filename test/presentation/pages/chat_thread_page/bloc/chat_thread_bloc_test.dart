@@ -309,6 +309,45 @@ void main() {
       },
     );
 
+    test('retrying a failed message sends it with the SAME key', () async {
+      // The other retry test aims at an id that has already left the queue, so
+      // it proves only that nothing breaks. This one drives the real path: fail
+      // the send, retry the entry that is still there, and check the key.
+      final outbox = getIt<OutboxRepository>();
+      await outbox.clean();
+
+      final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_0'));
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      bloc.add(const ChatThreadEvent.setScenario(ChatThreadScenario.sendError));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      bloc.add(const ChatThreadEvent.messageSent(text: 'failed once'));
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+
+      final failed = (bloc.state as Initialized).outgoing.single;
+      expect(failed.status, MessageStatus.error);
+
+      // Back to normal, then retry the SAME entry.
+      bloc.add(const ChatThreadEvent.setScenario(ChatThreadScenario.normal));
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      // The scenario reset clears the chat's queue, so re-queue and fail again
+      // is not what we want — enqueue directly and mark it failed instead.
+      final entry = (await outbox.enqueue(chatId: 'chat_0', text: 'retry me for real')).data!;
+      await outbox.recordFailure(clientMessageId: entry.clientMessageId, code: 'payloadTooLarge', terminal: true);
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+
+      bloc.add(ChatThreadEvent.sendRetried(entry.clientMessageId));
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+
+      // Accepted under the key it was minted with — that is what stops the
+      // server storing a second copy.
+      final delivered = (bloc.state as Initialized).allMessages.where((m) => m.text == 'retry me for real');
+      expect(delivered, hasLength(1));
+      expect(delivered.first.status, MessageStatus.sent);
+      expect(await outbox.pending(), isEmpty);
+      await outbox.clean();
+    });
+
     blocTest<ChatThreadBloc, ChatThreadState>(
       'sendRetried re-attempts a failed bubble; under the persistent send-error scenario it stays error',
       build: ChatThreadBloc.new,

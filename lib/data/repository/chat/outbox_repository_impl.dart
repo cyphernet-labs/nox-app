@@ -59,6 +59,12 @@ class OutboxRepositoryImpl with BaseRepositoryHelper implements OutboxRepository
   }
 
   @override
+  Future<OutboxEntry?> find({required String clientMessageId}) async {
+    final entity = await _dao.getById(clientMessageId);
+    return entity == null ? null : _mapper.toModel(entity: entity);
+  }
+
+  @override
   Future<void> recordFailure({required String clientMessageId, required String code, required bool terminal}) async {
     await _mutate(clientMessageId, (entity) {
       return entity.copyWith(
@@ -83,12 +89,12 @@ class OutboxRepositoryImpl with BaseRepositoryHelper implements OutboxRepository
   @override
   Future<void> clean() => _dao.cleanData();
 
-  /// Read-modify-write of one record. A vanished record is a no-op rather than
-  /// an error: the drain can finish and delete an entry while a slower failure
-  /// path is still on its way to marking it.
+  /// Read-modify-write of one record, delegated to the DAO so it happens in a
+  /// single transaction. A vanished record is a no-op rather than an error: the
+  /// drain can finish and delete an entry while a slower failure path is still
+  /// on its way to marking it — and, more sharply, the user can discard one
+  /// between the two halves of a read-then-write.
   Future<void> _mutate(String clientMessageId, OutboxEntity Function(OutboxEntity entity) change) async {
-    final current = await _dao.getById(clientMessageId);
-    if (current == null) return;
-    await _dao.update(change(current));
+    await _dao.updateIfPresent(clientMessageId, change);
   }
 }

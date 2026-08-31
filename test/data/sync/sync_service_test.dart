@@ -13,6 +13,7 @@ import 'package:nox_app/data/mapper/chat/message_wire_mapper.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/sync/sync_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -80,6 +81,7 @@ void main() {
       getIt<ChatWireMapper>(),
       getIt<MessageMapper>(),
       getIt<MessageWireMapper>(),
+      getIt<OutboxRepository>(),
     );
     service.start();
   });

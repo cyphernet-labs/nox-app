@@ -98,20 +98,31 @@ void main() {
     // The cursor goes FIRST: a crash mid-wipe must leave it behind the stores
     // (safe), never ahead of an emptied store (a stale high `since` would skip
     // replayed history forever under the monotonic guard).
-    verifyInOrder([session.clear(), sync.clear(), chats.clean(), messages.clean(), outbox.clean()]);
+    // The queue goes FIRST of the stores: it holds unsent message TEXTS, and a
+    // crash later in the wipe would leave them for the next identity to send
+    // under their own name.
+    verifyInOrder([session.clear(), outbox.clean(), sync.clear(), chats.clean(), messages.clean()]);
   });
 
   test('signing in re-arms the outgoing drain that logout cancelled', () async {
-    // The drain's phase subscription dies with logout. Without re-arming it a
-    // re-login in the same process would leave a queued message waiting for
-    // someone to ask, through every reconnect.
-    await repository.logout();
-    await repository.signIn(identifier: 'registered');
+    // The drain's phase subscription dies with logout, and stop() disarms it
+    // until start() is called again. Asserting through OBSERVABLE behaviour —
+    // does a queued message actually go out after a re-login — because the
+    // earlier version of this test passed with the re-arm deleted.
+    final outboxRepository = getIt<OutboxRepository>();
+    final drain = getIt<OutboxService>();
+    await outboxRepository.clean();
 
-    expect(getIt.isRegistered<OutboxService>(), isTrue);
-    // start() is idempotent, so calling it here cannot double-subscribe; the
-    // assertion that matters is that the sign-in path reaches it at all.
-    expect(() => getIt<OutboxService>().start(), returnsNormally);
+    await repository.logout(); // stops and disarms the drain
+    await outboxRepository.enqueue(chatId: 'chat_0', text: 'written after the logout');
+    await drain.flush();
+    expect(await outboxRepository.pending(), hasLength(1), reason: 'a disarmed drain must not send');
+
+    await repository.signIn(identifier: 'registered');
+    await drain.flush();
+
+    expect(await outboxRepository.pending(), isEmpty, reason: 'sign-in has to put the drain back to work');
+    await outboxRepository.clean();
   });
 
   test('completeOnboarding marks the flag and re-derives app state', () async {

@@ -273,13 +273,150 @@ void main() {
     expect(await outbox.pending(), isEmpty);
   });
 
-  test('stop() waits for a pass in flight — logout must not wipe underneath a send', () async {
+  test('stop() does not return while a send is in flight — logout must not wipe underneath a write', () async {
+    // Hold the send open so "in flight" is a fact of the test, not a hope about
+    // timing: the earlier version of this test passed even with the await in
+    // stop() deleted, because the pass finished on its own first.
+    final held = Completer<void>();
+    when(
+      messages.sendMessage(
+        chatId: anyNamed('chatId'),
+        clientMessageId: anyNamed('clientMessageId'),
+        text: anyNamed('text'),
+        attachment: anyNamed('attachment'),
+      ),
+    ).thenAnswer((invocation) async {
+      sentKeys.add(invocation.namedArguments[#clientMessageId] as String);
+      await held.future;
+      return RepositoryResult<MessageModel>.success(data: echo('c1', 'held'));
+    });
+    await enqueue(['held']);
+
+    unawaited(service.flush());
+    await Future<void>.delayed(const Duration(milliseconds: 20)); // let the send start
+    expect(sentKeys, hasLength(1)); // precondition: we are inside sendMessage
+
+    var stopped = false;
+    final stopping = service.stop().then((_) => stopped = true);
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(stopped, isFalse, reason: 'stop() must not return while a write is still running');
+
+    held.complete();
+    await stopping;
+
+    expect(stopped, isTrue);
+    // The write finished before stop() returned, so the caller may now wipe.
+    expect(await outbox.pending(), isEmpty);
+  });
+
+  test('a pass that has not started yet is abandoned by stop(), not sent into a wipe', () async {
     await enqueue(['a']);
-    final draining = service.flush();
 
     await service.stop();
-    await draining;
+    await service.flush(); // whatever was chained must not send now
 
+    expect(sentKeys, isEmpty);
+    // Nothing lost: the entry is still queued for whoever starts the drain next.
+    expect(await outbox.pending(), hasLength(1));
+  });
+
+  test('a retryable refusal actually pauses: an immediate flush does not re-hit the head', () async {
+    // Without the pause, every other trigger — a fresh send, a reconnect —
+    // retries the stuck head at once, which makes the backoff decorative and
+    // inflates the attempt count for a reason that has nothing to do with the
+    // server.
+    failures['a'] = RepositoryException.connection;
+    await enqueue(['a']);
+
+    await service.flush();
+    expect(sentKeys, hasLength(1));
+
+    await service.flush();
+    await service.flush();
+    expect(sentKeys, hasLength(1), reason: 'the pause has to hold against other triggers');
+    expect((await outbox.pending()).single.attempts, 1, reason: 'and it must not inflate the count');
+  });
+
+  test('the pause is lifted by the channel coming back, and the retry then goes out', () async {
+    failures['a'] = RepositoryException.connection;
+    phase = _FakePhase(SessionPhase.live);
+    service = OutboxService(outbox, messages, phase);
+    service.start();
+    await enqueue(['a']);
+
+    await service.flush();
+    expect(sentKeys, hasLength(1));
+
+    failures.clear(); // the server is back
+    phase.emit(SessionPhase.live); // a fresh live edge is a new reason to try
+    for (var i = 0; i < 100 && sentKeys.length < 2; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+
+    expect(sentKeys, hasLength(2));
+    expect(sentKeys.first, sentKeys.last, reason: 'the retry must carry the SAME idempotency key');
+    expect(await outbox.pending(), isEmpty);
+  });
+
+  test('a message the server keeps refusing retryably stops holding the queue', () async {
+    // The spec's edge case: something that will never go must not occupy the
+    // line forever. Set aside is not discarded — it stays, visible, retryable.
+    failures['stuck'] = RepositoryException.internal;
+    service.start(); // a live edge lifts the backoff pause, which is what drives the retries
+    final keys = await enqueue(['stuck', 'behind it']);
+
+    // Each live edge lifts the pause and buys one more attempt.
+    for (var i = 0; i < 20 && (await outbox.pending()).isNotEmpty; i++) {
+      phase.emit(SessionPhase.live);
+      await service.flush();
+    }
+
+    final left = await outbox.watchQueue().first;
+    expect(left.single.text, 'stuck');
+    expect(left.single.status, OutboxStatus.error);
+    expect(left.single.attempts, 10); // the automatic ladder, then set aside
+    expect(sentKeys.where((k) => k == keys[0]), hasLength(10));
+    // And the message behind it got out rather than waiting forever.
+    expect(sentKeys, contains(keys[1]));
+    expect(await outbox.pending(), isEmpty);
+  });
+
+  test('a discard landing mid-pass is honoured — the message is not sent', () async {
+    // A pass spans as long as the sends ahead of an entry take. Anything the
+    // user cancels in that window is gone from the store, and sending it anyway
+    // publishes, permanently, a message they were shown had been cancelled.
+    final keys = await enqueue(['first', 'second']);
+    when(
+      messages.sendMessage(
+        chatId: anyNamed('chatId'),
+        clientMessageId: anyNamed('clientMessageId'),
+        text: anyNamed('text'),
+        attachment: anyNamed('attachment'),
+      ),
+    ).thenAnswer((invocation) async {
+      final key = invocation.namedArguments[#clientMessageId] as String;
+      sentKeys.add(key);
+      // While the first send is in flight, the user discards the second.
+      if (key == keys[0]) await outbox.remove(clientMessageId: keys[1]);
+      return RepositoryResult<MessageModel>.success(data: echo('c1', 'x'));
+    });
+
+    await service.flush();
+
+    expect(sentKeys, [keys[0]]);
+    expect(await outbox.pending(), isEmpty);
+  });
+
+  test('messages for chats nobody has open are sent all the same', () async {
+    // The drain lives in the data layer precisely so that leaving the screen —
+    // or never opening it — does not strand a message. No bloc exists in this
+    // file at all, which is the point.
+    final a = (await outbox.enqueue(chatId: 'chat_a', text: 'to a')).data!;
+    final b = (await outbox.enqueue(chatId: 'chat_b', text: 'to b')).data!;
+
+    await service.flush();
+
+    expect(sentKeys, [a.clientMessageId, b.clientMessageId]);
     expect(await outbox.pending(), isEmpty);
   });
 }

@@ -26,6 +26,14 @@ abstract class OutboxRepository {
   /// drain's input.
   Future<List<OutboxEntry>> pending();
 
+  /// One entry as it stands right now, or null if it is gone.
+  ///
+  /// The drain re-reads each entry immediately before sending it: a pass can
+  /// span seconds, and a message the user discarded while it waited its turn
+  /// must not go out. In a space with no deletion, sending something the user
+  /// cancelled cannot be undone.
+  Future<OutboxEntry?> find({required String clientMessageId});
+
   /// Records a failed attempt: always raises `attempts` and stores [code];
   /// moves the entry to `error` only when [terminal].
   ///

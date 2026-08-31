@@ -54,11 +54,24 @@ class OutboxDao {
     });
   }
 
-  /// Rewrites an existing record in place (status / attempts / last error).
-  Future<void> update(OutboxEntity entity) async {
+  /// Applies [change] to an existing record, inside ONE transaction.
+  ///
+  /// The read and the write must not be separated. A discard landing between a
+  /// plain `get` and a plain `put` would be undone by the put, resurrecting a
+  /// record the user was already told is gone — and the drain would then send
+  /// the message they cancelled.
+  ///
+  /// A record that is not there is left alone; the caller learns that from the
+  /// returned false.
+  Future<bool> updateIfPresent(String clientMessageId, OutboxEntity Function(OutboxEntity current) change) async {
     final db = await _appDatabase.db;
-    await db.transaction((txn) async {
-      await _store.record(entity.clientMessageId).put(txn, entity.toJson());
+    return db.transaction((txn) async {
+      final raw = await _store.record(clientMessageId).get(txn);
+      if (raw == null) return false;
+      final current = _tryDecode(raw);
+      if (current == null) return false;
+      await _store.record(clientMessageId).put(txn, change(current).toJson());
+      return true;
     });
   }
 
@@ -96,8 +109,10 @@ class OutboxDao {
     final filtered = chatId == null ? entities : entities.where((e) => e.chatId == chatId).toList();
     filtered.sort((a, b) {
       final byOrdinal = a.ordinal.compareTo(b.ordinal);
-      // Rows written before `ordinal` existed all decode as 0; the key keeps the
-      // order total instead of leaving it up to store iteration.
+      // Ordinals are unique by construction (assigned as max+1 inside the
+      // enqueue transaction), so the key tiebreak is unreachable in practice —
+      // it is here so the sort is a total order rather than leaving equal rows
+      // to store iteration order.
       return byOrdinal != 0 ? byOrdinal : a.clientMessageId.compareTo(b.clientMessageId);
     });
     return filtered;

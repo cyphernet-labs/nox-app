@@ -13,6 +13,7 @@ import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/remote/socket/server_frame.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
+import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_app/general/formatters/chat_preview_formatter.dart';
 
@@ -38,6 +39,7 @@ class SyncService {
     this._chatWireMapper,
     this._messageMapper,
     this._messageWireMapper,
+    this._outbox,
   );
 
   final NoxSocketClient _socket;
@@ -48,6 +50,7 @@ class SyncService {
   final ChatWireMapper _chatWireMapper;
   final MessageMapper _messageMapper;
   final MessageWireMapper _messageWireMapper;
+  final OutboxRepository _outbox;
 
   StreamSubscription<ServerEvent>? _subscription;
   StreamSubscription<SessionPhase>? _phaseSubscription;
@@ -127,7 +130,18 @@ class SyncService {
   }
 
   Future<void> _applyMessage(Map<String, dynamic> data) async {
-    final wire = _messageWireMapper.toModel(entity: MessageWireEntity.fromJson(data));
+    final entity = MessageWireEntity.fromJson(data);
+    // Contract §5: an own message carries back the key it was sent with, and
+    // only an own message does. Seeing it means the server already has this
+    // send — so the queue entry is settled, and dropping it here is what stops
+    // a restart from re-sending something that arrived before the crash. The
+    // resend would be harmless (idempotency covers it) but not free: it costs a
+    // round trip and leaves the bubble queued until the answer comes back.
+    final clientMessageId = entity.clientMessageId;
+    if (clientMessageId != null && clientMessageId.isNotEmpty) {
+      await _outbox.remove(clientMessageId: clientMessageId);
+    }
+    final wire = _messageWireMapper.toModel(entity: entity);
     final existing = await _messageDao.getById(wire.id);
     // localPath and the local delivery status are device-local; an echo or a
     // redelivery must not wipe the path that makes a sent image previewable.
