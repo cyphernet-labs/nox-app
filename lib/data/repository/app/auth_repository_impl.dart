@@ -1,5 +1,6 @@
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
+import 'package:nox_app/data/sync/outbox_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/domain/repository/app/app_state_repository.dart';
@@ -8,6 +9,7 @@ import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_app/general/onboarding_mock_data.dart';
 
@@ -21,6 +23,7 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
     this._chatRepository,
     this._messageRepository,
     this._syncRepository,
+    this._outboxRepository,
   );
 
   final SessionRepository _sessionRepository;
@@ -28,6 +31,7 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
   final ChatRepository _chatRepository;
   final MessageRepository _messageRepository;
   final SyncRepository _syncRepository;
+  final OutboxRepository _outboxRepository;
 
   @override
   Future<RepositoryResult<bool>> signIn({required String identifier}) {
@@ -42,6 +46,11 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
       // again, or the device stays disconnected until the app is restarted.
       afterMutate: () async {
         if (getIt.isRegistered<LiveSessionStarter>()) await getIt<LiveSessionStarter>().restart();
+        // Logout cancelled the drain's phase subscription. Without re-arming it
+        // here, a re-login in the same process would only ever send when the
+        // thread asked directly — a message queued offline would sit there
+        // through the next reconnect with nobody to notice it.
+        if (getIt.isRegistered<OutboxService>()) getIt<OutboxService>().start();
       },
     );
   }
@@ -66,13 +75,31 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         // mid-wipe would repopulate the stores this is in the middle of
         // clearing, leaving a logged-out device holding someone's messages.
         if (getIt.isRegistered<LiveSessionStarter>()) await getIt<LiveSessionStarter>().stop();
-        // The cursor goes next: a crash mid-wipe must leave it behind the
-        // stores (safe - replay re-applies idempotently), never ahead of an
-        // emptied store (a stale high `since` would skip every row below it
-        // and the monotonic guard would keep it stuck forever).
-        await _syncRepository.clear();
-        await _chatRepository.clean();
-        await _messageRepository.clean();
+        // The outgoing drain closes with it, and for the same reason: a pass
+        // still in flight would persist a message into the store being emptied.
+        //
+        // stop() disarms it until the next start(), which is a sign-in. If the
+        // wipe below throws, no sign-in follows and the drain would stay dead
+        // for the life of the process while the app still shows the user signed
+        // in — so a failed wipe puts it back.
+        if (getIt.isRegistered<OutboxService>()) await getIt<OutboxService>().stop();
+        try {
+          // The queue goes FIRST of the stores. It holds message texts that were
+          // never sent, and a crash later in the wipe would leave them for the
+          // next identity — who would then have them sent, under their name, by
+          // the drain that re-arms at the next sign-in.
+          await _outboxRepository.clean();
+          // The cursor goes next: a crash mid-wipe must leave it behind the
+          // stores (safe - replay re-applies idempotently), never ahead of an
+          // emptied store (a stale high `since` would skip every row below it
+          // and the monotonic guard would keep it stuck forever).
+          await _syncRepository.clear();
+          await _chatRepository.clean();
+          await _messageRepository.clean();
+        } catch (_) {
+          if (getIt.isRegistered<OutboxService>()) getIt<OutboxService>().start();
+          rethrow;
+        }
       },
     );
   }

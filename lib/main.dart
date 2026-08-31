@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
+import 'package:nox_app/data/sync/outbox_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/app_config/app_flavor.dart';
 import 'package:nox_app/domain/model/app_config/app_flavor_type.dart';
@@ -29,6 +30,10 @@ void main() {
       // check and the applier subscription both have to precede the greeting,
       // and only the dev environment binds a starter at all.
       if (getIt.isRegistered<LiveSessionStarter>()) await getIt<LiveSessionStarter>().start();
+      // The outgoing queue drains in EVERY flavor, unlike the socket-bound
+      // starter above: a message written before the app was last closed has to
+      // leave whether or not this build talks to a real server.
+      getIt<OutboxService>().start();
 
       runApp(const AppRoot());
     },

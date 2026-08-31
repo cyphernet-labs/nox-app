@@ -4,7 +4,8 @@ import 'package:nox_app/domain/model/app_config/app_flavor_type.dart';
 
 /// Holds flavor-dependent config, initialized once after the DI container is ready
 /// (see contracts/di-bootstrap.md), plus the auth-token source for the transport
-/// seam. `apiUrl` stays null until the transport (027); the token writer is stage-2 auth.
+/// seam. `apiUrl` carries the server address from feature 026; the token writer is
+/// stage-2 auth and does not exist yet.
 abstract class AppConfigRepository {
   Future<void> initialize({required AppFlavorType flavorType});
 
@@ -16,11 +17,13 @@ abstract class AppConfigRepository {
   Future<String?> getUserAuthIdToken();
 
   /// Server payload bounds from the last session.hello (contract §3), the
-  /// preflight seam for the composer/picker. Contract defaults until the
-  /// transport (027) stores a live handshake via [updateLimits].
+  /// preflight seam for the composer/picker. Contract defaults until a live
+  /// handshake lands via [updateLimits] — which is every mock-backed flavor, and
+  /// the window before the first greeting on a live one.
   ServerLimits get limits;
 
-  /// Stores the limits of a live handshake (writer arrives with phase 027).
+  /// Stores the limits of a live handshake. Written by `LiveSessionStarter` on
+  /// every greeting (feature 026) — the server may revise them at any reconnect.
   void updateLimits(ServerLimits limits);
 
   /// True under the test environment — the future hook for bypassing real auth in tests.

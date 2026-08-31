@@ -119,7 +119,7 @@
   "timeYesterday": "Учора",
   "timeMinuteSuffix": "хв",
   "timeHourSuffix": "год",
-  "tooltipRetry": "Натисніть, щоб повторити",
+  "tooltipRetry": "Натисніть, щоб повторити; утримуйте, щоб прибрати",
   "tooltipChatInfo": "Про чат",
   "threadEmptyTitle": "Ще немає повідомлень",
   "threadEmptyMessage": "Надішліть перше.",

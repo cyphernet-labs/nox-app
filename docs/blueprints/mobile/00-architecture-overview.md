@@ -110,17 +110,28 @@ nox_app/
 │   │   │   └── item/item_mapper.dart            ItemMapper (entity ⇄ model)
 │   │   ├── remote/
 │   │   │   ├── api_client.dart                  тонкая обёртка над Dio: initBase() = base URL из AppConfig.apiUrl +
-│   │   │   │                                     AuthInterceptor. Инертна, пока apiUrl == null: основной транспорт
-│   │   │   │                                     контракта v0 — WS-конверт (фаза 027), REST остаётся для upload/download
-│   │   │   │                                     блобов; инъекция в data-sources приезжает с DI-флипом (фаза 028)
+│   │   │   │                                     AuthInterceptor. Для команд контракта v0 инертна: живой транспорт —
+│   │   │   │                                     WS-конверт (NoxSocketClient, фаза 026), и живые data-sources ходят
+│   │   │   │                                     через него; Dio зарезервирован под upload/download блобов (фаза 028)
+│   │   │   ├── socket/                          живой канал контракта v0 (фаза 026): nox_socket_client.dart (конверт,
+│   │   │   │                                     корреляция команд, фазы сессии, reconnect + keepalive),
+│   │   │   │                                     socket_channel_factory.dart (порт соединения), server_frame.dart
+│   │   │   ├── datasource/                      шов 016: интерфейсы *RemoteDataSource + real/ поверх сокет-клиента
+│   │   │   │                                     (чаты и сообщения, env [dev] — окружение флейвора stage) и mock/
+│   │   │   │                                     (те же две фичи — env [prod, test]; мок Item-слайса не флипался
+│   │   │   │                                     и остаётся на [dev, prod, test])
 │   │   │   └── api/
 │   │   │       └── item/get_items_api.dart      GetItemsApi — мок-источник ЗАМОРОЖЕННОГО Item-слайса (offset-пример
 │   │   │                                         с путём v1/items; продуктовые пути идут через *RemoteDataSource)
-│   │   └── repository/
-│   │       ├── log_repository_impl.dart                 @LazySingleton(as: LogRepository) — единый канал логов
-│   │       ├── app_config/app_config_repository_impl.dart @LazySingleton(as: AppConfigRepository)
-│   │       └── item/item_repository_impl.dart           @LazySingleton(as: ItemRepository) — network-only
-│   │                                                    (mapper + ItemRemoteDataSource, seam 016)
+│   │   ├── repository/
+│   │   │   ├── log_repository_impl.dart                 @LazySingleton(as: LogRepository) — единый канал логов
+│   │   │   ├── app_config/app_config_repository_impl.dart @LazySingleton(as: AppConfigRepository)
+│   │   │   └── item/item_repository_impl.dart           @LazySingleton(as: ItemRepository) — network-only
+│   │   │                                                (mapper + ItemRemoteDataSource, seam 016)
+│   │   └── sync/                                фоновые сервисы поверх репозиториев (env [dev], кроме outbox):
+│   │       ├── sync_service.dart                применяет журнальные события в DAO и двигает курсор since
+│   │       ├── live_session_starter.dart        порядок подъёма живого канала (wipe чужого мира → подписка → сокет)
+│   │       └── outbox_service.dart              слив очереди исходящих — ЕДИНСТВЕННЫЙ отправитель (фаза 027)
 │   │
 │   ├── presentation/                   ← ПРЕЗЕНТАЦИЯ (импортирует только domain)
 │   │   ├── app/
@@ -200,7 +211,7 @@ nox_app/
 
 ## 4. Сквозной поток данных — ЧТЕНИЕ
 
-Рабочий пример: `ItemListPage`, показывающая список элементов. Первая **реальная** фича на этом пути — **список чатов** (открытый общий список чатов, server-owned и постраничный) поверх бэкенда NOX: контракт v0 отдаёт его командой `chats.list{page, page_size, query?}` → `{chats, has_more}`. Транспорт — WS-конверт (фаза 027), REST остаётся только под upload/download блобов; сегодня список читается через `ChatRemoteDataSource` (мок) и локальный Sembast-кэш, а с DI-флипом (фаза 028) меняется только источник.
+Рабочий пример: `ItemListPage`, показывающая список элементов. Первая **реальная** фича на этом пути — **список чатов** (открытый общий список чатов, server-owned и постраничный) поверх бэкенда NOX: контракт v0 отдаёт его командой `chats.list{page, page_size, query?}` → `{chats, has_more}`. Транспорт — WS-конверт (`NoxSocketClient`, фаза 026), REST остаётся только под upload/download блобов (фаза 028); DI-флип 016 уже сделан в окружении `dev` (флейвор `stage`) — за `ChatRemoteDataSource` там стоит `RealChatRemoteDataSource` поверх сокет-клиента, а мок сужен до `[prod, test]`. Форма запроса от этого не изменилась: репозиторий берёт страницу через `*RemoteDataSource`, персистит её в Sembast и отдаёт локальный срез, когда канал недоступен.
 
 ```
 1. Page (ItemListPage)
@@ -253,7 +264,7 @@ nox_app/
 
 Пути чтения для **пользовательских ресурсов с локальным кэшем** — local-first: DAO (Sembast) служит источником истины для UI; удалённые данные втекают в локальное хранилище через маппер, а затем реактивно вытекают обратно через `BehaviorSubject`.
 
-> **Важная оговорка — список чатов читается иначе.** Список чатов — это **серверный, постранично-владеемый список**: BLoC хранит `PagingState` и подгружает страницы напрямую через репозиторий (`getChats`), а не подпиской на поток DAO — см. §7 принципов и [07-pagination.md](07-pagination.md). Сам репозиторий при этом с Feature 013 **cache-first**: `ChatRemoteDataSource` один раз засеивает Sembast-store, дальше список/поиск/пагинация обслуживаются из локальной БД, а реактивность добавлена сигналом `watchChats()` (Feature 014) — постраничная форма запроса от этого не меняется. Чисто **network-only** (нет DAO, нет `BehaviorSubject`) остаются замороженный Item-слайс и одноразовые команды. Local-first путь (с DAO и subject) — для пользовательских ресурсов, которые имеет смысл кэшировать целиком.
+> **Важная оговорка — список чатов читается иначе.** Список чатов — это **серверный, постранично-владеемый список**: BLoC хранит `PagingState` и подгружает страницы напрямую через репозиторий (`getChats`), а не подпиской на поток DAO — см. §7 принципов и [07-pagination.md](07-pagination.md). Сам репозиторий с Feature 013 держит локальный Sembast-store, но с фазой 026 читает **сквозь** него: каждый некэшированный запрос страницы (и поиск — он идёт на сервер, а не по загруженному срезу) уходит в `ChatRemoteDataSource`, ответ персистится, а локальная выборка отдаётся на `cachedOnly`-чтениях (тик живого обновления) и когда канал недоступен; реактивность — сигнал `watchChats()` (Feature 014), чистая проекция store'а. Постраничная форма запроса от этого не меняется. Чисто **network-only** (нет DAO, нет `BehaviorSubject`) остаются замороженный Item-слайс и одноразовые команды. Local-first путь (с DAO и subject) — для пользовательских ресурсов, которые имеет смысл кэшировать целиком.
 
 ---
 
@@ -301,6 +312,8 @@ nox_app/
 Мутации защищены `execute<T>()` (необработанные ошибки становятся `RepositoryException.unknown` и логируются единым каналом) и выполняются внутри DAO-транзакций, так что типизированные доменные исключения чисто доходят обратно до BLoC. Для network-only ресурсов (POST без локального кэша) шаги 5 и реактивные подписчики выпадают — репозиторий просто бьёт в API и возвращает `RepositoryResult`.
 
 > **Важная оговорка — на Item-слайсе этого write-пути нет.** Полный путь записи выше (`ItemListEvent.updateItem`, `ItemRepository.updateItem`/`createItem`, `ItemDao.put`) на **замороженном** Item-слайсе не отгружен: `ItemRepository` экспонирует только `getItems(config:)` + `clean()` (network-only carve-out, без DAO и записи), `ItemListEvent` ограничен `{ initialize, loadItems }`, а методы записи DAO называются `upsert` / `saveData` (не `put`). Реально шаблон работает с Feature 013 в продуктовых репозиториях — `ChatRepositoryImpl.createChat` / `updateChatName` и `MessageRepositoryImpl.sendMessage`: маппер → `ChatDao.upsert` / `MessageDao.upsert` в транзакции → `RepositoryResult`. Читайте §5 как форму пути, а имена методов сверяйте с этими импл.
+
+> **Отправка сообщения идёт через очередь (фаза 027).** Прямого вызова `sendMessage` из BLoC на этом пути больше нет: `ChatThreadBloc` кладёт исходящее в `OutboxRepository.enqueue` (Sembast-store `outbox`, **ключ записи = `client_message_id` контракта**, `ordinal` присваивается внутри транзакции постановки), и с этого момента сообщение переживает уход с экрана и рестарт. Очередь сливает `OutboxService` — **единственный отправитель**, и только он вызывает `MessageRepositoryImpl.sendMessage`; шаги 4–7 §5 остаются формой этого вызова. `ChatThreadState.outgoing` — проекция очереди, а не отдельное состояние BLoC: ретрай (`markPending`) и отказ (`recordFailure`) пишутся в ту же запись под тем же ключом, поэтому повтор — даже после рестарта — идёт с прежним ключом идемпотентности. Подробности — в [04-data-layer.md](04-data-layer.md) и [14-networking-and-auth.md](14-networking-and-auth.md).
 
 ---
 
@@ -362,7 +375,7 @@ lib/presentation/pages/<page>_page/
 - **Codegen-first модели** — Freezed для всех моделей/entity; ручную сериализацию и `==`/`hashCode` не пишем. JSON (`*.g.dart`) — только на entity-слое; доменные модели и BLoC-типы — без JSON.
 - **Композиция в data-пайплайне** — мапперы композируют дочерние мапперы через конструктор; `BaseMapper` даёт list-варианты; entity содержат только базовые типы (enum как `.name` String, DateTime как ISO-8601 String) — вся коэрция в маппере.
 - **Дисциплина дизайн-токенов** — только токены (`AppSpacingTokens`, `AppTextStyleTokens`, responsive через `flutter_screenutil`); `Semantics` на интерактивных виджетах; единый `feature_flags.dart`.
-- **Наблюдаемость и обработка ошибок** — единый канал `LogRepository` (обязательный, никакого raw `print`); типизированной иерархии исключений нет — всё сводится к `RepositoryException` внутри `BaseRepositoryHelper.execute<T>()` (три ветки catch: уже смапленный `BaseRepositoryException` проходит насквозь; `DioException` мапится по типу/статусу — таймауты/`connectionError` → `connection`, 401 → `unauthenticated`, 403 → `authentication`, 404 → `notFound`, прочее → `internal`; всё остальное → `unknown`), который всегда логирует. Коды ошибок контракта v0 §2.1 (`invalid_request`, `name_taken`, `payload_too_large`, `attachment_gone`, `rate_limited`, `unsupported_schema`, …) поднимаются из конверта через `unwrapEnvelope` + `RepositoryException.fromWireCode` (неизвестный код → `internal`).
+- **Наблюдаемость и обработка ошибок** — единый канал `LogRepository` (обязательный, никакого raw `print`); типизированной иерархии исключений нет — всё сводится к `RepositoryException` внутри `BaseRepositoryHelper.execute<T>()` (четыре ветки: уже смапленный `BaseRepositoryException` проходит насквозь; `SocketUnavailableException` → `connection` (фаза 026 — иначе мёртвый канал уходит в catch-all как `unknown` и кэш-фоллбэк становится недостижим); `DioException` мапится по типу/статусу — таймауты/`connectionError` → `connection`, 401 → `unauthenticated`, 403 → `authentication`, 404 → `notFound`, прочее → `internal`; всё остальное → `unknown`), который всегда логирует. Коды ошибок контракта v0 §2.1 (`invalid_request`, `name_taken`, `payload_too_large`, `attachment_gone`, `rate_limited`, `unsupported_schema`, …) поднимаются из конверта через `unwrapEnvelope` + `RepositoryException.fromWireCode` (неизвестный код → `internal`).
 - **Реактивные репозитории + carve-out** — для кэшируемых пользовательских ресурсов: `BehaviorSubject` + реактивный Sembast DAO (`onSnapshots`, transactions); env-scoped `AppDatabase` (Dev/Prod=IO, Test=memory) через `@LazySingleton(as: AppDatabase, env: [...])`; репозиторий подписывается на поток DAO один раз. **Carve-out:** постранично-владеемые серверные списки читаются страницами через репозиторий (`PagingState`, а не подписка на DAO) — при этом сам список чатов с Feature 013 кэшируется в Sembast, а чисто **network-only** (без DAO и subject) остаются замороженный Item-слайс и одноразовые команды (см. [07-pagination.md](07-pagination.md)).
 - **`RepositoryResult<T>` повсюду** — `@freezed` с данными-XOR-исключением (`.success(data:)` / `.error(exception:)`); поверхностный `match<R>(onData, onError)`. Никогда не разыменовывать `data` вслепую.
 - **Тематизация — light + dark** — `ThemeExtension<AppColors>` + `AppTheme.light()/dark()` + `context.appColors`; `themeMode` приходит из `AppRootBloc`; `ColorScheme`/`TextTheme` берутся из сгенерированного хендоффа (`nox_color_scheme.dart`/`nox_text_theme.dart`, регенерируются из `docs/design/system/nox-handoff/`), а **не** через `ColorScheme.fromSeed` (см. [06-theming.md](06-theming.md)).

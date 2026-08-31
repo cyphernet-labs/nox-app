@@ -8,6 +8,7 @@ import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 
@@ -24,7 +25,16 @@ import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 /// lifecycle, and a socket opened there would outlive logout.
 @LazySingleton(env: [Environment.dev])
 class LiveSessionStarter {
-  LiveSessionStarter(this._socket, this._syncService, this._syncRepository, this._config, this._session, this._chats, this._messages);
+  LiveSessionStarter(
+    this._socket,
+    this._syncService,
+    this._syncRepository,
+    this._config,
+    this._session,
+    this._chats,
+    this._messages,
+    this._outbox,
+  );
 
   final NoxSocketClient _socket;
   final SyncService _syncService;
@@ -33,6 +43,7 @@ class LiveSessionStarter {
   final SessionRepository _session;
   final ChatRepository _chats;
   final MessageRepository _messages;
+  final OutboxRepository _outbox;
 
   StreamSubscription<SessionPhase>? _phaseSub;
 
@@ -96,6 +107,13 @@ class LiveSessionStarter {
   Future<void> _wipeIfWorldChanged(String epoch) async {
     if (await _syncRepository.getEpoch() == epoch) return;
     logRepository.debug(target: this, message: 'sync: data source changed, dropping the local cache once');
+    // The outgoing queue goes with the cache, and for a sharper reason than the
+    // rest of it: a message written against the mock world — or against another
+    // server — would otherwise be sent to THIS one on the first drain, landing
+    // someone's unrelated text in a chat that has nothing to do with it. The
+    // chat id it names does not exist here either, so the send would fail; the
+    // text travelling at all is the part that must not happen.
+    await _outbox.clean();
     await _syncRepository.clear();
     await _chats.clean();
     await _messages.clean();

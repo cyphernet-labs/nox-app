@@ -279,11 +279,26 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
             onChipTap: () => widget.onOpenFile?.call(attachment),
           );
     Widget bubble = AppMessageBubbleWidget(isOwn: isOwn, text: m.text, time: DateFormatter.time(m.sentAt), status: m.status, file: file);
-    if (isOwn && m.status == MessageStatus.error) {
-      bubble = Tooltip(
-        message: context.l10n.tooltipRetry,
-        child: GestureDetector(onTap: () => _bloc.add(ChatThreadEvent.sendRetried(m.id)), child: bubble),
+    final isFailed = isOwn && m.status == MessageStatus.error;
+    final isQueued = isOwn && m.status == MessageStatus.pending;
+    if (isFailed || isQueued) {
+      // Long-press (secondary click on desktop — Principle VI puts the same
+      // affordance at both widths) discards. The escape hatch covers BOTH
+      // queued states, not just the failed one: since feature 027 an unsent
+      // message outlives the screen AND the process, and a send that keeps
+      // failing retryably stays `pending` forever, so an error-only gesture
+      // would leave exactly the stuck case with no way out.
+      bubble = GestureDetector(
+        // Tap still means retry, and only a failed bubble has anything to
+        // retry — a queued one is already on its way.
+        onTap: isFailed ? () => _bloc.add(ChatThreadEvent.sendRetried(m.id)) : null,
+        onLongPress: () => _bloc.add(ChatThreadEvent.sendDiscarded(m.id)),
+        onSecondaryTap: () => _bloc.add(ChatThreadEvent.sendDiscarded(m.id)),
+        child: bubble,
       );
+      // The hint stays on the failed bubble alone, as before: naming a retry on
+      // a message that is still going would be a lie.
+      if (isFailed) bubble = Tooltip(message: context.l10n.tooltipRetry, child: bubble);
     }
     return Padding(
       padding: EdgeInsets.only(bottom: AppSpacingTokens.s2),

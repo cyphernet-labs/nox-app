@@ -119,7 +119,7 @@
   "timeYesterday": "Yesterday",
   "timeMinuteSuffix": "min",
   "timeHourSuffix": "h",
-  "tooltipRetry": "Tap to retry",
+  "tooltipRetry": "Tap to retry, long-press to discard",
   "tooltipChatInfo": "Chat info",
   "threadEmptyTitle": "No messages yet",
   "threadEmptyMessage": "Send the first one.",

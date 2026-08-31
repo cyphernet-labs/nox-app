@@ -398,8 +398,11 @@ Create a repository: contract, configs union, implementation, and DI registratio
      never emit a `total` into `PageMetadata`.)
    - For the NETWORK-ONLY LIST path inject the `<Name>Mapper` and the `<Name>RemoteDataSource`
      INTERFACE (the feature-016 seam; the mock impl delegates to `Get<Name>sApi`, and the DI flip to a
-     real data source is phase 028) via constructor — NOT a `<Name>Dao` (the Dao is for cache-first
-     reactive features)
+     real data source LANDED in phase 026 for `Environment.dev` — the environment the `stage` flavor
+     boots: `Real<Name>RemoteDataSource` over the socket is bound `env: [Environment.dev]`, the mock
+     narrowed to `[Environment.prod, Environment.test]`, cf.
+     `lib/data/remote/datasource/real/real_chat_remote_data_source.dart`) via constructor —
+     NOT a `<Name>Dao` (the Dao is for cache-first reactive features)
    - NO IPC/multi-process variant.
 
 4. Register in DI: confirm the env-list annotation (incl. `Environment.test`) is picked up by `$initGetIt`.

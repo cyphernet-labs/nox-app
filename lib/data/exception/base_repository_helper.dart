@@ -8,7 +8,12 @@ import 'package:nox_app/domain/repository/base/repository_result.dart';
 
 /// Wraps a repository operation in try/catch, ALWAYS logs via LogRepository,
 /// and coarsely maps framework errors to a domain RepositoryException.
-/// Exactly two catch branches; no typed Dao/ApiException hierarchy.
+///
+/// FOUR catch branches, in this order, and the order is the point: an
+/// already-mapped domain error passes through undiluted, a dead socket becomes
+/// `connection` (or every cache fallback guarded on it is unreachable), a Dio
+/// error maps by type/status, and the catch-all degrades to `unknown`. No typed
+/// Dao/ApiException hierarchy.
 mixin BaseRepositoryHelper {
   Future<RepositoryResult<TD>> execute<TD>(Function executionFunction) async {
     try {

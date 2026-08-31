@@ -13,6 +13,7 @@ import 'package:nox_app/data/mapper/chat/message_wire_mapper.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/sync/sync_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -80,6 +81,7 @@ void main() {
       getIt<ChatWireMapper>(),
       getIt<MessageMapper>(),
       getIt<MessageWireMapper>(),
+      getIt<OutboxRepository>(),
     );
     service.start();
   });
@@ -99,6 +101,41 @@ void main() {
     await settle();
     return socket;
   }
+
+  test('an own message coming back settles its queue entry instead of being re-sent', () async {
+    // Contract §5: the echo and message.new of an OWN message carry the key it
+    // was sent with, expressly so the queue can settle against replay after a
+    // restart without an idle resend.
+    final outbox = getIt<OutboxRepository>();
+    await outbox.clean();
+    final queued = (await outbox.enqueue(chatId: 'c_1', text: 'sent before the crash')).data!;
+
+    final socket = await connected();
+    socket.pushEvent(
+      seq: 7,
+      event: 'message.new',
+      data: {...messageFrame('m_1', 'c_1', seq: 7), 'client_message_id': queued.clientMessageId},
+    );
+    await waitUntil(() async => (await outbox.watchQueue().first).isEmpty, reason: 'the entry settles');
+
+    expect(await messageDao.getById('m_1'), isNotNull); // and the message itself landed
+    await outbox.clean();
+  });
+
+  test('a message from someone else leaves the queue alone', () async {
+    // Only an own message carries the key, so nothing here may touch a queue
+    // entry — a stray removal would silently drop an unsent message.
+    final outbox = getIt<OutboxRepository>();
+    await outbox.clean();
+    await outbox.enqueue(chatId: 'c_1', text: 'still mine to send');
+
+    final socket = await connected();
+    socket.pushEvent(seq: 8, event: 'message.new', data: messageFrame('m_2', 'c_1', seq: 8));
+    await waitUntil(() async => await messageDao.getById('m_2') != null, reason: 'the event applies');
+
+    expect(await outbox.pending(), hasLength(1));
+    await outbox.clean();
+  });
 
   test('a new chat event lands in the store and the cursor follows it', () async {
     final socket = await connected();

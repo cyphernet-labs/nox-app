@@ -35,7 +35,7 @@ fvm install   # читает .fvmrc, скачивает Flutter 3.44.1 в gitign
 
 Полный файл ниже — готов к копированию. Имя пакета — `nox_app`, все импорты вида `package:nox_app/...`. Пины версий и inline-комментарии сохранены: они кодируют разрешённые конфликты — не трогайте без причины.
 
-> **Соответствие актуальному скелету.** Блок ниже — канонический «полный» манифест, сверенный с реально закоммиченным `pubspec.yaml`. Помимо базового набора там **активны**: `permission_handler` (камера фичи 010 + системный пермишен уведомлений), `file_selector` (пикер вложений, фича 017), `connectivity_plus` (офлайн-баннер, фичи 014/015), `zxing2` (pure-Dart QR-декод из картинки на Windows/Linux), `flutter_localizations` + `flutter: generate: true` (l10n EN+UK, конфиг — `l10n.yaml`); `fonts:`-блок **объявлен** (Roboto + Roboto Mono с фичи 002). Закомментированными плейсхолдерами остаются только `firebase_*` (push — док 15), `image_picker` (док 16) и vendor-SDK аналитики (док 17) — раскомментируются при активации соответствующего дока. Версии-пины держим здесь, потому что доки 14/15/16/17 ссылаются за ними сюда.
+> **Соответствие актуальному скелету.** Блок ниже — канонический «полный» манифест, сверенный с реально закоммиченным `pubspec.yaml`. Помимо базового набора там **активны**: `permission_handler` (камера фичи 010 + системный пермишен уведомлений), `file_selector` (пикер вложений, фича 017), `connectivity_plus` (офлайн-баннер, фичи 014/015), `zxing2` (pure-Dart QR-декод из картинки на Windows/Linux), `web_socket_channel` (клиент WebSocket-конверта, фича 026), `flutter_localizations` + `flutter: generate: true` (l10n EN+UK, конфиг — `l10n.yaml`); `fonts:`-блок **объявлен** (Roboto + Roboto Mono с фичи 002). Закомментированными плейсхолдерами остаются только `firebase_*` (push — док 15), `image_picker` (док 16) и vendor-SDK аналитики (док 17) — раскомментируются при активации соответствующего дока. Версии-пины держим здесь, потому что доки 14/15/16/17 ссылаются за ними сюда.
 
 ```yaml
 name: nox_app
@@ -75,6 +75,9 @@ dependencies:
 
   # --- Network ---
   dio: ^5.9.2
+  # Contract v0 travels over a WebSocket envelope (feature 026, lib/data/remote/socket/).
+  # Pinned to the version already present transitively so promoting it moves no other package.
+  web_socket_channel: 3.0.3
 
   # --- Pagination / UI list ---
   infinite_scroll_pagination: 5.1.1  # v5 PagingState API (bloc-owned, не widget-owned)
@@ -197,7 +200,7 @@ flutter_gen:
 
 > **`dependency_overrides`.** В этом проекте — **пусто**. Добавляйте override только когда реально упёрлись в ошибку резолва (например, конфликт транзитивов вокруг `win32`). Не копируйте overrides «на всякий случай» из чужих проектов.
 
-> **`config/stage.json` + `config/prod.json`.** Закоммиченные build-input файлы (не bundled-ассеты, **не** перечислены в `flutter: assets:`, новой зависимости не вводят). Каждый несёт **только** `{"app.flavor": "stage|prod"}` и потребляется через `--dart-define-from-file` — единообразный флейвор-механизм для всех платформ, включая desktop (Windows/Linux/macOS), у которых нет нативной flavor-машинерии Android/iOS (см. `09-build-and-secrets-infra.md`).
+> **`config/stage.json` + `config/prod.json`.** Закоммиченные build-input файлы (не bundled-ассеты, **не** перечислены в `flutter: assets:`, новой зависимости не вводят). Каждый несёт `{"app.flavor": "stage|prod"}`, а с фазы 026 `config/stage.json` дополнительно несёт `app.apiUrl` — адрес client-сервера, из которого выводится URL сокета (в `prod.json` его нет: пустое значение = «сервера нет», приложение остаётся на моках). Потребляются через `--dart-define-from-file` — единообразный флейвор-механизм для всех платформ, включая desktop (Windows/Linux/macOS), у которых нет нативной flavor-машинерии Android/iOS (см. `09-build-and-secrets-infra.md`).
 
 > **Почему нет `equatable`.** Библиотека **намеренно исключена** из зависимостей. Value-equality (`==` / `hashCode`) в этом проекте полностью обеспечивает **Freezed**: каждый `@freezed`-класс генерирует структурное равенство сам — это покрывает и BLoC-state/event (`05-presentation-layer.md`), и любые value-объекты. Правило: **где нужен value-объект, делайте его `@freezed`-классом — не наследуйте `Equatable` и не добавляйте `equatable`**. `equatable` тянем обратно только если найдётся кейс, который Freezed реально не закрывает (на сегодня такого нет).
 
@@ -216,7 +219,8 @@ flutter_gen:
 | `json_annotation` (+ dev `json_serializable`) | сериализация **entity-слоя** (`*.g.dart`). Доменные модели JSON не несут. См. `04-data-layer.md`. |
 | `rxdart` | `BehaviorSubject<RepositoryResult<...>>` в репозиториях поверх реактивного Sembast-DAO. |
 | `injectable` + `get_it` (+ dev `injectable_generator`) | единый `configureDependencies(String env)` + `$initGetIt`. См. `02-dependency-injection.md`. |
-| `dio` | HTTP-клиент **REST-поверхности** client-сервера (`noxd`, Go + встроенный SQLite): `PUT /files/{upload_token}` и `GET /files/{download_token}` c Range — контракт v0 §1/§7. Основной канал команд и событий — не HTTP, а WebSocket-конверт поверх `wss:443` с пиннингом ключа (фаза 027), поэтому dio остаётся только на файловой цепочке. |
+| `dio` | HTTP-клиент **REST-поверхности** client-сервера (`noxd`, Go + встроенный SQLite): `PUT /files/{upload_token}` и `GET /files/{download_token}` c Range — контракт v0 §1/§7. Основной канал команд и событий — не HTTP, а WebSocket-конверт: его клиент приехал в фазе **026** (`lib/data/remote/socket/`), поэтому dio остаётся только на файловой цепочке (фаза 028). Отдельно: `wss:443` с пиннингом ключа — **целевая** production-форма транспорта, она ещё не построена (сегодня это голый `IOWebSocketChannel.connect` без `SecurityContext` и проверки отпечатка, а `config/stage.json` смотрит на `http://127.0.0.1:8080`, то есть `ws`). |
+| `web_socket_channel` | транспорт WebSocket-конверта контракта v0: `SocketChannelFactory` поверх `IOWebSocketChannel` (нужен `pingInterval`) под `NoxSocketClient` — `lib/data/remote/socket/`, фаза 026. |
 | `infinite_scroll_pagination` 5.1.1 | stateless `PagingState`-в-bloc (без `PagingController`). См. `07-pagination.md`. |
 | `flutter_screenutil` 5.9.3 | адаптивные spacing/typography токены, design size 360×779. См. `06-theming.md`. |
 | `skeletonizer` | shimmer-плейсхолдеры для загрузки. |
@@ -322,7 +326,7 @@ formatter:
 
 - [ ] `.fvmrc` закоммичен со значением `{"flutter": "3.44.1"}`; `.fvm/` в `.gitignore`; `fvm install` отработал.
 - [ ] Один `pubspec.yaml` с `name: nox_app`, `description: "NOX secure messenger."`, `sdk: '>=3.12.0 <4.0.0'`, `flutter: 3.44.1`.
-- [ ] Рантайм-набор присутствует целиком: `flutter_bloc`, `bloc_concurrency`, `rxdart`, `freezed_annotation`, `json_annotation`, `get_it`, `injectable`, `dio`, `infinite_scroll_pagination: 5.1.1`, `flutter_screenutil: 5.9.3`, `skeletonizer`, `cached_network_image`, `flutter_svg`, `url_launcher`, `app_links`, `intl`, `uuid`, `collection`, `logger`, `path_provider`, `shared_preferences`, `flutter_secure_storage`, `sembast`, `package_info_plus` (^10), `cupertino_icons`.
+- [ ] Рантайм-набор присутствует целиком: `flutter_bloc`, `bloc_concurrency`, `rxdart`, `freezed_annotation`, `json_annotation`, `get_it`, `injectable`, `dio`, `web_socket_channel: 3.0.3`, `infinite_scroll_pagination: 5.1.1`, `flutter_screenutil: 5.9.3`, `skeletonizer`, `cached_network_image`, `flutter_svg`, `url_launcher`, `app_links`, `intl`, `uuid`, `collection`, `logger`, `path_provider`, `shared_preferences`, `flutter_secure_storage`, `sembast`, `package_info_plus` (^10), `cupertino_icons`.
 - [ ] Camera/QR: `mobile_scanner: ^7.2.0` (iOS/Android/macOS only), `qr_flutter: ^4.1.0` (все 5), `permission_handler: ^12.0.3` (iOS/Android), `zxing2: ^0.2.3` (QR-декод из картинки на Windows/Linux) — АКТИВНЫ.
 - [ ] Файлы/сеть: `file_selector: ^1.1.0` (НЕ `file_picker` — конфликт `win32` с `package_info_plus ^10`) и `connectivity_plus: ^7.3.1` — АКТИВНЫ.
 - [ ] l10n: `flutter_localizations` (sdk) + `flutter: generate: true` + `l10n.yaml`; `fonts:`-блок объявлен (Roboto, Roboto Mono).
