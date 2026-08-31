@@ -240,12 +240,18 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     // honest — the alternative is a bubble that nothing can ever deliver.
     if (entry == null) return;
 
+    // Re-read the state after the write: handlers for different events run
+    // concurrently, so a refresh could have emitted while the enqueue was in
+    // flight, and copying the pre-await snapshot would silently undo it.
+    final live = state;
+    if (live is! Initialized) return;
+
     // Render the bubble NOW rather than waiting for the queue's own tick:
     // waiting would put its appearance at the mercy of the scheduler, and the
     // send goldens pump a bounded number of frames. The tick arrives moments
     // later and re-projects the same row under the same key, so the state it
     // produces is equal and the bloc drops it.
-    emit(current.copyWith(outgoing: [...current.outgoing, _project(entry)], draftAttachment: null));
+    emit(live.copyWith(outgoing: [...live.outgoing, _project(entry)], draftAttachment: null));
 
     if (_scenario == ChatThreadScenario.sendError) {
       // Debug-only: reproduce the failed-send state without a real refusal.
@@ -437,7 +443,10 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     // records go too — `outgoing` is a projection now, so clearing only the
     // state would be undone by the queue's very next tick.
     await _outboxRepository.removeForChat(chatId: _chatId);
-    if (current is Initialized) emit(current.copyWith(outgoing: const [], draftAttachment: null));
+    // Re-read after the write, like every other post-await emit here: the
+    // pre-await snapshot could undo whatever landed while it ran.
+    final afterWipe = state;
+    if (afterWipe is Initialized) emit(afterWipe.copyWith(outgoing: const [], draftAttachment: null));
     add(state is Initialized ? const ChatThreadEvent.loadMessages(reset: true) : ChatThreadEvent.initialize(_chatId));
   }
 
