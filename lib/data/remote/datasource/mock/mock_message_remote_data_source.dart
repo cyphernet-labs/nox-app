@@ -12,8 +12,9 @@ import 'package:nox_app/general/identity/identity_resolver.dart';
 
 /// Mock [MessageRemoteDataSource] — aggregates the two thread generators
 /// ([GetMessagesApi] read + [SendMessageApi] send) behind one interface, for the
-/// mock-backed flavors `[prod, test]`. The dev flavor resolves
-/// `RealMessageRemoteDataSource` (`contracts/di-binding.md`).
+/// mock-backed ENVIRONMENTS `[prod, test]`. `Environment.dev` — the one the
+/// `stage` flavor boots — resolves `RealMessageRemoteDataSource`
+/// (`contracts/di-binding.md`). There is no `dev` flavor.
 @LazySingleton(as: MessageRemoteDataSource, env: [Environment.prod, Environment.test])
 class MockMessageRemoteDataSource implements MessageRemoteDataSource {
   MockMessageRemoteDataSource(this._getMessagesApi, this._sendMessageApi, this._sessionRepository);

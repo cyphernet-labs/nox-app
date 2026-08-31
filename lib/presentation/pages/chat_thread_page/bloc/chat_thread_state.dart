@@ -43,8 +43,9 @@ extension ChatThreadInitializedExt on Initialized {
         final byTime = a.sentAt.compareTo(b.sentAt);
         if (byTime != 0) return byTime;
         // Queued sends share the sentinel seq AND (under a frozen clock) the
-        // timestamp: their tiebreak is the queue position — a lexicographic id
-        // compare would put 'local_10' before 'local_2' past nine queued sends.
+        // timestamp: their tiebreak is the queue position. Comparing ids would
+        // order them by a uuid, i.e. at random — the one thing send order must
+        // never be.
         final byQueue = (queueIndex[a.id] ?? -1).compareTo(queueIndex[b.id] ?? -1);
         return byQueue != 0 ? byQueue : a.id.compareTo(b.id);
       });

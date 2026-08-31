@@ -1,6 +1,6 @@
 # 16 — Загрузка вложения в чат (picker → uploadBegin → PUT → attach to message)
 
-> **Назначение:** зафиксировать клиентский контракт вложения файла в сообщение чата в `nox_app` — выбор файла через `FilePickerService`, загрузка байтов по одноразовому токену и прикрепление загруженного файла к сообщению. Цепочка **задана контрактом v0 §7** ([contract-draft.md](../../client-backend/protocol/contract-draft.md)): `file.uploadBegin` (команда по сокету) → `PUT` байтов → `message.send {attachment: {file_id}}`; обратная сторона — `file.downloadBegin` → `GET` с поддержкой Range. Вложение-**изображение** с реальным локальным файлом рендерится инлайн-эскизом с переходом в полноэкранный просмотр (фича 020), любой другой тип — чип с иконкой типа файла. Worked-аналог `Item` из блюпринта здесь — пара `MessageAttachment` (загруженный файл) + `MessageModel` (сообщение, к которому файл прикреплён). Сетевой слой **не переизобретается** — берётся из [14-networking-and-auth.md](14-networking-and-auth.md): команды идут по WebSocket-конверту v0 (транспорт — фаза 027), REST остаётся **только** под байты файлов.
+> **Назначение:** зафиксировать клиентский контракт вложения файла в сообщение чата в `nox_app` — выбор файла через `FilePickerService`, загрузка байтов по одноразовому токену и прикрепление загруженного файла к сообщению. Цепочка **задана контрактом v0 §7** ([contract-draft.md](../../client-backend/protocol/contract-draft.md)): `file.uploadBegin` (команда по сокету) → `PUT` байтов → `message.send {attachment: {file_id}}`; обратная сторона — `file.downloadBegin` → `GET` с поддержкой Range. Вложение-**изображение** с реальным локальным файлом рендерится инлайн-эскизом с переходом в полноэкранный просмотр (фича 020), любой другой тип — чип с иконкой типа файла. Worked-аналог `Item` из блюпринта здесь — пара `MessageAttachment` (загруженный файл) + `MessageModel` (сообщение, к которому файл прикреплён). Сетевой слой **не переизобретается** — берётся из [14-networking-and-auth.md](14-networking-and-auth.md): команды идут по WebSocket-конверту v0 (транспорт приехал в фазе 026), REST остаётся **только** под байты файлов.
 > **Когда читать:** перед реализацией composer'а вложений в треде (picker → upload → attach), перед поднятием файлового датасорса `uploadBegin → PUT → send` в `lib/data/` (переходное требование контракта §9.6, фаза 028) и при работе со скачиванием вложения (`downloadBegin` → `GET` Range).
 > **Связанные документы:** [../../client-backend/protocol/contract-draft.md](../../client-backend/protocol/contract-draft.md) (**контракт v0** — §5 `message.send`, §7 файлы, §2.1 коды ошибок, §9 переходные требования), [04-data-layer.md](04-data-layer.md) (`ApiClient`, `BaseApiRepository`, `BaseRepositoryHelper.execute`/`unwrapEnvelope`, `ResponseEntity<T>`/`EntityConverter<E>`, мапперы, REST-слой, network-only POST), [03-domain-layer.md](03-domain-layer.md) (`RepositoryResult`, `RepositoryException`, контракты репозиториев, per-call конфиги), [05-presentation-layer.md](05-presentation-layer.md) (Freezed-BLoC, `BaseBloc.executeLogic`, side-эффект-стримы, `state.when`), [14-networking-and-auth.md](14-networking-and-auth.md) (сетевой слой — не переизобретать), [02-dependency-injection.md](02-dependency-injection.md) (`configureDependencies`, регистрация репозиториев), [07-pagination.md](07-pagination.md) (список чатов — куда возвращается сообщение с вложением), [01-stack-and-tooling.md](01-stack-and-tooling.md) (`file_selector`, `dio`).
 
@@ -44,10 +44,10 @@
 - **Токены файлов — не аутентификация, а capability.** `upload_token`/`download_token` одноразовые, TTL 10 минут, гасятся первым обращением независимо от исхода; после обрыва клиент запрашивает новый токен той же командой (`uploadBegin`/`downloadBegin`). Любой отказ токена на HTTP — единый `404` без раскрытия причин.
 - **`PUT` принимает ровно заявленный `size`:** больше → `413`, меньше → `400`, байты не сохраняются. Значит `size` в `uploadBegin` берётся из того же `PickedFile`, что и байты, — пересчитывать между шагами нельзя.
 - **`file_id` — единственное поле из шага 1, которое нужно держать для шага 3.** `upload_url`/`upload_token` живут только до `PUT`.
-- **Идемпотентность по `client_message_id`.** Повторная отправка того же ключа не создаёт дубль: сервер хранит ключ и возвращает **прежнее эхо**. Клиент не различает «создано» и «уже было» — и не должен: ключ назначается при постановке в очередь и персистится с ней (переходное требование §9.3, фаза 026), повтор после реконнекта/рестарта идёт с тем же ключом.
+- **Идемпотентность по `client_message_id`.** Повторная отправка того же ключа не создаёт дубль: сервер хранит ключ и возвращает **прежнее эхо**. Клиент не различает «создано» и «уже было» — и не должен: ключ назначается при постановке в очередь и персистится с ней (переходное требование §9.3, закрыто фазой 027), повтор после реконнекта/рестарта идёт с тем же ключом.
 - **Правила полей `uploadBegin`:** `name` ≤ 255 символов, `mime` ≤ 128, оба после трима непустые — нарушение → `invalid_request`. `mime` выводится клиентом из расширения имени (неизвестное расширение → `application/octet-stream`); байты пикер не читает.
 - **Все методы репозиториев возвращают `RepositoryResult<T>`** ([03-domain-layer.md](03-domain-layer.md)). Коды провода §2.1 уже живут в enum `RepositoryException` (`invalidRequest`, `nameTaken`, `payloadTooLarge`, `attachmentGone`, `rateLimited`, `unsupportedSchema` + общие) и разбираются статикой `RepositoryException.fromWireCode(String)` — неизвестный код трактуется как `internal`. Маркерный тип — `BaseRepositoryException`.
-- **Это network-only-фича** (one-shot команды) — без Sembast-DAO и `BehaviorSubject` (carve-out [04-data-layer.md](04-data-layer.md) §8). Отправленное сообщение затем подхватывается списком сообщений/чатов ([07-pagination.md](07-pagination.md)); само вложение персистится в записи сообщения (`MessageAttachment`, §4).
+- **Загрузочная цепочка сама по себе network-only** (one-shot команды) — без Sembast-DAO и `BehaviorSubject` (carve-out [04-data-layer.md](04-data-layer.md) §8). Оговорка про шаг 3: сам `message.send` с фазы 027 **не** one-shot — он идёт через долговечную очередь (`outbox`, [04-data-layer.md](04-data-layer.md) §6а), и отправитель у него ровно один. То есть 028 приносит `file_id`, а не новый путь отправки. Отправленное сообщение затем подхватывается списком сообщений/чатов ([07-pagination.md](07-pagination.md)); само вложение персистится в записи сообщения (`MessageAttachment`, §4).
 
 ---
 
@@ -88,7 +88,7 @@ if (picked.sizeBytes > getIt<AppConfigRepository>().limits.maxAttachmentBytes) {
 }
 ```
 
-> **Капы — не константы этого документа.** Потолок вложения приходит в рукопожатии (`session.hello`) и лежит в data-слое как `ServerLimits.maxAttachmentBytes` (`lib/domain/model/app_config/server_limits.dart`, доступ — `AppConfigRepository.limits`). До появления живого транспорта (фаза 027) отдаются контрактные дефолты (`ServerLimits.contractDefaults`: 100 MB на вложение). Предполётная проверка **обязательна**, а не «опциональна ради UX»: §2.1 помечает `payload_too_large` как неповторяемый — его предотвращают, а не обрабатывают повтором.
+> **Капы — не константы этого документа.** Потолок вложения приходит в рукопожатии (`session.hello`) и лежит в data-слое как `ServerLimits.maxAttachmentBytes` (`lib/domain/model/app_config/server_limits.dart`, доступ — `AppConfigRepository.limits`). Живой транспорт приехал в фазе 026: `LiveSessionStarter` (`lib/data/sync/live_session_starter.dart`) забирает лимиты рукопожатия из `NoxSocketClient` и записывает их через `AppConfigRepository.updateLimits`. До первого рукопожатия — и на мок-флаворах — отдаются контрактные дефолты (`ServerLimits.contractDefaults`: 100 MB на вложение). Предполётная проверка **обязательна**, а не «опциональна ради UX»: §2.1 помечает `payload_too_large` как неповторяемый — его предотвращают, а не обрабатывают повтором.
 
 > **Allow-list'а MIME на клиенте нет.** Тип не ограничивается — `MimeTypes` покрывает изображения/видео/аудио/документы/архивы, неизвестное расширение уходит как `application/octet-stream` (дефолт самого контракта). Ограничение по типу — продуктовое решение, которого в NOX сейчас нет.
 
@@ -172,7 +172,7 @@ if (picked.sizeBytes > getIt<AppConfigRepository>().limits.maxAttachmentBytes) {
 
 Доменные модели — Freezed без `fromJson` ([03-domain-layer.md](03-domain-layer.md)); JSON живёт в entity-слое (§5). Категория файла — существующий enum `FileType` (`lib/domain/model/file/file_type.dart`, 9 значений от `image` до `other`) с `FileType.fromExtension(String?)`: она **не** ходит по проводу, а выводится из расширения имени. На провод идёт `mime` (`MimeTypes.forFileName`, §2).
 
-> **Что здесь РЕАЛЬНОЕ, а что ЦЕЛЕВОЕ — читать до кода ниже.** Из файловой части домена в shipped-коде существуют **только** `lib/domain/model/file/file_type.dart` и `lib/domain/model/file/mime_types.dart` (весь каталог `lib/domain/model/file/` — это ровно два файла), плюс модель вложения `lib/domain/model/chat/message_attachment.dart` и шов `lib/domain/service/file_picker_service.dart`. Всего остального в этом параграфе в `lib/` **нет**: ни `upload_ticket.dart`, ни каталога `lib/domain/repository/file/` (а значит ни `FileRepository`, ни `UploadConfig`), ни `SendMessageConfig`. Это **целевая форма**, приезжающая вместе с файловым датасорсом в **фазе 028** (переходное требование контракта §9.6); контрактная форма самого `sendMessage` — фаза 026 (§9.3). Каждый блок ниже помечен явно: **РЕАЛЬНОЕ** — файл существует и снипет зеркалит его; **ЦЕЛЕВОЕ** — файла в `lib/` ещё нет, снипет описывает форму, к которой приводим. Реален и общий каркас, в который целевое встраивается: маркер `RepositoryConfig` (`lib/domain/repository/base/repository_config.dart`) и per-call конфиги вроде `GetMessagesConfig` уже в коде.
+> **Что здесь РЕАЛЬНОЕ, а что ЦЕЛЕВОЕ — читать до кода ниже.** Из файловой части домена в shipped-коде существуют **только** `lib/domain/model/file/file_type.dart` и `lib/domain/model/file/mime_types.dart` (весь каталог `lib/domain/model/file/` — это ровно два файла), плюс модель вложения `lib/domain/model/chat/message_attachment.dart` и шов `lib/domain/service/file_picker_service.dart`. Всего остального в этом параграфе в `lib/` **нет**: ни `upload_ticket.dart`, ни каталога `lib/domain/repository/file/` (а значит ни `FileRepository`, ни `UploadConfig`), ни `SendMessageConfig`. Это **целевая форма**, приезжающая вместе с файловым датасорсом в **фазе 028** (переходное требование контракта §9.6); контрактная форма самого `sendMessage` частично на месте: фаза 026 добавила `clientMessageId` **именованным параметром**, а не объектом `SendMessageConfig`; сам конфиг приезжает с файловой цепочкой в фазе 028, когда появится `fileId`, ради которого он и заводится. Каждый блок ниже помечен явно: **РЕАЛЬНОЕ** — файл существует и снипет зеркалит его; **ЦЕЛЕВОЕ** — файла в `lib/` ещё нет, снипет описывает форму, к которой приводим. Реален и общий каркас, в который целевое встраивается: маркер `RepositoryConfig` (`lib/domain/repository/base/repository_config.dart`) и per-call конфиги вроде `GetMessagesConfig` уже в коде.
 
 **РЕАЛЬНОЕ** — `lib/domain/model/chat/message_attachment.dart`, единственная существующая сегодня модель вложения (результат шага 3 и то, что персистится в Sembast):
 
@@ -237,14 +237,14 @@ abstract class UploadConfig with _$UploadConfig implements RepositoryConfig {
 }
 ```
 
-**ЦЕЛЕВОЕ (фаза 026)** — `lib/domain/repository/chat/send_message_config.dart`, файла в `lib/` ещё нет (вложение — это тот же `message.send`, отдельной команды нет):
+**ЦЕЛЕВОЕ (фаза 028)** — `lib/domain/repository/chat/send_message_config.dart`, файла в `lib/` ещё нет (вложение — это тот же `message.send`, отдельной команды нет):
 
 ```dart
 @freezed
 abstract class SendMessageConfig with _$SendMessageConfig implements RepositoryConfig {
   const factory SendMessageConfig({
     required String chatId,
-    required String clientMessageId, // UUID, assigned when queued (phase 026), persisted with the queue row
+    required String clientMessageId, // UUID, assigned when queued (phase 027), persisted with the queue row
     String? text,                    // body; optional WHEN an attachment is present
     String? fileId,                  // attachment: {file_id} from step 1
     String? localPath,               // device-local file, re-attached onto the echo; never sent
@@ -277,18 +277,23 @@ abstract class FileRepository {
 }
 ```
 
-Шаг 3 отдельного репозитория не заводит — это обычный `sendMessage` чат-фичи. Шов **уже существует, но в доконтрактной форме**, поэтому здесь обе стороны показаны рядом.
+Шаг 3 отдельного репозитория не заводит — это обычный `sendMessage` чат-фичи. Шов **уже существует**, и доконтрактным в нём осталось только вложение — ключ идемпотентности приехал в контрактной форме ещё в фазе 026, — поэтому здесь обе стороны показаны рядом.
 
 **РЕАЛЬНОЕ** — `lib/domain/repository/chat/message_repository.dart` в shipped-коде (остальные члены интерфейса — `getMessages`, `watchMessages`, `chatFiles`, `seedCreatedChat`, `simulateIncoming`, `clean` — к файловой цепочке не относятся и опущены):
 
 ```dart
 abstract class MessageRepository {
   /// One-shot send. Returns the accepted (server) message on success.
-  Future<RepositoryResult<MessageModel>> sendMessage({required String chatId, String? text, MessageAttachment? attachment});
+  Future<RepositoryResult<MessageModel>> sendMessage({
+    required String chatId,
+    required String clientMessageId, // added in phase 026; owned by the caller, reused on every retry
+    String? text,
+    MessageAttachment? attachment,
+  });
 }
 ```
 
-**ЦЕЛЕВОЕ (фаза 026)** — та же операция после перевода на per-call конфиг:
+**ЦЕЛЕВОЕ (фаза 028)** — та же операция после перевода на per-call конфиг:
 
 ```dart
 abstract class MessageRepository {
@@ -297,9 +302,9 @@ abstract class MessageRepository {
 }
 ```
 
-> **Что именно меняется.** В нынешней форме ключа идемпотентности нет, а вложение передаётся моделью `MessageAttachment` целиком — вместе с `localPath`, которого на проводе не существует. Контрактная форма заменяет её на `SendMessageConfig` с `clientMessageId` + `fileId` — переходные требования §9.3/§9.6, фаза 026 (`client_message_id` назначается при постановке в очередь и персистится с ней). До этого перехода весь блок «целевого» кода в §4–§5 читается как проект, а не как описание `lib/`.
+> **Что именно меняется.** Ключ идемпотентности в нынешней форме уже есть — `clientMessageId` приехал именованным параметром в фазе 026; отличается только вложение: оно передаётся моделью `MessageAttachment` целиком — вместе с `localPath`, которого на проводе не существует. Контрактная форма сворачивает параметры отправки в один `SendMessageConfig`, где `clientMessageId` переезжает как есть, а на месте модели вложения стоит `fileId`, — переходные требования §9.3/§9.6 (`client_message_id` назначается при постановке в очередь и персистится с ней — закрыто фазой 027; файловая часть — фаза 028). До этого перехода весь блок «целевого» кода в §4–§5 читается как проект, а не как описание `lib/`.
 
-> **Почему не `(MessageModel, bool isCreated)`.** Различия «создано» vs «уже было» на проводе **нет**: при повторе того же `client_message_id` сервер возвращает **прежнее эхо**, неотличимое от первого. Клиенту это и не нужно — идемпотентность закрывает очередь исходящих (фаза 026): ключ назначается при постановке, повтор после реконнекта/рестарта идёт с тем же ключом, дубль невозможен. Никаких HTTP-статусов `201`/`200` в этой цепочке нет — `message.send` идёт по сокету.
+> **Почему не `(MessageModel, bool isCreated)`.** Различия «создано» vs «уже было» на проводе **нет**: при повторе того же `client_message_id` сервер возвращает **прежнее эхо**, неотличимое от первого. Клиенту это и не нужно — идемпотентность закрывает очередь исходящих (фаза 027): ключ назначается при постановке и служит ключом записи store `outbox`, повтор после реконнекта/рестарта идёт с тем же ключом, дубль невозможен. Никаких HTTP-статусов `201`/`200` в этой цепочке нет — `message.send` идёт по сокету.
 
 > **`MessageModel` / `MessageEntity` — конкретный аналог worked-example `Item`** для чат-фичи (модель `lib/domain/model/chat/message_model.dart`, локальная entity `lib/data/entity/chat/message_entity.dart`, wire-DTO `lib/data/entity/chat/wire/message_wire_entity.dart`), а **не** типы из [07-pagination.md](07-pagination.md) (там список построен на абстрактном `ItemModel`). Ссылки на `07` — про **механику** списка (куда уходит отправленное сообщение), а не про определение `MessageModel`. Внимание: `ItemsEntity{items, page, page_size, total}` из той верификационной нарезки — **заморожённый** offset-пример, к файловой цепочке отношения не имеющий.
 
@@ -377,7 +382,7 @@ class UploadTicketWireMapper extends BaseMapper<UploadTicketWireEntity, UploadTi
 
 ### 5.3 Транспорт шага 1 и шага 2
 
-Шаг 1 — **команда по сокету**, а не REST: `FileRemoteDataSource` (новый per-feature шов по канону [016](../../../specs/016-remote-datasource-seam/contracts/remote-data-sources.md), методы `uploadBegin`/`downloadBegin`) кладёт `{name, size, mime}` в конверт `{"id": N, "cmd": "file.uploadBegin", "data": {...}}` и разбирает ответ в `ResponseEntity<UploadTicketWireEntity>` (WS-клиент — фаза 027, [14-networking-and-auth.md](14-networking-and-auth.md)).
+Шаг 1 — **команда по сокету**, а не REST: `FileRemoteDataSource` (новый per-feature шов по канону [016](../../../specs/016-remote-datasource-seam/contracts/remote-data-sources.md), методы `uploadBegin`/`downloadBegin`) кладёт `{name, size, mime}` в конверт `{"id": N, "cmd": "file.uploadBegin", "data": {...}}` и разбирает ответ в `ResponseEntity<UploadTicketWireEntity>` (WS-клиент `NoxSocketClient`, `lib/data/remote/socket/nox_socket_client.dart`, приехал в фазе 026 — [14-networking-and-auth.md](14-networking-and-auth.md)).
 
 Шаг 2 — **единственная REST-операция цепочки отправки** (на приёме ей симметричен `GET` скачивания): сырой `PUT` по относительному `upload_url`. Никакого `multipart/form-data`: тело — байты файла, потоком с диска (в память файл не поднимаем). `onSendProgress` Dio пробрасывается наверх для прогресс-бара. На non-2xx Dio бросает `DioException` — его **не** ловят на уровне API (канон [04-data-layer.md](04-data-layer.md) §7г).
 
@@ -422,16 +427,17 @@ class PutFileBytesApi extends BaseApiRepository {
 
 ### 5.4 Шаг 3: attach to message (`message.send` по сокету)
 
-Шаг 3 **не заводит своего API-класса** — это существующий шов отправки сообщения: `MessageRemoteDataSource.sendMessage(...)` (`lib/data/remote/datasource/message_remote_data_source.dart`), сегодня за ним мок `SendMessageApi`, в фазе 028 — реальная команда `message.send` по сокету. Возврат — `ResponseEntity<MessageWireEntity>` (эхо), **без** статус-кодов: их в этой цепочке нет.
+Шаг 3 **не заводит своего API-класса** — это существующий шов отправки сообщения: `MessageRemoteDataSource.sendMessage(...)` (`lib/data/remote/datasource/message_remote_data_source.dart`). Реальная команда `message.send` по сокету уже живёт в `RealMessageRemoteDataSource` (фаза 026, привязан к `Environment.dev`); мок `SendMessageApi` остался за `MockMessageRemoteDataSource` (`prod`/`test`). Возврат — `ResponseEntity<MessageWireEntity>` (эхо), **без** статус-кодов: их в этой цепочке нет. Вложение по живому каналу пока отклоняется на месте (`invalid_request`): `file_id` выдаёт только загрузочная цепочка фазы 028.
 
-К форме контракта датасорс приводится в фазе 026 (переходное требование §9.6): уходят `authorId`/`authorLabel` (сервер берёт их из сессии), появляются `client_message_id` и `attachment: {file_id}`:
+К форме контракта датасорс приведён в фазе 026 (переходное требование §9.6): `authorId`/`authorLabel` ушли (сервер берёт их из сессии), `client_message_id` на месте; `attachment: {file_id}` вместо модели `MessageAttachment` приезжает с файловой цепочкой в фазе 028:
 
 ```dart
 abstract class MessageRemoteDataSource {
   Future<ResponseEntity<MessagesWireEntity>> getMessages({required GetMessagesConfig config});
 
-  // Contract 5 shape (phase 026): no authorship in the request, idempotency key
-  // assigned when queued, attachment referenced by file_id only.
+  // Contract 5 shape. No authorship in the request and the idempotency key are
+  // already shipped (phase 026; the key is assigned when queued - phase 027).
+  // The attachment referenced by file_id only arrives with phase 028.
   Future<ResponseEntity<MessageWireEntity>> sendMessage({
     required String chatId,
     required String clientMessageId,
@@ -493,7 +499,7 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
 }
 ```
 
-`lib/data/repository/chat/message_repository_impl.dart` (целевой фрагмент шага 3, после расширения шва в фазе 026):
+`lib/data/repository/chat/message_repository_impl.dart` (целевой фрагмент шага 3, после перевода шва на `SendMessageConfig` в фазе 028):
 
 ```dart
 @override
@@ -698,8 +704,10 @@ class UploadBloc extends BaseBloc<UploadEvent, UploadState> {
     if (state is! Initialized || !state.canSend) return;
     final chatId = state.chatId;
     final ready = state.attachments.whereType<AttachmentReady>().first;
-    // The idempotency key is assigned ONCE, when the send is queued, and persisted
-    // with the queue row (phase 026) - a retry after a reconnect reuses it.
+    // The key is NOT minted here in the shipped code: OutboxRepositoryImpl.enqueue
+    // assigns it once and persists it with the queue row (phase 027), and OutboxService
+    // is the only sender. This example calls sendMessage directly to keep the file chain
+    // in one place, so the local is a stand-in for the key the outbox hands back.
     final clientMessageId = const Uuid().v4();
 
     emit(state.copyWith(sendInProgress: true));
@@ -825,16 +833,16 @@ void dispose() {
 ## 9. Чеклист
 
 - [ ] **Picker** — `FilePickerService` поверх `file_selector` (`file_picker` **запрещён** — конфликт `win32` с `package_info_plus`); только метаданные (`PickedFile`), байты не читаются; `mime` — `MimeTypes.forFileName`, категория — `FileType.fromExtension`; нативные диалоги на всех пяти платформах.
-- [ ] **Предполётная проверка** — `picked.sizeBytes` против `ServerLimits.maxAttachmentBytes` (рукопожатие §3; до фазы 027 — `contractDefaults`, 100 MB) **до** `uploadBegin`: `payload_too_large` по §2.1 неповторяем, его предотвращают.
+- [ ] **Предполётная проверка** — `picked.sizeBytes` против `ServerLimits.maxAttachmentBytes` (рукопожатие §3, пишется живым транспортом с фазы 026; до первого рукопожатия и на мок-флаворах — `contractDefaults`, 100 MB) **до** `uploadBegin`: `payload_too_large` по §2.1 неповторяем, его предотвращают.
 - [ ] **Шаг 1 (`file.uploadBegin`)** — команда по сокету `{name, size, mime}` → `UploadTicket{fileId, uploadUrl, uploadToken, maxAttachmentBytes}`; `name` ≤ 255, `mime` ≤ 128, иначе `invalid_request`; держим только `file_id`.
 - [ ] **Шаг 2 (`PUT`)** — сырые байты потоком по относительному `upload_url`, **ровно заявленный `size`** (больше → `413`, меньше → `400`); `onSendProgress` → прогресс-бар; токен одноразовый, TTL 10 минут — после обрыва **новый `uploadBegin`**, а не повтор `PUT`.
 - [ ] **Шаг 3 (`message.send`)** — `{chat_id, client_message_id, body?, attachment: {file_id}}` по сокету → эхо `{message: Message}`; `body` опционален при наличии вложения; авторства в запросе нет; таймаут 10 с → локальный `error` + повтор тем же ключом.
-- [ ] **Идемпотентность** — ключ `client_message_id` (UUID) назначается **при постановке в очередь** и персистится с ней (фаза 026); повтор возвращает **прежнее эхо** — различать «создано»/«уже было» нечем и не нужно; никаких `201`/`200` в цепочке нет.
+- [ ] **Идемпотентность** — ключ `client_message_id` (UUID) назначается **при постановке в очередь** и персистится с ней (фаза 027); повтор возвращает **прежнее эхо** — различать «создано»/«уже было» нечем и не нужно; никаких `201`/`200` в цепочке нет.
 - [ ] **Скачивание** — `file.downloadBegin` → `GET` с Range (докачка); `expires_at` персистится в `MessageAttachment` и гасит Save заранее; `attachment_gone` — терминальное состояние экрана файла (5.3) **без** кнопки повтора.
 - [ ] **Мапперы** — `BaseMapper<E, M, dynamic, dynamic>` (4-арг generic из кода); коэрция (unix-секунды ↔ `DateTime`, `file_id` → `id`, категория из расширения) — в `toModel`/`toEntity`; применение эха/события — **merge, а не replace** (`localPath`/`status` не затирать).
 - [ ] **Network-only** — цепочка без Sembast-DAO и `BehaviorSubject` ([04-data-layer.md](04-data-layer.md) §8); каждый метод в `execute<T>()` (лог через `LogRepository`; **три** ветки: `on BaseRepositoryException` — пропуск неразбавленным, `on DioException` — коэрция по типу/статусу, catch-all → `unknown`); конверт разворачивать `unwrapEnvelope(...)`, коды провода — `RepositoryException.fromWireCode` (неизвестный → `internal`).
 - [ ] **BLoC** — `@freezed sealed` State/Event (bare-имена `Initializing`/`Initialized`/`Error`); `executeLogic(() async {...}, onError: (String? error, dynamic exception, StackTrace stackTrace) {...})` (позиционный первый арг, **всегда** с `onError`); прогресс per-attachment в state (гранулярные ребилды); навигация/снэкбары через `PublishSubject`, не через state; `result.match`, никогда `result.data!`.
 - [ ] **Страница** — `BaseStatePage<T>`, BLoC + side-эффект-подписки в `initState`/`dispose`, `state.when`; изображение с локальным файлом — инлайн-эскиз + полноэкранный просмотр (фича 020), остальное — чип с иконкой типа; исход отправки — возврат в чат; снэкбары — локализованный текст из ARB, не сырое исключение.
-- [ ] **Сеть/транспорт** — команды по WebSocket-конверту v0 (фаза 027), REST только под байты файлов; `ApiClient`/`baseClient` — из [14-networking-and-auth.md](14-networking-and-auth.md), **не переизобретать**; per-request Bearer-токенов в модели NOX нет.
+- [ ] **Сеть/транспорт** — команды по WebSocket-конверту v0 (транспорт приехал в фазе 026), REST только под байты файлов; `ApiClient`/`baseClient` — из [14-networking-and-auth.md](14-networking-and-auth.md), **не переизобретать**; per-request Bearer-токенов в модели NOX нет.
 - [ ] **Удаление до отправки** — `RemoveAttachment` чисто клиентский (убрать из state, без сети); осиротевшие загрузки зачищает сервер сам (не привязанные за сутки — при старте, §7).
-- [ ] **Что реально открыто:** аутентификация этапа 2 (спаривание/подпись, §8.1) и граница E2EE (Q1 — задевает `body`, не `attachment`); файловая цепочка §7 **закрыта** и реализуется в фазе 028 (DI-флип по [016](../../../specs/016-remote-datasource-seam/contracts/di-binding.md)).
+- [ ] **Что реально открыто:** аутентификация этапа 2 (спаривание/подпись, §8.1) и граница E2EE (Q1 — задевает `body`, не `attachment`); файловая цепочка §7 **закрыта** и реализуется в фазе 028. DI-флип по [016](../../../specs/016-remote-datasource-seam/contracts/di-binding.md) — уже не будущая работа: в фазе 026 он сделан для chat/message (`Real*RemoteDataSource` связаны `env: [Environment.dev]`, мок сужен до `[Environment.prod, Environment.test]`; окружение dev — это флейвор stage), файловый датасорс пройдёт по тем же трём шагам.

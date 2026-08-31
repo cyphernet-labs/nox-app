@@ -11,9 +11,11 @@ import 'package:nox_app/general/app_clock.dart';
 import 'package:nox_app/general/onboarding_mock_data.dart';
 import 'package:uuid/uuid.dart';
 
-/// Mock [ChatRemoteDataSource] — stands in for the server on the mock-backed
-/// flavors `[prod, test]`. The dev flavor resolves `RealChatRemoteDataSource`
-/// instead (`specs/016-remote-datasource-seam/contracts/di-binding.md`).
+/// Mock [ChatRemoteDataSource] — stands in for the server in the mock-backed
+/// ENVIRONMENTS `[prod, test]`. `Environment.dev` — the one the `stage` flavor
+/// boots — resolves `RealChatRemoteDataSource` instead
+/// (`specs/016-remote-datasource-seam/contracts/di-binding.md`). Flavors are
+/// only `stage` and `prod`; there is no `dev` flavor.
 ///
 /// It mints ids and echoes writes the way a server would, so the repository
 /// runs the SAME code on both paths — the only difference is the binding.

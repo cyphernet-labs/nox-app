@@ -8,7 +8,7 @@
 
 > **Reactive-канал не только над Sembast (Feature 015).** Тот же паттерн change-signal применим к не-Sembast источникам: `SessionRepository.watchLabel()` — это broadcast-`StreamController<String?>` над `shared_preferences`-меткой (не реактивной самой по себе). Он эмитит текущую метку при подписке (seed-then-live, как `watch()`-`async*`), затем каждое переименование (`updateLabel`) и `null` при `clear` (logout). Единый источник identity (технический идентификатор + label) резолвится чистой `resolveIdentity(SessionModel?)`; переименование меняет только label, идентификатор remain-invariant (own-detection в треде опирается на идентификатор). Живые surfaces (desktop rail-аватар) подписываются и обновляются без рестарта. См. `specs/015-identity-unification/`.
 
-> **RemoteDataSource seam (Feature 016).** Сетевая граница каждой data-фичи — абстрактный интерфейс `*RemoteDataSource` (`lib/data/remote/datasource/`: `ChatRemoteDataSource`/`MessageRemoteDataSource`/`ItemRemoteDataSource`). Репо зависят **от интерфейса**, не от конкретного мока (dependency inversion). Мок-реализации (`Mock*RemoteDataSource`) делегируют неизменным `*Api`-генераторам и биндятся `@LazySingleton(as: Interface, env:[dev,prod,test])` — мок покрывает и `prod`, т.к. prod-флейвор бутается `Environment.prod`, а real-impl ещё нет. **Флип на бэкенд** (фаза 028, после транспорта 027): зарегистрировать `RealXRemoteDataSource` на `[Environment.prod]`, сузить мок до `[dev,test]`, `make generate` — репо/DAO/мапперы/`RepositoryResult`/`PageMetadata`/UI не трогаются. `RepositoryResult`+catch-all `execute()` и HTTP→exception-маппинг (S3) остаются контрактом поверх seam. См. `specs/016-remote-datasource-seam/`. _(Feature 017 ретайрил `ChatFilesRemoteDataSource`: файлы чата — не сетевой ресурс, а локальная деривация из уже персистентных вложений `MessageDao` (`MessageRepository.chatFiles(chatId)`, newest-first). У файлов нет собственной сетевой границы — они появляются вместе с сообщениями, а сообщения уже проходят через `MessageRemoteDataSource`.)_
+> **RemoteDataSource seam (Feature 016).** Сетевая граница каждой data-фичи — абстрактный интерфейс `*RemoteDataSource` (`lib/data/remote/datasource/`: `ChatRemoteDataSource`/`MessageRemoteDataSource`/`ItemRemoteDataSource`). Репо зависят **от интерфейса**, не от конкретного мока (dependency inversion). Мок-реализации (`Mock*RemoteDataSource`) делегируют неизменным `*Api`-генераторам и биндятся `@LazySingleton(as: Interface, env:[...])`. **Флип на бэкенд состоялся фазой 026** вместе с транспортом: `RealChatRemoteDataSource`/`RealMessageRemoteDataSource` (`remote/datasource/real/`) зарегистрированы на `[Environment.dev]`, их моки сужены до `[Environment.prod, Environment.test]` — репо/DAO/мапперы/`RepositoryResult`/`PageMetadata`/UI не тронуты, ровно как обещал seam. У `ItemRemoteDataSource` (замороженный верификационный срез) real-impl нет, и его мок по-прежнему покрывает `[dev, prod, test]`. `RepositoryResult`+catch-all `execute()` и HTTP→exception-маппинг (S3) остаются контрактом поверх seam. См. `specs/016-remote-datasource-seam/`. _(Feature 017 ретайрил `ChatFilesRemoteDataSource`: файлы чата — не сетевой ресурс, а локальная деривация из уже персистентных вложений `MessageDao` (`MessageRepository.chatFiles(chatId)`, newest-first). У файлов нет собственной сетевой границы — они появляются вместе с сообщениями, а сообщения уже проходят через `MessageRemoteDataSource`.)_
 
 ---
 
@@ -19,7 +19,7 @@
 - **Entities (DTO)** — `@freezed` + `json_serializable`, **только базовые типы** (`String`/`int`/`double`/`bool` + их `List`). Enum хранится как `.name` (String), `DateTime` — как ISO-8601 String. Любая коэрция отложена в маппер.
 - **`ResponseEntity<T>` + `EntityConverter<E>`** — генерик-конверт ответа (контракт v0: `success` зеркалит `ok` reply-кадра, `error` — объект `{code, message}` §2.1) + ручной реестр типов, резолвящий генерик `T` в конкретный entity.
 - **Мапперы** — двунаправленная конвертация `Entity <-> Model` (`BaseMapper`), где происходит ВСЯ коэрция типов (enum, `DateTime`, nullable-нормализация). Композиция дочерних мапперов через конструктор.
-- **Обработка ошибок** — единственный механизм `BaseRepositoryHelper.execute<TD>()`: тонкий guarded try/catch, который **обязательно** логирует через `LogRepository` и возвращает `RepositoryResult.error(...)`. Три ветки: `on BaseRepositoryException` (уже доменная ошибка — пробрасывается **как есть**, не понижается до `unknown`), `on DioException` (маппинг по типу/статусу через `_mapDioException`), общий `catch` → `RepositoryException.unknown`. Там же живёт `unwrapEnvelope<TD>(ResponseEntity<TD>, String what)` — разворачивание конверта: payload, иначе `RepositoryException.fromWireCode(error.code)`, иначе `StateError`. **Нет типизированной транспортной иерархии** (`ApiException` / `DaoException` / `BaseDomainExceptionHelper` намеренно отсутствуют — правило этого блюпринта), но есть **маркер** `BaseRepositoryException`, который реализует каждая доменная ошибка: общий enum `RepositoryException` и любые feature-специфичные enum'ы реализуют этот маркер (см. §5 и `03-domain-layer.md`). Конкретный доменный код возвращает сам callback явным `return RepositoryResult.error(...)`.
+- **Обработка ошибок** — единственный механизм `BaseRepositoryHelper.execute<TD>()`: тонкий guarded try/catch, который **обязательно** логирует через `LogRepository` и возвращает `RepositoryResult.error(...)`. Четыре ветки: `on BaseRepositoryException` (уже доменная ошибка — пробрасывается **как есть**, не понижается до `unknown`), `on SocketUnavailableException` → `RepositoryException.connection` (фаза 026: без неё мёртвый сокет попадает в catch-all как `unknown`, и весь кэш-фоллбэк, завязанный на `connection`, становится недостижимым кодом), `on DioException` (маппинг по типу/статусу через `_mapDioException`), общий `catch` → `RepositoryException.unknown`. Там же живёт `unwrapEnvelope<TD>(ResponseEntity<TD>, String what)` — разворачивание конверта: payload, иначе `RepositoryException.fromWireCode(error.code)`, иначе `StateError`. **Нет типизированной транспортной иерархии** (`ApiException` / `DaoException` / `BaseDomainExceptionHelper` намеренно отсутствуют — правило этого блюпринта), но есть **маркер** `BaseRepositoryException`, который реализует каждая доменная ошибка: общий enum `RepositoryException` и любые feature-специфичные enum'ы реализуют этот маркер (см. §5 и `03-domain-layer.md`). Конкретный доменный код возвращает сам callback явным `return RepositoryResult.error(...)`.
 - **DAO (Sembast)** — реактивное локальное хранилище: `onSnapshots()`/`onSnapshot()`, атомарные `db.transaction()`, env-scoped `AppDatabase` (Dev/Prod = IO, Test = memory).
 - **Репозитории** — реализуют контракты домена; **кэш-first — форма по умолчанию**: либо прямая подписка на DAO-поток (продуктовые `ChatRepositoryImpl`/`MessageRepositoryImpl`, фича 013), либо один `BehaviorSubject<RepositoryResult<...>>` (канон реактивного **одиночного** ресурса, §8.1). **Carve-out «пагинированный серверный список = network-only» ретайрен для продуктовых фич:** список чатов и история сообщений — кэш-first с DAO. Network-only (без DAO и subject) остаётся только у **замороженного верификационного среза `Item`** и у того, что действительно не кэшируется (см. §8 и `07-pagination.md`).
 
@@ -45,11 +45,22 @@ lib/data/
   local/
     app_database.dart            # см. 02-dependency-injection.md (env-scoped провайдеры)
     item/item_dao.dart
+    chat/outbox_dao.dart         # очередь исходящих; ключ записи = client_message_id (027)
+  sync/
+    live_session_starter.dart    # подъём живой сессии: сокет + фазы + первичный sync (026)
+    sync_service.dart            # применение событий журнала в DAO (026)
+    outbox_service.dart          # слив очереди исходящих — единственный отправитель (027)
   remote/
     api_client.dart              # тонкий @lazySingleton Dio-обёртка + initBase() (см. §7а)
     interceptor/auth_interceptor.dart   # Bearer-заголовок + 401 -> forced logout (019/S5)
     datasource/item_remote_data_source.dart      # сетевая граница фичи (016)
     datasource/mock/mock_item_remote_data_source.dart
+    datasource/real/real_chat_remote_data_source.dart     # команды поверх WS-конверта, env: [dev] (026)
+    datasource/real/real_message_remote_data_source.dart
+    datasource/real/socket_envelope.dart
+    socket/nox_socket_client.dart        # клиент конверта: корреляция, фазы, реконнект, keepalive (026)
+    socket/socket_channel_factory.dart   # узкий порт сокета + IOWebSocketChannel(pingInterval: 25s)
+    socket/server_frame.dart
     api/item/get_items_api.dart  # mock-генератор верификационного среза (FR-013)
     # --- TARGET-форма request-builder-обвязки REST (ещё не построена) ---
     # api/base/base_api_repository.dart
@@ -62,7 +73,7 @@ lib/data/
     log_repository_impl.dart
 ```
 
-> **SKELETON vs полный блюпринт.** Из перечисленного выше `remote/request_builder/` и `BaseApiRepository` — единственная **TARGET-форма**: в коде их нет. Всё остальное построено: тонкий `ApiClient` с `initBase()` + `AuthInterceptor` (019/S5), `Mock*RemoteDataSource` за интерфейсом (016), network-only `ItemRepositoryImpl` верификационного среза, а кэш-first DAO-обвязка реализована для продуктовых фич (`local/chat/chat_dao.dart`, `message_dao.dart`, `local/sync/sync_dao.dart`, фичи 013–025). Пометки SKELETON/TARGET по тексту показывают, что уже построено, а что — канон-к-построению; **`Item`-срез заморожен** как верификационный harness и не является продуктовым каноном.
+> **SKELETON vs полный блюпринт.** Из перечисленного выше `remote/request_builder/` и `BaseApiRepository` — единственная **TARGET-форма**: в коде их нет. Всё остальное построено: тонкий `ApiClient` с `initBase()` + `AuthInterceptor` (019/S5), `Mock*RemoteDataSource` за интерфейсом (016) и — с фазы 026 — `Real*RemoteDataSource` (`remote/datasource/real/`) поверх сокет-клиента конверта (`remote/socket/`), зарегистрированные в окружении `dev` (флейвор `stage`), тогда как чат/сообщенческие моки сужены до `[prod, test]`; network-only `ItemRepositoryImpl` верификационного среза, а кэш-first DAO-обвязка реализована для продуктовых фич (`local/chat/chat_dao.dart`, `message_dao.dart`, `local/chat/outbox_dao.dart`, `local/sync/sync_dao.dart`, фичи 013–027). Пометки SKELETON/TARGET по тексту показывают, что уже построено, а что — канон-к-построению; **`Item`-срез заморожен** как верификационный harness и не является продуктовым каноном.
 
 > `path_provider` — обязательная зависимость `pubspec.yaml`: файловый бэкенд Sembast (`databaseFactoryIo`) резолвит путь к базе через `getApplicationDocumentsDirectory()`.
 
@@ -324,6 +335,8 @@ import 'package:nox_app/domain/repository/base/repository_result.dart';
 
 /// Wraps a repository operation in try/catch, ALWAYS logs via LogRepository,
 /// and coarsely maps framework errors to a domain RepositoryException.
+///
+/// FOUR catch branches, in this order, and the order is the point.
 mixin BaseRepositoryHelper {
   Future<RepositoryResult<TD>> execute<TD>(Function executionFunction) async {
     try {
@@ -334,6 +347,12 @@ mixin BaseRepositoryHelper {
       // `unknown` by the catch-all.
       logRepository.error(target: this, error: e, stackTrace: stackTrace);
       return RepositoryResult<TD>.error(exception: e);
+    } on SocketUnavailableException catch (e, stackTrace) {
+      // The live channel is down, or a command went unanswered. Without this
+      // branch it lands in the catch-all as `unknown`, and every cache fallback
+      // guarded on `connection` becomes unreachable code (feature 026).
+      logRepository.error(target: this, error: e, stackTrace: stackTrace);
+      return RepositoryResult<TD>.error(exception: RepositoryException.connection);
     } on DioException catch (e, stackTrace) {
       logRepository.error(target: this, error: e, stackTrace: stackTrace);
       return RepositoryResult<TD>.error(exception: _mapDioException(e));
@@ -386,7 +405,7 @@ mixin BaseRepositoryHelper {
 }
 ```
 
-> `DioException` — транспортная ветка для REST-поверхности. Транспорт **выбран**: контракт v0 идёт WebSocket-конвертом поверх `wss:443` с key pinning (приходит фазой 027), а REST остаётся только для blob upload/download (`file.uploadBegin` → `PUT`, `file.downloadBegin` → `GET` с `Range`). Ветка `on BaseRepositoryException` — это путь доменных кодов, поднятых из конверта `unwrapEnvelope`; load-bearing здесь — «три ветки: уже-доменная ошибка сквозь, транспорт по типу/статусу, всё остальное → `unknown`». _(В самом файле над `mixin` уцелела до-025-ная строка докстринга «Exactly two catch branches» — веток три; устарел комментарий, не поведение.)_
+> `DioException` — транспортная ветка для REST-поверхности. Живой канал команд **построен**: контракт v0 идёт WebSocket-конвертом, и сам конверт вместе с сокет-клиентом пришёл фазой 026 (`remote/socket/`, `remote/datasource/real/`), а REST остаётся только для blob upload/download (`file.uploadBegin` → `PUT`, `file.downloadBegin` → `GET` с `Range`). Отдельно от этого: `wss:443` с key pinning — **целевая форма транспорта, ещё не построенная**. `WebSocketChannelFactory` открывает голый `IOWebSocketChannel.connect(url, pingInterval: 25s)` — ни `SecurityContext`, ни `badCertificateCallback`, ни сверки отпечатка в `lib/` нет; `LiveSessionStarter._socketUrl` лишь переводит `https` → `wss`, поэтому локальный `http://127.0.0.1:8080` из `config/stage.json` даёт `ws://`. Ветка `on BaseRepositoryException` — это путь доменных кодов, поднятых из конверта `unwrapEnvelope`; load-bearing здесь — «четыре ветки: уже-доменная ошибка сквозь, мёртвый сокет → `connection`, транспорт по типу/статусу, всё остальное → `unknown`». Сокет-ветка стала load-bearing именно в мире 026+: она и есть то, что делает кэш-фоллбэк достижимым.
 
 Ключевое:
 
@@ -542,11 +561,29 @@ Future<void> mutate({
 
 ---
 
+### 6а. Очередь исходящих — store, у которого ключ записи несёт смысл (027)
+
+`local/chat/outbox_dao.dart` — единственный store, где выбор ключа записи **и есть** гарантия корректности, а не деталь: ключ равен `client_message_id` из контракта §5. Store не может держать две строки под одним ключом, поэтому повторная постановка того же сообщения физически не создаёт дубль — в открытом пространстве без удаления это неисправимо, и полагаться на проверку, о которой нужно помнить, здесь нельзя.
+
+Три правила этого store, каждое — следствие того, что он переживает перезапуск:
+
+1. **Порядок задаёт поле `ordinal`, а не время.** Оно назначается **внутри транзакции** постановки как `max + 1`. Сортировка по `createdAt` не годится: под замороженными в снимках часами у пачки сообщений время совпадает до миллисекунды, а счётчик в памяти обнуляется ровно тогда, когда порядок и нужно помнить.
+2. **Фильтрация и сортировка — в Dart по декодированным сущностям.** Глобальный `field_rename: snake` пишет на диск `chat_id`, поэтому `Finder`/`Filter` по camelCase-ключу молча не находит ничего (та же гоча, что у `ChatDao`/`MessageDao`).
+3. **Состояния `sending` в store нет.** Оно живёт ровно столько, сколько длится один `await` в сервисе; персистировать его — значит после падения процесса оставить на диске запись, помеченную как отправляемая, которую никто не отправляет.
+
+Слив живёт рядом, в `data/sync/outbox_service.dart`, и это **единственный отправитель в приложении**. До 027 отправляли два места — композер и переотправка по реконнекту, — и мигание связи запускало их внахлёст. Проходы сериализованы цепочкой `Future _queue` (тот же приём, что в `SyncService`), идут строго по `ordinal` и по одной записи, а запись удаляется **только после** того, как репозиторий персистировал сообщение: обратный порядок оставляет окно, в котором сообщения нет нигде.
+
+Отказ классифицируется, а не обрабатывается одинаково: `connection` / `rate_limited` / `internal` / нераспознанный — повторяемые (пауза `min(30s, 1s × 2^(attempts − 1))` ±20%, где `attempts` берётся **у записи**); прочие — окончательные, помечаются ошибкой, и проход идёт дальше. Иначе одно негодное сообщение держит за собой всю очередь, а слишком длинный текст короче с десятой попытки не станет.
+
+Экран очередь **проецирует, а не хранит**: `ChatThreadBloc.outgoing` пересчитывается из `watchQueue(chatId:)`. Перечитывать сообщения из кэша нужно только на тике, где **какая-то запись исчезла**. Обычно это значит, что сервер её принял, и подмена «пузырь очереди → персистированная строка» обязана лечь одним `emit`, иначе пузырь на кадр пропадёт. Отмена вручную попадает под то же условие и вызывает лишнее чтение — сознательный размен: различить два повода исчезновения по самой очереди нельзя, а лишнее чтение кэша дешевле мигающего пузыря.
+
+---
+
 ## 7. REST-слой
 
 ### 7а. Dio `ApiClient`
 
-**Реальный код (seam 019/S5, пока инертен).** Один host, один экземпляр Dio. `ApiClient` — `@lazySingleton`, инжектирующий `AppConfigRepository`; идемпотентный `initBase()` ставит base URL из `AppConfig.apiUrl` и **один раз** навешивает `AuthInterceptor`. Seam инертен: `apiUrl` равен `null` во всех флейворах, `initBase()` из кода приложения не вызывается (только тесты), и ни один data source не инжектирует `ApiClient` — эта разводка приходит с DI-флипом (фаза 028), а сам транспорт контракта v0 — WS-конверт (фаза 027); REST остаётся за blob upload/download.
+**Реальный код (seam 019/S5, для команд по-прежнему инертен).** Один host, один экземпляр Dio. `ApiClient` — `@lazySingleton`, инжектирующий `AppConfigRepository`; идемпотентный `initBase()` ставит base URL из `AppConfig.apiUrl` и **один раз** навешивает `AuthInterceptor`. Dio-seam инертен **для команд**: `AppConfig.apiUrl` с фазы 026 больше не `null` — в dev/stage он несёт адрес локального `noxd` (`--dart-define=app.apiUrl`), но из него строится **WS-URL** (`LiveSessionStarter`), а не Dio-база. Поэтому `initBase()` из кода приложения по-прежнему не вызывается (только тесты) и ни один data source не инжектирует `ApiClient` — эта разводка приходит с blob upload/download (фаза 028); живой канал контракта v0 — WS-конверт (фаза 026).
 
 `lib/data/remote/api_client.dart`:
 
@@ -557,11 +594,12 @@ import 'package:nox_app/data/remote/interceptor/auth_interceptor.dart';
 import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
 
 /// Thin Dio wrapper. [initBase] configures the base URL from [AppConfig.apiUrl] and
-/// installs the [AuthInterceptor] (feature S5). Inert while `apiUrl` is null (the
-/// contract-v0 transport is a WS envelope arriving with feature 027; REST stays for
-/// blob upload/download): no base URL is set, so no real requests are built, though
-/// the interceptor is installed and ready. Not yet injected into the data sources
-/// (the mocks don't use it) — that binding lands with the 016 DI flip (feature 028).
+/// installs the [AuthInterceptor] (feature S5).
+///
+/// Inert for COMMANDS, and permanently so: contract v0 carries them over the
+/// WebSocket envelope (feature 026), never over HTTP. REST exists only for blob
+/// upload/download, so nothing calls [initBase] from app code and no data source
+/// injects this client — that binding arrives with the file chain (phase 028).
 @lazySingleton
 class ApiClient {
   ApiClient(this._config)
@@ -621,7 +659,7 @@ class AuthInterceptor extends Interceptor {
 
 ### 7б. `BaseApiRepository` (TARGET)
 
-> **TARGET-форма.** `BaseApiRepository` появляется вместе с request-builder-обвязкой; в коде его нет (API-классы не наследуют общий базовый, а mock-`GetItemsApi` — обычный `@lazySingleton`). Он и не обязателен: контракт v0 идёт WS-конвертом (фаза 027), а REST-поверхность сводится к blob upload/download — если request-builder-обвязку и построят, то под неё. Сигнатура ниже — сама TARGET-форма: реальный `ApiClient.initBase()` — это **инстанс-метод `void`** на `@lazySingleton` (§7а), поэтому базовый класс придётся привязать к инжектированному `ApiClient`, а не к статической фабрике.
+> **TARGET-форма.** `BaseApiRepository` появляется вместе с request-builder-обвязкой; в коде его нет (API-классы не наследуют общий базовый, а mock-`GetItemsApi` — обычный `@lazySingleton`). Он и не обязателен: контракт v0 идёт WS-конвертом (фаза 026), а REST-поверхность сводится к blob upload/download — если request-builder-обвязку и построят, то под неё. Сигнатура ниже — сама TARGET-форма: реальный `ApiClient.initBase()` — это **инстанс-метод `void`** на `@lazySingleton` (§7а), поэтому базовый класс придётся привязать к инжектированному `ApiClient`, а не к статической фабрике.
 
 `lib/data/remote/api/base/base_api_repository.dart`:
 
@@ -638,7 +676,7 @@ abstract class BaseApiRepository {
 
 ### 7в. `RequestBuilder` + `RequestBuilderHelper` (TARGET)
 
-> **TARGET-форма.** Папки `remote/request_builder/` в коде нет и не появилось с бэкендом: контракт v0 идёт WS-конвертом (фаза 027), REST — только blob upload/download. Ниже — канон-к-построению, если REST-поверхность вырастет.
+> **TARGET-форма.** Папки `remote/request_builder/` в коде нет и не появилось с бэкендом: контракт v0 идёт WS-конвертом (фаза 026), REST — только blob upload/download. Ниже — канон-к-построению, если REST-поверхность вырастет.
 
 `RequestBuilder<T>` строит `body`/`path`/`headers` из доменного конфига; `RequestBuilderHelper<T>` — mixin, резолвящий конкретный builder из `getIt` и форвардящий вызовы (API-класс остаётся свободным от ручной разводки билдеров).
 
@@ -1124,6 +1162,7 @@ fvm dart run build_runner build --delete-conflicting-outputs
 - [ ] `AppDatabase` env-scoped (интерфейс `db` + `clearEntireDatabase()`; `Dev`/`Prod` = `databaseFactoryIo`, `Test` = `databaseFactoryMemory`); `path_provider` — зависимость пакета; env-список в репозитории полный.
 - [ ] `ItemDao` (PRIMARY) — **per-ID records store** `stringMapStoreFactory.store('items')`, ключ = `item.id`: `watch()` как `Stream<List<ItemEntity>> async*`, `getById(String)`, позиционные `saveData(List)`/`upsert(ItemEntity)`/`removeById(String)`/`cleanData()`, `_decode`/`_tryDecode` пропускают битую запись (`null`). DAO **не** оборачивает сбои в `StateError` — исключения Sembast летят в catch-all `execute()`. Cache-miss/not-found решает callback репозитория. Single-record collection store — альтернативный вариант.
 - [ ] **`ItemRepositoryImpl` (замороженный верификационный срез)** реализует **узкий** контракт `ItemRepository` (`getItems({GetItemsConfig config}) -> (List, PageMetadata)` + `clean() -> Future<void>`): инжектирует только маппер + `ItemRemoteDataSource` (интерфейс, seam 016), без DAO/subject/dispose; пустой payload → `RepositoryException.unknown` в callback'е; `PageMetadata` сворачивается из offset-обёртки среза (`hasMore = (page * pageSize) < total`, `nextPage = hasMore ? page + 1 : null`) — **в самой `PageMetadata` полей `total`/`pageSize` нет**, только `{hasMore, nextPage?}`; `clean()` — no-op. **Полный** env-список `@LazySingleton`. Полная (TARGET) форма добавляет `watchItem`/`fetchItem`/CRUD + `ItemDao` + ОДИН `BehaviorSubject` (подписка раз в конструкторе) + `@disposeMethod`, читает через `hasData`/`match` (не `result.data!`).
-- [ ] REST **построенное**: `@lazySingleton ApiClient` (`remote/api_client.dart`) с идемпотентным `initBase()` (base URL из `AppConfig.apiUrl` + однократная установка `AuthInterceptor`, который асинхронно читает `AppConfigRepository.getUserAuthIdToken()` и на 401 делает forced logout через ленивый алиас) — seam инертен: `apiUrl` = `null`, `initBase()` из кода приложения не зовётся, data sources его не инжектируют (разводка — DI-флип фазы 028). Транспорт контракта v0 — WS-конверт (фаза 027); REST остаётся за blob upload/download. **TARGET (не построено)**: `BaseApiRepository` + `RequestBuilder`/`RequestBuilderHelper`; API-класс оборачивает `response.data` в `ResponseEntity<T>.fromJson`; на non-2xx Dio бросает `DioException`, не перехватываемый на уровне API → `execute()` → `_mapDioException` (никакого `ApiException`). В замороженном `Item`-срезе wire-параметр поиска — `search` (не `q`); `page` 1-based (`defaultPage = 1`).
+- [ ] REST **построенное**: `@lazySingleton ApiClient` (`remote/api_client.dart`) с идемпотентным `initBase()` (base URL из `AppConfig.apiUrl` + однократная установка `AuthInterceptor`, который асинхронно читает `AppConfigRepository.getUserAuthIdToken()` и на 401 делает forced logout через ленивый алиас) — Dio-seam инертен **для команд**: `initBase()` из кода приложения не зовётся, data sources его не инжектируют (разводка — blob upload/download фазы 028); `AppConfig.apiUrl` с фазы 026 непустой в dev/stage, но питает WS-транспорт, а не Dio. Транспорт контракта v0 — WS-конверт (фаза 026); REST остаётся за blob upload/download. **TARGET (не построено)**: `BaseApiRepository` + `RequestBuilder`/`RequestBuilderHelper`; API-класс оборачивает `response.data` в `ResponseEntity<T>.fromJson`; на non-2xx Dio бросает `DioException`, не перехватываемый на уровне API → `execute()` → `_mapDioException` (никакого `ApiException`). В замороженном `Item`-срезе wire-параметр поиска — `search` (не `q`); `page` 1-based (`defaultPage = 1`).
 - [ ] **Кэш-first — форма по умолчанию; carve-out «пагинированный список = network-only» ретайрен.** Список чатов и история сообщений — кэш-first (013): один seed в Sembast, дальше срезы/поиск/`PageMetadata` из DAO. Network-only (без DAO, без subject) допустим только там, где кэшировать нечего: замороженный `Item`-срез и one-shot команды без локальной проекции — и это обосновывается, а не предполагается. Форма возврата на обеих ветках одна — `RepositoryResult<(List<Model>, PageMetadata)>`, без отдельного `getItemsPage`/`watchItems` (см. `07-pagination.md`). Контракт пагинации зафиксирован v0: `{chats, has_more}` по `page`/`page_size`, `{messages, has_more}` по `before_seq`/`limit`.
+- [ ] **Очередь исходящих построена (027)**: store `outbox` (`local/chat/outbox_dao.dart`), где **ключ записи = `client_message_id`** контракта — повторная постановка физически не даёт дубля; `ordinal` назначается `max + 1` **внутри одной транзакции** с записью (сортировка по времени не годится); фильтрация и сортировка — в Dart по декодированным сущностям, не `Finder`'ом по camelCase-ключу (`field_rename: snake`); в `OutboxStatus` ровно `{pending, error}` — состояния `sending` на диске **нет**. `data/sync/outbox_service.dart` — **единственный отправитель**: проходы сериализованы цепочкой `Future _queue`, идут по `ordinal` по одной записи, запись удаляется **только после** персиста сообщения репозиторием; отказ классифицируется — `connection`/`rateLimited`/`internal`/`unknown`/нераспознанный повторяемы (пауза `min(30s, 1s × 2^(attempts − 1))` ±20%, где `attempts` берётся у записи), прочие окончательны (`error`, проход идёт дальше). Экран очередь **проецирует**, а не хранит (`ChatThreadBloc.outgoing` из `watchQueue(chatId:)`).
 - [ ] `build_runner` перезапущен один раз в корне пакета после изменений аннотаций.

@@ -26,10 +26,12 @@ class OutboxRepositoryImpl with BaseRepositoryHelper implements OutboxRepository
   @override
   Future<RepositoryResult<OutboxEntry>> enqueue({required String chatId, String? text, MessageAttachment? attachment}) {
     return execute<OutboxEntry>(() async {
-      // `local_` prefix kept from the pre-027 bloc-minted key: the thread uses
-      // this id for the optimistic bubble, and existing tests read it.
+      // A BARE uuid, because contract §5 says the key is a UUID and the contract
+      // is taken verbatim. The old `local_` prefix answered "is this row still
+      // local?" in the string itself; the queue answers that by holding the
+      // record, so the prefix bought nothing and put a non-UUID on the wire.
       final entry = OutboxEntry(
-        clientMessageId: 'local_${_uuid.v4()}',
+        clientMessageId: _uuid.v4(),
         chatId: chatId,
         ordinal: 0, // replaced inside the enqueue transaction
         createdAt: AppClock.now(),
