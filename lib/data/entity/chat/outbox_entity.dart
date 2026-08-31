@@ -25,6 +25,10 @@ abstract class OutboxEntity with _$OutboxEntity {
     required String createdAt, // ISO-8601
     required String status, // OutboxStatus.name
     required int attempts,
+
+    /// Failures where the SERVER actually answered. Optional so rows
+    /// written before this field existed still decode.
+    @Default(0) int refusals,
     String? text,
     String? lastErrorCode,
     // Flattened attachment — all null when there is no attachment.

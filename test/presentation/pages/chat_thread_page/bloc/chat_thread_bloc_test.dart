@@ -216,6 +216,7 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 250));
       final queuedIds = (offline.state as Initialized).outgoing.map((m) => m.id).toList();
       expect(queuedIds, hasLength(2));
+      expect(queuedIds.toSet(), hasLength(2)); // no key drawn twice
       await offline.close(); // the screen goes away
 
       final reopened = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_0'));
@@ -223,6 +224,10 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 500));
 
       final restored = (reopened.state as Initialized).outgoing;
+      // One bubble per queued message. The projection tick can land during the
+      // enqueue await, so the send handler has to check before it appends —
+      // otherwise a message draws twice.
+      expect(restored.map((m) => m.id).toSet(), hasLength(restored.length));
       // Same messages, same keys, same order — the keys matter most: a new key
       // would make the server store a second copy on the next attempt.
       expect(restored.map((m) => m.text).toList(), ['survives a restart', 'and keeps its place']);
@@ -333,7 +338,7 @@ void main() {
       // The scenario reset clears the chat's queue, so re-queue and fail again
       // is not what we want — enqueue directly and mark it failed instead.
       final entry = (await outbox.enqueue(chatId: 'chat_0', text: 'retry me for real')).data!;
-      await outbox.recordFailure(clientMessageId: entry.clientMessageId, code: 'payloadTooLarge', terminal: true);
+      await outbox.recordFailure(clientMessageId: entry.clientMessageId, code: 'payloadTooLarge', terminal: true, serverAnswered: true);
       await Future<void>.delayed(const Duration(milliseconds: 250));
 
       bloc.add(ChatThreadEvent.sendRetried(entry.clientMessageId));

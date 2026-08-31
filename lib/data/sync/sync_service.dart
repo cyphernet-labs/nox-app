@@ -133,25 +133,32 @@ class SyncService {
     final entity = MessageWireEntity.fromJson(data);
     // Contract §5: an own message carries back the key it was sent with, and
     // only an own message does. Seeing it means the server already has this
-    // send — so the queue entry is settled, and dropping it here is what stops
-    // a restart from re-sending something that arrived before the crash. The
-    // resend would be harmless (idempotency covers it) but not free: it costs a
-    // round trip and leaves the bubble queued until the answer comes back.
+    // send, so the queue entry is settled — dropping it is what stops a restart
+    // from re-sending something that arrived before the crash. The resend would
+    // be harmless (idempotency covers it) but not free: a round trip, and the
+    // bubble stays queued until the answer comes back.
     final clientMessageId = entity.clientMessageId;
-    if (clientMessageId != null && clientMessageId.isNotEmpty) {
-      await _outbox.remove(clientMessageId: clientMessageId);
-    }
+    final settled = clientMessageId == null || clientMessageId.isEmpty ? null : await _outbox.find(clientMessageId: clientMessageId);
+
     final wire = _messageWireMapper.toModel(entity: entity);
     final existing = await _messageDao.getById(wire.id);
     // localPath and the local delivery status are device-local; an echo or a
     // redelivery must not wipe the path that makes a sent image previewable.
-    final merged = existing == null
+    //
+    // On the FIRST arrival there is no stored row to take the path from, and
+    // the wire never carries one — the queue entry is the only place it still
+    // exists, so it has to be read across before the entry is dropped.
+    final localPath = existing?.attachmentLocalPath ?? settled?.attachment?.localPath;
+    final merged = existing == null && settled == null
         ? wire
         : wire.copyWith(
-            attachment: wire.attachment?.copyWith(localPath: existing.attachmentLocalPath),
-            status: _messageMapper.toModel(entity: existing).status,
+            attachment: wire.attachment?.copyWith(localPath: localPath),
+            status: existing == null ? wire.status : _messageMapper.toModel(entity: existing).status,
           );
     await _messageDao.upsert(_messageMapper.toEntity(model: merged));
+    // Only now: the same order the drain uses, and for the same reason — the
+    // entry is the message's only home until the message itself is stored.
+    if (settled != null) await _outbox.remove(clientMessageId: settled.clientMessageId);
     // The server does NOT emit chat.updated for a new message (§6): the preview,
     // the activity time and the ordering are the client's to fold.
     final chat = await _chatDao.getById(wire.chatId);

@@ -24,9 +24,15 @@ abstract class OutboxEntry with _$OutboxEntry {
     required DateTime createdAt,
     required OutboxStatus status,
 
-    /// How many attempts have failed — by any cause. Drives the backoff, which
-    /// is why a retryable failure increments it too.
+    /// How many attempts have failed — by any cause, including a channel that
+    /// died before the server said anything. Drives the backoff.
     @Default(0) int attempts,
+
+    /// How many times the SERVER answered with a refusal. Drives the cap on
+    /// automatic retries, and only this counter may: a broken connection is not
+    /// the message's fault, and counting it would let a flapping link set aside
+    /// a perfectly good message in seconds.
+    @Default(0) int refusals,
     String? text,
     MessageAttachment? attachment,
 

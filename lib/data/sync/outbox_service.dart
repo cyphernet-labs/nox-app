@@ -30,27 +30,30 @@ class OutboxService {
   static const Duration _minBackoff = Duration(seconds: 1);
   static const Duration _maxBackoff = Duration(seconds: 30);
 
-  /// How many times a RETRYABLE refusal is retried automatically before the
-  /// entry is set aside as an error.
+  /// How many times the SERVER may refuse an entry before it is set aside.
   ///
-  /// Not a contradiction of "retry until the user cancels": an entry set aside
-  /// is not discarded — it stays in the queue, visible, and a tap sends it
-  /// again. What the cap buys is the spec's edge case: a message the server
-  /// keeps refusing with a retryable code (a persistent `internal`, say) would
-  /// otherwise block every later message in every chat forever, because the
-  /// queue is one strictly-ordered line. Ten attempts spans roughly five
-  /// minutes with this ladder — long enough to ride out a restart or a rate
-  /// limit, short enough that a genuinely stuck message stops holding the rest.
+  /// Counted against refusals only, never against a broken connection. That
+  /// distinction is the whole point: a flapping link produces failure after
+  /// failure through no fault of the message, and counting those would set a
+  /// perfectly good message aside within seconds of a bad tunnel.
+  ///
+  /// Set aside is not discarded — the entry stays in the queue, visible, and a
+  /// tap replenishes the ladder and sends it again. What the cap buys is the
+  /// spec's edge case: a message the server keeps refusing with a retryable
+  /// code (a persistent `internal`) would otherwise block every later message
+  /// in every chat forever, because the queue is one strictly-ordered line.
   static const int _autoRetryLimit = 10;
 
   StreamSubscription<SessionPhase>? _phaseSubscription;
   Timer? _retryTimer;
 
-  /// True while a backoff pause is in effect. Any other trigger — a fresh send,
-  /// a reconnect — would otherwise retry the paused head immediately, which
-  /// makes the pause decorative and inflates the entry's attempt count for a
-  /// reason that has nothing to do with the server.
-  bool _paused = false;
+  /// The entry a backoff pause is waiting out, or null when nothing is paused.
+  ///
+  /// Keyed to the entry rather than kept as a bare flag, because a pause has to
+  /// end when its reason does: discard the failing head, or let the server's
+  /// echo settle it, and a plain flag would keep every later message waiting on
+  /// a record that no longer exists.
+  String? _pausedFor;
 
   /// Set by [stop] and cleared by [start]: the drain stays off in between.
   ///
@@ -77,7 +80,7 @@ class OutboxService {
       // waiting out, the condition that caused it has just changed.
       _retryTimer?.cancel();
       _retryTimer = null;
-      _paused = false;
+      _pausedFor = null;
       unawaited(flush());
     });
   }
@@ -109,18 +112,25 @@ class OutboxService {
     // new timer, and cancelling first would leave it running past the stop.
     _retryTimer?.cancel();
     _retryTimer = null;
-    _paused = false;
+    _pausedFor = null;
   }
 
   Future<void> _drain() async {
     // Sending with no live channel only burns an attempt and grows the backoff
     // for a reason that has nothing to do with the message.
     if (!_phaseService.phase.isCurrent) return;
-    // A pause in effect means the head is waiting out its backoff, and the head
-    // is what everything else queues behind.
-    if (_paused || _stopped) return;
+    if (_stopped) return;
 
     final queued = await _outbox.pending();
+    // A pause applies to ONE entry. If that entry is no longer at the head —
+    // discarded, or settled by the server's echo — its pause has outlived its
+    // reason and must not hold the rest of the queue.
+    if (_pausedFor != null) {
+      if (queued.isNotEmpty && queued.first.clientMessageId == _pausedFor) return;
+      _retryTimer?.cancel();
+      _retryTimer = null;
+      _pausedFor = null;
+    }
     for (final snapshot in queued) {
       // Re-read immediately before sending. The snapshot was taken once, and a
       // pass spans as long as the sends ahead of this entry take — seconds on a
@@ -159,20 +169,24 @@ class OutboxService {
     }
 
     final exception = result.exception;
-    // Exhausting the automatic retries turns a retryable refusal into a
-    // set-aside one: the message is kept, but it stops holding the line.
-    final exhausted = entry.attempts + 1 >= _autoRetryLimit;
+    // A dead channel is not an answer: the server never saw this send, so it
+    // must not count towards giving up on the message.
+    final serverAnswered = exception != RepositoryException.connection;
+    // Exhausting the refusals turns a retryable one into a set-aside entry: the
+    // message is kept, but it stops holding the line.
+    final exhausted = serverAnswered && entry.refusals + 1 >= _autoRetryLimit;
     final terminal = _isTerminal(exception) || exhausted;
     await _outbox.recordFailure(
       clientMessageId: entry.clientMessageId,
       code: exception is RepositoryException ? exception.name : 'unknown',
       terminal: terminal,
+      serverAnswered: serverAnswered,
     );
     // Log the key and the code, never the text, the label or the chat name.
     logRepository.debug(target: this, message: 'outbox: send failed id=${entry.clientMessageId} terminal=$terminal');
 
     if (terminal) return true; // one bad message must not hold the rest hostage
-    _scheduleRetry(entry.attempts + 1);
+    _scheduleRetry(entry.clientMessageId, entry.attempts + 1);
     return false;
   }
 
@@ -196,7 +210,7 @@ class OutboxService {
   /// `min(30s, 1s * 2^(attempts - 1))` with ±20% jitter. The count comes from
   /// the RECORD, not from this pass: a process restart resets everything in
   /// memory, which is exactly the moment the pause has to be remembered.
-  void _scheduleRetry(int attempts) {
+  void _scheduleRetry(String clientMessageId, int attempts) {
     if (_stopped) return;
     _retryTimer?.cancel();
     final exponent = (attempts - 1).clamp(0, 16);
@@ -204,10 +218,10 @@ class OutboxService {
     final capped = raw > _maxBackoff ? _maxBackoff : raw;
     // Jitter keeps a herd of clients from hitting a recovering server in step.
     final jittered = capped * (0.8 + _random.nextDouble() * 0.4);
-    _paused = true;
+    _pausedFor = clientMessageId;
     _retryTimer = Timer(jittered, () {
       _retryTimer = null;
-      _paused = false;
+      _pausedFor = null;
       unawaited(flush());
     });
   }

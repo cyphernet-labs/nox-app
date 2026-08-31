@@ -24,6 +24,7 @@ class OutboxMapper extends BaseMapper<OutboxEntity, OutboxEntry, dynamic, dynami
       createdAt: DateTime.tryParse(entity.createdAt)?.toLocal() ?? AppClock.now(),
       status: OutboxStatus.values.firstWhere((s) => s.name == entity.status, orElse: () => OutboxStatus.pending),
       attempts: entity.attempts,
+      refusals: entity.refusals,
       text: entity.text,
       lastErrorCode: entity.lastErrorCode,
       attachment: entity.attachmentId == null
@@ -51,6 +52,7 @@ class OutboxMapper extends BaseMapper<OutboxEntity, OutboxEntry, dynamic, dynami
       createdAt: model.createdAt.toUtc().toIso8601String(),
       status: model.status.name,
       attempts: model.attempts,
+      refusals: model.refusals,
       text: model.text,
       lastErrorCode: model.lastErrorCode,
       attachmentId: model.attachment?.id,

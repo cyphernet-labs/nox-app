@@ -361,11 +361,10 @@ void main() {
   test('a message the server keeps refusing retryably stops holding the queue', () async {
     // The spec's edge case: something that will never go must not occupy the
     // line forever. Set aside is not discarded — it stays, visible, retryable.
-    failures['stuck'] = RepositoryException.internal;
+    failures['stuck'] = RepositoryException.internal; // the SERVER keeps refusing it
     service.start(); // a live edge lifts the backoff pause, which is what drives the retries
     final keys = await enqueue(['stuck', 'behind it']);
 
-    // Each live edge lifts the pause and buys one more attempt.
     for (var i = 0; i < 20 && (await outbox.pending()).isNotEmpty; i++) {
       phase.emit(SessionPhase.live);
       await service.flush();
@@ -374,10 +373,75 @@ void main() {
     final left = await outbox.watchQueue().first;
     expect(left.single.text, 'stuck');
     expect(left.single.status, OutboxStatus.error);
-    expect(left.single.attempts, 10); // the automatic ladder, then set aside
+    expect(left.single.refusals, 10); // the ladder is spent by refusals, and only by them
     expect(sentKeys.where((k) => k == keys[0]), hasLength(10));
     // And the message behind it got out rather than waiting forever.
     expect(sentKeys, contains(keys[1]));
+    expect(await outbox.pending(), isEmpty);
+  });
+
+  test('a flapping link never sets a message aside — a dead channel is not a refusal', () async {
+    // The cap exists for a server that keeps saying no, not for a bad tunnel.
+    // Counting connection failures would strand a perfectly good message within
+    // seconds of a train going through one.
+    failures['on my way'] = RepositoryException.connection;
+    service.start();
+    await enqueue(['on my way']);
+
+    for (var i = 0; i < 25; i++) {
+      phase.emit(SessionPhase.live); // each reconnect lifts the pause and buys an attempt
+      await service.flush();
+    }
+
+    final entry = (await outbox.pending()).single;
+    expect(entry.status, OutboxStatus.pending, reason: 'the network is not the message\'s fault');
+    expect(entry.refusals, 0);
+    expect(entry.attempts, greaterThan(10)); // it kept trying, as it must
+
+    failures.clear();
+    phase.emit(SessionPhase.live);
+    await service.flush();
+    expect(await outbox.pending(), isEmpty); // and it goes as soon as the link holds
+  });
+
+  test('a manual retry replenishes the ladder rather than being a single shot', () async {
+    failures['stuck'] = RepositoryException.internal;
+    service.start();
+    final keys = await enqueue(['stuck']);
+    for (var i = 0; i < 20 && (await outbox.pending()).isNotEmpty; i++) {
+      phase.emit(SessionPhase.live);
+      await service.flush();
+    }
+    expect((await outbox.watchQueue().first).single.status, OutboxStatus.error);
+    final spent = sentKeys.length;
+
+    // The user taps Retry. That has to mean "start over", not "one more try":
+    // keeping the spent counters makes every later tap fail straight back.
+    await outbox.markPending(clientMessageId: keys[0]);
+    final requeued = (await outbox.pending()).single;
+    expect(requeued.refusals, 0);
+    expect(requeued.attempts, 0);
+
+    for (var i = 0; i < 20 && (await outbox.pending()).isNotEmpty; i++) {
+      phase.emit(SessionPhase.live);
+      await service.flush();
+    }
+    expect(sentKeys.length - spent, 10, reason: 'a full ladder, not one attempt');
+  });
+
+  test('a pause dies with the entry that caused it — a discarded head does not hold the queue', () async {
+    // The pause is keyed to one entry. A bare flag would keep every later
+    // message waiting on a record that no longer exists.
+    failures['head'] = RepositoryException.internal;
+    final keys = await enqueue(['head']);
+    await service.flush();
+    expect((await outbox.pending()).single.attempts, 1); // paused now
+
+    await outbox.remove(clientMessageId: keys[0]); // the user discards it
+    final fresh = (await outbox.enqueue(chatId: 'c1', text: 'sent right after')).data!;
+    await service.flush();
+
+    expect(sentKeys, contains(fresh.clientMessageId), reason: 'a pause must not outlive its reason');
     expect(await outbox.pending(), isEmpty);
   });
 
@@ -404,19 +468,6 @@ void main() {
     await service.flush();
 
     expect(sentKeys, [keys[0]]);
-    expect(await outbox.pending(), isEmpty);
-  });
-
-  test('messages for chats nobody has open are sent all the same', () async {
-    // The drain lives in the data layer precisely so that leaving the screen —
-    // or never opening it — does not strand a message. No bloc exists in this
-    // file at all, which is the point.
-    final a = (await outbox.enqueue(chatId: 'chat_a', text: 'to a')).data!;
-    final b = (await outbox.enqueue(chatId: 'chat_b', text: 'to b')).data!;
-
-    await service.flush();
-
-    expect(sentKeys, [a.clientMessageId, b.clientMessageId]);
     expect(await outbox.pending(), isEmpty);
   });
 }

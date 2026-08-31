@@ -258,7 +258,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
 
     if (_scenario == ChatThreadScenario.sendError) {
       // Debug-only: reproduce the failed-send state without a real refusal.
-      await _outboxRepository.recordFailure(clientMessageId: entry.clientMessageId, code: 'internal', terminal: true);
+      await _outboxRepository.recordFailure(clientMessageId: entry.clientMessageId, code: 'internal', terminal: true, serverAnswered: true);
       return;
     }
     if (_isOffline()) return; // stays queued until the channel is back
@@ -268,7 +268,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   Future<void> _onSendRetried(SendRetried event, Emitter<ChatThreadState> emit) async {
     await _outboxRepository.markPending(clientMessageId: event.localId);
     if (_scenario == ChatThreadScenario.sendError) {
-      await _outboxRepository.recordFailure(clientMessageId: event.localId, code: 'internal', terminal: true);
+      await _outboxRepository.recordFailure(clientMessageId: event.localId, code: 'internal', terminal: true, serverAnswered: true);
       return;
     }
     if (_isOffline()) return;

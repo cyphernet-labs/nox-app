@@ -65,10 +65,16 @@ class OutboxRepositoryImpl with BaseRepositoryHelper implements OutboxRepository
   }
 
   @override
-  Future<void> recordFailure({required String clientMessageId, required String code, required bool terminal}) async {
+  Future<void> recordFailure({
+    required String clientMessageId,
+    required String code,
+    required bool terminal,
+    required bool serverAnswered,
+  }) async {
     await _mutate(clientMessageId, (entity) {
       return entity.copyWith(
         attempts: entity.attempts + 1,
+        refusals: serverAnswered ? entity.refusals + 1 : entity.refusals,
         lastErrorCode: code,
         status: terminal ? OutboxStatus.error.name : entity.status,
       );
@@ -77,7 +83,7 @@ class OutboxRepositoryImpl with BaseRepositoryHelper implements OutboxRepository
 
   @override
   Future<void> markPending({required String clientMessageId}) async {
-    await _mutate(clientMessageId, (entity) => entity.copyWith(status: OutboxStatus.pending.name));
+    await _mutate(clientMessageId, (entity) => entity.copyWith(status: OutboxStatus.pending.name, attempts: 0, refusals: 0));
   }
 
   @override

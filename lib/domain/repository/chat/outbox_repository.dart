@@ -35,15 +35,21 @@ abstract class OutboxRepository {
   Future<OutboxEntry?> find({required String clientMessageId});
 
   /// Records a failed attempt: always raises `attempts` and stores [code];
-  /// moves the entry to `error` only when [terminal].
+  /// raises `refusals` only when [serverAnswered]; moves the entry to `error`
+  /// only when [terminal].
   ///
-  /// One method rather than two because the backoff grows off `attempts`, so a
-  /// retryable failure has to count exactly like a terminal one — otherwise the
-  /// pause after the first refusal would stay one second forever.
-  Future<void> recordFailure({required String clientMessageId, required String code, required bool terminal});
+  /// Two counters because there are two questions. `attempts` decides how long
+  /// to wait before trying again, and every failure delays that equally. Only
+  /// `refusals` may decide to give up, because giving up on a message the
+  /// server never even saw would punish it for the network.
+  Future<void> recordFailure({required String clientMessageId, required String code, required bool terminal, required bool serverAnswered});
 
-  /// Puts a failed entry back in line (manual retry). Deliberately does NOT
-  /// reset `attempts`: the history of failures is what the pause is based on.
+  /// Puts a failed entry back in line (manual retry) and resets BOTH counters.
+  ///
+  /// A tap is the user saying "try again now", so the ladder starts over: the
+  /// pause goes back to its shortest, and the automatic retries are replenished.
+  /// Keeping the history would make every later tap a single shot that fails
+  /// straight back to `error`.
   Future<void> markPending({required String clientMessageId});
 
   /// Drops one entry — the server accepted it, or the user discarded it.

@@ -71,7 +71,7 @@ void main() {
   test('a retryable failure counts the attempt but leaves the entry queued', () async {
     final entry = (await repository.enqueue(chatId: 'c1', text: 'x')).data!;
 
-    await repository.recordFailure(clientMessageId: entry.clientMessageId, code: 'connection', terminal: false);
+    await repository.recordFailure(clientMessageId: entry.clientMessageId, code: 'connection', terminal: false, serverAnswered: false);
 
     final after = (await repository.pending()).single;
     expect(after.status, OutboxStatus.pending); // still on its way
@@ -83,29 +83,44 @@ void main() {
   test('a terminal failure moves the entry to error and out of the drain\'s input', () async {
     final entry = (await repository.enqueue(chatId: 'c1', text: 'x')).data!;
 
-    await repository.recordFailure(clientMessageId: entry.clientMessageId, code: 'payloadTooLarge', terminal: true);
+    await repository.recordFailure(clientMessageId: entry.clientMessageId, code: 'payloadTooLarge', terminal: true, serverAnswered: true);
 
     expect(await repository.pending(), isEmpty); // nothing will retry it
     final queued = await repository.watchQueue().first;
     expect(queued.single.status, OutboxStatus.error); // but it is still shown
   });
 
-  test('a manual retry re-queues without forgetting the attempts the pause is built from', () async {
+  test('a manual retry re-queues and starts the ladder over', () async {
     final entry = (await repository.enqueue(chatId: 'c1', text: 'x')).data!;
-    await repository.recordFailure(clientMessageId: entry.clientMessageId, code: 'internal', terminal: false);
-    await repository.recordFailure(clientMessageId: entry.clientMessageId, code: 'payloadTooLarge', terminal: true);
+    await repository.recordFailure(clientMessageId: entry.clientMessageId, code: 'internal', terminal: false, serverAnswered: true);
+    await repository.recordFailure(clientMessageId: entry.clientMessageId, code: 'payloadTooLarge', terminal: true, serverAnswered: true);
 
     await repository.markPending(clientMessageId: entry.clientMessageId);
 
     final after = (await repository.pending()).single;
     expect(after.status, OutboxStatus.pending);
-    expect(after.attempts, 2); // history kept: resetting it would restart the backoff ladder
+    // A tap means "try again now": the pause goes back to its shortest and the
+    // automatic retries are replenished. Keeping the spent counters would make
+    // every later tap a single shot that fails straight back to error.
+    expect(after.attempts, 0);
+    expect(after.refusals, 0);
+  });
+
+  test('a dead channel raises attempts but not refusals — only the server may spend the ladder', () async {
+    final entry = (await repository.enqueue(chatId: 'c1', text: 'x')).data!;
+
+    await repository.recordFailure(clientMessageId: entry.clientMessageId, code: 'connection', terminal: false, serverAnswered: false);
+    await repository.recordFailure(clientMessageId: entry.clientMessageId, code: 'internal', terminal: false, serverAnswered: true);
+
+    final after = (await repository.pending()).single;
+    expect(after.attempts, 2); // both delay the next try
+    expect(after.refusals, 1); // only the answered one counts towards giving up
   });
 
   test('marking a record that has already been sent is a no-op, not a crash', () async {
     // The drain can remove an entry while a slower failure path is still on its
     // way to marking it; that race must not take the app down.
-    await repository.recordFailure(clientMessageId: 'gone', code: 'connection', terminal: false);
+    await repository.recordFailure(clientMessageId: 'gone', code: 'connection', terminal: false, serverAnswered: false);
     await repository.markPending(clientMessageId: 'gone');
 
     expect(await repository.pending(), isEmpty);

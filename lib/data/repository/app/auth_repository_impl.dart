@@ -77,19 +77,29 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         if (getIt.isRegistered<LiveSessionStarter>()) await getIt<LiveSessionStarter>().stop();
         // The outgoing drain closes with it, and for the same reason: a pass
         // still in flight would persist a message into the store being emptied.
+        //
+        // stop() disarms it until the next start(), which is a sign-in. If the
+        // wipe below throws, no sign-in follows and the drain would stay dead
+        // for the life of the process while the app still shows the user signed
+        // in — so a failed wipe puts it back.
         if (getIt.isRegistered<OutboxService>()) await getIt<OutboxService>().stop();
-        // The queue goes FIRST of the stores. It holds message texts that were
-        // never sent, and a crash later in the wipe would leave them for the
-        // next identity — who would then have them sent, under their name, by
-        // the drain that re-arms at the next sign-in.
-        await _outboxRepository.clean();
-        // The cursor goes next: a crash mid-wipe must leave it behind the
-        // stores (safe - replay re-applies idempotently), never ahead of an
-        // emptied store (a stale high `since` would skip every row below it
-        // and the monotonic guard would keep it stuck forever).
-        await _syncRepository.clear();
-        await _chatRepository.clean();
-        await _messageRepository.clean();
+        try {
+          // The queue goes FIRST of the stores. It holds message texts that were
+          // never sent, and a crash later in the wipe would leave them for the
+          // next identity — who would then have them sent, under their name, by
+          // the drain that re-arms at the next sign-in.
+          await _outboxRepository.clean();
+          // The cursor goes next: a crash mid-wipe must leave it behind the
+          // stores (safe - replay re-applies idempotently), never ahead of an
+          // emptied store (a stale high `since` would skip every row below it
+          // and the monotonic guard would keep it stuck forever).
+          await _syncRepository.clear();
+          await _chatRepository.clean();
+          await _messageRepository.clean();
+        } catch (_) {
+          if (getIt.isRegistered<OutboxService>()) getIt<OutboxService>().start();
+          rethrow;
+        }
       },
     );
   }
