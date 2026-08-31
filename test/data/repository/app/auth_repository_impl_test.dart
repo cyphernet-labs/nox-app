@@ -9,11 +9,12 @@ import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 
 import 'auth_repository_impl_test.mocks.dart';
 
-@GenerateMocks([SessionRepository, AppStateRepository, ChatRepository, MessageRepository, SyncRepository])
+@GenerateMocks([SessionRepository, AppStateRepository, ChatRepository, MessageRepository, SyncRepository, OutboxRepository])
 void main() {
   provideDummy<RepositoryResult<bool>>(const RepositoryResult<bool>.success(data: true));
   provideDummy<RepositoryResult<AppStateModel>>(RepositoryResult<AppStateModel>.success(data: AppStateModel.init()));
@@ -23,6 +24,7 @@ void main() {
   late MockChatRepository chats;
   late MockMessageRepository messages;
   late MockSyncRepository sync;
+  late MockOutboxRepository outbox;
   late AuthRepositoryImpl repository;
 
   setUp(() {
@@ -31,11 +33,13 @@ void main() {
     chats = MockChatRepository();
     messages = MockMessageRepository();
     sync = MockSyncRepository();
-    repository = AuthRepositoryImpl(session, appState, chats, messages, sync);
+    outbox = MockOutboxRepository();
+    repository = AuthRepositoryImpl(session, appState, chats, messages, sync, outbox);
 
     when(chats.clean()).thenAnswer((_) async {});
     when(messages.clean()).thenAnswer((_) async {});
     when(sync.clear()).thenAnswer((_) async {});
+    when(outbox.clean()).thenAnswer((_) async {});
 
     when(
       session.saveIdentifier(
@@ -76,6 +80,8 @@ void main() {
     verifyNever(chats.clean());
     verifyNever(messages.clean());
     verifyNever(sync.clear());
+    // The queue holds message texts; a failed wipe must not drop them either.
+    verifyNever(outbox.clean());
   });
 
   test('logout wipes the chat + message caches after a successful clear (full local wipe)', () async {
@@ -83,7 +89,7 @@ void main() {
     // The cursor goes FIRST: a crash mid-wipe must leave it behind the stores
     // (safe), never ahead of an emptied store (a stale high `since` would skip
     // replayed history forever under the monotonic guard).
-    verifyInOrder([session.clear(), sync.clear(), chats.clean(), messages.clean()]);
+    verifyInOrder([session.clear(), sync.clear(), chats.clean(), messages.clean(), outbox.clean()]);
   });
 
   test('completeOnboarding marks the flag and re-derives app state', () async {

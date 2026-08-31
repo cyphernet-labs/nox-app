@@ -14,6 +14,7 @@ import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/service/connectivity_service.dart';
 import 'package:nox_app/domain/service/file_picker_service.dart';
 import 'package:nox_app/presentation/pages/chat_thread_page/bloc/chat_thread_bloc.dart';
@@ -37,6 +38,13 @@ void _usePicker(PickedFile? result) {
 void main() {
   setUpAll(() async {
     await configureDependencies(Environment.test);
+  });
+
+  // The queue is durable BY DESIGN (feature 027) and the test DB is in-memory
+  // per isolate, not per test — without this, one test's unsent message is
+  // drained by the next one's flush.
+  setUp(() async {
+    await getIt<OutboxRepository>().clean();
   });
 
   tearDownAll(() async {
@@ -98,7 +106,7 @@ void main() {
     );
 
     blocTest<ChatThreadBloc, ChatThreadState>(
-      'an optimistic send goes pending → sent',
+      'a send leaves the queue once accepted and shows exactly one sent bubble',
       build: ChatThreadBloc.new,
       act: (bloc) async {
         bloc.add(const ChatThreadEvent.initialize('chat_0'));
@@ -108,9 +116,12 @@ void main() {
       wait: const Duration(milliseconds: 800),
       verify: (bloc) {
         final state = bloc.state as Initialized;
-        expect(state.outgoing, hasLength(1));
-        expect(state.outgoing.first.text, 'hello there');
-        expect(state.outgoing.first.status, MessageStatus.sent);
+        // Accepted means the queue is done with it — the row now lives in the
+        // persisted history, which is where `allMessages` picks it up.
+        expect(state.outgoing, isEmpty);
+        final sent = state.allMessages.where((m) => m.text == 'hello there');
+        expect(sent, hasLength(1)); // exactly one bubble, no ghost of the queued copy
+        expect(sent.first.status, MessageStatus.sent);
       },
     );
 
@@ -183,9 +194,11 @@ void main() {
       },
       wait: const Duration(milliseconds: 800),
       verify: (bloc) {
-        final outgoing = (bloc.state as Initialized).outgoing.where((m) => m.text == 'queued offline');
-        expect(outgoing, isNotEmpty);
-        expect(outgoing.first.status, MessageStatus.sent);
+        final state = bloc.state as Initialized;
+        expect(state.outgoing, isEmpty); // drained
+        final delivered = state.allMessages.where((m) => m.text == 'queued offline');
+        expect(delivered, hasLength(1));
+        expect(delivered.first.status, MessageStatus.sent);
       },
     );
 
@@ -246,21 +259,23 @@ void main() {
     // ack-to-sent branch and the send-error re-fail branch reached via retry,
     // plus the unknown-id no-op guard.
     blocTest<ChatThreadBloc, ChatThreadState>(
-      'sendRetried re-delivers an existing outgoing bubble and the mock repository acks it to sent',
+      'sendRetried on an already-accepted send adds no second copy',
       build: ChatThreadBloc.new,
       act: (bloc) async {
         bloc.add(const ChatThreadEvent.initialize('chat_0'));
         await Future<void>.delayed(const Duration(milliseconds: 400));
         bloc.add(const ChatThreadEvent.messageSent(text: 'retry me'));
-        await Future<void>.delayed(const Duration(milliseconds: 200));
-        // Retry the same optimistic bubble by its local id (looks like 'local_<n>').
-        bloc.add(ChatThreadEvent.sendRetried((bloc.state as Initialized).outgoing.first.id));
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+        // The accepted send has already left the queue, so retrying it by its
+        // key has nothing to re-send — and must not conjure a second bubble.
+        final delivered = (bloc.state as Initialized).allMessages.firstWhere((m) => m.text == 'retry me');
+        bloc.add(ChatThreadEvent.sendRetried(delivered.id));
       },
       wait: const Duration(milliseconds: 500),
       verify: (bloc) {
         final state = bloc.state as Initialized;
-        expect(state.outgoing, hasLength(1));
-        expect(state.outgoing.first.status, MessageStatus.sent);
+        expect(state.allMessages.where((m) => m.text == 'retry me'), hasLength(1));
+        expect(state.outgoing, isEmpty);
       },
     );
 
@@ -404,10 +419,13 @@ void main() {
         expect(pending.status, MessageStatus.pending); // held back by the offline guard
 
         conn.emit(true); // device reconnects
-        await Future<void>.delayed(const Duration(milliseconds: 600)); // re-deliver + mock ack
-        final delivered = (bloc.state as Initialized).outgoing.firstWhere((m) => m.text == 'queued while really offline');
-        expect(delivered.status, MessageStatus.sent); // flushed on reconnect
-        expect((bloc.state as Initialized).isOffline, isFalse); // banner cleared
+        await Future<void>.delayed(const Duration(milliseconds: 600)); // drain + mock ack
+        final live = bloc.state as Initialized;
+        // Accepted, so the queue released it and the persisted row carries it.
+        expect(live.outgoing, isEmpty);
+        final delivered = live.allMessages.firstWhere((m) => m.text == 'queued while really offline');
+        expect(delivered.status, MessageStatus.sent); // drained on reconnect
+        expect(live.isOffline, isFalse); // banner cleared
       });
 
       test('rapid reconnect flapping re-delivers a queued send exactly once (sequential, no duplicate)', () async {

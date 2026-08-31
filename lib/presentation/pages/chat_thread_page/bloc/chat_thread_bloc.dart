@@ -8,6 +8,8 @@ import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
 import 'package:nox_app/domain/model/chat/message_status.dart';
+import 'package:nox_app/domain/model/chat/outbox_entry.dart';
+import 'package:nox_app/domain/model/chat/outbox_status.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/domain/model/file/mime_types.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
@@ -16,15 +18,15 @@ import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
+import 'package:nox_app/data/sync/outbox_service.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/domain/service/file_picker_service.dart';
-import 'package:nox_app/general/app_clock.dart';
 import 'package:nox_app/general/identity/identity_resolver.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
 import 'package:nox_app/presentation/pagination/paging_state_ext.dart';
 import 'package:rxdart/rxdart.dart';
-import 'package:uuid/uuid.dart';
 
 part 'chat_thread_bloc.freezed.dart';
 part 'chat_thread_event.dart';
@@ -33,7 +35,10 @@ part 'chat_thread_state.dart';
 /// Chat thread (5.2) over the cache-first message repository. PagingState-in-state
 /// with a SEQ CURSOR rather than page numbers (feature 025): [Initialized.oldestLoadedSeq]
 /// is the `before_seq` of the next older batch, pulled in on scroll-up via sequential();
-/// plus an `outgoing` list for optimistic sends (pending → sent / error + retry).
+/// plus `outgoing` — a PROJECTION of the durable outbox (feature 027), not a
+/// list this bloc owns. Unsent messages therefore survive leaving the screen and
+/// restarting the app, and this bloc no longer sends anything itself: it
+/// enqueues and asks [OutboxService] to drain.
 /// Resolves [MessageRepository] from DI (mock-backed until the 016 flip). Offline /
 /// empty / fatal / send-error are reproduced by [ChatThreadScenario] (debug).
 class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
@@ -42,10 +47,12 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     on<LoadMessages>(_onLoadMessages, transformer: sequential());
     on<MessageSent>(_onMessageSent);
     on<SendRetried>(_onSendRetried);
+    on<SendDiscarded>(_onSendDiscarded);
+    // sequential() so a burst of queue ticks cannot interleave two re-projections
+    // and emit a stale `outgoing` after a fresh one.
+    on<OutboxChanged>(_onOutboxChanged, transformer: sequential());
     on<AttachmentPicked>(_onAttachmentPicked);
     on<AttachmentRemoved>(_onAttachmentRemoved);
-    // sequential() so a rapid connectivity flap can't run two overlapping re-deliveries
-    // of the same queued pending send (which would double-post in the open no-delete space).
     on<ConnectivityChanged>(_onConnectivityChanged, transformer: sequential());
     on<SetScenario>(_onSetScenario);
   }
@@ -55,6 +62,8 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   final SessionRepository _sessionRepository = getIt<SessionRepository>();
   final FilePickerService _filePickerService = getIt<FilePickerService>();
   final SessionPhaseService _sessionPhaseService = getIt<SessionPhaseService>();
+  final OutboxRepository _outboxRepository = getIt<OutboxRepository>();
+  final OutboxService _outboxService = getIt<OutboxService>();
 
   late String _chatId;
   // The signed-in own-identity resolved from the session at thread init (feature 015).
@@ -72,6 +81,11 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   // reachable in the real flow, not just via the debug scenario. Real offline keeps
   // sends `pending`; reconnecting re-delivers them (mirrors the offline→normal scenario).
   StreamSubscription<SessionPhase>? _connSub;
+
+  // Live projection of the durable queue for THIS chat. What makes an unsent
+  // message reappear after a restart: the bloc reads the queue, it does not
+  // hold it.
+  StreamSubscription<List<OutboxEntry>>? _outboxSub;
   bool _deviceOnline = true;
 
   /// The thread is offline when the device is offline OR the debug scenario forces it.
@@ -100,12 +114,16 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     // data on screen is current: a device can be online while the socket is
     // down, and the socket can be open while replay is still running (FR-005).
     _connSub ??= _sessionPhaseService.watchPhase().listen((phase) => add(ChatThreadEvent.connectivityChanged(phase.isCurrent)));
+    // The durable queue for this chat. No skip(1): the FIRST snapshot is the
+    // point — it is what restores a message written before the app was closed.
+    _outboxSub ??= _outboxRepository.watchQueue(chatId: _chatId).listen((entries) => add(ChatThreadEvent.outboxChanged(entries)));
   }
 
   @override
   Future<void> close() {
     _messagesSub?.cancel();
     _connSub?.cancel();
+    _outboxSub?.cancel();
     return super.close();
   }
 
@@ -209,89 +227,93 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     final text = (event.text != null && event.text!.trim().isNotEmpty) ? event.text!.trim() : null;
     if (text == null && event.attachment == null) return; // nothing to send
 
-    // The optimistic row's id doubles as the contract's idempotency key, so it
-    // must be globally unique — NOT a per-bloc counter, which restarts with
-    // every thread open and would collide across chats and sessions, making two
-    // different messages look like a retry of each other to the server.
-    final localId = 'local_${const Uuid().v4()}';
-    final optimistic = MessageModel(
-      id: localId,
-      chatId: _chatId,
-      authorId: current.currentId,
-      authorLabel: _identity.label,
-      text: text,
-      attachment: event.attachment,
-      sentAt: AppClock.now(), // AppClock (frozen in tests) → deterministic; real clock in prod
-      status: MessageStatus.pending,
-    );
-    emit(current.copyWith(outgoing: [...current.outgoing, optimistic], draftAttachment: null));
+    // Enqueue FIRST: the repository mints and persists the idempotency key in
+    // the same write, so from this point on the message survives leaving the
+    // screen, and a retry — even after a restart — carries the same key.
+    final queued = await _outboxRepository.enqueue(chatId: _chatId, text: text, attachment: event.attachment);
+    final entry = queued.data;
+    if (entry == null) return; // the write failed; nothing was promised to the user
 
-    await _deliver(localId, text: text, attachment: event.attachment, emit: emit);
+    // Render the bubble NOW rather than waiting for the queue's own tick:
+    // waiting would put its appearance at the mercy of the scheduler, and the
+    // send goldens pump a bounded number of frames. The tick arrives moments
+    // later and re-projects the same row under the same key, so the state it
+    // produces is equal and the bloc drops it.
+    emit(current.copyWith(outgoing: [...current.outgoing, _project(entry)], draftAttachment: null));
+
+    if (_scenario == ChatThreadScenario.sendError) {
+      // Debug-only: reproduce the failed-send state without a real refusal.
+      await _outboxRepository.recordFailure(clientMessageId: entry.clientMessageId, code: 'internal', terminal: true);
+      return;
+    }
+    if (_isOffline()) return; // stays queued until the channel is back
+    unawaited(_outboxService.flush());
   }
 
   Future<void> _onSendRetried(SendRetried event, Emitter<ChatThreadState> emit) async {
+    await _outboxRepository.markPending(clientMessageId: event.localId);
+    if (_scenario == ChatThreadScenario.sendError) {
+      await _outboxRepository.recordFailure(clientMessageId: event.localId, code: 'internal', terminal: true);
+      return;
+    }
+    if (_isOffline()) return;
+    unawaited(_outboxService.flush());
+  }
+
+  Future<void> _onSendDiscarded(SendDiscarded event, Emitter<ChatThreadState> emit) async {
+    // The message is thrown away deliberately, so nothing is left behind: the
+    // record goes, and the projection tick removes the bubble.
+    await _outboxRepository.remove(clientMessageId: event.localId);
+  }
+
+  /// Re-projects the queue, and re-reads the cache only when it SHRANK.
+  ///
+  /// The shrink is the interesting case: an entry leaves the queue exactly when
+  /// the server accepted it, so the message has just been persisted and the two
+  /// have to swap in a SINGLE emit — reacting to them separately would blank
+  /// the bubble in between. The drain's ordering is what makes one pass
+  /// correct: the record is removed only after the message is in the store.
+  ///
+  /// Growth and status changes need no read at all. Skipping it is not just an
+  /// optimisation: a read fired on every tick would keep the store busy long
+  /// after the screen is gone, and in a widget test it outlives the tree.
+  Future<void> _onOutboxChanged(OutboxChanged event, Emitter<ChatThreadState> emit) async {
     final current = state;
     if (current is! Initialized) return;
-    final matches = current.outgoing.where((m) => m.id == event.localId);
-    if (matches.isEmpty) return;
-    final msg = matches.first;
-    _updateOutgoing(event.localId, MessageStatus.pending, emit);
-    await _deliver(event.localId, text: msg.text, attachment: msg.attachment, emit: emit);
+    final projected = [for (final entry in event.entries) _project(entry)];
+    // The optimistic emit in _onMessageSent already produced this exact list, so
+    // the tick that follows it is a no-op rather than a second frame.
+    if (_sameQueue(current.outgoing, projected)) return;
+
+    final vanished = projected.map((m) => m.id).toSet();
+    final accepted = current.outgoing.any((m) => !vanished.contains(m.id));
+    if (!accepted) {
+      emit(current.copyWith(outgoing: projected));
+      return;
+    }
+    await _refreshMessages(current, emit, outgoing: projected);
   }
 
-  /// Delivers an optimistic message: offline keeps it `pending`; send-error flips it
-  /// to `error`; otherwise the (mock) repository ack marks it `sent`.
-  Future<void> _deliver(String localId, {String? text, MessageAttachment? attachment, required Emitter<ChatThreadState> emit}) async {
-    if (_isOffline()) return; // offline (device or debug) → queued as pending until restored
-    await executeLogic(() async {
-      if (_scenario == ChatThreadScenario.sendError) {
-        _updateOutgoing(localId, MessageStatus.error, emit);
-        return;
-      }
-      // localId is stable across retries (RetrySend re-delivers the same one),
-      // so it doubles as the contract's idempotency key: a resend after a lost
-      // reply is recognised by the server instead of stored twice.
-      final result = await _messageRepository.sendMessage(
-        chatId: _chatId,
-        // Stable across retries (RetrySend and the queue flush re-deliver the
-        // same localId), and globally unique — the two properties the key needs.
-        clientMessageId: localId,
-        text: text,
-        attachment: attachment,
-      );
-      result.match<void>(
-        // Adopt the persisted server message (srv_<uuid> id + sent) so the watch tick's
-        // copy is deduped by id in `allMessages` → exactly one bubble (no flicker).
-        onData: (persisted) => _adoptOutgoing(localId, persisted, emit),
-        onError: (_) => _updateOutgoing(localId, MessageStatus.error, emit),
-      );
-    }, onError: (error, exception, stackTrace) => _updateOutgoing(localId, MessageStatus.error, emit));
+  bool _sameQueue(List<MessageModel> a, List<MessageModel> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
-  void _updateOutgoing(String localId, MessageStatus status, Emitter<ChatThreadState> emit) {
-    final live = state;
-    if (live is! Initialized) return;
-    emit(
-      live.copyWith(
-        outgoing: [
-          for (final m in live.outgoing)
-            if (m.id == localId) m.copyWith(status: status) else m,
-        ],
-      ),
-    );
-  }
-
-  /// Replace an optimistic outgoing entry with the persisted server message (id adoption).
-  void _adoptOutgoing(String localId, MessageModel persisted, Emitter<ChatThreadState> emit) {
-    final live = state;
-    if (live is! Initialized) return;
-    emit(
-      live.copyWith(
-        outgoing: [
-          for (final m in live.outgoing)
-            if (m.id == localId) persisted else m,
-        ],
-      ),
+  /// Renders a queued send as the same optimistic bubble the thread drew before
+  /// the queue was durable: same id (the idempotency key), same statuses.
+  MessageModel _project(OutboxEntry entry) {
+    return MessageModel(
+      id: entry.clientMessageId,
+      chatId: entry.chatId,
+      authorId: _identity.id,
+      authorLabel: _identity.label,
+      text: entry.text,
+      attachment: entry.attachment,
+      sentAt: entry.createdAt,
+      status: entry.status == OutboxStatus.error ? MessageStatus.error : MessageStatus.pending,
     );
   }
 
@@ -305,8 +327,16 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   /// Re-folds `items` WITHOUT touching the optimistic `outgoing`, the draft or
   /// the loading state, and merges rather than replaces so the loaded span can
   /// only grow.
-  Future<void> _refreshMessages(Initialized live0, Emitter<ChatThreadState> emit) async {
-    if (_scenario == ChatThreadScenario.fatal || _scenario == ChatThreadScenario.empty) return;
+  Future<void> _refreshMessages(Initialized live0, Emitter<ChatThreadState> emit, {List<MessageModel>? outgoing}) async {
+    if (_scenario == ChatThreadScenario.fatal || _scenario == ChatThreadScenario.empty) {
+      // The debug states own the whole thread, but a queue projection must
+      // still land — otherwise a discarded bubble would linger in them.
+      if (outgoing != null) {
+        final pinned = state;
+        if (pinned is Initialized) emit(pinned.copyWith(outgoing: outgoing));
+      }
+      return;
+    }
     // An inbound that lands in the currently-viewed chat stays read (no-op at 0 otherwise).
     unawaited(_chatRepository.markChatRead(chatId: _chatId));
     // Only the newest batch: asking for the whole loaded span would exceed the
@@ -316,7 +346,15 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     final result = await _messageRepository.getMessages(
       config: GetMessagesConfig.tail(chatId: _chatId, limit: live0.items.length + GetMessagesConfig.pageSize, cachedOnly: true),
     );
-    if (!result.hasData) return; // swallow a background error — keep the current thread
+    if (!result.hasData) {
+      // Swallow a background read error — but never swallow the projection, or
+      // a bubble the drain already sent would stay on screen.
+      if (outgoing != null) {
+        final pinned = state;
+        if (pinned is Initialized) emit(pinned.copyWith(outgoing: outgoing));
+      }
+      return;
+    }
     final (all, meta) = result.data!;
     final live = state;
     if (live is! Initialized) return;
@@ -339,6 +377,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
         pagingState: r.pagingState,
         // The scroll-up cursor only ever moves DOWN.
         oldestLoadedSeq: merged.isEmpty ? live.oldestLoadedSeq : merged.first.seq,
+        outgoing: outgoing ?? live.outgoing,
       ),
     );
   }
@@ -383,25 +422,17 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     // Scoped to `normal` so offline→empty / offline→fatal fall through to the reset branch
     // below and render the target debug state (they are NOT a reconnect).
     if (event.scenario == ChatThreadScenario.normal && wasOffline && !_isOffline() && current is Initialized) {
-      await _redeliverQueued(emit);
+      unawaited(_outboxService.flush());
       return;
     }
 
-    // Any other scenario switch is a debug reset: drop stale optimistic bubbles so a
-    // previous scenario's sends don't leak into (e.g.) the empty state.
+    // Any other scenario switch is a debug reset: drop stale queued bubbles so a
+    // previous scenario's sends don't leak into (e.g.) the empty state. The
+    // records go too — `outgoing` is a projection now, so clearing only the
+    // state would be undone by the queue's very next tick.
+    await _outboxRepository.removeForChat(chatId: _chatId);
     if (current is Initialized) emit(current.copyWith(outgoing: const [], draftAttachment: null));
     add(state is Initialized ? const ChatThreadEvent.loadMessages(reset: true) : ChatThreadEvent.initialize(_chatId));
-  }
-
-  /// Re-deliver every message queued as `pending` while offline (own optimistic sends
-  /// held back by [_deliver]'s offline guard). Called on the offline→online transition.
-  Future<void> _redeliverQueued(Emitter<ChatThreadState> emit) async {
-    final current = state;
-    if (current is! Initialized) return;
-    final queued = current.outgoing.where((message) => message.status == MessageStatus.pending).toList();
-    for (final message in queued) {
-      await _deliver(message.id, text: message.text, attachment: message.attachment, emit: emit);
-    }
   }
 
   Future<void> _onConnectivityChanged(ConnectivityChanged event, Emitter<ChatThreadState> emit) async {
@@ -411,7 +442,9 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     if (wasOffline == nowOffline) return; // no effective change (a debug scenario may pin offline)
     final current = state;
     if (current is Initialized) emit(current.copyWith(isOffline: nowOffline)); // banner in place, no reload
-    // Reconnected → flush the offline send-queue.
-    if (!nowOffline) await _redeliverQueued(emit);
+    // Reconnected → ask for a drain. Re-delivery itself is no longer this
+    // bloc's job: a single sender is what keeps a connectivity flap from
+    // posting the same message twice.
+    if (!nowOffline) unawaited(_outboxService.flush());
   }
 }

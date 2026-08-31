@@ -13,8 +13,21 @@ sealed class ChatThreadEvent with _$ChatThreadEvent {
   /// Send a message (optimistic): text and/or the current draft attachment.
   const factory ChatThreadEvent.messageSent({String? text, MessageAttachment? attachment}) = MessageSent;
 
-  /// Retry a previously failed optimistic send by its local id.
+  /// Retry a previously failed queued send by its client_message_id. The key is
+  /// unchanged on purpose — that is what makes the server recognise the resend
+  /// instead of storing a second copy.
   const factory ChatThreadEvent.sendRetried(String localId) = SendRetried;
+
+  /// Discard a queued send by its client_message_id: it leaves the queue and is
+  /// never sent. The escape hatch for a message that will not go — without it,
+  /// a failed bubble now outlives the screen AND the process, i.e. forever.
+  const factory ChatThreadEvent.sendDiscarded(String localId) = SendDiscarded;
+
+  /// The durable outgoing queue changed (from `watchQueue`). The snapshot
+  /// travels WITH the event rather than being re-read in the handler: the
+  /// stream already carries it, and asking the store again would be a second
+  /// round-trip per tick for an answer we were just handed.
+  const factory ChatThreadEvent.outboxChanged(List<OutboxEntry> entries) = OutboxChanged;
 
   /// Attach a file (UI-phase: a no-op picker that synthesizes a draft attachment).
   const factory ChatThreadEvent.attachmentPicked() = AttachmentPicked;
