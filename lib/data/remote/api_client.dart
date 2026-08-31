@@ -4,11 +4,12 @@ import 'package:nox_app/data/remote/interceptor/auth_interceptor.dart';
 import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
 
 /// Thin Dio wrapper. [initBase] configures the base URL from [AppConfig.apiUrl] and
-/// installs the [AuthInterceptor] (feature S5). Inert while `apiUrl` is null (the
-/// contract-v0 transport is a WS envelope arriving with feature 027; REST stays for
-/// blob upload/download): no base URL is set, so no real requests are built, though
-/// the interceptor is installed and ready. Not yet injected into the data sources
-/// (the mocks don't use it) — that binding lands with the 016 DI flip (feature 028).
+/// installs the [AuthInterceptor] (feature S5).
+///
+/// Inert for COMMANDS, and permanently so: contract v0 carries them over the
+/// WebSocket envelope (feature 026), never over HTTP. REST exists only for blob
+/// upload/download, so nothing calls [initBase] from app code and no data source
+/// injects this client — that binding arrives with the file chain (phase 028).
 @lazySingleton
 class ApiClient {
   ApiClient(this._config)

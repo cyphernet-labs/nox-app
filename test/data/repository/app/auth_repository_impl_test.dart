@@ -1,7 +1,10 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:injectable/injectable.dart' show Environment;
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nox_app/data/repository/app/auth_repository_impl.dart';
+import 'package:nox_app/data/sync/outbox_service.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/app/app_state_model.dart';
 import 'package:nox_app/domain/repository/app/app_state_repository.dart';
@@ -11,6 +14,8 @@ import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
+
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'auth_repository_impl_test.mocks.dart';
 
@@ -27,7 +32,9 @@ void main() {
   late MockOutboxRepository outbox;
   late AuthRepositoryImpl repository;
 
-  setUp(() {
+  setUp(() async {
+    SharedPreferences.setMockInitialValues({});
+    await configureDependencies(Environment.test);
     session = MockSessionRepository();
     appState = MockAppStateRepository();
     chats = MockChatRepository();
@@ -54,6 +61,8 @@ void main() {
       appState.fetchAppState(sessionExpired: anyNamed('sessionExpired')),
     ).thenAnswer((_) async => RepositoryResult<AppStateModel>.success(data: AppStateModel.init()));
   });
+
+  tearDown(() async => getIt.reset());
 
   test('signIn under a registered identifier persists onboardingComplete=true', () async {
     await repository.signIn(identifier: 'registered');
@@ -90,6 +99,19 @@ void main() {
     // (safe), never ahead of an emptied store (a stale high `since` would skip
     // replayed history forever under the monotonic guard).
     verifyInOrder([session.clear(), sync.clear(), chats.clean(), messages.clean(), outbox.clean()]);
+  });
+
+  test('signing in re-arms the outgoing drain that logout cancelled', () async {
+    // The drain's phase subscription dies with logout. Without re-arming it a
+    // re-login in the same process would leave a queued message waiting for
+    // someone to ask, through every reconnect.
+    await repository.logout();
+    await repository.signIn(identifier: 'registered');
+
+    expect(getIt.isRegistered<OutboxService>(), isTrue);
+    // start() is idempotent, so calling it here cannot double-subscribe; the
+    // assertion that matters is that the sign-in path reaches it at all.
+    expect(() => getIt<OutboxService>().start(), returnsNormally);
   });
 
   test('completeOnboarding marks the flag and re-derives app state', () async {

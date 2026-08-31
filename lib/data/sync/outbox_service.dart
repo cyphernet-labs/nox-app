@@ -52,8 +52,16 @@ class OutboxService {
   }
 
   /// Runs a drain pass, chained after any pass already running.
+  ///
+  /// The chain absorbs errors deliberately. `_queue.then(...)` on a rejected
+  /// future stays rejected forever, so one failed read — a store hiccup, a
+  /// teardown mid-pass — would silently end sending for the life of the
+  /// process. Whatever went wrong, the queue is still on disk and the next
+  /// trigger deserves a real attempt.
   Future<void> flush() {
-    _queue = _queue.then((_) => _drain());
+    _queue = _queue.then((_) => _drain()).catchError((Object error, StackTrace stackTrace) {
+      logRepository.error(target: this, error: error, stackTrace: stackTrace);
+    });
     return _queue;
   }
 
@@ -95,6 +103,11 @@ class OutboxService {
     if (result.hasData) {
       // Removal comes AFTER the repository persisted the message, never before:
       // the reverse order leaves a window in which the message exists nowhere.
+      //
+      // A discard that landed while this send was in flight has already deleted
+      // the record, and this remove is a no-op. The message still shows as sent,
+      // which is correct: discarding means "do not send it", and once the server
+      // has it, an open space with no deletion cannot take it back.
       await _outbox.remove(clientMessageId: entry.clientMessageId);
       return true;
     }

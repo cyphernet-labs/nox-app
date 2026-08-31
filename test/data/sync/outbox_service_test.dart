@@ -225,6 +225,41 @@ void main() {
     expect(sentKeys, hasLength(1));
   });
 
+  test('a pass that blows up does not end sending for the life of the process', () async {
+    // `_queue.then(...)` on a rejected future stays rejected forever, so an
+    // unabsorbed throw would silently stop every later drain — the same shape
+    // as the halt that once silenced event sync.
+    await enqueue(['a']);
+    when(
+      messages.sendMessage(
+        chatId: anyNamed('chatId'),
+        clientMessageId: anyNamed('clientMessageId'),
+        text: anyNamed('text'),
+        attachment: anyNamed('attachment'),
+      ),
+    ).thenThrow(StateError('the store blew up mid-pass'));
+
+    await service.flush();
+    expect(await outbox.pending(), hasLength(1)); // nothing was sent, nothing was lost
+
+    // The next trigger has to get a real attempt.
+    when(
+      messages.sendMessage(
+        chatId: anyNamed('chatId'),
+        clientMessageId: anyNamed('clientMessageId'),
+        text: anyNamed('text'),
+        attachment: anyNamed('attachment'),
+      ),
+    ).thenAnswer((invocation) async {
+      sentKeys.add(invocation.namedArguments[#clientMessageId] as String);
+      return RepositoryResult<MessageModel>.success(data: echo('c1', 'a'));
+    });
+
+    await service.flush();
+    expect(sentKeys, hasLength(1));
+    expect(await outbox.pending(), isEmpty);
+  });
+
   test('messages for chats nobody has open are sent all the same', () async {
     // The drain lives in the data layer precisely so that leaving the screen —
     // or never opening it — does not strand a message. No bloc exists in this

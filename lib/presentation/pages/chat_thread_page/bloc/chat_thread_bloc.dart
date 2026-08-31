@@ -232,7 +232,13 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     // screen, and a retry — even after a restart — carries the same key.
     final queued = await _outboxRepository.enqueue(chatId: _chatId, text: text, attachment: event.attachment);
     final entry = queued.data;
-    if (entry == null) return; // the write failed; nothing was promised to the user
+    // A failed write means the local store is unusable, which the thread cannot
+    // paper over: `outgoing` is a projection of the queue, so there is nowhere
+    // to put a bubble that is not in it. The draft attachment survives (it is
+    // only cleared on the success path below) and the repository has already
+    // logged the failure; the message simply never appears, which is at least
+    // honest — the alternative is a bubble that nothing can ever deliver.
+    if (entry == null) return;
 
     // Render the bubble NOW rather than waiting for the queue's own tick:
     // waiting would put its appearance at the mercy of the scheduler, and the

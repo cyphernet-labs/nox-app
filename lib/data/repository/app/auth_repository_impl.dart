@@ -46,6 +46,11 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
       // again, or the device stays disconnected until the app is restarted.
       afterMutate: () async {
         if (getIt.isRegistered<LiveSessionStarter>()) await getIt<LiveSessionStarter>().restart();
+        // Logout cancelled the drain's phase subscription. Without re-arming it
+        // here, a re-login in the same process would only ever send when the
+        // thread asked directly — a message queued offline would sit there
+        // through the next reconnect with nobody to notice it.
+        if (getIt.isRegistered<OutboxService>()) getIt<OutboxService>().start();
       },
     );
   }
