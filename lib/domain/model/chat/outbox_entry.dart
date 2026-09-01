@@ -39,5 +39,14 @@ abstract class OutboxEntry with _$OutboxEntry {
     /// Contract §2.1 code of the last refusal. Diagnostic only — the thread
     /// renders the same error bubble regardless of the reason.
     String? lastErrorCode,
+
+    /// The server's id for this send's attachment, once its bytes are
+    /// confirmed on the server — and never before.
+    ///
+    /// This is the whole mechanism for "a crash after the upload does not
+    /// upload again". Written after the declaration but before the bytes, it
+    /// would point at a file the server has no bytes for: the send would be
+    /// accepted and the recipient could never download it.
+    String? fileId,
   }) = _OutboxEntry;
 }

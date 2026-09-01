@@ -82,6 +82,11 @@ class OutboxRepositoryImpl with BaseRepositoryHelper implements OutboxRepository
   }
 
   @override
+  Future<void> attachFile({required String clientMessageId, required String? fileId}) async {
+    await _mutate(clientMessageId, (entity) => entity.copyWith(fileId: fileId));
+  }
+
+  @override
   Future<void> markPending({required String clientMessageId}) async {
     await _mutate(clientMessageId, (entity) => entity.copyWith(status: OutboxStatus.pending.name, attempts: 0, refusals: 0));
   }

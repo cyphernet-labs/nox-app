@@ -27,6 +27,7 @@ class OutboxMapper extends BaseMapper<OutboxEntity, OutboxEntry, dynamic, dynami
       refusals: entity.refusals,
       text: entity.text,
       lastErrorCode: entity.lastErrorCode,
+      fileId: entity.fileId,
       attachment: entity.attachmentId == null
           ? null
           : MessageAttachment(
@@ -55,6 +56,7 @@ class OutboxMapper extends BaseMapper<OutboxEntity, OutboxEntry, dynamic, dynami
       refusals: model.refusals,
       text: model.text,
       lastErrorCode: model.lastErrorCode,
+      fileId: model.fileId,
       attachmentId: model.attachment?.id,
       attachmentType: model.attachment?.type.name,
       attachmentName: model.attachment?.name,

@@ -5,11 +5,14 @@ import 'package:injectable/injectable.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/exception/base_repository_exception.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
+import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/outbox_entry.dart';
 import 'package:nox_app/domain/model/chat/outbox_status.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/model/file/mime_types.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
+import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
 
 /// Drains the outgoing queue — and is the ONLY thing that sends.
@@ -21,11 +24,12 @@ import 'package:nox_app/domain/service/session_phase_service.dart';
 /// serialised drain.
 @LazySingleton(env: [Environment.dev, Environment.prod, Environment.test])
 class OutboxService {
-  OutboxService(this._outbox, this._messages, this._phaseService);
+  OutboxService(this._outbox, this._messages, this._phaseService, this._files);
 
   final OutboxRepository _outbox;
   final MessageRepository _messages;
   final SessionPhaseService _phaseService;
+  final FileRepository _files;
 
   static const Duration _minBackoff = Duration(seconds: 1);
   static const Duration _maxBackoff = Duration(seconds: 30);
@@ -148,12 +152,38 @@ class OutboxService {
   }
 
   /// Returns whether the pass may continue past [entry].
-  Future<bool> _send(OutboxEntry entry) async {
+  Future<bool> _send(OutboxEntry snapshot) async {
+    var entry = snapshot;
+
+    // An attachment has to be on the server before the message can name it.
+    // Three steps where only the last is idempotent, so this one is guarded by
+    // the record itself: `fileId` is written only after the bytes are
+    // confirmed, and a restart therefore skips straight past it.
+    final attachment = entry.attachment;
+    if (attachment != null && entry.fileId == null) {
+      final uploaded = await _uploadFor(entry, attachment);
+      if (uploaded == null) return false; // retryable; the pass waits with it
+      if (uploaded.isEmpty) return true; // terminal for this message; go on
+
+      await _outbox.attachFile(clientMessageId: entry.clientMessageId, fileId: uploaded);
+      entry = entry.copyWith(fileId: uploaded);
+
+      // Re-read AFTER the transfer. Feature 027 checks right before sending so
+      // a discarded message cannot go out; an upload stretches that window from
+      // milliseconds to minutes, which is long enough for someone to change
+      // their mind. The bytes stay on the server as an orphan and are swept
+      // there — what matters is that no message names them.
+      final still = await _outbox.find(clientMessageId: entry.clientMessageId);
+      if (still == null || still.status != OutboxStatus.pending) return true;
+    }
+
     final result = await _messages.sendMessage(
       chatId: entry.chatId,
       clientMessageId: entry.clientMessageId,
       text: entry.text,
-      attachment: entry.attachment,
+      // The id the server knows this file by. Before the upload it held the
+      // composer's local draft id, which means nothing to anyone else.
+      attachment: entry.fileId == null ? attachment : attachment?.copyWith(id: entry.fileId!),
     );
 
     if (result.hasData) {
@@ -188,6 +218,37 @@ class OutboxService {
     if (terminal) return true; // one bad message must not hold the rest hostage
     _scheduleRetry(entry.clientMessageId, entry.attempts + 1);
     return false;
+  }
+
+  /// Uploads the entry's file. Returns the server id on success, an empty
+  /// string when this message is beyond saving, and null when the pass should
+  /// simply wait and try again.
+  Future<String?> _uploadFor(OutboxEntry entry, MessageAttachment attachment) async {
+    final path = attachment.localPath;
+    if (path == null) {
+      // Nothing to send: an attachment with no bytes on this device cannot be
+      // uploaded, and never will be.
+      await _outbox.recordFailure(clientMessageId: entry.clientMessageId, code: 'invalid_request', terminal: true, serverAnswered: false);
+      return '';
+    }
+
+    final result = await _files.upload(path: path, mime: attachment.mime ?? MimeTypes.forFileName(attachment.name));
+    if (result.hasData) return result.data;
+
+    final exception = result.exception;
+    final terminal = _isTerminal(exception);
+    await _outbox.recordFailure(
+      clientMessageId: entry.clientMessageId,
+      code: exception is RepositoryException ? exception.name : 'unknown',
+      terminal: terminal,
+      // The upload never reached a decision the server made about the MESSAGE,
+      // so it must not spend the refusal ladder that guards against a server
+      // saying no over and over.
+      serverAnswered: false,
+    );
+    if (terminal) return '';
+    _scheduleRetry(entry.clientMessageId, entry.attempts + 1);
+    return null;
   }
 
   /// Whether retrying is pointless. A message the server called malformed or

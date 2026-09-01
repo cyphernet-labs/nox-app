@@ -18,6 +18,7 @@ import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
+import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -124,7 +125,7 @@ void main() {
     final firstRun = OutboxRepositoryImpl(dao, mapper) as OutboxRepository;
     final offlinePhase = _Phase();
     final sender = _LiveSend(RealMessageRemoteDataSource(socket));
-    final firstDrain = OutboxService(firstRun, sender, offlinePhase);
+    final firstDrain = OutboxService(firstRun, sender, offlinePhase, getIt<FileRepository>());
     final queued = (await firstRun.enqueue(chatId: chatId, text: 'written before the restart')).data!;
     await firstDrain.flush();
     expect(sender.accepted, isEmpty, reason: 'nothing may go out while the channel is down');
@@ -139,7 +140,7 @@ void main() {
 
     final livePhase = _Phase()..phaseValue = SessionPhase.live;
     final secondSender = _LiveSend(RealMessageRemoteDataSource(socket));
-    final secondDrain = OutboxService(secondRun, secondSender, livePhase);
+    final secondDrain = OutboxService(secondRun, secondSender, livePhase, getIt<FileRepository>());
     await secondDrain.flush();
     addTearDown(secondDrain.stop);
 
