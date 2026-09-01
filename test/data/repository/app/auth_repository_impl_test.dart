@@ -131,6 +131,20 @@ void main() {
     verify(appState.fetchAppState()).called(1);
   });
 
+  test('a failed completeOnboarding does not re-derive app state', () async {
+    // The reconnect that carries the new label rides in the same afterMutate,
+    // so a failure here must leave both alone rather than announcing a name the
+    // session never stored.
+    when(
+      session.setOnboardingComplete(label: anyNamed('label')),
+    ).thenAnswer((_) async => RepositoryResult<bool>.error(exception: RepositoryException.unknown));
+
+    final result = await repository.completeOnboarding(label: 'Alice');
+
+    expect(result.hasData, isFalse);
+    verifyNever(appState.fetchAppState(sessionExpired: anyNamed('sessionExpired')));
+  });
+
   test('ordinary logout clears the session without sessionExpired', () async {
     await repository.logout();
     verify(session.clear()).called(1);

@@ -57,7 +57,18 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
 
   @override
   Future<RepositoryResult<bool>> completeOnboarding({String? label}) {
-    return _deriveAfter(() => _sessionRepository.setOnboardingComplete(label: label));
+    return _deriveAfter(
+      () => _sessionRepository.setOnboardingComplete(label: label),
+      // Reconnect so the chosen name actually reaches the server. Stage 1 has
+      // no `identity.setLabel` (contract §8.1 puts it in stage 2), so the
+      // greeting is the ONLY place a label is stated — and by now the socket
+      // has already greeted, under the server-assigned `User<random>`. Without
+      // this the user picks a name and everyone else keeps seeing the old one
+      // until something happens to reconnect the device.
+      afterMutate: () async {
+        if (getIt.isRegistered<LiveSessionStarter>()) await getIt<LiveSessionStarter>().restart();
+      },
+    );
   }
 
   @override
