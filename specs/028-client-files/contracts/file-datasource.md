@@ -69,7 +69,7 @@ abstract class FileRemoteDataSource {
 | `404` на пути `/files/<токен>` | Пропуск негоден → **начать заново с заявки**, не окончательно |
 | `413` / `400` | Размер разошёлся с заявленным → окончательно по этому сообщению |
 | обрыв связи, таймаут | Повторяемо, как везде |
-| `attachment_gone`, `not_found` при скачивании | Окончательно: байтов нет и не будет |
+| `attachment_gone`, `not_found` при скачивании | Окончательно: байтов нет и не будет. По §2.1 — терминальное состояние **на экране файла, без повтора**, а не фатальный экран приложения |
 | `invalid_request` «байты ещё не переданы» | Повторяемо: отправитель, возможно, ещё грузит |
 
 ## `FileRepository` — `lib/domain/repository/file/file_repository.dart`
@@ -79,7 +79,7 @@ abstract class FileRepository {
   /// Заявка + передача байтов. Возвращает идентификатор файла ТОЛЬКО когда
   /// байты подтверждённо на сервере.
   Future<RepositoryResult<String>> upload({
-    required File file,
+    required String path,
     required String mime,
     void Function(double fraction)? onProgress,
   });
@@ -95,6 +95,8 @@ abstract class FileRepository {
   Future<void> clean();
 }
 ```
+
+Домен получает **путь**, а не `dart:io File`: `domain` не импортирует ничего, и файловый тип втащил бы туда платформенную библиотеку ради значения, которое и так является строкой. Тот же выбор уже сделан у пикера (`PickedFile.path`).
 
 ### Обязательства
 
