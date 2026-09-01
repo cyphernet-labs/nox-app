@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
@@ -37,16 +39,36 @@ void main() {
 
   /// Lets the event loop drain: the greeting is sent only after an async read
   /// of the persisted cursor, so a single microtask turn is not enough.
+  ///
+  /// Kept for the handful of assertions about a state that has no settled
+  /// condition to wait for. Where there IS one, use [waitUntil] instead — a
+  /// fixed pause is the test that passes on a quiet machine and fails in a full
+  /// suite run, which is exactly how this file used to flake.
   Future<void> settle() => Future<void>.delayed(const Duration(milliseconds: 20));
+
+  /// Waits for a condition instead of a duration. The predicate may be async so
+  /// callers can wait on persisted state, not just in-memory fields.
+  Future<void> waitUntil(FutureOr<bool> Function() done, {String reason = ''}) async {
+    for (var i = 0; i < 400; i++) {
+      if (await done()) return;
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    fail('condition never became true${reason.isEmpty ? '' : ': $reason'}');
+  }
 
   /// Connects and greets, returning the fake the client is talking to.
   Future<FakeSocket> connect({int cursor = 0, String? label}) async {
     await client.start(url: url, labelProvider: label == null ? null : () async => label);
     final socket = factory.latest;
     socket.pushGreeting();
-    await settle();
+    // The client answers the greeting only after an async cursor read, so wait
+    // for the command itself rather than for a guess at how long that takes.
+    await waitUntil(() => socket.commandNamed('session.hello') != null, reason: 'the client greets back');
     socket.replyToHello(cursor: cursor);
-    await settle();
+    await waitUntil(
+      () => client.currentPhase == SessionPhase.live || client.currentPhase == SessionPhase.catchingUp,
+      reason: 'the greeting reply is applied',
+    );
     return socket;
   }
 
@@ -57,9 +79,10 @@ void main() {
       final hello = socket.commandNamed('session.hello')!;
       // Sending since:0 would ask for the WHOLE journal from seq 1 (contract §3).
       expect((hello['data'] as Map<String, dynamic>).containsKey('since'), isFalse);
-      // The reply's cursor becomes the starting point, and with no replay to
-      // wait for the session is current immediately.
-      expect(await sync.getCursor(), 12);
+      // The reply's cursor becomes the starting point. It is persisted on its
+      // own schedule, separately from the phase, so wait for the write rather
+      // than assume the phase change implies it.
+      await waitUntil(() async => await sync.getCursor() == 12, reason: 'the reply cursor is adopted');
       expect(client.currentPhase, SessionPhase.live);
     });
 
