@@ -10,6 +10,7 @@ import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
+import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_app/general/onboarding_mock_data.dart';
 
@@ -24,6 +25,7 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
     this._messageRepository,
     this._syncRepository,
     this._outboxRepository,
+    this._fileRepository,
   );
 
   final SessionRepository _sessionRepository;
@@ -32,6 +34,7 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
   final MessageRepository _messageRepository;
   final SyncRepository _syncRepository;
   final OutboxRepository _outboxRepository;
+  final FileRepository _fileRepository;
 
   @override
   Future<RepositoryResult<bool>> signIn({required String identifier}) {
@@ -100,6 +103,10 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
           // next identity — who would then have them sent, under their name, by
           // the drain that re-arms at the next sign-in.
           await _outboxRepository.clean();
+          // Downloaded bytes go with them, and for the same reason: they are
+          // other people's pictures, sitting in a cache on a device that has
+          // just been handed back to nobody in particular.
+          await _fileRepository.clean();
           // The cursor goes next: a crash mid-wipe must leave it behind the
           // stores (safe - replay re-applies idempotently), never ahead of an
           // emptied store (a stale high `since` would skip every row below it

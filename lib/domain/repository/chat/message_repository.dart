@@ -45,6 +45,14 @@ abstract class MessageRepository {
   /// settles.
   Future<List<MessageAttachment>> chatFiles({required String chatId, bool refresh = false});
 
+  /// Records where an attachment's bytes now live on this device (feature 028).
+  ///
+  /// The same `localPath` a picked file has always used, reached a second way:
+  /// before, it meant "the file the user chose"; now also "the file we fetched".
+  /// Keeping one answer to "where are the bytes" is what lets the thumbnail and
+  /// Save keep working with no change at all.
+  Future<void> attachLocalFile({required String messageId, required String localPath});
+
   /// DEBUG ONLY (`kDebugMode`, Feature 014): persist an inbound message (author != me)
   /// into a chat and bump its unread — the deterministic stand-in for a server push.
   /// Callers MUST guard with `kDebugMode`.

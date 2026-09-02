@@ -3,7 +3,9 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:nox_app/design/theme/nox_opacity.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nox_app/presentation/helpers/adaptive_lightbox.dart';
+import 'package:nox_app/presentation/pages/file_view_page/bloc/file_view_bloc.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/service/file_picker_service.dart';
@@ -11,7 +13,6 @@ import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
-import 'package:nox_app/general/app_clock.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/formatters/file_size_formatter.dart';
@@ -38,21 +39,26 @@ Future<void> showFileView(BuildContext context, MessageAttachment file) => showA
 /// REAL since feature 020: it picks a destination and copies the bytes. Save is
 /// additionally gated by the attachment's server retention deadline
 /// (`expiresAt`, contract §5/025): an expired file cannot be saved - the
-/// bytes are gone server-side (terminal `attachment_gone` state). Local state
-/// only — no BLoC (blueprint 05 §5.1 carve-out for a presentational screen;
-/// the expiry gate is one derived flag and keeps the carve-out).
+/// bytes are gone server-side. Owns a [FileViewBloc] since feature 028: the
+/// blueprint's carve-out for a BLoC-less screen ends exactly where a real
+/// repository begins, and the download is now one.
 class FileViewPage extends StatefulWidget {
-  const FileViewPage({super.key, required this.file, this.demo = false, this.inDialog = false});
+  const FileViewPage({super.key, required this.file, this.messageId, this.demo = false, this.inDialog = false});
 
   final MessageAttachment file;
+
+  /// The message this attachment belongs to, when it has one. Bytes fetched
+  /// here are recorded against it, so the thread's thumbnail and a later Save
+  /// find them without downloading again.
+  final String? messageId;
   final bool demo;
 
   /// When shown inside the desktop lightbox [Dialog], render the lightbox content
   /// only (the Dialog provides the surface + scrim).
   final bool inDialog;
 
-  static Route<void> route(MessageAttachment file) => MaterialPageRoute<void>(
-    builder: (_) => FileViewPage(file: file),
+  static Route<void> route(MessageAttachment file, {String? messageId}) => MaterialPageRoute<void>(
+    builder: (_) => FileViewPage(file: file, messageId: messageId),
     settings: const RouteSettings(name: '/file'),
   );
 
@@ -73,52 +79,23 @@ class FileViewPage extends StatefulWidget {
   State<FileViewPage> createState() => _FileViewPageState();
 }
 
-class _FileViewPageState extends State<FileViewPage> with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-  bool _cached = false;
-
-  /// Contract §5: the client persists expires_at and disables Save in
-  /// advance - the server no longer stores the bytes past this instant.
-  bool get _expired {
-    final expiresAt = widget.file.expiresAt;
-    return expiresAt != null && !AppClock.now().isBefore(expiresAt);
-  }
+class _FileViewPageState extends State<FileViewPage> {
+  late final FileViewBloc _bloc;
 
   @override
   void initState() {
     super.initState();
-    // TODO(backend): real download + cache (Phase 2). UI-phase: a timed progress.
-    _controller = AnimationController(vsync: this, duration: const Duration(milliseconds: 1000))
-      ..addListener(() => setState(() {}))
-      ..addStatusListener((status) {
-        if (status == AnimationStatus.completed) setState(() => _cached = true);
-      });
-    _startDownload();
+    _bloc = FileViewBloc(file: widget.file, messageId: widget.messageId)..add(const FileViewEvent.started());
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    _bloc.close();
     super.dispose();
   }
 
-  void _startDownload() {
-    // A real local file (picked/sent, feature 020) already has its bytes on disk —
-    // there is nothing to fetch, so enable Save immediately (P4). Only a seeded /
-    // backend-sourced file with no local copy runs the timed mock "download", which
-    // stands in for the real network fetch (TBD until the backend lands).
-    final path = widget.file.localPath;
-    if (path != null && path.isNotEmpty && File(path).existsSync()) {
-      _controller.stop();
-      setState(() => _cached = true);
-      return;
-    }
-    setState(() => _cached = false);
-    _controller.forward(from: 0);
-  }
-
-  Future<void> _save() async {
-    final path = widget.file.localPath;
+  Future<void> _save(FileViewState state) async {
+    final path = state.file.localPath;
     // No real local file (seeded / backend-TBD / stale path after restart) → the honest
     // UI-phase mock confirmation (there are no bytes to copy).
     if (path == null || path.isEmpty || !File(path).existsSync()) {
@@ -142,35 +119,47 @@ class _FileViewPageState extends State<FileViewPage> with SingleTickerProviderSt
   }
 
   void _simulateError() {
-    _controller.stop();
-    setState(() {});
     showAppSnackBar(
       context,
       text: context.l10n.fileDownloadError,
       actionLabel: context.l10n.actionTryAgain,
-      onAction: _startDownload,
+      onAction: () => _bloc.add(const FileViewEvent.retried()),
       error: true,
     );
   }
 
-  double get _progress => _controller.value;
-
-  int get _percent => (_controller.value * 100).round();
-
   @override
   Widget build(BuildContext context) {
-    if (widget.inDialog) return _lightboxContent(context);
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final wide = constraints.maxWidth >= Constants.railBreakpoint;
-        return wide ? _wide(context) : _mobile(context);
-      },
+    return BlocProvider<FileViewBloc>.value(
+      value: _bloc,
+      child: BlocConsumer<FileViewBloc, FileViewState>(
+        bloc: _bloc,
+        // A network failure is the other outcome and keeps its retry: the
+        // contract only forbids one for bytes that are gone for good.
+        listenWhen: (previous, current) => previous.status != current.status && current.status == FileViewStatus.failed,
+        listener: (context, state) => showAppSnackBar(
+          context,
+          text: context.l10n.fileDownloadError,
+          actionLabel: context.l10n.actionTryAgain,
+          onAction: () => _bloc.add(const FileViewEvent.retried()),
+          error: true,
+        ),
+        builder: (context, state) {
+          if (widget.inDialog) return _lightboxContent(context, state);
+          return LayoutBuilder(
+            builder: (context, constraints) {
+              final wide = constraints.maxWidth >= Constants.railBreakpoint;
+              return wide ? _wide(context, state) : _mobile(context, state);
+            },
+          );
+        },
+      ),
     );
   }
 
   // ---- Mobile (full screen) --------------------------------------------------
 
-  Widget _mobile(BuildContext context) {
+  Widget _mobile(BuildContext context, FileViewState state) {
     final colorScheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(
@@ -184,23 +173,23 @@ class _FileViewPageState extends State<FileViewPage> with SingleTickerProviderSt
         actions: [
           IconButton(
             tooltip: context.l10n.tooltipSave,
-            onPressed: (_cached && !_expired) ? _save : null,
+            onPressed: state.canSave ? () => _save(state) : null,
             icon: AppIconWidget(
               NoxIcons.download,
               // Dim with the SAME predicate that disables onPressed: an expired
               // attachment must read as gated, not as a live control (FR-006).
-              color: (_cached && !_expired) ? colorScheme.onSurface : colorScheme.onSurface.withValues(alpha: NoxOpacity.disabled),
+              color: state.canSave ? colorScheme.onSurface : colorScheme.onSurface.withValues(alpha: NoxOpacity.disabled),
             ),
           ),
         ],
       ),
       body: Stack(
         children: [
-          if (!_cached) LinearProgressIndicator(value: _progress),
+          if (state.status == FileViewStatus.downloading) LinearProgressIndicator(value: state.progress),
           Center(
             child: Padding(
               padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s32),
-              child: _info(context),
+              child: _info(context, state),
             ),
           ),
           if (kDebugMode && widget.demo) Align(alignment: Alignment.bottomCenter, child: _debugControls()),
@@ -211,7 +200,7 @@ class _FileViewPageState extends State<FileViewPage> with SingleTickerProviderSt
 
   // ---- Desktop standalone (lightbox over a scrim) ----------------------------
 
-  Widget _wide(BuildContext context) {
+  Widget _wide(BuildContext context, FileViewState state) {
     final colorScheme = Theme.of(context).colorScheme;
     return Scaffold(
       backgroundColor: colorScheme.scrim.withValues(alpha: NoxOpacity.scrim),
@@ -230,7 +219,7 @@ class _FileViewPageState extends State<FileViewPage> with SingleTickerProviderSt
                   elevation: NoxElevation.level5,
                   borderRadius: BorderRadius.circular(NoxRadius.xl),
                   clipBehavior: Clip.antiAlias,
-                  child: _lightboxContent(context),
+                  child: _lightboxContent(context, state),
                 ),
               ),
             ),
@@ -242,7 +231,7 @@ class _FileViewPageState extends State<FileViewPage> with SingleTickerProviderSt
 
   // ---- Lightbox content (shared by the dialog + the wide scaffold) -----------
 
-  Widget _lightboxContent(BuildContext context) {
+  Widget _lightboxContent(BuildContext context, FileViewState state) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -252,15 +241,15 @@ class _FileViewPageState extends State<FileViewPage> with SingleTickerProviderSt
           leading: AppFileGlyphWidget(type: widget.file.type, iconSize: AppDimensionTokens.icon.md, box: AppSpacingTokens.s32),
           onClose: () => Navigator.of(context).maybePop(),
         ),
-        if (!_cached) LinearProgressIndicator(value: _progress),
-        Padding(padding: EdgeInsets.all(AppSpacingTokens.s24), child: _info(context)),
+        if (state.status == FileViewStatus.downloading) LinearProgressIndicator(value: state.progress),
+        Padding(padding: EdgeInsets.all(AppSpacingTokens.s24), child: _info(context, state)),
         Padding(
           padding: EdgeInsets.fromLTRB(AppSpacingTokens.s24, 0, AppSpacingTokens.s24, AppSpacingTokens.s24),
           child: SizedBox(
             width: double.infinity,
             child: FilledButton(
-              onPressed: (_cached && !_expired) ? _save : null,
-              child: Text(_cached ? context.l10n.actionDownload : context.l10n.downloadingProgress(_percent)),
+              onPressed: state.canSave ? () => _save(state) : null,
+              child: Text(state.isReady ? context.l10n.actionDownload : context.l10n.downloadingProgress(state.percent)),
             ),
           ),
         ),
@@ -271,7 +260,7 @@ class _FileViewPageState extends State<FileViewPage> with SingleTickerProviderSt
 
   // ---- Shared file info (glyph + name + size [+ progress caption]) ------------
 
-  Widget _info(BuildContext context) {
+  Widget _info(BuildContext context, FileViewState state) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     return Column(
@@ -286,8 +275,19 @@ class _FileViewPageState extends State<FileViewPage> with SingleTickerProviderSt
         ),
         SizedBox(height: AppSpacingTokens.s18),
         Text(
-          _cached ? FileSizeFormatter.format(widget.file.sizeBytes) : context.l10n.downloadingProgress(_percent),
-          style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
+          // Contract §2.1 puts the terminal state HERE, on the file screen and
+          // without a retry — expressly not on the app's fatal screen. Losing
+          // one attachment must not cost the person the conversation they were
+          // in.
+          switch (state.status) {
+            FileViewStatus.gone => context.l10n.attachmentGone,
+            FileViewStatus.ready => FileSizeFormatter.format(state.file.sizeBytes),
+            _ => context.l10n.downloadingProgress(state.percent),
+          },
+          textAlign: TextAlign.center,
+          style: textTheme.bodyMedium?.copyWith(
+            color: state.status == FileViewStatus.gone ? colorScheme.error : colorScheme.onSurfaceVariant,
+          ),
         ),
       ],
     );
@@ -299,7 +299,7 @@ class _FileViewPageState extends State<FileViewPage> with SingleTickerProviderSt
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          TextButton(onPressed: _startDownload, child: const Text('re-download')),
+          TextButton(onPressed: () => _bloc.add(const FileViewEvent.retried()), child: const Text('re-download')),
           SizedBox(width: AppSpacingTokens.s8),
           TextButton(onPressed: _simulateError, child: const Text('simulate error')),
         ],

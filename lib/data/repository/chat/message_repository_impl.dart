@@ -281,6 +281,14 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
   }
 
   @override
+  Future<void> attachLocalFile({required String messageId, required String localPath}) async {
+    final stored = await _messageDao.getById(messageId);
+    // Gone, or never had an attachment: nothing to point anywhere.
+    if (stored == null || stored.attachmentId == null) return;
+    await _messageDao.upsert(stored.copyWith(attachmentLocalPath: localPath));
+  }
+
+  @override
   Future<void> simulateIncoming({required String chatId}) async {
     // Debug stand-in for a server push: an inbound message (author != me) + unread bump.
     final message = MessageModel(

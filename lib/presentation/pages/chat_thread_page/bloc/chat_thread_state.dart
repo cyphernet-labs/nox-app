@@ -22,6 +22,11 @@ sealed class ChatThreadState with _$ChatThreadState {
     @Default(false) bool loadingInProgress,
     @Default(false) bool isOffline,
     MessageAttachment? draftAttachment,
+
+    /// Bumped when a picked file was refused for being over the server's
+    /// limit. A counter rather than a flag: picking the same oversized file
+    /// twice has to say so twice, and a bool would go quiet the second time.
+    @Default(0) int oversizedAttachmentTick,
   }) = Initialized;
 
   const factory ChatThreadState.error() = Error;

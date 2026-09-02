@@ -33,29 +33,63 @@ class _FakeSaver implements FilePickerService {
 }
 
 void main() {
+  setUp(() async {
+    SharedPreferences.setMockInitialValues({});
+    await configureDependencies(Environment.test);
+  });
+
+  tearDown(() async => getIt.reset());
+
   group('FileViewPage local file (P4)', () {
-    testWidgets('a file with a real local path skips the mock download and enables Save at once', (tester) async {
+    testWidgets('a file already on this device needs no fetch and offers Save at once', (tester) async {
       final src = File('${Directory.systemTemp.path}/nox_p4_src.png')..writeAsBytesSync(Uint8List.fromList([1, 2, 3]));
       addTearDown(() => src.existsSync() ? src.deleteSync() : null);
       final file = MessageAttachment(id: 'i', type: FileType.image, name: 'shot.png', sizeBytes: 3, localPath: src.path);
 
       await tester.binding.setSurfaceSize(const Size(420, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
-      // settle:false + a single pump — do NOT wait for the 1s mock download timer.
       await pumpApp(tester, FileViewPage(file: file), settle: false);
       await tester.pump();
+      await tester.pump();
 
-      // No "download" progress bar (nothing to fetch — bytes are on disk); the size shows.
+      // Nothing to fetch — the bytes are on disk — so no progress bar, and the
+      // size is shown rather than a percentage.
       expect(find.byType(LinearProgressIndicator), findsNothing);
-      expect(find.textContaining('B'), findsWidgets); // formatted size, not a % caption
+      expect(find.textContaining('B'), findsWidgets);
     });
 
-    testWidgets('a seeded file with no local path still runs the timed mock download (backend stand-in)', (tester) async {
+    testWidgets('a file the server holds is fetched, and the bar reflects a real transfer', (tester) async {
+      // No local path: the bytes have to come from the server. The mock data
+      // source stands in for it, so this exercises the real code path without
+      // one running.
       await tester.binding.setSurfaceSize(const Size(420, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
-      await pumpApp(tester, const FileViewPage(file: _file), settle: false); // pdf, no localPath
+      await pumpApp(tester, const FileViewPage(file: _file), settle: false);
       await tester.pump();
-      expect(find.byType(LinearProgressIndicator), findsOneWidget); // the mock "download" is running
+
+      // The fetch is in flight on the first frame — this is where the fake
+      // 1000ms animation used to live.
+      expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    });
+
+    testWidgets('a file whose bytes are gone ends in a terminal state, not a retry loop', (tester) async {
+      // Contract §2.1: attachment_gone is "терминальное error-состояние экрана
+      // файла (5.3), без кнопки повтора — не фатальный экран всего приложения".
+      await tester.binding.setSurfaceSize(const Size(420, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, const FileViewPage(file: _file), settle: false);
+      // The fetch is genuinely async, so wait for the OUTCOME rather than for a
+      // duration: a fixed pause is the test that passes alone and fails in a
+      // full run, which is exactly what it did.
+      for (var i = 0; i < 100 && find.text(l10nEn.attachmentGone).evaluate().isEmpty; i++) {
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 10)));
+        await tester.pump();
+      }
+
+      // The mock holds no bytes for an id it never issued, so this is the
+      // gone path. The screen says so and stays put.
+      expect(find.text(l10nEn.attachmentGone), findsOneWidget);
+      expect(find.text(l10nEn.actionTryAgain), findsNothing, reason: 'the contract forbids a retry here');
     });
   });
 
@@ -63,11 +97,16 @@ void main() {
     testWidgets('an expired attachment keeps Save disabled even after the download settles', (tester) async {
       AppClock.freeze(DateTime(2026, 6, 15, 21, 30));
       addTearDown(AppClock.reset);
+      final bytes = File('${Directory.systemTemp.path}/nox_expired.pdf')..writeAsBytesSync(Uint8List.fromList([1, 2]));
+      addTearDown(() => bytes.existsSync() ? bytes.deleteSync() : null);
       final expired = MessageAttachment(
         id: 'f-exp',
         type: FileType.pdf,
         name: 'old-spec.pdf',
         sizeBytes: 1024,
+        // On disk, so the screen is READY — the only thing that may disable
+        // Save here is the retention deadline, which is what this pins.
+        localPath: bytes.path,
         expiresAt: AppClock.now().subtract(const Duration(days: 1)),
       );
       await tester.binding.setSurfaceSize(const Size(420, 900));
@@ -88,53 +127,70 @@ void main() {
     testWidgets('a far-future expiry (stage-1 retention) leaves Save enabled as before', (tester) async {
       AppClock.freeze(DateTime(2026, 6, 15, 21, 30));
       addTearDown(AppClock.reset);
+      final bytes = File('${Directory.systemTemp.path}/nox_fresh.pdf')..writeAsBytesSync(Uint8List.fromList([1, 2]));
+      addTearDown(() => bytes.existsSync() ? bytes.deleteSync() : null);
       final valid = MessageAttachment(
         id: 'f-ok',
         type: FileType.pdf,
         name: 'fresh-spec.pdf',
         sizeBytes: 1024,
+        localPath: bytes.path,
         expiresAt: AppClock.now().add(const Duration(days: 3650)),
       );
       await tester.binding.setSurfaceSize(const Size(420, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await pumpApp(tester, FileViewPage(file: valid));
 
-      await tester.tap(find.byTooltip(l10nEn.tooltipSave));
-      await tester.pump();
-      expect(find.text(l10nEn.savedToDownloads), findsOneWidget);
+      // The gate under test is the retention deadline, so assert the gate:
+      // whether the copy then succeeds is the F2 group's business, and it has a
+      // fake picker for exactly that.
+      final saveButton = tester.widget<IconButton>(
+        find.ancestor(of: find.byTooltip(l10nEn.tooltipSave), matching: find.byType(IconButton)).first,
+      );
+      expect(saveButton.onPressed, isNotNull);
     });
   });
 
   group('FileViewPage (mobile)', () {
-    testWidgets('shows the file glyph, name and size after the download finishes', (tester) async {
+    testWidgets('shows the file glyph, name and size once the bytes are here', (tester) async {
+      final bytes = File('${Directory.systemTemp.path}/nox_meta.pdf')..writeAsBytesSync(Uint8List.fromList([1, 2, 3]));
+      addTearDown(() => bytes.existsSync() ? bytes.deleteSync() : null);
       await tester.binding.setSurfaceSize(const Size(420, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
-      await pumpApp(tester, const FileViewPage(file: _file)); // settles the fake download timer
+      await pumpApp(tester, FileViewPage(file: _file.copyWith(localPath: bytes.path)));
 
       expect(find.byType(AppFileGlyphWidget), findsOneWidget);
       expect(find.text('design-spec.pdf'), findsWidgets);
       expect(find.textContaining('MB'), findsWidgets);
     });
 
-    testWidgets('Save shows the saved-to-downloads snackbar', (tester) async {
+    testWidgets('Save is offered once the bytes are on this device', (tester) async {
+      final bytes = File('${Directory.systemTemp.path}/nox_save_meta.pdf')..writeAsBytesSync(Uint8List.fromList([1, 2, 3]));
+      addTearDown(() => bytes.existsSync() ? bytes.deleteSync() : null);
       await tester.binding.setSurfaceSize(const Size(420, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
-      await pumpApp(tester, const FileViewPage(file: _file));
+      await pumpApp(tester, FileViewPage(file: _file.copyWith(localPath: bytes.path)));
 
-      await tester.tap(find.byTooltip(l10nEn.tooltipSave));
+      final save = tester.widget<IconButton>(
+        find.ancestor(of: find.byTooltip(l10nEn.tooltipSave), matching: find.byType(IconButton)).first,
+      );
+      expect(save.onPressed, isNotNull);
+    });
+
+    testWidgets('Save stays gated while the bytes are not here — it could only fail', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(420, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, const FileViewPage(file: _file), settle: false);
       await tester.pump();
 
-      expect(find.text(l10nEn.savedToDownloads), findsOneWidget);
+      final save = tester.widget<IconButton>(
+        find.ancestor(of: find.byTooltip(l10nEn.tooltipSave), matching: find.byType(IconButton)).first,
+      );
+      expect(save.onPressed, isNull);
     });
   });
 
   group('FileViewPage real save (F2)', () {
-    setUp(() async {
-      SharedPreferences.setMockInitialValues({});
-      await configureDependencies(Environment.test);
-    });
-    tearDown(() async => getIt.reset());
-
     void useSaver(String? dest) {
       getIt.allowReassignment = true;
       getIt.registerSingleton<FilePickerService>(_FakeSaver(dest));
@@ -201,9 +257,11 @@ void main() {
 
   group('FileViewPage (desktop lightbox)', () {
     testWidgets('renders a centered lightbox with a Download action', (tester) async {
+      final bytes = File('${Directory.systemTemp.path}/nox_wide.pdf')..writeAsBytesSync(Uint8List.fromList([1]));
+      addTearDown(() => bytes.existsSync() ? bytes.deleteSync() : null);
       await tester.binding.setSurfaceSize(const Size(1200, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
-      await pumpApp(tester, const FileViewPage(file: _file));
+      await pumpApp(tester, FileViewPage(file: _file.copyWith(localPath: bytes.path)));
 
       // Two glyphs on the desktop lightbox: the small leading one in the header + the hero one in the body.
       expect(find.byType(AppFileGlyphWidget), findsNWidgets(2));

@@ -155,5 +155,18 @@
   "filesEmptyMessage": "Files sent in this chat will appear here.",
   "chatInfoTitle": "Details",
   "chatInfoLoadError": "Could not load chat info. Check your connection and try again.",
-  "settingsSaveError": "Could not save. Try again."
+  "settingsSaveError": "Could not save. Try again.",
+  "attachmentTooLarge": "File is too large to send (limit {limit})",
+  "@attachmentTooLarge": {
+    "description": "Composer error when the picked file exceeds the server limit (checked at attach time).",
+    "placeholders": {
+      "limit": {
+        "type": "String"
+      }
+    }
+  },
+  "attachmentGone": "This file is no longer on the server",
+  "@attachmentGone": {
+    "description": "Terminal state on the file screen: the bytes are gone. Contract 2.1 forbids offering a retry here."
+  }
 }

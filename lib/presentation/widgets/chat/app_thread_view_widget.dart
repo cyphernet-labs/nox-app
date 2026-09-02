@@ -13,6 +13,9 @@ import 'package:nox_app/domain/model/chat/message_model.dart';
 import 'package:nox_app/general/formatters/date_formatter.dart';
 import 'package:nox_app/general/formatters/file_size_formatter.dart';
 import 'package:nox_app/general/l10n_extension.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
+import 'package:nox_app/presentation/helpers/app_feedback_helper.dart';
 import 'package:nox_app/presentation/pages/chat_thread_page/bloc/chat_thread_bloc.dart';
 import 'package:nox_app/presentation/widgets/chat/app_author_header_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_composer_widget.dart';
@@ -124,7 +127,15 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
   Widget build(BuildContext context) {
     return BlocProvider<ChatThreadBloc>.value(
       value: _bloc,
-      child: BlocBuilder<ChatThreadBloc, ChatThreadState>(
+      child: BlocConsumer<ChatThreadBloc, ChatThreadState>(
+        // A file refused for its size is a transient notice, not a screen
+        // state: the composer is unchanged and the person just picks another.
+        listenWhen: (previous, current) =>
+            previous is Initialized && current is Initialized && previous.oversizedAttachmentTick != current.oversizedAttachmentTick,
+        listener: (context, state) {
+          final limit = FileSizeFormatter.format(getIt<AppConfigRepository>().limits.maxAttachmentBytes);
+          showAppSnackBar(context, text: context.l10n.attachmentTooLarge(limit));
+        },
         builder: (context, state) {
           return Column(
             children: [
