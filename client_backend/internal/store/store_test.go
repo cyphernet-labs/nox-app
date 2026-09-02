@@ -100,7 +100,7 @@ func TestSendMessageSeqAndIdempotency(t *testing.T) {
 		t.Fatalf("CreateChat: %v", err)
 	}
 
-	first, ev, created, err := s.SendMessage(ctx, chat.ChatID, "cmid-1", "Anna", "Anna", textBody("hello"), "", 101)
+	first, ev, created, err := s.SendMessage(ctx, chat.ChatID, "cmid-1", person(t, s, "Anna"), textBody("hello"), "", 101)
 	if err != nil || !created {
 		t.Fatalf("SendMessage: created=%v err=%v", created, err)
 	}
@@ -108,7 +108,7 @@ func TestSendMessageSeqAndIdempotency(t *testing.T) {
 		t.Fatalf("seq = %d/%d, want 2 (after chat.created)", first.Seq, ev.Seq)
 	}
 
-	dup, dupEv, created, err := s.SendMessage(ctx, chat.ChatID, "cmid-1", "Anna", "Anna", textBody("hello"), "", 999)
+	dup, dupEv, created, err := s.SendMessage(ctx, chat.ChatID, "cmid-1", person(t, s, "Anna"), textBody("hello"), "", 999)
 	if err != nil {
 		t.Fatalf("duplicate SendMessage: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestSendMessageSeqAndIdempotency(t *testing.T) {
 
 func TestSendMessageUnknownChat(t *testing.T) {
 	s := newStore(t)
-	_, _, _, err := s.SendMessage(context.Background(), "c_missing", "cmid-1", "a", "a", textBody("x"), "", 1)
+	_, _, _, err := s.SendMessage(context.Background(), "c_missing", "cmid-1", person(t, s, "a"), textBody("x"), "", 1)
 	if !errors.Is(err, ErrChatNotFound) {
 		t.Fatalf("err = %v, want ErrChatNotFound", err)
 	}
@@ -148,7 +148,7 @@ func TestEventsSinceOrderingAndRepeatability(t *testing.T) {
 		t.Fatalf("CreateChat: %v", err)
 	}
 	for i, id := range []string{"a", "b", "c"} {
-		if _, _, _, err := s.SendMessage(ctx, chat.ChatID, id, "Anna", "Anna", textBody(id), "", int64(101+i)); err != nil {
+		if _, _, _, err := s.SendMessage(ctx, chat.ChatID, id, person(t, s, "Anna"), textBody(id), "", int64(101+i)); err != nil {
 			t.Fatalf("SendMessage %s: %v", id, err)
 		}
 	}
@@ -300,7 +300,7 @@ func TestListMessagesBackwardPaging(t *testing.T) {
 	}
 	var seqs []int64
 	for i := range 5 {
-		msg, _, _, err := s.SendMessage(ctx, chat.ChatID, mustString(i), "Anna", "Anna", textBody("m"), "", int64(101+i))
+		msg, _, _, err := s.SendMessage(ctx, chat.ChatID, mustString(i), person(t, s, "Anna"), textBody("m"), "", int64(101+i))
 		if err != nil {
 			t.Fatalf("SendMessage %d: %v", i, err)
 		}
@@ -350,7 +350,7 @@ func TestRenameChatEventNoOpAndUniqueness(t *testing.T) {
 	if _, _, err := s.CreateChat(ctx, "Занято", "Bob", 100); err != nil {
 		t.Fatalf("CreateChat second: %v", err)
 	}
-	if _, _, _, err := s.SendMessage(ctx, chat.ChatID, "r1", "Anna", "Anna", textBody("hi"), "", 150); err != nil {
+	if _, _, _, err := s.SendMessage(ctx, chat.ChatID, "r1", person(t, s, "Anna"), textBody("hi"), "", 150); err != nil {
 		t.Fatalf("SendMessage: %v", err)
 	}
 	before, err := s.GetChat(ctx, chat.ChatID)
@@ -505,7 +505,7 @@ func TestFileLifecycleAndAttachmentBinding(t *testing.T) {
 	}
 
 	// Sending before the bytes are uploaded is rejected.
-	if _, _, _, err := s.SendMessage(ctx, chat.ChatID, "a1", "Anna", "Anna", nil, att.FileID, 300); !errors.Is(err, ErrFileNotReady) {
+	if _, _, _, err := s.SendMessage(ctx, chat.ChatID, "a1", person(t, s, "Anna"), nil, att.FileID, 300); !errors.Is(err, ErrFileNotReady) {
 		t.Fatalf("unready err = %v, want ErrFileNotReady", err)
 	}
 	if err := s.MarkUploaded(ctx, att.FileID); err != nil {
@@ -516,7 +516,7 @@ func TestFileLifecycleAndAttachmentBinding(t *testing.T) {
 	}
 
 	// Attachment-only send: echo carries the full attachment, preview = name.
-	msg, ev, created, err := s.SendMessage(ctx, chat.ChatID, "a1", "Anna", "Anna", nil, att.FileID, 300)
+	msg, ev, created, err := s.SendMessage(ctx, chat.ChatID, "a1", person(t, s, "Anna"), nil, att.FileID, 300)
 	if err != nil || !created || msg.Attachment == nil {
 		t.Fatalf("send: %+v created=%v err=%v", msg, created, err)
 	}
@@ -533,17 +533,17 @@ func TestFileLifecycleAndAttachmentBinding(t *testing.T) {
 	}
 
 	// Idempotent replay returns the same attachment, no new event.
-	replay, _, created, err := s.SendMessage(ctx, chat.ChatID, "a1", "Anna", "Anna", nil, att.FileID, 400)
+	replay, _, created, err := s.SendMessage(ctx, chat.ChatID, "a1", person(t, s, "Anna"), nil, att.FileID, 400)
 	if err != nil || created || replay.Attachment == nil || *replay.Attachment != att {
 		t.Fatalf("replay: %+v created=%v err=%v", replay, created, err)
 	}
 
 	// The file is bound: a second message cannot reference it.
-	if _, _, _, err := s.SendMessage(ctx, chat.ChatID, "a2", "Anna", "Anna", nil, att.FileID, 500); !errors.Is(err, ErrFileTaken) {
+	if _, _, _, err := s.SendMessage(ctx, chat.ChatID, "a2", person(t, s, "Anna"), nil, att.FileID, 500); !errors.Is(err, ErrFileTaken) {
 		t.Fatalf("rebind err = %v, want ErrFileTaken", err)
 	}
 	// Unknown file.
-	if _, _, _, err := s.SendMessage(ctx, chat.ChatID, "a3", "Anna", "Anna", nil, "f_missing", 500); !errors.Is(err, ErrFileNotFound) {
+	if _, _, _, err := s.SendMessage(ctx, chat.ChatID, "a3", person(t, s, "Anna"), nil, "f_missing", 500); !errors.Is(err, ErrFileNotFound) {
 		t.Fatalf("unknown file err = %v, want ErrFileNotFound", err)
 	}
 
@@ -583,7 +583,7 @@ func TestListChatFilesProjection(t *testing.T) {
 	}
 	var fileSeqs []int64
 	for i := range 5 {
-		if _, _, _, err := s.SendMessage(ctx, chat.ChatID, mustString(100+i), "Anna", "Anna", textBody("t"), "", int64(200+i)); err != nil {
+		if _, _, _, err := s.SendMessage(ctx, chat.ChatID, mustString(100+i), person(t, s, "Anna"), textBody("t"), "", int64(200+i)); err != nil {
 			t.Fatalf("text send %d: %v", i, err)
 		}
 		att, err := s.CreateUpload(ctx, mustString(i)+".bin", 10, "application/octet-stream", int64(200+i))
@@ -593,7 +593,7 @@ func TestListChatFilesProjection(t *testing.T) {
 		if err := s.MarkUploaded(ctx, att.FileID); err != nil {
 			t.Fatalf("MarkUploaded %d: %v", i, err)
 		}
-		msg, _, _, err := s.SendMessage(ctx, chat.ChatID, mustString(200+i), "Anna", "Anna", nil, att.FileID, int64(200+i))
+		msg, _, _, err := s.SendMessage(ctx, chat.ChatID, mustString(200+i), person(t, s, "Anna"), nil, att.FileID, int64(200+i))
 		if err != nil {
 			t.Fatalf("file send %d: %v", i, err)
 		}
@@ -647,7 +647,7 @@ func TestOrphanSweepQueries(t *testing.T) {
 	if err := s.MarkUploaded(ctx, bound.FileID); err != nil {
 		t.Fatalf("MarkUploaded: %v", err)
 	}
-	if _, _, _, err := s.SendMessage(ctx, chat.ChatID, "b1", "Anna", "Anna", nil, bound.FileID, 1100); err != nil {
+	if _, _, _, err := s.SendMessage(ctx, chat.ChatID, "b1", person(t, s, "Anna"), nil, bound.FileID, 1100); err != nil {
 		t.Fatalf("bind send: %v", err)
 	}
 
@@ -668,4 +668,16 @@ func TestOrphanSweepQueries(t *testing.T) {
 	if _, err := s.FileByID(ctx, bound.FileID); err != nil {
 		t.Fatalf("bound file swept: %v", err)
 	}
+}
+
+// person resolves (and on first call creates) a test identity. Messages now
+// carry a foreign key to users, so a test that writes a message needs its
+// author to exist. Idempotent: the digest finds the row on every later call.
+func person(t *testing.T, s *Store, name string) Identity {
+	t.Helper()
+	id, err := s.ResolveIdentity(context.Background(), "digest-"+name, "", name, 1)
+	if err != nil {
+		t.Fatalf("ResolveIdentity(%s): %v", name, err)
+	}
+	return id
 }

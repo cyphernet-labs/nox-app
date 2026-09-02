@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/coder/websocket"
@@ -28,9 +29,9 @@ func sendText(t *testing.T, c *wsClient, id int, chatID, clientMessageID, text s
 }
 
 // helloCursor performs session.hello with since and returns the reply cursor.
-func helloCursor(t *testing.T, c *wsClient, since int64) int64 {
+func helloCursor(t *testing.T, c *wsClient, since int64, extra ...string) int64 {
 	t.Helper()
-	data := c.hello(1, fmt.Sprintf(`,"since":%d`, since))
+	data := c.hello(1, fmt.Sprintf(`,"since":%d`, since)+strings.Join(extra, ""))
 	var cursor int64
 	mustUnmarshal(t, data["cursor"], &cursor)
 	return cursor

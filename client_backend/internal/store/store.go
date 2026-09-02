@@ -4,7 +4,9 @@
 // 2-4); event payloads are built at write time so replay never depends on
 // later state. The file-metadata lifecycle (upload registration,
 // mark-uploaded, orphan sweep) is deliberately event-less: files surface to
-// other clients only through message.send.
+// other clients only through message.send. Identity resolution (identity.go)
+// is the second deliberate exception: a person or a device coming into being
+// is not visible on the wire, so it inserts no events row either.
 package store
 
 import (
@@ -510,17 +512,26 @@ func (s *Store) CreateChat(ctx context.Context, name, creatorLabel string, now i
 // replay returns the original message (attachment included) with
 // created=false and no new event. fileID "" means no attachment; validation
 // that at least one of body/attachment is present belongs to the caller.
-func (s *Store) SendMessage(ctx context.Context, chatID, clientMessageID, authorID, authorLabel string, body json.RawMessage, fileID string, now int64) (protocol.Message, StoredEvent, bool, error) {
+func (s *Store) SendMessage(ctx context.Context, chatID, clientMessageID string, author Identity, body json.RawMessage, fileID string, now int64) (protocol.Message, StoredEvent, bool, error) {
 	tx, err := s.write.BeginTx(ctx, nil)
 	if err != nil {
 		return protocol.Message{}, StoredEvent{}, false, fmt.Errorf("begin send message: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if existing, err := messageByClientID(ctx, tx, clientMessageID); err == nil {
+	if existing, err := messageByClientID(ctx, tx, author.UserID, clientMessageID); err == nil {
 		return existing, StoredEvent{}, false, nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return protocol.Message{}, StoredEvent{}, false, fmt.Errorf("check idempotency: %w", err)
+	}
+
+	// An ephemeral identity was minted in memory during the greeting and has no
+	// row yet (see ResolveIdentity). This is the only path that needs the parent
+	// row, and it materialises here so the person and the message land together.
+	if author.Ephemeral {
+		if err := MaterialiseUser(ctx, tx, author, now); err != nil {
+			return protocol.Message{}, StoredEvent{}, false, err
+		}
 	}
 
 	var chatExists int
@@ -571,8 +582,8 @@ func (s *Store) SendMessage(ctx context.Context, chatID, clientMessageID, author
 		MessageID:       "m_" + randomID(),
 		Seq:             seq,
 		ChatID:          chatID,
-		AuthorID:        authorID,
-		AuthorLabel:     authorLabel,
+		AuthorID:        author.UserID,
+		AuthorLabel:     author.Label,
 		ClientMessageID: clientMessageID,
 		SentAt:          now,
 		Body:            body,
@@ -650,10 +661,12 @@ func scanMessage(row rowScanner) (protocol.Message, error) {
 	return msg, nil
 }
 
-func messageByClientID(ctx context.Context, tx *sql.Tx, clientMessageID string) (protocol.Message, error) {
+// messageByClientID keys on the person as well as the send key: idempotency is
+// per person, so two people colliding on a key do not collide with each other.
+func messageByClientID(ctx context.Context, tx *sql.Tx, authorID, clientMessageID string) (protocol.Message, error) {
 	return scanMessage(tx.QueryRowContext(ctx,
-		"SELECT "+messageColumns+" FROM messages m LEFT JOIN files f ON m.file_id = f.file_id WHERE m.client_message_id = ?",
-		clientMessageID))
+		"SELECT "+messageColumns+" FROM messages m LEFT JOIN files f ON m.file_id = f.file_id WHERE m.author_id = ? AND m.client_message_id = ?",
+		authorID, clientMessageID))
 }
 
 // previewFor folds a message into the single-line <=120-rune preview of

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"io"
 	"log/slog"
 	"net/http"
@@ -58,7 +59,13 @@ func openStack(t *testing.T, path string) (*httptest.Server, *Server, func()) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	cfg := config.Config{Addr: "127.0.0.1:0", DBPath: path, FilesPath: path + "-files", Limits: config.DefaultLimits()}
-	srv := New(cfg, store.New(dbs.Read, dbs.Write), h, bl, logger)
+	st := store.New(dbs.Read, dbs.Write)
+	// Mirror Run: the store identity is minted in Go once the schema exists,
+	// and the greeting hands it to clients.
+	if err := st.EnsureJournal(t.Context()); err != nil {
+		t.Fatalf("EnsureJournal: %v", err)
+	}
+	srv := New(cfg, st, h, bl, logger)
 	srv.pingInterval = 50 * time.Millisecond
 	// Long write timeout keeps slow-consumer tests deterministic: the
 	// overflow drop (policy violation) must win over a ping/write timeout.
@@ -106,4 +113,17 @@ func TestHealthServes200(t *testing.T) {
 	if string(body) != `{"status":"ok"}` {
 		t.Fatalf("body = %s", body)
 	}
+}
+
+// readDB opens a second read handle over the server's own database file, so a
+// test can assert on rows the command surface does not expose. Same process,
+// so invariant 1 (one process per file) holds.
+func readDB(t *testing.T, srv *Server) *sql.DB {
+	t.Helper()
+	d, err := db.Open(srv.cfg.DBPath)
+	if err != nil {
+		t.Fatalf("db.Open for reading: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	return d.Read
 }
