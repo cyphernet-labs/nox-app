@@ -411,16 +411,17 @@ func TestStoryOneDefaultLabelFallback(t *testing.T) {
 		t.Fatalf("assigned label = %q, want the User<4 digits> shape", ident.Label)
 	}
 
-	// A second nameless connection is a different person with a different name.
+	// A second nameless connection is a different person. Their NAMES are not
+	// asserted to differ: neither connection writes a users row (both are
+	// ephemeral until they send something), so the de-duplication in
+	// assignedLabelTx has nothing to see and a collision is possible by design -
+	// labels are not unique, by owner decision.
 	c2 := dialWS(t, ts)
 	c2.expectGreeting()
 	var ident2 identity
 	mustUnmarshal(t, c2.hello(1, ``)["identity"], &ident2)
 	if ident2.ID == ident.ID {
 		t.Fatalf("two nameless connections share the identity %q", ident.ID)
-	}
-	if ident2.Label == ident.Label {
-		t.Fatalf("two nameless connections share the label %q", ident.Label)
 	}
 }
 

@@ -113,6 +113,11 @@ func TestResolveIdentityNeverRefusesWhateverItIsGiven(t *testing.T) { // I4
 		{"very long device key", "", long, ""},
 		{"very long label", "", "dev-1", long},
 		{"label with newlines", "", "dev-2", "a\nb"},
+		// SQLite's length() stops at the first NUL, so a leading NUL used to be
+		// seen as empty by the schema's CHECK and refused the whole greeting.
+		{"label that starts with NUL", "", "dev-3", "\x00"},
+		{"digest that starts with NUL", "\x00digest", "", "Anna"},
+		{"label with an embedded NUL", "", "dev-4", "An\x00na"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

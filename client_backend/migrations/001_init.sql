@@ -10,10 +10,14 @@
 -- presented none (hand tools, the live probe) - such a person is created on
 -- first use and never found again, so the partial index leaves those rows out
 -- of uniqueness.
+-- Emptiness is tested with <> '' rather than length() > 0: SQLite's length()
+-- on TEXT stops at the first NUL, so length(char(0)) is 0 and a value whose
+-- first byte is NUL would be rejected as empty. The contract forbids refusing
+-- a greeting over the content of a name or a lookup key.
 CREATE TABLE users (
     user_id TEXT PRIMARY KEY,
-    label TEXT NOT NULL CHECK (length(label) > 0),
-    id_digest TEXT CHECK (id_digest IS NULL OR length(id_digest) > 0),
+    label TEXT NOT NULL CHECK (label <> ''),
+    id_digest TEXT CHECK (id_digest IS NULL OR id_digest <> ''),
     created_at INTEGER NOT NULL
 ) STRICT;
 
@@ -40,15 +44,15 @@ CREATE INDEX idx_devices_user ON devices (user_id);
 -- indistinguishable from the greeting alone. Exactly one row.
 CREATE TABLE journal (
     id INTEGER PRIMARY KEY CHECK (id = 1),
-    journal_id TEXT NOT NULL CHECK (length(journal_id) > 0)
+    journal_id TEXT NOT NULL CHECK (journal_id <> '')
 ) STRICT;
 
 -- name_ci is the Unicode case-folded name computed in Go: SQLite's own
 -- lower() folds ASCII only, which would let Cyrillic duplicates through.
 CREATE TABLE chats (
     chat_id TEXT PRIMARY KEY,
-    name TEXT NOT NULL CHECK (length(name) > 0),
-    name_ci TEXT NOT NULL CHECK (length(name_ci) > 0),
+    name TEXT NOT NULL CHECK (name <> ''),
+    name_ci TEXT NOT NULL CHECK (name_ci <> ''),
     created_at INTEGER NOT NULL,
     created_by_label TEXT NOT NULL,
     last_activity_at INTEGER NOT NULL,
@@ -62,9 +66,9 @@ CREATE UNIQUE INDEX idx_chats_name_ci ON chats (name_ci);
 -- bytes. expires_at is stage-1 "indefinite" (created_at + 10 years).
 CREATE TABLE files (
     file_id TEXT PRIMARY KEY,
-    name TEXT NOT NULL CHECK (length(name) > 0),
+    name TEXT NOT NULL CHECK (name <> ''),
     size INTEGER NOT NULL CHECK (size > 0),
-    mime TEXT NOT NULL CHECK (length(mime) > 0),
+    mime TEXT NOT NULL CHECK (mime <> ''),
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL,
     uploaded INTEGER NOT NULL DEFAULT 0,

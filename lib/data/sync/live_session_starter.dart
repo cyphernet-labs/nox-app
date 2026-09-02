@@ -91,17 +91,20 @@ class LiveSessionStarter {
   /// the same process must greet as the right person. The label is stated only
   /// when this device has just renamed — repeating a cached name on every
   /// greeting would push it back over a rename made from another device.
-  Future<GreetingCredentials> _credentials() async {
+  Future<GreetingCredentials?> _credentials() async {
     final session = await _session.readSession();
     if (!session.hasData) {
-      // Cannot tell "no session" from "keychain unavailable" by the value, and
-      // the two want opposite things. Greeting anonymously on a transient
-      // failure would write a stranger's rows, so state nothing and let the
-      // next attempt re-read.
-      logRepository.debug(target: this, message: 'sync: session unreadable, greeting states nothing');
-      return const GreetingCredentials();
+      // Null means "cannot greet yet", NOT "greet as nobody". Stating nothing
+      // is an anonymous greeting on the wire, and the server answers that with
+      // a throw-away identity: the outgoing queue would then drain under a
+      // person who does not exist, and the greeting would hand this session a
+      // stranger's author id. A delayed connection is strictly better.
+      logRepository.debug(target: this, message: 'sync: session unreadable, greeting deferred');
+      return null;
     }
     final data = session.data;
+    // A genuinely absent session is the sanctioned anonymous case: nobody has
+    // signed in, so there is nothing to claim.
     if (data == null) return const GreetingCredentials();
 
     final deviceId = await _session.deviceId();
@@ -119,9 +122,21 @@ class LiveSessionStarter {
   Future<void> _worldChanged() async {
     logRepository.debug(target: this, message: 'sync: server store changed, resetting the local world');
     await stop();
-    await _wipeWorld();
-    await _session.forgetAuthorId();
-    await start();
+    try {
+      await _wipeWorld();
+      await _session.forgetAuthorId();
+      // The new world has never heard this name. Without re-asserting it the
+      // greeting states nothing, the server mints User<random>, and the person
+      // is silently renamed out of the name they chose.
+      await _session.markLabelDirty();
+    } on Object catch (e, s) {
+      logRepository.error(target: this, error: e, stackTrace: s);
+    } finally {
+      // The channel comes back whichever way the wipe ended. This runs
+      // detached from the socket's own error handling, so a throw here would
+      // otherwise leave the device disconnected until the app restarts.
+      await start();
+    }
   }
 
   /// Takes what the greeting declared. Limits feed the composer's pre-flight

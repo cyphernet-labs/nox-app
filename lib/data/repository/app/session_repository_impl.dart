@@ -96,10 +96,13 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   Future<RepositoryResult<bool>> adoptServerIdentity({required String authorId, required String label}) {
     return execute<bool>(() async {
       await _prefs.setString(_kAuthorId, authorId);
-      // The server has stated the current name, so this device has nothing left
-      // to assert; further greetings stay silent about the label.
-      await _prefs.remove(_kLabelDirty);
-      final changed = _prefs.getString(_kLabel) != label;
+      final cached = _prefs.getString(_kLabel);
+      // Cleared only when the server came back with the very name this device
+      // is asserting. An unconditional clear loses a rename: a reconnect that
+      // stated nothing echoes the OLD name, and the flag would drop before the
+      // new one was ever sent.
+      if (cached == null || cached == label) await _prefs.remove(_kLabelDirty);
+      final changed = cached != label;
       if (changed) {
         await _prefs.setString(_kLabel, label);
         // Only announce a real change: a reconnect that confirms the current
@@ -146,6 +149,14 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   Future<RepositoryResult<bool>> isLabelDirty() {
     return execute<bool>(() async {
       return RepositoryResult<bool>.success(data: _prefs.getBool(_kLabelDirty) ?? false);
+    });
+  }
+
+  @override
+  Future<RepositoryResult<bool>> markLabelDirty() {
+    return execute<bool>(() async {
+      await _prefs.setBool(_kLabelDirty, true);
+      return const RepositoryResult<bool>.success(data: true);
     });
   }
 

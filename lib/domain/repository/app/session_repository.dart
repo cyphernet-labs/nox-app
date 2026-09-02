@@ -32,6 +32,11 @@ abstract class SessionRepository {
   /// two devices of one person would flip-flop forever.
   Future<RepositoryResult<bool>> isLabelDirty();
 
+  /// Raises the flag without changing the name. Used when the world the name
+  /// was confirmed in is gone: the server has never heard it, so it has to be
+  /// stated again or the person is silently renamed to a fresh `User<random>`.
+  Future<RepositoryResult<bool>> markLabelDirty();
+
   /// Records the identity the server declared at greeting time (contract §3):
   /// its author id, and the label it considers current. Both are the server's
   /// to decide — the label may have been changed from another device.

@@ -78,7 +78,7 @@ class NoxSocketClient {
   /// derivation and the device id are read fresh so a sign-in or a logout in
   /// the same process greets as the right person, and the label is stated only
   /// on the greeting that follows a rename.
-  Future<GreetingCredentials> Function()? _credentialsProvider;
+  Future<GreetingCredentials?> Function()? _credentialsProvider;
 
   /// Raised when the server turns out to be a different world than the one this
   /// device cached. The socket only reports it: emptying the local world belongs
@@ -102,7 +102,7 @@ class NoxSocketClient {
   /// Opens the connection and keeps it open until [stop]. Safe to call twice.
   Future<void> start({
     required Uri url,
-    Future<GreetingCredentials> Function()? credentialsProvider,
+    Future<GreetingCredentials?> Function()? credentialsProvider,
     void Function()? onJournalChanged,
   }) async {
     _url = url;
@@ -221,7 +221,15 @@ class NoxSocketClient {
     try {
       final since = await _syncRepository.getCursor();
       final firstEver = since == 0;
-      final credentials = await _credentialsProvider?.call() ?? const GreetingCredentials();
+      final provider = _credentialsProvider;
+      final credentials = provider == null ? const GreetingCredentials() : await provider();
+      if (credentials == null) {
+        // The provider could not tell who we are. Greeting anyway would claim a
+        // throw-away identity and write rows under it, so wait and re-read.
+        await _teardown(SessionPhase.disconnected);
+        _scheduleRetry();
+        return;
+      }
       final reply = await _sendOnce(isGreeting: true, 'session.hello', <String, dynamic>{
         'schema': 1,
         if (!firstEver) 'since': since,
@@ -249,7 +257,14 @@ class NoxSocketClient {
       // would apply strangers' events under numbers we already believe we hold.
       final serverJournal = data['journal_id'] as String?;
       final knownJournal = await _syncRepository.getJournal();
-      if (serverJournal != null && knownJournal != null && serverJournal != knownJournal) {
+      // A device holding a cursor but no remembered journal learned that cursor
+      // from a world that predates this field — every install from before this
+      // release. Treating that as "no divergence" would opt the check out of
+      // the one transition it exists for: the store is rebuilt (this release
+      // forces it), the device keeps a cursor above the new journal, and it
+      // never receives anything again. An empty local world wipes nothing.
+      final diverged = serverJournal != null && (knownJournal == null ? since > 0 : serverJournal != knownJournal);
+      if (diverged) {
         logRepository.debug(target: this, message: 'socket: server journal changed, local world is stale');
         // Recorded FIRST, and it outlives the wipe it is about to trigger:
         // leaving the old name behind would make the next greeting look like
@@ -268,7 +283,7 @@ class NoxSocketClient {
         return;
       }
       if (serverJournal != null) {
-        if (knownJournal == null) await _syncRepository.setJournal(serverJournal);
+        if (knownJournal != serverJournal) await _syncRepository.setJournal(serverJournal);
         journalId = serverJournal;
       }
 
