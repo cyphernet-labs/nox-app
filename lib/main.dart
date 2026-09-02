@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/remote/api_client.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
 import 'package:nox_app/data/sync/outbox_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
@@ -26,6 +27,12 @@ void main() {
       ]);
       await getIt.allReady();
       await getIt<AppConfigRepository>().initialize(flavorType: flavor);
+      // The blob half of the file chain (contract §7) goes over HTTP, and the
+      // server hands out RELATIVE paths because it does not know its own public
+      // address. Without a base URL those resolve to nothing, every byte
+      // transfer fails as a connection error, and the outbox — which treats
+      // that as retryable — pauses on the head of the queue forever.
+      getIt<ApiClient>().initBase();
       // Bring the live channel up before the first screen resolves: the world
       // check and the applier subscription both have to precede the greeting,
       // and only the dev environment binds a starter at all.

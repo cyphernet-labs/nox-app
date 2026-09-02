@@ -139,5 +139,18 @@
   "filesEmptyMessage": "Файли, надіслані в цьому чаті, з'являться тут.",
   "chatInfoTitle": "Деталі",
   "chatInfoLoadError": "Не вдалося завантажити інформацію про чат. Перевірте з'єднання та спробуйте ще раз.",
-  "settingsSaveError": "Не вдалося зберегти. Спробуйте ще раз."
+  "settingsSaveError": "Не вдалося зберегти. Спробуйте ще раз.",
+  "attachmentTooLarge": "Файл завеликий для надсилання (ліміт {limit})",
+  "@attachmentTooLarge": {
+    "description": "Composer error when the picked file exceeds the server limit (checked at attach time).",
+    "placeholders": {
+      "limit": {
+        "type": "String"
+      }
+    }
+  },
+  "attachmentGone": "Цього файлу вже немає на сервері",
+  "@attachmentGone": {
+    "description": "Terminal state on the file screen: the bytes are gone. Contract 2.1 forbids offering a retry here."
+  }
 }

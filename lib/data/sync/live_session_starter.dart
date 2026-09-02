@@ -9,6 +9,7 @@ import 'package:nox_app/domain/repository/app_config/app_config_repository.dart'
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
+import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 
@@ -34,6 +35,7 @@ class LiveSessionStarter {
     this._chats,
     this._messages,
     this._outbox,
+    this._files,
   );
 
   final NoxSocketClient _socket;
@@ -44,6 +46,7 @@ class LiveSessionStarter {
   final ChatRepository _chats;
   final MessageRepository _messages;
   final OutboxRepository _outbox;
+  final FileRepository _files;
 
   StreamSubscription<SessionPhase>? _phaseSub;
 
@@ -114,6 +117,8 @@ class LiveSessionStarter {
     // chat id it names does not exist here either, so the send would fail; the
     // text travelling at all is the part that must not happen.
     await _outbox.clean();
+    // Downloaded bytes belong to the world they came from.
+    await _files.clean();
     await _syncRepository.clear();
     await _chats.clean();
     await _messages.clean();

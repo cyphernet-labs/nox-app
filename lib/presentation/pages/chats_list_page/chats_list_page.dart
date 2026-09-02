@@ -295,7 +295,7 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
             chat: selected,
             showHeader: true,
             onInfo: () => showChatCard(context, selected),
-            onOpenFile: (file) => showFileView(context, file),
+            onOpenFile: (file, messageId) => showFileView(context, file, messageId: messageId),
           ),
         ),
       );

@@ -58,7 +58,7 @@ class ChatThreadPage extends StatelessWidget {
               demo: demo,
               showHeader: true,
               onInfo: () => showChatCard(context, chat),
-              onOpenFile: (file) => showFileView(context, file),
+              onOpenFile: (file, messageId) => showFileView(context, file, messageId: messageId),
               initialScenario: initialScenario,
               initialSendText: initialSendText,
             ),
@@ -85,7 +85,7 @@ class ChatThreadPage extends StatelessWidget {
           body: AppThreadViewWidget(
             chat: chat,
             demo: demo,
-            onOpenFile: (file) => showFileView(context, file),
+            onOpenFile: (file, messageId) => showFileView(context, file, messageId: messageId),
             initialScenario: initialScenario,
             initialSendText: initialSendText,
           ),

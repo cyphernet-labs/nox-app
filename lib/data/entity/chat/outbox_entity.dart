@@ -31,6 +31,10 @@ abstract class OutboxEntity with _$OutboxEntity {
     @Default(0) int refusals,
     String? text,
     String? lastErrorCode,
+
+    /// The server's id for this send's attachment — written ONLY once the bytes
+    /// are confirmed there. Empty while they are not.
+    String? fileId,
     // Flattened attachment — all null when there is no attachment.
     String? attachmentId,
     String? attachmentType, // FileType.name

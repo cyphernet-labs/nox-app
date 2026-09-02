@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
@@ -8,13 +9,16 @@ import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/data/sync/outbox_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
+import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
+import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/domain/model/chat/message_status.dart';
 import 'package:nox_app/domain/model/chat/outbox_status.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
+import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/general/app_clock.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -43,6 +47,35 @@ class _FakePhase implements SessionPhaseService {
   Future<void> dispose() => _controller.close();
 }
 
+/// A file repository the test drives by hand: it counts uploads, can run a hook
+/// in the middle of one, and can be told to refuse. Nothing touches a disk or a
+/// server.
+class _FakeFiles implements FileRepository {
+  int uploads = 0;
+  RepositoryException? failure;
+  Future<void> Function()? duringUpload;
+
+  @override
+  Future<RepositoryResult<String>> upload({required String path, required String mime, TransferFraction? onProgress}) async {
+    uploads++;
+    await duringUpload?.call();
+    if (failure != null) return RepositoryResult<String>.error(exception: failure!);
+    if (!File(path).existsSync()) return RepositoryResult<String>.error(exception: RepositoryException.notFound);
+    onProgress?.call(1);
+    return RepositoryResult<String>.success(data: 'f_fake_$uploads');
+  }
+
+  @override
+  Future<RepositoryResult<String>> download({required String fileId, required String suggestedName, TransferFraction? onProgress}) async =>
+      RepositoryResult<String>.success(data: '/tmp/$fileId');
+
+  @override
+  Future<String?> localPathFor({required String fileId, required String suggestedName}) async => null;
+
+  @override
+  Future<void> clean() async {}
+}
+
 /// The drain is the only sender in the app, so the properties asserted here —
 /// strict order, one pass at a time, remove-after-persist, and a classification
 /// that does not retry the unretryable — are the ones a duplicate or a lost
@@ -53,7 +86,13 @@ void main() {
   late OutboxRepository outbox;
   late _FakePhase phase;
   late OutboxService service;
+  late _FakeFiles files;
   late List<String> sentKeys;
+  late List<String> sentAttachmentIds;
+
+  /// Fails the SEND without touching the upload — the two are separate steps
+  /// now, and a test that cannot tell them apart proves nothing about either.
+  late RepositoryException? sendFailure;
   late Map<String, RepositoryException> failures;
 
   MessageModel echo(String chatId, String text) => MessageModel(
@@ -75,7 +114,9 @@ void main() {
     provideDummy<RepositoryResult<MessageModel>>(RepositoryResult.error(exception: RepositoryException.unknown));
 
     sentKeys = <String>[];
+    sentAttachmentIds = <String>[];
     failures = <String, RepositoryException>{};
+    sendFailure = null;
     messages = MockMessageRepository();
     when(
       messages.sendMessage(
@@ -87,14 +128,17 @@ void main() {
     ).thenAnswer((invocation) async {
       final key = invocation.namedArguments[#clientMessageId] as String;
       final text = invocation.namedArguments[#text] as String?;
+      final attached = invocation.namedArguments[#attachment] as MessageAttachment?;
       sentKeys.add(key);
-      final failure = failures[text];
+      if (attached != null) sentAttachmentIds.add(attached.id);
+      final failure = failures[text] ?? sendFailure;
       if (failure != null) return RepositoryResult<MessageModel>.error(exception: failure);
       return RepositoryResult<MessageModel>.success(data: echo(invocation.namedArguments[#chatId] as String, text ?? ''));
     });
 
+    files = _FakeFiles();
     phase = _FakePhase(SessionPhase.live);
-    service = OutboxService(outbox, messages, phase);
+    service = OutboxService(outbox, messages, phase, files);
   });
 
   tearDown(() async {
@@ -174,7 +218,7 @@ void main() {
 
   test('nothing is sent while the channel is down, and the attempt is not burned', () async {
     phase = _FakePhase(SessionPhase.disconnected);
-    service = OutboxService(outbox, messages, phase);
+    service = OutboxService(outbox, messages, phase, files);
     await enqueue(['a']);
 
     await service.flush();
@@ -187,7 +231,7 @@ void main() {
 
   test('catching up is not live: the drain waits for the replay to finish', () async {
     phase = _FakePhase(SessionPhase.catchingUp);
-    service = OutboxService(outbox, messages, phase);
+    service = OutboxService(outbox, messages, phase, files);
     await enqueue(['a']);
 
     await service.flush();
@@ -197,7 +241,7 @@ void main() {
 
   test('the channel going live drains the queue with no one asking', () async {
     phase = _FakePhase(SessionPhase.disconnected);
-    service = OutboxService(outbox, messages, phase);
+    service = OutboxService(outbox, messages, phase, files);
     service.start();
     await enqueue(['written while offline']);
 
@@ -212,7 +256,7 @@ void main() {
 
   test('start() twice does not open a second subscription (one live edge, one drain)', () async {
     phase = _FakePhase(SessionPhase.disconnected);
-    service = OutboxService(outbox, messages, phase);
+    service = OutboxService(outbox, messages, phase, files);
     service.start();
     service.start();
     await enqueue(['once']);
@@ -258,6 +302,84 @@ void main() {
     await service.flush();
     expect(sentKeys, hasLength(1));
     expect(await outbox.pending(), isEmpty);
+  });
+
+  group('attachments', () {
+    late File source;
+
+    setUp(() async {
+      source = File('${Directory.systemTemp.path}/nox_outbox_${DateTime.now().microsecondsSinceEpoch}.png')
+        ..writeAsBytesSync(List<int>.filled(64, 7));
+      addTearDown(() => source.existsSync() ? source.deleteSync() : null);
+    });
+
+    MessageAttachment picked() => MessageAttachment(
+      id: 'att_local',
+      type: FileType.image,
+      name: 'shot.png',
+      sizeBytes: 64,
+      mime: 'image/png',
+      localPath: source.path,
+    );
+
+    test('the bytes go up before the message names them, and the id is remembered', () async {
+      final entry = (await outbox.enqueue(chatId: 'c1', text: null, attachment: picked())).data!;
+
+      await service.flush();
+
+      // The message went out naming the SERVER's id, not the composer's local
+      // draft id — the latter means nothing to anyone else.
+      expect(sentAttachmentIds.single, isNot('att_local'));
+      expect(sentAttachmentIds.single, startsWith('f_'));
+      expect(files.uploads, 1);
+      expect(await outbox.pending(), isEmpty);
+      expect(entry.fileId, isNull, reason: 'the snapshot taken at enqueue knew nothing yet');
+    });
+
+    test('a confirmed upload is not repeated when the send is retried', () async {
+      // The whole point of remembering the id: a crash between the transfer and
+      // the send must not push the bytes again.
+      service.start(); // a live edge is what lifts the backoff pause between passes
+      await outbox.enqueue(chatId: 'c1', text: null, attachment: picked());
+
+      // First pass: the bytes go up, then the send fails retryably.
+      sendFailure = RepositoryException.connection;
+      await service.flush();
+      expect(files.uploads, 1);
+      expect((await outbox.pending()).single.fileId, isNotNull, reason: 'the confirmed id is remembered');
+
+      // Second pass: the send works this time.
+      sendFailure = null;
+      phase.emit(SessionPhase.live);
+      await service.flush();
+
+      expect(files.uploads, 1, reason: 'the bytes were already there — do not push them again');
+      expect(await outbox.pending(), isEmpty);
+    });
+
+    test('a file that vanished from disk fails this message and lets the queue move on', () async {
+      await outbox.enqueue(chatId: 'c1', text: null, attachment: picked());
+      final behind = (await outbox.enqueue(chatId: 'c1', text: 'behind it')).data!;
+      source.deleteSync(); // the user cleared their photos between attach and drain
+
+      await service.flush();
+
+      final left = await outbox.watchQueue().first;
+      expect(left.single.status, OutboxStatus.error);
+      expect(sentKeys, contains(behind.clientMessageId), reason: 'one bad attachment must not hold the queue');
+    });
+
+    test('a message discarded during the upload is not sent', () async {
+      // Phase 027 re-reads right before sending so a discard is honoured; an
+      // upload stretches that window from milliseconds to minutes.
+      final entry = (await outbox.enqueue(chatId: 'c1', text: null, attachment: picked())).data!;
+      files.duringUpload = () async => outbox.remove(clientMessageId: entry.clientMessageId);
+
+      await service.flush();
+
+      expect(sentKeys, isEmpty, reason: 'the bytes may be up, but no message may name them');
+      expect(await outbox.pending(), isEmpty);
+    });
   });
 
   test('messages for chats nobody has open are sent all the same', () async {
@@ -339,8 +461,9 @@ void main() {
 
   test('the pause is lifted by the channel coming back, and the retry then goes out', () async {
     failures['a'] = RepositoryException.connection;
+    files = _FakeFiles();
     phase = _FakePhase(SessionPhase.live);
-    service = OutboxService(outbox, messages, phase);
+    service = OutboxService(outbox, messages, phase, files);
     service.start();
     await enqueue(['a']);
 

@@ -13,12 +13,14 @@ import 'package:nox_app/domain/model/chat/outbox_status.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/domain/model/file/mime_types.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
+import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
 import 'package:nox_app/domain/repository/base/page_metadata.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
+import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
 import 'package:nox_app/data/sync/outbox_service.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
@@ -64,6 +66,8 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   final SessionPhaseService _sessionPhaseService = getIt<SessionPhaseService>();
   final OutboxRepository _outboxRepository = getIt<OutboxRepository>();
   final OutboxService _outboxService = getIt<OutboxService>();
+  final AttachmentPrefetchService _prefetch = getIt<AttachmentPrefetchService>();
+  final AppConfigRepository _appConfigRepository = getIt<AppConfigRepository>();
 
   late String _chatId;
   // The signed-in own-identity resolved from the session at thread init (feature 015).
@@ -205,6 +209,9 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
                 isOffline: _isOffline(),
               ),
             );
+            // Received pictures need their bytes to render at all. Fire and
+            // forget: the write wakes the watch, which redraws the thread.
+            unawaited(_prefetch.prefetch(r.updatedList));
           },
           onError: (exception) {
             emit(live.copyWith(pagingState: live.pagingState.copyWith(isLoading: false, error: exception), loadingInProgress: false));
@@ -403,6 +410,16 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     final picked = await _filePickerService.pickFile();
     final live = state;
     if (live is! Initialized || picked == null) return; // cancelled / unsupported → composer unchanged
+
+    // Checked HERE, while the person is still looking at the screen. The
+    // contract wants the limit checked before sending, and doing it at send
+    // time is too late in the one case that matters: a file attached with no
+    // connection is sent hours later, and the refusal would arrive then. The
+    // picker reports the size without reading a byte, so this costs nothing.
+    if (picked.sizeBytes > _appConfigRepository.limits.maxAttachmentBytes) {
+      emit(live.copyWith(oversizedAttachmentTick: live.oversizedAttachmentTick + 1));
+      return;
+    }
     emit(
       live.copyWith(
         draftAttachment: MessageAttachment(

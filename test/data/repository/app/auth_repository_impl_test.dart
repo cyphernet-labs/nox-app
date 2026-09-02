@@ -13,13 +13,14 @@ import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
+import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'auth_repository_impl_test.mocks.dart';
 
-@GenerateMocks([SessionRepository, AppStateRepository, ChatRepository, MessageRepository, SyncRepository, OutboxRepository])
+@GenerateMocks([SessionRepository, AppStateRepository, ChatRepository, MessageRepository, SyncRepository, OutboxRepository, FileRepository])
 void main() {
   provideDummy<RepositoryResult<bool>>(const RepositoryResult<bool>.success(data: true));
   provideDummy<RepositoryResult<AppStateModel>>(RepositoryResult<AppStateModel>.success(data: AppStateModel.init()));
@@ -30,6 +31,7 @@ void main() {
   late MockMessageRepository messages;
   late MockSyncRepository sync;
   late MockOutboxRepository outbox;
+  late MockFileRepository files;
   late AuthRepositoryImpl repository;
 
   setUp(() async {
@@ -41,12 +43,14 @@ void main() {
     messages = MockMessageRepository();
     sync = MockSyncRepository();
     outbox = MockOutboxRepository();
-    repository = AuthRepositoryImpl(session, appState, chats, messages, sync, outbox);
+    files = MockFileRepository();
+    repository = AuthRepositoryImpl(session, appState, chats, messages, sync, outbox, files);
 
     when(chats.clean()).thenAnswer((_) async {});
     when(messages.clean()).thenAnswer((_) async {});
     when(sync.clear()).thenAnswer((_) async {});
     when(outbox.clean()).thenAnswer((_) async {});
+    when(files.clean()).thenAnswer((_) async {});
 
     when(
       session.saveIdentifier(
@@ -91,6 +95,7 @@ void main() {
     verifyNever(sync.clear());
     // The queue holds message texts; a failed wipe must not drop them either.
     verifyNever(outbox.clean());
+    verifyNever(files.clean());
   });
 
   test('logout wipes the chat + message caches after a successful clear (full local wipe)', () async {
@@ -101,7 +106,7 @@ void main() {
     // The queue goes FIRST of the stores: it holds unsent message TEXTS, and a
     // crash later in the wipe would leave them for the next identity to send
     // under their own name.
-    verifyInOrder([session.clear(), outbox.clean(), sync.clear(), chats.clean(), messages.clean()]);
+    verifyInOrder([session.clear(), outbox.clean(), files.clean(), sync.clear(), chats.clean(), messages.clean()]);
   });
 
   test('signing in re-arms the outgoing drain that logout cancelled', () async {
@@ -129,6 +134,20 @@ void main() {
     await repository.completeOnboarding(label: 'Alice');
     verify(session.setOnboardingComplete(label: 'Alice')).called(1);
     verify(appState.fetchAppState()).called(1);
+  });
+
+  test('a failed completeOnboarding does not re-derive app state', () async {
+    // The reconnect that carries the new label rides in the same afterMutate,
+    // so a failure here must leave both alone rather than announcing a name the
+    // session never stored.
+    when(
+      session.setOnboardingComplete(label: anyNamed('label')),
+    ).thenAnswer((_) async => RepositoryResult<bool>.error(exception: RepositoryException.unknown));
+
+    final result = await repository.completeOnboarding(label: 'Alice');
+
+    expect(result.hasData, isFalse);
+    verifyNever(appState.fetchAppState(sessionExpired: anyNamed('sessionExpired')));
   });
 
   test('ordinary logout clears the session without sessionExpired', () async {

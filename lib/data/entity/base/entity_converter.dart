@@ -3,6 +3,7 @@ import 'package:nox_app/data/entity/chat/wire/chat_wire_entity.dart';
 import 'package:nox_app/data/entity/chat/wire/chats_wire_entity.dart';
 import 'package:nox_app/data/entity/chat/wire/message_wire_entity.dart';
 import 'package:nox_app/data/entity/chat/wire/messages_wire_entity.dart';
+import 'package:nox_app/data/entity/file/upload_ticket_wire_entity.dart';
 import 'package:nox_app/data/entity/item/item_entity.dart';
 import 'package:nox_app/data/entity/item/items_entity.dart';
 
@@ -36,6 +37,13 @@ class EntityConverter<E> implements JsonConverter<E?, dynamic> {
       // Message (feature 018/S4).
       if (_isType<E, MessageWireEntity>() || _isType<E, MessageWireEntity?>()) return MessageWireEntity.fromJson(json) as E;
       if (_isType<E, MessagesWireEntity>() || _isType<E, MessagesWireEntity?>()) return MessagesWireEntity.fromJson(json) as E;
+      // File chain (feature 028).
+      if (_isType<E, UploadTicketWireEntity>() || _isType<E, UploadTicketWireEntity?>()) {
+        return UploadTicketWireEntity.fromJson(json) as E;
+      }
+      if (_isType<E, DownloadTicketWireEntity>() || _isType<E, DownloadTicketWireEntity?>()) {
+        return DownloadTicketWireEntity.fromJson(json) as E;
+      }
     }
     throw ArgumentError('No converter found for type $E');
   }
@@ -50,6 +58,8 @@ class EntityConverter<E> implements JsonConverter<E?, dynamic> {
     if (object is ChatsWireEntity) return object.toJson();
     if (object is MessageWireEntity) return object.toJson();
     if (object is MessagesWireEntity) return object.toJson();
+    if (object is UploadTicketWireEntity) return object.toJson();
+    if (object is DownloadTicketWireEntity) return object.toJson();
     throw ArgumentError('No converter found for type $E');
   }
 }

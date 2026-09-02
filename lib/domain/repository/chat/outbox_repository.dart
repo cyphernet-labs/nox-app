@@ -44,6 +44,14 @@ abstract class OutboxRepository {
   /// server never even saw would punish it for the network.
   Future<void> recordFailure({required String clientMessageId, required String code, required bool terminal, required bool serverAnswered});
 
+  /// Remembers that this send's attachment is on the server.
+  ///
+  /// Called only after the bytes are confirmed, which is what makes a restart
+  /// skip the upload instead of repeating it. Passing null forgets it again —
+  /// the server sweeps uploads never bound to a message after a day, and a
+  /// remembered id can outlive its file.
+  Future<void> attachFile({required String clientMessageId, required String? fileId});
+
   /// Puts a failed entry back in line (manual retry) and resets BOTH counters.
   ///
   /// A tap is the user saying "try again now", so the ladder starts over: the

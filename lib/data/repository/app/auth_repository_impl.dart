@@ -1,8 +1,10 @@
 import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
 import 'package:nox_app/data/sync/outbox_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
+import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/repository/app/app_state_repository.dart';
 import 'package:nox_app/domain/repository/app/auth_repository.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
@@ -10,6 +12,7 @@ import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
+import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_app/general/onboarding_mock_data.dart';
 
@@ -24,6 +27,7 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
     this._messageRepository,
     this._syncRepository,
     this._outboxRepository,
+    this._fileRepository,
   );
 
   final SessionRepository _sessionRepository;
@@ -32,6 +36,7 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
   final MessageRepository _messageRepository;
   final SyncRepository _syncRepository;
   final OutboxRepository _outboxRepository;
+  final FileRepository _fileRepository;
 
   @override
   Future<RepositoryResult<bool>> signIn({required String identifier}) {
@@ -57,7 +62,18 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
 
   @override
   Future<RepositoryResult<bool>> completeOnboarding({String? label}) {
-    return _deriveAfter(() => _sessionRepository.setOnboardingComplete(label: label));
+    return _deriveAfter(
+      () => _sessionRepository.setOnboardingComplete(label: label),
+      // Reconnect so the chosen name actually reaches the server. Stage 1 has
+      // no `identity.setLabel` (contract §8.1 puts it in stage 2), so the
+      // greeting is the ONLY place a label is stated — and by now the socket
+      // has already greeted, under the server-assigned `User<random>`. Without
+      // this the user picks a name and everyone else keeps seeing the old one
+      // until something happens to reconnect the device.
+      afterMutate: () async {
+        if (getIt.isRegistered<LiveSessionStarter>()) await getIt<LiveSessionStarter>().restart();
+      },
+    );
   }
 
   @override
@@ -89,6 +105,26 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
           // next identity — who would then have them sent, under their name, by
           // the drain that re-arms at the next sign-in.
           await _outboxRepository.clean();
+          // Downloaded bytes go with them, and for the same reason: they are
+          // other people's pictures, sitting in a cache on a device that has
+          // just been handed back to nobody in particular.
+          //
+          // Guarded, and deliberately: this is the only filesystem delete in
+          // the wipe and the one most able to fail — a file still open from an
+          // in-flight download is enough on Windows. Letting it throw would
+          // abandon the wipe half-done and leave the previous identity's chats,
+          // messages and cursor on disk, which is far worse than a cached
+          // picture surviving. Best-effort here, loud in the log.
+          try {
+            await _fileRepository.clean();
+          } catch (error, stackTrace) {
+            logRepository.error(target: this, error: error, stackTrace: stackTrace);
+          }
+          // The prefetch remembers which files it already tried. That memory
+          // belongs to the identity that was signed in: without clearing it,
+          // the next person's pictures are never fetched for the life of the
+          // process, because their message ids may repeat ours.
+          if (getIt.isRegistered<AttachmentPrefetchService>()) getIt<AttachmentPrefetchService>().reset();
           // The cursor goes next: a crash mid-wipe must leave it behind the
           // stores (safe - replay re-applies idempotently), never ahead of an
           // emptied store (a stale high `since` would skip every row below it

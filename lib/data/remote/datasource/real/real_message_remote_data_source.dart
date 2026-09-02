@@ -1,5 +1,4 @@
 import 'package:injectable/injectable.dart';
-import 'package:nox_app/data/entity/base/error_wire_entity.dart';
 import 'package:nox_app/data/entity/base/response_entity.dart';
 import 'package:nox_app/data/entity/chat/wire/message_wire_entity.dart';
 import 'package:nox_app/data/entity/chat/wire/messages_wire_entity.dart';
@@ -35,19 +34,13 @@ class RealMessageRemoteDataSource implements MessageRemoteDataSource {
     String? text,
     MessageAttachment? attachment,
   }) async {
-    if (attachment != null) {
-      // An attachment needs a file_id, which only the upload chain issues, and
-      // that chain is phase 028. Refusing here is honest: sending text-only
-      // would drop the file silently, and sending without either field would be
-      // rejected by the server as a malformed command.
-      return const ResponseEntity<MessageWireEntity>(
-        success: false,
-        error: ErrorWireEntity(code: 'invalid_request', message: 'attachments are not sent over the live channel yet'),
-      );
-    }
     final reply = await _socket.send('message.send', <String, dynamic>{
       'chat_id': chatId,
       'client_message_id': clientMessageId,
+      // Contract §5: the wire names the file the server already holds, and
+      // nothing else. Name, size, mime and the retention deadline come back in
+      // the echo — the server took them from the upload, not from us.
+      if (attachment != null) 'attachment': <String, dynamic>{'file_id': attachment.id},
       'body': ?(text == null ? null : <String, dynamic>{'type': 'text', 'text': text}),
     });
     return reply.toWrappedEnvelope('message', MessageWireEntity.fromJson);
