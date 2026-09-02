@@ -13,8 +13,10 @@ import 'package:nox_app/general/app_clock.dart';
 /// flat text (a non-text body maps to a null text — the Q1 seam); the file
 /// CATEGORY is derived from the name's extension (contract §9.2), never
 /// carried on the wire. Local-only fields (`status`, `isSystem`, `localPath`)
-/// do not cross this boundary; `clientMessageId` is parsed but dropped until
-/// the persistent outbox (phase 026) gives it a domain home.
+/// do not cross this boundary. `clientMessageId` is parsed into the entity but
+/// deliberately does not cross into the domain model either: `SyncService`
+/// reads it straight off the entity to settle the matching outbox row, which is
+/// the only thing that ever needs it.
 @lazySingleton
 class MessageWireMapper extends BaseMapper<MessageWireEntity, MessageModel, dynamic, dynamic> {
   static const String _textBodyType = 'text';

@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
+import 'package:nox_app/data/sync/live_session_starter.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/general/constants.dart';
@@ -93,11 +95,17 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
     // surfaces (desktop rail avatar) update without a restart.
     final draft = state.draftName;
     final result = await sessionRepository.updateLabel(label: draft);
-    result.match<void>(
-      onData: (_) => emit(state.copyWith(name: draft, editing: false, status: SettingsNameStatus.idle)),
+    await result.match<Future<void>>(
+      onData: (_) async {
+        emit(state.copyWith(name: draft, editing: false, status: SettingsNameStatus.idle));
+        // The name reaches the server in a greeting, and a greeting only happens
+        // on connect. Without this the rename would sit here until some
+        // unrelated reconnect happened to carry it. Same call sign-in makes.
+        if (getIt.isRegistered<LiveSessionStarter>()) await getIt<LiveSessionStarter>().restart();
+      },
       // Keep the edit open on a persistence failure — never show a saved name that
       // did not persist. The mock store never errors; defensive only.
-      onError: (_) {},
+      onError: (_) async {},
     );
   }
 

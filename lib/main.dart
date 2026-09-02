@@ -7,6 +7,7 @@ import 'package:nox_app/data/remote/api_client.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
 import 'package:nox_app/data/sync/outbox_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/model/app_config/app_flavor.dart';
 import 'package:nox_app/domain/model/app_config/app_flavor_type.dart';
 import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
@@ -36,7 +37,16 @@ void main() {
       // Bring the live channel up before the first screen resolves: the world
       // check and the applier subscription both have to precede the greeting,
       // and only the dev environment binds a starter at all.
-      if (getIt.isRegistered<LiveSessionStarter>()) await getIt<LiveSessionStarter>().start();
+      // Guarded because start() now empties the local world when the server
+      // turns out to be a different one, and a cache that will not clear is no
+      // reason to withhold the app: cached data beats no screen at all.
+      if (getIt.isRegistered<LiveSessionStarter>()) {
+        try {
+          await getIt<LiveSessionStarter>().start();
+        } on Object catch (e, s) {
+          logRepository.error(target: 'main', error: e, stackTrace: s);
+        }
+      }
       // The outgoing queue drains in EVERY flavor, unlike the socket-bound
       // starter above: a message written before the app was last closed has to
       // leave whether or not this build talks to a real server.

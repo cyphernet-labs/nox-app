@@ -18,6 +18,20 @@ abstract class SessionRepository {
   /// validation (charset / uniqueness / ≤32).
   Future<RepositoryResult<bool>> updateLabel({required String label});
 
+  /// This installation's opaque id, minted once on first use and kept in secure
+  /// storage. It names the DEVICE in a greeting (`device_key`), never the
+  /// person: a logout wipes it along with everything else, and the person is
+  /// recognised by what they hold, not by which install they happen to be on.
+  Future<RepositoryResult<String>> deviceId();
+
+  /// Whether this device has renamed since the server last confirmed a name.
+  ///
+  /// A greeting states a label only when the answer is true. Stating it every
+  /// time turns a stale cache into a rename ping-pong: a device that was offline
+  /// through a rename would push the old name back over the new one, and the
+  /// two devices of one person would flip-flop forever.
+  Future<RepositoryResult<bool>> isLabelDirty();
+
   /// Records the identity the server declared at greeting time (contract §3):
   /// its author id, and the label it considers current. Both are the server's
   /// to decide — the label may have been changed from another device.
@@ -27,6 +41,11 @@ abstract class SessionRepository {
   /// every subsequent change (rename → new label, logout/clear → null). Broadcast —
   /// multiple surfaces (shell avatar, future consumers) may listen concurrently.
   Stream<String?> watchLabel();
+
+  /// Forgets the author id this device cached. Called when the server's store
+  /// turns out to be a different world: an id from the old one would mark
+  /// strangers' messages as this user's own.
+  Future<RepositoryResult<bool>> forgetAuthorId();
 
   /// Full wipe: secure storage deleteAll + remove prefs keys (logout).
   Future<RepositoryResult<bool>> clear();

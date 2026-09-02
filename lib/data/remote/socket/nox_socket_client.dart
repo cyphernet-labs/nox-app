@@ -74,11 +74,19 @@ class NoxSocketClient {
 
   Uri? _url;
 
-  /// Asked for the current label at every greeting rather than handed one at
-  /// start: stage 1 does not persist identities, so a reconnect that greeted
-  /// without a name would be assigned a fresh `User<n>` — silently renaming the
-  /// user, and renaming them again on the next drop.
-  Future<String?> Function()? _labelProvider;
+  /// Asked at every greeting rather than handed once at start: the login
+  /// derivation and the device id are read fresh so a sign-in or a logout in
+  /// the same process greets as the right person, and the label is stated only
+  /// on the greeting that follows a rename.
+  Future<GreetingCredentials> Function()? _credentialsProvider;
+
+  /// Raised when the server turns out to be a different world than the one this
+  /// device cached. The socket only reports it: emptying the local world belongs
+  /// to whoever owns it, and a failure there must never cost the reconnect.
+  void Function()? _onJournalChanged;
+
+  /// The store identity from the last greeting (contract §3).
+  String? journalId;
 
   /// Last greeting's identity and limits — the server is the authority on both.
   ServerIdentity? identity;
@@ -89,9 +97,14 @@ class NoxSocketClient {
   Stream<ServerEvent> get events => _events.stream;
 
   /// Opens the connection and keeps it open until [stop]. Safe to call twice.
-  Future<void> start({required Uri url, Future<String?> Function()? labelProvider}) async {
+  Future<void> start({
+    required Uri url,
+    Future<GreetingCredentials> Function()? credentialsProvider,
+    void Function()? onJournalChanged,
+  }) async {
     _url = url;
-    _labelProvider = labelProvider;
+    _credentialsProvider = credentialsProvider;
+    _onJournalChanged = onJournalChanged;
     if (_started) return;
     _started = true;
     await _openOnce();
@@ -205,11 +218,15 @@ class NoxSocketClient {
     try {
       final since = await _syncRepository.getCursor();
       final firstEver = since == 0;
-      final label = await _labelProvider?.call();
+      final credentials = await _credentialsProvider?.call() ?? const GreetingCredentials();
       final reply = await _sendOnce(isGreeting: true, 'session.hello', <String, dynamic>{
         'schema': 1,
         if (!firstEver) 'since': since,
-        'label': ?label,
+        // Stated only after a rename: a greeting that repeats a cached name
+        // would push it back over a rename made from another device.
+        'label': ?credentials.label,
+        'login_ref': ?credentials.loginRef,
+        'device_key': ?credentials.deviceKey,
       });
       if (!reply.ok) {
         logRepository.debug(target: this, message: 'socket: greeting refused: code=${reply.errorCode}');
@@ -222,6 +239,28 @@ class NoxSocketClient {
         return;
       }
       final data = reply.data ?? const <String, dynamic>{};
+
+      // Checked BEFORE anything else is taken from the reply, and long before
+      // the first replay frame: a rebuilt store that has already overtaken our
+      // mark is indistinguishable from a healthy one by cursor alone, so we
+      // would apply strangers' events under numbers we already believe we hold.
+      final serverJournal = data['journal_id'] as String?;
+      if (serverJournal != null && journalId != null && serverJournal != journalId) {
+        logRepository.debug(target: this, message: 'socket: server journal changed, local world is stale');
+        journalId = null;
+        await _teardown(SessionPhase.disconnected);
+        // Report, then retry regardless of what the owner of the local world
+        // does with the news — a throw over there must not strand the socket.
+        try {
+          _onJournalChanged?.call();
+        } on Object catch (e, s) {
+          logRepository.error(target: this, error: e, stackTrace: s);
+        }
+        _scheduleRetry();
+        return;
+      }
+      journalId = serverJournal ?? journalId;
+
       _helloCursor = data['cursor'] as int? ?? 0;
       final id = data['identity'];
       if (id is Map<String, dynamic>) {
@@ -310,4 +349,20 @@ class NoxSocketClient {
     await _phase.close();
     await _events.close();
   }
+}
+
+/// What a greeting states about who is connecting (contract §3). Every field is
+/// optional by contract: a connection presenting none of them is served as a
+/// one-off, which is what keeps hand tools and the live probe working.
+class GreetingCredentials {
+  const GreetingCredentials({this.loginRef, this.deviceKey, this.label});
+
+  /// One-way derivation of the login identifier — names the PERSON.
+  final String? loginRef;
+
+  /// Opaque per-install id — names the DEVICE.
+  final String? deviceKey;
+
+  /// Present only on the greeting that follows a rename.
+  final String? label;
 }

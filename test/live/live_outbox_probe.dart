@@ -106,7 +106,12 @@ void main() {
   test('a queued message survives a restart and arrives exactly once', () async {
     final socket = NoxSocketClient(WebSocketChannelFactory(), _MemoryCursor());
     addTearDown(socket.stop);
-    await socket.start(url: Uri.parse('ws://127.0.0.1:8080/ws'), labelProvider: () async => 'OutboxProbe');
+    await socket.start(
+      url: Uri.parse('ws://127.0.0.1:8080/ws'), // A probe names itself and nothing else: no login derivation, no device
+      // id. That is deliberate - the contract forbids refusing such a greeting,
+      // and it is exactly the shape this probe must keep working in.
+      credentialsProvider: () async => const GreetingCredentials(label: 'OutboxProbe'),
+    );
     await Future<void>.delayed(const Duration(seconds: 2));
     expect(socket.identity, isNotNull, reason: 'the greeting must have been answered');
 

@@ -1,10 +1,13 @@
 import 'dart:async';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
+import 'package:nox_app/general/identity/identifier_digest.dart';
 import 'package:nox_app/data/remote/socket/socket_channel_factory.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
@@ -57,8 +60,11 @@ void main() {
   }
 
   /// Connects and greets, returning the fake the client is talking to.
-  Future<FakeSocket> connect({int cursor = 0, String? label}) async {
-    await client.start(url: url, labelProvider: label == null ? null : () async => label);
+  Future<FakeSocket> connect({int cursor = 0, String? label, String? loginRef, String? deviceKey}) async {
+    await client.start(
+      url: url,
+      credentialsProvider: () async => GreetingCredentials(loginRef: loginRef, deviceKey: deviceKey, label: label),
+    );
     final socket = factory.latest;
     socket.pushGreeting();
     // The client answers the greeting only after an async cursor read, so wait
@@ -93,6 +99,83 @@ void main() {
       expect((socket.commandNamed('session.hello')!['data'] as Map<String, dynamic>)['since'], 41);
       // There is history to receive, so the session is behind until it arrives.
       expect(client.currentPhase, SessionPhase.catchingUp);
+    });
+
+    test('the greeting carries the login derivation and the device id, and never the raw identifier', () async {
+      const identifier = 'NOX-raw-secret-value';
+      final socket = await connect(cursor: 3, loginRef: IdentifierDigest.loginRef(identifier), deviceKey: 'dev-1');
+
+      final data = socket.commandNamed('session.hello')!['data'] as Map<String, dynamic>;
+      expect(data['login_ref'], IdentifierDigest.loginRef(identifier));
+      expect(data['device_key'], 'dev-1');
+      // The identifier is a bearer secret: it must not reach the wire in any
+      // shape, so assert against the whole frame rather than the one field.
+      expect(jsonEncode(socket.commandNamed('session.hello')), isNot(contains(identifier)));
+    });
+
+    test('a greeting with nothing to claim omits both fields rather than sending empties', () async {
+      final socket = await connect(cursor: 3);
+
+      final data = socket.commandNamed('session.hello')!['data'] as Map<String, dynamic>;
+      expect(data.containsKey('login_ref'), isFalse);
+      expect(data.containsKey('device_key'), isFalse);
+      expect(data.containsKey('label'), isFalse);
+    });
+
+    test('a changed journal id tears the session down instead of applying a stranger world', () async {
+      var reported = 0;
+      await client.start(
+        url: url,
+        credentialsProvider: () async => const GreetingCredentials(deviceKey: 'dev-1'),
+        onJournalChanged: () => reported++,
+      );
+      final first = factory.latest;
+      first.pushGreeting();
+      await waitUntil(() => first.commandNamed('session.hello') != null, reason: 'the client greets');
+      first.replyToHello(cursor: 5, journalId: 'j_one');
+      await waitUntil(() => client.journalId == 'j_one', reason: 'the first journal is adopted');
+
+      // The server was rebuilt: same address, different world.
+      await client.stop();
+      await client.start(
+        url: url,
+        credentialsProvider: () async => const GreetingCredentials(deviceKey: 'dev-1'),
+        onJournalChanged: () => reported++,
+      );
+      final second = factory.latest;
+      second.pushGreeting();
+      await waitUntil(() => second.commandNamed('session.hello') != null, reason: 'the client greets again');
+      second.replyToHello(cursor: 2, journalId: 'j_two');
+
+      await waitUntil(() => reported == 1, reason: 'the change is reported exactly once');
+      expect(client.currentPhase, isNot(SessionPhase.live));
+    });
+
+    test('a journal-change handler that throws does not strand the socket', () async {
+      await client.start(
+        url: url,
+        credentialsProvider: () async => const GreetingCredentials(deviceKey: 'dev-1'),
+        onJournalChanged: () => throw StateError('the owner of the local world failed'),
+      );
+      final first = factory.latest;
+      first.pushGreeting();
+      await waitUntil(() => first.commandNamed('session.hello') != null, reason: 'the client greets');
+      first.replyToHello(cursor: 5, journalId: 'j_one');
+      await waitUntil(() => client.journalId == 'j_one', reason: 'the first journal is adopted');
+
+      await client.stop();
+      await client.start(
+        url: url,
+        credentialsProvider: () async => const GreetingCredentials(deviceKey: 'dev-1'),
+        onJournalChanged: () => throw StateError('the owner of the local world failed'),
+      );
+      final second = factory.latest;
+      second.pushGreeting();
+      await waitUntil(() => second.commandNamed('session.hello') != null, reason: 'the client greets again');
+      second.replyToHello(cursor: 2, journalId: 'j_two');
+
+      // A throw over there must cost neither the teardown nor the retry.
+      await waitUntil(() => client.journalId == null, reason: 'the stale journal is dropped');
     });
 
     test('the device offers its stored label and takes the identity the server returns', () async {

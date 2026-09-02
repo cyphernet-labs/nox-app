@@ -35,6 +35,7 @@ class FakeSessionRepository implements SessionRepository {
   @override
   Future<RepositoryResult<bool>> updateLabel({required String label}) async {
     _label = label;
+    labelDirty = true;
     _labelController.add(label);
     return const RepositoryResult<bool>.success(data: true);
   }
@@ -51,6 +52,19 @@ class FakeSessionRepository implements SessionRepository {
 
   @override
   Future<RepositoryResult<bool>> setOnboardingComplete({String? label}) => throw UnimplementedError();
+
+  @override
+  Future<RepositoryResult<String>> deviceId() async => const RepositoryResult<String>.success(data: 'test-device');
+
+  @override
+  Future<RepositoryResult<bool>> isLabelDirty() async => RepositoryResult<bool>.success(data: labelDirty);
+
+  /// Raised by [updateLabel] the way the real store raises it: a greeting states
+  /// a name only after a rename.
+  bool labelDirty = false;
+
+  @override
+  Future<RepositoryResult<bool>> forgetAuthorId() async => const RepositoryResult<bool>.success(data: true);
 
   @override
   Future<RepositoryResult<bool>> clear() => throw UnimplementedError();
