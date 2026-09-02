@@ -22,4 +22,14 @@ abstract class SyncRepository {
   Future<String?> getEpoch();
 
   Future<void> setEpoch(String epoch);
+
+  /// The server's own name for its store (contract §3 `journal_id`).
+  ///
+  /// Persisted, not just held in memory: the case that actually happens is
+  /// "the server store was rebuilt and the app was restarted", and an in-memory
+  /// value would be null by then — the client would adopt the new world while
+  /// keeping a cursor from the old one and never receive anything again.
+  Future<String?> getJournal();
+
+  Future<void> setJournal(String journalId);
 }

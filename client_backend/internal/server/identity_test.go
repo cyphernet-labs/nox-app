@@ -209,14 +209,14 @@ func TestAssertIdentitySchemaRefusesAStaleDatabase(t *testing.T) {
 	if _, err := d.Write.Exec("PRAGMA user_version = 1"); err != nil {
 		t.Fatalf("set user_version: %v", err)
 	}
-	if err := assertIdentitySchema(context.Background(), d.Read); err == nil {
+	if err := assertIdentitySchema(context.Background(), d.Read, path); err == nil {
 		t.Fatal("assertIdentitySchema accepted a database with no identity tables")
 	}
 }
 
 func TestAssertIdentitySchemaAcceptsAFreshDatabase(t *testing.T) {
 	_, srv := newTestServer(t)
-	if err := assertIdentitySchema(context.Background(), readDB(t, srv)); err != nil {
+	if err := assertIdentitySchema(context.Background(), readDB(t, srv), srv.cfg.DBPath); err != nil {
 		t.Fatalf("assertIdentitySchema rejected a freshly migrated database: %v", err)
 	}
 }

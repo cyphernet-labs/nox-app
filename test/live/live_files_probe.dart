@@ -44,6 +44,12 @@ class _MemoryCursor implements SyncRepository {
   Future<String?> getEpoch() async => _epoch;
   @override
   Future<void> setEpoch(String epoch) async => _epoch = epoch;
+  @override
+  Future<String?> getJournal() async => _journal;
+  @override
+  Future<void> setJournal(String journalId) async => _journal = journalId;
+
+  String? _journal;
 }
 
 void main() {

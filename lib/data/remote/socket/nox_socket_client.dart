@@ -85,7 +85,10 @@ class NoxSocketClient {
   /// to whoever owns it, and a failure there must never cost the reconnect.
   void Function()? _onJournalChanged;
 
-  /// The store identity from the last greeting (contract §3).
+  /// The store identity from the last greeting (contract §3), mirrored from the
+  /// persisted value for tests to read. The AUTHORITY is the persisted one:
+  /// the case that actually happens is "the store was rebuilt and the app was
+  /// restarted", and an in-memory field is null by then.
   String? journalId;
 
   /// Last greeting's identity and limits — the server is the authority on both.
@@ -245,9 +248,14 @@ class NoxSocketClient {
       // mark is indistinguishable from a healthy one by cursor alone, so we
       // would apply strangers' events under numbers we already believe we hold.
       final serverJournal = data['journal_id'] as String?;
-      if (serverJournal != null && journalId != null && serverJournal != journalId) {
+      final knownJournal = await _syncRepository.getJournal();
+      if (serverJournal != null && knownJournal != null && serverJournal != knownJournal) {
         logRepository.debug(target: this, message: 'socket: server journal changed, local world is stale');
-        journalId = null;
+        // Recorded FIRST, and it outlives the wipe it is about to trigger:
+        // leaving the old name behind would make the next greeting look like
+        // another change and wipe again, on every reconnect, forever.
+        await _syncRepository.setJournal(serverJournal);
+        journalId = serverJournal;
         await _teardown(SessionPhase.disconnected);
         // Report, then retry regardless of what the owner of the local world
         // does with the news — a throw over there must not strand the socket.
@@ -259,7 +267,10 @@ class NoxSocketClient {
         _scheduleRetry();
         return;
       }
-      journalId = serverJournal ?? journalId;
+      if (serverJournal != null) {
+        if (knownJournal == null) await _syncRepository.setJournal(serverJournal);
+        journalId = serverJournal;
+      }
 
       _helloCursor = data['cursor'] as int? ?? 0;
       final id = data['identity'];

@@ -219,7 +219,7 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 	// pre-release rule edits it in place). Without this assertion the mismatch
 	// would degrade into an internal error on every greeting - a silent
 	// failure where a loud one is needed.
-	if err := assertIdentitySchema(ctx, dbs.Read); err != nil {
+	if err := assertIdentitySchema(ctx, dbs.Read, cfg.DBPath); err != nil {
 		return err
 	}
 	logger.Info("database ready", "path", cfg.DBPath, "schema_version", version)
@@ -287,7 +287,7 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 // assertIdentitySchema refuses to start on a database written before the
 // identity tables existed. See the call site for why the migration runner
 // cannot repair such a database on its own.
-func assertIdentitySchema(ctx context.Context, read *sql.DB) error {
+func assertIdentitySchema(ctx context.Context, read *sql.DB, dbPath string) error {
 	var present int
 	err := read.QueryRowContext(ctx,
 		"SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name IN ('users', 'devices', 'journal')").Scan(&present)
@@ -297,8 +297,8 @@ func assertIdentitySchema(ctx context.Context, read *sql.DB) error {
 	if present != 3 {
 		return fmt.Errorf(
 			"database schema predates the identity tables: the pre-release rule edits 001_init.sql in place, "+
-				"so delete the database file %s together with its -wal and -shm siblings and the files directory, then start again",
-			"(-db path)")
+				"so delete %s together with its -wal and -shm siblings and the %s-files directory, then start again",
+			dbPath, dbPath)
 	}
 	return nil
 }

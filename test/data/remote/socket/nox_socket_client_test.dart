@@ -133,7 +133,7 @@ void main() {
       first.pushGreeting();
       await waitUntil(() => first.commandNamed('session.hello') != null, reason: 'the client greets');
       first.replyToHello(cursor: 5, journalId: 'j_one');
-      await waitUntil(() => client.journalId == 'j_one', reason: 'the first journal is adopted');
+      await waitUntil(() async => await sync.getJournal() == 'j_one', reason: 'the first journal is persisted');
 
       // The server was rebuilt: same address, different world.
       await client.stop();
@@ -151,6 +151,31 @@ void main() {
       expect(client.currentPhase, isNot(SessionPhase.live));
     });
 
+    test('a journal remembered from a PREVIOUS run is compared, not just one seen this session', () async {
+      // The case that actually happens: the store was rebuilt and the app was
+      // restarted. An in-memory-only journal is null by then, so the client
+      // would adopt the new world while keeping the old cursor and never
+      // receive anything again - with no visible symptom.
+      await sync.setJournal('j_from_a_previous_run');
+      await sync.advanceCursor(42);
+
+      var reported = 0;
+      await client.start(
+        url: url,
+        credentialsProvider: () async => const GreetingCredentials(deviceKey: 'dev-1'),
+        onJournalChanged: () => reported++,
+      );
+      final socket = factory.latest;
+      socket.pushGreeting();
+      await waitUntil(() => socket.commandNamed('session.hello') != null, reason: 'the client greets');
+      socket.replyToHello(cursor: 1, journalId: 'j_rebuilt');
+
+      await waitUntil(() => reported == 1, reason: 'a journal from a previous run still counts');
+      // Recorded before the wipe it triggers, and it outlives that wipe: leaving
+      // the old name behind would wipe again on every later reconnect.
+      await waitUntil(() async => await sync.getJournal() == 'j_rebuilt', reason: 'the new journal replaces the remembered one');
+    });
+
     test('a journal-change handler that throws does not strand the socket', () async {
       await client.start(
         url: url,
@@ -161,7 +186,7 @@ void main() {
       first.pushGreeting();
       await waitUntil(() => first.commandNamed('session.hello') != null, reason: 'the client greets');
       first.replyToHello(cursor: 5, journalId: 'j_one');
-      await waitUntil(() => client.journalId == 'j_one', reason: 'the first journal is adopted');
+      await waitUntil(() async => await sync.getJournal() == 'j_one', reason: 'the first journal is persisted');
 
       await client.stop();
       await client.start(
@@ -175,7 +200,7 @@ void main() {
       second.replyToHello(cursor: 2, journalId: 'j_two');
 
       // A throw over there must cost neither the teardown nor the retry.
-      await waitUntil(() => client.journalId == null, reason: 'the stale journal is dropped');
+      await waitUntil(() async => await sync.getJournal() == 'j_two', reason: 'the new journal replaces the stale one');
     });
 
     test('the device offers its stored label and takes the identity the server returns', () async {
