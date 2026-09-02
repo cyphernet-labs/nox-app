@@ -241,10 +241,12 @@ class OutboxService {
       clientMessageId: entry.clientMessageId,
       code: exception is RepositoryException ? exception.name : 'unknown',
       terminal: terminal,
-      // The upload never reached a decision the server made about the MESSAGE,
-      // so it must not spend the refusal ladder that guards against a server
-      // saying no over and over.
-      serverAnswered: false,
+      // A dead channel is not an answer, but `internal` and `rate_limited` from
+      // `file.uploadBegin` ARE: the server looked at this file and said no. If
+      // none of them counted, an endpoint that refuses every upload would hold
+      // the one global queue — every chat, every later message — for good,
+      // which is the exact edge case the refusal cap exists to prevent.
+      serverAnswered: exception != RepositoryException.connection,
     );
     if (terminal) return '';
     _scheduleRetry(entry.clientMessageId, entry.attempts + 1);

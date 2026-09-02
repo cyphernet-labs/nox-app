@@ -57,7 +57,10 @@ class AppThreadViewWidget extends StatefulWidget {
   final VoidCallback? onInfo;
 
   /// Open the file view (5.3) for an attachment. Wired by callers; null → no-op.
-  final void Function(MessageAttachment attachment)? onOpenFile;
+  /// Opens the file screen. The message id travels with the attachment so a
+  /// download started there can be recorded against it — without it, the bytes
+  /// land in the cache and the thread still shows a chip.
+  final void Function(MessageAttachment attachment, String? messageId)? onOpenFile;
 
   /// Test-only seam: seed the debug [ChatThreadScenario] on init so golden tests can
   /// render the offline / send-error states deterministically (mirrors ChatsListPage).
@@ -287,7 +290,7 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
             attachment,
             onColor: isOwn ? colorScheme.onPrimaryContainer : colorScheme.onSurface,
             onImageTap: () => openImageViewer(context, attachment.localPath!),
-            onChipTap: () => widget.onOpenFile?.call(attachment),
+            onChipTap: () => widget.onOpenFile?.call(attachment, m.id),
           );
     Widget bubble = AppMessageBubbleWidget(isOwn: isOwn, text: m.text, time: DateFormatter.time(m.sentAt), status: m.status, file: file);
     final isFailed = isOwn && m.status == MessageStatus.error;

@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
@@ -37,11 +39,31 @@ class FileViewBloc extends BaseBloc<FileViewEvent, FileViewState> {
   final String? messageId;
 
   Future<void> _onStarted(FileViewEvent event, Emitter<FileViewState> emit) async {
+    // Everything below can throw — a directory query on a locked volume, a
+    // filesystem error. Unguarded, the screen would sit at "Downloading… 0%"
+    // for as long as the person is willing to watch it, with no error and no
+    // way to try again.
+    try {
+      await _fetch(emit);
+    } catch (error, stackTrace) {
+      logRepository.error(target: this, error: error, stackTrace: stackTrace);
+      if (!isClosed) emit(state.copyWith(status: FileViewStatus.failed));
+    }
+  }
+
+  Future<void> _fetch(Emitter<FileViewState> emit) async {
     final file = state.file;
 
     // Already on this device — picked here, sent from here, or fetched before.
-    // Nothing to do, and Save is live immediately.
-    final existing = file.localPath ?? await _files.localPathFor(fileId: file.id, suggestedName: file.name);
+    // Checked for EXISTENCE, not just for a non-null string: iOS rewrites the
+    // app-container path on every update, so a path stored months ago routinely
+    // points at nothing. Trusting it would leave the screen claiming to be
+    // ready over a file that is not there, and Save would fail on a button the
+    // screen said was live.
+    final stored = file.localPath;
+    final existing = (stored != null && File(stored).existsSync())
+        ? stored
+        : await _files.localPathFor(fileId: file.id, suggestedName: file.name);
     if (existing != null) {
       emit(
         state.copyWith(

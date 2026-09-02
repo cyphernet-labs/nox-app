@@ -25,10 +25,10 @@ import 'package:nox_app/presentation/widgets/shell/app_panel_header_widget.dart'
 /// Open the file view (5.3) adaptively: mobile pushes the full screen; desktop
 /// shows a centered lightbox dialog (corpus `08-file`). The tap target lives in the
 /// chat thread (5.2) and the chat card (5.4).
-Future<void> showFileView(BuildContext context, MessageAttachment file) => showAdaptiveLightbox(
+Future<void> showFileView(BuildContext context, MessageAttachment file, {String? messageId}) => showAdaptiveLightbox(
   context,
-  dialogChild: () => FileViewPage(file: file, inDialog: true),
-  route: () => FileViewPage.route(file),
+  dialogChild: () => FileViewPage(file: file, messageId: messageId, inDialog: true),
+  route: () => FileViewPage.route(file, messageId: messageId),
   maxWidth: AppDimensionTokens.layout.contentMaxW,
 );
 
@@ -281,12 +281,18 @@ class _FileViewPageState extends State<FileViewPage> {
           // in.
           switch (state.status) {
             FileViewStatus.gone => context.l10n.attachmentGone,
+            // A failure is not progress. Leaving the percentage here would say
+            // "still working" over a transfer that has stopped, and the only
+            // way back would be a snackbar that has already faded.
+            FileViewStatus.failed => context.l10n.fileDownloadError,
             FileViewStatus.ready => FileSizeFormatter.format(state.file.sizeBytes),
-            _ => context.l10n.downloadingProgress(state.percent),
+            FileViewStatus.downloading => context.l10n.downloadingProgress(state.percent),
           },
           textAlign: TextAlign.center,
           style: textTheme.bodyMedium?.copyWith(
-            color: state.status == FileViewStatus.gone ? colorScheme.error : colorScheme.onSurfaceVariant,
+            color: state.status == FileViewStatus.gone || state.status == FileViewStatus.failed
+                ? colorScheme.error
+                : colorScheme.onSurfaceVariant,
           ),
         ),
       ],

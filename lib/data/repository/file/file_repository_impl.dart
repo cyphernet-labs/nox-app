@@ -94,19 +94,29 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
       if (destination.existsSync()) return RepositoryResult<String>.success(data: destination.path);
       await destination.parent.create(recursive: true);
 
+      // Download to a SIDE file and rename on success. Dio writes straight to
+      // the path it is given, with no atomic finish, so a transfer cut short by
+      // a lost link or a killed process would leave a half file sitting exactly
+      // where a complete one belongs — and every later reader, this method
+      // included, treats existence as proof of completeness. The picture would
+      // render as garbage forever, and nothing would ever try again.
+      final partial = File('${destination.path}.part');
+      if (partial.existsSync()) await partial.delete();
+
       final ticket = unwrapEnvelope(await _remote.downloadBegin(fileId: fileId), 'downloadBegin');
       try {
         await _remote.getBytes(
           downloadPath: ticket.downloadUrl,
-          destination: destination,
+          destination: partial,
           onProgress: onProgress == null ? null : (done, total) => onProgress(total <= 0 ? 0 : done / total),
         );
       } on FileTransferException catch (e) {
-        // A half-written file would masquerade as a cached one on the next
-        // attempt, and the picture would render as garbage.
-        if (destination.existsSync()) await destination.delete();
+        if (partial.existsSync()) await partial.delete();
         throw e.failure == FileTransferFailure.sizeMismatch ? RepositoryException.invalidRequest : RepositoryException.connection;
       }
+      // The rename is the moment the file becomes real. Before it, nothing that
+      // looks like a cache hit exists.
+      await partial.rename(destination.path);
       return RepositoryResult<String>.success(data: destination.path);
     });
   }

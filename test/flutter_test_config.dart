@@ -27,7 +27,16 @@ Future<void> testExecutable(FutureOr<void> Function() testMain) async {
 /// bar rather than as a plugin error, so it is worth handling once here instead
 /// of in each test that happens to touch a file.
 void _mockPathProvider() {
-  final root = Directory('${Directory.systemTemp.path}/nox_test_paths')..createSync(recursive: true);
+  // A FRESH directory per run, not one shared forever: a file cached by one
+  // test would otherwise satisfy the next one's cache check and hide exactly
+  // the failure that test exists to catch.
+  // A fresh directory per test PROCESS. `flutter test` runs each file in its
+  // own isolate, so this is per-file isolation — enough that a file cached by
+  // one suite cannot satisfy another's cache check and hide the failure that
+  // check exists to catch. It is not cleaned up here: this hook runs outside
+  // any test, so there is nothing to hang a teardown on, and the OS reclaims a
+  // temp directory anyway.
+  final root = Directory.systemTemp.createTempSync('nox_test_paths');
   TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
     const MethodChannel('plugins.flutter.io/path_provider'),
     (call) async => root.path,

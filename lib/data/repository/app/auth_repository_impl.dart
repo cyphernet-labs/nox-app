@@ -1,8 +1,10 @@
 import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
 import 'package:nox_app/data/sync/outbox_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
+import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/repository/app/app_state_repository.dart';
 import 'package:nox_app/domain/repository/app/auth_repository.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
@@ -106,7 +108,23 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
           // Downloaded bytes go with them, and for the same reason: they are
           // other people's pictures, sitting in a cache on a device that has
           // just been handed back to nobody in particular.
-          await _fileRepository.clean();
+          //
+          // Guarded, and deliberately: this is the only filesystem delete in
+          // the wipe and the one most able to fail — a file still open from an
+          // in-flight download is enough on Windows. Letting it throw would
+          // abandon the wipe half-done and leave the previous identity's chats,
+          // messages and cursor on disk, which is far worse than a cached
+          // picture surviving. Best-effort here, loud in the log.
+          try {
+            await _fileRepository.clean();
+          } catch (error, stackTrace) {
+            logRepository.error(target: this, error: error, stackTrace: stackTrace);
+          }
+          // The prefetch remembers which files it already tried. That memory
+          // belongs to the identity that was signed in: without clearing it,
+          // the next person's pictures are never fetched for the life of the
+          // process, because their message ids may repeat ours.
+          if (getIt.isRegistered<AttachmentPrefetchService>()) getIt<AttachmentPrefetchService>().reset();
           // The cursor goes next: a crash mid-wipe must leave it behind the
           // stores (safe - replay re-applies idempotently), never ahead of an
           // emptied store (a stale high `since` would skip every row below it

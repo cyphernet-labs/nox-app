@@ -70,7 +70,11 @@ void main() {
     // The one place both transports meet, wired the way the app wires it.
     final config = getIt<AppConfigRepository>();
     await config.initialize(flavorType: AppFlavorType.stage);
-    final api = ApiClient(config)..dio.options.baseUrl = 'http://127.0.0.1:8080';
+    // Wired exactly as the app wires it — through initBase(), not by setting
+    // the base URL here. Doing it by hand is what let a build with no base URL
+    // at all pass this probe: every transfer would have failed in the real app
+    // and the probe would have been green.
+    final api = ApiClient(config)..initBase();
     final files = FileRepositoryImpl(RealFileRemoteDataSource(socket, api), config);
 
     // Bytes that could not be mistaken for anything else.

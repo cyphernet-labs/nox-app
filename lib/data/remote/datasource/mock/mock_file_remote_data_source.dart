@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/entity/base/error_wire_entity.dart';
+import 'package:nox_app/data/exception/file_transfer_exception.dart';
 import 'package:nox_app/data/entity/base/response_entity.dart';
 import 'package:nox_app/data/entity/file/upload_ticket_wire_entity.dart';
 import 'package:nox_app/data/remote/datasource/file_remote_data_source.dart';
@@ -85,7 +86,12 @@ class MockFileRemoteDataSource implements FileRemoteDataSource {
   Future<void> getBytes({required String downloadPath, required File destination, TransferProgress? onProgress}) async {
     final id = downloadPath.split('/').last.replaceFirst('get_', '');
     final source = _stored[id];
-    if (source == null || !File(source).existsSync()) return;
+    // The server answers a bare 404 here; returning quietly would let the
+    // repository treat an empty destination as a complete download, and the
+    // suite would be green over a defect.
+    if (source == null || !File(source).existsSync()) {
+      throw const FileTransferException(FileTransferFailure.passRejected);
+    }
     await File(source).copy(destination.path);
     final total = await destination.length();
     onProgress?.call(total, total);
