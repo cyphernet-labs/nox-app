@@ -8,7 +8,7 @@ void main() {
       'message_id': 'm_51c',
       'seq': 1042,
       'chat_id': 'c_9f2',
-      'author_id': 'Anna',
+      'author_id': 'u_3f2a1c9d40b7e518',
       'author_label': 'Anna',
       'client_message_id': '3f0e-uuid',
       'sent_at': 1755600123,
@@ -22,7 +22,7 @@ void main() {
       expect(entity.messageId, 'm_51c');
       expect(entity.seq, 1042);
       expect(entity.chatId, 'c_9f2');
-      expect(entity.authorId, 'Anna');
+      expect(entity.authorId, 'u_3f2a1c9d40b7e518');
       expect(entity.authorLabel, 'Anna');
       expect(entity.clientMessageId, '3f0e-uuid');
       expect(entity.sentAt, 1755600123);

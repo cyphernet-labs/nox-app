@@ -1,13 +1,14 @@
 {
   "schema": 1,
   "cursor": 0,
+  "journal_id": "j_7c1e4a90b3d2f6a1",
   "limits": {
     "max_message_bytes": 65536,
     "max_attachment_bytes": 104857600,
     "max_frame_bytes": 131072
   },
   "identity": {
-    "id": "Anna",
+    "id": "u_3f2a1c9d40b7e518",
     "label": "Anna"
   }
 }

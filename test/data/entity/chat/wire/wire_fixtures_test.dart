@@ -59,7 +59,14 @@ void main() {
       );
       expect(parsed, ServerLimits.contractDefaults);
       expect(raw['cursor'], isA<int>());
-      expect((raw['identity'] as Map<String, dynamic>)['label'], 'Anna');
+      final identity = raw['identity'] as Map<String, dynamic>;
+      expect(identity['label'], 'Anna');
+      // The author id is the PERSON, not the display name: since feature 030 a
+      // fixture carrying identity.id == label would assert a frame the server
+      // no longer produces.
+      expect(identity['id'], isNot(identity['label']));
+      expect(identity['id'], matches(RegExp(r'^u_[0-9a-f]{16}$')));
+      expect(raw['journal_id'], isNotNull);
     });
 
     for (final name in ['chat_create_echo.json', 'chat_rename_echo.json', 'chat_created_event.json', 'chat_updated_event.json']) {
