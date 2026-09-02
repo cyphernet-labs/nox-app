@@ -5,6 +5,7 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -12,7 +13,6 @@ import (
 	"net/http"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -48,7 +48,6 @@ type Server struct {
 
 	pingInterval time.Duration
 	writeTimeout time.Duration
-	userSeq      atomic.Int64
 
 	// kick wakes the event dispatcher after a committed mutation; capacity 1
 	// coalesces bursts (the dispatcher drains the log until it is current).
@@ -215,6 +214,14 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 	if err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
+	// The runner skips migrations it has already applied, so an edited
+	// 001_init.sql never reaches a database that predates this feature (the
+	// pre-release rule edits it in place). Without this assertion the mismatch
+	// would degrade into an internal error on every greeting - a silent
+	// failure where a loud one is needed.
+	if err := assertIdentitySchema(ctx, dbs.Read, cfg.DBPath); err != nil {
+		return err
+	}
 	logger.Info("database ready", "path", cfg.DBPath, "schema_version", version)
 
 	bl, err := blob.Open(cfg.FilesPath)
@@ -224,7 +231,11 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 	defer func() { _ = bl.Close() }()
 
 	h := hub.New()
-	srv := New(cfg, store.New(dbs.Read, dbs.Write), h, bl, logger)
+	st := store.New(dbs.Read, dbs.Write)
+	if err := st.EnsureJournal(ctx); err != nil {
+		return fmt.Errorf("ensure journal: %w", err)
+	}
+	srv := New(cfg, st, h, bl, logger)
 
 	// Startup sweep before endpoints open (research R10): abandoned uploads
 	// older than a day are the only garbage under indefinite retention.
@@ -271,4 +282,23 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 		return nil
 	})
 	return g.Wait()
+}
+
+// assertIdentitySchema refuses to start on a database written before the
+// identity tables existed. See the call site for why the migration runner
+// cannot repair such a database on its own.
+func assertIdentitySchema(ctx context.Context, read *sql.DB, dbPath string) error {
+	var present int
+	err := read.QueryRowContext(ctx,
+		"SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name IN ('users', 'devices', 'journal')").Scan(&present)
+	if err != nil {
+		return fmt.Errorf("inspect schema: %w", err)
+	}
+	if present != 3 {
+		return fmt.Errorf(
+			"database schema predates the identity tables: the pre-release rule edits 001_init.sql in place, "+
+				"so delete %s together with its -wal and -shm siblings and the %s-files directory, then start again",
+			dbPath, dbPath)
+	}
+	return nil
 }

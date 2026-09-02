@@ -1,10 +1,13 @@
 import 'dart:async';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
+import 'package:nox_app/general/identity/identifier_digest.dart';
 import 'package:nox_app/data/remote/socket/socket_channel_factory.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
@@ -57,8 +60,15 @@ void main() {
   }
 
   /// Connects and greets, returning the fake the client is talking to.
-  Future<FakeSocket> connect({int cursor = 0, String? label}) async {
-    await client.start(url: url, labelProvider: label == null ? null : () async => label);
+  /// Connects a device that ALREADY belongs to this world: a stored cursor
+  /// without a stored journal is the upgrade case, which tears the session down
+  /// on purpose, so tests about replay have to say which world they are in.
+  Future<FakeSocket> connect({int cursor = 0, String? label, String? loginRef, String? deviceKey}) async {
+    if (await sync.getCursor() > 0) await sync.setJournal('j_test');
+    await client.start(
+      url: url,
+      credentialsProvider: () async => GreetingCredentials(loginRef: loginRef, deviceKey: deviceKey, label: label),
+    );
     final socket = factory.latest;
     socket.pushGreeting();
     // The client answers the greeting only after an async cursor read, so wait
@@ -93,6 +103,160 @@ void main() {
       expect((socket.commandNamed('session.hello')!['data'] as Map<String, dynamic>)['since'], 41);
       // There is history to receive, so the session is behind until it arrives.
       expect(client.currentPhase, SessionPhase.catchingUp);
+    });
+
+    test('the greeting carries the login derivation and the device id, and never the raw identifier', () async {
+      const identifier = 'NOX-raw-secret-value';
+      final socket = await connect(cursor: 3, loginRef: IdentifierDigest.loginRef(identifier), deviceKey: 'dev-1');
+
+      final data = socket.commandNamed('session.hello')!['data'] as Map<String, dynamic>;
+      expect(data['login_ref'], IdentifierDigest.loginRef(identifier));
+      expect(data['device_key'], 'dev-1');
+      // The identifier is a bearer secret: it must not reach the wire in any
+      // shape, so assert against the whole frame rather than the one field.
+      expect(jsonEncode(socket.commandNamed('session.hello')), isNot(contains(identifier)));
+    });
+
+    test('a greeting with nothing to claim omits both fields rather than sending empties', () async {
+      final socket = await connect(cursor: 3);
+
+      final data = socket.commandNamed('session.hello')!['data'] as Map<String, dynamic>;
+      expect(data.containsKey('login_ref'), isFalse);
+      expect(data.containsKey('device_key'), isFalse);
+      expect(data.containsKey('label'), isFalse);
+    });
+
+    test('a changed journal id tears the session down instead of applying a stranger world', () async {
+      var reported = 0;
+      await client.start(
+        url: url,
+        credentialsProvider: () async => const GreetingCredentials(deviceKey: 'dev-1'),
+        onJournalChanged: () => reported++,
+      );
+      final first = factory.latest;
+      first.pushGreeting();
+      await waitUntil(() => first.commandNamed('session.hello') != null, reason: 'the client greets');
+      first.replyToHello(cursor: 5, journalId: 'j_one');
+      await waitUntil(() async => await sync.getJournal() == 'j_one', reason: 'the first journal is persisted');
+
+      // The server was rebuilt: same address, different world.
+      await client.stop();
+      await client.start(
+        url: url,
+        credentialsProvider: () async => const GreetingCredentials(deviceKey: 'dev-1'),
+        onJournalChanged: () => reported++,
+      );
+      final second = factory.latest;
+      second.pushGreeting();
+      await waitUntil(() => second.commandNamed('session.hello') != null, reason: 'the client greets again');
+      second.replyToHello(cursor: 2, journalId: 'j_two');
+
+      await waitUntil(() => reported == 1, reason: 'the change is reported exactly once');
+      expect(client.currentPhase, isNot(SessionPhase.live));
+    });
+
+    test('a cursor with no remembered journal is treated as a world change — the upgrade case', () async {
+      // Every install from before this release is exactly this: it holds a
+      // cursor learned from some world, and no journal record because the field
+      // did not exist. Reading that as "no divergence" would opt the check out
+      // of the one transition it was built for.
+      await sync.advanceCursor(42);
+      expect(await sync.getJournal(), isNull);
+
+      var reported = 0;
+      await client.start(
+        url: url,
+        credentialsProvider: () async => const GreetingCredentials(deviceKey: 'dev-1'),
+        onJournalChanged: () => reported++,
+      );
+      final socket = factory.latest;
+      socket.pushGreeting();
+      await waitUntil(() => socket.commandNamed('session.hello') != null, reason: 'the client greets');
+      socket.replyToHello(cursor: 1, journalId: 'j_rebuilt');
+
+      await waitUntil(() => reported == 1, reason: 'an unremembered journal with a cursor is a change');
+      await waitUntil(() async => await sync.getJournal() == 'j_rebuilt', reason: 'the new journal is recorded');
+    });
+
+    test('a FIRST-EVER connection adopts the journal without calling it a change', () async {
+      // Nothing cached, nothing to discard: the empty world must not be
+      // reported as stale or the app would wipe on every fresh install.
+      var reported = 0;
+      await client.start(
+        url: url,
+        credentialsProvider: () async => const GreetingCredentials(deviceKey: 'dev-1'),
+        onJournalChanged: () => reported++,
+      );
+      final socket = factory.latest;
+      socket.pushGreeting();
+      await waitUntil(() => socket.commandNamed('session.hello') != null, reason: 'the client greets');
+      socket.replyToHello(cursor: 3, journalId: 'j_first');
+
+      await waitUntil(() async => await sync.getJournal() == 'j_first', reason: 'the journal is adopted');
+      expect(reported, 0);
+    });
+
+    test('a provider that cannot tell who we are defers the greeting instead of claiming nobody', () async {
+      await client.start(url: url, credentialsProvider: () async => null);
+      final socket = factory.latest;
+      socket.pushGreeting();
+      // Greeting anonymously would take a throw-away identity and write rows
+      // under it, so nothing is sent at all.
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      expect(socket.commandNamed('session.hello'), isNull);
+      expect(client.currentPhase, isNot(SessionPhase.live));
+    });
+
+    test('a journal remembered from a PREVIOUS run is compared, not just one seen this session', () async {
+      // The case that actually happens: the store was rebuilt and the app was
+      // restarted. An in-memory-only journal is null by then, so the client
+      // would adopt the new world while keeping the old cursor and never
+      // receive anything again - with no visible symptom.
+      await sync.setJournal('j_from_a_previous_run');
+      await sync.advanceCursor(42);
+
+      var reported = 0;
+      await client.start(
+        url: url,
+        credentialsProvider: () async => const GreetingCredentials(deviceKey: 'dev-1'),
+        onJournalChanged: () => reported++,
+      );
+      final socket = factory.latest;
+      socket.pushGreeting();
+      await waitUntil(() => socket.commandNamed('session.hello') != null, reason: 'the client greets');
+      socket.replyToHello(cursor: 1, journalId: 'j_rebuilt');
+
+      await waitUntil(() => reported == 1, reason: 'a journal from a previous run still counts');
+      // Recorded before the wipe it triggers, and it outlives that wipe: leaving
+      // the old name behind would wipe again on every later reconnect.
+      await waitUntil(() async => await sync.getJournal() == 'j_rebuilt', reason: 'the new journal replaces the remembered one');
+    });
+
+    test('a journal-change handler that throws does not strand the socket', () async {
+      await client.start(
+        url: url,
+        credentialsProvider: () async => const GreetingCredentials(deviceKey: 'dev-1'),
+        onJournalChanged: () => throw StateError('the owner of the local world failed'),
+      );
+      final first = factory.latest;
+      first.pushGreeting();
+      await waitUntil(() => first.commandNamed('session.hello') != null, reason: 'the client greets');
+      first.replyToHello(cursor: 5, journalId: 'j_one');
+      await waitUntil(() async => await sync.getJournal() == 'j_one', reason: 'the first journal is persisted');
+
+      await client.stop();
+      await client.start(
+        url: url,
+        credentialsProvider: () async => const GreetingCredentials(deviceKey: 'dev-1'),
+        onJournalChanged: () => throw StateError('the owner of the local world failed'),
+      );
+      final second = factory.latest;
+      second.pushGreeting();
+      await waitUntil(() => second.commandNamed('session.hello') != null, reason: 'the client greets again');
+      second.replyToHello(cursor: 2, journalId: 'j_two');
+
+      // A throw over there must cost neither the teardown nor the retry.
+      await waitUntil(() async => await sync.getJournal() == 'j_two', reason: 'the new journal replaces the stale one');
     });
 
     test('the device offers its stored label and takes the identity the server returns', () async {

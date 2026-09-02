@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:uuid/uuid.dart';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/domain/model/app/session_model.dart';
@@ -32,6 +33,15 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   /// The author id the server assigned; open data, so prefs rather than the
   /// keychain — the login identifier is the secret, this is not.
   static const String _kAuthorId = 'session.author_id';
+
+  /// This installation's own id, presented as `device_key`. Secure storage
+  /// rather than prefs: it is not a secret the way the login identifier is, but
+  /// it is device-scoped state that must die with a logout, and deleteAll is
+  /// what guarantees that.
+  static const String _kDeviceId = 'session.device_id';
+
+  /// Raised by a rename, cleared once the server echoes the new name back.
+  static const String _kLabelDirty = 'session.label_dirty';
 
   @override
   Future<RepositoryResult<SessionModel?>> readSession() {
@@ -71,8 +81,13 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   Future<RepositoryResult<bool>> setOnboardingComplete({String? label}) {
     return execute<bool>(() async {
       await _prefs.setBool(_kOnboardingComplete, true);
-      if (label != null) await _prefs.setString(_kLabel, label);
-      if (label != null) _emitLabel(label);
+      if (label != null) {
+        await _prefs.setString(_kLabel, label);
+        // The name has to reach the server, and a greeting only states one when
+        // this flag is up.
+        await _prefs.setBool(_kLabelDirty, true);
+        _emitLabel(label);
+      }
       return const RepositoryResult<bool>.success(data: true);
     });
   }
@@ -81,7 +96,13 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   Future<RepositoryResult<bool>> adoptServerIdentity({required String authorId, required String label}) {
     return execute<bool>(() async {
       await _prefs.setString(_kAuthorId, authorId);
-      final changed = _prefs.getString(_kLabel) != label;
+      final cached = _prefs.getString(_kLabel);
+      // Cleared only when the server came back with the very name this device
+      // is asserting. An unconditional clear loses a rename: a reconnect that
+      // stated nothing echoes the OLD name, and the flag would drop before the
+      // new one was ever sent.
+      if (cached == null || cached == label) await _prefs.remove(_kLabelDirty);
+      final changed = cached != label;
       if (changed) {
         await _prefs.setString(_kLabel, label);
         // Only announce a real change: a reconnect that confirms the current
@@ -97,6 +118,7 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
     return execute<bool>(() async {
       // Label only — the secure identifier is rename-invariant (FR-009).
       await _prefs.setString(_kLabel, label);
+      await _prefs.setBool(_kLabelDirty, true);
       _emitLabel(label);
       return const RepositoryResult<bool>.success(data: true);
     });
@@ -111,6 +133,42 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   }
 
   @override
+  Future<RepositoryResult<String>> deviceId() {
+    return execute<String>(() async {
+      final stored = await _secureStorage.read(key: _kDeviceId);
+      if (stored != null && stored.isNotEmpty) {
+        return RepositoryResult<String>.success(data: stored);
+      }
+      final minted = const Uuid().v4();
+      await _secureStorage.write(key: _kDeviceId, value: minted);
+      return RepositoryResult<String>.success(data: minted);
+    });
+  }
+
+  @override
+  Future<RepositoryResult<bool>> isLabelDirty() {
+    return execute<bool>(() async {
+      return RepositoryResult<bool>.success(data: _prefs.getBool(_kLabelDirty) ?? false);
+    });
+  }
+
+  @override
+  Future<RepositoryResult<bool>> markLabelDirty() {
+    return execute<bool>(() async {
+      await _prefs.setBool(_kLabelDirty, true);
+      return const RepositoryResult<bool>.success(data: true);
+    });
+  }
+
+  @override
+  Future<RepositoryResult<bool>> forgetAuthorId() {
+    return execute<bool>(() async {
+      await _prefs.remove(_kAuthorId);
+      return const RepositoryResult<bool>.success(data: true);
+    });
+  }
+
+  @override
   Future<RepositoryResult<bool>> clear() {
     return execute<bool>(() async {
       await _secureStorage.deleteAll();
@@ -120,6 +178,7 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       // Leaving it behind would let the next sign-in inherit it and mark that
       // stranger's messages as its own until the next greeting overwrote it.
       await _prefs.remove(_kAuthorId);
+      await _prefs.remove(_kLabelDirty);
       _emitLabel(null); // logout resets every label surface to the fallback
       return const RepositoryResult<bool>.success(data: true);
     });

@@ -129,7 +129,7 @@ func TestStoryTwoTailLatencyOverLargeHistory(t *testing.T) {
 		t.Fatalf("seed chat: %v", err)
 	}
 	for i := range 1000 {
-		if _, _, _, err := srv.store.SendMessage(t.Context(), chat.ChatID, fmt.Sprintf("b%d", i), "Seeder", "Seeder",
+		if _, _, _, err := srv.store.SendMessage(t.Context(), chat.ChatID, fmt.Sprintf("b%d", i), person(t, srv.store, "Seeder"),
 			[]byte(`{"type":"text","text":"bulk"}`), "", int64(200+i)); err != nil {
 			t.Fatalf("seed message %d: %v", i, err)
 		}

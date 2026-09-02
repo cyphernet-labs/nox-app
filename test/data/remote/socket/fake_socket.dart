@@ -39,11 +39,12 @@ class FakeSocket implements SocketConnection {
   }
 
   /// A successful greeting reply carrying the catch-up cursor and identity.
-  void replyToHello({required int cursor, String label = 'Anna'}) => reply(
+  void replyToHello({required int cursor, String label = 'Anna', String journalId = 'j_test'}) => reply(
     sent.indexWhere((f) => f['cmd'] == 'session.hello'),
     data: {
       'schema': 1,
       'cursor': cursor,
+      'journal_id': journalId,
       'limits': {'max_message_bytes': 65536, 'max_attachment_bytes': 104857600, 'max_frame_bytes': 131072},
       'identity': {'id': 'u_1', 'label': label},
     },

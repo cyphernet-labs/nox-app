@@ -21,6 +21,13 @@ class SyncDao {
   static const String _kEpochKey = 'epoch';
   static const String _kEpochField = 'source';
 
+  /// The server's own name for its store (contract §3 `journal_id`). Its own
+  /// record for the same reason the epoch has one, and it must OUTLIVE the wipe
+  /// it triggers: forgetting it would make the very next greeting look like
+  /// another change and wipe again, forever.
+  static const String _kJournalKey = 'journal';
+  static const String _kJournalField = 'id';
+
   Future<int> readSince() async {
     final db = await _database.db;
     final record = await _store.record(_kStateKey).get(db);
@@ -58,8 +65,21 @@ class SyncDao {
     await _store.record(_kEpochKey).put(db, {_kEpochField: epoch});
   }
 
-  /// Drops the cursor. The epoch deliberately SURVIVES: it describes which world
-  /// the local data came from, and a logout does not change that world.
+  Future<String?> readJournal() async {
+    final db = await _database.db;
+    final record = await _store.record(_kJournalKey).get(db);
+    final value = record?[_kJournalField];
+    return value is String ? value : null;
+  }
+
+  Future<void> writeJournal(String journalId) async {
+    final db = await _database.db;
+    await _store.record(_kJournalKey).put(db, {_kJournalField: journalId});
+  }
+
+  /// Drops the cursor. The epoch and the journal id deliberately SURVIVE: both
+  /// describe which world the local data came from, and neither a logout nor
+  /// the wipe that follows a change of world changes what the world now IS.
   Future<void> cleanData() async {
     final db = await _database.db;
     await _store.record(_kStateKey).delete(db);

@@ -12,6 +12,7 @@ import (
 
 	"nox.app/client-backend/internal/hub"
 	"nox.app/client-backend/internal/protocol"
+	"nox.app/client-backend/internal/store"
 )
 
 // client is one WebSocket connection. One goroutine reads (the HTTP handler),
@@ -31,7 +32,11 @@ type client struct {
 
 	// Owned by the read goroutine.
 	helloDone bool
-	label     string
+	// identity is the person this connection speaks as, resolved once during
+	// the greeting. label mirrors identity.Label for the chat-creation path,
+	// which records a name rather than an id.
+	identity store.Identity
+	label    string
 }
 
 func newClient(srv *Server, conn *websocket.Conn, parent context.Context, logger *slog.Logger) *client {
@@ -126,7 +131,7 @@ func (c *client) writePump() {
 
 // forward moves live hub envelopes into the outbound queue. It starts after
 // the hello replay is queued, preserving subscribe -> reply -> replay ->
-// live. Reading c.label here is safe: it is written once before this
+// live. Reading c.identity here is safe: it is written once before this
 // goroutine starts and never changes (duplicate hello is rejected).
 func (c *client) forward() {
 	for {
@@ -135,7 +140,7 @@ func (c *client) forward() {
 			if !ok {
 				return
 			}
-			if !c.enqueueLive(env.FrameFor(c.label)) {
+			if !c.enqueueLive(env.FrameFor(c.identity.UserID)) {
 				return
 			}
 		case <-c.ctx.Done():

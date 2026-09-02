@@ -8,11 +8,15 @@ SQLite, single static CGO-free binary.
 **The contract is law:** `docs/client-backend/protocol/contract-draft.md`
 (v0). Every command, event, field name, error code and rule comes from
 there; a change needed on the wire is first a contract edit, then code.
-Stage 1 implements everything EXCEPT authentication: the `srv` greeting
-carries a challenge but `device_key`/`signature` in `session.hello` are
-accepted and ignored. Stage 2 (pairing per
-`docs/client-backend/architecture/authentication.md`) is deliberately
-out of scope — do not add auth checks, token tables or crypto now.
+Stage 1 implements everything EXCEPT authentication. Since feature 030 the
+greeting RESOLVES an identity: `login_ref` names the person, `device_key`
+names the install, and both are recorded without being proved — `signature`
+is still ignored and the `srv` challenge still unchecked. Stage 2 (pairing
+per `docs/client-backend/architecture/authentication.md`) is deliberately
+out of scope: identity and device tables without any verification are the
+sanctioned groundwork, but do not add signature checks, token tables or
+cryptography of any kind. No hashing happens in this program — `login_ref`
+arrives ready-made and is an opaque lookup key.
 
 Architecture rationale lives in `docs/blueprints/client-backend/README.md`;
 Go style rules live in the `go-style` skill; WebSocket/REST runtime
@@ -49,10 +53,12 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 3. **Transactional outbox.** Every mutation visible on the wire as an
    event inserts its `events` row in the SAME transaction; broadcasting
    happens only AFTER `Commit` returns (via the dispatcher). Never
-   broadcast inside a transaction. The file-metadata lifecycle
-   (upload registration, mark-uploaded, orphan sweep) is deliberately
-   event-less: files surface to other clients only through
-   `message.send`.
+   broadcast inside a transaction. Two lifecycles are deliberately
+   event-less: file metadata (upload registration, mark-uploaded, orphan
+   sweep), because files surface to other clients only through
+   `message.send`; and identity resolution (`internal/store/identity.go`),
+   because a person or a device coming into being is not visible on the
+   wire at all.
 4. **Write transactions are milliseconds.** No network I/O, no WebSocket
    sends, no sleeping between `BeginTx` and `Commit`.
 5. **`seq` is a strictly increasing total order** (single writer +
@@ -75,9 +81,10 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
    `Close(StatusGoingAway)` (Shutdown does NOT wait for hijacked conns —
    keep the conn registry wired via `RegisterOnShutdown`) → hub stops →
    DB closes. Preserve it.
-10. **Idempotency:** `message.send` is keyed by `client_message_id`
-    (UNIQUE); a replayed command returns the original echo, never a
-    duplicate row.
+10. **Idempotency:** `message.send` is keyed by `(author_id,
+    client_message_id)`; a replayed command returns the original echo,
+    never a duplicate row. Per person, so two people colliding on a send
+    key do not collide with each other.
 11. **Envelope discipline (contract §2):** four frame kinds only
     (`srv`/`cmd`/`ok`+`error`/`event`); unknown fields in incoming
     frames are ignored (v0 evolves); unknown commands answer
@@ -113,6 +120,9 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - `internal/config/`     — flags + `NOX_*` env, validated at start
 - `internal/db/`         — pools, pragmas, `user_version` migration runner
 - `internal/store/`      — types + all reads/writes; the ONLY writer code
+- `internal/store/identity.go` — identity resolution: person by `login_ref`,
+  device by `device_key`, the person wins on conflict; the second event-less
+  write besides file metadata
 - `internal/hub/`        — fan-out goroutine owning the subscriber set
 - `internal/protocol/`   — envelope v0 types, error codes, frame (un)marshal
 - `internal/server/`     — ServeMux wiring: `/ws`, REST (§1 of contract), middleware
@@ -138,7 +148,13 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 
 ## Known deliberate omissions (do not "fix" silently)
 
-- No authentication (stage 2) — greeting challenge is sent but unchecked.
+- No authentication (stage 2) — greeting challenge is sent but unchecked,
+  and `login_ref`/`device_key` are believed rather than proved. That is no
+  weaker than what preceded it, where a bare display name was taken at
+  face value, and it is the exact shape stage 2 needs.
+- `users.label` is neither unique nor validated (owner, 2026-09-02): a
+  greeting may never be refused because of a name, since the client
+  retries a refused greeting forever.
 - No push, no `chat.markRead`, message `body` is open text — all gated
   by open questions; see contract §8 before touching.
 - Cyrillic never appears in code, comments, or commit messages.

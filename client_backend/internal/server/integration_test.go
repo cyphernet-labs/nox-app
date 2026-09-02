@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -168,8 +169,13 @@ func TestStoryOneLiveExchange(t *testing.T) {
 
 	var ident identity
 	mustUnmarshal(t, helloData["identity"], &ident)
-	if ident.Label != "Anna" || ident.ID != "Anna" {
-		t.Fatalf("identity = %+v, want stage-1 stub Anna/Anna", ident)
+	// The author id is the person, not the name: a rename must not rewrite who
+	// owns the history, and a name must not double as credentials.
+	if ident.Label != "Anna" {
+		t.Fatalf("identity label = %q, want Anna", ident.Label)
+	}
+	if !regexp.MustCompile(`^u_[0-9a-f]{16}$`).MatchString(ident.ID) {
+		t.Fatalf("identity id = %q, want the u_<16 hex> shape", ident.ID)
 	}
 
 	bob := dialWS(t, ts)
@@ -398,8 +404,24 @@ func TestStoryOneDefaultLabelFallback(t *testing.T) {
 	data := c.hello(1, ``)
 	var ident identity
 	mustUnmarshal(t, data["identity"], &ident)
-	if ident.Label != "User1" || ident.ID != "User1" {
-		t.Fatalf("identity = %+v, want the User1 fallback", ident)
+	// The design spec asks for User<random>; the counter this replaced lived in
+	// process memory, so it both repeated names after a restart and reset to
+	// User1.
+	if !regexp.MustCompile(`^User[0-9]{4}$`).MatchString(ident.Label) {
+		t.Fatalf("assigned label = %q, want the User<4 digits> shape", ident.Label)
+	}
+
+	// A second nameless connection is a different person. Their NAMES are not
+	// asserted to differ: neither connection writes a users row (both are
+	// ephemeral until they send something), so the de-duplication in
+	// assignedLabelTx has nothing to see and a collision is possible by design -
+	// labels are not unique, by owner decision.
+	c2 := dialWS(t, ts)
+	c2.expectGreeting()
+	var ident2 identity
+	mustUnmarshal(t, c2.hello(1, ``)["identity"], &ident2)
+	if ident2.ID == ident.ID {
+		t.Fatalf("two nameless connections share the identity %q", ident.ID)
 	}
 }
 

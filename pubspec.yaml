@@ -27,6 +27,10 @@ dependencies:
   collection: 1.19.1
   intl: 0.20.2
   uuid: ^4.5.3
+  # SHA-256 for the login_ref derivation (contract v0 §3). The SDK has no hash
+  # functions at all, and the value has to be reproducible byte for byte across
+  # installs, so a hand-rolled digest is the one thing that must not happen here.
+  crypto: ^3.0.6
 
   # --- DI ---
   injectable: ^3.0.0

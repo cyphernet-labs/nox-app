@@ -35,18 +35,26 @@ func validChatName(raw string) (string, bool) {
 // helloRequest mirrors contract §3. device_key and signature are accepted and
 // ignored on stage 1 (constitution VII: no authentication yet).
 type helloRequest struct {
-	Schema    int    `json:"schema"`
-	Since     *int64 `json:"since"`
-	Label     string `json:"label"`
+	Schema int    `json:"schema"`
+	Since  *int64 `json:"since"`
+	Label  string `json:"label"`
+	// LoginRef identifies the PERSON: a one-way derivation of the login
+	// identifier, computed on the device (contract §3). The server never
+	// computes it, never reverses it and never validates it - it is an opaque
+	// lookup key. DeviceKey identifies the INSTALL; on stage 1 it carries an
+	// opaque per-install id rather than key material. Signature stays ignored
+	// until stage 2.
+	LoginRef  string `json:"login_ref"`
 	DeviceKey string `json:"device_key"`
 	Signature string `json:"signature"`
 }
 
 type helloReply struct {
-	Schema   int           `json:"schema"`
-	Cursor   int64         `json:"cursor"`
-	Limits   config.Limits `json:"limits"`
-	Identity identity      `json:"identity"`
+	Schema    int           `json:"schema"`
+	Cursor    int64         `json:"cursor"`
+	JournalID string        `json:"journal_id"`
+	Limits    config.Limits `json:"limits"`
+	Identity  identity      `json:"identity"`
 }
 
 type identity struct {
@@ -71,9 +79,24 @@ func (c *client) handleSessionHello(cmd protocol.Command) {
 		return
 	}
 
-	c.label = strings.TrimSpace(req.Label)
-	if c.label == "" {
-		c.label = fmt.Sprintf("User%d", c.srv.userSeq.Add(1))
+	// Resolve BEFORE registering with the hub: this writes, and invariant 4
+	// forbids a write transaction straddling hub registration. Failing here
+	// also avoids the unregister dance below.
+	id, err := c.srv.store.ResolveIdentity(c.ctx,
+		strings.TrimSpace(req.LoginRef), strings.TrimSpace(req.DeviceKey), strings.TrimSpace(req.Label), time.Now().Unix())
+	if err != nil {
+		c.logger.Error("resolve identity", "err", err)
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to resolve identity"))
+		return
+	}
+	c.identity = id
+	c.label = id.Label
+
+	journalID, err := c.srv.store.JournalID(c.ctx)
+	if err != nil {
+		c.logger.Error("read journal id", "err", err)
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to read journal id"))
+		return
 	}
 
 	// Subscribe FIRST, then read the cursor: an event committed between the
@@ -98,10 +121,11 @@ func (c *client) handleSessionHello(cmd protocol.Command) {
 	c.helloDone = true
 
 	c.sendFrame(protocol.OKReply(cmd.ID, helloReply{
-		Schema:   protocol.SchemaVersion,
-		Cursor:   cursor,
-		Limits:   c.srv.cfg.Limits,
-		Identity: identity{ID: c.label, Label: c.label},
+		Schema:    protocol.SchemaVersion,
+		Cursor:    cursor,
+		JournalID: journalID,
+		Limits:    c.srv.cfg.Limits,
+		Identity:  identity{ID: c.identity.UserID, Label: c.identity.Label},
 	}))
 
 	if req.Since != nil {
@@ -122,7 +146,7 @@ func (c *client) handleSessionHello(cmd protocol.Command) {
 				c.close(websocket.StatusInternalError, "replay failed")
 				return
 			}
-			c.send(env.FrameFor(c.label))
+			c.send(env.FrameFor(c.identity.UserID))
 		}
 		c.logger.Info("replay complete", "since", since, "events", len(events))
 	}
@@ -335,7 +359,7 @@ func (c *client) handleMessagesList(cmd protocol.Command) {
 	}
 	// Contract §5: client_message_id belongs to the author's own frames only.
 	for i := range messages {
-		if messages[i].AuthorID != c.label {
+		if messages[i].AuthorID != c.identity.UserID {
 			messages[i].ClientMessageID = ""
 		}
 	}
@@ -398,7 +422,7 @@ func (c *client) handleMessageSend(cmd protocol.Command) {
 	}
 
 	msg, event, created, err := c.srv.store.SendMessage(
-		c.ctx, req.ChatID, req.ClientMessageID, c.label, c.label, req.Body, fileID, time.Now().Unix())
+		c.ctx, req.ChatID, req.ClientMessageID, c.identity, req.Body, fileID, time.Now().Unix())
 	switch {
 	case errors.Is(err, store.ErrChatNotFound):
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrNotFound, "chat does not exist"))

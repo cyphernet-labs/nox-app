@@ -2,8 +2,11 @@ import 'dart:async';
 
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
+import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
 import 'package:nox_app/data/sync/sync_service.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/di/global_aliases.dart';
+import 'package:nox_app/general/identity/identifier_digest.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
@@ -62,12 +65,7 @@ class LiveSessionStarter {
     _phaseSub ??= _socket.phase.listen((phase) {
       if (phase == SessionPhase.catchingUp || phase == SessionPhase.live) unawaited(_adoptGreeting());
     });
-    await _socket.start(
-      url: _socketUrl(apiUrl),
-      // Read at every greeting: a reconnect that forgot the name would be given
-      // a fresh server-minted one, renaming the user behind their back.
-      labelProvider: () async => (await _session.readSession()).data?.label,
-    );
+    await _socket.start(url: _socketUrl(apiUrl), credentialsProvider: _credentials, onJournalChanged: () => unawaited(_worldChanged()));
   }
 
   /// Brings the channel back after a sign-in. Logout stops it, and without
@@ -87,6 +85,60 @@ class LiveSessionStarter {
     await _syncService.stop();
   }
 
+  /// What this connection states about who is greeting (contract §3).
+  ///
+  /// Read fresh at every greeting, not captured once: a sign-in or a logout in
+  /// the same process must greet as the right person. The label is stated only
+  /// when this device has just renamed — repeating a cached name on every
+  /// greeting would push it back over a rename made from another device.
+  Future<GreetingCredentials?> _credentials() async {
+    final session = await _session.readSession();
+    if (!session.hasData) {
+      // Null means "cannot greet yet", NOT "greet as nobody". Stating nothing
+      // is an anonymous greeting on the wire, and the server answers that with
+      // a throw-away identity: the outgoing queue would then drain under a
+      // person who does not exist, and the greeting would hand this session a
+      // stranger's author id. A delayed connection is strictly better.
+      logRepository.debug(target: this, message: 'sync: session unreadable, greeting deferred');
+      return null;
+    }
+    final data = session.data;
+    // A genuinely absent session is the sanctioned anonymous case: nobody has
+    // signed in, so there is nothing to claim.
+    if (data == null) return const GreetingCredentials();
+
+    final deviceId = await _session.deviceId();
+    final dirty = await _session.isLabelDirty();
+    return GreetingCredentials(
+      loginRef: IdentifierDigest.loginRef(data.identifier),
+      deviceKey: deviceId.data,
+      label: (dirty.data ?? false) ? data.label : null,
+    );
+  }
+
+  /// The server's store is not the one this device cached. Everything local
+  /// describes a world that no longer exists, so it goes — including the author
+  /// id, which would otherwise mark strangers' messages as this user's own.
+  Future<void> _worldChanged() async {
+    logRepository.debug(target: this, message: 'sync: server store changed, resetting the local world');
+    await stop();
+    try {
+      await _wipeWorld();
+      await _session.forgetAuthorId();
+      // The new world has never heard this name. Without re-asserting it the
+      // greeting states nothing, the server mints User<random>, and the person
+      // is silently renamed out of the name they chose.
+      await _session.markLabelDirty();
+    } on Object catch (e, s) {
+      logRepository.error(target: this, error: e, stackTrace: s);
+    } finally {
+      // The channel comes back whichever way the wipe ended. This runs
+      // detached from the socket's own error handling, so a throw here would
+      // otherwise leave the device disconnected until the app restarts.
+      await start();
+    }
+  }
+
   /// Takes what the greeting declared. Limits feed the composer's pre-flight
   /// check (§3 requires checking BEFORE sending, not learning from a rejection),
   /// and the label is the server's to decide — it may have been changed from
@@ -96,6 +148,12 @@ class LiveSessionStarter {
     if (limits != null) _config.updateLimits(limits);
     final identity = _socket.identity;
     if (identity == null || identity.id.isEmpty) return;
+    // A connection made before anyone signed in was served a one-off identity.
+    // Persisting it would hand the next person to sign in a stranger's author
+    // id and a stranger's name, and every message they had sent would come back
+    // looking like someone else's.
+    final session = await _session.readSession();
+    if (!session.hasData || session.data == null) return;
     // BOTH halves matter. The label is what the user sees; the author id is what
     // the server stamps on every message, so own-vs-other detection is wrong
     // without it — every message the user sent would come back looking like
@@ -110,6 +168,14 @@ class LiveSessionStarter {
   Future<void> _wipeIfWorldChanged(String epoch) async {
     if (await _syncRepository.getEpoch() == epoch) return;
     logRepository.debug(target: this, message: 'sync: data source changed, dropping the local cache once');
+    await _wipeWorld();
+    await _syncRepository.setEpoch(epoch);
+  }
+
+  /// Empties everything that describes one server's world. Shared by the
+  /// address-changed path and the journal-changed path, because the two differ
+  /// only in how the change was noticed.
+  Future<void> _wipeWorld() async {
     // The outgoing queue goes with the cache, and for a sharper reason than the
     // rest of it: a message written against the mock world — or against another
     // server — would otherwise be sent to THIS one on the first drain, landing
@@ -117,12 +183,20 @@ class LiveSessionStarter {
     // chat id it names does not exist here either, so the send would fail; the
     // text travelling at all is the part that must not happen.
     await _outbox.clean();
-    // Downloaded bytes belong to the world they came from.
-    await _files.clean();
+    // Downloaded bytes belong to the world they came from. Best-effort for the
+    // same reason logout treats it that way: a cache directory that will not
+    // clear is not worth keeping the app off the screen for.
+    try {
+      await _files.clean();
+    } on Object catch (e, s) {
+      logRepository.error(target: this, error: e, stackTrace: s);
+    }
+    // Prefetch memoises what it has already fetched; those ids belong to the
+    // world being discarded. Reached the way logout reaches it.
+    if (getIt.isRegistered<AttachmentPrefetchService>()) getIt<AttachmentPrefetchService>().reset();
     await _syncRepository.clear();
     await _chats.clean();
     await _messages.clean();
-    await _syncRepository.setEpoch(epoch);
   }
 
   /// `http(s)` addresses the REST half (blob bytes, phase 028); the socket is

@@ -7,7 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"context"
+
 	"nox.app/client-backend/internal/protocol"
+	"nox.app/client-backend/internal/store"
 )
 
 type chatsPage struct {
@@ -41,7 +44,7 @@ func TestStoryOneChatsListOrderSearchAndGet(t *testing.T) {
 	}
 	// A later message into Kitchen makes it the most recent and sets its
 	// preview.
-	if _, _, _, err := srv.store.SendMessage(t.Context(), kitchen, "c1", "Anna", "Anna",
+	if _, _, _, err := srv.store.SendMessage(t.Context(), kitchen, "c1", person(t, srv.store, "Anna"),
 		[]byte(`{"type":"text","text":"fresh preview"}`), "", 300); err != nil {
 		t.Fatalf("seed message: %v", err)
 	}
@@ -164,7 +167,7 @@ func TestStoryThreeRenameLiveNoReorderAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed target: %v", err)
 	}
-	if _, _, _, err := srv.store.SendMessage(t.Context(), kitchen, "m1", "Anna", "Anna",
+	if _, _, _, err := srv.store.SendMessage(t.Context(), kitchen, "m1", person(t, srv.store, "Anna"),
 		[]byte(`{"type":"text","text":"keeps kitchen on top"}`), "", 300); err != nil {
 		t.Fatalf("seed message: %v", err)
 	}
@@ -304,4 +307,16 @@ func TestStoryThreeConcurrentRenameRace(t *testing.T) {
 	if wins != 1 {
 		t.Fatalf("concurrent rename wins = %d, want exactly 1", wins)
 	}
+}
+
+// person resolves (and on first call creates) a test identity. Messages now
+// carry a foreign key to users, so a test that writes a message needs its
+// author to exist. Idempotent: the digest finds the row on every later call.
+func person(t *testing.T, s *store.Store, name string) store.Identity {
+	t.Helper()
+	id, err := s.ResolveIdentity(context.Background(), "digest-"+name, "", name, 1)
+	if err != nil {
+		t.Fatalf("ResolveIdentity(%s): %v", name, err)
+	}
+	return id
 }

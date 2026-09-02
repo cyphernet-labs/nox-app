@@ -44,6 +44,12 @@ class _MemoryCursor implements SyncRepository {
   Future<String?> getEpoch() async => _epoch;
   @override
   Future<void> setEpoch(String epoch) async => _epoch = epoch;
+  @override
+  Future<String?> getJournal() async => _journal;
+  @override
+  Future<void> setJournal(String journalId) async => _journal = journalId;
+
+  String? _journal;
 }
 
 void main() {
@@ -63,7 +69,12 @@ void main() {
   test('a file goes up, a message names it, and the same bytes come back', () async {
     final socket = NoxSocketClient(WebSocketChannelFactory(), _MemoryCursor());
     addTearDown(socket.stop);
-    await socket.start(url: Uri.parse('ws://127.0.0.1:8080/ws'), labelProvider: () async => 'FilesProbe');
+    await socket.start(
+      url: Uri.parse('ws://127.0.0.1:8080/ws'), // A probe names itself and nothing else: no login derivation, no device
+      // id. That is deliberate - the contract forbids refusing such a greeting,
+      // and it is exactly the shape this probe must keep working in.
+      credentialsProvider: () async => const GreetingCredentials(label: 'FilesProbe'),
+    );
     await Future<void>.delayed(const Duration(seconds: 2));
     expect(socket.identity, isNotNull, reason: 'the greeting must have been answered');
 
