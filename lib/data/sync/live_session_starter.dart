@@ -159,6 +159,17 @@ class LiveSessionStarter {
     // without it — every message the user sent would come back looking like
     // someone else's.
     await _session.adoptServerIdentity(authorId: identity.id, label: identity.label);
+    // A person the server already knows has nothing left to onboard. This is
+    // the only path that can rescue a device left sitting on the naming screen
+    // while the same person named themselves elsewhere - and it advances the
+    // flag only, so a reconnect before naming cannot skip the step.
+    final created = identity.created;
+    if (created != null) {
+      final advanced = await _session.advanceOnboardingIfKnown(created: created);
+      // Re-derive only when the flag actually moved: the navigation spine
+      // swaps the root route off the naming screen from this.
+      if (advanced.data ?? false) await appStateRepository.fetchAppState();
+    }
   }
 
   /// The cached rows and the cursor describe ONE world. Mock seqs are minted

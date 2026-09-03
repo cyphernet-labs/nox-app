@@ -10,5 +10,22 @@ part 'server_identity.freezed.dart';
 /// reply overwrites it (FR-020).
 @freezed
 abstract class ServerIdentity with _$ServerIdentity {
-  const factory ServerIdentity({required String id, required String label}) = _ServerIdentity;
+  const factory ServerIdentity({
+    required String id,
+    required String label,
+
+    /// Whether THIS answer brought the person into being (contract §3).
+    ///
+    /// Nullable on purpose: the wire has three states, and the third one is
+    /// load-bearing. Absent means "outcome not stated" — an older server, or a
+    /// stage-2 frame that does not carry it — and neither default is free.
+    /// Assuming false steals the naming step from a newcomer; assuming true
+    /// sends a returning person through onboarding and overwrites the name they
+    /// were known by, which is the defect this field exists to remove.
+    ///
+    /// Describes the answer, not the person: it is never persisted, and the
+    /// onboarding decision it feeds is monotonic (a later greeting may declare
+    /// onboarding done, never undone).
+    bool? created,
+  }) = _ServerIdentity;
 }

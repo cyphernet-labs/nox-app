@@ -64,6 +64,10 @@ class FakeSessionRepository implements SessionRepository {
   bool labelDirty = false;
 
   @override
+  Future<RepositoryResult<bool>> advanceOnboardingIfKnown({required bool created}) async =>
+      const RepositoryResult<bool>.success(data: false);
+
+  @override
   Future<RepositoryResult<bool>> markLabelDirty() async {
     labelDirty = true;
     return const RepositoryResult<bool>.success(data: true);

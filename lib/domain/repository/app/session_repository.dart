@@ -11,6 +11,12 @@ abstract class SessionRepository {
   Future<RepositoryResult<bool>> saveIdentifier({required String identifier, required bool onboardingComplete, String? label});
 
   /// Marks first-login onboarding complete (+ optionally caches the label).
+  ///
+  /// MONOTONIC: this flag only ever moves forward. Nothing but a logout may
+  /// return a person to onboarding. Without that rule the defect this feature
+  /// removes survives in one sequence - someone signed in, was shown the
+  /// naming screen, closed the app, then named themselves from another device
+  /// would be shown the naming screen again and have that name overwritten.
   Future<RepositoryResult<bool>> setOnboardingComplete({String? label});
 
   /// Persists a new display label (non-secret prefs) and broadcasts it on [watchLabel].
@@ -36,6 +42,13 @@ abstract class SessionRepository {
   /// was confirmed in is gone: the server has never heard it, so it has to be
   /// stated again or the person is silently renamed to a fresh `User<random>`.
   Future<RepositoryResult<bool>> markLabelDirty();
+
+  /// Advances the onboarding flag when the server says the person is already
+  /// known, and never the other way round. Called from the greeting-adoption
+  /// path, so a device sitting on the naming screen leaves it as soon as the
+  /// server reports that this person exists - which is what closes the
+  /// "named from another device meanwhile" hole.
+  Future<RepositoryResult<bool>> advanceOnboardingIfKnown({required bool created});
 
   /// Records the identity the server declared at greeting time (contract §3):
   /// its author id, and the label it considers current. Both are the server's

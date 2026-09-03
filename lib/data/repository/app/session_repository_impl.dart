@@ -153,6 +153,24 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   }
 
   @override
+  Future<RepositoryResult<bool>> advanceOnboardingIfKnown({required bool created}) {
+    return execute<bool>(() async {
+      // Forward only. A reconnect that happens BEFORE the person has named
+      // themselves legitimately reports created == false, because the row was
+      // already made by the first greeting - so "re-derive from every
+      // greeting" would silently declare them onboarded under the
+      // server-assigned name. Advancing but never retreating is safe in both
+      // directions.
+      if (created) return const RepositoryResult<bool>.success(data: false);
+      if (_prefs.getBool(_kOnboardingComplete) ?? false) {
+        return const RepositoryResult<bool>.success(data: false);
+      }
+      await _prefs.setBool(_kOnboardingComplete, true);
+      return const RepositoryResult<bool>.success(data: true);
+    });
+  }
+
+  @override
   Future<RepositoryResult<bool>> markLabelDirty() {
     return execute<bool>(() async {
       await _prefs.setBool(_kLabelDirty, true);

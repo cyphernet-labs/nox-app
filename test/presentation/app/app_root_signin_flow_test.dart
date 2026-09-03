@@ -45,10 +45,14 @@ void main() {
     expect(find.text(l10nEn.loginSignIn), findsNothing);
   });
 
-  testWidgets('signing in with a registered identifier lands on the shell', (tester) async {
+  testWidgets('no identifier is special any more - every sign-in without a server onboards', (tester) async {
+    // 'registered' used to skip onboarding by being one of two hardcoded
+    // strings. The server decides now, and this environment has no live
+    // channel to ask, so the naming screen is due - which is what makes the
+    // decision honest rather than guessed.
     await bootToLogin(tester);
     await signIn(tester, 'registered');
-    expect(find.byType(TabBarShell), findsOneWidget);
-    expect(find.byType(SetUsernamePage), findsNothing);
+    expect(find.byType(SetUsernamePage), findsOneWidget);
+    expect(find.byType(TabBarShell), findsNothing);
   });
 }

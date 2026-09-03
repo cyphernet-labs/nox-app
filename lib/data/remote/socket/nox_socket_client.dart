@@ -117,6 +117,13 @@ class NoxSocketClient {
     _started = false;
     _retryTimer?.cancel();
     _retryTimer = null;
+    // The ladder lives for the process and otherwise only resets on a
+    // successful greeting. stop() is only ever called by a human action -
+    // sign-in, logout, a channel restart - and after one of those the next
+    // attempt must be prompt: a device that sat offline long enough to climb
+    // to the ceiling would otherwise spend the whole sign-in wait without
+    // making a single connection attempt.
+    _backoff = _minBackoff;
     await _teardown(SessionPhase.disconnected);
   }
 
@@ -289,9 +296,22 @@ class NoxSocketClient {
 
       _helloCursor = data['cursor'] as int? ?? 0;
       final id = data['identity'];
-      if (id is Map<String, dynamic>) {
-        identity = ServerIdentity(id: id['id'] as String? ?? '', label: id['label'] as String? ?? '');
+      if (id is! Map<String, dynamic>) {
+        // Stage 1 always states who connected. A reply without it is not a
+        // greeting we can act on, and treating it as success would leave the
+        // previous connection's person in place (see the teardown reset).
+        logRepository.debug(target: this, message: 'socket: greeting carried no identity');
+        await _teardown(SessionPhase.disconnected);
+        _scheduleRetry();
+        return;
       }
+      identity = ServerIdentity(
+        id: id['id'] as String? ?? '',
+        label: id['label'] as String? ?? '',
+        // Absent stays absent: it means "outcome not stated", which is neither
+        // outcome, and the sign-in path must not be handed a guess.
+        created: id['created'] as bool?,
+      );
       final lim = data['limits'];
       if (lim is Map<String, dynamic>) {
         limits = ServerLimits(
@@ -347,6 +367,14 @@ class NoxSocketClient {
     // Callers waiting on the handshake must not hang past the drop.
     if (_greeted?.isCompleted == false) _greeted!.completeError(const SocketUnavailableException('connection lost'));
     _greeted = null;
+    // What the greeting declared belongs to the connection that declared it.
+    // Kept across a drop, `identity` would let a sign-in that timed out adopt
+    // the PREVIOUS connection's person; `limits` would govern a pre-flight
+    // check for a peer we are no longer talking to. The journal id is the one
+    // exception: it names the world our cache came from and outlives the
+    // socket by design.
+    identity = null;
+    limits = null;
     if (_phase.value != next) _phase.add(next);
   }
 

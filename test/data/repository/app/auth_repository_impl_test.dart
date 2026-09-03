@@ -68,9 +68,13 @@ void main() {
 
   tearDown(() async => getIt.reset());
 
-  test('signIn under a registered identifier persists onboardingComplete=true', () async {
+  test('signIn no longer consults any built-in list of identifiers', () async {
+    // 'registered' used to be one of two strings that made someone a returning
+    // person. Nothing in the app knows that word any more: the server decides,
+    // and with no live channel in this environment there is nobody to ask, so
+    // onboarding is due - for that identifier exactly as for any other.
     await repository.signIn(identifier: 'registered');
-    verify(session.saveIdentifier(identifier: 'registered', onboardingComplete: true)).called(1);
+    verify(session.saveIdentifier(identifier: 'registered', onboardingComplete: false)).called(1);
     verify(appState.fetchAppState()).called(1);
   });
 
@@ -79,9 +83,45 @@ void main() {
     verify(session.saveIdentifier(identifier: 'someoneNew', onboardingComplete: false)).called(1);
   });
 
-  test('signIn trims the identifier before matching and persisting', () async {
+  test('FR-004: signing in never states a label, so a known name cannot be overwritten', () async {
+    // The defect this feature removes, asserted at its narrowest point. The
+    // old path decided onboarding locally, sent the person to the naming
+    // screen, and the name they typed there travelled to the server as a
+    // RENAME - overwriting the name they were known by. Sign-in must
+    // therefore never raise the rename flag and never state a label itself:
+    // the only thing it writes is the identifier.
+    await repository.signIn(identifier: 'someoneNew');
+
+    verifyNever(session.updateLabel(label: anyNamed('label')));
+    verifyNever(session.markLabelDirty());
+    // setOnboardingComplete is what carries a label, and sign-in may only
+    // reach it when the SERVER said the person is already known - in which
+    // case there is nothing to name.
+    verifyNever(session.setOnboardingComplete(label: anyNamed('label')));
+  });
+
+  test('a sign-in that cannot ask the server leaves no half-made session behind', () async {
+    // Storing the identifier comes first, because that is what makes the
+    // greeting state a person instead of going out anonymously. If the
+    // handshake then fails, the stored identifier must not survive: a session
+    // with no settled outcome would strand the next launch in onboarding -
+    // the exact state this method exists to stop handing out.
+    when(
+      session.saveIdentifier(identifier: anyNamed('identifier'), onboardingComplete: anyNamed('onboardingComplete')),
+    ).thenAnswer((_) async => const RepositoryResult<bool>.error(exception: RepositoryException.unknown));
+
+    final result = await repository.signIn(identifier: 'someoneNew');
+
+    expect(result.hasData, isFalse);
+    verifyNever(appState.fetchAppState(sessionExpired: anyNamed('sessionExpired')));
+  });
+
+  test('signIn trims the identifier before persisting', () async {
+    // Normalisation still matters, and now for a sharper reason: the login_ref
+    // derivation is computed over the stored value, so a trailing newline
+    // would make the same person unrecognisable on the next install.
     await repository.signIn(identifier: '  registered\n');
-    verify(session.saveIdentifier(identifier: 'registered', onboardingComplete: true)).called(1);
+    verify(session.saveIdentifier(identifier: 'registered', onboardingComplete: false)).called(1);
   });
 
   test('logout propagates a clear() failure and does not re-derive app state or wipe caches', () async {
