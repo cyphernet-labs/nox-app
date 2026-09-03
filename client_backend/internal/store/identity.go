@@ -19,8 +19,14 @@ import (
 // message.send, the only path that needs a parent row for the author_id
 // foreign key. See MaterialiseUser.
 type Identity struct {
-	UserID    string
-	Label     string
+	UserID string
+	Label  string
+	// Created reports whether THIS resolution brought the person into being,
+	// which is what tells the client to offer the naming step (contract §3).
+	// It describes the answer, not the person: a reconnect before the person
+	// has named themselves legitimately reports false, because the row already
+	// exists. The client therefore treats the onboarding decision as monotonic.
+	Created   bool
 	Ephemeral bool
 }
 
@@ -71,6 +77,7 @@ func (s *Store) ResolveIdentity(ctx context.Context, idDigest, deviceKey, label 
 			if err != nil {
 				return Identity{}, err
 			}
+			id.Created = true
 			found = true
 		}
 	}
@@ -85,6 +92,7 @@ func (s *Store) ResolveIdentity(ctx context.Context, idDigest, deviceKey, label 
 			if err != nil {
 				return Identity{}, err
 			}
+			id.Created = true
 			found = true
 		}
 	}
@@ -98,7 +106,8 @@ func (s *Store) ResolveIdentity(ctx context.Context, idDigest, deviceKey, label 
 		if err := tx.Commit(); err != nil {
 			return Identity{}, fmt.Errorf("commit resolve identity: %w", err)
 		}
-		return Identity{UserID: "u_" + randomID(), Label: label, Ephemeral: true}, nil
+		// Created: until this answer no such person existed anywhere, row or not.
+		return Identity{UserID: "u_" + randomID(), Label: label, Created: true, Ephemeral: true}, nil
 	}
 
 	if deviceKey != "" {

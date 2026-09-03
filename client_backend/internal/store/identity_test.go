@@ -276,3 +276,82 @@ func TestJournalIDIsStableAcrossCalls(t *testing.T) {
 		t.Fatalf("journal id = %q then %q", first, second)
 	}
 }
+
+// The Created flag is what tells the client to offer the naming step. Every
+// arm of the resolution has to state it, and getting one wrong is invisible on
+// the server: it surfaces as a person being sent to Set username and having
+// the name they were known by overwritten.
+func TestResolveIdentityReportsWhetherItCreatedThePerson(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+
+	t.Run("inserted by digest", func(t *testing.T) {
+		id, err := s.ResolveIdentity(ctx, "digest-new", "", "", 100)
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		if !id.Created {
+			t.Fatal("a person who did not exist before this answer must report Created")
+		}
+	})
+
+	t.Run("found by digest", func(t *testing.T) {
+		if _, err := s.ResolveIdentity(ctx, "digest-known", "", "Anna", 100); err != nil {
+			t.Fatalf("first: %v", err)
+		}
+		id, err := s.ResolveIdentity(ctx, "digest-known", "", "", 200)
+		if err != nil {
+			t.Fatalf("second: %v", err)
+		}
+		if id.Created {
+			t.Fatal("a returning person must not report Created")
+		}
+	})
+
+	t.Run("inserted by device", func(t *testing.T) {
+		id, err := s.ResolveIdentity(ctx, "", "dev-fresh", "", 100)
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		if !id.Created {
+			t.Fatal("a device nobody has seen brings a person into being")
+		}
+	})
+
+	t.Run("found by device", func(t *testing.T) {
+		if _, err := s.ResolveIdentity(ctx, "", "dev-known", "Boris", 100); err != nil {
+			t.Fatalf("first: %v", err)
+		}
+		id, err := s.ResolveIdentity(ctx, "", "dev-known", "", 200)
+		if err != nil {
+			t.Fatalf("second: %v", err)
+		}
+		if id.Created {
+			t.Fatal("a returning device must not report Created")
+		}
+	})
+
+	t.Run("ephemeral", func(t *testing.T) {
+		id, err := s.ResolveIdentity(ctx, "", "", "", 100)
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		if !id.Created || !id.Ephemeral {
+			t.Fatalf("identity = %+v; until this answer no such person existed, row or not", id)
+		}
+	})
+
+	t.Run("a known device presenting a new person creates that person", func(t *testing.T) {
+		if _, err := s.ResolveIdentity(ctx, "digest-a", "dev-shared", "A", 100); err != nil {
+			t.Fatalf("first: %v", err)
+		}
+		// The person wins on conflict, and this person is new.
+		id, err := s.ResolveIdentity(ctx, "digest-b", "dev-shared", "B", 200)
+		if err != nil {
+			t.Fatalf("rebind: %v", err)
+		}
+		if !id.Created {
+			t.Fatal("re-binding a known device to a person who did not exist must report Created")
+		}
+	})
+}
