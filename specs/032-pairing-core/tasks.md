@@ -49,11 +49,11 @@ description: "Task list for feature implementation"
 
 ### Клиент
 
-- [ ] T018 Добавить `cryptography: ^2.9.0` в `pubspec.yaml` с комментарием, почему именно он (одна зависимость, чистый Dart, те же примитивы понадобятся для Q1)
-- [ ] T019 Создать `lib/general/pairing/device_keys.dart`: генерация пары из семени, подпись challenge, хранение семени через `flutter_secure_storage` под `session.device_secret`
-- [ ] T020 [P] Создать `lib/general/pairing/pairing_link.dart`: разбор и сборка ссылки по [contracts/pairing-link.md](./contracts/pairing-link.md); отказ разбора **отличим** от отказа токена
-- [ ] T021 [P] Тесты `test/general/pairing/pairing_link_test.dart`: контрольный вектор, неизвестная версия, обрезанная строка, все три типа адреса, приём ссылки без схемы (человек вставил один фрагмент)
-- [ ] T022 [P] Тесты `test/general/pairing/device_keys_test.dart`: подпись под фиксированным семенем совпадает с вектором из [research.md §1](./research.md) — это тот самый тест, который поймает подмену библиотеки или формата подписываемого
+- [X] T018 Добавить `cryptography: ^2.9.0` в `pubspec.yaml` с комментарием, почему именно он (одна зависимость, чистый Dart, те же примитивы понадобятся для Q1)
+- [X] T019 Создать `lib/general/pairing/device_keys.dart`: генерация пары из семени, подпись challenge, хранение семени через `flutter_secure_storage` под `session.device_secret`
+- [X] T020 [P] Создать `lib/general/pairing/pairing_link.dart`: разбор и сборка ссылки по [contracts/pairing-link.md](./contracts/pairing-link.md); отказ разбора **отличим** от отказа токена
+- [X] T021 [P] Тесты `test/general/pairing/pairing_link_test.dart`: контрольный вектор, неизвестная версия, обрезанная строка, все три типа адреса, приём ссылки без схемы (человек вставил один фрагмент)
+- [X] T022 [P] Тесты `test/general/pairing/device_keys_test.dart`: подпись под фиксированным семенем совпадает с вектором из [research.md §1](./research.md) — это тот самый тест, который поймает подмену библиотеки или формата подписываемого
 - [ ] T023 Расширить `lib/domain/repository/app/session_repository.dart` и `lib/data/repository/app/session_repository_impl.dart`: `deviceSecret()` вместо `deviceId()`; **удалить** `session.identifier` и `session.device_id`; `clear()` обязан стирать семя
 - [ ] T024 Добавить в `lib/data/repository/app/session_repository_impl.dart` хранение `session.server_address` и `session.server_key` (FR-033): адрес и ключ приходят из ссылки и живут вместе с сессией, а не в конфигурации сборки
 - [ ] T025 [P] Тесты `test/data/repository/app/session_repository_impl_test.dart` на новое: семя рождается один раз и переживает чтение; `clear()` его стирает
