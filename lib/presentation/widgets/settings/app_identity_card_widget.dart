@@ -11,8 +11,10 @@ import 'package:nox_app/presentation/widgets/primitives/app_spinner_widget.dart'
 /// Identity card (7.1): a Name block (inline-editable) + `Your ID`
 /// block (masked value + Copy / Show QR / optional reveal on one row). Parameterized
 /// per layout (Principle I — minimize secret exposure):
-///   - mobile: `revealable = true` → a Show/Hide toggle reveals the raw identifier;
-///   - desktop: `revealable = false` (the raw ID is never shown); the account QR is
+///   - `revealable = false` on both widths since feature 032: the id is the
+///     PUBLIC author id, so there is nothing to hide behind a toggle. What the
+///     row shows is what Copy copies. The reveal existed when this string was
+///     the login secret;
 ///     rendered as a separate block below the card (see settings_root_page).
 /// While [initialLoading], a spinner stands in for the identifier (FR-038).
 class AppIdentityCardWidget extends StatelessWidget {
@@ -61,7 +63,10 @@ class AppIdentityCardWidget extends StatelessWidget {
               padding: EdgeInsets.symmetric(vertical: AppSpacingTokens.s12),
               child: const AppHairlineDividerWidget(),
             ),
-            Text(context.l10n.loginIdLabel, style: textTheme.labelMedium?.copyWith(color: colorScheme.onSurfaceVariant)),
+            // Its own string. It used to borrow the login screen's label, and
+            // when that became "Pairing link" this row started calling the
+            // person's public author id a pairing link.
+            Text(context.l10n.settingsYourIdLabel, style: textTheme.labelMedium?.copyWith(color: colorScheme.onSurfaceVariant)),
             SizedBox(height: AppSpacingTokens.s4),
             _idBlock(context),
           ],
@@ -140,7 +145,9 @@ class AppIdentityCardWidget extends StatelessWidget {
     return Row(
       children: [
         Expanded(
-          child: Text(maskedId, style: textTheme.titleMedium?.copyWith(color: colorScheme.onSurface)),
+          // An em dash rather than a blank line: the id is simply not known
+          // yet, and an empty row reads as a rendering fault.
+          child: Text(maskedId.isEmpty ? '—' : maskedId, style: textTheme.titleMedium?.copyWith(color: colorScheme.onSurface)),
         ),
         ...actions,
       ],

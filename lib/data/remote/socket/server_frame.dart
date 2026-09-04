@@ -69,4 +69,16 @@ class ServerEvent extends ServerFrame {
   static const String chatCreated = 'chat.created';
   static const String chatUpdated = 'chat.updated';
   static const String messageNew = 'message.new';
+
+  /// Sent to the device being cut off, immediately before its socket closes
+  /// (contract §8A). Not journal content: it carries seq 0 and describes THIS
+  /// connection rather than the shared world.
+  static const String deviceRevoked = 'device.revoked';
+
+  /// Sent to the OTHER live connections of a person who has just renamed
+  /// (contract §8A). Also seq 0 and also not journal content, for the same
+  /// reason: it describes who this connection is, not what happened in the
+  /// shared world. Without it a second device holds the old name until
+  /// something reconnects it, and a stable socket never re-greets.
+  static const String identityUpdated = 'identity.updated';
 }

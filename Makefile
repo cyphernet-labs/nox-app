@@ -32,7 +32,7 @@ analyze:
 	fvm flutter analyze
 
 test:
-	fvm flutter test --exclude-tags golden $(FILE)
+	fvm flutter test --exclude-tags "golden || live" $(FILE)
 
 # Golden (snapshot) tests — LOCAL ONLY (Apple Silicon / macOS), excluded from CI via the `golden` tag.
 # See .claude/commands/golden-test.md. Narrow with FILE=test/presentation/pages/<page>/<x>_golden_test.dart.

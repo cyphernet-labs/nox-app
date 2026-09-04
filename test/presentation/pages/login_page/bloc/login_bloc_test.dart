@@ -120,6 +120,63 @@ void main() {
     );
 
     blocTest<LoginBloc, LoginState>(
+      'a link that will not parse says so, and not "check your connection"',
+      build: () {
+        when(
+          mockAuthRepository.signIn(identifier: anyNamed('identifier')),
+        ).thenAnswer((_) async => const RepositoryResult.error(exception: RepositoryException.invalidRequest));
+        return LoginBloc();
+      },
+      act: (bloc) => bloc
+        ..add(const LoginEvent.idChanged('not a link'))
+        ..add(const LoginEvent.signInRequested()),
+      wait: const Duration(milliseconds: 300),
+      expect: () => [
+        predicate<LoginState>((s) => s.id == 'not a link'),
+        predicate<LoginState>((s) => s.status == LoginStatus.loading),
+        predicate<LoginState>((s) => s.status == LoginStatus.errorFormat),
+      ],
+    );
+
+    blocTest<LoginBloc, LoginState>(
+      'an expired link is told apart from a rejected one, because the fix differs',
+      build: () {
+        when(
+          mockAuthRepository.signIn(identifier: anyNamed('identifier')),
+        ).thenAnswer((_) async => const RepositoryResult.error(exception: RepositoryException.notFound));
+        return LoginBloc();
+      },
+      act: (bloc) => bloc
+        ..add(const LoginEvent.idChanged('some-link'))
+        ..add(const LoginEvent.signInRequested()),
+      wait: const Duration(milliseconds: 300),
+      expect: () => [
+        predicate<LoginState>((s) => s.id == 'some-link'),
+        predicate<LoginState>((s) => s.status == LoginStatus.loading),
+        predicate<LoginState>((s) => s.status == LoginStatus.errorExpired),
+      ],
+    );
+
+    blocTest<LoginBloc, LoginState>(
+      'a rejected link says the link is unusable',
+      build: () {
+        when(
+          mockAuthRepository.signIn(identifier: anyNamed('identifier')),
+        ).thenAnswer((_) async => const RepositoryResult.error(exception: RepositoryException.authentication));
+        return LoginBloc();
+      },
+      act: (bloc) => bloc
+        ..add(const LoginEvent.idChanged('some-link'))
+        ..add(const LoginEvent.signInRequested()),
+      wait: const Duration(milliseconds: 300),
+      expect: () => [
+        predicate<LoginState>((s) => s.id == 'some-link'),
+        predicate<LoginState>((s) => s.status == LoginStatus.loading),
+        predicate<LoginState>((s) => s.status == LoginStatus.errorRejected),
+      ],
+    );
+
+    blocTest<LoginBloc, LoginState>(
       'a failed handshake shows a retryable error and guesses no outcome',
       build: () {
         when(

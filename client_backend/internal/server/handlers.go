@@ -32,37 +32,48 @@ func validChatName(raw string) (string, bool) {
 	return name, name != "" && utf8.RuneCountInString(name) <= maxChatNameRunes
 }
 
-// helloRequest mirrors contract §3. device_key and signature are accepted and
-// ignored on stage 1 (constitution VII: no authentication yet).
+// helloRequest mirrors contract §3.
 type helloRequest struct {
 	Schema int    `json:"schema"`
 	Since  *int64 `json:"since"`
 	Label  string `json:"label"`
-	// LoginRef identifies the PERSON: a one-way derivation of the login
-	// identifier, computed on the device (contract §3). The server never
-	// computes it, never reverses it and never validates it - it is an opaque
-	// lookup key. DeviceKey identifies the INSTALL; on stage 1 it carries an
-	// opaque per-install id rather than key material. Signature stays ignored
-	// until stage 2.
-	LoginRef  string `json:"login_ref"`
+	// DeviceKey is the device's Ed25519 PUBLIC key, base64; Signature is its
+	// signature over "nox/challenge/v1:" ‖ challenge. Together they are the
+	// whole of authentication: the person is found by the key, and the key is
+	// only believed because the signature verifies. A device that presents
+	// neither is not refused - the contract forbids that - it simply speaks as
+	// an ephemeral identity that owns nothing.
 	DeviceKey string `json:"device_key"`
 	Signature string `json:"signature"`
 }
 
 type helloReply struct {
-	Schema    int           `json:"schema"`
-	Cursor    int64         `json:"cursor"`
-	JournalID string        `json:"journal_id"`
-	Limits    config.Limits `json:"limits"`
-	Identity  identity      `json:"identity"`
+	Schema    int              `json:"schema"`
+	Cursor    int64            `json:"cursor"`
+	JournalID string           `json:"journal_id"`
+	Limits    config.Limits    `json:"limits"`
+	Identity  greetingIdentity `json:"identity"`
 }
 
+// greetingIdentity is the identity WITHOUT `created`. A greeting is by
+// definition a device that was already paired, so there is no outcome to
+// state - and stating one would give the client a second place to read a
+// decision that belongs to the pair reply (§3, §8A).
+type greetingIdentity struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+
+// identity is the object both the greeting and the pair reply carry, so the
+// client reads who it is in one place regardless of which frame brought it.
 type identity struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
-	// No omitempty, deliberately: a dropped false would read as "outcome not
-	// stated" on the wire (contract §3), which turns an ordinary returning
-	// person into a refused sign-in.
+	// Created says whether THIS operation brought the person into being, and it
+	// is meaningful only on the pair reply - a greeting is by definition a
+	// device that was already paired. No omitempty, deliberately: a dropped
+	// false would read as "outcome not stated" on the wire (§8A), which turns
+	// an ordinary returning person into a refused sign-in.
 	Created bool `json:"created"`
 }
 
@@ -83,11 +94,36 @@ func (c *client) handleSessionHello(cmd protocol.Command) {
 		return
 	}
 
+	deviceKey := strings.TrimSpace(req.DeviceKey)
+	// A greeting without a key is refused, not served. It used to be accepted
+	// on the grounds that "the contract forbids refusing a greeting" - but that
+	// rule (§3) is about the LABEL, and reading it as covering keys handed any
+	// connection that simply omitted the field a full session: the whole
+	// journal replayed, live events streamed, and the ability to post. Every
+	// connection proves possession now, or it gets nothing.
+	//
+	// The signature is checked BEFORE the lookup, so an unverified key never
+	// reaches the database as a search term.
+	if deviceKey == "" || !verifyChallenge(deviceKey, c.challenge, req.Signature) {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrUnauthenticated, "a signed device key is required"))
+		return
+	}
+
+	// Recorded BEFORE the resolve: the key is already proved by the signature,
+	// and a revoke arriving while this greeting is still in the database would
+	// otherwise find an empty key and leave the connection running.
+	c.srv.setDeviceKey(c, deviceKey)
+
 	// Resolve BEFORE registering with the hub: this writes, and invariant 4
 	// forbids a write transaction straddling hub registration. Failing here
 	// also avoids the unregister dance below.
-	id, err := c.srv.store.ResolveIdentity(c.ctx,
-		strings.TrimSpace(req.LoginRef), strings.TrimSpace(req.DeviceKey), strings.TrimSpace(req.Label), time.Now().Unix())
+	id, err := c.srv.store.ResolveIdentity(c.ctx, deviceKey, strings.TrimSpace(req.Label), time.Now().Unix())
+	if errors.Is(err, store.ErrDeviceUnknown) {
+		// Revoked, or a store rebuilt from nothing. The device cannot tell them
+		// apart and must not: both mean "this is not my server any more".
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrUnauthenticated, "device is not paired"))
+		return
+	}
 	if err != nil {
 		c.logger.Error("resolve identity", "err", err)
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to resolve identity"))
@@ -129,7 +165,11 @@ func (c *client) handleSessionHello(cmd protocol.Command) {
 		Cursor:    cursor,
 		JournalID: journalID,
 		Limits:    c.srv.cfg.Limits,
-		Identity:  identity{ID: c.identity.UserID, Label: c.identity.Label, Created: c.identity.Created},
+		// No `created` on a greeting at all. §3 says the outcome moved to the
+		// pair reply, and a greeting that still states it invites the client to
+		// read the decision from two places - which is exactly the second
+		// source of one truth the phase set out to remove.
+		Identity: greetingIdentity{ID: c.identity.UserID, Label: c.identity.Label},
 	}))
 
 	if req.Since != nil {

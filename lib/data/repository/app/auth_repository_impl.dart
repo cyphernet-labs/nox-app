@@ -1,6 +1,9 @@
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
 import 'package:nox_app/data/sync/live_identity_handshake.dart';
+import 'package:nox_app/general/pairing/device_keys.dart';
+import 'package:nox_app/general/pairing/pairing_link.dart';
+import 'package:nox_app/general/platform_utils.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
 import 'package:nox_app/data/sync/outbox_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
@@ -14,6 +17,7 @@ import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/repository/device/device_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
@@ -40,59 +44,104 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
   final OutboxRepository _outboxRepository;
   final FileRepository _fileRepository;
 
-  /// Signs in, and lets the SERVER decide whether onboarding is due.
+  /// Signs in by presenting a pairing link, and lets the SERVER decide whether
+  /// onboarding is due.
   ///
-  /// The order is the whole point. It used to be: guess the outcome from a
-  /// hardcoded set of two identifiers, store it, navigate, then connect. No
-  /// real identifier was in that set, so everyone was treated as new - and the
-  /// name they were then forced to type travelled to the server as a rename
-  /// and overwrote the name they were known by.
+  /// The order is the whole point. Parse the link, remember which server it
+  /// names, mint this device's key, pair, take the outcome from the answer, and
+  /// only then move the navigation. Remembering the server FIRST is what makes
+  /// the connection go to the machine the person actually presented — a
+  /// compile-time address would pair with one server and send messages to
+  /// another.
   ///
-  /// Now: store the identifier, greet, take the outcome from the answer, write
-  /// it, and only then move the navigation. Storing the identifier FIRST is
-  /// what makes the greeting state a person rather than going out anonymously;
-  /// it moves no screen on its own, because nothing re-derives app state until
-  /// the last step.
-  ///
-  /// A handshake that does not answer rolls the session back. Leaving a stored
-  /// identifier with no outcome behind would strand the next launch in
-  /// onboarding - the very state this method exists to stop handing out.
+  /// The three refusals stay apart because the person's next action differs: a
+  /// link that will not parse means "scan it again", an expired token means
+  /// "issue a new invite", a rejected one means "this is not usable". A failed
+  /// attempt rolls the session back, because a stored identity with no settled
+  /// outcome would strand the next launch in onboarding.
   @override
   Future<RepositoryResult<bool>> signIn({required String identifier}) {
     return execute<bool>(() async {
-      // Normalize once and persist the SAME value, so the stored identity
-      // cannot diverge from what the derivation was computed over (e.g. a
-      // pasted trailing newline). Normalization, not format validation.
-      final id = identifier.trim();
-      final saved = await _sessionRepository.saveIdentifier(identifier: id, onboardingComplete: false);
+      final PairingLink link;
+      try {
+        link = PairingLink.parse(identifier);
+      } on PairingLinkException {
+        // A link that will not parse: the person scans or pastes it again.
+        return const RepositoryResult<bool>.error(exception: RepositoryException.invalidRequest);
+      }
+
+      final saved = await _sessionRepository.saveServer(address: link.authority, serverKey: link.serverKey);
       if (!saved.hasData) return saved;
 
       final handshake = liveIdentityHandshake;
       if (handshake == null) {
-        // No live channel in this build (mock flavors). Behave as before:
-        // there is no server to ask, so onboarding is due.
+        // No live channel in this build (mock flavors). There is no server to
+        // ask, so onboarding is due.
+        final stored = await _sessionRepository.saveIdentifier(identifier: link.token, onboardingComplete: false);
+        if (!stored.hasData) return stored;
         return _finishSignIn(onboardingComplete: false);
       }
 
+      final seed = await _sessionRepository.deviceSecret();
+      if (!seed.hasData) return RepositoryResult<bool>.error(exception: seed.exception!);
+
       try {
-        final greeting = await handshake.greet();
+        final greeting = await handshake.pair(
+          link: link,
+          deviceKey: await DeviceKeys.publicKey(seed.data!),
+          platform: PlatformUtils.family,
+        );
         if (!greeting.outcomeStated) {
-          // The server did not say. Guessing costs the person either their
-          // naming step or their name, so we say so instead.
           await _sessionRepository.discardSignIn();
           return const RepositoryResult<bool>.error(exception: RepositoryException.connection);
         }
-        // The server made this person just now, and the naming screen is next.
-        // Remember it for this process, so a reconnect while they are typing
-        // cannot report their own brand-new row back at them as "already known".
+        // The identifier slot now holds the token this install paired with: it
+        // is what makes readSession() report a session at all, and it is not a
+        // secret any more - the key is.
+        final stored = await _sessionRepository.saveIdentifier(identifier: link.token, onboardingComplete: false);
+        if (!stored.hasData) return stored;
         if (greeting.created!) _sessionRepository.noteOnboardingStartedHere();
+        // Re-greet, SIGNED. The connection `pair` ran on was greeted before
+        // this device existed to the server, so it still speaks as whoever
+        // greeted then; a message sent on it would carry that identity and come
+        // back looking like a stranger's on the sender's own screen. Storing
+        // the session first is what makes this greeting state a person.
+        try {
+          await handshake.greet();
+        } on Object {
+          // The pairing itself landed. A greeting that did not is an ordinary
+          // reconnect away, and the session is already valid.
+        }
         return _finishSignIn(onboardingComplete: !greeting.created!);
-      } on Object catch (e, s) {
-        logRepository.error(target: this, error: e, stackTrace: s);
+      } on PairingRefused catch (e) {
+        await _sessionRepository.discardSignIn();
+        return RepositoryResult<bool>.error(exception: e.expired ? RepositoryException.notFound : RepositoryException.authentication);
+      } on Object catch (e, st) {
+        // The TYPE only. A FormatException from a base64 decode carries the
+        // offending source in its message, which here would be the link or the
+        // key seed - and a token in a log is still a usable pairing credential
+        // (Principle I, FR-035).
+        logRepository.error(target: this, error: e.runtimeType, stackTrace: st);
         await _sessionRepository.discardSignIn();
         return const RepositoryResult<bool>.error(exception: RepositoryException.connection);
       }
     });
+  }
+
+  /// Revokes this device's own key before the local wipe, when there is a
+  /// channel to say it on. Never blocks the logout: a person who chose to sign
+  /// out must sign out.
+  Future<void> _revokeOwnKey() async {
+    final devices = getIt.isRegistered<DeviceRepository>() ? getIt<DeviceRepository>() : null;
+    if (devices == null) return;
+    try {
+      final seed = await _sessionRepository.deviceSecret();
+      if (!seed.hasData) return;
+      await devices.revoke(deviceKey: await DeviceKeys.publicKey(seed.data!));
+    } on Object catch (e, st) {
+      // The type only: a decode failure would otherwise put the seed in the log.
+      logRepository.error(target: this, error: e.runtimeType, stackTrace: st);
+    }
   }
 
   Future<RepositoryResult<bool>> _finishSignIn({required bool onboardingComplete}) async {
@@ -118,19 +167,28 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
   }
 
   @override
-  Future<RepositoryResult<bool>> completeOnboarding({String? label}) {
-    return _deriveAfter(
-      () => _sessionRepository.setOnboardingComplete(label: label),
-      // Reconnect so the chosen name actually reaches the server. Stage 1 has
-      // no `identity.setLabel` (contract §8.1 puts it in stage 2), so the
-      // greeting is the ONLY place a label is stated — and by now the socket
-      // has already greeted, under the server-assigned `User<random>`. Without
-      // this the user picks a name and everyone else keeps seeing the old one
-      // until something happens to reconnect the device.
-      afterMutate: () async {
-        if (getIt.isRegistered<LiveSessionStarter>()) await getIt<LiveSessionStarter>().restart();
-      },
-    );
+  Future<RepositoryResult<bool>> completeOnboarding({String? label}) async {
+    // The name goes to the server BEFORE it is stored locally. Storing first
+    // and telling the server after - or not checking whether it landed - shows
+    // a name the next greeting silently replaces with the assigned one, and the
+    // person has no way to know their choice was lost.
+    var landed = label == null || label.isEmpty;
+    if (!landed) {
+      final devices = getIt.isRegistered<DeviceRepository>() ? getIt<DeviceRepository>() : null;
+      if (devices == null) {
+        // No live channel in this build: nothing to tell, so the local name is
+        // the whole truth.
+        landed = true;
+      } else {
+        landed = (await devices.setLabel(label: label)).hasData;
+      }
+    }
+
+    // Onboarding completes either way - a person who chose a name must not be
+    // stranded on the naming screen because one command failed - but the name
+    // is only kept if the server actually has it. Keeping it locally otherwise
+    // would be a lie the next greeting corrects.
+    return _deriveAfter(() => _sessionRepository.setOnboardingComplete(label: landed ? label : null));
   }
 
   @override
@@ -141,7 +199,26 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
     // After the session is cleared, drop the cached chats + messages so a re-login as a
     // different identity starts clean (Constitution I: full local wipe on identity switch).
     return _deriveAfter(
-      _sessionRepository.clear,
+      () async {
+        // A voluntary logout revokes THIS device's own key, so the key stops
+        // being a way in rather than merely being forgotten here. Best effort,
+        // and only while connected: offline the local wipe is unconditional and
+        // the orphaned key is revoked from another device - the accepted price
+        // (contract §8A). A forced logout skips it: the server already refused
+        // us, and asking it to revoke a key it does not know would be noise.
+        // Bounded: a person who chose to sign out must sign out, and the local
+        // wipe is what actually protects them. A server that does not answer
+        // gets a few seconds, not the full command timeout with the progress
+        // dialog already gone - the orphaned key is revoked from another
+        // device, which is the accepted price (§8A).
+        if (!forced) {
+          await _revokeOwnKey().timeout(
+            const Duration(seconds: 3),
+            onTimeout: () => logRepository.debug(target: this, message: 'logout: revoke did not answer, wiping anyway'),
+          );
+        }
+        return _sessionRepository.clear();
+      },
       sessionExpired: forced,
       afterMutate: () async {
         // Close the live channel BEFORE emptying anything: an event applied

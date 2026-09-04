@@ -5,8 +5,8 @@ import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
 import 'package:nox_app/data/sync/sync_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/data/remote/api_client.dart';
 import 'package:nox_app/di/global_aliases.dart';
-import 'package:nox_app/general/identity/identifier_digest.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
@@ -55,16 +55,45 @@ class LiveSessionStarter {
 
   /// Brings the channel up. A build with no configured address stays on the
   /// cached data and never opens a socket.
+  /// Waits out a transient storage failure before trying to start again.
+  Timer? _retry;
+
   Future<void> start() async {
-    final apiUrl = _config.config.apiUrl;
+    // The address comes from the PAIRING LINK, not from the build. A
+    // compile-time address would mean pairing with the server a person
+    // presented and then sending their messages somewhere else entirely -
+    // which is the opposite of "your own server".
+    final paired = await _session.serverAddress();
+    if (!paired.hasData) {
+      // A read failure is not "this install never paired". Falling back to the
+      // build-time address would point a paired device at a different server,
+      // whose journal id differs - and the world-change wipe would then throw
+      // away everything this person has.
+      // Deferred, not abandoned: without a retry a single transient keychain
+      // failure would leave the app offline until it is restarted.
+      logRepository.debug(target: this, message: 'sync: server address unreadable, retrying');
+      _retry?.cancel();
+      _retry = Timer(const Duration(seconds: 2), () => unawaited(start()));
+      return;
+    }
+    final apiUrl = paired.data ?? _config.config.apiUrl;
     if (apiUrl == null || apiUrl.isEmpty) return;
+    // Keyed on the address actually in use: two different servers reachable at
+    // one configured address would otherwise look like one world, and the
+    // device would carry rows with foreign seqs into the new one.
     await _wipeIfWorldChanged('live:$apiUrl');
+    // File bytes travel over REST, and they have to reach the SAME machine the
+    // socket does: an attachment uploaded to the build-time address would be
+    // referenced from a message on the paired server, where its id means
+    // nothing.
+    if (getIt.isRegistered<ApiClient>()) getIt<ApiClient>().initBase(address: apiUrl);
     _syncService.start();
     // The greeting is where the server states the payload limits and who we
     // are; both are authoritative and arrive again on every reconnect.
     _phaseSub ??= _socket.phase.listen((phase) {
       if (phase == SessionPhase.catchingUp || phase == SessionPhase.live) unawaited(_adoptGreeting());
     });
+    _socket.onUnauthenticated = () => unawaited(_deviceRejected());
     await _socket.start(url: _socketUrl(apiUrl), credentialsProvider: _credentials, onJournalChanged: () => unawaited(_worldChanged()));
   }
 
@@ -79,6 +108,8 @@ class LiveSessionStarter {
   /// Tears the channel down. Called before the logout wipe so live events
   /// cannot repopulate the stores it is in the middle of emptying.
   Future<void> stop() async {
+    _retry?.cancel();
+    _retry = null;
     await _phaseSub?.cancel();
     _phaseSub = null;
     await _socket.stop();
@@ -103,17 +134,48 @@ class LiveSessionStarter {
       return null;
     }
     final data = session.data;
-    // A genuinely absent session is the sanctioned anonymous case: nobody has
-    // signed in, so there is nothing to claim.
-    if (data == null) return const GreetingCredentials();
+    // Nobody has paired yet. There is no anonymous greeting any more - the
+    // server refuses one - so the connection is held open for `pair` and says
+    // nothing. This is the state a fresh install sits in, and the state
+    // sign-in runs its pairing in.
+    if (data == null) return const GreetingCredentials.unpaired();
 
-    final deviceId = await _session.deviceId();
-    final dirty = await _session.isLabelDirty();
-    return GreetingCredentials(
-      loginRef: IdentifierDigest.loginRef(data.identifier),
-      deviceKey: deviceId.data,
-      label: (dirty.data ?? false) ? data.label : null,
-    );
+    final seed = await _session.deviceSecret();
+    if (!seed.hasData) {
+      // A paired install whose key cannot be read right now. Greeting without
+      // it would be refused, and a refusal is indistinguishable from a
+      // revocation - which would wipe this device over a transient keychain
+      // failure. Defer instead.
+      logRepository.debug(target: this, message: 'sync: device key unreadable, greeting deferred');
+      return null;
+    }
+    // No label here any more. It used to ride the greeting behind a "renamed"
+    // flag, because a greeting was the only place a name could travel; with
+    // identity.setLabel it has its own command, and repeating a cached name on
+    // every reconnect is how two devices of one person flip-flop.
+    return GreetingCredentials(deviceSeed: seed.data);
+  }
+
+  /// The server does not know this device any more: revoked from elsewhere, or
+  /// pointed at a store that was rebuilt from nothing.
+  ///
+  /// Both are the same event from here, and both mean the local data is no
+  /// longer this person's on this server. A forced logout is exactly the right
+  /// shape: it wipes and puts the app back on the pairing screen.
+  Future<void> _deviceRejected() async {
+    // Only an install that HAS a session can be revoked. A refusal for a device
+    // that never paired is not a revocation - it is the ordinary answer to a
+    // greeting that should not have gone out - and wiping on it would delete
+    // the very key and address a sign-in in progress just wrote.
+    final session = await _session.readSession();
+    if (!session.hasData || session.data == null) {
+      logRepository.debug(target: this, message: 'sync: refused while unpaired, nothing to clear');
+      await stop();
+      return;
+    }
+    logRepository.debug(target: this, message: 'sync: this device is no longer paired, clearing');
+    await stop();
+    await authRepository.logout(forced: true);
   }
 
   /// The server's store is not the one this device cached. Everything local
@@ -125,10 +187,9 @@ class LiveSessionStarter {
     try {
       await _wipeWorld();
       await _session.forgetAuthorId();
-      // The new world has never heard this name. Without re-asserting it the
-      // greeting states nothing, the server mints User<random>, and the person
-      // is silently renamed out of the name they chose.
-      await _session.markLabelDirty();
+      // Nothing to re-assert any more. A rebuilt store has no devices table
+      // either, so this device's key is unknown there and the next greeting is
+      // refused - the person pairs again, and pairing is what names them.
     } on Object catch (e, s) {
       logRepository.error(target: this, error: e, stackTrace: s);
     } finally {
@@ -159,17 +220,10 @@ class LiveSessionStarter {
     // without it — every message the user sent would come back looking like
     // someone else's.
     await _session.adoptServerIdentity(authorId: identity.id, label: identity.label);
-    // A person the server already knows has nothing left to onboard. This is
-    // the only path that can rescue a device left sitting on the naming screen
-    // while the same person named themselves elsewhere - and it advances the
-    // flag only, so a reconnect before naming cannot skip the step.
-    final created = identity.created;
-    if (created != null) {
-      final advanced = await _session.advanceOnboardingIfKnown(created: created);
-      // Re-derive only when the flag actually moved: the navigation spine
-      // swaps the root route off the naming screen from this.
-      if (advanced.data ?? false) await appStateRepository.fetchAppState();
-    }
+    // The onboarding rescue that used to live here is gone. The greeting no
+    // longer carries `created` - the outcome moved to the pair reply (§3),
+    // where the decision is actually taken - so this could never fire again,
+    // and code that reads as if it still works is worse than none.
   }
 
   /// The cached rows and the cursor describe ONE world. Mock seqs are minted
@@ -223,7 +277,10 @@ class LiveSessionStarter {
 
   /// `http(s)` addresses the REST half (blob bytes, phase 028); the socket is
   /// the same host and port with the matching scheme and the `/ws` path.
+  /// Accepts both shapes an address can arrive in: a full URL from the build
+  /// config, and a bare `host:port` from a pairing link.
   static Uri _socketUrl(String apiUrl) {
+    if (!apiUrl.contains('://')) return Uri.parse('ws://$apiUrl/ws');
     final base = Uri.parse(apiUrl);
     return base.replace(scheme: base.scheme == 'https' ? 'wss' : 'ws', path: '/ws');
   }

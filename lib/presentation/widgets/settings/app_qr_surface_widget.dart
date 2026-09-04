@@ -3,7 +3,6 @@ import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/theme/nox_brand.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/general/l10n_extension.dart';
-import 'package:nox_app/general/nox_qr_envelope.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 /// Brand-fixed light QR surface for the user's identifier (7.1 Show QR). The
@@ -44,7 +43,9 @@ class _AppQrSurfaceWidgetState extends State<AppQrSurfaceWidget> {
   }
 
   Widget _buildQr() => QrImageView(
-    data: NoxQrEnvelope.encode(widget.data),
+    // Rendered verbatim: the caller hands in a pairing link, which is
+    // already the exact string the other device has to read.
+    data: widget.data,
     version: QrVersions.auto,
     backgroundColor: NoxBrand.qrSurface,
     eyeStyle: const QrEyeStyle(eyeShape: QrEyeShape.square, color: NoxBrand.qrInk),

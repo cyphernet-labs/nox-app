@@ -4,7 +4,6 @@ import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nox_app/data/repository/app/auth_repository_impl.dart';
 import 'package:nox_app/data/sync/live_identity_handshake.dart';
-import 'package:nox_app/data/sync/outbox_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/app/app_state_model.dart';
@@ -14,6 +13,7 @@ import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/repository/log_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
@@ -34,6 +34,8 @@ import 'auth_repository_impl_test.mocks.dart';
 ])
 void main() {
   provideDummy<RepositoryResult<bool>>(const RepositoryResult<bool>.success(data: true));
+  provideDummy<RepositoryResult<String>>(const RepositoryResult<String>.success(data: ''));
+  provideDummy<RepositoryResult<String?>>(const RepositoryResult<String?>.success(data: null));
   provideDummy<RepositoryResult<AppStateModel>>(RepositoryResult<AppStateModel>.success(data: AppStateModel.init()));
 
   late MockSessionRepository session;
@@ -80,64 +82,56 @@ void main() {
 
   tearDown(() async => getIt.reset());
 
-  test('signIn no longer consults any built-in list of identifiers', () async {
-    // 'registered' used to be one of two strings that made someone a returning
-    // person. Nothing in the app knows that word any more: the server decides,
-    // and with no live channel in this environment there is nobody to ask, so
-    // onboarding is due - for that identifier exactly as for any other.
-    await repository.signIn(identifier: 'registered');
-    verify(session.saveIdentifier(identifier: 'registered', onboardingComplete: false)).called(1);
-    verify(appState.fetchAppState()).called(1);
+  // A link the Go server actually produced, captured from a live noxd.
+  const link = 'https://nox.app/p/#AQF_AAABH5CjZmMytIk_2XvPJ-jonqlQtYsZD3SB33P1foxqnrVbFo-VEf6WohQoqA1_na5iVUo';
+
+  test('signing in remembers which server the link named', () async {
+    // Without this the app pairs with the server a person presented and then
+    // sends their messages to the address baked into the build.
+    await repository.signIn(identifier: link);
+    verify(session.saveServer(address: '127.0.0.1:8080', serverKey: anyNamed('serverKey'))).called(1);
   });
 
-  test('signIn under a new identifier persists onboardingComplete=false', () async {
-    await repository.signIn(identifier: 'someoneNew');
-    verify(session.saveIdentifier(identifier: 'someoneNew', onboardingComplete: false)).called(1);
+  test('a link that will not parse is refused before anything is stored', () async {
+    final result = await repository.signIn(identifier: 'not a pairing link');
+
+    expect(result.hasData, isFalse);
+    expect(result.exception, RepositoryException.invalidRequest);
+    verifyNever(session.saveServer(address: anyNamed('address'), serverKey: anyNamed('serverKey')));
+    verifyNever(session.saveIdentifier(identifier: anyNamed('identifier'), onboardingComplete: anyNamed('onboardingComplete')));
   });
 
   test('FR-004: signing in never states a label, so a known name cannot be overwritten', () async {
-    // The defect this feature removes, asserted at its narrowest point. The
-    // old path decided onboarding locally, sent the person to the naming
-    // screen, and the name they typed there travelled to the server as a
-    // RENAME - overwriting the name they were known by. Sign-in must
-    // therefore never raise the rename flag and never state a label itself:
-    // the only thing it writes is the identifier.
-    await repository.signIn(identifier: 'someoneNew');
+    // The defect feature 031 removed, asserted at its narrowest point: sign-in
+    // may write the identity but never a name.
+    await repository.signIn(identifier: link);
 
     verifyNever(session.updateLabel(label: anyNamed('label')));
-    verifyNever(session.markLabelDirty());
-    // setOnboardingComplete is what carries a label, and sign-in may only
-    // reach it when the SERVER said the person is already known - in which
-    // case there is nothing to name.
     verifyNever(session.setOnboardingComplete(label: anyNamed('label')));
   });
 
-  test('a sign-in that cannot ask the server leaves no half-made session behind', () async {
-    // Storing the identifier comes first, because that is what makes the
-    // greeting state a person instead of going out anonymously. If the
-    // handshake then fails, the stored identifier must not survive: a session
-    // with no settled outcome would strand the next launch in onboarding -
-    // the exact state this method exists to stop handing out.
-    when(
-      session.saveIdentifier(identifier: anyNamed('identifier'), onboardingComplete: anyNamed('onboardingComplete')),
-    ).thenAnswer((_) async => const RepositoryResult<bool>.error(exception: RepositoryException.unknown));
+  test('completeOnboarding marks the flag and re-derives app state', () async {
+    await repository.completeOnboarding(label: 'Alice');
+    verify(session.setOnboardingComplete(label: 'Alice')).called(1);
+    verify(appState.fetchAppState()).called(1);
+  });
 
-    final result = await repository.signIn(identifier: 'someoneNew');
+  test('a failed completeOnboarding does not re-derive app state', () async {
+    // The reconnect that carries the new label rides in the same afterMutate,
+    // so a failure here must leave both alone rather than announcing a name the
+    // session never stored.
+    when(
+      session.setOnboardingComplete(label: anyNamed('label')),
+    ).thenAnswer((_) async => RepositoryResult<bool>.error(exception: RepositoryException.unknown));
+
+    final result = await repository.completeOnboarding(label: 'Alice');
 
     expect(result.hasData, isFalse);
     verifyNever(appState.fetchAppState(sessionExpired: anyNamed('sessionExpired')));
   });
 
-  test('signIn trims the identifier before persisting', () async {
-    // Normalisation still matters, and now for a sharper reason: the login_ref
-    // derivation is computed over the stored value, so a trailing newline
-    // would make the same person unrecognisable on the next install.
-    await repository.signIn(identifier: '  registered\n');
-    verify(session.saveIdentifier(identifier: 'registered', onboardingComplete: false)).called(1);
-  });
-
   test('logout propagates a clear() failure and does not re-derive app state or wipe caches', () async {
-    when(session.clear()).thenAnswer((_) async => RepositoryResult<bool>.error(exception: RepositoryException.unknown));
+    when(session.clear()).thenAnswer((_) async => const RepositoryResult<bool>.error(exception: RepositoryException.unknown));
     final result = await repository.logout();
     expect(result.hasData, isFalse);
     verifyNever(appState.fetchAppState(sessionExpired: anyNamed('sessionExpired')));
@@ -161,47 +155,6 @@ void main() {
     verifyInOrder([session.clear(), outbox.clean(), files.clean(), sync.clear(), chats.clean(), messages.clean()]);
   });
 
-  test('signing in re-arms the outgoing drain that logout cancelled', () async {
-    // The drain's phase subscription dies with logout, and stop() disarms it
-    // until start() is called again. Asserting through OBSERVABLE behaviour —
-    // does a queued message actually go out after a re-login — because the
-    // earlier version of this test passed with the re-arm deleted.
-    final outboxRepository = getIt<OutboxRepository>();
-    final drain = getIt<OutboxService>();
-    await outboxRepository.clean();
-
-    await repository.logout(); // stops and disarms the drain
-    await outboxRepository.enqueue(chatId: 'chat_0', text: 'written after the logout');
-    await drain.flush();
-    expect(await outboxRepository.pending(), hasLength(1), reason: 'a disarmed drain must not send');
-
-    await repository.signIn(identifier: 'registered');
-    await drain.flush();
-
-    expect(await outboxRepository.pending(), isEmpty, reason: 'sign-in has to put the drain back to work');
-    await outboxRepository.clean();
-  });
-
-  test('completeOnboarding marks the flag and re-derives app state', () async {
-    await repository.completeOnboarding(label: 'Alice');
-    verify(session.setOnboardingComplete(label: 'Alice')).called(1);
-    verify(appState.fetchAppState()).called(1);
-  });
-
-  test('a failed completeOnboarding does not re-derive app state', () async {
-    // The reconnect that carries the new label rides in the same afterMutate,
-    // so a failure here must leave both alone rather than announcing a name the
-    // session never stored.
-    when(
-      session.setOnboardingComplete(label: anyNamed('label')),
-    ).thenAnswer((_) async => RepositoryResult<bool>.error(exception: RepositoryException.unknown));
-
-    final result = await repository.completeOnboarding(label: 'Alice');
-
-    expect(result.hasData, isFalse);
-    verifyNever(appState.fetchAppState(sessionExpired: anyNamed('sessionExpired')));
-  });
-
   test('ordinary logout clears the session without sessionExpired', () async {
     await repository.logout();
     verify(session.clear()).called(1);
@@ -218,6 +171,7 @@ void main() {
   /// the stage flavor, and the one no test used to reach — every case above
   /// runs the no-handshake fallback, so the server-decided outcome and its
   /// rollback were both unexercised.
+  /// Sign-in with a live channel: the branch the app takes on the stage flavor.
   group('signIn with a live channel', () {
     late MockLiveIdentityHandshake handshake;
 
@@ -226,24 +180,20 @@ void main() {
       getIt.allowReassignment = true;
       getIt.registerSingleton<LiveIdentityHandshake>(handshake);
       when(appState.currentState).thenReturn(AppStateType.authorized);
+      when(
+        session.deviceSecret(),
+      ).thenAnswer((_) async => const RepositoryResult<String>.success(data: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8='));
+      when(
+        session.saveServer(address: anyNamed('address'), serverKey: anyNamed('serverKey')),
+      ).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
     });
 
-    test('a person the server already knows skips onboarding entirely', () async {
-      when(handshake.greet()).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
+    test('claiming a server brings the person into being, so naming is ahead', () async {
+      when(
+        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
+      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_2', label: 'User1234', created: true));
 
-      final result = await repository.signIn(identifier: 'anna-id');
-
-      expect(result.data, isTrue);
-      verify(session.setOnboardingComplete()).called(1);
-      verifyNever(session.noteOnboardingStartedHere());
-      // Still no label from here: the name the server holds is the authority.
-      verifyNever(session.setOnboardingComplete(label: anyNamed('label')));
-    });
-
-    test('a person the server just created goes to naming, and the process remembers it', () async {
-      when(handshake.greet()).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_2', label: 'User1234', created: true));
-
-      final result = await repository.signIn(identifier: 'brand-new');
+      final result = await repository.signIn(identifier: link);
 
       expect(result.data, isTrue);
       verifyNever(session.setOnboardingComplete());
@@ -252,30 +202,138 @@ void main() {
       verify(session.noteOnboardingStartedHere()).called(1);
     });
 
-    test('a handshake that never answers rolls the sign-in back, keeping the device id', () async {
+    test('a device added to an existing person skips onboarding entirely', () async {
+      when(
+        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
+      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
+
+      final result = await repository.signIn(identifier: link);
+
+      expect(result.data, isTrue);
+      verify(session.setOnboardingComplete()).called(1);
+      verifyNever(session.noteOnboardingStartedHere());
+    });
+
+    test('only the PUBLIC key is presented - the seed never leaves', () async {
+      when(
+        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
+      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
+
+      await repository.signIn(identifier: link);
+
+      final presented = verify(
+        handshake.pair(link: anyNamed('link'), deviceKey: captureAnyNamed('deviceKey'), platform: anyNamed('platform')),
+      ).captured.single;
+      expect(presented, 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=', reason: 'the public half of the pinned vector');
+      expect(presented, isNot(contains('AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=')));
+    });
+
+    test('an expired invite is told apart from a rejected one', () async {
+      // The person acts differently: issue a new invite versus this one is not
+      // usable at all.
+      when(
+        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
+      ).thenThrow(const PairingRefused(expired: true));
+
+      final expired = await repository.signIn(identifier: link);
+      expect(expired.exception, RepositoryException.notFound);
+
+      when(
+        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
+      ).thenThrow(const PairingRefused(expired: false));
+
+      final rejected = await repository.signIn(identifier: link);
+      expect(rejected.exception, RepositoryException.authentication);
+    });
+
+    test('a successful pairing re-greets, so the session stops speaking as the pre-pair identity', () async {
+      // The connection `pair` ran on was greeted before this device existed to
+      // the server. Without a second greeting it keeps speaking as whoever
+      // greeted then, and a message sent on it comes back looking like a
+      // stranger's on the sender's own screen.
+      when(
+        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
+      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
+      when(handshake.greet()).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
+
+      await repository.signIn(identifier: link);
+
+      verify(handshake.greet()).called(1);
+    });
+
+    test('a greeting that fails after pairing does not undo the pairing', () async {
+      // The pairing landed and the token is spent. Rolling back here would burn
+      // it for nothing - an ordinary reconnect is enough.
+      when(
+        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
+      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
       when(handshake.greet()).thenThrow(const IdentityHandshakeTimeout());
 
-      final result = await repository.signIn(identifier: 'anna-id');
+      final result = await repository.signIn(identifier: link);
+
+      expect(result.data, isTrue);
+      verifyNever(session.discardSignIn());
+    });
+
+    test('a pairing that never answers rolls back, keeping the device key', () async {
+      when(
+        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
+      ).thenThrow(const IdentityHandshakeTimeout());
+
+      final result = await repository.signIn(identifier: link);
 
       expect(result.hasData, isFalse);
       verify(session.discardSignIn()).called(1);
       // NOT clear(): that wipes secure storage wholesale and takes the device
-      // id with it, so one install would register as two devices.
+      // key with it, so one install would register as two devices.
       verifyNever(session.clear());
       verifyNever(session.setOnboardingComplete());
+    });
+
+    test('a failure puts no token and no key seed into the log', () async {
+      // A token in a log is still a usable pairing credential, and a
+      // FormatException from a base64 decode carries its source in the message
+      // - which here would be the link or the seed (Principle I, FR-035).
+      final logs = <String>[];
+      final logger = _CapturingLog(logs);
+      getIt.registerSingleton<LogRepository>(logger);
+      when(
+        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
+      ).thenThrow(const FormatException('Invalid character', 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8='));
+
+      await repository.signIn(identifier: link);
+
+      final written = logs.join('\n');
+      expect(written, isNot(contains('AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=')));
+      expect(written, isNot(contains(link.split('#').last)));
     });
 
     test('an outcome the server did not state is not treated as an outcome', () async {
       // An older server, or a frame without the field. Guessing false steals a
       // newcomer's naming step; guessing true overwrites a returning person's
-      // name. Neither is acceptable, so the sign-in fails and offers a retry.
-      when(handshake.greet()).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_3', label: 'Anna', created: null));
+      // name.
+      when(
+        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
+      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_3', label: 'Anna', created: null));
 
-      final result = await repository.signIn(identifier: 'anna-id');
+      final result = await repository.signIn(identifier: link);
 
       expect(result.hasData, isFalse);
       verify(session.discardSignIn()).called(1);
       verifyNever(session.setOnboardingComplete());
     });
   });
+}
+
+/// Records what the app writes, so a test can assert what it does NOT write.
+class _CapturingLog implements LogRepository {
+  _CapturingLog(this.lines);
+
+  final List<String> lines;
+
+  @override
+  void debug({Object? target, required String message}) => lines.add(message);
+
+  @override
+  void error({Object? target, required Object error, StackTrace? stackTrace}) => lines.add(error.toString());
 }

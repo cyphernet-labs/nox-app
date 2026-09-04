@@ -2,6 +2,9 @@ package server
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -18,12 +21,19 @@ import (
 
 // wsClient is a test-side protocol client over one connection.
 type wsClient struct {
-	t    *testing.T
-	conn *websocket.Conn
-	ctx  context.Context
+	t         *testing.T
+	conn      *websocket.Conn
+	ctx       context.Context
+	challenge string
+	// dev is the key this client greets with. Every greeting has to be signed
+	// since feature 032, so a test that does not care which device it is gets
+	// one paired for it on the first hello.
+	dev *device
+	srv *Server
+	ts  *httptest.Server
 }
 
-func dialWS(t *testing.T, ts *httptest.Server) *wsClient {
+func dialWS(t *testing.T, ts *httptest.Server, srv *Server) *wsClient {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	t.Cleanup(cancel)
@@ -33,7 +43,7 @@ func dialWS(t *testing.T, ts *httptest.Server) *wsClient {
 	}
 	t.Cleanup(func() { _ = conn.Close(websocket.StatusNormalClosure, "") })
 	conn.SetReadLimit(1 << 20)
-	return &wsClient{t: t, conn: conn, ctx: ctx}
+	return &wsClient{t: t, conn: conn, ctx: ctx, srv: srv, ts: ts}
 }
 
 func (c *wsClient) send(frame string) {
@@ -58,20 +68,128 @@ func (c *wsClient) read() map[string]json.RawMessage {
 	return frame
 }
 
-// expectGreeting consumes the srv greeting frame.
+// expectGreeting consumes the srv greeting frame and remembers the challenge,
+// which every later greeting on this connection has to sign.
 func (c *wsClient) expectGreeting() {
 	c.t.Helper()
 	frame := c.read()
-	if _, ok := frame["srv"]; !ok {
+	raw, ok := frame["srv"]
+	if !ok {
 		c.t.Fatalf("first frame is not a greeting: %v", frame)
 	}
+	var body struct {
+		Challenge string `json:"challenge"`
+	}
+	mustUnmarshal(c.t, raw, &body)
+	c.challenge = body.Challenge
+}
+
+// device is one test device's key pair. The private half never leaves it, the
+// same way it never leaves a real installation.
+type device struct {
+	pub  string
+	priv ed25519.PrivateKey
+}
+
+func newDevice(t *testing.T) *device {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate device key: %v", err)
+	}
+	return &device{pub: base64.StdEncoding.EncodeToString(pub), priv: priv}
+}
+
+// sign produces what a real client puts in `signature`: the signature over the
+// prefixed RAW challenge bytes.
+func (d *device) sign(t *testing.T, challenge string) string {
+	t.Helper()
+	raw, err := base64.StdEncoding.DecodeString(challenge)
+	if err != nil {
+		t.Fatalf("decode challenge: %v", err)
+	}
+	return base64.StdEncoding.EncodeToString(
+		ed25519.Sign(d.priv, append([]byte(challengePrefix), raw...)))
+}
+
+// claimDevice pairs a fresh device by claiming the server. Returns the device
+// and the identity the pairing produced.
+func claimDevice(t *testing.T, ts *httptest.Server, srv *Server) (*device, map[string]json.RawMessage) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := srv.store.EnsureServerIdentity(ctx); err != nil {
+		t.Fatalf("EnsureServerIdentity: %v", err)
+	}
+	token, err := srv.store.IssueClaimToken(ctx, time.Now().Unix())
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+	return pairDevice(t, ts, token)
+}
+
+// pairDevice presents a token on a fresh connection, which is the one command
+// allowed before a greeting.
+func pairDevice(t *testing.T, ts *httptest.Server, token string) (*device, map[string]json.RawMessage) {
+	t.Helper()
+	d := newDevice(t)
+	c := dialWS(t, ts, nil)
+	c.expectGreeting()
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"device_key":%q,"platform":"test"}}`, token, d.pub))
+	data := c.expectOK(1)
+	_ = c.conn.Close(websocket.StatusNormalClosure, "")
+	return d, data
+}
+
+// greet performs a signed session.hello for an already paired device.
+func (c *wsClient) greet(t *testing.T, id int, d *device, extra string) map[string]json.RawMessage {
+	t.Helper()
+	return c.hello(id, fmt.Sprintf(`,"device_key":%q,"signature":%q%s`, d.pub, d.sign(t, c.challenge), extra))
 }
 
 // hello performs session.hello and returns the reply data.
+//
+// The signature is added automatically unless the caller already stated a
+// device_key: a greeting without one is refused, and making every one of the
+// thirty-odd tests spell that out would bury what each is actually about.
 func (c *wsClient) hello(id int, extra string) map[string]json.RawMessage {
 	c.t.Helper()
+	if !strings.Contains(extra, "device_key") {
+		if c.dev == nil {
+			c.dev = pairedDevice(c.t, c.ts, c.srv)
+		}
+		extra += fmt.Sprintf(`,"device_key":%q,"signature":%q`, c.dev.pub, c.dev.sign(c.t, c.challenge))
+	}
 	c.send(fmt.Sprintf(`{"id":%d,"cmd":"session.hello","data":{"schema":1%s}}`, id, extra))
 	return c.expectOK(id)
+}
+
+// pairedDevice pairs a fresh key: by claiming the server if nobody owns it
+// yet, otherwise by inviting a device to the person who does.
+func pairedDevice(t *testing.T, ts *httptest.Server, srv *Server) *device {
+	t.Helper()
+	ctx := context.Background()
+	id, err := srv.store.EnsureServerIdentity(ctx)
+	if err != nil {
+		t.Fatalf("EnsureServerIdentity: %v", err)
+	}
+	if !id.Claimed {
+		token, err := srv.store.IssueClaimToken(ctx, time.Now().Unix())
+		if err != nil {
+			t.Fatalf("IssueClaimToken: %v", err)
+		}
+		d, _ := pairDevice(t, ts, token)
+		return d
+	}
+	owner, err := srv.store.AnyUser(ctx)
+	if err != nil {
+		t.Fatalf("AnyUser: %v", err)
+	}
+	token, err := srv.store.IssueDeviceInvite(ctx, owner, time.Now().Unix())
+	if err != nil {
+		t.Fatalf("IssueDeviceInvite: %v", err)
+	}
+	d, _ := pairDevice(t, ts, token)
+	return d
 }
 
 // expectOK reads frames until the reply for id arrives (skipping events) and
@@ -161,9 +279,9 @@ func rawString(raw json.RawMessage) string {
 }
 
 func TestStoryOneLiveExchange(t *testing.T) {
-	ts, _ := newTestServer(t)
+	ts, srv := newTestServer(t)
 
-	anna := dialWS(t, ts)
+	anna := dialWS(t, ts, srv)
 	anna.expectGreeting()
 	helloData := anna.hello(1, `,"label":"Anna"`)
 
@@ -178,7 +296,7 @@ func TestStoryOneLiveExchange(t *testing.T) {
 		t.Fatalf("identity id = %q, want the u_<16 hex> shape", ident.ID)
 	}
 
-	bob := dialWS(t, ts)
+	bob := dialWS(t, ts, srv)
 	bob.expectGreeting()
 	bob.hello(1, `,"label":"Bob"`)
 
@@ -224,9 +342,13 @@ func TestStoryOneLiveExchange(t *testing.T) {
 	if evMsgID != echo.MessageID {
 		t.Fatalf("event message_id = %s, want %s", evMsgID, echo.MessageID)
 	}
-	// Contract §5: client_message_id belongs to the author's own frames only.
-	if _, leaked := evData["client_message_id"]; leaked {
-		t.Fatal("bob's message.new carries the author's client_message_id")
+	// Contract §5: client_message_id belongs to the AUTHOR - the person, not the
+	// device. A stage-2 server holds exactly one person until invite-user
+	// arrives (Q15), so the second connection is another device of the same
+	// person and legitimately receives the key: that is what lets a restarted
+	// send settle its queue entry instead of showing twice.
+	if _, present := evData["client_message_id"]; !present {
+		t.Fatal("the author's other device lost its own client_message_id")
 	}
 }
 
@@ -238,9 +360,9 @@ func (c *wsClient) expectOKAfter(id int, frame string) map[string]json.RawMessag
 }
 
 func TestStoryOneDuplicateSendIsIdempotent(t *testing.T) {
-	ts, _ := newTestServer(t)
+	ts, srv := newTestServer(t)
 
-	anna := dialWS(t, ts)
+	anna := dialWS(t, ts, srv)
 	anna.expectGreeting()
 	anna.hello(1, ``)
 	createData := anna.expectOKAfter(2, `{"id":2,"cmd":"chat.create","data":{"name":"dup"}}`)
@@ -264,7 +386,7 @@ func TestStoryOneDuplicateSendIsIdempotent(t *testing.T) {
 
 	// A watcher connected afterwards replays exactly two events: chat.created
 	// and ONE message.new - the duplicate produced none.
-	watcher := dialWS(t, ts)
+	watcher := dialWS(t, ts, srv)
 	watcher.expectGreeting()
 	watcher.hello(1, `,"since":0`)
 	if seq, name, _ := watcher.expectEvent(); name != protocol.EventChatCreated || seq != 1 {
@@ -276,9 +398,9 @@ func TestStoryOneDuplicateSendIsIdempotent(t *testing.T) {
 }
 
 func TestStoryOneNameTakenCaseInsensitiveAndConcurrentRace(t *testing.T) {
-	ts, _ := newTestServer(t)
+	ts, srv := newTestServer(t)
 
-	anna := dialWS(t, ts)
+	anna := dialWS(t, ts, srv)
 	anna.expectGreeting()
 	anna.hello(1, ``)
 	anna.expectOKAfter(2, `{"id":2,"cmd":"chat.create","data":{"name":"General"}}`)
@@ -291,10 +413,10 @@ func TestStoryOneNameTakenCaseInsensitiveAndConcurrentRace(t *testing.T) {
 	// Concurrent same-name creates from two connections: exactly one wins.
 	// Both frames are written before either reply is read, so the server
 	// processes them concurrently; reads stay on the test goroutine.
-	c1 := dialWS(t, ts)
+	c1 := dialWS(t, ts, srv)
 	c1.expectGreeting()
 	c1.hello(1, ``)
-	c2 := dialWS(t, ts)
+	c2 := dialWS(t, ts, srv)
 	c2.expectGreeting()
 	c2.hello(1, ``)
 
@@ -316,17 +438,17 @@ func TestStoryOneNameTakenCaseInsensitiveAndConcurrentRace(t *testing.T) {
 }
 
 func TestStoryOneProtocolNegatives(t *testing.T) {
-	ts, _ := newTestServer(t)
+	ts, srv := newTestServer(t)
 
 	t.Run("command before hello is rejected", func(t *testing.T) {
-		c := dialWS(t, ts)
+		c := dialWS(t, ts, srv)
 		c.expectGreeting()
 		c.send(`{"id":1,"cmd":"chat.create","data":{"name":"early"}}`)
 		c.expectErr(1, protocol.ErrInvalidRequest)
 	})
 
 	t.Run("unknown command", func(t *testing.T) {
-		c := dialWS(t, ts)
+		c := dialWS(t, ts, srv)
 		c.expectGreeting()
 		c.hello(1, ``)
 		c.send(`{"id":2,"cmd":"nope","data":{}}`)
@@ -334,7 +456,7 @@ func TestStoryOneProtocolNegatives(t *testing.T) {
 	})
 
 	t.Run("duplicate hello", func(t *testing.T) {
-		c := dialWS(t, ts)
+		c := dialWS(t, ts, srv)
 		c.expectGreeting()
 		c.hello(1, ``)
 		c.send(`{"id":2,"cmd":"session.hello","data":{"schema":1}}`)
@@ -342,14 +464,14 @@ func TestStoryOneProtocolNegatives(t *testing.T) {
 	})
 
 	t.Run("schema mismatch", func(t *testing.T) {
-		c := dialWS(t, ts)
+		c := dialWS(t, ts, srv)
 		c.expectGreeting()
 		c.send(`{"id":1,"cmd":"session.hello","data":{"schema":99}}`)
 		c.expectErr(1, protocol.ErrUnsupportedSchema)
 	})
 
 	t.Run("oversized body", func(t *testing.T) {
-		c := dialWS(t, ts)
+		c := dialWS(t, ts, srv)
 		c.expectGreeting()
 		c.hello(1, ``)
 		data := c.expectOKAfter(2, `{"id":2,"cmd":"chat.create","data":{"name":"big"}}`)
@@ -363,7 +485,7 @@ func TestStoryOneProtocolNegatives(t *testing.T) {
 	})
 
 	t.Run("send to missing chat", func(t *testing.T) {
-		c := dialWS(t, ts)
+		c := dialWS(t, ts, srv)
 		c.expectGreeting()
 		c.hello(1, ``)
 		c.send(`{"id":2,"cmd":"message.send","data":{"chat_id":"c_missing","client_message_id":"m1","body":{"type":"text","text":"x"}}}`)
@@ -371,7 +493,7 @@ func TestStoryOneProtocolNegatives(t *testing.T) {
 	})
 
 	t.Run("unparseable frame closes the connection, server survives", func(t *testing.T) {
-		c := dialWS(t, ts)
+		c := dialWS(t, ts, srv)
 		c.expectGreeting()
 		c.send(`[not, an, object]`)
 		waitClosed(t, c, websocket.StatusProtocolError)
@@ -379,7 +501,7 @@ func TestStoryOneProtocolNegatives(t *testing.T) {
 	})
 
 	t.Run("frame with id but no cmd gets invalid_request, connection survives", func(t *testing.T) {
-		c := dialWS(t, ts)
+		c := dialWS(t, ts, srv)
 		c.expectGreeting()
 		c.send(`{"id":7,"data":{}}`)
 		c.expectErr(7, protocol.ErrInvalidRequest)
@@ -387,7 +509,7 @@ func TestStoryOneProtocolNegatives(t *testing.T) {
 	})
 
 	t.Run("read-limit overflow closes the connection, server survives", func(t *testing.T) {
-		c := dialWS(t, ts)
+		c := dialWS(t, ts, srv)
 		c.expectGreeting()
 		huge := strings.Repeat("a", 200000) // above max_frame_bytes 131072
 		_ = c.conn.Write(c.ctx, websocket.MessageText, []byte(`{"id":1,"cmd":"session.hello","data":{"schema":1,"label":"`+huge+`"}}`))
@@ -397,9 +519,9 @@ func TestStoryOneProtocolNegatives(t *testing.T) {
 }
 
 func TestStoryOneDefaultLabelFallback(t *testing.T) {
-	ts, _ := newTestServer(t)
+	ts, srv := newTestServer(t)
 
-	c := dialWS(t, ts)
+	c := dialWS(t, ts, srv)
 	c.expectGreeting()
 	data := c.hello(1, ``)
 	var ident identity
@@ -411,17 +533,15 @@ func TestStoryOneDefaultLabelFallback(t *testing.T) {
 		t.Fatalf("assigned label = %q, want the User<4 digits> shape", ident.Label)
 	}
 
-	// A second nameless connection is a different person. Their NAMES are not
-	// asserted to differ: neither connection writes a users row (both are
-	// ephemeral until they send something), so the de-duplication in
-	// assignedLabelTx has nothing to see and a collision is possible by design -
-	// labels are not unique, by owner decision.
-	c2 := dialWS(t, ts)
+	// A second device of the same person is the SAME person. There is no other
+	// kind of second connection on a stage-2 server: a nameless one is refused,
+	// and inviting a new PERSON is still blocked on Q15.
+	c2 := dialWS(t, ts, srv)
 	c2.expectGreeting()
 	var ident2 identity
 	mustUnmarshal(t, c2.hello(1, ``)["identity"], &ident2)
-	if ident2.ID == ident.ID {
-		t.Fatalf("two nameless connections share the identity %q", ident.ID)
+	if ident2.ID != ident.ID {
+		t.Fatalf("a second device resolved to %q, want the same person %q", ident2.ID, ident.ID)
 	}
 }
 

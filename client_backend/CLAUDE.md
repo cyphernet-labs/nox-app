@@ -8,15 +8,17 @@ SQLite, single static CGO-free binary.
 **The contract is law:** `docs/client-backend/protocol/contract-draft.md`
 (v0). Every command, event, field name, error code and rule comes from
 there; a change needed on the wire is first a contract edit, then code.
-Stage 1 implements everything EXCEPT authentication. Since feature 030 the
-greeting RESOLVES an identity: `login_ref` names the person, `device_key`
-names the install, and both are recorded without being proved — `signature`
-is still ignored and the `srv` challenge still unchecked. Stage 2 (pairing
-per `docs/client-backend/architecture/authentication.md`) is deliberately
-out of scope: identity and device tables without any verification are the
-sanctioned groundwork, but do not add signature checks, token tables or
-cryptography of any kind. No hashing happens in this program — `login_ref`
-arrives ready-made and is an opaque lookup key.
+
+**Stage 2 is under way (feature 032).** The server now CHECKS who connects:
+`device_key` is an Ed25519 public key, `signature` over
+`"nox/challenge/v1:" ‖ challenge` is verified on every greeting, and the
+person is found by that key. `login_ref` is gone from the wire, the lookup
+and the schema — presenting a secret was replaced by proving possession of
+a key that never leaves the device. A greeting can no longer create anyone:
+an unknown key is refused (`unauthenticated`), and people come into being
+only through `pair` (§8A). Still out of scope and blocked: `recover` and the
+recovery phrase (Q16), inviting a new PERSON rather than a device (Q15),
+TLS with pinning.
 
 Architecture rationale lives in `docs/blueprints/client-backend/README.md`;
 Go style rules live in the `go-style` skill; WebSocket/REST runtime
@@ -120,9 +122,15 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - `internal/config/`     — flags + `NOX_*` env, validated at start
 - `internal/db/`         — pools, pragmas, `user_version` migration runner
 - `internal/store/`      — types + all reads/writes; the ONLY writer code
-- `internal/store/identity.go` — identity resolution: person by `login_ref`,
-  device by `device_key`, the person wins on conflict; the second event-less
-  write besides file metadata
+- `internal/store/identity.go` — identity resolution: the person is found by
+  the device's public key, and an unknown key is refused rather than enrolled;
+  the second event-less write besides file metadata
+- `internal/store/serverkey.go` — the machine's own key pair and the ownership
+  state machine (`claimed_at IS NULL` means only claim tokens are accepted)
+- `internal/store/pairing.go` — one-shot tokens and `Pair`; burning is a
+  conditional UPDATE whose affected-row count settles a two-device race
+- `internal/store/devices.go` — device list, revocation (DELETE, so a revoked
+  device is indistinguishable from an unknown one), rename
 - `internal/hub/`        — fan-out goroutine owning the subscriber set
 - `internal/protocol/`   — envelope v0 types, error codes, frame (un)marshal
 - `internal/server/`     — ServeMux wiring: `/ws`, REST (§1 of contract), middleware
@@ -148,10 +156,21 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 
 ## Known deliberate omissions (do not "fix" silently)
 
-- No authentication (stage 2) — greeting challenge is sent but unchecked,
-  and `login_ref`/`device_key` are believed rather than proved. That is no
-  weaker than what preceded it, where a bare display name was taken at
-  face value, and it is the exact shape stage 2 needs.
+- The claim token has NO expiry. It dies by being used, only someone with
+  access to the machine ever sees it, and an expiring one would leave an
+  installed-then-forgotten server unclaimable with no way to mint another.
+  Device invites do expire, after ten minutes.
+- The server's private key lives INSIDE the database file. The model's case 6
+  warns that a backup holding only the DB breaks pinning for every device at
+  once; one artifact makes that impossible, and anyone who can read the file
+  already has every message.
+- The claim link is printed to the log and nowhere else. A local HTTP page
+  serving the QR would hand ownership to everyone on the network while the
+  transport is not TLS.
+- The CLAIM link falls back to loopback under a wildcard bind (it is read on the
+  machine), while an INVITE link uses the address the requesting device dialled
+  (its `Host` header). The two differ because an invite is carried to another
+  device, and loopback there is a link nothing can dial.
 - `users.label` is neither unique nor validated (owner, 2026-09-02): a
   greeting may never be refused because of a name, since the client
   retries a refused greeting forever.

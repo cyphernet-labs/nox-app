@@ -6,7 +6,7 @@
 /// A domain seam over the pure-Dart decoder (`zxing2`) so the presentation stays
 /// testable without real image I/O — mirrors `CameraPermissionService` /
 /// `FilePickerService`. Returns the RAW QR text (the caller applies
-/// `NoxQrEnvelope.decode`, exactly like the camera path). No-throw: an unreadable
+/// `PairingLink.tryParse`, exactly like the camera path). No-throw: an unreadable
 /// file, an unsupported format, or an image with no QR all resolve to `null`.
 abstract class QrImageDecodeService {
   Future<String?> decodeQr(String imagePath);

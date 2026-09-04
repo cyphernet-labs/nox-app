@@ -10,15 +10,19 @@ void main() {
   tearDown(getIt.reset);
 
   blocTest<SettingsRootBloc, SettingsRootState>(
-    'initialize loads the real identifier from the session into rawId (FR-014)',
-    setUp: () => registerFakeSession(session: const SessionModel(identifier: 'real-id-xyz', onboardingComplete: true)),
+    'shows the SERVER-minted author id, never the pairing token beside it',
+    setUp: () => registerFakeSession(
+      session: const SessionModel(identifier: 'pairing-token-xyz', authorId: 'u_1234567890abcdef', onboardingComplete: true),
+    ),
     build: SettingsRootBloc.new,
     act: (bloc) => bloc.add(const SettingsRootEvent.initialize()),
-    expect: () => [predicate<SettingsRootState>((s) => !s.initialLoading && s.rawId == 'real-id-xyz')],
+    // The identifier slot now holds the pairing TOKEN. Showing that as "Your
+    // ID" would put a credential on screen and into the clipboard.
+    expect: () => [predicate<SettingsRootState>((s) => !s.initialLoading && s.rawId == 'u_1234567890abcdef' && !s.rawId.contains('token'))],
   );
 
   blocTest<SettingsRootBloc, SettingsRootState>(
-    'a session with no id yields an empty rawId — never fabricates a fake scannable QR',
+    'with no session there is no id to show, and none is invented',
     setUp: () => registerFakeSession(session: null),
     build: SettingsRootBloc.new,
     act: (bloc) => bloc.add(const SettingsRootEvent.initialize()),
@@ -26,10 +30,13 @@ void main() {
   );
 
   blocTest<SettingsRootBloc, SettingsRootState>(
-    'a read error yields an empty rawId (fails soft, no fabricated identity)',
+    'a read error shows nothing rather than inventing an id',
     setUp: () => registerFakeSession(fail: true),
     build: SettingsRootBloc.new,
     act: (bloc) => bloc.add(const SettingsRootEvent.initialize()),
+    // Deliberately not the fallback: a session that could not be read is not
+    // the same as a session that has no id, and guessing here would show
+    // somebody an id that is not theirs.
     expect: () => [predicate<SettingsRootState>((s) => !s.initialLoading && s.rawId.isEmpty)],
   );
 }

@@ -10,7 +10,13 @@ import 'package:nox_app/domain/repository/base/repository_result.dart';
 /// identity card / Show QR surface in tests.
 const String kTestIdentifier = 'NOX-7c1f9a4e2b8d40f3-a6e5c2179bd0e83f-9f2a7c4e1b6d8a30';
 
-const SessionModel kTestSession = SessionModel(identifier: kTestIdentifier, onboardingComplete: true);
+const SessionModel kTestSession = SessionModel(
+  identifier: kTestIdentifier,
+  // The server-minted public id. Distinct from the identifier slot, which now
+  // holds the pairing token - a credential, never shown as "Your ID".
+  authorId: 'u_test0000000001',
+  onboardingComplete: true,
+);
 
 /// Hand-written session double — callers exercise [readSession] plus the feature-015
 /// label channel ([watchLabel] / [updateLabel]).
@@ -54,10 +60,15 @@ class FakeSessionRepository implements SessionRepository {
   Future<RepositoryResult<bool>> setOnboardingComplete({String? label}) => throw UnimplementedError();
 
   @override
-  Future<RepositoryResult<String>> deviceId() async => const RepositoryResult<String>.success(data: 'test-device');
+  Future<RepositoryResult<String>> deviceSecret() async =>
+      const RepositoryResult<String>.success(data: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=');
 
   @override
-  Future<RepositoryResult<bool>> isLabelDirty() async => RepositoryResult<bool>.success(data: labelDirty);
+  Future<RepositoryResult<bool>> saveServer({required String address, required String serverKey}) async =>
+      const RepositoryResult<bool>.success(data: true);
+
+  @override
+  Future<RepositoryResult<String?>> serverAddress() async => const RepositoryResult<String?>.success(data: '127.0.0.1:8080');
 
   /// Raised by [updateLabel] the way the real store raises it: a greeting states
   /// a name only after a rename.
@@ -66,12 +77,6 @@ class FakeSessionRepository implements SessionRepository {
   @override
   Future<RepositoryResult<bool>> advanceOnboardingIfKnown({required bool created}) async =>
       const RepositoryResult<bool>.success(data: false);
-
-  @override
-  Future<RepositoryResult<bool>> markLabelDirty() async {
-    labelDirty = true;
-    return const RepositoryResult<bool>.success(data: true);
-  }
 
   @override
   Future<RepositoryResult<bool>> forgetAuthorId() async => const RepositoryResult<bool>.success(data: true);

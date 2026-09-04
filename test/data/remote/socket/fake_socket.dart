@@ -20,9 +20,15 @@ class FakeSocket implements SocketConnection {
   Future<void> close() async => closed = true;
 
   /// The one-time greeting that precedes any command (contract §2).
+  ///
+  /// The challenge is real base64 over 32 bytes, like a server's: a placeholder
+  /// string would make every signing test pass for the wrong reason and hide
+  /// the case where the client must actually sign something.
+  static const String challenge = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=';
+
   void pushGreeting() => _incoming.add(
     jsonEncode({
-      'srv': {'schema_max': 1, 'challenge': 'x'},
+      'srv': {'schema_max': 1, 'challenge': challenge},
     }),
   );
 

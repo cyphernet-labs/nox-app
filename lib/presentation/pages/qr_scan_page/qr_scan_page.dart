@@ -13,7 +13,7 @@ import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/model/qr/camera_permission_status.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/l10n_extension.dart';
-import 'package:nox_app/general/nox_qr_envelope.dart';
+import 'package:nox_app/general/pairing/pairing_link.dart';
 import 'package:nox_app/general/platform_utils.dart';
 import 'package:nox_app/presentation/pages/qr_scan_page/bloc/qr_scan_bloc.dart';
 import 'package:nox_app/presentation/widgets/onboarding/app_onboard_card_widget.dart';
@@ -411,10 +411,7 @@ class _QrScanPageState extends State<QrScanPage> with WidgetsBindingObserver {
               child: const Text('denied'),
             ),
             OutlinedButton(onPressed: () => _bloc.add(const QrScanEvent.detected('https://example.com')), child: const Text('invalid')),
-            OutlinedButton(
-              onPressed: () => _bloc.add(QrScanEvent.detected(NoxQrEnvelope.encode('registered'))),
-              child: const Text('success'),
-            ),
+            OutlinedButton(onPressed: () => _bloc.add(const QrScanEvent.detected(PairingLink.demo)), child: const Text('success')),
             OutlinedButton(
               onPressed: () => _bloc.add(const QrScanEvent.permissionResolved(CameraPermissionStatus.unavailable)),
               child: const Text('fatal'),

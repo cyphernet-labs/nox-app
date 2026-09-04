@@ -1,7 +1,7 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:nox_app/domain/model/qr/camera_permission_status.dart';
-import 'package:nox_app/general/nox_qr_envelope.dart';
+import 'package:nox_app/general/pairing/pairing_link.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
 
 part 'qr_scan_bloc.freezed.dart';
@@ -35,13 +35,15 @@ class QrScanBloc extends BaseBloc<QrScanEvent, QrScanState> {
   void _onDetected(Detected event, Emitter<QrScanState> emit) {
     // Single-shot: ignore everything after the first accepted code.
     if (state.decodedId != null) return;
-    final id = NoxQrEnvelope.decode(event.raw);
-    if (id == null) {
-      // Foreign / empty QR — keep scanning, surface a one-shot inline error.
+    // The QR carries a pairing link now, and the whole link is what the
+    // sign-in path needs: the address, the server key and the token travel
+    // together, so nothing is extracted out of it here.
+    if (PairingLink.tryParse(event.raw) == null) {
+      // Foreign / unreadable QR — keep scanning, surface a one-shot inline error.
       emit(state.copyWith(invalid: true));
       return;
     }
-    emit(state.copyWith(decodedId: id));
+    emit(state.copyWith(decodedId: event.raw.trim()));
   }
 
   void _onSignalHandled(SignalHandled event, Emitter<QrScanState> emit) {

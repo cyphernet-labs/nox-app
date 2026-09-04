@@ -8,8 +8,8 @@ import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/service/file_picker_service.dart';
 import 'package:nox_app/general/l10n_extension.dart';
-import 'package:nox_app/general/nox_qr_envelope.dart';
-import 'package:nox_app/general/qr_image_sign_in_capability.dart';
+import 'package:nox_app/general/pairing/pairing_link.dart';
+import 'package:nox_app/general/qr_image_pairing_capability.dart';
 import 'package:nox_app/general/qr_scanner_capability.dart';
 import 'package:nox_app/presentation/helpers/app_feedback_helper.dart';
 import 'package:nox_app/presentation/pages/base/base_state_page.dart';
@@ -29,7 +29,12 @@ import 'package:nox_app/presentation/widgets/onboarding/app_primary_button_widge
 /// Desktop: centered `AppOnboardCardWidget` under a window `TitleBar`. `demo: true`
 /// (gallery) shows a dev outcome selector. Owns [LoginBloc].
 class LoginPage extends StatefulWidget {
-  const LoginPage({super.key, this.demo = false});
+  const LoginPage({super.key, this.demo = false, this.initialStatus});
+
+  /// Seeds a status so a golden can pin a state the real flow only reaches
+  /// through a server. Test-only; the real flow never passes it.
+  @visibleForTesting
+  final LoginStatus? initialStatus;
 
   final bool demo;
 
@@ -61,7 +66,7 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
   @override
   void initState() {
     super.initState();
-    _bloc = LoginBloc(demo: widget.demo);
+    _bloc = LoginBloc(demo: widget.demo, initialStatus: widget.initialStatus);
     WidgetsBinding.instance.addObserver(this);
     _refreshClipboard();
   }
@@ -122,14 +127,16 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
       final path = picked?.path;
       if (path == null || !mounted) return;
       final raw = await qrImageDecodeService.decodeQr(path);
-      final id = raw == null ? null : NoxQrEnvelope.decode(raw);
+      final link = raw == null ? null : PairingLink.tryParse(raw);
       if (!mounted) return;
-      if (id == null) {
+      if (link == null) {
         showAppSnackBar(context, text: context.l10n.loginQrImageError, error: true);
         return;
       }
-      _controller.text = id;
-      _bloc.add(LoginEvent.idChanged(id));
+      // The whole link goes through, not something extracted from it: the
+      // address and the server key travel with the token.
+      _controller.text = raw!.trim();
+      _bloc.add(LoginEvent.idChanged(raw.trim()));
       _submit();
     } finally {
       if (mounted) setState(() => _pickingQrImage = false);
@@ -150,6 +157,8 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
       case LoginStatus.idle:
       case LoginStatus.loading:
       case LoginStatus.errorFormat:
+      case LoginStatus.errorExpired:
+      case LoginStatus.errorRejected:
       case LoginStatus.errorNetwork:
         break;
     }
@@ -187,6 +196,8 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
   /// widget (not the BLoC state) so it can read locale-aware strings via context.
   String? _errorText(BuildContext context, LoginStatus status) => switch (status) {
     LoginStatus.errorFormat => context.l10n.loginInvalidId,
+    LoginStatus.errorExpired => context.l10n.loginLinkExpired,
+    LoginStatus.errorRejected => context.l10n.loginLinkRejected,
     LoginStatus.errorNetwork => context.l10n.loginNetworkError,
     _ => null,
   };
@@ -205,7 +216,7 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
             width: double.infinity,
             child: TextButton(onPressed: state.isLoading ? null : _scanQr, child: Text(context.l10n.loginScanQr)),
           ),
-        ] else if (QrImageSignInCapability.isAvailable) ...[
+        ] else if (QrImagePairingCapability.isAvailable) ...[
           SizedBox(height: AppSpacingTokens.s8),
           SizedBox(
             width: double.infinity,

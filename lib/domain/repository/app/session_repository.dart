@@ -28,20 +28,25 @@ abstract class SessionRepository {
   /// storage. It names the DEVICE in a greeting (`device_key`), never the
   /// person: a logout wipes it along with everything else, and the person is
   /// recognised by what they hold, not by which install they happen to be on.
-  Future<RepositoryResult<String>> deviceId();
+  /// This device's key seed, minted on first use. The public half of the pair
+  /// is what the server knows as `device_key`; this half never leaves.
+  Future<RepositoryResult<String>> deviceSecret();
+
+  /// Records which server this installation was paired with, from the link.
+  /// Without it the app would pair with one server and talk to another.
+  Future<RepositoryResult<bool>> saveServer({required String address, required String serverKey});
+
+  /// The paired server's address, or null when this install is not paired.
+  Future<RepositoryResult<String?>> serverAddress();
 
   /// Whether this device has renamed since the server last confirmed a name.
   ///
   /// A greeting states a label only when the answer is true. Stating it every
   /// time turns a stale cache into a rename ping-pong: a device that was offline
   /// through a rename would push the old name back over the new one, and the
-  /// two devices of one person would flip-flop forever.
-  Future<RepositoryResult<bool>> isLabelDirty();
 
   /// Raises the flag without changing the name. Used when the world the name
   /// was confirmed in is gone: the server has never heard it, so it has to be
-  /// stated again or the person is silently renamed to a fresh `User<random>`.
-  Future<RepositoryResult<bool>> markLabelDirty();
 
   /// Advances the onboarding flag when the server says the person is already
   /// known, and never the other way round. Called from the greeting-adoption

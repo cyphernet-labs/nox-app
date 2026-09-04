@@ -525,15 +525,6 @@ func (s *Store) SendMessage(ctx context.Context, chatID, clientMessageID string,
 		return protocol.Message{}, StoredEvent{}, false, fmt.Errorf("check idempotency: %w", err)
 	}
 
-	// An ephemeral identity was minted in memory during the greeting and has no
-	// row yet (see ResolveIdentity). This is the only path that needs the parent
-	// row, and it materialises here so the person and the message land together.
-	if author.Ephemeral {
-		if err := MaterialiseUser(ctx, tx, author, now); err != nil {
-			return protocol.Message{}, StoredEvent{}, false, err
-		}
-	}
-
 	var chatExists int
 	err = tx.QueryRowContext(ctx, "SELECT COUNT(1) FROM chats WHERE chat_id = ?", chatID).Scan(&chatExists)
 	if err != nil {

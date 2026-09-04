@@ -23,9 +23,9 @@ func listMessages(t *testing.T, c *wsClient, id int, data string) historyPage {
 }
 
 func TestStoryTwoBackwardWalkIsCompleteAndOrdered(t *testing.T) {
-	ts, _ := newTestServer(t)
+	ts, srv := newTestServer(t)
 
-	anna := dialWS(t, ts)
+	anna := dialWS(t, ts, srv)
 	anna.expectGreeting()
 	anna.hello(1, `,"label":"Anna"`)
 	chatID := seedChat(t, anna, "walk")
@@ -70,24 +70,27 @@ func TestStoryTwoBackwardWalkIsCompleteAndOrdered(t *testing.T) {
 	}
 
 	// A second client gets the same history WITHOUT client_message_id.
-	bob := dialWS(t, ts)
+	bob := dialWS(t, ts, srv)
 	bob.expectGreeting()
 	bob.hello(1, `,"label":"Bob"`)
 	bobPage := listMessages(t, bob, 2, fmt.Sprintf(`{"chat_id":%q,"limit":100}`, chatID))
 	if len(bobPage.Messages) != 25 {
 		t.Fatalf("bob sees %d messages, want 25", len(bobPage.Messages))
 	}
+	// The send key belongs to the PERSON, and a stage-2 server holds one person
+	// until invite-user arrives (Q15), so the second connection is another
+	// device of the same person and sees its own keys.
 	for _, msg := range bobPage.Messages {
-		if msg.ClientMessageID != "" {
-			t.Fatalf("bob's history leaked client_message_id at seq %d", msg.Seq)
+		if msg.ClientMessageID == "" {
+			t.Fatalf("the author's own history lost client_message_id at seq %d", msg.Seq)
 		}
 	}
 }
 
 func TestStoryTwoHistoryEdges(t *testing.T) {
-	ts, _ := newTestServer(t)
+	ts, srv := newTestServer(t)
 
-	c := dialWS(t, ts)
+	c := dialWS(t, ts, srv)
 	c.expectGreeting()
 	c.hello(1, ``)
 	chatID := seedChat(t, c, "edges")
@@ -135,7 +138,7 @@ func TestStoryTwoTailLatencyOverLargeHistory(t *testing.T) {
 		}
 	}
 
-	c := dialWS(t, ts)
+	c := dialWS(t, ts, srv)
 	c.expectGreeting()
 	c.hello(1, ``)
 	start := time.Now()

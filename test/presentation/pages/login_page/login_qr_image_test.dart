@@ -9,7 +9,7 @@ import 'package:mockito/mockito.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/service/file_picker_service.dart';
 import 'package:nox_app/domain/service/qr_image_decode_service.dart';
-import 'package:nox_app/general/nox_qr_envelope.dart';
+import 'package:nox_app/general/pairing/pairing_link.dart';
 import 'package:nox_app/general/qr_scanner_capability.dart';
 import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/pages/login_page/login_page.dart';
@@ -55,7 +55,7 @@ void main() {
 
   testWidgets('picking an image with a valid NOX QR signs in down the normal path', (tester) async {
     when(filePicker.pickFile()).thenAnswer((_) async => (name: 'id.png', sizeBytes: 1, extension: 'png', path: '/tmp/id.png'));
-    when(decoder.decodeQr(any)).thenAnswer((_) async => NoxQrEnvelope.encode('fresh-identifier'));
+    when(decoder.decodeQr(any)).thenAnswer((_) async => PairingLink.demo);
 
     await pumpApp(tester, const LoginPage(demo: true));
     await tester.tap(imageButton());
@@ -81,7 +81,7 @@ void main() {
   testWidgets('a second tap while the first pick is still running is ignored (review fix)', (tester) async {
     final gate = Completer<PickedFile?>();
     when(filePicker.pickFile()).thenAnswer((_) => gate.future); // first pick hangs open
-    when(decoder.decodeQr(any)).thenAnswer((_) async => NoxQrEnvelope.encode('fresh-identifier'));
+    when(decoder.decodeQr(any)).thenAnswer((_) async => PairingLink.demo);
 
     await pumpApp(tester, const LoginPage(demo: true));
     await tester.tap(imageButton());

@@ -18,12 +18,17 @@ class ApiClient {
   final AppConfigRepository _config;
   final Dio dio;
 
-  /// Idempotent: sets the base URL (when `apiUrl` is non-empty) and installs the auth
-  /// interceptor exactly once (a second call is a no-op).
-  void initBase() {
-    final apiUrl = _config.config.apiUrl;
+  /// Idempotent for the interceptor; the base URL is re-pointed on every call.
+  ///
+  /// [address] wins when given: since pairing, the server is the one from the
+  /// link, and file bytes have to go to the SAME machine the socket talks to.
+  /// Leaving them on the build-time address would upload an attachment to one
+  /// server and reference it from a message on another, where the id resolves
+  /// to nothing.
+  void initBase({String? address}) {
+    final apiUrl = address ?? _config.config.apiUrl;
     if (apiUrl != null && apiUrl.isNotEmpty) {
-      dio.options.baseUrl = apiUrl;
+      dio.options.baseUrl = apiUrl.contains('://') ? apiUrl : 'http://$apiUrl';
     }
     if (dio.interceptors.whereType<AuthInterceptor>().isEmpty) {
       dio.interceptors.add(AuthInterceptor(_config));

@@ -4,5 +4,9 @@
 # generated and verified ONLY locally — `make golden-update` / `make golden-verify` (which pass
 # `--tags golden`) — and are EXCLUDED from `make test` and CI (`flutter test --exclude-tags golden`).
 # Declaring the tag here silences "unknown tag" warnings; see .claude/commands/golden-test.md.
+# The `live` tag marks probes that need a running `noxd`. They are run by hand
+# against a real server and excluded from the gate, because the gate must not
+# depend on a process nobody started.
 tags:
   golden:
+  live:

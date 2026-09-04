@@ -102,12 +102,12 @@ func randomPayload(t *testing.T, n int) []byte {
 func TestStoryOneAttachmentChain(t *testing.T) {
 	ts, srv := newTestServer(t)
 
-	anna := dialWS(t, ts)
+	anna := dialWS(t, ts, srv)
 	anna.expectGreeting()
 	anna.hello(1, `,"label":"Anna"`)
 	chatID := seedChat(t, anna, "files")
 
-	bob := dialWS(t, ts)
+	bob := dialWS(t, ts, srv)
 	bob.expectGreeting()
 	bob.hello(1, `,"label":"Bob"`)
 
@@ -156,8 +156,8 @@ func TestStoryOneAttachmentChain(t *testing.T) {
 	if evAtt != *echo.Attachment {
 		t.Fatalf("event attachment = %+v, want %+v", evAtt, *echo.Attachment)
 	}
-	if _, leaked := evData["client_message_id"]; leaked {
-		t.Fatal("bob's message.new leaked client_message_id")
+	if _, present := evData["client_message_id"]; !present {
+		t.Fatal("the author's other device lost its own client_message_id")
 	}
 
 	// Preview of a text-less attachment message is the file name (SC-005).
@@ -249,14 +249,14 @@ func TestStoryOneUploadSurvivesRestart(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "restart.db")
 
-	ts, _, closeAll := openStack(t, path)
+	ts, srv, closeAll := openStack(t, path)
 	firstClosed := false
 	defer func() {
 		if !firstClosed {
 			closeAll()
 		}
 	}()
-	c := dialWS(t, ts)
+	c := dialWS(t, ts, srv)
 	c.expectGreeting()
 	c.hello(1, `,"label":"Anna"`)
 	chatID := seedChat(t, c, "restart-files")
@@ -271,9 +271,9 @@ func TestStoryOneUploadSurvivesRestart(t *testing.T) {
 
 	// A fresh process over the same db and files dir: the upload is intact
 	// and still sendable, and the bytes download byte-identically.
-	ts2, _, closeAll2 := openStack(t, path)
+	ts2, srv2, closeAll2 := openStack(t, path)
 	defer closeAll2()
-	c2 := dialWS(t, ts2)
+	c2 := dialWS(t, ts2, srv2)
 	c2.expectGreeting()
 	c2.hello(1, `,"label":"Anna"`)
 	sent := c2.expectOKAfter(2, fmt.Sprintf(
@@ -293,7 +293,7 @@ func TestStoryOneUploadSurvivesRestart(t *testing.T) {
 func TestStoryTwoDownloadWithResume(t *testing.T) {
 	ts, srv := newTestServer(t)
 
-	anna := dialWS(t, ts)
+	anna := dialWS(t, ts, srv)
 	anna.expectGreeting()
 	anna.hello(1, `,"label":"Anna"`)
 	chatID := seedChat(t, anna, "dl")
@@ -305,7 +305,7 @@ func TestStoryTwoDownloadWithResume(t *testing.T) {
 	anna.expectOKAfter(4, fmt.Sprintf(
 		`{"id":4,"cmd":"message.send","data":{"chat_id":%q,"client_message_id":"d1","attachment":{"file_id":%q}}}`, chatID, fileID))
 
-	bob := dialWS(t, ts)
+	bob := dialWS(t, ts, srv)
 	bob.expectGreeting()
 	bob.hello(1, `,"label":"Bob"`)
 
@@ -380,9 +380,9 @@ func TestStoryTwoDownloadWithResume(t *testing.T) {
 }
 
 func TestStoryThreeChatFilesPanel(t *testing.T) {
-	ts, _ := newTestServer(t)
+	ts, srv := newTestServer(t)
 
-	c := dialWS(t, ts)
+	c := dialWS(t, ts, srv)
 	c.expectGreeting()
 	c.hello(1, `,"label":"Anna"`)
 	chatID := seedChat(t, c, "panel")
@@ -439,7 +439,7 @@ func TestStoryThreeChatFilesPanel(t *testing.T) {
 func TestOrphanSweepRemovesAbandonedUploads(t *testing.T) {
 	ts, srv := newTestServer(t)
 
-	c := dialWS(t, ts)
+	c := dialWS(t, ts, srv)
 	c.expectGreeting()
 	c.hello(1, `,"label":"Anna"`)
 	chatID := seedChat(t, c, "sweep")

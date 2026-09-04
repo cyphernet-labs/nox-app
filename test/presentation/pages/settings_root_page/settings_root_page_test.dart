@@ -88,19 +88,23 @@ void main() {
       expect(find.text(l10nEn.copiedToClipboard), findsOneWidget);
     });
 
-    testWidgets('Show QR opens the brand-fixed light QR sheet', (tester) async {
+    testWidgets('Show QR leads to Devices, where an invite is actually minted', (tester) async {
+      // It used to render a QR of the login identifier - a bearer secret, and
+      // handing it over WAS the sign-in. Adding a device is a different act
+      // now: it needs a one-shot token the server issues.
       await pumpMobile(tester);
 
       await tester.tap(find.byTooltip(l10nEn.idShowQrTooltip));
       await tester.pumpAndSettle();
 
-      expect(find.byType(AppQrSurfaceWidget), findsOneWidget);
-      expect(find.text(l10nEn.qrSheetTitle), findsOneWidget);
+      expect(find.text(l10nEn.settingsDevicesTitle), findsWidgets);
     });
 
-    testWidgets('Show/Hide reveal is available on mobile', (tester) async {
+    testWidgets('there is nothing to reveal any more - the id is public', (tester) async {
+      // The reveal existed because the string was a secret. A person is
+      // recognised by a paired key now, so masking it would only pretend.
       await pumpMobile(tester);
-      expect(find.byTooltip(l10nEn.idShowTooltip), findsOneWidget);
+      expect(find.byTooltip(l10nEn.idShowTooltip), findsNothing);
     });
 
     testWidgets('Log out opens a confirm dialog that Cancel dismisses', (tester) async {
@@ -185,12 +189,15 @@ void main() {
       expect(find.byType(NotificationsPage), findsNothing);
     });
 
-    testWidgets('the raw ID is never revealable on desktop (no Show/Hide)', (tester) async {
+    testWidgets('there is no reveal and no account QR - the id is public, and it is not an invite', (tester) async {
       await pumpDesktop(tester);
 
+      // Nothing to reveal: the id stopped being a secret with feature 032.
       expect(find.byTooltip(l10nEn.idShowTooltip), findsNothing);
-      // Inline account QR is shown instead.
-      expect(find.byType(AppQrSurfaceWidget), findsOneWidget);
+      // And no QR of it either. Rendering one captioned "let someone add you"
+      // promised a pairing that scanning it cannot perform - adding a device
+      // needs a one-shot token, which Devices mints.
+      expect(find.byType(AppQrSurfaceWidget), findsNothing);
     });
   });
 }

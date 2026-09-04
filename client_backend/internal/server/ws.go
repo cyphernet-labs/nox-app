@@ -22,6 +22,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 
 	logger := s.logger.With("conn", randomConnID())
 	c := newClient(s, conn, r.Context(), logger)
+	c.requestHost = r.Host
 	s.track(c)
 	defer s.untrack(c)
 	defer c.close(websocket.StatusNormalClosure, "")
@@ -35,6 +36,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		c.close(websocket.StatusInternalError, "internal error")
 		return
 	}
+	c.challenge = challenge
 	c.sendFrame(protocol.Greeting{Srv: protocol.GreetingBody{
 		SchemaMax: protocol.SchemaVersion,
 		Challenge: challenge,
@@ -77,7 +79,10 @@ func (c *client) readLoop() {
 }
 
 func (c *client) dispatch(cmd protocol.Command) {
-	if !c.helloDone && cmd.Cmd != protocol.CmdSessionHello {
+	// pair is the ONE exception to "hello first", and not for convenience: an
+	// unpaired device has nothing to sign the challenge with, so requiring a
+	// greeting first would make pairing impossible rather than awkward.
+	if !c.helloDone && cmd.Cmd != protocol.CmdSessionHello && cmd.Cmd != protocol.CmdPair {
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "session.hello must be the first command"))
 		return
 	}
@@ -85,6 +90,16 @@ func (c *client) dispatch(cmd protocol.Command) {
 	switch cmd.Cmd {
 	case protocol.CmdSessionHello:
 		c.handleSessionHello(cmd)
+	case protocol.CmdPair:
+		c.handlePair(cmd)
+	case protocol.CmdDeviceList:
+		c.handleDeviceList(cmd)
+	case protocol.CmdDeviceRevoke:
+		c.handleDeviceRevoke(cmd)
+	case protocol.CmdDeviceInvite:
+		c.handleDeviceInvite(cmd)
+	case protocol.CmdIdentitySetLabel:
+		c.handleIdentitySetLabel(cmd)
 	case protocol.CmdChatsList:
 		c.handleChatsList(cmd)
 	case protocol.CmdChatGet:

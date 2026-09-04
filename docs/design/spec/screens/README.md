@@ -39,3 +39,4 @@
 | 7.5 | Поддержка | [support.md](support.md) | вне scope |
 | 7.6 | Terms | [terms.md](terms.md) | вопросы закрыты |
 | 7.7 | О приложении | [about.md](about.md) | вопросы закрыты |
+| 7.8 | Устройства | [devices.md](devices.md) | новый экран фазы 032 |

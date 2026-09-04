@@ -31,6 +31,12 @@ dependencies:
   # functions at all, and the value has to be reproducible byte for byte across
   # installs, so a hand-rolled digest is the one thing that must not happen here.
   crypto: ^3.0.6
+  # Ed25519 for the device key: pure Dart, so all five platforms are covered
+  # without a native plugin, and one dependency rather than two. The same
+  # package carries the key-agreement primitives the E2EE boundary will need,
+  # so the seam is not opened twice. Chosen by resolving against the existing
+  # constraint set - this is the repo where file_picker could not be used.
+  cryptography: ^2.9.0
 
   # --- DI ---
   injectable: ^3.0.0

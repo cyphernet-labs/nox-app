@@ -2,9 +2,11 @@ import 'dart:async';
 
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
+import 'package:nox_app/data/remote/socket/server_frame.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
+import 'package:nox_app/general/pairing/pairing_link.dart';
 
 /// What the server said about who just connected. A domain value on purpose:
 /// the onboarding decision is taken from THIS, never from "was there a hello
@@ -34,6 +36,19 @@ class IdentityHandshakeTimeout implements Exception {
 
   @override
   String toString() => 'IdentityHandshakeTimeout';
+}
+
+/// The server refused the pairing token. Distinct from a timeout because the
+/// person's next action differs: get a new link rather than try again.
+class PairingRefused implements Exception {
+  const PairingRefused({required this.expired});
+
+  /// True when the token was still real but had outlived its ten minutes.
+  /// Worth telling apart: "issue a new invite" versus "this one is not usable".
+  final bool expired;
+
+  @override
+  String toString() => 'PairingRefused(expired: $expired)';
 }
 
 /// Owns the sign-in handshake: brings the live channel up, waits for the
@@ -66,6 +81,43 @@ class LiveIdentityHandshake {
   /// always states a person. Gating the credentials provider on this instead
   /// would deadlock, since the handshake is what brings the channel up.
   bool get inFlight => _pending != null;
+
+  /// Presents a pairing token and returns what the server said about who was
+  /// just paired.
+  ///
+  /// The caller MUST re-greet afterwards ([greet]) once the session is stored.
+  /// The connection this ran on was greeted before anyone was paired, so the
+  /// server still knows it as whoever greeted then — messages sent on it would
+  /// be stamped with that identity, not the person who just paired.
+  ///
+  /// The socket has to be brought up against the address from the LINK, which
+  /// the caller has already stored — [LiveSessionStarter.restart] reads it from
+  /// there. `pair` is then the one command allowed before a greeting.
+  Future<IdentityHandshake> pair({required PairingLink link, required String deviceKey, required String platform}) async {
+    await _starter.restart();
+    final CommandReply reply;
+    try {
+      reply = await _socket.pair(token: link.token, deviceKey: deviceKey, platform: platform);
+    } on Object {
+      // No channel, or no answer within the command timeout. The person is
+      // told to try again; nothing was decided.
+      throw const IdentityHandshakeTimeout();
+    }
+    if (!reply.ok) {
+      throw PairingRefused(expired: reply.errorCode == 'token_expired');
+    }
+    final data = reply.data;
+    final id = data is Map<String, dynamic> ? data['identity'] : null;
+    if (id is! Map<String, dynamic>) throw const IdentityHandshakeTimeout();
+    final created = id['created'];
+    return IdentityHandshake(
+      authorId: id['id'] as String? ?? '',
+      label: id['label'] as String? ?? '',
+      // Absent stays absent: "outcome not stated" is neither outcome, and the
+      // sign-in path must not be handed a guess.
+      created: created is bool ? created : null,
+    );
+  }
 
   /// Restarts the channel and waits for the server to say who connected.
   ///

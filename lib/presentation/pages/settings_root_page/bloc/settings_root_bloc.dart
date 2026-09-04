@@ -2,9 +2,9 @@ import 'dart:async';
 
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
-import 'package:nox_app/data/sync/live_session_starter.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/di/global_aliases.dart';
+import 'package:nox_app/domain/repository/device/device_repository.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/identity/identity_resolver.dart';
@@ -43,7 +43,13 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
       // Load the real display label from the session (feature 015); a missing/empty
       // label degrades to the default via resolveIdentity, matching the state default.
       onData: (session) =>
-          emit(state.copyWith(initialLoading: false, rawId: session?.identifier ?? '', name: resolveIdentity(session).label)),
+          // The public author id, not a secret. The login identifier this used
+          // to show no longer exists: a person is recognised by a paired key,
+          // so there is nothing here worth hiding behind a reveal.
+          // The SERVER-minted id only. resolveIdentity falls back to the login
+          // identifier, whose slot now holds the pairing TOKEN - showing that
+          // as "Your ID" would put a credential on screen and in the clipboard.
+          emit(state.copyWith(initialLoading: false, rawId: session?.authorId ?? '', name: resolveIdentity(session).label)),
       onError: (_) => emit(state.copyWith(initialLoading: false, rawId: '')),
     );
   }
@@ -77,22 +83,32 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
 
   Future<void> _onNameSubmitted(NameSubmitted event, Emitter<SettingsRootState> emit) async {
     if (!state.canSave) return;
-    // Persist the validated new label to the session (feature 015). Empty/invalid/taken
-    // drafts never reach here (canSave). The write broadcasts on watchLabel so live
-    // surfaces (desktop rail avatar) update without a restart.
     final draft = state.draftName;
+
+    // The SERVER first. Persisting locally and then telling it would show a
+    // saved name that the next greeting silently reverts - and reverting from
+    // the already-updated state re-showed the very name that failed, which is
+    // how the previous attempt at this was ineffective.
+    final devices = getIt.isRegistered<DeviceRepository>() ? getIt<DeviceRepository>() : null;
+    if (devices != null) {
+      final sent = await devices.setLabel(label: draft);
+      if (!sent.hasData) {
+        // Keep the edit open on the OLD name - nothing was saved anywhere, so
+        // nothing is claimed - and SAY so. Silence here left Enter looking
+        // broken: the field simply reverted and nothing explained why.
+        emit(state.copyWith(draftName: state.name, editing: true, status: SettingsNameStatus.saveFailed));
+        return;
+      }
+    }
+
+    // Only now is it true. The write broadcasts on watchLabel so live surfaces
+    // (desktop rail avatar) update without a restart.
     final result = await sessionRepository.updateLabel(label: draft);
-    await result.match<Future<void>>(
-      onData: (_) async {
-        emit(state.copyWith(name: draft, editing: false, status: SettingsNameStatus.idle));
-        // The name reaches the server in a greeting, and a greeting only happens
-        // on connect. Without this the rename would sit here until some
-        // unrelated reconnect happened to carry it. Same call sign-in makes.
-        if (getIt.isRegistered<LiveSessionStarter>()) await getIt<LiveSessionStarter>().restart();
-      },
-      // Keep the edit open on a persistence failure — never show a saved name that
-      // did not persist. The mock store never errors; defensive only.
-      onError: (_) async {},
+    result.match<void>(
+      onData: (_) => emit(state.copyWith(name: draft, editing: false, status: SettingsNameStatus.idle)),
+      // Keep the edit open on a persistence failure - never show a saved name
+      // that did not persist.
+      onError: (_) {},
     );
   }
 

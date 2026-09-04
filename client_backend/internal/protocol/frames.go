@@ -68,7 +68,7 @@ const (
 	EventMessageNew  = "message.new"
 )
 
-// Command names of the stage-1 slice (022 + 023 + 024).
+// Command names.
 const (
 	CmdSessionHello      = "session.hello"
 	CmdChatsList         = "chats.list"
@@ -81,7 +81,27 @@ const (
 	CmdMessageSend       = "message.send"
 	CmdFileUploadBegin   = "file.uploadBegin"
 	CmdFileDownloadBegin = "file.downloadBegin"
+
+	// Pairing (§8A). CmdPair is the ONLY command accepted before the greeting:
+	// an unpaired device has nothing to sign the challenge with.
+	CmdPair             = "pair"
+	CmdDeviceList       = "device.list"
+	CmdDeviceRevoke     = "device.revoke"
+	CmdDeviceInvite     = "device.invite"
+	CmdIdentitySetLabel = "identity.setLabel"
 )
+
+// EventDeviceRevoked is delivered to the device being cut off, immediately
+// before its socket is closed.
+const EventDeviceRevoked = "device.revoked"
+
+// EventIdentityUpdated is delivered to the OTHER live connections of a person
+// who has just renamed. Like device.revoked it carries seq 0 and never enters
+// the event log: the log is global, and who a person is has no business waking
+// every other client (invariant 3). Without it a second device holds the old
+// name until it reconnects - and stamps that old name into message history,
+// which is frozen at send time.
+const EventIdentityUpdated = "identity.updated"
 
 // Chat is the wire model of contract §4 (022: preview served but unused by
 // any implemented command; it feeds chats.list in phase 023).

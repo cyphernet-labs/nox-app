@@ -7,7 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/data/service/qr_image_decode_service_impl.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
-import 'package:nox_app/general/nox_qr_envelope.dart';
+import 'package:nox_app/general/pairing/pairing_link.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 /// Real QR-from-image decode (P14): render the app's own generator (QrPainter) to a PNG
@@ -68,21 +68,22 @@ void main() {
     await getIt.reset();
   });
 
-  testWidgets('decodes a NOX identity QR from a rendered image file (round-trip)', (tester) async {
-    const id = 'User7421-abc.def_GHI-0123456789';
-    final env = NoxQrEnvelope.encode(id);
+  testWidgets('decodes a pairing link QR from a rendered image file (round-trip)', (tester) async {
+    const env = PairingLink.demo;
     await tester.runAsync(() async {
       final path = await _writeQrPng(env, 512, 'nox_qr_ok.png');
       temp.add(path);
       final raw = await service.decodeQr(path);
       expect(raw, env); // the exact QR payload
-      expect(NoxQrEnvelope.decode(raw!), id); // resolves back to the identifier
+      // Resolves back to a readable link: this is the only QR path Windows and
+      // Linux have, so a link that survives rendering but not parsing would
+      // leave those two platforms with no way to pair at all.
+      expect(PairingLink.tryParse(raw!), isNotNull);
     });
   });
 
   testWidgets('decodes a NOX QR from a TRANSPARENT-background image (review fix)', (tester) async {
-    const id = 'User9999-transparent.bg';
-    final env = NoxQrEnvelope.encode(id);
+    const env = PairingLink.demo;
     await tester.runAsync(() async {
       final path = await _writeTransparentQrPng(env, 512, 'nox_qr_transparent.png');
       temp.add(path);

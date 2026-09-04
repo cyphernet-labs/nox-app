@@ -49,7 +49,7 @@ func TestStoryOneChatsListOrderSearchAndGet(t *testing.T) {
 		t.Fatalf("seed message: %v", err)
 	}
 
-	anna := dialWS(t, ts)
+	anna := dialWS(t, ts, srv)
 	anna.expectGreeting()
 	anna.hello(1, `,"label":"Anna"`)
 
@@ -103,7 +103,7 @@ func TestStoryOneFirstPageLatencyOverLargeList(t *testing.T) {
 		}
 	}
 
-	c := dialWS(t, ts)
+	c := dialWS(t, ts, srv)
 	c.expectGreeting()
 	c.hello(1, ``)
 	start := time.Now()
@@ -124,9 +124,9 @@ func TestStoryOneFirstPageLatencyOverLargeList(t *testing.T) {
 }
 
 func TestStoryThreeRenameValidationNegatives(t *testing.T) {
-	ts, _ := newTestServer(t)
+	ts, srv := newTestServer(t)
 
-	c := dialWS(t, ts)
+	c := dialWS(t, ts, srv)
 	c.expectGreeting()
 	c.hello(1, ``)
 	chatID := seedChat(t, c, "valid")
@@ -172,10 +172,10 @@ func TestStoryThreeRenameLiveNoReorderAndReplay(t *testing.T) {
 		t.Fatalf("seed message: %v", err)
 	}
 
-	anna := dialWS(t, ts)
+	anna := dialWS(t, ts, srv)
 	anna.expectGreeting()
 	anna.hello(1, `,"label":"Anna"`)
-	bob := dialWS(t, ts)
+	bob := dialWS(t, ts, srv)
 	bob.expectGreeting()
 	bob.hello(1, `,"label":"Bob"`)
 
@@ -262,7 +262,7 @@ func TestStoryThreeRenameLiveNoReorderAndReplay(t *testing.T) {
 	}
 
 	// Replay: a reconnecting client receives chat.updated in log order.
-	lateBob := dialWS(t, ts)
+	lateBob := dialWS(t, ts, srv)
 	lateBob.expectGreeting()
 	lateBob.hello(1, `,"label":"Late","since":0`)
 	var seenChatUpdated bool
@@ -279,12 +279,12 @@ func TestStoryThreeRenameLiveNoReorderAndReplay(t *testing.T) {
 }
 
 func TestStoryThreeConcurrentRenameRace(t *testing.T) {
-	ts, _ := newTestServer(t)
+	ts, srv := newTestServer(t)
 
-	c1 := dialWS(t, ts)
+	c1 := dialWS(t, ts, srv)
 	c1.expectGreeting()
 	c1.hello(1, ``)
-	c2 := dialWS(t, ts)
+	c2 := dialWS(t, ts, srv)
 	c2.expectGreeting()
 	c2.hello(1, ``)
 
@@ -309,12 +309,31 @@ func TestStoryThreeConcurrentRenameRace(t *testing.T) {
 	}
 }
 
-// person resolves (and on first call creates) a test identity. Messages now
-// carry a foreign key to users, so a test that writes a message needs its
-// author to exist. Idempotent: the digest finds the row on every later call.
+// person pairs one device and names it, the way the first device of a fresh
+// install does. Messages carry a foreign key to users, so a test that writes a
+// message needs its author to exist - and since feature 032 a person can only
+// come into being through pairing. Idempotent: the device key finds the row on
+// every later call.
 func person(t *testing.T, s *store.Store, name string) store.Identity {
 	t.Helper()
-	id, err := s.ResolveIdentity(context.Background(), "digest-"+name, "", name, 1)
+	ctx := context.Background()
+	deviceKey := "dev-" + name
+
+	if id, err := s.ResolveIdentity(ctx, deviceKey, name, 1); err == nil {
+		return id
+	}
+	if _, err := s.EnsureServerIdentity(ctx); err != nil {
+		t.Fatalf("EnsureServerIdentity: %v", err)
+	}
+	token, err := s.IssueClaimToken(ctx, 1)
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+	if _, err := s.Pair(ctx, token, deviceKey, "test", 1); err != nil {
+		t.Fatalf("Pair(%s): %v", name, err)
+	}
+	// State the chosen name the way onboarding does.
+	id, err := s.ResolveIdentity(ctx, deviceKey, name, 1)
 	if err != nil {
 		t.Fatalf("ResolveIdentity(%s): %v", name, err)
 	}

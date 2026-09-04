@@ -6,6 +6,7 @@ package server
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -22,6 +23,7 @@ import (
 	"nox.app/client-backend/internal/config"
 	"nox.app/client-backend/internal/db"
 	"nox.app/client-backend/internal/hub"
+	"nox.app/client-backend/internal/protocol"
 	"nox.app/client-backend/internal/store"
 )
 
@@ -168,6 +170,79 @@ func (s *Server) WaitConnections(ctx context.Context) error {
 	}
 }
 
+// dropDevice cuts off every live connection authenticated with a revoked key,
+// and tells each one why before the socket closes.
+//
+// Immediately, not on the device's next attempt: a sold tablet would otherwise
+// keep reading the conversation for as long as it stays online, which is the
+// whole thing revocation exists to stop.
+func (s *Server) dropDevice(deviceKey string) {
+	s.mu.Lock()
+	doomed := make([]*client, 0, 1)
+	for c := range s.conns {
+		if c.deviceKey == deviceKey {
+			doomed = append(doomed, c)
+		}
+	}
+	s.mu.Unlock()
+	payload, err := json.Marshal(map[string]string{"device_key": deviceKey})
+	if err != nil {
+		// Cannot fail for a map of strings, but the connections still have to
+		// go: the row is already deleted either way.
+		payload = json.RawMessage(`{}`)
+	}
+	for _, c := range doomed {
+		c.sendFrame(protocol.Event{Seq: 0, Event: protocol.EventDeviceRevoked, Data: payload})
+		go c.closeAfterFlush("device revoked")
+	}
+}
+
+// refreshLabel updates the cached identity of every live connection of a
+// person after a rename.
+//
+// Under the same lock as the writes it touches. Without it the renaming device
+// is the only one that knows: another live socket keeps the identity it cached
+// at greeting time and stamps the old name into `messages.author_label`, which
+// is frozen at send time and never follows a rename.
+func (s *Server) refreshLabel(userID, label string, origin *client) {
+	s.mu.Lock()
+	notify := make([]*client, 0, 1)
+	for c := range s.conns {
+		if c.identity.UserID == userID {
+			c.identity.Label = label
+			c.label = label
+			if c != origin {
+				notify = append(notify, c)
+			}
+		}
+	}
+	s.mu.Unlock()
+
+	if len(notify) == 0 {
+		return
+	}
+	payload, err := json.Marshal(map[string]string{"label": label})
+	if err != nil {
+		// Cannot fail for a map of strings; the in-memory state above is
+		// already correct either way, and a missed frame costs a stale name
+		// until the next greeting rather than anything unrecoverable.
+		return
+	}
+	// Outside the lock: sendFrame writes to a bounded queue, and a full one
+	// under s.mu would hold up every other connection of every other person.
+	for _, c := range notify {
+		c.sendFrame(protocol.Event{Seq: 0, Event: protocol.EventIdentityUpdated, Data: payload})
+	}
+}
+
+// setDeviceKey records which key a connection authenticated with, under the
+// same lock dropDevice reads it through.
+func (s *Server) setDeviceKey(c *client, key string) {
+	s.mu.Lock()
+	c.deviceKey = key
+	s.mu.Unlock()
+}
+
 func (s *Server) track(c *client) {
 	s.mu.Lock()
 	s.conns[c] = struct{}{}
@@ -235,6 +310,9 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 	if err := st.EnsureJournal(ctx); err != nil {
 		return fmt.Errorf("ensure journal: %w", err)
 	}
+	if err := announceClaim(ctx, st, cfg.Addr, logger); err != nil {
+		return err
+	}
 	srv := New(cfg, st, h, bl, logger)
 
 	// Startup sweep before endpoints open (research R10): abandoned uploads
@@ -285,20 +363,63 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 }
 
 // assertIdentitySchema refuses to start on a database written before the
-// identity tables existed. See the call site for why the migration runner
+// pairing tables existed. See the call site for why the migration runner
 // cannot repair such a database on its own.
+//
+// It names every table the current 001 creates that a pre-release database may
+// be missing: a guard that checks only some of them starts happily and then
+// fails deeper in with an error nobody can act on.
 func assertIdentitySchema(ctx context.Context, read *sql.DB, dbPath string) error {
 	var present int
 	err := read.QueryRowContext(ctx,
-		"SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name IN ('users', 'devices', 'journal')").Scan(&present)
+		"SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name IN "+
+			"('users', 'devices', 'journal', 'server_identity', 'pair_tokens')").Scan(&present)
 	if err != nil {
 		return fmt.Errorf("inspect schema: %w", err)
 	}
-	if present != 3 {
+	if present != 5 {
 		return fmt.Errorf(
-			"database schema predates the identity tables: the pre-release rule edits 001_init.sql in place, "+
+			"database schema predates the pairing tables: the pre-release rule edits 001_init.sql in place, "+
 				"so delete %s together with its -wal and -shm siblings and the %s-files directory, then start again",
 			dbPath, dbPath)
 	}
+	return nil
+}
+
+// announceClaim mints the server's own key on first start and, while nobody
+// owns this server yet, prints the pairing link.
+//
+// The link goes to the log and nowhere else: a local HTTP page serving the QR
+// would hand ownership to everyone on the network as long as the transport is
+// not TLS. It is reprinted on every start until somebody claims the server,
+// because a terminal scrolls and an unclaimed server has to stay claimable.
+//
+// This is the ONE place a token is deliberately written to output. It is the
+// claim mechanism itself, and it is only visible to whoever can already read
+// the machine's logs - which is whoever could take the database anyway.
+func announceClaim(ctx context.Context, st *store.Store, addr string, logger *slog.Logger) error {
+	id, err := st.EnsureServerIdentity(ctx)
+	if err != nil {
+		return fmt.Errorf("ensure server identity: %w", err)
+	}
+	devices, err := st.CountDevices(ctx)
+	if err != nil {
+		return fmt.Errorf("count devices: %w", err)
+	}
+	// Silent only while somebody can actually reach this server. A claimed
+	// server with no devices left is locked, not owned, and the machine is the
+	// root of trust: whoever can read this log can take it back.
+	if id.Claimed && devices > 0 {
+		return nil
+	}
+	token, err := st.IssueClaimToken(ctx, time.Now().Unix())
+	if err != nil {
+		return fmt.Errorf("issue claim token: %w", err)
+	}
+	link, err := BuildPairingLink(listenAddress(addr), id.PublicKey, token)
+	if err != nil {
+		return fmt.Errorf("build pairing link: %w", err)
+	}
+	logger.Info("this server has no owner yet - present this link in the app to claim it", "link", link)
 	return nil
 }

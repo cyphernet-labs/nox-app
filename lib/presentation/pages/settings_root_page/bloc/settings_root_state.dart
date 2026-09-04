@@ -4,7 +4,10 @@ part of 'settings_root_bloc.dart';
 /// No `taken`: person labels are not unique (owner, 2026-09-02) and nothing
 /// checks them, so the rename field can only be idle, valid or
 /// refused on charset.
-enum SettingsNameStatus { idle, valid, invalidCharset }
+/// `saveFailed`: the server refused or never answered. The edit stays open on
+/// the OLD name, because nothing was saved anywhere and claiming otherwise is
+/// what the next greeting would silently undo.
+enum SettingsNameStatus { idle, valid, invalidCharset, saveFailed }
 
 @freezed
 abstract class SettingsRootState with _$SettingsRootState {
