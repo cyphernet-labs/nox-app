@@ -7,7 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
-import 'package:nox_app/general/identity/identifier_digest.dart';
+import 'package:nox_app/general/pairing/device_keys.dart';
 import 'package:nox_app/data/remote/socket/socket_channel_factory.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
@@ -63,11 +63,11 @@ void main() {
   /// Connects a device that ALREADY belongs to this world: a stored cursor
   /// without a stored journal is the upgrade case, which tears the session down
   /// on purpose, so tests about replay have to say which world they are in.
-  Future<FakeSocket> connect({int cursor = 0, String? label, String? loginRef, String? deviceKey}) async {
+  Future<FakeSocket> connect({int cursor = 0, String? label, String? deviceSeed}) async {
     if (await sync.getCursor() > 0) await sync.setJournal('j_test');
     await client.start(
       url: url,
-      credentialsProvider: () async => GreetingCredentials(loginRef: loginRef, deviceKey: deviceKey, label: label),
+      credentialsProvider: () async => GreetingCredentials(deviceSeed: deviceSeed, label: label),
     );
     final socket = factory.latest;
     socket.pushGreeting();
@@ -105,16 +105,18 @@ void main() {
       expect(client.currentPhase, SessionPhase.catchingUp);
     });
 
-    test('the greeting carries the login derivation and the device id, and never the raw identifier', () async {
-      const identifier = 'NOX-raw-secret-value';
-      final socket = await connect(cursor: 3, loginRef: IdentifierDigest.loginRef(identifier), deviceKey: 'dev-1');
+    test('the greeting carries the public key and a signature, and never the seed', () async {
+      const seed = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=';
+      final socket = await connect(cursor: 3, deviceSeed: seed);
 
-      final data = socket.commandNamed('session.hello')!['data'] as Map<String, dynamic>;
-      expect(data['login_ref'], IdentifierDigest.loginRef(identifier));
-      expect(data['device_key'], 'dev-1');
-      // The identifier is a bearer secret: it must not reach the wire in any
-      // shape, so assert against the whole frame rather than the one field.
-      expect(jsonEncode(socket.commandNamed('session.hello')), isNot(contains(identifier)));
+      final frame = socket.commandNamed('session.hello')!;
+      final data = frame['data'] as Map<String, dynamic>;
+      expect(data['device_key'], await DeviceKeys.publicKey(seed));
+      expect((data['signature'] as String).isNotEmpty, isTrue);
+      // The seed is the one thing that must never travel: possession is
+      // demonstrated by the signature, not handed over.
+      expect(jsonEncode(frame), isNot(contains(seed)));
+      expect(jsonEncode(frame), isNot(contains('login_ref')));
     });
 
     test('a greeting with nothing to claim omits both fields rather than sending empties', () async {
@@ -130,7 +132,7 @@ void main() {
       var reported = 0;
       await client.start(
         url: url,
-        credentialsProvider: () async => const GreetingCredentials(deviceKey: 'dev-1'),
+        credentialsProvider: () async => const GreetingCredentials(deviceSeed: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8='),
         onJournalChanged: () => reported++,
       );
       final first = factory.latest;
@@ -143,7 +145,7 @@ void main() {
       await client.stop();
       await client.start(
         url: url,
-        credentialsProvider: () async => const GreetingCredentials(deviceKey: 'dev-1'),
+        credentialsProvider: () async => const GreetingCredentials(deviceSeed: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8='),
         onJournalChanged: () => reported++,
       );
       final second = factory.latest;
@@ -161,7 +163,7 @@ void main() {
       // sign-in that timed out could then adopt a stranger.
       await client.start(
         url: url,
-        credentialsProvider: () async => const GreetingCredentials(deviceKey: 'dev-1'),
+        credentialsProvider: () async => const GreetingCredentials(deviceSeed: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8='),
       );
       final socket = factory.latest;
       socket.pushGreeting();
@@ -201,7 +203,7 @@ void main() {
       var reported = 0;
       await client.start(
         url: url,
-        credentialsProvider: () async => const GreetingCredentials(deviceKey: 'dev-1'),
+        credentialsProvider: () async => const GreetingCredentials(deviceSeed: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8='),
         onJournalChanged: () => reported++,
       );
       final socket = factory.latest;
@@ -219,7 +221,7 @@ void main() {
       var reported = 0;
       await client.start(
         url: url,
-        credentialsProvider: () async => const GreetingCredentials(deviceKey: 'dev-1'),
+        credentialsProvider: () async => const GreetingCredentials(deviceSeed: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8='),
         onJournalChanged: () => reported++,
       );
       final socket = factory.latest;
@@ -253,7 +255,7 @@ void main() {
       var reported = 0;
       await client.start(
         url: url,
-        credentialsProvider: () async => const GreetingCredentials(deviceKey: 'dev-1'),
+        credentialsProvider: () async => const GreetingCredentials(deviceSeed: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8='),
         onJournalChanged: () => reported++,
       );
       final socket = factory.latest;
@@ -270,7 +272,7 @@ void main() {
     test('a journal-change handler that throws does not strand the socket', () async {
       await client.start(
         url: url,
-        credentialsProvider: () async => const GreetingCredentials(deviceKey: 'dev-1'),
+        credentialsProvider: () async => const GreetingCredentials(deviceSeed: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8='),
         onJournalChanged: () => throw StateError('the owner of the local world failed'),
       );
       final first = factory.latest;
@@ -282,7 +284,7 @@ void main() {
       await client.stop();
       await client.start(
         url: url,
-        credentialsProvider: () async => const GreetingCredentials(deviceKey: 'dev-1'),
+        credentialsProvider: () async => const GreetingCredentials(deviceSeed: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8='),
         onJournalChanged: () => throw StateError('the owner of the local world failed'),
       );
       final second = factory.latest;

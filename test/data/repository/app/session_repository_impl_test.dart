@@ -1,6 +1,9 @@
+import 'dart:convert';
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/data/repository/app/session_repository_impl.dart';
+import 'package:nox_app/general/pairing/device_keys.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -102,6 +105,33 @@ void main() {
     });
   });
 
+  group('the paired server (feature 032)', () {
+    test('address and key survive, so the app talks to the server it paired with', () async {
+      await repository.saveServer(address: '10.0.0.5:9000', serverKey: 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=');
+
+      expect((await repository.serverAddress()).data, '10.0.0.5:9000');
+    });
+
+    test('an install that never paired has no address', () async {
+      expect((await repository.serverAddress()).data, isNull);
+    });
+
+    test('logout forgets the server, because the next link brings its own', () async {
+      await repository.saveServer(address: '10.0.0.5:9000', serverKey: 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=');
+      await repository.clear();
+
+      expect((await repository.serverAddress()).data, isNull);
+    });
+
+    test('the device seed is a real 32-byte key, not a random string', () async {
+      final seed = (await repository.deviceSecret()).data!;
+      // If this ever stops being a key, signing silently starts throwing and
+      // every connection fails with an error nobody can trace to here.
+      expect(base64.decode(seed).length, 32);
+      expect((await DeviceKeys.publicKey(seed)).isNotEmpty, isTrue);
+    });
+  });
+
   group('discardSignIn (feature 031)', () {
     test('undoes the sign-in so the session resolves to null', () async {
       await repository.saveIdentifier(identifier: 'abc', onboardingComplete: false);
@@ -109,21 +139,21 @@ void main() {
       expect((await repository.readSession()).data, isNull);
     });
 
-    test('keeps the device id - a sign-in that never reached the server changed no install', () async {
-      final before = (await repository.deviceId()).data;
+    test('keeps the device key - a sign-in that never reached the server changed no install', () async {
+      final before = (await repository.deviceSecret()).data;
       await repository.saveIdentifier(identifier: 'abc', onboardingComplete: false);
 
       await repository.discardSignIn();
 
       // clear() would rotate it, and the next successful attempt would then
       // register a second device for one install.
-      expect((await repository.deviceId()).data, before);
+      expect((await repository.deviceSecret()).data, before);
     });
 
-    test('clear DOES rotate the device id, which is why sign-in must not use it', () async {
-      final before = (await repository.deviceId()).data;
+    test('clear DOES rotate the device key, which is why sign-in must not use it', () async {
+      final before = (await repository.deviceSecret()).data;
       await repository.clear();
-      expect((await repository.deviceId()).data, isNot(before));
+      expect((await repository.deviceSecret()).data, isNot(before));
     });
   });
 

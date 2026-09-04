@@ -28,7 +28,16 @@ abstract class SessionRepository {
   /// storage. It names the DEVICE in a greeting (`device_key`), never the
   /// person: a logout wipes it along with everything else, and the person is
   /// recognised by what they hold, not by which install they happen to be on.
-  Future<RepositoryResult<String>> deviceId();
+  /// This device's key seed, minted on first use. The public half of the pair
+  /// is what the server knows as `device_key`; this half never leaves.
+  Future<RepositoryResult<String>> deviceSecret();
+
+  /// Records which server this installation was paired with, from the link.
+  /// Without it the app would pair with one server and talk to another.
+  Future<RepositoryResult<bool>> saveServer({required String address, required String serverKey});
+
+  /// The paired server's address, or null when this install is not paired.
+  Future<RepositoryResult<String?>> serverAddress();
 
   /// Whether this device has renamed since the server last confirmed a name.
   ///

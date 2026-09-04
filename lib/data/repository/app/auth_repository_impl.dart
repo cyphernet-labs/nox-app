@@ -1,6 +1,9 @@
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
 import 'package:nox_app/data/sync/live_identity_handshake.dart';
+import 'package:nox_app/general/pairing/device_keys.dart';
+import 'package:nox_app/general/pairing/pairing_link.dart';
+import 'package:nox_app/general/platform_utils.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
 import 'package:nox_app/data/sync/outbox_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
@@ -40,55 +43,69 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
   final OutboxRepository _outboxRepository;
   final FileRepository _fileRepository;
 
-  /// Signs in, and lets the SERVER decide whether onboarding is due.
+  /// Signs in by presenting a pairing link, and lets the SERVER decide whether
+  /// onboarding is due.
   ///
-  /// The order is the whole point. It used to be: guess the outcome from a
-  /// hardcoded set of two identifiers, store it, navigate, then connect. No
-  /// real identifier was in that set, so everyone was treated as new - and the
-  /// name they were then forced to type travelled to the server as a rename
-  /// and overwrote the name they were known by.
+  /// The order is the whole point. Parse the link, remember which server it
+  /// names, mint this device's key, pair, take the outcome from the answer, and
+  /// only then move the navigation. Remembering the server FIRST is what makes
+  /// the connection go to the machine the person actually presented — a
+  /// compile-time address would pair with one server and send messages to
+  /// another.
   ///
-  /// Now: store the identifier, greet, take the outcome from the answer, write
-  /// it, and only then move the navigation. Storing the identifier FIRST is
-  /// what makes the greeting state a person rather than going out anonymously;
-  /// it moves no screen on its own, because nothing re-derives app state until
-  /// the last step.
-  ///
-  /// A handshake that does not answer rolls the session back. Leaving a stored
-  /// identifier with no outcome behind would strand the next launch in
-  /// onboarding - the very state this method exists to stop handing out.
+  /// The three refusals stay apart because the person's next action differs: a
+  /// link that will not parse means "scan it again", an expired token means
+  /// "issue a new invite", a rejected one means "this is not usable". A failed
+  /// attempt rolls the session back, because a stored identity with no settled
+  /// outcome would strand the next launch in onboarding.
   @override
   Future<RepositoryResult<bool>> signIn({required String identifier}) {
     return execute<bool>(() async {
-      // Normalize once and persist the SAME value, so the stored identity
-      // cannot diverge from what the derivation was computed over (e.g. a
-      // pasted trailing newline). Normalization, not format validation.
-      final id = identifier.trim();
-      final saved = await _sessionRepository.saveIdentifier(identifier: id, onboardingComplete: false);
+      final PairingLink link;
+      try {
+        link = PairingLink.parse(identifier);
+      } on PairingLinkException {
+        // A link that will not parse: the person scans or pastes it again.
+        return const RepositoryResult<bool>.error(exception: RepositoryException.invalidRequest);
+      }
+
+      final saved = await _sessionRepository.saveServer(address: link.authority, serverKey: link.serverKey);
       if (!saved.hasData) return saved;
 
       final handshake = liveIdentityHandshake;
       if (handshake == null) {
-        // No live channel in this build (mock flavors). Behave as before:
-        // there is no server to ask, so onboarding is due.
+        // No live channel in this build (mock flavors). There is no server to
+        // ask, so onboarding is due.
+        final stored = await _sessionRepository.saveIdentifier(identifier: link.token, onboardingComplete: false);
+        if (!stored.hasData) return stored;
         return _finishSignIn(onboardingComplete: false);
       }
 
+      final seed = await _sessionRepository.deviceSecret();
+      if (!seed.hasData) return RepositoryResult<bool>.error(exception: seed.exception!);
+
       try {
-        final greeting = await handshake.greet();
+        final greeting = await handshake.pair(
+          link: link,
+          deviceKey: await DeviceKeys.publicKey(seed.data!),
+          platform: PlatformUtils.family,
+        );
         if (!greeting.outcomeStated) {
-          // The server did not say. Guessing costs the person either their
-          // naming step or their name, so we say so instead.
           await _sessionRepository.discardSignIn();
           return const RepositoryResult<bool>.error(exception: RepositoryException.connection);
         }
-        // The server made this person just now, and the naming screen is next.
-        // Remember it for this process, so a reconnect while they are typing
-        // cannot report their own brand-new row back at them as "already known".
+        // The identifier slot now holds the token this install paired with: it
+        // is what makes readSession() report a session at all, and it is not a
+        // secret any more - the key is.
+        final stored = await _sessionRepository.saveIdentifier(identifier: link.token, onboardingComplete: false);
+        if (!stored.hasData) return stored;
         if (greeting.created!) _sessionRepository.noteOnboardingStartedHere();
         return _finishSignIn(onboardingComplete: !greeting.created!);
-      } on Object catch (e, s) {
-        logRepository.error(target: this, error: e, stackTrace: s);
+      } on PairingRefused catch (e) {
+        await _sessionRepository.discardSignIn();
+        return RepositoryResult<bool>.error(exception: e.expired ? RepositoryException.notFound : RepositoryException.authentication);
+      } on Object catch (e, st) {
+        logRepository.error(target: this, error: e, stackTrace: st);
         await _sessionRepository.discardSignIn();
         return const RepositoryResult<bool>.error(exception: RepositoryException.connection);
       }

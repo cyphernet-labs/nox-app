@@ -6,7 +6,6 @@ import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
 import 'package:nox_app/data/sync/sync_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/di/global_aliases.dart';
-import 'package:nox_app/general/identity/identifier_digest.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
@@ -56,8 +55,16 @@ class LiveSessionStarter {
   /// Brings the channel up. A build with no configured address stays on the
   /// cached data and never opens a socket.
   Future<void> start() async {
-    final apiUrl = _config.config.apiUrl;
+    // The address comes from the PAIRING LINK, not from the build. A
+    // compile-time address would mean pairing with the server a person
+    // presented and then sending their messages somewhere else entirely -
+    // which is the opposite of "your own server".
+    final paired = await _session.serverAddress();
+    final apiUrl = paired.data ?? _config.config.apiUrl;
     if (apiUrl == null || apiUrl.isEmpty) return;
+    // Keyed on the address actually in use: two different servers reachable at
+    // one configured address would otherwise look like one world, and the
+    // device would carry rows with foreign seqs into the new one.
     await _wipeIfWorldChanged('live:$apiUrl');
     _syncService.start();
     // The greeting is where the server states the payload limits and who we
@@ -107,13 +114,9 @@ class LiveSessionStarter {
     // signed in, so there is nothing to claim.
     if (data == null) return const GreetingCredentials();
 
-    final deviceId = await _session.deviceId();
+    final seed = await _session.deviceSecret();
     final dirty = await _session.isLabelDirty();
-    return GreetingCredentials(
-      loginRef: IdentifierDigest.loginRef(data.identifier),
-      deviceKey: deviceId.data,
-      label: (dirty.data ?? false) ? data.label : null,
-    );
+    return GreetingCredentials(deviceSeed: seed.data, label: (dirty.data ?? false) ? data.label : null);
   }
 
   /// The server's store is not the one this device cached. Everything local
@@ -223,7 +226,10 @@ class LiveSessionStarter {
 
   /// `http(s)` addresses the REST half (blob bytes, phase 028); the socket is
   /// the same host and port with the matching scheme and the `/ws` path.
+  /// Accepts both shapes an address can arrive in: a full URL from the build
+  /// config, and a bare `host:port` from a pairing link.
   static Uri _socketUrl(String apiUrl) {
+    if (!apiUrl.contains('://')) return Uri.parse('ws://$apiUrl/ws');
     final base = Uri.parse(apiUrl);
     return base.replace(scheme: base.scheme == 'https' ? 'wss' : 'ws', path: '/ws');
   }

@@ -38,21 +38,26 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('signing in with a new identifier lands on Set username, stack cleared', (tester) async {
+  // A link the Go server actually produced, captured from a live noxd.
+  const link = 'https://nox.app/p/#AQF_AAABH5CjZmMytIk_2XvPJ-jonqlQtYsZD3SB33P1foxqnrVbFo-VEf6WohQoqA1_na5iVUo';
+
+  testWidgets('presenting a pairing link lands on Set username, stack cleared', (tester) async {
+    // No live channel in this environment, so there is no server to ask and
+    // the naming screen is due - which is what makes the decision honest
+    // rather than guessed from a hardcoded list, as it once was.
     await bootToLogin(tester);
-    await signIn(tester, 'brand-new-id');
+    await signIn(tester, link);
     expect(find.byType(SetUsernamePage), findsOneWidget);
     expect(find.text(l10nEn.loginSignIn), findsNothing);
   });
 
-  testWidgets('no identifier is special any more - every sign-in without a server onboards', (tester) async {
-    // 'registered' used to skip onboarding by being one of two hardcoded
-    // strings. The server decides now, and this environment has no live
-    // channel to ask, so the naming screen is due - which is what makes the
-    // decision honest rather than guessed.
+  testWidgets('a string that is not a pairing link goes nowhere', (tester) async {
     await bootToLogin(tester);
     await signIn(tester, 'registered');
-    expect(find.byType(SetUsernamePage), findsOneWidget);
+    // 'registered' used to skip onboarding by being one of two hardcoded
+    // strings. It is not a link, so now it is simply unreadable.
+    expect(find.byType(SetUsernamePage), findsNothing);
     expect(find.byType(TabBarShell), findsNothing);
+    expect(find.text(l10nEn.loginSignIn), findsOneWidget);
   });
 }

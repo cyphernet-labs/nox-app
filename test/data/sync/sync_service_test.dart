@@ -96,7 +96,12 @@ void main() {
     await socketClient.start(url: Uri.parse('ws://127.0.0.1:8080/ws'));
     final socket = factory.latest;
     socket.pushGreeting();
-    await settle();
+    // Wait for the greeting to actually be on the wire rather than for a guess
+    // at how long that takes: the client answers only after an async cursor
+    // read, and since feature 032 also after signing the challenge.
+    for (var i = 0; i < 200 && socket.commandNamed('session.hello') == null; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
     socket.replyToHello(cursor: cursor);
     await settle();
     return socket;

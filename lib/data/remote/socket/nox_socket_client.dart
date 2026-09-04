@@ -9,6 +9,7 @@ import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/model/app_config/server_limits.dart';
 import 'package:nox_app/domain/model/session/server_identity.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
+import 'package:nox_app/general/pairing/device_keys.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:rxdart/rxdart.dart';
 
@@ -103,6 +104,9 @@ class NoxSocketClient {
   /// connection's identity, before the restart had torn it down — which is
   /// exactly the guess the sign-in path exists to stop making.
   int greetingGeneration = 0;
+
+  /// The challenge of the CURRENT connection, from the server's greeting.
+  String _challenge = '';
   ServerLimits? limits;
 
   Stream<SessionPhase> get phase => _phase.stream;
@@ -150,6 +154,17 @@ class NoxSocketClient {
       logRepository.debug(target: this, message: 'socket: rate limited, retrying: cmd=$cmd attempt=${attempt + 1}');
       await Future<void>.delayed(_rateLimitPause * (attempt + 1));
     }
+  }
+
+  /// Presents a pairing token, which is the ONE command allowed before the
+  /// greeting: an unpaired device has nothing to sign the challenge with, so
+  /// waiting for a handshake would make pairing impossible rather than awkward.
+  ///
+  /// Sent through [_sendOnce] with the greeting flag for exactly that reason —
+  /// not because it is a greeting, but because it shares the one property that
+  /// matters here: it must not wait for one.
+  Future<CommandReply> pair({required String token, required String deviceKey, required String platform}) {
+    return _sendOnce(isGreeting: true, 'pair', <String, dynamic>{'token': token, 'device_key': deviceKey, 'platform': platform});
   }
 
   Future<CommandReply> _sendOnce(String cmd, Map<String, dynamic> data, {bool isGreeting = false}) async {
@@ -214,7 +229,10 @@ class NoxSocketClient {
     }
     final frame = ServerFrame.parse(json);
     switch (frame) {
-      case SrvGreeting():
+      case SrvGreeting(:final challenge):
+        // Kept per connection: a signature made over one connection's challenge
+        // is useless on the next, which is what makes replay pointless.
+        _challenge = challenge;
         unawaited(_greet());
       case CommandReply(:final id):
         _pending.remove(id)?.complete(frame);
@@ -247,14 +265,33 @@ class NoxSocketClient {
         _scheduleRetry();
         return;
       }
+      String? deviceKey;
+      String? signature;
+      final seed = credentials.deviceSeed;
+      if (seed != null && seed.isNotEmpty && _challenge.isNotEmpty) {
+        try {
+          deviceKey = await DeviceKeys.publicKey(seed);
+          signature = await DeviceKeys.signChallenge(seed: seed, challenge: _challenge);
+        } on Object catch (e) {
+          // A challenge that will not decode is a broken peer, not a broken
+          // client. Greeting unsigned lets the server refuse us properly
+          // instead of the socket dying on an exception nobody can trace.
+          logRepository.debug(target: this, message: 'socket: could not sign the challenge: ${e.runtimeType}');
+          deviceKey = null;
+          signature = null;
+        }
+      }
       final reply = await _sendOnce(isGreeting: true, 'session.hello', <String, dynamic>{
         'schema': 1,
         if (!firstEver) 'since': since,
         // Stated only after a rename: a greeting that repeats a cached name
         // would push it back over a rename made from another device.
         'label': ?credentials.label,
-        'login_ref': ?credentials.loginRef,
-        'device_key': ?credentials.deviceKey,
+        // The public half and a signature over the challenge - never the seed.
+        // A device that has not paired yet presents neither and speaks as an
+        // ephemeral identity, which the contract requires be accepted.
+        'device_key': ?deviceKey,
+        'signature': ?signature,
       });
       if (!reply.ok) {
         logRepository.debug(target: this, message: 'socket: greeting refused: code=${reply.errorCode}');
@@ -420,13 +457,13 @@ class NoxSocketClient {
 /// optional by contract: a connection presenting none of them is served as a
 /// one-off, which is what keeps hand tools and the live probe working.
 class GreetingCredentials {
-  const GreetingCredentials({this.loginRef, this.deviceKey, this.label});
+  const GreetingCredentials({this.deviceSeed, this.label});
 
-  /// One-way derivation of the login identifier — names the PERSON.
-  final String? loginRef;
-
-  /// Opaque per-install id — names the DEVICE.
-  final String? deviceKey;
+  /// This device's key seed. The socket derives the public half for
+  /// `device_key` and signs the challenge with it — the seed itself never
+  /// reaches the wire, and neither does anything derived from a login
+  /// identifier, which no longer exists.
+  final String? deviceSeed;
 
   /// Present only on the greeting that follows a rename.
   final String? label;

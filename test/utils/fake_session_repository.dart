@@ -54,7 +54,15 @@ class FakeSessionRepository implements SessionRepository {
   Future<RepositoryResult<bool>> setOnboardingComplete({String? label}) => throw UnimplementedError();
 
   @override
-  Future<RepositoryResult<String>> deviceId() async => const RepositoryResult<String>.success(data: 'test-device');
+  Future<RepositoryResult<String>> deviceSecret() async =>
+      const RepositoryResult<String>.success(data: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=');
+
+  @override
+  Future<RepositoryResult<bool>> saveServer({required String address, required String serverKey}) async =>
+      const RepositoryResult<bool>.success(data: true);
+
+  @override
+  Future<RepositoryResult<String?>> serverAddress() async => const RepositoryResult<String?>.success(data: '127.0.0.1:8080');
 
   @override
   Future<RepositoryResult<bool>> isLabelDirty() async => RepositoryResult<bool>.success(data: labelDirty);

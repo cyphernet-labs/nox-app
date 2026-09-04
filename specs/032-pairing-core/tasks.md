@@ -54,10 +54,10 @@ description: "Task list for feature implementation"
 - [X] T020 [P] Создать `lib/general/pairing/pairing_link.dart`: разбор и сборка ссылки по [contracts/pairing-link.md](./contracts/pairing-link.md); отказ разбора **отличим** от отказа токена
 - [X] T021 [P] Тесты `test/general/pairing/pairing_link_test.dart`: контрольный вектор, неизвестная версия, обрезанная строка, все три типа адреса, приём ссылки без схемы (человек вставил один фрагмент)
 - [X] T022 [P] Тесты `test/general/pairing/device_keys_test.dart`: подпись под фиксированным семенем совпадает с вектором из [research.md §1](./research.md) — это тот самый тест, который поймает подмену библиотеки или формата подписываемого
-- [ ] T023 Расширить `lib/domain/repository/app/session_repository.dart` и `lib/data/repository/app/session_repository_impl.dart`: `deviceSecret()` вместо `deviceId()`; **удалить** `session.identifier` и `session.device_id`; `clear()` обязан стирать семя
-- [ ] T024 Добавить в `lib/data/repository/app/session_repository_impl.dart` хранение `session.server_address` и `session.server_key` (FR-033): адрес и ключ приходят из ссылки и живут вместе с сессией, а не в конфигурации сборки
-- [ ] T025 [P] Тесты `test/data/repository/app/session_repository_impl_test.dart` на новое: семя рождается один раз и переживает чтение; `clear()` его стирает
-- [ ] T026 [P] Тест в `test/data/repository/app/session_repository_impl_test.dart`: адрес и ключ сервера переживают перезапуск и стираются выходом
+- [X] T023 Расширить `lib/domain/repository/app/session_repository.dart` и `lib/data/repository/app/session_repository_impl.dart`: `deviceSecret()` вместо `deviceId()`; **удалить** `session.identifier` и `session.device_id`; `clear()` обязан стирать семя
+- [X] T024 Добавить в `lib/data/repository/app/session_repository_impl.dart` хранение `session.server_address` и `session.server_key` (FR-033): адрес и ключ приходят из ссылки и живут вместе с сессией, а не в конфигурации сборки
+- [X] T025 [P] Тесты `test/data/repository/app/session_repository_impl_test.dart` на новое: семя рождается один раз и переживает чтение; `clear()` его стирает
+- [X] T026 [P] Тест в `test/data/repository/app/session_repository_impl_test.dart`: адрес и ключ сервера переживают перезапуск и стираются выходом
 
 **Контрольная точка:** сервер умеет ключ и токены, клиент умеет ключ и ссылку — ни одна история ещё не работает, но всё для них есть.
 
@@ -82,27 +82,27 @@ description: "Task list for feature implementation"
 
 ### Клиент
 
-- [ ] T035 [US1] Реализовать команду спаривания в `lib/data/remote/socket/nox_socket_client.dart`: отправка `pair` до приветствия, разбор ответа
-- [ ] T036 [US1] Подписывать challenge в приветствии в `lib/data/remote/socket/nox_socket_client.dart`; убрать отправку `login_ref`
-- [ ] T037 [US1] Переписать `signIn` в `lib/data/repository/app/auth_repository_impl.dart` на предъявление ссылки: разобрать → спариться → взять исход → и только потом двигать навигацию. Порядок тот же, что выстроен фазой 031, и по той же причине
+- [X] T035 [US1] Реализовать команду спаривания в `lib/data/remote/socket/nox_socket_client.dart`: отправка `pair` до приветствия, разбор ответа
+- [X] T036 [US1] Подписывать challenge в приветствии в `lib/data/remote/socket/nox_socket_client.dart`; убрать отправку `login_ref`
+- [X] T037 [US1] Переписать `signIn` в `lib/data/repository/app/auth_repository_impl.dart` на предъявление ссылки: разобрать → спариться → взять исход → и только потом двигать навигацию. Порядок тот же, что выстроен фазой 031, и по той же причине
 - [ ] T038 [US1] **Удалить** `lib/general/nox_qr_envelope.dart` и `test/general/nox_qr_envelope_test.dart`: весь его смысл переезжает в `pairing_link.dart`, и держать два разбора одной сущности — способ развести их
 - [ ] T039 [US1] Перевести `lib/domain/service/qr_image_decode_service.dart` и его реализацию на ссылку спаривания — это **единственный** путь чтения QR на Windows и Linux, где камеры нет
 - [ ] T040 [US1] Перевести `lib/presentation/pages/qr_scan_page/` (экран и BLoC) на ссылку спаривания
 - [ ] T041 [US1] Перевести `lib/presentation/widgets/settings/app_qr_surface_widget.dart` — он рисует QR, и рисовать ему теперь другое
 - [ ] T042 [P] [US1] Обновить тесты потребителей: `test/data/service/qr_image_decode_service_impl_test.dart`, `test/presentation/pages/qr_scan_page/qr_scan_page_test.dart`, `test/presentation/pages/login_page/login_qr_image_test.dart`
 - [ ] T043 [US1] Переименовать `lib/general/qr_image_sign_in_capability.dart` → `qr_image_pairing_capability.dart` (и класс): «sign in» переживёт исчезновение входа по идентификатору и станет враньём
-- [ ] T044 [US1] Брать адрес соединения из сессии в `lib/data/sync/live_session_starter.dart` вместо `AppConfig.apiUrl` (FR-032) — без этого устройство спарится с одним сервером, а сообщения пошлёт в другой
-- [ ] T045 [US1] Считать в `lib/data/sync/live_session_starter.dart` признак «того же мира» от **сохранённого** адреса, а не от значения из сборки (FR-034): иначе два разных сервера на одном адресе конфигурации сольются в один
-- [ ] T046 [P] [US1] Тест `test/data/sync/live_session_starter_test.dart`: соединение идёт по адресу из сессии; смена сохранённого адреса считается сменой мира
+- [X] T044 [US1] Брать адрес соединения из сессии в `lib/data/sync/live_session_starter.dart` вместо `AppConfig.apiUrl` (FR-032) — без этого устройство спарится с одним сервером, а сообщения пошлёт в другой
+- [X] T045 [US1] Считать в `lib/data/sync/live_session_starter.dart` признак «того же мира» от **сохранённого** адреса, а не от значения из сборки (FR-034): иначе два разных сервера на одном адресе конфигурации сольются в один
+- [X] T046 [P] [US1] Тест `test/data/sync/live_session_starter_test.dart`: соединение идёт по адресу из сессии; смена сохранённого адреса считается сменой мира
 - [ ] T047 [US1] Переделать `lib/presentation/pages/login_page/`: вставка и скан **ссылки** вместо идентификатора; тексты ошибок различают «ссылка не читается», «токен недействителен», «срок истёк»
 - [ ] T048 [US1] Свести wide-ветку `lib/presentation/pages/login_page/login_page.dart` с `docs/design/system/nox-desktop-screens/`, narrow — с `nox-mobile-screens/`
 - [ ] T049 [P] [US1] Тесты `test/presentation/pages/login_page/bloc/login_bloc_test.dart`: ожидание, три различимых отказа, успех никуда не навигирует сам
 - [ ] T050 [P] [US1] Эталоны в `test/presentation/pages/login_page/login_page_golden_test.dart`: `goldenTest` и `goldenTestDesktop`, включая состояние ошибки разбора
 - [ ] T051 [P] [US1] Тесты `test/data/repository/app/auth_repository_impl_test.dart`: `created: true` ведёт к выбору имени, `created: false` — нет; неудача спаривания не оставляет полусессии
-- [ ] T052 [P] [US1] Тест `test/data/remote/socket/nox_socket_client_test.dart`: кадр `pair` несёт **публичную** часть ключа и **не несёт** семени (FR-008) — центральное обещание модели, которое иначе ничем не проверено
+- [X] T052 [P] [US1] Тест `test/data/remote/socket/nox_socket_client_test.dart`: кадр `pair` несёт **публичную** часть ключа и **не несёт** семени (FR-008) — центральное обещание модели, которое иначе ничем не проверено
 - [ ] T053 [US1] Провести по `lib/data/` и `lib/presentation/pages/login_page/` дисциплину журналирования (FR-035): ни токен, ни семя, ни ссылка целиком не уходят в `logRepository` — ни на успехе, ни в ветках ошибок
 - [ ] T054 [P] [US1] Тест `test/data/repository/app/auth_repository_impl_test.dart`: спаривание с подставным логгером не пишет ни токена, ни семени
-- [ ] T055 [P] [US1] Тест `test/data/sync/live_session_starter_test.dart`: сервер с неизвестным ключом устройства приводит клиента в состояние «не спарен» и вычищает локальные данные (FR-027) — тот же путь, что у отзыва и у пересобранного сервера
+- [X] T055 [P] [US1] Тест `test/data/sync/live_session_starter_test.dart`: сервер с неизвестным ключом устройства приводит клиента в состояние «не спарен» и вычищает локальные данные (FR-027) — тот же путь, что у отзыва и у пересобранного сервера
 
 **Контрольная точка:** MVP. Человек получает работающий мессенджер на своём сервере, и сервер его проверяет.
 
