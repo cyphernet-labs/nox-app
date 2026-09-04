@@ -37,83 +37,58 @@ type Identity struct {
 // because of a name (contract §3).
 const assignedLabelAttempts = 8
 
-// ResolveIdentity finds or creates the person a connection speaks as, and
-// records the device it speaks from. It is the only place identities come
-// into being.
+// ResolveIdentity finds the person a connection speaks as, from the PUBLIC KEY
+// of the device that connected. It never creates a person: people come into
+// being through pairing (see Pair), and a connection whose key nobody knows is
+// not a new person but an unauthorised one.
 //
-// Recognition splits in two. idDigest identifies the PERSON: it is the one-way
-// derivation of the login identifier the person holds, so re-entering that
-// identifier on a reinstalled app or a second machine lands on the same row.
-// deviceKey identifies the INSTALL. The person wins on conflict - a known
-// device presenting another person's digest is re-bound - because the reverse
-// would let an old install keep hold of someone else's history.
+// Recognition is single-valued now. Stage 1 also accepted a one-way derivation
+// of a login identifier, which meant anyone who learned that identifier became
+// that person - the identifier WAS the secret, and it travelled through
+// clipboards and QR codes. Pairing replaced presenting a secret with proving
+// possession of a key that never leaves the device, so the derivation is gone
+// from the wire, from this lookup and from the schema.
 //
-// Stage 1 proves neither: both are presented, not demonstrated. That is no
-// weaker than today, where a bare display name is taken at face value, and it
-// is the exact shape stage 2 needs, which only adds signature verification
-// over the same lookup.
+// A connection presenting no device key at all is still permitted (hand tools,
+// the live probe, a port scanner speaking WebSocket): the contract forbids
+// refusing such a greeting. It gets an ephemeral identity whose row is written
+// only if it ever sends a message - see MaterialiseUser.
 //
-// The whole resolution is one immediate transaction on the single-connection
-// write pool, so two first connections of the same person serialise and the
-// second finds the row the first created. It writes NO events row: a person
-// coming into being is not visible on the wire.
-func (s *Store) ResolveIdentity(ctx context.Context, idDigest, deviceKey, label string, now int64) (Identity, error) {
+// One immediate transaction on the single-connection write pool, so a device
+// reconnecting while another of the same person is greeting cannot interleave.
+// It writes NO events row: a person being recognised is not visible on the wire.
+func (s *Store) ResolveIdentity(ctx context.Context, deviceKey, label string, now int64) (Identity, error) {
 	tx, err := s.write.BeginTx(ctx, nil)
 	if err != nil {
 		return Identity{}, fmt.Errorf("begin resolve identity: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var id Identity
-	var found bool
-
-	if idDigest != "" {
-		id, found, err = lookupByDigest(ctx, tx, idDigest)
-		if err != nil {
-			return Identity{}, err
-		}
-		if !found {
-			id, err = insertUser(ctx, tx, idDigest, label, now)
-			if err != nil {
-				return Identity{}, err
-			}
-			id.Created = true
-			found = true
-		}
-	}
-
-	if !found && deviceKey != "" {
-		id, found, err = lookupByDevice(ctx, tx, deviceKey)
-		if err != nil {
-			return Identity{}, err
-		}
-		if !found {
-			id, err = insertUser(ctx, tx, "", label, now)
-			if err != nil {
-				return Identity{}, err
-			}
-			id.Created = true
-			found = true
-		}
-	}
-
-	if !found {
-		// Neither presented: mint in memory, write nothing.
-		label, err = s.assignedLabel(ctx, tx, label)
+	if deviceKey == "" {
+		// Neither paired nor claiming to be: mint in memory, write nothing.
+		assigned, err := s.assignedLabel(ctx, tx, label)
 		if err != nil {
 			return Identity{}, err
 		}
 		if err := tx.Commit(); err != nil {
 			return Identity{}, fmt.Errorf("commit resolve identity: %w", err)
 		}
-		// Created: until this answer no such person existed anywhere, row or not.
-		return Identity{UserID: "u_" + randomID(), Label: label, Created: true, Ephemeral: true}, nil
+		return Identity{UserID: "u_" + randomID(), Label: assigned, Ephemeral: true}, nil
 	}
 
-	if deviceKey != "" {
-		if err := upsertDevice(ctx, tx, deviceKey, id.UserID, now); err != nil {
-			return Identity{}, err
-		}
+	id, found, err := lookupByDevice(ctx, tx, deviceKey)
+	if err != nil {
+		return Identity{}, err
+	}
+	if !found {
+		// The key is not in the allowed list. Revoked, or belonging to a store
+		// that was rebuilt - the device cannot tell those apart and must not:
+		// both mean "this is not my server any more".
+		return Identity{}, ErrDeviceUnknown
+	}
+
+	if err := touchDevice(ctx, tx, deviceKey, now); err != nil {
+		return Identity{}, err
 	}
 
 	// A greeting without a label does NOT rename. The client states a name only
@@ -134,6 +109,11 @@ func (s *Store) ResolveIdentity(ctx context.Context, idDigest, deviceKey, label 
 	return id, nil
 }
 
+// ErrDeviceUnknown means the presented key is not in the allowed list. The
+// caller answers `unauthenticated`; the device treats it exactly as a
+// revocation, because from where it stands the two are the same event.
+var ErrDeviceUnknown = errors.New("device key not paired")
+
 // MaterialiseUser writes the row for an identity that was minted in memory by
 // ResolveIdentity. It takes a transaction because it must land together with
 // whatever needed the parent row: half a person with no message is pointless,
@@ -144,25 +124,12 @@ func (s *Store) ResolveIdentity(ctx context.Context, idDigest, deviceKey, label 
 // row. The values are identical, so conflict means "already done".
 func MaterialiseUser(ctx context.Context, tx *sql.Tx, id Identity, now int64) error {
 	_, err := tx.ExecContext(ctx,
-		"INSERT INTO users (user_id, label, id_digest, created_at) VALUES (?, ?, NULL, ?) ON CONFLICT (user_id) DO NOTHING",
+		"INSERT INTO users (user_id, label, created_at) VALUES (?, ?, ?) ON CONFLICT (user_id) DO NOTHING",
 		id.UserID, id.Label, now)
 	if err != nil {
 		return fmt.Errorf("materialise user: %w", err)
 	}
 	return nil
-}
-
-func lookupByDigest(ctx context.Context, tx *sql.Tx, idDigest string) (Identity, bool, error) {
-	var id Identity
-	err := tx.QueryRowContext(ctx,
-		"SELECT user_id, label FROM users WHERE id_digest = ?", idDigest).Scan(&id.UserID, &id.Label)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Identity{}, false, nil
-	}
-	if err != nil {
-		return Identity{}, false, fmt.Errorf("lookup user by digest: %w", err)
-	}
-	return id, true, nil
 }
 
 func lookupByDevice(ctx context.Context, tx *sql.Tx, deviceKey string) (Identity, bool, error) {
@@ -179,36 +146,43 @@ func lookupByDevice(ctx context.Context, tx *sql.Tx, deviceKey string) (Identity
 	return id, true, nil
 }
 
-func insertUser(ctx context.Context, tx *sql.Tx, idDigest, label string, now int64) (Identity, error) {
+func insertUser(ctx context.Context, tx *sql.Tx, label string, now int64) (Identity, error) {
 	assigned, err := assignedLabelTx(ctx, tx, label)
 	if err != nil {
 		return Identity{}, err
 	}
 	id := Identity{UserID: "u_" + randomID(), Label: assigned}
 
-	var digest any
-	if idDigest != "" {
-		digest = idDigest
-	}
 	_, err = tx.ExecContext(ctx,
-		"INSERT INTO users (user_id, label, id_digest, created_at) VALUES (?, ?, ?, ?)",
-		id.UserID, id.Label, digest, now)
+		"INSERT INTO users (user_id, label, created_at) VALUES (?, ?, ?)",
+		id.UserID, id.Label, now)
 	if err != nil {
 		return Identity{}, fmt.Errorf("insert user: %w", err)
 	}
 	return id, nil
 }
 
-// upsertDevice records the install and binds it to the person. created_at is
-// the moment the device first appeared and survives a re-binding; last_seen_at
-// always moves.
-func upsertDevice(ctx context.Context, tx *sql.Tx, deviceKey, userID string, now int64) error {
+// insertDevice authorises a key for a person. Called only from pairing: a
+// greeting can no longer bring a device into existence, which is the whole
+// point - an unknown key is refused, not enrolled.
+func insertDevice(ctx context.Context, tx *sql.Tx, deviceKey, userID, platform string, now int64) error {
 	_, err := tx.ExecContext(ctx,
-		`INSERT INTO devices (device_key, user_id, created_at, last_seen_at) VALUES (?, ?, ?, ?)
-		 ON CONFLICT (device_key) DO UPDATE SET user_id = excluded.user_id, last_seen_at = excluded.last_seen_at`,
-		deviceKey, userID, now, now)
+		`INSERT INTO devices (device_key, user_id, platform, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?)
+		 ON CONFLICT (device_key) DO UPDATE SET last_seen_at = excluded.last_seen_at`,
+		deviceKey, userID, platform, now, now)
 	if err != nil {
-		return fmt.Errorf("upsert device: %w", err)
+		return fmt.Errorf("insert device: %w", err)
+	}
+	return nil
+}
+
+// touchDevice records that an already-authorised device was seen. It never
+// re-binds the key to another person: a device belongs to whoever paired it.
+func touchDevice(ctx context.Context, tx *sql.Tx, deviceKey string, now int64) error {
+	_, err := tx.ExecContext(ctx,
+		"UPDATE devices SET last_seen_at = ? WHERE device_key = ?", now, deviceKey)
+	if err != nil {
+		return fmt.Errorf("touch device: %w", err)
 	}
 	return nil
 }

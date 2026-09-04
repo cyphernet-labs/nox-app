@@ -309,12 +309,31 @@ func TestStoryThreeConcurrentRenameRace(t *testing.T) {
 	}
 }
 
-// person resolves (and on first call creates) a test identity. Messages now
-// carry a foreign key to users, so a test that writes a message needs its
-// author to exist. Idempotent: the digest finds the row on every later call.
+// person pairs one device and names it, the way the first device of a fresh
+// install does. Messages carry a foreign key to users, so a test that writes a
+// message needs its author to exist - and since feature 032 a person can only
+// come into being through pairing. Idempotent: the device key finds the row on
+// every later call.
 func person(t *testing.T, s *store.Store, name string) store.Identity {
 	t.Helper()
-	id, err := s.ResolveIdentity(context.Background(), "digest-"+name, "", name, 1)
+	ctx := context.Background()
+	deviceKey := "dev-" + name
+
+	if id, err := s.ResolveIdentity(ctx, deviceKey, name, 1); err == nil {
+		return id
+	}
+	if _, err := s.EnsureServerIdentity(ctx); err != nil {
+		t.Fatalf("EnsureServerIdentity: %v", err)
+	}
+	token, err := s.IssueClaimToken(ctx, 1)
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+	if _, err := s.Pair(ctx, token, deviceKey, "test", 1); err != nil {
+		t.Fatalf("Pair(%s): %v", name, err)
+	}
+	// State the chosen name the way onboarding does.
+	id, err := s.ResolveIdentity(ctx, deviceKey, name, 1)
 	if err != nil {
 		t.Fatalf("ResolveIdentity(%s): %v", name, err)
 	}

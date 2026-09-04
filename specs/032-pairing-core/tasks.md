@@ -39,13 +39,13 @@ description: "Task list for feature implementation"
 
 ### Сервер
 
-- [ ] T011 Добавить в `client_backend/migrations/001_init.sql` таблицу `server_identity` по [data-model.md](./data-model.md) — правится **на месте**, миграция до релиза одна
-- [ ] T012 Добавить в `client_backend/migrations/001_init.sql` таблицу `pair_tokens`; `expires_at` **nullable**, потому что у claim срока нет
-- [ ] T013 Изменить в `client_backend/migrations/001_init.sql` таблицу `devices`: добавить `platform`, переопределить смысл `device_key`; удалить `users.id_digest`
-- [ ] T014 Создать `client_backend/internal/store/serverkey.go`: рождение пары ключей при первом запуске, чтение, автомат `claimed_at`
-- [ ] T015 [P] Создать `client_backend/internal/store/pairing.go`: выпуск токена и **атомарное** сжигание. Имя файла не `tokens.go` — так уже называется файл про пропуска на передачу файлов в пакете `server`
-- [ ] T016 [P] Тесты `client_backend/internal/store/pairing_test.go`: одноразовость, срок invite, отсутствие срока у claim, **переживание перезапуска** (FR-006) и **гонка двух одновременных предъявлений одного токена** — выиграть должен ровно один
-- [ ] T017 [P] Тесты `client_backend/internal/store/serverkey_test.go`: ключ переживает перезапуск; claim принимается пока `claimed_at IS NULL` и не принимается после
+- [X] T011 Добавить в `client_backend/migrations/001_init.sql` таблицу `server_identity` по [data-model.md](./data-model.md) — правится **на месте**, миграция до релиза одна
+- [X] T012 Добавить в `client_backend/migrations/001_init.sql` таблицу `pair_tokens`; `expires_at` **nullable**, потому что у claim срока нет
+- [X] T013 Изменить в `client_backend/migrations/001_init.sql` таблицу `devices`: добавить `platform`, переопределить смысл `device_key`; удалить `users.id_digest`
+- [X] T014 Создать `client_backend/internal/store/serverkey.go`: рождение пары ключей при первом запуске, чтение, автомат `claimed_at`
+- [X] T015 [P] Создать `client_backend/internal/store/pairing.go`: выпуск токена и **атомарное** сжигание. Имя файла не `tokens.go` — так уже называется файл про пропуска на передачу файлов в пакете `server`
+- [X] T016 [P] Тесты `client_backend/internal/store/pairing_test.go`: одноразовость, срок invite, отсутствие срока у claim, **переживание перезапуска** (FR-006) и **гонка двух одновременных предъявлений одного токена** — выиграть должен ровно один
+- [X] T017 [P] Тесты `client_backend/internal/store/serverkey_test.go`: ключ переживает перезапуск; claim принимается пока `claimed_at IS NULL` и не принимается после
 
 ### Клиент
 
@@ -71,14 +71,14 @@ description: "Task list for feature implementation"
 
 ### Сервер
 
-- [ ] T027 [US1] Реализовать в `client_backend/internal/server/handlers.go` команду `pair`: сжечь токен, завести личность для `claim`, записать публичный ключ и `platform`
-- [ ] T028 [US1] Провести в `client_backend/internal/server/ws.go` `pair` как **исключение** из правила «первая команда — hello»: неспаренному устройству нечем подписать challenge
-- [ ] T029 [US1] Включить в `ws.go` проверку `signature` над `"nox/challenge/v1:" ‖ challenge`; неизвестный ключ и несошедшаяся подпись — `unauthenticated`
-- [ ] T030 [US1] Переписать `client_backend/internal/store/identity.go`: личность ищется по ключу устройства, ветка `login_ref` удаляется целиком
-- [ ] T031 [US1] Вернуть в `client_backend/internal/server/handlers.go` в ответе `pair` объект `identity` с `created`, считая его **от того, завели ли личность** — не от типа токена и не от факта успеха
-- [ ] T032 [US1] Печатать в `client_backend/main.go` ссылку спаривания при первом запуске; локальной HTTP-страницы **не делать** (уточнение 2026-09-04)
-- [ ] T033 [P] [US1] Тесты `client_backend/internal/server/pairing_test.go`: claim заводит личность и возвращает `created: true`; повторный claim отвергается; подпись проверяется; подделанная подпись отвергается
-- [ ] T034 [P] [US1] Тест в `client_backend/internal/server/pairing_test.go`: устройство с ключом, которого сервер не знает, получает `unauthenticated` — это же поведение у пересобранного сервера
+- [X] T027 [US1] Реализовать в `client_backend/internal/server/handlers.go` команду `pair`: сжечь токен, завести личность для `claim`, записать публичный ключ и `platform`
+- [X] T028 [US1] Провести в `client_backend/internal/server/ws.go` `pair` как **исключение** из правила «первая команда — hello»: неспаренному устройству нечем подписать challenge
+- [X] T029 [US1] Включить в `ws.go` проверку `signature` над `"nox/challenge/v1:" ‖ challenge`; неизвестный ключ и несошедшаяся подпись — `unauthenticated`
+- [X] T030 [US1] Переписать `client_backend/internal/store/identity.go`: личность ищется по ключу устройства, ветка `login_ref` удаляется целиком
+- [X] T031 [US1] Вернуть в `client_backend/internal/server/handlers.go` в ответе `pair` объект `identity` с `created`, считая его **от того, завели ли личность** — не от типа токена и не от факта успеха
+- [X] T032 [US1] Печатать в `client_backend/main.go` ссылку спаривания при первом запуске; локальной HTTP-страницы **не делать** (уточнение 2026-09-04)
+- [X] T033 [P] [US1] Тесты `client_backend/internal/server/pairing_test.go`: claim заводит личность и возвращает `created: true`; повторный claim отвергается; подпись проверяется; подделанная подпись отвергается
+- [X] T034 [P] [US1] Тест в `client_backend/internal/server/pairing_test.go`: устройство с ключом, которого сервер не знает, получает `unauthenticated` — это же поведение у пересобранного сервера
 
 ### Клиент
 

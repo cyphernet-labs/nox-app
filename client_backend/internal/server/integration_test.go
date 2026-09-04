@@ -2,6 +2,9 @@ package server
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -18,9 +21,10 @@ import (
 
 // wsClient is a test-side protocol client over one connection.
 type wsClient struct {
-	t    *testing.T
-	conn *websocket.Conn
-	ctx  context.Context
+	t         *testing.T
+	conn      *websocket.Conn
+	ctx       context.Context
+	challenge string
 }
 
 func dialWS(t *testing.T, ts *httptest.Server) *wsClient {
@@ -58,13 +62,82 @@ func (c *wsClient) read() map[string]json.RawMessage {
 	return frame
 }
 
-// expectGreeting consumes the srv greeting frame.
+// expectGreeting consumes the srv greeting frame and remembers the challenge,
+// which every later greeting on this connection has to sign.
 func (c *wsClient) expectGreeting() {
 	c.t.Helper()
 	frame := c.read()
-	if _, ok := frame["srv"]; !ok {
+	raw, ok := frame["srv"]
+	if !ok {
 		c.t.Fatalf("first frame is not a greeting: %v", frame)
 	}
+	var body struct {
+		Challenge string `json:"challenge"`
+	}
+	mustUnmarshal(c.t, raw, &body)
+	c.challenge = body.Challenge
+}
+
+// device is one test device's key pair. The private half never leaves it, the
+// same way it never leaves a real installation.
+type device struct {
+	pub  string
+	priv ed25519.PrivateKey
+}
+
+func newDevice(t *testing.T) *device {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate device key: %v", err)
+	}
+	return &device{pub: base64.StdEncoding.EncodeToString(pub), priv: priv}
+}
+
+// sign produces what a real client puts in `signature`: the signature over the
+// prefixed RAW challenge bytes.
+func (d *device) sign(t *testing.T, challenge string) string {
+	t.Helper()
+	raw, err := base64.StdEncoding.DecodeString(challenge)
+	if err != nil {
+		t.Fatalf("decode challenge: %v", err)
+	}
+	return base64.StdEncoding.EncodeToString(
+		ed25519.Sign(d.priv, append([]byte(challengePrefix), raw...)))
+}
+
+// claimDevice pairs a fresh device by claiming the server. Returns the device
+// and the identity the pairing produced.
+func claimDevice(t *testing.T, ts *httptest.Server, srv *Server) (*device, map[string]json.RawMessage) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := srv.store.EnsureServerIdentity(ctx); err != nil {
+		t.Fatalf("EnsureServerIdentity: %v", err)
+	}
+	token, err := srv.store.IssueClaimToken(ctx, time.Now().Unix())
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+	return pairDevice(t, ts, token)
+}
+
+// pairDevice presents a token on a fresh connection, which is the one command
+// allowed before a greeting.
+func pairDevice(t *testing.T, ts *httptest.Server, token string) (*device, map[string]json.RawMessage) {
+	t.Helper()
+	d := newDevice(t)
+	c := dialWS(t, ts)
+	c.expectGreeting()
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"device_key":%q,"platform":"test"}}`, token, d.pub))
+	data := c.expectOK(1)
+	_ = c.conn.Close(websocket.StatusNormalClosure, "")
+	return d, data
+}
+
+// greet performs a signed session.hello for an already paired device.
+func (c *wsClient) greet(t *testing.T, id int, d *device, extra string) map[string]json.RawMessage {
+	t.Helper()
+	return c.hello(id, fmt.Sprintf(`,"device_key":%q,"signature":%q%s`, d.pub, d.sign(t, c.challenge), extra))
 }
 
 // hello performs session.hello and returns the reply data.

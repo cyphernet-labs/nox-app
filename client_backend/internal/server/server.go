@@ -235,6 +235,9 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 	if err := st.EnsureJournal(ctx); err != nil {
 		return fmt.Errorf("ensure journal: %w", err)
 	}
+	if err := announceClaim(ctx, st, cfg.Addr, logger); err != nil {
+		return err
+	}
 	srv := New(cfg, st, h, bl, logger)
 
 	// Startup sweep before endpoints open (research R10): abandoned uploads
@@ -300,5 +303,36 @@ func assertIdentitySchema(ctx context.Context, read *sql.DB, dbPath string) erro
 				"so delete %s together with its -wal and -shm siblings and the %s-files directory, then start again",
 			dbPath, dbPath)
 	}
+	return nil
+}
+
+// announceClaim mints the server's own key on first start and, while nobody
+// owns this server yet, prints the pairing link.
+//
+// The link goes to the log and nowhere else: a local HTTP page serving the QR
+// would hand ownership to everyone on the network as long as the transport is
+// not TLS. It is reprinted on every start until somebody claims the server,
+// because a terminal scrolls and an unclaimed server has to stay claimable.
+//
+// This is the ONE place a token is deliberately written to output. It is the
+// claim mechanism itself, and it is only visible to whoever can already read
+// the machine's logs - which is whoever could take the database anyway.
+func announceClaim(ctx context.Context, st *store.Store, addr string, logger *slog.Logger) error {
+	id, err := st.EnsureServerIdentity(ctx)
+	if err != nil {
+		return fmt.Errorf("ensure server identity: %w", err)
+	}
+	if id.Claimed {
+		return nil
+	}
+	token, err := st.IssueClaimToken(ctx, time.Now().Unix())
+	if err != nil {
+		return fmt.Errorf("issue claim token: %w", err)
+	}
+	link, err := BuildPairingLink(listenAddress(addr), id.PublicKey, token)
+	if err != nil {
+		return fmt.Errorf("build pairing link: %w", err)
+	}
+	logger.Info("this server has no owner yet - present this link in the app to claim it", "link", link)
 	return nil
 }

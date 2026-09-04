@@ -32,6 +32,10 @@ type client struct {
 
 	// Owned by the read goroutine.
 	helloDone bool
+	// challenge is the 32 random bytes this connection handed the device in the
+	// greeting. Kept per connection so a signature captured on one connection
+	// cannot be replayed on another.
+	challenge string
 	// identity is the person this connection speaks as, resolved once during
 	// the greeting. label mirrors identity.Label for the chat-creation path,
 	// which records a name rather than an id.

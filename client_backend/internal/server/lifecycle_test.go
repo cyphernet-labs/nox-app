@@ -120,18 +120,23 @@ func TestStoryThreeRestartIntegrity(t *testing.T) {
 	baseline := runtime.NumGoroutine()
 
 	var chatID string
+	var dev *device
 	for i := range cycles {
 		// The closure guarantees the stack is released even when an
 		// assertion fails mid-cycle (Fatalf runs deferred calls via Goexit).
 		func() {
-			ts, _, closeAll := openStack(t, path)
+			ts, srv, closeAll := openStack(t, path)
 			defer closeAll()
+			// One device key pair for the whole run, paired on the first cycle
+			// and reused after: client_message_id comes back only to the
+			// message's own author, so a restart that lost the key would look
+			// like a different person.
+			if dev == nil {
+				dev, _ = claimDevice(t, ts, srv)
+			}
 			c := dialWS(t, ts)
 			c.expectGreeting()
-			// A stable device key across cycles: client_message_id comes back
-			// only to the message's own author, and every nameless greeting is
-			// now a different person.
-			c.hello(1, `,"device_key":"dev-restart"`)
+			c.greet(t, 1, dev, "")
 			if i == 0 {
 				chatID = seedChat(t, c, "restart")
 			}
@@ -150,7 +155,7 @@ func TestStoryThreeRestartIntegrity(t *testing.T) {
 	}()
 	c := dialWS(t, ts)
 	c.expectGreeting()
-	cursor := helloCursor(t, c, 0, `,"device_key":"dev-restart"`)
+	cursor := helloCursor(t, c, 0, fmt.Sprintf(`,"device_key":%q,"signature":%q`, dev.pub, dev.sign(t, c.challenge)))
 	if want := int64(cycles + 1); cursor != want {
 		t.Fatalf("cursor after %d cycles = %d, want %d", cycles, cursor, want)
 	}
