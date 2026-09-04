@@ -182,6 +182,10 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
           // stores (safe - replay re-applies idempotently), never ahead of an
           // emptied store (a stale high `since` would skip every row below it
           // and the monotonic guard would keep it stuck forever).
+          // Before the cursor, deliberately. A mark that outlived it would sit
+          // above a rebuilt seq space and suppress every badge - and unlike a
+          // stale counter, which the next open resets, nothing ever repairs it.
+          await _chatRepository.clearReadMarks();
           await _syncRepository.clear();
           await _chatRepository.clean();
           await _messageRepository.clean();

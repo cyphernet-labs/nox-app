@@ -318,15 +318,20 @@ void main() {
       await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0')); // seed the thread
     });
 
-    test('appends an inbound message (author != me) and increments the chat unread', () async {
-      final beforeUnread = (await chatDao.getById('chat_0'))!.unreadCount;
+    test('appends an inbound message (author != me) with a seq a server could have issued', () async {
       await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0'));
       final beforeTotal = await messageDao.countByChat('chat_0');
+      final head = await messageDao.highestSeq('chat_0');
 
       await repo.simulateIncoming(chatId: 'chat_0');
 
-      expect((await chatDao.getById('chat_0'))!.unreadCount, beforeUnread + 1);
       expect(await messageDao.countByChat('chat_0'), beforeTotal + 1);
+      // One past the cached head, not a clock-derived number. A clock value sits
+      // fifteen digits above any journal seq, and the read mark - which only
+      // moves forward - would follow it there and kill this chat's badge for good.
+      expect(await messageDao.highestSeq('chat_0'), (head ?? 0) + 1);
+      // The row itself no longer carries the badge: it is recounted from the mark.
+      expect((await chatDao.getById('chat_0'))!.lastOpenedSeq, isNull);
       final (messages, _) = (await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0'))).data!;
       final inbound = messages.firstWhere((m) => m.text == 'Simulated incoming message');
       expect(inbound.authorId, isNot('me')); // an inbound, not an own message

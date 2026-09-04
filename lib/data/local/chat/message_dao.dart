@@ -30,6 +30,35 @@ class MessageDao {
 
   Future<int> countByChat(String chatId) async => (await getByChatSorted(chatId)).length;
 
+  /// The highest seq cached for a chat, or null when nothing is cached.
+  Future<int?> highestSeq(String chatId) async {
+    // seq is nullable on the entity: pre-025 rows and locally-minted optimistic
+    // sends have none. A row without a seq has no place in the journal order,
+    // so it neither raises the mark nor counts against it.
+    final seqs = (await getByChatSorted(chatId)).map((m) => m.seq).nonNulls;
+    if (seqs.isEmpty) return null;
+    return seqs.reduce((a, b) => a > b ? a : b);
+  }
+
+  /// How many cached messages sit above [aboveSeq] and were not written by us.
+  ///
+  /// Counted in Dart over decoded entities rather than by a Finder: the global
+  /// snake_case field rename means a query keyed on a camelCase field name
+  /// silently matches nothing.
+  ///
+  /// This is a recount, not a running total, and that is the point: the
+  /// protocol permits the same event to arrive twice at the replay/live
+  /// boundary, and counting the set is idempotent where incrementing was not.
+  Future<int> countUnread({required String chatId, required int? aboveSeq, required Set<String> excludeAuthors}) async {
+    // Never opened means no badge at all, by the product spec.
+    if (aboveSeq == null) return 0;
+    final messages = await getByChatSorted(chatId);
+    return messages.where((m) {
+      final seq = m.seq;
+      return seq != null && seq > aboveSeq && !excludeAuthors.contains(m.authorId);
+    }).length;
+  }
+
   /// One message by id, or null. Record-key lookup, so it is unaffected by the
   /// `field_rename: snake` gotcha that makes a Finder on a camelCase key match
   /// nothing.

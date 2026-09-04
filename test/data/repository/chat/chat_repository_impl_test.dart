@@ -18,8 +18,8 @@ import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
+import 'package:nox_app/data/local/chat/message_dao.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
-import 'package:nox_app/general/chat_seed_mock_data.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -68,15 +68,16 @@ void main() {
       expect(metadata.nextPage, isNotNull);
     });
 
-    test('seeding overlays the device-local unread badges (wire rows carry 0, contract §8.3)', () async {
+    test('a chat nobody has opened carries no badge, whatever the seed says', () async {
       final (chats, _) = (await repository.getChats(config: GetChatsConfig.firstPage())).data!;
 
-      // The overlay path itself: every seeded row carries exactly the local
-      // ChatSeedMockData value (0 for absent ids), incl. the 99+ cap case.
+      // The badge is recounted from each chat's read mark, and an unopened
+      // chat has none - which is the product rule ("никогда не открытый чат
+      // бейджа не имеет"), now true by construction. The seed used to hand out
+      // badges for chats the person had never seen, which quietly broke it.
       for (final chat in chats) {
-        expect(chat.unreadCount, ChatSeedMockData.unreadFor(chat.id), reason: '${chat.id} unread overlay');
+        expect(chat.unreadCount, 0, reason: '${chat.id} was never opened');
       }
-      expect(chats.firstWhere((c) => c.id == 'chat_4').unreadCount, 142); // the 99+ cap case, end to end
     });
 
     test('a failed envelope (success:false / null data) surfaces as RepositoryResult.error (S4)', () async {
@@ -89,6 +90,8 @@ void main() {
         getIt<ChatMapper>(),
         getIt<ChatWireMapper>(),
         getIt<MessageRepository>(),
+        getIt<MessageDao>(),
+        getIt<SessionRepository>(),
       );
 
       final result = await errorRepo.getChats(config: GetChatsConfig.firstPage());
@@ -246,18 +249,48 @@ void main() {
     });
   });
 
-  group('markChatRead (US4)', () {
-    test('resets a chat unread count to 0 and is a no-op when already 0', () async {
+  group('read marks and the recounted badge (US4)', () {
+    test('opening a chat advances its mark, and the badge is recounted from it', () async {
       await repository.getChats(config: GetChatsConfig.firstPage()); // seed the chat rows
       final chatDao = getIt<ChatDao>();
-      final unread = (await chatDao.getAllSorted()).firstWhere((c) => c.unreadCount > 0);
+      final chat = (await chatDao.getAllSorted()).first;
 
-      await repository.markChatRead(chatId: unread.id);
-      expect((await chatDao.getById(unread.id))!.unreadCount, 0);
+      // A chat nobody has opened has no mark and therefore no badge - the
+      // product rule, now true by construction rather than by coincidence.
+      expect(chat.lastOpenedSeq, isNull);
 
-      // Idempotent: a second call on an already-read chat leaves it at 0 (no throw).
-      await repository.markChatRead(chatId: unread.id);
-      expect((await chatDao.getById(unread.id))!.unreadCount, 0);
+      await repository.markChatRead(chatId: chat.id);
+      final opened = (await chatDao.getById(chat.id))!;
+      expect(opened.lastOpenedSeq, isNotNull, reason: 'opening records what was on screen');
+
+      // Idempotent, and monotonic: a second open cannot lower the mark.
+      await repository.markChatRead(chatId: chat.id);
+      expect((await chatDao.getById(chat.id))!.lastOpenedSeq, opened.lastOpenedSeq);
+    });
+
+    test('the badge counts messages above the mark that this device did not write', () async {
+      await repository.getChats(config: GetChatsConfig.firstPage());
+      final chatDao = getIt<ChatDao>();
+      final chat = (await chatDao.getAllSorted()).first;
+      final messages = getIt<MessageRepository>();
+
+      await repository.markChatRead(chatId: chat.id);
+      final before = (await repository.getChats(
+        config: GetChatsConfig.firstPage(),
+      )).data!.$1.firstWhere((c) => c.id == chat.id).unreadCount;
+      expect(before, 0, reason: 'a chat just opened has nothing above its mark');
+
+      await messages.simulateIncoming(chatId: chat.id);
+      await messages.simulateIncoming(chatId: chat.id);
+
+      final page = await repository.getChats(config: GetChatsConfig.firstPage());
+      final badge = page.data!.$1.firstWhere((c) => c.id == chat.id).unreadCount;
+      expect(badge, 2, reason: 'exactly the two that arrived after the open');
+
+      // Recount, not a running total: opening clears it without a counter to reset.
+      await repository.markChatRead(chatId: chat.id);
+      final after = await repository.getChats(config: GetChatsConfig.firstPage());
+      expect(after.data!.$1.firstWhere((c) => c.id == chat.id).unreadCount, 0);
     });
   });
 

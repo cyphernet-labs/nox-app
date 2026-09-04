@@ -2,7 +2,6 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
-import 'package:nox_app/general/onboarding_mock_data.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
 import 'package:nox_app/presentation/base/bloc_transformers.dart';
 
@@ -55,14 +54,12 @@ class RenameChatBloc extends BaseBloc<RenameChatEvent, RenameChatState> {
     await executeLogic(() async {
       await Future<void>.delayed(const Duration(milliseconds: 200));
       if (state.name != event.name) return;
-      // Exclude THIS chat (a rename never collides with its own name), OR a reserved demo
-      // name. The reserved check is self-excluded case-insensitively too — recapitalizing a
-      // chat's own name ('general' → 'General') must never read as taken. Fail-OPEN on a read
-      // error (mirrors create-chat) — the server is the authority.
+      // Excludes THIS chat, since a rename never collides with its own name.
+      // The server is the only authority beyond that: the frozen reserved list
+      // this used to OR in declared three names taken that the server was
+      // happy to give out. Fail-OPEN on a read error, as create-chat does.
       final dbResult = await chatRepository.isChatNameTaken(name: event.name, excludeChatId: chatId);
-      final ownVariant = event.name.toLowerCase() == state.initialName.toLowerCase();
-      final reserved = !ownVariant && OnboardingMockData.takenChatNames.contains(event.name);
-      final taken = dbResult.match(onData: (t) => t, onError: (_) => false) || reserved;
+      final taken = dbResult.match(onData: (t) => t, onError: (_) => false);
       emit(state.copyWith(status: taken ? RenameChatStatus.taken : RenameChatStatus.valid));
     }, onError: (error, exception, stackTrace) => emit(state.copyWith(status: RenameChatStatus.valid)));
   }

@@ -39,7 +39,16 @@ abstract class ChatRepository {
 
   /// Marks a chat read: resets its unread count to 0 (no-op when already 0). Called when
   /// the chat's thread is viewed (Feature 014); the reactive list badge updates live.
+  /// Records that the chat has been seen up to what is cached for it. The
+  /// badge is a recount from this mark, never a stored total: the protocol
+  /// permits the same event twice at the replay/live boundary, and counting a
+  /// set is idempotent where incrementing is not (contract §6/§8.3).
   Future<void> markChatRead({required String chatId});
+
+  /// Drops every read mark. Called before the sync cursor is cleared, because
+  /// a mark that outlived the cursor would sit above a rebuilt seq space and
+  /// suppress every badge with nothing to ever repair it.
+  Future<void> clearReadMarks();
 
   /// Resets any cached state (called on logout).
   Future<void> clean();

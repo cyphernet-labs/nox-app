@@ -109,7 +109,7 @@ class _SetUsernamePageState extends BaseStatePage<SetUsernamePage> {
 
   String? _errorText(BuildContext context, UsernameStatus status) => switch (status) {
     UsernameStatus.invalidCharset => context.l10n.usernameCharsetError,
-    UsernameStatus.taken || UsernameStatus.raceTaken => context.l10n.nameTakenError,
+    UsernameStatus.raceTaken => context.l10n.nameTakenError,
     _ => null,
   };
 

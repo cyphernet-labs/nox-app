@@ -187,13 +187,25 @@ class LiveSessionStarter {
   /// address-changed path and the journal-changed path, because the two differ
   /// only in how the change was noticed.
   Future<void> _wipeWorld() async {
+    // The cursor and the read marks go FIRST, because their survival is the
+    // only unrecoverable outcome here. A cursor left above an emptied journal
+    // makes the device deaf; a mark left above a rebuilt seq space silently
+    // kills every badge, and unlike a stale counter — which the next open
+    // resets — nothing ever repairs it. Everything below is merely dirty.
+    await _syncRepository.clear();
+    await _chats.clearReadMarks();
     // The outgoing queue goes with the cache, and for a sharper reason than the
     // rest of it: a message written against the mock world — or against another
     // server — would otherwise be sent to THIS one on the first drain, landing
     // someone's unrelated text in a chat that has nothing to do with it. The
     // chat id it names does not exist here either, so the send would fail; the
-    // text travelling at all is the part that must not happen.
-    await _outbox.clean();
+    // text travelling at all is the part that must not happen. Best-effort, so
+    // a failure here cannot cost the two clears above.
+    try {
+      await _outbox.clean();
+    } on Object catch (e, s) {
+      logRepository.error(target: this, error: e, stackTrace: s);
+    }
     // Downloaded bytes belong to the world they came from. Best-effort for the
     // same reason logout treats it that way: a cache directory that will not
     // clear is not worth keeping the app off the screen for.
@@ -205,7 +217,6 @@ class LiveSessionStarter {
     // Prefetch memoises what it has already fetched; those ids belong to the
     // world being discarded. Reached the way logout reaches it.
     if (getIt.isRegistered<AttachmentPrefetchService>()) getIt<AttachmentPrefetchService>().reset();
-    await _syncRepository.clear();
     await _chats.clean();
     await _messages.clean();
   }

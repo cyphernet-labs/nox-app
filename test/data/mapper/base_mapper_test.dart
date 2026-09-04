@@ -11,9 +11,30 @@ void main() {
 
   test('toListModel maps every entity through toModel preserving input order and count', () {
     const entities = [
-      ChatEntity(id: 'c1', name: 'Alpha', lastMessagePreview: 'hi', lastMessageAt: '2026-01-02T03:04:05.000Z', unreadCount: 1),
-      ChatEntity(id: 'c2', name: 'Beta', lastMessagePreview: 'yo', lastMessageAt: '2026-01-03T03:04:05.000Z', unreadCount: 2),
-      ChatEntity(id: 'c3', name: 'Gamma', lastMessagePreview: 'ok', lastMessageAt: '2026-01-04T03:04:05.000Z', unreadCount: 0),
+      ChatEntity(
+        id: 'c1',
+        name: 'Alpha',
+        lastMessagePreview: 'hi',
+        lastMessageAt: '2026-01-02T03:04:05.000Z',
+        unreadCount: 1,
+        lastOpenedSeq: null,
+      ),
+      ChatEntity(
+        id: 'c2',
+        name: 'Beta',
+        lastMessagePreview: 'yo',
+        lastMessageAt: '2026-01-03T03:04:05.000Z',
+        unreadCount: 2,
+        lastOpenedSeq: null,
+      ),
+      ChatEntity(
+        id: 'c3',
+        name: 'Gamma',
+        lastMessagePreview: 'ok',
+        lastMessageAt: '2026-01-04T03:04:05.000Z',
+        unreadCount: 0,
+        lastOpenedSeq: null,
+      ),
     ];
 
     final models = mapper.toListModel(entities: entities);

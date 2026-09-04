@@ -147,7 +147,14 @@ void main() {
 
   test('applying a chat event keeps the unread badge, which the wire does not carry', () async {
     await chatDao.upsert(
-      const ChatEntity(id: 'c_1', name: 'Old name', lastMessagePreview: 'p', lastMessageAt: '2026-01-01T00:00:00.000Z', unreadCount: 7),
+      const ChatEntity(
+        id: 'c_1',
+        name: 'Old name',
+        lastMessagePreview: 'p',
+        lastMessageAt: '2026-01-01T00:00:00.000Z',
+        unreadCount: 7,
+        lastOpenedSeq: null,
+      ),
     );
     final socket = await connected();
     socket.pushEvent(
@@ -164,7 +171,14 @@ void main() {
 
   test('an incoming message raises the chat row itself, because the server sends no chat.updated for it', () async {
     await chatDao.upsert(
-      const ChatEntity(id: 'c_1', name: 'Chat', lastMessagePreview: '', lastMessageAt: '2026-01-01T00:00:00.000Z', unreadCount: 0),
+      const ChatEntity(
+        id: 'c_1',
+        name: 'Chat',
+        lastMessagePreview: '',
+        lastMessageAt: '2026-01-01T00:00:00.000Z',
+        unreadCount: 0,
+        lastOpenedSeq: null,
+      ),
     );
     final socket = await connected();
     socket.pushEvent(seq: 7, data: messageFrame('m_1', 'c_1', seq: 7, text: 'ping'));
@@ -173,12 +187,22 @@ void main() {
     expect((await messageDao.getById('m_1'))?.text, 'ping');
     final chat = await chatDao.getById('c_1');
     expect(chat?.lastMessagePreview, contains('ping'));
-    expect(chat?.unreadCount, 1);
+    // The row carries preview and activity time only. The badge is recounted
+    // from the read mark when the list is read, so applying an event does not
+    // touch a counter - which is what makes a duplicate free.
+    expect(chat?.unreadCount, 0);
   });
 
   test('a duplicate at the replay boundary is dropped instead of applied twice', () async {
     await chatDao.upsert(
-      const ChatEntity(id: 'c_1', name: 'Chat', lastMessagePreview: '', lastMessageAt: '2026-01-01T00:00:00.000Z', unreadCount: 0),
+      const ChatEntity(
+        id: 'c_1',
+        name: 'Chat',
+        lastMessagePreview: '',
+        lastMessageAt: '2026-01-01T00:00:00.000Z',
+        unreadCount: 0,
+        lastOpenedSeq: null,
+      ),
     );
     final socket = await connected();
     socket.pushEvent(seq: 9, data: messageFrame('m_9', 'c_1', seq: 9));
@@ -186,13 +210,23 @@ void main() {
     socket.pushEvent(seq: 9, data: messageFrame('m_9', 'c_1', seq: 9));
     await settle();
 
-    // The unread bump is the observable: a second application would double it.
-    expect((await chatDao.getById('c_1'))?.unreadCount, 1);
+    // The message row is the observable now: exactly one, no matter how many
+    // times the same event arrives. The badge cannot double-count either, since
+    // it counts a set rather than accumulating - which is why the contract
+    // forbids an incrementing counter in the first place (§6).
+    expect(await messageDao.countByChat('c_1'), 1);
   });
 
   test('an echo does not erase the local file path of a message already stored', () async {
     await chatDao.upsert(
-      const ChatEntity(id: 'c_1', name: 'Chat', lastMessagePreview: '', lastMessageAt: '2026-01-01T00:00:00.000Z', unreadCount: 0),
+      const ChatEntity(
+        id: 'c_1',
+        name: 'Chat',
+        lastMessagePreview: '',
+        lastMessageAt: '2026-01-01T00:00:00.000Z',
+        unreadCount: 0,
+        lastOpenedSeq: null,
+      ),
     );
     await messageDao.upsert(
       const MessageEntity(
@@ -232,7 +266,14 @@ void main() {
     // Close the database under the applier so the write fails for real.
     await getIt<AppDatabase>().clearEntireDatabase();
     await chatDao.upsert(
-      const ChatEntity(id: 'c_1', name: 'Chat', lastMessagePreview: '', lastMessageAt: '2026-01-01T00:00:00.000Z', unreadCount: 0),
+      const ChatEntity(
+        id: 'c_1',
+        name: 'Chat',
+        lastMessagePreview: '',
+        lastMessageAt: '2026-01-01T00:00:00.000Z',
+        unreadCount: 0,
+        lastOpenedSeq: null,
+      ),
     );
 
     // A malformed payload fails to parse inside the apply.

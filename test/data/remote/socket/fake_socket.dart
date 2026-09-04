@@ -39,14 +39,18 @@ class FakeSocket implements SocketConnection {
   }
 
   /// A successful greeting reply carrying the catch-up cursor and identity.
-  void replyToHello({required int cursor, String label = 'Anna', String journalId = 'j_test'}) => reply(
+  void replyToHello({required int cursor, String label = 'Anna', String journalId = 'j_test', bool? created = false}) => reply(
     sent.indexWhere((f) => f['cmd'] == 'session.hello'),
     data: {
       'schema': 1,
       'cursor': cursor,
       'journal_id': journalId,
       'limits': {'max_message_bytes': 65536, 'max_attachment_bytes': 104857600, 'max_frame_bytes': 131072},
-      'identity': {'id': 'u_1', 'label': label},
+      // Nullable, and stated with the ?-spread: the wire has THREE states and
+      // the third one - the field absent, meaning "outcome not stated" - is the
+      // one a test has to be able to reproduce. A non-nullable bool here would
+      // make the very case FR-006 requires checking inexpressible.
+      'identity': {'id': 'u_1', 'label': label, 'created': ?created},
     },
   );
 

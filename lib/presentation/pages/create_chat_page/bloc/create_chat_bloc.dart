@@ -5,7 +5,6 @@ import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
-import 'package:nox_app/general/onboarding_mock_data.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
 import 'package:nox_app/presentation/base/bloc_transformers.dart';
 
@@ -43,13 +42,13 @@ class CreateChatBloc extends BaseBloc<CreateChatEvent, CreateChatState> {
     await executeLogic(() async {
       await Future<void>.delayed(const Duration(milliseconds: 200));
       if (state.name != event.name) return;
-      // Uniqueness against the ACCUMULATING local DB (seeded + already-created chats,
-      // D4), OR a small reserved demo set. `// TODO(backend): real server check.`
-      // Fail-OPEN on a read error (onError → false): a transient store error must not
-      // block typing; the real (server) uniqueness check is the authority — the mock
-      // phase has no data-layer backstop (see _onCreateRequested).
+      // The server is the ONLY authority on whether a chat name is free. It used
+      // to be OR-ed with a frozen list of three words, which declared those
+      // three taken even when the server was handing them out.
+      // Fail-OPEN on a read error (onError → false): a transient failure must
+      // not block typing, and creation itself still refuses a taken name.
       final dbResult = await chatRepository.isChatNameTaken(name: event.name);
-      final taken = dbResult.match(onData: (t) => t, onError: (_) => false) || OnboardingMockData.takenChatNames.contains(event.name);
+      final taken = dbResult.match(onData: (t) => t, onError: (_) => false);
       emit(state.copyWith(status: taken ? CreateChatStatus.taken : CreateChatStatus.valid));
     }, onError: (error, exception, stackTrace) => emit(state.copyWith(status: CreateChatStatus.valid)));
   }

@@ -24,7 +24,6 @@ import 'package:nox_app/general/formatters/chat_preview_formatter.dart';
 import 'package:nox_app/general/identity/identity_resolver.dart';
 import 'package:nox_app/general/chat_seed_mock_data.dart';
 import 'package:nox_app/general/identity_mock_data.dart';
-import 'package:nox_app/general/mock_seq.dart';
 import 'package:uuid/uuid.dart';
 
 /// Cache-first chat thread (5.2) over the local Sembast DB. The [MessageRemoteDataSource]
@@ -228,7 +227,7 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
       await _messageDao.upsert(_mapper.toEntity(model: message));
       // Keep the chat row (list) consistent with the thread: update preview + time + order.
       // A failed send returns an error before reaching here, so the row is never touched (FR-004).
-      await _touchChatRow(chatId, message, incrementUnread: false);
+      await _touchChatRow(chatId, message);
       return RepositoryResult<MessageModel>.success(data: message);
     });
   }
@@ -293,7 +292,11 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
     // Debug stand-in for a server push: an inbound message (author != me) + unread bump.
     final message = MessageModel(
       id: 'sim_${_uuid.v4()}',
-      seq: MockSeq.next(),
+      // The seq a server would have issued, not one minted from the clock.
+      // A clock-derived value sits fifteen digits above any journal number,
+      // and the read mark - which only ever moves forward - would follow it
+      // there, putting this chat's badge permanently out of reach.
+      seq: (await _messageDao.highestSeq(chatId) ?? 0) + 1,
       chatId: chatId,
       authorId: 'other:$chatId',
       authorLabel: 'Someone',
@@ -302,22 +305,24 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
       status: MessageStatus.none,
     );
     await _messageDao.upsert(_mapper.toEntity(model: message));
-    await _touchChatRow(chatId, message, incrementUnread: true);
+    await _touchChatRow(chatId, message);
   }
 
   /// Updates the parent chat row after a message is persisted: last-message preview +
   /// timestamp (→ newest-first reorder), and optionally the unread count. Works at the
   /// [ChatEntity] level via a record-key lookup ([ChatDao.getById]) — no mapper needed.
   /// No-op if the chat row is absent.
-  Future<void> _touchChatRow(String chatId, MessageModel message, {required bool incrementUnread}) async {
+  /// Updates the parent chat row after a message is persisted: preview and
+  /// activity time only.
+  ///
+  /// The unread count is no longer touched here. It is recounted from the
+  /// chat's read mark, which makes it idempotent to the duplicates §3 permits
+  /// and makes the sender's own echo count for nothing without a special case.
+  Future<void> _touchChatRow(String chatId, MessageModel message) async {
     final chat = await _chatDao.getById(chatId);
     if (chat == null) return;
     await _chatDao.upsert(
-      chat.copyWith(
-        lastMessagePreview: chatPreviewFor(message),
-        lastMessageAt: message.sentAt.toUtc().toIso8601String(),
-        unreadCount: incrementUnread ? chat.unreadCount + 1 : chat.unreadCount,
-      ),
+      chat.copyWith(lastMessagePreview: chatPreviewFor(message), lastMessageAt: message.sentAt.toUtc().toIso8601String()),
     );
   }
 

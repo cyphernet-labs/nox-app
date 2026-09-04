@@ -77,14 +77,12 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
   Future<void> _onAvailabilityRequested(SettingsAvailabilityRequested event, Emitter<SettingsRootState> emit) async {
     if (state.draftName != event.name || state.status != SettingsNameStatus.checking) return;
     await executeLogic(() async {
-      // TODO(backend): real server uniqueness check.
-      await Future<void>.delayed(const Duration(milliseconds: 200));
+      // Nothing to ask: person labels are not unique (owner, 2026-09-02), so
+      // the only rules left are charset and length, and those are local and
+      // already applied. The former fail-safe guarded against committing a
+      // possibly-taken label; there is no such thing now.
       if (state.draftName != event.name) return;
-      final taken = UsernameRules.isTaken(event.name); // case-sensitive (FR-032)
-      emit(state.copyWith(status: taken ? SettingsNameStatus.taken : SettingsNameStatus.valid));
-      // Fail-safe: a failed uniqueness check must NOT report the name as available
-      // (would let a possibly-taken label be committed). Fall back to a neutral,
-      // non-committable state so the user re-checks. `// TODO(backend):` retry UX.
+      emit(state.copyWith(status: SettingsNameStatus.valid));
     }, onError: (error, exception, stackTrace) => emit(state.copyWith(status: SettingsNameStatus.idle)));
   }
 

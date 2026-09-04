@@ -1,9 +1,14 @@
-/// Fixed mock data driving the happy/taken path of the UI-only onboarding-form
-/// availability checks (2.1 sign-in, 2.3 username, 6.1 chat name). It exists only
-/// so typing specific values reproduces every state deterministically; it is
-/// replaced by a real repository in the backend phase.
-//
-// TODO(backend): replace with real server uniqueness / sign-in checks.
+/// MOCK-PATH ONLY. Nothing on the live path reads any of this any more.
+///
+/// `takenChatNames` is consulted by the mock chat datasource so the mock world
+/// has something to refuse; the live path asks the server. `registeredIds`
+/// survives for the screens gallery, which drives login outcomes by hand. A
+/// reader who finds either on a live path has found a defect: that is exactly
+/// what feature 031 removed.
+///
+/// The former `takenUsernames` is gone with the check that read it: person
+/// labels are not unique (owner, 2026-09-02), so a list of taken ones was a
+/// rule nothing in the system observed.
 abstract final class OnboardingMockData {
   const OnboardingMockData._();
 
@@ -12,8 +17,6 @@ abstract final class OnboardingMockData {
   static const Set<String> registeredIds = {'registered', 'demo'};
 
   /// Usernames reported as taken (2.3). Matching is CASE-SENSITIVE (Anna != anna,
-  /// FR-032) — callers compare with `contains` against the raw input.
-  static const Set<String> takenUsernames = {'admin', 'NOX', 'User1234', 'taken'};
 
   /// Chat names reported as taken (6.1). Charset is unrestricted (FR-041).
   static const Set<String> takenChatNames = {'General', 'Random thoughts', 'taken'};

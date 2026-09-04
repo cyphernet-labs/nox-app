@@ -3,6 +3,9 @@ import 'dart:async';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/data/remote/socket/socket_channel_factory.dart';
+import 'package:nox_app/data/local/chat/message_dao.dart';
+import 'package:nox_app/domain/repository/app/session_repository.dart';
+import 'package:nox_app/general/identity_mock_data.dart';
 import 'package:nox_app/data/entity/chat/chat_entity.dart';
 import 'package:nox_app/data/local/chat/chat_dao.dart';
 import 'package:nox_app/data/mapper/chat/chat_mapper.dart';
@@ -17,7 +20,6 @@ import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
-import 'package:nox_app/general/chat_seed_mock_data.dart';
 
 /// Chats list (5.1): read-through cache over the local Sembast DB.
 ///
@@ -32,13 +34,23 @@ import 'package:nox_app/general/chat_seed_mock_data.dart';
 /// wire does not carry the device-local unread count (§6, §8.3).
 @LazySingleton(as: ChatRepository, env: [Environment.dev, Environment.prod, Environment.test])
 class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
-  ChatRepositoryImpl(this._chatDao, this._chatRemote, this._mapper, this._wireMapper, this._messageRepository);
+  ChatRepositoryImpl(
+    this._chatDao,
+    this._chatRemote,
+    this._mapper,
+    this._wireMapper,
+    this._messageRepository,
+    this._messageDao,
+    this._session,
+  );
 
   final ChatDao _chatDao;
   final ChatRemoteDataSource _chatRemote;
   final ChatMapper _mapper;
   final ChatWireMapper _wireMapper;
   final MessageRepository _messageRepository;
+  final MessageDao _messageDao;
+  final SessionRepository _session;
 
   static const int _pageSize = GetChatsConfig.pageSize;
 
@@ -56,16 +68,60 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
     final merged = <ChatEntity>[];
     for (final chat in wire) {
       final existing = await _chatDao.getById(chat.id);
-      final unread = existing?.unreadCount ?? ChatSeedMockData.unreadFor(chat.id);
-      merged.add(_mapper.toEntity(model: chat.copyWith(unreadCount: unread)));
+      // The stored number is carried forward untouched and read by nobody: the
+      // badge is recounted from the read mark. Seeding a value here used to
+      // hand badges to chats the person had never opened, which contradicts
+      // the product rule that an unopened chat shows none.
+      final unread = existing?.unreadCount ?? 0;
+      merged.add(
+        _mapper.toEntity(
+          model: chat.copyWith(unreadCount: unread),
+          lastOpenedSeq: existing?.lastOpenedSeq,
+        ),
+      );
     }
     await _chatDao.saveData(merged);
-    return merged.map((e) => _mapper.toModel(entity: e)).toList();
+    // Through the same recount as the cache path: the connected read must not
+    // hand the UI a different number than the cached one for the same rows.
+    return _withRecountedBadges(merged);
   }
 
   /// Serves one page out of the cache — the answer when the channel is down.
+  /// Every id a message written on THIS device could carry.
+  ///
+  /// Not the single resolved id: `resolveIdentity` falls back to the login
+  /// identifier while the server-minted author id is not known yet, and in
+  /// that window a single-value comparison stops matching - so own messages
+  /// would start counting as unread. The set is collision-free by contract:
+  /// server ids are `u_` + 16 hex and can never equal a login identifier.
+  Future<Set<String>> _ownIds() async {
+    final session = (await _session.readSession()).data;
+    return <String>{?session?.authorId, ?session?.identifier, IdentityMockData.fallbackOwnId}..removeWhere((id) => id.isEmpty);
+  }
+
+  /// Turns stored rows into models whose badge is RECOUNTED from each chat's
+  /// read mark, rather than read from the stored number.
+  ///
+  /// Every path that hands chats to the UI goes through here. The stored
+  /// `unreadCount` column is now vestigial - a leftover of the counter this
+  /// replaced - and reading it would resurrect the very behaviour the contract
+  /// forbids: a running total that double-counts the duplicates §3 permits and
+  /// that the sender's own echo increments.
+  Future<List<ChatModel>> _withRecountedBadges(List<ChatEntity> entities) async {
+    // Resolved ONCE per call, not per chat: this reads secure storage, and the
+    // chats list re-reads its pages on every watch tick.
+    final ownIds = await _ownIds();
+    final models = <ChatModel>[];
+    for (final entity in entities) {
+      final unread = await _messageDao.countUnread(chatId: entity.id, aboveSeq: entity.lastOpenedSeq, excludeAuthors: ownIds);
+      models.add(_mapper.toModel(entity: entity).copyWith(unreadCount: unread));
+    }
+    return models;
+  }
+
   Future<(List<ChatModel>, PageMetadata)> _cachedPage(GetChatsConfig config) async {
-    final all = (await _chatDao.getAllSorted()).map((e) => _mapper.toModel(entity: e)).toList();
+    final entities = await _chatDao.getAllSorted();
+    final all = await _withRecountedBadges(entities);
     final search = config.search?.trim().toLowerCase() ?? '';
     final filtered = search.isEmpty ? all : all.where((c) => c.name.toLowerCase().contains(search)).toList();
     final start = (config.page - 1) * _pageSize;
@@ -130,7 +186,10 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
       final wire = _wireMapper.toModel(entity: unwrapEnvelope(response, 'chat'));
       // Merge, never replace: the reply carries no unread count.
       final existing = await _chatDao.getById(chatId);
-      final merged = _mapper.toEntity(model: wire.copyWith(unreadCount: existing?.unreadCount ?? 0));
+      final merged = _mapper.toEntity(
+        model: wire.copyWith(unreadCount: existing?.unreadCount ?? 0),
+        lastOpenedSeq: existing?.lastOpenedSeq,
+      );
       await _chatDao.upsert(merged);
       return RepositoryResult<ChatModel>.success(data: _mapper.toModel(entity: merged));
     });
@@ -210,12 +269,21 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
   }
 
   @override
+  /// Records that the chat was seen up to whatever is cached for it.
+  ///
+  /// Advances to the highest cached seq rather than to "now": that is exactly
+  /// what was on screen. It fires on any load that RETURNED, online or not -
+  /// an offline open serves the cache and is a real open. Opening offline with
+  /// nothing cached therefore marks 0, and history that arrives later counts
+  /// as unread, which is true: the person never saw it.
+  @override
   Future<void> markChatRead({required String chatId}) async {
-    final chat = await _chatDao.getById(chatId);
-    // No-op when absent or already read — avoids a redundant write / watch emission.
-    if (chat == null || chat.unreadCount == 0) return;
-    await _chatDao.upsert(chat.copyWith(unreadCount: 0));
+    final head = await _messageDao.highestSeq(chatId) ?? 0;
+    await _chatDao.advanceReadMark(chatId: chatId, seq: head, ceiling: head);
   }
+
+  @override
+  Future<void> clearReadMarks() => _chatDao.clearReadMarks();
 
   @override
   Future<void> clean() async {

@@ -59,11 +59,13 @@ class SetUsernameBloc extends BaseBloc<SetUsernameEvent, SetUsernameState> {
     // Drop stale checks (the user kept typing); switchMap already cancels the prior run.
     if (state.name != event.name || state.status != UsernameStatus.checking) return;
     await executeLogic(() async {
-      // TODO(backend): real server uniqueness check.
-      await Future<void>.delayed(const Duration(milliseconds: 200));
+      // There is nobody to ask any more. Person labels are not unique (owner,
+      // 2026-09-02): the server neither enforces nor reports it. What used to
+      // happen here was a fabricated delay followed by a lookup in four
+      // hardcoded strings, so those four names were refused by a rule nothing
+      // observed. Charset and length still decide, and they decided already.
       if (state.name != event.name) return;
-      final taken = UsernameRules.isTaken(event.name); // case-sensitive (FR-032)
-      emit(state.copyWith(status: taken ? UsernameStatus.taken : UsernameStatus.valid));
+      emit(state.copyWith(status: UsernameStatus.valid));
     }, onError: (error, exception, stackTrace) => emit(state.copyWith(status: UsernameStatus.valid)));
   }
 

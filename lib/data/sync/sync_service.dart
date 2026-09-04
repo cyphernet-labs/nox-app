@@ -126,7 +126,12 @@ class SyncService {
     final existing = await _chatDao.getById(wire.id);
     // The unread badge is this device's alone — the wire has no such field, so
     // taking the wire row wholesale would silently clear it.
-    await _chatDao.upsert(_chatMapper.toEntity(model: wire.copyWith(unreadCount: existing?.unreadCount ?? 0)));
+    await _chatDao.upsert(
+      _chatMapper.toEntity(
+        model: wire.copyWith(unreadCount: existing?.unreadCount ?? 0),
+        lastOpenedSeq: existing?.lastOpenedSeq,
+      ),
+    );
   }
 
   Future<void> _applyMessage(Map<String, dynamic> data) async {
@@ -167,7 +172,10 @@ class SyncService {
       chat.copyWith(
         lastMessagePreview: chatPreviewFor(merged),
         lastMessageAt: merged.sentAt.toUtc().toIso8601String(),
-        unreadCount: chat.unreadCount + 1,
+        // No increment. The badge is recounted from the chat's read mark, so
+        // an event delivered twice at the replay/live boundary - which §3
+        // explicitly permits - counts once, and the sender's own echo counts
+        // not at all, by construction rather than by a special case.
       ),
     );
   }

@@ -42,20 +42,9 @@ void main() {
     );
 
     blocTest<SetUsernameBloc, SetUsernameState>(
-      'a taken name resolves to taken',
+      'a name that used to be reserved is accepted - nothing checks label uniqueness',
       build: () => SetUsernameBloc(demo: true),
       act: (bloc) => bloc.add(const SetUsernameEvent.nameChanged('NOX')),
-      wait: const Duration(milliseconds: 700),
-      expect: () => [
-        predicate<SetUsernameState>((s) => s.status == UsernameStatus.checking),
-        predicate<SetUsernameState>((s) => s.status == UsernameStatus.taken),
-      ],
-    );
-
-    blocTest<SetUsernameBloc, SetUsernameState>(
-      'uniqueness is case-sensitive: "nox" is free even though "NOX" is taken',
-      build: () => SetUsernameBloc(demo: true),
-      act: (bloc) => bloc.add(const SetUsernameEvent.nameChanged('nox')),
       wait: const Duration(milliseconds: 700),
       expect: () => [
         predicate<SetUsernameState>((s) => s.status == UsernameStatus.checking),
