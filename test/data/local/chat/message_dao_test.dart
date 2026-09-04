@@ -30,6 +30,75 @@ void main() {
     attachmentSizeBytes: null,
   );
 
+  MessageEntity from(String id, String chatId, int seq, String author) => MessageEntity(
+    id: id,
+    chatId: chatId,
+    seq: seq,
+    authorId: author,
+    authorLabel: author,
+    text: 't',
+    sentAt: '2026-06-01T00:00:00.000Z',
+    status: 'sent',
+    isSystem: false,
+    attachmentId: null,
+    attachmentType: null,
+    attachmentName: null,
+    attachmentSizeBytes: null,
+  );
+
+  group('countUnreadByChat', () {
+    test('counts only what arrived above each chat\'s own mark', () async {
+      await dao.saveData([
+        from('m1', 'c1', 1, 'other'),
+        from('m2', 'c1', 2, 'other'),
+        from('m3', 'c1', 3, 'other'),
+        from('m4', 'c2', 7, 'other'),
+      ]);
+
+      final counts = await dao.countUnreadByChat(marks: {'c1': 1, 'c2': 9}, excludeAuthors: const {});
+
+      expect(counts['c1'], 2, reason: 'seq 2 and 3 sit above the mark, seq 1 does not');
+      expect(counts['c2'], isNull, reason: 'nothing above the mark is no entry, which reads as zero');
+    });
+
+    test('a chat with no mark is absent, because an unopened chat shows no badge', () async {
+      await dao.saveData([from('m1', 'c1', 1, 'other')]);
+
+      final counts = await dao.countUnreadByChat(marks: const {}, excludeAuthors: const {});
+
+      expect(counts, isEmpty);
+    });
+
+    test('our own messages never count, whichever id this device stamped', () async {
+      // The identity resolver falls back to the login identifier before the
+      // server-minted id is known, so both have to be excluded or a restart
+      // mid-send raises a badge against yourself.
+      await dao.saveData([from('m1', 'c1', 2, 'u_me'), from('m2', 'c1', 3, 'login-identifier'), from('m3', 'c1', 4, 'someone')]);
+
+      final counts = await dao.countUnreadByChat(marks: {'c1': 1}, excludeAuthors: {'u_me', 'login-identifier'});
+
+      expect(counts['c1'], 1);
+    });
+
+    test('a row with no seq has no place in the order and is not counted', () async {
+      await dao.saveData([msg('pending', 'c1', '2026-06-05T00:00:00.000Z'), from('m1', 'c1', 5, 'other')]);
+
+      final counts = await dao.countUnreadByChat(marks: {'c1': 1}, excludeAuthors: const {});
+
+      expect(counts['c1'], 1);
+    });
+
+    test('one call answers for every chat at once', () async {
+      await dao.saveData([from('m1', 'c1', 2, 'other'), from('m2', 'c2', 2, 'other'), from('m3', 'c3', 2, 'other')]);
+
+      final counts = await dao.countUnreadByChat(marks: {'c1': 1, 'c2': 1, 'c3': 5}, excludeAuthors: const {});
+
+      expect(counts['c1'], 1);
+      expect(counts['c2'], 1);
+      expect(counts['c3'], isNull);
+    });
+  });
+
   test('getByChatSorted returns a chat\'s messages chronological + counts per chat', () async {
     await dao.saveData([
       msg('b', 'c1', '2026-06-02T00:00:00.000Z'),

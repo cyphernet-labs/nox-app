@@ -77,6 +77,9 @@ class FakeSessionRepository implements SessionRepository {
   Future<RepositoryResult<bool>> forgetAuthorId() async => const RepositoryResult<bool>.success(data: true);
 
   @override
+  void noteOnboardingStartedHere() {}
+
+  @override
   Future<RepositoryResult<bool>> discardSignIn() => throw UnimplementedError();
 
   @override

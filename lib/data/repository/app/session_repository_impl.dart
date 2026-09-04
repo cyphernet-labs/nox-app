@@ -40,6 +40,18 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   /// what guarantees that.
   static const String _kDeviceId = 'session.device_id';
 
+  /// True while THIS process is the one that brought the person into being and
+  /// has not finished naming them.
+  ///
+  /// In memory on purpose. Its only job is to tell "the server made this person
+  /// a moment ago, on this device, and someone is typing a name right now"
+  /// apart from "this person existed before this install ever greeted" — and
+  /// the two are indistinguishable on the wire, because every greeting after
+  /// the first reports `created == false` either way. It must NOT survive a
+  /// restart: after one, the naming screen is exactly where a greeting SHOULD
+  /// rescue a device from.
+  bool _onboardingStartedHere = false;
+
   /// Raised by a rename, cleared once the server echoes the new name back.
   static const String _kLabelDirty = 'session.label_dirty';
 
@@ -80,6 +92,9 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   @override
   Future<RepositoryResult<bool>> setOnboardingComplete({String? label}) {
     return execute<bool>(() async {
+      // Named (or skipped): this process is no longer the one mid-onboarding,
+      // so a later greeting may act on what the server says again.
+      _onboardingStartedHere = false;
       await _prefs.setBool(_kOnboardingComplete, true);
       if (label != null) {
         await _prefs.setString(_kLabel, label);
@@ -162,6 +177,11 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       // server-assigned name. Advancing but never retreating is safe in both
       // directions.
       if (created) return const RepositoryResult<bool>.success(data: false);
+      // A reconnect while the person is still typing their name reports
+      // created == false, because the first greeting already made the row.
+      // Advancing on it would swap the root route out from under them and
+      // discard what they had typed, under the server-assigned name.
+      if (_onboardingStartedHere) return const RepositoryResult<bool>.success(data: false);
       if (_prefs.getBool(_kOnboardingComplete) ?? false) {
         return const RepositoryResult<bool>.success(data: false);
       }
@@ -187,6 +207,9 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   }
 
   @override
+  void noteOnboardingStartedHere() => _onboardingStartedHere = true;
+
+  @override
   Future<RepositoryResult<bool>> discardSignIn() {
     return execute<bool>(() async {
       // Deliberately narrower than [clear]: it removes exactly what a sign-in
@@ -194,6 +217,7 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       // the person, so an attempt that never reached the server must not
       // rotate it - doing so would make one install look like two devices to
       // the server the moment the next attempt succeeds.
+      _onboardingStartedHere = false;
       await _secureStorage.delete(key: _kIdentifier);
       await _prefs.remove(_kOnboardingComplete);
       return const RepositoryResult<bool>.success(data: true);
@@ -203,6 +227,7 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   @override
   Future<RepositoryResult<bool>> clear() {
     return execute<bool>(() async {
+      _onboardingStartedHere = false;
       await _secureStorage.deleteAll();
       await _prefs.remove(_kOnboardingComplete);
       await _prefs.remove(_kLabel);

@@ -49,6 +49,59 @@ void main() {
     expect((await repository.readSession()).data, isNull);
   });
 
+  group('advanceOnboardingIfKnown (feature 031)', () {
+    test('a greeting that created the person does not end onboarding', () async {
+      await repository.saveIdentifier(identifier: 'abc', onboardingComplete: false);
+      final moved = await repository.advanceOnboardingIfKnown(created: true);
+      expect(moved.data, isFalse);
+      expect((await repository.readSession()).data!.onboardingComplete, isFalse);
+    });
+
+    test('a reconnect while this process is still naming does NOT end onboarding', () async {
+      // The defect this guards is invisible on the wire: the second greeting
+      // of a brand-new person says created == false, exactly like the greeting
+      // of someone who existed all along. Acting on it swaps the root route
+      // away from the naming screen and discards what was typed.
+      await repository.saveIdentifier(identifier: 'abc', onboardingComplete: false);
+      repository.noteOnboardingStartedHere();
+
+      final moved = await repository.advanceOnboardingIfKnown(created: false);
+
+      expect(moved.data, isFalse);
+      expect((await repository.readSession()).data!.onboardingComplete, isFalse);
+    });
+
+    test('after a restart the same greeting DOES rescue the device', () async {
+      // No in-process memory of having created anyone: this is the device left
+      // on the naming screen while the person named themselves elsewhere.
+      await repository.saveIdentifier(identifier: 'abc', onboardingComplete: false);
+
+      final moved = await repository.advanceOnboardingIfKnown(created: false);
+
+      expect(moved.data, isTrue);
+      expect((await repository.readSession()).data!.onboardingComplete, isTrue);
+    });
+
+    test('naming clears the in-process mark, so later greetings act again', () async {
+      await repository.saveIdentifier(identifier: 'abc', onboardingComplete: false);
+      repository.noteOnboardingStartedHere();
+      await repository.setOnboardingComplete(label: 'Anna');
+
+      // Already complete, so nothing moves - but the mark is gone, which is
+      // what the next sign-in in this process depends on.
+      expect((await repository.advanceOnboardingIfKnown(created: false)).data, isFalse);
+      await repository.discardSignIn();
+      await repository.saveIdentifier(identifier: 'def', onboardingComplete: false);
+      expect((await repository.advanceOnboardingIfKnown(created: false)).data, isTrue);
+    });
+
+    test('the flag never retreats: onboarding already done stays done', () async {
+      await repository.saveIdentifier(identifier: 'abc', onboardingComplete: true);
+      expect((await repository.advanceOnboardingIfKnown(created: true)).data, isFalse);
+      expect((await repository.readSession()).data!.onboardingComplete, isTrue);
+    });
+  });
+
   group('discardSignIn (feature 031)', () {
     test('undoes the sign-in so the session resolves to null', () async {
       await repository.saveIdentifier(identifier: 'abc', onboardingComplete: false);

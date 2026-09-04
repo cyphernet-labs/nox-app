@@ -75,6 +75,13 @@ class LiveIdentityHandshake {
   /// below would never execute, and `inFlight` would stay true for the life of
   /// the process — wedging every later sign-in attempt.
   Future<IdentityHandshake> greet() async {
+    // Captured BEFORE anything is torn down. The phase stream replays its
+    // current value to a new listener, so on an already-connected socket the
+    // first event carries the PREVIOUS connection's identity — including the
+    // anonymous greeting the app makes at boot, whose `created` is always
+    // true. Answering from that would route every returning person into
+    // onboarding without the server having been asked about them at all.
+    final generation = _socket.greetingGeneration;
     final pending = Completer<IdentityHandshake>();
     _pending = pending;
     _timer = Timer(timeout, () {
@@ -89,6 +96,8 @@ class LiveIdentityHandshake {
         return;
       }
       if (phase != SessionPhase.catchingUp && phase != SessionPhase.live) return;
+      // Only an answer to OUR greeting counts.
+      if (_socket.greetingGeneration <= generation) return;
       final identity = _socket.identity;
       if (identity == null || identity.id.isEmpty) return;
       if (!pending.isCompleted) {

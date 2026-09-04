@@ -1,8 +1,22 @@
 import 'dart:async';
 
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:injectable/injectable.dart' show Environment;
+import 'package:mockito/annotations.dart';
+import 'package:mockito/mockito.dart';
+import 'package:nox_app/data/local/app_database.dart';
+import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/sync/live_identity_handshake.dart';
+import 'package:nox_app/data/sync/live_session_starter.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/repository/sync/sync_repository.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import '../remote/socket/fake_socket.dart';
+import 'live_identity_handshake_test.mocks.dart';
+
+@GenerateMocks([LiveSessionStarter])
 void main() {
   group('IdentityHandshake', () {
     test('an outcome the server stated is usable', () {
@@ -49,6 +63,116 @@ void main() {
 
       await expectLater(owner.greet(), throwsA(isA<IdentityHandshakeTimeout>()));
       expect(owner.attempts, 2, reason: 'the second attempt has to actually run');
+    });
+  });
+
+  /// The owner driven over a real [NoxSocketClient] and an in-memory peer.
+  ///
+  /// The mirror class below cannot see this class of defect: it models the
+  /// timer, not the socket. What lives here is the part that put a returning
+  /// person on the naming screen — the wait answering from a connection that
+  /// was already up before that person ever tapped Sign in.
+  group('LiveIdentityHandshake over a real socket', () {
+    late FakeSocketFactory factory;
+    late SyncRepository sync;
+    late NoxSocketClient client;
+    late MockLiveSessionStarter starter;
+    late LiveIdentityHandshake handshake;
+
+    final url = Uri.parse('ws://127.0.0.1:8080/ws');
+
+    Future<void> waitUntil(FutureOr<bool> Function() done, {String reason = ''}) async {
+      for (var i = 0; i < 400; i++) {
+        if (await done()) return;
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      fail('condition never became true${reason.isEmpty ? '' : ': $reason'}');
+    }
+
+    setUp(() async {
+      FlutterSecureStorage.setMockInitialValues({});
+      SharedPreferences.setMockInitialValues({});
+      await configureDependencies(Environment.test);
+      await getIt<AppDatabase>().clearEntireDatabase();
+      sync = getIt<SyncRepository>();
+      factory = FakeSocketFactory();
+      client = NoxSocketClient(factory, sync);
+      starter = MockLiveSessionStarter();
+      handshake = LiveIdentityHandshake(client, starter);
+    });
+
+    tearDown(() async {
+      await client.stop();
+      await getIt.reset();
+    });
+
+    /// Connects and answers the greeting, the way a connection reaches `live`.
+    Future<FakeSocket> answerNextGreeting({required String id, required bool? created, String label = 'Anna'}) async {
+      await client.start(url: url, credentialsProvider: () async => const GreetingCredentials());
+      final socket = factory.latest;
+      socket.pushGreeting();
+      await waitUntil(() => socket.commandNamed('session.hello') != null, reason: 'greeting sent');
+      socket.replyToHello(cursor: 0, id: id, label: label, created: created);
+      return socket;
+    }
+
+    test('refuses the answer the socket was already holding, and waits for its own', () async {
+      // The app greets anonymously at boot, and the server answers an
+      // anonymous greeting by minting a person - so that reply always says
+      // created: true. Taking it as the answer for whoever signs in next
+      // routes EVERY returning person into onboarding, and the name they then
+      // type is sent as a rename over the name they were known by.
+      await answerNextGreeting(id: 'u_boot', created: true, label: 'User9999');
+      await waitUntil(() => client.identity?.id == 'u_boot', reason: 'boot greeting applied');
+
+      var restarted = false;
+      when(starter.restart()).thenAnswer((_) async {
+        await client.stop();
+        await client.start(url: url, credentialsProvider: () async => const GreetingCredentials());
+        restarted = true;
+      });
+
+      IdentityHandshake? settled;
+      final pending = handshake.greet();
+      unawaited(pending.then((value) => settled = value));
+
+      await waitUntil(() => restarted, reason: 'restart ran');
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(settled, isNull, reason: 'the boot connection answered a question nobody asked');
+
+      final second = factory.latest;
+      second.pushGreeting();
+      await waitUntil(() => second.commandNamed('session.hello') != null, reason: 'second greeting sent');
+      second.replyToHello(cursor: 0, id: 'u_person', label: 'Anna', created: false);
+
+      final result = await pending;
+      expect(result.authorId, 'u_person');
+      expect(result.label, 'Anna');
+      expect(result.created, isFalse, reason: 'a returning person is not created, and must not be onboarded');
+    });
+
+    test('hands back what THIS greeting said about a newcomer', () async {
+      when(starter.restart()).thenAnswer((_) async {
+        await answerNextGreeting(id: 'u_new', created: true, label: 'User4242');
+      });
+
+      final result = await handshake.greet();
+      expect(result.authorId, 'u_new');
+      expect(result.created, isTrue);
+      expect(result.outcomeStated, isTrue);
+    });
+
+    test('a greeting that states no outcome is reported as unstated, not guessed', () async {
+      // The third wire state, reachable from an older server. Neither boolean
+      // may be substituted: one steals the naming step, the other overwrites a
+      // returning person's name.
+      when(starter.restart()).thenAnswer((_) async {
+        await answerNextGreeting(id: 'u_silent', created: null);
+      });
+
+      final result = await handshake.greet();
+      expect(result.outcomeStated, isFalse);
+      expect(result.created, isNull);
     });
   });
 }

@@ -110,12 +110,14 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
     // Resolved ONCE per call, not per chat: this reads secure storage, and the
     // chats list re-reads its pages on every watch tick.
     final ownIds = await _ownIds();
-    final models = <ChatModel>[];
-    for (final entity in entities) {
-      final unread = await _messageDao.countUnread(chatId: entity.id, aboveSeq: entity.lastOpenedSeq, excludeAuthors: ownIds);
-      models.add(_mapper.toModel(entity: entity).copyWith(unreadCount: unread));
-    }
-    return models;
+    // A chat with no mark was never opened and shows no badge, so it is left
+    // out of the query entirely rather than counted and discarded.
+    final marks = <String, int>{
+      for (final entity in entities)
+        if (entity.lastOpenedSeq != null) entity.id: entity.lastOpenedSeq!,
+    };
+    final counts = await _messageDao.countUnreadByChat(marks: marks, excludeAuthors: ownIds);
+    return [for (final entity in entities) _mapper.toModel(entity: entity).copyWith(unreadCount: counts[entity.id] ?? 0)];
   }
 
   /// Serves one page out of the cache — the answer when the channel is down.

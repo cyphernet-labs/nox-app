@@ -93,6 +93,16 @@ class NoxSocketClient {
 
   /// Last greeting's identity and limits — the server is the authority on both.
   ServerIdentity? identity;
+
+  /// Counts greetings applied on this client.
+  ///
+  /// A caller waiting for the answer to ITS greeting captures this first and
+  /// refuses anything not above it. [phase] is a `BehaviorSubject`, so a fresh
+  /// listener is handed the CURRENT phase immediately: on an already-live
+  /// socket that would otherwise resolve the wait from the PREVIOUS
+  /// connection's identity, before the restart had torn it down — which is
+  /// exactly the guess the sign-in path exists to stop making.
+  int greetingGeneration = 0;
   ServerLimits? limits;
 
   Stream<SessionPhase> get phase => _phase.stream;
@@ -312,6 +322,7 @@ class NoxSocketClient {
         // outcome, and the sign-in path must not be handed a guess.
         created: id['created'] as bool?,
       );
+      greetingGeneration++;
       final lim = data['limits'];
       if (lim is Map<String, dynamic>) {
         limits = ServerLimits(

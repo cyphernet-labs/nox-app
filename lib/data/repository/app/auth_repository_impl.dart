@@ -82,6 +82,10 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
           await _sessionRepository.discardSignIn();
           return const RepositoryResult<bool>.error(exception: RepositoryException.connection);
         }
+        // The server made this person just now, and the naming screen is next.
+        // Remember it for this process, so a reconnect while they are typing
+        // cannot report their own brand-new row back at them as "already known".
+        if (greeting.created!) _sessionRepository.noteOnboardingStartedHere();
         return _finishSignIn(onboardingComplete: !greeting.created!);
       } on Object catch (e, s) {
         logRepository.error(target: this, error: e, stackTrace: s);

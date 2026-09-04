@@ -65,6 +65,13 @@ abstract class SessionRepository {
   /// strangers' messages as this user's own.
   Future<RepositoryResult<bool>> forgetAuthorId();
 
+  /// Records that this process created the person and is now naming them.
+  ///
+  /// Until onboarding finishes, a greeting may not declare it done: every
+  /// greeting after the first says `created == false`, so a mere reconnect
+  /// would otherwise swap the root route out from under someone mid-name.
+  void noteOnboardingStartedHere();
+
   /// Undoes what a failed sign-in wrote, and nothing else. Narrower than
   /// [clear] on purpose: the device id survives, because a sign-in that never
   /// reached the server did not change which install this is.
