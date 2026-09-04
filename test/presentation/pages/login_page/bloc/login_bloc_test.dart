@@ -1,8 +1,22 @@
+import 'dart:async';
+
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:injectable/injectable.dart';
+import 'package:mockito/annotations.dart';
+import 'package:mockito/mockito.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/exception/repository_exception.dart';
+import 'package:nox_app/domain/repository/app/auth_repository.dart';
+import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/presentation/pages/login_page/bloc/login_bloc.dart';
 
+import 'login_bloc_test.mocks.dart';
+
+@GenerateMocks([AuthRepository])
 void main() {
+  provideDummy<RepositoryResult<bool>>(const RepositoryResult.success(data: true));
+
   group('LoginBloc', () {
     blocTest<LoginBloc, LoginState>(
       'enables submit once the id is non-empty',
@@ -73,6 +87,94 @@ void main() {
       seed: () => const LoginState(id: 'kept-id', status: LoginStatus.navNewId),
       act: (bloc) => bloc.add(const LoginEvent.navigationHandled()),
       expect: () => [predicate<LoginState>((s) => s.status == LoginStatus.idle && s.id == 'kept-id')],
+    );
+  });
+
+  // Sign-in stopped being a local decision in feature 031: the button now waits
+  // for the server to say who connected, so these cover the real path rather
+  // than the demo outcomes above.
+  group('LoginBloc real sign-in (demo: false)', () {
+    late MockAuthRepository mockAuthRepository;
+
+    setUp(() async {
+      await configureDependencies(Environment.test);
+      getIt.allowReassignment = true;
+      mockAuthRepository = MockAuthRepository();
+      getIt.registerSingleton<AuthRepository>(mockAuthRepository);
+    });
+    tearDown(() async => getIt.reset());
+
+    blocTest<LoginBloc, LoginState>(
+      'stays in the waiting state while the server has not answered',
+      build: () {
+        // Never completes: the point is that the screen shows a wait rather
+        // than resolving an outcome it has not been told.
+        when(mockAuthRepository.signIn(identifier: anyNamed('identifier'))).thenAnswer((_) => Completer<RepositoryResult<bool>>().future);
+        return LoginBloc();
+      },
+      act: (bloc) => bloc
+        ..add(const LoginEvent.idChanged('some-id'))
+        ..add(const LoginEvent.signInRequested()),
+      wait: const Duration(milliseconds: 300),
+      expect: () => [predicate<LoginState>((s) => s.id == 'some-id'), predicate<LoginState>((s) => s.status == LoginStatus.loading)],
+    );
+
+    blocTest<LoginBloc, LoginState>(
+      'a failed handshake shows a retryable error and guesses no outcome',
+      build: () {
+        when(
+          mockAuthRepository.signIn(identifier: anyNamed('identifier')),
+        ).thenAnswer((_) async => const RepositoryResult.error(exception: RepositoryException.connection));
+        return LoginBloc();
+      },
+      act: (bloc) => bloc
+        ..add(const LoginEvent.idChanged('some-id'))
+        ..add(const LoginEvent.signInRequested()),
+      wait: const Duration(milliseconds: 300),
+      expect: () => [
+        predicate<LoginState>((s) => s.id == 'some-id'),
+        predicate<LoginState>((s) => s.status == LoginStatus.loading),
+        // Not navNewId: an unanswered sign-in used to be resolved locally, and
+        // guessing "new" here is exactly what steals a returning person's name.
+        predicate<LoginState>((s) => s.status == LoginStatus.errorNetwork && s.canSubmit),
+      ],
+    );
+
+    blocTest<LoginBloc, LoginState>(
+      'the error is retryable - a second press really re-runs sign-in',
+      build: () {
+        when(
+          mockAuthRepository.signIn(identifier: anyNamed('identifier')),
+        ).thenAnswer((_) async => const RepositoryResult.error(exception: RepositoryException.connection));
+        return LoginBloc();
+      },
+      act: (bloc) async {
+        bloc.add(const LoginEvent.idChanged('some-id'));
+        bloc.add(const LoginEvent.signInRequested());
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        bloc.add(const LoginEvent.signInRequested());
+      },
+      wait: const Duration(milliseconds: 300),
+      verify: (_) => verify(mockAuthRepository.signIn(identifier: 'some-id')).called(2),
+    );
+
+    blocTest<LoginBloc, LoginState>(
+      'a successful sign-in navigates nowhere from here - the app-state spine does',
+      build: () {
+        when(
+          mockAuthRepository.signIn(identifier: anyNamed('identifier')),
+        ).thenAnswer((_) async => const RepositoryResult.success(data: true));
+        return LoginBloc();
+      },
+      act: (bloc) => bloc
+        ..add(const LoginEvent.idChanged('some-id'))
+        ..add(const LoginEvent.signInRequested()),
+      wait: const Duration(milliseconds: 300),
+      expect: () => [
+        predicate<LoginState>((s) => s.id == 'some-id'),
+        predicate<LoginState>((s) => s.status == LoginStatus.loading),
+        predicate<LoginState>((s) => s.status == LoginStatus.idle),
+      ],
     );
   });
 }

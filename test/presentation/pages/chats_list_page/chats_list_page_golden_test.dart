@@ -35,8 +35,19 @@ void main() {
   goldenTest('chats_list_page_inline_error', () => const ChatsListPage(inShell: true, initialScenario: ChatsListScenario.inlineError));
   goldenTest('chats_list_page_error', () => const ChatsListPage(inShell: true, initialScenario: ChatsListScenario.fatal));
 
+  // The ONLY page-level baseline that contains a chat row with a badge, and the
+  // badge is produced by the real mechanism - a chat is opened, so a read mark
+  // exists, and messages then arrive above it. Without this, nothing at page
+  // level covers unread emphasis at all; the widget baselines feed their
+  // numbers from literals and never touch the recount.
+  goldenTest('chats_list_page_unread', () => const ChatsListPage(inShell: true, initialScenario: ChatsListScenario.unread));
+
   // ── page — desktop (1280x800 surface, light + dark) ──
   // Full desktop chats view via the shell: window titlebar + rail (with the account
   // avatar) + list pane + no-selection thread pane.
   goldenTestDesktop('chats_list_page', () => const TabBarShell());
+
+  // Constitution VI: the wide branch renders the badge differently and must be
+  // locked too. Same scenario, desktop surface.
+  goldenTestDesktop('chats_list_page_unread', () => const ChatsListPage(inShell: false, initialScenario: ChatsListScenario.unread));
 }

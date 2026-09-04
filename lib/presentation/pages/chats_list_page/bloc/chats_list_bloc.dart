@@ -13,6 +13,7 @@ import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
+import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
 import 'package:nox_app/presentation/base/bloc_transformers.dart';
@@ -41,6 +42,7 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
   }
 
   final ChatRepository _chatRepository = getIt<ChatRepository>();
+  final MessageRepository _messageRepository = getIt<MessageRepository>();
   final SessionPhaseService _sessionPhaseService = getIt<SessionPhaseService>();
 
   // Live change-signal over the cache-first DB (Feature 014): a DB write (create / send /
@@ -65,6 +67,19 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
 
   /// The Offline banner shows when the device is offline OR the debug scenario forces it.
   bool _isOffline() => !_isDeviceOnline || _scenario == ChatsListScenario.offline;
+
+  /// Marks the first two chats read and drops messages above the mark, so the
+  /// list shows badges produced by the recount rather than by a seeded number.
+  Future<void> _seedUnreadForDebug() async {
+    final page = await _chatRepository.getChats(config: GetChatsConfig.firstPage());
+    final chats = page.match<List<ChatModel>>(onData: (data) => data.$1, onError: (_) => const []);
+    for (final (index, chat) in chats.take(2).indexed) {
+      await _chatRepository.markChatRead(chatId: chat.id);
+      for (var i = 0; i <= index * 4; i++) {
+        await _messageRepository.simulateIncoming(chatId: chat.id);
+      }
+    }
+  }
 
   FutureOr<void> _onInitialize(Initialize event, Emitter<ChatsListState> emit) async {
     emit(ChatsListState.initialized(pagingState: PagingState<String, ChatModel>()));
@@ -171,6 +186,11 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
           );
           return;
         }
+
+        // Debug: produce a badge the way the product does - open a chat, then
+        // let messages arrive above the mark. Seeding a number instead would
+        // lock a golden against a value nothing in the app can now produce.
+        if (_scenario == ChatsListScenario.unread && isReset) await _seedUnreadForDebug();
 
         final config = GetChatsConfig.nextPage(page: nextPageKey, search: current.query.isEmpty ? null : current.query);
         final result = await _chatRepository.getChats(config: config);

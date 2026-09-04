@@ -81,6 +81,13 @@ class LiveIdentityHandshake {
       if (!pending.isCompleted) pending.completeError(const IdentityHandshakeTimeout());
     });
     _phases = _socket.phase.listen((phase) {
+      if (phase == SessionPhase.unsupported) {
+        // The peer refused in a way it will refuse again - a schema it does not
+        // speak, or a malformed greeting. Waiting out the full timeout would
+        // spend twenty seconds to reach the same answer, so say it now.
+        if (!pending.isCompleted) pending.completeError(const IdentityHandshakeTimeout());
+        return;
+      }
       if (phase != SessionPhase.catchingUp && phase != SessionPhase.live) return;
       final identity = _socket.identity;
       if (identity == null || identity.id.isEmpty) return;
