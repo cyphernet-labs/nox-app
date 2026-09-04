@@ -2,9 +2,9 @@ import 'dart:async';
 
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
-import 'package:nox_app/data/sync/live_session_starter.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/di/global_aliases.dart';
+import 'package:nox_app/domain/repository/device/device_repository.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/identity/identity_resolver.dart';
@@ -43,7 +43,10 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
       // Load the real display label from the session (feature 015); a missing/empty
       // label degrades to the default via resolveIdentity, matching the state default.
       onData: (session) =>
-          emit(state.copyWith(initialLoading: false, rawId: session?.identifier ?? '', name: resolveIdentity(session).label)),
+          // The public author id, not a secret. The login identifier this used
+          // to show no longer exists: a person is recognised by a paired key,
+          // so there is nothing here worth hiding behind a reveal.
+          emit(state.copyWith(initialLoading: false, rawId: resolveIdentity(session).id, name: resolveIdentity(session).label)),
       onError: (_) => emit(state.copyWith(initialLoading: false, rawId: '')),
     );
   }
@@ -85,10 +88,11 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
     await result.match<Future<void>>(
       onData: (_) async {
         emit(state.copyWith(name: draft, editing: false, status: SettingsNameStatus.idle));
-        // The name reaches the server in a greeting, and a greeting only happens
-        // on connect. Without this the rename would sit here until some
-        // unrelated reconnect happened to carry it. Same call sign-in makes.
-        if (getIt.isRegistered<LiveSessionStarter>()) await getIt<LiveSessionStarter>().restart();
+        // The name goes to the server as its own command. It used to travel
+        // only in a greeting, so a rename had to reconnect the whole session -
+        // workable with one device, a source of divergence with two.
+        final devices = getIt.isRegistered<DeviceRepository>() ? getIt<DeviceRepository>() : null;
+        if (devices != null) await devices.setLabel(label: draft);
       },
       // Keep the edit open on a persistence failure — never show a saved name that
       // did not persist. The mock store never errors; defensive only.

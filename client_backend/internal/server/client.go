@@ -36,6 +36,9 @@ type client struct {
 	// greeting. Kept per connection so a signature captured on one connection
 	// cannot be replayed on another.
 	challenge string
+	// deviceKey is the key this connection authenticated with, so a revocation
+	// can find and cut off exactly the connections it applies to.
+	deviceKey string
 	// identity is the person this connection speaks as, resolved once during
 	// the greeting. label mirrors identity.Label for the chat-creation path,
 	// which records a name rather than an id.

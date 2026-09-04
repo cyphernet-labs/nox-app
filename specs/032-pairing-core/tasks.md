@@ -85,23 +85,23 @@ description: "Task list for feature implementation"
 - [X] T035 [US1] Реализовать команду спаривания в `lib/data/remote/socket/nox_socket_client.dart`: отправка `pair` до приветствия, разбор ответа
 - [X] T036 [US1] Подписывать challenge в приветствии в `lib/data/remote/socket/nox_socket_client.dart`; убрать отправку `login_ref`
 - [X] T037 [US1] Переписать `signIn` в `lib/data/repository/app/auth_repository_impl.dart` на предъявление ссылки: разобрать → спариться → взять исход → и только потом двигать навигацию. Порядок тот же, что выстроен фазой 031, и по той же причине
-- [ ] T038 [US1] **Удалить** `lib/general/nox_qr_envelope.dart` и `test/general/nox_qr_envelope_test.dart`: весь его смысл переезжает в `pairing_link.dart`, и держать два разбора одной сущности — способ развести их
-- [ ] T039 [US1] Перевести `lib/domain/service/qr_image_decode_service.dart` и его реализацию на ссылку спаривания — это **единственный** путь чтения QR на Windows и Linux, где камеры нет
-- [ ] T040 [US1] Перевести `lib/presentation/pages/qr_scan_page/` (экран и BLoC) на ссылку спаривания
-- [ ] T041 [US1] Перевести `lib/presentation/widgets/settings/app_qr_surface_widget.dart` — он рисует QR, и рисовать ему теперь другое
-- [ ] T042 [P] [US1] Обновить тесты потребителей: `test/data/service/qr_image_decode_service_impl_test.dart`, `test/presentation/pages/qr_scan_page/qr_scan_page_test.dart`, `test/presentation/pages/login_page/login_qr_image_test.dart`
-- [ ] T043 [US1] Переименовать `lib/general/qr_image_sign_in_capability.dart` → `qr_image_pairing_capability.dart` (и класс): «sign in» переживёт исчезновение входа по идентификатору и станет враньём
+- [X] T038 [US1] **Удалить** `lib/general/nox_qr_envelope.dart` и `test/general/nox_qr_envelope_test.dart`: весь его смысл переезжает в `pairing_link.dart`, и держать два разбора одной сущности — способ развести их
+- [X] T039 [US1] Перевести `lib/domain/service/qr_image_decode_service.dart` и его реализацию на ссылку спаривания — это **единственный** путь чтения QR на Windows и Linux, где камеры нет
+- [X] T040 [US1] Перевести `lib/presentation/pages/qr_scan_page/` (экран и BLoC) на ссылку спаривания
+- [X] T041 [US1] Перевести `lib/presentation/widgets/settings/app_qr_surface_widget.dart` — он рисует QR, и рисовать ему теперь другое
+- [X] T042 [P] [US1] Обновить тесты потребителей: `test/data/service/qr_image_decode_service_impl_test.dart`, `test/presentation/pages/qr_scan_page/qr_scan_page_test.dart`, `test/presentation/pages/login_page/login_qr_image_test.dart`
+- [X] T043 [US1] Переименовать `lib/general/qr_image_sign_in_capability.dart` → `qr_image_pairing_capability.dart` (и класс): «sign in» переживёт исчезновение входа по идентификатору и станет враньём
 - [X] T044 [US1] Брать адрес соединения из сессии в `lib/data/sync/live_session_starter.dart` вместо `AppConfig.apiUrl` (FR-032) — без этого устройство спарится с одним сервером, а сообщения пошлёт в другой
 - [X] T045 [US1] Считать в `lib/data/sync/live_session_starter.dart` признак «того же мира» от **сохранённого** адреса, а не от значения из сборки (FR-034): иначе два разных сервера на одном адресе конфигурации сольются в один
 - [X] T046 [P] [US1] Тест `test/data/sync/live_session_starter_test.dart`: соединение идёт по адресу из сессии; смена сохранённого адреса считается сменой мира
-- [ ] T047 [US1] Переделать `lib/presentation/pages/login_page/`: вставка и скан **ссылки** вместо идентификатора; тексты ошибок различают «ссылка не читается», «токен недействителен», «срок истёк»
-- [ ] T048 [US1] Свести wide-ветку `lib/presentation/pages/login_page/login_page.dart` с `docs/design/system/nox-desktop-screens/`, narrow — с `nox-mobile-screens/`
-- [ ] T049 [P] [US1] Тесты `test/presentation/pages/login_page/bloc/login_bloc_test.dart`: ожидание, три различимых отказа, успех никуда не навигирует сам
-- [ ] T050 [P] [US1] Эталоны в `test/presentation/pages/login_page/login_page_golden_test.dart`: `goldenTest` и `goldenTestDesktop`, включая состояние ошибки разбора
-- [ ] T051 [P] [US1] Тесты `test/data/repository/app/auth_repository_impl_test.dart`: `created: true` ведёт к выбору имени, `created: false` — нет; неудача спаривания не оставляет полусессии
+- [X] T047 [US1] Переделать `lib/presentation/pages/login_page/`: вставка и скан **ссылки** вместо идентификатора; тексты ошибок различают «ссылка не читается», «токен недействителен», «срок истёк»
+- [X] T048 [US1] Свести wide-ветку `lib/presentation/pages/login_page/login_page.dart` с `docs/design/system/nox-desktop-screens/`, narrow — с `nox-mobile-screens/`
+- [X] T049 [P] [US1] Тесты `test/presentation/pages/login_page/bloc/login_bloc_test.dart`: ожидание, три различимых отказа, успех никуда не навигирует сам
+- [X] T050 [P] [US1] Эталоны в `test/presentation/pages/login_page/login_page_golden_test.dart`: `goldenTest` и `goldenTestDesktop`, включая состояние ошибки разбора
+- [X] T051 [P] [US1] Тесты `test/data/repository/app/auth_repository_impl_test.dart`: `created: true` ведёт к выбору имени, `created: false` — нет; неудача спаривания не оставляет полусессии
 - [X] T052 [P] [US1] Тест `test/data/remote/socket/nox_socket_client_test.dart`: кадр `pair` несёт **публичную** часть ключа и **не несёт** семени (FR-008) — центральное обещание модели, которое иначе ничем не проверено
-- [ ] T053 [US1] Провести по `lib/data/` и `lib/presentation/pages/login_page/` дисциплину журналирования (FR-035): ни токен, ни семя, ни ссылка целиком не уходят в `logRepository` — ни на успехе, ни в ветках ошибок
-- [ ] T054 [P] [US1] Тест `test/data/repository/app/auth_repository_impl_test.dart`: спаривание с подставным логгером не пишет ни токена, ни семени
+- [X] T053 [US1] Провести по `lib/data/` и `lib/presentation/pages/login_page/` дисциплину журналирования (FR-035): ни токен, ни семя, ни ссылка целиком не уходят в `logRepository` — ни на успехе, ни в ветках ошибок
+- [X] T054 [P] [US1] Тест `test/data/repository/app/auth_repository_impl_test.dart`: спаривание с подставным логгером не пишет ни токена, ни семени
 - [X] T055 [P] [US1] Тест `test/data/sync/live_session_starter_test.dart`: сервер с неизвестным ключом устройства приводит клиента в состояние «не спарен» и вычищает локальные данные (FR-027) — тот же путь, что у отзыва и у пересобранного сервера
 
 **Контрольная точка:** MVP. Человек получает работающий мессенджер на своём сервере, и сервер его проверяет.
@@ -116,20 +116,20 @@ description: "Task list for feature implementation"
 
 ### Сервер
 
-- [ ] T056 [US2] Реализовать выпуск `invite-device` в `client_backend/internal/server/handlers.go`: токен привязан к личности выпустившего, живёт 10 минут
-- [ ] T057 [US2] Обработать в `client_backend/internal/server/handlers.go` в `pair` токен типа `invite_device`: ключ добавляется **к той же личности**, ответ несёт `created: false`
-- [ ] T058 [US2] Реализовать `identity.setLabel` в `client_backend/internal/server/handlers.go`: переименование обычной командой, эхо новым именем всем устройствам личности
-- [ ] T059 [P] [US2] Тесты в `client_backend/internal/server/pairing_test.go`: приглашение одноразово; просроченное даёт `token_expired`, а израсходованное — `invalid_token`; два устройства оказываются у одной личности
+- [X] T056 [US2] Реализовать выпуск `invite-device` в `client_backend/internal/server/handlers.go`: токен привязан к личности выпустившего, живёт 10 минут
+- [X] T057 [US2] Обработать в `client_backend/internal/server/handlers.go` в `pair` токен типа `invite_device`: ключ добавляется **к той же личности**, ответ несёт `created: false`
+- [X] T058 [US2] Реализовать `identity.setLabel` в `client_backend/internal/server/handlers.go`: переименование обычной командой, эхо новым именем всем устройствам личности
+- [X] T059 [P] [US2] Тесты в `client_backend/internal/server/pairing_test.go`: приглашение одноразово; просроченное даёт `token_expired`, а израсходованное — `invalid_token`; два устройства оказываются у одной личности
 
 ### Клиент
 
-- [ ] T060 [US2] Реализовать выпуск приглашения и его показ в `lib/presentation/pages/settings_root_page/`: QR через `qr_flutter` **и** копирование текстом — без второго Windows и Linux останутся без пути
-- [ ] T061 [US2] Перевести переименование в `lib/presentation/pages/settings_root_page/bloc/settings_root_bloc.dart` на `identity.setLabel`; **удалить** `session.label_dirty` и вызов `LiveSessionStarter.restart()` при смене имени
-- [ ] T062 [US2] Переделать поверхность «Your ID» в `lib/presentation/pages/settings_root_page/`: показ публичного `identity.id` вместо секрета, «показать QR» → приглашение устройства
-- [ ] T063 [US2] Свести обе ветки `lib/presentation/pages/settings_root_page/settings_root_page.dart` со своими корпусами ширин
-- [ ] T064 [P] [US2] Тесты `test/presentation/pages/settings_root_page/bloc/settings_root_bloc_test.dart`: переименование уходит командой и **не** перезапускает сессию
-- [ ] T065 [P] [US2] Обновить эталоны в `test/presentation/pages/settings_root_page/settings_root_page_golden_test.dart`, обе ширины
-- [ ] T066 [P] [US2] Тест в `test/data/repository/chat/message_repository_impl_test.dart`: сообщение, отправленное первым устройством, на втором опознано своим — оба знают один `author_id`
+- [X] T060 [US2] Реализовать выпуск приглашения и его показ в `lib/presentation/pages/settings_root_page/`: QR через `qr_flutter` **и** копирование текстом — без второго Windows и Linux останутся без пути
+- [X] T061 [US2] Перевести переименование в `lib/presentation/pages/settings_root_page/bloc/settings_root_bloc.dart` на `identity.setLabel`; **удалить** `session.label_dirty` и вызов `LiveSessionStarter.restart()` при смене имени
+- [X] T062 [US2] Переделать поверхность «Your ID» в `lib/presentation/pages/settings_root_page/`: показ публичного `identity.id` вместо секрета, «показать QR» → приглашение устройства
+- [X] T063 [US2] Свести обе ветки `lib/presentation/pages/settings_root_page/settings_root_page.dart` со своими корпусами ширин
+- [X] T064 [P] [US2] Тесты `test/presentation/pages/settings_root_page/bloc/settings_root_bloc_test.dart`: переименование уходит командой и **не** перезапускает сессию
+- [X] T065 [P] [US2] Обновить эталоны в `test/presentation/pages/settings_root_page/settings_root_page_golden_test.dart`, обе ширины
+- [X] T066 [P] [US2] Тест в `test/data/repository/chat/message_repository_impl_test.dart`: сообщение, отправленное первым устройством, на втором опознано своим — оба знают один `author_id`
 
 **Контрольная точка:** личность действительно переживает устройства, а не только на бумаге.
 
@@ -143,22 +143,22 @@ description: "Task list for feature implementation"
 
 ### Сервер
 
-- [ ] T067 [US3] Реализовать `device.list` в `client_backend/internal/server/handlers.go`: ключ, платформа, момент привязки, момент последней связи
-- [ ] T068 [US3] Реализовать `device.revoke` в `client_backend/internal/server/handlers.go`: удаление строки; отзыв несуществующего ключа — **успех**, конечное состояние достигнуто
-- [ ] T069 [US3] Рвать в `client_backend/internal/server/ws.go` живое соединение отозванного ключа **сразу**, а не ждать его следующей попытки, и слать событие `device.revoked`
-- [ ] T070 [US3] Тестом в `client_backend/internal/store/pairing_test.go` убедиться, что личность переживает отзыв последнего устройства — иначе кейсу восстановления не к чему будет прицепиться
-- [ ] T071 [P] [US3] Тесты в `client_backend/internal/server/pairing_test.go`: отзыв рвёт сессию; отозванный ключ больше не подключается; повторный отзыв успешен; личность остаётся
+- [X] T067 [US3] Реализовать `device.list` в `client_backend/internal/server/handlers.go`: ключ, платформа, момент привязки, момент последней связи
+- [X] T068 [US3] Реализовать `device.revoke` в `client_backend/internal/server/handlers.go`: удаление строки; отзыв несуществующего ключа — **успех**, конечное состояние достигнуто
+- [X] T069 [US3] Рвать в `client_backend/internal/server/ws.go` живое соединение отозванного ключа **сразу**, а не ждать его следующей попытки, и слать событие `device.revoked`
+- [X] T070 [US3] Тестом в `client_backend/internal/store/pairing_test.go` убедиться, что личность переживает отзыв последнего устройства — иначе кейсу восстановления не к чему будет прицепиться
+- [X] T071 [P] [US3] Тесты в `client_backend/internal/server/pairing_test.go`: отзыв рвёт сессию; отозванный ключ больше не подключается; повторный отзыв успешен; личность остаётся
 
 ### Клиент
 
-- [ ] T072 [US3] Создать `lib/data/repository/device/` — список и отзыв поверх сокета, `RepositoryResult` как везде
-- [ ] T073 [US3] Создать `lib/presentation/pages/devices_page/` с Freezed-BLoC: список, отметка текущего устройства, действие отзыва с подтверждением
-- [ ] T074 [US3] Построить в `lib/presentation/pages/devices_page/devices_page.dart` narrow-ветку по `nox-mobile-screens/`, wide — по `nox-desktop-screens/`; на десктопе экран живёт панелью деталей настроек, как остальные листья
-- [ ] T075 [US3] Обработать событие `device.revoked` в `lib/data/sync/live_session_starter.dart`: локальная очистка и возврат к предъявлению ссылки — тем же кодом, что и «сервер не знает мой ключ»
-- [ ] T076 [US3] Перевести выход в `lib/data/repository/app/auth_repository_impl.dart` на отзыв своего ключа при живой связи; без связи очистка **безусловна**
-- [ ] T077 [P] [US3] Тесты `test/presentation/pages/devices_page/bloc/devices_bloc_test.dart`: список, отзыв другого, отзыв себя
-- [ ] T078 [P] [US3] Эталоны в `test/presentation/pages/devices_page/devices_page_golden_test.dart`: `goldenTest` **и** `goldenTestDesktop` — продуктовая страница обязана иметь пару
-- [ ] T079 [P] [US3] Тест `test/data/repository/app/auth_repository_impl_test.dart`: выход без связи вычищает локально, не дожидаясь сервера
+- [X] T072 [US3] Создать `lib/data/repository/device/` — список и отзыв поверх сокета, `RepositoryResult` как везде
+- [X] T073 [US3] Создать `lib/presentation/pages/devices_page/` с Freezed-BLoC: список, отметка текущего устройства, действие отзыва с подтверждением
+- [X] T074 [US3] Построить в `lib/presentation/pages/devices_page/devices_page.dart` narrow-ветку по `nox-mobile-screens/`, wide — по `nox-desktop-screens/`; на десктопе экран живёт панелью деталей настроек, как остальные листья
+- [X] T075 [US3] Обработать событие `device.revoked` в `lib/data/sync/live_session_starter.dart`: локальная очистка и возврат к предъявлению ссылки — тем же кодом, что и «сервер не знает мой ключ»
+- [X] T076 [US3] Перевести выход в `lib/data/repository/app/auth_repository_impl.dart` на отзыв своего ключа при живой связи; без связи очистка **безусловна**
+- [X] T077 [P] [US3] Тесты `test/presentation/pages/devices_page/bloc/devices_bloc_test.dart`: список, отзыв другого, отзыв себя
+- [X] T078 [P] [US3] Эталоны в `test/presentation/pages/devices_page/devices_page_golden_test.dart`: `goldenTest` **и** `goldenTestDesktop` — продуктовая страница обязана иметь пару
+- [X] T079 [P] [US3] Тест `test/data/repository/app/auth_repository_impl_test.dart`: выход без связи вычищает локально, не дожидаясь сервера
 
 **Контрольная точка:** дыра, которую открыла история 2, закрыта.
 
@@ -166,20 +166,20 @@ description: "Task list for feature implementation"
 
 ## Phase 6: Документация и живая проверка
 
-- [ ] T080 [P] Обновить `docs/design/spec/screens/login.md`: предъявление ссылки вместо идентификатора
-- [ ] T081 [P] Обновить `docs/design/spec/screens/qr-scan.md`: сканер читает ссылку спаривания, а не `nox://id/`
-- [ ] T082 [P] Обновить `docs/design/spec/screens/settings-root.md`: «Your ID» перестал быть секретом, «показать QR» стало приглашением
-- [ ] T083 [P] Завести спеку нового экрана списка устройств в `docs/design/spec/screens/`
-- [ ] T084 [P] Обновить `docs/design/system/nox-mobile-screens/screens/` — вход, настройки, новый экран
-- [ ] T085 [P] Обновить `docs/design/system/nox-desktop-screens/screens/` — то же для широкой ширины
-- [ ] T086 [P] Обновить `docs/design/spec/overview.md`: раздел про идентичность — идентификатора входа больше нет как понятия
-- [ ] T087 [P] Записать в `CLAUDE.md` инварианты фазы: где живёт ключ сервера, почему отзыв удаляет строку, почему у claim нет срока, что подписывается
-- [ ] T088 [P] Закрыть в `docs/client-backend/open-questions.md` то, что фаза закрыла, и обновить `docs/client-backend/roadmap-client-track.md`
-- [ ] T089 Записать в `docs/blueprints/mobile/` desktop-fallback для хранения секретов — принцип III требует явной фиксации, раз подсистема платформенно-специфична
+- [X] T080 [P] Обновить `docs/design/spec/screens/login.md`: предъявление ссылки вместо идентификатора
+- [X] T081 [P] Обновить `docs/design/spec/screens/qr-scan.md`: сканер читает ссылку спаривания, а не `nox://id/`
+- [X] T082 [P] Обновить `docs/design/spec/screens/settings-root.md`: «Your ID» перестал быть секретом, «показать QR» стало приглашением
+- [X] T083 [P] Завести спеку нового экрана списка устройств в `docs/design/spec/screens/`
+- [X] T084 [P] Обновить `docs/design/system/nox-mobile-screens/screens/` — вход, настройки, новый экран
+- [X] T085 [P] Обновить `docs/design/system/nox-desktop-screens/screens/` — то же для широкой ширины
+- [X] T086 [P] Обновить `docs/design/spec/overview.md`: раздел про идентичность — идентификатора входа больше нет как понятия
+- [X] T087 [P] Записать в `CLAUDE.md` инварианты фазы: где живёт ключ сервера, почему отзыв удаляет строку, почему у claim нет срока, что подписывается
+- [X] T088 [P] Закрыть в `docs/client-backend/open-questions.md` то, что фаза закрыла, и обновить `docs/client-backend/roadmap-client-track.md`
+- [X] T089 Записать в `docs/blueprints/mobile/` desktop-fallback для хранения секретов — принцип III требует явной фиксации, раз подсистема платформенно-специфична
 - [ ] T090 `make gate`
 - [ ] T091 `make golden-verify` — объяснить каждый сдвиг эталона в сообщении коммита
 - [ ] T092 `cd client_backend && go test ./...`
-- [ ] T093 Живой сценарий [quickstart.md §2](./quickstart.md) целиком, двумя клиентами: §2.2 (главный), §2.3, §2.4, §2.5, §2.6 (гонка), §2.7, §2.8, §2.9, §2.10, §2.11 (подпись правда проверяется), §2.12 (идентификатора нет нигде)
+- [X] T093 Живой сценарий [quickstart.md §2](./quickstart.md) целиком, двумя клиентами: §2.2 (главный), §2.3, §2.4, §2.5, §2.6 (гонка), §2.7, §2.8, §2.9, §2.10, §2.11 (подпись правда проверяется), §2.12 (идентификатора нет нигде)
 
 ---
 
@@ -233,3 +233,11 @@ US2 добавляет второе устройство и делает реа�
 **Обещание, которое ничто не проверяло (HIGH).** «Приватный ключ не покидает устройство» — центральная фраза модели, и на неё не было ни одного теста. T052.
 
 Мелочи: переживание токенов после перезапуска не проверялось (T016); чистый старт хранилища не имел задачи-проверки (T055); `qr-scan.md` отсутствовал в списке документации (T077); имя файла спеки экрана входа было угадано неверно; ключ эпохи мира считался от адреса сборки (T045); задача про конверт допускала два прочтения — решено в пользу удаления; блок требований об имени носил номера `FR-019a–c` под чужой темой — перенумерован в FR-029…031.
+
+## Что отличалось от плана
+
+- **Размер полезной нагрузки ссылки.** Модель считала ~55 байт, не закладывая байт типа адреса. Тип записан явно (`1.2.3.4` читается и как IPv4, и как имя), поэтому реально **56 байт и 75 знаков**; контракт исправлен, расхождение записано.
+- **Личность на сервере одна.** Кейс 2 (новый человек в круге) заблокирован Q15, поэтому серверные тесты про «двух людей» переписаны на «человек и анонимное соединение» — единственная вторая сторона, которая сегодня существует.
+- **`identity.setLabel` переехал в `DeviceRepository`.** Сессионный репозиторий — локальное хранилище, а это команда провода; контракт §8A группирует имя с устройствами по той же причине.
+- **Найдена и закрыта утечка в журнал.** `FormatException` от base64 несёт исходную строку в сообщении — на пути спаривания это семя ключа или ссылка целиком. Логируется только тип; закреплено тестом.
+- **Тестовый фейк сокета здоровался challenge'ем `'x'`** — не base64. Все тесты подписи проходили бы по неверной причине.

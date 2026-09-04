@@ -88,19 +88,23 @@ void main() {
       expect(find.text(l10nEn.copiedToClipboard), findsOneWidget);
     });
 
-    testWidgets('Show QR opens the brand-fixed light QR sheet', (tester) async {
+    testWidgets('Show QR leads to Devices, where an invite is actually minted', (tester) async {
+      // It used to render a QR of the login identifier - a bearer secret, and
+      // handing it over WAS the sign-in. Adding a device is a different act
+      // now: it needs a one-shot token the server issues.
       await pumpMobile(tester);
 
       await tester.tap(find.byTooltip(l10nEn.idShowQrTooltip));
       await tester.pumpAndSettle();
 
-      expect(find.byType(AppQrSurfaceWidget), findsOneWidget);
-      expect(find.text(l10nEn.qrSheetTitle), findsOneWidget);
+      expect(find.text(l10nEn.settingsDevicesTitle), findsWidgets);
     });
 
-    testWidgets('Show/Hide reveal is available on mobile', (tester) async {
+    testWidgets('there is nothing to reveal any more - the id is public', (tester) async {
+      // The reveal existed because the string was a secret. A person is
+      // recognised by a paired key now, so masking it would only pretend.
       await pumpMobile(tester);
-      expect(find.byTooltip(l10nEn.idShowTooltip), findsOneWidget);
+      expect(find.byTooltip(l10nEn.idShowTooltip), findsNothing);
     });
 
     testWidgets('Log out opens a confirm dialog that Cancel dismisses', (tester) async {

@@ -64,9 +64,6 @@ class FakeSessionRepository implements SessionRepository {
   @override
   Future<RepositoryResult<String?>> serverAddress() async => const RepositoryResult<String?>.success(data: '127.0.0.1:8080');
 
-  @override
-  Future<RepositoryResult<bool>> isLabelDirty() async => RepositoryResult<bool>.success(data: labelDirty);
-
   /// Raised by [updateLabel] the way the real store raises it: a greeting states
   /// a name only after a rename.
   bool labelDirty = false;
@@ -74,12 +71,6 @@ class FakeSessionRepository implements SessionRepository {
   @override
   Future<RepositoryResult<bool>> advanceOnboardingIfKnown({required bool created}) async =>
       const RepositoryResult<bool>.success(data: false);
-
-  @override
-  Future<RepositoryResult<bool>> markLabelDirty() async {
-    labelDirty = true;
-    return const RepositoryResult<bool>.success(data: true);
-  }
 
   @override
   Future<RepositoryResult<bool>> forgetAuthorId() async => const RepositoryResult<bool>.success(data: true);

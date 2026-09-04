@@ -44,13 +44,9 @@ abstract class SessionRepository {
   /// A greeting states a label only when the answer is true. Stating it every
   /// time turns a stale cache into a rename ping-pong: a device that was offline
   /// through a rename would push the old name back over the new one, and the
-  /// two devices of one person would flip-flop forever.
-  Future<RepositoryResult<bool>> isLabelDirty();
 
   /// Raises the flag without changing the name. Used when the world the name
   /// was confirmed in is gone: the server has never heard it, so it has to be
-  /// stated again or the person is silently renamed to a fresh `User<random>`.
-  Future<RepositoryResult<bool>> markLabelDirty();
 
   /// Advances the onboarding flag when the server says the person is already
   /// known, and never the other way round. Called from the greeting-adoption

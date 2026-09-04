@@ -17,6 +17,7 @@ import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/repository/device/device_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
@@ -105,11 +106,31 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         await _sessionRepository.discardSignIn();
         return RepositoryResult<bool>.error(exception: e.expired ? RepositoryException.notFound : RepositoryException.authentication);
       } on Object catch (e, st) {
-        logRepository.error(target: this, error: e, stackTrace: st);
+        // The TYPE only. A FormatException from a base64 decode carries the
+        // offending source in its message, which here would be the link or the
+        // key seed - and a token in a log is still a usable pairing credential
+        // (Principle I, FR-035).
+        logRepository.error(target: this, error: e.runtimeType, stackTrace: st);
         await _sessionRepository.discardSignIn();
         return const RepositoryResult<bool>.error(exception: RepositoryException.connection);
       }
     });
+  }
+
+  /// Revokes this device's own key before the local wipe, when there is a
+  /// channel to say it on. Never blocks the logout: a person who chose to sign
+  /// out must sign out.
+  Future<void> _revokeOwnKey() async {
+    final devices = getIt.isRegistered<DeviceRepository>() ? getIt<DeviceRepository>() : null;
+    if (devices == null) return;
+    try {
+      final seed = await _sessionRepository.deviceSecret();
+      if (!seed.hasData) return;
+      await devices.revoke(deviceKey: await DeviceKeys.publicKey(seed.data!));
+    } on Object catch (e, st) {
+      // The type only: a decode failure would otherwise put the seed in the log.
+      logRepository.error(target: this, error: e.runtimeType, stackTrace: st);
+    }
   }
 
   Future<RepositoryResult<bool>> _finishSignIn({required bool onboardingComplete}) async {
@@ -158,7 +179,16 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
     // After the session is cleared, drop the cached chats + messages so a re-login as a
     // different identity starts clean (Constitution I: full local wipe on identity switch).
     return _deriveAfter(
-      _sessionRepository.clear,
+      () async {
+        // A voluntary logout revokes THIS device's own key, so the key stops
+        // being a way in rather than merely being forgotten here. Best effort,
+        // and only while connected: offline the local wipe is unconditional and
+        // the orphaned key is revoked from another device - the accepted price
+        // (contract §8A). A forced logout skips it: the server already refused
+        // us, and asking it to revoke a key it does not know would be noise.
+        if (!forced) await _revokeOwnKey();
+        return _sessionRepository.clear();
+      },
       sessionExpired: forced,
       afterMutate: () async {
         // Close the live channel BEFORE emptying anything: an event applied

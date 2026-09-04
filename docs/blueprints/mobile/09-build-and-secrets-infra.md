@@ -1,5 +1,20 @@
 # 09 — Сборка, секреты и CI
 
+## Ключ устройства (фаза 032) — платформенный fallback
+
+Приватный ключ устройства (семя Ed25519, 32 байта) хранится в `flutter_secure_storage` под `session.device_secret`. Блюпринт определяет хранение секретов для iOS/Android; для **desktop** здесь фиксируется явный fallback, как требует Принцип III:
+
+| Платформа | Хранилище |
+|---|---|
+| iOS / macOS | Keychain (macOS пришпилен к legacy keychain, `usesDataProtectionKeychain: false`) |
+| Android | EncryptedSharedPreferences |
+| Windows | DPAPI |
+| Linux | libsecret |
+
+⚠️ **Ключ извлекаем.** Он лежит в защищённом хранилище ОС, но не в аппаратном анклаве: настоящая неизвлекаемость требует нативного кода на пяти платформах и в фазу 032 не входила. Записано явно, потому что модель аутентификации обещает «приватные ключи не переезжают», и это обещание надо читать как «не передаются по сети», а не «защищены железом».
+
+Стирается тем же путём, что и всё остальное при выходе: `SessionRepository.clear()` делает `deleteAll`.
+
 > **Назначение:** превратить скелет `nox_app` в воспроизводимо собираемый и публикуемый проект с **нулём секретов в репозитории**. Описывает production-grade инфраструктуру: FVM (пин SDK), mise (пины инструментов + граф задач), SOPS + age (шифрованные секреты), Android Gradle flavors, iOS xcconfig/schemes, нативную идентичность desktop, тонкий Makefile, релизный поток (CalVer + shifted-epoch) и GitHub Actions CI. NOX — **отдельный standalone-репозиторий**: своя SOPS+age-схема, свой `.mise.toml`, свои `ci.yml` + `compile-check.yml` (никакого монорепо/корневого экспортёра/reusable-workflow).
 > **Когда читать:** когда вы развернули дерево исходников (см. `11-scaffolding-plan.md`) и нужно сделать его собираемым/тестируемым на машине и в CI; перед первой сборкой stage/prod артефакта; при онбординге проекта NOX в более широкую CI/CD-политику.
 > **Связанные документы:** `01-stack-and-tooling.md` (версии инструментов, `analysis_options.yaml`, `build.yaml`), `02-dependency-injection.md` (`configureDependencies(String env)` + флейворная изоляция), `08-conventions-and-constitution.md` (правило line-length 140, политика форматирования), `12-dev-commands.md` (обёртки `.claude/commands` / `Makefile`-цели вокруг этих задач), `11-scaffolding-plan.md` (порядок раскатки файлов).

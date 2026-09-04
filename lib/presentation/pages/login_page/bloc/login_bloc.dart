@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:nox_app/di/global_aliases.dart';
+import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/general/onboarding_mock_data.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
@@ -16,7 +17,8 @@ part 'login_state.dart';
 /// validation of the ID (FR-011); the sign-in outcome is stubbed via a debug
 /// selector + the mock dataset (UI-only). `// TODO(backend): real sign-in.`
 class LoginBloc extends BaseBloc<LoginEvent, LoginState> {
-  LoginBloc({this.demo = false}) : super(const LoginState()) {
+  LoginBloc({this.demo = false, LoginStatus? initialStatus})
+    : super(initialStatus == null ? const LoginState() : LoginState(status: initialStatus)) {
     on<IdChanged>(_onIdChanged);
     on<ClipboardChecked>(_onClipboardChecked);
     on<SignInRequested>(_onSignInRequested);
@@ -58,9 +60,18 @@ class LoginBloc extends BaseBloc<LoginEvent, LoginState> {
     final result = await authRepository.signIn(identifier: state.id);
     result.match<void>(
       onData: (_) => emit(state.copyWith(status: LoginStatus.idle)),
-      onError: (_) => emit(state.copyWith(status: LoginStatus.errorNetwork)),
+      onError: (e) => emit(state.copyWith(status: _statusFor(e))),
     );
   }
+
+  /// Each refusal keeps its own message: the repository already told the three
+  /// apart, and collapsing them here would undo that.
+  static LoginStatus _statusFor(Object? exception) => switch (exception) {
+    RepositoryException.invalidRequest => LoginStatus.errorFormat,
+    RepositoryException.notFound => LoginStatus.errorExpired,
+    RepositoryException.authentication => LoginStatus.errorRejected,
+    _ => LoginStatus.errorNetwork,
+  };
 
   /// Maps the (debug) outcome to a terminal status. `auto` derives new-vs-registered
   /// from the mock dataset so typing a known id reproduces the registered path.

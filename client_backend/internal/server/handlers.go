@@ -110,6 +110,7 @@ func (c *client) handleSessionHello(cmd protocol.Command) {
 	}
 	c.identity = id
 	c.label = id.Label
+	c.deviceKey = deviceKey
 
 	journalID, err := c.srv.store.JournalID(c.ctx)
 	if err != nil {

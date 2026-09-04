@@ -1,5 +1,7 @@
 # 2.1 · Login
 
+> ⚠️ **Feature 032:** the field is the pairing link, not an identifier. Sign-in by identifier no longer exists — the device proves possession of a key that never leaves it. Refusals stay distinguishable: unreadable link, expired token, rejected token.
+
 > **Onboarding** · mobile (iOS / Android) · Material 3
 
 **Purpose.** Sign in by pasting / typing an existing account ID, or jump to QR scan.

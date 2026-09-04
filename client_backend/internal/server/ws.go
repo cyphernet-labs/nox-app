@@ -91,6 +91,14 @@ func (c *client) dispatch(cmd protocol.Command) {
 		c.handleSessionHello(cmd)
 	case protocol.CmdPair:
 		c.handlePair(cmd)
+	case protocol.CmdDeviceList:
+		c.handleDeviceList(cmd)
+	case protocol.CmdDeviceRevoke:
+		c.handleDeviceRevoke(cmd)
+	case protocol.CmdDeviceInvite:
+		c.handleDeviceInvite(cmd)
+	case protocol.CmdIdentitySetLabel:
+		c.handleIdentitySetLabel(cmd)
 	case protocol.CmdChatsList:
 		c.handleChatsList(cmd)
 	case protocol.CmdChatGet:

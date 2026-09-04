@@ -5,7 +5,11 @@ part of 'login_bloc.dart';
 enum LoginOutcome { auto, newId, registered, errorFormat, errorNetwork, fatal }
 
 /// Login form status. The `nav*` values are terminal: the page navigates on them.
-enum LoginStatus { idle, loading, errorFormat, errorNetwork, navNewId, navRegistered, navFatal }
+/// The refusals stay apart because the person's next action differs: a link
+/// that will not parse means scan it again, an expired token means ask for a
+/// new invite, a rejected one means this link cannot be used at all. One
+/// shared "it did not work" leaves them guessing which.
+enum LoginStatus { idle, loading, errorFormat, errorExpired, errorRejected, errorNetwork, navNewId, navRegistered, navFatal }
 
 @freezed
 abstract class LoginState with _$LoginState {

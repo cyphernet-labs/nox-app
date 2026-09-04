@@ -58,6 +58,10 @@ class PairingLink {
   /// The one-shot pairing right, base64url without padding.
   final String token;
 
+  /// A readable link for debug surfaces, so the screens gallery can drive the
+  /// scanner without a server. Not reachable from the real flow.
+  static const String demo = 'https://nox.app/p/#AQF_AAABH5CjZmMytIk_2XvPJ-jonqlQtYsZD3SB33P1foxqnrVbFo-VEf6WohQoqA1_na5iVUo';
+
   /// The address to connect to, as the socket layer wants it.
   String get authority => host.contains(':') ? '[$host]:$port' : '$host:$port';
 
@@ -123,6 +127,17 @@ class PairingLink {
     final token = base64Url.encode(bytes.sublist(offset, offset + 16)).replaceAll('=', '');
 
     return PairingLink(host: host, port: port, serverKey: key, token: token);
+  }
+
+  /// Reads a link, or returns null. For places that only need to know whether
+  /// a string is a pairing link at all — a scanned QR, a picked image — where
+  /// the reason it failed changes nothing.
+  static PairingLink? tryParse(String raw) {
+    try {
+      return parse(raw);
+    } on PairingLinkException {
+      return null;
+    }
   }
 
   /// Renders the link, so a device can show an invite it just obtained.

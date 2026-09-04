@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:nox_app/domain/model/qr/camera_permission_status.dart';
-import 'package:nox_app/general/nox_qr_envelope.dart';
+import 'package:nox_app/general/pairing/pairing_link.dart';
 import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/pages/qr_scan_page/bloc/qr_scan_bloc.dart';
 import 'package:nox_app/presentation/pages/qr_scan_page/qr_scan_page.dart';
@@ -68,10 +68,10 @@ void main() {
 
       await tester.tap(find.text('open'));
       await tester.pumpAndSettle();
-      bloc.add(QrScanEvent.detected(NoxQrEnvelope.encode('alice')));
+      bloc.add(QrScanEvent.detected(PairingLink.demo));
       await tester.pumpAndSettle();
 
-      expect(captured, 'alice');
+      expect(captured, PairingLink.demo);
       expect(find.byType(QrScanPage), findsNothing);
     });
 

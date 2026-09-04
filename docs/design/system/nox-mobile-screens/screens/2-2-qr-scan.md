@@ -1,5 +1,7 @@
 # 2.2 · QR scan
 
+> ⚠️ **Feature 032:** the scanner reads a pairing link, not `nox://id/`, and passes the WHOLE payload on — the server address and its key are needed as much as the token. Windows and Linux have no camera: the same parser runs over a picked image there, and pasting text works everywhere.
+
 > **Onboarding** · mobile (iOS / Android) · Material 3
 
 **Purpose.** Scan another device’s ID QR with the camera.

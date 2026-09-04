@@ -12,8 +12,7 @@ import (
 // Identity is the person a connection speaks as. UserID is the public author
 // id carried on the wire (contract §3); Label is the current display name.
 //
-// Ephemeral is true for a connection that presented neither a login_ref nor a
-// device_key - hand tools, the live probe, a port scanner speaking WebSocket.
+// Ephemeral is true for a connection that presented no device key at all - hand tools, the live probe, a port scanner speaking WebSocket.
 // The contract forbids refusing such a greeting, but writing a row for every
 // one of them is unbounded growth, so the row is deferred until the first
 // message.send, the only path that needs a parent row for the author_id

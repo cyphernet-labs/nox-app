@@ -61,9 +61,6 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   /// rescue a device from.
   bool _onboardingStartedHere = false;
 
-  /// Raised by a rename, cleared once the server echoes the new name back.
-  static const String _kLabelDirty = 'session.label_dirty';
-
   @override
   Future<RepositoryResult<SessionModel?>> readSession() {
     return execute<SessionModel?>(() async {
@@ -107,9 +104,6 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       await _prefs.setBool(_kOnboardingComplete, true);
       if (label != null) {
         await _prefs.setString(_kLabel, label);
-        // The name has to reach the server, and a greeting only states one when
-        // this flag is up.
-        await _prefs.setBool(_kLabelDirty, true);
         _emitLabel(label);
       }
       return const RepositoryResult<bool>.success(data: true);
@@ -121,11 +115,6 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
     return execute<bool>(() async {
       await _prefs.setString(_kAuthorId, authorId);
       final cached = _prefs.getString(_kLabel);
-      // Cleared only when the server came back with the very name this device
-      // is asserting. An unconditional clear loses a rename: a reconnect that
-      // stated nothing echoes the OLD name, and the flag would drop before the
-      // new one was ever sent.
-      if (cached == null || cached == label) await _prefs.remove(_kLabelDirty);
       final changed = cached != label;
       if (changed) {
         await _prefs.setString(_kLabel, label);
@@ -142,7 +131,6 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
     return execute<bool>(() async {
       // Label only — the secure identifier is rename-invariant (FR-009).
       await _prefs.setString(_kLabel, label);
-      await _prefs.setBool(_kLabelDirty, true);
       _emitLabel(label);
       return const RepositoryResult<bool>.success(data: true);
     });
@@ -189,13 +177,6 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   }
 
   @override
-  Future<RepositoryResult<bool>> isLabelDirty() {
-    return execute<bool>(() async {
-      return RepositoryResult<bool>.success(data: _prefs.getBool(_kLabelDirty) ?? false);
-    });
-  }
-
-  @override
   Future<RepositoryResult<bool>> advanceOnboardingIfKnown({required bool created}) {
     return execute<bool>(() async {
       // Forward only. A reconnect that happens BEFORE the person has named
@@ -214,14 +195,6 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
         return const RepositoryResult<bool>.success(data: false);
       }
       await _prefs.setBool(_kOnboardingComplete, true);
-      return const RepositoryResult<bool>.success(data: true);
-    });
-  }
-
-  @override
-  Future<RepositoryResult<bool>> markLabelDirty() {
-    return execute<bool>(() async {
-      await _prefs.setBool(_kLabelDirty, true);
       return const RepositoryResult<bool>.success(data: true);
     });
   }
@@ -263,7 +236,6 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       // Leaving it behind would let the next sign-in inherit it and mark that
       // stranger's messages as its own until the next greeting overwrote it.
       await _prefs.remove(_kAuthorId);
-      await _prefs.remove(_kLabelDirty);
       _emitLabel(null); // logout resets every label surface to the fallback
       return const RepositoryResult<bool>.success(data: true);
     });

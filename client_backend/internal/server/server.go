@@ -6,6 +6,7 @@ package server
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -22,6 +23,7 @@ import (
 	"nox.app/client-backend/internal/config"
 	"nox.app/client-backend/internal/db"
 	"nox.app/client-backend/internal/hub"
+	"nox.app/client-backend/internal/protocol"
 	"nox.app/client-backend/internal/store"
 )
 
@@ -165,6 +167,33 @@ func (s *Server) WaitConnections(ctx context.Context) error {
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
+	}
+}
+
+// dropDevice cuts off every live connection authenticated with a revoked key,
+// and tells each one why before the socket closes.
+//
+// Immediately, not on the device's next attempt: a sold tablet would otherwise
+// keep reading the conversation for as long as it stays online, which is the
+// whole thing revocation exists to stop.
+func (s *Server) dropDevice(deviceKey string) {
+	s.mu.Lock()
+	doomed := make([]*client, 0, 1)
+	for c := range s.conns {
+		if c.deviceKey == deviceKey {
+			doomed = append(doomed, c)
+		}
+	}
+	s.mu.Unlock()
+	payload, err := json.Marshal(map[string]string{"device_key": deviceKey})
+	if err != nil {
+		// Cannot fail for a map of strings, but the connections still have to
+		// go: the row is already deleted either way.
+		payload = json.RawMessage(`{}`)
+	}
+	for _, c := range doomed {
+		c.sendFrame(protocol.Event{Seq: 0, Event: protocol.EventDeviceRevoked, Data: payload})
+		go c.close(websocket.StatusNormalClosure, "device revoked")
 	}
 }
 

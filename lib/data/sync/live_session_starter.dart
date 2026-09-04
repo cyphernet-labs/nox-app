@@ -72,6 +72,7 @@ class LiveSessionStarter {
     _phaseSub ??= _socket.phase.listen((phase) {
       if (phase == SessionPhase.catchingUp || phase == SessionPhase.live) unawaited(_adoptGreeting());
     });
+    _socket.onUnauthenticated = () => unawaited(_deviceRejected());
     await _socket.start(url: _socketUrl(apiUrl), credentialsProvider: _credentials, onJournalChanged: () => unawaited(_worldChanged()));
   }
 
@@ -115,8 +116,23 @@ class LiveSessionStarter {
     if (data == null) return const GreetingCredentials();
 
     final seed = await _session.deviceSecret();
-    final dirty = await _session.isLabelDirty();
-    return GreetingCredentials(deviceSeed: seed.data, label: (dirty.data ?? false) ? data.label : null);
+    // No label here any more. It used to ride the greeting behind a "renamed"
+    // flag, because a greeting was the only place a name could travel; with
+    // identity.setLabel it has its own command, and repeating a cached name on
+    // every reconnect is how two devices of one person flip-flop.
+    return GreetingCredentials(deviceSeed: seed.data);
+  }
+
+  /// The server does not know this device any more: revoked from elsewhere, or
+  /// pointed at a store that was rebuilt from nothing.
+  ///
+  /// Both are the same event from here, and both mean the local data is no
+  /// longer this person's on this server. A forced logout is exactly the right
+  /// shape: it wipes and puts the app back on the pairing screen.
+  Future<void> _deviceRejected() async {
+    logRepository.debug(target: this, message: 'sync: this device is no longer paired, clearing');
+    await stop();
+    await authRepository.logout(forced: true);
   }
 
   /// The server's store is not the one this device cached. Everything local
@@ -128,10 +144,9 @@ class LiveSessionStarter {
     try {
       await _wipeWorld();
       await _session.forgetAuthorId();
-      // The new world has never heard this name. Without re-asserting it the
-      // greeting states nothing, the server mints User<random>, and the person
-      // is silently renamed out of the name they chose.
-      await _session.markLabelDirty();
+      // Nothing to re-assert any more. A rebuilt store has no devices table
+      // either, so this device's key is unknown there and the next greeting is
+      // refused - the person pairs again, and pairing is what names them.
     } on Object catch (e, s) {
       logRepository.error(target: this, error: e, stackTrace: s);
     } finally {

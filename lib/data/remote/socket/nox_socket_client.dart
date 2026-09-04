@@ -107,6 +107,10 @@ class NoxSocketClient {
 
   /// The challenge of the CURRENT connection, from the server's greeting.
   String _challenge = '';
+
+  /// Called when the server does not recognise this device any more. Set by
+  /// the session starter, which owns what happens next.
+  void Function()? onUnauthenticated;
   ServerLimits? limits;
 
   Stream<SessionPhase> get phase => _phase.stream;
@@ -298,6 +302,15 @@ class NoxSocketClient {
         // A version mismatch or a malformed greeting is a programmer error, not
         // a blip: the contract marks both non-repeatable (§2.1). Retrying would
         // spin forever against a server that will never accept us.
+        if (reply.errorCode == 'unauthenticated') {
+          // Revoked, or a server whose store was rebuilt. The device cannot
+          // tell those apart and must not: both mean "this is not my server any
+          // more". Retrying would spin forever against a peer that will keep
+          // refusing, so the session is torn down and the app is told.
+          await _teardown(SessionPhase.unsupported);
+          onUnauthenticated?.call();
+          return;
+        }
         final terminal = reply.errorCode == 'unsupported_schema' || reply.errorCode == 'invalid_request';
         await _teardown(terminal ? SessionPhase.unsupported : SessionPhase.disconnected);
         if (!terminal) _scheduleRetry();

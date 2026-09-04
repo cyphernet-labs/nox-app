@@ -101,3 +101,134 @@ func (c *client) handlePair(cmd protocol.Command) {
 		Identity: identity{ID: id.UserID, Label: id.Label, Created: id.Created},
 	}))
 }
+
+type deviceListReply struct {
+	Devices []store.Device `json:"devices"`
+}
+
+// handleDeviceList answers with the person's own devices. There is nothing to
+// scope: a connection speaks as exactly one person, so it can only ever see
+// its own.
+func (c *client) handleDeviceList(cmd protocol.Command) {
+	devices, err := c.srv.store.ListDevices(c.ctx, c.identity.UserID)
+	if err != nil {
+		c.logger.Error("device.list", "err", err)
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to list devices"))
+		return
+	}
+	c.sendFrame(protocol.OKReply(cmd.ID, deviceListReply{Devices: devices}))
+}
+
+type deviceRevokeRequest struct {
+	DeviceKey string `json:"device_key"`
+}
+
+// handleDeviceRevoke removes a key from the allowed list and cuts the revoked
+// device off immediately.
+//
+// Dropping the live connection matters as much as the row: waiting for the
+// device to reconnect would leave a sold tablet reading the conversation for
+// as long as it stays online.
+func (c *client) handleDeviceRevoke(cmd protocol.Command) {
+	var req deviceRevokeRequest
+	if err := json.Unmarshal(cmd.Data, &req); err != nil {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "malformed device.revoke data"))
+		return
+	}
+	key := strings.TrimSpace(req.DeviceKey)
+	if key == "" {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "device_key is required"))
+		return
+	}
+
+	// Only one's own devices. Without this check anyone could cut off anyone.
+	owner, found, err := c.srv.store.DeviceOwner(c.ctx, key)
+	if err != nil {
+		c.logger.Error("device owner", "err", err)
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to read the device"))
+		return
+	}
+	if found && owner != c.identity.UserID {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrNotFound, "no such device"))
+		return
+	}
+
+	if err := c.srv.store.RevokeDevice(c.ctx, key); err != nil {
+		c.logger.Error("device.revoke", "err", err)
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to revoke the device"))
+		return
+	}
+	// Revoking a key that is not there is a success: the caller asked for a
+	// state and that state holds, so a retry after a dropped connection does
+	// not look like a failure.
+	c.sendFrame(protocol.OKReply(cmd.ID, struct{}{}))
+	c.srv.dropDevice(key)
+}
+
+type inviteReply struct {
+	Token string `json:"token"`
+	Link  string `json:"link"`
+}
+
+// handleDeviceInvite mints a token that binds another device to this person,
+// and renders the link to show.
+//
+// The link is built here rather than on the device because only the server
+// knows its own public key and the address it is reachable at.
+func (c *client) handleDeviceInvite(cmd protocol.Command) {
+	token, err := c.srv.store.IssueDeviceInvite(c.ctx, c.identity.UserID, time.Now().Unix())
+	if err != nil {
+		c.logger.Error("device.invite", "err", err)
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to issue an invite"))
+		return
+	}
+	id, err := c.srv.store.ServerIdentity(c.ctx)
+	if err != nil {
+		c.logger.Error("server identity", "err", err)
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to read the server identity"))
+		return
+	}
+	link, err := BuildPairingLink(listenAddress(c.srv.cfg.Addr), id.PublicKey, token)
+	if err != nil {
+		c.logger.Error("build invite link", "err", err)
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to build the link"))
+		return
+	}
+	c.sendFrame(protocol.OKReply(cmd.ID, inviteReply{Token: token, Link: link}))
+}
+
+type setLabelRequest struct {
+	Label string `json:"label"`
+}
+
+type setLabelReply struct {
+	Label string `json:"label"`
+}
+
+// handleIdentitySetLabel renames the person.
+//
+// Nothing here checks availability: names are not unique, the server neither
+// enforces nor reports uniqueness, so there is no refusal to make. Before this
+// command a name could only travel in a greeting, which meant a rename had to
+// reconnect the session - workable with one device, a source of divergence with
+// two.
+func (c *client) handleIdentitySetLabel(cmd protocol.Command) {
+	var req setLabelRequest
+	if err := json.Unmarshal(cmd.Data, &req); err != nil {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "malformed identity.setLabel data"))
+		return
+	}
+	label := strings.TrimSpace(req.Label)
+	if label == "" {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "label is required"))
+		return
+	}
+	if err := c.srv.store.SetLabel(c.ctx, c.identity.UserID, label); err != nil {
+		c.logger.Error("identity.setLabel", "err", err)
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to set the label"))
+		return
+	}
+	c.identity.Label = label
+	c.label = label
+	c.sendFrame(protocol.OKReply(cmd.ID, setLabelReply{Label: label}))
+}

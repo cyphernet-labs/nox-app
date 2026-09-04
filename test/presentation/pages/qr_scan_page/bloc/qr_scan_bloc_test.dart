@@ -1,7 +1,7 @@
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/domain/model/qr/camera_permission_status.dart';
-import 'package:nox_app/general/nox_qr_envelope.dart';
+import 'package:nox_app/general/pairing/pairing_link.dart';
 import 'package:nox_app/presentation/pages/qr_scan_page/bloc/qr_scan_bloc.dart';
 
 void main() {
@@ -37,11 +37,11 @@ void main() {
 
   group('QrScanBloc detection', () {
     blocTest<QrScanBloc, QrScanState>(
-      'a valid nox://id/ envelope sets decodedId',
+      'a readable pairing link sets decodedId to the WHOLE link',
       build: QrScanBloc.new,
       seed: () => const QrScanState(status: QrScanStatus.scanning),
-      act: (bloc) => bloc.add(QrScanEvent.detected(NoxQrEnvelope.encode('alice'))),
-      expect: () => const [QrScanState(status: QrScanStatus.scanning, decodedId: 'alice')],
+      act: (bloc) => bloc.add(QrScanEvent.detected(PairingLink.demo)),
+      expect: () => const [QrScanState(status: QrScanStatus.scanning, decodedId: PairingLink.demo)],
     );
 
     blocTest<QrScanBloc, QrScanState>(
@@ -55,15 +55,15 @@ void main() {
     blocTest<QrScanBloc, QrScanState>(
       'single-shot: a second detect after a decode is ignored',
       build: QrScanBloc.new,
-      seed: () => const QrScanState(status: QrScanStatus.scanning, decodedId: 'alice'),
-      act: (bloc) => bloc.add(QrScanEvent.detected(NoxQrEnvelope.encode('bob'))),
+      seed: () => const QrScanState(status: QrScanStatus.scanning, decodedId: PairingLink.demo),
+      act: (bloc) => bloc.add(QrScanEvent.detected(PairingLink.demo)),
       expect: () => const <QrScanState>[],
     );
 
     blocTest<QrScanBloc, QrScanState>(
       'a late permission result after a decode is ignored (no camera restart)',
       build: QrScanBloc.new,
-      seed: () => const QrScanState(status: QrScanStatus.scanning, decodedId: 'alice'),
+      seed: () => const QrScanState(status: QrScanStatus.scanning, decodedId: PairingLink.demo),
       act: (bloc) => bloc.add(const QrScanEvent.permissionResolved(CameraPermissionStatus.granted)),
       expect: () => const <QrScanState>[],
     );

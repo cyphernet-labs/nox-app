@@ -23,6 +23,8 @@ import 'package:nox_app/presentation/pages/error_page/error_page_params.dart';
 import 'package:nox_app/presentation/pages/language_page/language_body.dart';
 import 'package:nox_app/presentation/pages/language_page/language_page.dart';
 import 'package:nox_app/presentation/pages/notifications_page/notifications_body.dart';
+import 'package:nox_app/presentation/pages/devices_page/devices_body.dart';
+import 'package:nox_app/presentation/pages/devices_page/devices_page.dart';
 import 'package:nox_app/presentation/pages/notifications_page/notifications_page.dart';
 import 'package:nox_app/presentation/pages/screens_gallery_page/screens_gallery_page.dart';
 import 'package:nox_app/presentation/pages/ui_kit_page/ui_kit_page.dart';
@@ -39,7 +41,7 @@ import 'package:nox_app/presentation/widgets/settings/app_settings_nav_row_widge
 import 'package:nox_app/presentation/widgets/shell/app_list_detail_widget.dart';
 
 /// Desktop settings sections (the list-detail menu items).
-enum _Section { account, notifications, appearance, language, terms, about }
+enum _Section { account, devices, notifications, appearance, language, terms, about }
 
 /// 7.1 Settings root — the Settings tab body. Mobile: a flat list (identity card +
 /// nav rows + Log out). Desktop: a list-detail (menu pane 340 + detail pane ≤680,
@@ -179,7 +181,8 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
       appBar: AppBar(leading: widget.inShell ? null : _backButton(), title: Text(context.l10n.settings)),
       body: ListView(
         children: [
-          Padding(padding: EdgeInsets.all(AppSpacingTokens.s16), child: _identityCard(state, revealable: true, wide: false)),
+          Padding(padding: EdgeInsets.all(AppSpacingTokens.s16), child: _identityCard(state, revealable: false, wide: false)),
+          AppSettingsNavRowWidget(title: context.l10n.settingsDevicesTitle, onTap: () => _openSection(DevicesPage.route())),
           AppSettingsNavRowWidget(title: context.l10n.settingsNotificationsTitle, onTap: () => _openSection(NotificationsPage.route())),
           AppSettingsNavRowWidget(title: context.l10n.settingsAppearanceTitle, onTap: () => _openSection(AppearancePage.route())),
           AppSettingsNavRowWidget(title: context.l10n.settingsLanguageTitle, onTap: () => _openSection(LanguagePage.route())),
@@ -243,6 +246,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
             children: [
               // Group 1: Account.
               item(_Section.account, context.l10n.settingsAccountTitle),
+              item(_Section.devices, context.l10n.settingsDevicesTitle),
               const AppHairlineDividerWidget(),
               // Group 2: Notifications, Appearance, Language.
               item(_Section.notifications, context.l10n.settingsNotificationsTitle),
@@ -265,6 +269,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
   // Title of the selected detail section, mirroring the menu-pane item labels.
   String _sectionTitle(_Section section) => switch (section) {
     _Section.account => context.l10n.settingsAccountTitle,
+    _Section.devices => context.l10n.settingsDevicesTitle,
     _Section.notifications => context.l10n.settingsNotificationsTitle,
     _Section.appearance => context.l10n.settingsAppearanceTitle,
     _Section.language => context.l10n.settingsLanguageTitle,
@@ -283,6 +288,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
           if (!state.editing && !state.initialLoading) _accountQrBlock(context, state.rawId),
         ],
       ),
+      _Section.devices => const DevicesBody(),
       _Section.notifications => const NotificationsBody(),
       _Section.appearance => const AppearanceBody(),
       _Section.language => const LanguageBody(),
@@ -329,7 +335,11 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
       onToggleReveal: () => _bloc.add(const SettingsRootEvent.idRevealToggled()),
       onEditName: _startEdit,
       onCopy: _copyId,
-      onShowQr: () => showIdQr(context, data: state.rawId, wide: wide),
+      // Showing a QR of the identity used to hand over a bearer secret. The id
+      // is public now and inviting a device is a different act, so the action
+      // leads to the devices screen, where the invite is minted with a real
+      // one-shot token.
+      onShowQr: () => _openSection(DevicesPage.route()),
       nameEditField: state.editing
           ? AppLabeledFieldWidget(
               controller: _nameController,

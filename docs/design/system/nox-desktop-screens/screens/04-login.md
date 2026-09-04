@@ -1,5 +1,7 @@
 # 03 · Login
 
+> ⚠️ **Feature 032:** the field is the pairing link, not an identifier. Sign-in by identifier no longer exists — the device proves possession of a key that never leaves it. Refusals stay distinguishable: unreadable link, expired token, rejected token.
+
 > **03 · Onboarding** · desktop (Windows / Linux / macOS) · Material 3 · window 1440×900
 
 **Purpose.** Sign in with an ID on desktop — a centered card on an empty window.

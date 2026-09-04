@@ -13,6 +13,7 @@ import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/repository/log_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
@@ -106,7 +107,6 @@ void main() {
     await repository.signIn(identifier: link);
 
     verifyNever(session.updateLabel(label: anyNamed('label')));
-    verifyNever(session.markLabelDirty());
     verifyNever(session.setOnboardingComplete(label: anyNamed('label')));
   });
 
@@ -236,6 +236,24 @@ void main() {
       verifyNever(session.setOnboardingComplete());
     });
 
+    test('a failure puts no token and no key seed into the log', () async {
+      // A token in a log is still a usable pairing credential, and a
+      // FormatException from a base64 decode carries its source in the message
+      // - which here would be the link or the seed (Principle I, FR-035).
+      final logs = <String>[];
+      final logger = _CapturingLog(logs);
+      getIt.registerSingleton<LogRepository>(logger);
+      when(
+        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
+      ).thenThrow(const FormatException('Invalid character', 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8='));
+
+      await repository.signIn(identifier: link);
+
+      final written = logs.join('\n');
+      expect(written, isNot(contains('AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=')));
+      expect(written, isNot(contains(link.split('#').last)));
+    });
+
     test('an outcome the server did not state is not treated as an outcome', () async {
       // An older server, or a frame without the field. Guessing false steals a
       // newcomer's naming step; guessing true overwrites a returning person's
@@ -251,4 +269,17 @@ void main() {
       verifyNever(session.setOnboardingComplete());
     });
   });
+}
+
+/// Records what the app writes, so a test can assert what it does NOT write.
+class _CapturingLog implements LogRepository {
+  _CapturingLog(this.lines);
+
+  final List<String> lines;
+
+  @override
+  void debug({Object? target, required String message}) => lines.add(message);
+
+  @override
+  void error({Object? target, required Object error, StackTrace? stackTrace}) => lines.add(error.toString());
 }
