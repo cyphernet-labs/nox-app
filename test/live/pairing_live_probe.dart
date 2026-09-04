@@ -10,6 +10,7 @@ import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/repository/app/auth_repository.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/device/device_repository.dart';
+import 'package:nox_app/general/pairing/pairing_link.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Drives the REAL client code against a running `noxd`, which is the gap the
@@ -61,5 +62,31 @@ void main() {
     final invite = await devices.inviteDevice();
     stdout.writeln('INVITE: ${invite.hasData ? 'ok' : invite.exception}');
     expect(invite.hasData, isTrue);
+
+    // The link a person carries to their other device has to be dialable from
+    // there. A server bound to a wildcard used to put loopback in it, which is
+    // reachable from this machine and nowhere else.
+    final parsed = PairingLink.parse(invite.data!);
+    stdout.writeln('INVITE LINK: ${parsed.authority}');
+    expect(parsed.authority, (await session.serverAddress()).data);
+
+    // A rename travels as its own command now. The reply carries the name back,
+    // which is what proves it landed rather than being accepted locally.
+    final renamed = await devices.setLabel(label: 'LiveBobbi');
+    stdout.writeln('RENAME: ${renamed.hasData ? 'ok' : renamed.exception}');
+    expect(renamed.hasData, isTrue);
+
+    // Signing out revokes this device's own key, so the key stops being a way
+    // in rather than merely being forgotten here.
+    final out = await auth.logout();
+    stdout.writeln('LOGOUT: ${out.hasData ? 'ok' : out.exception}');
+    expect(out.hasData, isTrue);
+    expect((await session.readSession()).data, isNull);
+    expect((await session.serverAddress()).data, isNull);
+
+    // And the key really is gone on the server: the same link cannot be reused,
+    // because the token was spent - a fresh pairing needs a fresh one.
+    final again = await auth.signIn(identifier: link);
+    stdout.writeln('REUSE: ${again.hasData ? 'accepted' : again.exception}');
   }, timeout: const Timeout(Duration(seconds: 90)));
 }

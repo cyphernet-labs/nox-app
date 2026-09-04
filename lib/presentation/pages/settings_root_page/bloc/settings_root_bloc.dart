@@ -93,9 +93,10 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
     if (devices != null) {
       final sent = await devices.setLabel(label: draft);
       if (!sent.hasData) {
-        // Keep the edit open on the OLD name. Nothing was saved anywhere, so
-        // nothing is claimed.
-        emit(state.copyWith(draftName: state.name, editing: true, status: SettingsNameStatus.idle));
+        // Keep the edit open on the OLD name - nothing was saved anywhere, so
+        // nothing is claimed - and SAY so. Silence here left Enter looking
+        // broken: the field simply reverted and nothing explained why.
+        emit(state.copyWith(draftName: state.name, editing: true, status: SettingsNameStatus.saveFailed));
         return;
       }
     }

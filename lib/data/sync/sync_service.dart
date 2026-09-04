@@ -115,6 +115,13 @@ class SyncService {
         await authRepository.logout(forced: true);
         return;
       }
+      // A rename made on another device of this person. Ahead of the cursor
+      // guard for the same reason as the revocation: seq 0 is at or below every
+      // cursor, so the duplicate guard would drop it.
+      if (event.event == ServerEvent.identityUpdated) {
+        await _applyOwnLabel(event.data);
+        return;
+      }
       // Duplicates are allowed at the replay/live boundary (§3) — the cursor is
       // what tells them apart, so anything at or below it has been applied.
       if (event.seq <= await _syncRepository.getCursor()) return;
@@ -136,6 +143,24 @@ class SyncService {
       _halted = true;
       logRepository.error(target: this, error: error, stackTrace: stackTrace);
     }
+  }
+
+  /// Takes a rename made from another device of this person.
+  ///
+  /// The author id is unchanged and is passed through rather than re-read: this
+  /// event says nothing about it, and writing a guess there would mark
+  /// strangers' messages as this user's own.
+  Future<void> _applyOwnLabel(Map<String, dynamic> data) async {
+    final label = data['label'];
+    if (label is! String || label.isEmpty) return;
+    final session = await sessionRepository.readSession();
+    final authorId = session.data?.authorId;
+    // No session, or no id yet: nothing to attach the name to. A device that
+    // has not paired is not this person, and stamping a name on it would hand
+    // the next person to sign in somebody else's.
+    if (authorId == null || authorId.isEmpty) return;
+    logRepository.debug(target: this, message: 'sync: the label changed on another device');
+    await sessionRepository.adoptServerIdentity(authorId: authorId, label: label);
   }
 
   Future<void> _applyChat(Map<String, dynamic> data) async {

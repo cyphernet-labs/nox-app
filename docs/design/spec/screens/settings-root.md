@@ -111,7 +111,7 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 | Q9 | Loading state ID | `CircularProgressIndicator` в позиции ID |
 | — | Раскрытие ID | Text wrap (monospace) в одну колонку; toggle `Show` / `Hide` |
 | — | QR sheet | QR на светлом фоне (сканируем в обеих темах), без raw-ID текстом, drag-handle, wrap-height |
-| — | Inline-name-edit | Save по Enter/Done/blur при валидном; invalid/taken — остаётся в edit; пустое → не меняет имя |
+| — | Inline-name-edit | Save по Enter/Done/blur при валидном; invalid — остаётся в edit; отказ сервера — остаётся в edit с сообщением; пустое → не меняет имя |
 | — | Logout-loading | Спиннер в кнопке диалога; диалог модален до перехода в 1.1 |
 
 ## Десктоп-раскладка (этап M3, сверено с корпусом)

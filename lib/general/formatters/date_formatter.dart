@@ -44,6 +44,19 @@ class DateFormatter {
     return _dateTail(when, ref, l10n);
   }
 
+  /// A moment precise enough to tell two devices apart, short enough for one
+  /// line: `8 Jun 14:32` within the current year, `8 Jun 2025` beyond it.
+  ///
+  /// The time is what does the work — the reason a moment is shown at all is
+  /// that two devices of the same platform, paired on the same day, are
+  /// otherwise identical rows. On something paired a year ago the minute is
+  /// noise, and the year is what places it.
+  static String momentShort(DateTime when, {required AppLocalizations l10n, DateTime? now}) {
+    final ref = now ?? AppClock.now();
+    if (when.year != ref.year) return DateFormat('d MMM y', l10n.localeName).format(when);
+    return '${DateFormat('d MMM', l10n.localeName).format(when)} ${_time.format(when)}';
+  }
+
   /// Shared date tail: `d MMM` within the same year, otherwise `d MMM y`. Month names
   /// are localized to the active UI locale (en → "8 Jun", uk → "8 черв.") — the tail
   /// must match the surrounding relative-time words, which are already localized.

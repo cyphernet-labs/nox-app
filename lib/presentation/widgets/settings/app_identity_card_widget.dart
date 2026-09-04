@@ -145,7 +145,9 @@ class AppIdentityCardWidget extends StatelessWidget {
     return Row(
       children: [
         Expanded(
-          child: Text(maskedId, style: textTheme.titleMedium?.copyWith(color: colorScheme.onSurface)),
+          // An em dash rather than a blank line: the id is simply not known
+          // yet, and an empty row reads as a rendering fault.
+          child: Text(maskedId.isEmpty ? '—' : maskedId, style: textTheme.titleMedium?.copyWith(color: colorScheme.onSurface)),
         ),
         ...actions,
       ],

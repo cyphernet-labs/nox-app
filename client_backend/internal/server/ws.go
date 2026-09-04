@@ -22,6 +22,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 
 	logger := s.logger.With("conn", randomConnID())
 	c := newClient(s, conn, r.Context(), logger)
+	c.requestHost = r.Host
 	s.track(c)
 	defer s.untrack(c)
 	defer c.close(websocket.StatusNormalClosure, "")

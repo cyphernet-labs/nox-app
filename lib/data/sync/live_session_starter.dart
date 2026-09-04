@@ -55,6 +55,9 @@ class LiveSessionStarter {
 
   /// Brings the channel up. A build with no configured address stays on the
   /// cached data and never opens a socket.
+  /// Waits out a transient storage failure before trying to start again.
+  Timer? _retry;
+
   Future<void> start() async {
     // The address comes from the PAIRING LINK, not from the build. A
     // compile-time address would mean pairing with the server a person
@@ -66,7 +69,11 @@ class LiveSessionStarter {
       // build-time address would point a paired device at a different server,
       // whose journal id differs - and the world-change wipe would then throw
       // away everything this person has.
-      logRepository.debug(target: this, message: 'sync: server address unreadable, start deferred');
+      // Deferred, not abandoned: without a retry a single transient keychain
+      // failure would leave the app offline until it is restarted.
+      logRepository.debug(target: this, message: 'sync: server address unreadable, retrying');
+      _retry?.cancel();
+      _retry = Timer(const Duration(seconds: 2), () => unawaited(start()));
       return;
     }
     final apiUrl = paired.data ?? _config.config.apiUrl;
@@ -101,6 +108,8 @@ class LiveSessionStarter {
   /// Tears the channel down. Called before the logout wipe so live events
   /// cannot repopulate the stores it is in the middle of emptying.
   Future<void> stop() async {
+    _retry?.cancel();
+    _retry = null;
     await _phaseSub?.cancel();
     _phaseSub = null;
     await _socket.stop();
@@ -211,17 +220,10 @@ class LiveSessionStarter {
     // without it — every message the user sent would come back looking like
     // someone else's.
     await _session.adoptServerIdentity(authorId: identity.id, label: identity.label);
-    // A person the server already knows has nothing left to onboard. This is
-    // the only path that can rescue a device left sitting on the naming screen
-    // while the same person named themselves elsewhere - and it advances the
-    // flag only, so a reconnect before naming cannot skip the step.
-    final created = identity.created;
-    if (created != null) {
-      final advanced = await _session.advanceOnboardingIfKnown(created: created);
-      // Re-derive only when the flag actually moved: the navigation spine
-      // swaps the root route off the naming screen from this.
-      if (advanced.data ?? false) await appStateRepository.fetchAppState();
-    }
+    // The onboarding rescue that used to live here is gone. The greeting no
+    // longer carries `created` - the outcome moved to the pair reply (§3),
+    // where the decision is actually taken - so this could never fire again,
+    // and code that reads as if it still works is worse than none.
   }
 
   /// The cached rows and the cursor describe ONE world. Mock seqs are minted

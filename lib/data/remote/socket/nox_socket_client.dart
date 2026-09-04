@@ -303,8 +303,9 @@ class NoxSocketClient {
         // would push it back over a rename made from another device.
         'label': ?credentials.label,
         // The public half and a signature over the challenge - never the seed.
-        // A device that has not paired yet presents neither and speaks as an
-        // ephemeral identity, which the contract requires be accepted.
+        // Both are always present here: a device that has not paired yet does
+        // not reach this point at all, because there is no anonymous greeting
+        // any more and the server refuses one.
         'device_key': ?deviceKey,
         'signature': ?signature,
       });

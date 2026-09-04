@@ -188,7 +188,7 @@ func (c *client) handleDeviceInvite(cmd protocol.Command) {
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to read the server identity"))
 		return
 	}
-	link, err := BuildPairingLink(listenAddress(c.srv.cfg.Addr), id.PublicKey, token)
+	link, err := BuildPairingLink(inviteAddress(c.srv.cfg.Addr, c.requestHost), id.PublicKey, token)
 	if err != nil {
 		c.logger.Error("build invite link", "err", err)
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to build the link"))
@@ -228,7 +228,12 @@ func (c *client) handleIdentitySetLabel(cmd protocol.Command) {
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to set the label"))
 		return
 	}
-	c.identity.Label = label
-	c.label = label
+	// Every live connection of this person, not just the one that asked. The
+	// name is copied into `messages.author_label` at send time and frozen
+	// there, so a second device left with a stale identity would stamp the OLD
+	// name into history permanently. The others are told as well: a stable
+	// socket never re-greets, so without the event they would show the old name
+	// until something happened to reconnect them.
+	c.srv.refreshLabel(c.identity.UserID, label, c)
 	c.sendFrame(protocol.OKReply(cmd.ID, setLabelReply{Label: label}))
 }

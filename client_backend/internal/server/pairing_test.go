@@ -238,6 +238,41 @@ func TestSetLabelRenamesWithoutReconnecting(t *testing.T) {
 	}
 }
 
+// US2 scenario 5: the OTHER device of the same person has to see the new name.
+// A stable socket never re-greets, so before this event a second device carried
+// the old name for as long as it stayed connected - and stamped it into message
+// history, which freezes the name at send time.
+func TestARenameReachesTheOtherDeviceOfTheSamePerson(t *testing.T) {
+	ts, srv := newTestServer(t)
+	dev, _ := claimDevice(t, ts, srv)
+
+	first := dialWS(t, ts, srv)
+	first.expectGreeting()
+	first.greet(t, 1, dev, "")
+	invite := first.expectOKAfter(2, `{"id":2,"cmd":"device.invite","data":{}}`)
+	var reply struct {
+		Token string `json:"token"`
+	}
+	mustUnmarshal(t, mustRaw(t, invite), &reply)
+	secondKey, _ := pairDevice(t, ts, reply.Token)
+
+	second := dialWS(t, ts, srv)
+	second.expectGreeting()
+	second.greet(t, 1, secondKey, "")
+
+	first.expectOKAfter(3, `{"id":3,"cmd":"identity.setLabel","data":{"label":"Anna"}}`)
+
+	_, name, data := second.expectEvent()
+	if name != protocol.EventIdentityUpdated {
+		t.Fatalf("event = %s, want %s", name, protocol.EventIdentityUpdated)
+	}
+	var label string
+	mustUnmarshal(t, data["label"], &label)
+	if label != "Anna" {
+		t.Fatalf("label = %q, want Anna", label)
+	}
+}
+
 // expectErrCode reads the reply for id and returns its error code.
 func expectErrCode(t *testing.T, c *wsClient, id int) string {
 	t.Helper()

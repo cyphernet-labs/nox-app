@@ -167,6 +167,10 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - The claim link is printed to the log and nowhere else. A local HTTP page
   serving the QR would hand ownership to everyone on the network while the
   transport is not TLS.
+- The CLAIM link falls back to loopback under a wildcard bind (it is read on the
+  machine), while an INVITE link uses the address the requesting device dialled
+  (its `Host` header). The two differ because an invite is carried to another
+  device, and loopback there is a link nothing can dial.
 - `users.label` is neither unique nor validated (owner, 2026-09-02): a
   greeting may never be refused because of a name, since the client
   retries a refused greeting forever.

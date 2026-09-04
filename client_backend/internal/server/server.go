@@ -197,6 +197,44 @@ func (s *Server) dropDevice(deviceKey string) {
 	}
 }
 
+// refreshLabel updates the cached identity of every live connection of a
+// person after a rename.
+//
+// Under the same lock as the writes it touches. Without it the renaming device
+// is the only one that knows: another live socket keeps the identity it cached
+// at greeting time and stamps the old name into `messages.author_label`, which
+// is frozen at send time and never follows a rename.
+func (s *Server) refreshLabel(userID, label string, origin *client) {
+	s.mu.Lock()
+	notify := make([]*client, 0, 1)
+	for c := range s.conns {
+		if c.identity.UserID == userID {
+			c.identity.Label = label
+			c.label = label
+			if c != origin {
+				notify = append(notify, c)
+			}
+		}
+	}
+	s.mu.Unlock()
+
+	if len(notify) == 0 {
+		return
+	}
+	payload, err := json.Marshal(map[string]string{"label": label})
+	if err != nil {
+		// Cannot fail for a map of strings; the in-memory state above is
+		// already correct either way, and a missed frame costs a stale name
+		// until the next greeting rather than anything unrecoverable.
+		return
+	}
+	// Outside the lock: sendFrame writes to a bounded queue, and a full one
+	// under s.mu would hold up every other connection of every other person.
+	for _, c := range notify {
+		c.sendFrame(protocol.Event{Seq: 0, Event: protocol.EventIdentityUpdated, Data: payload})
+	}
+}
+
 // setDeviceKey records which key a connection authenticated with, under the
 // same lock dropDevice reads it through.
 func (s *Server) setDeviceKey(c *client, key string) {

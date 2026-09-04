@@ -196,14 +196,41 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 		if claimedAt.Valid && devices > 0 {
 			return Identity{}, ErrTokenInvalid
 		}
-		id, err = insertUser(ctx, tx, "", now)
+
+		// Re-claiming a server that lost every device attaches to the person
+		// who is already there rather than minting a second one. A server holds
+		// one person until invite-user arrives (Q15), and a new identity would
+		// orphan the old one: their messages keep an author_id nobody can sign
+		// in as, and "the identity survives its devices" would be true on paper
+		// and worthless in practice.
+		existing, found, err := onlyUser(ctx, tx)
 		if err != nil {
 			return Identity{}, err
 		}
-		id.Created = true
+		if found {
+			id = existing
+			// Not Created: this person existed before this operation, so there
+			// is no naming step ahead - they already have a name.
+		} else {
+			id, err = insertUser(ctx, tx, "", now)
+			if err != nil {
+				return Identity{}, err
+			}
+			id.Created = true
+		}
 		if _, err := tx.ExecContext(ctx,
 			"UPDATE server_identity SET claimed_at = ? WHERE id = 1 AND claimed_at IS NULL", now); err != nil {
 			return Identity{}, fmt.Errorf("mark claimed: %w", err)
+		}
+		// Every OTHER unused claim token dies with this one. They were printed
+		// to the server log on earlier starts, and a log is not a secret store:
+		// without this, each of them comes back to life the moment the device
+		// count drops to zero again, and the oldest scrap of terminal scrollback
+		// becomes a way in.
+		if _, err := tx.ExecContext(ctx,
+			"UPDATE pair_tokens SET used_at = ? WHERE kind = ? AND used_at IS NULL AND token <> ?",
+			now, TokenClaim, token); err != nil {
+			return Identity{}, fmt.Errorf("retire other claim tokens: %w", err)
 		}
 
 	case TokenInviteDevice:
@@ -231,23 +258,45 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 // device key is asking. A different key presenting a used token is an ordinary
 // replay and stays refused.
 //
-// Created is deliberately false on this path: the person exists by now, and the
-// device is asking again because it never heard the first answer. Saying
-// created would send a returning person through onboarding.
+// It answers exactly what the lost reply said, including `created`. Returning
+// false unconditionally would be a DIFFERENT answer from the one being
+// replayed: a claim that minted the person reported created, and a retry that
+// says otherwise walks the owner of a brand-new server straight past the
+// naming step, into the chats list under an auto-assigned User<random>.
 func pairedBy(ctx context.Context, tx *sql.Tx, token, deviceKey string) (Identity, bool, error) {
 	var id Identity
+	var kind string
 	err := tx.QueryRowContext(ctx, `
-		SELECT u.user_id, u.label
+		SELECT u.user_id, u.label, t.kind
 		FROM pair_tokens t
 		JOIN devices d ON d.device_key = ?
 		JOIN users u ON u.user_id = d.user_id
 		WHERE t.token = ? AND t.used_at IS NOT NULL`,
-		deviceKey, token).Scan(&id.UserID, &id.Label)
+		deviceKey, token).Scan(&id.UserID, &id.Label, &kind)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Identity{}, false, nil
 	}
 	if err != nil {
 		return Identity{}, false, fmt.Errorf("read pairing replay: %w", err)
+	}
+	// A claim is the only kind that brings a person into being, so replaying one
+	// reports created just as the lost reply did. An invite attaches a device to
+	// somebody who already existed.
+	id.Created = kind == TokenClaim
+	return id, true, nil
+}
+
+// onlyUser returns the single person a server holds, if it holds one. A server
+// serves one person until invite-user arrives (Q15); this is what lets a
+// re-claim reattach instead of orphaning them.
+func onlyUser(ctx context.Context, tx *sql.Tx) (Identity, bool, error) {
+	var id Identity
+	err := tx.QueryRowContext(ctx, "SELECT user_id, label FROM users ORDER BY created_at LIMIT 1").Scan(&id.UserID, &id.Label)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Identity{}, false, nil
+	}
+	if err != nil {
+		return Identity{}, false, fmt.Errorf("read existing person: %w", err)
 	}
 	return id, true, nil
 }

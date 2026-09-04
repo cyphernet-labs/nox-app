@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 )
 
 func isNoRows(err error) bool { return errors.Is(err, sql.ErrNoRows) }
@@ -61,8 +62,36 @@ func (s *Store) ListDevices(ctx context.Context, userID string) ([]Device, error
 // device: an identity has to survive losing every device, or recovery would
 // have nothing to reattach to.
 func (s *Store) RevokeDevice(ctx context.Context, deviceKey string) error {
-	if _, err := s.write.ExecContext(ctx, "DELETE FROM devices WHERE device_key = ?", deviceKey); err != nil {
+	tx, err := s.write.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin revoke device: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var userID string
+	err = tx.QueryRowContext(ctx, "SELECT user_id FROM devices WHERE device_key = ?", deviceKey).Scan(&userID)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		// Already gone. Nothing to revoke and nothing to retire.
+		return tx.Commit()
+	case err != nil:
+		return fmt.Errorf("read device before revoke: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, "DELETE FROM devices WHERE device_key = ?", deviceKey); err != nil {
 		return fmt.Errorf("revoke device: %w", err)
+	}
+	// Live invites of this person die with it. A revoked device may well have
+	// issued one minutes ago, and leaving it usable would let whoever holds
+	// that link walk straight back in - the revocation would have removed the
+	// key and left the door it opened.
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE pair_tokens SET used_at = ? WHERE user_id = ? AND used_at IS NULL",
+		time.Now().Unix(), userID); err != nil {
+		return fmt.Errorf("retire invites: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit revoke device: %w", err)
 	}
 	return nil
 }

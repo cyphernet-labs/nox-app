@@ -67,6 +67,7 @@
   "devicesInviteError": "Не вдалося створити запрошення.",
   "settingsYourIdLabel": "Ваш ID",
   "actionHide": "Сховати",
+  "settingsNameSaveError": "Не вдалося зберегти імʼя. Спробуйте ще раз.",
   "settingsAboutTitle": "Про застосунок",
   "loginSignIn": "Увійти",
   "loginIdLabel": "Посилання для звʼязування",

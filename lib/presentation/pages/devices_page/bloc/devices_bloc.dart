@@ -66,7 +66,12 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
 
   Future<void> _onInviteRequested(DevicesInviteRequested event, Emitter<DevicesState> emit) async {
     final repository = _repository;
-    if (repository == null) return;
+    if (repository == null) {
+      // No live channel in this build. Saying so beats a button that does
+      // nothing at all when tapped.
+      emit(state.copyWith(inviteFailed: true));
+      return;
+    }
     final result = await repository.inviteDevice();
     result.match<void>(
       onData: (link) => emit(state.copyWith(inviteLink: link, inviteFailed: false)),

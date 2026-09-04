@@ -69,6 +69,7 @@
   "@devicesLastSeen": {"placeholders": {"date": {"type": "String"}}},
   "settingsYourIdLabel": "Your ID",
   "actionHide": "Hide",
+  "settingsNameSaveError": "Couldn't save your name. Try again.",
   "settingsAboutTitle": "About",
   "loginSignIn": "Sign in",
   "loginIdLabel": "Pairing link",

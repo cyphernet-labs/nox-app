@@ -44,6 +44,11 @@ type client struct {
 	deviceKey string
 	// closeReason accompanies the close sentinel through the write queue.
 	closeReason string
+	// requestHost is the address this device dialled to get here, from the
+	// request's Host header. It is the only address the server knows to be
+	// reachable from somewhere other than the machine itself, which is what an
+	// invite link needs.
+	requestHost string
 	// identity is the person this connection speaks as, resolved once during
 	// the greeting. label mirrors identity.Label for the chat-creation path,
 	// which records a name rather than an id.

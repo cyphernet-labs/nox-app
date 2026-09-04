@@ -73,11 +73,9 @@ func BuildPairingLink(addr, serverKey, token string) (string, error) {
 // listenAddress turns a bind address into one a device can actually reach.
 //
 // A wildcard bind has no single right answer, so it falls back to loopback:
-// wrong for a phone on the same network, but honest and never a link that
-// cannot be dialled at all. ⚠️ An operator binding 0.0.0.0 therefore has to
-// hand out the link with the real address substituted; announcing the reachable
-// one needs a configured public address, which arrives with TLS and the
-// pinning work.
+// right for the claim link, which is printed on the machine itself and dialled
+// from it or read by whoever is sitting there. An INVITE link is a different
+// case and must not use this - see inviteAddress.
 func listenAddress(addr string) string {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -90,4 +88,44 @@ func listenAddress(addr string) string {
 	// produced "[[::1]]:8080", which this file's own parser then rejects - so
 	// a server bound to an IPv6 address printed no link at all.
 	return net.JoinHostPort(host, port)
+}
+
+// inviteAddress is the address to put in a link that will be carried to ANOTHER
+// device.
+//
+// listenAddress is wrong here whenever the server is bound to a wildcard: the
+// loopback it falls back to is reachable from the machine and from nowhere
+// else, so every invite issued by a server bound to 0.0.0.0 - the ordinary way
+// to run one for a household - produced a link no phone could dial. Nothing in
+// the config says which address is the reachable one, but the device asking for
+// the invite is connected over one that demonstrably is, and the Host header is
+// exactly that address.
+//
+// Trust: the header is written by the requesting device, which is already
+// paired and is asking for a link to show to itself. It cannot point anyone at
+// another server, because the link also carries THIS server's public key and a
+// token only this server will accept - a wrong host just yields a link that
+// does not connect.
+func inviteAddress(cfgAddr, requestHost string) string {
+	host, port, err := net.SplitHostPort(cfgAddr)
+	if err != nil {
+		return listenAddress(cfgAddr)
+	}
+	if host != "" && host != "0.0.0.0" && host != "::" {
+		// An explicitly configured address is a decision; keep it.
+		return listenAddress(cfgAddr)
+	}
+	if requestHost == "" {
+		return listenAddress(cfgAddr)
+	}
+	reachedHost, reachedPort, err := net.SplitHostPort(requestHost)
+	if err != nil {
+		// No port in the header: the whole value is the host, and the port is
+		// the one this server is actually listening on.
+		reachedHost, reachedPort = requestHost, port
+	}
+	if reachedHost == "" || reachedPort == "" {
+		return listenAddress(cfgAddr)
+	}
+	return net.JoinHostPort(reachedHost, reachedPort)
 }

@@ -124,8 +124,13 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
   }
 
   void _copyId() {
+    final id = _bloc.state.rawId;
+    // Nothing to copy is not a successful copy. The id is absent until the
+    // server has stated one, and confirming an empty clipboard write leaves
+    // somebody pasting nothing and wondering where it went.
+    if (id.isEmpty) return;
     // Fire-and-forget the clipboard write; the confirmation is instant.
-    unawaited(Clipboard.setData(ClipboardData(text: _bloc.state.rawId)));
+    unawaited(Clipboard.setData(ClipboardData(text: id)));
     showAppSnackBar(context, text: context.l10n.copiedToClipboard);
   }
 
@@ -318,6 +323,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
   // SettingsRootState.nameError; the BLoC state no longer holds localized strings).
   String? _nameError(SettingsNameStatus status) => switch (status) {
     SettingsNameStatus.invalidCharset => context.l10n.usernameCharsetError,
+    SettingsNameStatus.saveFailed => context.l10n.settingsNameSaveError,
     _ => null,
   };
 

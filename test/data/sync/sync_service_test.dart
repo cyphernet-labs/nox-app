@@ -13,6 +13,7 @@ import 'package:nox_app/data/mapper/chat/message_wire_mapper.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/sync/sync_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/repository/app/app_state_repository.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
@@ -116,12 +117,20 @@ void main() {
     await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
     expect((await session.readSession()).data, isNotNull, reason: 'precondition: this device is paired');
 
+    final expiries = <bool>[];
+    final sub = getIt<AppStateRepository>().watchAppState().listen((r) => expiries.add(r.data?.sessionExpired ?? false));
+    addTearDown(sub.cancel);
+
     final socket = await connected(cursor: 5);
     socket.pushEvent(seq: 0, event: 'device.revoked', data: const {'device_key': 'k'});
     await settle();
     await settle();
 
     expect((await session.readSession()).data, isNull, reason: 'a revoked device keeps nothing');
+    // And the person is told why: a forced logout carries the expiry reason,
+    // which is what raises the notice instead of dropping them at the pairing
+    // screen with no explanation.
+    expect(expiries, contains(true));
   });
 
   test('a revocation echo of our OWN sign-out is ignored', () async {
@@ -130,8 +139,45 @@ void main() {
     // session expired when they simply signed out.
     final socket = await connected(cursor: 5);
 
-    // No session: this is what a sign-out has just left behind.
+    // The session being empty is the SETUP, not the assertion: a sign-out has
+    // just left it that way. What must not happen is the second, forced logout
+    // - so what is watched is the expiry reason, which is the only thing that
+    // distinguishes "you signed out" from "your session expired".
+    final expiries = <bool>[];
+    final sub = getIt<AppStateRepository>().watchAppState().listen((r) => expiries.add(r.data?.sessionExpired ?? false));
+    addTearDown(sub.cancel);
+    await settle();
+    expiries.clear();
+
     socket.pushEvent(seq: 0, event: 'device.revoked', data: const {'device_key': 'k'});
+    await settle();
+    await settle();
+
+    expect(expiries, isNot(contains(true)), reason: 'signing out is not an expiry');
+  });
+
+  test('a rename made on another device lands here without a reconnect', () async {
+    final session = getIt<SessionRepository>();
+    await session.saveIdentifier(identifier: 'tok', onboardingComplete: true, label: 'Anna');
+    await session.adoptServerIdentity(authorId: 'u_1', label: 'Anna');
+
+    final socket = await connected(cursor: 5);
+    socket.pushEvent(seq: 0, event: 'identity.updated', data: const {'label': 'Bobbi'});
+    await settle();
+    await settle();
+
+    final after = (await session.readSession()).data;
+    expect(after?.label, 'Bobbi');
+    // The id is untouched: this event says nothing about it, and a guess there
+    // would mark strangers' messages as this user's own.
+    expect(after?.authorId, 'u_1');
+  });
+
+  test('a rename arriving before anyone has paired is ignored', () async {
+    // Nothing to attach a name to. Stamping one on an empty session would hand
+    // the next person to sign in somebody else's.
+    final socket = await connected(cursor: 5);
+    socket.pushEvent(seq: 0, event: 'identity.updated', data: const {'label': 'Bobbi'});
     await settle();
 
     expect((await getIt<SessionRepository>().readSession()).data, isNull);

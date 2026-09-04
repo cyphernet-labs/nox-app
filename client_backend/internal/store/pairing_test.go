@@ -290,8 +290,11 @@ func TestARetryFromTheSameDeviceGetsTheSameAnswer(t *testing.T) {
 	if again.UserID != first.UserID {
 		t.Fatalf("retry resolved to %q, want %q", again.UserID, first.UserID)
 	}
-	if again.Created {
-		t.Fatal("a retry must not report having created the person - that sends them through onboarding")
+	// The SAME answer the lost reply carried, `created` included. Saying false
+	// here would walk the owner of a brand-new server past the naming step and
+	// into the chats list under an auto-assigned User<random>.
+	if again.Created != first.Created {
+		t.Fatalf("retry reported created=%v, want %v - a replay must repeat the answer, not invent one", again.Created, first.Created)
 	}
 
 	// A DIFFERENT key presenting the same spent token is an ordinary replay.
@@ -328,8 +331,21 @@ func TestAServerWithNoDevicesBecomesClaimableAgain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("re-claim: %v", err)
 	}
-	if back.UserID == owner.UserID {
-		t.Log("re-claim reused the existing person")
+	// The SAME person, not a second one. A new identity would orphan the old:
+	// their messages keep an author_id nobody can sign in as, and "the identity
+	// survives its devices" would be true on paper and worthless in practice.
+	if back.UserID != owner.UserID {
+		t.Fatalf("re-claim minted %q, want the existing person %q", back.UserID, owner.UserID)
+	}
+	if back.Created {
+		t.Fatal("reattaching to an existing person must not report created - they already have a name")
+	}
+	people, err := s.CountUsers(ctx)
+	if err != nil {
+		t.Fatalf("CountUsers: %v", err)
+	}
+	if people != 1 {
+		t.Fatalf("users = %d, want 1: a re-claim must not leave an orphan behind", people)
 	}
 
 	// And with a device present again, a further claim is refused as before.
@@ -339,5 +355,56 @@ func TestAServerWithNoDevicesBecomesClaimableAgain(t *testing.T) {
 	}
 	if _, err := s.Pair(ctx, second, "dev-other", "linux", 500); !errors.Is(err, ErrTokenInvalid) {
 		t.Fatalf("claim on a reachable server err = %v, want ErrTokenInvalid", err)
+	}
+}
+
+// A claim link is printed to the server log, and a log is not a secret store.
+// Every unused one has to die with the claim that succeeded, or the oldest
+// scrap of terminal scrollback becomes a way in the next time the device count
+// reaches zero.
+func TestASuccessfulClaimRetiresEveryOtherClaimToken(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	if _, err := s.EnsureServerIdentity(ctx); err != nil {
+		t.Fatalf("EnsureServerIdentity: %v", err)
+	}
+	stale, err := s.IssueClaimToken(ctx, 100)
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+	used, err := s.IssueClaimToken(ctx, 100)
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+	if _, err := s.Pair(ctx, used, "dev-phone", "ios", 100); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+
+	// Every device revoked: the server is claimable again.
+	if err := s.RevokeDevice(ctx, "dev-phone"); err != nil {
+		t.Fatalf("RevokeDevice: %v", err)
+	}
+	if _, err := s.Pair(ctx, stale, "dev-attacker", "linux", 200); !errors.Is(err, ErrTokenInvalid) {
+		t.Fatalf("an old printed claim token still works: %v", err)
+	}
+}
+
+// A revoked device may have issued an invite minutes ago. Leaving it usable
+// removes the key and leaves the door it opened.
+func TestRevokingADeviceRetiresTheInvitesItCouldHaveIssued(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	owner := claimPerson(t, s, "dev-phone")
+
+	invite, err := s.IssueDeviceInvite(ctx, owner.UserID, 200)
+	if err != nil {
+		t.Fatalf("IssueDeviceInvite: %v", err)
+	}
+	if err := s.RevokeDevice(ctx, "dev-phone"); err != nil {
+		t.Fatalf("RevokeDevice: %v", err)
+	}
+
+	if _, err := s.Pair(ctx, invite, "dev-new", "linux", 300); !errors.Is(err, ErrTokenInvalid) {
+		t.Fatalf("an invite from a revoked device still works: %v", err)
 	}
 }

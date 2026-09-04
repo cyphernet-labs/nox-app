@@ -105,6 +105,38 @@ void main() {
       expect(client.currentPhase, SessionPhase.catchingUp);
     });
 
+    test('an unpaired install holds the connection open instead of greeting', () async {
+      // The window `pair` runs in. Greeting here sends an unsigned hello, the
+      // server refuses it, and the refusal used to be read as a revocation -
+      // which wiped the key and address mid-pairing and bricked the install.
+      await client.start(url: url, credentialsProvider: () async => const GreetingCredentials.unpaired());
+      final socket = factory.latest;
+      socket.pushGreeting();
+      await settle();
+
+      expect(socket.commandNamed('session.hello'), isNull, reason: 'nothing to greet with, so nothing is sent');
+      expect(socket.closed, isFalse, reason: 'the connection is what pair needs');
+    });
+
+    test('a refused greeting tells the app, instead of retrying forever', () async {
+      const seed = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=';
+      var rejected = false;
+      client.onUnauthenticated = () => rejected = true;
+      await client.start(
+        url: url,
+        credentialsProvider: () async => const GreetingCredentials(deviceSeed: seed),
+      );
+      final socket = factory.latest;
+      socket.pushGreeting();
+      await waitUntil(() => socket.commandNamed('session.hello') != null);
+      socket.reply(socket.sent.indexWhere((f) => f['cmd'] == 'session.hello'), ok: false, code: 'unauthenticated');
+      await waitUntil(() => rejected, reason: 'the app has to learn it is no longer paired');
+
+      // Not a reconnect loop: the peer will keep refusing, and whoever owns the
+      // session decides what happens next.
+      expect(client.currentPhase, SessionPhase.unsupported);
+    });
+
     test('the greeting carries the public key and a signature, and never the seed', () async {
       const seed = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=';
       final socket = await connect(cursor: 3, deviceSeed: seed);

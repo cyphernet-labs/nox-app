@@ -1,12 +1,19 @@
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
+import 'package:mockito/annotations.dart';
+import 'package:mockito/mockito.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
+import 'package:nox_app/domain/repository/base/repository_result.dart';
+import 'package:nox_app/domain/repository/device/device_repository.dart';
+import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/presentation/pages/settings_root_page/bloc/settings_root_bloc.dart';
 
 import '../../../../utils/fake_session_repository.dart';
+import 'settings_root_bloc_test.mocks.dart';
 
+@GenerateMocks([DeviceRepository])
 void main() {
   group('SettingsRootBloc', () {
     setUp(registerFakeSession);
@@ -108,6 +115,59 @@ void main() {
         expect(bloc.state.rawId, isEmpty);
       },
     );
+
+    group('the rename reaches the server before it is shown as saved', () {
+      late MockDeviceRepository devices;
+
+      setUp(() {
+        provideDummy<RepositoryResult<bool>>(const RepositoryResult<bool>.success(data: true));
+        devices = MockDeviceRepository();
+        getIt.allowReassignment = true;
+        getIt.registerSingleton<DeviceRepository>(devices);
+      });
+
+      test('a rejected rename keeps the old name and says why', () async {
+        when(
+          devices.setLabel(label: anyNamed('label')),
+        ).thenAnswer((_) async => const RepositoryResult<bool>.error(exception: RepositoryException.connection));
+        await signIn('Alice');
+        final bloc = SettingsRootBloc()..add(const SettingsRootEvent.initialize());
+        addTearDown(bloc.close);
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+
+        bloc
+          ..add(const SettingsRootEvent.nameEditStarted())
+          ..add(const SettingsRootEvent.nameChanged('Bobbi'));
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        bloc.add(const SettingsRootEvent.nameSubmitted());
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+
+        // Nothing was saved anywhere, so nothing is claimed - and the edit says
+        // so rather than reverting in silence, which left Enter looking broken.
+        expect(bloc.state.name, 'Alice');
+        expect(bloc.state.editing, isTrue);
+        expect(bloc.state.status, SettingsNameStatus.saveFailed);
+      });
+
+      test('an accepted rename is stored only after the server has it', () async {
+        when(devices.setLabel(label: anyNamed('label'))).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
+        await signIn('Alice');
+        final bloc = SettingsRootBloc()..add(const SettingsRootEvent.initialize());
+        addTearDown(bloc.close);
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+
+        bloc
+          ..add(const SettingsRootEvent.nameEditStarted())
+          ..add(const SettingsRootEvent.nameChanged('Bobbi'));
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        bloc.add(const SettingsRootEvent.nameSubmitted());
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+
+        verify(devices.setLabel(label: 'Bobbi')).called(1);
+        expect(bloc.state.name, 'Bobbi');
+        expect(bloc.state.editing, isFalse);
+      });
+    });
 
     test('a valid confirmed rename persists the new label to the session', () async {
       await signIn('Alice');

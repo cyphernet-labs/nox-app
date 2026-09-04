@@ -140,7 +140,8 @@ class _DeviceRow extends StatelessWidget {
       // identical across five rows, and a person has to recognise their own.
       title: Text(device.isCurrent ? '${_platformName(device.platform)} · ${l10n.devicesCurrent}' : _platformName(device.platform)),
       subtitle: Text(
-        '${l10n.devicesPairedAt(DateFormatter.short(device.pairedAt))} · ${l10n.devicesLastSeen(DateFormatter.short(device.lastSeenAt))}',
+        '${l10n.devicesPairedAt(DateFormatter.momentShort(device.pairedAt, l10n: l10n))} · '
+        '${l10n.devicesLastSeen(DateFormatter.momentShort(device.lastSeenAt, l10n: l10n))}',
       ),
       trailing: TextButton(onPressed: onRevoke, child: Text(l10n.devicesRevoke)),
     );

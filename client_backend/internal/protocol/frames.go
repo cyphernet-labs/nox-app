@@ -95,6 +95,14 @@ const (
 // before its socket is closed.
 const EventDeviceRevoked = "device.revoked"
 
+// EventIdentityUpdated is delivered to the OTHER live connections of a person
+// who has just renamed. Like device.revoked it carries seq 0 and never enters
+// the event log: the log is global, and who a person is has no business waking
+// every other client (invariant 3). Without it a second device holds the old
+// name until it reconnects - and stamps that old name into message history,
+// which is frozen at send time.
+const EventIdentityUpdated = "identity.updated"
+
 // Chat is the wire model of contract §4 (022: preview served but unused by
 // any implemented command; it feeds chats.list in phase 023).
 type Chat struct {

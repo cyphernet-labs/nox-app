@@ -206,7 +206,17 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         // the orphaned key is revoked from another device - the accepted price
         // (contract §8A). A forced logout skips it: the server already refused
         // us, and asking it to revoke a key it does not know would be noise.
-        if (!forced) await _revokeOwnKey();
+        // Bounded: a person who chose to sign out must sign out, and the local
+        // wipe is what actually protects them. A server that does not answer
+        // gets a few seconds, not the full command timeout with the progress
+        // dialog already gone - the orphaned key is revoked from another
+        // device, which is the accepted price (§8A).
+        if (!forced) {
+          await _revokeOwnKey().timeout(
+            const Duration(seconds: 3),
+            onTimeout: () => logRepository.debug(target: this, message: 'logout: revoke did not answer, wiping anyway'),
+          );
+        }
         return _sessionRepository.clear();
       },
       sessionExpired: forced,
