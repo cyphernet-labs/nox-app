@@ -61,6 +61,16 @@ class _DevicesBodyState extends State<DevicesBody> {
               _InviteCard(link: state.inviteLink!, onDismiss: () => _bloc.add(const DevicesEvent.inviteDismissed())),
               SizedBox(height: AppSpacingTokens.s16),
             ],
+            // A silent failure here reads as a dead button: the person taps
+            // "Add a device" and nothing at all happens.
+            if (state.inviteFailed) ...[
+              Text(
+                context.l10n.devicesInviteError,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.error),
+              ),
+              SizedBox(height: AppSpacingTokens.s16),
+            ],
             if (state.current != null)
               AppSettingsGroupWidget(
                 children: [_DeviceRow(device: state.current!, onRevoke: () => _confirmRevoke(state.current!))],
@@ -152,7 +162,10 @@ class _InviteCard extends StatelessWidget {
             // Copying matters as much as the QR: Windows and Linux have no
             // camera, so text is the only path that works everywhere.
             SelectableText(link, style: Theme.of(context).textTheme.bodySmall, textAlign: TextAlign.center),
-            TextButton(onPressed: onDismiss, child: Text(context.l10n.actionCancel)),
+            // "Hide", not "Cancel": nothing here cancels the invite. The token
+            // stays usable for its ten minutes whatever this button says, and
+            // calling it Cancel would promise a revocation that does not happen.
+            TextButton(onPressed: onDismiss, child: Text(context.l10n.actionHide)),
           ],
         ),
       ),

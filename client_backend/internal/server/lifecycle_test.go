@@ -18,9 +18,9 @@ import (
 // outbound queue overflows: the connection must close with policy violation
 // while the healthy client keeps receiving with normal latency (SC-006).
 func TestStoryThreeSlowClientDropped(t *testing.T) {
-	ts, _ := newTestServer(t)
+	ts, srv := newTestServer(t)
 
-	anna := dialWS(t, ts)
+	anna := dialWS(t, ts, srv)
 	anna.expectGreeting()
 	anna.hello(1, `,"label":"Anna"`)
 	chatID := seedChat(t, anna, "flood")
@@ -28,11 +28,11 @@ func TestStoryThreeSlowClientDropped(t *testing.T) {
 		t.Fatalf("anna's own chat.created = %s/%d", name, seq)
 	}
 
-	observer := dialWS(t, ts)
+	observer := dialWS(t, ts, srv)
 	observer.expectGreeting()
 	observer.hello(1, `,"label":"Watcher"`)
 
-	slow := dialWS(t, ts)
+	slow := dialWS(t, ts, srv)
 	slow.expectGreeting()
 	slow.hello(1, `,"label":"Slow"`)
 	// From here on the slow client never reads; large frames fill its
@@ -77,9 +77,9 @@ func TestStoryThreeSlowClientDropped(t *testing.T) {
 // WebSocket connections receive the going-away close and the server exits
 // within the SC-005 window.
 func TestStoryThreeShutdownDeliversGoingAway(t *testing.T) {
-	ts, _ := newTestServer(t)
+	ts, srv := newTestServer(t)
 
-	c := dialWS(t, ts)
+	c := dialWS(t, ts, srv)
 	c.expectGreeting()
 	c.hello(1, ``)
 
@@ -134,7 +134,7 @@ func TestStoryThreeRestartIntegrity(t *testing.T) {
 			if dev == nil {
 				dev, _ = claimDevice(t, ts, srv)
 			}
-			c := dialWS(t, ts)
+			c := dialWS(t, ts, srv)
 			c.expectGreeting()
 			c.greet(t, 1, dev, "")
 			if i == 0 {
@@ -146,14 +146,14 @@ func TestStoryThreeRestartIntegrity(t *testing.T) {
 	}
 
 	// Final cycle: a fresh process replays the whole history in order.
-	ts, _, closeAll := openStack(t, path)
+	ts, srv, closeAll := openStack(t, path)
 	closed := false
 	defer func() {
 		if !closed {
 			closeAll()
 		}
 	}()
-	c := dialWS(t, ts)
+	c := dialWS(t, ts, srv)
 	c.expectGreeting()
 	cursor := helloCursor(t, c, 0, fmt.Sprintf(`,"device_key":%q,"signature":%q`, dev.pub, dev.sign(t, c.challenge)))
 	if want := int64(cycles + 1); cursor != want {

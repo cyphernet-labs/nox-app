@@ -89,24 +89,26 @@ func TestARevokedDeviceLooksExactlyLikeAnUnknownOne(t *testing.T) {
 	}
 }
 
-func TestAnonymousConnectionGetsAnIdentityAndWritesNoRow(t *testing.T) {
+func TestGreetingWithNoKeyIsRefused(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
+	claimPerson(t, s, "dev-phone")
 
-	id, err := s.ResolveIdentity(ctx, "", "", 100)
-	if err != nil {
-		t.Fatalf("ResolveIdentity: %v", err)
-	}
-	if !id.Ephemeral || id.UserID == "" {
-		t.Fatalf("identity = %+v, want an ephemeral one with an id", id)
+	// There is no anonymous identity any more. Serving one was justified by
+	// "the contract forbids refusing a greeting", which is a rule about the
+	// LABEL - and reading it as covering keys handed any connection that
+	// omitted the field a full session.
+	_, err := s.ResolveIdentity(ctx, "", "", 100)
+	if !errors.Is(err, ErrDeviceUnknown) {
+		t.Fatalf("err = %v, want ErrDeviceUnknown", err)
 	}
 
 	var people int
 	if err := s.read.QueryRowContext(ctx, "SELECT COUNT(1) FROM users").Scan(&people); err != nil {
 		t.Fatalf("count users: %v", err)
 	}
-	if people != 0 {
-		t.Fatalf("users = %d, want 0: an anonymous greeting writes nothing", people)
+	if people != 1 {
+		t.Fatalf("users = %d, want 1: a refused greeting writes nothing", people)
 	}
 }
 

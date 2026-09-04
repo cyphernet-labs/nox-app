@@ -32,12 +32,15 @@ type client struct {
 
 	// Owned by the read goroutine.
 	helloDone bool
+	// deviceKey is the key this connection authenticated with. Written by the
+	// read goroutine and read by ANOTHER connection's goroutine in
+	// Server.dropDevice, so both sides go through Server.mu - otherwise it is a
+	// data race, and a device revoked while it is greeting keeps a full session
+	// because the revoker saw an empty key.
 	// challenge is the 32 random bytes this connection handed the device in the
 	// greeting. Kept per connection so a signature captured on one connection
 	// cannot be replayed on another.
 	challenge string
-	// deviceKey is the key this connection authenticated with, so a revocation
-	// can find and cut off exactly the connections it applies to.
 	deviceKey string
 	// identity is the person this connection speaks as, resolved once during
 	// the greeting. label mirrors identity.Label for the chat-creation path,
@@ -67,6 +70,22 @@ func (c *client) close(code websocket.StatusCode, reason string) {
 		_ = c.conn.Close(code, reason)
 		c.cancel()
 	})
+}
+
+// closeAfterFlush lets the frames already queued reach the wire before the
+// socket goes away.
+//
+// A plain close races them: the revoked device is supposed to LEARN it was
+// revoked (contract §8A sends device.revoked immediately before the close), and
+// a close that overtakes the event leaves it guessing why it was dropped.
+func (c *client) closeAfterFlush(code websocket.StatusCode, reason string) {
+	for range 100 {
+		if len(c.out) == 0 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	c.close(code, reason)
 }
 
 // send queues an outbound frame from the read goroutine (greeting, replies,

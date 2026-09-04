@@ -86,10 +86,17 @@ func (c *client) handleSessionHello(cmd protocol.Command) {
 	}
 
 	deviceKey := strings.TrimSpace(req.DeviceKey)
+	// A greeting without a key is refused, not served. It used to be accepted
+	// on the grounds that "the contract forbids refusing a greeting" - but that
+	// rule (§3) is about the LABEL, and reading it as covering keys handed any
+	// connection that simply omitted the field a full session: the whole
+	// journal replayed, live events streamed, and the ability to post. Every
+	// connection proves possession now, or it gets nothing.
+	//
 	// The signature is checked BEFORE the lookup, so an unverified key never
 	// reaches the database as a search term.
-	if deviceKey != "" && !verifyChallenge(deviceKey, c.challenge, req.Signature) {
-		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrUnauthenticated, "signature does not verify"))
+	if deviceKey == "" || !verifyChallenge(deviceKey, c.challenge, req.Signature) {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrUnauthenticated, "a signed device key is required"))
 		return
 	}
 
@@ -110,7 +117,7 @@ func (c *client) handleSessionHello(cmd protocol.Command) {
 	}
 	c.identity = id
 	c.label = id.Label
-	c.deviceKey = deviceKey
+	c.srv.setDeviceKey(c, deviceKey)
 
 	journalID, err := c.srv.store.JournalID(c.ctx)
 	if err != nil {

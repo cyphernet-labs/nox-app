@@ -101,6 +101,17 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         final stored = await _sessionRepository.saveIdentifier(identifier: link.token, onboardingComplete: false);
         if (!stored.hasData) return stored;
         if (greeting.created!) _sessionRepository.noteOnboardingStartedHere();
+        // Re-greet, SIGNED. The connection `pair` ran on was greeted before
+        // this device existed to the server, so it still speaks as whoever
+        // greeted then; a message sent on it would carry that identity and come
+        // back looking like a stranger's on the sender's own screen. Storing
+        // the session first is what makes this greeting state a person.
+        try {
+          await handshake.greet();
+        } on Object {
+          // The pairing itself landed. A greeting that did not is an ordinary
+          // reconnect away, and the session is already valid.
+        }
         return _finishSignIn(onboardingComplete: !greeting.created!);
       } on PairingRefused catch (e) {
         await _sessionRepository.discardSignIn();
@@ -159,14 +170,16 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
   Future<RepositoryResult<bool>> completeOnboarding({String? label}) {
     return _deriveAfter(
       () => _sessionRepository.setOnboardingComplete(label: label),
-      // Reconnect so the chosen name actually reaches the server. Stage 1 has
-      // no `identity.setLabel` (contract §8.1 puts it in stage 2), so the
-      // greeting is the ONLY place a label is stated — and by now the socket
-      // has already greeted, under the server-assigned `User<random>`. Without
-      // this the user picks a name and everyone else keeps seeing the old one
-      // until something happens to reconnect the device.
+      // Send the chosen name to the server as its own command.
+      //
+      // It used to travel only in a greeting, so this reconnected the session.
+      // With the label gone from the greeting, a reconnect states nothing at
+      // all - the person picks a name, the server keeps the `User<random>` it
+      // assigned, and the next greeting overwrites the local choice with it.
       afterMutate: () async {
-        if (getIt.isRegistered<LiveSessionStarter>()) await getIt<LiveSessionStarter>().restart();
+        if (label == null || label.isEmpty) return;
+        final devices = getIt.isRegistered<DeviceRepository>() ? getIt<DeviceRepository>() : null;
+        if (devices != null) await devices.setLabel(label: label);
       },
     );
   }

@@ -5,6 +5,7 @@ import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
 import 'package:nox_app/data/sync/sync_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/data/remote/api_client.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
@@ -66,6 +67,11 @@ class LiveSessionStarter {
     // one configured address would otherwise look like one world, and the
     // device would carry rows with foreign seqs into the new one.
     await _wipeIfWorldChanged('live:$apiUrl');
+    // File bytes travel over REST, and they have to reach the SAME machine the
+    // socket does: an attachment uploaded to the build-time address would be
+    // referenced from a message on the paired server, where its id means
+    // nothing.
+    if (getIt.isRegistered<ApiClient>()) getIt<ApiClient>().initBase(address: apiUrl);
     _syncService.start();
     // The greeting is where the server states the payload limits and who we
     // are; both are authoritative and arrive again on every reconnect.

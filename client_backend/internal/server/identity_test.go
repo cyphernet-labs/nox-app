@@ -43,7 +43,7 @@ func TestIdentityOwnKeyReachesTheAuthorOnAllThreePaths(t *testing.T) {
 	ts, srv := newTestServer(t)
 	dev, _ := claimDevice(t, ts, srv)
 
-	anna := dialWS(t, ts)
+	anna := dialWS(t, ts, srv)
 	anna.expectGreeting()
 	anna.greet(t, 1, dev, `,"label":"Anna"`)
 	chatID := seedChat(t, anna, "three-paths")
@@ -64,7 +64,7 @@ func TestIdentityOwnKeyReachesTheAuthorOnAllThreePaths(t *testing.T) {
 		t.Fatalf("IssueDeviceInvite: %v", err)
 	}
 	second, _ := pairDevice(t, ts, invite)
-	live := dialWS(t, ts)
+	live := dialWS(t, ts, srv)
 	live.expectGreeting()
 	live.greet(t, 1, second, "")
 	sendText(t, anna, 4, chatID, "own-2", "second")
@@ -93,7 +93,7 @@ func TestIdentityOwnKeyReachesTheAuthorOnAllThreePaths(t *testing.T) {
 	}
 
 	// Path 4 - replay after a reconnect.
-	back := dialWS(t, ts)
+	back := dialWS(t, ts, srv)
 	back.expectGreeting()
 	helloCursor(t, back, 1, fmt.Sprintf(`,"device_key":%q,"signature":%q`, dev.pub, dev.sign(t, back.challenge)))
 	for range 2 {
@@ -107,32 +107,6 @@ func TestIdentityOwnKeyReachesTheAuthorOnAllThreePaths(t *testing.T) {
 	}
 }
 
-// TestIdentityStrangersDoNotSeeEachOthersSendKeys is the other half of the same
-// rule: the key is the author's alone.
-//
-// The stranger is an anonymous connection rather than a second paired person:
-// a stage-2 server holds exactly one person until invite-user arrives (Q15),
-// and an unpaired listener is the only other party that can exist today.
-func TestIdentityStrangersDoNotSeeEachOthersSendKeys(t *testing.T) {
-	ts, srv := newTestServer(t)
-	dev, _ := claimDevice(t, ts, srv)
-
-	anna := dialWS(t, ts)
-	anna.expectGreeting()
-	anna.greet(t, 1, dev, `,"label":"Anna"`)
-	chatID := seedChat(t, anna, "strangers")
-
-	stranger := dialWS(t, ts)
-	stranger.expectGreeting()
-	stranger.hello(1, "")
-
-	sendText(t, anna, 3, chatID, "annas-key", "hello")
-	_, _, data := stranger.expectEvent()
-	if got := eventKey(t, data); got != "" {
-		t.Fatalf("the stranger received anna's send key %q", got)
-	}
-}
-
 // TestIdentityRenameLeavesPastMessagesAlone is the second of the three defects
 // this feature exists to fix: with the author id and the display name being one
 // string, a rename used to make one's own history look like a stranger's.
@@ -140,14 +114,14 @@ func TestIdentityRenameLeavesPastMessagesAlone(t *testing.T) {
 	ts, srv := newTestServer(t)
 	dev, _ := claimDevice(t, ts, srv)
 
-	anna := dialWS(t, ts)
+	anna := dialWS(t, ts, srv)
 	anna.expectGreeting()
 	var before identity
 	mustUnmarshal(t, anna.greet(t, 1, dev, `,"label":"Anna"`)["identity"], &before)
 	chatID := seedChat(t, anna, "rename")
 	sendText(t, anna, 3, chatID, "old-1", "written as Anna")
 
-	renamed := dialWS(t, ts)
+	renamed := dialWS(t, ts, srv)
 	renamed.expectGreeting()
 	var after identity
 	mustUnmarshal(t, renamed.greet(t, 1, dev, `,"label":"Anna2"`)["identity"], &after)
@@ -181,30 +155,6 @@ func TestIdentityRenameLeavesPastMessagesAlone(t *testing.T) {
 	}
 	if labels["new-1"] != "Anna2" {
 		t.Fatalf("the new signature = %q, want Anna2", labels["new-1"])
-	}
-}
-
-// TestIdentityAnonymousConnectionIsServedAndLeavesNoRow covers the hand tools,
-// the live probe and anything else that speaks the protocol without presenting
-// credentials. Refusing them is forbidden; recording them is unbounded growth.
-func TestIdentityAnonymousConnectionIsServedAndLeavesNoRow(t *testing.T) {
-	ts, srv := newTestServer(t)
-
-	probe := dialWS(t, ts)
-	probe.expectGreeting()
-	data := probe.hello(1, ``)
-	var ident identity
-	mustUnmarshal(t, data["identity"], &ident)
-	if ident.ID == "" || ident.Label == "" {
-		t.Fatalf("identity = %+v, want a served identity", ident)
-	}
-
-	var users int
-	if err := readDB(t, srv).QueryRow("SELECT COUNT(1) FROM users").Scan(&users); err != nil {
-		t.Fatalf("count users: %v", err)
-	}
-	if users != 0 {
-		t.Fatalf("users = %d, want 0: a greeting alone must not write a person", users)
 	}
 }
 
@@ -281,7 +231,7 @@ func TestGreetingNeverReportsCreated(t *testing.T) {
 	ts, srv := newTestServer(t)
 	dev, _ := claimDevice(t, ts, srv)
 
-	c := dialWS(t, ts)
+	c := dialWS(t, ts, srv)
 	c.expectGreeting()
 	var ident identity
 	mustUnmarshal(t, c.greet(t, 1, dev, "")["identity"], &ident)
@@ -298,4 +248,32 @@ func ownerOf(t *testing.T, srv *Server, d *device) string {
 		t.Fatalf("DeviceOwner(%s): %v found=%v", d.pub, err, found)
 	}
 	return owner
+}
+
+// A greeting that presents no key at all is refused, exactly like one
+// presenting an unknown key.
+//
+// This replaces two tests that pinned the opposite. They rested on reading
+// "the server may not refuse a greeting" as covering keys, but that rule
+// (contract §3) is about the LABEL - and taking it for a key rule handed any
+// connection that simply omitted the field a full session: the whole journal
+// replayed, live events streamed, and the ability to post.
+func TestGreetingWithNoDeviceKeyIsRefused(t *testing.T) {
+	ts, srv := newTestServer(t)
+	pairedDevice(t, ts, srv) // somebody owns the server, and has history
+
+	c := dialWS(t, ts, srv)
+	c.expectGreeting()
+	c.send(`{"id":1,"cmd":"session.hello","data":{"schema":1,"since":0}}`)
+	if code := expectErrCode(t, c, 1); code != protocol.ErrUnauthenticated {
+		t.Fatalf("code = %q, want %q", code, protocol.ErrUnauthenticated)
+	}
+
+	people, err := srv.store.CountUsers(context.Background())
+	if err != nil {
+		t.Fatalf("count users: %v", err)
+	}
+	if people != 1 {
+		t.Fatalf("users = %d, want 1: a refused greeting writes nothing", people)
+	}
 }

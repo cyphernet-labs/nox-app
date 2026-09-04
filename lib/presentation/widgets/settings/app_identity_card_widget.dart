@@ -61,7 +61,10 @@ class AppIdentityCardWidget extends StatelessWidget {
               padding: EdgeInsets.symmetric(vertical: AppSpacingTokens.s12),
               child: const AppHairlineDividerWidget(),
             ),
-            Text(context.l10n.loginIdLabel, style: textTheme.labelMedium?.copyWith(color: colorScheme.onSurfaceVariant)),
+            // Its own string. It used to borrow the login screen's label, and
+            // when that became "Pairing link" this row started calling the
+            // person's public author id a pairing link.
+            Text(context.l10n.settingsYourIdLabel, style: textTheme.labelMedium?.copyWith(color: colorScheme.onSurfaceVariant)),
             SizedBox(height: AppSpacingTokens.s4),
             _idBlock(context),
           ],

@@ -49,7 +49,7 @@ func TestStoryOneChatsListOrderSearchAndGet(t *testing.T) {
 		t.Fatalf("seed message: %v", err)
 	}
 
-	anna := dialWS(t, ts)
+	anna := dialWS(t, ts, srv)
 	anna.expectGreeting()
 	anna.hello(1, `,"label":"Anna"`)
 
@@ -103,7 +103,7 @@ func TestStoryOneFirstPageLatencyOverLargeList(t *testing.T) {
 		}
 	}
 
-	c := dialWS(t, ts)
+	c := dialWS(t, ts, srv)
 	c.expectGreeting()
 	c.hello(1, ``)
 	start := time.Now()
@@ -124,9 +124,9 @@ func TestStoryOneFirstPageLatencyOverLargeList(t *testing.T) {
 }
 
 func TestStoryThreeRenameValidationNegatives(t *testing.T) {
-	ts, _ := newTestServer(t)
+	ts, srv := newTestServer(t)
 
-	c := dialWS(t, ts)
+	c := dialWS(t, ts, srv)
 	c.expectGreeting()
 	c.hello(1, ``)
 	chatID := seedChat(t, c, "valid")
@@ -172,10 +172,10 @@ func TestStoryThreeRenameLiveNoReorderAndReplay(t *testing.T) {
 		t.Fatalf("seed message: %v", err)
 	}
 
-	anna := dialWS(t, ts)
+	anna := dialWS(t, ts, srv)
 	anna.expectGreeting()
 	anna.hello(1, `,"label":"Anna"`)
-	bob := dialWS(t, ts)
+	bob := dialWS(t, ts, srv)
 	bob.expectGreeting()
 	bob.hello(1, `,"label":"Bob"`)
 
@@ -262,7 +262,7 @@ func TestStoryThreeRenameLiveNoReorderAndReplay(t *testing.T) {
 	}
 
 	// Replay: a reconnecting client receives chat.updated in log order.
-	lateBob := dialWS(t, ts)
+	lateBob := dialWS(t, ts, srv)
 	lateBob.expectGreeting()
 	lateBob.hello(1, `,"label":"Late","since":0`)
 	var seenChatUpdated bool
@@ -279,12 +279,12 @@ func TestStoryThreeRenameLiveNoReorderAndReplay(t *testing.T) {
 }
 
 func TestStoryThreeConcurrentRenameRace(t *testing.T) {
-	ts, _ := newTestServer(t)
+	ts, srv := newTestServer(t)
 
-	c1 := dialWS(t, ts)
+	c1 := dialWS(t, ts, srv)
 	c1.expectGreeting()
 	c1.hello(1, ``)
-	c2 := dialWS(t, ts)
+	c2 := dialWS(t, ts, srv)
 	c2.expectGreeting()
 	c2.hello(1, ``)
 

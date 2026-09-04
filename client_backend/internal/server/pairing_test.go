@@ -28,7 +28,7 @@ func TestPairClaimCreatesThePersonAndRefusesASecondClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueClaimToken: %v", err)
 	}
-	second := dialWS(t, ts)
+	second := dialWS(t, ts, srv)
 	second.expectGreeting()
 	other := newDevice(t)
 	second.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"device_key":%q,"platform":"test"}}`, token, other.pub))
@@ -45,7 +45,7 @@ func TestGreetingWithoutAValidSignatureIsRefused(t *testing.T) {
 	dev, _ := claimDevice(t, ts, srv)
 
 	t.Run("no signature at all", func(t *testing.T) {
-		c := dialWS(t, ts)
+		c := dialWS(t, ts, srv)
 		c.expectGreeting()
 		c.send(fmt.Sprintf(`{"id":1,"cmd":"session.hello","data":{"schema":1,"device_key":%q}}`, dev.pub))
 		if code := expectErrCode(t, c, 1); code != protocol.ErrUnauthenticated {
@@ -55,7 +55,7 @@ func TestGreetingWithoutAValidSignatureIsRefused(t *testing.T) {
 
 	t.Run("a signature from another key", func(t *testing.T) {
 		impostor := newDevice(t)
-		c := dialWS(t, ts)
+		c := dialWS(t, ts, srv)
 		c.expectGreeting()
 		// The real device's public key with somebody else's signature: this is
 		// what an intercepted key without the private half looks like.
@@ -70,7 +70,7 @@ func TestGreetingWithoutAValidSignatureIsRefused(t *testing.T) {
 		// Revoked, or a rebuilt store. The device cannot tell them apart and
 		// must not: both mean "this is not my server any more".
 		stranger := newDevice(t)
-		c := dialWS(t, ts)
+		c := dialWS(t, ts, srv)
 		c.expectGreeting()
 		c.send(fmt.Sprintf(`{"id":1,"cmd":"session.hello","data":{"schema":1,"device_key":%q,"signature":%q}}`,
 			stranger.pub, stranger.sign(t, c.challenge)))
@@ -86,7 +86,7 @@ func TestInviteAddsADeviceToTheSamePerson(t *testing.T) {
 	var owner identity
 	mustUnmarshal(t, claimed["identity"], &owner)
 
-	c := dialWS(t, ts)
+	c := dialWS(t, ts, srv)
 	c.expectGreeting()
 	c.greet(t, 1, dev, "")
 	invite := c.expectOKAfter(2, `{"id":2,"cmd":"device.invite","data":{}}`)
@@ -114,7 +114,7 @@ func TestRevokeDropsTheLiveConnectionRatherThanWaiting(t *testing.T) {
 	ts, srv := newTestServer(t)
 	dev, _ := claimDevice(t, ts, srv)
 
-	owner := dialWS(t, ts)
+	owner := dialWS(t, ts, srv)
 	owner.expectGreeting()
 	owner.greet(t, 1, dev, "")
 	invite := owner.expectOKAfter(2, `{"id":2,"cmd":"device.invite","data":{}}`)
@@ -126,7 +126,7 @@ func TestRevokeDropsTheLiveConnectionRatherThanWaiting(t *testing.T) {
 
 	// The device being revoked is live and idle, exactly like a sold tablet
 	// left switched on.
-	victim := dialWS(t, ts)
+	victim := dialWS(t, ts, srv)
 	victim.expectGreeting()
 	victim.greet(t, 1, second, "")
 
@@ -138,7 +138,7 @@ func TestRevokeDropsTheLiveConnectionRatherThanWaiting(t *testing.T) {
 		t.Fatalf("event = %s, want %s", name, protocol.EventDeviceRevoked)
 	}
 
-	back := dialWS(t, ts)
+	back := dialWS(t, ts, srv)
 	back.expectGreeting()
 	back.send(fmt.Sprintf(`{"id":1,"cmd":"session.hello","data":{"schema":1,"device_key":%q,"signature":%q}}`,
 		second.pub, second.sign(t, back.challenge)))
@@ -151,7 +151,7 @@ func TestRevokingSomebodyElsesDeviceIsRefused(t *testing.T) {
 	ts, srv := newTestServer(t)
 	dev, _ := claimDevice(t, ts, srv)
 
-	c := dialWS(t, ts)
+	c := dialWS(t, ts, srv)
 	c.expectGreeting()
 	c.greet(t, 1, dev, "")
 
@@ -173,7 +173,7 @@ func TestDeviceListShowsWhatDistinguishesADevice(t *testing.T) {
 	ts, srv := newTestServer(t)
 	dev, _ := claimDevice(t, ts, srv)
 
-	c := dialWS(t, ts)
+	c := dialWS(t, ts, srv)
 	c.expectGreeting()
 	c.greet(t, 1, dev, "")
 	data := c.expectOKAfter(2, `{"id":2,"cmd":"device.list","data":{}}`)
@@ -199,7 +199,7 @@ func TestSetLabelRenamesWithoutReconnecting(t *testing.T) {
 	ts, srv := newTestServer(t)
 	dev, _ := claimDevice(t, ts, srv)
 
-	c := dialWS(t, ts)
+	c := dialWS(t, ts, srv)
 	c.expectGreeting()
 	c.greet(t, 1, dev, "")
 	data := c.expectOKAfter(2, `{"id":2,"cmd":"identity.setLabel","data":{"label":"Anna"}}`)
@@ -213,7 +213,7 @@ func TestSetLabelRenamesWithoutReconnecting(t *testing.T) {
 
 	// The name survives on the next connection, so it really landed rather than
 	// living in this session only.
-	back := dialWS(t, ts)
+	back := dialWS(t, ts, srv)
 	back.expectGreeting()
 	var id identity
 	mustUnmarshal(t, back.greet(t, 1, dev, "")["identity"], &id)

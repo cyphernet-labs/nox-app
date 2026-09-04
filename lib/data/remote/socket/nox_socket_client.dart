@@ -277,12 +277,14 @@ class NoxSocketClient {
           deviceKey = await DeviceKeys.publicKey(seed);
           signature = await DeviceKeys.signChallenge(seed: seed, challenge: _challenge);
         } on Object catch (e) {
-          // A challenge that will not decode is a broken peer, not a broken
-          // client. Greeting unsigned lets the server refuse us properly
-          // instead of the socket dying on an exception nobody can trace.
+          // Fail CLOSED. Greeting unsigned would ask the server to accept us
+          // without proof - and if it ever did, this path would be the way in.
+          // A challenge that will not decode is a broken peer; tear down and
+          // let the reconnect ladder retry.
           logRepository.debug(target: this, message: 'socket: could not sign the challenge: ${e.runtimeType}');
-          deviceKey = null;
-          signature = null;
+          await _teardown(SessionPhase.disconnected);
+          _scheduleRetry();
+          return;
         }
       }
       final reply = await _sendOnce(isGreeting: true, 'session.hello', <String, dynamic>{

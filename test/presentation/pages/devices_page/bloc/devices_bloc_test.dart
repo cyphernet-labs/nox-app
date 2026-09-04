@@ -96,4 +96,58 @@ void main() {
     wait: const Duration(milliseconds: 100),
     expect: () => [predicate<DevicesState>((s) => s.inviteLink == 'https://nox.app/p/#abc')],
   );
+
+  blocTest<DevicesBloc, DevicesState>(
+    'a failed revoke says so instead of pretending the device is gone',
+    build: () {
+      when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone, tablet]));
+      when(
+        devices.revoke(deviceKey: anyNamed('deviceKey')),
+      ).thenAnswer((_) async => const RepositoryResult<bool>.error(exception: RepositoryException.connection));
+      return DevicesBloc();
+    },
+    act: (bloc) async {
+      bloc.add(const DevicesEvent.initialize());
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      bloc.add(const DevicesEvent.revokeRequested('k-tablet'));
+    },
+    wait: const Duration(milliseconds: 100),
+    verify: (bloc) {
+      expect(bloc.state.failed, isTrue);
+      // And the row is still there: a device that is still connecting must not
+      // look gone.
+      expect(bloc.state.others.length, 1);
+    },
+  );
+
+  blocTest<DevicesBloc, DevicesState>(
+    'a failed invite raises a flag the screen can render',
+    build: () {
+      when(devices.inviteDevice()).thenAnswer((_) async => const RepositoryResult<String>.error(exception: RepositoryException.connection));
+      return DevicesBloc();
+    },
+    act: (bloc) => bloc.add(const DevicesEvent.inviteRequested()),
+    wait: const Duration(milliseconds: 100),
+    // Without this the button is simply dead: tapping it does nothing at all.
+    expect: () => [predicate<DevicesState>((s) => s.inviteFailed && s.inviteLink == null)],
+  );
+
+  blocTest<DevicesBloc, DevicesState>(
+    'revoking THIS device goes through logout, not through a bare delete',
+    build: () {
+      when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone, tablet]));
+      return DevicesBloc();
+    },
+    act: (bloc) async {
+      bloc.add(const DevicesEvent.initialize());
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      bloc.add(const DevicesEvent.revokeRequested('k-phone'));
+    },
+    wait: const Duration(milliseconds: 100),
+    verify: (_) {
+      // Deleting the row alone would leave the app sitting there with a session
+      // the server no longer honours. Logout wipes and moves the navigation.
+      verifyNever(devices.revoke(deviceKey: 'k-phone'));
+    },
+  );
 }

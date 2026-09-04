@@ -67,6 +67,8 @@
   "devicesInviteError": "Couldn't create an invite.",
   "@devicesPairedAt": {"placeholders": {"date": {"type": "String"}}},
   "@devicesLastSeen": {"placeholders": {"date": {"type": "String"}}},
+  "settingsYourIdLabel": "Your ID",
+  "actionHide": "Hide",
   "settingsAboutTitle": "About",
   "loginSignIn": "Sign in",
   "loginIdLabel": "Pairing link",

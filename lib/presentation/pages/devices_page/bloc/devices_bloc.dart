@@ -1,6 +1,7 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/model/device/device_model.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/domain/repository/device/device_repository.dart';
@@ -43,6 +44,16 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
   Future<void> _onRevokeRequested(DevicesRevokeRequested event, Emitter<DevicesState> emit) async {
     final repository = _repository;
     if (repository == null) return;
+
+    // Revoking the device in your hand IS a logout - the contract calls logout
+    // a special case of revocation. Going through the logout path wipes the
+    // local data and moves the navigation; merely deleting the row would leave
+    // the app sitting there with a session the server no longer honours.
+    if (state.devices.any((d) => d.isCurrent && d.deviceKey == event.deviceKey)) {
+      await authRepository.logout();
+      return;
+    }
+
     final result = await repository.revoke(deviceKey: event.deviceKey);
     // Re-read rather than removing the row locally: the server is the authority
     // on what is still allowed, and a revoke that silently failed would

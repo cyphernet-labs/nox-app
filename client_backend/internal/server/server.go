@@ -193,8 +193,16 @@ func (s *Server) dropDevice(deviceKey string) {
 	}
 	for _, c := range doomed {
 		c.sendFrame(protocol.Event{Seq: 0, Event: protocol.EventDeviceRevoked, Data: payload})
-		go c.close(websocket.StatusNormalClosure, "device revoked")
+		go c.closeAfterFlush(websocket.StatusNormalClosure, "device revoked")
 	}
+}
+
+// setDeviceKey records which key a connection authenticated with, under the
+// same lock dropDevice reads it through.
+func (s *Server) setDeviceKey(c *client, key string) {
+	s.mu.Lock()
+	c.deviceKey = key
+	s.mu.Unlock()
 }
 
 func (s *Server) track(c *client) {

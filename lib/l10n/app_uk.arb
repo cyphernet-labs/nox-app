@@ -65,6 +65,8 @@
   "devicesAdd": "Додати пристрій",
   "devicesInviteMessage": "Відскануйте це з іншого пристрою. Посилання діє 10 хвилин.",
   "devicesInviteError": "Не вдалося створити запрошення.",
+  "settingsYourIdLabel": "Ваш ID",
+  "actionHide": "Сховати",
   "settingsAboutTitle": "Про застосунок",
   "loginSignIn": "Увійти",
   "loginIdLabel": "Посилання для звʼязування",

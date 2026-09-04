@@ -220,6 +220,11 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       // the server the moment the next attempt succeeds.
       _onboardingStartedHere = false;
       await _secureStorage.delete(key: _kIdentifier);
+      // The server the failed attempt pointed at goes with it. Leaving it would
+      // aim the next connection at a machine this install never paired with,
+      // and the world-epoch key would call that the same world.
+      await _secureStorage.delete(key: _kServerAddress);
+      await _secureStorage.delete(key: _kServerKey);
       await _prefs.remove(_kOnboardingComplete);
       return const RepositoryResult<bool>.success(data: true);
     });

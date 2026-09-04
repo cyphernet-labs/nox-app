@@ -85,6 +85,11 @@ class LiveIdentityHandshake {
   /// Presents a pairing token and returns what the server said about who was
   /// just paired.
   ///
+  /// The caller MUST re-greet afterwards ([greet]) once the session is stored.
+  /// The connection this ran on was greeted before anyone was paired, so the
+  /// server still knows it as whoever greeted then — messages sent on it would
+  /// be stamped with that identity, not the person who just paired.
+  ///
   /// The socket has to be brought up against the address from the LINK, which
   /// the caller has already stored — [LiveSessionStarter.restart] reads it from
   /// there. `pair` is then the one command allowed before a greeting.

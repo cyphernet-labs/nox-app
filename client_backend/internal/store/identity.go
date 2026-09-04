@@ -12,11 +12,12 @@ import (
 // Identity is the person a connection speaks as. UserID is the public author
 // id carried on the wire (contract §3); Label is the current display name.
 //
-// Ephemeral is true for a connection that presented no device key at all - hand tools, the live probe, a port scanner speaking WebSocket.
-// The contract forbids refusing such a greeting, but writing a row for every
-// one of them is unbounded growth, so the row is deferred until the first
-// message.send, the only path that needs a parent row for the author_id
-// foreign key. See MaterialiseUser.
+// Every identity is a paired one since feature 032. The anonymous shape that
+// used to exist here - a connection presenting no key, served an in-memory
+// person - was justified by "the contract forbids refusing such a greeting",
+// which misread contract §3: the rule that may not refuse is about the LABEL,
+// never about the key. §3 says the opposite for keys, and the whole point of
+// the phase is that an unproved connection gets nothing.
 type Identity struct {
 	UserID string
 	Label  string
@@ -25,8 +26,7 @@ type Identity struct {
 	// It describes the answer, not the person: a reconnect before the person
 	// has named themselves legitimately reports false, because the row already
 	// exists. The client therefore treats the onboarding decision as monotonic.
-	Created   bool
-	Ephemeral bool
+	Created bool
 }
 
 // assignedLabelAttempts bounds the search for an unused generated name. There
@@ -48,10 +48,9 @@ const assignedLabelAttempts = 8
 // possession of a key that never leaves the device, so the derivation is gone
 // from the wire, from this lookup and from the schema.
 //
-// A connection presenting no device key at all is still permitted (hand tools,
-// the live probe, a port scanner speaking WebSocket): the contract forbids
-// refusing such a greeting. It gets an ephemeral identity whose row is written
-// only if it ever sends a message - see MaterialiseUser.
+// A connection presenting no key at all is refused exactly like one presenting
+// an unknown key: there is nothing to recognise it by, and serving it anyway
+// was the hole this phase exists to close.
 //
 // One immediate transaction on the single-connection write pool, so a device
 // reconnecting while another of the same person is greeting cannot interleave.
@@ -64,15 +63,7 @@ func (s *Store) ResolveIdentity(ctx context.Context, deviceKey, label string, no
 	defer func() { _ = tx.Rollback() }()
 
 	if deviceKey == "" {
-		// Neither paired nor claiming to be: mint in memory, write nothing.
-		assigned, err := s.assignedLabel(ctx, tx, label)
-		if err != nil {
-			return Identity{}, err
-		}
-		if err := tx.Commit(); err != nil {
-			return Identity{}, fmt.Errorf("commit resolve identity: %w", err)
-		}
-		return Identity{UserID: "u_" + randomID(), Label: assigned, Ephemeral: true}, nil
+		return Identity{}, ErrDeviceUnknown
 	}
 
 	id, found, err := lookupByDevice(ctx, tx, deviceKey)
@@ -112,24 +103,6 @@ func (s *Store) ResolveIdentity(ctx context.Context, deviceKey, label string, no
 // caller answers `unauthenticated`; the device treats it exactly as a
 // revocation, because from where it stands the two are the same event.
 var ErrDeviceUnknown = errors.New("device key not paired")
-
-// MaterialiseUser writes the row for an identity that was minted in memory by
-// ResolveIdentity. It takes a transaction because it must land together with
-// whatever needed the parent row: half a person with no message is pointless,
-// half a message with no person violates the foreign key.
-//
-// Idempotent by design: the connection keeps carrying an Ephemeral identity
-// after the first send, so every later message re-enters here with the same
-// row. The values are identical, so conflict means "already done".
-func MaterialiseUser(ctx context.Context, tx *sql.Tx, id Identity, now int64) error {
-	_, err := tx.ExecContext(ctx,
-		"INSERT INTO users (user_id, label, created_at) VALUES (?, ?, ?) ON CONFLICT (user_id) DO NOTHING",
-		id.UserID, id.Label, now)
-	if err != nil {
-		return fmt.Errorf("materialise user: %w", err)
-	}
-	return nil
-}
 
 func lookupByDevice(ctx context.Context, tx *sql.Tx, deviceKey string) (Identity, bool, error) {
 	var id Identity

@@ -38,16 +38,16 @@ func helloCursor(t *testing.T, c *wsClient, since int64, extra ...string) int64 
 }
 
 func TestStoryTwoKillReconnectCatchup(t *testing.T) {
-	ts, _ := newTestServer(t)
+	ts, srv := newTestServer(t)
 
-	anna := dialWS(t, ts)
+	anna := dialWS(t, ts, srv)
 	anna.expectGreeting()
 	anna.hello(1, `,"label":"Anna"`)
 	chatID := seedChat(t, anna, "catchup")
 	sendText(t, anna, 3, chatID, "a1", "first")
 
 	// Bob is live, sees seq 1..2, then dies.
-	bob := dialWS(t, ts)
+	bob := dialWS(t, ts, srv)
 	bob.expectGreeting()
 	if cursor := helloCursor(t, bob, 0); cursor != 2 {
 		t.Fatalf("bob cursor = %d, want 2", cursor)
@@ -65,7 +65,7 @@ func TestStoryTwoKillReconnectCatchup(t *testing.T) {
 	sendText(t, anna, 6, chatID, "a4", "fourth")
 
 	// Reconnect with the last seen cursor: all missed events, ascending.
-	bob2 := dialWS(t, ts)
+	bob2 := dialWS(t, ts, srv)
 	bob2.expectGreeting()
 	cursor := helloCursor(t, bob2, lastSeen)
 	if cursor != 5 {
@@ -86,15 +86,15 @@ func TestStoryTwoKillReconnectCatchup(t *testing.T) {
 }
 
 func TestStoryTwoSinceEqualsCursorIsImmediatelyCaughtUp(t *testing.T) {
-	ts, _ := newTestServer(t)
+	ts, srv := newTestServer(t)
 
-	anna := dialWS(t, ts)
+	anna := dialWS(t, ts, srv)
 	anna.expectGreeting()
 	anna.hello(1, ``)
 	chatID := seedChat(t, anna, "quiet")
 	sendText(t, anna, 3, chatID, "q1", "only")
 
-	bob := dialWS(t, ts)
+	bob := dialWS(t, ts, srv)
 	bob.expectGreeting()
 	cursor := helloCursor(t, bob, 2)
 	if cursor != 2 {
@@ -109,14 +109,14 @@ func TestStoryTwoSinceEqualsCursorIsImmediatelyCaughtUp(t *testing.T) {
 }
 
 func TestStoryTwoSinceAheadOfCursorYieldsEmptyReplay(t *testing.T) {
-	ts, _ := newTestServer(t)
+	ts, srv := newTestServer(t)
 
-	anna := dialWS(t, ts)
+	anna := dialWS(t, ts, srv)
 	anna.expectGreeting()
 	anna.hello(1, ``)
 	chatID := seedChat(t, anna, "ahead")
 
-	bob := dialWS(t, ts)
+	bob := dialWS(t, ts, srv)
 	bob.expectGreeting()
 	cursor := helloCursor(t, bob, 99)
 	if cursor != 1 {
@@ -131,9 +131,9 @@ func TestStoryTwoSinceAheadOfCursorYieldsEmptyReplay(t *testing.T) {
 }
 
 func TestStoryTwoReplayIsRepeatable(t *testing.T) {
-	ts, _ := newTestServer(t)
+	ts, srv := newTestServer(t)
 
-	anna := dialWS(t, ts)
+	anna := dialWS(t, ts, srv)
 	anna.expectGreeting()
 	anna.hello(1, ``)
 	chatID := seedChat(t, anna, "repeat")
@@ -146,7 +146,7 @@ func TestStoryTwoReplayIsRepeatable(t *testing.T) {
 		Data  string
 	}
 	collect := func() []replayFrame {
-		c := dialWS(t, ts)
+		c := dialWS(t, ts, srv)
 		c.expectGreeting()
 		cursor := helloCursor(t, c, 0)
 		frames := make([]replayFrame, 0, cursor)
@@ -174,9 +174,9 @@ func TestStoryTwoReplayIsRepeatable(t *testing.T) {
 }
 
 func TestStoryTwoLiveDuringReplayLosesNothing(t *testing.T) {
-	ts, _ := newTestServer(t)
+	ts, srv := newTestServer(t)
 
-	anna := dialWS(t, ts)
+	anna := dialWS(t, ts, srv)
 	anna.expectGreeting()
 	anna.hello(1, ``)
 	chatID := seedChat(t, anna, "boundary")
@@ -186,9 +186,11 @@ func TestStoryTwoLiveDuringReplayLosesNothing(t *testing.T) {
 	// traffic keeps flowing: duplicates at the boundary are tolerated, loss
 	// is not (invariant 6). Bob deliberately does not read until the end -
 	// frames queue up on his connection.
-	bob := dialWS(t, ts)
+	bob := dialWS(t, ts, srv)
 	bob.expectGreeting()
-	bob.send(`{"id":1,"cmd":"session.hello","data":{"schema":1,"since":1}}`)
+	bobDev := pairedDevice(t, ts, srv)
+	bob.send(fmt.Sprintf(`{"id":1,"cmd":"session.hello","data":{"schema":1,"since":1,"device_key":%q,"signature":%q}}`,
+		bobDev.pub, bobDev.sign(t, bob.challenge)))
 	for i := range 8 {
 		sendText(t, anna, 10+i, chatID, fmt.Sprintf("live%d", i), "during")
 	}
