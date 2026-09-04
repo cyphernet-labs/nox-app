@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"nox.app/client-backend/internal/db"
@@ -218,5 +219,49 @@ func TestAssertIdentitySchemaAcceptsAFreshDatabase(t *testing.T) {
 	_, srv := newTestServer(t)
 	if err := assertIdentitySchema(context.Background(), readDB(t, srv), srv.cfg.DBPath); err != nil {
 		t.Fatalf("assertIdentitySchema rejected a freshly migrated database: %v", err)
+	}
+}
+
+// TestIdentityCreatedTellsTheClientWhetherToOnboard is the wire half of the
+// same rule. The false case is asserted on the RAW frame, not on the decoded
+// struct: with omitempty the field would vanish, the client would read
+// "outcome not stated", and an ordinary returning person would be refused
+// sign-in instead of walking into their conversation.
+func TestIdentityCreatedTellsTheClientWhetherToOnboard(t *testing.T) {
+	ts, _ := newTestServer(t)
+
+	first := dialWS(t, ts)
+	first.expectGreeting()
+	var newcomer identity
+	mustUnmarshal(t, first.hello(1, `,"login_ref":"digest-anna","label":"Anna"`)["identity"], &newcomer)
+	if !newcomer.Created {
+		t.Fatal("a first greeting must report created")
+	}
+
+	back := dialWS(t, ts)
+	back.expectGreeting()
+	raw := back.hello(1, `,"login_ref":"digest-anna"`)["identity"]
+	var returning identity
+	mustUnmarshal(t, raw, &returning)
+	if returning.Created {
+		t.Fatal("a returning person must not report created")
+	}
+	if returning.ID != newcomer.ID {
+		t.Fatalf("identity changed from %q to %q", newcomer.ID, returning.ID)
+	}
+	if !strings.Contains(string(raw), `"created"`) {
+		t.Fatalf("the false case dropped out of the frame: %s", raw)
+	}
+}
+
+func TestIdentityCreatedForAnAnonymousGreeting(t *testing.T) {
+	ts, _ := newTestServer(t)
+
+	probe := dialWS(t, ts)
+	probe.expectGreeting()
+	var ident identity
+	mustUnmarshal(t, probe.hello(1, ``)["identity"], &ident)
+	if !ident.Created {
+		t.Fatal("until this answer no such person existed, row or not")
 	}
 }

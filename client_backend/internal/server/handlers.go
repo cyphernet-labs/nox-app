@@ -60,6 +60,10 @@ type helloReply struct {
 type identity struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
+	// No omitempty, deliberately: a dropped false would read as "outcome not
+	// stated" on the wire (contract §3), which turns an ordinary returning
+	// person into a refused sign-in.
+	Created bool `json:"created"`
 }
 
 func (c *client) handleSessionHello(cmd protocol.Command) {
@@ -125,7 +129,7 @@ func (c *client) handleSessionHello(cmd protocol.Command) {
 		Cursor:    cursor,
 		JournalID: journalID,
 		Limits:    c.srv.cfg.Limits,
-		Identity:  identity{ID: c.identity.UserID, Label: c.identity.Label},
+		Identity:  identity{ID: c.identity.UserID, Label: c.identity.Label, Created: c.identity.Created},
 	}))
 
 	if req.Since != nil {

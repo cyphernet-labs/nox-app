@@ -2,7 +2,12 @@ part of 'chats_list_bloc.dart';
 
 /// Debug-selectable load scenario (5.1, dev-only) — reproduces the server-dependent
 /// states on stub data (FR-005/FR-053).
-enum ChatsListScenario { normal, empty, inlineError, fatal, offline }
+/// `unread` is the only scenario that produces a badge through the REAL
+/// mechanism: it opens a chat, so a read mark exists, then lets messages
+/// arrive above it. Without it no page-level golden contains a chat row with a
+/// badge at all, and the desktop rendering of one would have no coverage
+/// (Constitution VI).
+enum ChatsListScenario { normal, empty, inlineError, fatal, offline, unread }
 
 @freezed
 sealed class ChatsListState with _$ChatsListState {

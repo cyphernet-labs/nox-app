@@ -10,6 +10,8 @@
 
 Имя — глобально уникальное **с учётом регистра** (Anna ≠ anna), лимит 32 символа, charset — **латиница + цифры + `-`, `_`, `.`** (см. [overview.md](../overview.md#идентичность-пользователя)).
 
+> ⚠️ **Уникальность на этапе 1 не обеспечивается** (решение владельца 2026-09-02, фаза 030). Сервер не проверяет ни длину, ни набор символов, ни занятость label и **не может отказать в приветствии из-за имени** (контракт §3) — потому что отказ в приветствии клиент повторяет бесконечно, и проверка без переделки этого поведения дала бы вечный цикл вместо внятной ошибки. Экран поэтому не имеет состояния «имя занято»: проверять его нечему. Правило продуктовой модели выше **остаётся в силе как требование** и закрывается на этапе 2, где label назначает сервер при спаривании. Фаза 031 сняла локальную проверку, которая сравнивала имя с четырьмя захардкоженными строками — то есть отказывала по правилу, которого никто не соблюдал.
+
 ## Контекст и переходы
 
 - **Откуда:**
@@ -35,28 +37,26 @@ Material Scaffold с `resizeToAvoidBottomInset: true`; фон — `ColorScheme.s
 
 | Состояние | Описание |
 |---|---|
-| Prefilled | Поле предзаполнено текущим `User<random>` (валидно и уникально). `Done` enabled. |
-| Checking-availability | Имя изменено, локально OK, идёт серверная проверка занятости (debounced ~300 мс). Suffix-индикатор в поле. |
+| Prefilled | Поле предзаполнено текущим `User<random>`. `Done` enabled. |
 | Filled-invalid (charset) | Введён недопустимый символ. errorText `Contains invalid characters (allowed: letters, digits, - _ .)`. `Done` disabled. |
-| Filled-invalid (taken) | Имя занято. errorText `This name is taken`. `Done` disabled. |
 | Empty | Поле очищено. `Done` disabled (имя не может быть пустым — у пользователя всегда есть label). Можно `Skip`. Placeholder `How others will see you` виден только в этом состоянии (по умолчанию поле предзаполнено текущим именем). |
-| Filled-valid | Длина OK, charset OK, имя свободно. `Done` enabled. |
+| Filled-valid | Длина OK, charset OK. `Done` enabled. |
 | Loading-submit | Идёт сохранение нового имени. Поле и кнопки disabled; индикатор внутри primary button. |
-| Race-taken | На submit пришёл ответ «занято» (race между real-time и submit). Inline-error, фокус возвращается в поле. |
+| Race-taken | **Только демо-режим галереи экранов.** Живой путь этого состояния не производит: занятость имени человека никто не проверяет. |
 | Fatal | Server-fatal → передача в 3.1. |
 
 ## Взаимодействия
 
 - Тап в поле → клавиатура поднимается.
-- Ввод символов → локальная валидация charset → при успехе debounced проверка занятости (~300 мс).
-- **`Done`** или **Enter / Done** на клавиатуре → сохранение текущего значения поля (должно быть валидным, уникальным, непустым).
+- Ввод символов → локальная валидация charset и длины, результат сразу. Ни серверной проверки занятости, ни debounce-ожидания: проверять нечего.
+- **`Done`** или **Enter / Done** на клавиатуре → сохранение текущего значения поля (должно быть валидным и непустым).
 - **`Skip`** или **системный back / жест back** → пропуск: имя остаётся `User<random>`, переход в 4.1.
 
 ## Material-компоненты
 
 - `Scaffold` с `resizeToAvoidBottomInset: true`.
 - `AppBar` (M3) с wordmark `NOX`; адаптируется под тему через `ColorScheme`.
-- `TextField` (M3 outlined) с `maxLength: 32`, встроенным counter, постоянным `helperText`, suffix-`CircularProgressIndicator` в Checking-availability.
+- `TextField` (M3 outlined) с `maxLength: 32`, встроенным counter, постоянным `helperText`. Suffix-индикатора нет — ждать нечего.
 - `FilledButton` — primary `Done`.
 - `TextButton` — secondary `Skip`.
 - `CircularProgressIndicator` (внутри primary button) — Loading-submit.
@@ -71,7 +71,6 @@ Material Scaffold с `resizeToAvoidBottomInset: true`; фон — `ColorScheme.s
 | HelperText (постоянный) | `Others see this name. You can change it now or later in Settings.` |
 | Counter | автоматический `N/32` |
 | Error: charset | `Contains invalid characters (allowed: letters, digits, - _ .)` |
-| Error: taken | `This name is taken` |
 | Loading-submit | — (no text, only indicator) |
 | Primary action | `Done` |
 | Secondary action | `Skip` |

@@ -67,6 +67,11 @@ void main() {
       expect(identity['id'], isNot(identity['label']));
       expect(identity['id'], matches(RegExp(r'^u_[0-9a-f]{16}$')));
       expect(raw['journal_id'], isNotNull);
+      // Present, and a real boolean rather than a missing key: the client reads
+      // an absent field as "outcome not stated" and refuses to decide, so a
+      // server that dropped it would turn every ordinary sign-in into an error.
+      expect(identity.containsKey('created'), isTrue);
+      expect(identity['created'], isA<bool>());
     });
 
     for (final name in ['chat_create_echo.json', 'chat_rename_echo.json', 'chat_created_event.json', 'chat_updated_event.json']) {

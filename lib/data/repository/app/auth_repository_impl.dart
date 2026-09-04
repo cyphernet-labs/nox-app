@@ -1,10 +1,13 @@
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
+import 'package:nox_app/data/sync/live_identity_handshake.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
 import 'package:nox_app/data/sync/outbox_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/di/global_aliases.dart';
+import 'package:nox_app/domain/exception/repository_exception.dart';
+import 'package:nox_app/domain/model/app/app_state_type.dart';
 import 'package:nox_app/domain/repository/app/app_state_repository.dart';
 import 'package:nox_app/domain/repository/app/auth_repository.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
@@ -14,7 +17,6 @@ import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
-import 'package:nox_app/general/onboarding_mock_data.dart';
 
 /// Mutate source-of-truth (session) → re-derive app state. Single logout path;
 /// only forced logout passes `sessionExpired`. Sign-in is a stub (backend TBD).
@@ -38,26 +40,81 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
   final OutboxRepository _outboxRepository;
   final FileRepository _fileRepository;
 
+  /// Signs in, and lets the SERVER decide whether onboarding is due.
+  ///
+  /// The order is the whole point. It used to be: guess the outcome from a
+  /// hardcoded set of two identifiers, store it, navigate, then connect. No
+  /// real identifier was in that set, so everyone was treated as new - and the
+  /// name they were then forced to type travelled to the server as a rename
+  /// and overwrote the name they were known by.
+  ///
+  /// Now: store the identifier, greet, take the outcome from the answer, write
+  /// it, and only then move the navigation. Storing the identifier FIRST is
+  /// what makes the greeting state a person rather than going out anonymously;
+  /// it moves no screen on its own, because nothing re-derives app state until
+  /// the last step.
+  ///
+  /// A handshake that does not answer rolls the session back. Leaving a stored
+  /// identifier with no outcome behind would strand the next launch in
+  /// onboarding - the very state this method exists to stop handing out.
   @override
   Future<RepositoryResult<bool>> signIn({required String identifier}) {
-    // Normalize once: derive the outcome from AND persist the SAME value so the
-    // stored identity can't diverge from the id that was matched (e.g. a pasted
-    // "registered\n"). This is normalization, not format validation (FR-011).
-    final id = identifier.trim();
-    final onboardingComplete = OnboardingMockData.registeredIds.contains(id);
-    return _deriveAfter(
-      () => _sessionRepository.saveIdentifier(identifier: id, onboardingComplete: onboardingComplete),
-      // Logout closed the channel; a sign-in in the same process has to open it
-      // again, or the device stays disconnected until the app is restarted.
-      afterMutate: () async {
-        if (getIt.isRegistered<LiveSessionStarter>()) await getIt<LiveSessionStarter>().restart();
-        // Logout cancelled the drain's phase subscription. Without re-arming it
-        // here, a re-login in the same process would only ever send when the
-        // thread asked directly — a message queued offline would sit there
-        // through the next reconnect with nobody to notice it.
-        if (getIt.isRegistered<OutboxService>()) getIt<OutboxService>().start();
-      },
-    );
+    return execute<bool>(() async {
+      // Normalize once and persist the SAME value, so the stored identity
+      // cannot diverge from what the derivation was computed over (e.g. a
+      // pasted trailing newline). Normalization, not format validation.
+      final id = identifier.trim();
+      final saved = await _sessionRepository.saveIdentifier(identifier: id, onboardingComplete: false);
+      if (!saved.hasData) return saved;
+
+      final handshake = liveIdentityHandshake;
+      if (handshake == null) {
+        // No live channel in this build (mock flavors). Behave as before:
+        // there is no server to ask, so onboarding is due.
+        return _finishSignIn(onboardingComplete: false);
+      }
+
+      try {
+        final greeting = await handshake.greet();
+        if (!greeting.outcomeStated) {
+          // The server did not say. Guessing costs the person either their
+          // naming step or their name, so we say so instead.
+          await _sessionRepository.discardSignIn();
+          return const RepositoryResult<bool>.error(exception: RepositoryException.connection);
+        }
+        // The server made this person just now, and the naming screen is next.
+        // Remember it for this process, so a reconnect while they are typing
+        // cannot report their own brand-new row back at them as "already known".
+        if (greeting.created!) _sessionRepository.noteOnboardingStartedHere();
+        return _finishSignIn(onboardingComplete: !greeting.created!);
+      } on Object catch (e, s) {
+        logRepository.error(target: this, error: e, stackTrace: s);
+        await _sessionRepository.discardSignIn();
+        return const RepositoryResult<bool>.error(exception: RepositoryException.connection);
+      }
+    });
+  }
+
+  Future<RepositoryResult<bool>> _finishSignIn({required bool onboardingComplete}) async {
+    if (onboardingComplete) {
+      final marked = await _sessionRepository.setOnboardingComplete();
+      if (!marked.hasData) return marked;
+    }
+    // Logout cancelled the drain's phase subscription. Without re-arming it
+    // here, a re-login in the same process would only ever send when the
+    // thread asked directly - a message queued offline would sit there through
+    // the next reconnect with nobody to notice it.
+    if (getIt.isRegistered<OutboxService>()) getIt<OutboxService>().start();
+
+    await _appStateRepository.fetchAppState();
+    // The outcome is the state, not the write: a transient storage failure
+    // leaves the derivation where it was, and reporting success then would
+    // show a sign-in that goes nowhere and says nothing.
+    final settled = _appStateRepository.currentState;
+    if (settled == AppStateType.unauthorized || settled == AppStateType.init) {
+      return const RepositoryResult<bool>.error(exception: RepositoryException.unknown);
+    }
+    return const RepositoryResult<bool>.success(data: true);
   }
 
   @override
@@ -129,6 +186,10 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
           // stores (safe - replay re-applies idempotently), never ahead of an
           // emptied store (a stale high `since` would skip every row below it
           // and the monotonic guard would keep it stuck forever).
+          // Before the cursor, deliberately. A mark that outlived it would sit
+          // above a rebuilt seq space and suppress every badge - and unlike a
+          // stale counter, which the next open resets, nothing ever repairs it.
+          await _chatRepository.clearReadMarks();
           await _syncRepository.clear();
           await _chatRepository.clean();
           await _messageRepository.clean();

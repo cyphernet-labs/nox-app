@@ -10,7 +10,6 @@ import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/identity/identity_resolver.dart';
 import 'package:nox_app/general/username_rules.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
-import 'package:nox_app/presentation/base/bloc_transformers.dart';
 
 part 'settings_root_bloc.freezed.dart';
 part 'settings_root_event.dart';
@@ -28,7 +27,6 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
     on<SettingsInitialize>(_onInitialize);
     on<NameEditStarted>(_onNameEditStarted);
     on<SettingsNameChanged>(_onNameChanged);
-    on<SettingsAvailabilityRequested>(_onAvailabilityRequested, transformer: debounceRestartable());
     on<NameSubmitted>(_onNameSubmitted);
     on<NameEditCancelled>(_onNameEditCancelled);
     on<IdRevealToggled>(_onIdRevealToggled);
@@ -70,22 +68,11 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
       emit(state.copyWith(draftName: name, status: SettingsNameStatus.invalidCharset));
       return;
     }
-    emit(state.copyWith(draftName: name, status: SettingsNameStatus.checking));
-    add(SettingsRootEvent.availabilityRequested(name));
-  }
-
-  Future<void> _onAvailabilityRequested(SettingsAvailabilityRequested event, Emitter<SettingsRootState> emit) async {
-    if (state.draftName != event.name || state.status != SettingsNameStatus.checking) return;
-    await executeLogic(() async {
-      // TODO(backend): real server uniqueness check.
-      await Future<void>.delayed(const Duration(milliseconds: 200));
-      if (state.draftName != event.name) return;
-      final taken = UsernameRules.isTaken(event.name); // case-sensitive (FR-032)
-      emit(state.copyWith(status: taken ? SettingsNameStatus.taken : SettingsNameStatus.valid));
-      // Fail-safe: a failed uniqueness check must NOT report the name as available
-      // (would let a possibly-taken label be committed). Fall back to a neutral,
-      // non-committable state so the user re-checks. `// TODO(backend):` retry UX.
-    }, onError: (error, exception, stackTrace) => emit(state.copyWith(status: SettingsNameStatus.idle)));
+    // Decided here: there is no availability to check. Person labels are not
+    // unique (owner, 2026-09-02), so charset and length - already applied
+    // above - are the whole rule. The debounced handler this used to schedule
+    // waited 200ms and compared against four hardcoded strings.
+    emit(state.copyWith(draftName: name, status: SettingsNameStatus.valid));
   }
 
   Future<void> _onNameSubmitted(NameSubmitted event, Emitter<SettingsRootState> emit) async {

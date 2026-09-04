@@ -155,6 +155,41 @@ void main() {
       expect(client.currentPhase, isNot(SessionPhase.live));
     });
 
+    test('a greeting carrying no identity is not a success', () async {
+      // Stage 1 always states who connected. Treating a reply without it as a
+      // greeting would leave the PREVIOUS connection's person in place, and a
+      // sign-in that timed out could then adopt a stranger.
+      await client.start(
+        url: url,
+        credentialsProvider: () async => const GreetingCredentials(deviceKey: 'dev-1'),
+      );
+      final socket = factory.latest;
+      socket.pushGreeting();
+      await waitUntil(() => socket.commandNamed('session.hello') != null, reason: 'the client greets');
+      socket.reply(
+        socket.sent.indexWhere((f) => f['cmd'] == 'session.hello'),
+        data: {'schema': 1, 'cursor': 0, 'journal_id': 'j_test', 'limits': const <String, dynamic>{}},
+      );
+
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      expect(client.identity, isNull);
+      expect(client.currentPhase, isNot(SessionPhase.live));
+      expect(client.currentPhase, isNot(SessionPhase.catchingUp));
+    });
+
+    test('what the greeting declared dies with the connection that declared it', () async {
+      final socket = await connect(cursor: 0, label: 'Anna');
+      expect(client.identity, isNotNull);
+      expect(client.limits, isNotNull);
+
+      await socket.drop();
+      await waitUntil(() => client.identity == null, reason: 'the identity is released on a drop');
+      expect(client.limits, isNull);
+      // The journal id is the deliberate exception: it names the world our
+      // cache came from and outlives the socket by design.
+      expect(client.journalId, isNotNull);
+    });
+
     test('a cursor with no remembered journal is treated as a world change — the upgrade case', () async {
       // Every install from before this release is exactly this: it holds a
       // cursor learned from some world, and no journal record because the field

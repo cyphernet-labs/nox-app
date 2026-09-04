@@ -1,7 +1,10 @@
 part of 'settings_root_bloc.dart';
 
 /// Inline name-edit status (7.1 identity card). Mirrors the 2.3 vocabulary.
-enum SettingsNameStatus { idle, checking, valid, invalidCharset, taken }
+/// No `taken`: person labels are not unique (owner, 2026-09-02) and nothing
+/// checks them, so the rename field can only be idle, valid or
+/// refused on charset.
+enum SettingsNameStatus { idle, valid, invalidCharset }
 
 @freezed
 abstract class SettingsRootState with _$SettingsRootState {
@@ -18,8 +21,6 @@ abstract class SettingsRootState with _$SettingsRootState {
     @Default(SettingsNameStatus.idle) SettingsNameStatus status,
     @Default(false) bool idRevealed,
   }) = _SettingsRootState;
-
-  bool get isChecking => status == SettingsNameStatus.checking;
 
   /// Save (Enter/Done/blur) is allowed only for a valid draft.
   bool get canSave => status == SettingsNameStatus.valid;

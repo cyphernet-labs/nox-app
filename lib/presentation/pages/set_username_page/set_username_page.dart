@@ -101,7 +101,6 @@ class _SetUsernamePageState extends BaseStatePage<SetUsernamePage> {
       helperText: context.l10n.usernameHelper,
       placeholder: context.l10n.usernameHint,
       errorText: _errorText(context, state.status),
-      checking: state.isChecking,
       enabled: !state.isSubmitting,
       onChanged: (value) => _bloc.add(SetUsernameEvent.nameChanged(value)),
     );
@@ -109,7 +108,7 @@ class _SetUsernamePageState extends BaseStatePage<SetUsernamePage> {
 
   String? _errorText(BuildContext context, UsernameStatus status) => switch (status) {
     UsernameStatus.invalidCharset => context.l10n.usernameCharsetError,
-    UsernameStatus.taken || UsernameStatus.raceTaken => context.l10n.nameTakenError,
+    UsernameStatus.raceTaken => context.l10n.nameTakenError,
     _ => null,
   };
 

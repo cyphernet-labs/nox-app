@@ -27,20 +27,17 @@ void main() {
     });
   });
 
-  group('UsernameRules.isTaken', () {
-    test('reports a name in the mock taken set as taken', () {
-      expect(UsernameRules.isTaken('admin'), isTrue);
-      expect(UsernameRules.isTaken('taken'), isTrue);
-      expect(UsernameRules.isTaken('User1234'), isTrue);
-    });
-
-    test('is case-sensitive: NOX is taken but nox is not', () {
-      expect(UsernameRules.isTaken('NOX'), isTrue);
-      expect(UsernameRules.isTaken('nox'), isFalse);
-    });
-
-    test('reports an unknown name as not taken', () {
-      expect(UsernameRules.isTaken('brand-new-user'), isFalse);
+  group('there is no uniqueness rule left to apply', () {
+    test('the names that used to be reserved are ordinary valid names', () {
+      // Person labels are not unique (owner, 2026-09-02): the server neither
+      // enforces nor reports it and may never refuse a greeting over a name
+      // (contract §3). The check that lived here compared against four
+      // hardcoded strings, so those four were refused by a rule nothing else
+      // in the system observed. Length and charset are all that remain.
+      for (final name in ['admin', 'NOX', 'nox', 'User1234', 'taken', 'brand-new-user']) {
+        expect(UsernameRules.hasValidCharset(name), isTrue, reason: name);
+        expect(name.length <= UsernameRules.maxLength, isTrue, reason: name);
+      }
     });
   });
 

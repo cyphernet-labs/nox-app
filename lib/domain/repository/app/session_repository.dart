@@ -11,6 +11,12 @@ abstract class SessionRepository {
   Future<RepositoryResult<bool>> saveIdentifier({required String identifier, required bool onboardingComplete, String? label});
 
   /// Marks first-login onboarding complete (+ optionally caches the label).
+  ///
+  /// MONOTONIC: this flag only ever moves forward. Nothing but a logout may
+  /// return a person to onboarding. Without that rule the defect this feature
+  /// removes survives in one sequence - someone signed in, was shown the
+  /// naming screen, closed the app, then named themselves from another device
+  /// would be shown the naming screen again and have that name overwritten.
   Future<RepositoryResult<bool>> setOnboardingComplete({String? label});
 
   /// Persists a new display label (non-secret prefs) and broadcasts it on [watchLabel].
@@ -37,6 +43,13 @@ abstract class SessionRepository {
   /// stated again or the person is silently renamed to a fresh `User<random>`.
   Future<RepositoryResult<bool>> markLabelDirty();
 
+  /// Advances the onboarding flag when the server says the person is already
+  /// known, and never the other way round. Called from the greeting-adoption
+  /// path, so a device sitting on the naming screen leaves it as soon as the
+  /// server reports that this person exists - which is what closes the
+  /// "named from another device meanwhile" hole.
+  Future<RepositoryResult<bool>> advanceOnboardingIfKnown({required bool created});
+
   /// Records the identity the server declared at greeting time (contract §3):
   /// its author id, and the label it considers current. Both are the server's
   /// to decide — the label may have been changed from another device.
@@ -51,6 +64,18 @@ abstract class SessionRepository {
   /// turns out to be a different world: an id from the old one would mark
   /// strangers' messages as this user's own.
   Future<RepositoryResult<bool>> forgetAuthorId();
+
+  /// Records that this process created the person and is now naming them.
+  ///
+  /// Until onboarding finishes, a greeting may not declare it done: every
+  /// greeting after the first says `created == false`, so a mere reconnect
+  /// would otherwise swap the root route out from under someone mid-name.
+  void noteOnboardingStartedHere();
+
+  /// Undoes what a failed sign-in wrote, and nothing else. Narrower than
+  /// [clear] on purpose: the device id survives, because a sign-in that never
+  /// reached the server did not change which install this is.
+  Future<RepositoryResult<bool>> discardSignIn();
 
   /// Full wipe: secure storage deleteAll + remove prefs keys (logout).
   Future<RepositoryResult<bool>> clear();

@@ -11,12 +11,10 @@ Title bar (NOX · Set up) + OnboardCard with name field (counter N/32, helper), 
 
 ## States
 - `prefilled` — Prefilled
-- `checking` — Checking
-- `taken` — Taken
 - `empty` — Empty
 
 ## Behavior
-- Same as mobile 2.3: pre-filled default, ≤32 chars, live uniqueness (spinner), taken → error + Done disabled.
+- Same as mobile 2.3: pre-filled default, ≤32 chars, charset checked as typed. No availability check: person labels are **not unique** (owner, 2026-09-02), so there is no `checking`, no `taken` and no suffix spinner.
 
 ## Navigation
 - Done / Skip → Chats (01).
@@ -30,7 +28,7 @@ Title bar (NOX · Set up) + OnboardCard with name field (counter N/32, helper), 
 ## Design-system components
 - DesktopWindow + TitleBar
 - OnboardCard
-- TextField (counter, spinner)
+- TextField (counter)
 - FilledButton
 - TextButton
 

@@ -201,18 +201,27 @@ void main() {
       },
     );
 
-    test('a simulated inbound increments a chat unread badge live in the list (US4/FR-010)', () async {
+    test('an inbound message raises the badge live, but only for a chat that was opened', () async {
       final bloc = ChatsListBloc()..add(const ChatsListEvent.initialize());
       addTearDown(bloc.close);
       await Future<void>.delayed(const Duration(milliseconds: 500)); // seed + load
       final target = (bloc.state as Initialized).items.first;
-      final before = target.unreadCount;
+      expect(target.unreadCount, 0, reason: 'nothing has been opened yet, so nothing is unread');
 
+      // A chat nobody has opened shows no badge no matter what arrives - the
+      // product rule, and now true by construction: the badge is a recount
+      // from the read mark, and an unopened chat has none.
       await getIt<MessageRepository>().simulateIncoming(chatId: target.id);
-      await Future<void>.delayed(const Duration(milliseconds: 500)); // watchChats change-signal → refresh
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      expect((bloc.state as Initialized).items.firstWhere((c) => c.id == target.id).unreadCount, 0);
+
+      // Open it, then let one more arrive: now there is a mark to count above.
+      await getIt<ChatRepository>().markChatRead(chatId: target.id);
+      await getIt<MessageRepository>().simulateIncoming(chatId: target.id);
+      await Future<void>.delayed(const Duration(milliseconds: 500)); // watchChats tick → refresh
 
       final after = (bloc.state as Initialized).items.firstWhere((c) => c.id == target.id);
-      expect(after.unreadCount, before + 1); // badge incremented live, no manual reload
+      expect(after.unreadCount, 1, reason: 'the one that arrived after the open, live and unreloaded');
     });
 
     // Review finding (medium): the multi-page prefix re-read (pages 1..loadedPageCount) is the

@@ -43,14 +43,17 @@ void main() {
     expect(tester.widget<FilledButton>(doneButton()).onPressed, isNull);
   });
 
-  testWidgets('a taken name shows the taken error after the debounced check', (tester) async {
+  testWidgets('a name that used to be reserved shows no error at all', (tester) async {
+    // Person labels are not unique (owner, 2026-09-02) and nothing checks
+    // them, so the screen has no "taken" state to reach. Four specific names
+    // used to be refused here by a rule nothing else observed.
     await pumpApp(tester, const SetUsernamePage(demo: true), settle: false);
 
     await tester.enterText(find.byType(TextField), 'NOX');
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 700));
 
-    expect(find.text(l10nEn.nameTakenError), findsOneWidget);
+    expect(find.text(l10nEn.nameTakenError), findsNothing);
   });
 
   testWidgets('Skip routes to the shell', (tester) async {

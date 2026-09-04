@@ -74,6 +74,49 @@ class ChatDao {
     });
   }
 
+  /// Moves the mark forward only, and never past [ceiling].
+  ///
+  /// Monotonic because a badge must not resurrect: going backwards would make
+  /// already-seen messages unread again. Clamped because a foreign seq space
+  /// would otherwise poison it permanently - the debug inbound path once
+  /// minted seqs from the clock, fifteen digits above anything a server
+  /// issues, and one such message would put the mark somewhere no real event
+  /// can ever reach, killing that chat's badge for good.
+  Future<void> advanceReadMark({required String chatId, required int seq, required int ceiling}) async {
+    final db = await _appDatabase.db;
+    await db.transaction((txn) async {
+      final record = await _store.record(chatId).get(txn);
+      if (record == null) return;
+      final entity = ChatEntity.fromJson(record);
+      final capped = seq > ceiling ? ceiling : seq;
+      // -1, not 0: "never opened" and "opened when nothing was cached" are
+      // different states. Opening a chat offline with an empty cache marks 0,
+      // which is a real open - history that arrives later is genuinely unread,
+      // because nobody saw it. Collapsing the two would leave that chat
+      // permanently badge-less.
+      if (capped <= (entity.lastOpenedSeq ?? -1)) return;
+      await _store.record(chatId).put(txn, entity.copyWith(lastOpenedSeq: capped).toJson());
+    });
+  }
+
+  /// Drops every mark, leaving the rest of each chat row alone.
+  ///
+  /// Called before the sync cursor is cleared: a mark that outlived the cursor
+  /// would sit above a rebuilt seq space and silently suppress every badge,
+  /// and unlike a stale counter - which the next open resets - nothing ever
+  /// repairs it.
+  Future<void> clearReadMarks() async {
+    final db = await _appDatabase.db;
+    await db.transaction((txn) async {
+      final records = await _store.find(txn);
+      for (final record in records) {
+        final entity = ChatEntity.fromJson(record.value);
+        if (entity.lastOpenedSeq == null) continue;
+        await _store.record(record.key).put(txn, entity.copyWith(lastOpenedSeq: null).toJson());
+      }
+    });
+  }
+
   /// Drop every chat (logout).
   Future<void> cleanData() async {
     final db = await _appDatabase.db;

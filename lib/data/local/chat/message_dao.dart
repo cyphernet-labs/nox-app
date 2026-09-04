@@ -30,6 +30,48 @@ class MessageDao {
 
   Future<int> countByChat(String chatId) async => (await getByChatSorted(chatId)).length;
 
+  /// The highest seq cached for a chat, or null when nothing is cached.
+  Future<int?> highestSeq(String chatId) async {
+    // seq is nullable on the entity: pre-025 rows and locally-minted optimistic
+    // sends have none. A row without a seq has no place in the journal order,
+    // so it neither raises the mark nor counts against it.
+    final seqs = (await getByChatSorted(chatId)).map((m) => m.seq).nonNulls;
+    if (seqs.isEmpty) return null;
+    return seqs.reduce((a, b) => a > b ? a : b);
+  }
+
+  /// How many cached messages sit above each chat's mark and were not written by us.
+  ///
+  /// Counted in Dart over decoded entities rather than by a Finder: the global
+  /// snake_case field rename means a query keyed on a camelCase field name
+  /// silently matches nothing.
+  ///
+  /// This is a recount, not a running total, and that is the point: the
+  /// protocol permits the same event to arrive twice at the replay/live
+  /// boundary, and counting the set is idempotent where incrementing was not.
+  Future<Map<String, int>> countUnreadByChat({required Map<String, int> marks, required Set<String> excludeAuthors}) async {
+    if (marks.isEmpty) return const <String, int>{};
+    final db = await _appDatabase.db;
+    final counts = <String, int>{};
+    // ONE pass over the store for the whole list. Counting per chat instead
+    // meant decoding every record in the store once per chat — on the UI
+    // isolate, on every watch tick, so a device with a few thousand cached
+    // messages paid tens of thousands of decodes to redraw a list of badges.
+    for (final message in _decode(await _store.query().getSnapshots(db))) {
+      // Absent mark = never opened = no badge at all, by the product rule, so
+      // those chats are simply not in `marks` and cost nothing here.
+      final mark = marks[message.chatId];
+      if (mark == null) continue;
+      final seq = message.seq;
+      // A row with no seq has no place in the journal order: an optimistic
+      // send that has not come back yet, or a pre-025 row.
+      if (seq == null || seq <= mark) continue;
+      if (excludeAuthors.contains(message.authorId)) continue;
+      counts[message.chatId] = (counts[message.chatId] ?? 0) + 1;
+    }
+    return counts;
+  }
+
   /// One message by id, or null. Record-key lookup, so it is unaffected by the
   /// `field_rename: snake` gotcha that makes a Finder on a camelCase key match
   /// nothing.

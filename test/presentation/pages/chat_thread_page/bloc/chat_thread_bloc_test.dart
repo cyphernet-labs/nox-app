@@ -403,17 +403,19 @@ void main() {
       },
     );
 
-    test('opening a chat thread marks it read — its unread count resets to 0 (US4)', () async {
+    test('opening a chat thread records how far it was read (US4)', () async {
       await getIt<ChatRepository>().getChats(config: GetChatsConfig.firstPage()); // seed chat rows
       final chatDao = getIt<ChatDao>();
-      final unread = (await chatDao.getAllSorted()).firstWhere((c) => c.unreadCount > 0);
-      expect(unread.unreadCount, greaterThan(0)); // precondition
+      final chat = (await chatDao.getAllSorted()).first;
+      expect(chat.lastOpenedSeq, isNull); // precondition: never opened, so no badge
 
-      final bloc = ChatThreadBloc()..add(ChatThreadEvent.initialize(unread.id));
+      final bloc = ChatThreadBloc()..add(ChatThreadEvent.initialize(chat.id));
       addTearDown(bloc.close);
-      await Future<void>.delayed(const Duration(milliseconds: 400)); // init fires markChatRead
+      await Future<void>.delayed(const Duration(milliseconds: 400)); // init advances the mark
 
-      expect((await chatDao.getById(unread.id))!.unreadCount, 0);
+      // The mark is what an open leaves behind now; the badge is recounted from
+      // it rather than zeroed, so there is no counter to reset.
+      expect((await chatDao.getById(chat.id))!.lastOpenedSeq, isNotNull);
     });
 
     group('signed-in identity (feature 015)', () {

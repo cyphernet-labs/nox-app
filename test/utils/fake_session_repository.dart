@@ -64,6 +64,10 @@ class FakeSessionRepository implements SessionRepository {
   bool labelDirty = false;
 
   @override
+  Future<RepositoryResult<bool>> advanceOnboardingIfKnown({required bool created}) async =>
+      const RepositoryResult<bool>.success(data: false);
+
+  @override
   Future<RepositoryResult<bool>> markLabelDirty() async {
     labelDirty = true;
     return const RepositoryResult<bool>.success(data: true);
@@ -71,6 +75,12 @@ class FakeSessionRepository implements SessionRepository {
 
   @override
   Future<RepositoryResult<bool>> forgetAuthorId() async => const RepositoryResult<bool>.success(data: true);
+
+  @override
+  void noteOnboardingStartedHere() {}
+
+  @override
+  Future<RepositoryResult<bool>> discardSignIn() => throw UnimplementedError();
 
   @override
   Future<RepositoryResult<bool>> clear() => throw UnimplementedError();

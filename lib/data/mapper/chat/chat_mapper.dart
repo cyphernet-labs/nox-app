@@ -22,14 +22,26 @@ class ChatMapper extends BaseMapper<ChatEntity, ChatModel, dynamic, dynamic> {
     );
   }
 
+  /// [lastOpenedSeq] is device-local and has no domain counterpart: it never
+  /// crosses the wire and the UI never sees it, so it cannot be recovered from
+  /// the model. Callers merging a wire row into a stored one must hand the
+  /// stored value back, or the mark is lost and the chat looks never-opened -
+  /// which silently hides its badge.
+  ///
+  /// It cannot be `required`: this overrides a base-class method, and a
+  /// subtype may not demand more than its supertype. The entity field IS
+  /// required, so a new construction site is a compile error - but a caller of
+  /// THIS method that forgets is not. `chat_mapper_test` pins the round trip
+  /// for that reason.
   @override
-  ChatEntity toEntity({required ChatModel model, dynamic Function(dynamic entity)? ad}) {
+  ChatEntity toEntity({required ChatModel model, dynamic Function(dynamic entity)? ad, int? lastOpenedSeq}) {
     return ChatEntity(
       id: model.id,
       name: model.name,
       lastMessagePreview: model.lastMessagePreview,
       lastMessageAt: model.lastMessageAt.toUtc().toIso8601String(),
       unreadCount: model.unreadCount,
+      lastOpenedSeq: lastOpenedSeq,
       createdAt: model.createdAt == null ? null : model.createdAt!.toUtc().millisecondsSinceEpoch ~/ 1000,
       createdByLabel: model.createdByLabel,
     );

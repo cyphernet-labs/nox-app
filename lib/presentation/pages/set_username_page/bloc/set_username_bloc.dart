@@ -7,7 +7,6 @@ import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/username_rules.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
-import 'package:nox_app/presentation/base/bloc_transformers.dart';
 
 part 'set_username_bloc.freezed.dart';
 part 'set_username_event.dart';
@@ -21,7 +20,6 @@ class SetUsernameBloc extends BaseBloc<SetUsernameEvent, SetUsernameState> {
   SetUsernameBloc({String initialName = defaultName, this.demo = false})
     : super(SetUsernameState(name: initialName, status: UsernameStatus.prefilled)) {
     on<NameChanged>(_onNameChanged);
-    on<AvailabilityRequested>(_onAvailabilityRequested, transformer: debounceRestartable());
     on<DoneRequested>(_onDoneRequested);
     on<SkipRequested>(_onSkipRequested);
     on<NavigationHandled>(_onNavigationHandled);
@@ -36,9 +34,8 @@ class SetUsernameBloc extends BaseBloc<SetUsernameEvent, SetUsernameState> {
     emit(state.copyWith(status: UsernameStatus.valid));
   }
 
-  /// Stub for the server-assigned default name (must NOT collide with the mock
-  /// taken set, since the user's current name is always free to keep). Single
-  /// source: [Constants.defaultUserLabel] (shared with the shell + Settings).
+  /// Stand-in for the server-assigned default name. Single source:
+  /// [Constants.defaultUserLabel] (shared with the shell + Settings).
   static const String defaultName = Constants.defaultUserLabel;
 
   void _onNameChanged(NameChanged event, Emitter<SetUsernameState> emit) {
@@ -51,20 +48,12 @@ class SetUsernameBloc extends BaseBloc<SetUsernameEvent, SetUsernameState> {
       emit(state.copyWith(name: name, status: UsernameStatus.invalidCharset));
       return;
     }
-    emit(state.copyWith(name: name, status: UsernameStatus.checking));
-    add(SetUsernameEvent.availabilityRequested(name));
-  }
-
-  Future<void> _onAvailabilityRequested(AvailabilityRequested event, Emitter<SetUsernameState> emit) async {
-    // Drop stale checks (the user kept typing); switchMap already cancels the prior run.
-    if (state.name != event.name || state.status != UsernameStatus.checking) return;
-    await executeLogic(() async {
-      // TODO(backend): real server uniqueness check.
-      await Future<void>.delayed(const Duration(milliseconds: 200));
-      if (state.name != event.name) return;
-      final taken = UsernameRules.isTaken(event.name); // case-sensitive (FR-032)
-      emit(state.copyWith(status: taken ? UsernameStatus.taken : UsernameStatus.valid));
-    }, onError: (error, exception, stackTrace) => emit(state.copyWith(status: UsernameStatus.valid)));
+    // Decided here and now. There is nobody to ask: person labels are not
+    // unique (owner, 2026-09-02), the server neither enforces nor reports it,
+    // and charset and length are local rules that have just been applied. What
+    // used to follow was a debounced 200ms wait and a lookup in four hardcoded
+    // strings - a spinner animating a check nothing performed.
+    emit(state.copyWith(name: name, status: UsernameStatus.valid));
   }
 
   Future<void> _onDoneRequested(DoneRequested event, Emitter<SetUsernameState> emit) async {
