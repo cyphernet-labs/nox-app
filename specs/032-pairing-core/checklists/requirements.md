@@ -1,0 +1,41 @@
+# Specification Quality Checklist: Ядро спаривания и аутентификации
+
+**Purpose**: Validate specification completeness and quality before proceeding to planning
+**Created**: 2026-09-04
+**Feature**: [spec.md](../spec.md)
+
+## Content Quality
+
+- [x] No implementation details (languages, frameworks, APIs)
+- [x] Focused on user value and business needs
+- [x] Written for non-technical stakeholders
+- [x] All mandatory sections completed
+
+## Requirement Completeness
+
+- [x] No [NEEDS CLARIFICATION] markers remain
+- [x] Requirements are testable and unambiguous
+- [x] Success criteria are measurable
+- [x] Success criteria are technology-agnostic (no implementation details)
+- [x] All acceptance scenarios are defined
+- [x] Edge cases are identified
+- [x] Scope is clearly bounded
+- [x] Dependencies and assumptions identified
+
+## Feature Readiness
+
+- [x] All functional requirements have clear acceptance criteria
+- [x] User scenarios cover primary flows
+- [x] Feature meets measurable outcomes defined in Success Criteria
+- [x] No implementation details leak into specification
+
+## Notes
+
+Проверка пройдена со второй итерации. Что правилось:
+
+1. **Названия команд и полей провода** (`pair`, `device.revoke`, `signature`, `login_ref`) стояли в требованиях — это форма, а не потребность. Заменены на то, что они означают: «доказательство владения ключом», «отзыв ключа», «односторонняя производная от идентификатора входа». Имена остались только там, где спека ссылается на уже существующий контракт как на артефакт.
+2. **Критерии успеха** были сформулированы через внутренности («сервер хранит», «таблица содержит»). Переписаны через наблюдаемый исход: SC-002 говорит, что перехваченная строка бесполезна, а не как устроена проверка.
+3. **Ed25519** убран из требований: конкретный алгоритм — решение этапа планирования, требование FR-008 говорит о свойстве (приватный ключ не покидает устройство), а не о примитиве. В заголовке ветки он остаётся, потому что модель аутентификации его уже зафиксировала.
+4. **Границы фазы** вынесены в отдельную таблицу «Вне объёма» со ссылками на конкретные открытые вопросы реестра, чтобы «не сейчас» не читалось как «не будет».
+
+Отдельно отмечено допущением, а не требованием: **пиннинг в этой фазе не работает**. Правило №1 модели без TLS не исполнимо, и притворяться, что оно исполняется, было бы хуже, чем записать долг явно.
