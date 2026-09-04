@@ -74,7 +74,6 @@ class ChatDao {
     });
   }
 
-  /// Drop every chat (logout).
   /// Moves the mark forward only, and never past [ceiling].
   ///
   /// Monotonic because a badge must not resurrect: going backwards would make
@@ -118,6 +117,7 @@ class ChatDao {
     });
   }
 
+  /// Drop every chat (logout).
   Future<void> cleanData() async {
     final db = await _appDatabase.db;
     await db.transaction((txn) async {

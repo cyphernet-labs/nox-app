@@ -79,13 +79,13 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         if (!greeting.outcomeStated) {
           // The server did not say. Guessing costs the person either their
           // naming step or their name, so we say so instead.
-          await _sessionRepository.clear();
+          await _sessionRepository.discardSignIn();
           return const RepositoryResult<bool>.error(exception: RepositoryException.connection);
         }
         return _finishSignIn(onboardingComplete: !greeting.created!);
       } on Object catch (e, s) {
         logRepository.error(target: this, error: e, stackTrace: s);
-        await _sessionRepository.clear();
+        await _sessionRepository.discardSignIn();
         return const RepositoryResult<bool>.error(exception: RepositoryException.connection);
       }
     });

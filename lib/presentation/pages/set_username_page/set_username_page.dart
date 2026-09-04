@@ -101,7 +101,6 @@ class _SetUsernamePageState extends BaseStatePage<SetUsernamePage> {
       helperText: context.l10n.usernameHelper,
       placeholder: context.l10n.usernameHint,
       errorText: _errorText(context, state.status),
-      checking: state.isChecking,
       enabled: !state.isSubmitting,
       onChanged: (value) => _bloc.add(SetUsernameEvent.nameChanged(value)),
     );

@@ -86,7 +86,6 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
     return _withRecountedBadges(merged);
   }
 
-  /// Serves one page out of the cache — the answer when the channel is down.
   /// Every id a message written on THIS device could carry.
   ///
   /// Not the single resolved id: `resolveIdentity` falls back to the login
@@ -119,6 +118,7 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
     return models;
   }
 
+  /// Serves one page out of the cache — the answer when the channel is down.
   Future<(List<ChatModel>, PageMetadata)> _cachedPage(GetChatsConfig config) async {
     final entities = await _chatDao.getAllSorted();
     final all = await _withRecountedBadges(entities);

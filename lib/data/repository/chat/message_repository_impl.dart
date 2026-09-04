@@ -308,12 +308,10 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
     await _touchChatRow(chatId, message);
   }
 
-  /// Updates the parent chat row after a message is persisted: last-message preview +
-  /// timestamp (→ newest-first reorder), and optionally the unread count. Works at the
-  /// [ChatEntity] level via a record-key lookup ([ChatDao.getById]) — no mapper needed.
+  /// Updates the parent chat row after a message is persisted: last-message
+  /// preview + timestamp (→ newest-first reorder). Works at the [ChatEntity]
+  /// level via a record-key lookup ([ChatDao.getById]) — no mapper needed.
   /// No-op if the chat row is absent.
-  /// Updates the parent chat row after a message is persisted: preview and
-  /// activity time only.
   ///
   /// The unread count is no longer touched here. It is recounted from the
   /// chat's read mark, which makes it idempotent to the duplicates §3 permits

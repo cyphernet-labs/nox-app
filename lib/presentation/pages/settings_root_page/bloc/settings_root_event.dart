@@ -12,7 +12,6 @@ sealed class SettingsRootEvent with _$SettingsRootEvent {
   const factory SettingsRootEvent.nameChanged(String name) = SettingsNameChanged;
 
   /// Debounced uniqueness check for [name].
-  const factory SettingsRootEvent.availabilityRequested(String name) = SettingsAvailabilityRequested;
 
   /// Save the draft (Enter / Done / blur) — commits only when valid.
   const factory SettingsRootEvent.nameSubmitted() = NameSubmitted;

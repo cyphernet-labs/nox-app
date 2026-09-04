@@ -48,7 +48,7 @@ Material Scaffold с `resizeToAvoidBottomInset: true`; фон — `ColorScheme.s
 ## Взаимодействия
 
 - Тап в поле → клавиатура поднимается.
-- Ввод символов → локальная валидация charset и длины. Серверной проверки занятости нет.
+- Ввод символов → локальная валидация charset и длины, результат сразу. Ни серверной проверки занятости, ни debounce-ожидания: проверять нечего.
 - **`Done`** или **Enter / Done** на клавиатуре → сохранение текущего значения поля (должно быть валидным и непустым).
 - **`Skip`** или **системный back / жест back** → пропуск: имя остаётся `User<random>`, переход в 4.1.
 
@@ -56,7 +56,7 @@ Material Scaffold с `resizeToAvoidBottomInset: true`; фон — `ColorScheme.s
 
 - `Scaffold` с `resizeToAvoidBottomInset: true`.
 - `AppBar` (M3) с wordmark `NOX`; адаптируется под тему через `ColorScheme`.
-- `TextField` (M3 outlined) с `maxLength: 32`, встроенным counter, постоянным `helperText`, suffix-`CircularProgressIndicator` в Checking-availability.
+- `TextField` (M3 outlined) с `maxLength: 32`, встроенным counter, постоянным `helperText`. Suffix-индикатора нет — ждать нечего.
 - `FilledButton` — primary `Done`.
 - `TextButton` — secondary `Skip`.
 - `CircularProgressIndicator` (внутри primary button) — Loading-submit.

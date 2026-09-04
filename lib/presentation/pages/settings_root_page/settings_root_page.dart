@@ -338,7 +338,6 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
               maxLength: 32,
               autofocus: true,
               errorText: _nameError(state.status),
-              checking: state.isChecking,
               onChanged: (value) => _bloc.add(SettingsRootEvent.nameChanged(value)),
               onSubmitted: () => _bloc.add(const SettingsRootEvent.nameSubmitted()),
             )

@@ -10,7 +10,6 @@ import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/identity/identity_resolver.dart';
 import 'package:nox_app/general/username_rules.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
-import 'package:nox_app/presentation/base/bloc_transformers.dart';
 
 part 'settings_root_bloc.freezed.dart';
 part 'settings_root_event.dart';
@@ -28,7 +27,6 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
     on<SettingsInitialize>(_onInitialize);
     on<NameEditStarted>(_onNameEditStarted);
     on<SettingsNameChanged>(_onNameChanged);
-    on<SettingsAvailabilityRequested>(_onAvailabilityRequested, transformer: debounceRestartable());
     on<NameSubmitted>(_onNameSubmitted);
     on<NameEditCancelled>(_onNameEditCancelled);
     on<IdRevealToggled>(_onIdRevealToggled);
@@ -70,20 +68,11 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
       emit(state.copyWith(draftName: name, status: SettingsNameStatus.invalidCharset));
       return;
     }
-    emit(state.copyWith(draftName: name, status: SettingsNameStatus.checking));
-    add(SettingsRootEvent.availabilityRequested(name));
-  }
-
-  Future<void> _onAvailabilityRequested(SettingsAvailabilityRequested event, Emitter<SettingsRootState> emit) async {
-    if (state.draftName != event.name || state.status != SettingsNameStatus.checking) return;
-    await executeLogic(() async {
-      // Nothing to ask: person labels are not unique (owner, 2026-09-02), so
-      // the only rules left are charset and length, and those are local and
-      // already applied. The former fail-safe guarded against committing a
-      // possibly-taken label; there is no such thing now.
-      if (state.draftName != event.name) return;
-      emit(state.copyWith(status: SettingsNameStatus.valid));
-    }, onError: (error, exception, stackTrace) => emit(state.copyWith(status: SettingsNameStatus.idle)));
+    // Decided here: there is no availability to check. Person labels are not
+    // unique (owner, 2026-09-02), so charset and length - already applied
+    // above - are the whole rule. The debounced handler this used to schedule
+    // waited 200ms and compared against four hardcoded strings.
+    emit(state.copyWith(draftName: name, status: SettingsNameStatus.valid));
   }
 
   Future<void> _onNameSubmitted(NameSubmitted event, Emitter<SettingsRootState> emit) async {

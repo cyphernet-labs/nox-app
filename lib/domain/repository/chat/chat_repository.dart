@@ -37,8 +37,6 @@ abstract class ChatRepository {
   /// All files shared in a chat (5.4) — chat-owned, not paginated.
   Future<RepositoryResult<List<MessageAttachment>>> getChatFiles({required String chatId, bool refresh = false});
 
-  /// Marks a chat read: resets its unread count to 0 (no-op when already 0). Called when
-  /// the chat's thread is viewed (Feature 014); the reactive list badge updates live.
   /// Records that the chat has been seen up to what is cached for it. The
   /// badge is a recount from this mark, never a stored total: the protocol
   /// permits the same event twice at the replay/live boundary, and counting a

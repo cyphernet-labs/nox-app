@@ -65,6 +65,11 @@ abstract class SessionRepository {
   /// strangers' messages as this user's own.
   Future<RepositoryResult<bool>> forgetAuthorId();
 
+  /// Undoes what a failed sign-in wrote, and nothing else. Narrower than
+  /// [clear] on purpose: the device id survives, because a sign-in that never
+  /// reached the server did not change which install this is.
+  Future<RepositoryResult<bool>> discardSignIn();
+
   /// Full wipe: secure storage deleteAll + remove prefs keys (logout).
   Future<RepositoryResult<bool>> clear();
 }

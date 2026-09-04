@@ -49,6 +49,31 @@ void main() {
     expect((await repository.readSession()).data, isNull);
   });
 
+  group('discardSignIn (feature 031)', () {
+    test('undoes the sign-in so the session resolves to null', () async {
+      await repository.saveIdentifier(identifier: 'abc', onboardingComplete: false);
+      await repository.discardSignIn();
+      expect((await repository.readSession()).data, isNull);
+    });
+
+    test('keeps the device id - a sign-in that never reached the server changed no install', () async {
+      final before = (await repository.deviceId()).data;
+      await repository.saveIdentifier(identifier: 'abc', onboardingComplete: false);
+
+      await repository.discardSignIn();
+
+      // clear() would rotate it, and the next successful attempt would then
+      // register a second device for one install.
+      expect((await repository.deviceId()).data, before);
+    });
+
+    test('clear DOES rotate the device id, which is why sign-in must not use it', () async {
+      final before = (await repository.deviceId()).data;
+      await repository.clear();
+      expect((await repository.deviceId()).data, isNot(before));
+    });
+  });
+
   group('updateLabel (feature 015)', () {
     test('persists the new label and leaves the identifier untouched', () async {
       await repository.saveIdentifier(identifier: 'abc', onboardingComplete: true, label: 'Alice');

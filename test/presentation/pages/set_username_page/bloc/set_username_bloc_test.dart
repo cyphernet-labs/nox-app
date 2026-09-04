@@ -31,25 +31,17 @@ void main() {
     );
 
     blocTest<SetUsernameBloc, SetUsernameState>(
-      'a free valid name resolves to valid after the debounced check',
+      'a valid name resolves at once - there is no availability to wait for',
       build: () => SetUsernameBloc(demo: true),
       act: (bloc) => bloc.add(const SetUsernameEvent.nameChanged('Freename')),
-      wait: const Duration(milliseconds: 700),
-      expect: () => [
-        predicate<SetUsernameState>((s) => s.status == UsernameStatus.checking),
-        predicate<SetUsernameState>((s) => s.status == UsernameStatus.valid && s.canSubmit),
-      ],
+      expect: () => [predicate<SetUsernameState>((s) => s.status == UsernameStatus.valid && s.canSubmit)],
     );
 
     blocTest<SetUsernameBloc, SetUsernameState>(
       'a name that used to be reserved is accepted - nothing checks label uniqueness',
       build: () => SetUsernameBloc(demo: true),
       act: (bloc) => bloc.add(const SetUsernameEvent.nameChanged('NOX')),
-      wait: const Duration(milliseconds: 700),
-      expect: () => [
-        predicate<SetUsernameState>((s) => s.status == UsernameStatus.checking),
-        predicate<SetUsernameState>((s) => s.status == UsernameStatus.valid),
-      ],
+      expect: () => [predicate<SetUsernameState>((s) => s.status == UsernameStatus.valid)],
     );
 
     blocTest<SetUsernameBloc, SetUsernameState>(

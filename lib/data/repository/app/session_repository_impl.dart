@@ -187,6 +187,20 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   }
 
   @override
+  Future<RepositoryResult<bool>> discardSignIn() {
+    return execute<bool>(() async {
+      // Deliberately narrower than [clear]: it removes exactly what a sign-in
+      // wrote and leaves the device id alone. That id names this install, not
+      // the person, so an attempt that never reached the server must not
+      // rotate it - doing so would make one install look like two devices to
+      // the server the moment the next attempt succeeds.
+      await _secureStorage.delete(key: _kIdentifier);
+      await _prefs.remove(_kOnboardingComplete);
+      return const RepositoryResult<bool>.success(data: true);
+    });
+  }
+
+  @override
   Future<RepositoryResult<bool>> clear() {
     return execute<bool>(() async {
       await _secureStorage.deleteAll();

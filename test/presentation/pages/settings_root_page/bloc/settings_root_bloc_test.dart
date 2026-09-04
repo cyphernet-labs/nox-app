@@ -41,25 +41,17 @@ void main() {
     );
 
     blocTest<SettingsRootBloc, SettingsRootState>(
-      'a free valid name resolves to valid after the debounced check',
+      'a valid name resolves at once - there is no availability to wait for',
       build: SettingsRootBloc.new,
       act: (bloc) => bloc.add(const SettingsRootEvent.nameChanged('Freename')),
-      wait: const Duration(milliseconds: 700),
-      expect: () => [
-        predicate<SettingsRootState>((s) => s.status == SettingsNameStatus.checking),
-        predicate<SettingsRootState>((s) => s.status == SettingsNameStatus.valid && s.canSave),
-      ],
+      expect: () => [predicate<SettingsRootState>((s) => s.status == SettingsNameStatus.valid && s.canSave)],
     );
 
     blocTest<SettingsRootBloc, SettingsRootState>(
       'a name that used to be reserved is accepted - nothing checks label uniqueness',
       build: SettingsRootBloc.new,
       act: (bloc) => bloc.add(const SettingsRootEvent.nameChanged('NOX')),
-      wait: const Duration(milliseconds: 700),
-      expect: () => [
-        predicate<SettingsRootState>((s) => s.status == SettingsNameStatus.checking),
-        predicate<SettingsRootState>((s) => s.status == SettingsNameStatus.valid),
-      ],
+      expect: () => [predicate<SettingsRootState>((s) => s.status == SettingsNameStatus.valid)],
     );
 
     blocTest<SettingsRootBloc, SettingsRootState>(
@@ -80,7 +72,7 @@ void main() {
     blocTest<SettingsRootBloc, SettingsRootState>(
       'cancelling edit reverts the draft to the committed name',
       build: SettingsRootBloc.new,
-      seed: () => const SettingsRootState(name: 'User7421', draftName: 'Half', editing: true, status: SettingsNameStatus.checking),
+      seed: () => const SettingsRootState(name: 'User7421', draftName: 'Half', editing: true, status: SettingsNameStatus.valid),
       act: (bloc) => bloc.add(const SettingsRootEvent.nameEditCancelled()),
       expect: () => [predicate<SettingsRootState>((s) => !s.editing && s.draftName == 'User7421' && s.status == SettingsNameStatus.idle)],
     );

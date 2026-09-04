@@ -7,16 +7,15 @@ enum UsernameOutcome { success, raceTaken, fatal }
 /// `raceTaken` survives on the demo path only (the screens gallery drives it
 /// through [UsernameOutcome]). There is no `taken`: person labels are not
 /// unique (owner, 2026-09-02), so nothing can report a person's name as
-/// belonging to someone else.
-enum UsernameStatus { prefilled, empty, invalidCharset, checking, valid, submitting, raceTaken, navSuccess, navFatal }
+/// belonging to someone else — and no `checking` either, since a name is
+/// judged the moment it is typed.
+enum UsernameStatus { prefilled, empty, invalidCharset, valid, submitting, raceTaken, navSuccess, navFatal }
 
 @freezed
 abstract class SetUsernameState with _$SetUsernameState {
   const SetUsernameState._();
 
   const factory SetUsernameState({@Default('') String name, @Default(UsernameStatus.prefilled) UsernameStatus status}) = _SetUsernameState;
-
-  bool get isChecking => status == UsernameStatus.checking;
 
   bool get isSubmitting => status == UsernameStatus.submitting;
 

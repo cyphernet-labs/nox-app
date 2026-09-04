@@ -124,8 +124,10 @@ class SyncService {
   Future<void> _applyChat(Map<String, dynamic> data) async {
     final wire = _chatWireMapper.toModel(entity: ChatWireEntity.fromJson(data));
     final existing = await _chatDao.getById(wire.id);
-    // The unread badge is this device's alone — the wire has no such field, so
-    // taking the wire row wholesale would silently clear it.
+    // Both fields are device-local and absent from the wire, so a wholesale
+    // take of the wire row would drop them. The mark is the load-bearing one -
+    // the badge is recounted from it; the stored count is carried forward for
+    // the schema's sake and read by nobody.
     await _chatDao.upsert(
       _chatMapper.toEntity(
         model: wire.copyWith(unreadCount: existing?.unreadCount ?? 0),
