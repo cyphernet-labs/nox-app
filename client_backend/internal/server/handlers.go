@@ -48,11 +48,20 @@ type helloRequest struct {
 }
 
 type helloReply struct {
-	Schema    int           `json:"schema"`
-	Cursor    int64         `json:"cursor"`
-	JournalID string        `json:"journal_id"`
-	Limits    config.Limits `json:"limits"`
-	Identity  identity      `json:"identity"`
+	Schema    int              `json:"schema"`
+	Cursor    int64            `json:"cursor"`
+	JournalID string           `json:"journal_id"`
+	Limits    config.Limits    `json:"limits"`
+	Identity  greetingIdentity `json:"identity"`
+}
+
+// greetingIdentity is the identity WITHOUT `created`. A greeting is by
+// definition a device that was already paired, so there is no outcome to
+// state - and stating one would give the client a second place to read a
+// decision that belongs to the pair reply (§3, §8A).
+type greetingIdentity struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
 }
 
 // identity is the object both the greeting and the pair reply carry, so the
@@ -100,6 +109,11 @@ func (c *client) handleSessionHello(cmd protocol.Command) {
 		return
 	}
 
+	// Recorded BEFORE the resolve: the key is already proved by the signature,
+	// and a revoke arriving while this greeting is still in the database would
+	// otherwise find an empty key and leave the connection running.
+	c.srv.setDeviceKey(c, deviceKey)
+
 	// Resolve BEFORE registering with the hub: this writes, and invariant 4
 	// forbids a write transaction straddling hub registration. Failing here
 	// also avoids the unregister dance below.
@@ -117,7 +131,6 @@ func (c *client) handleSessionHello(cmd protocol.Command) {
 	}
 	c.identity = id
 	c.label = id.Label
-	c.srv.setDeviceKey(c, deviceKey)
 
 	journalID, err := c.srv.store.JournalID(c.ctx)
 	if err != nil {
@@ -152,10 +165,11 @@ func (c *client) handleSessionHello(cmd protocol.Command) {
 		Cursor:    cursor,
 		JournalID: journalID,
 		Limits:    c.srv.cfg.Limits,
-		// Created is false here by construction: a greeting is a device that
-		// was already paired, so nobody was brought into being by it. The
-		// onboarding outcome lives on the pair reply (§8A).
-		Identity: identity{ID: c.identity.UserID, Label: c.identity.Label},
+		// No `created` on a greeting at all. §3 says the outcome moved to the
+		// pair reply, and a greeting that still states it invites the client to
+		// read the decision from two places - which is exactly the second
+		// source of one truth the phase set out to remove.
+		Identity: greetingIdentity{ID: c.identity.UserID, Label: c.identity.Label},
 	}))
 
 	if req.Since != nil {

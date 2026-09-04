@@ -98,6 +98,14 @@ class SyncService {
     // catch-up: applying later events would advance the cursor past the gap.
     if (_halted) return;
     try {
+      // Revocation is not journal content: it carries seq 0 and describes THIS
+      // connection, not the shared world. Checked before the cursor guard,
+      // which would otherwise discard it as a duplicate of everything.
+      if (event.event == ServerEvent.deviceRevoked) {
+        logRepository.debug(target: this, message: 'sync: this device was revoked');
+        await authRepository.logout(forced: true);
+        return;
+      }
       // Duplicates are allowed at the replay/live boundary (§3) — the cursor is
       // what tells them apart, so anything at or below it has been applied.
       if (event.seq <= await _syncRepository.getCursor()) return;

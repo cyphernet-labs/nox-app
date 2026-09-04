@@ -61,6 +61,14 @@ class LiveSessionStarter {
     // presented and then sending their messages somewhere else entirely -
     // which is the opposite of "your own server".
     final paired = await _session.serverAddress();
+    if (!paired.hasData) {
+      // A read failure is not "this install never paired". Falling back to the
+      // build-time address would point a paired device at a different server,
+      // whose journal id differs - and the world-change wipe would then throw
+      // away everything this person has.
+      logRepository.debug(target: this, message: 'sync: server address unreadable, start deferred');
+      return;
+    }
     final apiUrl = paired.data ?? _config.config.apiUrl;
     if (apiUrl == null || apiUrl.isEmpty) return;
     // Keyed on the address actually in use: two different servers reachable at
@@ -117,11 +125,21 @@ class LiveSessionStarter {
       return null;
     }
     final data = session.data;
-    // A genuinely absent session is the sanctioned anonymous case: nobody has
-    // signed in, so there is nothing to claim.
-    if (data == null) return const GreetingCredentials();
+    // Nobody has paired yet. There is no anonymous greeting any more - the
+    // server refuses one - so the connection is held open for `pair` and says
+    // nothing. This is the state a fresh install sits in, and the state
+    // sign-in runs its pairing in.
+    if (data == null) return const GreetingCredentials.unpaired();
 
     final seed = await _session.deviceSecret();
+    if (!seed.hasData) {
+      // A paired install whose key cannot be read right now. Greeting without
+      // it would be refused, and a refusal is indistinguishable from a
+      // revocation - which would wipe this device over a transient keychain
+      // failure. Defer instead.
+      logRepository.debug(target: this, message: 'sync: device key unreadable, greeting deferred');
+      return null;
+    }
     // No label here any more. It used to ride the greeting behind a "renamed"
     // flag, because a greeting was the only place a name could travel; with
     // identity.setLabel it has its own command, and repeating a cached name on
@@ -136,6 +154,16 @@ class LiveSessionStarter {
   /// longer this person's on this server. A forced logout is exactly the right
   /// shape: it wipes and puts the app back on the pairing screen.
   Future<void> _deviceRejected() async {
+    // Only an install that HAS a session can be revoked. A refusal for a device
+    // that never paired is not a revocation - it is the ordinary answer to a
+    // greeting that should not have gone out - and wiping on it would delete
+    // the very key and address a sign-in in progress just wrote.
+    final session = await _session.readSession();
+    if (!session.hasData || session.data == null) {
+      logRepository.debug(target: this, message: 'sync: refused while unpaired, nothing to clear');
+      await stop();
+      return;
+    }
     logRepository.debug(target: this, message: 'sync: this device is no longer paired, clearing');
     await stop();
     await authRepository.logout(forced: true);

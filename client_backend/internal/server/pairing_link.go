@@ -72,8 +72,13 @@ func BuildPairingLink(addr, serverKey, token string) (string, error) {
 }
 
 // listenAddress turns a bind address into one a device can actually reach.
-// A server bound to every interface prints a loopback link rather than
-// "0.0.0.0:8080", which no device can dial.
+//
+// A wildcard bind has no single right answer, so it falls back to loopback:
+// wrong for a phone on the same network, but honest and never a link that
+// cannot be dialled at all. ⚠️ An operator binding 0.0.0.0 therefore has to
+// hand out the link with the real address substituted; announcing the reachable
+// one needs a configured public address, which arrives with TLS and the
+// pinning work.
 func listenAddress(addr string) string {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {

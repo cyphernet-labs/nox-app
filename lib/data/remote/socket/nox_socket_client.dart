@@ -263,10 +263,19 @@ class NoxSocketClient {
       final provider = _credentialsProvider;
       final credentials = provider == null ? const GreetingCredentials() : await provider();
       if (credentials == null) {
-        // The provider could not tell who we are. Greeting anyway would claim a
-        // throw-away identity and write rows under it, so wait and re-read.
+        // The provider could not tell who we are - a transient storage failure.
+        // Greeting anyway would send an unsigned hello, which the server
+        // refuses; wait and re-read instead.
         await _teardown(SessionPhase.disconnected);
         _scheduleRetry();
+        return;
+      }
+      if (credentials.unpaired) {
+        // Held open, NOT torn down: this is the window `pair` runs in, and it
+        // is the one command allowed before a greeting. Nothing else can be
+        // sent - every other command waits on the greeting that will not come
+        // until pairing has happened.
+        logRepository.debug(target: this, message: 'socket: not paired yet, holding the connection open for pairing');
         return;
       }
       String? deviceKey;
@@ -472,7 +481,15 @@ class NoxSocketClient {
 /// optional by contract: a connection presenting none of them is served as a
 /// one-off, which is what keeps hand tools and the live probe working.
 class GreetingCredentials {
-  const GreetingCredentials({this.deviceSeed, this.label});
+  const GreetingCredentials({this.deviceSeed, this.label, this.unpaired = false});
+
+  /// This install has not paired yet, so there is nothing to greet with.
+  ///
+  /// The connection is still needed - `pair` is the one command allowed before
+  /// a greeting - so the socket stays open and simply does not greet. Greeting
+  /// anyway would be an unsigned hello, which the server refuses, and the
+  /// refusal reads as a revocation.
+  const GreetingCredentials.unpaired() : deviceSeed = null, label = null, unpaired = true;
 
   /// This device's key seed. The socket derives the public half for
   /// `device_key` and signs the challenge with it — the seed itself never
@@ -482,4 +499,7 @@ class GreetingCredentials {
 
   /// Present only on the greeting that follows a rename.
   final String? label;
+
+  /// See [GreetingCredentials.unpaired].
+  final bool unpaired;
 }

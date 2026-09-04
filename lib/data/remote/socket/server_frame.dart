@@ -69,4 +69,9 @@ class ServerEvent extends ServerFrame {
   static const String chatCreated = 'chat.created';
   static const String chatUpdated = 'chat.updated';
   static const String messageNew = 'message.new';
+
+  /// Sent to the device being cut off, immediately before its socket closes
+  /// (contract §8A). Not journal content: it carries seq 0 and describes THIS
+  /// connection rather than the shared world.
+  static const String deviceRevoked = 'device.revoked';
 }

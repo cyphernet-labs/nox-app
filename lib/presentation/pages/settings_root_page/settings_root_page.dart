@@ -36,7 +36,6 @@ import 'package:nox_app/presentation/widgets/onboarding/app_labeled_field_widget
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 import 'package:nox_app/presentation/widgets/settings/app_identity_card_widget.dart';
 import 'package:nox_app/presentation/widgets/settings/app_logout_dialog_widget.dart';
-import 'package:nox_app/presentation/widgets/settings/app_qr_surface_widget.dart';
 import 'package:nox_app/presentation/widgets/settings/app_settings_nav_row_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_list_detail_widget.dart';
 
@@ -285,7 +284,6 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
           _identityCard(state, revealable: false, wide: true),
           // Design: the account QR + caption sit in a separate centred block BELOW the
           // identity card, on the plain detail-pane background (not inside the card).
-          if (!state.editing && !state.initialLoading) _accountQrBlock(context, state.rawId),
         ],
       ),
       _Section.devices => const DevicesBody(),
@@ -326,7 +324,9 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
   Widget _identityCard(SettingsRootState state, {required bool revealable, required bool wide}) {
     return AppIdentityCardWidget(
       name: state.name,
-      maskedId: state.maskedId,
+      // The id is public now: masking it would hide something that is not a
+      // secret, and leave nothing for Copy to make sense of.
+      maskedId: state.rawId,
       rawId: state.rawId,
       revealable: revealable,
       initialLoading: state.initialLoading,
@@ -352,26 +352,6 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
               onSubmitted: () => _bloc.add(const SettingsRootEvent.nameSubmitted()),
             )
           : null,
-    );
-  }
-
-  // The account QR + caption as a standalone centred block on the plain detail-pane
-  // background, shown below the identity card on desktop Account (design 02/07.1).
-  Widget _accountQrBlock(BuildContext context, String rawId) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: EdgeInsets.only(top: AppSpacingTokens.s16),
-      child: Column(
-        children: [
-          AppQrSurfaceWidget(data: rawId, size: AppDimensionTokens.size.qrSurface),
-          SizedBox(height: AppSpacingTokens.s8),
-          Text(
-            context.l10n.qrAccountCaption,
-            textAlign: TextAlign.center,
-            style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-          ),
-        ],
-      ),
     );
   }
 

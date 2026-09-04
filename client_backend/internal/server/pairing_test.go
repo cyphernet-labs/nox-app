@@ -66,6 +66,22 @@ func TestGreetingWithoutAValidSignatureIsRefused(t *testing.T) {
 		}
 	})
 
+	t.Run("a signature over ANOTHER connection's challenge", func(t *testing.T) {
+		// The reason the challenge is per connection. Without this, one captured
+		// greeting would be a permanent key: replaying it on a fresh socket
+		// would authenticate as its author forever.
+		other := dialWS(t, ts, srv)
+		other.expectGreeting()
+		stolen := dev.sign(t, other.challenge)
+
+		c := dialWS(t, ts, srv)
+		c.expectGreeting()
+		c.send(fmt.Sprintf(`{"id":1,"cmd":"session.hello","data":{"schema":1,"device_key":%q,"signature":%q}}`, dev.pub, stolen))
+		if code := expectErrCode(t, c, 1); code != protocol.ErrUnauthenticated {
+			t.Fatalf("code = %q, want %q", code, protocol.ErrUnauthenticated)
+		}
+	})
+
 	t.Run("a key the server does not know", func(t *testing.T) {
 		// Revoked, or a rebuilt store. The device cannot tell them apart and
 		// must not: both mean "this is not my server any more".

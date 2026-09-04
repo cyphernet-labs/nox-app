@@ -63,6 +63,17 @@ class _DevicesBodyState extends State<DevicesBody> {
             ],
             // A silent failure here reads as a dead button: the person taps
             // "Add a device" and nothing at all happens.
+            // A failed revoke used to be invisible: the error was rendered only
+            // when the list was empty, so a person tapped Revoke, saw the row
+            // stay, and had no idea whether it worked.
+            if (state.failed && state.devices.isNotEmpty) ...[
+              Text(
+                context.l10n.devicesError,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.error),
+              ),
+              SizedBox(height: AppSpacingTokens.s16),
+            ],
             if (state.inviteFailed) ...[
               Text(
                 context.l10n.devicesInviteError,

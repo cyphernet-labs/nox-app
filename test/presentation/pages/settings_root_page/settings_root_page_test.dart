@@ -189,12 +189,15 @@ void main() {
       expect(find.byType(NotificationsPage), findsNothing);
     });
 
-    testWidgets('the raw ID is never revealable on desktop (no Show/Hide)', (tester) async {
+    testWidgets('there is no reveal and no account QR - the id is public, and it is not an invite', (tester) async {
       await pumpDesktop(tester);
 
+      // Nothing to reveal: the id stopped being a secret with feature 032.
       expect(find.byTooltip(l10nEn.idShowTooltip), findsNothing);
-      // Inline account QR is shown instead.
-      expect(find.byType(AppQrSurfaceWidget), findsOneWidget);
+      // And no QR of it either. Rendering one captioned "let someone add you"
+      // promised a pairing that scanning it cannot perform - adding a device
+      // needs a one-shot token, which Devices mints.
+      expect(find.byType(AppQrSurfaceWidget), findsNothing);
     });
   });
 }

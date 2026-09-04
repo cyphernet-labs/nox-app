@@ -92,7 +92,14 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
         // only in a greeting, so a rename had to reconnect the whole session -
         // workable with one device, a source of divergence with two.
         final devices = getIt.isRegistered<DeviceRepository>() ? getIt<DeviceRepository>() : null;
-        if (devices != null) await devices.setLabel(label: draft);
+        if (devices == null) return;
+        final sent = await devices.setLabel(label: draft);
+        if (!sent.hasData) {
+          // The server never heard it, so the next greeting echoes the OLD name
+          // and silently undoes what the person just did. The edit goes back
+          // with the old name rather than showing one that is about to revert.
+          emit(state.copyWith(draftName: state.name, editing: true, status: SettingsNameStatus.idle));
+        }
       },
       // Keep the edit open on a persistence failure — never show a saved name that
       // did not persist. The mock store never errors; defensive only.

@@ -11,8 +11,10 @@ import 'package:nox_app/presentation/widgets/primitives/app_spinner_widget.dart'
 /// Identity card (7.1): a Name block (inline-editable) + `Your ID`
 /// block (masked value + Copy / Show QR / optional reveal on one row). Parameterized
 /// per layout (Principle I — minimize secret exposure):
-///   - mobile: `revealable = true` → a Show/Hide toggle reveals the raw identifier;
-///   - desktop: `revealable = false` (the raw ID is never shown); the account QR is
+///   - `revealable = false` on both widths since feature 032: the id is the
+///     PUBLIC author id, so there is nothing to hide behind a toggle. What the
+///     row shows is what Copy copies. The reveal existed when this string was
+///     the login secret;
 ///     rendered as a separate block below the card (see settings_root_page).
 /// While [initialLoading], a spinner stands in for the identifier (FR-038).
 class AppIdentityCardWidget extends StatelessWidget {
