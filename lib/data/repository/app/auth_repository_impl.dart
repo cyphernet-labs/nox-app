@@ -167,21 +167,28 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
   }
 
   @override
-  Future<RepositoryResult<bool>> completeOnboarding({String? label}) {
-    return _deriveAfter(
-      () => _sessionRepository.setOnboardingComplete(label: label),
-      // Send the chosen name to the server as its own command.
-      //
-      // It used to travel only in a greeting, so this reconnected the session.
-      // With the label gone from the greeting, a reconnect states nothing at
-      // all - the person picks a name, the server keeps the `User<random>` it
-      // assigned, and the next greeting overwrites the local choice with it.
-      afterMutate: () async {
-        if (label == null || label.isEmpty) return;
-        final devices = getIt.isRegistered<DeviceRepository>() ? getIt<DeviceRepository>() : null;
-        if (devices != null) await devices.setLabel(label: label);
-      },
-    );
+  Future<RepositoryResult<bool>> completeOnboarding({String? label}) async {
+    // The name goes to the server BEFORE it is stored locally. Storing first
+    // and telling the server after - or not checking whether it landed - shows
+    // a name the next greeting silently replaces with the assigned one, and the
+    // person has no way to know their choice was lost.
+    var landed = label == null || label.isEmpty;
+    if (!landed) {
+      final devices = getIt.isRegistered<DeviceRepository>() ? getIt<DeviceRepository>() : null;
+      if (devices == null) {
+        // No live channel in this build: nothing to tell, so the local name is
+        // the whole truth.
+        landed = true;
+      } else {
+        landed = (await devices.setLabel(label: label)).hasData;
+      }
+    }
+
+    // Onboarding completes either way - a person who chose a name must not be
+    // stranded on the naming screen because one command failed - but the name
+    // is only kept if the server actually has it. Keeping it locally otherwise
+    // would be a lie the next greeting corrects.
+    return _deriveAfter(() => _sessionRepository.setOnboardingComplete(label: landed ? label : null));
   }
 
   @override

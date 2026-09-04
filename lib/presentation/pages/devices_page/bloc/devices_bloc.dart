@@ -50,7 +50,10 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
     // local data and moves the navigation; merely deleting the row would leave
     // the app sitting there with a session the server no longer honours.
     if (state.devices.any((d) => d.isCurrent && d.deviceKey == event.deviceKey)) {
-      await authRepository.logout();
+      final out = await authRepository.logout();
+      // A failed wipe leaves the person signed in with data that should be
+      // gone. Settings surfaces the same failure; so does this.
+      if (!out.hasData) emit(state.copyWith(failed: true));
       return;
     }
 

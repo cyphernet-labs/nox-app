@@ -1,5 +1,7 @@
 # 7.1 · Settings root
 
+> ⚠️ **Feature 032:** `Your ID` shows the PUBLIC author id with no Show/Hide — it stopped being a secret. The account QR is gone: scanning an id adds nobody, so `Show QR` leads to **Devices**, where an invite is minted with a one-shot token. Logout is irreversible now (the device revokes its own key), and its copy says so.
+
 > **Settings** · mobile (iOS / Android) · Material 3
 
 **Purpose.** Account identity + grouped settings entries.

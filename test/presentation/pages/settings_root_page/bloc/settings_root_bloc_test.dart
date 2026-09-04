@@ -16,7 +16,7 @@ void main() {
       'initialize clears the initial-loading flag and loads the identifier',
       build: SettingsRootBloc.new,
       act: (bloc) => bloc.add(const SettingsRootEvent.initialize()),
-      expect: () => [predicate<SettingsRootState>((s) => !s.initialLoading && s.rawId == kTestIdentifier)],
+      expect: () => [predicate<SettingsRootState>((s) => !s.initialLoading && s.rawId == (kTestSession.authorId ?? ''))],
     );
 
     blocTest<SettingsRootBloc, SettingsRootState>(
@@ -103,7 +103,9 @@ void main() {
       wait: const Duration(milliseconds: 100),
       verify: (bloc) {
         expect(bloc.state.name, 'Alice'); // the chosen label, not the compile-time default
-        expect(bloc.state.rawId, 'sess-abc');
+        // The pairing token in the identifier slot is NOT the id: this session
+        // has no server-minted one yet, so there is nothing to show.
+        expect(bloc.state.rawId, isEmpty);
       },
     );
 

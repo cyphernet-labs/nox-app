@@ -10,7 +10,13 @@ import 'package:nox_app/domain/repository/base/repository_result.dart';
 /// identity card / Show QR surface in tests.
 const String kTestIdentifier = 'NOX-7c1f9a4e2b8d40f3-a6e5c2179bd0e83f-9f2a7c4e1b6d8a30';
 
-const SessionModel kTestSession = SessionModel(identifier: kTestIdentifier, onboardingComplete: true);
+const SessionModel kTestSession = SessionModel(
+  identifier: kTestIdentifier,
+  // The server-minted public id. Distinct from the identifier slot, which now
+  // holds the pairing token - a credential, never shown as "Your ID".
+  authorId: 'u_test0000000001',
+  onboardingComplete: true,
+);
 
 /// Hand-written session double — callers exercise [readSession] plus the feature-015
 /// label channel ([watchLabel] / [updateLabel]).

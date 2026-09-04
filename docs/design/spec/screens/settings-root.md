@@ -24,7 +24,7 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 2. **Body:** прокручиваемый `ListView`:
    - **Identity card (Material Card):** визуально выделена.
      - **Блок имени**: label `Name` + текущее имя + edit-аффорданс (pencil-иконка). Тап превращает текстовую строку в inline `TextField`.
-     - **Блок идентификатора (одна строка)**: label `Your ID` + masked text (`••••••••` — точки фиксированной длины 8) + action-row справа (`Show/Hide` toggle · `Copy` · `Show QR`). При раскрытии (`Show`) длинный идентификатор переносится по строкам (text wrap, monospace); action-row остаётся под текстом; `Hide` возвращает маску.
+     - **Блок идентификатора (одна строка)**: label `Your ID` + **сам публичный идентификатор личности** + action-row справа (`Copy` · `Show QR`). ⚠️ **С фазы 032 раскрытия нет**: строка перестала быть секретом — человек узнаётся по спаренному ключу устройства, — и маскировать её значило бы прятать то, что прятать нечего. `Show QR` ведёт на **7.8 Устройства**, где приглашение выпускается настоящим одноразовым токеном; раньше QR отдавал идентификатор-секрет, и его показ **был** входом.
    - **Плоский список** `ListTile`-ов (без group-заголовков):
      - `Notifications` → 7.2;
      - `Appearance` → 7.3;
@@ -76,13 +76,13 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 | AppBar title | `Settings` |
 | Name block label | `Name` |
 | Name edit tooltip | `Edit` |
-| Identifier block label | `Your ID` |
+| Identifier block label | `Your ID` (публичный `identity.id`, не секрет) |
 | Identifier mask (default) | `••••••••` (8 точек, фиксированная длина) |
 | Show identifier tooltip | `Show` |
 | Hide identifier tooltip | `Hide` |
 | Copy tooltip | `Copy` |
 | Show QR tooltip | `Show QR` |
-| QR bottom sheet title | `Your ID QR` |
+| ~~QR bottom sheet title~~ | ~~`Your ID QR`~~ — листа больше нет, `Show QR` ведёт в 7.8 |
 | QR bottom sheet close | `Close` |
 | Copy snackbar | `Copied to clipboard` |
 | Notifications row | `Notifications` |
@@ -92,7 +92,7 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 | About row | `About` |
 | Logout row | `Log out` |
 | Logout dialog title | `Log out?` |
-| Logout dialog message | `Your ID and local data will be removed from this device.` |
+| Logout dialog message | `This device will be signed out and won't be able to connect again. You'll need a new pairing link to come back.` — выход стал **необратимым**: устройство отзывает свой ключ |
 | Logout dialog confirm | `Log out` |
 | Logout dialog cancel | `Cancel` |
 

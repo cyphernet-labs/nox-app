@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net"
 	"strconv"
-	"strings"
 )
 
 // Pairing link format, contract §8A. One shape for every case, so there is one
@@ -87,8 +86,8 @@ func listenAddress(addr string) string {
 	if host == "" || host == "0.0.0.0" || host == "::" {
 		host = "127.0.0.1"
 	}
-	if strings.Contains(host, ":") {
-		host = "[" + host + "]"
-	}
+	// JoinHostPort brackets an IPv6 literal itself. Doing it here as well
+	// produced "[[::1]]:8080", which this file's own parser then rejects - so
+	// a server bound to an IPv6 address printed no link at all.
 	return net.JoinHostPort(host, port)
 }

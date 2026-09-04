@@ -193,7 +193,7 @@ func (s *Server) dropDevice(deviceKey string) {
 	}
 	for _, c := range doomed {
 		c.sendFrame(protocol.Event{Seq: 0, Event: protocol.EventDeviceRevoked, Data: payload})
-		go c.closeAfterFlush(websocket.StatusNormalClosure, "device revoked")
+		go c.closeAfterFlush("device revoked")
 	}
 }
 
@@ -325,18 +325,23 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 }
 
 // assertIdentitySchema refuses to start on a database written before the
-// identity tables existed. See the call site for why the migration runner
+// pairing tables existed. See the call site for why the migration runner
 // cannot repair such a database on its own.
+//
+// It names every table the current 001 creates that a pre-release database may
+// be missing: a guard that checks only some of them starts happily and then
+// fails deeper in with an error nobody can act on.
 func assertIdentitySchema(ctx context.Context, read *sql.DB, dbPath string) error {
 	var present int
 	err := read.QueryRowContext(ctx,
-		"SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name IN ('users', 'devices', 'journal')").Scan(&present)
+		"SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name IN "+
+			"('users', 'devices', 'journal', 'server_identity', 'pair_tokens')").Scan(&present)
 	if err != nil {
 		return fmt.Errorf("inspect schema: %w", err)
 	}
-	if present != 3 {
+	if present != 5 {
 		return fmt.Errorf(
-			"database schema predates the identity tables: the pre-release rule edits 001_init.sql in place, "+
+			"database schema predates the pairing tables: the pre-release rule edits 001_init.sql in place, "+
 				"so delete %s together with its -wal and -shm siblings and the %s-files directory, then start again",
 			dbPath, dbPath)
 	}
@@ -359,7 +364,14 @@ func announceClaim(ctx context.Context, st *store.Store, addr string, logger *sl
 	if err != nil {
 		return fmt.Errorf("ensure server identity: %w", err)
 	}
-	if id.Claimed {
+	devices, err := st.CountDevices(ctx)
+	if err != nil {
+		return fmt.Errorf("count devices: %w", err)
+	}
+	// Silent only while somebody can actually reach this server. A claimed
+	// server with no devices left is locked, not owned, and the machine is the
+	// root of trust: whoever can read this log can take it back.
+	if id.Claimed && devices > 0 {
 		return nil
 	}
 	token, err := st.IssueClaimToken(ctx, time.Now().Unix())

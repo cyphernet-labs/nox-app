@@ -150,6 +150,24 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	// A token this very device already spent means its reply was lost, not that
+	// somebody is replaying one. `pair` commits and THEN replies, so a dropped
+	// connection in that window leaves the device paired and the client
+	// believing nothing happened - and with a one-shot claim there is no second
+	// chance: the token is burned, the server is owned, and a single-device
+	// install would be locked out for good. Answering with the same identity is
+	// the at-least-once story `message.send` gets from its idempotency key.
+	same, found, err := pairedBy(ctx, tx, token, deviceKey)
+	if err != nil {
+		return Identity{}, err
+	}
+	if found {
+		if err := tx.Commit(); err != nil {
+			return Identity{}, fmt.Errorf("commit pair replay: %w", err)
+		}
+		return same, nil
+	}
+
 	pt, err := BurnToken(ctx, tx, token, now)
 	if err != nil {
 		return Identity{}, err
@@ -166,7 +184,16 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 			"SELECT claimed_at FROM server_identity WHERE id = 1").Scan(&claimedAt); err != nil {
 			return Identity{}, fmt.Errorf("read claim state: %w", err)
 		}
-		if claimedAt.Valid {
+		// Owned means "somebody can still get in", not "somebody once did".
+		// Revoking the last device - which logout is - would otherwise lock the
+		// machine forever: the claim is spent, there is no device to issue an
+		// invite from, and recovery is Q16. The person's row survives either
+		// way; this is only about being able to attach a device to it again.
+		var devices int
+		if err := tx.QueryRowContext(ctx, "SELECT COUNT(1) FROM devices").Scan(&devices); err != nil {
+			return Identity{}, fmt.Errorf("count devices: %w", err)
+		}
+		if claimedAt.Valid && devices > 0 {
 			return Identity{}, ErrTokenInvalid
 		}
 		id, err = insertUser(ctx, tx, "", now)
@@ -198,4 +225,29 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 		return Identity{}, fmt.Errorf("commit pair: %w", err)
 	}
 	return id, nil
+}
+
+// pairedBy reports the identity a spent token produced, but only when the SAME
+// device key is asking. A different key presenting a used token is an ordinary
+// replay and stays refused.
+//
+// Created is deliberately false on this path: the person exists by now, and the
+// device is asking again because it never heard the first answer. Saying
+// created would send a returning person through onboarding.
+func pairedBy(ctx context.Context, tx *sql.Tx, token, deviceKey string) (Identity, bool, error) {
+	var id Identity
+	err := tx.QueryRowContext(ctx, `
+		SELECT u.user_id, u.label
+		FROM pair_tokens t
+		JOIN devices d ON d.device_key = ?
+		JOIN users u ON u.user_id = d.user_id
+		WHERE t.token = ? AND t.used_at IS NOT NULL`,
+		deviceKey, token).Scan(&id.UserID, &id.Label)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Identity{}, false, nil
+	}
+	if err != nil {
+		return Identity{}, false, fmt.Errorf("read pairing replay: %w", err)
+	}
+	return id, true, nil
 }

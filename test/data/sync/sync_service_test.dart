@@ -13,6 +13,7 @@ import 'package:nox_app/data/mapper/chat/message_wire_mapper.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/sync/sync_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -106,6 +107,35 @@ void main() {
     await settle();
     return socket;
   }
+
+  test('device.revoked is acted on, not discarded as a duplicate', () async {
+    // It carries seq 0, and every cursor is at least that - so the ordinary
+    // duplicate guard would drop it, and the contract obligation to wipe and
+    // return to pairing would be silently unimplemented.
+    final session = getIt<SessionRepository>();
+    await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
+    expect((await session.readSession()).data, isNotNull, reason: 'precondition: this device is paired');
+
+    final socket = await connected(cursor: 5);
+    socket.pushEvent(seq: 0, event: 'device.revoked', data: const {'device_key': 'k'});
+    await settle();
+    await settle();
+
+    expect((await session.readSession()).data, isNull, reason: 'a revoked device keeps nothing');
+  });
+
+  test('a revocation echo of our OWN sign-out is ignored', () async {
+    // Logout revokes this very key, so the server echoes the same event back.
+    // Acting on it would run a second, forced logout and tell the person their
+    // session expired when they simply signed out.
+    final socket = await connected(cursor: 5);
+
+    // No session: this is what a sign-out has just left behind.
+    socket.pushEvent(seq: 0, event: 'device.revoked', data: const {'device_key': 'k'});
+    await settle();
+
+    expect((await getIt<SessionRepository>().readSession()).data, isNull);
+  });
 
   test('an own message coming back settles its queue entry instead of being re-sent', () async {
     // Contract §5: the echo and message.new of an OWN message carry the key it

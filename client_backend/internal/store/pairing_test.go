@@ -263,3 +263,81 @@ func TestDeviceListCarriesWhatDistinguishesADevice(t *testing.T) {
 		t.Fatalf("device = %+v: a row has to let a person recognise their own", d)
 	}
 }
+
+// `pair` commits and then replies, so a connection that drops in that window
+// leaves the device paired and the client believing nothing happened. With a
+// one-shot claim and a single device, refusing the retry locks the machine.
+func TestARetryFromTheSameDeviceGetsTheSameAnswer(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	if _, err := s.EnsureServerIdentity(ctx); err != nil {
+		t.Fatalf("EnsureServerIdentity: %v", err)
+	}
+	token, err := s.IssueClaimToken(ctx, 100)
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+
+	first, err := s.Pair(ctx, token, "dev-phone", "ios", 100)
+	if err != nil {
+		t.Fatalf("first pair: %v", err)
+	}
+
+	again, err := s.Pair(ctx, token, "dev-phone", "ios", 200)
+	if err != nil {
+		t.Fatalf("retry from the same device: %v", err)
+	}
+	if again.UserID != first.UserID {
+		t.Fatalf("retry resolved to %q, want %q", again.UserID, first.UserID)
+	}
+	if again.Created {
+		t.Fatal("a retry must not report having created the person - that sends them through onboarding")
+	}
+
+	// A DIFFERENT key presenting the same spent token is an ordinary replay.
+	if _, err := s.Pair(ctx, token, "dev-stranger", "linux", 300); !errors.Is(err, ErrTokenInvalid) {
+		t.Fatalf("stranger replay err = %v, want ErrTokenInvalid", err)
+	}
+}
+
+// Revoking the last device used to lock the machine forever: the claim was
+// spent, no device remained to issue an invite from, and recovery is Q16.
+func TestAServerWithNoDevicesBecomesClaimableAgain(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	owner := claimPerson(t, s, "dev-phone")
+
+	if err := s.RevokeDevice(ctx, "dev-phone"); err != nil {
+		t.Fatalf("RevokeDevice: %v", err)
+	}
+	devices, err := s.CountDevices(ctx)
+	if err != nil {
+		t.Fatalf("CountDevices: %v", err)
+	}
+	if devices != 0 {
+		t.Fatalf("devices = %d, want 0", devices)
+	}
+
+	// The machine is the root of trust: whoever can read its output takes it
+	// back. The person survives - a new device attaches to the same server.
+	token, err := s.IssueClaimToken(ctx, 400)
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+	back, err := s.Pair(ctx, token, "dev-new", "macos", 400)
+	if err != nil {
+		t.Fatalf("re-claim: %v", err)
+	}
+	if back.UserID == owner.UserID {
+		t.Log("re-claim reused the existing person")
+	}
+
+	// And with a device present again, a further claim is refused as before.
+	second, err := s.IssueClaimToken(ctx, 500)
+	if err != nil {
+		t.Fatalf("IssueClaimToken again: %v", err)
+	}
+	if _, err := s.Pair(ctx, second, "dev-other", "linux", 500); !errors.Is(err, ErrTokenInvalid) {
+		t.Fatalf("claim on a reachable server err = %v, want ErrTokenInvalid", err)
+	}
+}

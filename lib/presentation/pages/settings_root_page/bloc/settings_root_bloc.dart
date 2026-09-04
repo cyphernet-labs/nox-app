@@ -46,7 +46,10 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
           // The public author id, not a secret. The login identifier this used
           // to show no longer exists: a person is recognised by a paired key,
           // so there is nothing here worth hiding behind a reveal.
-          emit(state.copyWith(initialLoading: false, rawId: resolveIdentity(session).id, name: resolveIdentity(session).label)),
+          // The SERVER-minted id only. resolveIdentity falls back to the login
+          // identifier, whose slot now holds the pairing TOKEN - showing that
+          // as "Your ID" would put a credential on screen and in the clipboard.
+          emit(state.copyWith(initialLoading: false, rawId: session?.authorId ?? '', name: resolveIdentity(session).label)),
       onError: (_) => emit(state.copyWith(initialLoading: false, rawId: '')),
     );
   }
@@ -80,30 +83,31 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
 
   Future<void> _onNameSubmitted(NameSubmitted event, Emitter<SettingsRootState> emit) async {
     if (!state.canSave) return;
-    // Persist the validated new label to the session (feature 015). Empty/invalid/taken
-    // drafts never reach here (canSave). The write broadcasts on watchLabel so live
-    // surfaces (desktop rail avatar) update without a restart.
     final draft = state.draftName;
+
+    // The SERVER first. Persisting locally and then telling it would show a
+    // saved name that the next greeting silently reverts - and reverting from
+    // the already-updated state re-showed the very name that failed, which is
+    // how the previous attempt at this was ineffective.
+    final devices = getIt.isRegistered<DeviceRepository>() ? getIt<DeviceRepository>() : null;
+    if (devices != null) {
+      final sent = await devices.setLabel(label: draft);
+      if (!sent.hasData) {
+        // Keep the edit open on the OLD name. Nothing was saved anywhere, so
+        // nothing is claimed.
+        emit(state.copyWith(draftName: state.name, editing: true, status: SettingsNameStatus.idle));
+        return;
+      }
+    }
+
+    // Only now is it true. The write broadcasts on watchLabel so live surfaces
+    // (desktop rail avatar) update without a restart.
     final result = await sessionRepository.updateLabel(label: draft);
-    await result.match<Future<void>>(
-      onData: (_) async {
-        emit(state.copyWith(name: draft, editing: false, status: SettingsNameStatus.idle));
-        // The name goes to the server as its own command. It used to travel
-        // only in a greeting, so a rename had to reconnect the whole session -
-        // workable with one device, a source of divergence with two.
-        final devices = getIt.isRegistered<DeviceRepository>() ? getIt<DeviceRepository>() : null;
-        if (devices == null) return;
-        final sent = await devices.setLabel(label: draft);
-        if (!sent.hasData) {
-          // The server never heard it, so the next greeting echoes the OLD name
-          // and silently undoes what the person just did. The edit goes back
-          // with the old name rather than showing one that is about to revert.
-          emit(state.copyWith(draftName: state.name, editing: true, status: SettingsNameStatus.idle));
-        }
-      },
-      // Keep the edit open on a persistence failure — never show a saved name that
-      // did not persist. The mock store never errors; defensive only.
-      onError: (_) async {},
+    result.match<void>(
+      onData: (_) => emit(state.copyWith(name: draft, editing: false, status: SettingsNameStatus.idle)),
+      // Keep the edit open on a persistence failure - never show a saved name
+      // that did not persist.
+      onError: (_) {},
     );
   }
 

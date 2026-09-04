@@ -1,5 +1,7 @@
 # 02 · Settings
 
+> ⚠️ **Feature 032:** `Your ID` shows the PUBLIC author id with no Show/Hide — it stopped being a secret. The account QR is gone: scanning an id adds nobody, so `Show QR` leads to **Devices**, where an invite is minted with a one-shot token. Logout is irreversible now (the device revokes its own key), and its copy says so.
+
 > **02 · Settings** · desktop (Windows / Linux / macOS) · Material 3 · window 1440×900
 
 **Purpose.** List-detail settings: menu pane (left) + the selected section’s panel (right).

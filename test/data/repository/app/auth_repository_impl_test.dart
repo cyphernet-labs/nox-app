@@ -246,6 +246,35 @@ void main() {
       expect(rejected.exception, RepositoryException.authentication);
     });
 
+    test('a successful pairing re-greets, so the session stops speaking as the pre-pair identity', () async {
+      // The connection `pair` ran on was greeted before this device existed to
+      // the server. Without a second greeting it keeps speaking as whoever
+      // greeted then, and a message sent on it comes back looking like a
+      // stranger's on the sender's own screen.
+      when(
+        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
+      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
+      when(handshake.greet()).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
+
+      await repository.signIn(identifier: link);
+
+      verify(handshake.greet()).called(1);
+    });
+
+    test('a greeting that fails after pairing does not undo the pairing', () async {
+      // The pairing landed and the token is spent. Rolling back here would burn
+      // it for nothing - an ordinary reconnect is enough.
+      when(
+        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
+      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
+      when(handshake.greet()).thenThrow(const IdentityHandshakeTimeout());
+
+      final result = await repository.signIn(identifier: link);
+
+      expect(result.data, isTrue);
+      verifyNever(session.discardSignIn());
+    });
+
     test('a pairing that never answers rolls back, keeping the device key', () async {
       when(
         handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),

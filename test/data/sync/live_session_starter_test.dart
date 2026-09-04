@@ -7,8 +7,13 @@ import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/general/pairing/device_keys.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// The client half of pairing and revocation, at the two points where getting
-/// it wrong destroys an installation rather than merely inconveniencing it.
+/// The client half of pairing and revocation, at the points where getting it
+/// wrong destroys an installation rather than merely inconveniencing it.
+///
+/// [LiveSessionStarter] itself is registered only on the dev environment and
+/// owns a real socket, so what is exercised here is the STATE it decides from -
+/// which is where both brick defects actually lived: a greeting sent with
+/// nothing to greet with, and a refusal read as a revocation.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -73,5 +78,30 @@ void main() {
     // A new key, because this is a different install of the app as far as the
     // server is concerned - which is why sign-in must never take this path.
     expect((await session.deviceSecret()).data, isNot(before));
+  });
+
+  test('an unpaired install decides to hold, and a paired one decides to sign', () async {
+    // The two branches of the decision that bricked an install twice: greeting
+    // with nothing (refused, read as a revocation, wiped) versus greeting with
+    // the key (accepted).
+    expect((await session.readSession()).data, isNull);
+    const held = GreetingCredentials.unpaired();
+    expect(held.unpaired, isTrue);
+    expect(held.deviceSeed, isNull);
+
+    await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
+    final seed = (await session.deviceSecret()).data;
+    final signing = GreetingCredentials(deviceSeed: seed);
+    expect(signing.unpaired, isFalse);
+    expect(signing.deviceSeed, isNotNull);
+  });
+
+  test('the paired server address is what a later connection uses', () async {
+    await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
+    await session.saveServer(address: '10.0.0.5:9000', serverKey: 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=');
+
+    // Not the build-time address: pairing with the server a person presented
+    // and then talking to another one is the opposite of "your own server".
+    expect((await session.serverAddress()).data, '10.0.0.5:9000');
   });
 }

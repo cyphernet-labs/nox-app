@@ -1,4 +1,4 @@
-# 7.3 · Devices
+# 7.8 · Devices
 
 > **Settings** · mobile (iOS / Android) · Material 3 · new in feature 032
 

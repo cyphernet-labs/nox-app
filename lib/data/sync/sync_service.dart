@@ -102,6 +102,15 @@ class SyncService {
       // connection, not the shared world. Checked before the cursor guard,
       // which would otherwise discard it as a duplicate of everything.
       if (event.event == ServerEvent.deviceRevoked) {
+        // Only when somebody ELSE cut us off. A voluntary sign-out revokes this
+        // very key, so the server echoes the same event back - and treating
+        // that as an expiry would run a second logout and tell the person their
+        // session expired when they simply signed out.
+        final session = await sessionRepository.readSession();
+        if (!session.hasData || session.data == null) {
+          logRepository.debug(target: this, message: 'sync: revocation echo of our own sign-out, ignored');
+          return;
+        }
         logRepository.debug(target: this, message: 'sync: this device was revoked');
         await authRepository.logout(forced: true);
         return;

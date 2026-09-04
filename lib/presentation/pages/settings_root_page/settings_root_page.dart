@@ -339,7 +339,10 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
       // is public now and inviting a device is a different act, so the action
       // leads to the devices screen, where the invite is minted with a real
       // one-shot token.
-      onShowQr: () => _openSection(DevicesPage.route()),
+      //
+      // On desktop that is a pane selection, not a push: pushing a full-screen
+      // page over the shell is how the rest of Settings would never behave.
+      onShowQr: wide ? () => setState(() => _selected = _Section.devices) : () => _openSection(DevicesPage.route()),
       nameEditField: state.editing
           ? AppLabeledFieldWidget(
               controller: _nameController,

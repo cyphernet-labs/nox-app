@@ -42,6 +42,8 @@ type client struct {
 	// cannot be replayed on another.
 	challenge string
 	deviceKey string
+	// closeReason accompanies the close sentinel through the write queue.
+	closeReason string
 	// identity is the person this connection speaks as, resolved once during
 	// the greeting. label mirrors identity.Label for the chat-creation path,
 	// which records a name rather than an id.
@@ -72,20 +74,18 @@ func (c *client) close(code websocket.StatusCode, reason string) {
 	})
 }
 
-// closeAfterFlush lets the frames already queued reach the wire before the
-// socket goes away.
+// closeAfterFlush queues the close BEHIND the frames already waiting, so they
+// reach the wire first.
 //
-// A plain close races them: the revoked device is supposed to LEARN it was
-// revoked (contract §8A sends device.revoked immediately before the close), and
-// a close that overtakes the event leaves it guessing why it was dropped.
-func (c *client) closeAfterFlush(code websocket.StatusCode, reason string) {
-	for range 100 {
-		if len(c.out) == 0 {
-			break
-		}
-		time.Sleep(time.Millisecond)
+// The writer owns the ordering: draining the channel from here and then closing
+// still races the write in flight, and the one frame that must not be lost is
+// device.revoked - it is the only way the device learns why it was dropped.
+func (c *client) closeAfterFlush(reason string) {
+	c.closeReason = reason
+	select {
+	case c.out <- nil:
+	case <-c.ctx.Done():
 	}
-	c.close(code, reason)
 }
 
 // send queues an outbound frame from the read goroutine (greeting, replies,
@@ -134,6 +134,15 @@ func (c *client) writePump() {
 	for {
 		select {
 		case frame := <-c.out:
+			// A nil frame is the close sentinel: everything queued before it has
+			// been written, so the socket can go now. Closing from anywhere else
+			// races the frames still in this channel - and the one frame that
+			// must never be lost is device.revoked, which is the only way the
+			// device learns WHY it was dropped.
+			if frame == nil {
+				c.close(websocket.StatusNormalClosure, c.closeReason)
+				return
+			}
 			wctx, cancel := context.WithTimeout(c.ctx, c.srv.writeTimeout)
 			err := c.conn.Write(wctx, websocket.MessageText, frame)
 			cancel()

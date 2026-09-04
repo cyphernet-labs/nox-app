@@ -92,6 +92,19 @@ func (s *Store) SetLabel(ctx context.Context, userID, label string) error {
 	return nil
 }
 
+// CountDevices reports how many keys can still reach this server at all.
+//
+// Zero means nobody can: the claim is spent, every device is revoked, and
+// without this the machine would be locked forever - the identity survives,
+// which is the point, but nothing could ever attach to it again.
+func (s *Store) CountDevices(ctx context.Context) (int, error) {
+	var n int
+	if err := s.read.QueryRowContext(ctx, "SELECT COUNT(1) FROM devices").Scan(&n); err != nil {
+		return 0, fmt.Errorf("count devices: %w", err)
+	}
+	return n, nil
+}
+
 // CountUsers reports how many people the server knows. Test-support.
 func (s *Store) CountUsers(ctx context.Context) (int, error) {
 	var n int

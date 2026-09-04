@@ -109,10 +109,13 @@ class _DevicesBodyState extends State<DevicesBody> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: Text(l10n.devicesRevokeTitle),
+        title: Text(device.isCurrent ? l10n.logoutDialogTitle : l10n.devicesRevokeTitle),
         // Revoking the device in your hand is a logout, and it reads
         // differently from cutting off a tablet you no longer have.
-        content: Text(device.isCurrent ? l10n.devicesRevokeSelfMessage : l10n.devicesRevokeMessage),
+        // Revoking your own device IS logout, so it has to read like logout -
+        // the weaker wording undersold an action that ends the session and
+        // cannot be undone without a new pairing link.
+        content: Text(device.isCurrent ? l10n.logoutDialogMessage : l10n.devicesRevokeMessage),
         actions: [
           TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: Text(l10n.actionCancel)),
           TextButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: Text(l10n.devicesRevoke)),
