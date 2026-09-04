@@ -4,4 +4,12 @@
          to allow setting breakpoints, to provide hot reload, etc.
     -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Cleartext is allowed in DEBUG BUILDS ONLY, and only until the transport
+         gets TLS. Android blocks it by default since API 28, so a debug build
+         could not reach a dev server over `ws://` at all - the socket fails
+         before it opens, which reads as "the server is down" rather than as a
+         platform policy. Release builds keep the strict default: this file is
+         merged into the debug variant and nothing else, and once the transport
+         is wss with pinning this attribute goes away with the reason for it. -->
+    <application android:usesCleartextTraffic="true"/>
 </manifest>
