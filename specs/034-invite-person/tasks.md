@@ -43,6 +43,7 @@
 - [ ] T011 Add `TokenInviteUser`, `PersonInviteTTLSeconds` (86400), `ApprovalWindowSeconds` (300) and `IssuePersonInvite` to `client_backend/internal/store/pairing.go`
 - [ ] T012 Introduce `store.PairResult{Identity, Pending, RequestID}` in `client_backend/internal/store/pairing.go` and change `Pair` to return it, updating every call site and test
 - [ ] T013 [P] Create `client_backend/internal/store/approval.go` with `PendingRequest`, the three sentinel errors and `randomRequestID`
+- [ ] T014 Regression guard for the paths this phase does NOT change (FR-019): assert in `client_backend/internal/store/pairing_test.go` and `client_backend/internal/server/pairing_test.go` that claim, `device.invite` (still 10 minutes, still issuable by anyone) and `device.list` (still no ownership flag in a row) behave exactly as before the `Pair` signature change
 
 **Checkpoint**: сервер собирается и все прежние тесты зелены на новой сигнатуре.
 
@@ -56,36 +57,39 @@
 
 ### Сервер
 
-- [ ] T014 [US1] Add the `invite_user` branch to `Pair` in `client_backend/internal/store/pairing.go`: refuse a device key already bound to somebody else FIRST, then record the pending request (`request_id`, `used_by`, `awaiting_platform`, `awaiting_until`) and return `PairResult{Pending: true}`
-- [ ] T015 [US1] Implement the approve path of `ConfirmPair` in `client_backend/internal/store/approval.go`: one transaction creating the person, inserting the device, writing `paired_user_id`/`created_person` and setting `outcome = 'approved'`
-- [ ] T016 [US1] Teach `handlePair` in `client_backend/internal/server/pairing.go` to answer `status: "paired"` or `status: "pending"`
-- [ ] T017 [US1] Implement `handlePersonInvite` in `client_backend/internal/server/pairing.go`, building the link the way `device.invite` does
-- [ ] T018 [US1] Implement `handlePersonConfirm` in `client_backend/internal/server/pairing.go`
-- [ ] T019 [US1] Route `person.invite`, `person.list` and `person.confirm` in `client_backend/internal/server/handlers.go`
-- [ ] T020 [US1] Add `notifyPairRequested` and `notifyPairResolved` to `client_backend/internal/server/server.go`, delivering to the waiting connection and to every live connection of the owner
-- [ ] T021 [US1] Re-send every outstanding request to the owner right after a successful greeting, in `client_backend/internal/server/handlers.go`
-- [ ] T022 [P] [US1] Store tests in `client_backend/internal/store/approval_test.go`: pending is recorded, approval creates a person, the new person owns nothing, the token records its outcome
-- [ ] T023 [US1] Server test in `client_backend/internal/server/pairing_test.go`: present → pending reply → confirm → resolved event carries the identity with `created: true` and `owner: false`
+- [ ] T015 [US1] Add the `invite_user` branch to `Pair` in `client_backend/internal/store/pairing.go`: refuse a device key already bound to somebody else FIRST, then record the pending request (`request_id`, `used_by`, `awaiting_platform`, `awaiting_until`) and return `PairResult{Pending: true}`
+- [ ] T016 [US1] Mark the waiting connection with its `request_id` in `client_backend/internal/server/client.go` and `pairing.go`, under `Server.mu` — the connection is unauthenticated, so neither the person nor the device key can find it later
+- [ ] T017 [US1] Implement the approve path of `ConfirmPair` in `client_backend/internal/store/approval.go`: one transaction creating the person, inserting the device, writing `paired_user_id`/`created_person` and setting `outcome = 'approved'`
+- [ ] T018 [US1] Teach `handlePair` in `client_backend/internal/server/pairing.go` to answer `status: "paired"` or `status: "pending"`
+- [ ] T019 [US1] Implement `handlePersonInvite` in `client_backend/internal/server/pairing.go`, building the link the way `device.invite` does
+- [ ] T020 [US1] Implement `handlePersonConfirm` in `client_backend/internal/server/pairing.go`
+- [ ] T021 [US1] Route `person.invite`, `person.list` and `person.confirm` in `client_backend/internal/server/handlers.go`
+- [ ] T022 [US1] Add `notifyPairRequested` and `notifyPairResolved` to `client_backend/internal/server/server.go`, finding the waiting connection by its request mark and the owner's connections by person, the way `dropDevice` and `refreshLabel` already scan
+- [ ] T023 [US1] Re-send every outstanding request to the owner right after a successful greeting, in `client_backend/internal/server/handlers.go`
+- [ ] T024 [P] [US1] Store tests in `client_backend/internal/store/approval_test.go`: pending is recorded, approval creates a person, the new person owns nothing, the token records its outcome
+- [ ] T025 [P] [US1] Store test in `client_backend/internal/store/pairing_test.go` (FR-016): presenting a person invite with a device key that already belongs to somebody else is refused, and NO pending request is written — the owner is never asked a question whose answer could not work
+- [ ] T026 [US1] Server test in `client_backend/internal/server/pairing_test.go`: present → pending reply → confirm → resolved event carries the identity with `created: true` and `owner: false`; assert the requested event carries ONLY `request_id`, `invited_at` and `expires_at` (FR-027)
 
 ### Клиент
 
-- [ ] T024 [P] [US1] Add `personPairRequested` and `personPairResolved` to `lib/data/remote/socket/server_frame.dart`
-- [ ] T025 [US1] Parse the `pair` reply's `status` and add `invitePerson`, `listPeople` and `confirmPair` to `lib/data/remote/socket/nox_socket_client.dart`
-- [ ] T026 [P] [US1] Create the `PairOutcome` sealed union (`paired` · `declined` · `timedOut` · `refused`) in `lib/domain/model/session/pair_outcome.dart`
-- [ ] T027 [US1] Make `LiveIdentityHandshake.pair` in `lib/data/sync/live_identity_handshake.dart` wait for `person.pairResolved` on a pending reply, owning its own timer the way `greet()` does
-- [ ] T028 [US1] Return the four outcomes from sign-in in `lib/data/repository/app/auth_repository_impl.dart`
-- [ ] T029 [P] [US1] Create `lib/data/sync/pair_request_service.dart` — a replaying stream of open confirmation requests
-- [ ] T030 [P] [US1] Create `PersonModel` in `lib/domain/model/person/person_model.dart` and `PairRequest` in `lib/domain/model/person/pair_request.dart`
-- [ ] T031 [P] [US1] Declare `PersonRepository` in `lib/domain/repository/person/person_repository.dart`
-- [ ] T032 [US1] Implement `PersonRepositoryImpl` in `lib/data/repository/person/person_repository_impl.dart` (`env: [Environment.dev]`, socket-only, no cache — the same reasoning as `DeviceRepositoryImpl`)
-- [ ] T033 [US1] Create the `PeopleBloc` with its Freezed event/state in `lib/presentation/pages/people_page/bloc/`
-- [ ] T034 [US1] Build `PeopleBody` and `PeoplePage` in `lib/presentation/pages/people_page/`, reusing `AppSettingsGroupWidget` and the QR/link invite card of 7.3
-- [ ] T035 [US1] Add the owner-only `People` row to `lib/presentation/pages/settings_root_page/settings_root_page.dart` and wire it into the desktop detail pane
-- [ ] T036 [US1] Build the confirmation surface in `lib/presentation/pages/pair_request_page/` — `route()` when narrow, `showAsDialog` when wide
-- [ ] T037 [US1] Subscribe to `PairRequestService` in `lib/presentation/widgets/app_root.dart` so the question reaches the owner wherever they are
-- [ ] T038 [P] [US1] Add the microcopy for both surfaces to `lib/l10n/app_en.arb` and `lib/l10n/app_uk.arb` (identical key sets)
-- [ ] T039 [P] [US1] Widget tests for both surfaces under `test/presentation/pages/people_page/` and `test/presentation/pages/pair_request_page/`
-- [ ] T040 [US1] Goldens for both surfaces: mobile via `goldenTest`, desktop via `goldenTestDesktop`
+- [ ] T027 [P] [US1] Add `personPairRequested` and `personPairResolved` to `lib/data/remote/socket/server_frame.dart`
+- [ ] T028 [US1] Parse the `pair` reply's `status` and add `invitePerson`, `listPeople` and `confirmPair` to `lib/data/remote/socket/nox_socket_client.dart`
+- [ ] T029 [P] [US1] Create the `PairOutcome` sealed union (`paired` · `declined` · `timedOut` · `refused`) in `lib/domain/model/session/pair_outcome.dart`
+- [ ] T030 [US1] Make `LiveIdentityHandshake.pair` in `lib/data/sync/live_identity_handshake.dart` wait for `person.pairResolved` on a pending reply, owning its own timer the way `greet()` does
+- [ ] T031 [US1] Re-present the same link when the channel comes back during the wait, in `lib/data/sync/live_identity_handshake.dart` (FR-012): the decision may already have been taken, and sending the person back to the start loses it
+- [ ] T032 [US1] Return the four outcomes from sign-in in `lib/data/repository/app/auth_repository_impl.dart`
+- [ ] T033 [P] [US1] Create `lib/data/sync/pair_request_service.dart` — a replaying stream of open confirmation requests
+- [ ] T034 [P] [US1] Create `PersonModel` in `lib/domain/model/person/person_model.dart` and `PairRequest` in `lib/domain/model/person/pair_request.dart`
+- [ ] T035 [P] [US1] Declare `PersonRepository` in `lib/domain/repository/person/person_repository.dart`
+- [ ] T036 [US1] Implement `PersonRepositoryImpl` in `lib/data/repository/person/person_repository_impl.dart` (`env: [Environment.dev]`, socket-only, no cache — the same reasoning as `DeviceRepositoryImpl`)
+- [ ] T037 [US1] Create the `PeopleBloc` with its Freezed event/state in `lib/presentation/pages/people_page/bloc/`
+- [ ] T038 [US1] Build `PeopleBody` and `PeoplePage` in `lib/presentation/pages/people_page/`, reusing `AppSettingsGroupWidget` and the QR/link invite card of 7.3
+- [ ] T039 [US1] Add the owner-only `People` row to `lib/presentation/pages/settings_root_page/settings_root_page.dart` and wire it into the desktop detail pane
+- [ ] T040 [US1] Build the confirmation surface in `lib/presentation/pages/pair_request_page/` — `route()` when narrow, `showAsDialog` when wide
+- [ ] T041 [US1] Subscribe to `PairRequestService` in `lib/presentation/widgets/app_root.dart` so the question reaches the owner wherever they are
+- [ ] T042 [P] [US1] Add the microcopy for both surfaces to `lib/l10n/app_en.arb` and `lib/l10n/app_uk.arb` (identical key sets)
+- [ ] T043 [P] [US1] Widget tests for both surfaces under `test/presentation/pages/people_page/` and `test/presentation/pages/pair_request_page/`
+- [ ] T044 [US1] Goldens for both surfaces: mobile via `goldenTest`, desktop via `goldenTestDesktop`
 
 **Checkpoint**: приглашение проходит путь целиком; второй человек существует и отличим от первого.
 
@@ -97,10 +101,10 @@
 
 **Independent Test**: приглашённый клиент просит приглашение и получает отказ, отличимый от «токен недействителен»; владелец на том же сервере получает приглашение.
 
-- [ ] T041 [US2] Refuse `IssuePersonInvite` with `ErrNotOwner` when the caller does not own the server, in `client_backend/internal/store/pairing.go`
-- [ ] T042 [US2] Map `ErrNotOwner` onto the `not_owner` code in `handlePersonInvite` and `handlePersonConfirm` in `client_backend/internal/server/pairing.go`
-- [ ] T043 [P] [US2] Server test in `client_backend/internal/server/pairing_test.go`: a non-owner is refused with `not_owner`, distinct from `invalid_token` and `internal`; the owner succeeds on the same server
-- [ ] T044 [P] [US2] Widget test in `test/presentation/pages/settings_root_page/`: the `People` row is absent for a non-owner and for "the server did not say" alike
+- [ ] T045 [US2] Refuse `IssuePersonInvite` with `ErrNotOwner` when the caller does not own the server, in `client_backend/internal/store/pairing.go`
+- [ ] T046 [US2] Map `ErrNotOwner` onto the `not_owner` code in `handlePersonInvite` and `handlePersonConfirm` in `client_backend/internal/server/pairing.go`
+- [ ] T047 [P] [US2] Server test in `client_backend/internal/server/pairing_test.go`: a non-owner is refused with `not_owner`, distinct from `invalid_token` and `internal`; the owner succeeds on the same server
+- [ ] T048 [P] [US2] Widget test in `test/presentation/pages/settings_root_page/`: the `People` row is absent for a non-owner and for "the server did not say" alike
 
 **Checkpoint**: право выпускать проверяется на сервере и не предлагается в приложении.
 
@@ -112,31 +116,31 @@
 
 **Independent Test**: приглашение предъявлено, владелец отклоняет — предъявивший получает отличимый отказ и не попадает внутрь; личность не заведена.
 
-- [ ] T045 [US3] Implement the decline path of `ConfirmPair` in `client_backend/internal/store/approval.go`
-- [ ] T046 [US3] Implement `ExpirePendingPairs` in `client_backend/internal/store/approval.go` and the lazy expiry check taken on re-presentation in `client_backend/internal/store/pairing.go`
-- [ ] T047 [US3] Add `runPairSweeper` to `client_backend/internal/server/server.go`, in the same group as `runDispatcher`, pushing `person.pairResolved` for everything it expires
-- [ ] T048 [US3] Answer a re-presentation from the recorded outcome in `client_backend/internal/store/pairing.go` — `pending` again, the identity, `ErrPairDeclined` or `ErrPairTimeout` — and `ErrTokenInvalid` for any other key
-- [ ] T049 [US3] Map the two new sentinels onto `pair_declined` and `pair_timeout` in `client_backend/internal/server/pairing.go`
-- [ ] T050 [P] [US3] Store tests in `client_backend/internal/store/approval_test.go`: decline, expiry, a pending request surviving a reopen of the store, re-presentation after each outcome, and a foreign key getting `invalid_token` in every case
-- [ ] T051 [US3] Server test in `client_backend/internal/server/pairing_test.go`: the sweeper resolves both sides, and an answer from one owner device closes the question on the other
-- [ ] T052 [US3] Show the four outcomes distinctly on the pairing screen in `lib/presentation/pages/login_page/` — "not usable", "expired", "the owner declined", "the owner did not answer"
-- [ ] T053 [P] [US3] Bloc test for the four outcomes under `test/presentation/pages/login_page/bloc/`
+- [ ] T049 [US3] Implement the decline path of `ConfirmPair` in `client_backend/internal/store/approval.go`
+- [ ] T050 [US3] Implement `ExpirePendingPairs` in `client_backend/internal/store/approval.go` — predicate `outcome IS NULL AND awaiting_until IS NOT NULL AND awaiting_until <= ?`, because the first condition alone is true of every claim and device token — plus the lazy expiry check taken on re-presentation in `client_backend/internal/store/pairing.go`
+- [ ] T051 [US3] Add `runPairSweeper` to `client_backend/internal/server/server.go`, in the same group as `runDispatcher`, pushing `person.pairResolved` for everything it expires and reading the owner where startup reads it
+- [ ] T052 [US3] Answer a re-presentation from the recorded outcome in `client_backend/internal/store/pairing.go` — `pending` again, the identity, `ErrPairDeclined` or `ErrPairTimeout` — and `ErrTokenInvalid` for any other key
+- [ ] T053 [US3] Map the two new sentinels onto `pair_declined` and `pair_timeout` in `client_backend/internal/server/pairing.go`
+- [ ] T054 [P] [US3] Store tests in `client_backend/internal/store/approval_test.go`: decline, expiry, a pending request surviving a reopen of the store, re-presentation after each outcome, and a foreign key getting `invalid_token` in every case
+- [ ] T055 [US3] Server test in `client_backend/internal/server/pairing_test.go`: the sweeper resolves both sides, and an answer from one owner device closes the question on the other
+- [ ] T056 [US3] Show the four outcomes distinctly on the pairing screen in `lib/presentation/pages/login_page/` — "not usable", "expired", "the owner declined", "the owner did not answer"
+- [ ] T057 [P] [US3] Bloc test for the four outcomes under `test/presentation/pages/login_page/bloc/`
 
 **Checkpoint**: без владельца не входит никто, и четыре отказа ведут к четырём разным действиям.
 
 ---
 
-## Phase 6: User Story 4 — в списке видно, чьи устройства (Priority: P3)
+## Phase 6: User Story 4 — видно, кто живёт на этом сервере (Priority: P3)
 
-**Goal**: признак владения, отложенный из фазы 033, наконец несёт информацию.
+**Goal**: признак владения, отложенный из фазы 033, наконец что-то различает — потому что строки стали разными людьми, а не разными устройствами одного.
 
 **Independent Test**: на сервере два человека; в списке круга владелец отмечен, остальные — нет.
 
-- [ ] T054 [P] [US4] Implement `ListPeople` in `client_backend/internal/store/people.go` — id, label and the owner mark, nothing else
-- [ ] T055 [US4] Implement `handlePersonList` in `client_backend/internal/server/pairing.go`
-- [ ] T056 [P] [US4] Store and server tests in `client_backend/internal/store/people_test.go`: exactly one person is marked owner, and the reply carries no devices, keys or counters
-- [ ] T057 [US4] Render the circle in `lib/presentation/pages/people_page/people_body.dart`, reusing `AppOwnerBadgeWidget` extracted by feature 033
-- [ ] T058 [P] [US4] Golden for the two-person list, mobile and desktop
+- [ ] T058 [P] [US4] Implement `ListPeople` in `client_backend/internal/store/people.go` — id, label and the owner mark, nothing else
+- [ ] T059 [US4] Implement `handlePersonList` in `client_backend/internal/server/pairing.go`
+- [ ] T060 [P] [US4] Store and server tests in `client_backend/internal/store/people_test.go`: exactly one person is marked owner, and the reply carries no devices, keys or counters
+- [ ] T061 [US4] Render the circle in `lib/presentation/pages/people_page/people_body.dart`, reusing `AppOwnerBadgeWidget` extracted by feature 033
+- [ ] T062 [P] [US4] Golden for the two-person list, mobile and desktop
 
 **Checkpoint**: все истории работают независимо.
 
@@ -144,14 +148,15 @@
 
 ## Phase 7: Polish & Cross-Cutting Concerns
 
-- [ ] T059 [P] Record the phase's invariants in `client_backend/CLAUDE.md`: the outcome is recorded and never re-derived, the wait lives in the row, both events stay off the journal
-- [ ] T060 [P] Add the `People` row and the new screens to `docs/design/spec/screens/settings-root.md` and a new screen doc under `docs/design/spec/screens/`
-- [ ] T061 [P] Add both surfaces to the screen map in `docs/design/spec/top-level-screens.md`
-- [ ] T062 [P] Reconcile `docs/blueprints/mobile/` with anything this phase changed about the live path
-- [ ] T063 [P] Mark 034 ☑ in `docs/client-backend/roadmap-stage2.md`
-- [ ] T064 Run `gofmt -l .`, `go vet ./...` and `go test -race ./...` in `client_backend/`
-- [ ] T065 Run `make gate` and `make golden-verify`
-- [ ] T066 Walk [quickstart.md](./quickstart.md) live against a real `noxd` with two clients
+- [ ] T063 Assert no invite token reaches a log, on either side (FR-026): a Go test in `client_backend/internal/server/server_test.go` over the mutex-guarded log buffer of feature 033, and an audit of every `logRepository` call on the new client paths
+- [ ] T064 [P] Record the phase's invariants in `client_backend/CLAUDE.md`: the outcome is recorded and never re-derived, the wait lives in the row, both events stay off the journal
+- [ ] T065 [P] Add the `People` row and the new screens to `docs/design/spec/screens/settings-root.md` and a new screen doc under `docs/design/spec/screens/`
+- [ ] T066 [P] Add both surfaces to the screen map in `docs/design/spec/top-level-screens.md`
+- [ ] T067 [P] Reconcile `docs/blueprints/mobile/` with anything this phase changed about the live path
+- [ ] T068 [P] Mark 034 ☑ in `docs/client-backend/roadmap-stage2.md`
+- [ ] T069 Run `gofmt -l .`, `go vet ./...` and `go test -race ./...` in `client_backend/`
+- [ ] T070 Run `make gate` and `make golden-verify`
+- [ ] T071 Walk [quickstart.md](./quickstart.md) live against a real `noxd` with two clients
 
 ---
 
@@ -160,7 +165,7 @@
 ### Phase Dependencies
 
 - **Контракт (Phase 1)**: первым, без исключений (Принцип VII).
-- **Foundational (Phase 2)**: зависит от Phase 1; блокирует все истории.
+- **Foundational (Phase 2)**: зависит от Phase 1; блокирует все истории. T014 закрывает её регрессионно: T012 меняет сигнатуру общего пути спаривания, по которому едут и claim, и приглашение устройства.
 - **US1 (Phase 3)**: MVP. US2 и US3 садятся на её код.
 - **US2 (Phase 4)**: технически независима от US1 — проверка права живёт на выпуске, — но проверять её нечем, пока приглашение человека не существует.
 - **US3 (Phase 5)**: расширяет ветку US1 остальными исходами; отдельно от неё не собирается.
@@ -177,7 +182,7 @@
 - T001, T003, T004, T005 — разные разделы контракта.
 - T009, T010, T013 — разные файлы.
 - US4 целиком параллельна US1: она не трогает ни `Pair`, ни ожидание.
-- Клиентские T024, T026, T029, T030, T031, T038 — разные файлы, зависят только от контракта.
+- Клиентские T027, T029, T033, T034, T035, T042 — разные файлы, зависят только от контракта.
 
 ---
 

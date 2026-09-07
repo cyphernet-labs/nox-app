@@ -36,7 +36,7 @@ outcome TEXT CHECK (outcome IS NULL OR outcome IN ('approved', 'declined', 'expi
 
 - `awaiting_device` отдельной колонкой **не заводится**: предъявившее устройство — это `used_by`, уже существующая колонка с ровно этим смыслом. Вторая запись того же факта разошлась бы с первой (урок `claimed_at`, фаза 033).
 - «Ожидает подтверждения» = `kind = 'invite_user' AND used_at IS NOT NULL AND outcome IS NULL`. Отдельного флага нет: состояние выводится из тех же трёх колонок, которыми оно и создаётся.
-- Индекс `idx_pair_tokens_pending` по `(outcome, awaiting_until)` — единственный запрос подметальщика ходит по нему.
+- Индекс `idx_pair_tokens_pending` по `(outcome, awaiting_until)` — единственный запрос подметальщика ходит по нему: `outcome IS NULL AND awaiting_until IS NOT NULL AND awaiting_until <= ?`. Второе условие обязательно: `outcome IS NULL` истинно и для каждого claim-токена, и для каждого приглашения устройства.
 - `request_id` уникален и **случаен**: он попадает в кадры, идущие владельцу, и не должен позволять угадать соседний запрос.
 - Правка идёт в `001_init.sql` **на месте** (пре-релизное правило владельца 2026-08-27). Базы прошлой фазы становятся несовместимыми — их ловит отпечаток схемы на старте (фаза 033).
 
@@ -92,7 +92,7 @@ outcome TEXT CHECK (outcome IS NULL OR outcome IN ('approved', 'declined', 'expi
 
 Точная форма — в [contracts/](./contracts/).
 
-`device.list` не меняется (FR-018).
+`device.list` не меняется (FR-019).
 
 ## Клиент — Dart
 
