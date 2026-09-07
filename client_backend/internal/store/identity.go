@@ -90,11 +90,15 @@ func (s *Store) ResolveIdentity(ctx context.Context, deviceKey, label string, no
 	// A new read on the greeting path: nothing here used to look at the
 	// machine's own row. One statement inside the transaction that is already
 	// open, so it costs a round of SQLite and no extra lock.
-	owner, err := ownerUserID(ctx, tx)
+	//
+	// A missing machine row is NOT fatal here: it means nobody owns this
+	// server, and a greeting refused over it would spin a client forever
+	// (a refused greeting is retried without end) for a question the greeting
+	// never used to ask.
+	id.Owner, err = ownsServer(ctx, tx, id.UserID)
 	if err != nil {
 		return Identity{}, err
 	}
-	id.Owner = owner != "" && owner == id.UserID
 
 	// A greeting without a label does NOT rename. The client states a name only
 	// when it has just changed one; a device carrying a stale cache would
@@ -154,8 +158,17 @@ func insertUser(ctx context.Context, tx *sql.Tx, label string, now int64) (Ident
 // point - an unknown key is refused, not enrolled.
 func insertDevice(ctx context.Context, tx *sql.Tx, deviceKey, userID, platform string, now int64) error {
 	_, err := tx.ExecContext(ctx,
+		// user_id is re-bound on conflict, not left alone. The pair reply names
+		// the person the token was issued for; leaving the row pointing at
+		// whoever registered the key earlier makes the reply a promise the very
+		// next greeting breaks - the client stores that person's author id and,
+		// since 033, their ownership badge, and then resolves to somebody else.
+		// The row and the reply have to say the same thing.
 		`INSERT INTO devices (device_key, user_id, platform, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?)
-		 ON CONFLICT (device_key) DO UPDATE SET last_seen_at = excluded.last_seen_at`,
+		 ON CONFLICT (device_key) DO UPDATE SET
+		     user_id = excluded.user_id,
+		     platform = excluded.platform,
+		     last_seen_at = excluded.last_seen_at`,
 		deviceKey, userID, platform, now, now)
 	if err != nil {
 		return fmt.Errorf("insert device: %w", err)

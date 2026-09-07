@@ -341,7 +341,7 @@ func TestOwnershipFieldIsAlwaysOnTheWireEvenWhenFalse(t *testing.T) {
 		frame any
 	}{
 		{"greeting", greetingIdentity{ID: "u_1", Label: "Anna"}},
-		{"pair reply", identity{ID: "u_1", Label: "Anna"}},
+		{"pair reply", identity{greetingIdentity: greetingIdentity{ID: "u_1", Label: "Anna"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			raw, err := json.Marshal(tc.frame)
@@ -430,9 +430,33 @@ func TestOwnershipIsNeverLoggedBesideTheIdentifier(t *testing.T) {
 	c.expectGreeting()
 	c.greet(t, 1, dev, "")
 
-	logs := buf.String()
-	if strings.Contains(logs, id.ID) && strings.Contains(logs, "owner") {
-		t.Fatalf("the log carries the owner flag next to the person it names:\n%s", logs)
+	// Per RECORD, not per buffer. Two whole-buffer substring checks ANDed
+	// together are satisfied by an empty log and by two unrelated lines alike -
+	// the test would have been green without ever exercising the property.
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) == 0 || lines[0] == "" {
+		t.Fatal("no log records at all: the assertion below would pass vacuously")
+	}
+	for _, line := range lines {
+		var record map[string]any
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			t.Fatalf("log line is not JSON: %v (%s)", err, line)
+		}
+		var namesPerson, statesOwnership bool
+		for k, v := range record {
+			if s, ok := v.(string); ok && s == id.ID {
+				namesPerson = true
+			}
+			if strings.Contains(strings.ToLower(k), "owner") {
+				statesOwnership = true
+			}
+			if s, ok := v.(string); ok && strings.Contains(strings.ToLower(s), "owner") {
+				statesOwnership = true
+			}
+		}
+		if namesPerson && statesOwnership {
+			t.Fatalf("one record carries both the person and their ownership: %s", line)
+		}
 	}
 }
 

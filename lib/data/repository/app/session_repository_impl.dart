@@ -265,6 +265,15 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       // in its own comment, reachable here since sign-in started adopting the
       // identity from the pair reply.
       await _prefs.remove(_kAuthorId);
+      // And the label written by that same call. Left behind, it is the failed
+      // server's person's name, and the pairing path's next saveIdentifier
+      // states none - so Settings and both account avatars would render a
+      // stranger's name until some greeting happened to overwrite it.
+      await _prefs.remove(_kLabel);
+      // Live listeners are told, exactly as clear() tells them. Without this a
+      // mounted surface keeps rendering values the storage no longer holds.
+      _emitLabel(null);
+      _emitOwnership(null);
       return const RepositoryResult<bool>.success(data: true);
     });
   }

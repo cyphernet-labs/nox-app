@@ -366,7 +366,9 @@ class NoxSocketClient {
         journalId = serverJournal;
       }
 
-      _helloCursor = data['cursor'] as int? ?? 0;
+      // `is int` rather than a cast: JSON gives a double for `1042.0`, and a
+      // cast would throw where a reconnect is the right answer.
+      _helloCursor = data['cursor'] is int ? data['cursor'] as int : 0;
       final id = data['identity'];
       if (id is! Map<String, dynamic>) {
         // Stage 1 always states who connected. A reply without it is not a
@@ -378,8 +380,10 @@ class NoxSocketClient {
         return;
       }
       identity = ServerIdentity(
-        id: id['id'] as String? ?? '',
-        label: id['label'] as String? ?? '',
+        // Read, not cast, for the same reason as the two booleans below: a
+        // wrong-typed field is worth ignoring, never worth wedging the channel.
+        id: id['id'] is String ? id['id'] as String : '',
+        label: id['label'] is String ? id['label'] as String : '',
         // Absent stays absent: it means "outcome not stated", which is neither
         // outcome, and the sign-in path must not be handed a guess.
         //
@@ -399,9 +403,13 @@ class NoxSocketClient {
       final lim = data['limits'];
       if (lim is Map<String, dynamic>) {
         limits = ServerLimits(
-          maxMessageBytes: lim['max_message_bytes'] as int? ?? ServerLimits.contractDefaults.maxMessageBytes,
-          maxAttachmentBytes: lim['max_attachment_bytes'] as int? ?? ServerLimits.contractDefaults.maxAttachmentBytes,
-          maxFrameBytes: lim['max_frame_bytes'] as int? ?? ServerLimits.contractDefaults.maxFrameBytes,
+          maxMessageBytes: lim['max_message_bytes'] is int
+              ? lim['max_message_bytes'] as int
+              : ServerLimits.contractDefaults.maxMessageBytes,
+          maxAttachmentBytes: lim['max_attachment_bytes'] is int
+              ? lim['max_attachment_bytes'] as int
+              : ServerLimits.contractDefaults.maxAttachmentBytes,
+          maxFrameBytes: lim['max_frame_bytes'] is int ? lim['max_frame_bytes'] as int : ServerLimits.contractDefaults.maxFrameBytes,
         );
       }
       // The ladder resets HERE — a greeting is the first proof the peer is real.
@@ -420,6 +428,18 @@ class NoxSocketClient {
         _phase.add(SessionPhase.live);
       }
     } on SocketUnavailableException {
+      await _teardown(SessionPhase.disconnected);
+      _scheduleRetry();
+    } on Object catch (e, st) {
+      // Everything else, and deliberately so. This method runs through
+      // `unawaited()`, so any escaping throw becomes an unhandled async error:
+      // no teardown, no retry, `_greeted` never completed - the channel is dead
+      // for the life of the process and nothing says why. A malformed field in
+      // a reply is worth a reconnect; it is never worth that.
+      //
+      // Field-by-field type checks below help, but they can only cover the
+      // fields somebody remembered. This covers the ones nobody did.
+      logRepository.error(target: this, error: e.runtimeType, stackTrace: st);
       await _teardown(SessionPhase.disconnected);
       _scheduleRetry();
     }

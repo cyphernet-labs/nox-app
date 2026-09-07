@@ -253,11 +253,10 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 		// reply promise ownership the row does not hold - and the very next
 		// greeting, which resolves it from that row, would take the badge away
 		// again.
-		settled, err := ownerUserID(ctx, tx)
+		id.Owner, err = ownsServer(ctx, tx, id.UserID)
 		if err != nil {
 			return Identity{}, err
 		}
-		id.Owner = settled != "" && settled == id.UserID
 		// Every OTHER unused claim token dies with this one. They were printed
 		// to the server log on earlier starts, and a log is not a secret store:
 		// without this, each of them comes back to life the moment the device
@@ -280,11 +279,10 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 		// Ownership, unlike Created, is whatever it already was: an invite adds
 		// a DEVICE to a person, and a person's second device owns exactly what
 		// their first one does.
-		owner, err := ownerUserID(ctx, tx)
+		id.Owner, err = ownsServer(ctx, tx, id.UserID)
 		if err != nil {
 			return Identity{}, err
 		}
-		id.Owner = owner != "" && owner == id.UserID
 
 	default:
 		return Identity{}, ErrTokenInvalid
@@ -331,11 +329,10 @@ func pairedBy(ctx context.Context, tx *sql.Tx, token, deviceKey string) (Identit
 	// Ownership is read, not inferred from the kind: a replayed claim answers
 	// about a person who owns the machine, and a replayed invite about one who
 	// may or may not.
-	owner, err := ownerUserID(ctx, tx)
+	id.Owner, err = ownsServer(ctx, tx, id.UserID)
 	if err != nil {
 		return Identity{}, false, err
 	}
-	id.Owner = owner != "" && owner == id.UserID
 	return id, true, nil
 }
 

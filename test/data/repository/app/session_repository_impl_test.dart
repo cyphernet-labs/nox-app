@@ -239,10 +239,15 @@ void main() {
       await repository.discardSignIn();
 
       // The pair reply may well have claimed the machine before the step that
-      // failed; a badge with no session behind it is a lie.
+      // failed; a badge with no session behind it is a lie. Asserted on the
+      // STORED keys - readSession() returns null on a missing identifier alone,
+      // so reading through it would pass whatever the prefs still held.
       expect((await repository.readSession()).data, isNull);
       final prefs = await SharedPreferences.getInstance();
       expect(prefs.getBool('session.is_owner'), isNull);
+      expect(prefs.getString('session.author_id'), isNull);
+      // The label came from the same call and names the failed server's person.
+      expect(prefs.getString('session.label'), isNull);
     });
 
     test('an unstated flag reads as null, not as false', () async {

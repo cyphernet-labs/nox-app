@@ -46,6 +46,15 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
 
   StreamSubscription<bool?>? _ownership;
 
+  /// Set once the watch has delivered an answer.
+  ///
+  /// `initialize` reads ownership from storage and then emits, but it awaits in
+  /// between - and the watch runs on its own concurrent handler. Without this,
+  /// an answer that arrives during that await is overwritten by the value read
+  /// before it, and since ownership then never changes again the badge is lost
+  /// for the life of the process. Exactly the miss the watch was added for.
+  bool _ownershipStated = false;
+
   @override
   Future<void> close() async {
     await _ownership?.cancel();
@@ -74,7 +83,10 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
               initialLoading: false,
               rawId: session?.authorId ?? '',
               name: resolveIdentity(session).label,
-              isOwner: session?.isOwner,
+              // Yielded to the watch if it has already spoken: this value was
+              // read BEFORE the await above, and a newer answer must not lose
+              // to an older one just because this handler resumed last.
+              isOwner: _ownershipStated ? state.isOwner : session?.isOwner,
             ),
           ),
       onError: (_) => emit(state.copyWith(initialLoading: false, rawId: '')),
@@ -148,6 +160,7 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
   }
 
   void _onOwnershipChanged(OwnershipChanged event, Emitter<SettingsRootState> emit) {
+    _ownershipStated = true;
     emit(state.copyWith(isOwner: event.isOwner));
   }
 }

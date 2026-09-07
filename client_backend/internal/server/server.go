@@ -424,7 +424,11 @@ func warnOwnerlessStore(ctx context.Context, read *sql.DB, logger *slog.Logger) 
 		return
 	}
 	if people > 0 {
-		logger.Warn("this server has people but no owner - it will not be picked automatically; re-claim it to restore ownership",
+		// Deliberately not "re-claim it": Pair refuses a claim in this state,
+		// so that advice would be impossible to follow. The store needs a
+		// human - restore a backup, or write the owner back by hand - and no
+		// claim link is printed while it is like this.
+		logger.Warn("this server holds people but records no owner: it cannot be claimed and no owner will be guessed - restore it from a backup or set the owner by hand",
 			"people", people)
 	}
 }
@@ -457,6 +461,17 @@ func announceClaim(ctx context.Context, st *store.Store, addr string, logger *sl
 	// the same thing, and a decision taken on the poorer of the two is how they
 	// drift apart.
 	if id.Claimed() && devices > 0 {
+		return nil
+	}
+	// Also silent when the store holds people but no owner. Pair refuses such a
+	// claim - both ways of guessing whose identity to attach are worse than a
+	// refusal - so printing a link here would hand the operator an instruction
+	// that cannot be followed, once per restart, for ever.
+	people, err := st.CountUsers(ctx)
+	if err != nil {
+		return fmt.Errorf("count people: %w", err)
+	}
+	if !id.Claimed() && people > 0 {
 		return nil
 	}
 	token, err := st.IssueClaimToken(ctx, time.Now().Unix())

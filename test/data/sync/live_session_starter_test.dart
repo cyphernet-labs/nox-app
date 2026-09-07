@@ -250,6 +250,13 @@ void main() {
       factory.latest.pushGreeting();
       await settle();
 
+      // Asserted on the STORED keys, not through readSession(): that returns
+      // null whenever the identifier is absent, whatever else the prefs hold -
+      // so the guard could be deleted and this test would still pass while the
+      // greeting stamped a stranger's identity onto the device.
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getBool('session.is_owner'), isNull);
+      expect(prefs.getString('session.author_id'), isNull);
       expect((await session.readSession()).data, isNull);
     });
 

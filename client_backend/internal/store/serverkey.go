@@ -107,6 +107,27 @@ func setOwner(ctx context.Context, tx *sql.Tx, userID string, now int64) error {
 	return nil
 }
 
+// ownsServer reports whether userID is the person this machine belongs to.
+//
+// The one place the rule lives. It was hand-copied into four reply paths, and
+// the next one would have been copied from whichever of them its author found
+// first: forget the empty-string guard and every identity with a blank id owns
+// the server; read claimed_at instead and the two-records-of-one-fact split
+// this feature removed comes straight back.
+//
+// A machine with no row yet owns nothing and belongs to nobody, which is not an
+// error for a caller asking about ownership - only for one asking for the key.
+func ownsServer(ctx context.Context, q rowQuerier, userID string) (bool, error) {
+	owner, err := ownerUserID(ctx, q)
+	if errors.Is(err, ErrNoServerIdentity) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return owner != "" && owner == userID, nil
+}
+
 // ownerUserID reads the owner inside a transaction that is already open.
 func ownerUserID(ctx context.Context, q rowQuerier) (string, error) {
 	var owner sql.NullString

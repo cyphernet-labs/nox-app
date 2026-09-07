@@ -72,18 +72,17 @@ type greetingIdentity struct {
 // identity is the object both the greeting and the pair reply carry, so the
 // client reads who it is in one place regardless of which frame brought it.
 type identity struct {
-	ID    string `json:"id"`
-	Label string `json:"label"`
+	// Embedded, not repeated. The pair reply IS the greeting's identity plus one
+	// field, and spelling both out invited the next addition to land on one
+	// struct only - after which the two frames would describe the same person
+	// differently, and only a test somebody remembered to extend would say so.
+	greetingIdentity
 	// Created says whether THIS operation brought the person into being, and it
 	// is meaningful only on the pair reply - a greeting is by definition a
 	// device that was already paired. No omitempty, deliberately: a dropped
 	// false would read as "outcome not stated" on the wire (§8A), which turns
 	// an ordinary returning person into a refused sign-in.
 	Created bool `json:"created"`
-	// Owner is the same field the greeting carries, and for the same reason it
-	// is written unconditionally. Unlike Created it describes the person rather
-	// than this operation, so it means the same thing in both frames.
-	Owner bool `json:"owner"`
 }
 
 func (c *client) handleSessionHello(cmd protocol.Command) {

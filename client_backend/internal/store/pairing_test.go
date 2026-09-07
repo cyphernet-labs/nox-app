@@ -652,3 +652,46 @@ func TestPairNeverReportsOwnershipTheRowDoesNotHold(t *testing.T) {
 		t.Fatalf("pair answered %+v, want the existing owner still owning", id)
 	}
 }
+
+// The pair reply names the person the token was issued for, so the row must
+// name them too. Leaving the key bound to whoever registered it earlier makes
+// the reply a promise the next greeting breaks - and since 033 the broken
+// promise includes an ownership badge.
+func TestPairingAKnownKeyWithSomebodyElsesInviteRebindsIt(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	owner := claimPerson(t, s, "dev-shared")
+
+	// A second person, and an invite of theirs presented by the SAME key.
+	if _, err := s.write.ExecContext(ctx,
+		"INSERT INTO users (user_id, label, created_at) VALUES ('u_guest', 'Guest', 200)"); err != nil {
+		t.Fatalf("insert guest: %v", err)
+	}
+	token, err := s.IssueDeviceInvite(ctx, "u_guest", 200)
+	if err != nil {
+		t.Fatalf("IssueDeviceInvite: %v", err)
+	}
+	id, err := s.Pair(ctx, token, "dev-shared", "test", 200)
+	if err != nil {
+		t.Fatalf("Pair: %v", err)
+	}
+	if id.UserID != "u_guest" {
+		t.Fatalf("pair answered %q, want the invited person", id.UserID)
+	}
+
+	// The greeting has to agree with what pair just said - about the person and
+	// about the ownership that comes with them.
+	greeted, err := s.ResolveIdentity(ctx, "dev-shared", "", 300)
+	if err != nil {
+		t.Fatalf("ResolveIdentity: %v", err)
+	}
+	if greeted.UserID != id.UserID {
+		t.Fatalf("greeting says %q, pair said %q", greeted.UserID, id.UserID)
+	}
+	if greeted.Owner != id.Owner {
+		t.Fatalf("greeting says owner=%v, pair said owner=%v", greeted.Owner, id.Owner)
+	}
+	if id.Owner {
+		t.Fatalf("the guest reports owning the server, which belongs to %q", owner.UserID)
+	}
+}
