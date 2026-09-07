@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -248,6 +249,22 @@ void main() {
       expect(prefs.getString('session.author_id'), isNull);
       // The label came from the same call and names the failed server's person.
       expect(prefs.getString('session.label'), isNull);
+    });
+
+    test('a change landing between the read and the subscribe is not lost', () async {
+      await repository.saveIdentifier(identifier: 'sess-1', onboardingComplete: true);
+      await repository.adoptServerIdentity(authorId: 'u_1', label: 'Anna', isOwner: false);
+
+      final seen = <bool?>[];
+      final sub = repository.watchOwnership().listen(seen.add);
+      addTearDown(sub.cancel);
+      // No await before this: with a plain broadcast controller the stream is
+      // still between yielding the seed and subscribing, and this emission is
+      // dropped with no replay.
+      unawaited(repository.adoptServerIdentity(authorId: 'u_1', label: 'Anna', isOwner: true));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(seen, contains(true));
     });
 
     test('an unstated flag reads as null, not as false', () async {

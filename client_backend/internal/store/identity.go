@@ -158,15 +158,15 @@ func insertUser(ctx context.Context, tx *sql.Tx, label string, now int64) (Ident
 // point - an unknown key is refused, not enrolled.
 func insertDevice(ctx context.Context, tx *sql.Tx, deviceKey, userID, platform string, now int64) error {
 	_, err := tx.ExecContext(ctx,
-		// user_id is re-bound on conflict, not left alone. The pair reply names
-		// the person the token was issued for; leaving the row pointing at
-		// whoever registered the key earlier makes the reply a promise the very
-		// next greeting breaks - the client stores that person's author id and,
-		// since 033, their ownership badge, and then resolves to somebody else.
-		// The row and the reply have to say the same thing.
+		// The row is refreshed but NEVER re-bound to another person. Rebinding
+		// looks like the fix for "the reply and the row must say the same
+		// thing", and it is a device takeover: device_key is public - it rides
+		// every greeting and device.list lists it - so anyone able to issue an
+		// invite for themselves could name somebody else's key and walk off
+		// with their paired device. The other way to make the two agree is to
+		// refuse the pair, and that is what Pair does (see claimedByAnother).
 		`INSERT INTO devices (device_key, user_id, platform, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?)
 		 ON CONFLICT (device_key) DO UPDATE SET
-		     user_id = excluded.user_id,
 		     platform = excluded.platform,
 		     last_seen_at = excluded.last_seen_at`,
 		deviceKey, userID, platform, now, now)
@@ -174,6 +174,20 @@ func insertDevice(ctx context.Context, tx *sql.Tx, deviceKey, userID, platform s
 		return fmt.Errorf("insert device: %w", err)
 	}
 	return nil
+}
+
+// deviceOwnerOf reports which person a device key is bound to, empty if the key
+// is unknown.
+func deviceOwnerOf(ctx context.Context, tx *sql.Tx, deviceKey string) (string, error) {
+	var userID string
+	err := tx.QueryRowContext(ctx, "SELECT user_id FROM devices WHERE device_key = ?", deviceKey).Scan(&userID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read device owner: %w", err)
+	}
+	return userID, nil
 }
 
 // touchDevice records that an already-authorised device was seen. It never

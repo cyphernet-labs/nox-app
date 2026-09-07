@@ -134,7 +134,11 @@ func (s *Store) CountDevices(ctx context.Context) (int, error) {
 	return n, nil
 }
 
-// CountUsers reports how many people the server knows. Test-support.
+// CountUsers reports how many people this server holds.
+//
+// NOT test-support: startup reads it to decide whether printing a claim link
+// would be honest - a store with people but no owner refuses the claim it
+// would advertise.
 func (s *Store) CountUsers(ctx context.Context) (int, error) {
 	var n int
 	if err := s.read.QueryRowContext(ctx, "SELECT COUNT(1) FROM users").Scan(&n); err != nil {

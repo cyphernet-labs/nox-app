@@ -288,6 +288,22 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 		return Identity{}, ErrTokenInvalid
 	}
 
+	// A key already belonging to somebody else is refused outright. It is a
+	// PUBLIC value - it rides every greeting and device.list prints it - so
+	// without this anyone who can issue an invite for themselves could name a
+	// stranger's key and take that device: it would keep working, resolve as
+	// the attacker on its next greeting, author every message as them, and
+	// vanish from its real owner's device list.
+	//
+	// Refusing is the other way to satisfy "the row and the reply must agree",
+	// and it is the one that does not hand a device away.
+	bound, err := deviceOwnerOf(ctx, tx, deviceKey)
+	if err != nil {
+		return Identity{}, err
+	}
+	if bound != "" && bound != id.UserID {
+		return Identity{}, ErrTokenInvalid
+	}
 	if err := insertDevice(ctx, tx, deviceKey, id.UserID, platform, now); err != nil {
 		return Identity{}, err
 	}
@@ -309,12 +325,20 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 func pairedBy(ctx context.Context, tx *sql.Tx, token, deviceKey string) (Identity, bool, error) {
 	var id Identity
 	var kind string
+	// The person comes from the DEVICE row and the outcome from the TOKEN, so
+	// the join insists the two agree: `t.user_id IS NULL OR t.user_id = d.user_id`
+	// covers a claim (no person on the token) and an invite (one person, who
+	// must be the device's). Without it a replay could answer about one person
+	// while reporting an outcome computed for another - and `created: true`
+	// from a claim would walk an existing, already-named person back through
+	// the naming screen under somebody else's identity.
 	err := tx.QueryRowContext(ctx, `
 		SELECT u.user_id, u.label, t.kind
 		FROM pair_tokens t
 		JOIN devices d ON d.device_key = ?
 		JOIN users u ON u.user_id = d.user_id
-		WHERE t.token = ? AND t.used_at IS NOT NULL`,
+		WHERE t.token = ? AND t.used_at IS NOT NULL
+		  AND (t.user_id IS NULL OR t.user_id = d.user_id)`,
 		deviceKey, token).Scan(&id.UserID, &id.Label, &kind)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Identity{}, false, nil

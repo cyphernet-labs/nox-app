@@ -320,7 +320,15 @@ class NoxSocketClient {
           // more". Retrying would spin forever against a peer that will keep
           // refusing, so the session is torn down and the app is told.
           await _teardown(SessionPhase.unsupported);
-          onUnauthenticated?.call();
+          // Guarded like the journal callback below, and for a sharper reason
+          // since the catch-all was added: a throw from here would land there,
+          // flip the phase back to disconnected and start retrying - undoing
+          // the one decision this branch exists to make.
+          try {
+            onUnauthenticated?.call();
+          } on Object catch (e, st) {
+            logRepository.error(target: this, error: e.runtimeType, stackTrace: st);
+          }
           return;
         }
         final terminal = reply.errorCode == 'unsupported_schema' || reply.errorCode == 'invalid_request';
@@ -366,9 +374,20 @@ class NoxSocketClient {
         journalId = serverJournal;
       }
 
-      // `is int` rather than a cast: JSON gives a double for `1042.0`, and a
-      // cast would throw where a reconnect is the right answer.
-      _helloCursor = data['cursor'] is int ? data['cursor'] as int : 0;
+      // A malformed cursor is a RECONNECT, never a zero. Substituting 0 makes
+      // `since >= _helloCursor` true on the next line, so the client declares
+      // itself caught up before a single replay frame has been applied - and on
+      // a first greeting persists that zero. Every other unreadable field in
+      // this reply tears down and retries; the one that governs replay
+      // correctness must not be the exception.
+      final rawCursor = data['cursor'];
+      if (rawCursor is! int) {
+        logRepository.debug(target: this, message: 'socket: greeting carried no usable cursor, reconnecting');
+        await _teardown(SessionPhase.disconnected);
+        _scheduleRetry();
+        return;
+      }
+      _helloCursor = rawCursor;
       final id = data['identity'];
       if (id is! Map<String, dynamic>) {
         // Stage 1 always states who connected. A reply without it is not a
@@ -439,6 +458,12 @@ class NoxSocketClient {
       //
       // Field-by-field type checks below help, but they can only cover the
       // fields somebody remembered. This covers the ones nobody did.
+      // The TYPE plus where it happened, deliberately not the message. A
+      // TypeError quotes the offending value, and the value here can be a
+      // person's display name - Principle I keeps names out of logs whether or
+      // not they also travelled on the wire. The frame and the phase are what
+      // an operator needs to place it.
+      logRepository.debug(target: this, message: 'socket: greeting reply could not be read (${e.runtimeType}), reconnecting');
       logRepository.error(target: this, error: e.runtimeType, stackTrace: st);
       await _teardown(SessionPhase.disconnected);
       _scheduleRetry();

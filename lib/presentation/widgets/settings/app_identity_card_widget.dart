@@ -110,7 +110,7 @@ class AppIdentityCardWidget extends StatelessWidget {
                 runSpacing: AppSpacingTokens.s4,
                 children: [
                   Text(name, style: textTheme.titleMedium?.copyWith(color: colorScheme.onSurface)),
-                  if (isOwner ?? false) _ownerBadge(context),
+                  if (isOwner ?? false) _ownerBadge(context, theme),
                 ],
               ),
             ),
@@ -128,8 +128,9 @@ class AppIdentityCardWidget extends StatelessWidget {
   /// The badge itself. Text rather than an icon: the design corpus has no
   /// symbol for ownership, and adding one is a separate piece of work with a
   /// separate owner — while a word needs no legend.
-  Widget _ownerBadge(BuildContext context) {
-    final theme = Theme.of(context);
+  Widget _ownerBadge(BuildContext context, ThemeData theme) {
+    // Theme handed in: the only caller resolved it two lines above the call,
+    // and looking it up again buys nothing.
     return Container(
       padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s8, vertical: AppSpacingTokens.s2),
       decoration: BoxDecoration(

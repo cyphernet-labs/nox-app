@@ -6,6 +6,7 @@ import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/domain/model/app/session_model.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/general/pairing/device_keys.dart';
+import 'package:rxdart/rxdart.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -30,7 +31,14 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
 
   void _emitLabel(String? label) => _labelController.add(label);
 
-  final StreamController<bool?> _ownershipController = StreamController<bool?>.broadcast();
+  /// A `BehaviorSubject`, not a plain broadcast controller.
+  ///
+  /// `async*` yields the seeded value first and subscribes only after that
+  /// yield resumes, a microtask later. A change landing in that window on a
+  /// broadcast controller is dropped with no replay — and since ownership then
+  /// never changes again, the badge would be absent for the life of the
+  /// process. Which is exactly the miss this channel was added to close.
+  final BehaviorSubject<bool?> _ownershipController = BehaviorSubject<bool?>();
 
   void _emitOwnership(bool? isOwner) => _ownershipController.add(isOwner);
 
@@ -160,9 +168,12 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   }
 
   @override
-  Stream<bool?> watchOwnership() async* {
-    yield _prefs.getBool(_kIsOwner);
-    yield* _ownershipController.stream;
+  Stream<bool?> watchOwnership() {
+    // No `async*` seed: the subject replays its latest value to a new listener
+    // itself, so there is no gap between reading and subscribing. Seeded from
+    // storage on first listen, because nothing may have emitted yet.
+    if (!_ownershipController.hasValue) _ownershipController.add(_prefs.getBool(_kIsOwner));
+    return _ownershipController.stream;
   }
 
   @override

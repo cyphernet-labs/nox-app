@@ -6,7 +6,7 @@
 
 **Purpose.** List-detail settings: menu pane (left) + the selected section’s panel (right).
 
-**Adaptation from mobile.** mobile full-screen settings → list-detail · bottom sheet → centered dialog · ID masked + account QR by default
+**Adaptation from mobile.** mobile full-screen settings → list-detail · bottom sheet → centered dialog · the identity card, badge included, is the same widget at both widths
 
 ## Anatomy
 NavigationRail + settings menu pane (340, grouped nav items) + detail pane (content capped to ≤680). Each detail reuses the exact phone widgets.
@@ -21,7 +21,7 @@ NavigationRail + settings menu pane (340, grouped nav items) + detail pane (cont
 - `terms` — Terms
 - `about` — About
 - `logout` — Logout dialog
-- `qr` — QR dialog
+- `account-member` — Account, ownership not stated or not held: no badge
 
 ## Behavior
 - Selecting a menu item highlights it (secondaryContainer) and swaps the detail pane — no push.
@@ -31,7 +31,6 @@ NavigationRail + settings menu pane (340, grouped nav items) + detail pane (cont
 - Notifications: enable switch; OS-denied → InfoBanner + Open settings, switch off.
 - Appearance: System / Light / Dark theme cards. Language: System / English / Українська.
 - Log out → centered confirm Dialog (mobile’s sheet/dialog becomes a centered dialog); destructive action tinted error.
-- Show QR → centered Dialog with the brand-fixed white QR card (mobile bottom-sheet → dialog).
 
 ## Navigation
 - Menu item → swaps detail pane.
@@ -39,7 +38,7 @@ NavigationRail + settings menu pane (340, grouped nav items) + detail pane (cont
 
 ## Copy (EN)
 - Pane title: Settings
-- Account QR caption: Show this code to let someone add you
+- Owner badge: Server owner
 - Logout: Log out? / Your ID and local data will be removed from this device.
 
 ## Design-system components
@@ -47,7 +46,6 @@ NavigationRail + settings menu pane (340, grouped nav items) + detail pane (cont
 - PaneHeader
 - SettingsNavItem
 - IdentityCard
-- FakeQR (brand white)
 - SettingsGroup / SettingsSwitchRow / LangRow
 - ThemeOptionCard
 - InfoBanner

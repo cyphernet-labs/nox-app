@@ -115,8 +115,13 @@ class LiveIdentityHandshake {
     if (id is! Map<String, dynamic>) throw const IdentityHandshakeTimeout();
     final created = id['created'];
     return IdentityHandshake(
-      authorId: id['id'] as String? ?? '',
-      label: id['label'] as String? ?? '',
+      // Type-checked like the socket's parser, and here the stakes are higher:
+      // a throw at this point happens AFTER the server committed the pairing
+      // and burned a one-shot claim token, so the same link cannot be presented
+      // again and the person waits for an operator to read a fresh one out of
+      // the server log.
+      authorId: id['id'] is String ? id['id'] as String : '',
+      label: id['label'] is String ? id['label'] as String : '',
       // Absent stays absent: "outcome not stated" is neither outcome, and the
       // sign-in path must not be handed a guess.
       created: created is bool ? created : null,

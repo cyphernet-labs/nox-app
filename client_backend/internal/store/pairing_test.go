@@ -653,11 +653,13 @@ func TestPairNeverReportsOwnershipTheRowDoesNotHold(t *testing.T) {
 	}
 }
 
-// The pair reply names the person the token was issued for, so the row must
-// name them too. Leaving the key bound to whoever registered it earlier makes
-// the reply a promise the next greeting breaks - and since 033 the broken
-// promise includes an ownership badge.
-func TestPairingAKnownKeyWithSomebodyElsesInviteRebindsIt(t *testing.T) {
+// A device key already belonging to somebody is not up for grabs. The key is
+// public - it rides every greeting and device.list prints it - so rebinding on
+// conflict would let anyone who can issue an invite name a stranger's key and
+// walk off with their device.
+//
+// The reply and the row still have to agree; refusing is how, not rebinding.
+func TestPairingSomebodyElsesDeviceKeyIsRefused(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 	owner := claimPerson(t, s, "dev-shared")
@@ -671,27 +673,74 @@ func TestPairingAKnownKeyWithSomebodyElsesInviteRebindsIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueDeviceInvite: %v", err)
 	}
-	id, err := s.Pair(ctx, token, "dev-shared", "test", 200)
-	if err != nil {
-		t.Fatalf("Pair: %v", err)
-	}
-	if id.UserID != "u_guest" {
-		t.Fatalf("pair answered %q, want the invited person", id.UserID)
+	if _, err := s.Pair(ctx, token, "dev-shared", "test", 200); !errors.Is(err, ErrTokenInvalid) {
+		t.Fatalf("err = %v, want ErrTokenInvalid: a paired device must not change hands", err)
 	}
 
-	// The greeting has to agree with what pair just said - about the person and
-	// about the ownership that comes with them.
+	// The device still belongs to the person who paired it, and still answers
+	// as them - with their ownership.
 	greeted, err := s.ResolveIdentity(ctx, "dev-shared", "", 300)
 	if err != nil {
 		t.Fatalf("ResolveIdentity: %v", err)
 	}
-	if greeted.UserID != id.UserID {
-		t.Fatalf("greeting says %q, pair said %q", greeted.UserID, id.UserID)
+	if greeted.UserID != owner.UserID {
+		t.Fatalf("the device now answers as %q, want its owner %q", greeted.UserID, owner.UserID)
 	}
-	if greeted.Owner != id.Owner {
-		t.Fatalf("greeting says owner=%v, pair said owner=%v", greeted.Owner, id.Owner)
+	if !greeted.Owner {
+		t.Fatal("the device lost its person's ownership")
 	}
-	if id.Owner {
-		t.Fatalf("the guest reports owning the server, which belongs to %q", owner.UserID)
+}
+
+// Re-pairing a device to the SAME person stays allowed: that is an ordinary
+// repeat, not a takeover.
+func TestPairingYourOwnDeviceKeyAgainIsAccepted(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	owner := claimPerson(t, s, "dev-mine")
+
+	token, err := s.IssueDeviceInvite(ctx, owner.UserID, 200)
+	if err != nil {
+		t.Fatalf("IssueDeviceInvite: %v", err)
 	}
+	again, err := s.Pair(ctx, token, "dev-mine", "test", 200)
+	if err != nil {
+		t.Fatalf("re-pairing my own device: %v", err)
+	}
+	if again.UserID != owner.UserID || !again.Owner {
+		t.Fatalf("answered %+v, want the same person still owning", again)
+	}
+}
+
+// A replay answers about the device's person and reports the outcome computed
+// from the token, so the two must belong together. Otherwise a claim token
+// replayed by a device that now belongs to somebody else would report
+// `created: true` about an existing, already-named person - walking them back
+// through the naming screen under a stranger's identity.
+func TestAReplayWhoseTokenAndDeviceDisagreeIsNotAnswered(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	owner := claimPerson(t, s, "dev-phone")
+
+	// A second person and a spent invite of theirs, with the device still
+	// belonging to the owner. Written directly: pairing refuses to produce this
+	// state, and that refusal is what the test above pins - this one covers the
+	// replay path if the state is ever reached another way.
+	if _, err := s.write.ExecContext(ctx,
+		"INSERT INTO users (user_id, label, created_at) VALUES ('u_guest', 'Guest', 200)"); err != nil {
+		t.Fatalf("insert guest: %v", err)
+	}
+	token, err := s.IssueDeviceInvite(ctx, "u_guest", 200)
+	if err != nil {
+		t.Fatalf("IssueDeviceInvite: %v", err)
+	}
+	if _, err := s.write.ExecContext(ctx,
+		"UPDATE pair_tokens SET used_at = 200 WHERE token = ?", token); err != nil {
+		t.Fatalf("burn token: %v", err)
+	}
+
+	// The replay must not answer about the owner using the guest's token.
+	if _, err := s.Pair(ctx, token, "dev-phone", "test", 300); !errors.Is(err, ErrTokenInvalid) {
+		t.Fatalf("err = %v, want ErrTokenInvalid: the token names one person and the device another", err)
+	}
+	_ = owner
 }

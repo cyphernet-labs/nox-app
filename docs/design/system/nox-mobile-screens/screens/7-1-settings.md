@@ -7,21 +7,20 @@
 **Purpose.** Account identity + grouped settings entries.
 
 ## Anatomy
-App bar (Settings). Identity card (name + masked ID). Grouped list: Notifications, Appearance, Language, Terms, About. Separate destructive Log out group. Bottom bar.
+App bar (Settings). Identity card (name + `Server owner` badge when the server states it + the public ID). Grouped list: Devices, Notifications, Appearance, Language, Terms, About. Separate destructive Log out group. Bottom bar.
 
 ## States
-- `loaded` — Loaded
-- `id-shown` — ID revealed
+- `loaded` — Loaded (owner: badge beside the name)
+- `loaded-member` — Loaded, ownership not stated or not held: no badge, and no gap where one would be
 - `editing` — Editing name
-- `qr` — QR sheet
 - `logout` — Logout dialog
 - `logout-loading` — Logging out
 
 ## Behavior
 - Identity card: name (edit inline) + `Server owner` badge + ID with copy / show-QR actions.
 - Owner badge (phase 033): shown only when the server states that this person owns it. "Not stated" and "not the owner" both render nothing — drawing "not the owner" before the server answers would be a claim the app cannot make, followed by a flicker when it is corrected. The badge sits beside the name and drops onto its own line when the name and the badge no longer fit one row (long localisation, large text scale).
-- ⚠️ Phase 032 removed the reveal: the ID stopped being a secret, so there is nothing to mask.
-- Full ID rendered mono, wrapped break-all, with copy/QR.
+- ⚠️ Phase 032 removed the mask and the reveal: the ID stopped being a secret — the person is recognised by the device's paired key — so there is nothing to hide and no `id-shown` state. The ID renders in full, at the card's ordinary text style.
+- `Show QR` leads to **Devices**, where an invite is minted with a real one-shot token. It no longer shows a QR of the ID: that used to hand over a bearer secret.
 - Editing: name becomes an inline TextField with counter.
 - Show QR → modal bottom sheet; the QR card surface is brand-fixed WHITE so it scans in dark mode.
 - Log out → confirm AlertDialog (destructive action tinted error); confirming wipes ID + local data; shows a loading state.
@@ -32,7 +31,7 @@ App bar (Settings). Identity card (name + masked ID). Grouped list: Notification
 
 ## Copy (EN)
 - Title: Settings
-- ID mask: ••••••••
+- Owner badge: Server owner
 - Logout title: Log out?
 - Logout body: Your ID and local data will be removed from this device.
 - Actions: Cancel · Log out
