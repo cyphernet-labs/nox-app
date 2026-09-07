@@ -74,14 +74,44 @@ void main() {
       // Without this the second device keeps a modal with no barrier dismiss and
       // no back arrow, whose only two buttons now answer a settled request and
       // are refused. There is no way out of the app but to kill it.
+      //
+      // The question is present when the bloc subscribes and leaves AFTERWARDS:
+      // settling on a list that was already empty would pass without the watch
+      // ever having done anything.
       setUp: () async {
         final socket = await connect();
         await pushQuestion(socket, 'r_1');
-        socket.pushEvent(seq: 0, event: ServerEvent.personPairResolved, data: {'request_id': 'r_1', 'outcome': 'approved'});
       },
       build: () => PairRequestBloc(requestId: 'r_1'),
+      act: (_) async {
+        expect(service.current.single.requestId, 'r_1', reason: 'the question is open when the surface opens');
+        factory.latest.pushEvent(seq: 0, event: ServerEvent.personPairResolved, data: {'request_id': 'r_1', 'outcome': 'approved'});
+      },
       wait: const Duration(milliseconds: 200),
       expect: () => [predicate<PairRequestState>((s) => s.settled && !s.failed)],
+    );
+
+    blocTest<PairRequestBloc, PairRequestState>(
+      'a refusal the server will repeat takes the question out of the list, not just off the screen',
+      // A question still in the list is re-opened the instant its surface
+      // closes - forever, on a desktop modal that has no other exit.
+      setUp: () async {
+        final socket = await connect();
+        await pushQuestion(socket, 'r_5');
+      },
+      build: () {
+        when(
+          repository.confirm(requestId: anyNamed('requestId'), approve: anyNamed('approve')),
+        ).thenAnswer((_) async => const RepositoryResult<bool>.error(exception: RepositoryException.notFound));
+        return PairRequestBloc(requestId: 'r_5');
+      },
+      act: (bloc) => bloc.add(const PairRequestEvent.answered(approve: true)),
+      wait: const Duration(milliseconds: 100),
+      verify: (_) => expect(service.current, isEmpty, reason: 'nothing is left for AppRoot to re-open'),
+      expect: () => [
+        predicate<PairRequestState>((s) => s.sending),
+        predicate<PairRequestState>((s) => s.settled && !s.failed && !s.sending),
+      ],
     );
 
     blocTest<PairRequestBloc, PairRequestState>(

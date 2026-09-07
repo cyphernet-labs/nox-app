@@ -4,6 +4,7 @@ import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/remote/socket/server_frame.dart';
 import 'package:nox_app/domain/model/person/pair_request.dart';
+import 'package:nox_app/general/app_clock.dart';
 import 'package:rxdart/rxdart.dart';
 
 /// The questions waiting for the owner: somebody has presented an invite and is
@@ -33,6 +34,21 @@ class PairRequestService {
   Timer? _expiry;
 
   Stream<List<PairRequest>> get open => _open.stream;
+
+  /// Forgets one question, because whoever was asked has finished with it.
+  ///
+  /// The server's `person.pairResolved` normally does this. It does not arrive
+  /// when the answer was given on ANOTHER device while this one was offline, or
+  /// when the server refused the answer outright — and a question that stays in
+  /// the list is re-opened the instant its surface closes, forever, on a
+  /// desktop modal that has no other exit.
+  void forget(String requestId) {
+    if (!_open.value.any((request) => request.requestId == requestId)) return;
+    _emit(<PairRequest>[
+      for (final request in _open.value)
+        if (request.requestId != requestId) request,
+    ]);
+  }
 
   /// Forgets every open question. Called by logout, alongside the other wipes.
   ///
@@ -82,7 +98,7 @@ class PairRequestService {
   /// channel to say it on. A question left on screen after the moment it could
   /// have been answered would invite an answer that does nothing.
   void _emit(List<PairRequest> requests) {
-    final now = DateTime.now();
+    final now = AppClock.now();
     final live = <PairRequest>[
       for (final request in requests)
         // A request whose deadline could not be read is KEPT. The server is the
@@ -137,7 +153,7 @@ class PairRequestService {
       requestId: id,
       invitedAt: _seconds(data['invited_at']),
       expiresAt: _seconds(data['expires_at']),
-      receivedAt: DateTime.now(),
+      receivedAt: AppClock.now(),
     );
   }
 

@@ -7,6 +7,7 @@ import 'package:nox_app/data/remote/socket/server_frame.dart';
 import 'package:nox_app/data/sync/pair_request_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
+import 'package:nox_app/general/app_clock.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../remote/socket/fake_socket.dart';
@@ -124,6 +125,45 @@ void main() {
 
       socket.pushEvent(seq: 0, event: ServerEvent.personPairResolved, data: {'request_id': 'r_1', 'outcome': 'expired'});
       await waitUntil(() => service.current.isEmpty, reason: 'and the server closed it');
+    });
+
+    test('the local fallback drops a question the server never closed', () async {
+      // The fallback exists for a device that loses the channel before the
+      // `expired` outcome can reach it. Measured from arrival, so a clock that
+      // disagrees with the server cannot shorten or lengthen it.
+      AppClock.freeze(DateTime(2026, 6, 15, 12));
+      addTearDown(AppClock.reset);
+
+      final socket = await connect();
+      socket.pushEvent(
+        seq: 0,
+        event: ServerEvent.personPairRequested,
+        data: {'request_id': 'r_1', 'invited_at': seconds(-const Duration(minutes: 1)), 'expires_at': seconds(const Duration(minutes: 5))},
+      );
+      await waitUntil(() => service.current.length == 1, reason: 'the question arrived');
+
+      // Six minutes later, with nothing heard from the server.
+      AppClock.freeze(DateTime(2026, 6, 15, 12, 7));
+      service.forget('nothing');
+      socket.pushEvent(seq: 0, event: ServerEvent.personPairResolved, data: {'request_id': 'r_other', 'outcome': 'expired'});
+      await waitUntil(() => service.current.isEmpty, reason: 'the fallback let it go');
+    });
+
+    test('forget() takes a question out, so a closing surface does not re-open it', () async {
+      final socket = await connect();
+      socket.pushEvent(
+        seq: 0,
+        event: ServerEvent.personPairRequested,
+        data: {'request_id': 'r_1', 'invited_at': seconds(-const Duration(minutes: 1)), 'expires_at': seconds(const Duration(minutes: 5))},
+      );
+      await waitUntil(() => service.current.length == 1, reason: 'the question arrived');
+
+      service.forget('r_1');
+      expect(service.current, isEmpty);
+      // Idempotent: the server's own outcome frame arrives afterwards.
+      socket.pushEvent(seq: 0, event: ServerEvent.personPairResolved, data: {'request_id': 'r_1', 'outcome': 'declined'});
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(service.current, isEmpty);
     });
 
     test('clear() forgets the session\'s questions', () async {

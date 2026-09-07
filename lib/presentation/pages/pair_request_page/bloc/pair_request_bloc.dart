@@ -55,6 +55,14 @@ class PairRequestBloc extends BaseBloc<PairRequestEvent, PairRequestState> {
     return super.close();
   }
 
+  /// Marks the question finished with, so closing the surface does not re-open
+  /// it. The service's own removal covers the ordinary case; this covers the
+  /// ones where no outcome frame ever arrives.
+  void _forget() {
+    if (!getIt.isRegistered<PairRequestService>()) return;
+    getIt<PairRequestService>().forget(requestId);
+  }
+
   Future<void> _onAnswered(PairRequestAnswered event, Emitter<PairRequestState> emit) async {
     if (state.sending || state.settled) return;
     emit(state.copyWith(sending: true, failed: false));
@@ -68,15 +76,28 @@ class PairRequestBloc extends BaseBloc<PairRequestEvent, PairRequestState> {
       // Settled, whichever way. The screen closes on this; the server tells
       // every other device of the owner separately, so none of them is left
       // holding a question that has been answered.
-      onData: (_) => emit(state.copyWith(sending: false, settled: true)),
+      onData: (_) {
+        _forget();
+        emit(state.copyWith(sending: false, settled: true));
+      },
       onError: (e) {
-        // A question that is already gone is not a failure to retry: somebody
-        // answered it, or it ran out of time. Either way there is nothing left
-        // to decide, and offering the buttons again would offer the same
-        // refusal again.
-        // notOwner belongs here too: a question this person may not answer is
-        // not one they can retry out of, and the surface has no other exit.
-        final gone = e == RepositoryException.notFound || e == RepositoryException.pairTimeout || e == RepositoryException.notOwner;
+        // Everything the server will keep refusing: somebody answered it, it
+        // ran out of time, or it cannot be answered by this person at all.
+        // Offering the buttons again would offer the same refusal again. notOwner is not something
+        // this person can retry out of; `authentication` is what the wire's
+        // `invalid_token` becomes, and person.confirm sends it when the waiting
+        // device's key acquired an owner during the wait - nothing is recorded,
+        // the request expires on its own, and no answer can ever succeed.
+        //
+        // Each of these has to leave the LIST as well as the screen: the server
+        // sends no outcome for them, and a question still in the list re-opens
+        // the moment its surface closes.
+        final gone =
+            e == RepositoryException.notFound ||
+            e == RepositoryException.pairTimeout ||
+            e == RepositoryException.notOwner ||
+            e == RepositoryException.authentication;
+        if (gone) _forget();
         emit(state.copyWith(sending: false, settled: gone, failed: !gone));
       },
     );

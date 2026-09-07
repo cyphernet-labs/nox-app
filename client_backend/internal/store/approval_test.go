@@ -372,3 +372,77 @@ func TestExpiringPendingPairsLeavesOrdinaryTokensAlone(t *testing.T) {
 		t.Fatalf("swept = %+v, want nothing: none of these waits on a person", swept)
 	}
 }
+
+// What handlePair reads when a decision landed between the store commit and the
+// connection mark - the one window nothing else can close, because no outcome
+// is ever re-sent to the waiting side.
+func TestRequestOutcomeReportsWhatWasDecided(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("undecided", func(t *testing.T) {
+		s := newStore(t)
+		owner := claimOwner(t, s, "dev-owner")
+		token, err := s.IssuePersonInvite(ctx, owner.UserID, 200)
+		if err != nil {
+			t.Fatalf("IssuePersonInvite: %v", err)
+		}
+		req := present(t, s, token, "dev-guest", 300)
+
+		_, _, decided, err := s.RequestOutcome(ctx, req.RequestID)
+		if err != nil || decided {
+			t.Fatalf("decided = %v, %v; want false: nothing has been answered", decided, err)
+		}
+	})
+
+	t.Run("approved carries the person", func(t *testing.T) {
+		s := newStore(t)
+		owner := claimOwner(t, s, "dev-owner")
+		token, err := s.IssuePersonInvite(ctx, owner.UserID, 200)
+		if err != nil {
+			t.Fatalf("IssuePersonInvite: %v", err)
+		}
+		req := present(t, s, token, "dev-guest", 300)
+		out, err := s.ConfirmPair(ctx, req.RequestID, owner.UserID, true, 310)
+		if err != nil {
+			t.Fatalf("ConfirmPair: %v", err)
+		}
+
+		outcome, id, decided, err := s.RequestOutcome(ctx, req.RequestID)
+		if err != nil || !decided || outcome != OutcomeApproved {
+			t.Fatalf("outcome = (%q, %v, %v), want approved", outcome, decided, err)
+		}
+		if id.UserID != out.Identity.UserID || !id.Created || id.Owner {
+			t.Fatalf("identity = %+v, want the created person owning nothing", id)
+		}
+	})
+
+	t.Run("declined carries nobody", func(t *testing.T) {
+		s := newStore(t)
+		owner := claimOwner(t, s, "dev-owner")
+		token, err := s.IssuePersonInvite(ctx, owner.UserID, 200)
+		if err != nil {
+			t.Fatalf("IssuePersonInvite: %v", err)
+		}
+		req := present(t, s, token, "dev-guest", 300)
+		if _, err := s.ConfirmPair(ctx, req.RequestID, owner.UserID, false, 310); err != nil {
+			t.Fatalf("ConfirmPair: %v", err)
+		}
+
+		outcome, id, decided, err := s.RequestOutcome(ctx, req.RequestID)
+		if err != nil || !decided || outcome != OutcomeDeclined {
+			t.Fatalf("outcome = (%q, %v, %v), want declined", outcome, decided, err)
+		}
+		if id.UserID != "" {
+			t.Fatalf("identity = %+v, want nobody: a decline creates no one", id)
+		}
+	})
+
+	t.Run("a request that never existed", func(t *testing.T) {
+		s := newStore(t)
+		claimOwner(t, s, "dev-owner")
+		_, _, decided, err := s.RequestOutcome(ctx, "r_nothing")
+		if err != nil || decided {
+			t.Fatalf("decided = %v, %v; want false", decided, err)
+		}
+	})
+}

@@ -508,10 +508,14 @@ func TestClaimAndDeviceInvitesAreUntouchedByPersonInvites(t *testing.T) {
 	}
 }
 
-// The window the connection mark cannot cover is the one before it: the store
-// commits, and only then is the connection marked. A decision landing in that
-// instant was addressed to a connection nobody had marked yet.
-func TestAnOutcomeDecidedBeforeTheMarkStillReachesTheWaitingDevice(t *testing.T) {
+// The recovery path the contract promises: a guest whose socket died while the
+// question was open learns the decision by presenting the same link again.
+//
+// This is the REPLAY branch, not the mark-race one - `pairedBy` answers before
+// anything pending is consulted. The race itself (a confirm committing between
+// store.Pair and markPendingRequest) is covered at the store level by
+// TestRequestOutcomeReportsWhatWasDecided, which is what handlePair reads.
+func TestARepeatedPresentationLearnsTheDecisionItMissed(t *testing.T) {
 	ts, srv := newTestServer(t)
 	owner, _ := ownerSession(t, ts, srv)
 

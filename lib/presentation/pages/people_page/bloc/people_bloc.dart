@@ -37,10 +37,13 @@ class PeopleBloc extends BaseBloc<PeopleEvent, PeopleState> {
   ///
   /// The person who was just let in appears in `person.list` immediately, but
   /// nothing on this screen would ask again: the surface that took the decision
-  /// opens OVER this one and pops back to it. And the link still on screen is
-  /// dead whichever way the question went - approving, declining and expiring
-  /// all spend the invite - so leaving it up advertises 24 hours of validity
-  /// for a token that has none.
+  /// opens OVER this one and pops back to it.
+  ///
+  /// The link on screen is deliberately LEFT ALONE. A resolved question says
+  /// which request was answered, never which invite it spent, and every
+  /// `person.invite` mints its own token - so clearing on any outcome discards
+  /// an invite the owner minted and has not sent yet. Nothing revokes it and
+  /// nothing lists it (Q17), so a wrongly discarded one is gone for good.
   void _watchQuestions() {
     if (!getIt.isRegistered<PairRequestService>()) return;
     final service = getIt<PairRequestService>();
@@ -59,7 +62,6 @@ class PeopleBloc extends BaseBloc<PeopleEvent, PeopleState> {
   }
 
   Future<void> _onQuestionSettled(PeopleQuestionSettled event, Emitter<PeopleState> emit) async {
-    emit(state.copyWith(inviteLink: null));
     await _onInitialize(const PeopleInitialize(), emit);
   }
 

@@ -190,6 +190,14 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - A device key that already belongs to somebody is refused AT PRESENTATION,
   before the owner is asked. Waking them with a question whose "yes" could not
   work would let them authorise something that will not happen.
+- **Known narrow window, predating 034:** the greeting reads the person from the
+  store and writes it to the connection a few lines later, and `refreshLabel`
+  matches connections by `identity.UserID` - which is empty in between. A rename
+  landing in that gap is overwritten by the write, and no `identity.updated` goes
+  to that connection, so a stable socket keeps the old name until something
+  reconnects it. Closing it properly means holding the connection registry lock
+  across a store read, which invariant 4 exists to forbid; recorded rather than
+  papered over.
 - The claim token has NO expiry. It dies by being used, only someone with
   access to the machine ever sees it, and an expiring one would leave an
   installed-then-forgotten server unclaimable with no way to mint another.
