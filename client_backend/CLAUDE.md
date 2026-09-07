@@ -220,6 +220,10 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - **A busy status port does not stop the server.** It is logged and the page is
   skipped: 8081 is not a rare port, and people talking to each other must not
   depend on a page nobody has opened.
+- **The TOKEN is cached, never the built link.** Caching the link froze an
+  address for the life of the process while "can a phone reach us" went on being
+  recomputed, so a laptop whose network came up after the server did drew a QR
+  over a link that still said 127.0.0.1. One fact, one cache.
 - **The held claim token is re-checked before it is shown.** It can be spent
   between two page loads - somebody claims, the owner later revokes their last
   device - and handing back the burnt one would point the only recovery tool

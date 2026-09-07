@@ -94,7 +94,6 @@ type Server struct {
 	// claim guards the one claim link this process ever hands out.
 	claim      sync.Mutex
 	claimToken string
-	claimLnk   string
 
 	// kick wakes the event dispatcher after a committed mutation; capacity 1
 	// coalesces bursts (the dispatcher drains the log until it is current).

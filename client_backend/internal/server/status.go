@@ -283,7 +283,7 @@ func (s *Server) claimLink(ctx context.Context) (string, bool, error) {
 			return "", false, err
 		}
 		if !usable {
-			s.claimToken, s.claimLnk = "", ""
+			s.claimToken = ""
 		}
 	}
 	// Two questions, and conflating them cost the whole page once already.
@@ -296,26 +296,30 @@ func (s *Server) claimLink(ctx context.Context) (string, bool, error) {
 	if host == "" {
 		host = listenAddress(s.cfg.Addr)
 	}
-	if s.claimLnk != "" {
-		return s.claimLnk, scannable, nil
+
+	// The TOKEN is what may be minted only once; the link is rebuilt every time.
+	//
+	// Caching the built link froze an address for the life of the process while
+	// the answer to "can a phone reach us" went on being recomputed - so a
+	// laptop whose Wi-Fi came up after the server did would draw a QR over a
+	// link that still said 127.0.0.1, which is exactly the code this page
+	// refuses to draw. One fact, one cache.
+	token := s.claimToken
+	if token == "" {
+		minted, err := s.store.IssueClaimToken(ctx, time.Now().Unix())
+		if err != nil {
+			return "", false, fmt.Errorf("issue claim token: %w", err)
+		}
+		s.claimToken, token = minted, minted
 	}
 	id, err := s.store.ServerIdentity(ctx)
 	if err != nil {
 		return "", false, fmt.Errorf("read server identity: %w", err)
 	}
-	token := s.claimToken
-	if token == "" {
-		token, err = s.store.IssueClaimToken(ctx, time.Now().Unix())
-		if err != nil {
-			return "", false, fmt.Errorf("issue claim token: %w", err)
-		}
-		s.claimToken = token
-	}
 	link, err := BuildPairingLink(host, id.PublicKey, token)
 	if err != nil {
 		return "", false, fmt.Errorf("build claim link: %w", err)
 	}
-	s.claimLnk = link
 	return link, scannable, nil
 }
 

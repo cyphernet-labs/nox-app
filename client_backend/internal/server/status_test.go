@@ -405,3 +405,39 @@ func TestThePageRefusesAHostThatIsNotThisMachine(t *testing.T) {
 func dialable(srv *Server) {
 	srv.cfg.Addr = "192.168.1.10:8080"
 }
+
+// The link follows the address; only the token is held.
+//
+// Caching the built link froze an address for the life of the process while
+// "can a phone reach us" went on being recomputed — so a laptop whose network
+// came up after the server did drew a QR over a link that still said
+// 127.0.0.1, which is precisely the code this page refuses to draw.
+func TestTheLinkFollowsTheAddressWhileTheTokenStaysPut(t *testing.T) {
+	_, srv := newTestServer(t)
+	ctx := context.Background()
+	if _, err := srv.store.EnsureServerIdentity(ctx); err != nil {
+		t.Fatalf("EnsureServerIdentity: %v", err)
+	}
+
+	// Started with no network: loopback, no code, but a link.
+	first := statusBody(t, srv)
+	if strings.Contains(first, "<svg") {
+		t.Fatalf("a loopback bind drew a code: %s", first)
+	}
+	loopbackLink := linkOf(t, first)
+
+	// The network comes up.
+	dialable(srv)
+	second := statusBody(t, srv)
+	if !strings.Contains(second, "<svg") {
+		t.Fatalf("a reachable address drew no code: %s", second)
+	}
+	lanLink := linkOf(t, second)
+	if lanLink == loopbackLink {
+		t.Fatal("the link kept the address it was built with, so the code points at loopback")
+	}
+	// And it is the same right, not a second one.
+	if got := countLiveClaimTokens(t, srv); got != 1 {
+		t.Fatalf("unspent claim tokens = %d, want 1: the address changed, the token must not", got)
+	}
+}
