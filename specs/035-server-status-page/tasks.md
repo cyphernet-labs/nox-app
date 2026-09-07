@@ -41,7 +41,12 @@
 - [ ] T011 [US1] Bring up the loopback listener in `client_backend/internal/server/server.go`, in the same group as the main one and stopped in the same order — before the database closes (invariant 9)
 - [ ] T012 [US1] Render the unclaimed page in `client_backend/internal/server/status_page.go`: the QR, the same link as text, and a sentence saying what it is — somebody installing a server for the first time is not required to know the word "claim"
 - [ ] T013 [US1] Render the QR as inline SVG in `client_backend/internal/server/status_qr.go`, large and high-contrast, and readable in a browser's dark theme
-- [ ] T014 [US1] Decide between the two pages on `OwnershipState.OwnerCanGetIn` — the SAME predicate the startup announcement uses, read fresh on every request
+- [ ] T013a [US1] Resolve a DIALLABLE address for the QR in `client_backend/internal/server/status.go`: the bind address when it is concrete, otherwise the first non-loopback interface address. `listenAddress` falls back to loopback under a wildcard — right for the startup line, read on the machine, and useless for the phone this page exists to serve
+- [ ] T013b [US1] When no non-loopback address exists, show no QR and say so, pointing at the startup output — a code nothing can dial is worse than none
+- [ ] T013c [P] [US1] Test in `client_backend/internal/server/status_test.go`: the QR's address is non-loopback under a wildcard bind, and equals the bind address when it is concrete; the TOKEN matches the one the startup announcement used
+- [ ] T014 [US1] Decide between the THREE pages on the same `OwnershipState` the startup announcement reads, fresh on every request: needs-a-link, claimed, and a store with people but no owner
+- [ ] T014a [US1] Render the ownerless-store page in `client_backend/internal/server/status_page.go`: no link, because `Pair` refuses a claim there and a link would be an instruction that cannot be followed — say what the startup log says, that this machine has no owner
+- [ ] T014b [P] [US1] Test in `client_backend/internal/server/status_test.go`: a store with people and no owner serves neither a link nor a QR
 - [ ] T015 [US1] Print the page's address at startup next to the link in `client_backend/internal/server/server.go` — otherwise nobody learns it exists
 - [ ] T016 [P] [US1] Server test in `client_backend/internal/server/status_test.go`: an unclaimed server serves the link and the QR, and the link is byte-identical to the one the startup announcement built
 - [ ] T017 [P] [US1] Server test: the page is NOT reachable on the main listener under any path
@@ -73,6 +78,8 @@
 
 - [ ] T022 [US3] Server test in `client_backend/internal/server/status_test.go`: against a store holding a named person, a named chat and a message, the rendered page contains none of those strings, no device public key and no token
 - [ ] T023 [US3] Server test: a claimed server's page carries the claim link nowhere — not as a link, not as a QR, not in the markup
+- [ ] T023a [P] Regression test in `client_backend/internal/server/health_test.go`: `GET /health` answers exactly what it answered — OS services and the tunnel read it, and a page for people must not change a machine's answer (FR-013)
+- [ ] T023b [P] Test in `client_backend/internal/server/status_test.go`: the status listener's resolved address is loopback, so "unreachable from the network" is asserted rather than assumed (SC-002)
 
 **Checkpoint**: Принцип I проверен, а не заявлен.
 
