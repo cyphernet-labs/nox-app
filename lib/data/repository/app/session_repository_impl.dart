@@ -34,6 +34,14 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   /// keychain — the login identifier is the secret, this is not.
   static const String _kAuthorId = 'session.author_id';
 
+  /// Whether this person owns the server (contract §3, §8A).
+  ///
+  /// Plain prefs, not the secure store: the project puts in the keychain what
+  /// grants ACCESS, and this grants none — it states a role whose rules the
+  /// server enforces. Calling it a secret would cost a platform channel on
+  /// every read to protect nothing.
+  static const String _kIsOwner = 'session.is_owner';
+
   /// This device's Ed25519 seed. The private half of the pair whose public
   /// half the server knows as `device_key` — it is generated here, stays here,
   /// and dies with a logout through `deleteAll`.
@@ -73,6 +81,7 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
           identifier: identifier,
           label: _prefs.getString(_kLabel),
           authorId: _prefs.getString(_kAuthorId),
+          isOwner: _prefs.getBool(_kIsOwner),
           onboardingComplete: _prefs.getBool(_kOnboardingComplete) ?? false,
         ),
       );
@@ -111,9 +120,13 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   }
 
   @override
-  Future<RepositoryResult<bool>> adoptServerIdentity({required String authorId, required String label}) {
+  Future<RepositoryResult<bool>> adoptServerIdentity({required String authorId, required String label, bool? isOwner}) {
     return execute<bool>(() async {
       await _prefs.setString(_kAuthorId, authorId);
+      // Null is "the server did not say", and that must not overwrite an answer
+      // heard earlier: a build talking to an older server would otherwise lose
+      // the badge on the first reconnect.
+      if (isOwner != null) await _prefs.setBool(_kIsOwner, isOwner);
       final cached = _prefs.getString(_kLabel);
       final changed = cached != label;
       if (changed) {
@@ -226,6 +239,10 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       await _secureStorage.delete(key: _kServerAddress);
       await _secureStorage.delete(key: _kServerKey);
       await _prefs.remove(_kOnboardingComplete);
+      // An attempt that never landed leaves no trace of ownership either: the
+      // pair reply may well have arrived and claimed the machine before the
+      // step that failed, and a badge with no session behind it is a lie.
+      await _prefs.remove(_kIsOwner);
       return const RepositoryResult<bool>.success(data: true);
     });
   }
@@ -241,6 +258,9 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       // Leaving it behind would let the next sign-in inherit it and mark that
       // stranger's messages as its own until the next greeting overwrote it.
       await _prefs.remove(_kAuthorId);
+      // Ownership belongs to the person signing out. The next person to sign in
+      // on this device inherits neither their name nor their machine.
+      await _prefs.remove(_kIsOwner);
       _emitLabel(null); // logout resets every label surface to the fallback
       return const RepositoryResult<bool>.success(data: true);
     });

@@ -100,6 +100,12 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         // secret any more - the key is.
         final stored = await _sessionRepository.saveIdentifier(identifier: link.token, onboardingComplete: false);
         if (!stored.hasData) return stored;
+        // Ownership comes from the pair reply, not from the fact that THIS
+        // device presented a claim link: the server is the only one who knows,
+        // and a device that inferred it would be right until the day it was
+        // not. Stored now so the owner sees the badge without waiting for the
+        // greeting that follows.
+        await _sessionRepository.adoptServerIdentity(authorId: greeting.authorId, label: greeting.label, isOwner: greeting.isOwner);
         if (greeting.created!) _sessionRepository.noteOnboardingStartedHere();
         // Re-greet, SIGNED. The connection `pair` ran on was greeted before
         // this device existed to the server, so it still speaks as whoever

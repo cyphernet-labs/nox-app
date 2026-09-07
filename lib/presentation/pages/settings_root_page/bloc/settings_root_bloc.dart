@@ -49,7 +49,14 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
           // The SERVER-minted id only. resolveIdentity falls back to the login
           // identifier, whose slot now holds the pairing TOKEN - showing that
           // as "Your ID" would put a credential on screen and in the clipboard.
-          emit(state.copyWith(initialLoading: false, rawId: session?.authorId ?? '', name: resolveIdentity(session).label)),
+          emit(
+            state.copyWith(
+              initialLoading: false,
+              rawId: session?.authorId ?? '',
+              name: resolveIdentity(session).label,
+              isOwner: session?.isOwner,
+            ),
+          ),
       onError: (_) => emit(state.copyWith(initialLoading: false, rawId: '')),
     );
   }

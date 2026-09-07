@@ -56,9 +56,15 @@ abstract class SessionRepository {
   Future<RepositoryResult<bool>> advanceOnboardingIfKnown({required bool created});
 
   /// Records the identity the server declared at greeting time (contract §3):
-  /// its author id, and the label it considers current. Both are the server's
-  /// to decide — the label may have been changed from another device.
-  Future<RepositoryResult<bool>> adoptServerIdentity({required String authorId, required String label});
+  /// its author id, the label it considers current, and whether this person
+  /// owns the server. All three are the server's to decide — the label may
+  /// have been changed from another device, and ownership is never inferred
+  /// locally from having presented the claim link.
+  ///
+  /// [isOwner] null means the server did not state it, and the stored value is
+  /// then left alone: "did not say" must not overwrite a real answer heard
+  /// earlier, or an older server would silently strip the badge.
+  Future<RepositoryResult<bool>> adoptServerIdentity({required String authorId, required String label, bool? isOwner});
 
   /// Reactive display-label signal: emits the current cached label on listen, then
   /// every subsequent change (rename → new label, logout/clear → null). Broadcast —

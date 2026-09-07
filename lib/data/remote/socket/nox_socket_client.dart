@@ -383,6 +383,10 @@ class NoxSocketClient {
         // Absent stays absent: it means "outcome not stated", which is neither
         // outcome, and the sign-in path must not be handed a guess.
         created: id['created'] as bool?,
+        // Same rule for ownership, and for a sharper reason: a server that does
+        // not state it is not saying "no". Reading a missing field as false
+        // would strip the badge from an owner talking to an older build.
+        isOwner: id['owner'] as bool?,
       );
       greetingGeneration++;
       final lim = data['limits'];

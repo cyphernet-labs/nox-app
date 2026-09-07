@@ -29,4 +29,27 @@ void main() {
       ),
     ),
   );
+
+  // The owner's variant. Its own baseline rather than a flag on the one above:
+  // the badge sits on the name row, and a row that has to fit a name, a badge
+  // and an edit button is exactly where a layout regression would hide.
+  goldenTest(
+    'app_identity_card_widget_owner',
+    () => Padding(
+      padding: const EdgeInsets.all(16),
+      child: AppIdentityCardWidget(
+        name: 'Aria',
+        maskedId: l10nEn.idMask,
+        rawId: 'RAWID-0123456789',
+        revealable: true,
+        initialLoading: false,
+        editing: false,
+        isOwner: true,
+        onToggleReveal: () {},
+        onEditName: () {},
+        onCopy: () {},
+        onShowQr: () {},
+      ),
+    ),
+  );
 }

@@ -13,10 +13,14 @@ import 'package:nox_app/general/pairing/pairing_link.dart';
 /// frame". Contract §8.1 moves the same distinction onto the pairing reply at
 /// stage 2, and nothing outside the transport layer may notice that it moved.
 class IdentityHandshake {
-  const IdentityHandshake({required this.authorId, required this.label, required this.created});
+  const IdentityHandshake({required this.authorId, required this.label, required this.created, this.isOwner});
 
   final String authorId;
   final String label;
+
+  /// Whether this person owns the server (contract §3, §8A). Null means the
+  /// server did not state it, which is not the same as "does not own".
+  final bool? isOwner;
 
   /// Whether the server brought this person into being just now. Null means it
   /// did not say — an older server, or a frame that does not carry the
@@ -116,6 +120,7 @@ class LiveIdentityHandshake {
       // Absent stays absent: "outcome not stated" is neither outcome, and the
       // sign-in path must not be handed a guess.
       created: created is bool ? created : null,
+      isOwner: id['owner'] is bool ? id['owner'] as bool : null,
     );
   }
 
@@ -153,7 +158,9 @@ class LiveIdentityHandshake {
       final identity = _socket.identity;
       if (identity == null || identity.id.isEmpty) return;
       if (!pending.isCompleted) {
-        pending.complete(IdentityHandshake(authorId: identity.id, label: identity.label, created: identity.created));
+        pending.complete(
+          IdentityHandshake(authorId: identity.id, label: identity.label, created: identity.created, isOwner: identity.isOwner),
+        );
       }
     });
 

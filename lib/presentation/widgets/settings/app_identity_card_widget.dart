@@ -32,6 +32,7 @@ class AppIdentityCardWidget extends StatelessWidget {
     this.nameEditField,
     this.idRevealed = false,
     this.onToggleReveal,
+    this.isOwner,
   });
 
   final String name;
@@ -46,6 +47,15 @@ class AppIdentityCardWidget extends StatelessWidget {
   final Widget? nameEditField;
   final bool idRevealed;
   final VoidCallback? onToggleReveal;
+
+  /// Whether this person owns the server (contract §3).
+  ///
+  /// Three states, and only two of them draw anything: `true` shows the badge,
+  /// `false` and `null` show nothing. They are kept apart anyway because they
+  /// mean different things — `null` is "the server has not said yet" — and
+  /// rendering "not the owner" before the answer arrives would be a claim the
+  /// app is not entitled to make, followed by a flicker when it is corrected.
+  final bool? isOwner;
 
   @override
   Widget build(BuildContext context) {
@@ -87,9 +97,15 @@ class AppIdentityCardWidget extends StatelessWidget {
         SizedBox(height: AppSpacingTokens.s2),
         Row(
           children: [
-            Expanded(
-              child: Text(name, style: textTheme.titleMedium?.copyWith(color: colorScheme.onSurface)),
+            Flexible(
+              child: Text(
+                name,
+                style: textTheme.titleMedium?.copyWith(color: colorScheme.onSurface),
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
+            if (isOwner ?? false) ...[SizedBox(width: AppSpacingTokens.s8), _ownerBadge(context)],
+            const Spacer(),
             IconButton(
               tooltip: context.l10n.settingsNameEditTooltip,
               icon: AppIconWidget(NoxIcons.edit, size: AppDimensionTokens.icon.lg),
@@ -98,6 +114,24 @@ class AppIdentityCardWidget extends StatelessWidget {
           ],
         ),
       ],
+    );
+  }
+
+  /// The badge itself. Text rather than an icon: the design corpus has no
+  /// symbol for ownership, and adding one is a separate piece of work with a
+  /// separate owner — while a word needs no legend.
+  Widget _ownerBadge(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s8, vertical: AppSpacingTokens.s2),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.secondaryContainer,
+        borderRadius: BorderRadius.circular(AppDimensionTokens.radius.sm),
+      ),
+      child: Text(
+        context.l10n.settingsOwnerBadge,
+        style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSecondaryContainer),
+      ),
     );
   }
 

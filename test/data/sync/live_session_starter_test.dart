@@ -220,6 +220,39 @@ void main() {
       expect(hello.toString(), isNot(contains(seed!)));
     });
 
+    test('the greeting hands ownership to the session', () async {
+      await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
+      await session.saveServer(address: '10.0.0.5:9000', serverKey: 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=');
+
+      await starter.start();
+      await settle();
+      factory.latest.pushGreeting();
+      for (var i = 0; i < 40 && factory.latest.commandNamed('session.hello') == null; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      factory.latest.replyToHello(cursor: 0, owner: true);
+      for (var i = 0; i < 40 && (await session.readSession()).data?.isOwner != true; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+
+      // The badge has to outlive the connection that brought it: the next
+      // launch may well be offline.
+      expect((await session.readSession()).data?.isOwner, isTrue);
+    });
+
+    test('a greeting with no session behind it writes no ownership', () async {
+      // The window `pair` runs in. Stamping a badge on an empty session would
+      // hand it to whoever signs in next.
+      await session.saveServer(address: '10.0.0.5:9000', serverKey: 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=');
+
+      await starter.start();
+      await settle();
+      factory.latest.pushGreeting();
+      await settle();
+
+      expect((await session.readSession()).data, isNull);
+    });
+
     test('a refusal while unpaired clears nothing', () async {
       // The brick: a device that has not paired is refused as a matter of
       // course, and treating that as a revocation wiped the key and the address

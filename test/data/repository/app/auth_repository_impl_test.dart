@@ -74,6 +74,9 @@ void main() {
     ).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
     when(session.setOnboardingComplete(label: anyNamed('label'))).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
     when(session.clear()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
+    when(
+      session.adoptServerIdentity(authorId: anyNamed('authorId'), label: anyNamed('label'), isOwner: anyNamed('isOwner')),
+    ).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
     when(session.discardSignIn()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
     when(
       appState.fetchAppState(sessionExpired: anyNamed('sessionExpired')),
@@ -306,6 +309,22 @@ void main() {
       final written = logs.join('\n');
       expect(written, isNot(contains('AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=')));
       expect(written, isNot(contains(link.split('#').last)));
+    });
+
+    test('ownership never reaches the log beside the person it belongs to', () async {
+      // A role logged next to the person holding it is a record of who runs the
+      // machine (Principle I, FR-024). The app has no reason to write either.
+      final logs = <String>[];
+      getIt.registerSingleton<LogRepository>(_CapturingLog(logs));
+      when(
+        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
+      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_owner_7', label: 'Anna', created: true, isOwner: true));
+
+      await repository.signIn(identifier: link);
+
+      final written = logs.join('\n').toLowerCase();
+      expect(written, isNot(contains('u_owner_7')));
+      expect(written, isNot(contains('owner')));
     });
 
     test('an outcome the server did not state is not treated as an outcome', () async {

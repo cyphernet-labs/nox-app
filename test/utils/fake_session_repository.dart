@@ -15,6 +15,10 @@ const SessionModel kTestSession = SessionModel(
   // The server-minted public id. Distinct from the identifier slot, which now
   // holds the pairing token - a credential, never shown as "Your ID".
   authorId: 'u_test0000000001',
+  // The only person on a server owns it: until invite-user arrives (Q15) there
+  // is nobody else, so this is the ordinary state and the one the page goldens
+  // should lock.
+  isOwner: true,
   onboardingComplete: true,
 );
 
@@ -36,7 +40,8 @@ class FakeSessionRepository implements SessionRepository {
   }
 
   @override
-  Future<RepositoryResult<bool>> adoptServerIdentity({required String authorId, required String label}) => throw UnimplementedError();
+  Future<RepositoryResult<bool>> adoptServerIdentity({required String authorId, required String label, bool? isOwner}) =>
+      throw UnimplementedError();
 
   @override
   Future<RepositoryResult<bool>> updateLabel({required String label}) async {

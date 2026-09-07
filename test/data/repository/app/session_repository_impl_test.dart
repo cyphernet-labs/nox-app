@@ -201,4 +201,56 @@ void main() {
     // messages as this user's own until the next greeting overwrote it.
     expect((await repository.readSession()).data?.authorId, isNull);
   });
+
+  group('server ownership (033)', () {
+    test('the flag is stored, survives a restart and is wiped by logout', () async {
+      await repository.saveIdentifier(identifier: 'sess-1', onboardingComplete: true, label: 'Anna');
+      await repository.adoptServerIdentity(authorId: 'srv-anna', label: 'Anna', isOwner: true);
+
+      expect((await repository.readSession()).data?.isOwner, isTrue);
+
+      // A second repository over the same prefs is what a relaunch looks like:
+      // the badge has to be there before any server answers, or an offline
+      // start would show the owner as somebody who owns nothing.
+      final prefs = await SharedPreferences.getInstance();
+      final restarted = SessionRepositoryImpl(const FlutterSecureStorage(), prefs);
+      expect((await restarted.readSession()).data?.isOwner, isTrue);
+
+      await repository.clear();
+      await repository.saveIdentifier(identifier: 'sess-2', onboardingComplete: true);
+      expect((await repository.readSession()).data?.isOwner, isNull, reason: 'the next person inherits nobody else\'s machine');
+    });
+
+    test('a silent server never overwrites an answer heard earlier', () async {
+      await repository.saveIdentifier(identifier: 'sess-1', onboardingComplete: true, label: 'Anna');
+      await repository.adoptServerIdentity(authorId: 'srv-anna', label: 'Anna', isOwner: true);
+
+      // Null is "did not state it", which an older server sends on every
+      // reconnect. Treating it as false would strip the badge silently.
+      await repository.adoptServerIdentity(authorId: 'srv-anna', label: 'Anna');
+
+      expect((await repository.readSession()).data?.isOwner, isTrue);
+    });
+
+    test('a sign-in that never landed leaves no ownership behind', () async {
+      await repository.saveIdentifier(identifier: 'sess-1', onboardingComplete: false);
+      await repository.adoptServerIdentity(authorId: 'srv-anna', label: 'Anna', isOwner: true);
+
+      await repository.discardSignIn();
+
+      // The pair reply may well have claimed the machine before the step that
+      // failed; a badge with no session behind it is a lie.
+      expect((await repository.readSession()).data, isNull);
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getBool('session.is_owner'), isNull);
+    });
+
+    test('an unstated flag reads as null, not as false', () async {
+      await repository.saveIdentifier(identifier: 'sess-1', onboardingComplete: true);
+
+      // "Not stated" and "not the owner" draw the same thing and mean different
+      // things. Collapsing them here would make FR-022 unimplementable above.
+      expect((await repository.readSession()).data?.isOwner, isNull);
+    });
+  });
 }
