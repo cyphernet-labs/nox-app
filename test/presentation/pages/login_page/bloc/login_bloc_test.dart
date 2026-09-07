@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:injectable/injectable.dart';
+import 'package:injectable/injectable.dart' show Environment;
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
@@ -175,6 +175,16 @@ void main() {
         predicate<LoginState>((s) => s.status == LoginStatus.errorRejected),
       ],
     );
+
+    test('Sign in is not offered again while the owner is being asked', () {
+      // The wait is minutes long and the screen shows a spinner. A button that
+      // stays live under it invites a second tap, and that second sign-in
+      // restarts the channel the first is waiting on - whichever loses discards
+      // the session the other just stored.
+      const waiting = LoginState(id: 'some-link', status: LoginStatus.waitingForOwner);
+      expect(waiting.canSubmit, isFalse);
+      expect(waiting.isLoading, isTrue);
+    });
 
     blocTest<LoginBloc, LoginState>(
       'a declined invite says the owner said no',

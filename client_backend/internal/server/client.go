@@ -50,10 +50,10 @@ type client struct {
 	// invite link needs.
 	requestHost string
 	// identity is the person this connection speaks as, resolved once during
-	// the greeting. label mirrors identity.Label for the chat-creation path,
-	// which records a name rather than an id.
+	// the greeting. Written and read through Server.setIdentity /
+	// Server.currentIdentity: other connections' goroutines touch it -
+	// refreshLabel rewrites the label, and the notify helpers match on the id.
 	identity store.Identity
-	label    string
 	// pendingRequestID names the person invite this connection is waiting on.
 	//
 	// It exists because the waiting connection is UNAUTHENTICATED by

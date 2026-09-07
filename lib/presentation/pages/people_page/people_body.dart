@@ -78,6 +78,10 @@ class _PeopleBodyState extends State<PeopleBody> {
               SizedBox(height: AppSpacingTokens.s16),
             ],
             if (state.inviteFailed) ...[_error(context, context.l10n.peopleInviteError), SizedBox(height: AppSpacingTokens.s16)],
+            // Said, not swallowed. "Only the owner may invite" means the app
+            // should not have offered this at all - a silent no-op here is the
+            // dead button the failure message exists to avoid.
+            if (state.notOwner) ...[_error(context, context.l10n.peopleNotOwner), SizedBox(height: AppSpacingTokens.s16)],
             if (state.self != null) AppSettingsGroupWidget(children: [_PersonRow(person: state.self!)]),
             SizedBox(height: AppSpacingTokens.s16),
             if (state.others.isEmpty)

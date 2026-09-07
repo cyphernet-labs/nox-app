@@ -58,6 +58,24 @@ void main() {
     expect(find.text(l10nEn.peopleInviteMessage), findsOneWidget);
   });
 
+  testWidgets('"only the owner may invite" is said on screen, not just held in state', (tester) async {
+    // A refusal the screen does not render is a dead button: the person taps
+    // Invite, the button blinks, and nothing tells them why nothing happened.
+    await pumpApp(tester, Scaffold(body: PeopleBody(initialState: _circle.copyWith(notOwner: true))));
+
+    expect(find.text(l10nEn.peopleNotOwner), findsOneWidget);
+    expect(find.text(l10nEn.peopleInviteError), findsNothing, reason: 'it is not "try again"');
+  });
+
+  testWidgets('the invite button is disabled while one is in flight', (tester) async {
+    // Every press mints a 24-hour token that admits a person and cannot be
+    // taken back.
+    await pumpApp(tester, Scaffold(body: PeopleBody(initialState: _circle.copyWith(inviting: true))));
+
+    final button = tester.widget<FilledButton>(find.widgetWithText(FilledButton, l10nEn.peopleInvite));
+    expect(button.onPressed, isNull);
+  });
+
   testWidgets('a failed invite is visible with rows already on screen, not only on an empty list', (tester) async {
     // Rendered only when the list is empty, a failure reads as a dead button on
     // every other attempt.

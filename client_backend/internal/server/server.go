@@ -242,7 +242,6 @@ func (s *Server) refreshLabel(userID, label string, origin *client) {
 	for c := range s.conns {
 		if c.identity.UserID == userID {
 			c.identity.Label = label
-			c.label = label
 			if c != origin {
 				notify = append(notify, c)
 			}
@@ -420,7 +419,6 @@ func (s *Server) setDeviceKey(c *client, key string) {
 func (s *Server) setIdentity(c *client, id store.Identity) {
 	s.mu.Lock()
 	c.identity = id
-	c.label = id.Label
 	s.mu.Unlock()
 }
 

@@ -143,6 +143,12 @@ class _AppRootState extends State<AppRoot> {
     } else {
       navigator.pushAndRemoveUntil(route, (_) => false);
     }
+    // A question may have arrived while the app was still on Splash or Login -
+    // the server re-sends every waiting one on each greeting, and the greeting
+    // happens before the state settles. _askNext refuses to ask then, and
+    // nothing emits again afterwards, so the question would sit unseen until it
+    // expired.
+    _askNext();
   }
 
   // One-shot session-expiry message, shown over the freshly-pushed Login. Runs in a
