@@ -108,16 +108,38 @@ void main() {
       expect(service.current.map((r) => r.requestId), ['r_old', 'r_new'], reason: 'two people knocking is two decisions');
     });
 
-    test('a question already past its deadline is not shown', () async {
+    test("a deadline already in the past does NOT drop the question - the clock here may be wrong", () async {
+      // This device's clock is the one thing the app cannot trust against a
+      // server timestamp. Comparing the two made a device running a few minutes
+      // fast discard every question the instant it arrived: the owner was never
+      // asked, and every guest timed out with nothing on either side saying why.
+      // The server stays the authority, and says so with an `expired` outcome.
       final socket = await connect();
       socket.pushEvent(
         seq: 0,
         event: ServerEvent.personPairRequested,
-        data: {'request_id': 'r_1', 'invited_at': seconds(-const Duration(minutes: 9)), 'expires_at': seconds(-const Duration(minutes: 1))},
+        data: {'request_id': 'r_1', 'invited_at': seconds(-const Duration(minutes: 9)), 'expires_at': seconds(-const Duration(minutes: 4))},
       );
-      await Future<void>.delayed(const Duration(milliseconds: 60));
+      await waitUntil(() => service.current.length == 1, reason: 'the question survived a disagreeing clock');
 
-      expect(service.current, isEmpty, reason: 'answering it could not work');
+      socket.pushEvent(seq: 0, event: ServerEvent.personPairResolved, data: {'request_id': 'r_1', 'outcome': 'expired'});
+      await waitUntil(() => service.current.isEmpty, reason: 'and the server closed it');
+    });
+
+    test('clear() forgets the session\'s questions', () async {
+      // A question belongs to the session that received it. Left behind, it
+      // surfaces after the next sign-in - possibly to somebody who is not the
+      // owner and has no way to dismiss it.
+      final socket = await connect();
+      socket.pushEvent(
+        seq: 0,
+        event: ServerEvent.personPairRequested,
+        data: {'request_id': 'r_1', 'invited_at': seconds(-const Duration(minutes: 1)), 'expires_at': seconds(const Duration(minutes: 5))},
+      );
+      await waitUntil(() => service.current.length == 1, reason: 'the question arrived');
+
+      service.clear();
+      expect(service.current, isEmpty);
     });
 
     test('a question whose deadline the server did not state is KEPT', () async {

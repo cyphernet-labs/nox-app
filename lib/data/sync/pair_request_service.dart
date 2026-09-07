@@ -34,6 +34,19 @@ class PairRequestService {
 
   Stream<List<PairRequest>> get open => _open.stream;
 
+  /// Forgets every open question. Called by logout, alongside the other wipes.
+  ///
+  /// A question belongs to the session that received it. Without this it
+  /// outlives one: the socket stops, so no outcome ever arrives to remove it,
+  /// and the next sign-in — possibly as a GUEST of the same server — is shown a
+  /// full-screen "someone wants to join" it has no right to answer and, since
+  /// `not_owner` is a refusal rather than a resolution, no way to dismiss.
+  void clear() {
+    _expiry?.cancel();
+    _expiry = null;
+    _open.add(const <PairRequest>[]);
+  }
+
   /// The open questions right now. Read after a surface closes, to find the one
   /// that was waiting behind it — nothing emits again at that moment.
   List<PairRequest> get current => _open.value;
@@ -78,7 +91,17 @@ class PairRequestService {
         // this device's clock runs ahead of the server's - would swallow the
         // question silently and leave the person at the door waiting out the
         // full window for nothing.
-        if (request.expiresAt == null || request.expiresAt!.isAfter(now)) request,
+        // Measured from when the frame ARRIVED, never against the server's
+        // absolute deadline. The server is the authority on when a question
+        // dies and says so with an `expired` outcome; this is only the fallback
+        // for a device that loses the channel before hearing it.
+        //
+        // Comparing local now against a server timestamp made that fallback
+        // wrong in the one direction that matters: a device whose clock runs a
+        // few minutes fast discarded every question the instant it arrived, the
+        // owner was never asked, and every guest timed out with nothing on
+        // either side saying why.
+        if (now.difference(request.receivedAt) < _localWindow) request,
       // Oldest question first. A request with no stated moment sorts last
       // rather than to 1970: it is the newest thing we know nothing about.
     ]..sort((a, b) => (a.invitedAt ?? _far).compareTo(b.invitedAt ?? _far));
@@ -86,13 +109,12 @@ class PairRequestService {
 
     _expiry?.cancel();
     _expiry = null;
-    DateTime? soonest;
+    if (live.isEmpty) return;
+    var soonest = live.first.receivedAt.add(_localWindow);
     for (final request in live) {
-      final expires = request.expiresAt;
-      if (expires == null) continue;
-      if (soonest == null || expires.isBefore(soonest)) soonest = expires;
+      final ends = request.receivedAt.add(_localWindow);
+      if (ends.isBefore(soonest)) soonest = ends;
     }
-    if (soonest == null) return;
     final remaining = soonest.difference(now);
     _expiry = Timer(remaining.isNegative ? Duration.zero : remaining, () => _emit(_open.value));
   }
@@ -101,10 +123,22 @@ class PairRequestService {
   /// always sorts last, and never rendered.
   static final DateTime _far = DateTime.utc(9999);
 
+  /// How long a question stays on screen without the server saying anything.
+  ///
+  /// A little longer than the server's own five-minute window, so the answer
+  /// that closes a question is the server's whenever there is a channel to
+  /// carry it. Immune to clock skew because it is measured from arrival.
+  static const Duration _localWindow = Duration(minutes: 6);
+
   static PairRequest? _parse(Map<String, dynamic> data) {
     final id = data['request_id'];
     if (id is! String || id.isEmpty) return null;
-    return PairRequest(requestId: id, invitedAt: _seconds(data['invited_at']), expiresAt: _seconds(data['expires_at']));
+    return PairRequest(
+      requestId: id,
+      invitedAt: _seconds(data['invited_at']),
+      expiresAt: _seconds(data['expires_at']),
+      receivedAt: DateTime.now(),
+    );
   }
 
   /// A wire second, or null when the field is missing or not a usable number.

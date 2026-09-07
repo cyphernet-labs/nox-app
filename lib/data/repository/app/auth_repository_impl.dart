@@ -6,6 +6,7 @@ import 'package:nox_app/general/pairing/pairing_link.dart';
 import 'package:nox_app/general/platform_utils.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
 import 'package:nox_app/data/sync/outbox_service.dart';
+import 'package:nox_app/data/sync/pair_request_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/di/global_aliases.dart';
@@ -183,6 +184,14 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
     });
   }
 
+  /// Forgets any question waiting for an answer. A question belongs to the
+  /// session that received it: left behind, it would surface after the next
+  /// sign-in, possibly to somebody who is not the owner and cannot answer it.
+  void _forgetPairRequests() {
+    if (!getIt.isRegistered<PairRequestService>()) return;
+    getIt<PairRequestService>().clear();
+  }
+
   /// Revokes this device's own key before the local wipe, when there is a
   /// channel to say it on. Never blocks the logout: a person who chose to sign
   /// out must sign out.
@@ -288,6 +297,10 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         // for the life of the process while the app still shows the user signed
         // in — so a failed wipe puts it back.
         if (getIt.isRegistered<OutboxService>()) await getIt<OutboxService>().stop();
+        // A question waiting for an answer belongs to the session that received
+        // it. Nothing else removes it — the socket is down, so the outcome that
+        // would have will never arrive.
+        _forgetPairRequests();
         try {
           // The queue goes FIRST of the stores. It holds message texts that were
           // never sent, and a crash later in the wipe would leave them for the

@@ -10,8 +10,12 @@ import '../../../utils/golden.dart';
 
 /// Frozen moments rather than "now": a golden that renders a clock drifts every
 /// time it is verified.
-PairRequest _request() =>
-    PairRequest(requestId: 'r_9c41e0b7', invitedAt: DateTime(2026, 6, 15, 14, 32), expiresAt: DateTime(2026, 6, 15, 21, 35));
+PairRequest _request() => PairRequest(
+  requestId: 'r_9c41e0b7',
+  invitedAt: DateTime(2026, 6, 15, 14, 32),
+  expiresAt: DateTime(2026, 6, 15, 21, 35),
+  receivedAt: DateTime(2026, 6, 15, 21, 30),
+);
 
 void main() {
   goldenTest('pair_request_page', () => PairRequestPage(request: _request()));

@@ -12,8 +12,12 @@ import '../../../utils/pump_app.dart';
 
 final l10nEn = AppLocalizationsEn();
 
-PairRequest _request() =>
-    PairRequest(requestId: 'r_9c41e0b7', invitedAt: DateTime(2026, 6, 15, 14, 32), expiresAt: DateTime(2026, 6, 15, 14, 37));
+PairRequest _request() => PairRequest(
+  requestId: 'r_9c41e0b7',
+  invitedAt: DateTime(2026, 6, 15, 14, 32),
+  expiresAt: DateTime(2026, 6, 15, 14, 37),
+  receivedAt: DateTime(2026, 6, 15, 14, 32),
+);
 
 void main() {
   setUp(() => AppClock.freeze(DateTime(2026, 6, 15, 14, 33)));
@@ -42,7 +46,12 @@ void main() {
 
   testWidgets('a moment the server did not state is not shown at all', (tester) async {
     // Saying nothing beats saying 1970.
-    await pumpApp(tester, PairRequestPage(request: const PairRequest(requestId: 'r_1', invitedAt: null, expiresAt: null)));
+    await pumpApp(
+      tester,
+      PairRequestPage(
+        request: PairRequest(requestId: 'r_1', invitedAt: null, expiresAt: null, receivedAt: DateTime(2026, 6, 15, 14, 32)),
+      ),
+    );
 
     expect(find.textContaining('Invite sent'), findsNothing);
     expect(find.textContaining('Expires'), findsNothing);

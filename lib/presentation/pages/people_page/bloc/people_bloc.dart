@@ -1,7 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
+import 'package:nox_app/data/sync/pair_request_service.dart';
+import 'package:nox_app/domain/model/person/pair_request.dart';
 import 'package:nox_app/domain/model/person/person_model.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/domain/repository/person/person_repository.dart';
@@ -22,6 +26,41 @@ class PeopleBloc extends BaseBloc<PeopleEvent, PeopleState> {
     on<PeopleInitialize>(_onInitialize);
     on<PeopleInviteRequested>(_onInviteRequested);
     on<PeopleInviteDismissed>((_, emit) => emit(state.copyWith(inviteLink: null, inviteFailed: false)));
+    on<PeopleQuestionSettled>(_onQuestionSettled);
+    _watchQuestions();
+  }
+
+  StreamSubscription<List<PairRequest>>? _questions;
+  int _openQuestions = 0;
+
+  /// Re-reads the circle when a question is answered somewhere.
+  ///
+  /// The person who was just let in appears in `person.list` immediately, but
+  /// nothing on this screen would ask again: the surface that took the decision
+  /// opens OVER this one and pops back to it. And the link still on screen is
+  /// dead whichever way the question went - approving, declining and expiring
+  /// all spend the invite - so leaving it up advertises 24 hours of validity
+  /// for a token that has none.
+  void _watchQuestions() {
+    if (!getIt.isRegistered<PairRequestService>()) return;
+    final service = getIt<PairRequestService>();
+    _openQuestions = service.current.length;
+    _questions = service.open.listen((requests) {
+      final settled = requests.length < _openQuestions;
+      _openQuestions = requests.length;
+      if (settled && !isClosed) add(const PeopleEvent.questionSettled());
+    });
+  }
+
+  @override
+  Future<void> close() async {
+    await _questions?.cancel();
+    return super.close();
+  }
+
+  Future<void> _onQuestionSettled(PeopleQuestionSettled event, Emitter<PeopleState> emit) async {
+    emit(state.copyWith(inviteLink: null));
+    await _onInitialize(const PeopleInitialize(), emit);
   }
 
   PersonRepository? get _repository => getIt.isRegistered<PersonRepository>() ? getIt<PersonRepository>() : null;

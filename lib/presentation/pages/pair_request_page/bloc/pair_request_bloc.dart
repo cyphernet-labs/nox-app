@@ -74,7 +74,9 @@ class PairRequestBloc extends BaseBloc<PairRequestEvent, PairRequestState> {
         // answered it, or it ran out of time. Either way there is nothing left
         // to decide, and offering the buttons again would offer the same
         // refusal again.
-        final gone = e == RepositoryException.notFound || e == RepositoryException.pairTimeout;
+        // notOwner belongs here too: a question this person may not answer is
+        // not one they can retry out of, and the surface has no other exit.
+        final gone = e == RepositoryException.notFound || e == RepositoryException.pairTimeout || e == RepositoryException.notOwner;
         emit(state.copyWith(sending: false, settled: gone, failed: !gone));
       },
     );
