@@ -845,3 +845,55 @@ func TestAStoreWithPeopleAndNoServerIdentityRefusesToMintANewKey(t *testing.T) {
 		t.Fatalf("the refusal does not say what to do: %v", err)
 	}
 }
+
+// The owner is not locked out of their own machine by somebody else's device.
+// Counting every device on the server - rather than the owner's - would do
+// exactly that once 034 puts a guest on it: the owner logs out, a guest device
+// keeps running, and the owner's own claim link is refused for ever.
+func TestAGuestDeviceDoesNotBlockTheOwnersReClaim(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	owner := claimPerson(t, s, "dev-owner")
+
+	// A guest with a live device. Written directly: 034 is what produces this.
+	if _, err := s.write.ExecContext(ctx,
+		"INSERT INTO users (user_id, label, created_at) VALUES ('u_guest', 'Guest', 200)"); err != nil {
+		t.Fatalf("insert guest: %v", err)
+	}
+	if _, err := s.write.ExecContext(ctx,
+		"INSERT INTO devices (device_key, user_id, platform, created_at, last_seen_at) VALUES ('dev-guest', 'u_guest', 'test', 200, 200)"); err != nil {
+		t.Fatalf("insert guest device: %v", err)
+	}
+	// The owner logs out: their last device goes, the guest's stays.
+	if err := s.RevokeDevice(ctx, "dev-owner"); err != nil {
+		t.Fatalf("RevokeDevice: %v", err)
+	}
+
+	token, err := s.IssueClaimToken(ctx, 300)
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+	back, err := s.Pair(ctx, token, "dev-owner-new", "test", 300)
+	if err != nil {
+		t.Fatalf("the owner cannot get back into their own machine: %v", err)
+	}
+	if back.UserID != owner.UserID || !back.Owner {
+		t.Fatalf("re-claim answered %+v, want the owner back", back)
+	}
+}
+
+// And a claim is still refused while the owner HAS a device: that is the rule
+// the count exists for.
+func TestAClaimIsStillRefusedWhileTheOwnerHasADevice(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	claimPerson(t, s, "dev-owner")
+
+	token, err := s.IssueClaimToken(ctx, 300)
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+	if _, err := s.Pair(ctx, token, "dev-other", "test", 300); !errors.Is(err, ErrTokenInvalid) {
+		t.Fatalf("err = %v, want ErrTokenInvalid", err)
+	}
+}

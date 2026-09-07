@@ -99,16 +99,11 @@ func (s *Store) RevokeDevice(ctx context.Context, deviceKey string) error {
 // DeviceOwner reports which person a key belongs to, so a caller can refuse to
 // revoke somebody else's device.
 func (s *Store) DeviceOwner(ctx context.Context, deviceKey string) (string, bool, error) {
-	var userID string
-	err := s.read.QueryRowContext(ctx,
-		"SELECT user_id FROM devices WHERE device_key = ?", deviceKey).Scan(&userID)
+	owner, err := deviceOwnerOf(ctx, s.read, deviceKey)
 	if err != nil {
-		if isNoRows(err) {
-			return "", false, nil
-		}
-		return "", false, fmt.Errorf("read device owner: %w", err)
+		return "", false, err
 	}
-	return userID, true, nil
+	return owner, owner != "", nil
 }
 
 // SetLabel renames a person. Contract §8A: names are not unique and the server
@@ -136,9 +131,9 @@ func (s *Store) CountDevices(ctx context.Context) (int, error) {
 
 // CountUsers reports how many people this server holds.
 //
-// NOT test-support: startup reads it to decide whether printing a claim link
-// would be honest - a store with people but no owner refuses the claim it
-// would advertise.
+// NOT test-support: OwnerlessWithPeople reads it, and startup decides through
+// that whether printing a claim link would be honest - a store with people but
+// no owner refuses the claim it would advertise.
 func (s *Store) CountUsers(ctx context.Context) (int, error) {
 	var n int
 	if err := s.read.QueryRowContext(ctx, "SELECT COUNT(1) FROM users").Scan(&n); err != nil {

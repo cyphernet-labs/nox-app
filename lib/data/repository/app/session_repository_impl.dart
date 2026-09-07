@@ -243,6 +243,12 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   Future<RepositoryResult<bool>> forgetAuthorId() {
     return execute<bool>(() async {
       await _prefs.remove(_kAuthorId);
+      // Ownership belongs to the world being discarded too. A rebuilt store
+      // knows nothing about this person, so a badge carried over from the old
+      // one claims a role on a machine that never granted it - and it would
+      // stay on screen until some later refusal happened to force a logout.
+      await _prefs.remove(_kIsOwner);
+      _emitOwnership(null);
       return const RepositoryResult<bool>.success(data: true);
     });
   }

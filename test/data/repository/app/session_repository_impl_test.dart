@@ -267,6 +267,19 @@ void main() {
       expect(seen, contains(true));
     });
 
+    test('a rebuilt server world takes the badge with the author id', () async {
+      await repository.saveIdentifier(identifier: 'sess-1', onboardingComplete: true);
+      await repository.adoptServerIdentity(authorId: 'u_1', label: 'Anna', isOwner: true);
+
+      await repository.forgetAuthorId();
+
+      // A rebuilt store knows nothing about this person, so a badge carried
+      // over from the old world claims a role the new machine never granted.
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('session.author_id'), isNull);
+      expect(prefs.getBool('session.is_owner'), isNull);
+    });
+
     test('an unstated flag reads as null, not as false', () async {
       await repository.saveIdentifier(identifier: 'sess-1', onboardingComplete: true);
 

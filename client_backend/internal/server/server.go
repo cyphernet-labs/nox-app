@@ -374,7 +374,16 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 // Tables are not enough on their own. Editing 001 in place also ADDS COLUMNS to
 // tables that already exist, and a missing column sails past a table check to
 // die later as a raw "no such column" - the exact unactionable error this guard
-// exists to replace. So every column a later phase adds is named here too.
+// exists to replace.
+//
+// So every column a later phase adds goes in requiredColumns, one line each.
+// The list is hand-maintained and will stay that way until the schema carries a
+// fingerprint; forgetting an entry is how a stale database gets past this.
+var requiredColumns = map[string][]string{
+	"server_identity": {"owner_user_id"},
+	"pair_tokens":     {"used_by", "created_person"},
+}
+
 func assertIdentitySchema(ctx context.Context, read *sql.DB, dbPath string) error {
 	var present int
 	err := read.QueryRowContext(ctx,
@@ -386,14 +395,18 @@ func assertIdentitySchema(ctx context.Context, read *sql.DB, dbPath string) erro
 	if present != 5 {
 		return staleSchemaError(dbPath)
 	}
-	var owners int
-	err = read.QueryRowContext(ctx,
-		"SELECT COUNT(1) FROM pragma_table_info('server_identity') WHERE name = 'owner_user_id'").Scan(&owners)
-	if err != nil {
-		return fmt.Errorf("inspect server_identity columns: %w", err)
-	}
-	if owners != 1 {
-		return staleSchemaError(dbPath)
+	for table, columns := range requiredColumns {
+		for _, column := range columns {
+			var found int
+			err := read.QueryRowContext(ctx,
+				"SELECT COUNT(1) FROM pragma_table_info(?) WHERE name = ?", table, column).Scan(&found)
+			if err != nil {
+				return fmt.Errorf("inspect %s columns: %w", table, err)
+			}
+			if found != 1 {
+				return staleSchemaError(dbPath)
+			}
+		}
 	}
 	return nil
 }

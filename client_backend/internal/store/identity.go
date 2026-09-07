@@ -178,9 +178,13 @@ func insertDevice(ctx context.Context, tx *sql.Tx, deviceKey, userID, platform s
 
 // deviceOwnerOf reports which person a device key is bound to, empty if the key
 // is unknown.
-func deviceOwnerOf(ctx context.Context, tx *sql.Tx, deviceKey string) (string, error) {
+// The ONE definition of "whose device is this". Store.DeviceOwner delegates to
+// it, so the security-relevant caller (Pair's takeover refusal) and the
+// ordinary one (revoking only your own devices) cannot drift apart about what
+// an unknown key means.
+func deviceOwnerOf(ctx context.Context, q rowQuerier, deviceKey string) (string, error) {
 	var userID string
-	err := tx.QueryRowContext(ctx, "SELECT user_id FROM devices WHERE device_key = ?", deviceKey).Scan(&userID)
+	err := q.QueryRowContext(ctx, "SELECT user_id FROM devices WHERE device_key = ?", deviceKey).Scan(&userID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}

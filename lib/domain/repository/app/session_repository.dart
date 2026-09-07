@@ -88,7 +88,8 @@ abstract class SessionRepository {
   /// multiple surfaces (shell avatar, future consumers) may listen concurrently.
   Stream<String?> watchLabel();
 
-  /// Forgets the author id this device cached. Called when the server's store
+  /// Forgets who this device is on the server it cached: the author id and
+  /// the ownership answer both belong to that world. Called when the server's store
   /// turns out to be a different world: an id from the old one would mark
   /// strangers' messages as this user's own.
   Future<RepositoryResult<bool>> forgetAuthorId();

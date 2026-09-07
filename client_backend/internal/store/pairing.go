@@ -186,14 +186,21 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 		if err != nil {
 			return Identity{}, err
 		}
-		// Owned means "somebody can still get in", not "somebody once did".
-		// Revoking the last device - which logout is - would otherwise lock the
-		// machine forever: the claim is spent, there is no device to issue an
-		// invite from, and recovery is Q16. The person's row survives either
-		// way; this is only about being able to attach a device to it again.
+		// Owned means "the OWNER can still get in", not "somebody once did" and
+		// not "anybody is here". Revoking the last device - which logout is -
+		// would otherwise lock the machine forever: the claim is spent, there is
+		// no device to issue an invite from, and recovery is Q16.
+		//
+		// Counting every device on the server would reintroduce that lockout the
+		// moment a second person exists (034): a guest's device left running
+		// would keep the owner's own claim link refused for ever, on a machine
+		// that is theirs.
 		var devices int
-		if err := tx.QueryRowContext(ctx, "SELECT COUNT(1) FROM devices").Scan(&devices); err != nil {
-			return Identity{}, fmt.Errorf("count devices: %w", err)
+		if owner != "" {
+			if err := tx.QueryRowContext(ctx,
+				"SELECT COUNT(1) FROM devices WHERE user_id = ?", owner).Scan(&devices); err != nil {
+				return Identity{}, fmt.Errorf("count owner devices: %w", err)
+			}
 		}
 		if owner != "" && devices > 0 {
 			return Identity{}, ErrTokenInvalid

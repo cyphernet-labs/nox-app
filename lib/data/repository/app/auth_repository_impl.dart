@@ -111,6 +111,14 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         // the pairing TOKEN, so own-vs-other detection stops matching and every
         // message the person sends comes back looking like a stranger's. The
         // re-greet that would repair it is best-effort and swallowed.
+        if (greeting.authorId.isEmpty) {
+          // The worse of the two failures, and it was the silent one. Nothing
+          // is stored, so resolveIdentity falls back to the login identifier -
+          // which since 032 holds the pairing token - and every message this
+          // person sends comes back rendered as a stranger's. The greeting that
+          // follows carries the same identity and repairs it.
+          logRepository.debug(target: this, message: 'sign-in: the pair reply named nobody, waiting for the greeting');
+        }
         final adopted = greeting.authorId.isEmpty
             ? const RepositoryResult<bool>.success(data: true)
             : await _sessionRepository.adoptServerIdentity(authorId: greeting.authorId, label: greeting.label, isOwner: greeting.isOwner);

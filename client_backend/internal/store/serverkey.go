@@ -138,12 +138,21 @@ func setOwner(ctx context.Context, tx *sql.Tx, userID string, now int64) (bool, 
 // records is the shape this whole feature came to remove.
 func (s *Store) OwnerlessWithPeople(ctx context.Context) (bool, int, error) {
 	owner, err := ownerUserID(ctx, s.read)
-	if err != nil && !errors.Is(err, ErrNoServerIdentity) {
+	if errors.Is(err, ErrNoServerIdentity) {
+		// A MISSING row is a different state, and a fatal one: startup refuses
+		// to mint a key for a store that already holds people, because a new
+		// key breaks pinning for every device paired against the old one.
+		// Folding it in here would have this function promise the server keeps
+		// running while startup aborts, and hand the operator two different
+		// remedies for one situation.
+		return false, 0, nil
+	}
+	if err != nil {
 		return false, 0, err
 	}
-	var people int
-	if err := s.read.QueryRowContext(ctx, "SELECT COUNT(1) FROM users").Scan(&people); err != nil {
-		return false, 0, fmt.Errorf("count people: %w", err)
+	people, err := s.CountUsers(ctx)
+	if err != nil {
+		return false, 0, err
 	}
 	return owner == "" && people > 0, people, nil
 }

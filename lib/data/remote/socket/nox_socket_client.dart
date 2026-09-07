@@ -319,20 +319,34 @@ class NoxSocketClient {
           // tell those apart and must not: both mean "this is not my server any
           // more". Retrying would spin forever against a peer that will keep
           // refusing, so the session is torn down and the app is told.
-          await _teardown(SessionPhase.unsupported);
-          // Guarded like the journal callback below, and for a sharper reason
-          // since the catch-all was added: a throw from here would land there,
-          // flip the phase back to disconnected and start retrying - undoing
-          // the one decision this branch exists to make.
+          //
+          // The WHOLE branch is guarded, not just the callback. `_teardown`
+          // awaits a socket close, which can fail on any platform, and a throw
+          // anywhere in here would fall through to the catch-all at the end of
+          // this method - which retries. That would undo the one decision this
+          // branch exists to make and put a revoked device back in a refusal
+          // loop for ever.
           try {
+            await _teardown(SessionPhase.unsupported);
             onUnauthenticated?.call();
           } on Object catch (e, st) {
+            // Deliberately terminal: the phase stays unsupported and nothing is
+            // retried. A device the server refuses has nothing to gain from
+            // reconnecting, and a loop is worse than a stall.
+            _phase.add(SessionPhase.unsupported);
             logRepository.error(target: this, error: e.runtimeType, stackTrace: st);
           }
           return;
         }
         final terminal = reply.errorCode == 'unsupported_schema' || reply.errorCode == 'invalid_request';
-        await _teardown(terminal ? SessionPhase.unsupported : SessionPhase.disconnected);
+        // Same reasoning: a failing teardown must not turn a terminal refusal
+        // into an endless retry.
+        try {
+          await _teardown(terminal ? SessionPhase.unsupported : SessionPhase.disconnected);
+        } on Object catch (e, st) {
+          _phase.add(terminal ? SessionPhase.unsupported : SessionPhase.disconnected);
+          logRepository.error(target: this, error: e.runtimeType, stackTrace: st);
+        }
         if (!terminal) _scheduleRetry();
         return;
       }
@@ -458,13 +472,15 @@ class NoxSocketClient {
       //
       // Field-by-field type checks below help, but they can only cover the
       // fields somebody remembered. This covers the ones nobody did.
-      // The TYPE plus where it happened, deliberately not the message. A
+      // The TYPE and where it happened, deliberately not the message. A
       // TypeError quotes the offending value, and the value here can be a
       // person's display name - Principle I keeps names out of logs whether or
-      // not they also travelled on the wire. The frame and the phase are what
-      // an operator needs to place it.
-      logRepository.debug(target: this, message: 'socket: greeting reply could not be read (${e.runtimeType}), reconnecting');
-      logRepository.error(target: this, error: e.runtimeType, stackTrace: st);
+      // not they also travelled on the wire.
+      //
+      // One line, like every other failure branch in this method: the stack
+      // trace carries the rest, and a flapping peer should not double this
+      // file's log volume for a single event.
+      logRepository.error(target: this, error: 'greeting reply unreadable: ${e.runtimeType}', stackTrace: st);
       await _teardown(SessionPhase.disconnected);
       _scheduleRetry();
     }
