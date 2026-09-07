@@ -149,13 +149,13 @@
 ## Phase 7: Polish & Cross-Cutting Concerns
 
 - [X] T063 Assert no invite token reaches a log, on either side (FR-026): a Go test in `client_backend/internal/server/server_test.go` over the mutex-guarded log buffer of feature 033, and an audit of every `logRepository` call on the new client paths
-- [ ] T064 [P] Record the phase's invariants in `client_backend/CLAUDE.md`: the outcome is recorded and never re-derived, the wait lives in the row, both events stay off the journal
-- [ ] T065 [P] Add the `People` row and the new screens to `docs/design/spec/screens/settings-root.md` and a new screen doc under `docs/design/spec/screens/`
-- [ ] T066 [P] Add both surfaces to the screen map in `docs/design/spec/top-level-screens.md`
-- [ ] T067 [P] Reconcile `docs/blueprints/mobile/` with anything this phase changed about the live path
-- [ ] T068 [P] Mark 034 ☑ in `docs/client-backend/roadmap-stage2.md`
-- [ ] T069 Run `gofmt -l .`, `go vet ./...` and `go test -race ./...` in `client_backend/`
-- [ ] T070 Run `make gate` and `make golden-verify`
+- [X] T064 [P] Record the phase's invariants in `client_backend/CLAUDE.md`: the outcome is recorded and never re-derived, the wait lives in the row, both events stay off the journal
+- [X] T065 [P] Add the `People` row and the new screens to `docs/design/spec/screens/settings-root.md` and a new screen doc under `docs/design/spec/screens/`
+- [X] T066 [P] Add both surfaces to the screen map in `docs/design/spec/top-level-screens.md`
+- [X] T067 [P] Reconcile `docs/blueprints/mobile/` with anything this phase changed about the live path
+- [X] T068 [P] Mark 034 ☑ in `docs/client-backend/roadmap-stage2.md`
+- [X] T069 Run `gofmt -l .`, `go vet ./...` and `go test -race ./...` in `client_backend/`
+- [X] T070 Run `make gate` and `make golden-verify`
 - [ ] T071 Walk [quickstart.md](./quickstart.md) live against a real `noxd` with two clients
 
 ---
