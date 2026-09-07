@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -136,4 +137,54 @@ func readDB(t *testing.T, srv *Server) *sql.DB {
 	}
 	t.Cleanup(func() { _ = d.Close() })
 	return d.Read
+}
+
+// The startup line has to tell the two situations apart, because they ask
+// different things of the person reading it: a machine nobody has claimed is
+// about to get an owner, while one whose owner lost every device is about to
+// let that same owner back in. Before ownership was explicit the two were
+// indistinguishable and the message said "no owner yet" for both.
+func TestTheStartupLineDistinguishesAnUnclaimedServerFromAnEmptyOne(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "announce.db")
+	dbs, err := db.Open(path)
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = dbs.Close() })
+	if _, err := db.Migrate(context.Background(), dbs.Write, os.DirFS("../../migrations")); err != nil {
+		t.Fatalf("db.Migrate: %v", err)
+	}
+	st := store.New(dbs.Read, dbs.Write)
+	ctx := context.Background()
+
+	fresh := &syncBuffer{}
+	if err := announceClaim(ctx, st, "127.0.0.1:8080", slog.New(slog.NewTextHandler(fresh, nil))); err != nil {
+		t.Fatalf("announceClaim on a fresh store: %v", err)
+	}
+	if !strings.Contains(fresh.String(), "no owner yet") {
+		t.Fatalf("fresh store announced %q", fresh.String())
+	}
+
+	// Claim it, then take the device away - which is what logging out does.
+	token, err := st.IssueClaimToken(ctx, 100)
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+	if _, err := st.Pair(ctx, token, "dev-a", "test", 100); err != nil {
+		t.Fatalf("Pair: %v", err)
+	}
+	if err := st.RevokeDevice(ctx, "dev-a"); err != nil {
+		t.Fatalf("RevokeDevice: %v", err)
+	}
+
+	owned := &syncBuffer{}
+	if err := announceClaim(ctx, st, "127.0.0.1:8080", slog.New(slog.NewTextHandler(owned, nil))); err != nil {
+		t.Fatalf("announceClaim on an owned store: %v", err)
+	}
+	if strings.Contains(owned.String(), "no owner yet") {
+		t.Fatalf("a server that still has an owner claims to have none: %q", owned.String())
+	}
+	if !strings.Contains(owned.String(), "get back in") {
+		t.Fatalf("owned-but-empty store announced %q", owned.String())
+	}
 }

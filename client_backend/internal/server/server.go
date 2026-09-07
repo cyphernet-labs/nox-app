@@ -467,6 +467,14 @@ func announceClaim(ctx context.Context, st *store.Store, addr string, logger *sl
 	if err != nil {
 		return fmt.Errorf("build pairing link: %w", err)
 	}
-	logger.Info("this server has no owner yet - present this link in the app to claim it", "link", link)
+	// Two different situations, and until this feature they were indistinguishable:
+	// nobody has ever claimed the machine, or its owner has no device left to get
+	// back in with. Saying "no owner yet" in the second case is simply false, and
+	// it tells the person the wrong story about what is about to happen.
+	if id.Claimed() {
+		logger.Info("this server has an owner but no devices left - present this link in the app to get back in", "link", link)
+	} else {
+		logger.Info("this server has no owner yet - present this link in the app to claim it", "link", link)
+	}
 	return nil
 }
