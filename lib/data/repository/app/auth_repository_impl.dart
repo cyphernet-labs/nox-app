@@ -11,6 +11,7 @@ import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/app/app_state_type.dart';
+import 'package:nox_app/domain/model/session/pair_refusal.dart';
 import 'package:nox_app/domain/repository/app/app_state_repository.dart';
 import 'package:nox_app/domain/repository/app/auth_repository.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
@@ -154,7 +155,17 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         return _finishSignIn(onboardingComplete: !greeting.created!);
       } on PairingRefused catch (e) {
         await _sessionRepository.discardSignIn();
-        return RepositoryResult<bool>.error(exception: e.expired ? RepositoryException.notFound : RepositoryException.authentication);
+        // Four refusals, four answers. The owner's decision and the owner's
+        // silence are NOT the same thing to the person reading it: one means
+        // stop asking, the other means ask again.
+        return RepositoryResult<bool>.error(
+          exception: switch (e.reason) {
+            PairRefusal.expired => RepositoryException.notFound,
+            PairRefusal.declined => RepositoryException.pairDeclined,
+            PairRefusal.noAnswer => RepositoryException.pairTimeout,
+            PairRefusal.notUsable => RepositoryException.authentication,
+          },
+        );
       } on Object catch (e, st) {
         // The TYPE only. A FormatException from a base64 decode carries the
         // offending source in its message, which here would be the link or the

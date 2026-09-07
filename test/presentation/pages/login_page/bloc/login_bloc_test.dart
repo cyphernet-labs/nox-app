@@ -177,6 +177,46 @@ void main() {
     );
 
     blocTest<LoginBloc, LoginState>(
+      'a declined invite says the owner said no',
+      build: () {
+        when(
+          mockAuthRepository.signIn(identifier: anyNamed('identifier')),
+        ).thenAnswer((_) async => const RepositoryResult.error(exception: RepositoryException.pairDeclined));
+        return LoginBloc();
+      },
+      act: (bloc) => bloc
+        ..add(const LoginEvent.idChanged('some-link'))
+        ..add(const LoginEvent.signInRequested()),
+      wait: const Duration(milliseconds: 300),
+      expect: () => [
+        predicate<LoginState>((s) => s.id == 'some-link'),
+        predicate<LoginState>((s) => s.status == LoginStatus.loading),
+        // Not errorRejected and not errorNetwork: "the owner declined" means
+        // stop asking, and both of those would tell the person to try again.
+        predicate<LoginState>((s) => s.status == LoginStatus.errorDeclined),
+      ],
+    );
+
+    blocTest<LoginBloc, LoginState>(
+      'an unanswered invite says to ask again, which is the opposite of a decline',
+      build: () {
+        when(
+          mockAuthRepository.signIn(identifier: anyNamed('identifier')),
+        ).thenAnswer((_) async => const RepositoryResult.error(exception: RepositoryException.pairTimeout));
+        return LoginBloc();
+      },
+      act: (bloc) => bloc
+        ..add(const LoginEvent.idChanged('some-link'))
+        ..add(const LoginEvent.signInRequested()),
+      wait: const Duration(milliseconds: 300),
+      expect: () => [
+        predicate<LoginState>((s) => s.id == 'some-link'),
+        predicate<LoginState>((s) => s.status == LoginStatus.loading),
+        predicate<LoginState>((s) => s.status == LoginStatus.errorNoAnswer),
+      ],
+    );
+
+    blocTest<LoginBloc, LoginState>(
       'a failed handshake shows a retryable error and guesses no outcome',
       build: () {
         when(

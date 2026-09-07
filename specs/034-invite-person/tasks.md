@@ -72,24 +72,24 @@
 
 ### Клиент
 
-- [ ] T027 [P] [US1] Add `personPairRequested` and `personPairResolved` to `lib/data/remote/socket/server_frame.dart`
-- [ ] T028 [US1] Parse the `pair` reply's `status` and add `invitePerson`, `listPeople` and `confirmPair` to `lib/data/remote/socket/nox_socket_client.dart`
-- [ ] T029 [P] [US1] Create the `PairOutcome` sealed union (`paired` · `declined` · `timedOut` · `refused`) in `lib/domain/model/session/pair_outcome.dart`
-- [ ] T030 [US1] Make `LiveIdentityHandshake.pair` in `lib/data/sync/live_identity_handshake.dart` wait for `person.pairResolved` on a pending reply, owning its own timer the way `greet()` does
-- [ ] T031 [US1] Re-present the same link when the channel comes back during the wait, in `lib/data/sync/live_identity_handshake.dart` (FR-012): the decision may already have been taken, and sending the person back to the start loses it
-- [ ] T032 [US1] Return the four outcomes from sign-in in `lib/data/repository/app/auth_repository_impl.dart`
-- [ ] T033 [P] [US1] Create `lib/data/sync/pair_request_service.dart` — a replaying stream of open confirmation requests
-- [ ] T034 [P] [US1] Create `PersonModel` in `lib/domain/model/person/person_model.dart` and `PairRequest` in `lib/domain/model/person/pair_request.dart`
-- [ ] T035 [P] [US1] Declare `PersonRepository` in `lib/domain/repository/person/person_repository.dart`
-- [ ] T036 [US1] Implement `PersonRepositoryImpl` in `lib/data/repository/person/person_repository_impl.dart` (`env: [Environment.dev]`, socket-only, no cache — the same reasoning as `DeviceRepositoryImpl`)
-- [ ] T037 [US1] Create the `PeopleBloc` with its Freezed event/state in `lib/presentation/pages/people_page/bloc/`
-- [ ] T038 [US1] Build `PeopleBody` and `PeoplePage` in `lib/presentation/pages/people_page/`, reusing `AppSettingsGroupWidget` and the QR/link invite card of 7.3
-- [ ] T039 [US1] Add the owner-only `People` row to `lib/presentation/pages/settings_root_page/settings_root_page.dart` and wire it into the desktop detail pane
-- [ ] T040 [US1] Build the confirmation surface in `lib/presentation/pages/pair_request_page/` — `route()` when narrow, `showAsDialog` when wide
-- [ ] T041 [US1] Subscribe to `PairRequestService` in `lib/presentation/widgets/app_root.dart` so the question reaches the owner wherever they are
-- [ ] T042 [P] [US1] Add the microcopy for both surfaces to `lib/l10n/app_en.arb` and `lib/l10n/app_uk.arb` (identical key sets)
-- [ ] T043 [P] [US1] Widget tests for both surfaces under `test/presentation/pages/people_page/` and `test/presentation/pages/pair_request_page/`
-- [ ] T044 [US1] Goldens for both surfaces: mobile via `goldenTest`, desktop via `goldenTestDesktop`
+- [X] T027 [P] [US1] Add `personPairRequested` and `personPairResolved` to `lib/data/remote/socket/server_frame.dart`
+- [X] T028 [US1] Parse the `pair` reply's `status` and add `invitePerson`, `listPeople` and `confirmPair` to `lib/data/remote/socket/nox_socket_client.dart`
+- [X] T029 [P] [US1] Create the `PairOutcome` sealed union (`paired` · `declined` · `timedOut` · `refused`) in `lib/domain/model/session/pair_outcome.dart`
+- [X] T030 [US1] Make `LiveIdentityHandshake.pair` in `lib/data/sync/live_identity_handshake.dart` wait for `person.pairResolved` on a pending reply, owning its own timer the way `greet()` does
+- [X] T031 [US1] Re-present the same link when the channel comes back during the wait, in `lib/data/sync/live_identity_handshake.dart` (FR-012): the decision may already have been taken, and sending the person back to the start loses it
+- [X] T032 [US1] Return the four outcomes from sign-in in `lib/data/repository/app/auth_repository_impl.dart`
+- [X] T033 [P] [US1] Create `lib/data/sync/pair_request_service.dart` — a replaying stream of open confirmation requests
+- [X] T034 [P] [US1] Create `PersonModel` in `lib/domain/model/person/person_model.dart` and `PairRequest` in `lib/domain/model/person/pair_request.dart`
+- [X] T035 [P] [US1] Declare `PersonRepository` in `lib/domain/repository/person/person_repository.dart`
+- [X] T036 [US1] Implement `PersonRepositoryImpl` in `lib/data/repository/person/person_repository_impl.dart` (`env: [Environment.dev]`, socket-only, no cache — the same reasoning as `DeviceRepositoryImpl`)
+- [X] T037 [US1] Create the `PeopleBloc` with its Freezed event/state in `lib/presentation/pages/people_page/bloc/`
+- [X] T038 [US1] Build `PeopleBody` and `PeoplePage` in `lib/presentation/pages/people_page/`, reusing `AppSettingsGroupWidget` and the QR/link invite card of 7.3
+- [X] T039 [US1] Add the owner-only `People` row to `lib/presentation/pages/settings_root_page/settings_root_page.dart` and wire it into the desktop detail pane
+- [X] T040 [US1] Build the confirmation surface in `lib/presentation/pages/pair_request_page/` — `route()` when narrow, `showAsDialog` when wide
+- [X] T041 [US1] Subscribe to `PairRequestService` in `lib/presentation/widgets/app_root.dart` so the question reaches the owner wherever they are
+- [X] T042 [P] [US1] Add the microcopy for both surfaces to `lib/l10n/app_en.arb` and `lib/l10n/app_uk.arb` (identical key sets)
+- [X] T043 [P] [US1] Widget tests for both surfaces under `test/presentation/pages/people_page/` and `test/presentation/pages/pair_request_page/`
+- [X] T044 [US1] Goldens for both surfaces: mobile via `goldenTest`, desktop via `goldenTestDesktop`
 
 **Checkpoint**: приглашение проходит путь целиком; второй человек существует и отличим от первого.
 
@@ -104,7 +104,7 @@
 - [X] T045 [US2] Refuse `IssuePersonInvite` with `ErrNotOwner` when the caller does not own the server, in `client_backend/internal/store/pairing.go`
 - [X] T046 [US2] Map `ErrNotOwner` onto the `not_owner` code in `handlePersonInvite` and `handlePersonConfirm` in `client_backend/internal/server/pairing.go`
 - [X] T047 [P] [US2] Server test in `client_backend/internal/server/pairing_test.go`: a non-owner is refused with `not_owner`, distinct from `invalid_token` and `internal`; the owner succeeds on the same server
-- [ ] T048 [P] [US2] Widget test in `test/presentation/pages/settings_root_page/`: the `People` row is absent for a non-owner and for "the server did not say" alike
+- [X] T048 [P] [US2] Widget test in `test/presentation/pages/settings_root_page/`: the `People` row is absent for a non-owner and for "the server did not say" alike
 
 **Checkpoint**: право выпускать проверяется на сервере и не предлагается в приложении.
 
@@ -123,8 +123,8 @@
 - [X] T053 [US3] Map the two new sentinels onto `pair_declined` and `pair_timeout` in `client_backend/internal/server/pairing.go`
 - [X] T054 [P] [US3] Store tests in `client_backend/internal/store/approval_test.go`: decline, expiry, a pending request surviving a reopen of the store, re-presentation after each outcome, and a foreign key getting `invalid_token` in every case
 - [X] T055 [US3] Server test in `client_backend/internal/server/pairing_test.go`: the sweeper resolves both sides, and an answer from one owner device closes the question on the other
-- [ ] T056 [US3] Show the four outcomes distinctly on the pairing screen in `lib/presentation/pages/login_page/` — "not usable", "expired", "the owner declined", "the owner did not answer"
-- [ ] T057 [P] [US3] Bloc test for the four outcomes under `test/presentation/pages/login_page/bloc/`
+- [X] T056 [US3] Show the four outcomes distinctly on the pairing screen in `lib/presentation/pages/login_page/` — "not usable", "expired", "the owner declined", "the owner did not answer"
+- [X] T057 [P] [US3] Bloc test for the four outcomes under `test/presentation/pages/login_page/bloc/`
 
 **Checkpoint**: без владельца не входит никто, и четыре отказа ведут к четырём разным действиям.
 
@@ -139,8 +139,8 @@
 - [X] T058 [P] [US4] Implement `ListPeople` in `client_backend/internal/store/people.go` — id, label and the owner mark, nothing else
 - [X] T059 [US4] Implement `handlePersonList` in `client_backend/internal/server/pairing.go`
 - [X] T060 [P] [US4] Store and server tests in `client_backend/internal/store/people_test.go`: exactly one person is marked owner, and the reply carries no devices, keys or counters
-- [ ] T061 [US4] Render the circle in `lib/presentation/pages/people_page/people_body.dart`, reusing `AppOwnerBadgeWidget` extracted by feature 033
-- [ ] T062 [P] [US4] Golden for the two-person list, mobile and desktop
+- [X] T061 [US4] Render the circle in `lib/presentation/pages/people_page/people_body.dart`, reusing `AppOwnerBadgeWidget` extracted by feature 033
+- [X] T062 [P] [US4] Golden for the two-person list, mobile and desktop
 
 **Checkpoint**: все истории работают независимо.
 

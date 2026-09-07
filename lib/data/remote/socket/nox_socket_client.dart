@@ -171,6 +171,14 @@ class NoxSocketClient {
     return _sendOnce(isGreeting: true, 'pair', <String, dynamic>{'token': token, 'device_key': deviceKey, 'platform': platform});
   }
 
+  /// Answers one waiting invite for a new person (contract §8B).
+  ///
+  /// Sent like any other command — the owner is greeted and signed; it is the
+  /// device at the door that is not.
+  Future<CommandReply> confirmPair({required String requestId, required bool approve}) {
+    return send('person.confirm', <String, dynamic>{'request_id': requestId, 'approve': approve});
+  }
+
   Future<CommandReply> _sendOnce(String cmd, Map<String, dynamic> data, {bool isGreeting = false}) async {
     if (!isGreeting) {
       final greeted = _greeted;

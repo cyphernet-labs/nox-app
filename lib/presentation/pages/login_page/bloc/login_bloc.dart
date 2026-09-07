@@ -64,12 +64,14 @@ class LoginBloc extends BaseBloc<LoginEvent, LoginState> {
     );
   }
 
-  /// Each refusal keeps its own message: the repository already told the three
+  /// Each refusal keeps its own message: the repository already told them
   /// apart, and collapsing them here would undo that.
   static LoginStatus _statusFor(Object? exception) => switch (exception) {
     RepositoryException.invalidRequest => LoginStatus.errorFormat,
     RepositoryException.notFound => LoginStatus.errorExpired,
     RepositoryException.authentication => LoginStatus.errorRejected,
+    RepositoryException.pairDeclined => LoginStatus.errorDeclined,
+    RepositoryException.pairTimeout => LoginStatus.errorNoAnswer,
     _ => LoginStatus.errorNetwork,
   };
 

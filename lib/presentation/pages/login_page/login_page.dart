@@ -159,6 +159,8 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
       case LoginStatus.errorFormat:
       case LoginStatus.errorExpired:
       case LoginStatus.errorRejected:
+      case LoginStatus.errorDeclined:
+      case LoginStatus.errorNoAnswer:
       case LoginStatus.errorNetwork:
         break;
     }
@@ -198,6 +200,8 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
     LoginStatus.errorFormat => context.l10n.loginInvalidId,
     LoginStatus.errorExpired => context.l10n.loginLinkExpired,
     LoginStatus.errorRejected => context.l10n.loginLinkRejected,
+    LoginStatus.errorDeclined => context.l10n.loginErrorDeclined,
+    LoginStatus.errorNoAnswer => context.l10n.loginErrorNoAnswer,
     LoginStatus.errorNetwork => context.l10n.loginNetworkError,
     _ => null,
   };

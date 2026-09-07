@@ -6,6 +6,7 @@ import 'package:nox_app/data/repository/app/auth_repository_impl.dart';
 import 'package:nox_app/data/sync/live_identity_handshake.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
+import 'package:nox_app/domain/model/session/pair_refusal.dart';
 import 'package:nox_app/domain/model/app/app_state_model.dart';
 import 'package:nox_app/domain/model/app/app_state_type.dart';
 import 'package:nox_app/domain/repository/app/app_state_repository.dart';
@@ -231,22 +232,25 @@ void main() {
       expect(presented, isNot(contains('AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=')));
     });
 
-    test('an expired invite is told apart from a rejected one', () async {
-      // The person acts differently: issue a new invite versus this one is not
-      // usable at all.
-      when(
-        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
-      ).thenThrow(const PairingRefused(expired: true));
+    test('the four refusals stay apart, because each says a different thing to do next', () async {
+      // Get a new invite; this one is not usable at all; the owner said no;
+      // the owner never answered. Four answers, four next actions - collapsing
+      // any two would tell somebody the wrong thing to do.
+      const expectations = <PairRefusal, RepositoryException>{
+        PairRefusal.expired: RepositoryException.notFound,
+        PairRefusal.notUsable: RepositoryException.authentication,
+        PairRefusal.declined: RepositoryException.pairDeclined,
+        PairRefusal.noAnswer: RepositoryException.pairTimeout,
+      };
+      for (final entry in expectations.entries) {
+        when(
+          handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
+        ).thenThrow(PairingRefused(reason: entry.key));
 
-      final expired = await repository.signIn(identifier: link);
-      expect(expired.exception, RepositoryException.notFound);
-
-      when(
-        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
-      ).thenThrow(const PairingRefused(expired: false));
-
-      final rejected = await repository.signIn(identifier: link);
-      expect(rejected.exception, RepositoryException.authentication);
+        final refused = await repository.signIn(identifier: link);
+        expect(refused.exception, entry.value, reason: '${entry.key.name} must stay distinguishable');
+      }
+      expect(expectations.values.toSet(), hasLength(4), reason: 'no two refusals may share an answer');
     });
 
     test('a successful pairing re-greets, so the session stops speaking as the pre-pair identity', () async {

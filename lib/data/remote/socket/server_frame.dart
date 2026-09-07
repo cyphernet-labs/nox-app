@@ -81,4 +81,19 @@ class ServerEvent extends ServerFrame {
   /// shared world. Without it a second device holds the old name until
   /// something reconnects it, and a stable socket never re-greets.
   static const String identityUpdated = 'identity.updated';
+
+  /// Sent to every live device of the OWNER when somebody presents an invite
+  /// for a new person (contract §8B), and re-sent after each of the owner's
+  /// greetings for every request still waiting. Seq 0 and off the journal, for
+  /// the same reason as the two above: who is joining this machine is not the
+  /// shared world.
+  ///
+  /// It says nothing about who is knocking. Before joining, the server knows
+  /// nothing about them.
+  static const String personPairRequested = 'person.pairRequested';
+
+  /// Sent to the device that is waiting AND to every device of the owner: the
+  /// first needs the outcome, the rest need the question to leave their screens
+  /// rather than only the one that answered it.
+  static const String personPairResolved = 'person.pairResolved';
 }

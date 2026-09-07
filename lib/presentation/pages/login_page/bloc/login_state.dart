@@ -9,7 +9,25 @@ enum LoginOutcome { auto, newId, registered, errorFormat, errorNetwork, fatal }
 /// that will not parse means scan it again, an expired token means ask for a
 /// new invite, a rejected one means this link cannot be used at all. One
 /// shared "it did not work" leaves them guessing which.
-enum LoginStatus { idle, loading, errorFormat, errorExpired, errorRejected, errorNetwork, navNewId, navRegistered, navFatal }
+/// The refusals stay apart because each leads somewhere different: a link that
+/// will not parse means "scan it again", an expired one means "get a new one",
+/// a rejected one means "this is not usable", [errorDeclined] means "the owner
+/// said no, do not insist" and [errorNoAnswer] means "they did not answer, ask
+/// again". Collapsing any two would make the app tell somebody the wrong thing
+/// to do next.
+enum LoginStatus {
+  idle,
+  loading,
+  errorFormat,
+  errorExpired,
+  errorRejected,
+  errorDeclined,
+  errorNoAnswer,
+  errorNetwork,
+  navNewId,
+  navRegistered,
+  navFatal,
+}
 
 @freezed
 abstract class LoginState with _$LoginState {
