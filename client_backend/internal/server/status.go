@@ -159,32 +159,53 @@ func dialableHost(bindAddr string) string {
 		return ""
 	}
 	if host != "" && host != "0.0.0.0" && host != "::" {
-		// The operator named an address. Theirs is the answer, whatever it is.
+		// The operator named an address. Theirs is the answer - UNLESS it is
+		// loopback, which is the default and means the server is reachable
+		// from this machine and nowhere else. A QR pointing at 127.0.0.1 is a
+		// code that cannot work, and drawing it confidently is worse than
+		// drawing none: the person scans it and gets an error about the
+		// network rather than being told to bind an address.
+		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+			return ""
+		}
+		if host == "localhost" {
+			return ""
+		}
 		return net.JoinHostPort(host, port)
 	}
-	addrs, err := net.InterfaceAddrs()
+	// A wildcard bind. Only interfaces that are actually UP count: a laptop
+	// carries a docker bridge, a VPN tap and an unplugged ethernet with a
+	// static address, and any of those would produce a code the phone cannot
+	// reach while looking exactly as valid as a working one.
+	ifaces, err := net.Interfaces()
 	if err != nil {
 		return ""
 	}
-	for _, addr := range addrs {
-		ipNet, ok := addr.(*net.IPNet)
-		if !ok || ipNet.IP.IsLoopback() || ipNet.IP.IsLinkLocalUnicast() {
+	var fallback string
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagRunning == 0 || iface.Flags&net.FlagLoopback != 0 {
 			continue
 		}
-		// IPv4 first: a QR is read by a camera, and an IPv6 literal is four
-		// times the characters for the same reach on a home network.
-		if v4 := ipNet.IP.To4(); v4 != nil {
-			return net.JoinHostPort(v4.String(), port)
-		}
-	}
-	for _, addr := range addrs {
-		ipNet, ok := addr.(*net.IPNet)
-		if !ok || ipNet.IP.IsLoopback() || ipNet.IP.IsLinkLocalUnicast() {
+		addrs, err := iface.Addrs()
+		if err != nil {
 			continue
 		}
-		return net.JoinHostPort(ipNet.IP.String(), port)
+		for _, addr := range addrs {
+			ipNet, ok := addr.(*net.IPNet)
+			if !ok || ipNet.IP.IsLoopback() || ipNet.IP.IsLinkLocalUnicast() || ipNet.IP.IsUnspecified() {
+				continue
+			}
+			// IPv4 first: a QR is read by a camera, and an IPv6 literal is four
+			// times the modules for the same reach on a home network.
+			if v4 := ipNet.IP.To4(); v4 != nil {
+				return net.JoinHostPort(v4.String(), port)
+			}
+			if fallback == "" && ipNet.IP.IsGlobalUnicast() {
+				fallback = net.JoinHostPort(ipNet.IP.String(), port)
+			}
+		}
 	}
-	return ""
+	return fallback
 }
 
 // humanBytes renders a size the way a person reads one.
@@ -231,6 +252,21 @@ func humanDuration(d time.Duration) string {
 func (s *Server) claimLink(ctx context.Context) (string, error) {
 	s.claim.Lock()
 	defer s.claim.Unlock()
+
+	// The held token can have been spent since it was minted: somebody claims
+	// the server, the owner later revokes their last device, and this page is
+	// asked for a link again. Showing the burnt one would offer the only way
+	// back in as a door that no longer opens - and a claim token has no expiry
+	// to make that obvious.
+	if s.claimToken != "" {
+		usable, err := s.store.ClaimTokenUsable(ctx, s.claimToken)
+		if err != nil {
+			return "", err
+		}
+		if !usable {
+			s.claimToken, s.claimLnk = "", ""
+		}
+	}
 	if s.claimLnk != "" {
 		return s.claimLnk, nil
 	}

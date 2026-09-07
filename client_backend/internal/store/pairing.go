@@ -95,6 +95,29 @@ func (s *Store) IssueDeviceInvite(ctx context.Context, userID string, now int64)
 	return s.issueToken(ctx, TokenInviteDevice, userID, now, now+InviteTTLSeconds)
 }
 
+// ClaimTokenUsable reports whether a claim token can still be presented.
+//
+// The service page holds the one token this process minted, and a token can be
+// spent between two page loads: somebody claims the server, the owner then
+// revokes their last device, and the page is asked for a link again. Handing
+// back the burnt one would show the only recovery tool there is, pointing at a
+// door that no longer opens.
+func (s *Store) ClaimTokenUsable(ctx context.Context, token string) (bool, error) {
+	if token == "" {
+		return false, nil
+	}
+	var usedAt sql.NullInt64
+	err := s.read.QueryRowContext(ctx,
+		"SELECT used_at FROM pair_tokens WHERE token = ? AND kind = ?", token, TokenClaim).Scan(&usedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read claim token: %w", err)
+	}
+	return !usedAt.Valid, nil
+}
+
 // IssuePersonInvite mints a token that brings a NEW person into the circle.
 //
 // Only the owner may call it, and the check lives HERE rather than in the

@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -17,26 +19,51 @@ func TestCountsOnAnEmptyStoreAreZerosRatherThanAbsent(t *testing.T) {
 	}
 }
 
+// Four DIFFERENT numbers on purpose: with two of them equal, swapping the two
+// fields in the Scan would pass, and the page would show a message count under
+// "Chats" with every test green.
 func TestCountsFollowWhatTheStoreHolds(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 	owner := claimOwner(t, s, "dev-owner")
 
+	// Two people.
 	token, err := s.IssuePersonInvite(ctx, owner.UserID, 200)
 	if err != nil {
 		t.Fatalf("IssuePersonInvite: %v", err)
 	}
 	req := present(t, s, token, "dev-guest", 300)
-	if _, err := s.ConfirmPair(ctx, req.RequestID, owner.UserID, true, 310); err != nil {
+	guest, err := s.ConfirmPair(ctx, req.RequestID, owner.UserID, true, 310)
+	if err != nil {
 		t.Fatalf("ConfirmPair: %v", err)
+	}
+	// Three devices.
+	invite, err := s.IssueDeviceInvite(ctx, owner.UserID, 400)
+	if err != nil {
+		t.Fatalf("IssueDeviceInvite: %v", err)
+	}
+	if _, err := s.Pair(ctx, invite, "dev-owner-2", "test", 410); err != nil {
+		t.Fatalf("Pair: %v", err)
+	}
+	// One chat, four messages.
+	chat, _, err := s.CreateChat(ctx, "Kitchen", owner.Label, 500)
+	if err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	for i := range 4 {
+		if _, _, _, err := s.SendMessage(ctx, chat.ChatID, fmt.Sprintf("m%d", i), guest.Identity,
+			json.RawMessage(`{"type":"text","text":"x"}`), "", int64(600+i)); err != nil {
+			t.Fatalf("SendMessage: %v", err)
+		}
 	}
 
 	got, err := s.CountEverything(ctx)
 	if err != nil {
 		t.Fatalf("CountEverything: %v", err)
 	}
-	if got.People != 2 || got.Devices != 2 {
-		t.Fatalf("counts = %+v, want two people and two devices", got)
+	want := Counts{People: 2, Devices: 3, Chats: 1, Messages: 4}
+	if got != want {
+		t.Fatalf("counts = %+v, want %+v", got, want)
 	}
 }
 

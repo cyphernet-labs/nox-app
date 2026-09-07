@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -566,8 +567,23 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 	// otherwise no phone could reach it. An empty address removes the listener
 	// rather than the handler, so the port is not even held.
 	var statusServer *http.Server
+	var statusListener net.Listener
 	if cfg.StatusAddr != "" {
-		statusServer = &http.Server{Addr: cfg.StatusAddr, Handler: srv.StatusHandler(), ReadHeaderTimeout: readHeaderTimeout}
+		statusListener, err = net.Listen("tcp", cfg.StatusAddr)
+		if err != nil {
+			logger.Error("service page unavailable, continuing without it", "addr", cfg.StatusAddr, "err", err)
+		} else if err := assertLoopback(statusListener); err != nil {
+			// The config check catches the mistake when it is made; this is the
+			// guarantee. A name can resolve to loopback at parse time and
+			// somewhere else at bind time, and the difference between those two
+			// moments is a claim link on a network.
+			_ = statusListener.Close()
+			statusListener = nil
+			return err
+		}
+		if statusListener != nil {
+			statusServer = &http.Server{Handler: srv.StatusHandler(), ReadHeaderTimeout: readHeaderTimeout}
+		}
 	}
 
 	hubCtx, stopHub := context.WithCancel(context.Background())
@@ -596,8 +612,13 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 			// Printed, or nobody learns it exists. Next to the claim link,
 			// because the two are read at the same moment.
 			logger.Info("service page for this machine only", "url", "http://"+cfg.StatusAddr)
-			if err := statusServer.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
-				return fmt.Errorf("listen on %s: %w", cfg.StatusAddr, err)
+			if err := statusServer.Serve(statusListener); !errors.Is(err, http.ErrServerClosed) {
+				// Logged, NOT returned. Returning it cancels the group and
+				// takes the whole messenger down: a port somebody else already
+				// holds - 8081 is not rare, and a second noxd with its own -db
+				// would collide by default - would stop people talking to each
+				// other over a page nobody had opened yet.
+				logger.Error("service page unavailable, continuing without it", "addr", cfg.StatusAddr, "err", err)
 			}
 			return nil
 		})
@@ -611,7 +632,15 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 			// Down with the main one and BEFORE the database closes: a request
 			// arriving mid-shutdown would otherwise read a store being closed
 			// underneath it (invariant 9).
-			if statusErr := statusServer.Shutdown(shCtx); statusErr != nil && err == nil {
+			//
+			// Its OWN deadline, not the leftovers of the main one: sharing an
+			// expired context closes the listener and returns immediately,
+			// leaving a page request in flight to race the database close -
+			// the exact thing the ordering is for.
+			statusCtx, cancelStatus := context.WithTimeout(context.Background(), shutdownTimeout)
+			statusErr := statusServer.Shutdown(statusCtx)
+			cancelStatus()
+			if statusErr != nil && err == nil {
 				err = statusErr
 			}
 		}
@@ -751,6 +780,22 @@ func announceClaim(
 		logger.Info("this server has no owner yet - present this link in the app to claim it", "link", link)
 	}
 	return token, nil
+}
+
+// assertLoopback refuses a service-page listener that ended up anywhere else.
+//
+// Checked on the socket rather than on the string, because the string is what
+// somebody typed and the socket is what happened. A hostname resolving one way
+// at parse time and another at bind time is the whole gap this closes.
+func assertLoopback(ln net.Listener) error {
+	tcp, ok := ln.Addr().(*net.TCPAddr)
+	if !ok {
+		return fmt.Errorf("service page listener is not TCP: %s", ln.Addr())
+	}
+	if !tcp.IP.IsLoopback() {
+		return fmt.Errorf("service page bound to %s, which is not loopback", tcp.IP)
+	}
+	return nil
 }
 
 // startupWarnings collects what only the terminal would otherwise have seen.

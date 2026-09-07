@@ -2,6 +2,7 @@ package server
 
 import (
 	"html/template"
+	"net"
 	"net/http"
 	"strings"
 )
@@ -37,10 +38,11 @@ footer { margin-top: 2.5rem; font-size: .85rem; opacity: .6; }
 <h1>Nobody has claimed this server yet</h1>
 <p class="lead">Scan this from the NOX app on your phone, or paste the link below into it.
 The first device to use it becomes the owner of this server.</p>
-{{if .QR}}<div class="qr">{{.QR}}</div>{{else}}
-<p class="warn">This machine has no address anything else can reach, so there is no code to scan.
-Use the link printed when the server started.</p>{{end}}
-{{if .Link}}<code class="link">{{.Link}}</code>{{end}}
+{{if .QR}}<div class="qr">{{.QR}}</div>{{end}}
+{{if .Link}}<code class="link">{{.Link}}</code>{{else}}
+<p class="warn">This server is reachable from this machine only, so a phone cannot connect to it and
+there is no code to scan. Start it with <code>-addr</code> set to an address on your network, or use
+the link printed at startup from a device that can reach this machine.</p>{{end}}
 
 {{else if eq .State 2}}
 <h1>This server has no owner</h1>
@@ -92,6 +94,15 @@ type statusView struct {
 
 // handleStatusPage serves the service page.
 func (s *Server) handleStatusPage(w http.ResponseWriter, r *http.Request) {
+	// The listener keeps the network out; this keeps the operator's own browser
+	// out. Without it a page on any site can be rebound to 127.0.0.1 by DNS,
+	// fetch this one as same-origin and read the claim link straight off it -
+	// after which the machine belongs to whoever served that page. A loopback
+	// socket does not help, because the request really does come from loopback.
+	if !localHost(r.Host) {
+		http.Error(w, "this page is only served to this machine", http.StatusForbidden)
+		return
+	}
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return
@@ -132,9 +143,13 @@ func (s *Server) handleStatusPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	// The page carries a claim link. Nothing may keep a copy of it.
+	// The page carries a claim link. Nothing may keep a copy of it, embed it in
+	// another page, or guess at its type.
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data:; frame-ancestors 'none'")
 	var out strings.Builder
 	if err := statusPage.Execute(&out, view); err != nil {
 		s.logger.Error("render status page", "err", err)
@@ -142,6 +157,26 @@ func (s *Server) handleStatusPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, _ = w.Write([]byte(out.String()))
+}
+
+// localHost reports whether a Host header names this machine.
+//
+// Names as well as literals, because a browser sends whatever was typed: a
+// person opens http://localhost:8081 as readily as the address. What is
+// refused is a name that merely RESOLVES here - that is the rebinding attack,
+// and the whole point is that resolution is not to be trusted.
+func localHost(host string) bool {
+	name, _, err := net.SplitHostPort(host)
+	if err != nil {
+		// No port: the header is the bare host.
+		name = host
+	}
+	name = strings.TrimSuffix(strings.TrimPrefix(name, "["), "]")
+	if name == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(name)
+	return ip != nil && ip.IsLoopback()
 }
 
 // StatusHandler is the service page's own mux, served on its own listener.

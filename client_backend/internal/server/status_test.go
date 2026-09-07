@@ -15,7 +15,9 @@ import (
 func statusBody(t *testing.T, srv *Server) string {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	srv.StatusHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = "127.0.0.1:8081"
+	srv.StatusHandler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status page = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
@@ -24,6 +26,7 @@ func statusBody(t *testing.T, srv *Server) string {
 
 func TestAnUnclaimedServerOffersTheLinkAndACodeToScan(t *testing.T) {
 	_, srv := newTestServer(t)
+	dialable(srv)
 	if _, err := srv.store.EnsureServerIdentity(context.Background()); err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
@@ -45,6 +48,7 @@ func TestAnUnclaimedServerOffersTheLinkAndACodeToScan(t *testing.T) {
 // be a second unrevocable door - a claim token has no expiry to close it.
 func TestThePageAndTheStartupLineShareOneClaimToken(t *testing.T) {
 	_, srv := newTestServer(t)
+	dialable(srv)
 	ctx := context.Background()
 	if _, err := srv.store.EnsureServerIdentity(ctx); err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
@@ -96,6 +100,7 @@ func TestTheCodeCarriesAnAddressAPhoneCanDial(t *testing.T) {
 
 func TestAClaimedServerShowsTheMachineAndNoLink(t *testing.T) {
 	ts, srv := newTestServer(t)
+	dialable(srv)
 	claimDevice(t, ts, srv)
 
 	body := statusBody(t, srv)
@@ -121,6 +126,7 @@ func TestAClaimedServerShowsTheMachineAndNoLink(t *testing.T) {
 // somebody locked out of their own machine.
 func TestAnOwnerWithNoDevicesLeftIsOfferedTheLinkAgain(t *testing.T) {
 	ts, srv := newTestServer(t)
+	dialable(srv)
 	dev, _ := claimDevice(t, ts, srv)
 	if strings.Contains(statusBody(t, srv), "https://nox.app/p/#") {
 		t.Fatal("a claimed server offered a link before the device was revoked")
@@ -138,6 +144,7 @@ func TestAnOwnerWithNoDevicesLeftIsOfferedTheLinkAgain(t *testing.T) {
 // link would be an instruction nobody can follow.
 func TestAStoreWithPeopleAndNoOwnerOffersNothingToScan(t *testing.T) {
 	ts, srv := newTestServer(t)
+	dialable(srv)
 	claimDevice(t, ts, srv)
 	orphanStore(t, srv)
 
@@ -265,4 +272,98 @@ func countLiveClaimTokens(t *testing.T, srv *Server) int {
 		t.Fatalf("count claim tokens: %v", err)
 	}
 	return n
+}
+
+// A token spent between two page loads must not come back. The owner claims,
+// then logs out; the page is the only recovery tool there is, and offering the
+// burnt link would point it at a door that no longer opens.
+func TestThePageStopsOfferingATokenThatHasBeenSpent(t *testing.T) {
+	ts, srv := newTestServer(t)
+	dialable(srv)
+	ctx := context.Background()
+	if _, err := srv.store.EnsureServerIdentity(ctx); err != nil {
+		t.Fatalf("EnsureServerIdentity: %v", err)
+	}
+	token, err := srv.store.IssueClaimToken(ctx, time.Now().Unix())
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+	// The production path: the startup announcement's token is what the page
+	// holds. Without seeding it, the page mints its own and the bug is unreachable.
+	srv.seedClaimToken(token)
+	first := linkOf(t, statusBody(t, srv))
+
+	dev, _ := pairDevice(t, ts, token)
+	if err := srv.store.RevokeDevice(ctx, dev.pub); err != nil {
+		t.Fatalf("RevokeDevice: %v", err)
+	}
+
+	second := linkOf(t, statusBody(t, srv))
+	if second == first {
+		t.Fatal("the page still offers the token the claim already burned")
+	}
+	if got := countLiveClaimTokens(t, srv); got != 1 {
+		t.Fatalf("unspent claim tokens = %d, want exactly the replacement", got)
+	}
+}
+
+// The default bind is loopback, and a phone cannot dial it. Drawing a code
+// confidently there is worse than drawing none: the person scans it and gets a
+// network error instead of being told to bind an address.
+func TestALoopbackBindDrawsNoCodeAndSaysWhy(t *testing.T) {
+	if got := dialableHost("127.0.0.1:8080"); got != "" {
+		t.Fatalf("dialableHost = %q, want empty: no phone can dial loopback", got)
+	}
+	if got := dialableHost("localhost:8080"); got != "" {
+		t.Fatalf("dialableHost = %q, want empty", got)
+	}
+	if got := dialableHost("[::1]:8080"); got != "" {
+		t.Fatalf("dialableHost = %q, want empty", got)
+	}
+
+	_, srv := newTestServer(t)
+	if _, err := srv.store.EnsureServerIdentity(context.Background()); err != nil {
+		t.Fatalf("EnsureServerIdentity: %v", err)
+	}
+	body := statusBody(t, srv)
+	if strings.Contains(body, "<svg") {
+		t.Fatalf("a loopback-bound server drew a code no phone can use: %s", body)
+	}
+	if !strings.Contains(body, "reachable from this machine only") {
+		t.Fatalf("the page does not explain why there is no code: %s", body)
+	}
+}
+
+// A separate socket keeps the network out; it does not keep the operator's own
+// browser out. Any site can be rebound to 127.0.0.1 by DNS and read this page
+// as same-origin - and the claim link with it.
+func TestThePageRefusesAHostThatIsNotThisMachine(t *testing.T) {
+	_, srv := newTestServer(t)
+	for _, host := range []string{"evil.example:8081", "nox.local:8081", "192.168.1.10:8081"} {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Host = host
+		rec := httptest.NewRecorder()
+		srv.StatusHandler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("Host %q = %d, want 403: a rebound name must not read this page", host, rec.Code)
+		}
+	}
+	for _, host := range []string{"127.0.0.1:8081", "localhost:8081", "[::1]:8081"} {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Host = host
+		rec := httptest.NewRecorder()
+		srv.StatusHandler().ServeHTTP(rec, req)
+		if rec.Code == http.StatusForbidden {
+			t.Fatalf("Host %q was refused, but it is this machine", host)
+		}
+	}
+}
+
+// dialable gives the test server an address a phone could reach.
+//
+// The harness binds 127.0.0.1:0, which the page now correctly treats as "no
+// phone can get here" - right in production, and it would leave every
+// link-related test asserting about a page that deliberately shows none.
+func dialable(srv *Server) {
+	srv.cfg.Addr = "192.168.1.10:8080"
 }

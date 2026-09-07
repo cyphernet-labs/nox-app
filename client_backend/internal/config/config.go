@@ -114,8 +114,11 @@ func checkStatusAddr(addr string) error {
 			return fmt.Errorf("invalid -status-addr %q: the service page must be bound to loopback, and %s is not", addr, ip)
 		}
 	}
-	if len(ips) == 0 {
-		return fmt.Errorf("invalid -status-addr %q: resolved to no address", addr)
-	}
+	// LookupIP returns an error rather than an empty answer, so there is no
+	// "resolved to nothing" case to handle here.
+	//
+	// This check catches the mistake at the moment it is made. It is NOT the
+	// guarantee: a name can resolve differently between here and the bind, so
+	// the address the listener actually got is checked again once it has it.
 	return nil
 }
