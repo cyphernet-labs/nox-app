@@ -6,8 +6,8 @@ import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/domain/model/app/session_model.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/general/pairing/device_keys.dart';
-import 'package:rxdart/rxdart.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
+import 'package:rxdart/rxdart.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Security-sensitive identifier → secure storage; non-secret onboarding flag and
@@ -47,6 +47,11 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   static const String _kAuthorId = 'session.author_id';
 
   /// Whether this person owns the server (contract §3, §8A).
+  ///
+  /// Deliberately NOT part of [SessionModel]: the badge reads it through
+  /// [watchOwnership], and a second copy on the session aggregate would be a
+  /// value nothing keeps current - the first reader to trust it would be
+  /// holding an answer the watch had already superseded.
   ///
   /// Plain prefs, not the secure store: the project puts in the keychain what
   /// grants ACCESS, and this grants none — it states a role whose rules the
@@ -93,7 +98,6 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
           identifier: identifier,
           label: _prefs.getString(_kLabel),
           authorId: _prefs.getString(_kAuthorId),
-          isOwner: _prefs.getBool(_kIsOwner),
           onboardingComplete: _prefs.getBool(_kOnboardingComplete) ?? false,
         ),
       );

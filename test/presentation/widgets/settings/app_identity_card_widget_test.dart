@@ -116,6 +116,15 @@ void main() {
       expect(find.text(l10nEn.settingsOwnerBadge), findsOneWidget);
     });
 
+    testWidgets('the badge survives an inline rename', (tester) async {
+      // Ownership has nothing to do with editing a name. While the editing
+      // branch returned the field alone, the badge blinked out on every rename.
+      await pumpApp(tester, card(isOwner: true, editing: true));
+
+      expect(find.byKey(const Key('edit')), findsOneWidget);
+      expect(find.text(l10nEn.settingsOwnerBadge), findsOneWidget);
+    });
+
     testWidgets('desktop (non-revealable): no reveal toggle, and no QR inside the card', (tester) async {
       await pumpApp(tester, card(revealable: false));
 

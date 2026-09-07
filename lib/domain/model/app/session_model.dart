@@ -20,16 +20,6 @@ abstract class SessionModel with _$SessionModel {
     /// login identifier is the only id there is.
     String? authorId,
 
-    /// Whether this person owns the server they are paired with (contract §3).
-    ///
-    /// Same name as `ServerIdentity.isOwner` on purpose: one fact deserves one
-    /// name, and two names for it is how a copy between them goes wrong.
-    ///
-    /// Null means "the server has never said" — a fresh install, or an older
-    /// server. Rendering that as "not the owner" would show the owner a wrong
-    /// answer on every offline launch, so the badge stays absent for both and
-    /// the difference lives here rather than in the widget.
-    bool? isOwner,
     @Default(false) bool onboardingComplete,
   }) = _SessionModel;
 }

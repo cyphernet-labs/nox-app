@@ -51,9 +51,9 @@ void main() {
 
     // Ownership arrives with the pair reply, so it is already stored before the
     // greeting that follows - no waiting, no second round trip.
-    final owning = (await session.readSession()).data;
-    stdout.writeln('OWNER: ${owning?.isOwner}');
-    expect(owning?.isOwner, isTrue, reason: 'the person who claimed the server must own it');
+    final owning = (await SharedPreferences.getInstance()).getBool('session.is_owner');
+    stdout.writeln('OWNER: $owning');
+    expect(owning, isTrue, reason: 'the person who claimed the server must own it');
 
     final named = await auth.completeOnboarding(label: 'LiveAnna');
     stdout.writeln('NAME: ${named.hasData ? 'ok' : named.exception}');
@@ -86,7 +86,7 @@ void main() {
     // in rather than merely being forgotten here.
     // And it survives the greeting rather than being overwritten by it: the
     // greeting states ownership too, and the two must agree.
-    expect((await session.readSession()).data?.isOwner, isTrue);
+    expect((await SharedPreferences.getInstance()).getBool('session.is_owner'), isTrue);
 
     final out = await auth.logout();
     stdout.writeln('LOGOUT: ${out.hasData ? 'ok' : out.exception}');

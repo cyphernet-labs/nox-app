@@ -897,3 +897,57 @@ func TestAClaimIsStillRefusedWhileTheOwnerHasADevice(t *testing.T) {
 		t.Fatalf("err = %v, want ErrTokenInvalid", err)
 	}
 }
+
+// A replay reproduces the recorded answer, not the device's current binding.
+// After a logout and a re-pair the same key can belong to a different moment in
+// this person's life - and once 034 lands, to a different person entirely.
+func TestAReplayAnswersWithWhatTheTokenProducedNotWhoHoldsTheKeyNow(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	if _, err := s.EnsureServerIdentity(ctx); err != nil {
+		t.Fatalf("EnsureServerIdentity: %v", err)
+	}
+	claim, err := s.IssueClaimToken(ctx, 100)
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+	first, err := s.Pair(ctx, claim, "dev-x", "test", 100)
+	if err != nil {
+		t.Fatalf("Pair: %v", err)
+	}
+	if !first.Created {
+		t.Fatal("the first claim should have created the person")
+	}
+
+	// Log out, come back with a new device, then bring dev-x back by invite.
+	if err := s.RevokeDevice(ctx, "dev-x"); err != nil {
+		t.Fatalf("RevokeDevice: %v", err)
+	}
+	again, err := s.IssueClaimToken(ctx, 200)
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+	back, err := s.Pair(ctx, again, "dev-new", "test", 200)
+	if err != nil {
+		t.Fatalf("re-claim: %v", err)
+	}
+	if back.Created {
+		t.Fatal("the re-claim created a person who already existed")
+	}
+	invite, err := s.IssueDeviceInvite(ctx, back.UserID, 300)
+	if err != nil {
+		t.Fatalf("IssueDeviceInvite: %v", err)
+	}
+	if _, err := s.Pair(ctx, invite, "dev-x", "test", 300); err != nil {
+		t.Fatalf("re-adding dev-x: %v", err)
+	}
+
+	// The ORIGINAL claim token replayed by dev-x answers what it produced then.
+	replay, err := s.Pair(ctx, claim, "dev-x", "test", 400)
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if replay.UserID != first.UserID || replay.Created != first.Created {
+		t.Fatalf("replay = %+v, want the original answer %+v", replay, first)
+	}
+}

@@ -326,27 +326,20 @@ class NoxSocketClient {
           // this method - which retries. That would undo the one decision this
           // branch exists to make and put a revoked device back in a refusal
           // loop for ever.
+          // Separate guards, deliberately. Sharing one would let a failing
+          // teardown skip the notification - and the notification is the whole
+          // point of this branch: without it the app keeps showing a signed-in
+          // shell over a dead channel until the process restarts.
+          await _teardownQuietly(SessionPhase.unsupported);
           try {
-            await _teardown(SessionPhase.unsupported);
             onUnauthenticated?.call();
           } on Object catch (e, st) {
-            // Deliberately terminal: the phase stays unsupported and nothing is
-            // retried. A device the server refuses has nothing to gain from
-            // reconnecting, and a loop is worse than a stall.
-            _phase.add(SessionPhase.unsupported);
-            logRepository.error(target: this, error: e.runtimeType, stackTrace: st);
+            logRepository.error(target: this, error: 'unauthenticated handler failed: ${e.runtimeType}', stackTrace: st);
           }
           return;
         }
         final terminal = reply.errorCode == 'unsupported_schema' || reply.errorCode == 'invalid_request';
-        // Same reasoning: a failing teardown must not turn a terminal refusal
-        // into an endless retry.
-        try {
-          await _teardown(terminal ? SessionPhase.unsupported : SessionPhase.disconnected);
-        } on Object catch (e, st) {
-          _phase.add(terminal ? SessionPhase.unsupported : SessionPhase.disconnected);
-          logRepository.error(target: this, error: e.runtimeType, stackTrace: st);
-        }
+        await _teardownQuietly(terminal ? SessionPhase.unsupported : SessionPhase.disconnected);
         if (!terminal) _scheduleRetry();
         return;
       }
@@ -394,14 +387,20 @@ class NoxSocketClient {
       // a first greeting persists that zero. Every other unreadable field in
       // this reply tears down and retries; the one that governs replay
       // correctness must not be the exception.
+      // Any NUMBER is accepted: JSON round-tripped through a float parser makes
+      // 1042 arrive as 1042.0, and refusing that would retry for ever with
+      // nothing on screen saying why. Only a truly absent or non-numeric cursor
+      // is a reconnect - substituting 0 would make `since >= _helloCursor` true
+      // on the next line, declaring catch-up complete before a single replay
+      // frame was applied.
       final rawCursor = data['cursor'];
-      if (rawCursor is! int) {
+      if (rawCursor is! num) {
         logRepository.debug(target: this, message: 'socket: greeting carried no usable cursor, reconnecting');
-        await _teardown(SessionPhase.disconnected);
+        await _teardownQuietly(SessionPhase.disconnected);
         _scheduleRetry();
         return;
       }
-      _helloCursor = rawCursor;
+      _helloCursor = rawCursor.toInt();
       final id = data['identity'];
       if (id is! Map<String, dynamic>) {
         // Stage 1 always states who connected. A reply without it is not a
@@ -461,7 +460,7 @@ class NoxSocketClient {
         _phase.add(SessionPhase.live);
       }
     } on SocketUnavailableException {
-      await _teardown(SessionPhase.disconnected);
+      await _teardownQuietly(SessionPhase.disconnected);
       _scheduleRetry();
     } on Object catch (e, st) {
       // Everything else, and deliberately so. This method runs through
@@ -481,8 +480,27 @@ class NoxSocketClient {
       // trace carries the rest, and a flapping peer should not double this
       // file's log volume for a single event.
       logRepository.error(target: this, error: 'greeting reply unreadable: ${e.runtimeType}', stackTrace: st);
-      await _teardown(SessionPhase.disconnected);
+      await _teardownQuietly(SessionPhase.disconnected);
       _scheduleRetry();
+    }
+  }
+
+  /// Tears down and never throws.
+  ///
+  /// Every teardown in [_greet] goes through this. `_greet` is driven by
+  /// `unawaited()`, so a throw escaping it is an unhandled async error: the
+  /// retry is never scheduled, `_greeted` is never completed and the channel is
+  /// dead for the life of the process. Closing a socket that is already gone
+  /// can throw on any platform, which makes that a real path rather than a
+  /// theoretical one.
+  Future<void> _teardownQuietly(SessionPhase phase) async {
+    try {
+      await _teardown(phase);
+    } on Object catch (e, st) {
+      // The phase still has to land: whoever is listening decides what happens
+      // next from it, and a failed close must not leave them waiting.
+      _phase.add(phase);
+      logRepository.error(target: this, error: 'teardown failed: ${e.runtimeType}', stackTrace: st);
     }
   }
 

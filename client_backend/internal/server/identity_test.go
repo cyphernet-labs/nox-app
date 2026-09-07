@@ -317,8 +317,10 @@ func TestSchemaGuardRefusesADatabaseWithoutTheOwnerColumn(t *testing.T) {
 }
 
 // The warning is the only thing standing between a hand-edited store and a
-// silent guess, so it has to fire when it should and stay quiet otherwise.
-func TestOwnerlessStoreWarnsOnlyWhenItHasPeople(t *testing.T) {
+// silent guess, so the state it reports has to be right - and it must not fire
+// for a store whose machine row is merely missing, which is a fatal case with
+// its own, different remedy.
+func TestOwnerlessStoreIsReportedOnlyWhenItHasPeopleAndAMachineRow(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ownerless.db")
 	dbs, err := db.Open(path)
 	if err != nil {
@@ -331,11 +333,12 @@ func TestOwnerlessStoreWarnsOnlyWhenItHasPeople(t *testing.T) {
 	ctx := context.Background()
 	st := store.New(dbs.Read, dbs.Write)
 
-	// Empty store, and one with no machine row at all: nothing to warn about.
-	quiet := &syncBuffer{}
-	warnOwnerlessStore(ctx, st, slog.New(slog.NewTextHandler(quiet, nil)))
-	if quiet.String() != "" {
-		t.Fatalf("an empty store warned: %s", quiet.String())
+	stranded, _, err := st.OwnerlessWithPeople(ctx)
+	if err != nil {
+		t.Fatalf("OwnerlessWithPeople: %v", err)
+	}
+	if stranded {
+		t.Fatal("an empty store reported itself stranded")
 	}
 
 	if _, err := st.EnsureServerIdentity(ctx); err != nil {
@@ -348,23 +351,47 @@ func TestOwnerlessStoreWarnsOnlyWhenItHasPeople(t *testing.T) {
 	if _, err := st.Pair(ctx, token, "dev-a", "test", 100); err != nil {
 		t.Fatalf("Pair: %v", err)
 	}
-
-	owned := &syncBuffer{}
-	warnOwnerlessStore(ctx, st, slog.New(slog.NewTextHandler(owned, nil)))
-	if owned.String() != "" {
-		t.Fatalf("a properly owned store warned: %s", owned.String())
+	stranded, _, err = st.OwnerlessWithPeople(ctx)
+	if err != nil {
+		t.Fatalf("OwnerlessWithPeople: %v", err)
+	}
+	if stranded {
+		t.Fatal("a properly owned store reported itself stranded")
 	}
 
 	if _, err := dbs.Write.ExecContext(ctx, "UPDATE server_identity SET owner_user_id = NULL WHERE id = 1"); err != nil {
 		t.Fatalf("clear owner: %v", err)
 	}
-	loud := &syncBuffer{}
-	warnOwnerlessStore(ctx, st, slog.New(slog.NewTextHandler(loud, nil)))
-	if !strings.Contains(loud.String(), "no owner") {
-		t.Fatalf("a store with people but no owner said nothing: %q", loud.String())
+	stranded, people, err := st.OwnerlessWithPeople(ctx)
+	if err != nil {
+		t.Fatalf("OwnerlessWithPeople: %v", err)
 	}
-	// And it must not advise re-claiming, because Pair refuses that.
-	if strings.Contains(loud.String(), "re-claim") {
-		t.Fatalf("the warning advises something Pair refuses: %s", loud.String())
+	if !stranded || people != 1 {
+		t.Fatalf("stranded=%v people=%d, want a store with one person and no owner", stranded, people)
+	}
+
+	// A MISSING machine row is a different state with a different remedy, and
+	// startup refuses outright there - so this must not claim it is survivable.
+	if _, err := dbs.Write.ExecContext(ctx, "DELETE FROM server_identity"); err != nil {
+		t.Fatalf("drop machine row: %v", err)
+	}
+	stranded, _, err = st.OwnerlessWithPeople(ctx)
+	if err != nil {
+		t.Fatalf("OwnerlessWithPeople: %v", err)
+	}
+	if stranded {
+		t.Fatal("a store with no machine row was reported as merely ownerless")
+	}
+
+	// And the warning itself says what to do, without advising a claim Pair refuses.
+	loud := &syncBuffer{}
+	warnOwnerlessStore(true, 1, slog.New(slog.NewTextHandler(loud, nil)))
+	if !strings.Contains(loud.String(), "no owner") || strings.Contains(loud.String(), "re-claim") {
+		t.Fatalf("warning reads %q", loud.String())
+	}
+	quiet := &syncBuffer{}
+	warnOwnerlessStore(false, 0, slog.New(slog.NewTextHandler(quiet, nil)))
+	if quiet.String() != "" {
+		t.Fatalf("a healthy store warned: %s", quiet.String())
 	}
 }

@@ -13,7 +13,7 @@ import '../../../utils/golden.dart';
 void main() {
   group('the owner', () {
     // The identity card / Show QR loads the id from the session spine on init.
-    setUpAll(() => registerFakeSession(session: kTestSession.copyWith(isOwner: true)));
+    setUpAll(() => registerFakeSession(isOwner: true));
     tearDownAll(getIt.reset);
 
     // Mobile layout: identity card + flat settings rows + Log out.
@@ -29,7 +29,7 @@ void main() {
     // only when it is absent - passes the whole suite. It is also the state
     // every non-owner will see once 034 lands, and the state anyone sees
     // against a server that has not stated ownership.
-    setUpAll(() => registerFakeSession(session: kTestSession.copyWith(isOwner: false)));
+    setUpAll(() => registerFakeSession(isOwner: false));
     tearDownAll(getIt.reset);
 
     goldenTest('settings_root_page_member', () => BlocProvider<AppRootBloc>(create: (_) => AppRootBloc(), child: const SettingsRootPage()));

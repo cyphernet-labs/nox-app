@@ -16,20 +16,22 @@ const SessionModel kTestSession = SessionModel(
   // The server-minted public id. Distinct from the identifier slot, which now
   // holds the pairing token - a credential, never shown as "Your ID".
   authorId: 'u_test0000000001',
-  // Ownership is deliberately NOT stated here. A shared fixture that claims it
-  // makes every consumer inherit a badge they never asked about - and makes the
-  // watch emit at construction in tests that are not about ownership at all.
-  // The two settings-page golden groups state it explicitly instead.
   onboardingComplete: true,
 );
 
 /// Hand-written session double — callers exercise [readSession] plus the feature-015
 /// label channel ([watchLabel] / [updateLabel]).
 class FakeSessionRepository implements SessionRepository {
-  FakeSessionRepository({this.session = kTestSession, this.fail = false}) : _label = session?.label;
+  FakeSessionRepository({this.session = kTestSession, this.fail = false, bool? isOwner})
+    : _label = session?.label,
+      _seedOwnership = isOwner;
 
   final SessionModel? session;
   final bool fail;
+
+  /// What the server has stated about ownership, mirroring the prefs key the
+  /// real repository reads. Null is "not stated".
+  final bool? _seedOwnership;
 
   String? _label;
   final StreamController<String?> _labelController = StreamController<String?>.broadcast();
@@ -59,7 +61,7 @@ class FakeSessionRepository implements SessionRepository {
     // does NOT complete. The generator this replaced closed after a single
     // event, which made the behaviour the channel exists for - an answer
     // arriving after the screen was built - unreachable through the fake.
-    if (!_ownership.hasValue) _ownership.add(session?.isOwner);
+    if (!_ownership.hasValue) _ownership.add(_seedOwnership);
     return _ownership.stream;
   }
 
@@ -114,7 +116,7 @@ class FakeSessionRepository implements SessionRepository {
 /// Registers a [FakeSessionRepository] into the DI container so blocs/pages that
 /// resolve the `sessionRepository` alias work in otherwise DI-less tests. Pair with
 /// `tearDown(getIt.reset)`.
-void registerFakeSession({SessionModel? session = kTestSession, bool fail = false}) {
+void registerFakeSession({SessionModel? session = kTestSession, bool fail = false, bool? isOwner}) {
   getIt.allowReassignment = true;
-  getIt.registerSingleton<SessionRepository>(FakeSessionRepository(session: session, fail: fail));
+  getIt.registerSingleton<SessionRepository>(FakeSessionRepository(session: session, fail: fail, isOwner: isOwner));
 }

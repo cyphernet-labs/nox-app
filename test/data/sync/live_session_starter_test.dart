@@ -231,13 +231,13 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 5));
       }
       factory.latest.replyToHello(cursor: 0, owner: true);
-      for (var i = 0; i < 40 && (await session.readSession()).data?.isOwner != true; i++) {
+      for (var i = 0; i < 40 && (await SharedPreferences.getInstance()).getBool('session.is_owner') != true; i++) {
         await Future<void>.delayed(const Duration(milliseconds: 5));
       }
 
       // The badge has to outlive the connection that brought it: the next
       // launch may well be offline.
-      expect((await session.readSession()).data?.isOwner, isTrue);
+      expect((await SharedPreferences.getInstance()).getBool('session.is_owner'), isTrue);
     });
 
     test('a greeting with no session behind it writes no ownership', () async {

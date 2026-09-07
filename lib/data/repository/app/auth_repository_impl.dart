@@ -105,31 +105,29 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         // and a device that inferred it would be right until the day it was
         // not. Stored now so the owner sees the badge without waiting for the
         // greeting that follows.
-        // Guarded like the greeting path is. An unreadable `identity.id` in the
-        // reply degrades to '', and resolveIdentity treats '' as absent - it
-        // then falls back to the login identifier, whose slot since 032 holds
-        // the pairing TOKEN, so own-vs-other detection stops matching and every
-        // message the person sends comes back looking like a stranger's. The
-        // re-greet that would repair it is best-effort and swallowed.
+        // Ownership and identity come from the pair reply, not from the fact
+        // that THIS device presented a claim link: the server is the only one
+        // who knows, and a device that inferred it would be right until the day
+        // it was not. Stored now so the owner sees the badge without waiting
+        // for the greeting that follows.
         if (greeting.authorId.isEmpty) {
-          // The worse of the two failures, and it was the silent one. Nothing
-          // is stored, so resolveIdentity falls back to the login identifier -
-          // which since 032 holds the pairing token - and every message this
-          // person sends comes back rendered as a stranger's. The greeting that
-          // follows carries the same identity and repairs it.
+          // An unreadable `identity.id` degrades to '' upstream, and
+          // resolveIdentity treats '' as absent - it then falls back to the
+          // login identifier, whose slot since 032 holds the pairing TOKEN. So
+          // nothing is stored, and the greeting that follows repairs it.
           logRepository.debug(target: this, message: 'sign-in: the pair reply named nobody, waiting for the greeting');
-        }
-        final adopted = greeting.authorId.isEmpty
-            ? const RepositoryResult<bool>.success(data: true)
-            : await _sessionRepository.adoptServerIdentity(authorId: greeting.authorId, label: greeting.label, isOwner: greeting.isOwner);
-        if (!adopted.hasData) {
-          // NOT fatal, and deliberately not a rollback: the claim token is
-          // already spent, so discarding here would leave the device unable to
-          // pair again - the brick this path was rewritten to avoid. The
-          // greeting that follows writes the same three values, so a transient
-          // storage failure repairs itself; what must not happen is losing it
-          // silently.
-          logRepository.debug(target: this, message: 'sign-in: identity not stored yet, the greeting will repair it');
+        } else {
+          final adopted = await _sessionRepository.adoptServerIdentity(
+            authorId: greeting.authorId,
+            label: greeting.label,
+            isOwner: greeting.isOwner,
+          );
+          if (!adopted.hasData) {
+            // NOT fatal, and deliberately not a rollback: the claim token is
+            // already spent, so discarding here would leave the device unable
+            // to pair again - the brick this path was rewritten to avoid.
+            logRepository.debug(target: this, message: 'sign-in: identity not stored yet, the greeting will repair it');
+          }
         }
         if (greeting.created!) _sessionRepository.noteOnboardingStartedHere();
         // Re-greet, SIGNED. The connection `pair` ran on was greeted before

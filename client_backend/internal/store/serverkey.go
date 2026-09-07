@@ -137,7 +137,16 @@ func setOwner(ctx context.Context, tx *sql.Tx, userID string, now int64) (bool, 
 // disagree about a missing server_identity row - and one fact in several
 // records is the shape this whole feature came to remove.
 func (s *Store) OwnerlessWithPeople(ctx context.Context) (bool, int, error) {
-	owner, err := ownerUserID(ctx, s.read)
+	// One transaction: read separately, the owner and the count can straddle a
+	// committing claim and report a healthy store as stranded - which suppresses
+	// the claim link and raises a false alarm about a hand-edited database.
+	tx, err := s.read.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return false, 0, fmt.Errorf("begin ownership read: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	owner, err := ownerUserID(ctx, tx)
 	if errors.Is(err, ErrNoServerIdentity) {
 		// A MISSING row is a different state, and a fatal one: startup refuses
 		// to mint a key for a store that already holds people, because a new
@@ -150,11 +159,58 @@ func (s *Store) OwnerlessWithPeople(ctx context.Context) (bool, int, error) {
 	if err != nil {
 		return false, 0, err
 	}
-	people, err := s.CountUsers(ctx)
-	if err != nil {
-		return false, 0, err
+	var people int
+	if err := tx.QueryRowContext(ctx, "SELECT COUNT(1) FROM users").Scan(&people); err != nil {
+		return false, 0, fmt.Errorf("count people: %w", err)
 	}
 	return owner == "" && people > 0, people, nil
+}
+
+// OwnerCanStillGetIn reports whether the owner has a device left, and who the
+// owner is.
+//
+// "Occupied" means "the OWNER can still get in", and counting every device on
+// the server instead would lock them out of their own machine the moment
+// somebody else's device is running (034). The rule lived in two predicates
+// once already - Pair counting the owner's devices while startup counted all of
+// them - which is how a claimed server with a guest online stopped printing any
+// link at all.
+//
+// Both values are read inside ONE transaction: taken separately they can
+// observe a claim half-committed and report a healthy store as stranded.
+func (s *Store) OwnerCanStillGetIn(ctx context.Context) (canGetIn bool, owner string, err error) {
+	tx, err := s.read.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return false, "", fmt.Errorf("begin ownership read: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	owner, err = ownerUserID(ctx, tx)
+	if errors.Is(err, ErrNoServerIdentity) {
+		return false, "", nil
+	}
+	if err != nil {
+		return false, "", err
+	}
+	if owner == "" {
+		return false, "", nil
+	}
+	devices, err := ownerDeviceCount(ctx, tx, owner)
+	if err != nil {
+		return false, "", err
+	}
+	return devices > 0, owner, nil
+}
+
+// ownerDeviceCount is the ONE spelling of "how many devices can the owner still
+// reach this machine with".
+func ownerDeviceCount(ctx context.Context, q rowQuerier, owner string) (int, error) {
+	var devices int
+	if err := q.QueryRowContext(ctx,
+		"SELECT COUNT(1) FROM devices WHERE user_id = ?", owner).Scan(&devices); err != nil {
+		return 0, fmt.Errorf("count owner devices: %w", err)
+	}
+	return devices, nil
 }
 
 // ownsServer reports whether userID is the person this machine belongs to.

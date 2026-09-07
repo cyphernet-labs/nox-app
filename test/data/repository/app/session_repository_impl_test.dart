@@ -208,18 +208,22 @@ void main() {
       await repository.saveIdentifier(identifier: 'sess-1', onboardingComplete: true, label: 'Anna');
       await repository.adoptServerIdentity(authorId: 'srv-anna', label: 'Anna', isOwner: true);
 
-      expect((await repository.readSession()).data?.isOwner, isTrue);
+      expect((await SharedPreferences.getInstance()).getBool('session.is_owner'), isTrue);
 
       // A second repository over the same prefs is what a relaunch looks like:
       // the badge has to be there before any server answers, or an offline
       // start would show the owner as somebody who owns nothing.
       final prefs = await SharedPreferences.getInstance();
       final restarted = SessionRepositoryImpl(const FlutterSecureStorage(), prefs);
-      expect((await restarted.readSession()).data?.isOwner, isTrue);
+      expect((await restarted.watchOwnership().first), isTrue);
 
       await repository.clear();
       await repository.saveIdentifier(identifier: 'sess-2', onboardingComplete: true);
-      expect((await repository.readSession()).data?.isOwner, isNull, reason: 'the next person inherits nobody else\'s machine');
+      expect(
+        (await SharedPreferences.getInstance()).getBool('session.is_owner'),
+        isNull,
+        reason: 'the next person inherits nobody else\'s machine',
+      );
     });
 
     test('a silent server never overwrites an answer heard earlier', () async {
@@ -230,7 +234,7 @@ void main() {
       // reconnect. Treating it as false would strip the badge silently.
       await repository.adoptServerIdentity(authorId: 'srv-anna', label: 'Anna');
 
-      expect((await repository.readSession()).data?.isOwner, isTrue);
+      expect((await SharedPreferences.getInstance()).getBool('session.is_owner'), isTrue);
     });
 
     test('a sign-in that never landed leaves no ownership behind', () async {
@@ -285,7 +289,7 @@ void main() {
 
       // "Not stated" and "not the owner" draw the same thing and mean different
       // things. Collapsing them here would make FR-022 unimplementable above.
-      expect((await repository.readSession()).data?.isOwner, isNull);
+      expect((await SharedPreferences.getInstance()).getBool('session.is_owner'), isNull);
     });
   });
 }

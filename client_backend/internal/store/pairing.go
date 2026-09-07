@@ -195,15 +195,14 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 		// moment a second person exists (034): a guest's device left running
 		// would keep the owner's own claim link refused for ever, on a machine
 		// that is theirs.
-		var devices int
 		if owner != "" {
-			if err := tx.QueryRowContext(ctx,
-				"SELECT COUNT(1) FROM devices WHERE user_id = ?", owner).Scan(&devices); err != nil {
-				return Identity{}, fmt.Errorf("count owner devices: %w", err)
+			devices, err := ownerDeviceCount(ctx, tx, owner)
+			if err != nil {
+				return Identity{}, err
 			}
-		}
-		if owner != "" && devices > 0 {
-			return Identity{}, ErrTokenInvalid
+			if devices > 0 {
+				return Identity{}, ErrTokenInvalid
+			}
 		}
 
 		switch {
@@ -315,14 +314,21 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 	if err := insertDevice(ctx, tx, deviceKey, id.UserID, platform, now); err != nil {
 		return Identity{}, err
 	}
-	// Record WHAT this spending did, so a replay can answer with it instead of
-	// guessing from the token kind. The outcome is only known here, after the
-	// branch above decided whether a person came into being.
+	// Record WHO this spending produced and WHAT it did, so a replay can answer
+	// with those instead of re-deriving them. Both are only known here, after
+	// the branch above resolved the person and whether one came into being.
+	//
+	// The person matters as much as the outcome: re-deriving it from the device
+	// row answers about whoever holds that key at replay time, which after a
+	// logout and a re-pair is not who the token produced.
+	created := 0
 	if id.Created {
-		if _, err := tx.ExecContext(ctx,
-			"UPDATE pair_tokens SET created_person = 1 WHERE token = ?", token); err != nil {
-			return Identity{}, fmt.Errorf("record pairing outcome: %w", err)
-		}
+		created = 1
+	}
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE pair_tokens SET paired_user_id = ?, created_person = ? WHERE token = ?",
+		id.UserID, created, token); err != nil {
+		return Identity{}, fmt.Errorf("record pairing outcome: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return Identity{}, fmt.Errorf("commit pair: %w", err)
@@ -341,25 +347,24 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 // naming step, into the chats list under an auto-assigned User<random>.
 func pairedBy(ctx context.Context, tx *sql.Tx, token, deviceKey string) (Identity, bool, error) {
 	var id Identity
-	// Matched on used_by: the token must have been spent by THIS device.
+	// The whole answer comes from the TOKEN's own record - who it produced and
+	// what it did - and it is handed only to the device that spent it.
 	//
-	// Trying to tie the two together through the users table does not work for
-	// a claim, whose token names nobody - so before used_by existed, any known
-	// device key could present a spent claim token and be told that person's
-	// id, label and ownership. The key is public: it rides every greeting and
-	// device.list prints it, while the token sits in the server log across
-	// restarts and `pair` is the one command that carries no signature.
+	// Nothing is re-derived here on purpose. Matching through the device's
+	// current binding answers about whoever holds that key now, which after a
+	// logout and a re-pair is not the person the token produced; and deriving
+	// the outcome from the token kind reports "created" for a re-claim that
+	// created nobody, walking a named person back through the naming screen.
 	//
-	// created_person is read rather than re-derived from the kind, so a replay
-	// answers with what the original reply said. A re-claim that attached to an
-	// existing owner created nobody, and re-deriving it from "this was a claim"
-	// would walk that owner back through the naming screen.
+	// used_by is what keeps a spent token from answering a stranger: the key is
+	// public - it rides every greeting and device.list prints it - the token
+	// sits in the server log across restarts, and `pair` is the one command
+	// that carries no signature.
 	var created int
 	err := tx.QueryRowContext(ctx, `
 		SELECT u.user_id, u.label, t.created_person
 		FROM pair_tokens t
-		JOIN devices d ON d.device_key = t.used_by
-		JOIN users u ON u.user_id = d.user_id
+		JOIN users u ON u.user_id = t.paired_user_id
 		WHERE t.token = ? AND t.used_at IS NOT NULL AND t.used_by = ?`,
 		token, deviceKey).Scan(&id.UserID, &id.Label, &created)
 	if errors.Is(err, sql.ErrNoRows) {

@@ -89,7 +89,20 @@ class AppIdentityCardWidget extends StatelessWidget {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final textTheme = theme.textTheme;
-    if (editing && nameEditField != null) return nameEditField!;
+    if (editing && nameEditField != null) {
+      // The badge stays. Ownership has nothing to do with editing a name, and
+      // dropping it here made it blink out of existence on every rename - on
+      // both widths - for no reason a person could connect to what they did.
+      if (!(isOwner ?? false)) return nameEditField!;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _ownerBadge(context, theme),
+          SizedBox(height: AppSpacingTokens.s8),
+          nameEditField!,
+        ],
+      );
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [

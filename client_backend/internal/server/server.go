@@ -307,11 +307,19 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 
 	h := hub.New()
 	st := store.New(dbs.Read, dbs.Write)
-	warnOwnerlessStore(ctx, st, logger)
+	// Computed ONCE and used twice: the warning and the decision not to print a
+	// claim link are the same fact, and evaluating it in both places is how the
+	// two start disagreeing - an operator getting a link with no warning, or a
+	// warning with no link.
+	stranded, people, err := st.OwnerlessWithPeople(ctx)
+	if err != nil {
+		return fmt.Errorf("check ownership state: %w", err)
+	}
+	warnOwnerlessStore(stranded, people, logger)
 	if err := st.EnsureJournal(ctx); err != nil {
 		return fmt.Errorf("ensure journal: %w", err)
 	}
-	if err := announceClaim(ctx, st, cfg.Addr, logger); err != nil {
+	if err := announceClaim(ctx, st, cfg.Addr, stranded, logger); err != nil {
 		return err
 	}
 	srv := New(cfg, st, h, bl, logger)
@@ -381,7 +389,7 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 // fingerprint; forgetting an entry is how a stale database gets past this.
 var requiredColumns = map[string][]string{
 	"server_identity": {"owner_user_id"},
-	"pair_tokens":     {"used_by", "created_person"},
+	"pair_tokens":     {"used_by", "paired_user_id", "created_person"},
 }
 
 func assertIdentitySchema(ctx context.Context, read *sql.DB, dbPath string) error {
@@ -428,20 +436,19 @@ func staleSchemaError(dbPath string) error {
 // by row order, which is precisely the guess this feature exists to remove.
 //
 // No user id in the message (Principle I): the count is what an operator needs.
-func warnOwnerlessStore(ctx context.Context, st *store.Store, logger *slog.Logger) {
-	stranded, people, err := st.OwnerlessWithPeople(ctx)
-	if err != nil {
-		logger.Warn("could not check whether this server has an owner", "err", err)
+func warnOwnerlessStore(stranded bool, people int, logger *slog.Logger) {
+	if !stranded {
 		return
 	}
-	if stranded {
-		// Deliberately not "re-claim it": Pair refuses a claim in this state,
-		// so that advice would be impossible to follow. The store needs a
-		// human - restore a backup, or write the owner back by hand - and no
-		// claim link is printed while it is like this.
-		logger.Warn("this server holds people but records no owner: it cannot be claimed and no owner will be guessed - restore it from a backup or set the owner by hand",
-			"people", people)
-	}
+	// Deliberately not "re-claim it": Pair refuses a claim in this state, so
+	// that advice would be impossible to follow. The store needs a human -
+	// restore a backup, or write the owner back by hand - and no claim link is
+	// printed while it is like this.
+	//
+	// No user id in the message (Principle I): the count is what an operator
+	// needs.
+	logger.Warn("this server holds people but records no owner: it cannot be claimed and no owner will be guessed - restore it from a backup or set the owner by hand",
+		"people", people)
 }
 
 // announceClaim mints the server's own key on first start and, while nobody
@@ -455,33 +462,30 @@ func warnOwnerlessStore(ctx context.Context, st *store.Store, logger *slog.Logge
 // This is the ONE place a token is deliberately written to output. It is the
 // claim mechanism itself, and it is only visible to whoever can already read
 // the machine's logs - which is whoever could take the database anyway.
-func announceClaim(ctx context.Context, st *store.Store, addr string, logger *slog.Logger) error {
+func announceClaim(ctx context.Context, st *store.Store, addr string, stranded bool, logger *slog.Logger) error {
 	id, err := st.EnsureServerIdentity(ctx)
 	if err != nil {
 		return fmt.Errorf("ensure server identity: %w", err)
 	}
-	devices, err := st.CountDevices(ctx)
+	// Silent only while THE OWNER can actually reach this server. Counting every
+	// device instead would keep a claimed machine silent because somebody else's
+	// device is running - locking the owner out of their own, with Pair standing
+	// ready to accept the claim link that never gets printed. One rule, one
+	// predicate: Pair reads the same one.
+	canGetIn, _, err := st.OwnerCanStillGetIn(ctx)
 	if err != nil {
-		return fmt.Errorf("count devices: %w", err)
+		return fmt.Errorf("check ownership state: %w", err)
 	}
-	// Silent only while somebody can actually reach this server. A claimed
-	// server with no devices left is locked, not owned, and the machine is the
-	// root of trust: whoever can read this log can take it back.
-	//
-	// "Claimed" is read from the owner, never from the timestamp: the two say
-	// the same thing, and a decision taken on the poorer of the two is how they
-	// drift apart.
-	if id.Claimed() && devices > 0 {
+	if canGetIn {
 		return nil
 	}
 	// Also silent when the store holds people but no owner. Pair refuses such a
 	// claim - both ways of guessing whose identity to attach are worse than a
 	// refusal - so printing a link here would hand the operator an instruction
 	// that cannot be followed, once per restart, for ever.
-	stranded, _, err := st.OwnerlessWithPeople(ctx)
-	if err != nil {
-		return fmt.Errorf("check ownership state: %w", err)
-	}
+	//
+	// Handed in rather than re-derived: startup already computed it for the
+	// warning, and one decision evaluated twice is one decision that can drift.
 	if stranded {
 		return nil
 	}
