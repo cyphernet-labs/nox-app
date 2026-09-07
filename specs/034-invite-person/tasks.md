@@ -19,13 +19,13 @@
 
 **Purpose**: ни одна строка кода не пишется раньше провода. Обе стороны потом сверяются с одним текстом, а не друг с другом.
 
-- [ ] T001 [P] Add `not_owner`, `pair_declined` and `pair_timeout` to the error table in `docs/client-backend/protocol/contract-draft.md` §2.1
-- [ ] T002 Add `status` to the `pair` reply (`paired` with `identity`, `pending` with `request_id` and `expires_at`) and the re-presentation table in `docs/client-backend/protocol/contract-draft.md` §8A
-- [ ] T003 [P] Document `person.invite` (owner only, 24 hours) in `docs/client-backend/protocol/contract-draft.md` §8A
-- [ ] T004 [P] Document `person.list` (id, label, owner — no devices, no keys) in `docs/client-backend/protocol/contract-draft.md` §8A
-- [ ] T005 [P] Document `person.confirm` (request_id, approve) in `docs/client-backend/protocol/contract-draft.md` §8A
-- [ ] T006 Document the `person.pairRequested` and `person.pairResolved` events (seq 0, off-journal) in `docs/client-backend/protocol/contract-draft.md` §8A
-- [ ] T007 Replace the two now-stale notes in `docs/client-backend/protocol/contract-draft.md` §8A — "`invite-user` заблокирован Q15" under `device.invite`, and "вопрос возвращается" under `device.list` — and add the deadlines table
+- [X] T001 [P] Add `not_owner`, `pair_declined` and `pair_timeout` to the error table in `docs/client-backend/protocol/contract-draft.md` §2.1
+- [X] T002 Add `status` to the `pair` reply (`paired` with `identity`, `pending` with `request_id` and `expires_at`) and the re-presentation table in `docs/client-backend/protocol/contract-draft.md` §8A
+- [X] T003 [P] Document `person.invite` (owner only, 24 hours) in `docs/client-backend/protocol/contract-draft.md` §8A
+- [X] T004 [P] Document `person.list` (id, label, owner — no devices, no keys) in `docs/client-backend/protocol/contract-draft.md` §8A
+- [X] T005 [P] Document `person.confirm` (request_id, approve) in `docs/client-backend/protocol/contract-draft.md` §8A
+- [X] T006 Document the `person.pairRequested` and `person.pairResolved` events (seq 0, off-journal) in `docs/client-backend/protocol/contract-draft.md` §8A
+- [X] T007 Replace the two now-stale notes in `docs/client-backend/protocol/contract-draft.md` §8A — "`invite-user` заблокирован Q15" under `device.invite`, and "вопрос возвращается" under `device.list` — and add the deadlines table
 
 **Checkpoint**: контракт описывает фазу целиком; дальше код только исполняет его.
 
