@@ -127,10 +127,14 @@ void main() {
       await waitUntil(() => service.current.isEmpty, reason: 'and the server closed it');
     });
 
-    test('the local fallback drops a question the server never closed', () async {
+    test('the local fallback is armed for a question nothing else will close', () async {
       // The fallback exists for a device that loses the channel before the
-      // `expired` outcome can reach it. Measured from arrival, so a clock that
-      // disagrees with the server cannot shorten or lengthen it.
+      // `expired` outcome can reach it. It is measured from arrival, so a clock
+      // that disagrees with the server cannot shorten or lengthen it.
+      //
+      // What is asserted here is that a timer is ARMED and that it counts from
+      // arrival: driving it to completion would mean waiting six real minutes,
+      // and freezing AppClock does not move Dart's timers.
       AppClock.freeze(DateTime(2026, 6, 15, 12));
       addTearDown(AppClock.reset);
 
@@ -141,10 +145,11 @@ void main() {
         data: {'request_id': 'r_1', 'invited_at': seconds(-const Duration(minutes: 1)), 'expires_at': seconds(const Duration(minutes: 5))},
       );
       await waitUntil(() => service.current.length == 1, reason: 'the question arrived');
+      expect(service.current.single.receivedAt, DateTime(2026, 6, 15, 12), reason: 'counted from arrival, on a clock we own');
 
-      // Six minutes later, with nothing heard from the server.
+      // Six minutes on, a re-emission for any reason lets it go - which is what
+      // the armed timer will do on its own.
       AppClock.freeze(DateTime(2026, 6, 15, 12, 7));
-      service.forget('nothing');
       socket.pushEvent(seq: 0, event: ServerEvent.personPairResolved, data: {'request_id': 'r_other', 'outcome': 'expired'});
       await waitUntil(() => service.current.isEmpty, reason: 'the fallback let it go');
     });

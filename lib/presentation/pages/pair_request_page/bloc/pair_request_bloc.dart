@@ -98,7 +98,11 @@ class PairRequestBloc extends BaseBloc<PairRequestEvent, PairRequestState> {
             e == RepositoryException.notOwner ||
             e == RepositoryException.authentication;
         if (gone) _forget();
-        emit(state.copyWith(sending: false, settled: gone, failed: !gone));
+        // A dead channel is told apart from anything else: the question is
+        // still open on the server, the answer simply did not leave. Without
+        // that distinction an offline owner reads "couldn't answer" as a broken
+        // app and has no exit to prove otherwise.
+        emit(state.copyWith(sending: false, settled: gone, failed: !gone, offline: e == RepositoryException.connection));
       },
     );
   }

@@ -107,6 +107,14 @@ class LiveIdentityHandshake {
   /// lands should be the server's.
   static const Duration approvalSlack = Duration(seconds: 30);
 
+  /// The longest this will ever wait, whatever the server states.
+  ///
+  /// The server's deadline is a moment on its own clock; this is a duration on
+  /// ours. Without the ceiling a device whose clock lags by hours reads the
+  /// stated moment as hours of waiting still ahead, and sits on a screen with
+  /// no enabled control until the app is killed.
+  static const Duration approvalCeiling = Duration(minutes: 12);
+
   /// How often the same link is presented again while waiting.
   ///
   /// The wait is not a single held request: a dropped socket takes the
@@ -151,16 +159,16 @@ class LiveIdentityHandshake {
   /// there. `pair` is then the one command allowed before a greeting.
   Future<IdentityHandshake> pair({required PairingLink link, required String deviceKey, required String platform}) async {
     await _starter.restart();
-    var deadline = DateTime.now().add(approvalWait);
-    var presented = false;
+    final started = DateTime.now();
     try {
-      return await _present(link, deviceKey, platform, deadline, presented);
+      return await _present(link, deviceKey, platform, started.add(approvalWait), started.add(approvalCeiling));
     } finally {
       _waitingForOwner.add(false);
     }
   }
 
-  Future<IdentityHandshake> _present(PairingLink link, String deviceKey, String platform, DateTime deadline, bool presented) async {
+  Future<IdentityHandshake> _present(PairingLink link, String deviceKey, String platform, DateTime deadline, DateTime ceiling) async {
+    var presented = false;
     while (true) {
       final CommandReply reply;
       try {
@@ -184,7 +192,16 @@ class LiveIdentityHandshake {
         // contract's evolution rule says treat it as `internal` and let the
         // person retry; calling it "this link cannot be used" would send them
         // hunting for a new invite over a server hiccup.
-        if (refusal == null) throw const PairingFailed();
+        if (refusal == null) {
+          // Not about the link. While a request is already waiting this is the
+          // same kind of blip as a dropped socket - the neighbouring branch
+          // treats those as something to present again rather than as an
+          // outcome - and giving up here would abandon a decision the owner may
+          // be looking at right now.
+          if (!presented || DateTime.now().isAfter(deadline)) throw const PairingFailed();
+          await Future<void>.delayed(approvalPoll);
+          continue;
+        }
         throw PairingRefused(reason: refusal);
       }
       final data = reply.data;
@@ -206,7 +223,13 @@ class LiveIdentityHandshake {
         final stated = data['expires_at'];
         if (stated is num && stated.isFinite) {
           final until = DateTime.fromMillisecondsSinceEpoch(stated.toInt() * 1000, isUtc: true).toLocal().add(approvalSlack);
-          if (until.isAfter(deadline)) deadline = until;
+          // Capped. The server's deadline is an absolute moment on ITS clock,
+          // compared here against this device's — so a device running hours
+          // behind would read it as hours of waiting still to go, on a screen
+          // whose only button is disabled. The ceiling is measured from the
+          // moment this wait began, which is a duration rather than a moment
+          // and therefore immune to the disagreement.
+          if (until.isAfter(deadline) && until.isBefore(ceiling)) deadline = until;
         }
         final resolved = await _awaitPairOutcome(requestId, approvalPoll);
         if (resolved == null) {

@@ -190,6 +190,15 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - A device key that already belongs to somebody is refused AT PRESENTATION,
   before the owner is asked. Waking them with a question whose "yes" could not
   work would let them authorise something that will not happen.
+- **Two known, bounded windows in the person-invite path.** (1) If the owner
+  decides between `markPendingRequest` and the pending reply being queued, the
+  outcome frame is queued BEFORE that reply and the client - which subscribes
+  after parsing it - misses it; the next re-presentation, at most twenty seconds
+  later, answers from the recorded outcome. (2) `notifyPairResolved` and
+  `sendToOwnerDevices` deliver with the blocking send rather than the dropping
+  one, so a device that has filled its 64-frame queue stalls the sender for up
+  to the write timeout - the sweeper included. The dropping alternative loses
+  the outcome instead, which costs more than a bounded stall.
 - **Known narrow window, predating 034:** the greeting reads the person from the
   store and writes it to the connection a few lines later, and `refreshLabel`
   matches connections by `identity.UserID` - which is empty in between. A rename

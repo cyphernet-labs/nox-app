@@ -12,5 +12,10 @@ abstract class PairRequestState with _$PairRequestState {
     /// the tap: closing first would leave the owner believing they decided
     /// something the server never heard.
     @Default(false) bool settled,
+
+    /// The answer could not leave this device. The question is still open on
+    /// the server and will still be there when the channel returns — which is
+    /// a different sentence to read than "something went wrong".
+    @Default(false) bool offline,
   }) = _PairRequestState;
 }

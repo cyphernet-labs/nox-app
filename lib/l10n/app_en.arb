@@ -206,7 +206,7 @@
   "peopleEmpty": "Nobody else yet",
   "peopleError": "Couldn't load the people here.",
   "peopleInvite": "Invite a person",
-  "peopleInviteMessage": "Send this to the person you're inviting. The link works for 24 hours, and you'll be asked to confirm before they can join.",
+  "peopleInviteMessage": "Send this to the person you're inviting. It works once, within 24 hours, and you'll be asked to confirm before they can join.",
   "peopleInviteError": "Couldn't create an invite.",
   "peopleYou": "You",
   "pairRequestTitle": "Someone wants to join",
@@ -233,5 +233,6 @@
     }
   },
   "peopleNotOwner": "Only the server owner can invite people.",
-  "loginWaitingForOwner": "Waiting for the owner to let you in. This can take a few minutes."
+  "loginWaitingForOwner": "Waiting for the owner to let you in. This can take a few minutes.",
+  "pairRequestOffline": "You're offline. The question is still waiting on the server — answer it once you're back."
 }

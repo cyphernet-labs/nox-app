@@ -122,7 +122,10 @@ class _PairRequestPageState extends State<PairRequestPage> {
           ),
         if (state.failed) ...[
           SizedBox(height: AppSpacingTokens.s12),
-          Text(context.l10n.pairRequestFailed, style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.error)),
+          Text(
+            state.offline ? context.l10n.pairRequestOffline : context.l10n.pairRequestFailed,
+            style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.error),
+          ),
         ],
         SizedBox(height: AppSpacingTokens.s24),
         FilledButton(
