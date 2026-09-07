@@ -31,8 +31,14 @@ const (
 // Per request rather than cached: the state changes while a page is open, and
 // a tab left on screen must not go on offering a link that has just been spent.
 type machineStatus struct {
-	State     machineState
-	Link      string
+	State machineState
+	Link  string
+	// Scannable is whether the link's address can be reached from ANOTHER
+	// device. False does not mean there is no link: a server bound to loopback
+	// is perfectly claimable from the app on this same machine, and the link is
+	// what that app needs. It only means there is no point drawing a code for a
+	// camera.
+	Scannable bool
 	JournalID string
 	Schema    int
 	Counts    store.Counts
@@ -80,11 +86,11 @@ func (s *Server) collectStatus(ctx context.Context) (machineStatus, error) {
 		status.State = stateClaimed
 	default:
 		status.State = stateNeedsClaim
-		link, err := s.claimLink(ctx)
+		link, scannable, err := s.claimLink(ctx)
 		if err != nil {
 			return machineStatus{}, err
 		}
-		status.Link = link
+		status.Link, status.Scannable = link, scannable
 	}
 	return status, nil
 }
@@ -165,13 +171,26 @@ func dialableHost(bindAddr string) string {
 		// code that cannot work, and drawing it confidently is worse than
 		// drawing none: the person scans it and gets an error about the
 		// network rather than being told to bind an address.
-		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		if ip := net.ParseIP(host); ip != nil {
+			if ip.IsLoopback() {
+				return ""
+			}
+			return net.JoinHostPort(host, port)
+		}
+		// A NAME, resolved rather than compared against "localhost": an alias
+		// in /etc/hosts, localhost.localdomain, or a different spelling all
+		// point at the same unreachable place, and the code drawn for them
+		// would be exactly the one this refuses to draw.
+		ips, err := net.LookupIP(host)
+		if err != nil || len(ips) == 0 {
 			return ""
 		}
-		if host == "localhost" {
-			return ""
+		for _, ip := range ips {
+			if !ip.IsLoopback() {
+				return net.JoinHostPort(host, port)
+			}
 		}
-		return net.JoinHostPort(host, port)
+		return ""
 	}
 	// A wildcard bind. Only interfaces that are actually UP count: a laptop
 	// carries a docker bridge, a VPN tap and an unplugged ethernet with a
@@ -249,7 +268,7 @@ func humanDuration(d time.Duration) string {
 // remembers. The startup announcement seeds this with the token it already
 // minted, so the page and the terminal hand out the same right; only the
 // ADDRESS differs, because the two have different readers.
-func (s *Server) claimLink(ctx context.Context) (string, error) {
+func (s *Server) claimLink(ctx context.Context) (string, bool, error) {
 	s.claim.Lock()
 	defer s.claim.Unlock()
 
@@ -261,39 +280,43 @@ func (s *Server) claimLink(ctx context.Context) (string, error) {
 	if s.claimToken != "" {
 		usable, err := s.store.ClaimTokenUsable(ctx, s.claimToken)
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 		if !usable {
 			s.claimToken, s.claimLnk = "", ""
 		}
 	}
-	if s.claimLnk != "" {
-		return s.claimLnk, nil
-	}
+	// Two questions, and conflating them cost the whole page once already.
+	// "Can a phone dial this address" decides the QR - and nothing decides
+	// whether there is a LINK. A server on the default loopback bind is claimed
+	// from the app on this same machine by pasting, and refusing to issue a link
+	// there left an owner who had logged out with no way back in at all.
 	host := dialableHost(s.cfg.Addr)
+	scannable := host != ""
 	if host == "" {
-		// Nothing outside this machine can reach it. A code nothing can dial is
-		// worse than no code: it looks like it should work.
-		return "", nil
+		host = listenAddress(s.cfg.Addr)
+	}
+	if s.claimLnk != "" {
+		return s.claimLnk, scannable, nil
 	}
 	id, err := s.store.ServerIdentity(ctx)
 	if err != nil {
-		return "", fmt.Errorf("read server identity: %w", err)
+		return "", false, fmt.Errorf("read server identity: %w", err)
 	}
 	token := s.claimToken
 	if token == "" {
 		token, err = s.store.IssueClaimToken(ctx, time.Now().Unix())
 		if err != nil {
-			return "", fmt.Errorf("issue claim token: %w", err)
+			return "", false, fmt.Errorf("issue claim token: %w", err)
 		}
 		s.claimToken = token
 	}
 	link, err := BuildPairingLink(host, id.PublicKey, token)
 	if err != nil {
-		return "", fmt.Errorf("build claim link: %w", err)
+		return "", false, fmt.Errorf("build claim link: %w", err)
 	}
 	s.claimLnk = link
-	return link, nil
+	return link, scannable, nil
 }
 
 // seedClaimToken records the token the startup announcement already minted, so

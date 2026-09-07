@@ -332,6 +332,44 @@ func TestALoopbackBindDrawsNoCodeAndSaysWhy(t *testing.T) {
 	if !strings.Contains(body, "reachable from this machine only") {
 		t.Fatalf("the page does not explain why there is no code: %s", body)
 	}
+	// And the LINK is still there. Conflating "no phone can dial this" with
+	// "there is no link" left an owner on the default bind - which is loopback
+	// - unable to claim their own server from the app running right there.
+	if !strings.Contains(body, "https://nox.app/p/#") {
+		t.Fatalf("a loopback-bound server offers no link at all: %s", body)
+	}
+	if got := countLiveClaimTokens(t, srv); got != 1 {
+		t.Fatalf("unspent claim tokens = %d, want 1: a loopback bind must still issue one", got)
+	}
+}
+
+// The recovery path on the DEFAULT configuration: claim, log out, and the page
+// must offer a fresh usable link - not nothing, and not the burnt one.
+func TestALoopbackServerCanBeReclaimedAfterALogout(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+	if _, err := srv.store.EnsureServerIdentity(ctx); err != nil {
+		t.Fatalf("EnsureServerIdentity: %v", err)
+	}
+	token, err := srv.store.IssueClaimToken(ctx, time.Now().Unix())
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+	srv.seedClaimToken(token)
+	first := linkOf(t, statusBody(t, srv))
+
+	dev, _ := pairDevice(t, ts, token)
+	if err := srv.store.RevokeDevice(ctx, dev.pub); err != nil {
+		t.Fatalf("RevokeDevice: %v", err)
+	}
+
+	second := linkOf(t, statusBody(t, srv))
+	if second == first {
+		t.Fatal("the page offers the token the claim already burned")
+	}
+	if got := countLiveClaimTokens(t, srv); got != 1 {
+		t.Fatalf("unspent claim tokens = %d, want exactly the replacement", got)
+	}
 }
 
 // A separate socket keeps the network out; it does not keep the operator's own

@@ -38,11 +38,11 @@ footer { margin-top: 2.5rem; font-size: .85rem; opacity: .6; }
 <h1>Nobody has claimed this server yet</h1>
 <p class="lead">Scan this from the NOX app on your phone, or paste the link below into it.
 The first device to use it becomes the owner of this server.</p>
-{{if .QR}}<div class="qr">{{.QR}}</div>{{end}}
-{{if .Link}}<code class="link">{{.Link}}</code>{{else}}
-<p class="warn">This server is reachable from this machine only, so a phone cannot connect to it and
-there is no code to scan. Start it with <code>-addr</code> set to an address on your network, or use
-the link printed at startup from a device that can reach this machine.</p>{{end}}
+{{if .QR}}<div class="qr">{{.QR}}</div>{{else}}
+<p class="warn">This server is reachable from this machine only, so there is no code for a phone to
+scan &mdash; but the link below works in the NOX app running here. To claim it from a phone instead,
+start the server with <code>-addr</code> set to an address on your network.</p>{{end}}
+{{if .Link}}<code class="link">{{.Link}}</code>{{end}}
 
 {{else if eq .State 2}}
 <h1>This server has no owner</h1>
@@ -131,7 +131,10 @@ func (s *Server) handleStatusPage(w http.ResponseWriter, r *http.Request) {
 		Messages:  status.Counts.Messages,
 		Warnings:  status.Warnings,
 	}
-	if status.Link != "" {
+	// The code is drawn only when something other than this machine could dial
+	// the address in it. The LINK is shown either way: pasting it into the app
+	// on this machine is how a loopback-bound server is claimed.
+	if status.Link != "" && status.Scannable {
 		svg, err := qrSVG(status.Link, 6)
 		if err != nil {
 			// The link is still shown as text, which is the path that works
@@ -172,7 +175,10 @@ func localHost(host string) bool {
 		name = host
 	}
 	name = strings.TrimSuffix(strings.TrimPrefix(name, "["), "]")
-	if name == "localhost" {
+	// A browser sends "localhost." for a URL typed with the root dot. Same host,
+	// and refusing it is an unexplainable no.
+	name = strings.TrimSuffix(name, ".")
+	if strings.EqualFold(name, "localhost") {
 		return true
 	}
 	ip := net.ParseIP(name)

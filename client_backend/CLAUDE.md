@@ -203,10 +203,12 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - **One claim token per process.** The page shows the token the startup
   announcement already minted; minting per request would leave an unrevocable
   door behind every browser refresh, because a claim token has no expiry.
-- **A loopback bind draws NO code.** The default `-addr` is `127.0.0.1:8080`, and
-  a phone cannot dial that; a QR pointing at loopback is a code that cannot work,
-  and drawing it confidently is worse than drawing none. The page says so and
-  names the fix instead.
+- **A loopback bind draws no CODE, but still shows the LINK.** Two questions, and
+  conflating them cost the page once: "can a phone dial this" decides the QR, and
+  nothing decides whether a link exists. The default `-addr` is `127.0.0.1:8080`,
+  where a phone cannot reach the server at all - but the app running on that same
+  machine claims it by pasting, so refusing to issue a link there leaves an owner
+  who logged out with no way back in.
 - **The service page checks the `Host` header.** The loopback socket keeps the
   network out; this keeps the operator's own browser out. Any site can be rebound
   to 127.0.0.1 by DNS and read the page as same-origin - and the claim link with

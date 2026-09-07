@@ -569,9 +569,14 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 	var statusServer *http.Server
 	var statusListener net.Listener
 	if cfg.StatusAddr != "" {
-		statusListener, err = net.Listen("tcp", cfg.StatusAddr)
-		if err != nil {
-			logger.Error("service page unavailable, continuing without it", "addr", cfg.StatusAddr, "err", err)
+		// Its OWN error variable. Assigning to the function's would leave it
+		// non-nil on the "logged it and carried on" path, and the next `if err
+		// != nil` anybody adds below would turn a busy port back into a server
+		// that refuses to start.
+		listener, listenErr := net.Listen("tcp", cfg.StatusAddr)
+		statusListener = listener
+		if listenErr != nil {
+			logger.Error("service page unavailable, continuing without it", "addr", cfg.StatusAddr, "err", listenErr)
 		} else if err := assertLoopback(statusListener); err != nil {
 			// The config check catches the mistake when it is made; this is the
 			// guarantee. A name can resolve to loopback at parse time and
@@ -611,7 +616,7 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 		g.Go(func() error {
 			// Printed, or nobody learns it exists. Next to the claim link,
 			// because the two are read at the same moment.
-			logger.Info("service page for this machine only", "url", "http://"+cfg.StatusAddr)
+			logger.Info("service page for this machine only", "url", "http://"+statusListener.Addr().String())
 			if err := statusServer.Serve(statusListener); !errors.Is(err, http.ErrServerClosed) {
 				// Logged, NOT returned. Returning it cancels the group and
 				// takes the whole messenger down: a port somebody else already
