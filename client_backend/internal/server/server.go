@@ -81,6 +81,20 @@ type Server struct {
 	pairSweep time.Duration
 	now       func() int64
 
+	// What the service page shows about the process itself. Set once at
+	// startup: the schema version the migrator reported, the moment this
+	// process began, and the warnings only the terminal would otherwise have
+	// seen - a store with people but no owner, a files directory that would
+	// not open. A person who closed that terminal has no other way to them.
+	schemaVersion int
+	startedAt     time.Time
+	warnings      []string
+
+	// claim guards the one claim link this process ever hands out.
+	claim      sync.Mutex
+	claimToken string
+	claimLnk   string
+
 	// kick wakes the event dispatcher after a committed mutation; capacity 1
 	// coalesces bursts (the dispatcher drains the log until it is current).
 	kick chan struct{}
@@ -106,6 +120,7 @@ func New(cfg config.Config, st *store.Store, h *hub.Hub, bl *blob.Store, logger 
 		writeTimeout: defaultWriteTimeout,
 		pairSweep:    pairSweepInterval,
 		now:          func() int64 { return time.Now().Unix() },
+		startedAt:    time.Now(),
 		kick:         make(chan struct{}, 1),
 		conns:        make(map[*client]struct{}),
 	}
@@ -523,10 +538,17 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 	if err := st.EnsureJournal(ctx); err != nil {
 		return fmt.Errorf("ensure journal: %w", err)
 	}
-	if err := announceClaim(ctx, st, cfg.Addr, ownership, machine, logger); err != nil {
+	claimToken, err := announceClaim(ctx, st, cfg.Addr, ownership, machine, logger)
+	if err != nil {
 		return err
 	}
 	srv := New(cfg, st, h, bl, logger)
+	srv.schemaVersion = version
+	srv.warnings = startupWarnings(ownership)
+	// The page hands out the SAME right the terminal just printed. A second
+	// token would be a second unrevocable door, and the claim token has no
+	// expiry to close it.
+	srv.seedClaimToken(claimToken)
 
 	// Startup sweep before endpoints open (research R10): abandoned uploads
 	// older than a day are the only garbage under indefinite retention.
@@ -536,6 +558,17 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 
 	httpServer := &http.Server{Addr: cfg.Addr, Handler: srv.Handler(), ReadHeaderTimeout: readHeaderTimeout}
 	httpServer.RegisterOnShutdown(srv.CloseConnections)
+
+	// The service page gets its OWN listener, on loopback, and the main one
+	// never serves it. That is the whole protection: a check on RemoteAddr
+	// inside a handler is a check somebody eventually routes around with a
+	// header, and the main server is ordinarily bound to every interface -
+	// otherwise no phone could reach it. An empty address removes the listener
+	// rather than the handler, so the port is not even held.
+	var statusServer *http.Server
+	if cfg.StatusAddr != "" {
+		statusServer = &http.Server{Addr: cfg.StatusAddr, Handler: srv.StatusHandler(), ReadHeaderTimeout: readHeaderTimeout}
+	}
 
 	hubCtx, stopHub := context.WithCancel(context.Background())
 	defer stopHub()
@@ -558,11 +591,30 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 		}
 		return nil
 	})
+	if statusServer != nil {
+		g.Go(func() error {
+			// Printed, or nobody learns it exists. Next to the claim link,
+			// because the two are read at the same moment.
+			logger.Info("service page for this machine only", "url", "http://"+cfg.StatusAddr)
+			if err := statusServer.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+				return fmt.Errorf("listen on %s: %w", cfg.StatusAddr, err)
+			}
+			return nil
+		})
+	}
 	g.Go(func() error {
 		<-gctx.Done()
 		shCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
 		err := httpServer.Shutdown(shCtx)
+		if statusServer != nil {
+			// Down with the main one and BEFORE the database closes: a request
+			// arriving mid-shutdown would otherwise read a store being closed
+			// underneath it (invariant 9).
+			if statusErr := statusServer.Shutdown(shCtx); statusErr != nil && err == nil {
+				err = statusErr
+			}
+		}
 		// Shutdown ignores hijacked connections; wait for their handlers so
 		// the going-away close frames flush and nothing touches the store
 		// after the database closes (invariant 9).
@@ -670,7 +722,7 @@ func announceClaim(
 	ownership store.OwnershipState,
 	machine store.ServerIdentity,
 	logger *slog.Logger,
-) error {
+) (string, error) {
 	// Silent while THE OWNER can still reach this server, and while the store is
 	// stranded - Pair refuses a claim there, so a link would be an instruction
 	// that cannot be followed, printed once per restart for ever.
@@ -679,15 +731,15 @@ func announceClaim(
 	// would evaluate the same rule twice against a store another connection
 	// could have changed in between.
 	if ownership.OwnerCanGetIn || ownership.Stranded {
-		return nil
+		return "", nil
 	}
 	token, err := st.IssueClaimToken(ctx, time.Now().Unix())
 	if err != nil {
-		return fmt.Errorf("issue claim token: %w", err)
+		return "", fmt.Errorf("issue claim token: %w", err)
 	}
 	link, err := BuildPairingLink(listenAddress(addr), machine.PublicKey, token)
 	if err != nil {
-		return fmt.Errorf("build pairing link: %w", err)
+		return "", fmt.Errorf("build pairing link: %w", err)
 	}
 	// Two different situations, and until this feature they were indistinguishable:
 	// nobody has ever claimed the machine, or its owner has no device left to get
@@ -698,5 +750,18 @@ func announceClaim(
 	} else {
 		logger.Info("this server has no owner yet - present this link in the app to claim it", "link", link)
 	}
-	return nil
+	return token, nil
+}
+
+// startupWarnings collects what only the terminal would otherwise have seen.
+//
+// A person who closed that terminal has no other way to these, and "the last
+// startup said something was wrong" is exactly the kind of thing a service page
+// exists to carry.
+func startupWarnings(ownership store.OwnershipState) []string {
+	var out []string
+	if ownership.Stranded {
+		out = append(out, "This store holds people but records no owner. Nobody can claim it in this state.")
+	}
+	return out
 }

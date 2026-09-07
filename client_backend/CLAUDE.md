@@ -41,9 +41,14 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 
 ## Toolchain & dependencies
 
-- Go **1.27**. Direct dependencies: exactly three — `github.com/coder/websocket`,
-  `modernc.org/sqlite`, `golang.org/x/sync` (errgroup). Adding any other
-  requires written justification; "convenient" is not one.
+- Go **1.27**. Direct dependencies: exactly four — `github.com/coder/websocket`,
+  `modernc.org/sqlite`, `golang.org/x/sync` (errgroup) and `rsc.io/qr`. Adding
+  any other requires written justification; "convenient" is not one.
+- **Why `rsc.io/qr` (035):** encoding a QR is a whole capability — Reed-Solomon
+  over GF(256), version selection, eight masks scored by penalty — not a
+  convenience, and writing it here buys nothing but our own bugs in the thing
+  people scan to take ownership of a server. Pure Go, no dependencies of its
+  own, no CGO, so `CGO_ENABLED=0` static builds are untouched.
 - `modernc.org/libc` does not follow semver — its version stays pinned;
   bump only together with `modernc.org/sqlite` and run the full test suite.
 - Dev tools go through `tool` directives in go.mod (Go 1.24+), never a
@@ -190,6 +195,22 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - A device key that already belongs to somebody is refused AT PRESENTATION,
   before the owner is asked. Waking them with a question whose "yes" could not
   work would let them authorise something that will not happen.
+- **The service page lives on its OWN loopback listener** (`-status-addr`), and
+  the main mux serves it nowhere. That separation IS the protection: a check on
+  RemoteAddr inside a handler is one somebody eventually routes around with a
+  header, and the main server is ordinarily bound to every interface. An empty
+  address removes the listener rather than the handler, so the port is not held.
+- **One claim token per process.** The page shows the token the startup
+  announcement already minted; minting per request would leave an unrevocable
+  door behind every browser refresh, because a claim token has no expiry.
+- **The QR's address is NOT `listenAddress`.** That falls back to loopback under
+  a wildcard bind, which is right for the line printed in the terminal and
+  useless for the phone reading the code off the screen. The page resolves a
+  dialable address instead, and shows no code at all when the machine has none.
+- **The page decides between its three states on the SAME ownership predicate**
+  the startup announcement uses. A second definition of "claimed" is how phase
+  033's one fact would go back to living in two records - and this one would
+  show a status page to somebody locked out of their own machine.
 - **Two known, bounded windows in the person-invite path.** (1) If the owner
   decides between `markPendingRequest` and the pending reply being queued, the
   outcome frame is queued BEFORE that reply and the client - which subscribes

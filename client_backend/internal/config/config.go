@@ -22,7 +22,14 @@ type Config struct {
 	Addr      string
 	DBPath    string
 	FilesPath string
-	Limits    Limits
+	// StatusAddr is where the service page listens, or empty for no page at
+	// all. Always a loopback address: the page shows the claim link, and a
+	// claim link reachable over the network hands ownership to everyone on
+	// that network. The restriction lives on the SOCKET rather than in a
+	// handler, because a check inside the process is a check somebody
+	// eventually routes around with a header.
+	StatusAddr string
+	Limits     Limits
 }
 
 // DefaultLimits mirrors the contract v0 §3 example values.
@@ -48,17 +55,25 @@ func Load(args []string, getenv func(string) string) (Config, error) {
 		defDB = "nox.db"
 	}
 	defFiles := getenv("NOX_FILES")
+	defStatus := getenv("NOX_STATUS_ADDR")
+	if defStatus == "" {
+		defStatus = "127.0.0.1:8081"
+	}
 
 	fs := flag.NewFlagSet("noxd", flag.ContinueOnError)
 	addr := fs.String("addr", defAddr, "listen address (host:port)")
 	dbPath := fs.String("db", defDB, "path to the SQLite database file")
 	filesPath := fs.String("files", defFiles, "attachment bytes directory (default <db>-files)")
+	statusAddr := fs.String("status-addr", defStatus, "loopback address for the service page, empty to disable it")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, fmt.Errorf("parse flags: %w", err)
 	}
 
 	if _, _, err := net.SplitHostPort(*addr); err != nil {
 		return Config{}, fmt.Errorf("invalid -addr %q: %w", *addr, err)
+	}
+	if err := checkStatusAddr(*statusAddr); err != nil {
+		return Config{}, err
 	}
 	if *dbPath == "" {
 		return Config{}, fmt.Errorf("-db must not be empty")
@@ -68,5 +83,39 @@ func Load(args []string, getenv func(string) string) (Config, error) {
 		files = *dbPath + "-files"
 	}
 
-	return Config{Addr: *addr, DBPath: *dbPath, FilesPath: files, Limits: DefaultLimits()}, nil
+	return Config{Addr: *addr, DBPath: *dbPath, FilesPath: files, StatusAddr: *statusAddr, Limits: DefaultLimits()}, nil
+}
+
+// checkStatusAddr refuses anything the service page must not listen on.
+//
+// Empty is allowed and means no page. Everything else has to resolve to a
+// loopback address: the flag exists to move the port, not to put the page on a
+// network, and somebody who writes 0.0.0.0 there has to learn it now rather
+// than when a stranger claims their server. A name is resolved rather than
+// pattern-matched, so "localhost" passes and a name that quietly points
+// somewhere else does not.
+func checkStatusAddr(addr string) error {
+	if addr == "" {
+		return nil
+	}
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("invalid -status-addr %q: %w", addr, err)
+	}
+	if host == "" {
+		return fmt.Errorf("invalid -status-addr %q: the service page must be bound to loopback, not to every interface", addr)
+	}
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return fmt.Errorf("invalid -status-addr %q: %w", addr, err)
+	}
+	for _, ip := range ips {
+		if !ip.IsLoopback() {
+			return fmt.Errorf("invalid -status-addr %q: the service page must be bound to loopback, and %s is not", addr, ip)
+		}
+	}
+	if len(ips) == 0 {
+		return fmt.Errorf("invalid -status-addr %q: resolved to no address", addr)
+	}
+	return nil
 }

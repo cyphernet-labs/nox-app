@@ -13,10 +13,39 @@ func TestLoad(t *testing.T) {
 		want    Config
 	}{
 		{
+			// Empty is not "unset": it removes the page and its listener with
+			// it, so nothing holds the port and nothing answers on it.
+			name:   "an empty status address disables the service page",
+			args:   []string{"-status-addr", ""},
+			getenv: noEnv,
+			want:   Config{Addr: "127.0.0.1:8080", DBPath: "nox.db", FilesPath: "nox.db-files", StatusAddr: "", Limits: DefaultLimits()},
+		},
+		{
+			name:   "the service page port can be moved",
+			args:   []string{"-status-addr", "127.0.0.1:9100"},
+			getenv: noEnv,
+			want:   Config{Addr: "127.0.0.1:8080", DBPath: "nox.db", FilesPath: "nox.db-files", StatusAddr: "127.0.0.1:9100", Limits: DefaultLimits()},
+		},
+		{
+			// The flag moves the port; it does not put the page on a network.
+			// Somebody who tries has to learn it now rather than when a
+			// stranger claims their server.
+			name:    "a service page bound off loopback is refused",
+			args:    []string{"-status-addr", "0.0.0.0:8081"},
+			getenv:  noEnv,
+			wantErr: true,
+		},
+		{
+			name:    "a service page bound to a routable address is refused",
+			args:    []string{"-status-addr", "192.168.1.10:8081"},
+			getenv:  noEnv,
+			wantErr: true,
+		},
+		{
 			name:   "defaults apply when nothing is provided",
 			args:   nil,
 			getenv: noEnv,
-			want:   Config{Addr: "127.0.0.1:8080", DBPath: "nox.db", FilesPath: "nox.db-files", Limits: DefaultLimits()},
+			want:   Config{Addr: "127.0.0.1:8080", DBPath: "nox.db", FilesPath: "nox.db-files", StatusAddr: "127.0.0.1:8081", Limits: DefaultLimits()},
 		},
 		{
 			name: "environment overrides defaults",
@@ -30,7 +59,7 @@ func TestLoad(t *testing.T) {
 				}
 				return ""
 			},
-			want: Config{Addr: "127.0.0.1:9999", DBPath: "/tmp/env.db", FilesPath: "/tmp/env.db-files", Limits: DefaultLimits()},
+			want: Config{Addr: "127.0.0.1:9999", DBPath: "/tmp/env.db", FilesPath: "/tmp/env.db-files", StatusAddr: "127.0.0.1:8081", Limits: DefaultLimits()},
 		},
 		{
 			name: "flags win over environment",
@@ -41,7 +70,7 @@ func TestLoad(t *testing.T) {
 				}
 				return ""
 			},
-			want: Config{Addr: "127.0.0.1:7777", DBPath: "flag.db", FilesPath: "flag.db-files", Limits: DefaultLimits()},
+			want: Config{Addr: "127.0.0.1:7777", DBPath: "flag.db", FilesPath: "flag.db-files", StatusAddr: "127.0.0.1:8081", Limits: DefaultLimits()},
 		},
 		{
 			name:    "address without port is rejected",
