@@ -158,7 +158,7 @@ func TestTheStartupLineDistinguishesAnUnclaimedServerFromAnEmptyOne(t *testing.T
 	ctx := context.Background()
 
 	fresh := &syncBuffer{}
-	if err := announceClaim(ctx, st, "127.0.0.1:8080", false, slog.New(slog.NewTextHandler(fresh, nil))); err != nil {
+	if err := announceClaim(ctx, st, "127.0.0.1:8080", mustOwnership(t, st), slog.New(slog.NewTextHandler(fresh, nil))); err != nil {
 		t.Fatalf("announceClaim on a fresh store: %v", err)
 	}
 	if !strings.Contains(fresh.String(), "no owner yet") {
@@ -178,7 +178,7 @@ func TestTheStartupLineDistinguishesAnUnclaimedServerFromAnEmptyOne(t *testing.T
 	}
 
 	owned := &syncBuffer{}
-	if err := announceClaim(ctx, st, "127.0.0.1:8080", false, slog.New(slog.NewTextHandler(owned, nil))); err != nil {
+	if err := announceClaim(ctx, st, "127.0.0.1:8080", mustOwnership(t, st), slog.New(slog.NewTextHandler(owned, nil))); err != nil {
 		t.Fatalf("announceClaim on an owned store: %v", err)
 	}
 	if strings.Contains(owned.String(), "no owner yet") {
@@ -231,10 +231,20 @@ func TestAGuestDeviceDoesNotSilenceTheOwnersClaimLink(t *testing.T) {
 	}
 
 	out := &syncBuffer{}
-	if err := announceClaim(ctx, st, "127.0.0.1:8080", false, slog.New(slog.NewTextHandler(out, nil))); err != nil {
+	if err := announceClaim(ctx, st, "127.0.0.1:8080", mustOwnership(t, st), slog.New(slog.NewTextHandler(out, nil))); err != nil {
 		t.Fatalf("announceClaim: %v", err)
 	}
 	if !strings.Contains(out.String(), "get back in") {
 		t.Fatalf("the owner was left with no link on their own machine: %q", out.String())
 	}
+}
+
+// mustOwnership reads the snapshot startup would hand to announceClaim.
+func mustOwnership(t *testing.T, st *store.Store) store.OwnershipState {
+	t.Helper()
+	state, err := st.ReadOwnershipState(context.Background())
+	if err != nil {
+		t.Fatalf("ReadOwnershipState: %v", err)
+	}
+	return state
 }

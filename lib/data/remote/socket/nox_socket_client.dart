@@ -330,7 +330,7 @@ class NoxSocketClient {
           // teardown skip the notification - and the notification is the whole
           // point of this branch: without it the app keeps showing a signed-in
           // shell over a dead channel until the process restarts.
-          await _teardownQuietly(SessionPhase.unsupported);
+          await _teardown(SessionPhase.unsupported);
           try {
             onUnauthenticated?.call();
           } on Object catch (e, st) {
@@ -339,7 +339,7 @@ class NoxSocketClient {
           return;
         }
         final terminal = reply.errorCode == 'unsupported_schema' || reply.errorCode == 'invalid_request';
-        await _teardownQuietly(terminal ? SessionPhase.unsupported : SessionPhase.disconnected);
+        await _teardown(terminal ? SessionPhase.unsupported : SessionPhase.disconnected);
         if (!terminal) _scheduleRetry();
         return;
       }
@@ -396,7 +396,7 @@ class NoxSocketClient {
       final rawCursor = data['cursor'];
       if (rawCursor is! num) {
         logRepository.debug(target: this, message: 'socket: greeting carried no usable cursor, reconnecting');
-        await _teardownQuietly(SessionPhase.disconnected);
+        await _teardown(SessionPhase.disconnected);
         _scheduleRetry();
         return;
       }
@@ -462,7 +462,7 @@ class NoxSocketClient {
         _phase.add(SessionPhase.live);
       }
     } on SocketUnavailableException {
-      await _teardownQuietly(SessionPhase.disconnected);
+      await _teardown(SessionPhase.disconnected);
       _scheduleRetry();
     } on Object catch (e, st) {
       // Everything else, and deliberately so. This method runs through
@@ -482,32 +482,23 @@ class NoxSocketClient {
       // trace carries the rest, and a flapping peer should not double this
       // file's log volume for a single event.
       logRepository.error(target: this, error: 'greeting reply unreadable: ${e.runtimeType}', stackTrace: st);
-      await _teardownQuietly(SessionPhase.disconnected);
+      await _teardown(SessionPhase.disconnected);
       _scheduleRetry();
     }
   }
 
   /// One limit from the greeting, or the contract default when the server did
   /// not state a usable one.
-  static int _limit(Object? raw, int fallback) => raw is num ? raw.toInt() : fallback;
-
-  /// Tears down and never throws.
   ///
-  /// Every teardown in [_greet] goes through this. `_greet` is driven by
-  /// `unawaited()`, so a throw escaping it is an unhandled async error: the
-  /// retry is never scheduled, `_greeted` is never completed and the channel is
-  /// dead for the life of the process. Closing a socket that is already gone
-  /// can throw on any platform, which makes that a real path rather than a
-  /// theoretical one.
-  Future<void> _teardownQuietly(SessionPhase phase) async {
-    try {
-      await _teardown(phase);
-    } on Object catch (e, st) {
-      // The phase still has to land: whoever is listening decides what happens
-      // next from it, and a failed close must not leave them waiting.
-      _phase.add(phase);
-      logRepository.error(target: this, error: 'teardown failed: ${e.runtimeType}', stackTrace: st);
-    }
+  /// "Usable" means positive. A stated `0` is not a limit the composer can work
+  /// with - its pre-flight check would refuse every message the person types,
+  /// with nothing on screen explaining why - and a negative one is worse. The
+  /// contract default is one comparison away, so an unusable value is treated
+  /// like an absent one rather than installed verbatim.
+  static int _limit(Object? raw, int fallback) {
+    if (raw is! num) return fallback;
+    final value = raw.toInt();
+    return value > 0 ? value : fallback;
   }
 
   /// The catch-up rule: applied `seq >= cursor` means replay is behind us.
@@ -524,10 +515,30 @@ class NoxSocketClient {
     _scheduleRetry();
   }
 
+  /// Never throws, and always finishes the reset.
+  ///
+  /// Both awaits below can fail - closing a socket that is already gone throws
+  /// on several platforms, and `_onDropped` runs on exactly that path. When
+  /// they did, everything after them was skipped: the subscription and the
+  /// connection stayed live, pending callers were never failed, and `identity`
+  /// survived into the next connection - which is what this method's own
+  /// comment says must not happen. The retry then opened a SECOND socket while
+  /// the old frames kept arriving.
+  ///
+  /// Guarding at the call sites could not fix that; only finishing the reset
+  /// can. So the failures are absorbed here and the state below always runs.
   Future<void> _teardown(SessionPhase next) async {
-    await _frames?.cancel();
+    try {
+      await _frames?.cancel();
+    } on Object catch (e) {
+      logRepository.debug(target: this, message: 'socket: frame subscription would not cancel (${e.runtimeType})');
+    }
     _frames = null;
-    await _connection?.close();
+    try {
+      await _connection?.close();
+    } on Object catch (e) {
+      logRepository.debug(target: this, message: 'socket: connection would not close (${e.runtimeType})');
+    }
     _connection = null;
     for (final completer in _pending.values) {
       if (!completer.isCompleted) completer.completeError(const SocketUnavailableException('connection lost'));
@@ -544,7 +555,14 @@ class NoxSocketClient {
     // socket by design.
     identity = null;
     limits = null;
-    if (_phase.value != next) _phase.add(next);
+    // Guarded too: dispose() closes the subject while an unawaited greeting can
+    // still be in flight, and adding to a closed subject throws. Nobody is
+    // listening by then, so there is nothing to tell and nothing to fail.
+    try {
+      if (_phase.value != next) _phase.add(next);
+    } on Object {
+      // Closed. The teardown itself is done, which is what mattered.
+    }
   }
 
   void _scheduleRetry() {

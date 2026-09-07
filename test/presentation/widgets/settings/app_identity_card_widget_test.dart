@@ -103,17 +103,24 @@ void main() {
     });
 
     testWidgets('the badge moves to its own line instead of crushing the name', (tester) async {
-      // Ukrainian is the longer localisation, and doubled text scale is the
-      // accessibility floor the project already tests to. Together they leave
-      // no room for name and badge on one line.
+      // Doubled text scale on a narrow phone is the accessibility floor the
+      // project already tests to, and it leaves no room for the name and the
+      // badge on one row. `pumpApp` pins the English locale, so this is the
+      // SHORTER of the two strings - the Ukrainian one only makes it tighter.
+      const long = 'Alexandra_Smirnova_QQ';
       await tester.binding.setSurfaceSize(const Size(320, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
 
-      await pumpApp(tester, card(name: 'Alexandra_Smirnova_QQ', isOwner: true), textScale: 2);
-
-      // Nothing overflows, and both are still on screen.
+      await pumpApp(tester, card(name: long, isOwner: true), textScale: 2);
       expect(tester.takeException(), isNull);
-      expect(find.text(l10nEn.settingsOwnerBadge), findsOneWidget);
+
+      // Asserted by POSITION, not by presence: both widgets are on screen in
+      // the broken layout too - a Row of two flexible children keeps them side
+      // by side and silently squeezes the name to an ellipsis. Only the y
+      // offset tells the two apart.
+      final nameTop = tester.getTopLeft(find.text(long)).dy;
+      final badgeTop = tester.getTopLeft(find.text(l10nEn.settingsOwnerBadge)).dy;
+      expect(badgeTop, greaterThan(nameTop), reason: 'the badge should have wrapped below the name');
     });
 
     testWidgets('the badge survives an inline rename', (tester) async {

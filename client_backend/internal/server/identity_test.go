@@ -333,11 +333,11 @@ func TestOwnerlessStoreIsReportedOnlyWhenItHasPeopleAndAMachineRow(t *testing.T)
 	ctx := context.Background()
 	st := store.New(dbs.Read, dbs.Write)
 
-	stranded, _, err := st.OwnerlessWithPeople(ctx)
+	state, err := st.ReadOwnershipState(ctx)
 	if err != nil {
-		t.Fatalf("OwnerlessWithPeople: %v", err)
+		t.Fatalf("ReadOwnershipState: %v", err)
 	}
-	if stranded {
+	if state.Stranded {
 		t.Fatal("an empty store reported itself stranded")
 	}
 
@@ -351,23 +351,23 @@ func TestOwnerlessStoreIsReportedOnlyWhenItHasPeopleAndAMachineRow(t *testing.T)
 	if _, err := st.Pair(ctx, token, "dev-a", "test", 100); err != nil {
 		t.Fatalf("Pair: %v", err)
 	}
-	stranded, _, err = st.OwnerlessWithPeople(ctx)
+	state, err = st.ReadOwnershipState(ctx)
 	if err != nil {
-		t.Fatalf("OwnerlessWithPeople: %v", err)
+		t.Fatalf("ReadOwnershipState: %v", err)
 	}
-	if stranded {
+	if state.Stranded {
 		t.Fatal("a properly owned store reported itself stranded")
 	}
 
 	if _, err := dbs.Write.ExecContext(ctx, "UPDATE server_identity SET owner_user_id = NULL WHERE id = 1"); err != nil {
 		t.Fatalf("clear owner: %v", err)
 	}
-	stranded, people, err := st.OwnerlessWithPeople(ctx)
+	state, err = st.ReadOwnershipState(ctx)
 	if err != nil {
-		t.Fatalf("OwnerlessWithPeople: %v", err)
+		t.Fatalf("ReadOwnershipState: %v", err)
 	}
-	if !stranded || people != 1 {
-		t.Fatalf("stranded=%v people=%d, want a store with one person and no owner", stranded, people)
+	if !state.Stranded || state.People != 1 {
+		t.Fatalf("state=%+v, want a store with one person and no owner", state)
 	}
 
 	// A MISSING machine row is a different state with a different remedy, and
@@ -375,22 +375,22 @@ func TestOwnerlessStoreIsReportedOnlyWhenItHasPeopleAndAMachineRow(t *testing.T)
 	if _, err := dbs.Write.ExecContext(ctx, "DELETE FROM server_identity"); err != nil {
 		t.Fatalf("drop machine row: %v", err)
 	}
-	stranded, _, err = st.OwnerlessWithPeople(ctx)
+	state, err = st.ReadOwnershipState(ctx)
 	if err != nil {
-		t.Fatalf("OwnerlessWithPeople: %v", err)
+		t.Fatalf("ReadOwnershipState: %v", err)
 	}
-	if stranded {
+	if state.Stranded {
 		t.Fatal("a store with no machine row was reported as merely ownerless")
 	}
 
 	// And the warning itself says what to do, without advising a claim Pair refuses.
 	loud := &syncBuffer{}
-	warnOwnerlessStore(true, 1, slog.New(slog.NewTextHandler(loud, nil)))
+	warnOwnerlessStore(store.OwnershipState{Stranded: true, People: 1}, slog.New(slog.NewTextHandler(loud, nil)))
 	if !strings.Contains(loud.String(), "no owner") || strings.Contains(loud.String(), "re-claim") {
 		t.Fatalf("warning reads %q", loud.String())
 	}
 	quiet := &syncBuffer{}
-	warnOwnerlessStore(false, 0, slog.New(slog.NewTextHandler(quiet, nil)))
+	warnOwnerlessStore(store.OwnershipState{}, slog.New(slog.NewTextHandler(quiet, nil)))
 	if quiet.String() != "" {
 		t.Fatalf("a healthy store warned: %s", quiet.String())
 	}

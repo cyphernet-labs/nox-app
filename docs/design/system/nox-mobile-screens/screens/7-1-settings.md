@@ -21,7 +21,7 @@ App bar (Settings). Identity card (name + `Server owner` badge when the server s
 - Owner badge (phase 033): shown only when the server states that this person owns it. "Not stated" and "not the owner" both render nothing — drawing "not the owner" before the server answers would be a claim the app cannot make, followed by a flicker when it is corrected. The badge sits beside the name and drops onto its own line when the name and the badge no longer fit one row (long localisation, large text scale).
 - ⚠️ Phase 032 removed the mask and the reveal: the ID stopped being a secret — the person is recognised by the device's paired key — so there is nothing to hide and no `id-shown` state. The ID renders in full, at the card's ordinary text style.
 - `Show QR` leads to **Devices**, where an invite is minted with a real one-shot token. It no longer shows a QR of the ID: that used to hand over a bearer secret.
-- Editing: name becomes an inline TextField with counter.
+- Editing: name becomes an inline TextField with counter. **The badge stays**, above the field — ownership has nothing to do with editing a name, and dropping it made it blink out on every rename.
 - Log out → confirm AlertDialog (destructive action tinted error); confirming wipes ID + local data; shows a loading state.
 
 ## Navigation

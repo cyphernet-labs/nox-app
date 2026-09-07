@@ -130,17 +130,13 @@ func (s *Store) CountDevices(ctx context.Context) (int, error) {
 	return n, nil
 }
 
-// CountUsers reports how many people this server holds.
+// CountUsers reports how many people this server holds, on the read pool.
 //
-// NOT test-support: OwnerlessWithPeople reads it, and startup decides through
-// that whether printing a claim link would be honest - a store with people but
-// no owner refuses the claim it would advertise.
+// Test-support: production paths count inside the transaction they are already
+// in, through countPeople - which this delegates to, so the query has exactly
+// one spelling.
 func (s *Store) CountUsers(ctx context.Context) (int, error) {
-	var n int
-	if err := s.read.QueryRowContext(ctx, "SELECT COUNT(1) FROM users").Scan(&n); err != nil {
-		return 0, fmt.Errorf("count users: %w", err)
-	}
-	return n, nil
+	return countPeople(ctx, s.read)
 }
 
 // AnyUser returns some person's id. Test-support for a server that holds

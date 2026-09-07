@@ -249,14 +249,14 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 		// decent proxy the moment a second person can exist. The write is
 		// conditional on the column being empty, so a re-claim attaches to the
 		// person who is already the owner and moves ownership nowhere.
-		became, err := setOwner(ctx, tx, id.UserID, now)
-		if err != nil {
+		if err := setOwner(ctx, tx, id.UserID, now); err != nil {
 			return Identity{}, err
 		}
-		// Either this claim made them the owner, or they already were one and
-		// re-attached: the branch above only reaches here for the recorded
-		// owner or for a store with nobody in it.
-		id.Owner = became || owner == id.UserID
+		// True on every path that reaches here, and deliberately not read back
+		// to prove it: the branch above resolved `id` either from the recorded
+		// owner or from a store that had nobody at all, and setOwner's
+		// condition covers exactly the second case.
+		id.Owner = true
 		// Every OTHER unused claim token dies with this one. They were printed
 		// to the server log on earlier starts, and a log is not a secret store:
 		// without this, each of them comes back to life the moment the device
@@ -399,9 +399,9 @@ func loadUser(ctx context.Context, tx *sql.Tx, userID string, id *Identity) erro
 }
 
 // countPeople reports how many people this server holds.
-func countPeople(ctx context.Context, tx *sql.Tx) (int, error) {
+func countPeople(ctx context.Context, q rowQuerier) (int, error) {
 	var people int
-	if err := tx.QueryRowContext(ctx, "SELECT COUNT(1) FROM users").Scan(&people); err != nil {
+	if err := q.QueryRowContext(ctx, "SELECT COUNT(1) FROM users").Scan(&people); err != nil {
 		return 0, fmt.Errorf("count people: %w", err)
 	}
 	return people, nil

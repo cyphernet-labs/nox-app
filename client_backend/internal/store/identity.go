@@ -87,19 +87,6 @@ func (s *Store) ResolveIdentity(ctx context.Context, deviceKey, label string, no
 		return Identity{}, err
 	}
 
-	// A new read on the greeting path: nothing here used to look at the
-	// machine's own row. One statement inside the transaction that is already
-	// open, so it costs a round of SQLite and no extra lock.
-	//
-	// A missing machine row is NOT fatal here: it means nobody owns this
-	// server, and a greeting refused over it would spin a client forever
-	// (a refused greeting is retried without end) for a question the greeting
-	// never used to ask.
-	id.Owner, err = ownsServer(ctx, tx, id.UserID)
-	if err != nil {
-		return Identity{}, err
-	}
-
 	// A greeting without a label does NOT rename. The client states a name only
 	// when it has just changed one; a device carrying a stale cache would
 	// otherwise push the old name back over a rename made elsewhere, and the
@@ -123,11 +110,21 @@ func (s *Store) ResolveIdentity(ctx context.Context, deviceKey, label string, no
 // revocation, because from where it stands the two are the same event.
 var ErrDeviceUnknown = errors.New("device key not paired")
 
+// Ownership is answered by the SAME statement, as a correlated subquery rather
+// than a second round trip. This runs inside the single-connection write pool
+// on every greeting, and reconnects arrive in bursts on a flaky link - so an
+// extra statement here is an extra statement in the serialized critical
+// section, paid by every device, for a value that changes at most once in a
+// server's lifetime.
 func lookupByDevice(ctx context.Context, tx *sql.Tx, deviceKey string) (Identity, bool, error) {
 	var id Identity
-	err := tx.QueryRowContext(ctx,
-		"SELECT u.user_id, u.label FROM devices d JOIN users u ON u.user_id = d.user_id WHERE d.device_key = ?",
-		deviceKey).Scan(&id.UserID, &id.Label)
+	err := tx.QueryRowContext(ctx, `
+		SELECT u.user_id, u.label,
+		       COALESCE((SELECT owner_user_id FROM server_identity WHERE id = 1), '') = u.user_id
+		FROM devices d
+		JOIN users u ON u.user_id = d.user_id
+		WHERE d.device_key = ?`,
+		deviceKey).Scan(&id.UserID, &id.Label, &id.Owner)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Identity{}, false, nil
 	}

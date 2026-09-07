@@ -123,18 +123,19 @@ window.NOX_SPECS = [
         "label": "Logout dialog"
       },
       {
-        "key": "qr",
-        "label": "QR dialog"
+        "key": "account-member",
+        "label": "Account, ownership not stated or not held"
       }
     ],
     "anatomy": "NavigationRail + settings menu pane (340, grouped nav items) + detail pane (content capped to ≤680). Each detail reuses the exact phone widgets.",
     "behavior": [
       "Selecting a menu item highlights it (secondaryContainer) and swaps the detail pane — no push.",
-      "Account: identity card; by default the ID stays masked and the account QR is shown inline (no secret reveal on desktop). Editing → inline name field.",
+      "Account: identity card carrying the name, the Server owner badge and the public ID. Editing → inline name field, with the badge above it.",
+      "Owner badge (phase 033): shown only when the server states that this person owns it; \"not stated\" and \"not the owner\" both render nothing. Same rule and same widget as the narrow width.",
       "Notifications: enable switch; OS-denied → InfoBanner + Open settings, switch off.",
       "Appearance: System / Light / Dark theme cards. Language: System / English / Українська.",
       "Log out → centered confirm Dialog (mobile’s sheet/dialog becomes a centered dialog); destructive action tinted error.",
-      "Show QR → centered Dialog with the brand-fixed white QR card (mobile bottom-sheet → dialog)."
+      "Phase 032 removed the mask and the inline account QR: the ID is public. Show QR selects the Devices pane, where an invite is minted with a one-shot token."
     ],
     "navigation": [
       "Menu item → swaps detail pane.",
@@ -142,7 +143,7 @@ window.NOX_SPECS = [
     ],
     "copy": [
       "Pane title: Settings",
-      "Account QR caption: Show this code to let someone add you",
+      "Owner badge: Server owner",
       "Logout: Log out? / Your ID and local data will be removed from this device."
     ],
     "ds": [
@@ -150,14 +151,13 @@ window.NOX_SPECS = [
       "PaneHeader",
       "SettingsNavItem",
       "IdentityCard",
-      "FakeQR (brand white)",
       "SettingsGroup / SettingsSwitchRow / LangRow",
       "ThemeOptionCard",
       "InfoBanner",
       "TermsBody",
       "LogoutDialog / CenteredQR"
     ],
-    "adapt": "mobile full-screen settings → list-detail · bottom sheet → centered dialog · ID masked + account QR by default"
+    "adapt": "mobile full-screen settings → list-detail · bottom sheet → centered dialog · the identity card, badge included, is the same widget at both widths"
   },
   {
     "id": "d-splash",

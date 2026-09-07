@@ -66,9 +66,9 @@ func (s *Store) EnsureServerIdentity(ctx context.Context) (ServerIdentity, error
 	// case 6 of the authentication model warns about. It happens when a restore
 	// brings back users without server_identity, and it must be loud: the right
 	// answer is to finish the restore, not to hand out a new identity.
-	var people int
-	if err := tx.QueryRowContext(ctx, "SELECT COUNT(1) FROM users").Scan(&people); err != nil {
-		return ServerIdentity{}, fmt.Errorf("count people: %w", err)
+	people, err := countPeople(ctx, tx)
+	if err != nil {
+		return ServerIdentity{}, err
 	}
 	if people > 0 {
 		return ServerIdentity{}, fmt.Errorf(
@@ -106,103 +106,75 @@ func (s *Store) ServerIdentity(ctx context.Context) (ServerIdentity, error) {
 // claim transaction in Pair, so ownership and the person that holds it are
 // committed together or not at all.
 //
-// Conditional on the column still being empty: a claim that races another one
-// must not move ownership, and the affected-row count is what settles it -
-// the same shape token burning uses.
-// It reports whether the write landed: the statement is conditional, so "did
-// this person become the owner" is answered by the affected-row count - the
-// same shape BurnToken uses - rather than by reading the row back afterwards.
-func setOwner(ctx context.Context, tx *sql.Tx, userID string, now int64) (bool, error) {
+// Conditional on the column still being empty: a claim racing another one must
+// not move ownership. The caller does not read the outcome back - the branch
+// that reaches here already knows which of the two cases it is in.
+func setOwner(ctx context.Context, tx *sql.Tx, userID string, now int64) error {
 	// claimed_at is written in the SAME statement on purpose. It decides
 	// nothing, but the moment is unrecoverable, and keeping the two writes
 	// apart is how one of them gets dropped by a later edit.
-	res, err := tx.ExecContext(ctx,
+	if _, err := tx.ExecContext(ctx,
 		"UPDATE server_identity SET owner_user_id = ?, claimed_at = ? WHERE id = 1 AND owner_user_id IS NULL",
-		userID, now)
-	if err != nil {
-		return false, fmt.Errorf("set server owner: %w", err)
+		userID, now); err != nil {
+		return fmt.Errorf("set server owner: %w", err)
 	}
-	affected, err := res.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("set server owner rows: %w", err)
-	}
-	return affected == 1, nil
+	return nil
 }
 
-// OwnerlessWithPeople reports the state no code path produces and a partial
-// restore can: rows in users, nobody recorded as the owner.
+// OwnershipState is everything startup needs to know about who owns this
+// machine, read in ONE transaction.
 //
-// One predicate, because three hand-written copies of it had already started to
-// disagree about a missing server_identity row - and one fact in several
-// records is the shape this whole feature came to remove.
-func (s *Store) OwnerlessWithPeople(ctx context.Context) (bool, int, error) {
-	// One transaction: read separately, the owner and the count can straddle a
-	// committing claim and report a healthy store as stranded - which suppresses
-	// the claim link and raises a false alarm about a hand-edited database.
+// One read, because the three questions are one fact: taken apart they can
+// straddle a committing claim and describe a store that never existed, and the
+// answers then have to be threaded between functions to keep them agreeing.
+type OwnershipState struct {
+	// Owned is true when the machine has an owner recorded.
+	Owned bool
+	// OwnerCanGetIn is true when that owner still has a device to reach it
+	// with. "Occupied" means this, never "any device is here": counting every
+	// device locks an owner out of their own machine as soon as somebody else's
+	// is running.
+	OwnerCanGetIn bool
+	// Stranded is the state no code path produces and a partial restore can:
+	// people in the store, nobody recorded as the owner.
+	Stranded bool
+	// People is the count, for the operator-facing warning. Never an id
+	// (Principle I).
+	People int
+}
+
+// ReadOwnershipState answers all of it at once.
+//
+// A MISSING machine row is deliberately not Stranded: that state is fatal and
+// has its own remedy - EnsureServerIdentity refuses to mint a key for a store
+// that already holds people, because a new key breaks pinning for every device
+// paired against the old one.
+func (s *Store) ReadOwnershipState(ctx context.Context) (OwnershipState, error) {
 	tx, err := s.read.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
-		return false, 0, fmt.Errorf("begin ownership read: %w", err)
+		return OwnershipState{}, fmt.Errorf("begin ownership read: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
 	owner, err := ownerUserID(ctx, tx)
 	if errors.Is(err, ErrNoServerIdentity) {
-		// A MISSING row is a different state, and a fatal one: startup refuses
-		// to mint a key for a store that already holds people, because a new
-		// key breaks pinning for every device paired against the old one.
-		// Folding it in here would have this function promise the server keeps
-		// running while startup aborts, and hand the operator two different
-		// remedies for one situation.
-		return false, 0, nil
+		return OwnershipState{}, nil
 	}
 	if err != nil {
-		return false, 0, err
+		return OwnershipState{}, err
 	}
-	var people int
-	if err := tx.QueryRowContext(ctx, "SELECT COUNT(1) FROM users").Scan(&people); err != nil {
-		return false, 0, fmt.Errorf("count people: %w", err)
-	}
-	return owner == "" && people > 0, people, nil
-}
-
-// OwnerCanStillGetIn reports whether the owner still has a device to reach this
-// machine with.
-//
-// "Occupied" means "the OWNER can still get in", and counting every device on
-// the server instead would lock them out of their own machine the moment
-// somebody else's device is running (034). The rule lived in two predicates
-// once already - Pair counting the owner's devices while startup counted all of
-// them - which is how a claimed server with a guest online stopped printing any
-// link at all.
-//
-// Both values are read inside ONE transaction: taken separately they can
-// observe a claim half-committed and report a healthy store as stranded.
-// The owner's identifier is deliberately NOT returned: no caller needs it, and
-// a predicate that hands it out invites somebody to put it somewhere it does
-// not belong - a log line, a wire field - against the rules this same feature
-// enforces elsewhere.
-func (s *Store) OwnerCanStillGetIn(ctx context.Context) (bool, error) {
-	tx, err := s.read.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	people, err := countPeople(ctx, tx)
 	if err != nil {
-		return false, fmt.Errorf("begin ownership read: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	owner, err := ownerUserID(ctx, tx)
-	if errors.Is(err, ErrNoServerIdentity) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
+		return OwnershipState{}, err
 	}
 	if owner == "" {
-		return false, nil
+		return OwnershipState{Stranded: people > 0, People: people}, nil
 	}
 	devices, err := ownerDeviceCount(ctx, tx, owner)
 	if err != nil {
-		return false, err
+		return OwnershipState{}, err
 	}
-	return devices > 0, nil
+	return OwnershipState{Owned: true, OwnerCanGetIn: devices > 0, People: people}, nil
 }
 
 // ownerDeviceCount is the ONE spelling of "how many devices can the owner still

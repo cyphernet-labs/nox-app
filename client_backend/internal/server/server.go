@@ -307,19 +307,19 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 
 	h := hub.New()
 	st := store.New(dbs.Read, dbs.Write)
-	// Computed ONCE and used twice: the warning and the decision not to print a
-	// claim link are the same fact, and evaluating it in both places is how the
-	// two start disagreeing - an operator getting a link with no warning, or a
+	// One read, one snapshot. The warning and the decision about printing a
+	// claim link are the same fact, and asking for it twice is how the two
+	// start disagreeing - an operator getting a link with no warning, or a
 	// warning with no link.
-	stranded, people, err := st.OwnerlessWithPeople(ctx)
+	ownership, err := st.ReadOwnershipState(ctx)
 	if err != nil {
-		return fmt.Errorf("check ownership state: %w", err)
+		return fmt.Errorf("read ownership state: %w", err)
 	}
-	warnOwnerlessStore(stranded, people, logger)
+	warnOwnerlessStore(ownership, logger)
 	if err := st.EnsureJournal(ctx); err != nil {
 		return fmt.Errorf("ensure journal: %w", err)
 	}
-	if err := announceClaim(ctx, st, cfg.Addr, stranded, logger); err != nil {
+	if err := announceClaim(ctx, st, cfg.Addr, ownership, logger); err != nil {
 		return err
 	}
 	srv := New(cfg, st, h, bl, logger)
@@ -436,8 +436,8 @@ func staleSchemaError(dbPath string) error {
 // by row order, which is precisely the guess this feature exists to remove.
 //
 // No user id in the message (Principle I): the count is what an operator needs.
-func warnOwnerlessStore(stranded bool, people int, logger *slog.Logger) {
-	if !stranded {
+func warnOwnerlessStore(ownership store.OwnershipState, logger *slog.Logger) {
+	if !ownership.Stranded {
 		return
 	}
 	// Deliberately not "re-claim it": Pair refuses a claim in this state, so
@@ -445,7 +445,7 @@ func warnOwnerlessStore(stranded bool, people int, logger *slog.Logger) {
 	// restore a backup, or write the owner back by hand - and no claim link is
 	// printed while it is like this.
 	logger.Warn("this server holds people but records no owner: it cannot be claimed and no owner will be guessed - restore it from a backup or set the owner by hand",
-		"people", people)
+		"people", ownership.People)
 }
 
 // announceClaim mints the server's own key on first start and, while nobody
@@ -459,32 +459,20 @@ func warnOwnerlessStore(stranded bool, people int, logger *slog.Logger) {
 // This is the ONE place a token is deliberately written to output. It is the
 // claim mechanism itself, and it is only visible to whoever can already read
 // the machine's logs - which is whoever could take the database anyway.
-func announceClaim(ctx context.Context, st *store.Store, addr string, stranded bool, logger *slog.Logger) error {
+func announceClaim(ctx context.Context, st *store.Store, addr string, ownership store.OwnershipState, logger *slog.Logger) error {
+	// Silent while THE OWNER can still reach this server, and while the store is
+	// stranded - Pair refuses a claim there, so a link would be an instruction
+	// that cannot be followed, printed once per restart for ever.
+	//
+	// Both come from the snapshot startup already took: re-deriving them here
+	// would evaluate the same rule twice against a store another connection
+	// could have changed in between.
+	if ownership.OwnerCanGetIn || ownership.Stranded {
+		return nil
+	}
 	id, err := st.EnsureServerIdentity(ctx)
 	if err != nil {
 		return fmt.Errorf("ensure server identity: %w", err)
-	}
-	// Silent only while THE OWNER can actually reach this server. Counting every
-	// device instead would keep a claimed machine silent because somebody else's
-	// device is running - locking the owner out of their own, with Pair standing
-	// ready to accept the claim link that never gets printed. One rule, one
-	// predicate: Pair reads the same one.
-	canGetIn, err := st.OwnerCanStillGetIn(ctx)
-	if err != nil {
-		return fmt.Errorf("check ownership state: %w", err)
-	}
-	if canGetIn {
-		return nil
-	}
-	// Also silent when the store holds people but no owner. Pair refuses such a
-	// claim - both ways of guessing whose identity to attach are worse than a
-	// refusal - so printing a link here would hand the operator an instruction
-	// that cannot be followed, once per restart, for ever.
-	//
-	// Handed in rather than re-derived: startup already computed it for the
-	// warning, and one decision evaluated twice is one decision that can drift.
-	if stranded {
-		return nil
 	}
 	token, err := st.IssueClaimToken(ctx, time.Now().Unix())
 	if err != nil {
@@ -498,7 +486,7 @@ func announceClaim(ctx context.Context, st *store.Store, addr string, stranded b
 	// nobody has ever claimed the machine, or its owner has no device left to get
 	// back in with. Saying "no owner yet" in the second case is simply false, and
 	// it tells the person the wrong story about what is about to happen.
-	if id.Claimed() {
+	if ownership.Owned {
 		logger.Info("this server has an owner but no devices left - present this link in the app to get back in", "link", link)
 	} else {
 		logger.Info("this server has no owner yet - present this link in the app to claim it", "link", link)
