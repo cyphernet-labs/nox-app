@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"testing/synctest"
 
@@ -743,4 +744,104 @@ func TestAReplayWhoseTokenAndDeviceDisagreeIsNotAnswered(t *testing.T) {
 		t.Fatalf("err = %v, want ErrTokenInvalid: the token names one person and the device another", err)
 	}
 	_ = owner
+}
+
+// A spent token answers only the device that spent it. Before used_by existed,
+// a claim token named nobody, so any KNOWN device key - and the key is public,
+// it rides every greeting and device.list prints it - could present a spent
+// claim from the server log and be told that person's id, label and ownership.
+// `pair` is the one command that carries no signature.
+func TestASpentTokenAnswersOnlyTheDeviceThatSpentIt(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	if _, err := s.EnsureServerIdentity(ctx); err != nil {
+		t.Fatalf("EnsureServerIdentity: %v", err)
+	}
+	claim, err := s.IssueClaimToken(ctx, 100)
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+	owner, err := s.Pair(ctx, claim, "dev-a", "test", 100)
+	if err != nil {
+		t.Fatalf("Pair: %v", err)
+	}
+
+	// A second device of the same person, joined the ordinary way.
+	invite, err := s.IssueDeviceInvite(ctx, owner.UserID, 200)
+	if err != nil {
+		t.Fatalf("IssueDeviceInvite: %v", err)
+	}
+	if _, err := s.Pair(ctx, invite, "dev-b", "test", 200); err != nil {
+		t.Fatalf("Pair second device: %v", err)
+	}
+
+	// dev-b presenting the spent claim must learn nothing.
+	if _, err := s.Pair(ctx, claim, "dev-b", "test", 300); !errors.Is(err, ErrTokenInvalid) {
+		t.Fatalf("err = %v, want ErrTokenInvalid: a spent token must not answer a device that never used it", err)
+	}
+	// A key nobody knows either.
+	if _, err := s.Pair(ctx, claim, "dev-stranger", "test", 300); !errors.Is(err, ErrTokenInvalid) {
+		t.Fatalf("err = %v, want ErrTokenInvalid", err)
+	}
+	// And the device that DID spend it still gets its answer.
+	replay, err := s.Pair(ctx, claim, "dev-a", "test", 300)
+	if err != nil {
+		t.Fatalf("replay by the spender: %v", err)
+	}
+	if replay.UserID != owner.UserID || !replay.Created {
+		t.Fatalf("replay = %+v, want the original answer back", replay)
+	}
+}
+
+// A replay answers with what HAPPENED, not with what the token kind implies. A
+// re-claim that attached to an existing owner created nobody, and re-deriving
+// "this was a claim, so created" walks that owner back through the naming
+// screen and lets them overwrite their own name.
+func TestAReplayedReClaimDoesNotClaimToHaveCreatedAnybody(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	claimPerson(t, s, "dev-phone")
+	if err := s.RevokeDevice(ctx, "dev-phone"); err != nil {
+		t.Fatalf("RevokeDevice: %v", err)
+	}
+
+	token, err := s.IssueClaimToken(ctx, 300)
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+	first, err := s.Pair(ctx, token, "dev-new", "test", 300)
+	if err != nil {
+		t.Fatalf("re-claim: %v", err)
+	}
+	if first.Created {
+		t.Fatal("a re-claim reported creating a person who already existed")
+	}
+
+	replay, err := s.Pair(ctx, token, "dev-new", "test", 350)
+	if err != nil {
+		t.Fatalf("replayed re-claim: %v", err)
+	}
+	if replay.Created != first.Created {
+		t.Fatalf("replay says created=%v, the original said %v", replay.Created, first.Created)
+	}
+}
+
+// A restore that brings back people without the machine's own row must not be
+// handed a fresh keypair: that breaks pinning for every device paired against
+// the old one, silently, and the right answer is to finish the restore.
+func TestAStoreWithPeopleAndNoServerIdentityRefusesToMintANewKey(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	claimPerson(t, s, "dev-phone")
+
+	if _, err := s.write.ExecContext(ctx, "DELETE FROM server_identity"); err != nil {
+		t.Fatalf("simulate a partial restore: %v", err)
+	}
+	_, err := s.EnsureServerIdentity(ctx)
+	if err == nil {
+		t.Fatal("a new server key was minted for a store that already holds people")
+	}
+	if !strings.Contains(err.Error(), "restore") {
+		t.Fatalf("the refusal does not say what to do: %v", err)
+	}
 }

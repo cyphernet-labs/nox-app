@@ -37,23 +37,14 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
     // slow start, or against a server that only learned the field on upgrade -
     // so it is watched, exactly as the label is.
     //
-    // `.skip(1)` because the stream seeds its current value on listen and
-    // `initialize` already reads it - the same shape the chats list uses for
-    // its watches. Without the skip every consumer would see one extra state
-    // for a value nothing changed.
-    _ownership = sessionRepository.watchOwnership().skip(1).listen((isOwner) => add(SettingsRootEvent.ownershipChanged(isOwner)));
+    // The watch is the SINGLE source: `initialize` does not read ownership at
+    // all. Two sources meant the read taken before initialize's own await could
+    // beat a newer answer simply by resuming last, and refereeing that needed a
+    // third piece of state. One source removes the race rather than judging it.
+    _ownership = sessionRepository.watchOwnership().listen((isOwner) => add(SettingsRootEvent.ownershipChanged(isOwner)));
   }
 
   StreamSubscription<bool?>? _ownership;
-
-  /// Set once the watch has delivered an answer.
-  ///
-  /// `initialize` reads ownership from storage and then emits, but it awaits in
-  /// between - and the watch runs on its own concurrent handler. Without this,
-  /// an answer that arrives during that await is overwritten by the value read
-  /// before it, and since ownership then never changes again the badge is lost
-  /// for the life of the process. Exactly the miss the watch was added for.
-  bool _ownershipStated = false;
 
   @override
   Future<void> close() async {
@@ -86,7 +77,6 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
               // Yielded to the watch if it has already spoken: this value was
               // read BEFORE the await above, and a newer answer must not lose
               // to an older one just because this handler resumed last.
-              isOwner: _ownershipStated ? state.isOwner : session?.isOwner,
             ),
           ),
       onError: (_) => emit(state.copyWith(initialLoading: false, rawId: '')),
@@ -160,7 +150,10 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
   }
 
   void _onOwnershipChanged(OwnershipChanged event, Emitter<SettingsRootState> emit) {
-    _ownershipStated = true;
+    // A watch seeds its current value on listen, so the first event usually
+    // states what the state already holds. Emitting for it would hand every
+    // consumer an extra rebuild for a change that did not happen.
+    if (event.isOwner == state.isOwner) return;
     emit(state.copyWith(isOwner: event.isOwner));
   }
 }

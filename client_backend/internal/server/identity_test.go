@@ -333,7 +333,7 @@ func TestOwnerlessStoreWarnsOnlyWhenItHasPeople(t *testing.T) {
 
 	// Empty store, and one with no machine row at all: nothing to warn about.
 	quiet := &syncBuffer{}
-	warnOwnerlessStore(ctx, dbs.Read, slog.New(slog.NewTextHandler(quiet, nil)))
+	warnOwnerlessStore(ctx, st, slog.New(slog.NewTextHandler(quiet, nil)))
 	if quiet.String() != "" {
 		t.Fatalf("an empty store warned: %s", quiet.String())
 	}
@@ -350,7 +350,7 @@ func TestOwnerlessStoreWarnsOnlyWhenItHasPeople(t *testing.T) {
 	}
 
 	owned := &syncBuffer{}
-	warnOwnerlessStore(ctx, dbs.Read, slog.New(slog.NewTextHandler(owned, nil)))
+	warnOwnerlessStore(ctx, st, slog.New(slog.NewTextHandler(owned, nil)))
 	if owned.String() != "" {
 		t.Fatalf("a properly owned store warned: %s", owned.String())
 	}
@@ -359,7 +359,7 @@ func TestOwnerlessStoreWarnsOnlyWhenItHasPeople(t *testing.T) {
 		t.Fatalf("clear owner: %v", err)
 	}
 	loud := &syncBuffer{}
-	warnOwnerlessStore(ctx, dbs.Read, slog.New(slog.NewTextHandler(loud, nil)))
+	warnOwnerlessStore(ctx, st, slog.New(slog.NewTextHandler(loud, nil)))
 	if !strings.Contains(loud.String(), "no owner") {
 		t.Fatalf("a store with people but no owner said nothing: %q", loud.String())
 	}

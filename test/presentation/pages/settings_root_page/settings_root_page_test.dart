@@ -15,6 +15,8 @@ import 'package:nox_app/presentation/widgets/settings/app_identity_card_widget.d
 import 'package:nox_app/presentation/widgets/settings/app_qr_surface_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_list_detail_widget.dart';
 
+import 'package:nox_app/domain/repository/app/session_repository.dart';
+
 import '../../../utils/fake_session_repository.dart';
 import '../../../utils/pump_app.dart';
 
@@ -187,6 +189,22 @@ void main() {
       // No navigation push happened — still the same settings page.
       expect(find.byType(SettingsRootPage), findsOneWidget);
       expect(find.byType(NotificationsPage), findsNothing);
+    });
+
+    testWidgets('an ownership answer arriving after the screen was built reaches the badge', (tester) async {
+      // The behaviour the watch exists for, and it is only reachable through
+      // the fake now that the fake behaves like the real channel: a shared
+      // subject that replays and does not complete. While it closed after one
+      // event, every fake-backed test rendered the badge from initialize alone
+      // and this path was untestable here.
+      final session = getIt<SessionRepository>() as FakeSessionRepository;
+      await pumpDesktop(tester);
+      expect(find.text(l10nEn.settingsOwnerBadge), findsNothing);
+
+      session.emitOwnership(true);
+      await tester.pumpAndSettle();
+
+      expect(find.text(l10nEn.settingsOwnerBadge), findsOneWidget);
     });
 
     testWidgets('there is no reveal and no account QR - the id is public, and it is not an invite', (tester) async {

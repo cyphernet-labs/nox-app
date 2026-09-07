@@ -298,7 +298,6 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 		return err
 	}
 	logger.Info("database ready", "path", cfg.DBPath, "schema_version", version)
-	warnOwnerlessStore(ctx, dbs.Read, logger)
 
 	bl, err := blob.Open(cfg.FilesPath)
 	if err != nil {
@@ -308,6 +307,7 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 
 	h := hub.New()
 	st := store.New(dbs.Read, dbs.Write)
+	warnOwnerlessStore(ctx, st, logger)
 	if err := st.EnsureJournal(ctx); err != nil {
 		return fmt.Errorf("ensure journal: %w", err)
 	}
@@ -415,15 +415,13 @@ func staleSchemaError(dbPath string) error {
 // by row order, which is precisely the guess this feature exists to remove.
 //
 // No user id in the message (Principle I): the count is what an operator needs.
-func warnOwnerlessStore(ctx context.Context, read *sql.DB, logger *slog.Logger) {
-	var people int
-	if err := read.QueryRowContext(ctx, `
-		SELECT COUNT(1) FROM users
-		WHERE (SELECT owner_user_id FROM server_identity WHERE id = 1) IS NULL`).Scan(&people); err != nil {
+func warnOwnerlessStore(ctx context.Context, st *store.Store, logger *slog.Logger) {
+	stranded, people, err := st.OwnerlessWithPeople(ctx)
+	if err != nil {
 		logger.Warn("could not check whether this server has an owner", "err", err)
 		return
 	}
-	if people > 0 {
+	if stranded {
 		// Deliberately not "re-claim it": Pair refuses a claim in this state,
 		// so that advice would be impossible to follow. The store needs a
 		// human - restore a backup, or write the owner back by hand - and no
@@ -467,11 +465,11 @@ func announceClaim(ctx context.Context, st *store.Store, addr string, logger *sl
 	// claim - both ways of guessing whose identity to attach are worse than a
 	// refusal - so printing a link here would hand the operator an instruction
 	// that cannot be followed, once per restart, for ever.
-	people, err := st.CountUsers(ctx)
+	stranded, _, err := st.OwnerlessWithPeople(ctx)
 	if err != nil {
-		return fmt.Errorf("count people: %w", err)
+		return fmt.Errorf("check ownership state: %w", err)
 	}
-	if !id.Claimed() && people > 0 {
+	if stranded {
 		return nil
 	}
 	token, err := st.IssueClaimToken(ctx, time.Now().Unix())

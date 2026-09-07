@@ -61,6 +61,21 @@ func (s *Store) EnsureServerIdentity(ctx context.Context) (ServerIdentity, error
 		return ServerIdentity{}, err
 	}
 
+	// Minting a key for a store that ALREADY holds people would silently break
+	// pinning for every device paired against the old one - the exact outcome
+	// case 6 of the authentication model warns about. It happens when a restore
+	// brings back users without server_identity, and it must be loud: the right
+	// answer is to finish the restore, not to hand out a new identity.
+	var people int
+	if err := tx.QueryRowContext(ctx, "SELECT COUNT(1) FROM users").Scan(&people); err != nil {
+		return ServerIdentity{}, fmt.Errorf("count people: %w", err)
+	}
+	if people > 0 {
+		return ServerIdentity{}, fmt.Errorf(
+			"this database holds %d people but no server identity: minting a new key would break pinning for every "+
+				"paired device - restore server_identity from the same backup as the rest of the database", people)
+	}
+
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return ServerIdentity{}, fmt.Errorf("generate server key: %w", err)
@@ -94,17 +109,43 @@ func (s *Store) ServerIdentity(ctx context.Context) (ServerIdentity, error) {
 // Conditional on the column still being empty: a claim that races another one
 // must not move ownership, and the affected-row count is what settles it -
 // the same shape token burning uses.
-func setOwner(ctx context.Context, tx *sql.Tx, userID string, now int64) error {
+// It reports whether the write landed, which is what the caller needs: the
+// statement is conditional, so "did this person become the owner" is answered
+// by the affected-row count - the same shape BurnToken uses - rather than by
+// reading the row back afterwards.
+func setOwner(ctx context.Context, tx *sql.Tx, userID string, now int64) (bool, error) {
 	// claimed_at is written in the SAME statement on purpose. It decides
 	// nothing, but the moment is unrecoverable, and keeping the two writes
 	// apart is how one of them gets dropped by a later edit.
-	_, err := tx.ExecContext(ctx,
+	res, err := tx.ExecContext(ctx,
 		"UPDATE server_identity SET owner_user_id = ?, claimed_at = ? WHERE id = 1 AND owner_user_id IS NULL",
 		userID, now)
 	if err != nil {
-		return fmt.Errorf("set server owner: %w", err)
+		return false, fmt.Errorf("set server owner: %w", err)
 	}
-	return nil
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("set server owner rows: %w", err)
+	}
+	return affected == 1, nil
+}
+
+// OwnerlessWithPeople reports the state no code path produces and a partial
+// restore can: rows in users, nobody recorded as the owner.
+//
+// One predicate, because three hand-written copies of it had already started to
+// disagree about a missing server_identity row - and one fact in several
+// records is the shape this whole feature came to remove.
+func (s *Store) OwnerlessWithPeople(ctx context.Context) (bool, int, error) {
+	owner, err := ownerUserID(ctx, s.read)
+	if err != nil && !errors.Is(err, ErrNoServerIdentity) {
+		return false, 0, err
+	}
+	var people int
+	if err := s.read.QueryRowContext(ctx, "SELECT COUNT(1) FROM users").Scan(&people); err != nil {
+		return false, 0, fmt.Errorf("count people: %w", err)
+	}
+	return owner == "" && people > 0, people, nil
 }
 
 // ownsServer reports whether userID is the person this machine belongs to.

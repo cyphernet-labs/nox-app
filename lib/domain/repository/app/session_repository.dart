@@ -74,8 +74,13 @@ abstract class SessionRepository {
   /// shows forever — and ownership is settled by a frame that may arrive after
   /// that, or change later when ownership can be transferred.
   ///
-  /// Same contract as [watchLabel]: a fresh single-subscription stream per
-  /// call, so call it once per consumer.
+  /// Unlike [watchLabel] this is ONE shared broadcast stream that replays its
+  /// latest value to every new listener and never completes. Listening twice is
+  /// fine; waiting for `onDone` is not — it will not arrive.
+  ///
+  /// Shared on purpose: a per-call generator has to yield the stored value and
+  /// only then subscribe, and a change landing in that gap is lost with no
+  /// replay — which is the exact miss this channel was added to close.
   Stream<bool?> watchOwnership();
 
   /// Reactive display-label signal: emits the current cached label on listen, then

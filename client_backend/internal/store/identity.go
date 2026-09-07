@@ -164,7 +164,7 @@ func insertDevice(ctx context.Context, tx *sql.Tx, deviceKey, userID, platform s
 		// every greeting and device.list lists it - so anyone able to issue an
 		// invite for themselves could name somebody else's key and walk off
 		// with their paired device. The other way to make the two agree is to
-		// refuse the pair, and that is what Pair does (see claimedByAnother).
+		// refuse the pair, and that is what Pair does (see deviceOwnerOf below).
 		`INSERT INTO devices (device_key, user_id, platform, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?)
 		 ON CONFLICT (device_key) DO UPDATE SET
 		     platform = excluded.platform,

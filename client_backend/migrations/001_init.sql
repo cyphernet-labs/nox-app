@@ -92,13 +92,24 @@ CREATE TABLE server_identity (
 -- token's deliberate shape: it dies by being used, only someone with access to
 -- the machine ever sees it, and an expiring claim would leave a freshly
 -- installed server unclaimable forever. Device invites carry a real deadline.
+--
+-- used_by and created_person record WHO spent the token and WHAT the spending
+-- did. Both exist so that replaying a spent token can answer with what actually
+-- happened instead of re-deriving it:
+--   * without used_by, any device key - a PUBLIC value - could present a spent
+--     claim token and be told that person's id, label and ownership;
+--   * without created_person, a replay re-derives the outcome from the token
+--     kind, so a re-claim that attached to an existing owner answers "created"
+--     the second time and walks them back through the naming screen.
 CREATE TABLE pair_tokens (
     token TEXT PRIMARY KEY,
     kind TEXT NOT NULL CHECK (kind IN ('claim', 'invite_device')),
     user_id TEXT REFERENCES users (user_id),
     created_at INTEGER NOT NULL,
     expires_at INTEGER,
-    used_at INTEGER
+    used_at INTEGER,
+    used_by TEXT,
+    created_person INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 
 -- name_ci is the Unicode case-folded name computed in Go: SQLite's own

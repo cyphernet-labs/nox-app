@@ -105,11 +105,15 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         // and a device that inferred it would be right until the day it was
         // not. Stored now so the owner sees the badge without waiting for the
         // greeting that follows.
-        final adopted = await _sessionRepository.adoptServerIdentity(
-          authorId: greeting.authorId,
-          label: greeting.label,
-          isOwner: greeting.isOwner,
-        );
+        // Guarded like the greeting path is. An unreadable `identity.id` in the
+        // reply degrades to '', and resolveIdentity treats '' as absent - it
+        // then falls back to the login identifier, whose slot since 032 holds
+        // the pairing TOKEN, so own-vs-other detection stops matching and every
+        // message the person sends comes back looking like a stranger's. The
+        // re-greet that would repair it is best-effort and swallowed.
+        final adopted = greeting.authorId.isEmpty
+            ? const RepositoryResult<bool>.success(data: true)
+            : await _sessionRepository.adoptServerIdentity(authorId: greeting.authorId, label: greeting.label, isOwner: greeting.isOwner);
         if (!adopted.hasData) {
           // NOT fatal, and deliberately not a rollback: the claim token is
           // already spent, so discarding here would leave the device unable to

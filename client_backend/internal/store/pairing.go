@@ -92,7 +92,7 @@ func (s *Store) issueToken(ctx context.Context, kind, userID string, now, expire
 // two devices presenting the same invite at the same moment both reach this
 // statement, exactly one sees a row change, and the other is told the token is
 // invalid. Checking-then-updating would let both through.
-func BurnToken(ctx context.Context, tx *sql.Tx, token string, now int64) (PairToken, error) {
+func BurnToken(ctx context.Context, tx *sql.Tx, token, deviceKey string, now int64) (PairToken, error) {
 	var kind string
 	var userID sql.NullString
 	var expiresAt, usedAt sql.NullInt64
@@ -115,7 +115,7 @@ func BurnToken(ctx context.Context, tx *sql.Tx, token string, now int64) (PairTo
 	}
 
 	res, err := tx.ExecContext(ctx,
-		"UPDATE pair_tokens SET used_at = ? WHERE token = ? AND used_at IS NULL", now, token)
+		"UPDATE pair_tokens SET used_at = ?, used_by = ? WHERE token = ? AND used_at IS NULL", now, deviceKey, token)
 	if err != nil {
 		return PairToken{}, fmt.Errorf("burn pairing token: %w", err)
 	}
@@ -168,7 +168,7 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 		return same, nil
 	}
 
-	pt, err := BurnToken(ctx, tx, token, now)
+	pt, err := BurnToken(ctx, tx, token, deviceKey, now)
 	if err != nil {
 		return Identity{}, err
 	}
@@ -245,18 +245,19 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 		// Conditional on the column being empty, so a re-claim on a server that
 		// lost every device attaches to the person who is already the owner and
 		// does NOT move ownership anywhere.
-		if err := setOwner(ctx, tx, id.UserID, now); err != nil {
-			return Identity{}, err
-		}
-		// Read back rather than asserted. setOwner is conditional on the column
-		// still being empty, so claiming the write succeeded would let the pair
-		// reply promise ownership the row does not hold - and the very next
-		// greeting, which resolves it from that row, would take the badge away
-		// again.
-		id.Owner, err = ownsServer(ctx, tx, id.UserID)
+		// The write answers for itself: setOwner is conditional, and its
+		// affected-row count says whether THIS person became the owner. Taking
+		// it from there rather than reading the row back afterwards keeps one
+		// round of SQLite out of every claim and removes the chance of the two
+		// answers disagreeing.
+		became, err := setOwner(ctx, tx, id.UserID, now)
 		if err != nil {
 			return Identity{}, err
 		}
+		// Either this claim made them the owner, or they already were one and
+		// re-attached: the branch above only reaches here for the recorded
+		// owner or for a store with nobody in it.
+		id.Owner = became || owner == id.UserID
 		// Every OTHER unused claim token dies with this one. They were printed
 		// to the server log on earlier starts, and a log is not a secret store:
 		// without this, each of them comes back to life the moment the device
@@ -307,6 +308,15 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 	if err := insertDevice(ctx, tx, deviceKey, id.UserID, platform, now); err != nil {
 		return Identity{}, err
 	}
+	// Record WHAT this spending did, so a replay can answer with it instead of
+	// guessing from the token kind. The outcome is only known here, after the
+	// branch above decided whether a person came into being.
+	if id.Created {
+		if _, err := tx.ExecContext(ctx,
+			"UPDATE pair_tokens SET created_person = 1 WHERE token = ?", token); err != nil {
+			return Identity{}, fmt.Errorf("record pairing outcome: %w", err)
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return Identity{}, fmt.Errorf("commit pair: %w", err)
 	}
@@ -324,32 +334,34 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 // naming step, into the chats list under an auto-assigned User<random>.
 func pairedBy(ctx context.Context, tx *sql.Tx, token, deviceKey string) (Identity, bool, error) {
 	var id Identity
-	var kind string
-	// The person comes from the DEVICE row and the outcome from the TOKEN, so
-	// the join insists the two agree: `t.user_id IS NULL OR t.user_id = d.user_id`
-	// covers a claim (no person on the token) and an invite (one person, who
-	// must be the device's). Without it a replay could answer about one person
-	// while reporting an outcome computed for another - and `created: true`
-	// from a claim would walk an existing, already-named person back through
-	// the naming screen under somebody else's identity.
+	// Matched on used_by: the token must have been spent by THIS device.
+	//
+	// Trying to tie the two together through the users table does not work for
+	// a claim, whose token names nobody - so before used_by existed, any known
+	// device key could present a spent claim token and be told that person's
+	// id, label and ownership. The key is public: it rides every greeting and
+	// device.list prints it, while the token sits in the server log across
+	// restarts and `pair` is the one command that carries no signature.
+	//
+	// created_person is read rather than re-derived from the kind, so a replay
+	// answers with what the original reply said. A re-claim that attached to an
+	// existing owner created nobody, and re-deriving it from "this was a claim"
+	// would walk that owner back through the naming screen.
+	var created int
 	err := tx.QueryRowContext(ctx, `
-		SELECT u.user_id, u.label, t.kind
+		SELECT u.user_id, u.label, t.created_person
 		FROM pair_tokens t
-		JOIN devices d ON d.device_key = ?
+		JOIN devices d ON d.device_key = t.used_by
 		JOIN users u ON u.user_id = d.user_id
-		WHERE t.token = ? AND t.used_at IS NOT NULL
-		  AND (t.user_id IS NULL OR t.user_id = d.user_id)`,
-		deviceKey, token).Scan(&id.UserID, &id.Label, &kind)
+		WHERE t.token = ? AND t.used_at IS NOT NULL AND t.used_by = ?`,
+		token, deviceKey).Scan(&id.UserID, &id.Label, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Identity{}, false, nil
 	}
 	if err != nil {
 		return Identity{}, false, fmt.Errorf("read pairing replay: %w", err)
 	}
-	// A claim is the only kind that brings a person into being, so replaying one
-	// reports created just as the lost reply did. An invite attaches a device to
-	// somebody who already existed.
-	id.Created = kind == TokenClaim
+	id.Created = created != 0
 	// Ownership is read, not inferred from the kind: a replayed claim answers
 	// about a person who owns the machine, and a replayed invite about one who
 	// may or may not.

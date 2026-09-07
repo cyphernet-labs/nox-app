@@ -13,7 +13,7 @@ import '../../../utils/golden.dart';
 void main() {
   group('the owner', () {
     // The identity card / Show QR loads the id from the session spine on init.
-    setUpAll(registerFakeSession);
+    setUpAll(() => registerFakeSession(session: kTestSession.copyWith(isOwner: true)));
     tearDownAll(getIt.reset);
 
     // Mobile layout: identity card + flat settings rows + Log out.

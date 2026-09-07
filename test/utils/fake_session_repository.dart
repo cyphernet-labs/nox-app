@@ -5,6 +5,7 @@ import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/app/session_model.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
+import 'package:rxdart/rxdart.dart';
 
 /// Canonical test identifier (a long key-like string) — a stable `Your ID` for the
 /// identity card / Show QR surface in tests.
@@ -15,10 +16,10 @@ const SessionModel kTestSession = SessionModel(
   // The server-minted public id. Distinct from the identifier slot, which now
   // holds the pairing token - a credential, never shown as "Your ID".
   authorId: 'u_test0000000001',
-  // The only person on a server owns it: until invite-user arrives (Q15) there
-  // is nobody else, so this is the ordinary state and the one the page goldens
-  // should lock.
-  isOwner: true,
+  // Ownership is deliberately NOT stated here. A shared fixture that claims it
+  // makes every consumer inherit a badge they never asked about - and makes the
+  // watch emit at construction in tests that are not about ownership at all.
+  // The two settings-page golden groups state it explicitly instead.
   onboardingComplete: true,
 );
 
@@ -32,6 +33,7 @@ class FakeSessionRepository implements SessionRepository {
 
   String? _label;
   final StreamController<String?> _labelController = StreamController<String?>.broadcast();
+  final BehaviorSubject<bool?> _ownership = BehaviorSubject<bool?>();
 
   @override
   Future<RepositoryResult<SessionModel?>> readSession() async {
@@ -52,10 +54,17 @@ class FakeSessionRepository implements SessionRepository {
   }
 
   @override
-  Stream<bool?> watchOwnership() async* {
-    yield session?.isOwner;
-    yield* const Stream<bool?>.empty();
+  Stream<bool?> watchOwnership() {
+    // Mirrors the real one: a shared subject that replays its latest value and
+    // does NOT complete. The generator this replaced closed after a single
+    // event, which made the behaviour the channel exists for - an answer
+    // arriving after the screen was built - unreachable through the fake.
+    if (!_ownership.hasValue) _ownership.add(session?.isOwner);
+    return _ownership.stream;
   }
+
+  /// Pushes a new ownership answer, the way a greeting would.
+  void emitOwnership(bool? isOwner) => _ownership.add(isOwner);
 
   @override
   Stream<String?> watchLabel() async* {
