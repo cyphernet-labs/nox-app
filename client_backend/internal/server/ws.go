@@ -100,6 +100,12 @@ func (c *client) dispatch(cmd protocol.Command) {
 		c.handleDeviceInvite(cmd)
 	case protocol.CmdIdentitySetLabel:
 		c.handleIdentitySetLabel(cmd)
+	case protocol.CmdPersonInvite:
+		c.handlePersonInvite(cmd)
+	case protocol.CmdPersonList:
+		c.handlePersonList(cmd)
+	case protocol.CmdPersonConfirm:
+		c.handlePersonConfirm(cmd)
 	case protocol.CmdChatsList:
 		c.handleChatsList(cmd)
 	case protocol.CmdChatGet:

@@ -24,7 +24,7 @@ func claimPerson(t *testing.T, s *Store, deviceKey string) Identity {
 	if err != nil {
 		t.Fatalf("IssueClaimToken: %v", err)
 	}
-	id, err := s.Pair(ctx, token, deviceKey, "test", 100)
+	id, err := pairID(ctx, s, token, deviceKey, "test", 100)
 	if err != nil {
 		t.Fatalf("Pair: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestGreetingNeverRebindsADeviceToAnotherPerson(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueDeviceInvite: %v", err)
 	}
-	second, err := s.Pair(ctx, token, "dev-desktop", "test", 200)
+	second, err := pairID(ctx, s, token, "dev-desktop", "test", 200)
 	if err != nil {
 		t.Fatalf("Pair second device: %v", err)
 	}

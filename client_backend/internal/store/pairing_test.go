@@ -11,6 +11,15 @@ import (
 	"nox.app/client-backend/internal/db"
 )
 
+// pairID presents a token and flattens the result to the identity, for the
+// many tests that expect a pairing to COMPLETE. Person invites do not complete
+// here - they wait for the owner - so tests about those call Pair directly and
+// read PairResult.Pending.
+func pairID(ctx context.Context, s *Store, token, deviceKey, platform string, now int64) (Identity, error) {
+	res, err := s.Pair(ctx, token, deviceKey, platform, now)
+	return res.Identity, err
+}
+
 func TestServerKeyIsMintedOnceAndSurvivesRestart(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "key.db")
@@ -65,7 +74,7 @@ func TestClaimIsAcceptedOnceAndThenDeadForever(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueClaimToken: %v", err)
 	}
-	if _, err := s.Pair(ctx, first, "dev-a", "test", 100); err != nil {
+	if _, err := pairID(ctx, s, first, "dev-a", "test", 100); err != nil {
 		t.Fatalf("first claim: %v", err)
 	}
 
@@ -75,7 +84,7 @@ func TestClaimIsAcceptedOnceAndThenDeadForever(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueClaimToken again: %v", err)
 	}
-	if _, err := s.Pair(ctx, second, "dev-b", "test", 200); !errors.Is(err, ErrTokenInvalid) {
+	if _, err := pairID(ctx, s, second, "dev-b", "test", 200); !errors.Is(err, ErrTokenInvalid) {
 		t.Fatalf("second claim err = %v, want ErrTokenInvalid", err)
 	}
 }
@@ -93,7 +102,7 @@ func TestClaimTokenNeverExpires(t *testing.T) {
 	}
 	// A year later. An expiring claim would leave a server that was installed
 	// and forgotten unclaimable, with no way to mint another.
-	if _, err := s.Pair(ctx, token, "dev-a", "test", 100+365*24*3600); err != nil {
+	if _, err := pairID(ctx, s, token, "dev-a", "test", 100+365*24*3600); err != nil {
 		t.Fatalf("claim after a year: %v", err)
 	}
 }
@@ -107,7 +116,7 @@ func TestDeviceInviteExpiresAndIsDistinguishableFromASpentOne(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueDeviceInvite: %v", err)
 	}
-	_, err = s.Pair(ctx, expired, "dev-late", "test", 100+InviteTTLSeconds+1)
+	_, err = pairID(ctx, s, expired, "dev-late", "test", 100+InviteTTLSeconds+1)
 	if !errors.Is(err, ErrTokenExpired) {
 		t.Fatalf("expired invite err = %v, want ErrTokenExpired", err)
 	}
@@ -116,13 +125,13 @@ func TestDeviceInviteExpiresAndIsDistinguishableFromASpentOne(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueDeviceInvite: %v", err)
 	}
-	if _, err := s.Pair(ctx, spent, "dev-desktop", "test", 200); err != nil {
+	if _, err := pairID(ctx, s, spent, "dev-desktop", "test", 200); err != nil {
 		t.Fatalf("first use: %v", err)
 	}
 	// The two refusals are separate because the person's next action differs:
 	// an expired invite means "issue a new one", a spent one means "you already
 	// used this".
-	if _, err := s.Pair(ctx, spent, "dev-tablet", "test", 300); !errors.Is(err, ErrTokenInvalid) {
+	if _, err := pairID(ctx, s, spent, "dev-tablet", "test", 300); !errors.Is(err, ErrTokenInvalid) {
 		t.Fatalf("spent invite err = %v, want ErrTokenInvalid", err)
 	}
 }
@@ -156,7 +165,7 @@ func TestTokenSurvivesRestart(t *testing.T) {
 	// standing in the next room.
 	s2, closeSecond := open()
 	defer closeSecond()
-	if _, err := s2.Pair(ctx, token, "dev-a", "test", 200); err != nil {
+	if _, err := pairID(ctx, s2, token, "dev-a", "test", 200); err != nil {
 		t.Fatalf("pair after restart: %v", err)
 	}
 }
@@ -178,7 +187,7 @@ func TestOneInviteProducesExactlyOneDevice(t *testing.T) {
 		results := make(chan error, 2)
 		for i, key := range []string{"dev-x", "dev-y"} {
 			go func() {
-				_, err := s.Pair(ctx, token, key, "test", 200+int64(i))
+				_, err := pairID(ctx, s, token, key, "test", 200+int64(i))
 				results <- err
 			}()
 		}
@@ -279,12 +288,12 @@ func TestARetryFromTheSameDeviceGetsTheSameAnswer(t *testing.T) {
 		t.Fatalf("IssueClaimToken: %v", err)
 	}
 
-	first, err := s.Pair(ctx, token, "dev-phone", "ios", 100)
+	first, err := pairID(ctx, s, token, "dev-phone", "ios", 100)
 	if err != nil {
 		t.Fatalf("first pair: %v", err)
 	}
 
-	again, err := s.Pair(ctx, token, "dev-phone", "ios", 200)
+	again, err := pairID(ctx, s, token, "dev-phone", "ios", 200)
 	if err != nil {
 		t.Fatalf("retry from the same device: %v", err)
 	}
@@ -299,7 +308,7 @@ func TestARetryFromTheSameDeviceGetsTheSameAnswer(t *testing.T) {
 	}
 
 	// A DIFFERENT key presenting the same spent token is an ordinary replay.
-	if _, err := s.Pair(ctx, token, "dev-stranger", "linux", 300); !errors.Is(err, ErrTokenInvalid) {
+	if _, err := pairID(ctx, s, token, "dev-stranger", "linux", 300); !errors.Is(err, ErrTokenInvalid) {
 		t.Fatalf("stranger replay err = %v, want ErrTokenInvalid", err)
 	}
 }
@@ -328,7 +337,7 @@ func TestAServerWithNoDevicesBecomesClaimableAgain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueClaimToken: %v", err)
 	}
-	back, err := s.Pair(ctx, token, "dev-new", "macos", 400)
+	back, err := pairID(ctx, s, token, "dev-new", "macos", 400)
 	if err != nil {
 		t.Fatalf("re-claim: %v", err)
 	}
@@ -354,7 +363,7 @@ func TestAServerWithNoDevicesBecomesClaimableAgain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueClaimToken again: %v", err)
 	}
-	if _, err := s.Pair(ctx, second, "dev-other", "linux", 500); !errors.Is(err, ErrTokenInvalid) {
+	if _, err := pairID(ctx, s, second, "dev-other", "linux", 500); !errors.Is(err, ErrTokenInvalid) {
 		t.Fatalf("claim on a reachable server err = %v, want ErrTokenInvalid", err)
 	}
 }
@@ -377,7 +386,7 @@ func TestASuccessfulClaimRetiresEveryOtherClaimToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueClaimToken: %v", err)
 	}
-	if _, err := s.Pair(ctx, used, "dev-phone", "ios", 100); err != nil {
+	if _, err := pairID(ctx, s, used, "dev-phone", "ios", 100); err != nil {
 		t.Fatalf("claim: %v", err)
 	}
 
@@ -385,7 +394,7 @@ func TestASuccessfulClaimRetiresEveryOtherClaimToken(t *testing.T) {
 	if err := s.RevokeDevice(ctx, "dev-phone"); err != nil {
 		t.Fatalf("RevokeDevice: %v", err)
 	}
-	if _, err := s.Pair(ctx, stale, "dev-attacker", "linux", 200); !errors.Is(err, ErrTokenInvalid) {
+	if _, err := pairID(ctx, s, stale, "dev-attacker", "linux", 200); !errors.Is(err, ErrTokenInvalid) {
 		t.Fatalf("an old printed claim token still works: %v", err)
 	}
 }
@@ -405,7 +414,7 @@ func TestRevokingADeviceRetiresTheInvitesItCouldHaveIssued(t *testing.T) {
 		t.Fatalf("RevokeDevice: %v", err)
 	}
 
-	if _, err := s.Pair(ctx, invite, "dev-new", "linux", 300); !errors.Is(err, ErrTokenInvalid) {
+	if _, err := pairID(ctx, s, invite, "dev-new", "linux", 300); !errors.Is(err, ErrTokenInvalid) {
 		t.Fatalf("an invite from a revoked device still works: %v", err)
 	}
 }
@@ -424,7 +433,7 @@ func TestClaimMakesThePersonTheOwner(t *testing.T) {
 		t.Fatalf("IssueClaimToken: %v", err)
 	}
 
-	id, err := s.Pair(ctx, token, "dev-phone", "test", 100)
+	id, err := pairID(ctx, s, token, "dev-phone", "test", 100)
 	if err != nil {
 		t.Fatalf("Pair: %v", err)
 	}
@@ -458,7 +467,7 @@ func TestAnInvitedDeviceOfTheOwnerAlsoReportsOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueDeviceInvite: %v", err)
 	}
-	second, err := s.Pair(ctx, token, "dev-desktop", "test", 200)
+	second, err := pairID(ctx, s, token, "dev-desktop", "test", 200)
 	if err != nil {
 		t.Fatalf("Pair second device: %v", err)
 	}
@@ -483,12 +492,12 @@ func TestAReplayedClaimStillReportsOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueClaimToken: %v", err)
 	}
-	first, err := s.Pair(ctx, token, "dev-phone", "test", 100)
+	first, err := pairID(ctx, s, token, "dev-phone", "test", 100)
 	if err != nil {
 		t.Fatalf("Pair: %v", err)
 	}
 
-	replay, err := s.Pair(ctx, token, "dev-phone", "test", 150)
+	replay, err := pairID(ctx, s, token, "dev-phone", "test", 150)
 	if err != nil {
 		t.Fatalf("replayed Pair: %v", err)
 	}
@@ -513,7 +522,7 @@ func TestReClaimKeepsOwnershipWithTheExistingPerson(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueClaimToken: %v", err)
 	}
-	back, err := s.Pair(ctx, token, "dev-new", "test", 300)
+	back, err := pairID(ctx, s, token, "dev-new", "test", 300)
 	if err != nil {
 		t.Fatalf("re-claim: %v", err)
 	}
@@ -585,7 +594,7 @@ func TestReClaimFollowsTheOwnerAndNotTheOldestPerson(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueClaimToken: %v", err)
 	}
-	back, err := s.Pair(ctx, token, "dev-new", "test", 300)
+	back, err := pairID(ctx, s, token, "dev-new", "test", 300)
 	if err != nil {
 		t.Fatalf("re-claim: %v", err)
 	}
@@ -616,7 +625,7 @@ func TestClaimIsRefusedOnAStoreWithPeopleButNoOwner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueClaimToken: %v", err)
 	}
-	if _, err := s.Pair(ctx, token, "dev-stranger", "test", 400); !errors.Is(err, ErrTokenInvalid) {
+	if _, err := pairID(ctx, s, token, "dev-stranger", "test", 400); !errors.Is(err, ErrTokenInvalid) {
 		t.Fatalf("err = %v, want ErrTokenInvalid: an ownerless store must not let a stranger into somebody's history", err)
 	}
 }
@@ -645,7 +654,7 @@ func TestPairNeverReportsOwnershipTheRowDoesNotHold(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueClaimToken: %v", err)
 	}
-	id, err := s.Pair(ctx, token, "dev-new", "test", 500)
+	id, err := pairID(ctx, s, token, "dev-new", "test", 500)
 	if err != nil {
 		t.Fatalf("Pair: %v", err)
 	}
@@ -674,7 +683,7 @@ func TestPairingSomebodyElsesDeviceKeyIsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueDeviceInvite: %v", err)
 	}
-	if _, err := s.Pair(ctx, token, "dev-shared", "test", 200); !errors.Is(err, ErrTokenInvalid) {
+	if _, err := pairID(ctx, s, token, "dev-shared", "test", 200); !errors.Is(err, ErrTokenInvalid) {
 		t.Fatalf("err = %v, want ErrTokenInvalid: a paired device must not change hands", err)
 	}
 
@@ -703,7 +712,7 @@ func TestPairingYourOwnDeviceKeyAgainIsAccepted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueDeviceInvite: %v", err)
 	}
-	again, err := s.Pair(ctx, token, "dev-mine", "test", 200)
+	again, err := pairID(ctx, s, token, "dev-mine", "test", 200)
 	if err != nil {
 		t.Fatalf("re-pairing my own device: %v", err)
 	}
@@ -740,7 +749,7 @@ func TestAReplayWhoseTokenAndDeviceDisagreeIsNotAnswered(t *testing.T) {
 	}
 
 	// The replay must not answer about the owner using the guest's token.
-	if _, err := s.Pair(ctx, token, "dev-phone", "test", 300); !errors.Is(err, ErrTokenInvalid) {
+	if _, err := pairID(ctx, s, token, "dev-phone", "test", 300); !errors.Is(err, ErrTokenInvalid) {
 		t.Fatalf("err = %v, want ErrTokenInvalid: the token names one person and the device another", err)
 	}
 	_ = owner
@@ -761,7 +770,7 @@ func TestASpentTokenAnswersOnlyTheDeviceThatSpentIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueClaimToken: %v", err)
 	}
-	owner, err := s.Pair(ctx, claim, "dev-a", "test", 100)
+	owner, err := pairID(ctx, s, claim, "dev-a", "test", 100)
 	if err != nil {
 		t.Fatalf("Pair: %v", err)
 	}
@@ -771,20 +780,20 @@ func TestASpentTokenAnswersOnlyTheDeviceThatSpentIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueDeviceInvite: %v", err)
 	}
-	if _, err := s.Pair(ctx, invite, "dev-b", "test", 200); err != nil {
+	if _, err := pairID(ctx, s, invite, "dev-b", "test", 200); err != nil {
 		t.Fatalf("Pair second device: %v", err)
 	}
 
 	// dev-b presenting the spent claim must learn nothing.
-	if _, err := s.Pair(ctx, claim, "dev-b", "test", 300); !errors.Is(err, ErrTokenInvalid) {
+	if _, err := pairID(ctx, s, claim, "dev-b", "test", 300); !errors.Is(err, ErrTokenInvalid) {
 		t.Fatalf("err = %v, want ErrTokenInvalid: a spent token must not answer a device that never used it", err)
 	}
 	// A key nobody knows either.
-	if _, err := s.Pair(ctx, claim, "dev-stranger", "test", 300); !errors.Is(err, ErrTokenInvalid) {
+	if _, err := pairID(ctx, s, claim, "dev-stranger", "test", 300); !errors.Is(err, ErrTokenInvalid) {
 		t.Fatalf("err = %v, want ErrTokenInvalid", err)
 	}
 	// And the device that DID spend it still gets its answer.
-	replay, err := s.Pair(ctx, claim, "dev-a", "test", 300)
+	replay, err := pairID(ctx, s, claim, "dev-a", "test", 300)
 	if err != nil {
 		t.Fatalf("replay by the spender: %v", err)
 	}
@@ -809,7 +818,7 @@ func TestAReplayedReClaimDoesNotClaimToHaveCreatedAnybody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueClaimToken: %v", err)
 	}
-	first, err := s.Pair(ctx, token, "dev-new", "test", 300)
+	first, err := pairID(ctx, s, token, "dev-new", "test", 300)
 	if err != nil {
 		t.Fatalf("re-claim: %v", err)
 	}
@@ -817,7 +826,7 @@ func TestAReplayedReClaimDoesNotClaimToHaveCreatedAnybody(t *testing.T) {
 		t.Fatal("a re-claim reported creating a person who already existed")
 	}
 
-	replay, err := s.Pair(ctx, token, "dev-new", "test", 350)
+	replay, err := pairID(ctx, s, token, "dev-new", "test", 350)
 	if err != nil {
 		t.Fatalf("replayed re-claim: %v", err)
 	}
@@ -873,7 +882,7 @@ func TestAGuestDeviceDoesNotBlockTheOwnersReClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueClaimToken: %v", err)
 	}
-	back, err := s.Pair(ctx, token, "dev-owner-new", "test", 300)
+	back, err := pairID(ctx, s, token, "dev-owner-new", "test", 300)
 	if err != nil {
 		t.Fatalf("the owner cannot get back into their own machine: %v", err)
 	}
@@ -893,7 +902,7 @@ func TestAClaimIsStillRefusedWhileTheOwnerHasADevice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueClaimToken: %v", err)
 	}
-	if _, err := s.Pair(ctx, token, "dev-other", "test", 300); !errors.Is(err, ErrTokenInvalid) {
+	if _, err := pairID(ctx, s, token, "dev-other", "test", 300); !errors.Is(err, ErrTokenInvalid) {
 		t.Fatalf("err = %v, want ErrTokenInvalid", err)
 	}
 }
@@ -911,7 +920,7 @@ func TestAReplayAnswersWithWhatTheTokenProducedNotWhoHoldsTheKeyNow(t *testing.T
 	if err != nil {
 		t.Fatalf("IssueClaimToken: %v", err)
 	}
-	first, err := s.Pair(ctx, claim, "dev-x", "test", 100)
+	first, err := pairID(ctx, s, claim, "dev-x", "test", 100)
 	if err != nil {
 		t.Fatalf("Pair: %v", err)
 	}
@@ -927,7 +936,7 @@ func TestAReplayAnswersWithWhatTheTokenProducedNotWhoHoldsTheKeyNow(t *testing.T
 	if err != nil {
 		t.Fatalf("IssueClaimToken: %v", err)
 	}
-	back, err := s.Pair(ctx, again, "dev-new", "test", 200)
+	back, err := pairID(ctx, s, again, "dev-new", "test", 200)
 	if err != nil {
 		t.Fatalf("re-claim: %v", err)
 	}
@@ -938,12 +947,12 @@ func TestAReplayAnswersWithWhatTheTokenProducedNotWhoHoldsTheKeyNow(t *testing.T
 	if err != nil {
 		t.Fatalf("IssueDeviceInvite: %v", err)
 	}
-	if _, err := s.Pair(ctx, invite, "dev-x", "test", 300); err != nil {
+	if _, err := pairID(ctx, s, invite, "dev-x", "test", 300); err != nil {
 		t.Fatalf("re-adding dev-x: %v", err)
 	}
 
 	// The ORIGINAL claim token replayed by dev-x answers what it produced then.
-	replay, err := s.Pair(ctx, claim, "dev-x", "test", 400)
+	replay, err := pairID(ctx, s, claim, "dev-x", "test", 400)
 	if err != nil {
 		t.Fatalf("replay: %v", err)
 	}
@@ -967,7 +976,7 @@ func TestAReplayIsRefusedOnceTheDeviceBelongsToSomebodyElse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueClaimToken: %v", err)
 	}
-	produced, err := s.Pair(ctx, claim, "dev-x", "test", 100)
+	produced, err := pairID(ctx, s, claim, "dev-x", "test", 100)
 	if err != nil {
 		t.Fatalf("Pair: %v", err)
 	}
@@ -983,7 +992,7 @@ func TestAReplayIsRefusedOnceTheDeviceBelongsToSomebodyElse(t *testing.T) {
 		t.Fatalf("rebind device: %v", err)
 	}
 
-	if _, err := s.Pair(ctx, claim, "dev-x", "test", 300); !errors.Is(err, ErrTokenInvalid) {
+	if _, err := pairID(ctx, s, claim, "dev-x", "test", 300); !errors.Is(err, ErrTokenInvalid) {
 		t.Fatalf("err = %v, want ErrTokenInvalid: the replay handed over %q's identity", err, produced.UserID)
 	}
 }

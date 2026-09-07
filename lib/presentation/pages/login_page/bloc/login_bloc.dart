@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
+import 'package:nox_app/data/sync/live_identity_handshake.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
@@ -23,6 +24,38 @@ class LoginBloc extends BaseBloc<LoginEvent, LoginState> {
     on<ClipboardChecked>(_onClipboardChecked);
     on<SignInRequested>(_onSignInRequested);
     on<NavigationHandled>(_onNavigationHandled);
+    on<OwnerWaitChanged>(_onOwnerWaitChanged);
+    _watchOwnerWait();
+  }
+
+  StreamSubscription<bool>? _ownerWait;
+
+  /// A presented invite that is waiting for the owner. Subscribed rather than
+  /// returned, because `signIn` only comes back once the wait is over — which
+  /// is exactly the several minutes the person has nothing on screen for.
+  void _watchOwnerWait() {
+    final handshake = liveIdentityHandshake;
+    if (handshake == null) return;
+    _ownerWait = handshake.waitingForOwner.listen((waiting) {
+      if (isClosed) return;
+      add(LoginEvent.ownerWaitChanged(waiting));
+    });
+  }
+
+  @override
+  Future<void> close() async {
+    await _ownerWait?.cancel();
+    return super.close();
+  }
+
+  void _onOwnerWaitChanged(OwnerWaitChanged event, Emitter<LoginState> emit) {
+    if (event.waiting) {
+      emit(state.copyWith(status: LoginStatus.waitingForOwner));
+      return;
+    }
+    // Back to plain loading only while a sign-in is still in flight; the result
+    // that follows sets the real status.
+    if (state.status == LoginStatus.waitingForOwner) emit(state.copyWith(status: LoginStatus.loading));
   }
 
   /// In demo mode (gallery) the sign-in outcome is a debug stand-in and navigation
@@ -64,12 +97,15 @@ class LoginBloc extends BaseBloc<LoginEvent, LoginState> {
     );
   }
 
-  /// Each refusal keeps its own message: the repository already told the three
+  /// Each refusal keeps its own message: the repository already told them
   /// apart, and collapsing them here would undo that.
   static LoginStatus _statusFor(Object? exception) => switch (exception) {
     RepositoryException.invalidRequest => LoginStatus.errorFormat,
     RepositoryException.notFound => LoginStatus.errorExpired,
     RepositoryException.authentication => LoginStatus.errorRejected,
+    RepositoryException.pairDeclined => LoginStatus.errorDeclined,
+    RepositoryException.pairTimeout => LoginStatus.errorNoAnswer,
+    RepositoryException.internal => LoginStatus.errorNetwork,
     _ => LoginStatus.errorNetwork,
   };
 

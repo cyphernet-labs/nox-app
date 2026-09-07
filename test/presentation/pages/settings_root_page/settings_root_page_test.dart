@@ -207,6 +207,22 @@ void main() {
       expect(find.text(l10nEn.settingsOwnerBadge), findsOneWidget);
     });
 
+    testWidgets('the People row is the owner\'s alone, and "not stated" hides it too', (tester) async {
+      // Hidden rather than shown-and-refused: the refusal on the wire exists
+      // for the protocol's honesty, not as a way to tell a person they may not.
+      final session = getIt<SessionRepository>() as FakeSessionRepository;
+      await pumpDesktop(tester);
+      expect(find.text(l10nEn.settingsPeopleTitle), findsNothing, reason: 'nothing stated yet is not "you are the owner"');
+
+      session.emitOwnership(false);
+      await tester.pumpAndSettle();
+      expect(find.text(l10nEn.settingsPeopleTitle), findsNothing);
+
+      session.emitOwnership(true);
+      await tester.pumpAndSettle();
+      expect(find.text(l10nEn.settingsPeopleTitle), findsOneWidget);
+    });
+
     testWidgets('there is no reveal and no account QR - the id is public, and it is not an invite', (tester) async {
       await pumpDesktop(tester);
 

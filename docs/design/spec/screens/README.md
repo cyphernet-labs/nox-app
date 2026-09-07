@@ -40,3 +40,5 @@
 | 7.6 | Terms | [terms.md](terms.md) | вопросы закрыты |
 | 7.7 | О приложении | [about.md](about.md) | вопросы закрыты |
 | 7.8 | Устройства | [devices.md](devices.md) | новый экран фазы 032 |
+| 7.9 | Люди | [people.md](people.md) | новый экран фазы 034 |
+| 8.1 | Запрос на подтверждение | [pair-request.md](pair-request.md) | новый экран фазы 034 |

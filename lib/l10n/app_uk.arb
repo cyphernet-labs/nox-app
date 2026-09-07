@@ -171,5 +171,24 @@
   "attachmentGone": "Цього файлу вже немає на сервері",
   "@attachmentGone": {
     "description": "Terminal state on the file screen: the bytes are gone. Contract 2.1 forbids offering a retry here."
-  }
+  },
+  "settingsPeopleTitle": "Люди",
+  "peopleEmpty": "Поки що більше нікого",
+  "peopleError": "Не вдалося завантажити людей.",
+  "peopleInvite": "Запросити людину",
+  "peopleInviteMessage": "Надішліть це тому, кого запрошуєте. Спрацює один раз, протягом 24 годин, і вам треба буде підтвердити вхід.",
+  "peopleInviteError": "Не вдалося створити запрошення.",
+  "peopleYou": "Ви",
+  "pairRequestTitle": "Хтось хоче приєднатися",
+  "pairRequestMessage": "Щойно скористалися вашим запрошенням. Якщо впустити, людина отримає доступ до всіх чатів на цьому сервері.",
+  "pairRequestInvited": "Запрошення надіслано {time}",
+  "pairRequestExpires": "Діє до {time}",
+  "pairRequestApprove": "Впустити",
+  "pairRequestDecline": "Не зараз",
+  "pairRequestFailed": "Не вдалося відповісти на запит.",
+  "loginErrorDeclined": "Власник відхилив це запрошення.",
+  "loginErrorNoAnswer": "Власник не відповів вчасно. Попросіть спробувати ще раз.",
+  "peopleNotOwner": "Запрошувати людей може лише власник сервера.",
+  "loginWaitingForOwner": "Чекаємо, доки власник вас впустить. Це може зайняти кілька хвилин.",
+  "pairRequestOffline": "Немає зв’язку. Запит усе ще чекає на сервері — дайте відповідь, коли зв’язок повернеться."
 }

@@ -6,11 +6,13 @@ import 'package:nox_app/general/pairing/pairing_link.dart';
 import 'package:nox_app/general/platform_utils.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
 import 'package:nox_app/data/sync/outbox_service.dart';
+import 'package:nox_app/data/sync/pair_request_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/app/app_state_type.dart';
+import 'package:nox_app/domain/model/session/pair_refusal.dart';
 import 'package:nox_app/domain/repository/app/app_state_repository.dart';
 import 'package:nox_app/domain/repository/app/auth_repository.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
@@ -152,9 +154,24 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
           // reconnect away, and the session is already valid.
         }
         return _finishSignIn(onboardingComplete: !greeting.created!);
+      } on PairingFailed {
+        // Not about the link. Retryable, and the person is told so rather than
+        // sent looking for an invite they already have.
+        await _sessionRepository.discardSignIn();
+        return const RepositoryResult<bool>.error(exception: RepositoryException.internal);
       } on PairingRefused catch (e) {
         await _sessionRepository.discardSignIn();
-        return RepositoryResult<bool>.error(exception: e.expired ? RepositoryException.notFound : RepositoryException.authentication);
+        // Four refusals, four answers. The owner's decision and the owner's
+        // silence are NOT the same thing to the person reading it: one means
+        // stop asking, the other means ask again.
+        return RepositoryResult<bool>.error(
+          exception: switch (e.reason) {
+            PairRefusal.expired => RepositoryException.notFound,
+            PairRefusal.declined => RepositoryException.pairDeclined,
+            PairRefusal.noAnswer => RepositoryException.pairTimeout,
+            PairRefusal.notUsable => RepositoryException.authentication,
+          },
+        );
       } on Object catch (e, st) {
         // The TYPE only. A FormatException from a base64 decode carries the
         // offending source in its message, which here would be the link or the
@@ -165,6 +182,14 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         return const RepositoryResult<bool>.error(exception: RepositoryException.connection);
       }
     });
+  }
+
+  /// Forgets any question waiting for an answer. A question belongs to the
+  /// session that received it: left behind, it would surface after the next
+  /// sign-in, possibly to somebody who is not the owner and cannot answer it.
+  void _forgetPairRequests() {
+    if (!getIt.isRegistered<PairRequestService>()) return;
+    getIt<PairRequestService>().clear();
   }
 
   /// Revokes this device's own key before the local wipe, when there is a
@@ -272,6 +297,10 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         // for the life of the process while the app still shows the user signed
         // in — so a failed wipe puts it back.
         if (getIt.isRegistered<OutboxService>()) await getIt<OutboxService>().stop();
+        // A question waiting for an answer belongs to the session that received
+        // it. Nothing else removes it — the socket is down, so the outcome that
+        // would have will never arrive.
+        _forgetPairRequests();
         try {
           // The queue goes FIRST of the stores. It holds message texts that were
           // never sent, and a crash later in the wipe would leave them for the

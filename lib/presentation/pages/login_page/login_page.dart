@@ -156,9 +156,12 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
         _bloc.add(const LoginEvent.navigationHandled());
       case LoginStatus.idle:
       case LoginStatus.loading:
+      case LoginStatus.waitingForOwner:
       case LoginStatus.errorFormat:
       case LoginStatus.errorExpired:
       case LoginStatus.errorRejected:
+      case LoginStatus.errorDeclined:
+      case LoginStatus.errorNoAnswer:
       case LoginStatus.errorNetwork:
         break;
     }
@@ -198,6 +201,8 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
     LoginStatus.errorFormat => context.l10n.loginInvalidId,
     LoginStatus.errorExpired => context.l10n.loginLinkExpired,
     LoginStatus.errorRejected => context.l10n.loginLinkRejected,
+    LoginStatus.errorDeclined => context.l10n.loginErrorDeclined,
+    LoginStatus.errorNoAnswer => context.l10n.loginErrorNoAnswer,
     LoginStatus.errorNetwork => context.l10n.loginNetworkError,
     _ => null,
   };
@@ -206,6 +211,17 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
+        // Said out loud, because the wait is on a PERSON: the owner has to
+        // notice, pick up a device and read. A bare spinner for several minutes
+        // reads as a hung app.
+        if (state.status == LoginStatus.waitingForOwner) ...[
+          Text(
+            context.l10n.loginWaitingForOwner,
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.outline),
+          ),
+          SizedBox(height: AppSpacingTokens.s12),
+        ],
         AppPrimaryButtonWidget(label: context.l10n.loginSignIn, onPressed: state.canSubmit ? _submit : null, loading: state.isLoading),
         // `Scan QR` is shown only where the camera scanner exists (iOS/Android/macOS);
         // on Windows/Linux it is hidden. There, a "pick a QR image" fallback stands in so

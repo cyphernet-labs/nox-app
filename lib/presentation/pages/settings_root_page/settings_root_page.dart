@@ -25,6 +25,8 @@ import 'package:nox_app/presentation/pages/language_page/language_page.dart';
 import 'package:nox_app/presentation/pages/notifications_page/notifications_body.dart';
 import 'package:nox_app/presentation/pages/devices_page/devices_body.dart';
 import 'package:nox_app/presentation/pages/devices_page/devices_page.dart';
+import 'package:nox_app/presentation/pages/people_page/people_body.dart';
+import 'package:nox_app/presentation/pages/people_page/people_page.dart';
 import 'package:nox_app/presentation/pages/notifications_page/notifications_page.dart';
 import 'package:nox_app/presentation/pages/screens_gallery_page/screens_gallery_page.dart';
 import 'package:nox_app/presentation/pages/ui_kit_page/ui_kit_page.dart';
@@ -40,7 +42,7 @@ import 'package:nox_app/presentation/widgets/settings/app_settings_nav_row_widge
 import 'package:nox_app/presentation/widgets/shell/app_list_detail_widget.dart';
 
 /// Desktop settings sections (the list-detail menu items).
-enum _Section { account, devices, notifications, appearance, language, terms, about }
+enum _Section { account, devices, people, notifications, appearance, language, terms, about }
 
 /// 7.1 Settings root — the Settings tab body. Mobile: a flat list (identity card +
 /// nav rows + Log out). Desktop: a list-detail (menu pane 340 + detail pane ≤680,
@@ -187,6 +189,12 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
         children: [
           Padding(padding: EdgeInsets.all(AppSpacingTokens.s16), child: _identityCard(state, revealable: false, wide: false)),
           AppSettingsNavRowWidget(title: context.l10n.settingsDevicesTitle, onTap: () => _openSection(DevicesPage.route())),
+          // Owner only, and hidden rather than shown-and-refused: the refusal on
+          // the wire exists for the protocol's honesty, not as a way to tell a
+          // person they may not. `== true` on purpose - "the server has not
+          // said" is not "you are not the owner", and neither shows the row.
+          if (state.isOwner == true)
+            AppSettingsNavRowWidget(title: context.l10n.settingsPeopleTitle, onTap: () => _openSection(PeoplePage.route())),
           AppSettingsNavRowWidget(title: context.l10n.settingsNotificationsTitle, onTap: () => _openSection(NotificationsPage.route())),
           AppSettingsNavRowWidget(title: context.l10n.settingsAppearanceTitle, onTap: () => _openSection(AppearancePage.route())),
           AppSettingsNavRowWidget(title: context.l10n.settingsLanguageTitle, onTap: () => _openSection(LanguagePage.route())),
@@ -251,6 +259,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
               // Group 1: Account.
               item(_Section.account, context.l10n.settingsAccountTitle),
               item(_Section.devices, context.l10n.settingsDevicesTitle),
+              if (state.isOwner == true) item(_Section.people, context.l10n.settingsPeopleTitle),
               const AppHairlineDividerWidget(),
               // Group 2: Notifications, Appearance, Language.
               item(_Section.notifications, context.l10n.settingsNotificationsTitle),
@@ -274,6 +283,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
   String _sectionTitle(_Section section) => switch (section) {
     _Section.account => context.l10n.settingsAccountTitle,
     _Section.devices => context.l10n.settingsDevicesTitle,
+    _Section.people => context.l10n.settingsPeopleTitle,
     _Section.notifications => context.l10n.settingsNotificationsTitle,
     _Section.appearance => context.l10n.settingsAppearanceTitle,
     _Section.language => context.l10n.settingsLanguageTitle,
@@ -292,6 +302,10 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
         ],
       ),
       _Section.devices => const DevicesBody(),
+      // Gated like the menu item it came from: if ownership stops being stated
+      // while People is open, the pane must stop offering an invite the menu no
+      // longer offers.
+      _Section.people => state.isOwner == true ? const PeopleBody() : const SizedBox.shrink(),
       _Section.notifications => const NotificationsBody(),
       _Section.appearance => const AppearanceBody(),
       _Section.language => const LanguageBody(),

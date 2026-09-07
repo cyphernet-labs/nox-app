@@ -15,6 +15,10 @@ import (
 const (
 	TokenClaim        = "claim"
 	TokenInviteDevice = "invite_device"
+	// TokenInviteUser brings a new PERSON into the circle rather than a new
+	// device into an existing person, and it is the only kind whose outcome is
+	// decided by a human (contract §8B).
+	TokenInviteUser = "invite_user"
 )
 
 // InviteTTLSeconds is how long a device invite stays usable. Ten minutes is
@@ -23,11 +27,43 @@ const (
 // deadline at all - see IssueClaimToken.
 const InviteTTLSeconds int64 = 600
 
+// PersonInviteTTLSeconds is how long an invite for a new PERSON stays usable.
+// A day rather than the device invite's ten minutes: you carry your own second
+// device into the next room, while a stranger has to be reached through a
+// messenger first and will not open it the same minute.
+const PersonInviteTTLSeconds int64 = 86400
+
+// ApprovalWindowSeconds is how long the owner has to answer once somebody has
+// presented a person invite. Chosen for a person rather than for a network -
+// long enough to notice a notification, pick up the phone and read the
+// question, short enough that the person at the door is not left staring at a
+// screen. It is the only deadline in the protocol measured in human reaction
+// time, because it is the only place an answer waits on a human.
+const ApprovalWindowSeconds int64 = 300
+
 // PairToken is a one-shot pairing right.
 type PairToken struct {
 	Token  string
 	Kind   string
 	UserID string
+}
+
+// PairResult is what presenting a token produced.
+//
+// Pair stopped returning a bare Identity when person invites arrived: they have
+// an outcome in which there is no identity yet, and "accepted, waiting for the
+// owner" is a normal result rather than a failure. Squeezing it into a sentinel
+// error would have made every caller tell it apart from real refusals by error
+// type - which is exactly the distinction a result type states plainly.
+type PairResult struct {
+	// Identity is who the device now speaks as. Empty while Pending.
+	Identity Identity
+	// Pending means the answer belongs to the owner and has not been given.
+	Pending bool
+	// RequestID names the waiting request on the wire. Empty unless Pending.
+	RequestID string
+	// ExpiresAt is the owner's deadline. Zero unless Pending.
+	ExpiresAt int64
 }
 
 // Errors a caller maps onto the wire codes of contract §8A.
@@ -59,12 +95,57 @@ func (s *Store) IssueDeviceInvite(ctx context.Context, userID string, now int64)
 	return s.issueToken(ctx, TokenInviteDevice, userID, now, now+InviteTTLSeconds)
 }
 
-func (s *Store) issueToken(ctx context.Context, kind, userID string, now, expiresAt int64) (string, error) {
+// IssuePersonInvite mints a token that brings a NEW person into the circle.
+//
+// Only the owner may call it, and the check lives HERE rather than in the
+// handler: the right belongs to the operation, not to one way of reaching it.
+// The ownership read and the insert share a transaction so a claim landing
+// between them cannot produce an invite issued by somebody who was not the
+// owner when it was written.
+func (s *Store) IssuePersonInvite(ctx context.Context, userID string, now int64) (string, error) {
+	tx, err := s.write.BeginTx(ctx, nil)
+	if err != nil {
+		return "", fmt.Errorf("begin person invite: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	owns, err := ownsServer(ctx, tx, userID)
+	if err != nil {
+		return "", err
+	}
+	if !owns {
+		return "", ErrNotOwner
+	}
+
+	token, err := newTokenValue()
+	if err != nil {
+		return "", err
+	}
+	if _, err := tx.ExecContext(ctx,
+		"INSERT INTO pair_tokens (token, kind, user_id, created_at, expires_at, used_at) VALUES (?, ?, ?, ?, ?, NULL)",
+		token, TokenInviteUser, userID, now, now+PersonInviteTTLSeconds); err != nil {
+		return "", fmt.Errorf("insert person invite: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("commit person invite: %w", err)
+	}
+	return token, nil
+}
+
+// newTokenValue mints the 16 random bytes a pairing link carries.
+func newTokenValue() (string, error) {
 	var raw [16]byte
 	if _, err := rand.Read(raw[:]); err != nil {
 		return "", fmt.Errorf("generate pairing token: %w", err)
 	}
-	token := base64.RawURLEncoding.EncodeToString(raw[:])
+	return base64.RawURLEncoding.EncodeToString(raw[:]), nil
+}
+
+func (s *Store) issueToken(ctx context.Context, kind, userID string, now, expiresAt int64) (string, error) {
+	token, err := newTokenValue()
+	if err != nil {
+		return "", err
+	}
 
 	var user any
 	if userID != "" {
@@ -75,7 +156,7 @@ func (s *Store) issueToken(ctx context.Context, kind, userID string, now, expire
 		expires = expiresAt
 	}
 
-	_, err := s.write.ExecContext(ctx,
+	_, err = s.write.ExecContext(ctx,
 		"INSERT INTO pair_tokens (token, kind, user_id, created_at, expires_at, used_at) VALUES (?, ?, ?, ?, ?, NULL)",
 		token, kind, user, now, expires)
 	if err != nil {
@@ -143,10 +224,10 @@ func burnToken(ctx context.Context, tx *sql.Tx, token, deviceKey string, now int
 // from what actually happened, not from the token kind: that distinction is
 // what tells the client to offer the naming step, and deriving it from
 // anything else is the mistake feature 031 spent a phase removing.
-func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now int64) (Identity, error) {
+func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now int64) (PairResult, error) {
 	tx, err := s.write.BeginTx(ctx, nil)
 	if err != nil {
-		return Identity{}, fmt.Errorf("begin pair: %w", err)
+		return PairResult{}, fmt.Errorf("begin pair: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
@@ -159,18 +240,35 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 	// the at-least-once story `message.send` gets from its idempotency key.
 	same, found, err := pairedBy(ctx, tx, token, deviceKey)
 	if err != nil {
-		return Identity{}, err
+		return PairResult{}, err
 	}
 	if found {
 		if err := tx.Commit(); err != nil {
-			return Identity{}, fmt.Errorf("commit pair replay: %w", err)
+			return PairResult{}, fmt.Errorf("commit pair replay: %w", err)
 		}
-		return same, nil
+		return PairResult{Identity: same}, nil
+	}
+
+	// A person invite this device already presented but that produced nobody -
+	// still waiting, declined, or timed out. It has to be answered before
+	// burnToken, which would report a spent token as simply invalid and lose
+	// the three answers the person actually needs (contract §8B).
+	res, handled, err := pendingOutcome(ctx, tx, token, deviceKey, now)
+	if handled {
+		// The expiry branch WRITES, so the transaction is committed even when
+		// the answer is an error.
+		if cerr := tx.Commit(); cerr != nil {
+			return PairResult{}, fmt.Errorf("commit pending outcome: %w", cerr)
+		}
+		return res, err
+	}
+	if err != nil {
+		return PairResult{}, err
 	}
 
 	pt, err := burnToken(ctx, tx, token, deviceKey, now)
 	if err != nil {
-		return Identity{}, err
+		return PairResult{}, err
 	}
 
 	var id Identity
@@ -184,7 +282,7 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 		// up disagreeing.
 		owner, err := ownerUserID(ctx, tx)
 		if err != nil {
-			return Identity{}, err
+			return PairResult{}, err
 		}
 		// Owned means "the OWNER can still get in", not "somebody once did" and
 		// not "anybody is here". Revoking the last device - which logout is -
@@ -198,10 +296,10 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 		if owner != "" {
 			devices, err := ownerDeviceCount(ctx, tx, owner)
 			if err != nil {
-				return Identity{}, err
+				return PairResult{}, err
 			}
 			if devices > 0 {
-				return Identity{}, ErrTokenInvalid
+				return PairResult{}, ErrTokenInvalid
 			}
 		}
 
@@ -217,7 +315,7 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 			// messages keep an author_id nobody can sign in as, and "the
 			// identity survives its devices" would be true on paper only.
 			if err := loadUser(ctx, tx, owner, &id); err != nil {
-				return Identity{}, err
+				return PairResult{}, err
 			}
 			// Not Created: this person existed before this operation, so there
 			// is no naming step ahead - they already have a name.
@@ -226,7 +324,7 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 			// fresh, and this claim is the one that names its owner.
 			people, err := countPeople(ctx, tx)
 			if err != nil {
-				return Identity{}, err
+				return PairResult{}, err
 			}
 			if people > 0 {
 				// People but no owner: unreachable through any code path, so
@@ -235,11 +333,11 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 				// attaching to somebody by row order hands a stranger their
 				// history, and minting a new person orphans it - and unlike a
 				// refusal neither is undoable.
-				return Identity{}, ErrTokenInvalid
+				return PairResult{}, ErrTokenInvalid
 			}
 			id, err = insertUser(ctx, tx, "", now)
 			if err != nil {
-				return Identity{}, err
+				return PairResult{}, err
 			}
 			id.Created = true
 		}
@@ -250,7 +348,7 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 		// conditional on the column being empty, so a re-claim attaches to the
 		// person who is already the owner and moves ownership nowhere.
 		if err := setOwner(ctx, tx, id.UserID, now); err != nil {
-			return Identity{}, err
+			return PairResult{}, err
 		}
 		// True on every path that reaches here, and deliberately not read back
 		// to prove it: the branch above resolved `id` either from the recorded
@@ -265,13 +363,39 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 		if _, err := tx.ExecContext(ctx,
 			"UPDATE pair_tokens SET used_at = ? WHERE kind = ? AND used_at IS NULL AND token <> ?",
 			now, TokenClaim, token); err != nil {
-			return Identity{}, fmt.Errorf("retire other claim tokens: %w", err)
+			return PairResult{}, fmt.Errorf("retire other claim tokens: %w", err)
 		}
+
+	case TokenInviteUser:
+		// Refused BEFORE the owner is asked anything. A key that already
+		// belongs to somebody cannot be handed over (the rule of phase 032),
+		// so approving this request could never work - and waking the owner
+		// with a question whose "yes" does nothing would let them authorise
+		// something that will not happen.
+		bound, err := deviceOwnerOf(ctx, tx, deviceKey)
+		if err != nil {
+			return PairResult{}, err
+		}
+		if bound != "" {
+			return PairResult{}, ErrTokenInvalid
+		}
+		req, err := recordPendingRequest(ctx, tx, token, platform, now)
+		if err != nil {
+			return PairResult{}, err
+		}
+		// Committed here and returned early: no person exists yet, so none of
+		// the tail below - the device row, the recorded outcome - applies. The
+		// token is already spent, which is what stops a second presenter from
+		// raising a second question about one invite.
+		if err := tx.Commit(); err != nil {
+			return PairResult{}, fmt.Errorf("commit pairing request: %w", err)
+		}
+		return PairResult{Pending: true, RequestID: req.RequestID, ExpiresAt: req.ExpiresAt}, nil
 
 	case TokenInviteDevice:
 		if err := tx.QueryRowContext(ctx,
 			"SELECT user_id, label FROM users WHERE user_id = ?", pt.UserID).Scan(&id.UserID, &id.Label); err != nil {
-			return Identity{}, fmt.Errorf("read invited person: %w", err)
+			return PairResult{}, fmt.Errorf("read invited person: %w", err)
 		}
 		// Deliberately NOT Created: the person existed before this operation,
 		// so there is no naming step ahead.
@@ -281,11 +405,11 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 		// their first one does.
 		id.Owner, err = ownsServer(ctx, tx, id.UserID)
 		if err != nil {
-			return Identity{}, err
+			return PairResult{}, err
 		}
 
 	default:
-		return Identity{}, ErrTokenInvalid
+		return PairResult{}, ErrTokenInvalid
 	}
 
 	// A key already belonging to somebody else is refused outright. It is a
@@ -299,13 +423,13 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 	// and it is the one that does not hand a device away.
 	bound, err := deviceOwnerOf(ctx, tx, deviceKey)
 	if err != nil {
-		return Identity{}, err
+		return PairResult{}, err
 	}
 	if bound != "" && bound != id.UserID {
-		return Identity{}, ErrTokenInvalid
+		return PairResult{}, ErrTokenInvalid
 	}
 	if err := insertDevice(ctx, tx, deviceKey, id.UserID, platform, now); err != nil {
-		return Identity{}, err
+		return PairResult{}, err
 	}
 	// Record WHO this spending produced and WHAT it did, so a replay can answer
 	// with those instead of re-deriving them. Both are only known here, after
@@ -321,12 +445,71 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 	if _, err := tx.ExecContext(ctx,
 		"UPDATE pair_tokens SET paired_user_id = ?, created_person = ? WHERE token = ?",
 		id.UserID, created, token); err != nil {
-		return Identity{}, fmt.Errorf("record pairing outcome: %w", err)
+		return PairResult{}, fmt.Errorf("record pairing outcome: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return Identity{}, fmt.Errorf("commit pair: %w", err)
+		return PairResult{}, fmt.Errorf("commit pair: %w", err)
 	}
-	return id, nil
+	return PairResult{Identity: id}, nil
+}
+
+// pendingOutcome answers a person invite that THIS device already presented.
+//
+// handled is false for every other case - a fresh token, another kind, another
+// device - and the caller carries on into burnToken. A different key presenting
+// a spent invite falls through on purpose: burnToken refuses it as invalid, and
+// a burned token must not tell a stranger even that it once existed.
+func pendingOutcome(ctx context.Context, tx *sql.Tx, token, deviceKey string, now int64) (PairResult, bool, error) {
+	var kind string
+	var usedBy sql.NullString
+	var createdAt int64
+	var awaitingUntil sql.NullInt64
+	var outcome, requestID sql.NullString
+	err := tx.QueryRowContext(ctx,
+		`SELECT kind, used_by, created_at, awaiting_until, outcome, request_id
+		 FROM pair_tokens WHERE token = ? AND used_at IS NOT NULL`, token).
+		Scan(&kind, &usedBy, &createdAt, &awaitingUntil, &outcome, &requestID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return PairResult{}, false, nil
+	}
+	if err != nil {
+		return PairResult{}, false, fmt.Errorf("read pending outcome: %w", err)
+	}
+	if kind != TokenInviteUser || !usedBy.Valid || usedBy.String != deviceKey {
+		return PairResult{}, false, nil
+	}
+
+	switch {
+	case outcome.String == OutcomeDeclined:
+		return PairResult{}, true, ErrPairDeclined
+	case outcome.String == OutcomeExpired:
+		return PairResult{}, true, ErrPairTimeout
+	case outcome.String == OutcomeApproved:
+		// Approved, yet pairedBy found nothing: the device row is gone, which
+		// means this device was revoked after joining - a logout. The person
+		// survives; the invite does not. A spent invite is spent.
+		return PairResult{}, true, ErrTokenInvalid
+	case !awaitingUntil.Valid:
+		// Spent, unresolved and with no deadline: not reachable through any
+		// code path, so the row has been edited by hand. Refuse rather than
+		// improvise.
+		return PairResult{}, true, ErrTokenInvalid
+	case awaitingUntil.Int64 <= now:
+		// The deadline passed and the sweeper has not reached it yet. Settle it
+		// here so the answer is the same whichever gets there first.
+		if err := setOutcome(ctx, tx, token, OutcomeExpired); err != nil {
+			return PairResult{}, true, err
+		}
+		// The id rides along WITH the error: settling here takes the row out of
+		// both the sweeper's predicate and the greeting re-send, so this is the
+		// last moment anything can tell the owner the question is dead. Without
+		// it their screen keeps a question nothing will ever close.
+		return PairResult{RequestID: requestID.String}, true, ErrPairTimeout
+	default:
+		// Still waiting. The same request, not a second one: the answer the
+		// owner eventually gives has to reach whoever is asking now.
+		return PairResult{Pending: true, RequestID: requestID.String, ExpiresAt: awaitingUntil.Int64}, true, nil
+	}
 }
 
 // pairedBy reports the identity a spent token produced, but only when the SAME

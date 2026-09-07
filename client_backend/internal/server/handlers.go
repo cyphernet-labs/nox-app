@@ -142,8 +142,7 @@ func (c *client) handleSessionHello(cmd protocol.Command) {
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to resolve identity"))
 		return
 	}
-	c.identity = id
-	c.label = id.Label
+	c.srv.setIdentity(c, id)
 
 	journalID, err := c.srv.store.JournalID(c.ctx)
 	if err != nil {
@@ -182,8 +181,15 @@ func (c *client) handleSessionHello(cmd protocol.Command) {
 		// pair reply, and a greeting that still states it invites the client to
 		// read the decision from two places - which is exactly the second
 		// source of one truth the phase set out to remove.
-		Identity: greetingIdentity{ID: c.identity.UserID, Label: c.identity.Label, Owner: c.identity.Owner},
+		Identity: greetingIdentity{ID: id.UserID, Label: id.Label, Owner: id.Owner},
 	}))
+
+	// Questions this device has not seen yet, re-sent to the owner on every
+	// greeting. A device may have been switched off, or the server restarted,
+	// while somebody was waiting at the door - and a question visible only to
+	// whoever happened to be online in the right second would let a five-minute
+	// wait expire for nothing.
+	c.resendPendingRequests()
 
 	if req.Since != nil {
 		since := *req.Since
@@ -211,6 +217,29 @@ func (c *client) handleSessionHello(cmd protocol.Command) {
 	go c.forward()
 }
 
+// resendPendingRequests hands the owner every invite still waiting for an
+// answer. A no-op for everybody else: the question is the owner's alone.
+func (c *client) resendPendingRequests() {
+	if !c.identity.Owner {
+		return
+	}
+	pending, err := c.srv.store.PendingRequests(c.ctx, time.Now().Unix())
+	if err != nil {
+		// Not fatal to the greeting: the sweeper will settle these anyway, and
+		// a person who never saw the question is no worse off than one whose
+		// device was switched off.
+		c.logger.Error("read pending requests on greeting", "err", err)
+		return
+	}
+	for _, req := range pending {
+		// To THIS connection, not to every device of the owner: the others
+		// were told when the request arrived, or on their own greetings. A
+		// fan-out here would re-ask every device each time any one of them
+		// reconnects.
+		c.sendFrame(pairRequestedFrame(req))
+	}
+}
+
 type chatCreateRequest struct {
 	Name string `json:"name"`
 }
@@ -235,7 +264,7 @@ func (c *client) handleChatCreate(cmd protocol.Command) {
 		return
 	}
 
-	chat, event, err := c.srv.store.CreateChat(c.ctx, name, c.label, time.Now().Unix())
+	chat, event, err := c.srv.store.CreateChat(c.ctx, name, c.srv.currentIdentity(c).Label, time.Now().Unix())
 	switch {
 	case errors.Is(err, store.ErrNameTaken):
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrNameTaken, "Chat name already exists"))
@@ -479,7 +508,7 @@ func (c *client) handleMessageSend(cmd protocol.Command) {
 	}
 
 	msg, event, created, err := c.srv.store.SendMessage(
-		c.ctx, req.ChatID, req.ClientMessageID, c.identity, req.Body, fileID, time.Now().Unix())
+		c.ctx, req.ChatID, req.ClientMessageID, c.srv.currentIdentity(c), req.Body, fileID, time.Now().Unix())
 	switch {
 	case errors.Is(err, store.ErrChatNotFound):
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrNotFound, "chat does not exist"))

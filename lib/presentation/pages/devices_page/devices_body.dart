@@ -5,7 +5,7 @@ import 'package:nox_app/domain/model/device/device_model.dart';
 import 'package:nox_app/general/formatters/date_formatter.dart';
 import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/pages/devices_page/bloc/devices_bloc.dart';
-import 'package:nox_app/presentation/widgets/settings/app_qr_surface_widget.dart';
+import 'package:nox_app/presentation/widgets/settings/app_invite_card_widget.dart';
 import 'package:nox_app/presentation/widgets/settings/app_settings_group_widget.dart';
 
 /// 7.3 Devices, chrome-less so the same body fills the desktop Settings detail
@@ -58,7 +58,11 @@ class _DevicesBodyState extends State<DevicesBody> {
           padding: EdgeInsets.all(AppSpacingTokens.s16),
           children: [
             if (state.inviteLink != null) ...[
-              _InviteCard(link: state.inviteLink!, onDismiss: () => _bloc.add(const DevicesEvent.inviteDismissed())),
+              AppInviteCardWidget(
+                link: state.inviteLink!,
+                message: context.l10n.devicesInviteMessage,
+                onDismiss: () => _bloc.add(const DevicesEvent.inviteDismissed()),
+              ),
               SizedBox(height: AppSpacingTokens.s16),
             ],
             // A silent failure here reads as a dead button: the person taps
@@ -155,35 +159,4 @@ class _DeviceRow extends StatelessWidget {
     'linux' => 'Linux',
     _ => 'Device',
   };
-}
-
-class _InviteCard extends StatelessWidget {
-  const _InviteCard({required this.link, required this.onDismiss});
-
-  final String link;
-  final VoidCallback onDismiss;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: EdgeInsets.all(AppSpacingTokens.s16),
-        child: Column(
-          children: [
-            AppQrSurfaceWidget(data: link),
-            SizedBox(height: AppSpacingTokens.s12),
-            Text(context.l10n.devicesInviteMessage, textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodyMedium),
-            SizedBox(height: AppSpacingTokens.s8),
-            // Copying matters as much as the QR: Windows and Linux have no
-            // camera, so text is the only path that works everywhere.
-            SelectableText(link, style: Theme.of(context).textTheme.bodySmall, textAlign: TextAlign.center),
-            // "Hide", not "Cancel": nothing here cancels the invite. The token
-            // stays usable for its ten minutes whatever this button says, and
-            // calling it Cancel would promise a revocation that does not happen.
-            TextButton(onPressed: onDismiss, child: Text(context.l10n.actionHide)),
-          ],
-        ),
-      ),
-    );
-  }
 }

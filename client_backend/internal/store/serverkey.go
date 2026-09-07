@@ -206,6 +206,20 @@ func ownsServer(ctx context.Context, q rowQuerier, userID string) (bool, error) 
 	return owner != "" && owner == userID, nil
 }
 
+// OwnerUserID reads who owns this machine, or empty if nobody does.
+//
+// Exported for the one caller outside a transaction that needs it: the sweeper,
+// which has to tell the owner about invites that expired without them. The
+// owner is a property of the machine and cannot change while a request waits,
+// so one read serves a whole batch.
+func (s *Store) OwnerUserID(ctx context.Context) (string, error) {
+	owner, err := ownerUserID(ctx, s.read)
+	if errors.Is(err, ErrNoServerIdentity) {
+		return "", nil
+	}
+	return owner, err
+}
+
 // ownerUserID reads the owner inside a transaction that is already open.
 func ownerUserID(ctx context.Context, q rowQuerier) (string, error) {
 	var owner sql.NullString

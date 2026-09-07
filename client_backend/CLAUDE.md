@@ -9,7 +9,7 @@ SQLite, single static CGO-free binary.
 (v0). Every command, event, field name, error code and rule comes from
 there; a change needed on the wire is first a contract edit, then code.
 
-**Stage 2 is under way (features 032, 033).** The server now CHECKS who connects:
+**Stage 2 is under way (features 032, 033, 034).** The server now CHECKS who connects:
 `device_key` is an Ed25519 public key, `signature` over
 `"nox/challenge/v1:" ‖ challenge` is verified on every greeting, and the
 person is found by that key. `login_ref` is gone from the wire, the lookup
@@ -18,9 +18,12 @@ a key that never leaves the device. A greeting can no longer create anyone:
 an unknown key is refused (`unauthenticated`), and people come into being
 only through `pair` (§8A). Feature 033 named the OWNER: the person a claim
 token created, recorded on the machine's own row, reported to the asker as
-`identity.owner` in both the greeting and the pair reply. Still out of scope and blocked: `recover` and the
-recovery phrase (Q16), inviting a new PERSON rather than a device (Q15),
-TLS with pinning.
+`identity.owner` in both the greeting and the pair reply. Feature 034 added the
+PERSON invite (§8B): only the owner may issue one, it takes effect only after
+they confirm on their own device, and `pair` therefore stopped always finishing
+— it answers `pending` and the outcome arrives as a seq-0 event. Still out of
+scope and blocked: `recover` and the recovery phrase (Q16), revoking a person
+(Q17), TLS with pinning.
 
 Architecture rationale lives in `docs/blueprints/client-backend/README.md`;
 Go style rules live in the `go-style` skill; WebSocket/REST runtime
@@ -132,6 +135,11 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   machine, and `claimed_at` is only a timestamp nothing decides by
 - `internal/store/pairing.go` — one-shot tokens and `Pair`; burning is a
   conditional UPDATE whose affected-row count settles a two-device race
+- `internal/store/approval.go` — the owner's decision about a person invite:
+  the waiting request, the recorded outcome, and the sweep that settles the ones
+  nobody answered
+- `internal/store/people.go` — the circle: names and the owner mark, and
+  nothing else
 - `internal/store/devices.go` — device list, revocation (DELETE, so a revoked
   device is indistinguishable from an unknown one), rename
 - `internal/hub/`        — fan-out goroutine owning the subscriber set
@@ -159,6 +167,46 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 
 ## Known deliberate omissions (do not "fix" silently)
 
+- A person invite is spent WHEN IT IS PRESENTED, not when the owner answers.
+  Otherwise a second presenter during the wait raises a second question about one
+  invite. The outcome is a separate column written once, and presenting the link
+  again returns what was recorded — still waiting, the person, declined, or
+  unanswered. Re-deriving any of that from the state of the store is the mistake
+  031 spent a phase removing and 032 wrote into the contract.
+- The waiting request lives in the ROW, not in the process. It has to outlive a
+  restart and a dropped socket, and the device that presented is `used_by` — the
+  column that already means that. A second column for it would be one fact
+  written twice, which is what 033 spent itself deleting.
+- The sweeper's predicate needs all three conditions:
+  `outcome IS NULL AND awaiting_until IS NOT NULL AND awaiting_until <= ?`. The
+  first is true of every claim and device token as well; the second is what
+  actually means "waiting for a human".
+- The waiting connection is found by a MARK on the connection, because it is
+  unauthenticated by construction: it has no person and no device key on it, and
+  there would otherwise be nothing to address the outcome to.
+- Both person events carry `seq: 0` and never enter the journal, like
+  `device.revoked` and `identity.updated`: who is joining this machine is not the
+  shared world (invariant 3).
+- A device key that already belongs to somebody is refused AT PRESENTATION,
+  before the owner is asked. Waking them with a question whose "yes" could not
+  work would let them authorise something that will not happen.
+- **Two known, bounded windows in the person-invite path.** (1) If the owner
+  decides between `markPendingRequest` and the pending reply being queued, the
+  outcome frame is queued BEFORE that reply and the client - which subscribes
+  after parsing it - misses it; the next re-presentation, at most twenty seconds
+  later, answers from the recorded outcome. (2) `notifyPairResolved` and
+  `sendToOwnerDevices` deliver with the blocking send rather than the dropping
+  one, so a device that has filled its 64-frame queue stalls the sender for up
+  to the write timeout - the sweeper included. The dropping alternative loses
+  the outcome instead, which costs more than a bounded stall.
+- **Known narrow window, predating 034:** the greeting reads the person from the
+  store and writes it to the connection a few lines later, and `refreshLabel`
+  matches connections by `identity.UserID` - which is empty in between. A rename
+  landing in that gap is overwritten by the write, and no `identity.updated` goes
+  to that connection, so a stable socket keeps the old name until something
+  reconnects it. Closing it properly means holding the connection registry lock
+  across a store read, which invariant 4 exists to forbid; recorded rather than
+  papered over.
 - The claim token has NO expiry. It dies by being used, only someone with
   access to the machine ever sees it, and an expiring one would leave an
   installed-then-forgotten server unclaimable with no way to mint another.

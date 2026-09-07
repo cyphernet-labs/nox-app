@@ -37,7 +37,31 @@ const (
 	// consumer: the connection is closed and heals via replay. The read
 	// goroutine's own frames (replies, replay) block instead of dropping.
 	outBuffer = 64
+
+	// pairSweepInterval is how often waiting person invites are checked
+	// against their deadline. Ten seconds against a five-minute window is 3%
+	// of slack, and it errs towards waiting slightly longer - which is the
+	// harmless direction. A shorter tick buys nothing; a longer one makes the
+	// gap between "time is up" and "the screen says so" visible.
+	pairSweepInterval = 10 * time.Second
 )
+
+// pairRequestedPayload is the body of person.pairRequested (contract §8B).
+// Nothing about the invitee: before joining, the server knows nothing about
+// them, and the platform their unauthenticated device claimed is not a fact.
+type pairRequestedPayload struct {
+	RequestID string `json:"request_id"`
+	InvitedAt int64  `json:"invited_at"`
+	ExpiresAt int64  `json:"expires_at"`
+}
+
+// pairResolvedPayload is the body of person.pairResolved (contract §8B).
+// Identity rides along only when the answer was yes.
+type pairResolvedPayload struct {
+	RequestID string    `json:"request_id"`
+	Outcome   string    `json:"outcome"`
+	Identity  *identity `json:"identity,omitempty"`
+}
 
 // Server handles one process's connections.
 type Server struct {
@@ -50,6 +74,12 @@ type Server struct {
 
 	pingInterval time.Duration
 	writeTimeout time.Duration
+	// pairSweep is how often waiting person invites are checked against their
+	// deadline, and now is the clock the check reads. Both are fields for the
+	// same reason pingInterval is one and tokenStore.now is: a test cannot sit
+	// through a five-minute window to watch it close.
+	pairSweep time.Duration
+	now       func() int64
 
 	// kick wakes the event dispatcher after a committed mutation; capacity 1
 	// coalesces bursts (the dispatcher drains the log until it is current).
@@ -74,6 +104,8 @@ func New(cfg config.Config, st *store.Store, h *hub.Hub, bl *blob.Store, logger 
 		logger:       logger,
 		pingInterval: defaultPingInterval,
 		writeTimeout: defaultWriteTimeout,
+		pairSweep:    pairSweepInterval,
+		now:          func() int64 { return time.Now().Unix() },
 		kick:         make(chan struct{}, 1),
 		conns:        make(map[*client]struct{}),
 	}
@@ -210,7 +242,6 @@ func (s *Server) refreshLabel(userID, label string, origin *client) {
 	for c := range s.conns {
 		if c.identity.UserID == userID {
 			c.identity.Label = label
-			c.label = label
 			if c != origin {
 				notify = append(notify, c)
 			}
@@ -235,12 +266,172 @@ func (s *Server) refreshLabel(userID, label string, origin *client) {
 	}
 }
 
+// markPendingRequest records which person invite this connection is waiting on,
+// or clears the mark when the wait is over. Under the same lock
+// notifyPairResolved reads it through.
+func (s *Server) markPendingRequest(c *client, requestID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c.pendingRequestID = requestID
+}
+
+// notifyPairRequested asks every live device of the owner to decide about one
+// waiting invite.
+//
+// Every device, not just one: the owner may be holding any of them, and a
+// question shown on the wrong screen is a question nobody answers. The frame
+// carries nothing about who is knocking, because before joining there is
+// nothing the server knows about them.
+func (s *Server) notifyPairRequested(owner string, req store.PendingRequest) {
+	s.sendToOwnerDevices(owner, pairRequestedFrame(req))
+}
+
+// pairRequestedFrame builds the question. One builder for both deliveries - the
+// push when a link is presented and the re-send after a greeting - so the two
+// cannot come to disagree about what a question looks like.
+func pairRequestedFrame(req store.PendingRequest) protocol.Event {
+	data, err := json.Marshal(pairRequestedPayload{RequestID: req.RequestID, InvitedAt: req.InvitedAt, ExpiresAt: req.ExpiresAt})
+	if err != nil {
+		// Cannot fail for a struct of a string and two ints. An empty body is
+		// still a frame the receiver will ignore, which beats a nil Data.
+		data = json.RawMessage(`{}`)
+	}
+	return protocol.Event{Seq: 0, Event: protocol.EventPairRequested, Data: data}
+}
+
+// notifyPairResolved tells the waiting device what was decided, and the owner's
+// devices that the question is closed.
+//
+// Both, not one: the person at the door needs the outcome, and every other
+// device of the owner needs the question to leave its screen rather than only
+// the one that answered it.
+func (s *Server) notifyPairResolved(owner, requestID, outcome string, id store.Identity) {
+	payload := pairResolvedPayload{RequestID: requestID, Outcome: outcome}
+	if outcome == store.OutcomeApproved {
+		payload.Identity = &identity{
+			greetingIdentity: greetingIdentity{ID: id.UserID, Label: id.Label, Owner: id.Owner},
+			Created:          id.Created,
+		}
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		s.logger.Error("marshal pair outcome", "err", err)
+		return
+	}
+	event := protocol.Event{Seq: 0, Event: protocol.EventPairResolved, Data: data}
+
+	s.mu.Lock()
+	waiting := make([]*client, 0, 1)
+	for c := range s.conns {
+		if c.pendingRequestID == requestID {
+			c.pendingRequestID = ""
+			waiting = append(waiting, c)
+		}
+	}
+	s.mu.Unlock()
+	// Outside the lock: sendFrame writes to a bounded queue, and a full one
+	// under s.mu would hold up every other connection of every other person.
+	for _, c := range waiting {
+		c.sendFrame(event)
+	}
+	s.sendToOwnerDevices(owner, event)
+}
+
+// sendToOwnerDevices delivers a frame to every live connection of one person.
+func (s *Server) sendToOwnerDevices(owner string, event protocol.Event) {
+	if owner == "" {
+		return
+	}
+	s.mu.Lock()
+	targets := make([]*client, 0, 2)
+	for c := range s.conns {
+		if c.identity.UserID == owner {
+			targets = append(targets, c)
+		}
+	}
+	s.mu.Unlock()
+	for _, c := range targets {
+		c.sendFrame(event)
+	}
+}
+
+// runPairSweeper settles person invites whose owner never answered.
+//
+// A ticker over the STORE rather than a timer per request: a timer lives in
+// this process and a waiting request lives in the database, so a request that
+// outlived a restart would never expire at all. Lazily expiring on the next
+// touch is not enough either - the owner's devices would keep showing a
+// question that is already dead, and nobody would ever touch it again.
+func (s *Server) runPairSweeper(ctx context.Context) error {
+	ticker := time.NewTicker(s.pairSweep)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
+		// The owner is read FIRST, and a failure skips the tick entirely.
+		// Expiring writes the outcome, which takes the row out of both the
+		// sweeper's predicate and the greeting re-send - so a batch marked
+		// without anybody to tell would leave the question on the owner's
+		// screen with nothing left that could ever close it.
+		//
+		// One read for the batch: the owner is a property of the machine, not
+		// of a request, and it cannot change while one is waiting.
+		owner, err := s.store.OwnerUserID(ctx)
+		if err != nil {
+			s.logger.Error("read owner for expired pairs", "err", err)
+			continue
+		}
+		expired, err := s.store.ExpirePendingPairs(ctx, s.now())
+		if err != nil {
+			// Transient: the next tick tries again, and pendingOutcome settles
+			// the same request if the device asks first.
+			s.logger.Error("expire pending pairs failed", "err", err)
+			continue
+		}
+		if len(expired) == 0 {
+			continue
+		}
+		for _, req := range expired {
+			s.notifyPairResolved(owner, req.RequestID, store.OutcomeExpired, store.Identity{})
+		}
+	}
+}
+
 // setDeviceKey records which key a connection authenticated with, under the
 // same lock dropDevice reads it through.
 func (s *Server) setDeviceKey(c *client, key string) {
 	s.mu.Lock()
 	c.deviceKey = key
 	s.mu.Unlock()
+}
+
+// setIdentity records who a connection speaks as, under the same lock the
+// other goroutines touch it through.
+//
+// A connection joins s.conns when it is accepted, long before it greets, so
+// refreshLabel and the two notify helpers walk it while this write is still to
+// come. Writing it bare made the greeting race every one of them - and the pair
+// sweeper turned that from a rename-only window into something a tick hits
+// every ten seconds.
+func (s *Server) setIdentity(c *client, id store.Identity) {
+	s.mu.Lock()
+	c.identity = id
+	s.mu.Unlock()
+}
+
+// currentIdentity reads back the person this connection speaks as.
+//
+// Needed only where the LABEL is consumed: refreshLabel rewrites it from
+// another goroutine, while user_id and the ownership flag are written once by
+// the read goroutine itself and never change. The name matters because it is
+// frozen into message history at send time.
+func (s *Server) currentIdentity(c *client) store.Identity {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return c.identity
 }
 
 func (s *Server) track(c *client) {
@@ -356,6 +547,9 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 	})
 	g.Go(func() error {
 		return srv.runDispatcher(gctx)
+	})
+	g.Go(func() error {
+		return srv.runPairSweeper(gctx)
 	})
 	g.Go(func() error {
 		logger.Info("listening", "addr", cfg.Addr)

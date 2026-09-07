@@ -50,10 +50,19 @@ type client struct {
 	// invite link needs.
 	requestHost string
 	// identity is the person this connection speaks as, resolved once during
-	// the greeting. label mirrors identity.Label for the chat-creation path,
-	// which records a name rather than an id.
+	// the greeting. Written and read through Server.setIdentity /
+	// Server.currentIdentity: other connections' goroutines touch it -
+	// refreshLabel rewrites the label, and the notify helpers match on the id.
 	identity store.Identity
-	label    string
+	// pendingRequestID names the person invite this connection is waiting on.
+	//
+	// It exists because the waiting connection is UNAUTHENTICATED by
+	// construction: it has nothing to sign a greeting with yet, so it carries
+	// neither a person nor a device key, and there would otherwise be no way to
+	// find it again when the owner answers. Written by the read goroutine and
+	// read by another connection's goroutine in Server.notifyPairResolved, so
+	// both go through Server.mu - the same rule deviceKey follows.
+	pendingRequestID string
 }
 
 func newClient(srv *Server, conn *websocket.Conn, parent context.Context, logger *slog.Logger) *client {
