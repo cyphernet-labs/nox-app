@@ -52,6 +52,12 @@ class FakeSessionRepository implements SessionRepository {
   }
 
   @override
+  Stream<bool?> watchOwnership() async* {
+    yield session?.isOwner;
+    yield* const Stream<bool?>.empty();
+  }
+
+  @override
   Stream<String?> watchLabel() async* {
     yield _label;
     yield* _labelController.stream;

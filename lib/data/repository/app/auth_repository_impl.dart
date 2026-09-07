@@ -105,7 +105,20 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         // and a device that inferred it would be right until the day it was
         // not. Stored now so the owner sees the badge without waiting for the
         // greeting that follows.
-        await _sessionRepository.adoptServerIdentity(authorId: greeting.authorId, label: greeting.label, isOwner: greeting.isOwner);
+        final adopted = await _sessionRepository.adoptServerIdentity(
+          authorId: greeting.authorId,
+          label: greeting.label,
+          isOwner: greeting.isOwner,
+        );
+        if (!adopted.hasData) {
+          // NOT fatal, and deliberately not a rollback: the claim token is
+          // already spent, so discarding here would leave the device unable to
+          // pair again - the brick this path was rewritten to avoid. The
+          // greeting that follows writes the same three values, so a transient
+          // storage failure repairs itself; what must not happen is losing it
+          // silently.
+          logRepository.debug(target: this, message: 'sign-in: identity not stored yet, the greeting will repair it');
+        }
         if (greeting.created!) _sessionRepository.noteOnboardingStartedHere();
         // Re-greet, SIGNED. The connection `pair` ran on was greeted before
         // this device existed to the server, so it still speaks as whoever

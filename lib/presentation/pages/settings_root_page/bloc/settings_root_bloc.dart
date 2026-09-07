@@ -30,6 +30,26 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
     on<NameSubmitted>(_onNameSubmitted);
     on<NameEditCancelled>(_onNameEditCancelled);
     on<IdRevealToggled>(_onIdRevealToggled);
+    on<OwnershipChanged>(_onOwnershipChanged);
+    // The settings tab is built once and stays mounted, so a value read at
+    // build time is the value it shows for the life of the process. Ownership
+    // is settled by a frame that may well arrive after that - a greeting on a
+    // slow start, or against a server that only learned the field on upgrade -
+    // so it is watched, exactly as the label is.
+    //
+    // `.skip(1)` because the stream seeds its current value on listen and
+    // `initialize` already reads it - the same shape the chats list uses for
+    // its watches. Without the skip every consumer would see one extra state
+    // for a value nothing changed.
+    _ownership = sessionRepository.watchOwnership().skip(1).listen((isOwner) => add(SettingsRootEvent.ownershipChanged(isOwner)));
+  }
+
+  StreamSubscription<bool?>? _ownership;
+
+  @override
+  Future<void> close() async {
+    await _ownership?.cancel();
+    return super.close();
   }
 
   Future<void> _onInitialize(SettingsInitialize event, Emitter<SettingsRootState> emit) async {
@@ -125,5 +145,9 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
 
   void _onIdRevealToggled(IdRevealToggled event, Emitter<SettingsRootState> emit) {
     emit(state.copyWith(idRevealed: !state.idRevealed));
+  }
+
+  void _onOwnershipChanged(OwnershipChanged event, Emitter<SettingsRootState> emit) {
+    emit(state.copyWith(isOwner: event.isOwner));
   }
 }

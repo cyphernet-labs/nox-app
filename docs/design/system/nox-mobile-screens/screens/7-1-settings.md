@@ -18,8 +18,10 @@ App bar (Settings). Identity card (name + masked ID). Grouped list: Notification
 - `logout-loading` — Logging out
 
 ## Behavior
-- Identity card: name (edit inline) + ID masked as •••••••• with reveal / copy / show-QR actions.
-- Reveal (id-shown): full ID rendered mono, wrapped break-all, with hide/copy/QR.
+- Identity card: name (edit inline) + `Server owner` badge + ID with copy / show-QR actions.
+- Owner badge (phase 033): shown only when the server states that this person owns it. "Not stated" and "not the owner" both render nothing — drawing "not the owner" before the server answers would be a claim the app cannot make, followed by a flicker when it is corrected. The badge sits beside the name and drops onto its own line when the name and the badge no longer fit one row (long localisation, large text scale).
+- ⚠️ Phase 032 removed the reveal: the ID stopped being a secret, so there is nothing to mask.
+- Full ID rendered mono, wrapped break-all, with copy/QR.
 - Editing: name becomes an inline TextField with counter.
 - Show QR → modal bottom sheet; the QR card surface is brand-fixed WHITE so it scans in dark mode.
 - Log out → confirm AlertDialog (destructive action tinted error); confirming wipes ID + local data; shows a loading state.

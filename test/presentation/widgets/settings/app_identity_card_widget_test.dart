@@ -15,9 +15,10 @@ void main() {
     bool editing = false,
     bool idRevealed = false,
     bool? isOwner,
+    String name = 'Aria',
   }) => AppIdentityCardWidget(
     isOwner: isOwner,
-    name: 'Aria',
+    name: name,
     maskedId: l10nEn.idMask,
     rawId: 'RAWID-0123456789',
     revealable: revealable,
@@ -80,6 +81,39 @@ void main() {
       // the distinction lives in the data.
       await pumpApp(tester, card());
       expect(find.text(l10nEn.settingsOwnerBadge), findsNothing);
+    });
+
+    testWidgets('a long name keeps its width, with and without the badge', (tester) async {
+      // The regression this pins: a Row of two flexible children splits the
+      // free space by flex, so the name was laid out at HALF the row and
+      // ellipsized with blank space beside it - for everyone, badge or not.
+      const long = 'Alexandra_Smirnova_QQ';
+      await tester.binding.setSurfaceSize(const Size(390, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      await pumpApp(tester, card(name: long));
+      final plain = tester.getSize(find.text(long)).width;
+
+      await pumpApp(tester, card(name: long, isOwner: true));
+      final withBadge = tester.getSize(find.text(long)).width;
+
+      // The name renders at its natural width, not at a fraction of the row.
+      expect(plain, greaterThan(150));
+      expect(withBadge, plain, reason: 'the badge must not steal width from the name');
+    });
+
+    testWidgets('the badge moves to its own line instead of crushing the name', (tester) async {
+      // Ukrainian is the longer localisation, and doubled text scale is the
+      // accessibility floor the project already tests to. Together they leave
+      // no room for name and badge on one line.
+      await tester.binding.setSurfaceSize(const Size(320, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      await pumpApp(tester, card(name: 'Alexandra_Smirnova_QQ', isOwner: true), textScale: 2);
+
+      // Nothing overflows, and both are still on screen.
+      expect(tester.takeException(), isNull);
+      expect(find.text(l10nEn.settingsOwnerBadge), findsOneWidget);
     });
 
     testWidgets('desktop (non-revealable): no reveal toggle, and no QR inside the card', (tester) async {

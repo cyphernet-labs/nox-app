@@ -134,6 +134,24 @@ void main() {
       expect(owning.state.isOwner, isTrue);
     });
 
+    test('an answer arriving after the screen was built still reaches the badge', () async {
+      // The settings tab is built once and stays mounted. Before the watch,
+      // ownership stated by a greeting that landed after that was never shown.
+      await signIn('Alice');
+      // Start from a stated "no", so the assertion is about the CHANGE arriving
+      // rather than about whatever the prefs happened to hold.
+      await getIt<SessionRepository>().adoptServerIdentity(authorId: 'u_1', label: 'Alice', isOwner: false);
+      final bloc = SettingsRootBloc()..add(const SettingsRootEvent.initialize());
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(bloc.state.isOwner, isFalse);
+
+      await getIt<SessionRepository>().adoptServerIdentity(authorId: 'u_1', label: 'Alice', isOwner: true);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      expect(bloc.state.isOwner, isTrue);
+    });
+
     group('the rename reaches the server before it is shown as saved', () {
       late MockDeviceRepository devices;
 

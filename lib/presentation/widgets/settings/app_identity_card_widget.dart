@@ -97,15 +97,23 @@ class AppIdentityCardWidget extends StatelessWidget {
         SizedBox(height: AppSpacingTokens.s2),
         Row(
           children: [
-            Flexible(
-              child: Text(
-                name,
-                style: textTheme.titleMedium?.copyWith(color: colorScheme.onSurface),
-                overflow: TextOverflow.ellipsis,
+            // Wrap, not a row of flexibles. Two flexible children would split
+            // the free space by flex and cap the NAME at half of it: it would
+            // ellipsize early with blank space beside it, badge or no badge.
+            // Wrap gives the name the full width and drops the badge onto its
+            // own line once it no longer fits - which is what happens at large
+            // text scales and in the longer localisation.
+            Expanded(
+              child: Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: AppSpacingTokens.s8,
+                runSpacing: AppSpacingTokens.s4,
+                children: [
+                  Text(name, style: textTheme.titleMedium?.copyWith(color: colorScheme.onSurface)),
+                  if (isOwner ?? false) _ownerBadge(context),
+                ],
               ),
             ),
-            if (isOwner ?? false) ...[SizedBox(width: AppSpacingTokens.s8), _ownerBadge(context)],
-            const Spacer(),
             IconButton(
               tooltip: context.l10n.settingsNameEditTooltip,
               icon: AppIconWidget(NoxIcons.edit, size: AppDimensionTokens.icon.lg),

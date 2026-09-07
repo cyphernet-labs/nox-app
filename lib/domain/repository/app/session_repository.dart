@@ -66,6 +66,18 @@ abstract class SessionRepository {
   /// earlier, or an older server would silently strip the badge.
   Future<RepositoryResult<bool>> adoptServerIdentity({required String authorId, required String label, bool? isOwner});
 
+  /// Reactive ownership signal: emits the cached answer on listen, then every
+  /// subsequent change (the server states it, logout clears it).
+  ///
+  /// Exists for the same reason [watchLabel] does. The settings screen is built
+  /// once and stays mounted, so a value read at build time is the value it
+  /// shows forever — and ownership is settled by a frame that may arrive after
+  /// that, or change later when ownership can be transferred.
+  ///
+  /// Same contract as [watchLabel]: a fresh single-subscription stream per
+  /// call, so call it once per consumer.
+  Stream<bool?> watchOwnership();
+
   /// Reactive display-label signal: emits the current cached label on listen, then
   /// every subsequent change (rename → new label, logout/clear → null). Broadcast —
   /// multiple surfaces (shell avatar, future consumers) may listen concurrently.

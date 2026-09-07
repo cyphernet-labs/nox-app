@@ -557,3 +557,98 @@ func TestClaimedIsReadFromTheOwnerAndNotFromTheTimestamp(t *testing.T) {
 		t.Fatal("a store with a timestamp but no owner reports itself claimed")
 	}
 }
+
+// The re-claim follows the OWNER, not the oldest row. Once a second person can
+// exist - which is what 034 brings - picking by row order would hand a fresh
+// device somebody else's identity together with all of their history.
+func TestReClaimFollowsTheOwnerAndNotTheOldestPerson(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	if _, err := s.EnsureServerIdentity(ctx); err != nil {
+		t.Fatalf("EnsureServerIdentity: %v", err)
+	}
+	owner := claimPerson(t, s, "dev-owner")
+	// A guest whose row sorts BEFORE the owner's. Written directly, because a
+	// server holds one person until invite-user (Q15) - this is the shape 034
+	// produces, and the ordering is what makes the old `onlyUser` inference
+	// pick the wrong one.
+	if _, err := s.write.ExecContext(ctx,
+		"INSERT INTO users (user_id, label, created_at) VALUES ('u_guest', 'Guest', 1)"); err != nil {
+		t.Fatalf("insert guest: %v", err)
+	}
+	if err := s.RevokeDevice(ctx, "dev-owner"); err != nil {
+		t.Fatalf("RevokeDevice: %v", err)
+	}
+
+	token, err := s.IssueClaimToken(ctx, 300)
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+	back, err := s.Pair(ctx, token, "dev-new", "test", 300)
+	if err != nil {
+		t.Fatalf("re-claim: %v", err)
+	}
+	if back.UserID != owner.UserID {
+		t.Fatalf("re-claim landed on %q, want the OWNER %q - not the oldest row", back.UserID, owner.UserID)
+	}
+	if !back.Owner {
+		t.Fatal("the owner came back without their ownership")
+	}
+}
+
+// A store holding people but no owner is reachable only by hand-editing the
+// database. Both available guesses are worse than a refusal and neither is
+// undoable: attaching by row order hands a stranger somebody's history, and
+// minting a new person orphans it.
+func TestClaimIsRefusedOnAStoreWithPeopleButNoOwner(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	claimPerson(t, s, "dev-phone")
+	if err := s.RevokeDevice(ctx, "dev-phone"); err != nil {
+		t.Fatalf("RevokeDevice: %v", err)
+	}
+	if _, err := s.write.ExecContext(ctx, "UPDATE server_identity SET owner_user_id = NULL WHERE id = 1"); err != nil {
+		t.Fatalf("clear owner: %v", err)
+	}
+
+	token, err := s.IssueClaimToken(ctx, 400)
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+	if _, err := s.Pair(ctx, token, "dev-stranger", "test", 400); !errors.Is(err, ErrTokenInvalid) {
+		t.Fatalf("err = %v, want ErrTokenInvalid: an ownerless store must not let a stranger into somebody's history", err)
+	}
+}
+
+// The pair reply may not promise ownership the row does not hold. setOwner is
+// conditional, so a claim that loses the race must answer honestly - otherwise
+// the badge appears and the next greeting takes it away.
+func TestPairNeverReportsOwnershipTheRowDoesNotHold(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	if _, err := s.EnsureServerIdentity(ctx); err != nil {
+		t.Fatalf("EnsureServerIdentity: %v", err)
+	}
+	// Somebody already owns the machine, and has no device left - so a claim is
+	// still accepted, and it must land on THEM.
+	if _, err := s.write.ExecContext(ctx,
+		"INSERT INTO users (user_id, label, created_at) VALUES ('u_owner', 'Owner', 1)"); err != nil {
+		t.Fatalf("insert owner: %v", err)
+	}
+	if _, err := s.write.ExecContext(ctx,
+		"UPDATE server_identity SET owner_user_id = 'u_owner', claimed_at = 1 WHERE id = 1"); err != nil {
+		t.Fatalf("set owner: %v", err)
+	}
+
+	token, err := s.IssueClaimToken(ctx, 500)
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+	id, err := s.Pair(ctx, token, "dev-new", "test", 500)
+	if err != nil {
+		t.Fatalf("Pair: %v", err)
+	}
+	if id.UserID != "u_owner" || !id.Owner {
+		t.Fatalf("pair answered %+v, want the existing owner still owning", id)
+	}
+}

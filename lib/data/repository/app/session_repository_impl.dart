@@ -30,6 +30,10 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
 
   void _emitLabel(String? label) => _labelController.add(label);
 
+  final StreamController<bool?> _ownershipController = StreamController<bool?>.broadcast();
+
+  void _emitOwnership(bool? isOwner) => _ownershipController.add(isOwner);
+
   /// The author id the server assigned; open data, so prefs rather than the
   /// keychain — the login identifier is the secret, this is not.
   static const String _kAuthorId = 'session.author_id';
@@ -126,7 +130,13 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       // Null is "the server did not say", and that must not overwrite an answer
       // heard earlier: a build talking to an older server would otherwise lose
       // the badge on the first reconnect.
-      if (isOwner != null) await _prefs.setBool(_kIsOwner, isOwner);
+      if (isOwner != null && _prefs.getBool(_kIsOwner) != isOwner) {
+        await _prefs.setBool(_kIsOwner, isOwner);
+        // Only a real change is announced, for the same reason the label is:
+        // a reconnect confirming the current answer should not ripple through
+        // the surfaces that render it.
+        _emitOwnership(isOwner);
+      }
       final cached = _prefs.getString(_kLabel);
       final changed = cached != label;
       if (changed) {
@@ -147,6 +157,12 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       _emitLabel(label);
       return const RepositoryResult<bool>.success(data: true);
     });
+  }
+
+  @override
+  Stream<bool?> watchOwnership() async* {
+    yield _prefs.getBool(_kIsOwner);
+    yield* _ownershipController.stream;
   }
 
   @override
@@ -243,6 +259,12 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       // pair reply may well have arrived and claimed the machine before the
       // step that failed, and a badge with no session behind it is a lie.
       await _prefs.remove(_kIsOwner);
+      // And the author id written by the SAME call. Left behind it would point
+      // at the previous server's person, and the next sign-in would inherit it
+      // and mark that stranger's messages as its own - the hazard clear() names
+      // in its own comment, reachable here since sign-in started adopting the
+      // identity from the pair reply.
+      await _prefs.remove(_kAuthorId);
       return const RepositoryResult<bool>.success(data: true);
     });
   }
@@ -261,6 +283,7 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       // Ownership belongs to the person signing out. The next person to sign in
       // on this device inherits neither their name nor their machine.
       await _prefs.remove(_kIsOwner);
+      _emitOwnership(null);
       _emitLabel(null); // logout resets every label surface to the fallback
       return const RepositoryResult<bool>.success(data: true);
     });

@@ -25,7 +25,9 @@ NavigationRail + settings menu pane (340, grouped nav items) + detail pane (cont
 
 ## Behavior
 - Selecting a menu item highlights it (secondaryContainer) and swaps the detail pane — no push.
-- Account: identity card; by default the ID stays masked and the account QR is shown inline (no secret reveal on desktop). Editing → inline name field.
+- Account: identity card carrying the name, the `Server owner` badge and the ID. Editing → inline name field.
+- Owner badge (phase 033): shown only when the server states that this person owns it; "not stated" and "not the owner" both render nothing. Same rule and same placement as the narrow width — one builder feeds both, so the two cannot drift apart.
+- ⚠️ Phase 032 removed both the mask and the inline account QR: the ID is public now, and a QR of it added nobody. `Show QR` selects the Devices pane, where an invite is minted with a real one-shot token.
 - Notifications: enable switch; OS-denied → InfoBanner + Open settings, switch off.
 - Appearance: System / Light / Dark theme cards. Language: System / English / Українська.
 - Log out → centered confirm Dialog (mobile’s sheet/dialog becomes a centered dialog); destructive action tinted error.

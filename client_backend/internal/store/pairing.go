@@ -199,21 +199,38 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 			return Identity{}, ErrTokenInvalid
 		}
 
-		// Re-claiming a server that lost every device attaches to the person
-		// who is already there rather than minting a second one. A server holds
-		// one person until invite-user arrives (Q15), and a new identity would
-		// orphan the old one: their messages keep an author_id nobody can sign
-		// in as, and "the identity survives its devices" would be true on paper
-		// and worthless in practice.
-		existing, found, err := onlyUser(ctx, tx)
-		if err != nil {
-			return Identity{}, err
-		}
-		if found {
-			id = existing
+		switch {
+		case owner != "":
+			// Re-claiming a server that lost every device attaches to the person
+			// who OWNS it. Not to "the only person", and above all not to the
+			// oldest row: that inference is what this whole feature exists to
+			// delete, and once a second person can exist it would hand a fresh
+			// device somebody else's identity and history.
+			//
+			// A new identity here would orphan the old one instead: their
+			// messages keep an author_id nobody can sign in as, and "the
+			// identity survives its devices" would be true on paper only.
+			if err := loadUser(ctx, tx, owner, &id); err != nil {
+				return Identity{}, err
+			}
 			// Not Created: this person existed before this operation, so there
 			// is no naming step ahead - they already have a name.
-		} else {
+		default:
+			// No owner recorded. If the store also holds no people it is simply
+			// fresh, and this claim is the one that names its owner.
+			people, err := countPeople(ctx, tx)
+			if err != nil {
+				return Identity{}, err
+			}
+			if people > 0 {
+				// People but no owner: unreachable through any code path, so
+				// the store has been edited by hand. Refuse rather than guess.
+				// The two available guesses are both worse than a refusal -
+				// attaching to somebody by row order hands a stranger their
+				// history, and minting a new person orphans it - and unlike a
+				// refusal neither is undoable.
+				return Identity{}, ErrTokenInvalid
+			}
 			id, err = insertUser(ctx, tx, "", now)
 			if err != nil {
 				return Identity{}, err
@@ -231,9 +248,16 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 		if err := setOwner(ctx, tx, id.UserID, now); err != nil {
 			return Identity{}, err
 		}
-		// A claim always ends with this person owning the machine: either they
-		// just became the owner, or they already were one and re-attached.
-		id.Owner = true
+		// Read back rather than asserted. setOwner is conditional on the column
+		// still being empty, so claiming the write succeeded would let the pair
+		// reply promise ownership the row does not hold - and the very next
+		// greeting, which resolves it from that row, would take the badge away
+		// again.
+		settled, err := ownerUserID(ctx, tx)
+		if err != nil {
+			return Identity{}, err
+		}
+		id.Owner = settled != "" && settled == id.UserID
 		// Every OTHER unused claim token dies with this one. They were printed
 		// to the server log on earlier starts, and a log is not a secret store:
 		// without this, each of them comes back to life the moment the device
@@ -315,17 +339,26 @@ func pairedBy(ctx context.Context, tx *sql.Tx, token, deviceKey string) (Identit
 	return id, true, nil
 }
 
-// onlyUser returns the single person a server holds, if it holds one. A server
-// serves one person until invite-user arrives (Q15); this is what lets a
-// re-claim reattach instead of orphaning them.
-func onlyUser(ctx context.Context, tx *sql.Tx) (Identity, bool, error) {
-	var id Identity
-	err := tx.QueryRowContext(ctx, "SELECT user_id, label FROM users ORDER BY created_at LIMIT 1").Scan(&id.UserID, &id.Label)
+// loadUser fills id with the person named by userID.
+func loadUser(ctx context.Context, tx *sql.Tx, userID string, id *Identity) error {
+	err := tx.QueryRowContext(ctx,
+		"SELECT user_id, label FROM users WHERE user_id = ?", userID).Scan(&id.UserID, &id.Label)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Identity{}, false, nil
+		// The foreign key forbids it, so reaching here means the row went away
+		// underneath a live transaction. Refusing beats improvising.
+		return ErrTokenInvalid
 	}
 	if err != nil {
-		return Identity{}, false, fmt.Errorf("read existing person: %w", err)
+		return fmt.Errorf("read owner: %w", err)
 	}
-	return id, true, nil
+	return nil
+}
+
+// countPeople reports how many people this server holds.
+func countPeople(ctx context.Context, tx *sql.Tx) (int, error) {
+	var people int
+	if err := tx.QueryRowContext(ctx, "SELECT COUNT(1) FROM users").Scan(&people); err != nil {
+		return 0, fmt.Errorf("count people: %w", err)
+	}
+	return people, nil
 }

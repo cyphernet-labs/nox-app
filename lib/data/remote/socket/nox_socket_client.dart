@@ -382,11 +382,18 @@ class NoxSocketClient {
         label: id['label'] as String? ?? '',
         // Absent stays absent: it means "outcome not stated", which is neither
         // outcome, and the sign-in path must not be handed a guess.
-        created: id['created'] as bool?,
+        //
+        // Type-checked rather than cast. `as bool?` throws on anything that is
+        // not a bool - a peer sending `1` or `"true"` - and the throw escapes
+        // _greet(), which catches only SocketUnavailableException and is called
+        // through unawaited(): no teardown, no retry, no completed greeting.
+        // The socket then hangs until the process restarts. A malformed field
+        // is worth ignoring, never worth wedging the channel for.
+        created: id['created'] is bool ? id['created'] as bool : null,
         // Same rule for ownership, and for a sharper reason: a server that does
         // not state it is not saying "no". Reading a missing field as false
         // would strip the badge from an owner talking to an older build.
-        isOwner: id['owner'] as bool?,
+        isOwner: id['owner'] is bool ? id['owner'] as bool : null,
       );
       greetingGeneration++;
       final lim = data['limits'];

@@ -94,8 +94,12 @@ void main() {
     expect((await session.readSession()).data, isNull);
     expect((await session.serverAddress()).data, isNull);
     // Ownership goes with the session: the next person to sign in on this
-    // device inherits nobody else's machine.
-    expect((await session.readSession()).data?.isOwner, isNull);
+    // device inherits nobody else's machine. Asserted on the STORED key, not on
+    // the session - the line above already proved the session is null, so
+    // `data?.isOwner` would be null whatever clear() did.
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getBool('session.is_owner'), isNull);
+    expect(prefs.getString('session.author_id'), isNull);
 
     // And the key really is gone on the server: the same link cannot be reused,
     // because the token was spent - a fresh pairing needs a fresh one.
