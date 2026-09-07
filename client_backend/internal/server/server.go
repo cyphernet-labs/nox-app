@@ -444,9 +444,6 @@ func warnOwnerlessStore(stranded bool, people int, logger *slog.Logger) {
 	// that advice would be impossible to follow. The store needs a human -
 	// restore a backup, or write the owner back by hand - and no claim link is
 	// printed while it is like this.
-	//
-	// No user id in the message (Principle I): the count is what an operator
-	// needs.
 	logger.Warn("this server holds people but records no owner: it cannot be claimed and no owner will be guessed - restore it from a backup or set the owner by hand",
 		"people", people)
 }
@@ -472,7 +469,7 @@ func announceClaim(ctx context.Context, st *store.Store, addr string, stranded b
 	// device is running - locking the owner out of their own, with Pair standing
 	// ready to accept the claim link that never gets printed. One rule, one
 	// predicate: Pair reads the same one.
-	canGetIn, _, err := st.OwnerCanStillGetIn(ctx)
+	canGetIn, err := st.OwnerCanStillGetIn(ctx)
 	if err != nil {
 		return fmt.Errorf("check ownership state: %w", err)
 	}

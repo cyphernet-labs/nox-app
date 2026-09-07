@@ -194,7 +194,7 @@ void main() {
     test('claiming a server brings the person into being, so naming is ahead', () async {
       when(
         handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
-      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_2', label: 'User1234', created: true));
+      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_2', label: 'User1234', created: true, isOwner: null));
 
       final result = await repository.signIn(identifier: link);
 
@@ -208,7 +208,7 @@ void main() {
     test('a device added to an existing person skips onboarding entirely', () async {
       when(
         handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
-      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
+      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false, isOwner: null));
 
       final result = await repository.signIn(identifier: link);
 
@@ -220,7 +220,7 @@ void main() {
     test('only the PUBLIC key is presented - the seed never leaves', () async {
       when(
         handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
-      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
+      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false, isOwner: null));
 
       await repository.signIn(identifier: link);
 
@@ -256,8 +256,10 @@ void main() {
       // stranger's on the sender's own screen.
       when(
         handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
-      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
-      when(handshake.greet()).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
+      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false, isOwner: null));
+      when(
+        handshake.greet(),
+      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false, isOwner: null));
 
       await repository.signIn(identifier: link);
 
@@ -269,7 +271,7 @@ void main() {
       // it for nothing - an ordinary reconnect is enough.
       when(
         handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
-      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
+      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false, isOwner: null));
       when(handshake.greet()).thenThrow(const IdentityHandshakeTimeout());
 
       final result = await repository.signIn(identifier: link);
@@ -333,7 +335,7 @@ void main() {
       // name.
       when(
         handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
-      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_3', label: 'Anna', created: null));
+      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_3', label: 'Anna', created: null, isOwner: null));
 
       final result = await repository.signIn(identifier: link);
 

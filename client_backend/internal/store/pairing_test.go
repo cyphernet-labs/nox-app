@@ -951,3 +951,39 @@ func TestAReplayAnswersWithWhatTheTokenProducedNotWhoHoldsTheKeyNow(t *testing.T
 		t.Fatalf("replay = %+v, want the original answer %+v", replay, first)
 	}
 }
+
+// A replay must not slip past the takeover refusal. Answering from the token's
+// own record is right, but only while the device it names still belongs to the
+// person it produced - otherwise a key rebound to somebody else is handed that
+// person's identity, label and ownership, and the client writes all three onto
+// the wrong device.
+func TestAReplayIsRefusedOnceTheDeviceBelongsToSomebodyElse(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	if _, err := s.EnsureServerIdentity(ctx); err != nil {
+		t.Fatalf("EnsureServerIdentity: %v", err)
+	}
+	claim, err := s.IssueClaimToken(ctx, 100)
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+	produced, err := s.Pair(ctx, claim, "dev-x", "test", 100)
+	if err != nil {
+		t.Fatalf("Pair: %v", err)
+	}
+
+	// dev-x ends up bound to somebody else. Written directly: Pair refuses to
+	// produce this, and a restore is what reaches it today.
+	if _, err := s.write.ExecContext(ctx,
+		"INSERT INTO users (user_id, label, created_at) VALUES ('u_other', 'Other', 200)"); err != nil {
+		t.Fatalf("insert other: %v", err)
+	}
+	if _, err := s.write.ExecContext(ctx,
+		"UPDATE devices SET user_id = 'u_other' WHERE device_key = 'dev-x'"); err != nil {
+		t.Fatalf("rebind device: %v", err)
+	}
+
+	if _, err := s.Pair(ctx, claim, "dev-x", "test", 300); !errors.Is(err, ErrTokenInvalid) {
+		t.Fatalf("err = %v, want ErrTokenInvalid: the replay handed over %q's identity", err, produced.UserID)
+	}
+}

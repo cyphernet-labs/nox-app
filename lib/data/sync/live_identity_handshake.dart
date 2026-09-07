@@ -13,13 +13,19 @@ import 'package:nox_app/general/pairing/pairing_link.dart';
 /// frame". Contract §8.1 moves the same distinction onto the pairing reply at
 /// stage 2, and nothing outside the transport layer may notice that it moved.
 class IdentityHandshake {
-  const IdentityHandshake({required this.authorId, required this.label, required this.created, this.isOwner});
+  const IdentityHandshake({required this.authorId, required this.label, required this.created, required this.isOwner});
 
   final String authorId;
   final String label;
 
   /// Whether this person owns the server (contract §3, §8A). Null means the
   /// server did not state it, which is not the same as "does not own".
+  ///
+  /// `required` although nullable, on the project's own precedent: a null here
+  /// is not a neutral default. `adoptServerIdentity` reads it as "say nothing,
+  /// leave the stored answer alone", so a construction site that forgets the
+  /// field would silently freeze a badge that ownership had moved away from.
+  /// The compiler makes every caller decide instead.
   final bool? isOwner;
 
   /// Whether the server brought this person into being just now. Null means it

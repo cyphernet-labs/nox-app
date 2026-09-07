@@ -116,11 +116,12 @@ func (s *Store) SetLabel(ctx context.Context, userID, label string) error {
 	return nil
 }
 
-// CountDevices reports how many keys can still reach this server at all.
+// CountDevices reports how many devices this server holds in total.
 //
-// Zero means nobody can: the claim is spent, every device is revoked, and
-// without this the machine would be locked forever - the identity survives,
-// which is the point, but nothing could ever attach to it again.
+// Test-support ONLY. It must never decide anything about claiming: "occupied"
+// means "the OWNER can still get in", and counting every device instead locks
+// an owner out of their own machine as soon as somebody else's device is
+// running. That decision belongs to OwnerCanStillGetIn.
 func (s *Store) CountDevices(ctx context.Context) (int, error) {
 	var n int
 	if err := s.read.QueryRowContext(ctx, "SELECT COUNT(1) FROM devices").Scan(&n); err != nil {

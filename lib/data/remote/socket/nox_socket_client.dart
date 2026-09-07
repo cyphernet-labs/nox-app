@@ -434,14 +434,16 @@ class NoxSocketClient {
       greetingGeneration++;
       final lim = data['limits'];
       if (lim is Map<String, dynamic>) {
+        // `num`, like the cursor above and for the same reason: a JSON layer
+        // that round-trips numbers through a float sends 65536.0, and treating
+        // that as unreadable would silently install the contract default in
+        // place of the limit the server actually stated - so the composer's
+        // pre-flight check would block messages the server accepts, or pass
+        // ones it rejects.
         limits = ServerLimits(
-          maxMessageBytes: lim['max_message_bytes'] is int
-              ? lim['max_message_bytes'] as int
-              : ServerLimits.contractDefaults.maxMessageBytes,
-          maxAttachmentBytes: lim['max_attachment_bytes'] is int
-              ? lim['max_attachment_bytes'] as int
-              : ServerLimits.contractDefaults.maxAttachmentBytes,
-          maxFrameBytes: lim['max_frame_bytes'] is int ? lim['max_frame_bytes'] as int : ServerLimits.contractDefaults.maxFrameBytes,
+          maxMessageBytes: _limit(lim['max_message_bytes'], ServerLimits.contractDefaults.maxMessageBytes),
+          maxAttachmentBytes: _limit(lim['max_attachment_bytes'], ServerLimits.contractDefaults.maxAttachmentBytes),
+          maxFrameBytes: _limit(lim['max_frame_bytes'], ServerLimits.contractDefaults.maxFrameBytes),
         );
       }
       // The ladder resets HERE — a greeting is the first proof the peer is real.
@@ -484,6 +486,10 @@ class NoxSocketClient {
       _scheduleRetry();
     }
   }
+
+  /// One limit from the greeting, or the contract default when the server did
+  /// not state a usable one.
+  static int _limit(Object? raw, int fallback) => raw is num ? raw.toInt() : fallback;
 
   /// Tears down and never throws.
   ///

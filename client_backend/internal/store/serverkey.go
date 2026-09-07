@@ -109,10 +109,9 @@ func (s *Store) ServerIdentity(ctx context.Context) (ServerIdentity, error) {
 // Conditional on the column still being empty: a claim that races another one
 // must not move ownership, and the affected-row count is what settles it -
 // the same shape token burning uses.
-// It reports whether the write landed, which is what the caller needs: the
-// statement is conditional, so "did this person become the owner" is answered
-// by the affected-row count - the same shape BurnToken uses - rather than by
-// reading the row back afterwards.
+// It reports whether the write landed: the statement is conditional, so "did
+// this person become the owner" is answered by the affected-row count - the
+// same shape BurnToken uses - rather than by reading the row back afterwards.
 func setOwner(ctx context.Context, tx *sql.Tx, userID string, now int64) (bool, error) {
 	// claimed_at is written in the SAME statement on purpose. It decides
 	// nothing, but the moment is unrecoverable, and keeping the two writes
@@ -166,8 +165,8 @@ func (s *Store) OwnerlessWithPeople(ctx context.Context) (bool, int, error) {
 	return owner == "" && people > 0, people, nil
 }
 
-// OwnerCanStillGetIn reports whether the owner has a device left, and who the
-// owner is.
+// OwnerCanStillGetIn reports whether the owner still has a device to reach this
+// machine with.
 //
 // "Occupied" means "the OWNER can still get in", and counting every device on
 // the server instead would lock them out of their own machine the moment
@@ -178,28 +177,32 @@ func (s *Store) OwnerlessWithPeople(ctx context.Context) (bool, int, error) {
 //
 // Both values are read inside ONE transaction: taken separately they can
 // observe a claim half-committed and report a healthy store as stranded.
-func (s *Store) OwnerCanStillGetIn(ctx context.Context) (canGetIn bool, owner string, err error) {
+// The owner's identifier is deliberately NOT returned: no caller needs it, and
+// a predicate that hands it out invites somebody to put it somewhere it does
+// not belong - a log line, a wire field - against the rules this same feature
+// enforces elsewhere.
+func (s *Store) OwnerCanStillGetIn(ctx context.Context) (bool, error) {
 	tx, err := s.read.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
-		return false, "", fmt.Errorf("begin ownership read: %w", err)
+		return false, fmt.Errorf("begin ownership read: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	owner, err = ownerUserID(ctx, tx)
+	owner, err := ownerUserID(ctx, tx)
 	if errors.Is(err, ErrNoServerIdentity) {
-		return false, "", nil
+		return false, nil
 	}
 	if err != nil {
-		return false, "", err
+		return false, err
 	}
 	if owner == "" {
-		return false, "", nil
+		return false, nil
 	}
 	devices, err := ownerDeviceCount(ctx, tx, owner)
 	if err != nil {
-		return false, "", err
+		return false, err
 	}
-	return devices > 0, owner, nil
+	return devices > 0, nil
 }
 
 // ownerDeviceCount is the ONE spelling of "how many devices can the owner still

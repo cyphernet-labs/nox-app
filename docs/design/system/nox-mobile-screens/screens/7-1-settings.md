@@ -22,7 +22,6 @@ App bar (Settings). Identity card (name + `Server owner` badge when the server s
 - ⚠️ Phase 032 removed the mask and the reveal: the ID stopped being a secret — the person is recognised by the device's paired key — so there is nothing to hide and no `id-shown` state. The ID renders in full, at the card's ordinary text style.
 - `Show QR` leads to **Devices**, where an invite is minted with a real one-shot token. It no longer shows a QR of the ID: that used to hand over a bearer secret.
 - Editing: name becomes an inline TextField with counter.
-- Show QR → modal bottom sheet; the QR card surface is brand-fixed WHITE so it scans in dark mode.
 - Log out → confirm AlertDialog (destructive action tinted error); confirming wipes ID + local data; shows a loading state.
 
 ## Navigation

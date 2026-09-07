@@ -20,11 +20,11 @@ import 'live_identity_handshake_test.mocks.dart';
 void main() {
   group('IdentityHandshake', () {
     test('an outcome the server stated is usable', () {
-      const known = IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false);
+      const known = IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false, isOwner: null);
       expect(known.outcomeStated, isTrue);
       expect(known.created, isFalse);
 
-      const newcomer = IdentityHandshake(authorId: 'u_2', label: 'User1234', created: true);
+      const newcomer = IdentityHandshake(authorId: 'u_2', label: 'User1234', created: true, isOwner: null);
       expect(newcomer.outcomeStated, isTrue);
       expect(newcomer.created, isTrue);
     });
@@ -33,7 +33,7 @@ void main() {
       // The third wire state is the load-bearing one. Collapsing it into
       // either boolean costs the person something: false steals a newcomer's
       // naming step, true overwrites a returning person's name.
-      const silent = IdentityHandshake(authorId: 'u_3', label: 'Anna', created: null);
+      const silent = IdentityHandshake(authorId: 'u_3', label: 'Anna', created: null, isOwner: null);
       expect(silent.outcomeStated, isFalse);
       expect(silent.created, isNull);
     });
@@ -42,7 +42,7 @@ void main() {
       // FR-006d: at stage 2 the same distinction arrives on the pairing reply.
       // Nothing outside the transport layer may notice that it moved, so the
       // type that carries the decision must not mention the greeting at all.
-      const value = IdentityHandshake(authorId: 'u_1', label: 'Anna', created: true);
+      const value = IdentityHandshake(authorId: 'u_1', label: 'Anna', created: true, isOwner: null);
       expect(value.toString(), isNot(contains('hello')));
       expect(value.toString(), isNot(contains('greet')));
     });

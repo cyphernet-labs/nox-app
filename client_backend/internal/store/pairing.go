@@ -244,18 +244,11 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 			id.Created = true
 		}
 		// Ownership is recorded HERE, in the transaction that creates the
-		// person, rather than derived later from who happens to be oldest:
-		// the order rows were created in is not a right, and it stops being
-		// even a decent proxy the moment a second person can exist.
-		//
-		// Conditional on the column being empty, so a re-claim on a server that
-		// lost every device attaches to the person who is already the owner and
-		// does NOT move ownership anywhere.
-		// The write answers for itself: setOwner is conditional, and its
-		// affected-row count says whether THIS person became the owner. Taking
-		// it from there rather than reading the row back afterwards keeps one
-		// round of SQLite out of every claim and removes the chance of the two
-		// answers disagreeing.
+		// person, rather than derived later from who happens to be oldest: the
+		// order rows were created in is not a right, and it stops being even a
+		// decent proxy the moment a second person can exist. The write is
+		// conditional on the column being empty, so a re-claim attaches to the
+		// person who is already the owner and moves ownership nowhere.
 		became, err := setOwner(ctx, tx, id.UserID, now)
 		if err != nil {
 			return Identity{}, err
@@ -360,11 +353,17 @@ func pairedBy(ctx context.Context, tx *sql.Tx, token, deviceKey string) (Identit
 	// public - it rides every greeting and device.list prints it - the token
 	// sits in the server log across restarts, and `pair` is the one command
 	// that carries no signature.
+	// The device must STILL belong to the person the token produced. Without
+	// that join the replay path answers before Pair's takeover refusal is ever
+	// reached: a key rebound to somebody else - a restore today, an ordinary
+	// invite once 034 lands - would be handed the original person's id, label
+	// and ownership, and the client writes all three into the wrong device.
 	var created int
 	err := tx.QueryRowContext(ctx, `
 		SELECT u.user_id, u.label, t.created_person
 		FROM pair_tokens t
 		JOIN users u ON u.user_id = t.paired_user_id
+		JOIN devices d ON d.device_key = t.used_by AND d.user_id = t.paired_user_id
 		WHERE t.token = ? AND t.used_at IS NOT NULL AND t.used_by = ?`,
 		token, deviceKey).Scan(&id.UserID, &id.Label, &created)
 	if errors.Is(err, sql.ErrNoRows) {
