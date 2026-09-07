@@ -43,6 +43,11 @@ enum RepositoryException implements BaseRepositoryException {
     'unauthenticated' => unauthenticated,
     'unsupported_schema' => unsupportedSchema,
     'internal' => internal,
+    // Pairing (§8A). Absent here until 034, so every consumer but sign-in - which
+    // has its own mapper - collapsed both into `internal` and lost the
+    // distinction the wire had kept all the way across.
+    'invalid_token' => authentication,
+    'token_expired' => notFound,
     'not_owner' => notOwner,
     'pair_declined' => pairDeclined,
     'pair_timeout' => pairTimeout,

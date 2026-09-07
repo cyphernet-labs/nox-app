@@ -142,8 +142,7 @@ func (c *client) handleSessionHello(cmd protocol.Command) {
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to resolve identity"))
 		return
 	}
-	c.identity = id
-	c.label = id.Label
+	c.srv.setIdentity(c, id)
 
 	journalID, err := c.srv.store.JournalID(c.ctx)
 	if err != nil {
@@ -182,7 +181,7 @@ func (c *client) handleSessionHello(cmd protocol.Command) {
 		// pair reply, and a greeting that still states it invites the client to
 		// read the decision from two places - which is exactly the second
 		// source of one truth the phase set out to remove.
-		Identity: greetingIdentity{ID: c.identity.UserID, Label: c.identity.Label, Owner: c.identity.Owner},
+		Identity: greetingIdentity{ID: id.UserID, Label: id.Label, Owner: id.Owner},
 	}))
 
 	// Questions this device has not seen yet, re-sent to the owner on every
@@ -233,7 +232,11 @@ func (c *client) resendPendingRequests() {
 		return
 	}
 	for _, req := range pending {
-		c.srv.notifyPairRequested(c.identity.UserID, req)
+		// To THIS connection, not to every device of the owner: the others
+		// were told when the request arrived, or on their own greetings. A
+		// fan-out here would re-ask every device each time any one of them
+		// reconnects.
+		c.sendFrame(pairRequestedFrame(req))
 	}
 }
 
@@ -261,7 +264,7 @@ func (c *client) handleChatCreate(cmd protocol.Command) {
 		return
 	}
 
-	chat, event, err := c.srv.store.CreateChat(c.ctx, name, c.label, time.Now().Unix())
+	chat, event, err := c.srv.store.CreateChat(c.ctx, name, c.srv.currentIdentity(c).Label, time.Now().Unix())
 	switch {
 	case errors.Is(err, store.ErrNameTaken):
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrNameTaken, "Chat name already exists"))
@@ -505,7 +508,7 @@ func (c *client) handleMessageSend(cmd protocol.Command) {
 	}
 
 	msg, event, created, err := c.srv.store.SendMessage(
-		c.ctx, req.ChatID, req.ClientMessageID, c.identity, req.Body, fileID, time.Now().Unix())
+		c.ctx, req.ChatID, req.ClientMessageID, c.srv.currentIdentity(c), req.Body, fileID, time.Now().Unix())
 	switch {
 	case errors.Is(err, store.ErrChatNotFound):
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrNotFound, "chat does not exist"))

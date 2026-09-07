@@ -153,6 +153,11 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
           // reconnect away, and the session is already valid.
         }
         return _finishSignIn(onboardingComplete: !greeting.created!);
+      } on PairingFailed {
+        // Not about the link. Retryable, and the person is told so rather than
+        // sent looking for an invite they already have.
+        await _sessionRepository.discardSignIn();
+        return const RepositoryResult<bool>.error(exception: RepositoryException.internal);
       } on PairingRefused catch (e) {
         await _sessionRepository.discardSignIn();
         // Four refusals, four answers. The owner's decision and the owner's

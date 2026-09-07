@@ -507,3 +507,114 @@ func TestClaimAndDeviceInvitesAreUntouchedByPersonInvites(t *testing.T) {
 		}
 	}
 }
+
+// The window the connection mark cannot cover is the one before it: the store
+// commits, and only then is the connection marked. A decision landing in that
+// instant was addressed to a connection nobody had marked yet.
+func TestAnOutcomeDecidedBeforeTheMarkStillReachesTheWaitingDevice(t *testing.T) {
+	ts, srv := newTestServer(t)
+	owner, _ := ownerSession(t, ts, srv)
+
+	token := personInvite(t, owner, 2)
+	guestDev := newDevice(t)
+	first, requestID := presentInvite(t, ts, token, guestDev)
+	owner.expectEvent()
+	// The guest's socket goes away while the question is still open.
+	_ = first.conn.Close(websocket.StatusNormalClosure, "")
+
+	// Answered while nobody is waiting: the outcome frame reaches no connection.
+	owner.send(fmt.Sprintf(`{"id":3,"cmd":"person.confirm","data":{"request_id":%q,"approve":true}}`, requestID))
+	owner.expectOK(3)
+	owner.expectEvent()
+
+	// The guest comes back and presents the same link. It has to learn the
+	// decision - re-presenting is the recovery path the contract promises.
+	back := dialWS(t, ts, nil)
+	back.expectGreeting()
+	back.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"device_key":%q,"platform":"ios"}}`, token, guestDev.pub))
+	data := back.expectOK(1)
+	var status string
+	mustUnmarshal(t, data["status"], &status)
+	if status != pairStatusPaired {
+		t.Fatalf("status = %q, want %q: the recorded outcome answers a repeat", status, pairStatusPaired)
+	}
+}
+
+// A request the sweeper has not reached yet, expired by the guest's own
+// presentation. Nothing else can tell the owner afterwards: the row now carries
+// an outcome, so neither the sweeper nor the greeting re-send will see it.
+func TestARequestExpiredByThePresentingDeviceStillClosesOnTheOwnerScreen(t *testing.T) {
+	ts, srv := newTestServer(t)
+	owner, _ := ownerSession(t, ts, srv)
+
+	token := personInvite(t, owner, 2)
+	guestDev := newDevice(t)
+
+	// Presented far enough in the past that its five-minute window is already
+	// over, straight through the store: the sweeper is not running here, so the
+	// row stays unresolved and past its deadline - the exact state the lazy
+	// path exists for.
+	ctx := context.Background()
+	res, err := srv.store.Pair(ctx, token, guestDev.pub, "ios", 100)
+	if err != nil {
+		t.Fatalf("Pair: %v", err)
+	}
+	if !res.Pending {
+		t.Fatalf("Pair = %+v, want a pending request", res)
+	}
+
+	back := dialWS(t, ts, nil)
+	back.expectGreeting()
+	back.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"device_key":%q,"platform":"ios"}}`, token, guestDev.pub))
+	if code := expectErrCode(t, back, 1); code != protocol.ErrPairTimeout {
+		t.Fatalf("code = %q, want %q", code, protocol.ErrPairTimeout)
+	}
+
+	_, name, data := owner.expectEvent()
+	if name != protocol.EventPairResolved {
+		t.Fatalf("event = %q, want %q: the question has to leave the owner's screen", name, protocol.EventPairResolved)
+	}
+	var outcome, got string
+	mustUnmarshal(t, data["outcome"], &outcome)
+	mustUnmarshal(t, data["request_id"], &got)
+	if outcome != store.OutcomeExpired || got != res.RequestID {
+		t.Fatalf("resolved = (%q, %q), want (expired, %q)", got, outcome, res.RequestID)
+	}
+}
+
+// The re-send goes to the device that just greeted, not to every device of the
+// owner: the others were told when the request arrived.
+func TestTheGreetingResendReachesOnlyTheDeviceThatGreeted(t *testing.T) {
+	ts, srv := newTestServer(t)
+	first, ownerDev := ownerSession(t, ts, srv)
+
+	token := personInvite(t, first, 2)
+	guestDev := newDevice(t)
+	_, requestID := presentInvite(t, ts, token, guestDev)
+	first.expectEvent()
+
+	// A SECOND device of the owner greets. The question is re-sent to it.
+	second := dialWS(t, ts, srv)
+	second.expectGreeting()
+	second.greet(t, 1, ownerDev, "")
+	_, name, data := second.expectEvent()
+	if name != protocol.EventPairRequested {
+		t.Fatalf("event = %q, want %q", name, protocol.EventPairRequested)
+	}
+	var got string
+	mustUnmarshal(t, data["request_id"], &got)
+	if got != requestID {
+		t.Fatalf("request %q, want %q", got, requestID)
+	}
+
+	// The first device must NOT be re-asked: it already has the question, and a
+	// fan-out here would repeat it on every reconnect of every other device.
+	// Something else has to arrive for the assertion to be about the re-send
+	// rather than about an empty queue, so a decision is what follows.
+	first.send(fmt.Sprintf(`{"id":3,"cmd":"person.confirm","data":{"request_id":%q,"approve":false}}`, requestID))
+	first.expectOK(3)
+	_, name, _ = first.expectEvent()
+	if name != protocol.EventPairResolved {
+		t.Fatalf("first device saw %q before the outcome, want the re-send to have skipped it", name)
+	}
+}

@@ -34,6 +34,10 @@ class PairRequestService {
 
   Stream<List<PairRequest>> get open => _open.stream;
 
+  /// The open questions right now. Read after a surface closes, to find the one
+  /// that was waiting behind it — nothing emits again at that moment.
+  List<PairRequest> get current => _open.value;
+
   void _onEvent(ServerEvent event) {
     switch (event.event) {
       case ServerEvent.personPairRequested:
@@ -68,20 +72,34 @@ class PairRequestService {
     final now = DateTime.now();
     final live = <PairRequest>[
       for (final request in requests)
-        if (request.expiresAt.isAfter(now)) request,
-    ]..sort((a, b) => a.invitedAt.compareTo(b.invitedAt));
+        // A request whose deadline could not be read is KEPT. The server is the
+        // authority on when a question dies and says so with an `expired`
+        // outcome; dropping one here because a field was missing - or because
+        // this device's clock runs ahead of the server's - would swallow the
+        // question silently and leave the person at the door waiting out the
+        // full window for nothing.
+        if (request.expiresAt == null || request.expiresAt!.isAfter(now)) request,
+      // Oldest question first. A request with no stated moment sorts last
+      // rather than to 1970: it is the newest thing we know nothing about.
+    ]..sort((a, b) => (a.invitedAt ?? _far).compareTo(b.invitedAt ?? _far));
     _open.add(live);
 
     _expiry?.cancel();
     _expiry = null;
-    if (live.isEmpty) return;
-    var soonest = live.first.expiresAt;
+    DateTime? soonest;
     for (final request in live) {
-      if (request.expiresAt.isBefore(soonest)) soonest = request.expiresAt;
+      final expires = request.expiresAt;
+      if (expires == null) continue;
+      if (soonest == null || expires.isBefore(soonest)) soonest = expires;
     }
+    if (soonest == null) return;
     final remaining = soonest.difference(now);
     _expiry = Timer(remaining.isNegative ? Duration.zero : remaining, () => _emit(_open.value));
   }
+
+  /// Stands in for an unstated moment when ordering. Far enough ahead that it
+  /// always sorts last, and never rendered.
+  static final DateTime _far = DateTime.utc(9999);
 
   static PairRequest? _parse(Map<String, dynamic> data) {
     final id = data['request_id'];
@@ -89,9 +107,15 @@ class PairRequestService {
     return PairRequest(requestId: id, invitedAt: _seconds(data['invited_at']), expiresAt: _seconds(data['expires_at']));
   }
 
-  static DateTime _seconds(Object? value) =>
-      DateTime.fromMillisecondsSinceEpoch((value is num && value.isFinite ? value.toInt() : 0) * 1000, isUtc: true).toLocal();
+  /// A wire second, or null when the field is missing or not a usable number.
+  /// Null means "not stated", never epoch zero: a zero here would read as a
+  /// deadline that passed in 1970 and drop the question on the floor.
+  static DateTime? _seconds(Object? value) {
+    if (value is! num || !value.isFinite) return null;
+    return DateTime.fromMillisecondsSinceEpoch(value.toInt() * 1000, isUtc: true).toLocal();
+  }
 
+  @disposeMethod
   Future<void> dispose() async {
     _expiry?.cancel();
     await _events.cancel();

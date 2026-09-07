@@ -500,7 +500,11 @@ func pendingOutcome(ctx context.Context, tx *sql.Tx, token, deviceKey string, no
 		if err := setOutcome(ctx, tx, token, OutcomeExpired); err != nil {
 			return PairResult{}, true, err
 		}
-		return PairResult{}, true, ErrPairTimeout
+		// The id rides along WITH the error: settling here takes the row out of
+		// both the sweeper's predicate and the greeting re-send, so this is the
+		// last moment anything can tell the owner the question is dead. Without
+		// it their screen keeps a question nothing will ever close.
+		return PairResult{RequestID: requestID.String}, true, ErrPairTimeout
 	default:
 		// Still waiting. The same request, not a second one: the answer the
 		// owner eventually gives has to reach whoever is asking now.

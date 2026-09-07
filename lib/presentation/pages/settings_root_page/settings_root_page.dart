@@ -302,7 +302,10 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
         ],
       ),
       _Section.devices => const DevicesBody(),
-      _Section.people => const PeopleBody(),
+      // Gated like the menu item it came from: if ownership stops being stated
+      // while People is open, the pane must stop offering an invite the menu no
+      // longer offers.
+      _Section.people => state.isOwner == true ? const PeopleBody() : const SizedBox.shrink(),
       _Section.notifications => const NotificationsBody(),
       _Section.appearance => const AppearanceBody(),
       _Section.language => const LanguageBody(),

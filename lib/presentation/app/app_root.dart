@@ -75,18 +75,44 @@ class _AppRootState extends State<AppRoot> {
   /// disagree with the server about it.
   void _watchPairRequests() {
     if (!getIt.isRegistered<PairRequestService>()) return;
-    _pairRequests = getIt<PairRequestService>().open.listen((requests) {
-      if (requests.isEmpty || _askingAbout != null) return;
-      final request = requests.first;
-      final navigatorContext = _navigatorKey.currentContext;
-      if (navigatorContext == null || !navigatorContext.mounted) return;
-      _askingAbout = request.requestId;
-      final wide = MediaQuery.sizeOf(navigatorContext).width >= Constants.railBreakpoint;
-      final surface = wide
-          ? PairRequestPage.showAsDialog(navigatorContext, request)
-          : Navigator.of(navigatorContext).push(PairRequestPage.route(request));
-      unawaited(surface.whenComplete(() => _askingAbout = null));
-    });
+    _pairRequests = getIt<PairRequestService>().open.listen((_) => _askNext());
+  }
+
+  /// Opens the oldest open question, if none is on screen already.
+  ///
+  /// Called on every emission AND after each surface closes. Only reacting to
+  /// emissions loses the second question: two people knocking while the phone
+  /// is locked produces `[A]` then `[A, B]`, and the second list arrives while
+  /// A is still on screen. Nothing emits again after A is answered, so B would
+  /// wait out its five minutes unseen.
+  void _askNext() {
+    if (_askingAbout != null || !getIt.isRegistered<PairRequestService>()) return;
+    final requests = getIt<PairRequestService>().current;
+    if (requests.isEmpty) return;
+    // Never over the pairing screen. A question that outlived a logout would
+    // ask a signed-out device to let somebody into a server it no longer has a
+    // session with.
+    if (_bloc.state.appliedAppState.state != AppStateType.authorized) return;
+    final navigatorContext = _navigatorKey.currentContext;
+    if (navigatorContext == null || !navigatorContext.mounted) return;
+
+    final request = requests.first;
+    _askingAbout = request.requestId;
+    // Read from the view rather than through MediaQuery.sizeOf: this runs from
+    // a stream callback, and sizeOf would register the root Navigator as a
+    // dependent - every resize and every keyboard would then rebuild the whole
+    // navigator subtree for the rest of the session.
+    final wide = MediaQueryData.fromView(View.of(navigatorContext)).size.width >= Constants.railBreakpoint;
+    final surface = wide
+        ? PairRequestPage.showAsDialog(navigatorContext, request)
+        : Navigator.of(navigatorContext).push(PairRequestPage.route(request));
+    unawaited(
+      surface.whenComplete(() {
+        _askingAbout = null;
+        // A question may have been waiting behind this one.
+        if (mounted) _askNext();
+      }),
+    );
   }
 
   Route<void>? _routeForState(AppStateType state) {

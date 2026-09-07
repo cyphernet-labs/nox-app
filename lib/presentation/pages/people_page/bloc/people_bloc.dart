@@ -1,6 +1,7 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/person/person_model.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/domain/repository/person/person_repository.dart';
@@ -41,17 +42,30 @@ class PeopleBloc extends BaseBloc<PeopleEvent, PeopleState> {
   }
 
   Future<void> _onInviteRequested(PeopleInviteRequested event, Emitter<PeopleState> emit) async {
+    // One at a time, and the button says so. Every call MINTS A TOKEN that
+    // admits a new person for 24 hours and cannot be revoked; a round trip can
+    // take ten seconds, and three impatient taps would leave two live invites
+    // nothing on this screen ever shows again.
+    if (state.inviting) return;
+    emit(state.copyWith(inviting: true, inviteFailed: false, notOwner: false));
     final repository = _repository;
     if (repository == null) {
       // A silent failure here reads as a dead button: the person taps "Invite"
       // and nothing at all happens.
-      emit(state.copyWith(inviteFailed: true));
+      emit(state.copyWith(inviting: false, inviteFailed: true));
       return;
     }
     final result = await repository.invitePerson();
     result.match<void>(
-      onData: (link) => emit(state.copyWith(inviteLink: link, inviteFailed: false)),
-      onError: (_) => emit(state.copyWith(inviteFailed: true)),
+      onData: (link) => emit(state.copyWith(inviting: false, inviteLink: link, inviteFailed: false)),
+      // "Only the owner may invite" is not "couldn't create an invite": one
+      // says the app should not have offered this at all, the other says try
+      // again. This screen is the owner's, so seeing it means the ownership
+      // answer went stale - and saying so beats inviting a retry that will
+      // fail the same way.
+      onError: (e) => emit(
+        state.copyWith(inviting: false, notOwner: e == RepositoryException.notOwner, inviteFailed: e != RepositoryException.notOwner),
+      ),
     );
   }
 }

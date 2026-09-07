@@ -102,14 +102,24 @@ class _PairRequestPageState extends State<PairRequestPage> {
         SizedBox(height: AppSpacingTokens.s16),
         // The two things the server actually knows: which invite this is, and
         // how long there is to answer.
-        Text(
-          context.l10n.pairRequestInvited(DateFormatter.time(widget.request.invitedAt)),
-          style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.outline),
-        ),
-        Text(
-          context.l10n.pairRequestExpires(DateFormatter.time(widget.request.expiresAt)),
-          style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.outline),
-        ),
+        //
+        // Rendered with the date when it is not today. A person invite lives
+        // 24 hours, so a bare HH:mm routinely shows a send time that reads as
+        // LATER than the expiry — the invite minted at 21:40 and opened at
+        // 09:05 the next morning.
+        //
+        // A moment the server did not state is simply not shown. Saying nothing
+        // beats saying 1970.
+        if (widget.request.invitedAt != null)
+          Text(
+            context.l10n.pairRequestInvited(DateFormatter.momentShort(widget.request.invitedAt!, l10n: context.l10n)),
+            style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.outline),
+          ),
+        if (widget.request.expiresAt != null)
+          Text(
+            context.l10n.pairRequestExpires(DateFormatter.momentShort(widget.request.expiresAt!, l10n: context.l10n)),
+            style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.outline),
+          ),
         if (state.failed) ...[
           SizedBox(height: AppSpacingTokens.s12),
           Text(context.l10n.pairRequestFailed, style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.error)),

@@ -282,3 +282,40 @@ func scanPending(rows *sql.Rows) ([]PendingRequest, error) {
 	}
 	return out, nil
 }
+
+// RequestOutcome reports whether one request has been decided, and by what.
+//
+// Read on exactly one path: a presentation that found the request still
+// waiting, committed, and only then marked its connection. A decision landing
+// in that window was addressed to a connection nobody had marked yet, and
+// nothing re-sends an outcome to the waiting side - so it has to be picked up
+// here or it is lost.
+func (s *Store) RequestOutcome(ctx context.Context, requestID string) (string, Identity, bool, error) {
+	var outcome sql.NullString
+	var id Identity
+	var userID, label sql.NullString
+	var created int
+	err := s.read.QueryRowContext(ctx, `
+		SELECT t.outcome, u.user_id, u.label, t.created_person
+		FROM pair_tokens t
+		LEFT JOIN users u ON u.user_id = t.paired_user_id
+		WHERE t.request_id = ? AND t.kind = ?`, requestID, TokenInviteUser).
+		Scan(&outcome, &userID, &label, &created)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", Identity{}, false, nil
+	}
+	if err != nil {
+		return "", Identity{}, false, fmt.Errorf("read request outcome: %w", err)
+	}
+	if !outcome.Valid {
+		return "", Identity{}, false, nil
+	}
+	if outcome.String == OutcomeApproved {
+		id = Identity{UserID: userID.String, Label: label.String, Created: created != 0}
+		// A person invite never grants ownership, so the flag is stated rather
+		// than read: the column it would come from belongs to the machine, and
+		// this person was made by an invite.
+		id.Owner = false
+	}
+	return outcome.String, id, true, nil
+}

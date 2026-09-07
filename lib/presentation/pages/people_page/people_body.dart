@@ -88,7 +88,10 @@ class _PeopleBodyState extends State<PeopleBody> {
             else
               AppSettingsGroupWidget(children: [for (final person in state.others) _PersonRow(person: person)]),
             SizedBox(height: AppSpacingTokens.s16),
-            FilledButton(onPressed: () => _bloc.add(const PeopleEvent.inviteRequested()), child: Text(context.l10n.peopleInvite)),
+            FilledButton(
+              onPressed: state.inviting ? null : () => _bloc.add(const PeopleEvent.inviteRequested()),
+              child: Text(context.l10n.peopleInvite),
+            ),
           ],
         );
       },

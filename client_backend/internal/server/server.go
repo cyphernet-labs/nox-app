@@ -284,15 +284,20 @@ func (s *Server) markPendingRequest(c *client, requestID string) {
 // carries nothing about who is knocking, because before joining there is
 // nothing the server knows about them.
 func (s *Server) notifyPairRequested(owner string, req store.PendingRequest) {
+	s.sendToOwnerDevices(owner, pairRequestedFrame(req))
+}
+
+// pairRequestedFrame builds the question. One builder for both deliveries - the
+// push when a link is presented and the re-send after a greeting - so the two
+// cannot come to disagree about what a question looks like.
+func pairRequestedFrame(req store.PendingRequest) protocol.Event {
 	data, err := json.Marshal(pairRequestedPayload{RequestID: req.RequestID, InvitedAt: req.InvitedAt, ExpiresAt: req.ExpiresAt})
 	if err != nil {
-		// Cannot fail for a struct of a string and two ints; a missed frame
-		// costs the owner one question they will see again on their next
-		// greeting, which is what the re-send exists for.
-		s.logger.Error("marshal pair request", "err", err)
-		return
+		// Cannot fail for a struct of a string and two ints. An empty body is
+		// still a frame the receiver will ignore, which beats a nil Data.
+		data = json.RawMessage(`{}`)
 	}
-	s.sendToOwnerDevices(owner, protocol.Event{Seq: 0, Event: protocol.EventPairRequested, Data: data})
+	return protocol.Event{Seq: 0, Event: protocol.EventPairRequested, Data: data}
 }
 
 // notifyPairResolved tells the waiting device what was decided, and the owner's
@@ -367,6 +372,19 @@ func (s *Server) runPairSweeper(ctx context.Context) error {
 			return nil
 		case <-ticker.C:
 		}
+		// The owner is read FIRST, and a failure skips the tick entirely.
+		// Expiring writes the outcome, which takes the row out of both the
+		// sweeper's predicate and the greeting re-send - so a batch marked
+		// without anybody to tell would leave the question on the owner's
+		// screen with nothing left that could ever close it.
+		//
+		// One read for the batch: the owner is a property of the machine, not
+		// of a request, and it cannot change while one is waiting.
+		owner, err := s.store.OwnerUserID(ctx)
+		if err != nil {
+			s.logger.Error("read owner for expired pairs", "err", err)
+			continue
+		}
 		expired, err := s.store.ExpirePendingPairs(ctx, s.now())
 		if err != nil {
 			// Transient: the next tick tries again, and pendingOutcome settles
@@ -376,12 +394,6 @@ func (s *Server) runPairSweeper(ctx context.Context) error {
 		}
 		if len(expired) == 0 {
 			continue
-		}
-		// One read for the batch: the owner is a property of the machine, not
-		// of a request, and it cannot change while one is waiting.
-		owner, err := s.store.OwnerUserID(ctx)
-		if err != nil {
-			s.logger.Error("read owner for expired pairs", "err", err)
 		}
 		for _, req := range expired {
 			s.notifyPairResolved(owner, req.RequestID, store.OutcomeExpired, store.Identity{})
@@ -395,6 +407,33 @@ func (s *Server) setDeviceKey(c *client, key string) {
 	s.mu.Lock()
 	c.deviceKey = key
 	s.mu.Unlock()
+}
+
+// setIdentity records who a connection speaks as, under the same lock the
+// other goroutines touch it through.
+//
+// A connection joins s.conns when it is accepted, long before it greets, so
+// refreshLabel and the two notify helpers walk it while this write is still to
+// come. Writing it bare made the greeting race every one of them - and the pair
+// sweeper turned that from a rename-only window into something a tick hits
+// every ten seconds.
+func (s *Server) setIdentity(c *client, id store.Identity) {
+	s.mu.Lock()
+	c.identity = id
+	c.label = id.Label
+	s.mu.Unlock()
+}
+
+// currentIdentity reads back the person this connection speaks as.
+//
+// Needed only where the LABEL is consumed: refreshLabel rewrites it from
+// another goroutine, while user_id and the ownership flag are written once by
+// the read goroutine itself and never change. The name matters because it is
+// frozen into message history at send time.
+func (s *Server) currentIdentity(c *client) store.Identity {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return c.identity
 }
 
 func (s *Server) track(c *client) {

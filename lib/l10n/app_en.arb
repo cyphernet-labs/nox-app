@@ -216,7 +216,7 @@
   "pairRequestApprove": "Let them in",
   "pairRequestDecline": "Not now",
   "pairRequestFailed": "Couldn't answer that request.",
-  "loginErrorDeclined": "The owner declined this invite. Ask them for a new link.",
+  "loginErrorDeclined": "The owner declined this invite.",
   "loginErrorNoAnswer": "The owner didn't answer in time. Ask them to try again.",
   "@pairRequestInvited": {
     "placeholders": {
@@ -231,5 +231,7 @@
         "type": "String"
       }
     }
-  }
+  },
+  "peopleNotOwner": "Only the server owner can invite people.",
+  "loginWaitingForOwner": "Waiting for the owner to let you in. This can take a few minutes."
 }

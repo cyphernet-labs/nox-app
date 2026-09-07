@@ -8,6 +8,7 @@ import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/session/pair_refusal.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/general/pairing/pairing_link.dart';
+import 'package:rxdart/rxdart.dart';
 
 /// What the server said about who just connected. A domain value on purpose:
 /// the onboarding decision is taken from THIS, never from "was there a hello
@@ -51,6 +52,17 @@ class IdentityHandshakeTimeout implements Exception {
 
 /// The server refused the pairing token. Distinct from a timeout because the
 /// person's next action differs: get a new link rather than try again.
+/// The server refused for a reason that is not about the link: an internal
+/// error, a rate limit, a code this build does not know. Retryable, and
+/// deliberately NOT one of the four refusals - telling somebody their invite is
+/// spent over a server hiccup sends them looking for a new one they do not need.
+class PairingFailed implements Exception {
+  const PairingFailed();
+
+  @override
+  String toString() => 'PairingFailed';
+}
+
 class PairingRefused implements Exception {
   const PairingRefused({required this.reason});
 
@@ -90,6 +102,11 @@ class LiveIdentityHandshake {
   /// while the real outcome was still on its way.
   static const Duration approvalWait = Duration(minutes: 5, seconds: 30);
 
+  /// How much longer than the server's own deadline the app waits. Small, and
+  /// in the right direction: when both clocks are nearly out, the answer that
+  /// lands should be the server's.
+  static const Duration approvalSlack = Duration(seconds: 30);
+
   /// How often the same link is presented again while waiting.
   ///
   /// The wait is not a single held request: a dropped socket takes the
@@ -99,6 +116,15 @@ class LiveIdentityHandshake {
   /// request, or the recorded outcome if the owner has answered meanwhile — so
   /// the client uses it rather than trying to detect the drop.
   static const Duration approvalPoll = Duration(seconds: 20);
+
+  /// True while a presented invite is waiting for the owner to answer.
+  ///
+  /// Published rather than kept private because the wait can last minutes, and
+  /// a sign-in screen that shows a bare spinner for five of them tells the
+  /// person nothing about what it is waiting for.
+  final BehaviorSubject<bool> _waitingForOwner = BehaviorSubject<bool>.seeded(false);
+
+  Stream<bool> get waitingForOwner => _waitingForOwner.stream;
 
   Completer<IdentityHandshake>? _pending;
   StreamSubscription<SessionPhase>? _phases;
@@ -125,8 +151,16 @@ class LiveIdentityHandshake {
   /// there. `pair` is then the one command allowed before a greeting.
   Future<IdentityHandshake> pair({required PairingLink link, required String deviceKey, required String platform}) async {
     await _starter.restart();
-    final deadline = DateTime.now().add(approvalWait);
+    var deadline = DateTime.now().add(approvalWait);
     var presented = false;
+    try {
+      return await _present(link, deviceKey, platform, deadline, presented);
+    } finally {
+      _waitingForOwner.add(false);
+    }
+  }
+
+  Future<IdentityHandshake> _present(PairingLink link, String deviceKey, String platform, DateTime deadline, bool presented) async {
     while (true) {
       final CommandReply reply;
       try {
@@ -144,7 +178,14 @@ class LiveIdentityHandshake {
         continue;
       }
       if (!reply.ok) {
-        throw PairingRefused(reason: _refusalFor(reply.errorCode));
+        final refusal = _refusalFor(reply.errorCode);
+        // A code that is not one of the four pairing refusals is not a refusal
+        // at all - `internal`, `rate_limited`, a code this build predates. The
+        // contract's evolution rule says treat it as `internal` and let the
+        // person retry; calling it "this link cannot be used" would send them
+        // hunting for a new invite over a server hiccup.
+        if (refusal == null) throw const PairingFailed();
+        throw PairingRefused(reason: refusal);
       }
       final data = reply.data;
       if (data is! Map<String, dynamic>) throw const IdentityHandshakeTimeout();
@@ -155,7 +196,18 @@ class LiveIdentityHandshake {
       // is not "pending", so the identity below is read as it always was.
       if (data['status'] == 'pending') {
         presented = true;
+        _waitingForOwner.add(true);
         final requestId = data['request_id'] is String ? data['request_id'] as String : '';
+        // The server's deadline, not one invented here. It rides in the reply
+        // for exactly this reason, and after a restart the server hands back
+        // the ORIGINAL deadline - a locally started window would disagree with
+        // it and give up while the request was still answerable. The local one
+        // stays as the fallback for a server that did not state it.
+        final stated = data['expires_at'];
+        if (stated is num && stated.isFinite) {
+          final until = DateTime.fromMillisecondsSinceEpoch(stated.toInt() * 1000, isUtc: true).toLocal().add(approvalSlack);
+          if (until.isAfter(deadline)) deadline = until;
+        }
         final resolved = await _awaitPairOutcome(requestId, approvalPoll);
         if (resolved == null) {
           // No answer yet. Present again, which re-marks whichever connection
@@ -209,11 +261,12 @@ class LiveIdentityHandshake {
     return _identityOf(id);
   }
 
-  static PairRefusal _refusalFor(String? code) => switch (code) {
+  static PairRefusal? _refusalFor(String? code) => switch (code) {
+    'invalid_token' => PairRefusal.notUsable,
     'token_expired' => PairRefusal.expired,
     'pair_declined' => PairRefusal.declined,
     'pair_timeout' => PairRefusal.noAnswer,
-    _ => PairRefusal.notUsable,
+    _ => null,
   };
 
   IdentityHandshake _identityOf(Map<String, dynamic> id) {

@@ -13,6 +13,16 @@ abstract class PeopleState with _$PeopleState {
     /// re-fetched, because every fetch mints a new token on the server.
     String? inviteLink,
     @Default(false) bool inviteFailed,
+
+    /// An invite is being minted. The button is disabled while it is: every
+    /// press creates a 24-hour token that admits a person and cannot be taken
+    /// back.
+    @Default(false) bool inviting,
+
+    /// The server said only the owner may invite. Distinct from a failure,
+    /// because it means the app should not have offered this — not that it
+    /// should be tried again.
+    @Default(false) bool notOwner,
   }) = _PeopleState;
 
   /// Everyone but the person holding this device, who is shown apart: the row

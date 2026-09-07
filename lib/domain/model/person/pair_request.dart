@@ -15,8 +15,13 @@ class PairRequest {
 
   /// When the owner issued this invite. The one thing the server does know, and
   /// what lets the owner recognise their own invite among several.
-  final DateTime invitedAt;
+  ///
+  /// Nullable because a frame that did not state it must not be turned into a
+  /// moment in 1970 — the screen simply says less, rather than something false.
+  final DateTime? invitedAt;
 
-  /// When the question stops being answerable.
-  final DateTime expiresAt;
+  /// When the question stops being answerable. Null means the server did not
+  /// state it, which is not the same as "already expired": the server remains
+  /// the authority on when a question dies.
+  final DateTime? expiresAt;
 }

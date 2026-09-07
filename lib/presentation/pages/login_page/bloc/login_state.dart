@@ -18,6 +18,11 @@ enum LoginOutcome { auto, newId, registered, errorFormat, errorNetwork, fatal }
 enum LoginStatus {
   idle,
   loading,
+
+  /// The invite was accepted and the OWNER is being asked. Not an error and not
+  /// ordinary loading: it can last minutes, because it waits on a person rather
+  /// than on a network, and a bare spinner would say none of that.
+  waitingForOwner,
   errorFormat,
   errorExpired,
   errorRejected,
@@ -36,7 +41,7 @@ abstract class LoginState with _$LoginState {
   const factory LoginState({@Default('') String id, @Default(LoginStatus.idle) LoginStatus status, @Default(false) bool canPaste}) =
       _LoginState;
 
-  bool get isLoading => status == LoginStatus.loading;
+  bool get isLoading => status == LoginStatus.loading || status == LoginStatus.waitingForOwner;
 
   /// `Sign in` is enabled for any non-empty input (no format validation, FR-011).
   bool get canSubmit => id.trim().isNotEmpty && status != LoginStatus.loading;

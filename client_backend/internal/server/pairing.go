@@ -108,6 +108,11 @@ func (c *client) handlePair(cmd protocol.Command) {
 		return
 	case errors.Is(err, store.ErrPairTimeout):
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrPairTimeout, "the owner did not answer in time"))
+		// Settled right here, by this presentation, rather than by the sweeper:
+		// the row now carries an outcome, so neither the sweeper nor the
+		// greeting re-send will look at it again. If the owner is not told now,
+		// nothing will ever tell them, and a dead question stays on screen.
+		c.announcePairOutcome(res.RequestID, store.OutcomeExpired)
 		return
 	case err != nil:
 		c.logger.Error("pair", "err", err)
@@ -125,6 +130,14 @@ func (c *client) handlePair(cmd protocol.Command) {
 			RequestID: res.RequestID,
 			ExpiresAt: res.ExpiresAt,
 		}))
+		// The window the mark cannot cover is the one BEFORE it: the store
+		// transaction has already committed, so an owner answering in that
+		// instant addressed the outcome to a connection nobody had marked yet -
+		// and nothing re-sends it to the waiting side. Re-reading settles that:
+		// if the request is already decided, this connection is told now.
+		if c.deliverSettledOutcome(res.RequestID) {
+			return
+		}
 		// Asked after the reply is queued, so the person at the door is told
 		// they are waiting even if the owner has no device online at all.
 		c.announcePairRequest(res.RequestID)
@@ -173,6 +186,43 @@ func (c *client) announcePairRequest(requestID string) {
 			return
 		}
 	}
+}
+
+// deliverSettledOutcome reports whether the request was already decided, and
+// hands this connection the outcome if it was.
+//
+// The read is cheap and only happens on the pending path, which is the one
+// place a decision can have landed between the commit and the mark.
+func (c *client) deliverSettledOutcome(requestID string) bool {
+	settled, id, decided, err := c.srv.store.RequestOutcome(c.ctx, requestID)
+	if err != nil {
+		c.logger.Error("read settled outcome", "err", err)
+		return false
+	}
+	if !decided {
+		return false
+	}
+	owner, err := c.srv.store.OwnerUserID(c.ctx)
+	if err != nil {
+		c.logger.Error("read owner for settled outcome", "err", err)
+		owner = ""
+	}
+	c.srv.notifyPairResolved(owner, requestID, settled, id)
+	return true
+}
+
+// announcePairOutcome tells the owner's devices that a question is closed, for
+// the one path where nothing else will: a request this presentation expired.
+func (c *client) announcePairOutcome(requestID, outcome string) {
+	if requestID == "" {
+		return
+	}
+	owner, err := c.srv.store.OwnerUserID(c.ctx)
+	if err != nil {
+		c.logger.Error("read owner for expired request", "err", err)
+		return
+	}
+	c.srv.notifyPairResolved(owner, requestID, outcome, store.Identity{})
 }
 
 type deviceListReply struct {
