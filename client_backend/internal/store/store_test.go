@@ -708,3 +708,14 @@ func person(t *testing.T, s *Store, name string) Identity {
 	}
 	return id
 }
+
+// readSource reads a file of this package, for the tests that assert about the
+// code itself rather than about its behaviour.
+func readSource(t *testing.T, name string) string {
+	t.Helper()
+	raw, err := os.ReadFile(name)
+	if err != nil {
+		t.Fatalf("read %s: %v", name, err)
+	}
+	return string(raw)
+}
