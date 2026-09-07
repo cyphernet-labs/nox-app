@@ -298,6 +298,7 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 		return err
 	}
 	logger.Info("database ready", "path", cfg.DBPath, "schema_version", version)
+	warnOwnerlessStore(ctx, dbs.Read, logger)
 
 	bl, err := blob.Open(cfg.FilesPath)
 	if err != nil {
@@ -369,6 +370,11 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 // It names every table the current 001 creates that a pre-release database may
 // be missing: a guard that checks only some of them starts happily and then
 // fails deeper in with an error nobody can act on.
+//
+// Tables are not enough on their own. Editing 001 in place also ADDS COLUMNS to
+// tables that already exist, and a missing column sails past a table check to
+// die later as a raw "no such column" - the exact unactionable error this guard
+// exists to replace. So every column a later phase adds is named here too.
 func assertIdentitySchema(ctx context.Context, read *sql.DB, dbPath string) error {
 	var present int
 	err := read.QueryRowContext(ctx,
@@ -378,12 +384,49 @@ func assertIdentitySchema(ctx context.Context, read *sql.DB, dbPath string) erro
 		return fmt.Errorf("inspect schema: %w", err)
 	}
 	if present != 5 {
-		return fmt.Errorf(
-			"database schema predates the pairing tables: the pre-release rule edits 001_init.sql in place, "+
-				"so delete %s together with its -wal and -shm siblings and the %s-files directory, then start again",
-			dbPath, dbPath)
+		return staleSchemaError(dbPath)
+	}
+	var owners int
+	err = read.QueryRowContext(ctx,
+		"SELECT COUNT(1) FROM pragma_table_info('server_identity') WHERE name = 'owner_user_id'").Scan(&owners)
+	if err != nil {
+		return fmt.Errorf("inspect server_identity columns: %w", err)
+	}
+	if owners != 1 {
+		return staleSchemaError(dbPath)
 	}
 	return nil
+}
+
+func staleSchemaError(dbPath string) error {
+	return fmt.Errorf(
+		"database schema predates this build: the pre-release rule edits 001_init.sql in place, "+
+			"so delete %s together with its -wal and -shm siblings and the %s-files directory, then start again",
+		dbPath, dbPath)
+}
+
+// warnOwnerlessStore says out loud that this store has people but no owner.
+//
+// Unreachable by any code path: a person is created only by pairing, and the
+// claim path records ownership in the same transaction. It takes a hand-edited
+// database to get here. The server still STARTS - the conversation is intact
+// and only owner-gated rules are affected, so refusing to boot would punish
+// the operator harder than the anomaly does - but it must not pick an owner
+// by row order, which is precisely the guess this feature exists to remove.
+//
+// No user id in the message (Principle I): the count is what an operator needs.
+func warnOwnerlessStore(ctx context.Context, read *sql.DB, logger *slog.Logger) {
+	var people int
+	if err := read.QueryRowContext(ctx, `
+		SELECT COUNT(1) FROM users
+		WHERE (SELECT owner_user_id FROM server_identity WHERE id = 1) IS NULL`).Scan(&people); err != nil {
+		logger.Warn("could not check whether this server has an owner", "err", err)
+		return
+	}
+	if people > 0 {
+		logger.Warn("this server has people but no owner - it will not be picked automatically; re-claim it to restore ownership",
+			"people", people)
+	}
 }
 
 // announceClaim mints the server's own key on first start and, while nobody
@@ -409,7 +452,11 @@ func announceClaim(ctx context.Context, st *store.Store, addr string, logger *sl
 	// Silent only while somebody can actually reach this server. A claimed
 	// server with no devices left is locked, not owned, and the machine is the
 	// root of trust: whoever can read this log can take it back.
-	if id.Claimed && devices > 0 {
+	//
+	// "Claimed" is read from the owner, never from the timestamp: the two say
+	// the same thing, and a decision taken on the poorer of the two is how they
+	// drift apart.
+	if id.Claimed() && devices > 0 {
 		return nil
 	}
 	token, err := st.IssueClaimToken(ctx, time.Now().Unix())

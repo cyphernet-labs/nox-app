@@ -20,10 +20,20 @@ import (
 // already read every message, so the key adds no new class of exposure.
 type ServerIdentity struct {
 	PublicKey string
-	// Claimed reports whether this server already has an owner. While it is
-	// false only claim tokens are accepted; once true, claim is dead forever.
-	Claimed bool
+	// OwnerUserID is the person this machine belongs to, empty while nobody
+	// owns it. It is the ONLY definition of "claimed": deciding by ClaimedAt
+	// instead would put one fact in two records, and two records of one fact
+	// eventually disagree.
+	OwnerUserID string
+	// ClaimedAt is when the machine was claimed, zero while it has no owner.
+	// Nothing decides by it - it is there because the moment is unrecoverable
+	// and the service page will want to show it.
+	ClaimedAt int64
 }
+
+// Claimed reports whether somebody owns this machine. While it is false only
+// claim tokens are accepted.
+func (s ServerIdentity) Claimed() bool { return s.OwnerUserID != "" }
 
 // ErrNoServerIdentity is returned when the machine has no key yet. Callers
 // bootstrap with EnsureServerIdentity rather than treating it as a failure.
@@ -77,16 +87,37 @@ func (s *Store) ServerIdentity(ctx context.Context) (ServerIdentity, error) {
 	return readServerIdentity(ctx, s.read)
 }
 
-// MarkClaimed records that this server now has an owner, killing the claim
-// token type forever. Idempotent, and deliberately never un-sets: ownership
-// is not something a later call may quietly hand back.
-func (s *Store) MarkClaimed(ctx context.Context, tx *sql.Tx, now int64) error {
+// setOwner records the person this machine belongs to. Called from inside the
+// claim transaction in Pair, so ownership and the person that holds it are
+// committed together or not at all.
+//
+// Conditional on the column still being empty: a claim that races another one
+// must not move ownership, and the affected-row count is what settles it -
+// the same shape token burning uses.
+func setOwner(ctx context.Context, tx *sql.Tx, userID string, now int64) error {
+	// claimed_at is written in the SAME statement on purpose. It decides
+	// nothing, but the moment is unrecoverable, and keeping the two writes
+	// apart is how one of them gets dropped by a later edit.
 	_, err := tx.ExecContext(ctx,
-		"UPDATE server_identity SET claimed_at = ? WHERE id = 1 AND claimed_at IS NULL", now)
+		"UPDATE server_identity SET owner_user_id = ?, claimed_at = ? WHERE id = 1 AND owner_user_id IS NULL",
+		userID, now)
 	if err != nil {
-		return fmt.Errorf("mark claimed: %w", err)
+		return fmt.Errorf("set server owner: %w", err)
 	}
 	return nil
+}
+
+// ownerUserID reads the owner inside a transaction that is already open.
+func ownerUserID(ctx context.Context, q rowQuerier) (string, error) {
+	var owner sql.NullString
+	err := q.QueryRowContext(ctx, "SELECT owner_user_id FROM server_identity WHERE id = 1").Scan(&owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNoServerIdentity
+	}
+	if err != nil {
+		return "", fmt.Errorf("read server owner: %w", err)
+	}
+	return owner.String, nil
 }
 
 type rowQuerier interface {
@@ -96,13 +127,14 @@ type rowQuerier interface {
 func readServerIdentity(ctx context.Context, q rowQuerier) (ServerIdentity, error) {
 	var pub string
 	var claimedAt sql.NullInt64
+	var owner sql.NullString
 	err := q.QueryRowContext(ctx,
-		"SELECT public_key, claimed_at FROM server_identity WHERE id = 1").Scan(&pub, &claimedAt)
+		"SELECT public_key, claimed_at, owner_user_id FROM server_identity WHERE id = 1").Scan(&pub, &claimedAt, &owner)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ServerIdentity{}, ErrNoServerIdentity
 	}
 	if err != nil {
 		return ServerIdentity{}, fmt.Errorf("read server identity: %w", err)
 	}
-	return ServerIdentity{PublicKey: pub, Claimed: claimedAt.Valid}, nil
+	return ServerIdentity{PublicKey: pub, OwnerUserID: owner.String, ClaimedAt: claimedAt.Int64}, nil
 }

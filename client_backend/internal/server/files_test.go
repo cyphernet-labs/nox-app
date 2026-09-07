@@ -249,7 +249,7 @@ func TestStoryOneUploadSurvivesRestart(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "restart.db")
 
-	ts, srv, closeAll := openStack(t, path)
+	ts, srv, closeAll := openStack(t, path, nil)
 	firstClosed := false
 	defer func() {
 		if !firstClosed {
@@ -271,7 +271,7 @@ func TestStoryOneUploadSurvivesRestart(t *testing.T) {
 
 	// A fresh process over the same db and files dir: the upload is intact
 	// and still sendable, and the bytes download byte-identically.
-	ts2, srv2, closeAll2 := openStack(t, path)
+	ts2, srv2, closeAll2 := openStack(t, path, nil)
 	defer closeAll2()
 	c2 := dialWS(t, ts2, srv2)
 	c2.expectGreeting()

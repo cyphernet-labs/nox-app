@@ -23,7 +23,15 @@ import (
 // running httptest server plus the Server for direct inspection.
 func newTestServer(t *testing.T) (*httptest.Server, *Server) {
 	t.Helper()
-	ts, srv, closeAll := openStack(t, filepath.Join(t.TempDir(), "test.db"))
+	return newTestServerLogging(t, nil)
+}
+
+// newTestServerLogging is newTestServer with somewhere to read the log from.
+// The logger is handed in BEFORE the stack starts: assigning srv.logger after
+// httptest is serving races the request middleware.
+func newTestServerLogging(t *testing.T, logger *slog.Logger) (*httptest.Server, *Server) {
+	t.Helper()
+	ts, srv, closeAll := openStack(t, filepath.Join(t.TempDir(), "test.db"), logger)
 	t.Cleanup(closeAll)
 	return ts, srv
 }
@@ -31,7 +39,7 @@ func newTestServer(t *testing.T) (*httptest.Server, *Server) {
 // openStack assembles db + hub + server over the given database file and
 // returns an explicit close function, so lifecycle tests can stop and restart
 // the whole stack against the same file.
-func openStack(t *testing.T, path string) (*httptest.Server, *Server, func()) {
+func openStack(t *testing.T, path string, logger *slog.Logger) (*httptest.Server, *Server, func()) {
 	t.Helper()
 
 	dbs, err := db.Open(path)
@@ -57,7 +65,9 @@ func openStack(t *testing.T, path string) (*httptest.Server, *Server, func()) {
 		h.Run(hubCtx)
 	}()
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
 	cfg := config.Config{Addr: "127.0.0.1:0", DBPath: path, FilesPath: path + "-files", Limits: config.DefaultLimits()}
 	st := store.New(dbs.Read, dbs.Write)
 	// Mirror Run: the store identity is minted in Go once the schema exists,

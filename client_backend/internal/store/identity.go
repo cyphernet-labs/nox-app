@@ -21,6 +21,12 @@ import (
 type Identity struct {
 	UserID string
 	Label  string
+	// Owner reports whether this PERSON owns the server. Unlike Created it
+	// describes the person rather than the answer, so it is the same in every
+	// reply about the same human being - which is why it rides both the
+	// greeting and the pair reply, while Created is meaningful only in the
+	// latter.
+	Owner bool
 	// Created reports whether THIS resolution brought the person into being,
 	// which is what tells the client to offer the naming step (contract §3).
 	// It describes the answer, not the person: a reconnect before the person
@@ -80,6 +86,15 @@ func (s *Store) ResolveIdentity(ctx context.Context, deviceKey, label string, no
 	if err := touchDevice(ctx, tx, deviceKey, now); err != nil {
 		return Identity{}, err
 	}
+
+	// A new read on the greeting path: nothing here used to look at the
+	// machine's own row. One statement inside the transaction that is already
+	// open, so it costs a round of SQLite and no extra lock.
+	owner, err := ownerUserID(ctx, tx)
+	if err != nil {
+		return Identity{}, err
+	}
+	id.Owner = owner != "" && owner == id.UserID
 
 	// A greeting without a label does NOT rename. The client states a name only
 	// when it has just changed one; a device carrying a stale cache would

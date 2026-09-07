@@ -172,7 +172,7 @@ func pairedDevice(t *testing.T, ts *httptest.Server, srv *Server) *device {
 	if err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
-	if !id.Claimed {
+	if !id.Claimed() {
 		token, err := srv.store.IssueClaimToken(ctx, time.Now().Unix())
 		if err != nil {
 			t.Fatalf("IssueClaimToken: %v", err)

@@ -58,14 +58,23 @@ CREATE TABLE journal (
 -- read every message in every chat, so the key adds no new class of exposure,
 -- while a key forgotten during a backup adds a new class of loss.
 --
--- claimed_at IS the state machine: NULL means nobody owns this server yet and
--- only claim tokens are accepted; once set, claim is dead forever. A separate
--- state column could disagree with this one; a derived state cannot.
+-- owner_user_id IS the state machine: NULL means nobody owns this server yet
+-- and only claim tokens are accepted. Ownership lives HERE rather than as a
+-- flag on the person for one reason worth keeping: this table holds exactly
+-- one row (CHECK id = 1), so "more than one owner" is unrepresentable by
+-- construction. A flag on users would need a partial unique index to say the
+-- same thing, and an index is one more thing to remember.
+--
+-- claimed_at is NOT the state machine any more. It records WHEN the machine
+-- was claimed and nothing decides by it: the same fact written twice is the
+-- shape that eventually disagrees with itself. The timestamp survives because
+-- the moment is unrecoverable and the service page will want it.
 CREATE TABLE server_identity (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     public_key TEXT NOT NULL CHECK (public_key <> ''),
     private_key TEXT NOT NULL CHECK (private_key <> ''),
-    claimed_at INTEGER
+    claimed_at INTEGER,
+    owner_user_id TEXT REFERENCES users(user_id)
 ) STRICT;
 
 -- One-shot pairing tokens. kind is known to the server and NEVER travels in

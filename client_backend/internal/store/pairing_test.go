@@ -408,3 +408,152 @@ func TestRevokingADeviceRetiresTheInvitesItCouldHaveIssued(t *testing.T) {
 		t.Fatalf("an invite from a revoked device still works: %v", err)
 	}
 }
+
+// Ownership arrives with the claim, in the transaction that creates the person.
+// The whole point of the phase: before it, "who owns this machine" could only
+// be guessed from row order, which stops being even a proxy in feature 034.
+func TestClaimMakesThePersonTheOwner(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	if _, err := s.EnsureServerIdentity(ctx); err != nil {
+		t.Fatalf("EnsureServerIdentity: %v", err)
+	}
+	token, err := s.IssueClaimToken(ctx, 100)
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+
+	id, err := s.Pair(ctx, token, "dev-phone", "test", 100)
+	if err != nil {
+		t.Fatalf("Pair: %v", err)
+	}
+	if !id.Owner {
+		t.Fatal("the person who claimed the server does not own it")
+	}
+
+	machine, err := s.ServerIdentity(ctx)
+	if err != nil {
+		t.Fatalf("ServerIdentity: %v", err)
+	}
+	if machine.OwnerUserID != id.UserID {
+		t.Fatalf("owner = %q, want %q", machine.OwnerUserID, id.UserID)
+	}
+	// The moment survives too. Nothing decides by it, but it is unrecoverable,
+	// and it is written by the very statement this feature rewrote.
+	if machine.ClaimedAt != 100 {
+		t.Fatalf("claimed_at = %d, want 100: the timestamp must survive the switch to owner-based decisions", machine.ClaimedAt)
+	}
+}
+
+// Ownership belongs to the PERSON, so their second device owns exactly what
+// their first one does. A flag that described the connection would answer
+// differently here, and the badge would flicker between devices.
+func TestAnInvitedDeviceOfTheOwnerAlsoReportsOwnership(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	owner := claimPerson(t, s, "dev-phone")
+
+	token, err := s.IssueDeviceInvite(ctx, owner.UserID, 200)
+	if err != nil {
+		t.Fatalf("IssueDeviceInvite: %v", err)
+	}
+	second, err := s.Pair(ctx, token, "dev-desktop", "test", 200)
+	if err != nil {
+		t.Fatalf("Pair second device: %v", err)
+	}
+	if !second.Owner {
+		t.Fatal("the owner's second device does not report ownership")
+	}
+	if second.Created {
+		t.Fatal("adding a device must not report having created a person")
+	}
+}
+
+// The replay path answers about the same person, so it must answer the same
+// way about ownership. It reads the owner rather than inferring it from the
+// token kind - an invite replay is about a person who may or may not own.
+func TestAReplayedClaimStillReportsOwnership(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	if _, err := s.EnsureServerIdentity(ctx); err != nil {
+		t.Fatalf("EnsureServerIdentity: %v", err)
+	}
+	token, err := s.IssueClaimToken(ctx, 100)
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+	first, err := s.Pair(ctx, token, "dev-phone", "test", 100)
+	if err != nil {
+		t.Fatalf("Pair: %v", err)
+	}
+
+	replay, err := s.Pair(ctx, token, "dev-phone", "test", 150)
+	if err != nil {
+		t.Fatalf("replayed Pair: %v", err)
+	}
+	if replay.UserID != first.UserID || !replay.Owner {
+		t.Fatalf("replay = %+v, want the same person still owning the server", replay)
+	}
+}
+
+// Re-claiming a server that lost every device gives the SAME person their
+// machine back. A second owner here would strand the first one's history under
+// an author_id nobody can sign in as.
+func TestReClaimKeepsOwnershipWithTheExistingPerson(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	owner := claimPerson(t, s, "dev-phone")
+
+	if err := s.RevokeDevice(ctx, "dev-phone"); err != nil {
+		t.Fatalf("RevokeDevice: %v", err)
+	}
+
+	token, err := s.IssueClaimToken(ctx, 300)
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+	back, err := s.Pair(ctx, token, "dev-new", "test", 300)
+	if err != nil {
+		t.Fatalf("re-claim: %v", err)
+	}
+	if back.UserID != owner.UserID {
+		t.Fatalf("re-claim landed on %q, want the existing person %q", back.UserID, owner.UserID)
+	}
+	if !back.Owner {
+		t.Fatal("the person who came back is no longer the owner")
+	}
+	if back.Created {
+		t.Fatal("re-claim reported creating a person who already existed")
+	}
+
+	var people int
+	if err := s.read.QueryRowContext(ctx, "SELECT COUNT(1) FROM users").Scan(&people); err != nil {
+		t.Fatalf("count users: %v", err)
+	}
+	if people != 1 {
+		t.Fatalf("users = %d, want 1: a re-claim must not mint a second person", people)
+	}
+}
+
+// "Claimed" is read from the owner and nothing else. A store carrying the old
+// timestamp but no owner is NOT claimed - which is what makes the two records
+// impossible to disagree about.
+func TestClaimedIsReadFromTheOwnerAndNotFromTheTimestamp(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	claimPerson(t, s, "dev-phone")
+
+	if _, err := s.write.ExecContext(ctx, "UPDATE server_identity SET owner_user_id = NULL WHERE id = 1"); err != nil {
+		t.Fatalf("clear owner: %v", err)
+	}
+	machine, err := s.ServerIdentity(ctx)
+	if err != nil {
+		t.Fatalf("ServerIdentity: %v", err)
+	}
+	if machine.ClaimedAt == 0 {
+		t.Fatal("precondition: the timestamp should still be there")
+	}
+	if machine.Claimed() {
+		t.Fatal("a store with a timestamp but no owner reports itself claimed")
+	}
+}

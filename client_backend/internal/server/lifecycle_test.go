@@ -125,7 +125,7 @@ func TestStoryThreeRestartIntegrity(t *testing.T) {
 		// The closure guarantees the stack is released even when an
 		// assertion fails mid-cycle (Fatalf runs deferred calls via Goexit).
 		func() {
-			ts, srv, closeAll := openStack(t, path)
+			ts, srv, closeAll := openStack(t, path, nil)
 			defer closeAll()
 			// One device key pair for the whole run, paired on the first cycle
 			// and reused after: client_message_id comes back only to the
@@ -146,7 +146,7 @@ func TestStoryThreeRestartIntegrity(t *testing.T) {
 	}
 
 	// Final cycle: a fresh process replays the whole history in order.
-	ts, srv, closeAll := openStack(t, path)
+	ts, srv, closeAll := openStack(t, path, nil)
 	closed := false
 	defer func() {
 		if !closed {

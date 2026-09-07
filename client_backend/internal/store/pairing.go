@@ -179,10 +179,12 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 		// A claim on an already-owned server is refused with the same answer as
 		// a token that never existed: the claim died the moment somebody used
 		// it, and staying silent about which is which says nothing useful.
-		var claimedAt sql.NullInt64
-		if err := tx.QueryRowContext(ctx,
-			"SELECT claimed_at FROM server_identity WHERE id = 1").Scan(&claimedAt); err != nil {
-			return Identity{}, fmt.Errorf("read claim state: %w", err)
+		// Read from the OWNER, never from claimed_at. The two say the same
+		// thing, and deciding by the poorer of the two records is how they end
+		// up disagreeing.
+		owner, err := ownerUserID(ctx, tx)
+		if err != nil {
+			return Identity{}, err
 		}
 		// Owned means "somebody can still get in", not "somebody once did".
 		// Revoking the last device - which logout is - would otherwise lock the
@@ -193,7 +195,7 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 		if err := tx.QueryRowContext(ctx, "SELECT COUNT(1) FROM devices").Scan(&devices); err != nil {
 			return Identity{}, fmt.Errorf("count devices: %w", err)
 		}
-		if claimedAt.Valid && devices > 0 {
+		if owner != "" && devices > 0 {
 			return Identity{}, ErrTokenInvalid
 		}
 
@@ -218,10 +220,20 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 			}
 			id.Created = true
 		}
-		if _, err := tx.ExecContext(ctx,
-			"UPDATE server_identity SET claimed_at = ? WHERE id = 1 AND claimed_at IS NULL", now); err != nil {
-			return Identity{}, fmt.Errorf("mark claimed: %w", err)
+		// Ownership is recorded HERE, in the transaction that creates the
+		// person, rather than derived later from who happens to be oldest:
+		// the order rows were created in is not a right, and it stops being
+		// even a decent proxy the moment a second person can exist.
+		//
+		// Conditional on the column being empty, so a re-claim on a server that
+		// lost every device attaches to the person who is already the owner and
+		// does NOT move ownership anywhere.
+		if err := setOwner(ctx, tx, id.UserID, now); err != nil {
+			return Identity{}, err
 		}
+		// A claim always ends with this person owning the machine: either they
+		// just became the owner, or they already were one and re-attached.
+		id.Owner = true
 		// Every OTHER unused claim token dies with this one. They were printed
 		// to the server log on earlier starts, and a log is not a secret store:
 		// without this, each of them comes back to life the moment the device
@@ -240,6 +252,15 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 		}
 		// Deliberately NOT Created: the person existed before this operation,
 		// so there is no naming step ahead.
+		//
+		// Ownership, unlike Created, is whatever it already was: an invite adds
+		// a DEVICE to a person, and a person's second device owns exactly what
+		// their first one does.
+		owner, err := ownerUserID(ctx, tx)
+		if err != nil {
+			return Identity{}, err
+		}
+		id.Owner = owner != "" && owner == id.UserID
 
 	default:
 		return Identity{}, ErrTokenInvalid
@@ -283,6 +304,14 @@ func pairedBy(ctx context.Context, tx *sql.Tx, token, deviceKey string) (Identit
 	// reports created just as the lost reply did. An invite attaches a device to
 	// somebody who already existed.
 	id.Created = kind == TokenClaim
+	// Ownership is read, not inferred from the kind: a replayed claim answers
+	// about a person who owns the machine, and a replayed invite about one who
+	// may or may not.
+	owner, err := ownerUserID(ctx, tx)
+	if err != nil {
+		return Identity{}, false, err
+	}
+	id.Owner = owner != "" && owner == id.UserID
 	return id, true, nil
 }
 

@@ -62,6 +62,11 @@ type helloReply struct {
 type greetingIdentity struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
+	// Owner says whether THIS person owns the machine. No omitempty, for the
+	// same reason `created` carries none: a dropped false reads as "not stated"
+	// on the wire (§3), and a client cannot tell that apart from a server too
+	// old to know the field - so the owner would silently lose their badge.
+	Owner bool `json:"owner"`
 }
 
 // identity is the object both the greeting and the pair reply carry, so the
@@ -75,6 +80,10 @@ type identity struct {
 	// false would read as "outcome not stated" on the wire (§8A), which turns
 	// an ordinary returning person into a refused sign-in.
 	Created bool `json:"created"`
+	// Owner is the same field the greeting carries, and for the same reason it
+	// is written unconditionally. Unlike Created it describes the person rather
+	// than this operation, so it means the same thing in both frames.
+	Owner bool `json:"owner"`
 }
 
 func (c *client) handleSessionHello(cmd protocol.Command) {
@@ -169,7 +178,7 @@ func (c *client) handleSessionHello(cmd protocol.Command) {
 		// pair reply, and a greeting that still states it invites the client to
 		// read the decision from two places - which is exactly the second
 		// source of one truth the phase set out to remove.
-		Identity: greetingIdentity{ID: c.identity.UserID, Label: c.identity.Label},
+		Identity: greetingIdentity{ID: c.identity.UserID, Label: c.identity.Label, Owner: c.identity.Owner},
 	}))
 
 	if req.Since != nil {
