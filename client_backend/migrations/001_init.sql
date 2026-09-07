@@ -105,17 +105,41 @@ CREATE TABLE server_identity (
 --     current binding, so a key that has since been re-paired to somebody else
 --     is answered about whoever holds it now rather than whoever the token
 --     produced - and paired with the token's own recorded outcome.
+-- A one-shot pairing right. Two facts used to be one column: `used_at` said
+-- both "spent" and "finished". A person invite splits them - it is spent the
+-- moment the link is presented, so a second presenter cannot raise a second
+-- question about it, while the outcome is decided by a human later and written
+-- to `outcome`.
+--
+-- The device that presented is `used_by`. It deliberately gets no second column
+-- of its own: one fact written twice is what phase 033 spent itself deleting.
 CREATE TABLE pair_tokens (
     token TEXT PRIMARY KEY,
-    kind TEXT NOT NULL CHECK (kind IN ('claim', 'invite_device')),
+    kind TEXT NOT NULL CHECK (kind IN ('claim', 'invite_device', 'invite_user')),
     user_id TEXT REFERENCES users (user_id),
     created_at INTEGER NOT NULL,
     expires_at INTEGER,
     used_at INTEGER,
     used_by TEXT,
     paired_user_id TEXT REFERENCES users (user_id),
-    created_person INTEGER NOT NULL DEFAULT 0
+    created_person INTEGER NOT NULL DEFAULT 0,
+    -- The waiting request's name on the wire. Random and unique: it travels to
+    -- the owner's devices, and the invite token deliberately does not - the
+    -- confirming device names a request, it does not present a right.
+    request_id TEXT UNIQUE,
+    -- Claimed by the presenting device, kept so the device row can be written
+    -- if and when the owner approves.
+    awaiting_platform TEXT,
+    -- Deadline for the owner's answer, chosen for a person rather than for a
+    -- network. NULL on every token that never waits for one.
+    awaiting_until INTEGER,
+    outcome TEXT CHECK (outcome IS NULL OR outcome IN ('approved', 'declined', 'expired'))
 ) STRICT;
+
+-- The sweeper's only query. `outcome IS NULL` alone is true of every claim and
+-- every device invite as well - they have no outcome and never will - so
+-- `awaiting_until IS NOT NULL` is what actually means "waiting".
+CREATE INDEX idx_pair_tokens_pending ON pair_tokens (outcome, awaiting_until);
 
 -- name_ci is the Unicode case-folded name computed in Go: SQLite's own
 -- lower() folds ASCII only, which would let Cyrillic duplicates through.

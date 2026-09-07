@@ -54,6 +54,15 @@ type client struct {
 	// which records a name rather than an id.
 	identity store.Identity
 	label    string
+	// pendingRequestID names the person invite this connection is waiting on.
+	//
+	// It exists because the waiting connection is UNAUTHENTICATED by
+	// construction: it has nothing to sign a greeting with yet, so it carries
+	// neither a person nor a device key, and there would otherwise be no way to
+	// find it again when the owner answers. Written by the read goroutine and
+	// read by another connection's goroutine in Server.notifyPairResolved, so
+	// both go through Server.mu - the same rule deviceKey follows.
+	pendingRequestID string
 }
 
 func newClient(srv *Server, conn *websocket.Conn, parent context.Context, logger *slog.Logger) *client {

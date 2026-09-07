@@ -185,6 +185,13 @@ func (c *client) handleSessionHello(cmd protocol.Command) {
 		Identity: greetingIdentity{ID: c.identity.UserID, Label: c.identity.Label, Owner: c.identity.Owner},
 	}))
 
+	// Questions this device has not seen yet, re-sent to the owner on every
+	// greeting. A device may have been switched off, or the server restarted,
+	// while somebody was waiting at the door - and a question visible only to
+	// whoever happened to be online in the right second would let a five-minute
+	// wait expire for nothing.
+	c.resendPendingRequests()
+
 	if req.Since != nil {
 		since := *req.Since
 		if since > cursor {
@@ -209,6 +216,25 @@ func (c *client) handleSessionHello(cmd protocol.Command) {
 	}
 
 	go c.forward()
+}
+
+// resendPendingRequests hands the owner every invite still waiting for an
+// answer. A no-op for everybody else: the question is the owner's alone.
+func (c *client) resendPendingRequests() {
+	if !c.identity.Owner {
+		return
+	}
+	pending, err := c.srv.store.PendingRequests(c.ctx, time.Now().Unix())
+	if err != nil {
+		// Not fatal to the greeting: the sweeper will settle these anyway, and
+		// a person who never saw the question is no worse off than one whose
+		// device was switched off.
+		c.logger.Error("read pending requests on greeting", "err", err)
+		return
+	}
+	for _, req := range pending {
+		c.srv.notifyPairRequested(c.identity.UserID, req)
+	}
 }
 
 type chatCreateRequest struct {
