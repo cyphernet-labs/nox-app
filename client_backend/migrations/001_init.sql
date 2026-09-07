@@ -58,14 +58,23 @@ CREATE TABLE journal (
 -- read every message in every chat, so the key adds no new class of exposure,
 -- while a key forgotten during a backup adds a new class of loss.
 --
--- claimed_at IS the state machine: NULL means nobody owns this server yet and
--- only claim tokens are accepted; once set, claim is dead forever. A separate
--- state column could disagree with this one; a derived state cannot.
+-- owner_user_id IS the state machine: NULL means nobody owns this server yet
+-- and only claim tokens are accepted. Ownership lives HERE rather than as a
+-- flag on the person for one reason worth keeping: this table holds exactly
+-- one row (CHECK id = 1), so "more than one owner" is unrepresentable by
+-- construction. A flag on users would need a partial unique index to say the
+-- same thing, and an index is one more thing to remember.
+--
+-- claimed_at is NOT the state machine any more. It records WHEN the machine
+-- was claimed and nothing decides by it: the same fact written twice is the
+-- shape that eventually disagrees with itself. The timestamp survives because
+-- the moment is unrecoverable and the service page will want it.
 CREATE TABLE server_identity (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     public_key TEXT NOT NULL CHECK (public_key <> ''),
     private_key TEXT NOT NULL CHECK (private_key <> ''),
-    claimed_at INTEGER
+    claimed_at INTEGER,
+    owner_user_id TEXT REFERENCES users(user_id)
 ) STRICT;
 
 -- One-shot pairing tokens. kind is known to the server and NEVER travels in
@@ -83,13 +92,29 @@ CREATE TABLE server_identity (
 -- token's deliberate shape: it dies by being used, only someone with access to
 -- the machine ever sees it, and an expiring claim would leave a freshly
 -- installed server unclaimable forever. Device invites carry a real deadline.
+--
+-- used_by and created_person record WHO spent the token and WHAT the spending
+-- did. Both exist so that replaying a spent token can answer with what actually
+-- happened instead of re-deriving it:
+--   * without used_by, any device key - a PUBLIC value - could present a spent
+--     claim token and be told that person's id, label and ownership;
+--   * without created_person, a replay re-derives the outcome from the token
+--     kind, so a re-claim that attached to an existing owner answers "created"
+--     the second time and walks them back through the naming screen;
+--   * without paired_user_id, a replay re-derives the PERSON from the device's
+--     current binding, so a key that has since been re-paired to somebody else
+--     is answered about whoever holds it now rather than whoever the token
+--     produced - and paired with the token's own recorded outcome.
 CREATE TABLE pair_tokens (
     token TEXT PRIMARY KEY,
     kind TEXT NOT NULL CHECK (kind IN ('claim', 'invite_device')),
     user_id TEXT REFERENCES users (user_id),
     created_at INTEGER NOT NULL,
     expires_at INTEGER,
-    used_at INTEGER
+    used_at INTEGER,
+    used_by TEXT,
+    paired_user_id TEXT REFERENCES users (user_id),
+    created_person INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 
 -- name_ci is the Unicode case-folded name computed in Go: SQLite's own

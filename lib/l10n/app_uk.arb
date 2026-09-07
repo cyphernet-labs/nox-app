@@ -66,6 +66,7 @@
   "devicesInviteMessage": "Відскануйте це з іншого пристрою. Посилання діє 10 хвилин.",
   "devicesInviteError": "Не вдалося створити запрошення.",
   "settingsYourIdLabel": "Ваш ID",
+  "settingsOwnerBadge": "Власник сервера",
   "actionHide": "Сховати",
   "settingsNameSaveError": "Не вдалося зберегти імʼя. Спробуйте ще раз.",
   "settingsAboutTitle": "Про застосунок",

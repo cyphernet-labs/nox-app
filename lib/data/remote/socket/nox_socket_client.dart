@@ -211,10 +211,22 @@ class NoxSocketClient {
     try {
       final connection = _factory.connect(url);
       _connection = connection;
+      // Every connection gets a number, and every callback carries the one it
+      // was born with. Closing a socket can FAIL - that is the whole reason
+      // teardown absorbs its errors - and a socket that would not close keeps
+      // delivering frames after the retry has opened its successor. Trusting
+      // close() to stop them is trusting the thing that just failed; the
+      // generation makes a leaked socket harmless instead of impossible.
+      _connectionEpoch++;
+      final epoch = _connectionEpoch;
       _frames = connection.frames.listen(
-        _onRawFrame,
-        onError: (Object e) => _onDropped('stream error: ${e.runtimeType}'),
-        onDone: () => _onDropped('closed by peer'),
+        (raw) => _onRawFrame(raw, epoch),
+        onError: (Object e) {
+          if (epoch == _connectionEpoch) _onDropped('stream error: ${e.runtimeType}');
+        },
+        onDone: () {
+          if (epoch == _connectionEpoch) _onDropped('closed by peer');
+        },
         cancelOnError: false,
       );
     } catch (e) {
@@ -222,7 +234,23 @@ class NoxSocketClient {
     }
   }
 
-  void _onRawFrame(dynamic raw) {
+  /// Counts connections, so a frame can say which one it came from.
+  int _connectionEpoch = 0;
+
+  /// Consecutive greetings this client could not read. Reset by a successful
+  /// one, because a peer that greets properly once is not the broken case.
+  int _greetFailures = 0;
+
+  /// How many of those before the channel is called unusable rather than
+  /// merely down. Small: a deterministic fault repeats immediately, and the
+  /// backoff ladder has already spread these attempts over half a minute.
+  static const int _maxGreetFailures = 5;
+
+  void _onRawFrame(dynamic raw, int epoch) {
+    // From a connection we have already moved on from. It may still be open -
+    // see the generation counter above - and anything it says now would be
+    // answered on behalf of a socket nobody is using.
+    if (epoch != _connectionEpoch) return;
     if (raw is! String) return; // binary frames are not part of contract v0
     final Map<String, dynamic> json;
     try {
@@ -319,8 +347,19 @@ class NoxSocketClient {
           // tell those apart and must not: both mean "this is not my server any
           // more". Retrying would spin forever against a peer that will keep
           // refusing, so the session is torn down and the app is told.
+          //
+          // Only the CALLBACK is guarded, because only it can fail: `_teardown`
+          // absorbs its own errors by construction, and that invariant is
+          // stated in its doc comment rather than assumed here. A throw from
+          // the callback must not reach the catch-all at the end of this
+          // method, which retries - that would undo the decision this branch
+          // exists to make and put a revoked device back in a refusal loop.
           await _teardown(SessionPhase.unsupported);
-          onUnauthenticated?.call();
+          try {
+            onUnauthenticated?.call();
+          } on Object catch (e, st) {
+            logRepository.error(target: this, error: 'unauthenticated handler failed: ${e.runtimeType}', stackTrace: st);
+          }
           return;
         }
         final terminal = reply.errorCode == 'unsupported_schema' || reply.errorCode == 'invalid_request';
@@ -366,7 +405,28 @@ class NoxSocketClient {
         journalId = serverJournal;
       }
 
-      _helloCursor = data['cursor'] as int? ?? 0;
+      // Any NUMBER is accepted: JSON round-tripped through a float parser makes
+      // 1042 arrive as 1042.0, and refusing that would retry for ever with
+      // nothing on screen saying why. Only a truly absent or non-numeric cursor
+      // is a reconnect - substituting 0 would make `since >= _helloCursor` true
+      // on the next line, declaring catch-up complete before a single replay
+      // frame was applied.
+      final rawCursor = data['cursor'];
+      // TERMINAL, not a retry. A greeting without a usable cursor is a peer
+      // that does not speak this contract, and reconnecting to it produces the
+      // same reply for ever - an app stuck on "connecting" with nothing on
+      // screen saying why. `unsupported` is how the other non-repeatable
+      // refusals are reported, and this is one of them.
+      //
+      // `isFinite` because NaN and Infinity are both `num`: `toInt()` throws on
+      // either, and a guard that lets through the two values it cannot convert
+      // is not a guard.
+      if (rawCursor is! num || !rawCursor.isFinite) {
+        logRepository.debug(target: this, message: 'socket: greeting carried no usable cursor');
+        await _teardown(SessionPhase.unsupported);
+        return;
+      }
+      _helloCursor = rawCursor.toInt();
       final id = data['identity'];
       if (id is! Map<String, dynamic>) {
         // Stage 1 always states who connected. A reply without it is not a
@@ -378,23 +438,43 @@ class NoxSocketClient {
         return;
       }
       identity = ServerIdentity(
-        id: id['id'] as String? ?? '',
-        label: id['label'] as String? ?? '',
+        // Read, not cast, for the same reason as the two booleans below: a
+        // wrong-typed field is worth ignoring, never worth wedging the channel.
+        id: id['id'] is String ? id['id'] as String : '',
+        label: id['label'] is String ? id['label'] as String : '',
         // Absent stays absent: it means "outcome not stated", which is neither
         // outcome, and the sign-in path must not be handed a guess.
-        created: id['created'] as bool?,
+        //
+        // Type-checked rather than cast. `as bool?` throws on anything that is
+        // not a bool - a peer sending `1` or `"true"` - and the throw escapes
+        // _greet(), which catches only SocketUnavailableException and is called
+        // through unawaited(): no teardown, no retry, no completed greeting.
+        // The socket then hangs until the process restarts. A malformed field
+        // is worth ignoring, never worth wedging the channel for.
+        created: id['created'] is bool ? id['created'] as bool : null,
+        // Same rule for ownership, and for a sharper reason: a server that does
+        // not state it is not saying "no". Reading a missing field as false
+        // would strip the badge from an owner talking to an older build.
+        isOwner: id['owner'] is bool ? id['owner'] as bool : null,
       );
       greetingGeneration++;
       final lim = data['limits'];
       if (lim is Map<String, dynamic>) {
+        // `num`, like the cursor above and for the same reason: a JSON layer
+        // that round-trips numbers through a float sends 65536.0, and treating
+        // that as unreadable would silently install the contract default in
+        // place of the limit the server actually stated - so the composer's
+        // pre-flight check would block messages the server accepts, or pass
+        // ones it rejects.
         limits = ServerLimits(
-          maxMessageBytes: lim['max_message_bytes'] as int? ?? ServerLimits.contractDefaults.maxMessageBytes,
-          maxAttachmentBytes: lim['max_attachment_bytes'] as int? ?? ServerLimits.contractDefaults.maxAttachmentBytes,
-          maxFrameBytes: lim['max_frame_bytes'] as int? ?? ServerLimits.contractDefaults.maxFrameBytes,
+          maxMessageBytes: _limit(lim['max_message_bytes'], ServerLimits.contractDefaults.maxMessageBytes),
+          maxAttachmentBytes: _limit(lim['max_attachment_bytes'], ServerLimits.contractDefaults.maxAttachmentBytes),
+          maxFrameBytes: _limit(lim['max_frame_bytes'], ServerLimits.contractDefaults.maxFrameBytes),
         );
       }
       // The ladder resets HERE — a greeting is the first proof the peer is real.
       _backoff = _minBackoff;
+      _greetFailures = 0;
       // Commands may flow from here: the server has accepted this connection.
       if (_greeted?.isCompleted == false) _greeted!.complete();
       _phase.add(SessionPhase.catchingUp);
@@ -411,7 +491,52 @@ class NoxSocketClient {
     } on SocketUnavailableException {
       await _teardown(SessionPhase.disconnected);
       _scheduleRetry();
+    } on Object catch (e, st) {
+      // Everything else, and deliberately so. This method runs through
+      // `unawaited()`, so any escaping throw becomes an unhandled async error:
+      // no teardown, no retry, `_greeted` never completed - the channel is dead
+      // for the life of the process and nothing says why. A malformed field in
+      // a reply is worth a reconnect; it is never worth that.
+      //
+      // The field-by-field type checks in the parse above help, but they can
+      // only cover the fields somebody remembered. This covers the rest.
+      // The TYPE and where it happened, deliberately not the message. A
+      // TypeError quotes the offending value, and the value here can be a
+      // person's display name - Principle I keeps names out of logs whether or
+      // not they also travelled on the wire.
+      //
+      // One line, like every other failure branch in this method: the stack
+      // trace carries the rest, and a flapping peer should not double this
+      // file's log volume for a single event.
+      logRepository.error(target: this, error: 'greeting reply unreadable: ${e.runtimeType}', stackTrace: st);
+      // Bounded. A malformed frame can be a blip, so the first few attempts
+      // retry - but a deterministic fault produces the same throw on every one
+      // of them, and an unbounded loop leaves the app "connecting" for ever
+      // with nothing to show the person. After the ladder has been climbed a
+      // few times this is reported the way the other non-repeatable failures
+      // are, so a surface can say it will not work.
+      _greetFailures++;
+      if (_greetFailures >= _maxGreetFailures) {
+        await _teardown(SessionPhase.unsupported);
+        return;
+      }
+      await _teardown(SessionPhase.disconnected);
+      _scheduleRetry();
     }
+  }
+
+  /// One limit from the greeting, or the contract default when the server did
+  /// not state a usable one.
+  ///
+  /// "Usable" means positive. A stated `0` is not a limit the composer can work
+  /// with - its pre-flight check would refuse every message the person types,
+  /// with nothing on screen explaining why - and a negative one is worse. The
+  /// contract default is one comparison away, so an unusable value is treated
+  /// like an absent one rather than installed verbatim.
+  static int _limit(Object? raw, int fallback) {
+    if (raw is! num) return fallback;
+    final value = raw.toInt();
+    return value > 0 ? value : fallback;
   }
 
   /// The catch-up rule: applied `seq >= cursor` means replay is behind us.
@@ -428,10 +553,30 @@ class NoxSocketClient {
     _scheduleRetry();
   }
 
+  /// Never throws, and always finishes the reset.
+  ///
+  /// Both awaits below can fail - closing a socket that is already gone throws
+  /// on several platforms, and `_onDropped` runs on exactly that path. When
+  /// they did, everything after them was skipped: the subscription and the
+  /// connection stayed live, pending callers were never failed, and `identity`
+  /// survived into the next connection - which is what this method's own
+  /// comment says must not happen. The retry then opened a SECOND socket while
+  /// the old frames kept arriving.
+  ///
+  /// Guarding at the call sites could not fix that; only finishing the reset
+  /// can. So the failures are absorbed here and the state below always runs.
   Future<void> _teardown(SessionPhase next) async {
-    await _frames?.cancel();
+    try {
+      await _frames?.cancel();
+    } on Object catch (e) {
+      logRepository.debug(target: this, message: 'socket: frame subscription would not cancel (${e.runtimeType})');
+    }
     _frames = null;
-    await _connection?.close();
+    try {
+      await _connection?.close();
+    } on Object catch (e) {
+      logRepository.debug(target: this, message: 'socket: connection would not close (${e.runtimeType})');
+    }
     _connection = null;
     for (final completer in _pending.values) {
       if (!completer.isCompleted) completer.completeError(const SocketUnavailableException('connection lost'));
@@ -448,7 +593,14 @@ class NoxSocketClient {
     // socket by design.
     identity = null;
     limits = null;
-    if (_phase.value != next) _phase.add(next);
+    // Guarded too: dispose() closes the subject while an unawaited greeting can
+    // still be in flight, and adding to a closed subject throws. Nobody is
+    // listening by then, so there is nothing to tell and nothing to fail.
+    try {
+      if (_phase.value != next) _phase.add(next);
+    } on Object {
+      // Closed. The teardown itself is done, which is what mattered.
+    }
   }
 
   void _scheduleRetry() {

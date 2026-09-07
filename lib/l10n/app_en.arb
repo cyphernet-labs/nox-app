@@ -68,6 +68,7 @@
   "@devicesPairedAt": {"placeholders": {"date": {"type": "String"}}},
   "@devicesLastSeen": {"placeholders": {"date": {"type": "String"}}},
   "settingsYourIdLabel": "Your ID",
+  "settingsOwnerBadge": "Server owner",
   "actionHide": "Hide",
   "settingsNameSaveError": "Couldn't save your name. Try again.",
   "settingsAboutTitle": "About",

@@ -206,7 +206,10 @@ const SettingsListPane = ({ t, selected }) => (
 );
 
 // detail content — every panel reuses the phone widgets verbatim
-const SettingsDetail = ({ t, section, detailState = null }) => {
+// Defaults to NOT stated, like the shipped widget: "not stated" and "not the
+// owner" both render nothing, so a screen built from this corpus without
+// saying otherwise must not show a badge.
+const SettingsDetail = ({ t, section, detailState = null, isOwner = false }) => {
   const wrap = (children) => (
     <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', background: t.surfaceContainerLowest, display: 'flex', flexDirection: 'column' }}>
       <PaneHeader t={t} title={section} />
@@ -219,13 +222,7 @@ const SettingsDetail = ({ t, section, detailState = null }) => {
   if (section === 'Account') {
     return wrap(
       <div>
-        <IdentityCard t={t} editing={detailState === 'editing'} />
-        {detailState !== 'editing' && (
-          <div style={{ margin: '4px 16px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: '12px 0 4px' }}>
-            <div style={{ padding: 16, background: BRAND.qrSurface, borderRadius: SHAPE.m }}><FakeQR size={184} /></div>
-            <div style={{ ...ty('bodyMedium'), color: t.onSurfaceVariant, textAlign: 'center' }}>Show this code to let someone add you</div>
-          </div>
-        )}
+        <IdentityCard t={t} editing={detailState === 'editing'} isOwner={isOwner} />
       </div>
     );
   }
@@ -273,27 +270,14 @@ const SettingsDetail = ({ t, section, detailState = null }) => {
   return wrap(<TermsBody t={t} />);
 };
 
-const SettingsDesktop = ({ t, section = 'Appearance', dialog = null, detailState = null }) => (
+const SettingsDesktop = ({ t, section = 'Appearance', dialog = null, detailState = null, isOwner = false }) => (
   <DesktopWindow t={t} subtitle="Settings">
     <NavRail t={t} active="settings" />
     <SettingsListPane t={t} selected={section} />
-    <SettingsDetail t={t} section={section} detailState={detailState} />
+    <SettingsDetail t={t} section={section} detailState={detailState} isOwner={isOwner} />
     {dialog === 'logout' && <LogoutDialog t={t} />}
     {dialog === 'logout-loading' && <LogoutDialog t={t} loading />}
-    {dialog === 'qr' && <CenteredQR t={t} />}
   </DesktopWindow>
-);
-
-// desktop QR: mobile bottom-sheet → centered dialog (same FakeQR widget)
-const CenteredQR = ({ t }) => (
-  <div style={{ position: 'absolute', inset: 0, zIndex: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-    <div style={{ position: 'absolute', inset: 0, background: hexA(t.scrim, 0.4) }} />
-    <div style={{ position: 'relative', background: t.surface, borderRadius: SHAPE.xl, boxShadow: elev(5, t.dark), padding: '24px 28px 28px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-      <div style={{ ...ty('titleLarge'), color: t.onSurface, marginBottom: 20 }}>Your ID QR</div>
-      <div style={{ padding: 16, background: BRAND.qrSurface, borderRadius: SHAPE.m }}><FakeQR size={220} /></div>
-      <div style={{ marginTop: 16 }}><TextButton t={t} label="Close" /></div>
-    </div>
-  </div>
 );
 
 // ============================================================
@@ -367,6 +351,6 @@ const SplashDesktop = () => (
 
 Object.assign(window, {
   ChatRow, ChatsListPane, ThreadHeader, ThreadMessages, ThreadPane, ChatsDesktop,
-  SETTINGS_NAV, SettingsNavItem, SettingsListPane, SettingsDetail, SettingsDesktop, CenteredQR,
+  SETTINGS_NAV, SettingsNavItem, SettingsListPane, SettingsDetail, SettingsDesktop,
   OnboardCard, LoginDesktop, UsernameDesktop, SplashDesktop,
 });

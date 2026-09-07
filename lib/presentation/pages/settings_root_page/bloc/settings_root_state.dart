@@ -19,6 +19,11 @@ abstract class SettingsRootState with _$SettingsRootState {
     // The user's own identifier (Your ID), encoded into the Show QR surface (7.1,
     // FR-014). Loaded from the session on initialize; falls back to the stub.
     @Default('') String rawId,
+
+    /// Whether this person owns the server (contract §3), as the server last
+    /// stated it. Null is "not stated yet" and draws no badge — the same as
+    /// false on screen, deliberately different in meaning.
+    bool? isOwner,
     @Default('') String draftName,
     @Default(false) bool editing,
     @Default(SettingsNameStatus.idle) SettingsNameStatus status,

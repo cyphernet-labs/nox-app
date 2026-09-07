@@ -1,9 +1,13 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -301,3 +305,176 @@ func mustRaw(t *testing.T, data map[string]json.RawMessage) json.RawMessage {
 }
 
 var _ = websocket.StatusNormalClosure
+
+// The pair reply says "you own this machine" in the same frame that says who
+// you are. Waiting for the next greeting to learn it would leave the device
+// that just claimed the server unable to say so.
+func TestPairAndGreetingBothCarryOwnership(t *testing.T) {
+	ts, srv := newTestServer(t)
+	dev, claimed := claimDevice(t, ts, srv)
+
+	var claimedIdentity identity
+	mustUnmarshal(t, claimed["identity"], &claimedIdentity)
+	if !claimedIdentity.Owner {
+		t.Fatal("the pair reply does not say the claimer owns the server")
+	}
+
+	c := dialWS(t, ts, srv)
+	c.expectGreeting()
+	var greeted identity
+	mustUnmarshal(t, c.greet(t, 1, dev, "")["identity"], &greeted)
+	if !greeted.Owner {
+		t.Fatal("the greeting does not say this person owns the server")
+	}
+	if greeted.ID != claimedIdentity.ID {
+		t.Fatalf("greeting is about %q, pair was about %q", greeted.ID, claimedIdentity.ID)
+	}
+}
+
+// The field must be WRITTEN, not merely true. An accidental omitempty passes
+// every test that unmarshals into a struct - the zero value looks identical -
+// and costs the owner their badge against a client that reads a missing field
+// as "not stated". So this one looks at the bytes.
+func TestOwnershipFieldIsAlwaysOnTheWireEvenWhenFalse(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		frame any
+	}{
+		{"greeting", greetingIdentity{ID: "u_1", Label: "Anna"}},
+		{"pair reply", identity{greetingIdentity: greetingIdentity{ID: "u_1", Label: "Anna"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := json.Marshal(tc.frame)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if !bytes.Contains(raw, []byte(`"owner":false`)) {
+				t.Fatalf("frame = %s, want an explicit \"owner\":false", raw)
+			}
+		})
+	}
+}
+
+// Ownership answers about the ASKER. The machine never names its owner on the
+// wire: rules are enforced server-side, so another person's id has no reason
+// to travel, and a field carrying it would have to be explained later.
+func TestTheOwnersIdentifierNeverReachesTheWire(t *testing.T) {
+	ts, srv := newTestServer(t)
+	dev, claimed := claimDevice(t, ts, srv)
+
+	c := dialWS(t, ts, srv)
+	c.expectGreeting()
+	greeting := c.greet(t, 1, dev, "")
+
+	for name, frame := range map[string]map[string]json.RawMessage{"pair": claimed, "greeting": greeting} {
+		for _, forbidden := range []string{"owner_id", "owner_user_id", "owner_label"} {
+			for key, raw := range frame {
+				if bytes.Contains(raw, []byte(`"`+forbidden+`"`)) {
+					t.Fatalf("%s frame names the owner explicitly in %q: %s", name, key, raw)
+				}
+			}
+		}
+	}
+}
+
+// US3 end to end: the machine outlives its devices and gives the same person
+// back the same identity and the same ownership. The path is rare and
+// irreversible - getting it wrong costs either the machine or the history.
+func TestReClaimAfterLosingEveryDeviceReturnsTheSameOwner(t *testing.T) {
+	ts, srv := newTestServer(t)
+	dev, claimed := claimDevice(t, ts, srv)
+	var before identity
+	mustUnmarshal(t, claimed["identity"], &before)
+
+	// Revoking the last device is what logout does.
+	c := dialWS(t, ts, srv)
+	c.expectGreeting()
+	c.greet(t, 1, dev, "")
+	c.expectOKAfter(2, fmt.Sprintf(`{"id":2,"cmd":"device.revoke","data":{"device_key":%q}}`, dev.pub))
+
+	token, err := srv.store.IssueClaimToken(context.Background(), time.Now().Unix())
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+	_, reclaimed := pairDevice(t, ts, token)
+	var after identity
+	mustUnmarshal(t, reclaimed["identity"], &after)
+
+	if after.ID != before.ID {
+		t.Fatalf("came back as %q, want the same person %q", after.ID, before.ID)
+	}
+	if !after.Owner {
+		t.Fatal("the person who came back no longer owns their own machine")
+	}
+	if after.Created {
+		t.Fatal("re-claim reported creating a person who already existed")
+	}
+}
+
+// Principle I: the flag is a role, and a role logged next to the person it
+// belongs to is a record of who runs the machine. The count is what an
+// operator needs; the identifier is not.
+func TestOwnershipIsNeverLoggedBesideTheIdentifier(t *testing.T) {
+	// A plain bytes.Buffer would be read here while connection goroutines are
+	// still writing to it - the race detector is right about that, and the log
+	// sink has to be safe rather than the assertion carefully timed.
+	buf := &syncBuffer{}
+	logger := slog.New(slog.NewJSONHandler(buf, nil))
+
+	ts, srv := newTestServerLogging(t, logger)
+	dev, claimed := claimDevice(t, ts, srv)
+	var id identity
+	mustUnmarshal(t, claimed["identity"], &id)
+
+	c := dialWS(t, ts, srv)
+	c.expectGreeting()
+	c.greet(t, 1, dev, "")
+
+	// Per RECORD, not per buffer. Two whole-buffer substring checks ANDed
+	// together are satisfied by an empty log and by two unrelated lines alike -
+	// the test would have been green without ever exercising the property.
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) == 0 || lines[0] == "" {
+		t.Fatal("no log records at all: the assertion below would pass vacuously")
+	}
+	for _, line := range lines {
+		var record map[string]any
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			t.Fatalf("log line is not JSON: %v (%s)", err, line)
+		}
+		var namesPerson, statesOwnership bool
+		for k, v := range record {
+			if s, ok := v.(string); ok && s == id.ID {
+				namesPerson = true
+			}
+			if strings.Contains(strings.ToLower(k), "owner") {
+				statesOwnership = true
+			}
+			if s, ok := v.(string); ok && strings.Contains(strings.ToLower(s), "owner") {
+				statesOwnership = true
+			}
+		}
+		if namesPerson && statesOwnership {
+			t.Fatalf("one record carries both the person and their ownership: %s", line)
+		}
+	}
+}
+
+// syncBuffer is a log sink that survives being read while the server is still
+// writing to it.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}

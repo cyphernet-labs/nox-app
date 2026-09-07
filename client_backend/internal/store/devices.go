@@ -8,8 +8,6 @@ import (
 	"time"
 )
 
-func isNoRows(err error) bool { return errors.Is(err, sql.ErrNoRows) }
-
 // Device is one authorised install of a person, as shown in the device list.
 //
 // Platform is the OS family and nothing more: enough to recognise one's own
@@ -99,16 +97,11 @@ func (s *Store) RevokeDevice(ctx context.Context, deviceKey string) error {
 // DeviceOwner reports which person a key belongs to, so a caller can refuse to
 // revoke somebody else's device.
 func (s *Store) DeviceOwner(ctx context.Context, deviceKey string) (string, bool, error) {
-	var userID string
-	err := s.read.QueryRowContext(ctx,
-		"SELECT user_id FROM devices WHERE device_key = ?", deviceKey).Scan(&userID)
+	owner, err := deviceOwnerOf(ctx, s.read, deviceKey)
 	if err != nil {
-		if isNoRows(err) {
-			return "", false, nil
-		}
-		return "", false, fmt.Errorf("read device owner: %w", err)
+		return "", false, err
 	}
-	return userID, true, nil
+	return owner, owner != "", nil
 }
 
 // SetLabel renames a person. Contract §8A: names are not unique and the server
@@ -119,36 +112,4 @@ func (s *Store) SetLabel(ctx context.Context, userID, label string) error {
 		return fmt.Errorf("set label: %w", err)
 	}
 	return nil
-}
-
-// CountDevices reports how many keys can still reach this server at all.
-//
-// Zero means nobody can: the claim is spent, every device is revoked, and
-// without this the machine would be locked forever - the identity survives,
-// which is the point, but nothing could ever attach to it again.
-func (s *Store) CountDevices(ctx context.Context) (int, error) {
-	var n int
-	if err := s.read.QueryRowContext(ctx, "SELECT COUNT(1) FROM devices").Scan(&n); err != nil {
-		return 0, fmt.Errorf("count devices: %w", err)
-	}
-	return n, nil
-}
-
-// CountUsers reports how many people the server knows. Test-support.
-func (s *Store) CountUsers(ctx context.Context) (int, error) {
-	var n int
-	if err := s.read.QueryRowContext(ctx, "SELECT COUNT(1) FROM users").Scan(&n); err != nil {
-		return 0, fmt.Errorf("count users: %w", err)
-	}
-	return n, nil
-}
-
-// AnyUser returns some person's id. Test-support for a server that holds
-// exactly one until invite-user arrives (Q15).
-func (s *Store) AnyUser(ctx context.Context) (string, error) {
-	var id string
-	if err := s.read.QueryRowContext(ctx, "SELECT user_id FROM users LIMIT 1").Scan(&id); err != nil {
-		return "", fmt.Errorf("read any user: %w", err)
-	}
-	return id, nil
 }

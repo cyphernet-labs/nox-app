@@ -98,7 +98,10 @@ func (c *client) handlePair(cmd protocol.Command) {
 	// to offer the naming step. Computed from whether a row was inserted - not
 	// from the token kind, and not from the fact that pairing succeeded.
 	c.sendFrame(protocol.OKReply(cmd.ID, pairReply{
-		Identity: identity{ID: id.UserID, Label: id.Label, Created: id.Created},
+		Identity: identity{
+			greetingIdentity: greetingIdentity{ID: id.UserID, Label: id.Label, Owner: id.Owner},
+			Created:          id.Created,
+		},
 	}))
 }
 

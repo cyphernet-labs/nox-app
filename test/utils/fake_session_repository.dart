@@ -5,6 +5,7 @@ import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/app/session_model.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
+import 'package:rxdart/rxdart.dart';
 
 /// Canonical test identifier (a long key-like string) — a stable `Your ID` for the
 /// identity card / Show QR surface in tests.
@@ -21,13 +22,20 @@ const SessionModel kTestSession = SessionModel(
 /// Hand-written session double — callers exercise [readSession] plus the feature-015
 /// label channel ([watchLabel] / [updateLabel]).
 class FakeSessionRepository implements SessionRepository {
-  FakeSessionRepository({this.session = kTestSession, this.fail = false}) : _label = session?.label;
+  FakeSessionRepository({this.session = kTestSession, this.fail = false, bool? isOwner})
+    : _label = session?.label,
+      _seedOwnership = isOwner;
 
   final SessionModel? session;
   final bool fail;
 
+  /// What the server has stated about ownership, mirroring the prefs key the
+  /// real repository reads. Null is "not stated".
+  final bool? _seedOwnership;
+
   String? _label;
   final StreamController<String?> _labelController = StreamController<String?>.broadcast();
+  final BehaviorSubject<bool?> _ownership = BehaviorSubject<bool?>();
 
   @override
   Future<RepositoryResult<SessionModel?>> readSession() async {
@@ -36,7 +44,8 @@ class FakeSessionRepository implements SessionRepository {
   }
 
   @override
-  Future<RepositoryResult<bool>> adoptServerIdentity({required String authorId, required String label}) => throw UnimplementedError();
+  Future<RepositoryResult<bool>> adoptServerIdentity({required String authorId, required String label, bool? isOwner}) =>
+      throw UnimplementedError();
 
   @override
   Future<RepositoryResult<bool>> updateLabel({required String label}) async {
@@ -45,6 +54,19 @@ class FakeSessionRepository implements SessionRepository {
     _labelController.add(label);
     return const RepositoryResult<bool>.success(data: true);
   }
+
+  @override
+  Stream<bool?> watchOwnership() {
+    // Mirrors the real one: a shared subject that replays its latest value and
+    // does NOT complete. The generator this replaced closed after a single
+    // event, which made the behaviour the channel exists for - an answer
+    // arriving after the screen was built - unreachable through the fake.
+    if (!_ownership.hasValue) _ownership.add(_seedOwnership);
+    return _ownership.stream;
+  }
+
+  /// Pushes a new ownership answer, the way a greeting would.
+  void emitOwnership(bool? isOwner) => _ownership.add(isOwner);
 
   @override
   Stream<String?> watchLabel() async* {
@@ -94,7 +116,7 @@ class FakeSessionRepository implements SessionRepository {
 /// Registers a [FakeSessionRepository] into the DI container so blocs/pages that
 /// resolve the `sessionRepository` alias work in otherwise DI-less tests. Pair with
 /// `tearDown(getIt.reset)`.
-void registerFakeSession({SessionModel? session = kTestSession, bool fail = false}) {
+void registerFakeSession({SessionModel? session = kTestSession, bool fail = false, bool? isOwner}) {
   getIt.allowReassignment = true;
-  getIt.registerSingleton<SessionRepository>(FakeSessionRepository(session: session, fail: fail));
+  getIt.registerSingleton<SessionRepository>(FakeSessionRepository(session: session, fail: fail, isOwner: isOwner));
 }

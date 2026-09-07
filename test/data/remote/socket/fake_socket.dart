@@ -45,21 +45,29 @@ class FakeSocket implements SocketConnection {
   }
 
   /// A successful greeting reply carrying the catch-up cursor and identity.
-  void replyToHello({required int cursor, String label = 'Anna', String journalId = 'j_test', bool? created = false, String id = 'u_1'}) =>
-      reply(
-        sent.indexWhere((f) => f['cmd'] == 'session.hello'),
-        data: {
-          'schema': 1,
-          'cursor': cursor,
-          'journal_id': journalId,
-          'limits': {'max_message_bytes': 65536, 'max_attachment_bytes': 104857600, 'max_frame_bytes': 131072},
-          // Nullable, and stated with the ?-spread: the wire has THREE states and
-          // the third one - the field absent, meaning "outcome not stated" - is the
-          // one a test has to be able to reproduce. A non-nullable bool here would
-          // make the very case FR-006 requires checking inexpressible.
-          'identity': {'id': id, 'label': label, 'created': ?created},
-        },
-      );
+  void replyToHello({
+    required int cursor,
+    String label = 'Anna',
+    String journalId = 'j_test',
+    bool? created = false,
+    String id = 'u_1',
+    bool? owner,
+  }) => reply(
+    sent.indexWhere((f) => f['cmd'] == 'session.hello'),
+    data: {
+      'schema': 1,
+      'cursor': cursor,
+      'journal_id': journalId,
+      'limits': {'max_message_bytes': 65536, 'max_attachment_bytes': 104857600, 'max_frame_bytes': 131072},
+      // Nullable, and stated with the ?-spread: the wire has THREE states and
+      // the third one - the field absent, meaning "outcome not stated" - is the
+      // one a test has to be able to reproduce. A non-nullable bool here would
+      // make the very case FR-006 requires checking inexpressible.
+      // `owner` defaults to ABSENT, like a server that predates the field:
+      // the test that matters is the one where it is not stated.
+      'identity': {'id': id, 'label': label, 'created': ?created, 'owner': ?owner},
+    },
+  );
 
   void refuseHello(String code) => reply(sent.indexWhere((f) => f['cmd'] == 'session.hello'), ok: false, code: code);
 

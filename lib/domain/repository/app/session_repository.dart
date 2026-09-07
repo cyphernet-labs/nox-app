@@ -56,16 +56,40 @@ abstract class SessionRepository {
   Future<RepositoryResult<bool>> advanceOnboardingIfKnown({required bool created});
 
   /// Records the identity the server declared at greeting time (contract §3):
-  /// its author id, and the label it considers current. Both are the server's
-  /// to decide — the label may have been changed from another device.
-  Future<RepositoryResult<bool>> adoptServerIdentity({required String authorId, required String label});
+  /// its author id, the label it considers current, and whether this person
+  /// owns the server. All three are the server's to decide — the label may
+  /// have been changed from another device, and ownership is never inferred
+  /// locally from having presented the claim link.
+  ///
+  /// [isOwner] null means the server did not state it, and the stored value is
+  /// then left alone: "did not say" must not overwrite a real answer heard
+  /// earlier, or an older server would silently strip the badge.
+  Future<RepositoryResult<bool>> adoptServerIdentity({required String authorId, required String label, bool? isOwner});
+
+  /// Reactive ownership signal: emits the cached answer on listen, then every
+  /// subsequent change (the server states it, logout clears it).
+  ///
+  /// Exists for the same reason [watchLabel] does. The settings screen is built
+  /// once and stays mounted, so a value read at build time is the value it
+  /// shows forever — and ownership is settled by a frame that may arrive after
+  /// that, or change later when ownership can be transferred.
+  ///
+  /// Unlike [watchLabel] this is ONE shared broadcast stream that replays its
+  /// latest value to every new listener and never completes. Listening twice is
+  /// fine; waiting for `onDone` is not — it will not arrive.
+  ///
+  /// Shared on purpose: a per-call generator has to yield the stored value and
+  /// only then subscribe, and a change landing in that gap is lost with no
+  /// replay — which is the exact miss this channel was added to close.
+  Stream<bool?> watchOwnership();
 
   /// Reactive display-label signal: emits the current cached label on listen, then
   /// every subsequent change (rename → new label, logout/clear → null). Broadcast —
   /// multiple surfaces (shell avatar, future consumers) may listen concurrently.
   Stream<String?> watchLabel();
 
-  /// Forgets the author id this device cached. Called when the server's store
+  /// Forgets who this device is on the server it cached: the author id and
+  /// the ownership answer both belong to that world. Called when the server's store
   /// turns out to be a different world: an id from the old one would mark
   /// strangers' messages as this user's own.
   Future<RepositoryResult<bool>> forgetAuthorId();

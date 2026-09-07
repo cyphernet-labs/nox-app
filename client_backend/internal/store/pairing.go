@@ -84,7 +84,7 @@ func (s *Store) issueToken(ctx context.Context, kind, userID string, now, expire
 	return token, nil
 }
 
-// BurnToken spends a token inside the caller's transaction and reports what it
+// burnToken spends a token inside the caller's transaction and reports what it
 // was for. It must be called in the same transaction as whatever the token
 // authorises, or a crash between the two would spend a token for nothing.
 //
@@ -92,7 +92,7 @@ func (s *Store) issueToken(ctx context.Context, kind, userID string, now, expire
 // two devices presenting the same invite at the same moment both reach this
 // statement, exactly one sees a row change, and the other is told the token is
 // invalid. Checking-then-updating would let both through.
-func BurnToken(ctx context.Context, tx *sql.Tx, token string, now int64) (PairToken, error) {
+func burnToken(ctx context.Context, tx *sql.Tx, token, deviceKey string, now int64) (PairToken, error) {
 	var kind string
 	var userID sql.NullString
 	var expiresAt, usedAt sql.NullInt64
@@ -115,7 +115,7 @@ func BurnToken(ctx context.Context, tx *sql.Tx, token string, now int64) (PairTo
 	}
 
 	res, err := tx.ExecContext(ctx,
-		"UPDATE pair_tokens SET used_at = ? WHERE token = ? AND used_at IS NULL", now, token)
+		"UPDATE pair_tokens SET used_at = ?, used_by = ? WHERE token = ? AND used_at IS NULL", now, deviceKey, token)
 	if err != nil {
 		return PairToken{}, fmt.Errorf("burn pairing token: %w", err)
 	}
@@ -168,7 +168,7 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 		return same, nil
 	}
 
-	pt, err := BurnToken(ctx, tx, token, now)
+	pt, err := burnToken(ctx, tx, token, deviceKey, now)
 	if err != nil {
 		return Identity{}, err
 	}
@@ -179,49 +179,84 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 		// A claim on an already-owned server is refused with the same answer as
 		// a token that never existed: the claim died the moment somebody used
 		// it, and staying silent about which is which says nothing useful.
-		var claimedAt sql.NullInt64
-		if err := tx.QueryRowContext(ctx,
-			"SELECT claimed_at FROM server_identity WHERE id = 1").Scan(&claimedAt); err != nil {
-			return Identity{}, fmt.Errorf("read claim state: %w", err)
-		}
-		// Owned means "somebody can still get in", not "somebody once did".
-		// Revoking the last device - which logout is - would otherwise lock the
-		// machine forever: the claim is spent, there is no device to issue an
-		// invite from, and recovery is Q16. The person's row survives either
-		// way; this is only about being able to attach a device to it again.
-		var devices int
-		if err := tx.QueryRowContext(ctx, "SELECT COUNT(1) FROM devices").Scan(&devices); err != nil {
-			return Identity{}, fmt.Errorf("count devices: %w", err)
-		}
-		if claimedAt.Valid && devices > 0 {
-			return Identity{}, ErrTokenInvalid
-		}
-
-		// Re-claiming a server that lost every device attaches to the person
-		// who is already there rather than minting a second one. A server holds
-		// one person until invite-user arrives (Q15), and a new identity would
-		// orphan the old one: their messages keep an author_id nobody can sign
-		// in as, and "the identity survives its devices" would be true on paper
-		// and worthless in practice.
-		existing, found, err := onlyUser(ctx, tx)
+		// Read from the OWNER, never from claimed_at. The two say the same
+		// thing, and deciding by the poorer of the two records is how they end
+		// up disagreeing.
+		owner, err := ownerUserID(ctx, tx)
 		if err != nil {
 			return Identity{}, err
 		}
-		if found {
-			id = existing
+		// Owned means "the OWNER can still get in", not "somebody once did" and
+		// not "anybody is here". Revoking the last device - which logout is -
+		// would otherwise lock the machine forever: the claim is spent, there is
+		// no device to issue an invite from, and recovery is Q16.
+		//
+		// Counting every device on the server would reintroduce that lockout the
+		// moment a second person exists (034): a guest's device left running
+		// would keep the owner's own claim link refused for ever, on a machine
+		// that is theirs.
+		if owner != "" {
+			devices, err := ownerDeviceCount(ctx, tx, owner)
+			if err != nil {
+				return Identity{}, err
+			}
+			if devices > 0 {
+				return Identity{}, ErrTokenInvalid
+			}
+		}
+
+		switch {
+		case owner != "":
+			// Re-claiming a server that lost every device attaches to the person
+			// who OWNS it. Not to "the only person", and above all not to the
+			// oldest row: that inference is what this whole feature exists to
+			// delete, and once a second person can exist it would hand a fresh
+			// device somebody else's identity and history.
+			//
+			// A new identity here would orphan the old one instead: their
+			// messages keep an author_id nobody can sign in as, and "the
+			// identity survives its devices" would be true on paper only.
+			if err := loadUser(ctx, tx, owner, &id); err != nil {
+				return Identity{}, err
+			}
 			// Not Created: this person existed before this operation, so there
 			// is no naming step ahead - they already have a name.
-		} else {
+		default:
+			// No owner recorded. If the store also holds no people it is simply
+			// fresh, and this claim is the one that names its owner.
+			people, err := countPeople(ctx, tx)
+			if err != nil {
+				return Identity{}, err
+			}
+			if people > 0 {
+				// People but no owner: unreachable through any code path, so
+				// the store has been edited by hand. Refuse rather than guess.
+				// The two available guesses are both worse than a refusal -
+				// attaching to somebody by row order hands a stranger their
+				// history, and minting a new person orphans it - and unlike a
+				// refusal neither is undoable.
+				return Identity{}, ErrTokenInvalid
+			}
 			id, err = insertUser(ctx, tx, "", now)
 			if err != nil {
 				return Identity{}, err
 			}
 			id.Created = true
 		}
-		if _, err := tx.ExecContext(ctx,
-			"UPDATE server_identity SET claimed_at = ? WHERE id = 1 AND claimed_at IS NULL", now); err != nil {
-			return Identity{}, fmt.Errorf("mark claimed: %w", err)
+		// Ownership is recorded HERE, in the transaction that creates the
+		// person, rather than derived later from who happens to be oldest: the
+		// order rows were created in is not a right, and it stops being even a
+		// decent proxy the moment a second person can exist. The write is
+		// conditional on the column being empty, so a re-claim attaches to the
+		// person who is already the owner and moves ownership nowhere.
+		if err := setOwner(ctx, tx, id.UserID, now); err != nil {
+			return Identity{}, err
 		}
+		// True on every path that reaches here, and deliberately not read back
+		// to prove it: the branch above resolved `id` either from the recorded
+		// owner or from a store that had nobody at all, and setOwner's
+		// condition covers exactly the second case.
+		id.Owner = true
 		// Every OTHER unused claim token dies with this one. They were printed
 		// to the server log on earlier starts, and a log is not a secret store:
 		// without this, each of them comes back to life the moment the device
@@ -240,13 +275,53 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 		}
 		// Deliberately NOT Created: the person existed before this operation,
 		// so there is no naming step ahead.
+		//
+		// Ownership, unlike Created, is whatever it already was: an invite adds
+		// a DEVICE to a person, and a person's second device owns exactly what
+		// their first one does.
+		id.Owner, err = ownsServer(ctx, tx, id.UserID)
+		if err != nil {
+			return Identity{}, err
+		}
 
 	default:
 		return Identity{}, ErrTokenInvalid
 	}
 
+	// A key already belonging to somebody else is refused outright. It is a
+	// PUBLIC value - it rides every greeting and device.list prints it - so
+	// without this anyone who can issue an invite for themselves could name a
+	// stranger's key and take that device: it would keep working, resolve as
+	// the attacker on its next greeting, author every message as them, and
+	// vanish from its real owner's device list.
+	//
+	// Refusing is the other way to satisfy "the row and the reply must agree",
+	// and it is the one that does not hand a device away.
+	bound, err := deviceOwnerOf(ctx, tx, deviceKey)
+	if err != nil {
+		return Identity{}, err
+	}
+	if bound != "" && bound != id.UserID {
+		return Identity{}, ErrTokenInvalid
+	}
 	if err := insertDevice(ctx, tx, deviceKey, id.UserID, platform, now); err != nil {
 		return Identity{}, err
+	}
+	// Record WHO this spending produced and WHAT it did, so a replay can answer
+	// with those instead of re-deriving them. Both are only known here, after
+	// the branch above resolved the person and whether one came into being.
+	//
+	// The person matters as much as the outcome: re-deriving it from the device
+	// row answers about whoever holds that key at replay time, which after a
+	// logout and a re-pair is not who the token produced.
+	created := 0
+	if id.Created {
+		created = 1
+	}
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE pair_tokens SET paired_user_id = ?, created_person = ? WHERE token = ?",
+		id.UserID, created, token); err != nil {
+		return Identity{}, fmt.Errorf("record pairing outcome: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return Identity{}, fmt.Errorf("commit pair: %w", err)
@@ -265,38 +340,69 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 // naming step, into the chats list under an auto-assigned User<random>.
 func pairedBy(ctx context.Context, tx *sql.Tx, token, deviceKey string) (Identity, bool, error) {
 	var id Identity
-	var kind string
+	// The whole answer comes from the TOKEN's own record - who it produced and
+	// what it did - and it is handed only to the device that spent it.
+	//
+	// Nothing is re-derived here on purpose. Matching through the device's
+	// current binding answers about whoever holds that key now, which after a
+	// logout and a re-pair is not the person the token produced; and deriving
+	// the outcome from the token kind reports "created" for a re-claim that
+	// created nobody, walking a named person back through the naming screen.
+	//
+	// used_by is what keeps a spent token from answering a stranger: the key is
+	// public - it rides every greeting and device.list prints it - the token
+	// sits in the server log across restarts, and `pair` is the one command
+	// that carries no signature.
+	// The device must STILL belong to the person the token produced. Without
+	// that join the replay path answers before Pair's takeover refusal is ever
+	// reached: a key rebound to somebody else - a restore today, an ordinary
+	// invite once 034 lands - would be handed the original person's id, label
+	// and ownership, and the client writes all three into the wrong device.
+	var created int
 	err := tx.QueryRowContext(ctx, `
-		SELECT u.user_id, u.label, t.kind
+		SELECT u.user_id, u.label, t.created_person
 		FROM pair_tokens t
-		JOIN devices d ON d.device_key = ?
-		JOIN users u ON u.user_id = d.user_id
-		WHERE t.token = ? AND t.used_at IS NOT NULL`,
-		deviceKey, token).Scan(&id.UserID, &id.Label, &kind)
+		JOIN users u ON u.user_id = t.paired_user_id
+		JOIN devices d ON d.device_key = t.used_by AND d.user_id = t.paired_user_id
+		WHERE t.token = ? AND t.used_at IS NOT NULL AND t.used_by = ?`,
+		token, deviceKey).Scan(&id.UserID, &id.Label, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Identity{}, false, nil
 	}
 	if err != nil {
 		return Identity{}, false, fmt.Errorf("read pairing replay: %w", err)
 	}
-	// A claim is the only kind that brings a person into being, so replaying one
-	// reports created just as the lost reply did. An invite attaches a device to
-	// somebody who already existed.
-	id.Created = kind == TokenClaim
+	id.Created = created != 0
+	// Ownership is read, not inferred from the kind: a replayed claim answers
+	// about a person who owns the machine, and a replayed invite about one who
+	// may or may not.
+	id.Owner, err = ownsServer(ctx, tx, id.UserID)
+	if err != nil {
+		return Identity{}, false, err
+	}
 	return id, true, nil
 }
 
-// onlyUser returns the single person a server holds, if it holds one. A server
-// serves one person until invite-user arrives (Q15); this is what lets a
-// re-claim reattach instead of orphaning them.
-func onlyUser(ctx context.Context, tx *sql.Tx) (Identity, bool, error) {
-	var id Identity
-	err := tx.QueryRowContext(ctx, "SELECT user_id, label FROM users ORDER BY created_at LIMIT 1").Scan(&id.UserID, &id.Label)
+// loadUser fills id with the person named by userID.
+func loadUser(ctx context.Context, tx *sql.Tx, userID string, id *Identity) error {
+	err := tx.QueryRowContext(ctx,
+		"SELECT user_id, label FROM users WHERE user_id = ?", userID).Scan(&id.UserID, &id.Label)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Identity{}, false, nil
+		// The foreign key forbids it, so reaching here means the row went away
+		// underneath a live transaction. Refusing beats improvising.
+		return ErrTokenInvalid
 	}
 	if err != nil {
-		return Identity{}, false, fmt.Errorf("read existing person: %w", err)
+		return fmt.Errorf("read owner: %w", err)
 	}
-	return id, true, nil
+	return nil
+}
+
+// countPeople reports how many people this server holds.
+func countPeople(ctx context.Context, q rowQuerier) (int, error) {
+	var people int
+	if err := q.QueryRowContext(ctx, "SELECT COUNT(1) FROM users").Scan(&people); err != nil {
+		return 0, fmt.Errorf("count people: %w", err)
+	}
+	return people, nil
 }

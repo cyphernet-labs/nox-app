@@ -30,6 +30,26 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
     on<NameSubmitted>(_onNameSubmitted);
     on<NameEditCancelled>(_onNameEditCancelled);
     on<IdRevealToggled>(_onIdRevealToggled);
+    on<OwnershipChanged>(_onOwnershipChanged);
+    // The settings tab is built once and stays mounted, so a value read at
+    // build time is the value it shows for the life of the process. Ownership
+    // is settled by a frame that may well arrive after that - a greeting on a
+    // slow start, or against a server that only learned the field on upgrade -
+    // so it is watched, exactly as the label is.
+    //
+    // The watch is the SINGLE source: `initialize` does not read ownership at
+    // all. Two sources meant the read taken before initialize's own await could
+    // beat a newer answer simply by resuming last, and refereeing that needed a
+    // third piece of state. One source removes the race rather than judging it.
+    _ownership = sessionRepository.watchOwnership().listen((isOwner) => add(SettingsRootEvent.ownershipChanged(isOwner)));
+  }
+
+  StreamSubscription<bool?>? _ownership;
+
+  @override
+  Future<void> close() async {
+    await _ownership?.cancel();
+    return super.close();
   }
 
   Future<void> _onInitialize(SettingsInitialize event, Emitter<SettingsRootState> emit) async {
@@ -118,5 +138,13 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
 
   void _onIdRevealToggled(IdRevealToggled event, Emitter<SettingsRootState> emit) {
     emit(state.copyWith(idRevealed: !state.idRevealed));
+  }
+
+  void _onOwnershipChanged(OwnershipChanged event, Emitter<SettingsRootState> emit) {
+    // A watch seeds its current value on listen, so the first event usually
+    // states what the state already holds. Emitting for it would hand every
+    // consumer an extra rebuild for a change that did not happen.
+    if (event.isOwner == state.isOwner) return;
+    emit(state.copyWith(isOwner: event.isOwner));
   }
 }

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,7 +24,15 @@ import (
 // running httptest server plus the Server for direct inspection.
 func newTestServer(t *testing.T) (*httptest.Server, *Server) {
 	t.Helper()
-	ts, srv, closeAll := openStack(t, filepath.Join(t.TempDir(), "test.db"))
+	return newTestServerLogging(t, nil)
+}
+
+// newTestServerLogging is newTestServer with somewhere to read the log from.
+// The logger is handed in BEFORE the stack starts: assigning srv.logger after
+// httptest is serving races the request middleware.
+func newTestServerLogging(t *testing.T, logger *slog.Logger) (*httptest.Server, *Server) {
+	t.Helper()
+	ts, srv, closeAll := openStack(t, filepath.Join(t.TempDir(), "test.db"), logger)
 	t.Cleanup(closeAll)
 	return ts, srv
 }
@@ -31,7 +40,7 @@ func newTestServer(t *testing.T) (*httptest.Server, *Server) {
 // openStack assembles db + hub + server over the given database file and
 // returns an explicit close function, so lifecycle tests can stop and restart
 // the whole stack against the same file.
-func openStack(t *testing.T, path string) (*httptest.Server, *Server, func()) {
+func openStack(t *testing.T, path string, logger *slog.Logger) (*httptest.Server, *Server, func()) {
 	t.Helper()
 
 	dbs, err := db.Open(path)
@@ -57,7 +66,9 @@ func openStack(t *testing.T, path string) (*httptest.Server, *Server, func()) {
 		h.Run(hubCtx)
 	}()
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
 	cfg := config.Config{Addr: "127.0.0.1:0", DBPath: path, FilesPath: path + "-files", Limits: config.DefaultLimits()}
 	st := store.New(dbs.Read, dbs.Write)
 	// Mirror Run: the store identity is minted in Go once the schema exists,
@@ -126,4 +137,160 @@ func readDB(t *testing.T, srv *Server) *sql.DB {
 	}
 	t.Cleanup(func() { _ = d.Close() })
 	return d.Read
+}
+
+// The startup line has to tell the two situations apart, because they ask
+// different things of the person reading it: a machine nobody has claimed is
+// about to get an owner, while one whose owner lost every device is about to
+// let that same owner back in. Before ownership was explicit the two were
+// indistinguishable and the message said "no owner yet" for both.
+func TestTheStartupLineDistinguishesAnUnclaimedServerFromAnEmptyOne(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "announce.db")
+	dbs, err := db.Open(path)
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = dbs.Close() })
+	if _, err := db.Migrate(context.Background(), dbs.Write, os.DirFS("../../migrations")); err != nil {
+		t.Fatalf("db.Migrate: %v", err)
+	}
+	st := store.New(dbs.Read, dbs.Write)
+	ctx := context.Background()
+
+	fresh := &syncBuffer{}
+	if err := announceClaim(ctx, st, "127.0.0.1:8080", mustOwnership(t, st), mustIdentity(t, st), slog.New(slog.NewTextHandler(fresh, nil))); err != nil {
+		t.Fatalf("announceClaim on a fresh store: %v", err)
+	}
+	if !strings.Contains(fresh.String(), "no owner yet") {
+		t.Fatalf("fresh store announced %q", fresh.String())
+	}
+
+	// Claim it, then take the device away - which is what logging out does.
+	token, err := st.IssueClaimToken(ctx, 100)
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+	if _, err := st.Pair(ctx, token, "dev-a", "test", 100); err != nil {
+		t.Fatalf("Pair: %v", err)
+	}
+	if err := st.RevokeDevice(ctx, "dev-a"); err != nil {
+		t.Fatalf("RevokeDevice: %v", err)
+	}
+
+	owned := &syncBuffer{}
+	if err := announceClaim(ctx, st, "127.0.0.1:8080", mustOwnership(t, st), mustIdentity(t, st), slog.New(slog.NewTextHandler(owned, nil))); err != nil {
+		t.Fatalf("announceClaim on an owned store: %v", err)
+	}
+	if strings.Contains(owned.String(), "no owner yet") {
+		t.Fatalf("a server that still has an owner claims to have none: %q", owned.String())
+	}
+	if !strings.Contains(owned.String(), "get back in") {
+		t.Fatalf("owned-but-empty store announced %q", owned.String())
+	}
+}
+
+// One rule, one predicate. Startup and Pair must agree about "the owner can
+// still get in": while they disagreed, a claimed server whose owner had logged
+// out stayed silent because a GUEST device was running - so the owner never got
+// a link, on a machine Pair would have let them back into.
+func TestAGuestDeviceDoesNotSilenceTheOwnersClaimLink(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "announce.db")
+	dbs, err := db.Open(path)
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = dbs.Close() })
+	if _, err := db.Migrate(context.Background(), dbs.Write, os.DirFS("../../migrations")); err != nil {
+		t.Fatalf("db.Migrate: %v", err)
+	}
+	ctx := context.Background()
+	st := store.New(dbs.Read, dbs.Write)
+
+	if _, err := st.EnsureServerIdentity(ctx); err != nil {
+		t.Fatalf("EnsureServerIdentity: %v", err)
+	}
+	token, err := st.IssueClaimToken(ctx, 100)
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+	if _, err := st.Pair(ctx, token, "dev-owner", "test", 100); err != nil {
+		t.Fatalf("Pair: %v", err)
+	}
+	// A guest with a live device, which 034 makes ordinary.
+	if _, err := dbs.Write.ExecContext(ctx,
+		"INSERT INTO users (user_id, label, created_at) VALUES ('u_guest', 'Guest', 200)"); err != nil {
+		t.Fatalf("insert guest: %v", err)
+	}
+	if _, err := dbs.Write.ExecContext(ctx,
+		"INSERT INTO devices (device_key, user_id, platform, created_at, last_seen_at) VALUES ('dev-guest', 'u_guest', 'test', 200, 200)"); err != nil {
+		t.Fatalf("insert guest device: %v", err)
+	}
+	// The owner logs out.
+	if err := st.RevokeDevice(ctx, "dev-owner"); err != nil {
+		t.Fatalf("RevokeDevice: %v", err)
+	}
+
+	out := &syncBuffer{}
+	if err := announceClaim(ctx, st, "127.0.0.1:8080", mustOwnership(t, st), mustIdentity(t, st), slog.New(slog.NewTextHandler(out, nil))); err != nil {
+		t.Fatalf("announceClaim: %v", err)
+	}
+	if !strings.Contains(out.String(), "get back in") {
+		t.Fatalf("the owner was left with no link on their own machine: %q", out.String())
+	}
+}
+
+// mustIdentity mints or reads the machine identity startup settles first.
+func mustIdentity(t *testing.T, st *store.Store) store.ServerIdentity {
+	t.Helper()
+	id, err := st.EnsureServerIdentity(context.Background())
+	if err != nil {
+		t.Fatalf("EnsureServerIdentity: %v", err)
+	}
+	return id
+}
+
+// mustOwnership reads the snapshot startup would hand to announceClaim.
+func mustOwnership(t *testing.T, st *store.Store) store.OwnershipState {
+	t.Helper()
+	state, err := st.ReadOwnershipState(context.Background())
+	if err != nil {
+		t.Fatalf("ReadOwnershipState: %v", err)
+	}
+	return state
+}
+
+// A startup that is going to abort must not rotate the journal on its way out.
+// The journal id is what makes every paired device wipe its chats, messages,
+// cursor and read marks - and a partial restore is exactly when the operator
+// still has a way back, right up until something destroys it for them.
+func TestAnAbortedStartupDoesNotRotateTheJournal(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "restore.db")
+	dbs, err := db.Open(path)
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = dbs.Close() })
+	ctx := context.Background()
+	if _, err := db.Migrate(ctx, dbs.Write, os.DirFS("../../migrations")); err != nil {
+		t.Fatalf("db.Migrate: %v", err)
+	}
+	// A restore that brought back people but neither single-row bootstrap table.
+	if _, err := dbs.Write.ExecContext(ctx,
+		"INSERT INTO users (user_id, label, created_at) VALUES ('u_restored', 'Restored', 1)"); err != nil {
+		t.Fatalf("insert person: %v", err)
+	}
+
+	st := store.New(dbs.Read, dbs.Write)
+	if _, err := st.EnsureServerIdentity(ctx); err == nil {
+		t.Fatal("a store with people and no server identity was handed a new key")
+	}
+
+	// And nothing minted a journal on the way to that refusal.
+	var journals int
+	if err := dbs.Read.QueryRowContext(ctx, "SELECT COUNT(1) FROM journal").Scan(&journals); err != nil {
+		t.Fatalf("count journal: %v", err)
+	}
+	if journals != 0 {
+		t.Fatal("the journal was rotated before the startup guard could refuse - every paired device would wipe its world")
+	}
 }

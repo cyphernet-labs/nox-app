@@ -330,6 +330,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
   Widget _identityCard(SettingsRootState state, {required bool revealable, required bool wide}) {
     return AppIdentityCardWidget(
       name: state.name,
+      isOwner: state.isOwner,
       // The id is public now: masking it would hide something that is not a
       // secret, and leave nothing for Copy to make sense of.
       maskedId: state.rawId,

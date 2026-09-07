@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,6 +13,7 @@ import (
 
 	"nox.app/client-backend/internal/db"
 	"nox.app/client-backend/internal/protocol"
+	"nox.app/client-backend/internal/store"
 )
 
 // replyKey reads the send key out of a command reply, where the message is
@@ -175,14 +178,14 @@ func TestAssertIdentitySchemaRefusesAStaleDatabase(t *testing.T) {
 	if _, err := d.Write.Exec("PRAGMA user_version = 1"); err != nil {
 		t.Fatalf("set user_version: %v", err)
 	}
-	if err := assertIdentitySchema(context.Background(), d.Read, path); err == nil {
+	if err := assertIdentitySchema(context.Background(), d.Read, os.DirFS("../../migrations"), path); err == nil {
 		t.Fatal("assertIdentitySchema accepted a database with no identity tables")
 	}
 }
 
 func TestAssertIdentitySchemaAcceptsAFreshDatabase(t *testing.T) {
 	_, srv := newTestServer(t)
-	if err := assertIdentitySchema(context.Background(), readDB(t, srv), srv.cfg.DBPath); err != nil {
+	if err := assertIdentitySchema(context.Background(), readDB(t, srv), os.DirFS("../../migrations"), srv.cfg.DBPath); err != nil {
 		t.Fatalf("assertIdentitySchema rejected a freshly migrated database: %v", err)
 	}
 }
@@ -269,11 +272,132 @@ func TestGreetingWithNoDeviceKeyIsRefused(t *testing.T) {
 		t.Fatalf("code = %q, want %q", code, protocol.ErrUnauthenticated)
 	}
 
-	people, err := srv.store.CountUsers(context.Background())
-	if err != nil {
+	var people int
+	if err := readDB(t, srv).QueryRowContext(context.Background(), "SELECT COUNT(1) FROM users").Scan(&people); err != nil {
 		t.Fatalf("count users: %v", err)
 	}
 	if people != 1 {
 		t.Fatalf("users = %d, want 1: a refused greeting writes nothing", people)
+	}
+}
+
+// The guard exists to replace a raw "no such column" with an instruction, so
+// the case it exists for - a feature-032 database, every table present and the
+// owner column missing - has to be the case it is tested on. A typo in the
+// predicate would otherwise either refuse every good database or wave every
+// stale one through to die deeper in.
+func TestSchemaGuardRefusesADatabaseWrittenByAnotherSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "stale.db")
+	dbs, err := db.Open(path)
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = dbs.Close() })
+	if _, err := db.Migrate(context.Background(), dbs.Write, os.DirFS("../../migrations")); err != nil {
+		t.Fatalf("db.Migrate: %v", err)
+	}
+	ctx := context.Background()
+
+	// A freshly migrated database passes.
+	if err := assertIdentitySchema(ctx, dbs.Read, os.DirFS("../../migrations"), path); err != nil {
+		t.Fatalf("a current database was refused: %v", err)
+	}
+
+	// Now make it look like a database written by an earlier build: the tables
+	// are all there, the schema behind them is not the current one. Dropping a
+	// column is one way to get there; the fingerprint catches every other way
+	// too, which a per-column list could not.
+	if _, err := dbs.Write.ExecContext(ctx, "ALTER TABLE server_identity DROP COLUMN owner_user_id"); err != nil {
+		t.Fatalf("drop column: %v", err)
+	}
+	if _, err := dbs.Write.ExecContext(ctx, "PRAGMA application_id = 1"); err != nil {
+		t.Fatalf("stale fingerprint: %v", err)
+	}
+	err = assertIdentitySchema(ctx, dbs.Read, os.DirFS("../../migrations"), path)
+	if err == nil {
+		t.Fatal("a database without the owner column was allowed to start")
+	}
+	if !strings.Contains(err.Error(), path) {
+		t.Fatalf("the refusal does not say which file to delete: %v", err)
+	}
+}
+
+// The warning is the only thing standing between a hand-edited store and a
+// silent guess, so the state it reports has to be right - and it must not fire
+// for a store whose machine row is merely missing, which is a fatal case with
+// its own, different remedy.
+func TestOwnerlessStoreIsReportedOnlyWhenItHasPeopleAndAMachineRow(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ownerless.db")
+	dbs, err := db.Open(path)
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = dbs.Close() })
+	if _, err := db.Migrate(context.Background(), dbs.Write, os.DirFS("../../migrations")); err != nil {
+		t.Fatalf("db.Migrate: %v", err)
+	}
+	ctx := context.Background()
+	st := store.New(dbs.Read, dbs.Write)
+
+	state, err := st.ReadOwnershipState(ctx)
+	if err != nil {
+		t.Fatalf("ReadOwnershipState: %v", err)
+	}
+	if state.Stranded {
+		t.Fatal("an empty store reported itself stranded")
+	}
+
+	if _, err := st.EnsureServerIdentity(ctx); err != nil {
+		t.Fatalf("EnsureServerIdentity: %v", err)
+	}
+	token, err := st.IssueClaimToken(ctx, 100)
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+	if _, err := st.Pair(ctx, token, "dev-a", "test", 100); err != nil {
+		t.Fatalf("Pair: %v", err)
+	}
+	state, err = st.ReadOwnershipState(ctx)
+	if err != nil {
+		t.Fatalf("ReadOwnershipState: %v", err)
+	}
+	if state.Stranded {
+		t.Fatal("a properly owned store reported itself stranded")
+	}
+
+	if _, err := dbs.Write.ExecContext(ctx, "UPDATE server_identity SET owner_user_id = NULL WHERE id = 1"); err != nil {
+		t.Fatalf("clear owner: %v", err)
+	}
+	state, err = st.ReadOwnershipState(ctx)
+	if err != nil {
+		t.Fatalf("ReadOwnershipState: %v", err)
+	}
+	if !state.Stranded || state.People != 1 {
+		t.Fatalf("state=%+v, want a store with one person and no owner", state)
+	}
+
+	// A MISSING machine row is a different state with a different remedy, and
+	// startup refuses outright there - so this must not claim it is survivable.
+	if _, err := dbs.Write.ExecContext(ctx, "DELETE FROM server_identity"); err != nil {
+		t.Fatalf("drop machine row: %v", err)
+	}
+	state, err = st.ReadOwnershipState(ctx)
+	if err != nil {
+		t.Fatalf("ReadOwnershipState: %v", err)
+	}
+	if state.Stranded {
+		t.Fatal("a store with no machine row was reported as merely ownerless")
+	}
+
+	// And the warning itself says what to do, without advising a claim Pair refuses.
+	loud := &syncBuffer{}
+	warnOwnerlessStore(store.OwnershipState{Stranded: true, People: 1}, slog.New(slog.NewTextHandler(loud, nil)))
+	if !strings.Contains(loud.String(), "no owner") || strings.Contains(loud.String(), "re-claim") {
+		t.Fatalf("warning reads %q", loud.String())
+	}
+	quiet := &syncBuffer{}
+	warnOwnerlessStore(store.OwnershipState{}, slog.New(slog.NewTextHandler(quiet, nil)))
+	if quiet.String() != "" {
+		t.Fatalf("a healthy store warned: %s", quiet.String())
 	}
 }

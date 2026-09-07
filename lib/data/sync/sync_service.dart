@@ -160,6 +160,9 @@ class SyncService {
     // the next person to sign in somebody else's.
     if (authorId == null || authorId.isEmpty) return;
     logRepository.debug(target: this, message: 'sync: the label changed on another device');
+    // No ownership here on purpose: this event carries a NAME. Passing null
+    // leaves the stored answer alone, which is what "the event said nothing
+    // about it" must mean.
     await sessionRepository.adoptServerIdentity(authorId: authorId, label: label);
   }
 

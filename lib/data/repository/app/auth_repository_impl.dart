@@ -83,7 +83,15 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
       }
 
       final seed = await _sessionRepository.deviceSecret();
-      if (!seed.hasData) return RepositoryResult<bool>.error(exception: seed.exception!);
+      if (!seed.hasData) {
+        // Rolled back like every other exit in this method. saveServer has
+        // already run, so returning without it leaves the address and the
+        // pinned key of a machine this install has no session with - the next
+        // launch dials it, greets as unpaired for ever, and the world epoch is
+        // keyed on it.
+        await _sessionRepository.discardSignIn();
+        return RepositoryResult<bool>.error(exception: seed.exception!);
+      }
 
       try {
         final greeting = await handshake.pair(
@@ -99,7 +107,38 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         // is what makes readSession() report a session at all, and it is not a
         // secret any more - the key is.
         final stored = await _sessionRepository.saveIdentifier(identifier: link.token, onboardingComplete: false);
-        if (!stored.hasData) return stored;
+        if (!stored.hasData) {
+          // Same rollback, and here it also clears the address the failed
+          // attempt stored. The pairing itself landed server-side, so the token
+          // is spent either way - what must not survive is a device pointed at
+          // a machine it has no session with.
+          await _sessionRepository.discardSignIn();
+          return stored;
+        }
+        // Ownership and identity come from the pair reply, not from the fact
+        // that THIS device presented a claim link: the server is the only one
+        // who knows, and a device that inferred it would be right until the day
+        // it was not. Stored now so the owner sees the badge without waiting
+        // for the greeting that follows.
+        if (greeting.authorId.isEmpty) {
+          // An unreadable `identity.id` degrades to '' upstream, and
+          // resolveIdentity treats '' as absent - it then falls back to the
+          // login identifier, whose slot since 032 holds the pairing TOKEN. So
+          // nothing is stored, and the greeting that follows repairs it.
+          logRepository.debug(target: this, message: 'sign-in: the pair reply named nobody, waiting for the greeting');
+        } else {
+          final adopted = await _sessionRepository.adoptServerIdentity(
+            authorId: greeting.authorId,
+            label: greeting.label,
+            isOwner: greeting.isOwner,
+          );
+          if (!adopted.hasData) {
+            // NOT fatal, and deliberately not a rollback: the claim token is
+            // already spent, so discarding here would leave the device unable
+            // to pair again - the brick this path was rewritten to avoid.
+            logRepository.debug(target: this, message: 'sign-in: identity not stored yet, the greeting will repair it');
+          }
+        }
         if (greeting.created!) _sessionRepository.noteOnboardingStartedHere();
         // Re-greet, SIGNED. The connection `pair` ran on was greeted before
         // this device existed to the server, so it still speaks as whoever

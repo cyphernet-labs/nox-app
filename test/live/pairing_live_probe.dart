@@ -49,6 +49,12 @@ void main() {
     expect((await session.serverAddress()).data, isNotNull, reason: 'the paired server must survive the sign-in');
     expect((await session.deviceSecret()).hasData, isTrue, reason: 'the device key must survive the sign-in');
 
+    // Ownership arrives with the pair reply, so it is already stored before the
+    // greeting that follows - no waiting, no second round trip.
+    final owning = (await SharedPreferences.getInstance()).getBool('session.is_owner');
+    stdout.writeln('OWNER: $owning');
+    expect(owning, isTrue, reason: 'the person who claimed the server must own it');
+
     final named = await auth.completeOnboarding(label: 'LiveAnna');
     stdout.writeln('NAME: ${named.hasData ? 'ok' : named.exception}');
     expect(named.hasData, isTrue);
@@ -78,11 +84,22 @@ void main() {
 
     // Signing out revokes this device's own key, so the key stops being a way
     // in rather than merely being forgotten here.
+    // And it survives the greeting rather than being overwritten by it: the
+    // greeting states ownership too, and the two must agree.
+    expect((await SharedPreferences.getInstance()).getBool('session.is_owner'), isTrue);
+
     final out = await auth.logout();
     stdout.writeln('LOGOUT: ${out.hasData ? 'ok' : out.exception}');
     expect(out.hasData, isTrue);
     expect((await session.readSession()).data, isNull);
     expect((await session.serverAddress()).data, isNull);
+    // Ownership goes with the session: the next person to sign in on this
+    // device inherits nobody else's machine. Asserted on the STORED key, not on
+    // the session - the line above already proved the session is null, so
+    // `data?.isOwner` would be null whatever clear() did.
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getBool('session.is_owner'), isNull);
+    expect(prefs.getString('session.author_id'), isNull);
 
     // And the key really is gone on the server: the same link cannot be reused,
     // because the token was spent - a fresh pairing needs a fresh one.

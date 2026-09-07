@@ -40,9 +40,14 @@ type helloRequest struct {
 	// DeviceKey is the device's Ed25519 PUBLIC key, base64; Signature is its
 	// signature over "nox/challenge/v1:" ‖ challenge. Together they are the
 	// whole of authentication: the person is found by the key, and the key is
-	// only believed because the signature verifies. A device that presents
-	// neither is not refused - the contract forbids that - it simply speaks as
-	// an ephemeral identity that owns nothing.
+	// only believed because the signature verifies.
+	//
+	// A greeting that presents neither is REFUSED with `unauthenticated`. The
+	// stage-1 rule this comment used to state - that a device without a key
+	// speaks as an ephemeral identity - is gone with 032, and it was a
+	// misreading of §3 besides: the contract's "a greeting may not be refused"
+	// is about the LABEL, and reading it as covering keys handed a full session
+	// to anyone who omitted the field.
 	DeviceKey string `json:"device_key"`
 	Signature string `json:"signature"`
 }
@@ -62,13 +67,21 @@ type helloReply struct {
 type greetingIdentity struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
+	// Owner says whether THIS person owns the machine. No omitempty, for the
+	// same reason `created` carries none: a dropped false reads as "not stated"
+	// on the wire (§3), and a client cannot tell that apart from a server too
+	// old to know the field - so the owner would silently lose their badge.
+	Owner bool `json:"owner"`
 }
 
 // identity is the object both the greeting and the pair reply carry, so the
 // client reads who it is in one place regardless of which frame brought it.
 type identity struct {
-	ID    string `json:"id"`
-	Label string `json:"label"`
+	// Embedded, not repeated. The pair reply IS the greeting's identity plus one
+	// field, and spelling both out invited the next addition to land on one
+	// struct only - after which the two frames would describe the same person
+	// differently, and only a test somebody remembered to extend would say so.
+	greetingIdentity
 	// Created says whether THIS operation brought the person into being, and it
 	// is meaningful only on the pair reply - a greeting is by definition a
 	// device that was already paired. No omitempty, deliberately: a dropped
@@ -169,7 +182,7 @@ func (c *client) handleSessionHello(cmd protocol.Command) {
 		// pair reply, and a greeting that still states it invites the client to
 		// read the decision from two places - which is exactly the second
 		// source of one truth the phase set out to remove.
-		Identity: greetingIdentity{ID: c.identity.UserID, Label: c.identity.Label},
+		Identity: greetingIdentity{ID: c.identity.UserID, Label: c.identity.Label, Owner: c.identity.Owner},
 	}))
 
 	if req.Since != nil {

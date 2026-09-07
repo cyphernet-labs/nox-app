@@ -517,16 +517,12 @@ window.NOX_SPECS = [
         "label": "Loaded"
       },
       {
-        "key": "id-shown",
-        "label": "ID revealed"
+        "key": "loaded-member",
+        "label": "Loaded, ownership not stated or not held"
       },
       {
         "key": "editing",
         "label": "Editing name"
-      },
-      {
-        "key": "qr",
-        "label": "QR sheet"
       },
       {
         "key": "logout",
@@ -537,12 +533,12 @@ window.NOX_SPECS = [
         "label": "Logging out"
       }
     ],
-    "anatomy": "App bar (Settings). Identity card (name + masked ID). Grouped list: Notifications, Appearance, Language, Terms, About. Separate destructive Log out group. Bottom bar.",
+    "anatomy": "App bar (Settings). Identity card (name + Server owner badge when the server states it + the public ID). Grouped list: Devices, Notifications, Appearance, Language, Terms, About. Separate destructive Log out group. Bottom bar.",
     "behavior": [
-      "Identity card: name (edit inline) + ID masked as •••••••• with reveal / copy / show-QR actions.",
-      "Reveal (id-shown): full ID rendered mono, wrapped break-all, with hide/copy/QR.",
-      "Editing: name becomes an inline TextField with counter.",
-      "Show QR → modal bottom sheet; the QR card surface is brand-fixed WHITE so it scans in dark mode.",
+      "Identity card: name (edit inline) + Server owner badge + the public ID with copy / show-QR actions.",
+      "Owner badge (phase 033): shown only when the server states that this person owns it; \"not stated\" and \"not the owner\" both render nothing. It sits beside the name, and drops onto its own line when the two no longer fit one row.",
+      "Editing: name becomes an inline TextField with counter; the badge stays, above the field - ownership has nothing to do with editing a name.",
+      "Phase 032 removed the mask, the reveal and the account QR: the ID stopped being a secret. Show QR leads to Devices, where an invite is minted with a one-shot token.",
       "Log out → confirm AlertDialog (destructive action tinted error); confirming wipes ID + local data; shows a loading state."
     ],
     "navigation": [
@@ -560,7 +556,6 @@ window.NOX_SPECS = [
       "AppBar (title)",
       "IdentityCard",
       "SettingsGroup / SettingsNavRow",
-      "QRSheet (brand white)",
       "LogoutDialog",
       "BottomBar"
     ]

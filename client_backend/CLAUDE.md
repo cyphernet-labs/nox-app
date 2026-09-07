@@ -9,14 +9,16 @@ SQLite, single static CGO-free binary.
 (v0). Every command, event, field name, error code and rule comes from
 there; a change needed on the wire is first a contract edit, then code.
 
-**Stage 2 is under way (feature 032).** The server now CHECKS who connects:
+**Stage 2 is under way (features 032, 033).** The server now CHECKS who connects:
 `device_key` is an Ed25519 public key, `signature` over
 `"nox/challenge/v1:" ‖ challenge` is verified on every greeting, and the
 person is found by that key. `login_ref` is gone from the wire, the lookup
 and the schema — presenting a secret was replaced by proving possession of
 a key that never leaves the device. A greeting can no longer create anyone:
 an unknown key is refused (`unauthenticated`), and people come into being
-only through `pair` (§8A). Still out of scope and blocked: `recover` and the
+only through `pair` (§8A). Feature 033 named the OWNER: the person a claim
+token created, recorded on the machine's own row, reported to the asker as
+`identity.owner` in both the greeting and the pair reply. Still out of scope and blocked: `recover` and the
 recovery phrase (Q16), inviting a new PERSON rather than a device (Q15),
 TLS with pinning.
 
@@ -125,8 +127,9 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - `internal/store/identity.go` — identity resolution: the person is found by
   the device's public key, and an unknown key is refused rather than enrolled;
   the second event-less write besides file metadata
-- `internal/store/serverkey.go` — the machine's own key pair and the ownership
-  state machine (`claimed_at IS NULL` means only claim tokens are accepted)
+- `internal/store/serverkey.go` — the machine's own key pair AND its owner:
+  `owner_user_id` on the single `server_identity` row is the ownership state
+  machine, and `claimed_at` is only a timestamp nothing decides by
 - `internal/store/pairing.go` — one-shot tokens and `Pair`; burning is a
   conditional UPDATE whose affected-row count settles a two-device race
 - `internal/store/devices.go` — device list, revocation (DELETE, so a revoked
@@ -160,6 +163,16 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   access to the machine ever sees it, and an expiring one would leave an
   installed-then-forgotten server unclaimable with no way to mint another.
   Device invites do expire, after ten minutes.
+- Ownership is a reference on `server_identity`, not a flag on `users`. The
+  table holds one row by CHECK, so "two owners" is unrepresentable without an
+  index anyone has to remember. It is written in the transaction that creates
+  the person and never derived from who is oldest: row order is not a right,
+  and it stops being even a proxy once invite-user lands.
+- `claimed_at` is NOT the state machine. "Claimed" means "has an owner", and
+  nothing reads the timestamp to decide anything - one fact in two records is
+  the shape that eventually disagrees with itself. The timestamp is still
+  written, in the same statement as the owner, because the moment is
+  unrecoverable and the service page will want it.
 - The server's private key lives INSIDE the database file. The model's case 6
   warns that a backup holding only the DB breaks pinning for every device at
   once; one artifact makes that impossible, and anyone who can read the file

@@ -294,7 +294,7 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 	// pre-release rule edits it in place). Without this assertion the mismatch
 	// would degrade into an internal error on every greeting - a silent
 	// failure where a loud one is needed.
-	if err := assertIdentitySchema(ctx, dbs.Read, cfg.DBPath); err != nil {
+	if err := assertIdentitySchema(ctx, dbs.Read, migrations, cfg.DBPath); err != nil {
 		return err
 	}
 	logger.Info("database ready", "path", cfg.DBPath, "schema_version", version)
@@ -307,10 +307,32 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 
 	h := hub.New()
 	st := store.New(dbs.Read, dbs.Write)
+	// One read, one snapshot. The warning and the decision about printing a
+	// claim link are the same fact, and asking for it twice is how the two
+	// start disagreeing - an operator getting a link with no warning, or a
+	// warning with no link.
+	ownership, err := st.ReadOwnershipState(ctx)
+	if err != nil {
+		return fmt.Errorf("read ownership state: %w", err)
+	}
+	warnOwnerlessStore(ownership, logger)
+	// The machine's own identity is settled BEFORE the journal is touched.
+	//
+	// EnsureServerIdentity refuses to mint a key for a store that already holds
+	// people - a partial restore - and that refusal has to happen while nothing
+	// destructive has run yet. EnsureJournal MINTS A NEW JOURNAL ID on a store
+	// that has none, and a changed journal id is what makes every paired device
+	// wipe its chats, messages, cursor and read marks. Running it first meant an
+	// aborted startup still destroyed every client's local world, silently and
+	// before the error that stopped it was even printed.
+	machine, err := st.EnsureServerIdentity(ctx)
+	if err != nil {
+		return fmt.Errorf("ensure server identity: %w", err)
+	}
 	if err := st.EnsureJournal(ctx); err != nil {
 		return fmt.Errorf("ensure journal: %w", err)
 	}
-	if err := announceClaim(ctx, st, cfg.Addr, logger); err != nil {
+	if err := announceClaim(ctx, st, cfg.Addr, ownership, machine, logger); err != nil {
 		return err
 	}
 	srv := New(cfg, st, h, bl, logger)
@@ -369,7 +391,20 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 // It names every table the current 001 creates that a pre-release database may
 // be missing: a guard that checks only some of them starts happily and then
 // fails deeper in with an error nobody can act on.
-func assertIdentitySchema(ctx context.Context, read *sql.DB, dbPath string) error {
+//
+// Tables are not enough on their own. Editing 001 in place also ADDS COLUMNS to
+// tables that already exist, and a missing column sails past a table check to
+// die later as a raw "no such column" - the exact unactionable error this guard
+// exists to replace.
+//
+// So the check is a FINGERPRINT, not a list. A hand-maintained catalogue of
+// columns only covers what somebody remembered to add to it, and its own
+// comment said as much; the hash of the migration text covers every column,
+// index, CHECK and rename that any later phase writes, and cannot be forgotten.
+//
+// A zero stored fingerprint means a database from before this existed, which is
+// by definition older than the current schema.
+func assertIdentitySchema(ctx context.Context, read *sql.DB, migrations fs.FS, dbPath string) error {
 	var present int
 	err := read.QueryRowContext(ctx,
 		"SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name IN "+
@@ -378,12 +413,49 @@ func assertIdentitySchema(ctx context.Context, read *sql.DB, dbPath string) erro
 		return fmt.Errorf("inspect schema: %w", err)
 	}
 	if present != 5 {
-		return fmt.Errorf(
-			"database schema predates the pairing tables: the pre-release rule edits 001_init.sql in place, "+
-				"so delete %s together with its -wal and -shm siblings and the %s-files directory, then start again",
-			dbPath, dbPath)
+		return staleSchemaError(dbPath)
+	}
+	want, err := db.Fingerprint(migrations)
+	if err != nil {
+		return err
+	}
+	stored, err := db.ReadFingerprint(ctx, read)
+	if err != nil {
+		return err
+	}
+	if stored != want {
+		return staleSchemaError(dbPath)
 	}
 	return nil
+}
+
+func staleSchemaError(dbPath string) error {
+	return fmt.Errorf(
+		"database schema predates this build: the pre-release rule edits 001_init.sql in place, "+
+			"so delete %s together with its -wal and -shm siblings and the %s-files directory, then start again",
+		dbPath, dbPath)
+}
+
+// warnOwnerlessStore says out loud that this store has people but no owner.
+//
+// Unreachable by any code path: a person is created only by pairing, and the
+// claim path records ownership in the same transaction. It takes a hand-edited
+// database to get here. The server still STARTS - the conversation is intact
+// and only owner-gated rules are affected, so refusing to boot would punish
+// the operator harder than the anomaly does - but it must not pick an owner
+// by row order, which is precisely the guess this feature exists to remove.
+//
+// No user id in the message (Principle I): the count is what an operator needs.
+func warnOwnerlessStore(ownership store.OwnershipState, logger *slog.Logger) {
+	if !ownership.Stranded {
+		return
+	}
+	// Deliberately not "re-claim it": Pair refuses a claim in this state, so
+	// that advice would be impossible to follow. The store needs a human -
+	// restore a backup, or write the owner back by hand - and no claim link is
+	// printed while it is like this.
+	logger.Warn("this server holds people but records no owner: it cannot be claimed and no owner will be guessed - restore it from a backup or set the owner by hand",
+		"people", ownership.People)
 }
 
 // announceClaim mints the server's own key on first start and, while nobody
@@ -397,29 +469,40 @@ func assertIdentitySchema(ctx context.Context, read *sql.DB, dbPath string) erro
 // This is the ONE place a token is deliberately written to output. It is the
 // claim mechanism itself, and it is only visible to whoever can already read
 // the machine's logs - which is whoever could take the database anyway.
-func announceClaim(ctx context.Context, st *store.Store, addr string, logger *slog.Logger) error {
-	id, err := st.EnsureServerIdentity(ctx)
-	if err != nil {
-		return fmt.Errorf("ensure server identity: %w", err)
-	}
-	devices, err := st.CountDevices(ctx)
-	if err != nil {
-		return fmt.Errorf("count devices: %w", err)
-	}
-	// Silent only while somebody can actually reach this server. A claimed
-	// server with no devices left is locked, not owned, and the machine is the
-	// root of trust: whoever can read this log can take it back.
-	if id.Claimed && devices > 0 {
+func announceClaim(
+	ctx context.Context,
+	st *store.Store,
+	addr string,
+	ownership store.OwnershipState,
+	machine store.ServerIdentity,
+	logger *slog.Logger,
+) error {
+	// Silent while THE OWNER can still reach this server, and while the store is
+	// stranded - Pair refuses a claim there, so a link would be an instruction
+	// that cannot be followed, printed once per restart for ever.
+	//
+	// Both come from the snapshot startup already took: re-deriving them here
+	// would evaluate the same rule twice against a store another connection
+	// could have changed in between.
+	if ownership.OwnerCanGetIn || ownership.Stranded {
 		return nil
 	}
 	token, err := st.IssueClaimToken(ctx, time.Now().Unix())
 	if err != nil {
 		return fmt.Errorf("issue claim token: %w", err)
 	}
-	link, err := BuildPairingLink(listenAddress(addr), id.PublicKey, token)
+	link, err := BuildPairingLink(listenAddress(addr), machine.PublicKey, token)
 	if err != nil {
 		return fmt.Errorf("build pairing link: %w", err)
 	}
-	logger.Info("this server has no owner yet - present this link in the app to claim it", "link", link)
+	// Two different situations, and until this feature they were indistinguishable:
+	// nobody has ever claimed the machine, or its owner has no device left to get
+	// back in with. Saying "no owner yet" in the second case is simply false, and
+	// it tells the person the wrong story about what is about to happen.
+	if ownership.Owned {
+		logger.Info("this server has an owner but no devices left - present this link in the app to get back in", "link", link)
+	} else {
+		logger.Info("this server has no owner yet - present this link in the app to claim it", "link", link)
+	}
 	return nil
 }

@@ -52,85 +52,54 @@ const InfoBanner = ({ t, icon, title, message, action }) => (
 );
 
 // identity card (§9.4)
-const IdentityCard = ({ t, editing = false, idShown = false }) => (
+// The badge is shown only when the server has STATED ownership. "Not stated"
+// and "not the owner" draw the same thing - nothing - because drawing "not the
+// owner" before the server answers is a claim the app cannot make.
+const OwnerBadge = ({ t }) => (
+  <span
+    style={{
+      ...ty('labelSmall'),
+      color: t.onSecondaryContainer,
+      background: t.secondaryContainer,
+      borderRadius: SHAPE.xs,
+      padding: '2px 8px',
+      whiteSpace: 'nowrap',
+    }}
+  >
+    Server owner
+  </span>
+);
+
+const IdentityCard = ({ t, editing = false, isOwner = false }) => (
   <div style={{ margin: '8px 16px 16px', background: t.surfaceContainerLow, borderRadius: SHAPE.m, boxShadow: elev(1, t.dark), padding: 16 }}>
     {/* name block */}
     <div style={{ ...ty('bodyMedium'), color: t.onSurfaceVariant, marginBottom: 6 }}>Name</div>
     {editing ? (
-      <TextField t={t} value="Nyx" focused counter="3/32" suffix={null} />
+      <div>
+        {/* The badge stays through a rename: ownership has nothing to do with
+            editing a name, and dropping it made it blink out on every one. */}
+        {isOwner && <div style={{ marginBottom: 8 }}><OwnerBadge t={t} /></div>}
+        <TextField t={t} value="Nyx" focused counter="3/32" suffix={null} />
+      </div>
     ) : (
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <span style={{ ...ty('titleMedium'), color: t.onSurface, flex: 1 }}>Nyx</span>
+        {/* Wraps rather than sharing the row by flex: two flexible children
+            split the width and cap the NAME at half of it. */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, flex: 1 }}>
+          <span style={{ ...ty('titleMedium'), color: t.onSurface }}>Nyx</span>
+          {isOwner && <OwnerBadge t={t} />}
+        </div>
         <Icon name="edit" size={20} color={t.onSurfaceVariant} />
       </div>
     )}
     <div style={{ height: 1, background: t.outlineVariant, margin: '16px 0' }} />
-    {/* id block */}
+    {/* id block - phase 032 removed the mask, the reveal and the account QR:
+        the id stopped being a secret, and Show QR leads to Devices. */}
     <div style={{ ...ty('bodyMedium'), color: t.onSurfaceVariant, marginBottom: 6 }}>Your ID</div>
-    {idShown ? (
-      <div>
-        <div style={{ fontFamily: MONO, fontSize: 16, lineHeight: '24px', color: t.onSurfaceVariant, wordBreak: 'break-all', marginBottom: 8 }}>{RAW_ID}</div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Icon name="visibility_off" size={22} color={t.onSurfaceVariant} />
-          <Icon name="content_copy" size={22} color={t.onSurfaceVariant} />
-          <Icon name="qr_code" size={22} color={t.onSurfaceVariant} />
-        </div>
-      </div>
-    ) : (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ fontFamily: MONO, fontSize: 16, color: t.onSurface, flex: 1, letterSpacing: 2 }}>••••••••</span>
-        <Icon name="visibility" size={22} color={t.onSurfaceVariant} />
-        <Icon name="content_copy" size={22} color={t.onSurfaceVariant} />
-        <Icon name="qr_code" size={22} color={t.onSurfaceVariant} />
-      </div>
-    )}
-  </div>
-);
-
-// deterministic fake QR matrix
-function qrMatrix(n = 25, seed = 7) {
-  const m = Array.from({ length: n }, () => Array(n).fill(false));
-  const finder = (r, c) => {
-    for (let i = -1; i <= 7; i++) for (let j = -1; j <= 7; j++) {
-      const rr = r + i, cc = c + j;
-      if (rr < 0 || cc < 0 || rr >= n || cc >= n) continue;
-      const border = i === 0 || i === 6 || j === 0 || j === 6;
-      const core = i >= 2 && i <= 4 && j >= 2 && j <= 4;
-      m[rr][cc] = (i >= 0 && i <= 6 && j >= 0 && j <= 6) ? (border || core) : false;
-    }
-  };
-  let s = seed;
-  const rnd = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
-  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
-    const inFinder = (r < 8 && c < 8) || (r < 8 && c >= n - 8) || (r >= n - 8 && c < 8);
-    if (!inFinder) m[r][c] = rnd() > 0.5;
-  }
-  finder(0, 0); finder(0, n - 7); finder(n - 7, 0);
-  return m;
-}
-const FakeQR = ({ size = 200 }) => {
-  const n = 25, m = qrMatrix(n);
-  const cell = size / n;
-  return (
-    <div style={{ width: size, height: size, position: 'relative', background: BRAND.qrSurface }}>
-      {m.map((row, r) => row.map((on, c) => on ? (
-        <div key={r + '-' + c} style={{ position: 'absolute', left: c * cell, top: r * cell, width: cell, height: cell, background: BRAND.qrInk }} />
-      ) : null))}
-    </div>
-  );
-};
-
-// QR modal bottom sheet overlay
-const QRSheet = ({ t }) => (
-  <div style={{ position: 'absolute', inset: 0, zIndex: 10 }}>
-    <div style={{ position: 'absolute', inset: 0, background: hexA(t.scrim, 0.4) }} />
-    <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, background: t.surface, borderTopLeftRadius: SHAPE.xl, borderTopRightRadius: SHAPE.xl, boxShadow: elev(5, t.dark), padding: '12px 24px 32px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-      <div style={{ width: 32, height: 4, borderRadius: 2, background: hexA(t.onSurfaceVariant, 0.4), marginBottom: 20 }} />
-      <div style={{ ...ty('titleLarge'), color: t.onSurface, marginBottom: 20 }}>Your ID QR</div>
-      <div style={{ padding: 16, background: BRAND.qrSurface, borderRadius: SHAPE.m }}>
-        <FakeQR size={220} />
-      </div>
-      <div style={{ marginTop: 20 }}><TextButton t={t} label="Close" /></div>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <span style={{ ...ty('titleMedium'), color: t.onSurface, flex: 1, wordBreak: 'break-all' }}>{RAW_ID}</span>
+      <Icon name="content_copy" size={22} color={t.onSurfaceVariant} />
+      <Icon name="qr_code" size={22} color={t.onSurfaceVariant} />
     </div>
   </div>
 );
@@ -153,7 +122,7 @@ const LogoutDialog = ({ t, loading = false }) => (
 );
 
 // ── 7.1 Settings root ────────────────────────────────────────
-// state: 'loaded' | 'id-shown' | 'editing' | 'qr' | 'logout' | 'logout-loading'
+// state: 'loaded' | 'loaded-member' | 'editing' | 'logout' | 'logout-loading'
 // grouped settings card + rich nav row
 const SettingsGroup = ({ t, children }) => (
   <div style={{ margin: '4px 16px 16px', background: t.surfaceContainerLow, borderRadius: SHAPE.l, overflow: 'hidden', boxShadow: elev(1, t.dark) }}>{children}</div>
@@ -203,7 +172,7 @@ const SettingsRootScreen = ({ t, state = 'loaded' }) => (
   <>
     <AppBar t={t} title="Settings" />
     <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-      <IdentityCard t={t} editing={state === 'editing'} idShown={state === 'id-shown'} />
+      <IdentityCard t={t} editing={state === 'editing'} isOwner={state !== 'loaded-member'} />
       <SettingsGroup t={t}>
         <SettingsNavRow t={t} icon="notifications" label="Notifications" />
         <SettingsNavRow t={t} icon="palette" label="Appearance" />
@@ -216,7 +185,6 @@ const SettingsRootScreen = ({ t, state = 'loaded' }) => (
       </SettingsGroup>
     </div>
     <BottomBar t={t} active="settings" />
-    {state === 'qr' && <QRSheet t={t} />}
     {(state === 'logout' || state === 'logout-loading') && <LogoutDialog t={t} loading={state === 'logout-loading'} />}
   </>
 );
@@ -382,7 +350,7 @@ const AboutScreen = ({ t }) => (
 );
 
 Object.assign(window, {
-  RAW_ID, ListTile, SwitchTile, RadioTile, InfoBanner, IdentityCard, FakeQR, QRSheet, LogoutDialog,
+  RAW_ID, ListTile, SwitchTile, RadioTile, InfoBanner, IdentityCard, OwnerBadge, LogoutDialog,
   SettingsGroup, SettingsSwitchRow, SettingsNavRow, SettingsRadioRow, ThemeOptionCard,
   LangRow, FlagUK, FlagUA, SysCircle, Thumb,
   SettingsRootScreen, NotificationsScreen, AppearanceScreen, LanguageScreen, TermsBody, TermsScreen, AboutScreen,
