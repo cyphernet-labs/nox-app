@@ -52,38 +52,55 @@ const InfoBanner = ({ t, icon, title, message, action }) => (
 );
 
 // identity card (§9.4)
-const IdentityCard = ({ t, editing = false, idShown = false }) => (
+// The badge is shown only when the server has STATED ownership. "Not stated"
+// and "not the owner" draw the same thing - nothing - because drawing "not the
+// owner" before the server answers is a claim the app cannot make.
+const OwnerBadge = ({ t }) => (
+  <span
+    style={{
+      ...ty('labelSmall'),
+      color: t.onSecondaryContainer,
+      background: t.secondaryContainer,
+      borderRadius: SHAPE.xs,
+      padding: '2px 8px',
+      whiteSpace: 'nowrap',
+    }}
+  >
+    Server owner
+  </span>
+);
+
+const IdentityCard = ({ t, editing = false, isOwner = false }) => (
   <div style={{ margin: '8px 16px 16px', background: t.surfaceContainerLow, borderRadius: SHAPE.m, boxShadow: elev(1, t.dark), padding: 16 }}>
     {/* name block */}
     <div style={{ ...ty('bodyMedium'), color: t.onSurfaceVariant, marginBottom: 6 }}>Name</div>
     {editing ? (
-      <TextField t={t} value="Nyx" focused counter="3/32" suffix={null} />
+      <div>
+        {/* The badge stays through a rename: ownership has nothing to do with
+            editing a name, and dropping it made it blink out on every one. */}
+        {isOwner && <div style={{ marginBottom: 8 }}><OwnerBadge t={t} /></div>}
+        <TextField t={t} value="Nyx" focused counter="3/32" suffix={null} />
+      </div>
     ) : (
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <span style={{ ...ty('titleMedium'), color: t.onSurface, flex: 1 }}>Nyx</span>
+        {/* Wraps rather than sharing the row by flex: two flexible children
+            split the width and cap the NAME at half of it. */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, flex: 1 }}>
+          <span style={{ ...ty('titleMedium'), color: t.onSurface }}>Nyx</span>
+          {isOwner && <OwnerBadge t={t} />}
+        </div>
         <Icon name="edit" size={20} color={t.onSurfaceVariant} />
       </div>
     )}
     <div style={{ height: 1, background: t.outlineVariant, margin: '16px 0' }} />
-    {/* id block */}
+    {/* id block - phase 032 removed the mask, the reveal and the account QR:
+        the id stopped being a secret, and Show QR leads to Devices. */}
     <div style={{ ...ty('bodyMedium'), color: t.onSurfaceVariant, marginBottom: 6 }}>Your ID</div>
-    {idShown ? (
-      <div>
-        <div style={{ fontFamily: MONO, fontSize: 16, lineHeight: '24px', color: t.onSurfaceVariant, wordBreak: 'break-all', marginBottom: 8 }}>{RAW_ID}</div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Icon name="visibility_off" size={22} color={t.onSurfaceVariant} />
-          <Icon name="content_copy" size={22} color={t.onSurfaceVariant} />
-          <Icon name="qr_code" size={22} color={t.onSurfaceVariant} />
-        </div>
-      </div>
-    ) : (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ fontFamily: MONO, fontSize: 16, color: t.onSurface, flex: 1, letterSpacing: 2 }}>••••••••</span>
-        <Icon name="visibility" size={22} color={t.onSurfaceVariant} />
-        <Icon name="content_copy" size={22} color={t.onSurfaceVariant} />
-        <Icon name="qr_code" size={22} color={t.onSurfaceVariant} />
-      </div>
-    )}
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <span style={{ ...ty('titleMedium'), color: t.onSurface, flex: 1, wordBreak: 'break-all' }}>{RAW_ID}</span>
+      <Icon name="content_copy" size={22} color={t.onSurfaceVariant} />
+      <Icon name="qr_code" size={22} color={t.onSurfaceVariant} />
+    </div>
   </div>
 );
 
@@ -153,7 +170,7 @@ const LogoutDialog = ({ t, loading = false }) => (
 );
 
 // ── 7.1 Settings root ────────────────────────────────────────
-// state: 'loaded' | 'id-shown' | 'editing' | 'qr' | 'logout' | 'logout-loading'
+// state: 'loaded' | 'loaded-member' | 'editing' | 'logout' | 'logout-loading'
 // grouped settings card + rich nav row
 const SettingsGroup = ({ t, children }) => (
   <div style={{ margin: '4px 16px 16px', background: t.surfaceContainerLow, borderRadius: SHAPE.l, overflow: 'hidden', boxShadow: elev(1, t.dark) }}>{children}</div>
@@ -203,7 +220,7 @@ const SettingsRootScreen = ({ t, state = 'loaded' }) => (
   <>
     <AppBar t={t} title="Settings" />
     <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-      <IdentityCard t={t} editing={state === 'editing'} idShown={state === 'id-shown'} />
+      <IdentityCard t={t} editing={state === 'editing'} isOwner={state !== 'loaded-member'} />
       <SettingsGroup t={t}>
         <SettingsNavRow t={t} icon="notifications" label="Notifications" />
         <SettingsNavRow t={t} icon="palette" label="Appearance" />
@@ -216,7 +233,6 @@ const SettingsRootScreen = ({ t, state = 'loaded' }) => (
       </SettingsGroup>
     </div>
     <BottomBar t={t} active="settings" />
-    {state === 'qr' && <QRSheet t={t} />}
     {(state === 'logout' || state === 'logout-loading') && <LogoutDialog t={t} loading={state === 'logout-loading'} />}
   </>
 );
@@ -382,7 +398,7 @@ const AboutScreen = ({ t }) => (
 );
 
 Object.assign(window, {
-  RAW_ID, ListTile, SwitchTile, RadioTile, InfoBanner, IdentityCard, FakeQR, QRSheet, LogoutDialog,
+  RAW_ID, ListTile, SwitchTile, RadioTile, InfoBanner, IdentityCard, OwnerBadge, FakeQR, QRSheet, LogoutDialog,
   SettingsGroup, SettingsSwitchRow, SettingsNavRow, SettingsRadioRow, ThemeOptionCard,
   LangRow, FlagUK, FlagUA, SysCircle, Thumb,
   SettingsRootScreen, NotificationsScreen, AppearanceScreen, LanguageScreen, TermsBody, TermsScreen, AboutScreen,

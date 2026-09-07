@@ -316,10 +316,23 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 		return fmt.Errorf("read ownership state: %w", err)
 	}
 	warnOwnerlessStore(ownership, logger)
+	// The machine's own identity is settled BEFORE the journal is touched.
+	//
+	// EnsureServerIdentity refuses to mint a key for a store that already holds
+	// people - a partial restore - and that refusal has to happen while nothing
+	// destructive has run yet. EnsureJournal MINTS A NEW JOURNAL ID on a store
+	// that has none, and a changed journal id is what makes every paired device
+	// wipe its chats, messages, cursor and read marks. Running it first meant an
+	// aborted startup still destroyed every client's local world, silently and
+	// before the error that stopped it was even printed.
+	identity, err := st.EnsureServerIdentity(ctx)
+	if err != nil {
+		return fmt.Errorf("ensure server identity: %w", err)
+	}
 	if err := st.EnsureJournal(ctx); err != nil {
 		return fmt.Errorf("ensure journal: %w", err)
 	}
-	if err := announceClaim(ctx, st, cfg.Addr, ownership, logger); err != nil {
+	if err := announceClaim(ctx, st, cfg.Addr, ownership, identity, logger); err != nil {
 		return err
 	}
 	srv := New(cfg, st, h, bl, logger)
@@ -384,15 +397,18 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 // die later as a raw "no such column" - the exact unactionable error this guard
 // exists to replace.
 //
-// So every column a later phase adds goes in requiredColumns, one line each.
-// The list is hand-maintained and will stay that way until the schema carries a
+// So every column a later phase adds goes in the table below, one line each.
+// It is hand-maintained and will stay that way until the schema carries a
 // fingerprint; forgetting an entry is how a stale database gets past this.
-var requiredColumns = map[string][]string{
-	"server_identity": {"owner_user_id"},
-	"pair_tokens":     {"used_by", "paired_user_id", "created_person"},
-}
-
+//
+// A local literal, not a package variable: CLAUDE.md forbids package-level
+// mutable state, and a guard whose expectations anything could empty is not a
+// guard.
 func assertIdentitySchema(ctx context.Context, read *sql.DB, dbPath string) error {
+	requiredColumns := map[string][]string{
+		"server_identity": {"owner_user_id"},
+		"pair_tokens":     {"used_by", "paired_user_id", "created_person"},
+	}
 	var present int
 	err := read.QueryRowContext(ctx,
 		"SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name IN "+
@@ -459,7 +475,14 @@ func warnOwnerlessStore(ownership store.OwnershipState, logger *slog.Logger) {
 // This is the ONE place a token is deliberately written to output. It is the
 // claim mechanism itself, and it is only visible to whoever can already read
 // the machine's logs - which is whoever could take the database anyway.
-func announceClaim(ctx context.Context, st *store.Store, addr string, ownership store.OwnershipState, logger *slog.Logger) error {
+func announceClaim(
+	ctx context.Context,
+	st *store.Store,
+	addr string,
+	ownership store.OwnershipState,
+	identity store.ServerIdentity,
+	logger *slog.Logger,
+) error {
 	// Silent while THE OWNER can still reach this server, and while the store is
 	// stranded - Pair refuses a claim there, so a link would be an instruction
 	// that cannot be followed, printed once per restart for ever.
@@ -470,15 +493,11 @@ func announceClaim(ctx context.Context, st *store.Store, addr string, ownership 
 	if ownership.OwnerCanGetIn || ownership.Stranded {
 		return nil
 	}
-	id, err := st.EnsureServerIdentity(ctx)
-	if err != nil {
-		return fmt.Errorf("ensure server identity: %w", err)
-	}
 	token, err := st.IssueClaimToken(ctx, time.Now().Unix())
 	if err != nil {
 		return fmt.Errorf("issue claim token: %w", err)
 	}
-	link, err := BuildPairingLink(listenAddress(addr), id.PublicKey, token)
+	link, err := BuildPairingLink(listenAddress(addr), identity.PublicKey, token)
 	if err != nil {
 		return fmt.Errorf("build pairing link: %w", err)
 	}

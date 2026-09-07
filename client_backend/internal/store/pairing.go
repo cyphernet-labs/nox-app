@@ -84,7 +84,7 @@ func (s *Store) issueToken(ctx context.Context, kind, userID string, now, expire
 	return token, nil
 }
 
-// BurnToken spends a token inside the caller's transaction and reports what it
+// burnToken spends a token inside the caller's transaction and reports what it
 // was for. It must be called in the same transaction as whatever the token
 // authorises, or a crash between the two would spend a token for nothing.
 //
@@ -92,7 +92,7 @@ func (s *Store) issueToken(ctx context.Context, kind, userID string, now, expire
 // two devices presenting the same invite at the same moment both reach this
 // statement, exactly one sees a row change, and the other is told the token is
 // invalid. Checking-then-updating would let both through.
-func BurnToken(ctx context.Context, tx *sql.Tx, token, deviceKey string, now int64) (PairToken, error) {
+func burnToken(ctx context.Context, tx *sql.Tx, token, deviceKey string, now int64) (PairToken, error) {
 	var kind string
 	var userID sql.NullString
 	var expiresAt, usedAt sql.NullInt64
@@ -168,7 +168,7 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 		return same, nil
 	}
 
-	pt, err := BurnToken(ctx, tx, token, deviceKey, now)
+	pt, err := burnToken(ctx, tx, token, deviceKey, now)
 	if err != nil {
 		return Identity{}, err
 	}

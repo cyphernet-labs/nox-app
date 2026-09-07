@@ -8,8 +8,6 @@ import (
 	"time"
 )
 
-func isNoRows(err error) bool { return errors.Is(err, sql.ErrNoRows) }
-
 // Device is one authorised install of a person, as shown in the device list.
 //
 // Platform is the OS family and nothing more: enough to recognise one's own
@@ -121,7 +119,7 @@ func (s *Store) SetLabel(ctx context.Context, userID, label string) error {
 // Test-support ONLY. It must never decide anything about claiming: "occupied"
 // means "the OWNER can still get in", and counting every device instead locks
 // an owner out of their own machine as soon as somebody else's device is
-// running. That decision belongs to OwnerCanStillGetIn.
+// running. That decision belongs to OwnershipState.OwnerCanGetIn.
 func (s *Store) CountDevices(ctx context.Context) (int, error) {
 	var n int
 	if err := s.read.QueryRowContext(ctx, "SELECT COUNT(1) FROM devices").Scan(&n); err != nil {

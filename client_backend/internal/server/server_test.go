@@ -158,7 +158,7 @@ func TestTheStartupLineDistinguishesAnUnclaimedServerFromAnEmptyOne(t *testing.T
 	ctx := context.Background()
 
 	fresh := &syncBuffer{}
-	if err := announceClaim(ctx, st, "127.0.0.1:8080", mustOwnership(t, st), slog.New(slog.NewTextHandler(fresh, nil))); err != nil {
+	if err := announceClaim(ctx, st, "127.0.0.1:8080", mustOwnership(t, st), mustIdentity(t, st), slog.New(slog.NewTextHandler(fresh, nil))); err != nil {
 		t.Fatalf("announceClaim on a fresh store: %v", err)
 	}
 	if !strings.Contains(fresh.String(), "no owner yet") {
@@ -178,7 +178,7 @@ func TestTheStartupLineDistinguishesAnUnclaimedServerFromAnEmptyOne(t *testing.T
 	}
 
 	owned := &syncBuffer{}
-	if err := announceClaim(ctx, st, "127.0.0.1:8080", mustOwnership(t, st), slog.New(slog.NewTextHandler(owned, nil))); err != nil {
+	if err := announceClaim(ctx, st, "127.0.0.1:8080", mustOwnership(t, st), mustIdentity(t, st), slog.New(slog.NewTextHandler(owned, nil))); err != nil {
 		t.Fatalf("announceClaim on an owned store: %v", err)
 	}
 	if strings.Contains(owned.String(), "no owner yet") {
@@ -231,12 +231,22 @@ func TestAGuestDeviceDoesNotSilenceTheOwnersClaimLink(t *testing.T) {
 	}
 
 	out := &syncBuffer{}
-	if err := announceClaim(ctx, st, "127.0.0.1:8080", mustOwnership(t, st), slog.New(slog.NewTextHandler(out, nil))); err != nil {
+	if err := announceClaim(ctx, st, "127.0.0.1:8080", mustOwnership(t, st), mustIdentity(t, st), slog.New(slog.NewTextHandler(out, nil))); err != nil {
 		t.Fatalf("announceClaim: %v", err)
 	}
 	if !strings.Contains(out.String(), "get back in") {
 		t.Fatalf("the owner was left with no link on their own machine: %q", out.String())
 	}
+}
+
+// mustIdentity mints or reads the machine identity startup settles first.
+func mustIdentity(t *testing.T, st *store.Store) store.ServerIdentity {
+	t.Helper()
+	id, err := st.EnsureServerIdentity(context.Background())
+	if err != nil {
+		t.Fatalf("EnsureServerIdentity: %v", err)
+	}
+	return id
 }
 
 // mustOwnership reads the snapshot startup would hand to announceClaim.
@@ -247,4 +257,40 @@ func mustOwnership(t *testing.T, st *store.Store) store.OwnershipState {
 		t.Fatalf("ReadOwnershipState: %v", err)
 	}
 	return state
+}
+
+// A startup that is going to abort must not rotate the journal on its way out.
+// The journal id is what makes every paired device wipe its chats, messages,
+// cursor and read marks - and a partial restore is exactly when the operator
+// still has a way back, right up until something destroys it for them.
+func TestAnAbortedStartupDoesNotRotateTheJournal(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "restore.db")
+	dbs, err := db.Open(path)
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = dbs.Close() })
+	ctx := context.Background()
+	if _, err := db.Migrate(ctx, dbs.Write, os.DirFS("../../migrations")); err != nil {
+		t.Fatalf("db.Migrate: %v", err)
+	}
+	// A restore that brought back people but neither single-row bootstrap table.
+	if _, err := dbs.Write.ExecContext(ctx,
+		"INSERT INTO users (user_id, label, created_at) VALUES ('u_restored', 'Restored', 1)"); err != nil {
+		t.Fatalf("insert person: %v", err)
+	}
+
+	st := store.New(dbs.Read, dbs.Write)
+	if _, err := st.EnsureServerIdentity(ctx); err == nil {
+		t.Fatal("a store with people and no server identity was handed a new key")
+	}
+
+	// And nothing minted a journal on the way to that refusal.
+	var journals int
+	if err := dbs.Read.QueryRowContext(ctx, "SELECT COUNT(1) FROM journal").Scan(&journals); err != nil {
+		t.Fatalf("count journal: %v", err)
+	}
+	if journals != 0 {
+		t.Fatal("the journal was rotated before the startup guard could refuse - every paired device would wipe its world")
+	}
 }

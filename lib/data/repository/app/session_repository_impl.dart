@@ -49,7 +49,12 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   /// announcement left every mounted surface rendering a badge the storage no
   /// longer holds, invisibly, until the process restarted.
   Future<void> _setOwnership(bool? value) async {
+    // The same rule on both branches: announce a real change and nothing else.
+    // Clearing what was already absent used to push a null through the shared
+    // subject anyway - and three mistyped pairing links meant three identical
+    // rebuilds of every mounted listener for a value that never moved.
     if (value == null) {
+      if (!_prefs.containsKey(_kIsOwner)) return;
       await _prefs.remove(_kIsOwner);
     } else {
       if (_prefs.getBool(_kIsOwner) == value) return;
@@ -155,9 +160,6 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   Future<RepositoryResult<bool>> adoptServerIdentity({required String authorId, required String label, bool? isOwner}) {
     return execute<bool>(() async {
       await _prefs.setString(_kAuthorId, authorId);
-      // Null is "the server did not say", and that must not overwrite an answer
-      // heard earlier: a build talking to an older server would otherwise lose
-      // the badge on the first reconnect.
       // Null is "the server did not say", and that must not overwrite an answer
       // heard earlier: a build talking to an older server would otherwise lose
       // the badge on the first reconnect. Only a real change is announced, for

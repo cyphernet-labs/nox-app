@@ -556,7 +556,6 @@ window.NOX_SPECS = [
       "AppBar (title)",
       "IdentityCard",
       "SettingsGroup / SettingsNavRow",
-      "QRSheet (brand white)",
       "LogoutDialog",
       "BottomBar"
     ]

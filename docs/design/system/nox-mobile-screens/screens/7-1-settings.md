@@ -39,7 +39,6 @@ App bar (Settings). Identity card (name + `Server owner` badge when the server s
 - AppBar (title)
 - IdentityCard
 - SettingsGroup / SettingsNavRow
-- QRSheet (brand white)
 - LogoutDialog
 - BottomBar
 

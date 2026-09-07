@@ -50,7 +50,7 @@ NavigationRail + settings menu pane (340, grouped nav items) + detail pane (cont
 - ThemeOptionCard
 - InfoBanner
 - TermsBody
-- LogoutDialog / CenteredQR
+- LogoutDialog
 
 ---
 Live design: open `index.html` → 02 Settings (switch states with the chips). The desktop shell re-arranges the SAME widgets as mobile — only the wrapper differs.

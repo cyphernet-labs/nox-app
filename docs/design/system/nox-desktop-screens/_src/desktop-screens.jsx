@@ -206,7 +206,7 @@ const SettingsListPane = ({ t, selected }) => (
 );
 
 // detail content — every panel reuses the phone widgets verbatim
-const SettingsDetail = ({ t, section, detailState = null }) => {
+const SettingsDetail = ({ t, section, detailState = null, isOwner = true }) => {
   const wrap = (children) => (
     <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', background: t.surfaceContainerLowest, display: 'flex', flexDirection: 'column' }}>
       <PaneHeader t={t} title={section} />
@@ -219,13 +219,7 @@ const SettingsDetail = ({ t, section, detailState = null }) => {
   if (section === 'Account') {
     return wrap(
       <div>
-        <IdentityCard t={t} editing={detailState === 'editing'} />
-        {detailState !== 'editing' && (
-          <div style={{ margin: '4px 16px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: '12px 0 4px' }}>
-            <div style={{ padding: 16, background: BRAND.qrSurface, borderRadius: SHAPE.m }}><FakeQR size={184} /></div>
-            <div style={{ ...ty('bodyMedium'), color: t.onSurfaceVariant, textAlign: 'center' }}>Show this code to let someone add you</div>
-          </div>
-        )}
+        <IdentityCard t={t} editing={detailState === 'editing'} isOwner={isOwner} />
       </div>
     );
   }
@@ -273,14 +267,13 @@ const SettingsDetail = ({ t, section, detailState = null }) => {
   return wrap(<TermsBody t={t} />);
 };
 
-const SettingsDesktop = ({ t, section = 'Appearance', dialog = null, detailState = null }) => (
+const SettingsDesktop = ({ t, section = 'Appearance', dialog = null, detailState = null, isOwner = true }) => (
   <DesktopWindow t={t} subtitle="Settings">
     <NavRail t={t} active="settings" />
     <SettingsListPane t={t} selected={section} />
-    <SettingsDetail t={t} section={section} detailState={detailState} />
+    <SettingsDetail t={t} section={section} detailState={detailState} isOwner={isOwner} />
     {dialog === 'logout' && <LogoutDialog t={t} />}
     {dialog === 'logout-loading' && <LogoutDialog t={t} loading />}
-    {dialog === 'qr' && <CenteredQR t={t} />}
   </DesktopWindow>
 );
 

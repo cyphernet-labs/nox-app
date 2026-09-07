@@ -155,7 +155,7 @@ window.NOX_SPECS = [
       "ThemeOptionCard",
       "InfoBanner",
       "TermsBody",
-      "LogoutDialog / CenteredQR"
+      "LogoutDialog"
     ],
     "adapt": "mobile full-screen settings → list-detail · bottom sheet → centered dialog · the identity card, badge included, is the same widget at both widths"
   },

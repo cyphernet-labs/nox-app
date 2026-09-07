@@ -27,12 +27,19 @@ type ServerIdentity struct {
 	OwnerUserID string
 	// ClaimedAt is when the machine was claimed, zero while it has no owner.
 	// Nothing decides by it - it is there because the moment is unrecoverable
-	// and the service page will want to show it.
+	// and the service page will want to show it. Read today only by the test
+	// that pins it still being written.
 	ClaimedAt int64
 }
 
-// Claimed reports whether somebody owns this machine. While it is false only
-// claim tokens are accepted.
+// Claimed reports whether somebody owns this machine.
+//
+// Test-support. No production path consults it: startup reads the whole
+// ownership picture at once through ReadOwnershipState, and Pair reads the
+// owner inside its own transaction. Left here because tests assert on it, and
+// marked so nobody reaches for an inviting predicate that answers only half of
+// what a claim decision needs - "has an owner" is not "the owner can still get
+// in", and that difference already locked an owner out once.
 func (s ServerIdentity) Claimed() bool { return s.OwnerUserID != "" }
 
 // ErrNoServerIdentity is returned when the machine has no key yet. Callers

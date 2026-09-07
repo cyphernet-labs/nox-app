@@ -19,7 +19,6 @@ abstract class SessionModel with _$SessionModel {
     /// to compare against this one. Null while the app runs on mocks, where the
     /// login identifier is the only id there is.
     String? authorId,
-
     @Default(false) bool onboardingComplete,
   }) = _SessionModel;
 }

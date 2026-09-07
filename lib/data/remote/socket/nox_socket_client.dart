@@ -381,12 +381,6 @@ class NoxSocketClient {
         journalId = serverJournal;
       }
 
-      // A malformed cursor is a RECONNECT, never a zero. Substituting 0 makes
-      // `since >= _helloCursor` true on the next line, so the client declares
-      // itself caught up before a single replay frame has been applied - and on
-      // a first greeting persists that zero. Every other unreadable field in
-      // this reply tears down and retries; the one that governs replay
-      // correctness must not be the exception.
       // Any NUMBER is accepted: JSON round-tripped through a float parser makes
       // 1042 arrive as 1042.0, and refusing that would retry for ever with
       // nothing on screen saying why. Only a truly absent or non-numeric cursor
@@ -471,8 +465,8 @@ class NoxSocketClient {
       // for the life of the process and nothing says why. A malformed field in
       // a reply is worth a reconnect; it is never worth that.
       //
-      // Field-by-field type checks below help, but they can only cover the
-      // fields somebody remembered. This covers the ones nobody did.
+      // The field-by-field type checks in the parse above help, but they can
+      // only cover the fields somebody remembered. This covers the rest.
       // The TYPE and where it happened, deliberately not the message. A
       // TypeError quotes the offending value, and the value here can be a
       // person's display name - Principle I keeps names out of logs whether or

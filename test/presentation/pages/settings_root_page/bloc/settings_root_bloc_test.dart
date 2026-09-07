@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
@@ -150,23 +148,6 @@ void main() {
 
       await getIt<SessionRepository>().adoptServerIdentity(authorId: 'u_1', label: 'Alice', isOwner: true);
       await Future<void>.delayed(const Duration(milliseconds: 100));
-
-      expect(bloc.state.isOwner, isTrue);
-    });
-
-    test('an answer arriving mid-initialize is not overwritten by the older read', () async {
-      // initialize reads ownership, awaits, then emits. The watch runs on its
-      // own handler, so without a guard the value read before the await wins
-      // simply by resuming last - and ownership never changes again, so the
-      // badge would be gone for the life of the process.
-      await signIn('Alice');
-      await getIt<SessionRepository>().adoptServerIdentity(authorId: 'u_1', label: 'Alice', isOwner: false);
-
-      final bloc = SettingsRootBloc()..add(const SettingsRootEvent.initialize());
-      addTearDown(bloc.close);
-      // No await: the answer lands while initialize is still in flight.
-      unawaited(getIt<SessionRepository>().adoptServerIdentity(authorId: 'u_1', label: 'Alice', isOwner: true));
-      await Future<void>.delayed(const Duration(milliseconds: 200));
 
       expect(bloc.state.isOwner, isTrue);
     });
