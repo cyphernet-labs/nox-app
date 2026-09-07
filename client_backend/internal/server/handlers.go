@@ -40,9 +40,14 @@ type helloRequest struct {
 	// DeviceKey is the device's Ed25519 PUBLIC key, base64; Signature is its
 	// signature over "nox/challenge/v1:" ‖ challenge. Together they are the
 	// whole of authentication: the person is found by the key, and the key is
-	// only believed because the signature verifies. A device that presents
-	// neither is not refused - the contract forbids that - it simply speaks as
-	// an ephemeral identity that owns nothing.
+	// only believed because the signature verifies.
+	//
+	// A greeting that presents neither is REFUSED with `unauthenticated`. The
+	// stage-1 rule this comment used to state - that a device without a key
+	// speaks as an ephemeral identity - is gone with 032, and it was a
+	// misreading of §3 besides: the contract's "a greeting may not be refused"
+	// is about the LABEL, and reading it as covering keys handed a full session
+	// to anyone who omitted the field.
 	DeviceKey string `json:"device_key"`
 	Signature string `json:"signature"`
 }

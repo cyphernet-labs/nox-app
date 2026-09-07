@@ -211,10 +211,22 @@ class NoxSocketClient {
     try {
       final connection = _factory.connect(url);
       _connection = connection;
+      // Every connection gets a number, and every callback carries the one it
+      // was born with. Closing a socket can FAIL - that is the whole reason
+      // teardown absorbs its errors - and a socket that would not close keeps
+      // delivering frames after the retry has opened its successor. Trusting
+      // close() to stop them is trusting the thing that just failed; the
+      // generation makes a leaked socket harmless instead of impossible.
+      _connectionEpoch++;
+      final epoch = _connectionEpoch;
       _frames = connection.frames.listen(
-        _onRawFrame,
-        onError: (Object e) => _onDropped('stream error: ${e.runtimeType}'),
-        onDone: () => _onDropped('closed by peer'),
+        (raw) => _onRawFrame(raw, epoch),
+        onError: (Object e) {
+          if (epoch == _connectionEpoch) _onDropped('stream error: ${e.runtimeType}');
+        },
+        onDone: () {
+          if (epoch == _connectionEpoch) _onDropped('closed by peer');
+        },
         cancelOnError: false,
       );
     } catch (e) {
@@ -222,7 +234,23 @@ class NoxSocketClient {
     }
   }
 
-  void _onRawFrame(dynamic raw) {
+  /// Counts connections, so a frame can say which one it came from.
+  int _connectionEpoch = 0;
+
+  /// Consecutive greetings this client could not read. Reset by a successful
+  /// one, because a peer that greets properly once is not the broken case.
+  int _greetFailures = 0;
+
+  /// How many of those before the channel is called unusable rather than
+  /// merely down. Small: a deterministic fault repeats immediately, and the
+  /// backoff ladder has already spread these attempts over half a minute.
+  static const int _maxGreetFailures = 5;
+
+  void _onRawFrame(dynamic raw, int epoch) {
+    // From a connection we have already moved on from. It may still be open -
+    // see the generation counter above - and anything it says now would be
+    // answered on behalf of a socket nobody is using.
+    if (epoch != _connectionEpoch) return;
     if (raw is! String) return; // binary frames are not part of contract v0
     final Map<String, dynamic> json;
     try {
@@ -320,16 +348,12 @@ class NoxSocketClient {
           // more". Retrying would spin forever against a peer that will keep
           // refusing, so the session is torn down and the app is told.
           //
-          // The WHOLE branch is guarded, not just the callback. `_teardown`
-          // awaits a socket close, which can fail on any platform, and a throw
-          // anywhere in here would fall through to the catch-all at the end of
-          // this method - which retries. That would undo the one decision this
-          // branch exists to make and put a revoked device back in a refusal
-          // loop for ever.
-          // Separate guards, deliberately. Sharing one would let a failing
-          // teardown skip the notification - and the notification is the whole
-          // point of this branch: without it the app keeps showing a signed-in
-          // shell over a dead channel until the process restarts.
+          // Only the CALLBACK is guarded, because only it can fail: `_teardown`
+          // absorbs its own errors by construction, and that invariant is
+          // stated in its doc comment rather than assumed here. A throw from
+          // the callback must not reach the catch-all at the end of this
+          // method, which retries - that would undo the decision this branch
+          // exists to make and put a revoked device back in a refusal loop.
           await _teardown(SessionPhase.unsupported);
           try {
             onUnauthenticated?.call();
@@ -388,10 +412,18 @@ class NoxSocketClient {
       // on the next line, declaring catch-up complete before a single replay
       // frame was applied.
       final rawCursor = data['cursor'];
-      if (rawCursor is! num) {
-        logRepository.debug(target: this, message: 'socket: greeting carried no usable cursor, reconnecting');
-        await _teardown(SessionPhase.disconnected);
-        _scheduleRetry();
+      // TERMINAL, not a retry. A greeting without a usable cursor is a peer
+      // that does not speak this contract, and reconnecting to it produces the
+      // same reply for ever - an app stuck on "connecting" with nothing on
+      // screen saying why. `unsupported` is how the other non-repeatable
+      // refusals are reported, and this is one of them.
+      //
+      // `isFinite` because NaN and Infinity are both `num`: `toInt()` throws on
+      // either, and a guard that lets through the two values it cannot convert
+      // is not a guard.
+      if (rawCursor is! num || !rawCursor.isFinite) {
+        logRepository.debug(target: this, message: 'socket: greeting carried no usable cursor');
+        await _teardown(SessionPhase.unsupported);
         return;
       }
       _helloCursor = rawCursor.toInt();
@@ -442,6 +474,7 @@ class NoxSocketClient {
       }
       // The ladder resets HERE — a greeting is the first proof the peer is real.
       _backoff = _minBackoff;
+      _greetFailures = 0;
       // Commands may flow from here: the server has accepted this connection.
       if (_greeted?.isCompleted == false) _greeted!.complete();
       _phase.add(SessionPhase.catchingUp);
@@ -476,6 +509,17 @@ class NoxSocketClient {
       // trace carries the rest, and a flapping peer should not double this
       // file's log volume for a single event.
       logRepository.error(target: this, error: 'greeting reply unreadable: ${e.runtimeType}', stackTrace: st);
+      // Bounded. A malformed frame can be a blip, so the first few attempts
+      // retry - but a deterministic fault produces the same throw on every one
+      // of them, and an unbounded loop leaves the app "connecting" for ever
+      // with nothing to show the person. After the ladder has been climbed a
+      // few times this is reported the way the other non-repeatable failures
+      // are, so a surface can say it will not work.
+      _greetFailures++;
+      if (_greetFailures >= _maxGreetFailures) {
+        await _teardown(SessionPhase.unsupported);
+        return;
+      }
       await _teardown(SessionPhase.disconnected);
       _scheduleRetry();
     }

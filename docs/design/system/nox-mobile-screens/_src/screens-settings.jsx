@@ -104,54 +104,6 @@ const IdentityCard = ({ t, editing = false, isOwner = false }) => (
   </div>
 );
 
-// deterministic fake QR matrix
-function qrMatrix(n = 25, seed = 7) {
-  const m = Array.from({ length: n }, () => Array(n).fill(false));
-  const finder = (r, c) => {
-    for (let i = -1; i <= 7; i++) for (let j = -1; j <= 7; j++) {
-      const rr = r + i, cc = c + j;
-      if (rr < 0 || cc < 0 || rr >= n || cc >= n) continue;
-      const border = i === 0 || i === 6 || j === 0 || j === 6;
-      const core = i >= 2 && i <= 4 && j >= 2 && j <= 4;
-      m[rr][cc] = (i >= 0 && i <= 6 && j >= 0 && j <= 6) ? (border || core) : false;
-    }
-  };
-  let s = seed;
-  const rnd = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
-  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
-    const inFinder = (r < 8 && c < 8) || (r < 8 && c >= n - 8) || (r >= n - 8 && c < 8);
-    if (!inFinder) m[r][c] = rnd() > 0.5;
-  }
-  finder(0, 0); finder(0, n - 7); finder(n - 7, 0);
-  return m;
-}
-const FakeQR = ({ size = 200 }) => {
-  const n = 25, m = qrMatrix(n);
-  const cell = size / n;
-  return (
-    <div style={{ width: size, height: size, position: 'relative', background: BRAND.qrSurface }}>
-      {m.map((row, r) => row.map((on, c) => on ? (
-        <div key={r + '-' + c} style={{ position: 'absolute', left: c * cell, top: r * cell, width: cell, height: cell, background: BRAND.qrInk }} />
-      ) : null))}
-    </div>
-  );
-};
-
-// QR modal bottom sheet overlay
-const QRSheet = ({ t }) => (
-  <div style={{ position: 'absolute', inset: 0, zIndex: 10 }}>
-    <div style={{ position: 'absolute', inset: 0, background: hexA(t.scrim, 0.4) }} />
-    <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, background: t.surface, borderTopLeftRadius: SHAPE.xl, borderTopRightRadius: SHAPE.xl, boxShadow: elev(5, t.dark), padding: '12px 24px 32px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-      <div style={{ width: 32, height: 4, borderRadius: 2, background: hexA(t.onSurfaceVariant, 0.4), marginBottom: 20 }} />
-      <div style={{ ...ty('titleLarge'), color: t.onSurface, marginBottom: 20 }}>Your ID QR</div>
-      <div style={{ padding: 16, background: BRAND.qrSurface, borderRadius: SHAPE.m }}>
-        <FakeQR size={220} />
-      </div>
-      <div style={{ marginTop: 20 }}><TextButton t={t} label="Close" /></div>
-    </div>
-  </div>
-);
-
 // Logout AlertDialog overlay
 const LogoutDialog = ({ t, loading = false }) => (
   <div style={{ position: 'absolute', inset: 0, zIndex: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
@@ -398,7 +350,7 @@ const AboutScreen = ({ t }) => (
 );
 
 Object.assign(window, {
-  RAW_ID, ListTile, SwitchTile, RadioTile, InfoBanner, IdentityCard, OwnerBadge, FakeQR, QRSheet, LogoutDialog,
+  RAW_ID, ListTile, SwitchTile, RadioTile, InfoBanner, IdentityCard, OwnerBadge, LogoutDialog,
   SettingsGroup, SettingsSwitchRow, SettingsNavRow, SettingsRadioRow, ThemeOptionCard,
   LangRow, FlagUK, FlagUA, SysCircle, Thumb,
   SettingsRootScreen, NotificationsScreen, AppearanceScreen, LanguageScreen, TermsBody, TermsScreen, AboutScreen,

@@ -32,16 +32,6 @@ type ServerIdentity struct {
 	ClaimedAt int64
 }
 
-// Claimed reports whether somebody owns this machine.
-//
-// Test-support. No production path consults it: startup reads the whole
-// ownership picture at once through ReadOwnershipState, and Pair reads the
-// owner inside its own transaction. Left here because tests assert on it, and
-// marked so nobody reaches for an inviting predicate that answers only half of
-// what a claim decision needs - "has an owner" is not "the owner can still get
-// in", and that difference already locked an owner out once.
-func (s ServerIdentity) Claimed() bool { return s.OwnerUserID != "" }
-
 // ErrNoServerIdentity is returned when the machine has no key yet. Callers
 // bootstrap with EnsureServerIdentity rather than treating it as a failure.
 var ErrNoServerIdentity = errors.New("server identity not initialised")

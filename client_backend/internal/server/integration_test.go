@@ -172,7 +172,7 @@ func pairedDevice(t *testing.T, ts *httptest.Server, srv *Server) *device {
 	if err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
-	if !id.Claimed() {
+	if id.OwnerUserID == "" {
 		token, err := srv.store.IssueClaimToken(ctx, time.Now().Unix())
 		if err != nil {
 			t.Fatalf("IssueClaimToken: %v", err)
@@ -180,9 +180,9 @@ func pairedDevice(t *testing.T, ts *httptest.Server, srv *Server) *device {
 		d, _ := pairDevice(t, ts, token)
 		return d
 	}
-	owner, err := srv.store.AnyUser(ctx)
-	if err != nil {
-		t.Fatalf("AnyUser: %v", err)
+	var owner string
+	if err := readDB(t, srv).QueryRowContext(ctx, "SELECT user_id FROM users LIMIT 1").Scan(&owner); err != nil {
+		t.Fatalf("read owner: %v", err)
 	}
 	token, err := srv.store.IssueDeviceInvite(ctx, owner, time.Now().Unix())
 	if err != nil {

@@ -314,9 +314,9 @@ func TestAServerWithNoDevicesBecomesClaimableAgain(t *testing.T) {
 	if err := s.RevokeDevice(ctx, "dev-phone"); err != nil {
 		t.Fatalf("RevokeDevice: %v", err)
 	}
-	devices, err := s.CountDevices(ctx)
+	devices, err := countAllDevices(ctx, s.read)
 	if err != nil {
-		t.Fatalf("CountDevices: %v", err)
+		t.Fatalf("count devices: %v", err)
 	}
 	if devices != 0 {
 		t.Fatalf("devices = %d, want 0", devices)
@@ -341,9 +341,9 @@ func TestAServerWithNoDevicesBecomesClaimableAgain(t *testing.T) {
 	if back.Created {
 		t.Fatal("reattaching to an existing person must not report created - they already have a name")
 	}
-	people, err := s.CountUsers(ctx)
+	people, err := countPeople(ctx, s.read)
 	if err != nil {
-		t.Fatalf("CountUsers: %v", err)
+		t.Fatalf("count people: %v", err)
 	}
 	if people != 1 {
 		t.Fatalf("users = %d, want 1: a re-claim must not leave an orphan behind", people)
@@ -554,7 +554,7 @@ func TestClaimedIsReadFromTheOwnerAndNotFromTheTimestamp(t *testing.T) {
 	if machine.ClaimedAt == 0 {
 		t.Fatal("precondition: the timestamp should still be there")
 	}
-	if machine.Claimed() {
+	if machine.OwnerUserID != "" {
 		t.Fatal("a store with a timestamp but no owner reports itself claimed")
 	}
 }
@@ -986,4 +986,14 @@ func TestAReplayIsRefusedOnceTheDeviceBelongsToSomebodyElse(t *testing.T) {
 	if _, err := s.Pair(ctx, claim, "dev-x", "test", 300); !errors.Is(err, ErrTokenInvalid) {
 		t.Fatalf("err = %v, want ErrTokenInvalid: the replay handed over %q's identity", err, produced.UserID)
 	}
+}
+
+// countAllDevices is the total this feature deliberately stopped deciding by;
+// tests still assert on it, so it lives here rather than on the Store.
+func countAllDevices(ctx context.Context, q rowQuerier) (int, error) {
+	var n int
+	if err := q.QueryRowContext(ctx, "SELECT COUNT(1) FROM devices").Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
 }

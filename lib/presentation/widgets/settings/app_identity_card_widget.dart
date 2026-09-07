@@ -6,6 +6,7 @@ import 'package:nox_app/design/app_text_style_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
+import 'package:nox_app/presentation/widgets/settings/app_owner_badge_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_spinner_widget.dart';
 
 /// Identity card (7.1): a Name block (inline-editable) + `Your ID`
@@ -97,7 +98,7 @@ class AppIdentityCardWidget extends StatelessWidget {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _ownerBadge(context, theme),
+          const AppOwnerBadgeWidget(),
           SizedBox(height: AppSpacingTokens.s8),
           nameEditField!,
         ],
@@ -123,7 +124,7 @@ class AppIdentityCardWidget extends StatelessWidget {
                 runSpacing: AppSpacingTokens.s4,
                 children: [
                   Text(name, style: textTheme.titleMedium?.copyWith(color: colorScheme.onSurface)),
-                  if (isOwner ?? false) _ownerBadge(context, theme),
+                  if (isOwner ?? false) const AppOwnerBadgeWidget(),
                 ],
               ),
             ),
@@ -135,25 +136,6 @@ class AppIdentityCardWidget extends StatelessWidget {
           ],
         ),
       ],
-    );
-  }
-
-  /// The badge itself. Text rather than an icon: the design corpus has no
-  /// symbol for ownership, and adding one is a separate piece of work with a
-  /// separate owner — while a word needs no legend.
-  Widget _ownerBadge(BuildContext context, ThemeData theme) {
-    // Theme handed in: the only caller resolved it two lines above the call,
-    // and looking it up again buys nothing.
-    return Container(
-      padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s8, vertical: AppSpacingTokens.s2),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.secondaryContainer,
-        borderRadius: BorderRadius.circular(AppDimensionTokens.radius.sm),
-      ),
-      child: Text(
-        context.l10n.settingsOwnerBadge,
-        style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSecondaryContainer),
-      ),
     );
   }
 

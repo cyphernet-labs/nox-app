@@ -113,36 +113,3 @@ func (s *Store) SetLabel(ctx context.Context, userID, label string) error {
 	}
 	return nil
 }
-
-// CountDevices reports how many devices this server holds in total.
-//
-// Test-support ONLY. It must never decide anything about claiming: "occupied"
-// means "the OWNER can still get in", and counting every device instead locks
-// an owner out of their own machine as soon as somebody else's device is
-// running. That decision belongs to OwnershipState.OwnerCanGetIn.
-func (s *Store) CountDevices(ctx context.Context) (int, error) {
-	var n int
-	if err := s.read.QueryRowContext(ctx, "SELECT COUNT(1) FROM devices").Scan(&n); err != nil {
-		return 0, fmt.Errorf("count devices: %w", err)
-	}
-	return n, nil
-}
-
-// CountUsers reports how many people this server holds, on the read pool.
-//
-// Test-support: production paths count inside the transaction they are already
-// in, through countPeople - which this delegates to, so the query has exactly
-// one spelling.
-func (s *Store) CountUsers(ctx context.Context) (int, error) {
-	return countPeople(ctx, s.read)
-}
-
-// AnyUser returns some person's id. Test-support for a server that holds
-// exactly one until invite-user arrives (Q15).
-func (s *Store) AnyUser(ctx context.Context) (string, error) {
-	var id string
-	if err := s.read.QueryRowContext(ctx, "SELECT user_id FROM users LIMIT 1").Scan(&id); err != nil {
-		return "", fmt.Errorf("read any user: %w", err)
-	}
-	return id, nil
-}

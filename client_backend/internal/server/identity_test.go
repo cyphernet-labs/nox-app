@@ -178,14 +178,14 @@ func TestAssertIdentitySchemaRefusesAStaleDatabase(t *testing.T) {
 	if _, err := d.Write.Exec("PRAGMA user_version = 1"); err != nil {
 		t.Fatalf("set user_version: %v", err)
 	}
-	if err := assertIdentitySchema(context.Background(), d.Read, path); err == nil {
+	if err := assertIdentitySchema(context.Background(), d.Read, os.DirFS("../../migrations"), path); err == nil {
 		t.Fatal("assertIdentitySchema accepted a database with no identity tables")
 	}
 }
 
 func TestAssertIdentitySchemaAcceptsAFreshDatabase(t *testing.T) {
 	_, srv := newTestServer(t)
-	if err := assertIdentitySchema(context.Background(), readDB(t, srv), srv.cfg.DBPath); err != nil {
+	if err := assertIdentitySchema(context.Background(), readDB(t, srv), os.DirFS("../../migrations"), srv.cfg.DBPath); err != nil {
 		t.Fatalf("assertIdentitySchema rejected a freshly migrated database: %v", err)
 	}
 }
@@ -272,8 +272,8 @@ func TestGreetingWithNoDeviceKeyIsRefused(t *testing.T) {
 		t.Fatalf("code = %q, want %q", code, protocol.ErrUnauthenticated)
 	}
 
-	people, err := srv.store.CountUsers(context.Background())
-	if err != nil {
+	var people int
+	if err := readDB(t, srv).QueryRowContext(context.Background(), "SELECT COUNT(1) FROM users").Scan(&people); err != nil {
 		t.Fatalf("count users: %v", err)
 	}
 	if people != 1 {
@@ -286,7 +286,7 @@ func TestGreetingWithNoDeviceKeyIsRefused(t *testing.T) {
 // owner column missing - has to be the case it is tested on. A typo in the
 // predicate would otherwise either refuse every good database or wave every
 // stale one through to die deeper in.
-func TestSchemaGuardRefusesADatabaseWithoutTheOwnerColumn(t *testing.T) {
+func TestSchemaGuardRefusesADatabaseWrittenByAnotherSchema(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "stale.db")
 	dbs, err := db.Open(path)
 	if err != nil {
@@ -299,15 +299,21 @@ func TestSchemaGuardRefusesADatabaseWithoutTheOwnerColumn(t *testing.T) {
 	ctx := context.Background()
 
 	// A freshly migrated database passes.
-	if err := assertIdentitySchema(ctx, dbs.Read, path); err != nil {
+	if err := assertIdentitySchema(ctx, dbs.Read, os.DirFS("../../migrations"), path); err != nil {
 		t.Fatalf("a current database was refused: %v", err)
 	}
 
-	// Now make it look like the previous phase's. SQLite can drop a column.
+	// Now make it look like a database written by an earlier build: the tables
+	// are all there, the schema behind them is not the current one. Dropping a
+	// column is one way to get there; the fingerprint catches every other way
+	// too, which a per-column list could not.
 	if _, err := dbs.Write.ExecContext(ctx, "ALTER TABLE server_identity DROP COLUMN owner_user_id"); err != nil {
 		t.Fatalf("drop column: %v", err)
 	}
-	err = assertIdentitySchema(ctx, dbs.Read, path)
+	if _, err := dbs.Write.ExecContext(ctx, "PRAGMA application_id = 1"); err != nil {
+		t.Fatalf("stale fingerprint: %v", err)
+	}
+	err = assertIdentitySchema(ctx, dbs.Read, os.DirFS("../../migrations"), path)
 	if err == nil {
 		t.Fatal("a database without the owner column was allowed to start")
 	}

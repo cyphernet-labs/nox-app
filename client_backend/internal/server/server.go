@@ -294,7 +294,7 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 	// pre-release rule edits it in place). Without this assertion the mismatch
 	// would degrade into an internal error on every greeting - a silent
 	// failure where a loud one is needed.
-	if err := assertIdentitySchema(ctx, dbs.Read, cfg.DBPath); err != nil {
+	if err := assertIdentitySchema(ctx, dbs.Read, migrations, cfg.DBPath); err != nil {
 		return err
 	}
 	logger.Info("database ready", "path", cfg.DBPath, "schema_version", version)
@@ -325,14 +325,14 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 	// wipe its chats, messages, cursor and read marks. Running it first meant an
 	// aborted startup still destroyed every client's local world, silently and
 	// before the error that stopped it was even printed.
-	identity, err := st.EnsureServerIdentity(ctx)
+	machine, err := st.EnsureServerIdentity(ctx)
 	if err != nil {
 		return fmt.Errorf("ensure server identity: %w", err)
 	}
 	if err := st.EnsureJournal(ctx); err != nil {
 		return fmt.Errorf("ensure journal: %w", err)
 	}
-	if err := announceClaim(ctx, st, cfg.Addr, ownership, identity, logger); err != nil {
+	if err := announceClaim(ctx, st, cfg.Addr, ownership, machine, logger); err != nil {
 		return err
 	}
 	srv := New(cfg, st, h, bl, logger)
@@ -397,18 +397,14 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 // die later as a raw "no such column" - the exact unactionable error this guard
 // exists to replace.
 //
-// So every column a later phase adds goes in the table below, one line each.
-// It is hand-maintained and will stay that way until the schema carries a
-// fingerprint; forgetting an entry is how a stale database gets past this.
+// So the check is a FINGERPRINT, not a list. A hand-maintained catalogue of
+// columns only covers what somebody remembered to add to it, and its own
+// comment said as much; the hash of the migration text covers every column,
+// index, CHECK and rename that any later phase writes, and cannot be forgotten.
 //
-// A local literal, not a package variable: CLAUDE.md forbids package-level
-// mutable state, and a guard whose expectations anything could empty is not a
-// guard.
-func assertIdentitySchema(ctx context.Context, read *sql.DB, dbPath string) error {
-	requiredColumns := map[string][]string{
-		"server_identity": {"owner_user_id"},
-		"pair_tokens":     {"used_by", "paired_user_id", "created_person"},
-	}
+// A zero stored fingerprint means a database from before this existed, which is
+// by definition older than the current schema.
+func assertIdentitySchema(ctx context.Context, read *sql.DB, migrations fs.FS, dbPath string) error {
 	var present int
 	err := read.QueryRowContext(ctx,
 		"SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name IN "+
@@ -419,18 +415,16 @@ func assertIdentitySchema(ctx context.Context, read *sql.DB, dbPath string) erro
 	if present != 5 {
 		return staleSchemaError(dbPath)
 	}
-	for table, columns := range requiredColumns {
-		for _, column := range columns {
-			var found int
-			err := read.QueryRowContext(ctx,
-				"SELECT COUNT(1) FROM pragma_table_info(?) WHERE name = ?", table, column).Scan(&found)
-			if err != nil {
-				return fmt.Errorf("inspect %s columns: %w", table, err)
-			}
-			if found != 1 {
-				return staleSchemaError(dbPath)
-			}
-		}
+	want, err := db.Fingerprint(migrations)
+	if err != nil {
+		return err
+	}
+	stored, err := db.ReadFingerprint(ctx, read)
+	if err != nil {
+		return err
+	}
+	if stored != want {
+		return staleSchemaError(dbPath)
 	}
 	return nil
 }
@@ -480,7 +474,7 @@ func announceClaim(
 	st *store.Store,
 	addr string,
 	ownership store.OwnershipState,
-	identity store.ServerIdentity,
+	machine store.ServerIdentity,
 	logger *slog.Logger,
 ) error {
 	// Silent while THE OWNER can still reach this server, and while the store is
@@ -497,7 +491,7 @@ func announceClaim(
 	if err != nil {
 		return fmt.Errorf("issue claim token: %w", err)
 	}
-	link, err := BuildPairingLink(listenAddress(addr), identity.PublicKey, token)
+	link, err := BuildPairingLink(listenAddress(addr), machine.PublicKey, token)
 	if err != nil {
 		return fmt.Errorf("build pairing link: %w", err)
 	}
