@@ -62,13 +62,15 @@ const ThreadHeader = ({ t }) => (
     <div style={{ flex: 1, minWidth: 0 }}>
       <div style={{ ...ty('titleMedium'), color: t.onSurface, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Night Owls</div>
     </div>
-    {/* Two actions, in this order: info, then the seam a relay will attach to.
+    {/* Two actions, in this order: info (drawn with folder_open, which is the
+        glyph the app ships and the one this corpus's icon set has - there is no
+        `info` icon in NOX), then the seam a relay will attach to.
         The invite is drawn through IconButton's own `color`, dimmed to the M3
         disabled 38% - the same treatment the app applies by hand, because its
         icon widget paints its own filter and never consults IconTheme.
         Per-chat search and folders were never in the spec, and the member
         subtitle went with the roster: this machine holds one person. */}
-    <IconButton t={t} name="info" />
+    <IconButton t={t} name="folder_open" />
     <IconButton t={t} name="add" color={hexA(t.onSurfaceVariant, 0.38)} />
   </div>
 );

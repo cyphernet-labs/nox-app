@@ -62,7 +62,7 @@ window.NOX_SPECS = [
     "copy": [
       "Pane titles: Chats",
       "No-selection: Select a chat / Choose a conversation on the left, or press + to start a new one.",
-      "Thread sub: Aria, Mox and you"
+      "Invite action: Invite a person (always disabled)"
     ],
     "ds": [
       "NavRail",
@@ -445,7 +445,7 @@ window.NOX_SPECS = [
       "Mobile’s pushed Chat card (5.4) becomes a right drawer over the thread. Segmented switches List ⇄ Grid; empty → folder_open state."
     ],
     "navigation": [
-      "Opened from the thread header info/folder action.",
+      "Opened from the thread header info action (folder-open icon).",
       "File row / cell → File view lightbox.",
       "Close / scrim → dismiss."
     ],

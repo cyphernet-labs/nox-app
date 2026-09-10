@@ -44,7 +44,7 @@ NavigationRail (80) + chat list pane (360, with pane header + SearchBar) + threa
 - No-selection: Select a chat / Choose a conversation on the left, or press + to start a new one.
 - Invite action: Invite a person (always disabled)
 
-> The live screens still carry a thread subtitle naming members ("Aria, Mox and you"). It was corpus drift before phase 037 and is plainly wrong now — a chat has no roster. The header shows the chat name and nothing under it.
+> The thread subtitle that named members ("Aria, Mox and you") was corpus drift before phase 037 and wrong outright after it — a chat has no roster. Removed from the live screen with the rest of this revision; the header shows the chat name and nothing under it.
 
 ## Design-system components
 - NavRail
