@@ -58,7 +58,7 @@ description: "Task list for feature 037 — local-only phase"
 - [ ] T012 [P] [US1] Удалить `client_backend/internal/store/people.go` и `client_backend/internal/store/people_test.go`
 - [ ] T013 [P] [US1] Удалить `client_backend/internal/server/approval_test.go`
 - [ ] T014 [US1] Снять `handlePersonInvite`, `handlePersonList`, `handlePersonConfirm` из `client_backend/internal/server/pairing.go`
-- [ ] T015 [US1] Снять диспетчеризацию `person.*` из `client_backend/internal/server/ws.go`
+- [ ] T015 [US1] Снять диспетчеризацию `person.*` из `client_backend/internal/server/ws.go`; **убедиться, что удалённое имя падает в ветку «неизвестная команда», а не в общий обработчик по префиксу** (FR-006)
 - [ ] T016 [US1] Снять ветку pending, `deliverSettledOutcome`, `announcePairOutcome` и поля `pairReply` из `client_backend/internal/server/pairing.go`
 - [ ] T017 [US1] Снять `notifyPairRequested`, `notifyPairResolved`, `pairRequestedFrame`, `markPendingRequest`, `sendToOwnerDevices` из `client_backend/internal/server/server.go`
 - [ ] T018 [US1] Снять `runPairSweeper` и его поля из `client_backend/internal/server/server.go`
@@ -70,7 +70,7 @@ description: "Task list for feature 037 — local-only phase"
 ### 3B. Сервер: схема и владение
 
 - [ ] T023 [US1] Убрать `invite_user` из CHECK и удалить `request_id`, `awaiting_platform`, `awaiting_until`, `outcome` и `idx_pair_tokens_pending` из `client_backend/migrations/001_init.sql`
-- [ ] T024 [US1] Добавить синглтон-индекс `users` в `client_backend/migrations/001_init.sql`; **проверить**, что SQLite принимает индекс по выражению на STRICT-таблице, иначе заменить на инвариант в комментарии плюс тест
+- [ ] T024 [US1] Добавить синглтон-индекс `users` в `client_backend/migrations/001_init.sql`; **проверить**, что SQLite принимает индекс по выражению на STRICT-таблице, иначе заменить на инвариант в комментарии плюс тест, доказывающий, что вторая личность не заводится ни одним путём. **Выбранный вариант записать в `research.md` §2** — задача считается закрытой только с записанным решением
 - [ ] T025 [US1] Снять `TokenInviteUser`, `PersonInviteTTLSeconds`, `ApprovalWindowSeconds`, `IssuePersonInvite`, `PairResult.Pending`, `pendingOutcome` из `client_backend/internal/store/pairing.go`
 - [ ] T026 [US1] Убрать признак владения из резолва личности и коррелированный подзапрос из `client_backend/internal/store/identity.go`
 - [ ] T027 [US1] Схлопнуть владение до отметки «машина забрана» в `client_backend/internal/store/serverkey.go`; **ключ машины не трогать**
@@ -130,6 +130,7 @@ description: "Task list for feature 037 — local-only phase"
 - [ ] T060 [US2] Пройти `specs/037-local-only-phase/quickstart.md` целиком на свежей базе и двух устройствах, отметить каждый пункт
 - [ ] T061 [US2] Сверить счётчики тестов и голденов с базовыми из T002: уменьшение только за счёт удалённых, ни одного упавшего (SC-003)
 - [ ] T062 [US2] Проверить, что мёртвая команда получает отказ «неизвестная команда», а не пустой успех — тест уровня протокола в `client_backend/internal/server/`
+- [ ] T063 [US2] **Подметание (SC-002, SC-004)**: grep по `person`, `isOwner`, `owner`, `pairRequest`, `pair_declined`, `People` в `lib/`, `test/`, `client_backend/` и `docs/`; каждое оставшееся совпадение либо снять, либо объяснить письменно в отчёте фазы. Это единственная задача, доказывающая, что убрано **всё**, а не только то, что было в списке
 
 ---
 
@@ -137,21 +138,23 @@ description: "Task list for feature 037 — local-only phase"
 
 **Цель**: ни один документ не описывает многолюдность как действующую возможность.
 
-- [ ] T063 [P] [US4] Переписать продуктовую модель в `docs/design/spec/overview.md`: §Чаты, таблица решений, уникальность имени чата, правило про push «только свои чаты»
-- [ ] T064 [P] [US4] Переписать `termsContentBody` в `lib/l10n/app_en.arb` и `lib/l10n/app_uk.arb` — обещание общего пространства имеет юридический вес
-- [ ] T065 [P] [US4] Удалить `docs/design/spec/screens/people.md` и `docs/design/spec/screens/pair-request.md`; поправить `screens/README.md`, `top-level-screens.md`, `settings-root.md`
-- [ ] T066 [P] [US4] Описать выключенный шов в `docs/design/spec/screens/chat.md` и `docs/design/spec/screens/chat-card.md`, обе ширины
-- [ ] T067 [P] [US4] Снять кейс 2 и его следы из `docs/client-backend/architecture/authentication.md`
-- [ ] T068 [US4] Обновить `docs/client-backend/open-questions.md`: переоткрыть Q4 с новым решением и датой (конвенция раздела — не удалять, а пометить изменённым с причиной), снять Q15 и Q17, поднять Q13 до блокирующего, добавить вопросы, которые впервые ставит новая модель
-- [ ] T069 [P] [US4] Обновить `docs/client-backend/roadmap-stage2.md` (034 отменена), `docs/client-backend/demo-runbook.md` (сценарий круга из двух), `docs/client-backend/README.md`, `docs/README.md`
-- [ ] T070 [US4] Обновить корневой `CLAUDE.md`: продуктовая модель, заметки по 034, список экранов, описание фаз
+- [ ] T064 [P] [US4] Переписать продуктовую модель в `docs/design/spec/overview.md`: §Чаты, таблица решений, уникальность имени чата, правило про push «только свои чаты»
+- [ ] T065 [P] [US4] Переписать `termsContentBody` в `lib/l10n/app_en.arb` и `lib/l10n/app_uk.arb` — обещание общего пространства имеет юридический вес
+- [ ] T066 [P] [US4] Удалить `docs/design/spec/screens/people.md` и `docs/design/spec/screens/pair-request.md`; поправить `screens/README.md`, `top-level-screens.md`, `settings-root.md`
+- [ ] T067 [P] [US4] Описать выключенный шов в `docs/design/spec/screens/chat.md` и `docs/design/spec/screens/chat-card.md`, обе ширины
+- [ ] T068 [P] [US4] Снять кейс 2 и его следы из `docs/client-backend/architecture/authentication.md`
+- [ ] T069 [US4] Обновить `docs/client-backend/open-questions.md`: переоткрыть Q4 с новым решением и датой (конвенция раздела — не удалять, а пометить изменённым с причиной), снять Q15 и Q17, поднять Q13 до блокирующего, добавить вопросы, которые впервые ставит новая модель
+- [ ] T070 [P] [US4] Обновить `docs/client-backend/roadmap-stage2.md` (034 отменена), `docs/client-backend/demo-runbook.md` (сценарий круга из двух), `docs/client-backend/README.md`, `docs/README.md`
+- [ ] T071 [P] [US4] Поправить `docs/client-backend/protocol/wire-surface.md`: строку про экономию открытой модели («нет ростера, управления членством») и обоснование `chat.rename`
+- [ ] T072 [US4] Поправить `docs/design/system/nox-desktop-screens/screens/01-chats.md`: шапка треда десктопа описана как несущая **одно** info-действие, а фаза добавляет второе. Корпус — авторитет по десктопной раскладке (Принцип IV), и он обязан следовать решению владельца, а не наоборот
+- [ ] T073 [US4] Обновить корневой `CLAUDE.md`: продуктовая модель, заметки по 034, список экранов, описание фаз
 
 ---
 
 ## Phase 7: Polish
 
-- [ ] T071 Финальный прогон `make gate`, `make golden-verify` и `go test -race ./...` на чистом дереве
-- [ ] T072 Слить `037-local-only-phase` в `develop` через `--no-ff`
+- [ ] T074 Финальный прогон `make gate`, `make golden-verify` и `go test -race ./...` на чистом дереве
+- [ ] T075 Слить `037-local-only-phase` в `develop` через `--no-ff`
 
 ---
 
@@ -184,8 +187,8 @@ Phase 7 (Polish)
 - **T011–T013** — три независимых удаления файлов
 - **T034–T039** — шесть независимых удалений на клиенте
 - **T056–T058** — тесты и голдены шва
-- **T063–T067, T069** — документы, разные файлы
-- **Phase 6 целиком** может идти параллельно с Phase 4 — документы и код не пересекаются
+- **T064, T065, T066, T067, T068, T070, T071** — документы, разные файлы
+- **Phase 6** может идти параллельно с Phase 4 **за одним исключением**: T065 и T053 правят одни и те же два ARB-файла, поэтому выполняются последовательно
 
 ## Implementation Strategy
 
