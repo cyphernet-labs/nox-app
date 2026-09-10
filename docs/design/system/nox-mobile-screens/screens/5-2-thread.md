@@ -6,7 +6,7 @@
 
 ## Anatomy
 App bar (back + chat name + a disabled **Invite a person** action). Message stream with date separators, author headers and bubbles. Composer pinned at bottom.
-> **Changed 2026-09-10 (phase 037).** The client backend serves one person; talking to anybody else moves to a relay that does not exist yet. The invite is present as a disabled seam — the place the relay will attach to. The live screen in `_src/` does NOT draw it yet: the corpus AppBar renders every action at full strength and has no disabled variant, so adding it there would show an ENABLED control — the one thing this seam must never look like. Spec first, live screen when the primitive grows a disabled state.
+> **Changed 2026-09-10 (phase 037).** The client backend serves one person; talking to anybody else moves to a relay that does not exist yet. The invite is present as a disabled seam — the place the relay will attach to. The live screen in `_src/` draws it too. It did not at first, and the excuse written here — "the corpus AppBar has no disabled variant" — was wrong three times over: the blocker was one hardcoded colour in `m3.jsx`'s `actions.map`, while `IconButton` in the same shared file had always taken a `color`. `AppBar` actions now accept `{name, color}`, and the seam is dimmed to the M3 disabled 38% exactly as the app dims it.
 
 
 ## States
