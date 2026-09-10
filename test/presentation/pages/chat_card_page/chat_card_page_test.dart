@@ -40,6 +40,36 @@ void main() {
       await tester.pumpAndSettle();
     }
 
+    testWidgets('the last file row stays clear of the phone\'s system inset', (tester) async {
+      // The card became one CustomScrollView, and unlike the ListView it
+      // replaced, a CustomScrollView does not read MediaQuery.padding for
+      // itself - BoxScrollView is what used to wrap the sliver in a
+      // SliverPadding built from it. Dropping that put the last row of files
+      // under a phone's gesture bar. No golden can see this: the test view has
+      // no padding until one is set, as here.
+      const inset = 34.0;
+      tester.view.devicePixelRatio = 3.0;
+      tester.view.physicalSize = Constants.designSize * 3.0;
+      tester.view.padding = const FakeViewPadding(bottom: inset * 3.0);
+      addTearDown(() {
+        tester.view.resetDevicePixelRatio();
+        tester.view.resetPhysicalSize();
+        tester.view.resetPadding();
+      });
+      await pumpApp(tester, ChatCardPage(chat: _sampleChat()), settle: false);
+      for (var i = 0; i < 24; i++) {
+        await tester.pump(const Duration(milliseconds: 150));
+      }
+
+      final padding = tester.widget<SliverPadding>(find.ancestor(of: find.byType(SliverList), matching: find.byType(SliverPadding)).first);
+
+      expect(
+        padding.padding.resolve(TextDirection.ltr).bottom,
+        inset,
+        reason: 'the files sliver does not consume the system inset the ListView used to',
+      );
+    });
+
     testWidgets('a loaded card lists the person and offers the disabled invite', (tester) async {
       await pumpCard(tester);
 

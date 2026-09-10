@@ -290,9 +290,9 @@ class _ChatCardBodyState extends State<ChatCardBody> {
   ///
   /// Design spec 5.4 calls this body a scrolling column. It never was one.
   List<Widget> _sectionSlivers(BuildContext context, ChatCardState state) {
-    if (state is Initializing) return [_fillRest(const AppProgressWidget())];
+    if (state is Initializing) return [_fillRest(context, const AppProgressWidget())];
     if (state is Error) {
-      return [_fillRest(AppErrorWidget(onTryAgain: () => _bloc.add(ChatCardEvent.initialize(widget.chat.id))))];
+      return [_fillRest(context, AppErrorWidget(onTryAgain: () => _bloc.add(ChatCardEvent.initialize(widget.chat.id))))];
     }
     final initialized = state as Initialized;
 
@@ -311,6 +311,7 @@ class _ChatCardBodyState extends State<ChatCardBody> {
       ),
       if (initialized.files.isEmpty)
         _fillRest(
+          context,
           AppEmptyContentWidget(
             illustration: Assets.svg.illustrations.emptyFiles,
             title: context.l10n.filesEmptyTitle,
@@ -340,36 +341,56 @@ class _ChatCardBodyState extends State<ChatCardBody> {
   /// `viewportMainAxisExtent - precedingScrollExtent` rather than
   /// `remainingPaintExtent`: the latter changes as the card is scrolled, and the
   /// height of a centred block must not depend on where the reader is.
-  Widget _fillRest(Widget child) {
+  Widget _fillRest(BuildContext context, Widget child) {
+    final inset = _bottomInset(context);
     return SliverLayoutBuilder(
       builder: (context, constraints) {
-        final rest = math.max(0.0, constraints.viewportMainAxisExtent - constraints.precedingScrollExtent);
+        final rest = math.max(0.0, constraints.viewportMainAxisExtent - constraints.precedingScrollExtent - inset);
         return SliverToBoxAdapter(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(minHeight: rest),
-            child: child,
+          child: Padding(
+            padding: EdgeInsets.only(bottom: inset),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: rest),
+              child: child,
+            ),
           ),
         );
       },
     );
   }
 
+  /// The system inset this scroll has to keep its last row clear of.
+  ///
+  /// A `ListView` reads `MediaQuery.padding` for itself - `BoxScrollView` wraps
+  /// its sliver in a `SliverPadding` built from it - and a `CustomScrollView`
+  /// does not. Moving the card onto slivers therefore dropped an inset nobody
+  /// had to think about before, and the last file row ended up under a phone's
+  /// gesture bar. Goldens cannot see it: the test view has no padding.
+  ///
+  /// Zero in the desktop side sheet, which sits inside a SafeArea that has
+  /// already consumed it - so reading it here cannot inset the same space twice.
+  static double _bottomInset(BuildContext context) => MediaQuery.paddingOf(context).bottom;
+
   Widget _list(BuildContext context, List<MessageAttachment> files) {
     final colorScheme = Theme.of(context).colorScheme;
     // A sliver, so the rows stay lazily built inside the card's single scroll -
     // a shrink-wrapped list would lay out every attachment of the chat at once.
-    return SliverList.builder(
-      itemCount: files.length,
-      itemBuilder: (context, index) {
-        final file = files[index];
-        return ListTile(
-          leading: AppFileGlyphWidget(type: file.type, iconSize: AppDimensionTokens.icon.xl, box: AppDimensionTokens.size.fileGlyphSm),
-          title: Text(file.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-          subtitle: Text(FileSizeFormatter.format(file.sizeBytes)),
-          trailing: AppIconWidget(NoxIcons.chevronRight, size: AppDimensionTokens.icon.base, color: colorScheme.onSurfaceVariant),
-          onTap: () => showFileView(context, file),
-        );
-      },
+    // Padded by the system inset, which the ListView this replaced added itself.
+    return SliverPadding(
+      padding: EdgeInsets.only(bottom: _bottomInset(context)),
+      sliver: SliverList.builder(
+        itemCount: files.length,
+        itemBuilder: (context, index) {
+          final file = files[index];
+          return ListTile(
+            leading: AppFileGlyphWidget(type: file.type, iconSize: AppDimensionTokens.icon.xl, box: AppDimensionTokens.size.fileGlyphSm),
+            title: Text(file.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+            subtitle: Text(FileSizeFormatter.format(file.sizeBytes)),
+            trailing: AppIconWidget(NoxIcons.chevronRight, size: AppDimensionTokens.icon.base, color: colorScheme.onSurfaceVariant),
+            onTap: () => showFileView(context, file),
+          );
+        },
+      ),
     );
   }
 
@@ -378,7 +399,7 @@ class _ChatCardBodyState extends State<ChatCardBody> {
     final colorScheme = Theme.of(context).colorScheme;
     final columns = widget.isDrawer ? 2 : 3;
     return SliverPadding(
-      padding: EdgeInsets.all(AppSpacingTokens.s12),
+      padding: EdgeInsets.all(AppSpacingTokens.s12).copyWith(bottom: AppSpacingTokens.s12 + _bottomInset(context)),
       sliver: SliverGrid.builder(
         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: columns,

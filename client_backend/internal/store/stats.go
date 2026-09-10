@@ -17,11 +17,11 @@ type Counts struct {
 	Messages int64
 }
 
-// CountEverything reads all four in one go.
+// CountEverything reads all three in one go.
 //
-// One statement rather than four calls, because they are shown together: four
-// reads could be interleaved with a write and produce a picture that never
-// existed - a device belonging to a person who is not counted yet.
+// One statement rather than three calls, because they are shown together:
+// separate reads could be interleaved with a write and produce a picture that
+// never existed - a message in a chat that is not counted yet.
 func (s *Store) CountEverything(ctx context.Context) (Counts, error) {
 	var c Counts
 	err := s.read.QueryRowContext(ctx, `
