@@ -15,5 +15,4 @@ sealed class LoginEvent with _$LoginEvent {
   const factory LoginEvent.navigationHandled() = NavigationHandled;
 
   /// The server accepted the invite and is asking the owner.
-  const factory LoginEvent.ownerWaitChanged(bool waiting) = OwnerWaitChanged;
 }

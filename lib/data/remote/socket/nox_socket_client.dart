@@ -171,14 +171,6 @@ class NoxSocketClient {
     return _sendOnce(isGreeting: true, 'pair', <String, dynamic>{'token': token, 'device_key': deviceKey, 'platform': platform});
   }
 
-  /// Answers one waiting invite for a new person (contract §8B).
-  ///
-  /// Sent like any other command — the owner is greeted and signed; it is the
-  /// device at the door that is not.
-  Future<CommandReply> confirmPair({required String requestId, required bool approve}) {
-    return send('person.confirm', <String, dynamic>{'request_id': requestId, 'approve': approve});
-  }
-
   Future<CommandReply> _sendOnce(String cmd, Map<String, dynamic> data, {bool isGreeting = false}) async {
     if (!isGreeting) {
       final greeted = _greeted;
@@ -460,10 +452,6 @@ class NoxSocketClient {
         // The socket then hangs until the process restarts. A malformed field
         // is worth ignoring, never worth wedging the channel for.
         created: id['created'] is bool ? id['created'] as bool : null,
-        // Same rule for ownership, and for a sharper reason: a server that does
-        // not state it is not saying "no". Reading a missing field as false
-        // would strip the badge from an owner talking to an older build.
-        isOwner: id['owner'] is bool ? id['owner'] as bool : null,
       );
       greetingGeneration++;
       final lim = data['limits'];

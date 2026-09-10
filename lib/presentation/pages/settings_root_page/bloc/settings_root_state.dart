@@ -23,7 +23,6 @@ abstract class SettingsRootState with _$SettingsRootState {
     /// Whether this person owns the server (contract §3), as the server last
     /// stated it. Null is "not stated yet" and draws no badge — the same as
     /// false on screen, deliberately different in meaning.
-    bool? isOwner,
     @Default('') String draftName,
     @Default(false) bool editing,
     @Default(SettingsNameStatus.idle) SettingsNameStatus status,

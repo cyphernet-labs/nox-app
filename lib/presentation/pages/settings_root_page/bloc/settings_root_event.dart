@@ -23,5 +23,4 @@ sealed class SettingsRootEvent with _$SettingsRootEvent {
   const factory SettingsRootEvent.idRevealToggled() = IdRevealToggled;
 
   /// The server's standing answer about ownership changed (or arrived at all).
-  const factory SettingsRootEvent.ownershipChanged(bool? isOwner) = OwnershipChanged;
 }

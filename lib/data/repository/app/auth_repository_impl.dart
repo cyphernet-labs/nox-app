@@ -6,7 +6,6 @@ import 'package:nox_app/general/pairing/pairing_link.dart';
 import 'package:nox_app/general/platform_utils.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
 import 'package:nox_app/data/sync/outbox_service.dart';
-import 'package:nox_app/data/sync/pair_request_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/di/global_aliases.dart';
@@ -129,11 +128,7 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
           // nothing is stored, and the greeting that follows repairs it.
           logRepository.debug(target: this, message: 'sign-in: the pair reply named nobody, waiting for the greeting');
         } else {
-          final adopted = await _sessionRepository.adoptServerIdentity(
-            authorId: greeting.authorId,
-            label: greeting.label,
-            isOwner: greeting.isOwner,
-          );
+          final adopted = await _sessionRepository.adoptServerIdentity(authorId: greeting.authorId, label: greeting.label);
           if (!adopted.hasData) {
             // NOT fatal, and deliberately not a rollback: the claim token is
             // already spent, so discarding here would leave the device unable
@@ -167,8 +162,6 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         return RepositoryResult<bool>.error(
           exception: switch (e.reason) {
             PairRefusal.expired => RepositoryException.notFound,
-            PairRefusal.declined => RepositoryException.pairDeclined,
-            PairRefusal.noAnswer => RepositoryException.pairTimeout,
             PairRefusal.notUsable => RepositoryException.authentication,
           },
         );
@@ -182,14 +175,6 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         return const RepositoryResult<bool>.error(exception: RepositoryException.connection);
       }
     });
-  }
-
-  /// Forgets any question waiting for an answer. A question belongs to the
-  /// session that received it: left behind, it would surface after the next
-  /// sign-in, possibly to somebody who is not the owner and cannot answer it.
-  void _forgetPairRequests() {
-    if (!getIt.isRegistered<PairRequestService>()) return;
-    getIt<PairRequestService>().clear();
   }
 
   /// Revokes this device's own key before the local wipe, when there is a
@@ -297,10 +282,6 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         // for the life of the process while the app still shows the user signed
         // in — so a failed wipe puts it back.
         if (getIt.isRegistered<OutboxService>()) await getIt<OutboxService>().stop();
-        // A question waiting for an answer belongs to the session that received
-        // it. Nothing else removes it — the socket is down, so the outcome that
-        // would have will never arrive.
-        _forgetPairRequests();
         try {
           // The queue goes FIRST of the stores. It holds message texts that were
           // never sent, and a crash later in the wipe would leave them for the

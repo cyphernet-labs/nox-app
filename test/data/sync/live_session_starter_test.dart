@@ -220,46 +220,6 @@ void main() {
       expect(hello.toString(), isNot(contains(seed!)));
     });
 
-    test('the greeting hands ownership to the session', () async {
-      await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
-      await session.saveServer(address: '10.0.0.5:9000', serverKey: 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=');
-
-      await starter.start();
-      await settle();
-      factory.latest.pushGreeting();
-      for (var i = 0; i < 40 && factory.latest.commandNamed('session.hello') == null; i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 5));
-      }
-      factory.latest.replyToHello(cursor: 0, owner: true);
-      for (var i = 0; i < 40 && (await SharedPreferences.getInstance()).getBool('session.is_owner') != true; i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 5));
-      }
-
-      // The badge has to outlive the connection that brought it: the next
-      // launch may well be offline.
-      expect((await SharedPreferences.getInstance()).getBool('session.is_owner'), isTrue);
-    });
-
-    test('a greeting with no session behind it writes no ownership', () async {
-      // The window `pair` runs in. Stamping a badge on an empty session would
-      // hand it to whoever signs in next.
-      await session.saveServer(address: '10.0.0.5:9000', serverKey: 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=');
-
-      await starter.start();
-      await settle();
-      factory.latest.pushGreeting();
-      await settle();
-
-      // Asserted on the STORED keys, not through readSession(): that returns
-      // null whenever the identifier is absent, whatever else the prefs hold -
-      // so the guard could be deleted and this test would still pass while the
-      // greeting stamped a stranger's identity onto the device.
-      final prefs = await SharedPreferences.getInstance();
-      expect(prefs.getBool('session.is_owner'), isNull);
-      expect(prefs.getString('session.author_id'), isNull);
-      expect((await session.readSession()).data, isNull);
-    });
-
     test('a refusal while unpaired clears nothing', () async {
       // The brick: a device that has not paired is refused as a matter of
       // course, and treating that as a revocation wiped the key and the address

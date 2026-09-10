@@ -20,15 +20,7 @@ enum RepositoryException implements BaseRepositoryException {
   payloadTooLarge,
   attachmentGone,
   rateLimited,
-  unsupportedSchema,
-
-  /// Contract §8B. The three refusals a person invite can meet, kept apart
-  /// because each leads somewhere different: [notOwner] means the app should
-  /// not have offered this at all, [pairDeclined] means "do not insist", and
-  /// [pairTimeout] means "ask again".
-  notOwner,
-  pairDeclined,
-  pairTimeout;
+  unsupportedSchema;
 
   /// Maps a contract §2.1 wire error code onto an enum value. The evolution
   /// rule applies: a code unknown to this client build is treated as
@@ -48,9 +40,6 @@ enum RepositoryException implements BaseRepositoryException {
     // distinction the wire had kept all the way across.
     'invalid_token' => authentication,
     'token_expired' => notFound,
-    'not_owner' => notOwner,
-    'pair_declined' => pairDeclined,
-    'pair_timeout' => pairTimeout,
     _ => internal,
   };
 }

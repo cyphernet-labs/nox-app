@@ -6,7 +6,6 @@ import 'package:nox_app/design/app_text_style_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
-import 'package:nox_app/presentation/widgets/settings/app_owner_badge_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_spinner_widget.dart';
 
 /// Identity card (7.1): a Name block (inline-editable) + `Your ID`
@@ -33,7 +32,6 @@ class AppIdentityCardWidget extends StatelessWidget {
     this.nameEditField,
     this.idRevealed = false,
     this.onToggleReveal,
-    this.isOwner,
   });
 
   final String name;
@@ -56,7 +54,6 @@ class AppIdentityCardWidget extends StatelessWidget {
   /// mean different things — `null` is "the server has not said yet" — and
   /// rendering "not the owner" before the answer arrives would be a claim the
   /// app is not entitled to make, followed by a flicker when it is corrected.
-  final bool? isOwner;
 
   @override
   Widget build(BuildContext context) {
@@ -90,20 +87,7 @@ class AppIdentityCardWidget extends StatelessWidget {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final textTheme = theme.textTheme;
-    if (editing && nameEditField != null) {
-      // The badge stays. Ownership has nothing to do with editing a name, and
-      // dropping it here made it blink out of existence on every rename - on
-      // both widths - for no reason a person could connect to what they did.
-      if (!(isOwner ?? false)) return nameEditField!;
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const AppOwnerBadgeWidget(),
-          SizedBox(height: AppSpacingTokens.s8),
-          nameEditField!,
-        ],
-      );
-    }
+    if (editing && nameEditField != null) return nameEditField!;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -111,22 +95,8 @@ class AppIdentityCardWidget extends StatelessWidget {
         SizedBox(height: AppSpacingTokens.s2),
         Row(
           children: [
-            // Wrap, not a row of flexibles. Two flexible children would split
-            // the free space by flex and cap the NAME at half of it: it would
-            // ellipsize early with blank space beside it, badge or no badge.
-            // Wrap gives the name the full width and drops the badge onto its
-            // own line once it no longer fits - which is what happens at large
-            // text scales and in the longer localisation.
             Expanded(
-              child: Wrap(
-                crossAxisAlignment: WrapCrossAlignment.center,
-                spacing: AppSpacingTokens.s8,
-                runSpacing: AppSpacingTokens.s4,
-                children: [
-                  Text(name, style: textTheme.titleMedium?.copyWith(color: colorScheme.onSurface)),
-                  if (isOwner ?? false) const AppOwnerBadgeWidget(),
-                ],
-              ),
+              child: Text(name, style: textTheme.titleMedium?.copyWith(color: colorScheme.onSurface)),
             ),
             IconButton(
               tooltip: context.l10n.settingsNameEditTooltip,

@@ -1,13 +1,8 @@
-import 'dart:async';
-
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:nox_app/data/sync/pair_request_service.dart';
 import 'package:nox_app/design/app_text_style_tokens.dart';
-import 'package:nox_app/di/configure_dependencies.dart';
-import 'package:nox_app/domain/model/person/pair_request.dart';
 import 'package:nox_app/design/theme/app_theme.dart';
 import 'package:nox_app/domain/model/app/app_state_type.dart';
 import 'package:nox_app/general/app_language.dart';
@@ -18,7 +13,6 @@ import 'package:nox_app/l10n/app_localizations.dart';
 import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
 import 'package:nox_app/presentation/helpers/app_feedback_helper.dart';
 import 'package:nox_app/presentation/pages/login_page/login_page.dart';
-import 'package:nox_app/presentation/pages/pair_request_page/pair_request_page.dart';
 import 'package:nox_app/presentation/pages/set_username_page/set_username_page.dart';
 import 'package:nox_app/presentation/pages/splash_page/splash_page.dart';
 import 'package:nox_app/presentation/widgets/shell/tab_bar_shell_widget.dart';
@@ -38,13 +32,6 @@ class _AppRootState extends State<AppRoot> {
   late final AppRootBloc _bloc;
   final _navigatorKey = GlobalKey<NavigatorState>();
 
-  StreamSubscription<List<PairRequest>>? _pairRequests;
-
-  /// The request currently on screen, so a re-send of the same question - the
-  /// server repeats every waiting one after each greeting - does not stack a
-  /// second identical surface on top of the first.
-  String? _askingAbout;
-
   // Whether the first app-state transition has already replaced the Splash home route.
   // The first transition uses pushReplacement; every later one clears the whole stack.
   bool _splashReplaced = false;
@@ -56,63 +43,12 @@ class _AppRootState extends State<AppRoot> {
     // Load the persisted UI language; nudges LocaleController.language, which
     // re-renders MaterialApp via the ValueListenableBuilder in build().
     LocaleController.instance.load();
-    _watchPairRequests();
   }
 
   @override
   void dispose() {
-    unawaited(_pairRequests?.cancel());
     _bloc.close();
     super.dispose();
-  }
-
-  /// Somebody is at the door (contract §8B).
-  ///
-  /// The subscription lives HERE rather than on the People screen because the
-  /// question has to reach the owner wherever they are - in a chat, in the
-  /// list, in settings. Only the owner is ever sent these, so nothing checks
-  /// the role: a second place reasoning about ownership is a second place to
-  /// disagree with the server about it.
-  void _watchPairRequests() {
-    if (!getIt.isRegistered<PairRequestService>()) return;
-    _pairRequests = getIt<PairRequestService>().open.listen((_) => _askNext());
-  }
-
-  /// Opens the oldest open question, if none is on screen already.
-  ///
-  /// Called on every emission AND after each surface closes. Only reacting to
-  /// emissions loses the second question: two people knocking while the phone
-  /// is locked produces `[A]` then `[A, B]`, and the second list arrives while
-  /// A is still on screen. Nothing emits again after A is answered, so B would
-  /// wait out its five minutes unseen.
-  void _askNext() {
-    if (_askingAbout != null || !getIt.isRegistered<PairRequestService>()) return;
-    final requests = getIt<PairRequestService>().current;
-    if (requests.isEmpty) return;
-    // Never over the pairing screen. A question that outlived a logout would
-    // ask a signed-out device to let somebody into a server it no longer has a
-    // session with.
-    if (_bloc.state.appliedAppState.state != AppStateType.authorized) return;
-    final navigatorContext = _navigatorKey.currentContext;
-    if (navigatorContext == null || !navigatorContext.mounted) return;
-
-    final request = requests.first;
-    _askingAbout = request.requestId;
-    // Read from the view rather than through MediaQuery.sizeOf: this runs from
-    // a stream callback, and sizeOf would register the root Navigator as a
-    // dependent - every resize and every keyboard would then rebuild the whole
-    // navigator subtree for the rest of the session.
-    final wide = MediaQueryData.fromView(View.of(navigatorContext)).size.width >= Constants.railBreakpoint;
-    final surface = wide
-        ? PairRequestPage.showAsDialog(navigatorContext, request)
-        : Navigator.of(navigatorContext).push(PairRequestPage.route(request));
-    unawaited(
-      surface.whenComplete(() {
-        _askingAbout = null;
-        // A question may have been waiting behind this one.
-        if (mounted) _askNext();
-      }),
-    );
   }
 
   Route<void>? _routeForState(AppStateType state) {
@@ -143,12 +79,6 @@ class _AppRootState extends State<AppRoot> {
     } else {
       navigator.pushAndRemoveUntil(route, (_) => false);
     }
-    // A question may have arrived while the app was still on Splash or Login -
-    // the server re-sends every waiting one on each greeting, and the greeting
-    // happens before the state settles. _askNext refuses to ask then, and
-    // nothing emits again afterwards, so the question would sit unseen until it
-    // expired.
-    _askNext();
   }
 
   // One-shot session-expiry message, shown over the freshly-pushed Login. Runs in a
