@@ -24,8 +24,8 @@ description: "Task list for feature 037 — local-only phase"
 
 ## Phase 1: Setup
 
-- [ ] T001 Удалить локальные базы разработки (`/tmp/nox-demo*`, `client_backend/*.db`) — схема правится на месте, старый файл несовместим
-- [ ] T002 Зафиксировать базовые счётчики для SC-003: число Go-тестов, число Dart-тестов и число голденов **до** уборки, записать в `specs/037-local-only-phase/quickstart.md`
+- [x] T001 Удалить локальные базы разработки (`/tmp/nox-demo*`, `client_backend/*.db`) — схема правится на месте, старый файл несовместим
+- [x] T002 Зафиксировать базовые счётчики для SC-003: число Go-тестов, число Dart-тестов и число голденов **до** уборки, записать в `specs/037-local-only-phase/quickstart.md`
 
 ---
 
@@ -33,14 +33,14 @@ description: "Task list for feature 037 — local-only phase"
 
 **Блокирует всё остальное.** Принцип VII: контракт — закон, обе стороны следуют записанному.
 
-- [ ] T003 Удалить раздел 8B «Приглашение человека в круг» целиком из `docs/client-backend/protocol/contract-draft.md`
-- [ ] T004 Удалить `person.invite`, `person.list`, `person.confirm` из перечня команд §8.1 в `docs/client-backend/protocol/contract-draft.md`
-- [ ] T005 Удалить события `person.pairRequested` и `person.pairResolved` из §6 в `docs/client-backend/protocol/contract-draft.md`
-- [ ] T006 Убрать ветку `status: "pending"` и поля `request_id` / `expires_at` из описания `pair` в §8A в `docs/client-backend/protocol/contract-draft.md`
-- [ ] T007 Убрать поле `owner` из объекта личности в §2.1 и во всех местах, где объект описан, в `docs/client-backend/protocol/contract-draft.md`
-- [ ] T008 Убрать коды ошибок `not_owner`, `pair_declined`, `pair_timeout` из §2.1 в `docs/client-backend/protocol/contract-draft.md`
-- [ ] T009 Переформулировать §1 (обзор), обоснование `chat.rename` и правило уникальности имени чата в `docs/client-backend/protocol/contract-draft.md`
-- [ ] T010 Записать в `docs/client-backend/protocol/contract-draft.md`, что изменение ломающее, и почему это допустимо (развёрнутых установок нет, стороны выпускаются одним коммитом)
+- [x] T003 Удалить раздел 8B «Приглашение человека в круг» целиком из `docs/client-backend/protocol/contract-draft.md`
+- [x] T004 Удалить `person.invite`, `person.list`, `person.confirm` из перечня команд §8.1 в `docs/client-backend/protocol/contract-draft.md`
+- [x] T005 Удалить события `person.pairRequested` и `person.pairResolved` из §6 — **оказалась пустой**: в §6 их не было, оба определялись только внутри §8B и ушли с ним (T003) в `docs/client-backend/protocol/contract-draft.md`
+- [x] T006 Убрать ветку `status: "pending"` и поля `request_id` / `expires_at` из описания `pair` в §8A в `docs/client-backend/protocol/contract-draft.md`
+- [x] T007 Убрать поле `owner` из объекта личности в §2.1 и во всех местах, где объект описан, в `docs/client-backend/protocol/contract-draft.md`
+- [x] T008 Убрать коды ошибок `not_owner`, `pair_declined`, `pair_timeout` из §2.1 в `docs/client-backend/protocol/contract-draft.md`
+- [x] T009 Переформулировать §1 (обзор), обоснование `chat.rename` и правило уникальности имени чата в `docs/client-backend/protocol/contract-draft.md`
+- [x] T010 Записать в `docs/client-backend/protocol/contract-draft.md`, что изменение ломающее, и почему это допустимо (развёрнутых установок нет, стороны выпускаются одним коммитом)
 
 **Гейт фазы**: документ читается связно, ни одна внутренняя ссылка не ведёт в удалённый раздел.
 
