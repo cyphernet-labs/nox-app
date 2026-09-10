@@ -94,12 +94,11 @@ function renderScreen(id, st, T) {
     }
     case 'd-settings': {
       const m = {
-        'account': { section: 'Account', isOwner: true }, 'account-editing': { section: 'Account', detailState: 'editing', isOwner: true },
+        'account': { section: 'Account' }, 'account-editing': { section: 'Account', detailState: 'editing' },
         'notifications': { section: 'Notifications' }, 'notifications-denied': { section: 'Notifications', detailState: 'denied' },
         'appearance': { section: 'Appearance' }, 'language': { section: 'Language' }, 'terms': { section: 'Terms' },
-        'about': { section: 'About' }, 'logout': { section: 'Account', dialog: 'logout', isOwner: true },
-        'account-member': { section: 'Account', isOwner: false },
-      }[st] || { section: 'Account', isOwner: true };
+        'about': { section: 'About' }, 'logout': { section: 'Account', dialog: 'logout' },
+      }[st] || { section: 'Account' };
       return <SettingsDesktop t={T} {...m} />;
     }
     case 'd-splash':   return <SplashDesktop />;

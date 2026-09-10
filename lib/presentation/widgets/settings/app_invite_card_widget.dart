@@ -5,10 +5,11 @@ import 'package:nox_app/presentation/widgets/settings/app_qr_surface_widget.dart
 
 /// A freshly minted pairing link, shown as a QR and as text.
 ///
-/// Shared between 7.3 Devices and 7.4 People because the two differ in exactly
-/// one thing — how long the link lives, which the caller states in [message].
-/// Everything else is identical, and a second copy would drift the moment one
-/// of them changed.
+/// Extracted when 7.3 Devices and 7.4 People both needed it, differing in one
+/// thing — how long the link lives, which the caller states in [message]. 037
+/// deleted 7.4 along with the person invite, so Devices is the only caller left;
+/// the widget stays because the device invite is untouched and because the relay
+/// will need this shape again.
 ///
 /// The text under the QR matters as much as the code: Windows and Linux have no
 /// camera, so copying is the only path that works everywhere.

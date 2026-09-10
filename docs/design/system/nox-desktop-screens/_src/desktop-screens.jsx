@@ -206,10 +206,7 @@ const SettingsListPane = ({ t, selected }) => (
 );
 
 // detail content — every panel reuses the phone widgets verbatim
-// Defaults to NOT stated, like the shipped widget: "not stated" and "not the
-// owner" both render nothing, so a screen built from this corpus without
-// saying otherwise must not show a badge.
-const SettingsDetail = ({ t, section, detailState = null, isOwner = false }) => {
+const SettingsDetail = ({ t, section, detailState = null }) => {
   const wrap = (children) => (
     <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', background: t.surfaceContainerLowest, display: 'flex', flexDirection: 'column' }}>
       <PaneHeader t={t} title={section} />
@@ -222,7 +219,7 @@ const SettingsDetail = ({ t, section, detailState = null, isOwner = false }) => 
   if (section === 'Account') {
     return wrap(
       <div>
-        <IdentityCard t={t} editing={detailState === 'editing'} isOwner={isOwner} />
+        <IdentityCard t={t} editing={detailState === 'editing'} />
       </div>
     );
   }
@@ -270,11 +267,11 @@ const SettingsDetail = ({ t, section, detailState = null, isOwner = false }) => 
   return wrap(<TermsBody t={t} />);
 };
 
-const SettingsDesktop = ({ t, section = 'Appearance', dialog = null, detailState = null, isOwner = false }) => (
+const SettingsDesktop = ({ t, section = 'Appearance', dialog = null, detailState = null }) => (
   <DesktopWindow t={t} subtitle="Settings">
     <NavRail t={t} active="settings" />
     <SettingsListPane t={t} selected={section} />
-    <SettingsDetail t={t} section={section} detailState={detailState} isOwner={isOwner} />
+    <SettingsDetail t={t} section={section} detailState={detailState} />
     {dialog === 'logout' && <LogoutDialog t={t} />}
     {dialog === 'logout-loading' && <LogoutDialog t={t} loading />}
   </DesktopWindow>

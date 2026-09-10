@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:nox_app/design/theme/nox_opacity.dart';
@@ -192,25 +194,37 @@ class _ChatCardBodyState extends State<ChatCardBody> {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              // Panel chrome stays OUTSIDE the scroll: the close button has to be
+              // reachable however far the body has been scrolled.
               if (widget.isDrawer) _drawerHeader(context),
-              _header(context),
-              // Design (ChatInfoDrawer): a divider separates the identity block from
-              // the Files section — desktop drawer only (the mobile card is full-screen).
-              if (widget.isDrawer) const AppHairlineDividerWidget(),
-              // The banner stays at the top of the card, where the spec pins
-              // it: pushed below the People block it lands ~150dp down, and on a
-              // phone at a large text scale it can fall off the first fold.
-              if (state is Initialized && state.isOffline) AppNoticeStripWidget(message: context.l10n.noConnection, icon: NoxIcons.wifiOff),
-              // Only once there is something to show. Rendered unconditionally
-              // it stacked a person and a disabled button over the embedded
-              // error screen and over the loading spinner - two states the
-              // spec's table does not put it in.
-              if (state is Initialized) ...[
-                AppChatPeopleSectionWidget(personLabel: state.personLabel),
-                const AppHairlineDividerWidget(),
-                SizedBox(height: AppSpacingTokens.s12),
-              ],
-              Expanded(child: _section(context, state)),
+              Expanded(
+                child: CustomScrollView(
+                  slivers: [
+                    SliverToBoxAdapter(child: _header(context)),
+                    // Design (ChatInfoDrawer): a divider separates the identity block
+                    // from what follows — desktop drawer only (the mobile card is
+                    // full-screen).
+                    if (widget.isDrawer) const SliverToBoxAdapter(child: AppHairlineDividerWidget()),
+                    // The banner stays at the top of the card, where the spec pins
+                    // it: pushed below the People block it lands ~150dp down, and on a
+                    // phone at a large text scale it can fall off the first fold.
+                    if (state is Initialized && state.isOffline)
+                      SliverToBoxAdapter(
+                        child: AppNoticeStripWidget(message: context.l10n.noConnection, icon: NoxIcons.wifiOff),
+                      ),
+                    // Only once there is something to show. Rendered unconditionally
+                    // it stacked a person and a disabled button over the embedded
+                    // error screen and over the loading spinner - two states the
+                    // spec's table does not put it in.
+                    if (state is Initialized) ...[
+                      SliverToBoxAdapter(child: AppChatPeopleSectionWidget(personLabel: state.personLabel)),
+                      const SliverToBoxAdapter(child: AppHairlineDividerWidget()),
+                      SliverToBoxAdapter(child: SizedBox(height: AppSpacingTokens.s12)),
+                    ],
+                    ..._sectionSlivers(context, state),
+                  ],
+                ),
+              ),
               if (kDebugMode && widget.demo) _scenarioControl(),
             ],
           );
@@ -262,15 +276,29 @@ class _ChatCardBodyState extends State<ChatCardBody> {
     );
   }
 
-  Widget _section(BuildContext context, ChatCardState state) {
-    if (state is Initializing) return const AppProgressWidget();
-    if (state is Error) return AppErrorWidget(onTryAgain: () => _bloc.add(ChatCardEvent.initialize(widget.chat.id)));
+  /// Everything below the panel chrome, as slivers of the card's ONE scroll.
+  ///
+  /// One scroll, because the shape this replaced fails without warning. The body
+  /// used to be a fixed Column whose single flexible child was this section, and
+  /// when the chrome above it outgrew the surface - which the People block made
+  /// possible at a large text scale, and the offline banner made likely -
+  /// `Expanded` clamps to ZERO. The files list then renders at no height at all:
+  /// not clipped and not scrolled past, absent, with every attachment in the
+  /// chat unreachable and only a striped overflow bar to say so. Scrolling only
+  /// the empty state, which is what the previous round did, fixed the one case
+  /// that showed a stripe and left the case that silently ate the content.
+  ///
+  /// Design spec 5.4 calls this body a scrolling column. It never was one.
+  List<Widget> _sectionSlivers(BuildContext context, ChatCardState state) {
+    if (state is Initializing) return [_fillRest(const AppProgressWidget())];
+    if (state is Error) {
+      return [_fillRest(AppErrorWidget(onTryAgain: () => _bloc.add(ChatCardEvent.initialize(widget.chat.id))))];
+    }
     final initialized = state as Initialized;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        AppCardSectionHeaderWidget(
+    return [
+      SliverToBoxAdapter(
+        child: AppCardSectionHeaderWidget(
           title: context.l10n.filesSectionTitle,
           trailing: initialized.files.isNotEmpty
               ? AppSegmentedWidget<FilesViewMode>(
@@ -280,45 +308,57 @@ class _ChatCardBodyState extends State<ChatCardBody> {
                 )
               : null,
         ),
-        Expanded(child: _files(context, initialized)),
-      ],
-    );
+      ),
+      if (initialized.files.isEmpty)
+        _fillRest(
+          AppEmptyContentWidget(
+            illustration: Assets.svg.illustrations.emptyFiles,
+            title: context.l10n.filesEmptyTitle,
+            message: context.l10n.filesEmptyMessage,
+          ),
+        )
+      else if (initialized.viewMode == FilesViewMode.list)
+        _list(context, initialized.files)
+      else
+        _grid(context, initialized.files),
+    ];
   }
 
-  Widget _files(BuildContext context, Initialized state) {
-    if (state.files.isEmpty) {
-      // The one branch of the card that has to carry its own scroll. Everything
-      // else here either scrolls already (the files list, the grid) or is fixed
-      // chrome, but the card is a non-scrolling Column and the empty state is a
-      // centred block that neither shrinks nor clips: at a large text scale on a
-      // phone it outgrows what the People block and the two headings leave it,
-      // and a Center that does not fit simply overflows.
-      //
-      // Scrolled HERE and not inside AppEmptyContentWidget, where it would look
-      // like the general fix: the chats list renders the same widget inside a
-      // SliverFillRemaining that measures intrinsic height, and neither a
-      // LayoutBuilder nor a nested viewport can answer that question.
-      return LayoutBuilder(
-        builder: (context, constraints) => SingleChildScrollView(
+  /// A one-off state (spinner, error, empty) centred in whatever the slivers
+  /// above it left, growing the scroll instead of overflowing when that is not
+  /// enough.
+  ///
+  /// Deliberately NOT `SliverFillRemaining(hasScrollBody: false)`, which asks
+  /// its child for an intrinsic height — and `RenderConstrainedBox` answers that
+  /// question by passing the FULL width down, ignoring the `maxWidth` it will
+  /// actually impose at layout time. `AppEmptyContentWidget` caps its message
+  /// that way, so the text was measured at one width, laid out at a narrower
+  /// one, wrapped onto an extra line and overflowed by exactly that line.
+  /// Measured here from the sliver's own constraints instead, so no intrinsic is
+  /// consulted at all.
+  ///
+  /// `viewportMainAxisExtent - precedingScrollExtent` rather than
+  /// `remainingPaintExtent`: the latter changes as the card is scrolled, and the
+  /// height of a centred block must not depend on where the reader is.
+  Widget _fillRest(Widget child) {
+    return SliverLayoutBuilder(
+      builder: (context, constraints) {
+        final rest = math.max(0.0, constraints.viewportMainAxisExtent - constraints.precedingScrollExtent);
+        return SliverToBoxAdapter(
           child: ConstrainedBox(
-            // Centred while it fits - the minimum is what keeps the block in the
-            // middle of an otherwise empty pane instead of pinned to its top.
-            constraints: BoxConstraints(minHeight: constraints.hasBoundedHeight ? constraints.maxHeight : 0),
-            child: AppEmptyContentWidget(
-              illustration: Assets.svg.illustrations.emptyFiles,
-              title: context.l10n.filesEmptyTitle,
-              message: context.l10n.filesEmptyMessage,
-            ),
+            constraints: BoxConstraints(minHeight: rest),
+            child: child,
           ),
-        ),
-      );
-    }
-    return state.viewMode == FilesViewMode.list ? _list(context, state.files) : _grid(context, state.files);
+        );
+      },
+    );
   }
 
   Widget _list(BuildContext context, List<MessageAttachment> files) {
     final colorScheme = Theme.of(context).colorScheme;
-    return ListView.builder(
+    // A sliver, so the rows stay lazily built inside the card's single scroll -
+    // a shrink-wrapped list would lay out every attachment of the chat at once.
+    return SliverList.builder(
       itemCount: files.length,
       itemBuilder: (context, index) {
         final file = files[index];
@@ -337,44 +377,49 @@ class _ChatCardBodyState extends State<ChatCardBody> {
     final textTheme = Theme.of(context).textTheme;
     final colorScheme = Theme.of(context).colorScheme;
     final columns = widget.isDrawer ? 2 : 3;
-    return GridView.builder(
+    return SliverPadding(
       padding: EdgeInsets.all(AppSpacingTokens.s12),
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: columns,
-        crossAxisSpacing: AppSpacingTokens.s8,
-        mainAxisSpacing: AppSpacingTokens.s8,
-        // Near-square cells (design = square; a true 1.0 clips the 48dp glyph +
-        // single-line name + size at 3 columns with Flutter's taller text metrics).
-        childAspectRatio: 0.8,
-      ),
-      itemCount: files.length,
-      itemBuilder: (context, index) {
-        final file = files[index];
-        return InkWell(
-          onTap: () => showFileView(context, file),
-          borderRadius: BorderRadius.circular(NoxRadius.m),
-          child: Container(
-            padding: EdgeInsets.all(AppSpacingTokens.s8),
-            decoration: BoxDecoration(color: colorScheme.surfaceContainerHigh, borderRadius: BorderRadius.circular(NoxRadius.m)),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                AppFileGlyphWidget(type: file.type, iconSize: AppDimensionTokens.icon.fab, box: AppDimensionTokens.size.fileGlyphMd),
-                SizedBox(height: AppSpacingTokens.s8),
-                Text(
-                  file.name,
-                  maxLines: 1,
-                  textAlign: TextAlign.center,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppTextStyleTokens.labelMedium(color: colorScheme.onSurface),
-                ),
-                SizedBox(height: AppSpacingTokens.s4),
-                Text(FileSizeFormatter.format(file.sizeBytes), style: textTheme.labelSmall?.copyWith(color: colorScheme.onSurfaceVariant)),
-              ],
+      sliver: SliverGrid.builder(
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: columns,
+          crossAxisSpacing: AppSpacingTokens.s8,
+          mainAxisSpacing: AppSpacingTokens.s8,
+          // Near-square cells (design = square; a true 1.0 clips the 48dp glyph +
+          // single-line name + size at 3 columns with Flutter's taller text metrics).
+          childAspectRatio: 0.8,
+        ),
+        itemCount: files.length,
+        itemBuilder: (context, index) {
+          final file = files[index];
+          return InkWell(
+            onTap: () => showFileView(context, file),
+            borderRadius: BorderRadius.circular(NoxRadius.m),
+            child: Container(
+              padding: EdgeInsets.all(AppSpacingTokens.s8),
+              decoration: BoxDecoration(color: colorScheme.surfaceContainerHigh, borderRadius: BorderRadius.circular(NoxRadius.m)),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  AppFileGlyphWidget(type: file.type, iconSize: AppDimensionTokens.icon.fab, box: AppDimensionTokens.size.fileGlyphMd),
+                  SizedBox(height: AppSpacingTokens.s8),
+                  Text(
+                    file.name,
+                    maxLines: 1,
+                    textAlign: TextAlign.center,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTextStyleTokens.labelMedium(color: colorScheme.onSurface),
+                  ),
+                  SizedBox(height: AppSpacingTokens.s4),
+                  Text(
+                    FileSizeFormatter.format(file.sizeBytes),
+                    style: textTheme.labelSmall?.copyWith(color: colorScheme.onSurfaceVariant),
+                  ),
+                ],
+              ),
             ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 

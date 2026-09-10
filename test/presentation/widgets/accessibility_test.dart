@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
+import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
@@ -19,6 +20,7 @@ import 'package:nox_app/presentation/widgets/shell/tab_bar_shell_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_chat_item_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_composer_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_file_chip_widget.dart';
+import 'package:nox_app/presentation/widgets/primitives/app_file_glyph_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_message_bubble_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_search_bar_widget.dart';
 import 'package:nox_app/presentation/pages/create_chat_page/create_chat_page.dart';
@@ -226,11 +228,10 @@ void main() {
     });
 
     testWidgets('the chat card survives 2.0 on a phone with no files in it', (tester) async {
-      // Two conditions at once, and either alone hides it: a phone-sized
-      // surface, and the EMPTY files state. The default 800x600 canvas has room
-      // to spare, and a card holding files puts a scrolling list under the
-      // shortfall. Empty, the card stacks a header, the People block and a
-      // section heading above a state that neither scrolled nor shrank.
+      // A phone-sized surface is half of what makes this visible: the default
+      // 800x600 canvas has room to spare. The card stacks a header, the People
+      // block and a section heading above the empty state, and at this scale
+      // what is left is smaller than the empty state wants.
       tester.view.devicePixelRatio = 3.0;
       tester.view.physicalSize = const Size(360, 640) * 3.0;
       addTearDown(() {
@@ -242,6 +243,56 @@ void main() {
       await pumpApp(tester, ChatCardPage(chat: chat, initialScenario: ChatCardScenario.empty), textScale: 2.0);
 
       expect(tester.takeException(), isNull, reason: 'the empty chat card overflowed at 2.0');
+    });
+
+    testWidgets('the chat card still SHOWS its files at 2.0, on a phone and in the desktop side sheet', (tester) async {
+      // The other half, and the one that fails silently. While the body was a
+      // fixed Column whose only flexible child was the files section, chrome
+      // that outgrew the surface made Expanded clamp to ZERO - and the list
+      // rendered at no height at all. Not clipped and not scrolled past:
+      // absent, with every attachment in the chat unreachable. An overflow
+      // assertion alone does not see it, so this one also demands that a file
+      // is actually on screen.
+      addTearDown(() {
+        tester.view.resetDevicePixelRatio();
+        tester.view.resetPhysicalSize();
+      });
+      final chat = ChatModel(id: 'chat_0', name: 'Design crit', lastMessagePreview: '', lastMessageAt: DateTime(2024, 1, 1));
+      // The test DB is in-memory but PERSISTS across tests in one isolate, and
+      // the files of this card derive from chat_0's seeded thread. Cleared here
+      // so the seed runs fresh: without it whatever an earlier test left behind
+      // decides whether this one has anything to look for.
+      await getIt<AppDatabase>().clearEntireDatabase();
+
+      // Both widths, because the drawer header makes the desktop side sheet the
+      // TIGHTER of the two despite the bigger window (Constitution VI).
+      for (final surface in const [Size(360, 640), Size(1280, 800)]) {
+        tester.view.devicePixelRatio = 2.0;
+        tester.view.physicalSize = surface * 2.0;
+
+        // Bounded pumps, not pumpAndSettle: opening the card pulls its files
+        // window from the source and the reactive watch keeps a timer in
+        // flight, so settling either hangs or snapshots the spinner - which is
+        // exactly the state where "no file rendered" would be a false alarm.
+        await pumpApp(tester, ChatCardPage(chat: chat), textScale: 2.0, settle: false);
+        for (var i = 0; i < 24; i++) {
+          await tester.pump(const Duration(milliseconds: 150));
+        }
+
+        expect(tester.takeException(), isNull, reason: 'the chat card overflowed at 2.0 on $surface');
+
+        // REACHABLE, not merely present. A sliver list builds only what is on
+        // screen, and at this scale the chrome pushes the first row past the
+        // fold - so "find it" would fail on a healthy card. Scrolling to it is
+        // the invariant: it throws when there is nothing to scroll, which is
+        // precisely what a files section clamped to zero height looks like.
+        await tester.scrollUntilVisible(
+          find.byType(AppFileGlyphWidget),
+          200,
+          scrollable: find.descendant(of: find.byType(CustomScrollView), matching: find.byType(Scrollable)).first,
+        );
+        expect(find.byType(AppFileGlyphWidget), findsWidgets, reason: 'no attachment could be reached at all on $surface');
+      }
     });
   });
 }

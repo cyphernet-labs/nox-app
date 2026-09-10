@@ -52,42 +52,24 @@ const InfoBanner = ({ t, icon, title, message, action }) => (
 );
 
 // identity card (§9.4)
-// The badge is shown only when the server has STATED ownership. "Not stated"
-// and "not the owner" draw the same thing - nothing - because drawing "not the
-// owner" before the server answers is a claim the app cannot make.
-const OwnerBadge = ({ t }) => (
-  <span
-    style={{
-      ...ty('labelSmall'),
-      color: t.onSecondaryContainer,
-      background: t.secondaryContainer,
-      borderRadius: SHAPE.xs,
-      padding: '2px 8px',
-      whiteSpace: 'nowrap',
-    }}
-  >
-    Server owner
-  </span>
-);
-
-const IdentityCard = ({ t, editing = false, isOwner = false }) => (
+// Phase 037 removed the Server owner badge: the machine holds one person, so a
+// mark that told the owner apart from an invited member tells nothing apart.
+const IdentityCard = ({ t, editing = false }) => (
   <div style={{ margin: '8px 16px 16px', background: t.surfaceContainerLow, borderRadius: SHAPE.m, boxShadow: elev(1, t.dark), padding: 16 }}>
     {/* name block */}
     <div style={{ ...ty('bodyMedium'), color: t.onSurfaceVariant, marginBottom: 6 }}>Name</div>
     {editing ? (
       <div>
-        {/* The badge stays through a rename: ownership has nothing to do with
-            editing a name, and dropping it made it blink out on every one. */}
-        {isOwner && <div style={{ marginBottom: 8 }}><OwnerBadge t={t} /></div>}
         <TextField t={t} value="Nyx" focused counter="3/32" suffix={null} />
       </div>
     ) : (
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        {/* Wraps rather than sharing the row by flex: two flexible children
-            split the width and cap the NAME at half of it. */}
+        {/* The name is the only flexible child of this row now, beside the
+            fixed-width edit action. It used to share the width with the owner
+            badge, and two flexible children split it - capping the NAME at
+            half. */}
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, flex: 1 }}>
           <span style={{ ...ty('titleMedium'), color: t.onSurface }}>Nyx</span>
-          {isOwner && <OwnerBadge t={t} />}
         </div>
         <Icon name="edit" size={20} color={t.onSurfaceVariant} />
       </div>
@@ -122,7 +104,7 @@ const LogoutDialog = ({ t, loading = false }) => (
 );
 
 // ── 7.1 Settings root ────────────────────────────────────────
-// state: 'loaded' | 'loaded-member' | 'editing' | 'logout' | 'logout-loading'
+// state: 'loaded' | 'editing' | 'logout' | 'logout-loading'
 // grouped settings card + rich nav row
 const SettingsGroup = ({ t, children }) => (
   <div style={{ margin: '4px 16px 16px', background: t.surfaceContainerLow, borderRadius: SHAPE.l, overflow: 'hidden', boxShadow: elev(1, t.dark) }}>{children}</div>
@@ -172,7 +154,7 @@ const SettingsRootScreen = ({ t, state = 'loaded' }) => (
   <>
     <AppBar t={t} title="Settings" />
     <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-      <IdentityCard t={t} editing={state === 'editing'} isOwner={state !== 'loaded-member'} />
+      <IdentityCard t={t} editing={state === 'editing'} />
       <SettingsGroup t={t}>
         <SettingsNavRow t={t} icon="notifications" label="Notifications" />
         <SettingsNavRow t={t} icon="palette" label="Appearance" />
@@ -350,7 +332,7 @@ const AboutScreen = ({ t }) => (
 );
 
 Object.assign(window, {
-  RAW_ID, ListTile, SwitchTile, RadioTile, InfoBanner, IdentityCard, OwnerBadge, LogoutDialog,
+  RAW_ID, ListTile, SwitchTile, RadioTile, InfoBanner, IdentityCard, LogoutDialog,
   SettingsGroup, SettingsSwitchRow, SettingsNavRow, SettingsRadioRow, ThemeOptionCard,
   LangRow, FlagUK, FlagUA, SysCircle, Thumb,
   SettingsRootScreen, NotificationsScreen, AppearanceScreen, LanguageScreen, TermsBody, TermsScreen, AboutScreen,

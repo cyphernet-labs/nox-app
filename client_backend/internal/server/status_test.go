@@ -430,27 +430,37 @@ func forgetOwnerOnDisk(t *testing.T, srv *Server) {
 
 // Every state of the page, enumerated, because the last three defects here were
 // all "the branch I did not think about". Each row is a store shape, the copy it
-// must show, and the copy it must NOT.
+// must show, the copy it must NOT, and whether the page hands out a claim
+// credential at all.
+//
+// offersClaim is the load-bearing column. Copy alone cannot pin this: two of the
+// five states share a sentence, so a row asserting only what is written passes
+// whichever page was rendered - including a claimed, reachable machine printing a
+// live claim link and QR, which is the one outcome here that costs somebody their
+// identity.
 func TestTheServicePageSaysTheRightThingInEveryState(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		arrange func(t *testing.T, ts *httptest.Server, srv *Server)
-		want    string
-		notWant []string
+		name        string
+		arrange     func(t *testing.T, ts *httptest.Server, srv *Server)
+		want        string
+		notWant     []string
+		offersClaim bool
 	}{
 		{
-			name:    "fresh, nobody has claimed it",
-			arrange: func(*testing.T, *httptest.Server, *Server) {},
-			want:    "Nobody has claimed this server yet",
-			notWant: []string{"records no owner", "Your server is waiting", "Running and claimed"},
+			name:        "fresh, nobody has claimed it",
+			arrange:     func(*testing.T, *httptest.Server, *Server) {},
+			want:        "Nobody has claimed this server yet",
+			notWant:     []string{"records no owner", "Your server is waiting", "Running and claimed"},
+			offersClaim: true,
 		},
 		{
 			name: "claimed and reachable",
 			arrange: func(t *testing.T, ts *httptest.Server, srv *Server) {
 				claimDevice(t, ts, srv)
 			},
-			want:    "Running and claimed",
-			notWant: []string{"records no owner", "Nobody has claimed", "Your server is waiting"},
+			want:        "Running and claimed",
+			notWant:     []string{"records no owner", "Nobody has claimed", "Your server is waiting"},
+			offersClaim: false,
 		},
 		{
 			name: "owner is there, their last device is not",
@@ -460,8 +470,9 @@ func TestTheServicePageSaysTheRightThingInEveryState(t *testing.T) {
 					t.Fatalf("RevokeDevice: %v", err)
 				}
 			},
-			want:    "Your server is waiting for you",
-			notWant: []string{"records no owner", "Nobody has claimed", "Running and claimed"},
+			want:        "Your server is waiting for you",
+			notWant:     []string{"records no owner", "Nobody has claimed", "Running and claimed"},
+			offersClaim: true,
 		},
 		{
 			name: "reachable, but the marker is gone",
@@ -469,8 +480,13 @@ func TestTheServicePageSaysTheRightThingInEveryState(t *testing.T) {
 				claimDevice(t, ts, srv)
 				forgetOwnerOnDisk(t, srv)
 			},
-			want:    "records no owner",
-			notWant: []string{"Running and claimed", "Nobody has claimed"},
+			// "records no owner" alone does NOT identify this page: the
+			// needs-claim branch says it too. The state is pinned by the
+			// sentence that belongs only to the other one, and by the absence
+			// of a claim credential.
+			want:        "records no owner",
+			notWant:     []string{"Running and claimed", "Nobody has claimed", "This server holds a conversation"},
+			offersClaim: false,
 		},
 		{
 			name: "the marker is gone and so is the last device",
@@ -481,8 +497,9 @@ func TestTheServicePageSaysTheRightThingInEveryState(t *testing.T) {
 				}
 				forgetOwnerOnDisk(t, srv)
 			},
-			want:    "This server holds a conversation",
-			notWant: []string{"Nobody has claimed", "Running and claimed", "Your server is waiting"},
+			want:        "This server holds a conversation",
+			notWant:     []string{"Nobody has claimed", "Running and claimed", "Your server is waiting"},
+			offersClaim: true,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -502,6 +519,16 @@ func TestTheServicePageSaysTheRightThingInEveryState(t *testing.T) {
 				if strings.Contains(body, wrong) {
 					t.Fatalf("the page also says %q, which belongs to another state: %s", wrong, body)
 				}
+			}
+			// The credential itself, not the words around it. A page that offers
+			// a claim carries the link (and the QR, when the server is dialable
+			// from anywhere but this machine); presenting it signs a device in as
+			// the person this store belongs to.
+			if got := strings.Contains(body, `class="link"`); got != tc.offersClaim {
+				t.Fatalf("page offers a claim link = %v, want %v: %s", got, tc.offersClaim, body)
+			}
+			if got := strings.Contains(body, "<svg"); got != tc.offersClaim {
+				t.Fatalf("page offers a claim QR = %v, want %v: %s", got, tc.offersClaim, body)
 			}
 		})
 	}

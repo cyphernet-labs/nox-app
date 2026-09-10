@@ -347,7 +347,7 @@ window.NOX_SPECS = [
         "label": "Offline"
       }
     ],
-    "anatomy": "App bar (back + chat name). Message stream with date separators, author headers and bubbles. Composer pinned at bottom.",
+    "anatomy": "App bar (back + chat name + a disabled Invite a person action). Message stream with date separators, author headers and bubbles. Composer pinned at bottom.",
     "behavior": [
       "Messages group by author; an AuthorHeader precedes each group (no per-message avatars in the feed).",
       "Own bubbles = primaryContainer (right, bottom-right corner clipped); others = surfaceContainerHigh (left, bottom-left clipped).",
@@ -432,7 +432,7 @@ window.NOX_SPECS = [
         "label": "Empty"
       }
     ],
-    "anatomy": "App bar (back + chat name). Header: avatar (56) + name (headlineSmall). “Files” section with a List/Grid segmented toggle, then file rows or a grid.",
+    "anatomy": "App bar (back + chat name). Header: avatar (56) + name (headlineSmall). “People” section: one row — the person this machine belongs to — then a disabled Invite a person button with its caption. Hairline, then the “Files” section with a List/Grid segmented toggle and file rows or a grid. The body is one scroll.",
     "behavior": [
       "List rows: file glyph + name (ellipsis) + size + chevron. Grid: square type cells.",
       "Segmented control switches List ⇄ Grid (single-select).",
@@ -517,10 +517,6 @@ window.NOX_SPECS = [
         "label": "Loaded"
       },
       {
-        "key": "loaded-member",
-        "label": "Loaded, ownership not stated or not held"
-      },
-      {
         "key": "editing",
         "label": "Editing name"
       },
@@ -533,11 +529,11 @@ window.NOX_SPECS = [
         "label": "Logging out"
       }
     ],
-    "anatomy": "App bar (Settings). Identity card (name + Server owner badge when the server states it + the public ID). Grouped list: Devices, Notifications, Appearance, Language, Terms, About. Separate destructive Log out group. Bottom bar.",
+    "anatomy": "App bar (Settings). Identity card (name + the public ID). Grouped list: Devices, Notifications, Appearance, Language, Terms, About. Separate destructive Log out group. Bottom bar.",
     "behavior": [
-      "Identity card: name (edit inline) + Server owner badge + the public ID with copy / show-QR actions.",
-      "Owner badge (phase 033): shown only when the server states that this person owns it; \"not stated\" and \"not the owner\" both render nothing. It sits beside the name, and drops onto its own line when the two no longer fit one row.",
-      "Editing: name becomes an inline TextField with counter; the badge stays, above the field - ownership has nothing to do with editing a name.",
+      "Identity card: name (edit inline) + the public ID with copy / show-QR actions.",
+      "Phase 037 removed the Server owner badge and its 'ownership not stated' state: the machine holds one person, so a mark that told the owner apart from an invited member tells nothing apart.",
+      "Editing: name becomes an inline TextField with counter.",
       "Phase 032 removed the mask, the reveal and the account QR: the ID stopped being a secret. Show QR leads to Devices, where an invite is minted with a one-shot token.",
       "Log out → confirm AlertDialog (destructive action tinted error); confirming wipes ID + local data; shows a loading state."
     ],
