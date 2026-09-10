@@ -15,6 +15,14 @@ typedef Identity = ({String id, String label});
 /// - `label`: the session display label when non-empty, else [Constants.defaultUserLabel].
 ///
 /// An empty stored value is treated as absent. Both fields are always non-empty.
+/// The label rule on its own, for callers that hold a label rather than a
+/// session — the live `watchLabel()` channel, for one.
+///
+/// Exists so the rule is written once. A second hand-matched copy agrees only
+/// until somebody changes this one, and then two surfaces show the same person
+/// under different names with nothing failing.
+String resolveLabel(String? label) => (label != null && label.isNotEmpty) ? label : Constants.defaultUserLabel;
+
 Identity resolveIdentity(SessionModel? session) {
   final identifier = session?.identifier;
   final authorId = session?.authorId;
@@ -28,6 +36,6 @@ Identity resolveIdentity(SessionModel? session) {
         : (identifier != null && identifier.isNotEmpty)
         ? identifier
         : IdentityMockData.fallbackOwnId,
-    label: (label != null && label.isNotEmpty) ? label : Constants.defaultUserLabel,
+    label: resolveLabel(label),
   );
 }

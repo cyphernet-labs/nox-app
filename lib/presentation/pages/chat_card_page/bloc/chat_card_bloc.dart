@@ -12,6 +12,7 @@ import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/general/constants.dart';
+import 'package:nox_app/general/identity/identity_resolver.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
 import 'package:rxdart/rxdart.dart';
 
@@ -122,11 +123,10 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
   }
 
   void _onPersonLabelChanged(PersonLabelChanged event, Emitter<ChatCardState> emit) {
-    // Null is logout; empty is a greeting that stated no name. Both are
-    // "absent" - the same test the shell and resolveIdentity use, and treating
-    // empty as a name draws a blank row with a blank avatar.
-    final label = event.label;
-    final next = (label != null && label.isNotEmpty) ? label : Constants.defaultUserLabel;
+    // Through the resolver, not a copy of its rule: null is logout, empty is a
+    // greeting that stated no name, and both mean "absent" everywhere else in
+    // the app. A hand-matched second copy agrees only until this one changes.
+    final next = resolveLabel(event.label);
     if (next == _person) return;
     _person = next;
     final current = state;

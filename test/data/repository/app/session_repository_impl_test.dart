@@ -202,6 +202,35 @@ void main() {
     expect((await repository.readSession()).data?.authorId, isNull);
   });
 
+  group('discarding a sign-in and forgetting a world', () {
+    // Both survived feature 037 and both had their only coverage deleted with
+    // the ownership group they happened to sit in. Their own comments call the
+    // consequences severe, and deleting either `remove` would leave the suite
+    // green while a stranger's name and author id stayed on screen.
+    test('a discarded sign-in leaves neither the author id nor the label behind', () async {
+      await repository.saveIdentifier(identifier: 'sess-1', onboardingComplete: true);
+      await repository.adoptServerIdentity(authorId: 'u_serverA', label: 'Anna');
+
+      await repository.discardSignIn();
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('session.author_id'), isNull, reason: "the next sign-in would mark a stranger's messages as its own");
+      expect(prefs.getString('session.label'), isNull, reason: "settings and both avatars would render a stranger's name");
+    });
+
+    test('forgetting the world drops the author id, and only that', () async {
+      await repository.saveIdentifier(identifier: 'sess-1', onboardingComplete: true);
+      await repository.adoptServerIdentity(authorId: 'u_serverA', label: 'Anna');
+
+      await repository.forgetAuthorId();
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('session.author_id'), isNull);
+      // The session itself is untouched: this is a rebuilt store, not a logout.
+      expect((await repository.readSession()).data?.identifier, 'sess-1');
+    });
+  });
+
   group('the ownership key left by older builds', () {
     test('the first session read sweeps it, without waiting for a logout', () async {
       // Written by builds that still had an owner badge. Nothing reads it now -

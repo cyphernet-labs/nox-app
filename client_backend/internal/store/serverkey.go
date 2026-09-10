@@ -133,10 +133,14 @@ type OwnershipState struct {
 	// ATTACHES to them and their whole conversation, and telling the operator
 	// "the first device to use this becomes the owner" there is simply false.
 	HasPerson bool
-	// OwnerCanGetIn is true when a device can still reach this machine. Read
-	// without the owner id on purpose: a store that lost its ownership marker
-	// still has a person who can get in, and answering "no" there is what makes
-	// startup print a claim link over a machine somebody is using.
+	// OwnerCanGetIn is true when a device can still reach this machine.
+	//
+	// It answers REACHABILITY, not ownership, and the name is kept for the one
+	// decision it drives: whether to offer a claim link. Read without the owner
+	// id on purpose - a store that lost its marker still has a person who can
+	// get in, and answering "no" there prints a link over a machine in use that
+	// Pair would refuse anyway. Use Owned when the question is who the machine
+	// belongs to.
 	OwnerCanGetIn bool
 }
 

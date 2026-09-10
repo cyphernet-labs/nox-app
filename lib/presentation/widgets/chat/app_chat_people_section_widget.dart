@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
+import 'package:nox_app/design/theme/nox_brand.dart';
 import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_ringed_avatar_widget.dart';
 
@@ -36,7 +37,11 @@ class AppChatPeopleSectionWidget extends StatelessWidget {
           SizedBox(height: AppSpacingTokens.s8),
           Row(
             children: [
-              AppRingedAvatarWidget(name: personLabel, size: AppDimensionTokens.size.avatarXs),
+              // A PERSON, so the account initials - not the chat-row ones. The
+              // two rules differ on purpose (nox_brand.dart), and using the
+              // wrong one shows the same human as "US" here and "U" in the
+              // shell avatar two taps away.
+              AppRingedAvatarWidget(name: personLabel, initials: noxAccountInitials(personLabel), size: AppDimensionTokens.size.avatarXs),
               SizedBox(width: AppSpacingTokens.s12),
               Expanded(
                 child: Text(

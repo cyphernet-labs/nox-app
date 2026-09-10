@@ -61,7 +61,7 @@ type machineStatus struct {
 
 // collectStatus reads the machine's own state.
 //
-// Ownership comes from the same ReadOwnershipState the startup announcement
+// Reachability comes from the same ReadOwnershipState the startup announcement
 // reads, and the SAME predicate decides: "claimed" means the owner can still
 // get in. A second definition here is how phase 033's one fact would go back to
 // living in two records - and this one would show a status page to somebody

@@ -263,13 +263,36 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 				// state below, and reachable by the same hand edit. Refusing
 				// would print a link on every restart that no presentation can
 				// ever satisfy, which is the instruction-nobody-can-follow this
-				// path exists to avoid. Mint the person the marker was promising
-				// and point it at them.
-				id, err = insertUser(ctx, tx, "", now)
+				// path exists to avoid.
+				//
+				// Attach to whoever IS here before minting anybody: the machine
+				// holds at most one person, so a row that survived the marker is
+				// the person this store belongs to. Minting unconditionally
+				// collides with the singleton index and turns the recovery into
+				// an internal error - the same permanent lockout, one layer down.
+				people, err := countPeople(ctx, tx)
 				if err != nil {
 					return Identity{}, err
 				}
-				id.Created = true
+				if people == 1 {
+					id, err = soleUser(ctx, tx)
+					if err != nil {
+						return Identity{}, err
+					}
+				} else if people == 0 {
+					id, err = insertUser(ctx, tx, "", now)
+					if err != nil {
+						return Identity{}, err
+					}
+					id.Created = true
+				} else {
+					// More people than the schema admits: this store was not
+					// written by this build, and there is genuinely something to
+					// pick between. Refuse rather than guess.
+					return Identity{}, ErrTokenInvalid
+				}
+				// Re-point the marker unconditionally - it currently names a
+				// ghost, and setOwner only writes into an empty column.
 				if _, err := tx.ExecContext(ctx,
 					"UPDATE server_identity SET owner_user_id = ?, claimed_at = ? WHERE id = 1",
 					id.UserID, now); err != nil {

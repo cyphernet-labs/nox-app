@@ -187,6 +187,33 @@ func TestTheStartupLineDistinguishesAnUnclaimedServerFromAnEmptyOne(t *testing.T
 	if !strings.Contains(owned.String(), "get back in") {
 		t.Fatalf("owned-but-empty store announced %q", owned.String())
 	}
+
+	// And the third: a store that holds the person but lost the marker. This is
+	// the state feature 037 traded the old refusal for, so it is the one line an
+	// operator reads while recovering. Ordering matters here - Owned implies
+	// HasPerson, so a switch that tested HasPerson first would swallow the case
+	// above and pass every other assertion in this test.
+	handle, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open the database again: %v", err)
+	}
+	if _, err := handle.Exec("UPDATE server_identity SET owner_user_id = NULL WHERE id = 1"); err != nil {
+		t.Fatalf("forget the owner: %v", err)
+	}
+	_ = handle.Close()
+
+	stranded := &syncBuffer{}
+	if _, err := announceClaim(ctx, st, "127.0.0.1:8080", mustOwnership(t, st), mustIdentity(t, st), slog.New(slog.NewTextHandler(stranded, nil))); err != nil {
+		t.Fatalf("announceClaim on a store with no marker: %v", err)
+	}
+	if !strings.Contains(stranded.String(), "sign in as the person it belongs to") {
+		t.Fatalf("a store that holds somebody announced %q", stranded.String())
+	}
+	for _, wrong := range []string{"no owner yet", "get back in"} {
+		if strings.Contains(stranded.String(), wrong) {
+			t.Fatalf("announced %q, which is the copy for another state: %q", wrong, stranded.String())
+		}
+	}
 }
 
 // mustIdentity mints or reads the machine identity startup settles first.

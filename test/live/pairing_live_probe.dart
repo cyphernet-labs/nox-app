@@ -39,6 +39,11 @@ void main() {
     final session = getIt<SessionRepository>();
     final devices = getIt<DeviceRepository>();
 
+    // An install upgraded from a build that still wrote the ownership key. The
+    // sweep has nothing to prove on a fresh one, and this probe is the only
+    // place the whole path runs against a real server.
+    await (await SharedPreferences.getInstance()).setBool('session.is_owner', true);
+
     final signedIn = await auth.signIn(identifier: link);
     stdout.writeln('SIGN IN: ${signedIn.hasData ? 'ok' : signedIn.exception}');
     expect(signedIn.hasData, isTrue, reason: 'the whole flow starts here');
@@ -83,11 +88,11 @@ void main() {
     expect(out.hasData, isTrue);
     expect((await session.readSession()).data, isNull);
     expect((await session.serverAddress()).data, isNull);
-    // The key an older build wrote goes with the session too. Nothing reads it
-    // any more, but an install upgraded from such a build would otherwise carry
-    // it for the life of the device.
+    // The key an older build wrote is gone. Seeded above BEFORE the sign-in,
+    // because a fresh install never has it - and an assertion on a key nothing
+    // ever wrote passes whether the sweep exists or not.
     final prefs = await SharedPreferences.getInstance();
-    expect(prefs.getBool('session.is_owner'), isNull);
+    expect(prefs.getBool('session.is_owner'), isNull, reason: 'the legacy key survived a full session');
     expect(prefs.getString('session.author_id'), isNull);
 
     // And the key really is gone on the server: the same link cannot be reused,

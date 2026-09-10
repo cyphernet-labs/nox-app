@@ -58,7 +58,12 @@ start the server with <code>-addr</code> set to an address on your network.</p>{
 
 {{else}}
 <h1>NOX server</h1>
-<p class="lead">Running and claimed.</p>
+{{if .Owned}}<p class="lead">Running and claimed.</p>
+{{else}}<p class="lead">Running. Your devices reach it normally.</p>
+<p class="warn">This server records no owner, which no normal sequence of events produces &mdash; a
+restore or a hand edit most likely. Nothing is broken: the devices already paired keep working. The
+marker is written back the next time the machine is claimed, which needs every device signed out
+first.</p>{{end}}
 {{end}}
 
 {{if ne .State 0}}

@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
-import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/model/app/session_model.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/general/pairing/device_keys.dart';
@@ -82,23 +81,23 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
 
   /// Never allowed to fail the read it rides on.
   ///
-  /// readSession sits inside `execute`, so a throw here would come back as a
-  /// repository ERROR - and on a cold start that lands the person on Login with
-  /// a perfectly good session, one tap from a full local wipe. A dead key that
-  /// survives one more launch costs nothing; a signed-in person thrown out
-  /// costs everything.
+  /// readSession sits inside `execute`, so anything thrown here comes back as a
+  /// repository ERROR - and on a cold start that lands a validly signed-in
+  /// person on Login, one tap from a full local wipe. A dead key that survives
+  /// to the next launch costs nothing; that person costs everything.
+  ///
+  /// Marked done BEFORE the work, so a failure retries on the next launch
+  /// rather than on the next read - readSession is the app's hottest, and a
+  /// storage that is refusing writes would be asked again on every one of them.
+  /// Nothing is logged from the catch either: the log alias is a container
+  /// lookup, and a lookup that throws inside a catch escapes it.
   Future<void> _sweepLegacyKeys() async {
     if (_legacySwept) return;
-    if (!_prefs.containsKey(_kLegacyIsOwner)) {
-      _legacySwept = true;
-      return;
-    }
+    _legacySwept = true;
     try {
-      await _prefs.remove(_kLegacyIsOwner);
-      _legacySwept = true;
-    } on Object catch (error) {
-      // Deliberately NOT marked swept: the next launch tries again.
-      logRepository.debug(target: this, message: 'legacy prefs sweep deferred: $error');
+      if (_prefs.containsKey(_kLegacyIsOwner)) await _prefs.remove(_kLegacyIsOwner);
+    } on Object {
+      // Next launch.
     }
   }
 

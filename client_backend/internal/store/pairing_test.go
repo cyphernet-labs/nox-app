@@ -941,3 +941,48 @@ func TestAClaimRecoversAMachineWhoseOwnerRowIsGone(t *testing.T) {
 		t.Fatalf("resolved %q, want %q", id.UserID, back.UserID)
 	}
 }
+
+// The shape the first attempt at this recovery got wrong: the marker names a
+// ghost AND a real person is still there. Minting unconditionally collides with
+// the singleton index and turns the recovery into an internal error - the same
+// permanent lockout one layer down.
+func TestAGhostOwnerMarkerAttachesToThePersonWhoIsActuallyThere(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	owner := claimOwner(t, s, "dev-owner")
+	if err := s.RevokeDevice(ctx, "dev-owner"); err != nil {
+		t.Fatalf("RevokeDevice: %v", err)
+	}
+	// A marker naming somebody who never existed, over a store that still holds
+	// its real person. Foreign keys off, because that is the only way to reach
+	// this state - and the way a hand edit through the sqlite3 CLI reaches it.
+	if _, err := s.write.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {
+		t.Fatalf("relax foreign keys: %v", err)
+	}
+	if _, err := s.write.ExecContext(ctx,
+		"UPDATE server_identity SET owner_user_id = 'u_ghost0000000000' WHERE id = 1"); err != nil {
+		t.Fatalf("point the marker at a ghost: %v", err)
+	}
+
+	token, err := s.IssueClaimToken(ctx, 500)
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+	back, err := pairID(ctx, s, token, "dev-new", "test", 500)
+	if err != nil {
+		t.Fatalf("claim over a ghost marker: %v", err)
+	}
+	if back.UserID != owner.UserID {
+		t.Fatalf("attached to %q, want the person who was already here (%q)", back.UserID, owner.UserID)
+	}
+	if back.Created {
+		t.Fatal("nobody was created here; the person predates the claim")
+	}
+	machine, err := s.ServerIdentity(ctx)
+	if err != nil {
+		t.Fatalf("ServerIdentity: %v", err)
+	}
+	if machine.OwnerUserID != owner.UserID {
+		t.Fatalf("marker = %q, want it re-pointed at %q", machine.OwnerUserID, owner.UserID)
+	}
+}

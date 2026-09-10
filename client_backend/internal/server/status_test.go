@@ -477,3 +477,25 @@ func TestAnOwnerWithNoDevicesIsNotToldTheirDatabaseWasEdited(t *testing.T) {
 		}
 	}
 }
+
+// "Claimed" and "reachable" stopped being the same question. A store whose
+// ownership marker is missing but whose devices still work is running normally,
+// and the page must say so without claiming an owner it does not record.
+func TestAReachableServerWithNoOwnerMarkerSaysWhatIsActuallyTrue(t *testing.T) {
+	ts, srv := newTestServer(t)
+	dialable(srv)
+	claimDevice(t, ts, srv)
+	forgetOwnerOnDisk(t, srv)
+
+	body := statusBody(t, srv)
+	if strings.Contains(body, "Running and claimed") {
+		t.Fatalf("the page claims an owner the store does not record: %s", body)
+	}
+	if !strings.Contains(body, "records no owner") {
+		t.Fatalf("the page says nothing about the missing marker: %s", body)
+	}
+	// And no claim link: a device is paired, so Pair would refuse one anyway.
+	if strings.Contains(body, "https://nox.app/p/#") {
+		t.Fatalf("a link is offered that Pair would refuse: %s", body)
+	}
+}
