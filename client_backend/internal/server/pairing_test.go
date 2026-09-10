@@ -306,55 +306,6 @@ func mustRaw(t *testing.T, data map[string]json.RawMessage) json.RawMessage {
 
 var _ = websocket.StatusNormalClosure
 
-// The pair reply says "you own this machine" in the same frame that says who
-// you are. Waiting for the next greeting to learn it would leave the device
-// that just claimed the server unable to say so.
-func TestPairAndGreetingBothCarryOwnership(t *testing.T) {
-	ts, srv := newTestServer(t)
-	dev, claimed := claimDevice(t, ts, srv)
-
-	var claimedIdentity identity
-	mustUnmarshal(t, claimed["identity"], &claimedIdentity)
-	if !claimedIdentity.Owner {
-		t.Fatal("the pair reply does not say the claimer owns the server")
-	}
-
-	c := dialWS(t, ts, srv)
-	c.expectGreeting()
-	var greeted identity
-	mustUnmarshal(t, c.greet(t, 1, dev, "")["identity"], &greeted)
-	if !greeted.Owner {
-		t.Fatal("the greeting does not say this person owns the server")
-	}
-	if greeted.ID != claimedIdentity.ID {
-		t.Fatalf("greeting is about %q, pair was about %q", greeted.ID, claimedIdentity.ID)
-	}
-}
-
-// The field must be WRITTEN, not merely true. An accidental omitempty passes
-// every test that unmarshals into a struct - the zero value looks identical -
-// and costs the owner their badge against a client that reads a missing field
-// as "not stated". So this one looks at the bytes.
-func TestOwnershipFieldIsAlwaysOnTheWireEvenWhenFalse(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		frame any
-	}{
-		{"greeting", greetingIdentity{ID: "u_1", Label: "Anna"}},
-		{"pair reply", identity{greetingIdentity: greetingIdentity{ID: "u_1", Label: "Anna"}}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			raw, err := json.Marshal(tc.frame)
-			if err != nil {
-				t.Fatalf("marshal: %v", err)
-			}
-			if !bytes.Contains(raw, []byte(`"owner":false`)) {
-				t.Fatalf("frame = %s, want an explicit \"owner\":false", raw)
-			}
-		})
-	}
-}
-
 // Ownership answers about the ASKER. The machine never names its owner on the
 // wire: rules are enforced server-side, so another person's id has no reason
 // to travel, and a field carrying it would have to be explained later.
@@ -402,9 +353,6 @@ func TestReClaimAfterLosingEveryDeviceReturnsTheSameOwner(t *testing.T) {
 
 	if after.ID != before.ID {
 		t.Fatalf("came back as %q, want the same person %q", after.ID, before.ID)
-	}
-	if !after.Owner {
-		t.Fatal("the person who came back no longer owns their own machine")
 	}
 	if after.Created {
 		t.Fatal("re-claim reported creating a person who already existed")

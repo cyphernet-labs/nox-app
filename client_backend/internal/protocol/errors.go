@@ -20,14 +20,4 @@ const (
 	ErrInvalidToken    = "invalid_token"
 	ErrTokenExpired    = "token_expired"
 	ErrUnauthenticated = "unauthenticated"
-
-	// Person invites (§8B). Three codes rather than one because each leads a
-	// person to a different action: not_owner means "this is not about the
-	// link and not about the network, and repeating will not help",
-	// pair_declined means "do not insist", pair_timeout means "ask again".
-	// One shared refusal would force the app to invent wording it does not
-	// know.
-	ErrNotOwner     = "not_owner"
-	ErrPairDeclined = "pair_declined"
-	ErrPairTimeout  = "pair_timeout"
 )

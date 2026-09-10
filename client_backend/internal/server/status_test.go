@@ -110,10 +110,15 @@ func TestAClaimedServerShowsTheMachineAndNoLink(t *testing.T) {
 	if strings.Contains(body, "<svg") {
 		t.Fatalf("a claimed server still draws a QR: %s", body)
 	}
-	for _, want := range []string{"Version", "Uptime", "Schema", "Storage id", "Database", "People", "Devices", "Chats", "Messages"} {
+	for _, want := range []string{"Version", "Uptime", "Schema", "Storage id", "Database", "Devices", "Chats", "Messages"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the claimed page does not show %q: %s", want, body)
 		}
+	}
+	// Nothing counts people any more: this machine holds exactly one, so the
+	// number would say the same thing on every server that ever runs.
+	if strings.Contains(body, "People") {
+		t.Fatalf("the page still counts people: %s", body)
 	}
 	// This one refreshes: uptime and counters shown without one read as now.
 	if !strings.Contains(body, `http-equiv="refresh"`) {
@@ -137,23 +142,6 @@ func TestAnOwnerWithNoDevicesLeftIsOfferedTheLinkAgain(t *testing.T) {
 	}
 	if !strings.Contains(statusBody(t, srv), "https://nox.app/p/#") {
 		t.Fatal("an owner who lost every device is not offered a way back in")
-	}
-}
-
-// The anomaly of phase 033: people, no owner. Pair refuses a claim there, so a
-// link would be an instruction nobody can follow.
-func TestAStoreWithPeopleAndNoOwnerOffersNothingToScan(t *testing.T) {
-	ts, srv := newTestServer(t)
-	dialable(srv)
-	claimDevice(t, ts, srv)
-	orphanStore(t, srv)
-
-	body := statusBody(t, srv)
-	if strings.Contains(body, "https://nox.app/p/#") || strings.Contains(body, "<svg") {
-		t.Fatalf("an ownerless store offers a claim it would refuse: %s", body)
-	}
-	if !strings.Contains(body, "no owner") {
-		t.Fatalf("an ownerless store does not say so: %s", body)
 	}
 }
 

@@ -12,7 +12,6 @@ import (
 // name, a title, a message body or a key. The queries below touch no such
 // column - that is stronger than a page that merely declines to print them.
 type Counts struct {
-	People   int64
 	Devices  int64
 	Chats    int64
 	Messages int64
@@ -26,11 +25,10 @@ type Counts struct {
 func (s *Store) CountEverything(ctx context.Context) (Counts, error) {
 	var c Counts
 	err := s.read.QueryRowContext(ctx, `
-		SELECT (SELECT COUNT(1) FROM users),
-		       (SELECT COUNT(1) FROM devices),
+		SELECT (SELECT COUNT(1) FROM devices),
 		       (SELECT COUNT(1) FROM chats),
 		       (SELECT COUNT(1) FROM messages)`).
-		Scan(&c.People, &c.Devices, &c.Chats, &c.Messages)
+		Scan(&c.Devices, &c.Chats, &c.Messages)
 	if err != nil {
 		return Counts{}, fmt.Errorf("count store contents: %w", err)
 	}

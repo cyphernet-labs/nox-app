@@ -89,14 +89,6 @@ const (
 	CmdDeviceRevoke     = "device.revoke"
 	CmdDeviceInvite     = "device.invite"
 	CmdIdentitySetLabel = "identity.setLabel"
-
-	// Person invites (§8B). person.list is open to any paired device: names
-	// are not a secret - they ride every message as author_label - and the
-	// owner mark answers the same question a person's own greeting already
-	// answers. The other two are the owner's alone.
-	CmdPersonInvite  = "person.invite"
-	CmdPersonList    = "person.list"
-	CmdPersonConfirm = "person.confirm"
 )
 
 // EventDeviceRevoked is delivered to the device being cut off, immediately
@@ -110,28 +102,6 @@ const EventDeviceRevoked = "device.revoked"
 // name until it reconnects - and stamps that old name into message history,
 // which is frozen at send time.
 const EventIdentityUpdated = "identity.updated"
-
-// EventPairRequested is delivered to every live connection of the OWNER when
-// somebody presents a person invite, and re-sent to each of the owner's
-// devices right after a successful greeting - one frame per request still
-// waiting. Without the re-send the question is only ever seen by a device that
-// happened to be online in the right second, and a five-minute wait would
-// almost always expire for nothing.
-//
-// It says nothing about who is knocking, because the server knows nothing:
-// before joining, the invitee is a presented token. The platform their
-// unauthenticated device sent is a claim, not a fact, and is not shown as one.
-const EventPairRequested = "person.pairRequested"
-
-// EventPairResolved is delivered to the waiting connection AND to every device
-// of the owner: the first needs the outcome, the rest need the question to
-// leave their screens rather than only the one that answered it.
-//
-// Like device.revoked and identity.updated it carries seq 0 and never enters
-// the event log: the log is global, and who is joining this machine is not the
-// shared world (invariant 3). In the log it would wake every device of every
-// person, including those the decision does not concern.
-const EventPairResolved = "person.pairResolved"
 
 // Chat is the wire model of contract §4 (022: preview served but unused by
 // any implemented command; it feeds chats.list in phase 023).

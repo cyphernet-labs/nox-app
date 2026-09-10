@@ -27,17 +27,7 @@ func TestCountsFollowWhatTheStoreHolds(t *testing.T) {
 	ctx := context.Background()
 	owner := claimOwner(t, s, "dev-owner")
 
-	// Two people.
-	token, err := s.IssuePersonInvite(ctx, owner.UserID, 200)
-	if err != nil {
-		t.Fatalf("IssuePersonInvite: %v", err)
-	}
-	req := present(t, s, token, "dev-guest", 300)
-	guest, err := s.ConfirmPair(ctx, req.RequestID, owner.UserID, true, 310)
-	if err != nil {
-		t.Fatalf("ConfirmPair: %v", err)
-	}
-	// Three devices.
+	// Two devices.
 	invite, err := s.IssueDeviceInvite(ctx, owner.UserID, 400)
 	if err != nil {
 		t.Fatalf("IssueDeviceInvite: %v", err)
@@ -51,7 +41,7 @@ func TestCountsFollowWhatTheStoreHolds(t *testing.T) {
 		t.Fatalf("CreateChat: %v", err)
 	}
 	for i := range 4 {
-		if _, _, _, err := s.SendMessage(ctx, chat.ChatID, fmt.Sprintf("m%d", i), guest.Identity,
+		if _, _, _, err := s.SendMessage(ctx, chat.ChatID, fmt.Sprintf("m%d", i), owner,
 			json.RawMessage(`{"type":"text","text":"x"}`), "", int64(600+i)); err != nil {
 			t.Fatalf("SendMessage: %v", err)
 		}
@@ -61,7 +51,7 @@ func TestCountsFollowWhatTheStoreHolds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CountEverything: %v", err)
 	}
-	want := Counts{People: 2, Devices: 3, Chats: 1, Messages: 4}
+	want := Counts{Devices: 2, Chats: 1, Messages: 4}
 	if got != want {
 		t.Fatalf("counts = %+v, want %+v", got, want)
 	}

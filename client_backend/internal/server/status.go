@@ -23,7 +23,6 @@ type machineState int
 const (
 	stateNeedsClaim machineState = iota
 	stateClaimed
-	stateOwnerless
 )
 
 // machineStatus is everything the service page shows, gathered per request.
@@ -45,7 +44,6 @@ type machineStatus struct {
 	DBBytes   int64
 	Version   string
 	Uptime    time.Duration
-	Warnings  []string
 }
 
 // collectStatus reads the machine's own state.
@@ -76,12 +74,9 @@ func (s *Server) collectStatus(ctx context.Context) (machineStatus, error) {
 		DBBytes:   fileSize(s.cfg.DBPath),
 		Version:   buildVersion(),
 		Uptime:    time.Since(s.startedAt),
-		Warnings:  s.warnings,
 	}
 
 	switch {
-	case ownership.Stranded:
-		status.State = stateOwnerless
 	case ownership.OwnerCanGetIn:
 		status.State = stateClaimed
 	default:

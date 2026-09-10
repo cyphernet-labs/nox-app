@@ -11,13 +11,30 @@ import (
 	"nox.app/client-backend/internal/db"
 )
 
-// pairID presents a token and flattens the result to the identity, for the
-// many tests that expect a pairing to COMPLETE. Person invites do not complete
-// here - they wait for the owner - so tests about those call Pair directly and
-// read PairResult.Pending.
+// pairID presents a token and returns the identity it produced. Kept as a
+// helper so the many call sites read the same way; Pair returns the identity
+// directly now that pairing always finishes.
 func pairID(ctx context.Context, s *Store, token, deviceKey, platform string, now int64) (Identity, error) {
-	res, err := s.Pair(ctx, token, deviceKey, platform, now)
-	return res.Identity, err
+	return s.Pair(ctx, token, deviceKey, platform, now)
+}
+
+// claimOwner claims a fresh server and returns the identity of the person it
+// now belongs to.
+func claimOwner(t *testing.T, s *Store, deviceKey string) Identity {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := s.EnsureServerIdentity(ctx); err != nil {
+		t.Fatalf("EnsureServerIdentity: %v", err)
+	}
+	token, err := s.IssueClaimToken(ctx, 100)
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+	id, err := pairID(ctx, s, token, deviceKey, "test", 100)
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	return id
 }
 
 func TestServerKeyIsMintedOnceAndSurvivesRestart(t *testing.T) {
@@ -437,9 +454,6 @@ func TestClaimMakesThePersonTheOwner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Pair: %v", err)
 	}
-	if !id.Owner {
-		t.Fatal("the person who claimed the server does not own it")
-	}
 
 	machine, err := s.ServerIdentity(ctx)
 	if err != nil {
@@ -452,57 +466,6 @@ func TestClaimMakesThePersonTheOwner(t *testing.T) {
 	// and it is written by the very statement this feature rewrote.
 	if machine.ClaimedAt != 100 {
 		t.Fatalf("claimed_at = %d, want 100: the timestamp must survive the switch to owner-based decisions", machine.ClaimedAt)
-	}
-}
-
-// Ownership belongs to the PERSON, so their second device owns exactly what
-// their first one does. A flag that described the connection would answer
-// differently here, and the badge would flicker between devices.
-func TestAnInvitedDeviceOfTheOwnerAlsoReportsOwnership(t *testing.T) {
-	s := newStore(t)
-	ctx := context.Background()
-	owner := claimPerson(t, s, "dev-phone")
-
-	token, err := s.IssueDeviceInvite(ctx, owner.UserID, 200)
-	if err != nil {
-		t.Fatalf("IssueDeviceInvite: %v", err)
-	}
-	second, err := pairID(ctx, s, token, "dev-desktop", "test", 200)
-	if err != nil {
-		t.Fatalf("Pair second device: %v", err)
-	}
-	if !second.Owner {
-		t.Fatal("the owner's second device does not report ownership")
-	}
-	if second.Created {
-		t.Fatal("adding a device must not report having created a person")
-	}
-}
-
-// The replay path answers about the same person, so it must answer the same
-// way about ownership. It reads the owner rather than inferring it from the
-// token kind - an invite replay is about a person who may or may not own.
-func TestAReplayedClaimStillReportsOwnership(t *testing.T) {
-	s := newStore(t)
-	ctx := context.Background()
-	if _, err := s.EnsureServerIdentity(ctx); err != nil {
-		t.Fatalf("EnsureServerIdentity: %v", err)
-	}
-	token, err := s.IssueClaimToken(ctx, 100)
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
-	}
-	first, err := pairID(ctx, s, token, "dev-phone", "test", 100)
-	if err != nil {
-		t.Fatalf("Pair: %v", err)
-	}
-
-	replay, err := pairID(ctx, s, token, "dev-phone", "test", 150)
-	if err != nil {
-		t.Fatalf("replayed Pair: %v", err)
-	}
-	if replay.UserID != first.UserID || !replay.Owner {
-		t.Fatalf("replay = %+v, want the same person still owning the server", replay)
 	}
 }
 
@@ -528,9 +491,6 @@ func TestReClaimKeepsOwnershipWithTheExistingPerson(t *testing.T) {
 	}
 	if back.UserID != owner.UserID {
 		t.Fatalf("re-claim landed on %q, want the existing person %q", back.UserID, owner.UserID)
-	}
-	if !back.Owner {
-		t.Fatal("the person who came back is no longer the owner")
 	}
 	if back.Created {
 		t.Fatal("re-claim reported creating a person who already existed")
@@ -568,139 +528,6 @@ func TestClaimedIsReadFromTheOwnerAndNotFromTheTimestamp(t *testing.T) {
 	}
 }
 
-// The re-claim follows the OWNER, not the oldest row. Once a second person can
-// exist - which is what 034 brings - picking by row order would hand a fresh
-// device somebody else's identity together with all of their history.
-func TestReClaimFollowsTheOwnerAndNotTheOldestPerson(t *testing.T) {
-	s := newStore(t)
-	ctx := context.Background()
-	if _, err := s.EnsureServerIdentity(ctx); err != nil {
-		t.Fatalf("EnsureServerIdentity: %v", err)
-	}
-	owner := claimPerson(t, s, "dev-owner")
-	// A guest whose row sorts BEFORE the owner's. Written directly, because a
-	// server holds one person until invite-user (Q15) - this is the shape 034
-	// produces, and the ordering is what makes the old `onlyUser` inference
-	// pick the wrong one.
-	if _, err := s.write.ExecContext(ctx,
-		"INSERT INTO users (user_id, label, created_at) VALUES ('u_guest', 'Guest', 1)"); err != nil {
-		t.Fatalf("insert guest: %v", err)
-	}
-	if err := s.RevokeDevice(ctx, "dev-owner"); err != nil {
-		t.Fatalf("RevokeDevice: %v", err)
-	}
-
-	token, err := s.IssueClaimToken(ctx, 300)
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
-	}
-	back, err := pairID(ctx, s, token, "dev-new", "test", 300)
-	if err != nil {
-		t.Fatalf("re-claim: %v", err)
-	}
-	if back.UserID != owner.UserID {
-		t.Fatalf("re-claim landed on %q, want the OWNER %q - not the oldest row", back.UserID, owner.UserID)
-	}
-	if !back.Owner {
-		t.Fatal("the owner came back without their ownership")
-	}
-}
-
-// A store holding people but no owner is reachable only by hand-editing the
-// database. Both available guesses are worse than a refusal and neither is
-// undoable: attaching by row order hands a stranger somebody's history, and
-// minting a new person orphans it.
-func TestClaimIsRefusedOnAStoreWithPeopleButNoOwner(t *testing.T) {
-	s := newStore(t)
-	ctx := context.Background()
-	claimPerson(t, s, "dev-phone")
-	if err := s.RevokeDevice(ctx, "dev-phone"); err != nil {
-		t.Fatalf("RevokeDevice: %v", err)
-	}
-	if _, err := s.write.ExecContext(ctx, "UPDATE server_identity SET owner_user_id = NULL WHERE id = 1"); err != nil {
-		t.Fatalf("clear owner: %v", err)
-	}
-
-	token, err := s.IssueClaimToken(ctx, 400)
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
-	}
-	if _, err := pairID(ctx, s, token, "dev-stranger", "test", 400); !errors.Is(err, ErrTokenInvalid) {
-		t.Fatalf("err = %v, want ErrTokenInvalid: an ownerless store must not let a stranger into somebody's history", err)
-	}
-}
-
-// The pair reply may not promise ownership the row does not hold. setOwner is
-// conditional, so a claim that loses the race must answer honestly - otherwise
-// the badge appears and the next greeting takes it away.
-func TestPairNeverReportsOwnershipTheRowDoesNotHold(t *testing.T) {
-	s := newStore(t)
-	ctx := context.Background()
-	if _, err := s.EnsureServerIdentity(ctx); err != nil {
-		t.Fatalf("EnsureServerIdentity: %v", err)
-	}
-	// Somebody already owns the machine, and has no device left - so a claim is
-	// still accepted, and it must land on THEM.
-	if _, err := s.write.ExecContext(ctx,
-		"INSERT INTO users (user_id, label, created_at) VALUES ('u_owner', 'Owner', 1)"); err != nil {
-		t.Fatalf("insert owner: %v", err)
-	}
-	if _, err := s.write.ExecContext(ctx,
-		"UPDATE server_identity SET owner_user_id = 'u_owner', claimed_at = 1 WHERE id = 1"); err != nil {
-		t.Fatalf("set owner: %v", err)
-	}
-
-	token, err := s.IssueClaimToken(ctx, 500)
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
-	}
-	id, err := pairID(ctx, s, token, "dev-new", "test", 500)
-	if err != nil {
-		t.Fatalf("Pair: %v", err)
-	}
-	if id.UserID != "u_owner" || !id.Owner {
-		t.Fatalf("pair answered %+v, want the existing owner still owning", id)
-	}
-}
-
-// A device key already belonging to somebody is not up for grabs. The key is
-// public - it rides every greeting and device.list prints it - so rebinding on
-// conflict would let anyone who can issue an invite name a stranger's key and
-// walk off with their device.
-//
-// The reply and the row still have to agree; refusing is how, not rebinding.
-func TestPairingSomebodyElsesDeviceKeyIsRefused(t *testing.T) {
-	s := newStore(t)
-	ctx := context.Background()
-	owner := claimPerson(t, s, "dev-shared")
-
-	// A second person, and an invite of theirs presented by the SAME key.
-	if _, err := s.write.ExecContext(ctx,
-		"INSERT INTO users (user_id, label, created_at) VALUES ('u_guest', 'Guest', 200)"); err != nil {
-		t.Fatalf("insert guest: %v", err)
-	}
-	token, err := s.IssueDeviceInvite(ctx, "u_guest", 200)
-	if err != nil {
-		t.Fatalf("IssueDeviceInvite: %v", err)
-	}
-	if _, err := pairID(ctx, s, token, "dev-shared", "test", 200); !errors.Is(err, ErrTokenInvalid) {
-		t.Fatalf("err = %v, want ErrTokenInvalid: a paired device must not change hands", err)
-	}
-
-	// The device still belongs to the person who paired it, and still answers
-	// as them - with their ownership.
-	greeted, err := s.ResolveIdentity(ctx, "dev-shared", "", 300)
-	if err != nil {
-		t.Fatalf("ResolveIdentity: %v", err)
-	}
-	if greeted.UserID != owner.UserID {
-		t.Fatalf("the device now answers as %q, want its owner %q", greeted.UserID, owner.UserID)
-	}
-	if !greeted.Owner {
-		t.Fatal("the device lost its person's ownership")
-	}
-}
-
 // Re-pairing a device to the SAME person stays allowed: that is an ordinary
 // repeat, not a takeover.
 func TestPairingYourOwnDeviceKeyAgainIsAccepted(t *testing.T) {
@@ -716,43 +543,9 @@ func TestPairingYourOwnDeviceKeyAgainIsAccepted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("re-pairing my own device: %v", err)
 	}
-	if again.UserID != owner.UserID || !again.Owner {
-		t.Fatalf("answered %+v, want the same person still owning", again)
+	if again.UserID != owner.UserID {
+		t.Fatalf("answered %+v, want the same person", again)
 	}
-}
-
-// A replay answers about the device's person and reports the outcome computed
-// from the token, so the two must belong together. Otherwise a claim token
-// replayed by a device that now belongs to somebody else would report
-// `created: true` about an existing, already-named person - walking them back
-// through the naming screen under a stranger's identity.
-func TestAReplayWhoseTokenAndDeviceDisagreeIsNotAnswered(t *testing.T) {
-	s := newStore(t)
-	ctx := context.Background()
-	owner := claimPerson(t, s, "dev-phone")
-
-	// A second person and a spent invite of theirs, with the device still
-	// belonging to the owner. Written directly: pairing refuses to produce this
-	// state, and that refusal is what the test above pins - this one covers the
-	// replay path if the state is ever reached another way.
-	if _, err := s.write.ExecContext(ctx,
-		"INSERT INTO users (user_id, label, created_at) VALUES ('u_guest', 'Guest', 200)"); err != nil {
-		t.Fatalf("insert guest: %v", err)
-	}
-	token, err := s.IssueDeviceInvite(ctx, "u_guest", 200)
-	if err != nil {
-		t.Fatalf("IssueDeviceInvite: %v", err)
-	}
-	if _, err := s.write.ExecContext(ctx,
-		"UPDATE pair_tokens SET used_at = 200 WHERE token = ?", token); err != nil {
-		t.Fatalf("burn token: %v", err)
-	}
-
-	// The replay must not answer about the owner using the guest's token.
-	if _, err := pairID(ctx, s, token, "dev-phone", "test", 300); !errors.Is(err, ErrTokenInvalid) {
-		t.Fatalf("err = %v, want ErrTokenInvalid: the token names one person and the device another", err)
-	}
-	_ = owner
 }
 
 // A spent token answers only the device that spent it. Before used_by existed,
@@ -855,42 +648,6 @@ func TestAStoreWithPeopleAndNoServerIdentityRefusesToMintANewKey(t *testing.T) {
 	}
 }
 
-// The owner is not locked out of their own machine by somebody else's device.
-// Counting every device on the server - rather than the owner's - would do
-// exactly that once 034 puts a guest on it: the owner logs out, a guest device
-// keeps running, and the owner's own claim link is refused for ever.
-func TestAGuestDeviceDoesNotBlockTheOwnersReClaim(t *testing.T) {
-	s := newStore(t)
-	ctx := context.Background()
-	owner := claimPerson(t, s, "dev-owner")
-
-	// A guest with a live device. Written directly: 034 is what produces this.
-	if _, err := s.write.ExecContext(ctx,
-		"INSERT INTO users (user_id, label, created_at) VALUES ('u_guest', 'Guest', 200)"); err != nil {
-		t.Fatalf("insert guest: %v", err)
-	}
-	if _, err := s.write.ExecContext(ctx,
-		"INSERT INTO devices (device_key, user_id, platform, created_at, last_seen_at) VALUES ('dev-guest', 'u_guest', 'test', 200, 200)"); err != nil {
-		t.Fatalf("insert guest device: %v", err)
-	}
-	// The owner logs out: their last device goes, the guest's stays.
-	if err := s.RevokeDevice(ctx, "dev-owner"); err != nil {
-		t.Fatalf("RevokeDevice: %v", err)
-	}
-
-	token, err := s.IssueClaimToken(ctx, 300)
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
-	}
-	back, err := pairID(ctx, s, token, "dev-owner-new", "test", 300)
-	if err != nil {
-		t.Fatalf("the owner cannot get back into their own machine: %v", err)
-	}
-	if back.UserID != owner.UserID || !back.Owner {
-		t.Fatalf("re-claim answered %+v, want the owner back", back)
-	}
-}
-
 // And a claim is still refused while the owner HAS a device: that is the rule
 // the count exists for.
 func TestAClaimIsStillRefusedWhileTheOwnerHasADevice(t *testing.T) {
@@ -961,42 +718,6 @@ func TestAReplayAnswersWithWhatTheTokenProducedNotWhoHoldsTheKeyNow(t *testing.T
 	}
 }
 
-// A replay must not slip past the takeover refusal. Answering from the token's
-// own record is right, but only while the device it names still belongs to the
-// person it produced - otherwise a key rebound to somebody else is handed that
-// person's identity, label and ownership, and the client writes all three onto
-// the wrong device.
-func TestAReplayIsRefusedOnceTheDeviceBelongsToSomebodyElse(t *testing.T) {
-	s := newStore(t)
-	ctx := context.Background()
-	if _, err := s.EnsureServerIdentity(ctx); err != nil {
-		t.Fatalf("EnsureServerIdentity: %v", err)
-	}
-	claim, err := s.IssueClaimToken(ctx, 100)
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
-	}
-	produced, err := pairID(ctx, s, claim, "dev-x", "test", 100)
-	if err != nil {
-		t.Fatalf("Pair: %v", err)
-	}
-
-	// dev-x ends up bound to somebody else. Written directly: Pair refuses to
-	// produce this, and a restore is what reaches it today.
-	if _, err := s.write.ExecContext(ctx,
-		"INSERT INTO users (user_id, label, created_at) VALUES ('u_other', 'Other', 200)"); err != nil {
-		t.Fatalf("insert other: %v", err)
-	}
-	if _, err := s.write.ExecContext(ctx,
-		"UPDATE devices SET user_id = 'u_other' WHERE device_key = 'dev-x'"); err != nil {
-		t.Fatalf("rebind device: %v", err)
-	}
-
-	if _, err := pairID(ctx, s, claim, "dev-x", "test", 300); !errors.Is(err, ErrTokenInvalid) {
-		t.Fatalf("err = %v, want ErrTokenInvalid: the replay handed over %q's identity", err, produced.UserID)
-	}
-}
-
 // countAllDevices is the total this feature deliberately stopped deciding by;
 // tests still assert on it, so it lives here rather than on the Store.
 func countAllDevices(ctx context.Context, q rowQuerier) (int, error) {
@@ -1005,4 +726,38 @@ func countAllDevices(ctx context.Context, q rowQuerier) (int, error) {
 		return 0, err
 	}
 	return n, nil
+}
+
+// The three tests this replaced each began by inserting a second person by
+// hand, to check that one person's device could not be taken over by another.
+// That situation is now unrepresentable rather than merely refused, so the
+// schema is what gets tested. The takeover guard in Pair stays where it is:
+// it is two lines on an authentication path, and it should hold the invariant
+// rather than assume it.
+func TestASecondPersonCannotBeCreatedByAnyMeans(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	owner := claimOwner(t, s, "dev-owner")
+
+	_, err := s.write.ExecContext(ctx,
+		"INSERT INTO users (user_id, label, created_at) VALUES (?, ?, ?)", "u_second", "Second", 500)
+	if err == nil {
+		t.Fatal("a second person was inserted; this machine belongs to one human being")
+	}
+	if !strings.Contains(err.Error(), "idx_users_singleton") {
+		t.Fatalf("refused by %v, want the singleton index", err)
+	}
+
+	// The one person is untouched by the attempt.
+	people, err := countPeople(ctx, s.read)
+	if err != nil {
+		t.Fatalf("countPeople: %v", err)
+	}
+	if people != 1 {
+		t.Fatalf("people = %d, want 1", people)
+	}
+	if _, err := s.ResolveIdentity(ctx, "dev-owner", "", 600); err != nil {
+		t.Fatalf("the owner stopped resolving: %v", err)
+	}
+	_ = owner
 }

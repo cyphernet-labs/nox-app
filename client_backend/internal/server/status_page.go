@@ -44,11 +44,6 @@ scan &mdash; but the link below works in the NOX app running here. To claim it f
 start the server with <code>-addr</code> set to an address on your network.</p>{{end}}
 {{if .Link}}<code class="link">{{.Link}}</code>{{end}}
 
-{{else if eq .State 2}}
-<h1>This server has no owner</h1>
-<p class="lead">It holds people but nobody owns it, which no normal sequence of events produces.
-Nobody can claim it in this state. The database has most likely been edited by hand.</p>
-
 {{else}}
 <h1>NOX server</h1>
 <p class="lead">Running and claimed.</p>
@@ -61,12 +56,10 @@ Nobody can claim it in this state. The database has most likely been edited by h
   <dt>Schema</dt><dd>v{{.Schema}}</dd>
   <dt>Storage id</dt><dd>{{.JournalID}}</dd>
   <dt>Database</dt><dd>{{.DBSize}}</dd>
-  <dt>People</dt><dd>{{.People}}</dd>
   <dt>Devices</dt><dd>{{.Devices}}</dd>
   <dt>Chats</dt><dd>{{.Chats}}</dd>
   <dt>Messages</dt><dd>{{.Messages}}</dd>
 </dl>
-{{range .Warnings}}<p class="warn">{{.}}</p>{{end}}
 {{end}}
 
 <footer>This page is only reachable from this machine. It is for people, not for programs &mdash;
@@ -85,11 +78,9 @@ type statusView struct {
 	Schema    int
 	JournalID string
 	DBSize    string
-	People    int64
 	Devices   int64
 	Chats     int64
 	Messages  int64
-	Warnings  []string
 }
 
 // handleStatusPage serves the service page.
@@ -125,11 +116,9 @@ func (s *Server) handleStatusPage(w http.ResponseWriter, r *http.Request) {
 		Schema:    status.Schema,
 		JournalID: status.JournalID,
 		DBSize:    humanBytes(status.DBBytes),
-		People:    status.Counts.People,
 		Devices:   status.Counts.Devices,
 		Chats:     status.Counts.Chats,
 		Messages:  status.Counts.Messages,
-		Warnings:  status.Warnings,
 	}
 	// The code is drawn only when something other than this machine could dial
 	// the address in it. The LINK is shown either way: pasting it into the app

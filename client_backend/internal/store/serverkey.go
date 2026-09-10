@@ -132,20 +132,9 @@ type OwnershipState struct {
 	// device locks an owner out of their own machine as soon as somebody else's
 	// is running.
 	OwnerCanGetIn bool
-	// Stranded is the state no code path produces and a partial restore can:
-	// people in the store, nobody recorded as the owner.
-	Stranded bool
-	// People is the count, for the operator-facing warning. Never an id
-	// (Principle I).
-	People int
 }
 
 // ReadOwnershipState answers all of it at once.
-//
-// A MISSING machine row is deliberately not Stranded: that state is fatal and
-// has its own remedy - EnsureServerIdentity refuses to mint a key for a store
-// that already holds people, because a new key breaks pinning for every device
-// paired against the old one.
 func (s *Store) ReadOwnershipState(ctx context.Context) (OwnershipState, error) {
 	tx, err := s.read.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
@@ -160,18 +149,14 @@ func (s *Store) ReadOwnershipState(ctx context.Context) (OwnershipState, error) 
 	if err != nil {
 		return OwnershipState{}, err
 	}
-	people, err := countPeople(ctx, tx)
-	if err != nil {
-		return OwnershipState{}, err
-	}
 	if owner == "" {
-		return OwnershipState{Stranded: people > 0, People: people}, nil
+		return OwnershipState{}, nil
 	}
 	devices, err := ownerDeviceCount(ctx, tx, owner)
 	if err != nil {
 		return OwnershipState{}, err
 	}
-	return OwnershipState{Owned: true, OwnerCanGetIn: devices > 0, People: people}, nil
+	return OwnershipState{Owned: true, OwnerCanGetIn: devices > 0}, nil
 }
 
 // ownerDeviceCount is the ONE spelling of "how many devices can the owner still
@@ -183,27 +168,6 @@ func ownerDeviceCount(ctx context.Context, q rowQuerier, owner string) (int, err
 		return 0, fmt.Errorf("count owner devices: %w", err)
 	}
 	return devices, nil
-}
-
-// ownsServer reports whether userID is the person this machine belongs to.
-//
-// The one place the rule lives. It was hand-copied into four reply paths, and
-// the next one would have been copied from whichever of them its author found
-// first: forget the empty-string guard and every identity with a blank id owns
-// the server; read claimed_at instead and the two-records-of-one-fact split
-// this feature removed comes straight back.
-//
-// A machine with no row yet owns nothing and belongs to nobody, which is not an
-// error for a caller asking about ownership - only for one asking for the key.
-func ownsServer(ctx context.Context, q rowQuerier, userID string) (bool, error) {
-	owner, err := ownerUserID(ctx, q)
-	if errors.Is(err, ErrNoServerIdentity) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return owner != "" && owner == userID, nil
 }
 
 // OwnerUserID reads who owns this machine, or empty if nobody does.
