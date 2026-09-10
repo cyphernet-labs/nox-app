@@ -139,6 +139,27 @@ const ChatCardScreen = ({ t, view = 'list' }) => (
         </div>
         <div style={{ ...ty('headlineSmall'), color: t.onSurface }}>Night Owls</div>
       </div>
+      {/* People (037): one row - the person this machine belongs to - then the
+          permanently disabled invite seam and its caption. Not a roster: the
+          machine holds one person, and anybody else goes through a relay that
+          does not exist yet. */}
+      <div style={{ padding: '0 16px 12px' }}>
+        <span style={{ ...ty('titleMedium'), color: t.onSurface }}>People</span>
+      </div>
+      <div style={{ padding: '0 16px 12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ borderRadius: '50%', boxShadow: `0 0 0 2px ${hexA(t.onSurface, 0.06)}` }}>
+            <Avatar name="User7421" initials="U" size={36} />
+          </div>
+          <span style={{ ...ty('bodyLarge'), color: t.onSurface }}>User7421</span>
+        </div>
+        <div style={{ height: 12 }} />
+        <FilledButton t={t} label="Invite a person" full disabled />
+        <div style={{ height: 4 }} />
+        <div style={{ ...ty('bodySmall'), color: t.onSurfaceVariant, textAlign: 'center' }}>Available in a future version</div>
+      </div>
+      <div style={{ height: 1, background: t.outlineVariant }} />
+      <div style={{ height: 12 }} />
       <div style={{ padding: '0 16px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span style={{ ...ty('titleMedium'), color: t.onSurface }}>Files</span>
         {view !== 'empty' && <Segmented t={t} options={['List', 'Grid']} value={view === 'grid' ? 'Grid' : 'List'} />}

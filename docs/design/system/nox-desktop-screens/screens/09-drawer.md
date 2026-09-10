@@ -8,7 +8,7 @@
 
 ## Anatomy
 Scrim + right drawer (380): Details header, chat avatar/name, **“People”** (one row — the person this machine belongs to — plus a disabled **Invite a person** button and its caption), hairline, then “Files” with List/Grid toggle, file rows or 2-col grid.
-> **Changed 2026-09-10 (phase 037).** The client backend serves one person; talking to anybody else moves to a relay that does not exist yet. The invite is present as a disabled seam — the place the relay will attach to. The live screen in `_src/` does NOT draw this section yet — it goes straight from the chat name to Files. Spec first; the corpus screens follow.
+> **Changed 2026-09-10 (phase 037).** The client backend serves one person; talking to anybody else moves to a relay that does not exist yet. The invite is present as a disabled seam — the place the relay will attach to. The live screen in `_src/` draws it too: `Avatar` gained an `initials` override so the corpus can show a PERSON the way the app does (User7421 → U, not US), and the disabled `FilledButton` was already there. The drawer's `Aria, Mox and you` subtitle went with it: a chat has no roster.
 
 
 ## States

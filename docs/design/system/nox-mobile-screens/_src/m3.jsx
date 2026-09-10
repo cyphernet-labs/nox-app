@@ -207,9 +207,12 @@ const Spinner = ({ size = 24, color = '#000', width = 3 }) => (
 );
 
 // Generated chat avatar
-const Avatar = ({ name, size = 40 }) => {
+// `initials` overrides the chat-row rule for a PERSON: the app derives a
+// person's initials differently (User7421 -> U, not US), and showing the same
+// human two ways on two screens is the drift this override exists to prevent.
+const Avatar = ({ name, size = 40, initials }) => {
   const pal = avatarFor(name);
-  const ini = initialsFor(name);
+  const ini = initials !== undefined ? initials : initialsFor(name);
   return (
     <div style={{
       width: size, height: size, borderRadius: '50%', background: pal.bg,

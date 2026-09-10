@@ -6,7 +6,7 @@
 
 ## Anatomy
 App bar (back + chat name). Header: avatar (56) + name (headlineSmall). **“People”** section: one row — the person this machine belongs to — then a disabled **Invite a person** button with the caption below it. Hairline, then the “Files” section with a List/Grid segmented toggle and file rows or a grid.
-> **Changed 2026-09-10 (phase 037).** The client backend serves one person; talking to anybody else moves to a relay that does not exist yet. The invite is present as a disabled seam — the place the relay will attach to. The live screen in `_src/` does NOT draw this section yet — it goes straight from the chat name to Files. Spec first; the corpus screens follow.
+> **Changed 2026-09-10 (phase 037).** The client backend serves one person; talking to anybody else moves to a relay that does not exist yet. The invite is present as a disabled seam — the place the relay will attach to. The live screen in `_src/` draws it too: `Avatar` gained an `initials` override so the corpus can show a PERSON the way the app does (User7421 → U, not US), and the disabled `FilledButton` was already there.
 
 
 ## States

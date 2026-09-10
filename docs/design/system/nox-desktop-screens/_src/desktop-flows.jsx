@@ -74,7 +74,23 @@ const ChatInfoDrawer = ({ t, view = 'list' }) => (
       <div style={{ padding: '20px 16px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, borderBottom: `1px solid ${t.outlineVariant}`, flexShrink: 0 }}>
         <div style={{ borderRadius: '50%', boxShadow: `0 0 0 2px ${hexA(t.onSurface, 0.06)}` }}><Avatar name="Night Owls" size={72} /></div>
         <div style={{ ...ty('headlineSmall'), color: t.onSurface }}>Night Owls</div>
-        <div style={{ ...ty('bodyMedium'), color: t.onSurfaceVariant }}>Aria, Mox and you</div>
+      </div>
+      {/* People (037): one row - the person this machine belongs to - then the
+          permanently disabled invite seam and its caption. Not a roster. */}
+      <div style={{ padding: '12px 16px 0', flexShrink: 0 }}>
+        <span style={{ ...ty('titleMedium'), color: t.onSurface }}>People</span>
+      </div>
+      <div style={{ padding: '12px 16px', flexShrink: 0, borderBottom: `1px solid ${t.outlineVariant}` }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ borderRadius: '50%', boxShadow: `0 0 0 2px ${hexA(t.onSurface, 0.06)}` }}>
+            <Avatar name="User7421" initials="U" size={36} />
+          </div>
+          <span style={{ ...ty('bodyLarge'), color: t.onSurface }}>User7421</span>
+        </div>
+        <div style={{ height: 12 }} />
+        <FilledButton t={t} label="Invite a person" full disabled />
+        <div style={{ height: 4 }} />
+        <div style={{ ...ty('bodySmall'), color: t.onSurfaceVariant, textAlign: 'center' }}>Available in a future version</div>
       </div>
       <div style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
         <span style={{ ...ty('titleMedium'), color: t.onSurface }}>Files</span>

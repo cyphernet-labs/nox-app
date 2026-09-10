@@ -251,16 +251,73 @@ void main() {
       expect(prefs.getString('session.label'), 'Renamed elsewhere');
     });
 
+    test('a greeting that lands after logout writes nobody back', () async {
+      // The guard inside _adoptGreeting, and it IS reachable - the comment that
+      // used to sit here said otherwise, which is precisely the argument that
+      // would justify deleting the guard.
+      //
+      // logout() clears the session inside `mutate` and only stops the live
+      // channel afterwards, so a phase that flips in that gap - or an adopt
+      // already suspended on the session read - resumes with an empty session
+      // while the socket still holds the identity the server stated. Without
+      // the guard the signed-out device is handed the previous person's author
+      // id back, and adoptServerIdentity re-emits their label on watchLabel(),
+      // so the account avatars go on naming somebody who just logged out.
+      await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
+      await session.saveServer(address: '10.0.0.5:9000', serverKey: 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=');
+
+      await starter.start();
+      await settle();
+      factory.latest.pushGreeting();
+      for (var i = 0; i < 40 && factory.latest.commandNamed('session.hello') == null; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      factory.latest.replyToHello(cursor: 5, id: 'u_person_9', label: 'Anna');
+      for (var i = 0; i < 40 && (await SharedPreferences.getInstance()).getString('session.author_id') == null; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+
+      // Reconnect. The server's cursor has moved past ours, so the new
+      // connection parks at catchingUp instead of going straight to live -
+      // which is what leaves a phase transition still to come.
+      final before = factory.created.length;
+      await factory.latest.drop();
+      for (var i = 0; i < 200 && factory.created.length == before; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      factory.latest.pushGreeting();
+      for (var i = 0; i < 40 && factory.latest.commandNamed('session.hello') == null; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      factory.latest.replyToHello(cursor: 9, id: 'u_person_9', label: 'Anna');
+      await settle();
+
+      // Logout, at the point logout() actually reaches: the session is gone and
+      // the starter is still listening.
+      await session.clear();
+      expect((await SharedPreferences.getInstance()).getString('session.author_id'), isNull, reason: 'clear() left the id behind');
+
+      // Catch-up completes, the phase flips to live, and _adoptGreeting fires
+      // with the identity still on the socket and nothing behind it.
+      factory.latest.pushEvent(seq: 9);
+      await settle();
+      await settle();
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('session.author_id'), isNull, reason: 'a greeting wrote a signed-out identity back onto this device');
+      expect(prefs.getString('session.label'), isNull, reason: 'the signed-out name came back');
+    });
+
     test('an install with a server but no identifier never greets, and writes nobody', () async {
       // A device that has not paired has nothing to say: `_credentials` answers
       // unpaired, so no `session.hello` leaves at all. Asserted on the frame,
       // not only on storage - "nothing was written" is true of a device that
       // greeted and was refused too, and those are different failures.
       //
-      // The guard further in (_adoptGreeting refusing to persist an identity
-      // when readSession is empty) is NOT what this covers: nothing on the
-      // public surface can put a server-stated identity in front of an empty
-      // session any more, now that a greeting cannot create anyone (032).
+      // The guard further in - _adoptGreeting refusing to persist an identity
+      // over an empty session - is a DIFFERENT case and has its own test above.
+      // This comment used to claim that guard was unreachable; it is reachable
+      // through logout, and saying otherwise is the argument for deleting it.
       await session.saveServer(address: '10.0.0.5:9000', serverKey: 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=');
 
       await starter.start();
