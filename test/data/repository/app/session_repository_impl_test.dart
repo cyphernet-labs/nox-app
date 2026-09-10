@@ -203,16 +203,26 @@ void main() {
   });
 
   group('the ownership key left by older builds', () {
-    test('logout sweeps it, because nothing writes it any more', () async {
+    test('the first session read sweeps it, without waiting for a logout', () async {
       // Written by builds that still had an owner badge. Nothing reads it now -
-      // this machine belongs to one person - but an upgraded install would
-      // carry the dead key for the life of the device.
+      // this machine belongs to one person - but the install this sweep exists
+      // for is one upgraded from such a build, and an install that never signs
+      // out never reaches logout. Swept on read, so every install loses it.
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('session.is_owner', true);
       await repository.saveIdentifier(identifier: 'sess-1', onboardingComplete: true);
 
-      await repository.clear();
+      await repository.readSession();
 
+      expect(prefs.getBool('session.is_owner'), isNull);
+    });
+
+    test('a signed-out install loses it too, where there is no session to read', () async {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('session.is_owner', false);
+
+      // No identifier: readSession returns null and still sweeps.
+      expect((await repository.readSession()).data, isNull);
       expect(prefs.getBool('session.is_owner'), isNull);
     });
   });

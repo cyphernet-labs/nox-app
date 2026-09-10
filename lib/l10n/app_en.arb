@@ -50,7 +50,7 @@
   "termsContentHeading": "Content",
   "termsContentBody": "Your chats live on your own server and are visible only on the devices you have paired with it. You are responsible for what you send and keep there; do not send or store unlawful content.",
   "termsPrivacyHeading": "Privacy",
-  "termsPrivacyBody": "NOX is end-to-end encrypted; the server never sees your message content.",
+  "termsPrivacyBody": "Your chats live on your own server. End-to-end encryption is not in this version yet.",
   "versionLabel": "Version",
   "settingsDevicesTitle": "Devices",
   "devicesCurrent": "This device",

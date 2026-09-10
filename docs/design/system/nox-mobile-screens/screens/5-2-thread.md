@@ -5,7 +5,9 @@
 **Purpose.** Read and send messages + files within one chat.
 
 ## Anatomy
-App bar (back + chat name). Message stream with date separators, author headers and bubbles. Composer pinned at bottom.
+App bar (back + chat name + a disabled **Invite a person** action). Message stream with date separators, author headers and bubbles. Composer pinned at bottom.
+> **Изменено 2026-09-10 (фаза 037).** Клиент-бэкенд обслуживает одного человека; общение с другими людьми уходит на relay, которого ещё нет. Приглашение присутствует как выключенный шов — место, к которому relay прирастёт.
+
 
 ## States
 - `filled` — Filled
@@ -20,6 +22,7 @@ App bar (back + chat name). Message stream with date separators, author headers 
 - Date separators: Today / Yesterday / 12 May. A system line marks chat creation.
 - Empty: chat_bubble_outline empty-state. Offline: top banner + queued messages show pending.
 - Composer: attach + text + send. Send enables when there is text or an attachment; attachment shows a removable chip above the row.
+- The invite action is permanently disabled and raises nothing when tapped: a missing control answers «how do I add somebody?» with silence, an error answers it with a fault, and the truth is that the relay it needs does not exist yet. Its screen-reader name is the action alone — a disabled control is already announced as unavailable, and the caption that says it comes later lives under the button in 5.4, where there is room for it.
 - Attachments in the feed: an IMAGE with a real local file renders an inline thumbnail (rounded, bubble-bounded); every other type — and an image with no/unavailable file — renders the type-icon chip (owner-revised F4).
 
 ## Navigation
@@ -30,6 +33,7 @@ App bar (back + chat name). Message stream with date separators, author headers 
 ## Copy (EN)
 - System: Chat created by Aria
 - Composer placeholder: Message
+- Invite action (screen-reader name): Invite a person
 
 ## Design-system components
 - AppBar (title)

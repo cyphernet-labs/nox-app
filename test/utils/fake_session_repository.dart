@@ -21,25 +21,16 @@ const SessionModel kTestSession = SessionModel(
 /// Hand-written session double — callers exercise [readSession] plus the feature-015
 /// label channel ([watchLabel] / [updateLabel]).
 class FakeSessionRepository implements SessionRepository {
-  FakeSessionRepository({this.session = kTestSession, this.fail = false, this.readDelay = Duration.zero}) : _label = session?.label;
+  FakeSessionRepository({this.session = kTestSession, this.fail = false}) : _label = session?.label;
 
   final SessionModel? session;
   final bool fail;
-
-  /// How long [readSession] takes to answer.
-  ///
-  /// Zero by default, because almost every test wants the answer immediately.
-  /// Opt in where the PENDING state is the thing under test: the real read goes
-  /// through the platform keychain, and a fake that resolves in a microtask
-  /// makes the frames before it unobservable.
-  final Duration readDelay;
 
   String? _label;
   final StreamController<String?> _labelController = StreamController<String?>.broadcast();
 
   @override
   Future<RepositoryResult<SessionModel?>> readSession() async {
-    if (readDelay > Duration.zero) await Future<void>.delayed(readDelay);
     if (fail) return const RepositoryResult<SessionModel?>.error(exception: RepositoryException.unknown);
     return RepositoryResult<SessionModel?>.success(data: session);
   }
@@ -103,7 +94,7 @@ class FakeSessionRepository implements SessionRepository {
 /// Registers a [FakeSessionRepository] into the DI container so blocs/pages that
 /// resolve the `sessionRepository` alias work in otherwise DI-less tests. Pair with
 /// `tearDown(getIt.reset)`.
-void registerFakeSession({SessionModel? session = kTestSession, bool fail = false, Duration readDelay = Duration.zero}) {
+void registerFakeSession({SessionModel? session = kTestSession, bool fail = false}) {
   getIt.allowReassignment = true;
-  getIt.registerSingleton<SessionRepository>(FakeSessionRepository(session: session, fail: fail, readDelay: readDelay));
+  getIt.registerSingleton<SessionRepository>(FakeSessionRepository(session: session, fail: fail));
 }

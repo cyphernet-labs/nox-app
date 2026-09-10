@@ -143,12 +143,14 @@ func (s *Store) ReadOwnershipState(ctx context.Context) (OwnershipState, error) 
 	defer func() { _ = tx.Rollback() }()
 
 	owner, err := ownerUserID(ctx, tx)
-	if errors.Is(err, ErrNoServerIdentity) {
-		return OwnershipState{}, nil
-	}
-	if err != nil {
+	if err != nil && !errors.Is(err, ErrNoServerIdentity) {
 		return OwnershipState{}, err
 	}
+	// The device count is read even when the machine row itself is missing.
+	// Answering "nobody can get in" from the absence of that row is the same
+	// mistake as answering it from a missing ownership marker: startup would
+	// print a claim link over a store somebody is still using, and Pair would
+	// refuse every presentation of it. One predicate, one answer.
 	devices, err := countDevices(ctx, tx)
 	if err != nil {
 		return OwnershipState{}, err

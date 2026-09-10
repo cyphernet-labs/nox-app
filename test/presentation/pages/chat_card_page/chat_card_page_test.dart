@@ -26,6 +26,40 @@ void main() {
     await getIt.reset();
   });
 
+  group('the People seam (5.4)', () {
+    Future<void> pumpCard(WidgetTester tester, {ChatCardScenario? scenario}) async {
+      tester.view.devicePixelRatio = 3.0;
+      tester.view.physicalSize = Constants.designSize * 3.0;
+      addTearDown(() {
+        tester.view.resetDevicePixelRatio();
+        tester.view.resetPhysicalSize();
+      });
+      await pumpApp(tester, ChatCardPage(chat: _sampleChat(), initialScenario: scenario));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('a loaded card lists the person and offers the disabled invite', (tester) async {
+      await pumpCard(tester);
+
+      expect(find.text(l10nEn.chatPeopleTitle), findsOneWidget);
+      final button = tester.widget<FilledButton>(find.widgetWithText(FilledButton, l10nEn.chatInvitePerson));
+      expect(button.onPressed, isNull);
+      expect(find.text(l10nEn.chatInviteLater), findsOneWidget);
+    });
+
+    testWidgets('the error state carries no people at all', (tester) async {
+      // Rendered unconditionally the section stacked a person and a disabled
+      // button over the embedded 3.1 error screen - a state the spec's table
+      // does not put it in, and one where neither says anything true.
+      await pumpCard(tester, scenario: ChatCardScenario.fatal);
+
+      expect(find.text(l10nEn.chatPeopleTitle), findsNothing);
+      expect(find.text(l10nEn.chatInvitePerson), findsNothing);
+      expect(find.text(l10nEn.chatInviteLater), findsNothing);
+    });
+  });
+
   group('ChatCardPage (mobile)', () {
     Future<void> pumpMobile(WidgetTester tester) async {
       // Pin the FlutterView to the design surface (scale 1.0) so the responsive

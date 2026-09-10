@@ -36,8 +36,12 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
 
   /// Written by builds that still had an owner badge. Nothing reads it any
   /// more — this machine belongs to one person, so the answer was the same on
-  /// every server that ever ran — but logout still removes it, or an upgraded
-  /// install would carry the dead key for the life of the device.
+  /// every server that ever ran.
+  ///
+  /// Swept on the first [readSession] rather than only at logout: the install
+  /// this exists for is one upgraded from such a build, and an install that
+  /// never signs out never reaches logout. SharedPreferences is an in-memory
+  /// map after init, so the check costs nothing and the write happens once.
   static const String _kLegacyIsOwner = 'session.is_owner';
 
   /// This device's Ed25519 seed. The private half of the pair whose public
@@ -70,6 +74,7 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   @override
   Future<RepositoryResult<SessionModel?>> readSession() {
     return execute<SessionModel?>(() async {
+      if (_prefs.containsKey(_kLegacyIsOwner)) await _prefs.remove(_kLegacyIsOwner);
       final identifier = await _secureStorage.read(key: _kIdentifier);
       if (identifier == null || identifier.isEmpty) {
         return const RepositoryResult<SessionModel?>.success(data: null);
@@ -263,7 +268,6 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       await _prefs.remove(_kAuthorId);
       // Swept rather than maintained: nothing writes this any more, and an
       // install upgraded from a build that did would otherwise keep it forever.
-      await _prefs.remove(_kLegacyIsOwner);
       _emitLabel(null); // logout resets every label surface to the fallback
       return const RepositoryResult<bool>.success(data: true);
     });
