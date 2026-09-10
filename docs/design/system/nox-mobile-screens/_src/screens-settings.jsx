@@ -313,10 +313,10 @@ const TermsBody = ({ t }) => (
   <div style={{ padding: '8px 16px 16px' }}>
     <div style={{ ...ty('titleLarge'), color: t.onSurface, marginBottom: 12 }}>Terms of Service</div>
     {[
-      ['1. Acceptance', 'By using NOX you agree to these terms. NOX is an open, shared messaging space — every chat is visible to everyone.'],
-      ['2. Your identity', 'Your account is an anonymous identifier stored only on this device. You are responsible for keeping it safe; losing it means losing access.'],
-      ['3. Content', 'You are responsible for what you send. Messages and files are permanent and cannot be deleted once posted.'],
-      ['4. Privacy', 'NOX does not collect personal data such as phone numbers or email. See the Privacy Policy for details.'],
+      ['1. Acceptance', 'By using NOX you accept these terms. If you do not agree, do not use the app.'],
+      ['2. Your identity', 'Your account is an anonymous identifier and a display name — no phone number or email. The identifier is public: it is what other people see beside your messages. Signing in is done by pairing a device, not by knowing it.'],
+      ['3. Content', 'Your chats live on your own server and are visible only on the devices you have paired with it. You are responsible for what you send and keep there; do not send or store unlawful content.'],
+      ['4. Privacy', 'Your chats live on your own server. End-to-end encryption is not in this version yet.'],
     ].map(([h, p]) => (
       <div key={h} style={{ marginBottom: 16 }}>
         <div style={{ ...ty('titleMedium'), color: t.onSurface, marginBottom: 4 }}>{h}</div>
