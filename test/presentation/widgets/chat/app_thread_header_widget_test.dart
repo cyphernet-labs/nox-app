@@ -26,6 +26,19 @@ void main() {
       expect(find.byTooltip(l10nEn.tooltipChatInfo), findsOneWidget);
     });
 
+    testWidgets('the invite action is present, disabled, and named for a screen reader', (tester) async {
+      // The seam a relay will attach to. Icon-only, so it must carry a text
+      // name (FR-017) - and the name has to say it is not ready, because the
+      // control looks like every other action in the row.
+      await pumpApp(tester, AppThreadHeaderWidget(chat: chat, onInfo: () {}));
+
+      final tooltip = '${l10nEn.chatInvitePerson} — ${l10nEn.chatInviteLater}';
+      expect(find.byTooltip(tooltip), findsOneWidget);
+
+      final button = tester.widget<IconButton>(find.ancestor(of: find.byTooltip(tooltip), matching: find.byType(IconButton)).first);
+      expect(button.onPressed, isNull, reason: 'the relay does not exist yet, so neither does the action');
+    });
+
     testWidgets('the chat name is single-line and ellipsized', (tester) async {
       await pumpApp(tester, AppThreadHeaderWidget(chat: chat, onInfo: () {}));
 

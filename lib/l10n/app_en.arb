@@ -37,7 +37,7 @@
   "languageUkrainian": "Українська",
   "settingsNotificationsTitle": "Notifications",
   "notificationsPushTitle": "Enable notifications",
-  "notificationsPushSubtitle": "Only for chats you're in",
+  "notificationsPushSubtitle": "For new messages in your chats",
   "notificationsDeniedTitle": "Notifications are blocked",
   "notificationsDeniedMessage": "Allow notifications in system settings to receive messages from your chats.",
   "actionOpenSettings": "Open settings",
@@ -48,7 +48,7 @@
   "termsIdentityHeading": "Your identity",
   "termsIdentityBody": "Your account is an anonymous identifier and a display name — no phone number or email. Keep your identifier safe; anyone who has it can sign in as you.",
   "termsContentHeading": "Content",
-  "termsContentBody": "Chats are an open shared space visible to everyone. You are responsible for what you send; do not post unlawful content.",
+  "termsContentBody": "Your chats live on your own server and are visible only on the devices you have paired with it. You are responsible for what you send and keep there; do not send or store unlawful content.",
   "termsPrivacyHeading": "Privacy",
   "termsPrivacyBody": "NOX is end-to-end encrypted; the server never sees your message content.",
   "versionLabel": "Version",
@@ -80,7 +80,6 @@
     }
   },
   "settingsYourIdLabel": "Your ID",
-  "settingsOwnerBadge": "Server owner",
   "actionHide": "Hide",
   "settingsNameSaveError": "Couldn't save your name. Try again.",
   "settingsAboutTitle": "About",
@@ -182,6 +181,9 @@
     }
   },
   "filesSectionTitle": "Files",
+  "chatPeopleTitle": "People",
+  "chatInvitePerson": "Invite a person",
+  "chatInviteLater": "Available in a future version",
   "filesViewList": "List",
   "filesViewGrid": "Grid",
   "filesEmptyTitle": "No files yet",
@@ -201,38 +203,5 @@
   "attachmentGone": "This file is no longer on the server",
   "@attachmentGone": {
     "description": "Terminal state on the file screen: the bytes are gone. Contract 2.1 forbids offering a retry here."
-  },
-  "settingsPeopleTitle": "People",
-  "peopleEmpty": "Nobody else yet",
-  "peopleError": "Couldn't load the people here.",
-  "peopleInvite": "Invite a person",
-  "peopleInviteMessage": "Send this to the person you're inviting. It works once, within 24 hours, and you'll be asked to confirm before they can join.",
-  "peopleInviteError": "Couldn't create an invite.",
-  "peopleYou": "You",
-  "pairRequestTitle": "Someone wants to join",
-  "pairRequestMessage": "An invite you sent has just been used. Letting them in gives them access to every chat on this server.",
-  "pairRequestInvited": "Invite sent {time}",
-  "pairRequestExpires": "Expires {time}",
-  "pairRequestApprove": "Let them in",
-  "pairRequestDecline": "Not now",
-  "pairRequestFailed": "Couldn't answer that request.",
-  "loginErrorDeclined": "The owner declined this invite.",
-  "loginErrorNoAnswer": "The owner didn't answer in time. Ask them to try again.",
-  "@pairRequestInvited": {
-    "placeholders": {
-      "time": {
-        "type": "String"
-      }
-    }
-  },
-  "@pairRequestExpires": {
-    "placeholders": {
-      "time": {
-        "type": "String"
-      }
-    }
-  },
-  "peopleNotOwner": "Only the server owner can invite people.",
-  "loginWaitingForOwner": "Waiting for the owner to let you in. This can take a few minutes.",
-  "pairRequestOffline": "You're offline. The question is still waiting on the server — answer it once you're back."
+  }
 }

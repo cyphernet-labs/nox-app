@@ -71,6 +71,15 @@ class ChatThreadPage extends StatelessWidget {
               icon: AppIconWidget(NoxIcons.arrowBack),
               onPressed: () => Navigator.of(context).maybePop(),
             ),
+            // The same disabled seam the desktop header carries, so the answer
+            // to "how do I add somebody?" is in the same place on both widths.
+            actions: [
+              IconButton(
+                onPressed: null,
+                tooltip: '${context.l10n.chatInvitePerson} — ${context.l10n.chatInviteLater}',
+                icon: AppIconWidget(NoxIcons.add),
+              ),
+            ],
             // Tapping the chat name opens the chat card (5.4).
             // Reactive to the chat row so a rename (from the card) updates the title live.
             title: WatchChat(

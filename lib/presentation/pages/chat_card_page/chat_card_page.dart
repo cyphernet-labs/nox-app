@@ -12,6 +12,7 @@ import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
+import 'package:nox_app/presentation/widgets/chat/app_chat_people_section_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/watch_chat.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/general/constants.dart';
@@ -195,6 +196,9 @@ class _ChatCardBodyState extends State<ChatCardBody> {
               // Design (ChatInfoDrawer): a divider separates the identity block from
               // the Files section — desktop drawer only (the mobile card is full-screen).
               if (widget.isDrawer) const AppHairlineDividerWidget(),
+              const AppChatPeopleSectionWidget(),
+              const AppHairlineDividerWidget(),
+              SizedBox(height: AppSpacingTokens.s12),
               Expanded(child: _section(context, state)),
               if (kDebugMode && widget.demo) _scenarioControl(),
             ],
