@@ -54,54 +54,54 @@ description: "Task list for feature 037 — local-only phase"
 
 ### 3A. Сервер: провод
 
-- [ ] T011 [P] [US1] Удалить `client_backend/internal/store/approval.go` и `client_backend/internal/store/approval_test.go`
-- [ ] T012 [P] [US1] Удалить `client_backend/internal/store/people.go` и `client_backend/internal/store/people_test.go`
-- [ ] T013 [P] [US1] Удалить `client_backend/internal/server/approval_test.go`
-- [ ] T014 [US1] Снять `handlePersonInvite`, `handlePersonList`, `handlePersonConfirm` из `client_backend/internal/server/pairing.go`
-- [ ] T015 [US1] Снять диспетчеризацию `person.*` из `client_backend/internal/server/ws.go`; **убедиться, что удалённое имя падает в ветку «неизвестная команда», а не в общий обработчик по префиксу** (FR-006)
-- [ ] T016 [US1] Снять ветку pending, `deliverSettledOutcome`, `announcePairOutcome` и поля `pairReply` из `client_backend/internal/server/pairing.go`
-- [ ] T017 [US1] Снять `notifyPairRequested`, `notifyPairResolved`, `pairRequestedFrame`, `markPendingRequest`, `sendToOwnerDevices` из `client_backend/internal/server/server.go`
-- [ ] T018 [US1] Снять `runPairSweeper` и его поля из `client_backend/internal/server/server.go`
-- [ ] T019 [US1] Снять `resendPendingRequests` и её вызов при приветствии из `client_backend/internal/server/handlers.go`
-- [ ] T020 [US1] Снять поле `pendingRequestID` из `client_backend/internal/server/client.go`
-- [ ] T021 [US1] Снять три команды, два события и три кода из `client_backend/internal/protocol/frames.go` и `client_backend/internal/protocol/errors.go`
-- [ ] T022 [US1] **Гейт**: `cd client_backend && go test -race ./...` зелёный
+- [x] T011 [P] [US1] Удалить `client_backend/internal/store/approval.go` и `client_backend/internal/store/approval_test.go`
+- [x] T012 [P] [US1] Удалить `client_backend/internal/store/people.go` и `client_backend/internal/store/people_test.go`
+- [x] T013 [P] [US1] Удалить `client_backend/internal/server/approval_test.go`
+- [x] T014 [US1] Снять `handlePersonInvite`, `handlePersonList`, `handlePersonConfirm` из `client_backend/internal/server/pairing.go`
+- [x] T015 [US1] Снять диспетчеризацию `person.*` из `client_backend/internal/server/ws.go`; **убедиться, что удалённое имя падает в ветку «неизвестная команда», а не в общий обработчик по префиксу** (FR-006)
+- [x] T016 [US1] Снять ветку pending, `deliverSettledOutcome`, `announcePairOutcome` и поля `pairReply` из `client_backend/internal/server/pairing.go`
+- [x] T017 [US1] Снять `notifyPairRequested`, `notifyPairResolved`, `pairRequestedFrame`, `markPendingRequest`, `sendToOwnerDevices` из `client_backend/internal/server/server.go`
+- [x] T018 [US1] Снять `runPairSweeper` и его поля из `client_backend/internal/server/server.go`
+- [x] T019 [US1] Снять `resendPendingRequests` и её вызов при приветствии из `client_backend/internal/server/handlers.go`
+- [x] T020 [US1] Снять поле `pendingRequestID` из `client_backend/internal/server/client.go`
+- [x] T021 [US1] Снять три команды, два события и три кода из `client_backend/internal/protocol/frames.go` и `client_backend/internal/protocol/errors.go`
+- [x] T022 [US1] **Гейт**: `cd client_backend && go test -race ./...` зелёный
 
 ### 3B. Сервер: схема и владение
 
-- [ ] T023 [US1] Убрать `invite_user` из CHECK и удалить `request_id`, `awaiting_platform`, `awaiting_until`, `outcome` и `idx_pair_tokens_pending` из `client_backend/migrations/001_init.sql`
-- [ ] T024 [US1] Добавить синглтон-индекс `users` в `client_backend/migrations/001_init.sql`; **проверить**, что SQLite принимает индекс по выражению на STRICT-таблице, иначе заменить на инвариант в комментарии плюс тест, доказывающий, что вторая личность не заводится ни одним путём. **Выбранный вариант записать в `research.md` §2** — задача считается закрытой только с записанным решением
-- [ ] T025 [US1] Снять `TokenInviteUser`, `PersonInviteTTLSeconds`, `ApprovalWindowSeconds`, `IssuePersonInvite`, `PairResult.Pending`, `pendingOutcome` из `client_backend/internal/store/pairing.go`
-- [ ] T026 [US1] Убрать признак владения из резолва личности и коррелированный подзапрос из `client_backend/internal/store/identity.go`
-- [ ] T027 [US1] Схлопнуть владение до отметки «машина забрана» в `client_backend/internal/store/serverkey.go`; **ключ машины не трогать**
-- [ ] T028 [US1] Убрать `owner` из объекта личности в приветствии в `client_backend/internal/server/handlers.go`
-- [ ] T029 [US1] Убрать состояние `stateOwnerless` и предупреждение о бесхозном хранилище из `client_backend/internal/server/status.go` и `client_backend/internal/server/status_page.go`
-- [ ] T030 [US1] Убрать счётчик людей из `client_backend/internal/store/stats.go` и со страницы статуса
-- [ ] T031 [US1] Снять шаг приглашения человека из `client_backend/cmd/smoke/main.go`
+- [x] T023 [US1] Убрать `invite_user` из CHECK и удалить `request_id`, `awaiting_platform`, `awaiting_until`, `outcome` и `idx_pair_tokens_pending` из `client_backend/migrations/001_init.sql`
+- [x] T024 [US1] Добавить синглтон-индекс `users` в `client_backend/migrations/001_init.sql`; **проверить**, что SQLite принимает индекс по выражению на STRICT-таблице, иначе заменить на инвариант в комментарии плюс тест, доказывающий, что вторая личность не заводится ни одним путём. **Выбранный вариант записать в `research.md` §2** — задача считается закрытой только с записанным решением
+- [x] T025 [US1] Снять `TokenInviteUser`, `PersonInviteTTLSeconds`, `ApprovalWindowSeconds`, `IssuePersonInvite`, `PairResult.Pending`, `pendingOutcome` из `client_backend/internal/store/pairing.go`
+- [x] T026 [US1] Убрать признак владения из резолва личности и коррелированный подзапрос из `client_backend/internal/store/identity.go`
+- [x] T027 [US1] Схлопнуть владение до отметки «машина забрана» в `client_backend/internal/store/serverkey.go`; **ключ машины не трогать**
+- [x] T028 [US1] Убрать `owner` из объекта личности в приветствии в `client_backend/internal/server/handlers.go`
+- [x] T029 [US1] Убрать состояние `stateOwnerless` и предупреждение о бесхозном хранилище из `client_backend/internal/server/status.go` и `client_backend/internal/server/status_page.go`
+- [x] T030 [US1] Убрать счётчик людей из `client_backend/internal/store/stats.go` и со страницы статуса
+- [x] T031 [US1] Снять шаг приглашения человека из `client_backend/cmd/smoke/main.go`
 - [x] T032 [US1] Обновить инварианты в `client_backend/CLAUDE.md`: снять пункты про приглашение человека, ожидание в строке, свипер, метку на соединении, seq-0 у двух событий, владение как ссылку
-- [ ] T033 [US1] **Гейт**: `go test -race ./...` на пересозданной базе; `cmd/smoke` проходит укороченный сценарий
+- [x] T033 [US1] **Гейт**: `go test -race ./...` на пересозданной базе; `cmd/smoke` проходит укороченный сценарий
 
 ### 3C. Клиент: удаление, от листьев к корню
 
-- [ ] T034 [P] [US1] Удалить `lib/presentation/pages/people_page/` целиком, `test/presentation/pages/people_page/` и 12 голденов
-- [ ] T035 [P] [US1] Удалить `lib/presentation/pages/pair_request_page/` целиком, `test/presentation/pages/pair_request_page/` и 4 голдена
-- [ ] T036 [P] [US1] Удалить `lib/data/sync/pair_request_service.dart` и `test/data/sync/pair_request_service_test.dart`
-- [ ] T037 [P] [US1] Удалить `lib/data/repository/person/` и `lib/domain/repository/person/`
-- [ ] T038 [P] [US1] Удалить `lib/domain/model/person/`
-- [ ] T039 [P] [US1] Удалить `lib/presentation/widgets/settings/app_owner_badge_widget.dart` и его голден
-- [ ] T040 [US1] Снять подписку на заявки и `_askNext` из `lib/presentation/app/app_root.dart`
-- [ ] T041 [US1] Снять `_forgetPairRequests` из `lib/data/repository/app/auth_repository_impl.dart`
-- [ ] T042 [US1] Снять ветку ожидания из `lib/data/sync/live_identity_handshake.dart`: развилку на `pending`, цикл переподачи, `approvalWait`/`approvalSlack`/`approvalCeiling`/`approvalPoll`, `waitingForOwner`, `_awaitPairOutcome`, `_outcomeOf`, `_refusalFor`. **Логику своего устройства — перезапуск канала, поколение приветствия — не трогать**
-- [ ] T043 [US1] Сократить `lib/domain/model/session/pair_refusal.dart` до двух значений
-- [ ] T044 [US1] Снять `notOwner`, `pairDeclined`, `pairTimeout` и их wire-коды из `lib/domain/exception/repository_exception.dart`
-- [ ] T045 [US1] Снять `personPairRequested` и `personPairResolved` из `lib/data/remote/socket/server_frame.dart` и `confirmPair` из `lib/data/remote/socket/nox_socket_client.dart`
-- [ ] T046 [US1] Снять `waitingForOwner`, `errorDeclined`, `errorNoAnswer` из `lib/presentation/pages/login_page/bloc/login_state.dart`, `_watchOwnerWait` из блока и соответствующие ветки из `login_page.dart`
-- [ ] T047 [US1] Вырезать `isOwner` сквозь слой сессии: `session_repository.dart`, `session_repository_impl.dart` (поток, ключ prefs, запись), `server_identity.dart`, `live_session_starter.dart`, `auth_repository_impl.dart`, `nox_socket_client.dart`, `live_identity_handshake.dart`
-- [ ] T048 [US1] Снять строку `People` и признак владельца из `lib/presentation/pages/settings_root_page/settings_root_page.dart`, его блока и состояния; убрать бейдж из `lib/presentation/widgets/settings/app_identity_card_widget.dart`
-- [ ] T049 [US1] Снять 19 ключей локализации многолюдности из `lib/l10n/app_en.arb` и `lib/l10n/app_uk.arb` — **наборы ключей должны остаться идентичными**
-- [ ] T050 [US1] Поправить тесты, задетые сквозняком: `test/data/repository/app/auth_repository_impl_test.dart`, `test/data/sync/live_identity_handshake_test.dart`, `test/presentation/pages/settings_root_page/bloc/settings_root_bloc_test.dart`, `test/utils/fake_session_repository.dart`, `test/data/remote/socket/nox_socket_client_test.dart`
-- [ ] T051 [US1] Перерисовать голдены настроек и карточки личности (уходит строка People и бейдж)
-- [ ] T052 [US1] **Гейт**: `make gate` зелёный
+- [x] T034 [P] [US1] Удалить `lib/presentation/pages/people_page/` целиком, `test/presentation/pages/people_page/` и 12 голденов
+- [x] T035 [P] [US1] Удалить `lib/presentation/pages/pair_request_page/` целиком, `test/presentation/pages/pair_request_page/` и 4 голдена
+- [x] T036 [P] [US1] Удалить `lib/data/sync/pair_request_service.dart` и `test/data/sync/pair_request_service_test.dart`
+- [x] T037 [P] [US1] Удалить `lib/data/repository/person/` и `lib/domain/repository/person/`
+- [x] T038 [P] [US1] Удалить `lib/domain/model/person/`
+- [x] T039 [P] [US1] Удалить `lib/presentation/widgets/settings/app_owner_badge_widget.dart` и его голден
+- [x] T040 [US1] Снять подписку на заявки и `_askNext` из `lib/presentation/app/app_root.dart`
+- [x] T041 [US1] Снять `_forgetPairRequests` из `lib/data/repository/app/auth_repository_impl.dart`
+- [x] T042 [US1] Снять ветку ожидания из `lib/data/sync/live_identity_handshake.dart`: развилку на `pending`, цикл переподачи, `approvalWait`/`approvalSlack`/`approvalCeiling`/`approvalPoll`, `waitingForOwner`, `_awaitPairOutcome`, `_outcomeOf`, `_refusalFor`. **Логику своего устройства — перезапуск канала, поколение приветствия — не трогать**
+- [x] T043 [US1] Сократить `lib/domain/model/session/pair_refusal.dart` до двух значений
+- [x] T044 [US1] Снять `notOwner`, `pairDeclined`, `pairTimeout` и их wire-коды из `lib/domain/exception/repository_exception.dart`
+- [x] T045 [US1] Снять `personPairRequested` и `personPairResolved` из `lib/data/remote/socket/server_frame.dart` и `confirmPair` из `lib/data/remote/socket/nox_socket_client.dart`
+- [x] T046 [US1] Снять `waitingForOwner`, `errorDeclined`, `errorNoAnswer` из `lib/presentation/pages/login_page/bloc/login_state.dart`, `_watchOwnerWait` из блока и соответствующие ветки из `login_page.dart`
+- [x] T047 [US1] Вырезать `isOwner` сквозь слой сессии: `session_repository.dart`, `session_repository_impl.dart` (поток, ключ prefs, запись), `server_identity.dart`, `live_session_starter.dart`, `auth_repository_impl.dart`, `nox_socket_client.dart`, `live_identity_handshake.dart`
+- [x] T048 [US1] Снять строку `People` и признак владельца из `lib/presentation/pages/settings_root_page/settings_root_page.dart`, его блока и состояния; убрать бейдж из `lib/presentation/widgets/settings/app_identity_card_widget.dart`
+- [x] T049 [US1] Снять 19 ключей локализации многолюдности из `lib/l10n/app_en.arb` и `lib/l10n/app_uk.arb` — **наборы ключей должны остаться идентичными**
+- [x] T050 [US1] Поправить тесты, задетые сквозняком: `test/data/repository/app/auth_repository_impl_test.dart`, `test/data/sync/live_identity_handshake_test.dart`, `test/presentation/pages/settings_root_page/bloc/settings_root_bloc_test.dart`, `test/utils/fake_session_repository.dart`, `test/data/remote/socket/nox_socket_client_test.dart`
+- [x] T051 [US1] Перерисовать голдены настроек и карточки личности (уходит строка People и бейдж)
+- [x] T052 [US1] **Гейт**: `make gate` зелёный
 
 ---
 
@@ -111,13 +111,13 @@ description: "Task list for feature 037 — local-only phase"
 
 **Независимая проверка**: открыть чат на узкой и широкой ширине; кнопка есть в шапке треда и в карточке чата, неактивна, подписана, нажатие не делает ничего.
 
-- [ ] T053 [US3] Добавить ключи `Invite a person`, `Available in a future version`, `People` в `lib/l10n/app_en.arb` и `lib/l10n/app_uk.arb`
-- [ ] T054 [US3] Добавить неактивное действие приглашения в шапку треда в `lib/presentation/widgets/chat/app_thread_header_widget.dart`, с текстовым именем для чтения с экрана; обе ширины
-- [ ] T055 [US3] Добавить секцию `People` с единственной строкой человека и выключенной кнопкой под ней в `lib/presentation/pages/chat_card_page/chat_card_body.dart`; человек читается через `resolveIdentity`, никакой новой сущности
-- [ ] T056 [P] [US3] Виджет-тесты: кнопка неактивна, нажатие не порождает ни навигации, ни снэкбара, действие в шапке имеет имя и объявлено недоступным
-- [ ] T057 [P] [US3] Голдены мобильный и десктопный для карточки чата с новой секцией
-- [ ] T058 [P] [US3] Голдены мобильный и десктопный для экрана переписки с новым действием в шапке
-- [ ] T059 [US3] **Гейт**: `make gate` и `make golden-verify` зелёные
+- [x] T053 [US3] Добавить ключи `Invite a person`, `Available in a future version`, `People` в `lib/l10n/app_en.arb` и `lib/l10n/app_uk.arb`
+- [x] T054 [US3] Добавить неактивное действие приглашения в шапку треда в `lib/presentation/widgets/chat/app_thread_header_widget.dart`, с текстовым именем для чтения с экрана; обе ширины
+- [x] T055 [US3] Добавить секцию `People` с единственной строкой человека и выключенной кнопкой под ней в `lib/presentation/pages/chat_card_page/chat_card_body.dart`; человек читается через `resolveIdentity`, никакой новой сущности
+- [x] T056 [P] [US3] Виджет-тесты: кнопка неактивна, нажатие не порождает ни навигации, ни снэкбара, действие в шапке имеет имя и объявлено недоступным
+- [x] T057 [P] [US3] Голдены мобильный и десктопный для карточки чата с новой секцией
+- [x] T058 [P] [US3] Голдены мобильный и десктопный для экрана переписки с новым действием в шапке
+- [x] T059 [US3] **Гейт**: `make gate` и `make golden-verify` зелёные
 
 ---
 
@@ -127,10 +127,10 @@ description: "Task list for feature 037 — local-only phase"
 
 **Независимая проверка**: сквозной прогон на свежей базе и двух устройствах.
 
-- [ ] T060 [US2] Пройти `specs/037-local-only-phase/quickstart.md` целиком на свежей базе и двух устройствах, отметить каждый пункт
-- [ ] T061 [US2] Сверить счётчики тестов и голденов с базовыми из T002: уменьшение только за счёт удалённых, ни одного упавшего (SC-003)
-- [ ] T062 [US2] Проверить, что мёртвая команда получает отказ «неизвестная команда», а не пустой успех — тест уровня протокола в `client_backend/internal/server/`
-- [ ] T063 [US2] **Подметание (SC-002, SC-004)**: grep по `person`, `isOwner`, `owner`, `pairRequest`, `pair_declined`, `People` в `lib/`, `test/`, `client_backend/` и `docs/`; каждое оставшееся совпадение либо снять, либо объяснить письменно в отчёте фазы. Это единственная задача, доказывающая, что убрано **всё**, а не только то, что было в списке
+- [x] T060 [US2] Пройти `specs/037-local-only-phase/quickstart.md` целиком на свежей базе и двух устройствах, отметить каждый пункт
+- [x] T061 [US2] Сверить счётчики тестов и голденов с базовыми из T002: уменьшение только за счёт удалённых, ни одного упавшего (SC-003)
+- [x] T062 [US2] Проверить, что мёртвая команда получает отказ «неизвестная команда», а не пустой успех — тест уровня протокола в `client_backend/internal/server/`
+- [x] T063 [US2] **Подметание (SC-002, SC-004)**: grep по `person`, `isOwner`, `owner`, `pairRequest`, `pair_declined`, `People` в `lib/`, `test/`, `client_backend/` и `docs/`; каждое оставшееся совпадение либо снять, либо объяснить письменно в отчёте фазы. Это единственная задача, доказывающая, что убрано **всё**, а не только то, что было в списке
 
 ---
 
@@ -153,7 +153,7 @@ description: "Task list for feature 037 — local-only phase"
 
 ## Phase 7: Polish
 
-- [ ] T074 Финальный прогон `make gate`, `make golden-verify` и `go test -race ./...` на чистом дереве
+- [x] T074 Финальный прогон `make gate`, `make golden-verify` и `go test -race ./...` на чистом дереве
 - [ ] T075 Слить `037-local-only-phase` в `develop` через `--no-ff`
 
 ---
