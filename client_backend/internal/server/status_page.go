@@ -35,7 +35,12 @@ footer { margin-top: 2.5rem; font-size: .85rem; opacity: .6; }
 </style></head><body>
 
 {{if eq .State 0}}
-{{if .HasPerson}}
+{{if .Owned}}
+<h1>Your server is waiting for you</h1>
+<p class="lead">It has an owner but no device left to reach it with &mdash; signing out on the last one
+does this. Scan this from the NOX app, or paste the link below into it, and you are back in with your
+chats and messages.</p>
+{{else if .HasPerson}}
 <h1>This server holds a conversation</h1>
 <p class="lead">It records no owner, which no normal sequence of events produces &mdash; a restore or a
 hand edit most likely. Scan this from the NOX app, or paste the link below into it: the device that
@@ -88,6 +93,7 @@ type statusView struct {
 	Devices   int64
 	Chats     int64
 	Messages  int64
+	Owned     bool
 	HasPerson bool
 }
 
@@ -127,6 +133,7 @@ func (s *Server) handleStatusPage(w http.ResponseWriter, r *http.Request) {
 		Devices:   status.Counts.Devices,
 		Chats:     status.Counts.Chats,
 		Messages:  status.Counts.Messages,
+		Owned:     status.Owned,
 		HasPerson: status.HasPerson,
 	}
 	// The code is drawn only when something other than this machine could dial

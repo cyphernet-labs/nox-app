@@ -254,11 +254,30 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 			// A new identity here would orphan the old one instead: their
 			// messages keep an author_id nobody can sign in as, and "the
 			// identity survives its devices" would be true on paper only.
-			if err := loadUser(ctx, tx, owner, &id); err != nil {
+			found, err := loadUser(ctx, tx, owner, &id)
+			if err != nil {
 				return Identity{}, err
 			}
-			// Not Created: this person existed before this operation, so there
-			// is no naming step ahead - they already have a name.
+			if !found {
+				// The marker names somebody who is not there - the mirror of the
+				// state below, and reachable by the same hand edit. Refusing
+				// would print a link on every restart that no presentation can
+				// ever satisfy, which is the instruction-nobody-can-follow this
+				// path exists to avoid. Mint the person the marker was promising
+				// and point it at them.
+				id, err = insertUser(ctx, tx, "", now)
+				if err != nil {
+					return Identity{}, err
+				}
+				id.Created = true
+				if _, err := tx.ExecContext(ctx,
+					"UPDATE server_identity SET owner_user_id = ?, claimed_at = ? WHERE id = 1",
+					id.UserID, now); err != nil {
+					return Identity{}, fmt.Errorf("repoint server owner: %w", err)
+				}
+			}
+			// Not Created when the person WAS there: they existed before this
+			// operation, so there is no naming step ahead - they have a name.
 		default:
 			// No owner recorded. Either the store is fresh - and this claim is
 			// the one that names its owner - or it holds the single person a
@@ -427,18 +446,20 @@ func pairedBy(ctx context.Context, tx *sql.Tx, token, deviceKey string) (Identit
 }
 
 // loadUser fills id with the person named by userID.
-func loadUser(ctx context.Context, tx *sql.Tx, userID string, id *Identity) error {
+// The bool reports whether the row was there. A missing one is not an error:
+// the ownership marker can outlive the person it names when a database is hand
+// edited with foreign keys off (the sqlite3 CLI defaults to off), and the claim
+// path recovers from that rather than refusing forever.
+func loadUser(ctx context.Context, tx *sql.Tx, userID string, id *Identity) (bool, error) {
 	err := tx.QueryRowContext(ctx,
 		"SELECT user_id, label FROM users WHERE user_id = ?", userID).Scan(&id.UserID, &id.Label)
 	if errors.Is(err, sql.ErrNoRows) {
-		// The foreign key forbids it, so reaching here means the row went away
-		// underneath a live transaction. Refusing beats improvising.
-		return ErrTokenInvalid
+		return false, nil
 	}
 	if err != nil {
-		return fmt.Errorf("read owner: %w", err)
+		return false, fmt.Errorf("read owner: %w", err)
 	}
-	return nil
+	return true, nil
 }
 
 // soleUser reads the one person this server holds.

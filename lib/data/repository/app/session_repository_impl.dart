@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
+import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/model/app/session_model.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/general/pairing/device_keys.dart';
@@ -79,10 +80,26 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   /// what keeps a one-time migration from riding every one of those calls.
   bool _legacySwept = false;
 
+  /// Never allowed to fail the read it rides on.
+  ///
+  /// readSession sits inside `execute`, so a throw here would come back as a
+  /// repository ERROR - and on a cold start that lands the person on Login with
+  /// a perfectly good session, one tap from a full local wipe. A dead key that
+  /// survives one more launch costs nothing; a signed-in person thrown out
+  /// costs everything.
   Future<void> _sweepLegacyKeys() async {
     if (_legacySwept) return;
-    _legacySwept = true;
-    if (_prefs.containsKey(_kLegacyIsOwner)) await _prefs.remove(_kLegacyIsOwner);
+    if (!_prefs.containsKey(_kLegacyIsOwner)) {
+      _legacySwept = true;
+      return;
+    }
+    try {
+      await _prefs.remove(_kLegacyIsOwner);
+      _legacySwept = true;
+    } on Object catch (error) {
+      // Deliberately NOT marked swept: the next launch tries again.
+      logRepository.debug(target: this, message: 'legacy prefs sweep deferred: $error');
+    }
   }
 
   @override

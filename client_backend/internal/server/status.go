@@ -44,9 +44,12 @@ type machineStatus struct {
 	// what that app needs. It only means there is no point drawing a code for a
 	// camera.
 	Scannable bool
-	// HasPerson picks the copy on the needs-claim page: presenting the link on a
-	// store that already holds somebody signs the device in as them, rather than
-	// making it the owner of an empty machine.
+	// Owned and HasPerson pick the copy on the needs-claim page, on the SAME
+	// three-way split the startup announcement uses: an owner who ran out of
+	// devices is getting back in, a store that holds somebody without a marker
+	// is being recovered, and an empty machine is being claimed. Two of those
+	// were once told they had been hand-edited.
+	Owned     bool
 	HasPerson bool
 	JournalID string
 	Schema    int
@@ -96,7 +99,7 @@ func (s *Server) collectStatus(ctx context.Context) (machineStatus, error) {
 			return machineStatus{}, err
 		}
 		status.Link, status.Scannable = link, scannable
-		status.HasPerson = ownership.HasPerson
+		status.Owned, status.HasPerson = ownership.Owned, ownership.HasPerson
 	}
 	return status, nil
 }

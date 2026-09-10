@@ -122,8 +122,11 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
   }
 
   void _onPersonLabelChanged(PersonLabelChanged event, Emitter<ChatCardState> emit) {
-    // Null is logout, and the fallback is what every other surface shows then.
-    final next = event.label ?? Constants.defaultUserLabel;
+    // Null is logout; empty is a greeting that stated no name. Both are
+    // "absent" - the same test the shell and resolveIdentity use, and treating
+    // empty as a name draws a blank row with a blank avatar.
+    final label = event.label;
+    final next = (label != null && label.isNotEmpty) ? label : Constants.defaultUserLabel;
     if (next == _person) return;
     _person = next;
     final current = state;

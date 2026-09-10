@@ -23,7 +23,7 @@ sealed class ChatCardState with _$ChatCardState {
     /// Resolved by the BLoC rather than read by the widget: the card owns one,
     /// and a presentation widget reaching for the session repository pays a
     /// keychain round trip on every open for a value the app already holds.
-    @Default('') String personLabel,
+    @Default(Constants.defaultUserLabel) String personLabel,
   }) = Initialized;
 
   const factory ChatCardState.error() = Error;

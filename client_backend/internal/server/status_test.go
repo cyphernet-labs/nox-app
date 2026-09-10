@@ -454,3 +454,26 @@ func forgetOwnerOnDisk(t *testing.T, srv *Server) {
 		t.Fatalf("forget the owner: %v", err)
 	}
 }
+
+// An owner who signed out on their last device is getting back in, not looking
+// at a hand-edited database. The page and the startup line have to split the
+// same three ways, or one of them tells the person the wrong story at the one
+// moment they are reading it.
+func TestAnOwnerWithNoDevicesIsNotToldTheirDatabaseWasEdited(t *testing.T) {
+	ts, srv := newTestServer(t)
+	dialable(srv)
+	d, _ := claimDevice(t, ts, srv)
+	if err := srv.store.RevokeDevice(context.Background(), d.pub); err != nil {
+		t.Fatalf("RevokeDevice: %v", err)
+	}
+
+	body := statusBody(t, srv)
+	if !strings.Contains(body, "Your server is waiting for you") {
+		t.Fatalf("the page does not recognise an owner getting back in: %s", body)
+	}
+	for _, wrong := range []string{"no normal sequence of events produces", "becomes the owner of this server"} {
+		if strings.Contains(body, wrong) {
+			t.Fatalf("the page tells the owner %q: %s", wrong, body)
+		}
+	}
+}

@@ -895,3 +895,49 @@ func TestAReplayIsRefusedOnceTheDeviceIsNoLongerTheOneThatSpentIt(t *testing.T) 
 		t.Fatalf("replay answered %v, want it refused once the device was revoked", err)
 	}
 }
+
+// The mirror of the ownerless store: the marker names somebody who is not
+// there. Reachable by the same hand edit, because the sqlite3 CLI leaves
+// foreign keys off. Refusing would reprint a claim link on every restart that
+// no presentation could ever satisfy.
+func TestAClaimRecoversAMachineWhoseOwnerRowIsGone(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	owner := claimOwner(t, s, "dev-owner")
+	if err := s.RevokeDevice(ctx, "dev-owner"); err != nil {
+		t.Fatalf("RevokeDevice: %v", err)
+	}
+	if _, err := s.write.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {
+		t.Fatalf("relax foreign keys: %v", err)
+	}
+	if _, err := s.write.ExecContext(ctx, "DELETE FROM users WHERE user_id = ?", owner.UserID); err != nil {
+		t.Fatalf("delete the person: %v", err)
+	}
+
+	token, err := s.IssueClaimToken(ctx, 500)
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+	back, err := pairID(ctx, s, token, "dev-new", "test", 500)
+	if err != nil {
+		t.Fatalf("claim on a machine whose owner row is gone: %v", err)
+	}
+	if !back.Created {
+		t.Fatal("a person had to be minted here; the marker was promising one that did not exist")
+	}
+	machine, err := s.ReadOwnershipState(ctx)
+	if err != nil {
+		t.Fatalf("ReadOwnershipState: %v", err)
+	}
+	if !machine.Owned || !machine.OwnerCanGetIn {
+		t.Fatalf("machine = %+v, want owned and reachable so no link is printed again", machine)
+	}
+	// And the marker points at the person who is actually there.
+	id, err := s.ResolveIdentity(ctx, "dev-new", "", 600)
+	if err != nil {
+		t.Fatalf("the new person does not resolve: %v", err)
+	}
+	if id.UserID != back.UserID {
+		t.Fatalf("resolved %q, want %q", id.UserID, back.UserID)
+	}
+}
