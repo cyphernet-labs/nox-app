@@ -127,10 +127,15 @@ class LiveIdentityHandshake {
       if (refusal == null) throw const PairingFailed();
       throw PairingRefused(reason: refusal);
     }
+    // An accepted reply this build cannot read is not a timeout. The channel
+    // worked and the server answered - it answered in a shape this client does
+    // not know, which is what a server speaking a protocol older or newer than
+    // §8A looks like from here. Reporting it as a network error sends the person
+    // to check their connection over something no connection can fix.
     final data = reply.data;
-    if (data is! Map<String, dynamic>) throw const IdentityHandshakeTimeout();
+    if (data is! Map<String, dynamic>) throw const PairingFailed();
     final id = data['identity'];
-    if (id is! Map<String, dynamic>) throw const IdentityHandshakeTimeout();
+    if (id is! Map<String, dynamic>) throw const PairingFailed();
     return _identityOf(id);
   }
 

@@ -232,26 +232,49 @@ void main() {
   });
 
   group('the ownership key left by older builds', () {
-    test('the first session read sweeps it, without waiting for a logout', () async {
+    test('the bootstrap sweep drops it, without waiting for a logout', () async {
       // Written by builds that still had an owner badge. Nothing reads it now -
       // this machine belongs to one person - but the install this sweep exists
       // for is one upgraded from such a build, and an install that never signs
-      // out never reaches logout. Swept on read, so every install loses it.
+      // out never reaches logout.
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('session.is_owner', true);
+      await repository.saveIdentifier(identifier: 'sess-1', onboardingComplete: true);
+
+      expect((await repository.sweepLegacyKeys()).hasData, isTrue);
+
+      expect(prefs.getBool('session.is_owner'), isNull);
+    });
+
+    test('a signed-out install loses it too, where there is no session at all', () async {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('session.is_owner', false);
+
+      expect((await repository.sweepLegacyKeys()).hasData, isTrue);
+
+      expect(prefs.getBool('session.is_owner'), isNull);
+    });
+
+    test('a session read migrates nothing', () async {
+      // The sweep belongs to bootstrap. Riding it on readSession - the app's
+      // hottest repository call - made a read perform a write and put a
+      // one-time migration inside the envelope that decides whether a
+      // signed-in person lands on their chats or on the Login screen.
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('session.is_owner', true);
       await repository.saveIdentifier(identifier: 'sess-1', onboardingComplete: true);
 
       await repository.readSession();
 
-      expect(prefs.getBool('session.is_owner'), isNull);
+      expect(prefs.getBool('session.is_owner'), isTrue, reason: 'a read wrote to storage');
     });
 
-    test('a signed-out install loses it too, where there is no session to read', () async {
+    test('sweeping twice is not an error, and neither is sweeping a key that was never there', () async {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool('session.is_owner', false);
 
-      // No identifier: readSession returns null and still sweeps.
-      expect((await repository.readSession()).data, isNull);
+      expect((await repository.sweepLegacyKeys()).hasData, isTrue);
+      expect((await repository.sweepLegacyKeys()).hasData, isTrue);
+
       expect(prefs.getBool('session.is_owner'), isNull);
     });
   });

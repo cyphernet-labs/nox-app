@@ -9,6 +9,7 @@ import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/domain/model/qr/camera_permission_status.dart';
 import 'package:nox_app/presentation/pages/qr_scan_page/bloc/qr_scan_bloc.dart';
 import 'package:nox_app/l10n/app_localizations_en.dart';
+import 'package:nox_app/presentation/pages/chat_card_page/bloc/chat_card_bloc.dart';
 import 'package:nox_app/presentation/pages/chat_card_page/chat_card_page.dart';
 import 'package:nox_app/presentation/pages/chat_thread_page/chat_thread_page.dart';
 import 'package:nox_app/presentation/pages/chats_list_page/chats_list_page.dart';
@@ -222,6 +223,25 @@ void main() {
         textScale: 2.0,
       );
       expect(tester.takeException(), isNull, reason: 'FileViewPage overflowed at 2.0');
+    });
+
+    testWidgets('the chat card survives 2.0 on a phone with no files in it', (tester) async {
+      // Two conditions at once, and either alone hides it: a phone-sized
+      // surface, and the EMPTY files state. The default 800x600 canvas has room
+      // to spare, and a card holding files puts a scrolling list under the
+      // shortfall. Empty, the card stacks a header, the People block and a
+      // section heading above a state that neither scrolled nor shrank.
+      tester.view.devicePixelRatio = 3.0;
+      tester.view.physicalSize = const Size(360, 640) * 3.0;
+      addTearDown(() {
+        tester.view.resetDevicePixelRatio();
+        tester.view.resetPhysicalSize();
+      });
+      final chat = ChatModel(id: 'chat_0', name: 'Design crit', lastMessagePreview: '', lastMessageAt: DateTime(2024, 1, 1));
+
+      await pumpApp(tester, ChatCardPage(chat: chat, initialScenario: ChatCardScenario.empty), textScale: 2.0);
+
+      expect(tester.takeException(), isNull, reason: 'the empty chat card overflowed at 2.0');
     });
   });
 }

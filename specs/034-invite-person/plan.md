@@ -1,5 +1,13 @@
 # Implementation Plan: Приглашение нового человека в круг
 
+> ⊘ **ФАЗА ОТМЕНЕНА 2026-09-10** (владелец, фаза [037](../037-local-only-phase/spec.md)).
+>
+> Всё, что описано ниже, было реализовано, смёржено и затем **удалено** из кода фазой 037. Читать как историю решения, а не как описание существующей функциональности.
+>
+> Причина: фаза реализовывала [Q4](../../docs/client-backend/open-questions.md) в редакции «сервер на круг», а Q4 перерешён «сервер на пользователя». Личный сервер держит ровно одного человека — приглашать на него некого. Знакомство разных людей уходит на relay ([Q13](../../docs/client-backend/open-questions.md)).
+>
+> Подробности снятого — в [roadmap-stage2.md](../../docs/client-backend/roadmap-stage2.md).
+
 **Branch**: `034-invite-person` | **Date**: 2026-09-07 | **Spec**: [spec.md](./spec.md)
 
 **Input**: Feature specification from `/specs/034-invite-person/spec.md`

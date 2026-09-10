@@ -270,26 +270,9 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 				// the person this store belongs to. Minting unconditionally
 				// collides with the singleton index and turns the recovery into
 				// an internal error - the same permanent lockout, one layer down.
-				people, err := countPeople(ctx, tx)
+				id, err = resolveSolePerson(ctx, tx, now)
 				if err != nil {
 					return Identity{}, err
-				}
-				if people == 1 {
-					id, err = soleUser(ctx, tx)
-					if err != nil {
-						return Identity{}, err
-					}
-				} else if people == 0 {
-					id, err = insertUser(ctx, tx, "", now)
-					if err != nil {
-						return Identity{}, err
-					}
-					id.Created = true
-				} else {
-					// More people than the schema admits: this store was not
-					// written by this build, and there is genuinely something to
-					// pick between. Refuse rather than guess.
-					return Identity{}, ErrTokenInvalid
 				}
 				// Re-point the marker unconditionally - it currently names a
 				// ghost, and setOwner only writes into an empty column.
@@ -314,32 +297,9 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 			// one row and guesses nothing. Refusing instead would leave the
 			// store permanently unclaimable with its whole conversation intact
 			// and no way in.
-			people, err := countPeople(ctx, tx)
+			id, err = resolveSolePerson(ctx, tx, now)
 			if err != nil {
 				return Identity{}, err
-			}
-			switch {
-			case people == 1:
-				existing, err := soleUser(ctx, tx)
-				if err != nil {
-					return Identity{}, err
-				}
-				id = existing
-				// Not Created: this person existed before the claim, so there
-				// is no naming step ahead of them.
-			case people == 0:
-				id, err = insertUser(ctx, tx, "", now)
-				if err != nil {
-					return Identity{}, err
-				}
-				id.Created = true
-			default:
-				// More than one person, which the singleton index makes
-				// impossible - so the schema this store carries is not the one
-				// this build wrote. Attaching to a row picked by order is the
-				// hazard the branch above exists to avoid, and here there is
-				// genuinely something to pick between. Refuse.
-				return Identity{}, ErrTokenInvalid
 			}
 		}
 		// Ownership is recorded HERE, in the transaction that creates the
@@ -483,6 +443,41 @@ func loadUser(ctx context.Context, tx *sql.Tx, userID string, id *Identity) (boo
 		return false, fmt.Errorf("read owner: %w", err)
 	}
 	return true, nil
+}
+
+// resolveSolePerson answers "whose store is this" for a claim the ownership
+// marker could not answer for.
+//
+// One spelling, because the two branches that need it - a marker naming
+// somebody who is gone, and no marker at all - differ ONLY in whether the
+// marker is re-pointed afterwards. They carried a hand-copied copy of this
+// count each, so tightening the refusal or changing what counts as a fresh
+// person had to be remembered twice, in the one function whose own history
+// says the branch nobody thought about is where the last defect was.
+func resolveSolePerson(ctx context.Context, tx *sql.Tx, now int64) (Identity, error) {
+	people, err := countPeople(ctx, tx)
+	if err != nil {
+		return Identity{}, err
+	}
+	switch people {
+	case 1:
+		// Not Created: this person existed before the claim, so there is no
+		// naming step ahead of them.
+		return soleUser(ctx, tx)
+	case 0:
+		id, err := insertUser(ctx, tx, "", now)
+		if err != nil {
+			return Identity{}, err
+		}
+		id.Created = true
+		return id, nil
+	default:
+		// More people than the singleton index admits, so the schema this store
+		// carries is not the one this build wrote. Attaching to a row picked by
+		// order is the hazard both callers exist to avoid, and here there is
+		// genuinely something to pick between. Refuse rather than guess.
+		return Identity{}, ErrTokenInvalid
+	}
 }
 
 // soleUser reads the one person this server holds.

@@ -286,10 +286,30 @@ class _ChatCardBodyState extends State<ChatCardBody> {
 
   Widget _files(BuildContext context, Initialized state) {
     if (state.files.isEmpty) {
-      return AppEmptyContentWidget(
-        illustration: Assets.svg.illustrations.emptyFiles,
-        title: context.l10n.filesEmptyTitle,
-        message: context.l10n.filesEmptyMessage,
+      // The one branch of the card that has to carry its own scroll. Everything
+      // else here either scrolls already (the files list, the grid) or is fixed
+      // chrome, but the card is a non-scrolling Column and the empty state is a
+      // centred block that neither shrinks nor clips: at a large text scale on a
+      // phone it outgrows what the People block and the two headings leave it,
+      // and a Center that does not fit simply overflows.
+      //
+      // Scrolled HERE and not inside AppEmptyContentWidget, where it would look
+      // like the general fix: the chats list renders the same widget inside a
+      // SliverFillRemaining that measures intrinsic height, and neither a
+      // LayoutBuilder nor a nested viewport can answer that question.
+      return LayoutBuilder(
+        builder: (context, constraints) => SingleChildScrollView(
+          child: ConstrainedBox(
+            // Centred while it fits - the minimum is what keeps the block in the
+            // middle of an otherwise empty pane instead of pinned to its top.
+            constraints: BoxConstraints(minHeight: constraints.hasBoundedHeight ? constraints.maxHeight : 0),
+            child: AppEmptyContentWidget(
+              illustration: Assets.svg.illustrations.emptyFiles,
+              title: context.l10n.filesEmptyTitle,
+              message: context.l10n.filesEmptyMessage,
+            ),
+          ),
+        ),
       );
     }
     return state.viewMode == FilesViewMode.list ? _list(context, state.files) : _grid(context, state.files);

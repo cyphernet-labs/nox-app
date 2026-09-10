@@ -38,10 +38,9 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   /// more — this machine belongs to one person, so the answer was the same on
   /// every server that ever ran.
   ///
-  /// Swept on the first [readSession] rather than only at logout: the install
-  /// this exists for is one upgraded from such a build, and an install that
-  /// never signs out never reaches logout. SharedPreferences is an in-memory
-  /// map after init, so the check costs nothing and the write happens once.
+  /// Swept at bootstrap rather than at logout: the install this exists for is
+  /// one upgraded from such a build, and an install that never signs out never
+  /// reaches logout.
   static const String _kLegacyIsOwner = 'session.is_owner';
 
   /// This device's Ed25519 seed. The private half of the pair whose public
@@ -71,40 +70,19 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   /// rescue a device from.
   bool _onboardingStartedHere = false;
 
-  /// True once the legacy sweep has run in this process.
-  ///
-  /// readSession is the app's hottest repository read - app-state derivation,
-  /// own-vs-other resolution, the seeding path - and the thing being swept is
-  /// settled once, forever, on the first launch after an upgrade. A bool is
-  /// what keeps a one-time migration from riding every one of those calls.
-  bool _legacySwept = false;
-
-  /// Never allowed to fail the read it rides on.
-  ///
-  /// readSession sits inside `execute`, so anything thrown here comes back as a
-  /// repository ERROR - and on a cold start that lands a validly signed-in
-  /// person on Login, one tap from a full local wipe. A dead key that survives
-  /// to the next launch costs nothing; that person costs everything.
-  ///
-  /// Marked done BEFORE the work, so a failure retries on the next launch
-  /// rather than on the next read - readSession is the app's hottest, and a
-  /// storage that is refusing writes would be asked again on every one of them.
-  /// Nothing is logged from the catch either: the log alias is a container
-  /// lookup, and a lookup that throws inside a catch escapes it.
-  Future<void> _sweepLegacyKeys() async {
-    if (_legacySwept) return;
-    _legacySwept = true;
-    try {
+  @override
+  Future<RepositoryResult<bool>> sweepLegacyKeys() {
+    // Inside `execute`, which logs and never throws, so bootstrap needs no
+    // guard of its own and a refusing storage cannot stop the app from opening.
+    return execute<bool>(() async {
       if (_prefs.containsKey(_kLegacyIsOwner)) await _prefs.remove(_kLegacyIsOwner);
-    } on Object {
-      // Next launch.
-    }
+      return const RepositoryResult<bool>.success(data: true);
+    });
   }
 
   @override
   Future<RepositoryResult<SessionModel?>> readSession() {
     return execute<SessionModel?>(() async {
-      await _sweepLegacyKeys();
       final identifier = await _secureStorage.read(key: _kIdentifier);
       if (identifier == null || identifier.isEmpty) {
         return const RepositoryResult<SessionModel?>.success(data: null);

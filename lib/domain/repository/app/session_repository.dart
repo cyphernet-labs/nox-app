@@ -39,15 +39,6 @@ abstract class SessionRepository {
   /// The paired server's address, or null when this install is not paired.
   Future<RepositoryResult<String?>> serverAddress();
 
-  /// Whether this device has renamed since the server last confirmed a name.
-  ///
-  /// A greeting states a label only when the answer is true. Stating it every
-  /// time turns a stale cache into a rename ping-pong: a device that was offline
-  /// through a rename would push the old name back over the new one, and the
-
-  /// Raises the flag without changing the name. Used when the world the name
-  /// was confirmed in is gone: the server has never heard it, so it has to be
-
   /// Advances the onboarding flag when the server says the person is already
   /// known, and never the other way round. Called from the greeting-adoption
   /// path, so a device sitting on the naming screen leaves it as soon as the
@@ -66,9 +57,9 @@ abstract class SessionRepository {
   Stream<String?> watchLabel();
 
   /// Forgets who this device is on the server it cached: the author id belongs
-  /// to that world. Called when the server's store
-  /// turns out to be a different world: an id from the old one would mark
-  /// strangers' messages as this user's own.
+  /// to that world. Called when the server's store turns out to be a different
+  /// world: an id from the old one would mark strangers' messages as this
+  /// user's own.
   Future<RepositoryResult<bool>> forgetAuthorId();
 
   /// Records that this process created the person and is now naming them.
@@ -82,6 +73,18 @@ abstract class SessionRepository {
   /// [clear] on purpose: the device id survives, because a sign-in that never
   /// reached the server did not change which install this is.
   Future<RepositoryResult<bool>> discardSignIn();
+
+  /// Drops keys that only builds before this one ever wrote.
+  ///
+  /// Called ONCE at bootstrap, not from a read. It is a one-time upgrade step,
+  /// settled forever on the first launch after an install updates, and riding
+  /// it on [readSession] - the app's hottest repository call - made a read
+  /// perform a write and put a migration inside the error envelope that decides
+  /// whether a signed-in person sees their chats or the Login screen.
+  ///
+  /// Never fails a boot: the result is reported, not thrown, and a caller is
+  /// free to ignore it. A key that outlives one more launch costs nothing.
+  Future<RepositoryResult<bool>> sweepLegacyKeys();
 
   /// Full wipe: secure storage deleteAll + remove prefs keys (logout).
   Future<RepositoryResult<bool>> clear();

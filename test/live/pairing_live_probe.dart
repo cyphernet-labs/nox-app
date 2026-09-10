@@ -41,8 +41,11 @@ void main() {
 
     // An install upgraded from a build that still wrote the ownership key. The
     // sweep has nothing to prove on a fresh one, and this probe is the only
-    // place the whole path runs against a real server.
+    // place the whole path runs against a real server. Seeded and then swept in
+    // the same order main() does it - the key is written by the OLD build, and
+    // the new one drops it at bootstrap rather than on the first read.
     await (await SharedPreferences.getInstance()).setBool('session.is_owner', true);
+    await session.sweepLegacyKeys();
 
     final signedIn = await auth.signIn(identifier: link);
     stdout.writeln('SIGN IN: ${signedIn.hasData ? 'ok' : signedIn.exception}');

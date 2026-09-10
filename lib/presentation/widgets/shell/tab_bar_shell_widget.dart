@@ -5,6 +5,7 @@ import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/general/constants.dart';
+import 'package:nox_app/general/identity/identity_resolver.dart';
 import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/pages/chats_list_page/chats_list_page.dart';
 import 'package:nox_app/presentation/pages/create_chat_page/create_chat_page.dart';
@@ -85,7 +86,10 @@ class _TabBarShellState extends State<TabBarShell> {
     super.initState();
     _labelSub = sessionRepository.watchLabel().listen((label) {
       if (!mounted) return;
-      setState(() => _accountLabel = (label != null && label.isNotEmpty) ? label : Constants.defaultUserLabel);
+      // Through the shared rule, not a hand-matched copy of it: this avatar
+      // and the chat card's People row read the same channel, and two spellings
+      // of "what to show when the name is empty" agree only until one changes.
+      setState(() => _accountLabel = resolveLabel(label));
     });
   }
 

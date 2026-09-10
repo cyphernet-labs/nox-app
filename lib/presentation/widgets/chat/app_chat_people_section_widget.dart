@@ -36,7 +36,10 @@ class AppChatPeopleSectionWidget extends StatelessWidget {
         // one screen cannot drift apart.
         AppCardSectionHeaderWidget(title: context.l10n.chatPeopleTitle),
         Padding(
-          padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s0, AppSpacingTokens.s16, AppSpacingTokens.s12),
+          // The heading's own inset, taken from it rather than retyped: the
+          // person row and the button have to line up with the title above them,
+          // and a copied number stays lined up only until the header moves.
+          padding: AppCardSectionHeaderWidget.padding,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [

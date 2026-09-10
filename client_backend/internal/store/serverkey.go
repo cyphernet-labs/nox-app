@@ -176,8 +176,7 @@ func (s *Store) ReadOwnershipState(ctx context.Context) (OwnershipState, error) 
 	// every surviving message would render as somebody else's.
 	owned := false
 	if owner != "" {
-		var id Identity
-		found, err := ownerRowExists(ctx, tx, owner, &id)
+		found, err := ownerRowExists(ctx, tx, owner)
 		if err != nil {
 			return OwnershipState{}, err
 		}
@@ -233,11 +232,15 @@ func readServerIdentity(ctx context.Context, q rowQuerier) (ServerIdentity, erro
 }
 
 // ownerRowExists reports whether the person named by the ownership marker is
-// actually in the store. Shares its statement shape with loadUser on purpose:
-// the two answer the same question, one for a read and one inside the claim.
-func ownerRowExists(ctx context.Context, q rowQuerier, userID string, id *Identity) (bool, error) {
-	err := q.QueryRowContext(ctx,
-		"SELECT user_id, label FROM users WHERE user_id = ?", userID).Scan(&id.UserID, &id.Label)
+// actually in the store.
+//
+// A bool question, answered with a bool. It used to fill an *Identity that its
+// only caller declared and never read - and on the false path Scan leaves that
+// struct zeroed, so the next caller to trust the out-parameter would read a
+// person with no id and no name and be told nothing was wrong.
+func ownerRowExists(ctx context.Context, q rowQuerier, userID string) (bool, error) {
+	var present int
+	err := q.QueryRowContext(ctx, "SELECT 1 FROM users WHERE user_id = ?", userID).Scan(&present)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
