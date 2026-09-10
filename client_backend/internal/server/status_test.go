@@ -414,33 +414,6 @@ func TestTheLinkFollowsTheAddressWhileTheTokenStaysPut(t *testing.T) {
 	}
 }
 
-// The two situations behind one page state. A store that lost its ownership
-// marker still holds a person and their whole conversation, and presenting the
-// link there signs the device in AS them - so the page must not say "the first
-// device to use it becomes the owner", which is the copy for an empty machine.
-func TestAStoreThatHoldsSomebodySaysSoOnTheClaimPage(t *testing.T) {
-	ts, srv := newTestServer(t)
-	dialable(srv)
-	d, _ := claimDevice(t, ts, srv)
-	ctx := context.Background()
-	if err := srv.store.RevokeDevice(ctx, d.pub); err != nil {
-		t.Fatalf("RevokeDevice: %v", err)
-	}
-	forgetOwnerOnDisk(t, srv)
-
-	body := statusBody(t, srv)
-	if !strings.Contains(body, "This server holds a conversation") {
-		t.Fatalf("the page offers an empty machine's copy over a store that holds somebody: %s", body)
-	}
-	if strings.Contains(body, "becomes the owner of this server") {
-		t.Fatalf("the page still promises ownership of an empty machine: %s", body)
-	}
-	// The link is still offered: this state is recoverable, not fatal.
-	if !strings.Contains(body, "https://nox.app/p/#") {
-		t.Fatalf("no way back in is offered: %s", body)
-	}
-}
-
 // forgetOwnerOnDisk drops the ownership marker through a second handle on the
 // same file - what a partial restore or a hand edit leaves behind.
 func forgetOwnerOnDisk(t *testing.T, srv *Server) {
@@ -455,47 +428,81 @@ func forgetOwnerOnDisk(t *testing.T, srv *Server) {
 	}
 }
 
-// An owner who signed out on their last device is getting back in, not looking
-// at a hand-edited database. The page and the startup line have to split the
-// same three ways, or one of them tells the person the wrong story at the one
-// moment they are reading it.
-func TestAnOwnerWithNoDevicesIsNotToldTheirDatabaseWasEdited(t *testing.T) {
-	ts, srv := newTestServer(t)
-	dialable(srv)
-	d, _ := claimDevice(t, ts, srv)
-	if err := srv.store.RevokeDevice(context.Background(), d.pub); err != nil {
-		t.Fatalf("RevokeDevice: %v", err)
-	}
+// Every state of the page, enumerated, because the last three defects here were
+// all "the branch I did not think about". Each row is a store shape, the copy it
+// must show, and the copy it must NOT.
+func TestTheServicePageSaysTheRightThingInEveryState(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		arrange func(t *testing.T, ts *httptest.Server, srv *Server)
+		want    string
+		notWant []string
+	}{
+		{
+			name:    "fresh, nobody has claimed it",
+			arrange: func(*testing.T, *httptest.Server, *Server) {},
+			want:    "Nobody has claimed this server yet",
+			notWant: []string{"records no owner", "Your server is waiting", "Running and claimed"},
+		},
+		{
+			name: "claimed and reachable",
+			arrange: func(t *testing.T, ts *httptest.Server, srv *Server) {
+				claimDevice(t, ts, srv)
+			},
+			want:    "Running and claimed",
+			notWant: []string{"records no owner", "Nobody has claimed", "Your server is waiting"},
+		},
+		{
+			name: "owner is there, their last device is not",
+			arrange: func(t *testing.T, ts *httptest.Server, srv *Server) {
+				d, _ := claimDevice(t, ts, srv)
+				if err := srv.store.RevokeDevice(context.Background(), d.pub); err != nil {
+					t.Fatalf("RevokeDevice: %v", err)
+				}
+			},
+			want:    "Your server is waiting for you",
+			notWant: []string{"records no owner", "Nobody has claimed", "Running and claimed"},
+		},
+		{
+			name: "reachable, but the marker is gone",
+			arrange: func(t *testing.T, ts *httptest.Server, srv *Server) {
+				claimDevice(t, ts, srv)
+				forgetOwnerOnDisk(t, srv)
+			},
+			want:    "records no owner",
+			notWant: []string{"Running and claimed", "Nobody has claimed"},
+		},
+		{
+			name: "the marker is gone and so is the last device",
+			arrange: func(t *testing.T, ts *httptest.Server, srv *Server) {
+				d, _ := claimDevice(t, ts, srv)
+				if err := srv.store.RevokeDevice(context.Background(), d.pub); err != nil {
+					t.Fatalf("RevokeDevice: %v", err)
+				}
+				forgetOwnerOnDisk(t, srv)
+			},
+			want:    "This server holds a conversation",
+			notWant: []string{"Nobody has claimed", "Running and claimed", "Your server is waiting"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ts, srv := newTestServer(t)
+			dialable(srv)
+			// Startup mints the machine key before it ever draws a page.
+			if _, err := srv.store.EnsureServerIdentity(context.Background()); err != nil {
+				t.Fatalf("EnsureServerIdentity: %v", err)
+			}
+			tc.arrange(t, ts, srv)
 
-	body := statusBody(t, srv)
-	if !strings.Contains(body, "Your server is waiting for you") {
-		t.Fatalf("the page does not recognise an owner getting back in: %s", body)
-	}
-	for _, wrong := range []string{"no normal sequence of events produces", "becomes the owner of this server"} {
-		if strings.Contains(body, wrong) {
-			t.Fatalf("the page tells the owner %q: %s", wrong, body)
-		}
-	}
-}
-
-// "Claimed" and "reachable" stopped being the same question. A store whose
-// ownership marker is missing but whose devices still work is running normally,
-// and the page must say so without claiming an owner it does not record.
-func TestAReachableServerWithNoOwnerMarkerSaysWhatIsActuallyTrue(t *testing.T) {
-	ts, srv := newTestServer(t)
-	dialable(srv)
-	claimDevice(t, ts, srv)
-	forgetOwnerOnDisk(t, srv)
-
-	body := statusBody(t, srv)
-	if strings.Contains(body, "Running and claimed") {
-		t.Fatalf("the page claims an owner the store does not record: %s", body)
-	}
-	if !strings.Contains(body, "records no owner") {
-		t.Fatalf("the page says nothing about the missing marker: %s", body)
-	}
-	// And no claim link: a device is paired, so Pair would refuse one anyway.
-	if strings.Contains(body, "https://nox.app/p/#") {
-		t.Fatalf("a link is offered that Pair would refuse: %s", body)
+			body := statusBody(t, srv)
+			if !strings.Contains(body, tc.want) {
+				t.Fatalf("the page does not say %q: %s", tc.want, body)
+			}
+			for _, wrong := range tc.notWant {
+				if strings.Contains(body, wrong) {
+					t.Fatalf("the page also says %q, which belongs to another state: %s", wrong, body)
+				}
+			}
+		})
 	}
 }

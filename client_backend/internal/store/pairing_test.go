@@ -986,3 +986,47 @@ func TestAGhostOwnerMarkerAttachesToThePersonWhoIsActuallyThere(t *testing.T) {
 		t.Fatalf("marker = %q, want it re-pointed at %q", machine.OwnerUserID, owner.UserID)
 	}
 }
+
+// The marker names a ghost and nobody else is there. Startup must not promise
+// "you are back in with your chats and messages" - there are none, and the claim
+// mints a brand-new person whose author id no surviving message carries.
+func TestAGhostMarkerOverAnEmptyStoreIsNotAnnouncedAsARecovery(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	owner := claimOwner(t, s, "dev-owner")
+	if err := s.RevokeDevice(ctx, "dev-owner"); err != nil {
+		t.Fatalf("RevokeDevice: %v", err)
+	}
+	if _, err := s.write.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {
+		t.Fatalf("relax foreign keys: %v", err)
+	}
+	if _, err := s.write.ExecContext(ctx, "DELETE FROM users WHERE user_id = ?", owner.UserID); err != nil {
+		t.Fatalf("delete the person: %v", err)
+	}
+
+	machine, err := s.ReadOwnershipState(ctx)
+	if err != nil {
+		t.Fatalf("ReadOwnershipState: %v", err)
+	}
+	// The marker is set, but it names nobody - so this is not an owner getting
+	// back in, and nothing may say it is.
+	if machine.Owned {
+		t.Fatal("a marker naming a person who is gone reported as ownership")
+	}
+	if machine.HasPerson {
+		t.Fatal("the store holds nobody")
+	}
+
+	// And the claim that follows is honest about it: a person is CREATED here.
+	token, err := s.IssueClaimToken(ctx, 500)
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+	back, err := pairID(ctx, s, token, "dev-new", "test", 500)
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if !back.Created {
+		t.Fatal("the person was minted here, and the app has to offer the naming step")
+	}
+}

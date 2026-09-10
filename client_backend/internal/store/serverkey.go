@@ -169,7 +169,21 @@ func (s *Store) ReadOwnershipState(ctx context.Context) (OwnershipState, error) 
 	if err != nil {
 		return OwnershipState{}, err
 	}
-	return OwnershipState{Owned: owner != "", HasPerson: people > 0, OwnerCanGetIn: devices > 0}, nil
+	// Owned means the marker names somebody who is THERE. A marker pointing at a
+	// row that is gone - reachable by a hand edit with foreign keys off - would
+	// otherwise have startup promise "you are back in with your chats and
+	// messages" over a store whose claim mints a brand-new person instead, and
+	// every surviving message would render as somebody else's.
+	owned := false
+	if owner != "" {
+		var id Identity
+		found, err := ownerRowExists(ctx, tx, owner, &id)
+		if err != nil {
+			return OwnershipState{}, err
+		}
+		owned = found
+	}
+	return OwnershipState{Owned: owned, HasPerson: people > 0, OwnerCanGetIn: devices > 0}, nil
 }
 
 // countDevices is the ONE spelling of "can anybody still reach this machine".
@@ -216,4 +230,19 @@ func readServerIdentity(ctx context.Context, q rowQuerier) (ServerIdentity, erro
 		return ServerIdentity{}, fmt.Errorf("read server identity: %w", err)
 	}
 	return ServerIdentity{PublicKey: pub, OwnerUserID: owner.String, ClaimedAt: claimedAt.Int64}, nil
+}
+
+// ownerRowExists reports whether the person named by the ownership marker is
+// actually in the store. Shares its statement shape with loadUser on purpose:
+// the two answer the same question, one for a read and one inside the claim.
+func ownerRowExists(ctx context.Context, q rowQuerier, userID string, id *Identity) (bool, error) {
+	err := q.QueryRowContext(ctx,
+		"SELECT user_id, label FROM users WHERE user_id = ?", userID).Scan(&id.UserID, &id.Label)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read the recorded owner: %w", err)
+	}
+	return true, nil
 }

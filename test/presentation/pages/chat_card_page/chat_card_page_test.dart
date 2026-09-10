@@ -9,6 +9,7 @@ import 'package:nox_app/presentation/pages/chat_card_page/bloc/chat_card_bloc.da
 import 'package:nox_app/presentation/pages/chat_card_page/chat_card_page.dart';
 import 'package:nox_app/presentation/pages/file_view_page/file_view_page.dart';
 import 'package:nox_app/presentation/widgets/chat/app_segmented_widget.dart';
+import 'package:nox_app/presentation/widgets/state/app_notice_strip_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_file_glyph_widget.dart';
 
 import '../../../utils/pump_app.dart';
@@ -46,6 +47,17 @@ void main() {
       final button = tester.widget<FilledButton>(find.widgetWithText(FilledButton, l10nEn.chatInvitePerson));
       expect(button.onPressed, isNull);
       expect(find.text(l10nEn.chatInviteLater), findsOneWidget);
+    });
+
+    testWidgets('the offline banner stays above the People section', (tester) async {
+      // The spec pins the banner to the top of the card. Pushed below the
+      // People block it lands ~150dp down, and on a phone at a large text scale
+      // it can fall off the first fold - which is the one place it is read.
+      await pumpCard(tester, scenario: ChatCardScenario.offline);
+
+      final banner = tester.getTopLeft(find.byType(AppNoticeStripWidget)).dy;
+      final people = tester.getTopLeft(find.text(l10nEn.chatPeopleTitle)).dy;
+      expect(banner, lessThan(people), reason: 'the banner was pushed below the people block');
     });
 
     testWidgets('the error state carries no people at all', (tester) async {

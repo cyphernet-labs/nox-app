@@ -12,6 +12,7 @@ import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
+import 'package:nox_app/presentation/widgets/chat/app_card_section_header_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_chat_people_section_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/watch_chat.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
@@ -196,6 +197,10 @@ class _ChatCardBodyState extends State<ChatCardBody> {
               // Design (ChatInfoDrawer): a divider separates the identity block from
               // the Files section — desktop drawer only (the mobile card is full-screen).
               if (widget.isDrawer) const AppHairlineDividerWidget(),
+              // The banner stays at the top of the card, where the spec pins
+              // it: pushed below the People block it lands ~150dp down, and on a
+              // phone at a large text scale it can fall off the first fold.
+              if (state is Initialized && state.isOffline) AppNoticeStripWidget(message: context.l10n.noConnection, icon: NoxIcons.wifiOff),
               // Only once there is something to show. Rendered unconditionally
               // it stacked a person and a disabled button over the embedded
               // error screen and over the loading spinner - two states the
@@ -264,20 +269,15 @@ class _ChatCardBodyState extends State<ChatCardBody> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (initialized.isOffline) AppNoticeStripWidget(message: context.l10n.noConnection, icon: NoxIcons.wifiOff),
-        Padding(
-          padding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s0, AppSpacingTokens.s16, AppSpacingTokens.s12),
-          child: Row(
-            children: [
-              Expanded(child: Text(context.l10n.filesSectionTitle, style: Theme.of(context).textTheme.titleMedium)),
-              if (initialized.files.isNotEmpty)
-                AppSegmentedWidget<FilesViewMode>(
+        AppCardSectionHeaderWidget(
+          title: context.l10n.filesSectionTitle,
+          trailing: initialized.files.isNotEmpty
+              ? AppSegmentedWidget<FilesViewMode>(
                   options: {FilesViewMode.list: context.l10n.filesViewList, FilesViewMode.grid: context.l10n.filesViewGrid},
                   selected: initialized.viewMode,
                   onChanged: (mode) => _bloc.add(ChatCardEvent.viewModeChanged(mode)),
-                ),
-            ],
-          ),
+                )
+              : null,
         ),
         Expanded(child: _files(context, initialized)),
       ],

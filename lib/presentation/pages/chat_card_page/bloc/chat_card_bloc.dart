@@ -93,7 +93,13 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
     // It also removes the await that used to sit in front of the fatal
     // short-circuit: a suspension point there let a second Initialize (the demo
     // dropdown re-dispatches one) interleave with the first.
-    _labelSub ??= _sessionRepository.watchLabel().listen((label) => add(ChatCardEvent.personLabelChanged(label)));
+    // isClosed first: logout emits null on this exact channel while the card is
+    // being torn down, and cancel() is asynchronous through the generator - so a
+    // null can land on a closed bloc in that window.
+    _labelSub ??= _sessionRepository.watchLabel().listen((label) {
+      if (isClosed) return;
+      add(ChatCardEvent.personLabelChanged(label));
+    });
     emit(const ChatCardState.initializing());
 
     if (_scenario == ChatCardScenario.fatal) {

@@ -81,6 +81,12 @@ func (s *Server) collectStatus(ctx context.Context) (machineStatus, error) {
 	}
 
 	status := machineStatus{
+		// Set before the switch, not inside a branch. Both states read them -
+		// the claimed page to say whether an owner is recorded, the needs-claim
+		// page to pick which of three stories it is telling - and filling them
+		// on one path only told every healthy server it had been hand edited.
+		Owned:     ownership.Owned,
+		HasPerson: ownership.HasPerson,
 		JournalID: journalID,
 		Schema:    s.schemaVersion,
 		Counts:    counts,
@@ -99,7 +105,6 @@ func (s *Server) collectStatus(ctx context.Context) (machineStatus, error) {
 			return machineStatus{}, err
 		}
 		status.Link, status.Scannable = link, scannable
-		status.Owned, status.HasPerson = ownership.Owned, ownership.HasPerson
 	}
 	return status, nil
 }
