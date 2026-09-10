@@ -61,11 +61,15 @@ const ThreadHeader = ({ t }) => (
     </div>
     <div style={{ flex: 1, minWidth: 0 }}>
       <div style={{ ...ty('titleMedium'), color: t.onSurface, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Night Owls</div>
-      <div style={{ ...ty('bodyMedium'), color: t.onSurfaceVariant }}>Aria, Mox and you</div>
     </div>
-    <IconButton t={t} name="search" />
-    <IconButton t={t} name="folder" />
+    {/* Two actions, in this order: info, then the seam a relay will attach to.
+        The invite is drawn through IconButton's own `color`, dimmed to the M3
+        disabled 38% - the same treatment the app applies by hand, because its
+        icon widget paints its own filter and never consults IconTheme.
+        Per-chat search and folders were never in the spec, and the member
+        subtitle went with the roster: this machine holds one person. */}
     <IconButton t={t} name="info" />
+    <IconButton t={t} name="add" color={hexA(t.onSurfaceVariant, 0.38)} />
   </div>
 );
 

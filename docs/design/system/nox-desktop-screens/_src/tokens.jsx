@@ -100,6 +100,7 @@ const TYPE = {
   bodyLarge:     { fontSize: 16, lineHeight: '24px', fontWeight: 400, letterSpacing: '0.5px' },
   bodyMedium:    { fontSize: 14, lineHeight: '20px', fontWeight: 400, letterSpacing: '0.25px' },
   labelLarge:    { fontSize: 14, lineHeight: '20px', fontWeight: 500, letterSpacing: '0.1px' },
+  bodySmall:     { fontSize: 12, lineHeight: '16px', fontWeight: 400, letterSpacing: '0.4px' },
   labelMedium:   { fontSize: 12, lineHeight: '16px', fontWeight: 500, letterSpacing: '0.5px' },
   labelSmall:    { fontSize: 11, lineHeight: '16px', fontWeight: 500, letterSpacing: '0.5px' },
 };
