@@ -55,9 +55,9 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
   /// compile-time address would pair with one server and send messages to
   /// another.
   ///
-  /// The three refusals stay apart because the person's next action differs: a
-  /// link that will not parse means "scan it again", an expired token means
-  /// "issue a new invite", a rejected one means "this is not usable". A failed
+  /// The refusals stay apart because the person's next action differs: a link
+  /// that will not parse means "scan it again", an expired token means "issue a
+  /// new invite", a rejected one means "this is not usable". A failed
   /// attempt rolls the session back, because a stored identity with no settled
   /// outcome would strand the next launch in onboarding.
   @override
@@ -156,9 +156,9 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         return const RepositoryResult<bool>.error(exception: RepositoryException.internal);
       } on PairingRefused catch (e) {
         await _sessionRepository.discardSignIn();
-        // Four refusals, four answers. The owner's decision and the owner's
-        // silence are NOT the same thing to the person reading it: one means
-        // stop asking, the other means ask again.
+        // Two refusals, two answers. Both are about the LINK, because a link
+        // is all there is to refuse now: nobody waits on a human being for
+        // permission to pair a device with their own machine.
         return RepositoryResult<bool>.error(
           exception: switch (e.reason) {
             PairRefusal.expired => RepositoryException.notFound,

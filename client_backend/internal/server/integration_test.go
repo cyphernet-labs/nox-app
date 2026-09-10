@@ -455,6 +455,21 @@ func TestStoryOneProtocolNegatives(t *testing.T) {
 		c.expectErr(2, protocol.ErrInvalidRequest)
 	})
 
+	// A command REMOVED by feature 037, sent by a build that predates the
+	// removal. It has to be refused like any other name the server does not
+	// know: a half-deleted command that answers with an empty success looks to
+	// an older client exactly like one that worked, and it would go on showing
+	// a circle that no longer exists.
+	t.Run("a retired person command is refused, not silently accepted", func(t *testing.T) {
+		for _, cmd := range []string{"person.invite", "person.list", "person.confirm"} {
+			c := dialWS(t, ts, srv)
+			c.expectGreeting()
+			c.hello(1, ``)
+			c.send(`{"id":2,"cmd":"` + cmd + `","data":{}}`)
+			c.expectErr(2, protocol.ErrInvalidRequest)
+		}
+	})
+
 	t.Run("duplicate hello", func(t *testing.T) {
 		c := dialWS(t, ts, srv)
 		c.expectGreeting()

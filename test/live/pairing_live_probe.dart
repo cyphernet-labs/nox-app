@@ -93,10 +93,9 @@ void main() {
     expect(out.hasData, isTrue);
     expect((await session.readSession()).data, isNull);
     expect((await session.serverAddress()).data, isNull);
-    // Ownership goes with the session: the next person to sign in on this
-    // device inherits nobody else's machine. Asserted on the STORED key, not on
-    // the session - the line above already proved the session is null, so
-    // `data?.isOwner` would be null whatever clear() did.
+    // The key an older build wrote goes with the session too. Nothing reads it
+    // any more, but an install upgraded from such a build would otherwise carry
+    // it for the life of the device.
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getBool('session.is_owner'), isNull);
     expect(prefs.getString('session.author_id'), isNull);

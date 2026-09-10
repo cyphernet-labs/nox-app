@@ -43,7 +43,7 @@ class IdentityHandshakeTimeout implements Exception {
 /// person's next action differs: get a new link rather than try again.
 /// The server refused for a reason that is not about the link: an internal
 /// error, a rate limit, a code this build does not know. Retryable, and
-/// deliberately NOT one of the four refusals - telling somebody their invite is
+/// deliberately NOT one of the pairing refusals - telling somebody their invite is
 /// spent over a server hiccup sends them looking for a new one they do not need.
 class PairingFailed implements Exception {
   const PairingFailed();
@@ -55,9 +55,9 @@ class PairingFailed implements Exception {
 class PairingRefused implements Exception {
   const PairingRefused({required this.reason});
 
-  /// Which of the four refusals this was. They stay apart because each leads
-  /// the person somewhere different, and one shared "it did not work" would
-  /// make the app invent wording it does not know.
+  /// Which refusal this was. The two stay apart because each leads the person
+  /// somewhere different, and one shared "it did not work" would make the app
+  /// invent wording it does not know.
   final PairRefusal reason;
 
   @override
