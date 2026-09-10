@@ -78,7 +78,7 @@ description: "Task list for feature 037 — local-only phase"
 - [ ] T029 [US1] Убрать состояние `stateOwnerless` и предупреждение о бесхозном хранилище из `client_backend/internal/server/status.go` и `client_backend/internal/server/status_page.go`
 - [ ] T030 [US1] Убрать счётчик людей из `client_backend/internal/store/stats.go` и со страницы статуса
 - [ ] T031 [US1] Снять шаг приглашения человека из `client_backend/cmd/smoke/main.go`
-- [ ] T032 [US1] Обновить инварианты в `client_backend/CLAUDE.md`: снять пункты про приглашение человека, ожидание в строке, свипер, метку на соединении, seq-0 у двух событий, владение как ссылку
+- [x] T032 [US1] Обновить инварианты в `client_backend/CLAUDE.md`: снять пункты про приглашение человека, ожидание в строке, свипер, метку на соединении, seq-0 у двух событий, владение как ссылку
 - [ ] T033 [US1] **Гейт**: `go test -race ./...` на пересозданной базе; `cmd/smoke` проходит укороченный сценарий
 
 ### 3C. Клиент: удаление, от листьев к корню
@@ -138,16 +138,16 @@ description: "Task list for feature 037 — local-only phase"
 
 **Цель**: ни один документ не описывает многолюдность как действующую возможность.
 
-- [ ] T064 [P] [US4] Переписать продуктовую модель в `docs/design/spec/overview.md`: §Чаты, таблица решений, уникальность имени чата, правило про push «только свои чаты»
-- [ ] T065 [P] [US4] Переписать `termsContentBody` в `lib/l10n/app_en.arb` и `lib/l10n/app_uk.arb` — обещание общего пространства имеет юридический вес
-- [ ] T066 [P] [US4] Удалить `docs/design/spec/screens/people.md` и `docs/design/spec/screens/pair-request.md`; поправить `screens/README.md`, `top-level-screens.md`, `settings-root.md`
-- [ ] T067 [P] [US4] Описать выключенный шов в `docs/design/spec/screens/chat.md` и `docs/design/spec/screens/chat-card.md`, обе ширины
-- [ ] T068 [P] [US4] Снять кейс 2 и его следы из `docs/client-backend/architecture/authentication.md`
-- [ ] T069 [US4] Обновить `docs/client-backend/open-questions.md`: переоткрыть Q4 с новым решением и датой (конвенция раздела — не удалять, а пометить изменённым с причиной), снять Q15 и Q17, поднять Q13 до блокирующего, добавить вопросы, которые впервые ставит новая модель
-- [ ] T070 [P] [US4] Обновить `docs/client-backend/roadmap-stage2.md` (034 отменена), `docs/client-backend/demo-runbook.md` (сценарий круга из двух), `docs/client-backend/README.md`, `docs/README.md`
-- [ ] T071 [P] [US4] Поправить `docs/client-backend/protocol/wire-surface.md`: строку про экономию открытой модели («нет ростера, управления членством») и обоснование `chat.rename`
-- [ ] T072 [US4] Поправить `docs/design/system/nox-desktop-screens/screens/01-chats.md`: шапка треда десктопа описана как несущая **одно** info-действие, а фаза добавляет второе. Корпус — авторитет по десктопной раскладке (Принцип IV), и он обязан следовать решению владельца, а не наоборот
-- [ ] T073 [US4] Обновить корневой `CLAUDE.md`: продуктовая модель, заметки по 034, список экранов, описание фаз
+- [x] T064 [P] [US4] Переписать продуктовую модель в `docs/design/spec/overview.md`: §Чаты, таблица решений, уникальность имени чата, правило про push «только свои чаты»
+- [x] T065 [P] [US4] Переписать `termsContentBody` в `lib/l10n/app_en.arb` и `lib/l10n/app_uk.arb` — обещание общего пространства имеет юридический вес
+- [x] T066 [P] [US4] Удалить `docs/design/spec/screens/people.md` и `docs/design/spec/screens/pair-request.md`; поправить `screens/README.md`, `top-level-screens.md`, `settings-root.md`
+- [x] T067 [P] [US4] Описать выключенный шов в `docs/design/spec/screens/chat.md` и `docs/design/spec/screens/chat-card.md`, обе ширины
+- [x] T068 [P] [US4] Снять кейс 2 и его следы из `docs/client-backend/architecture/authentication.md`
+- [x] T069 [US4] Обновить `docs/client-backend/open-questions.md`: переоткрыть Q4 с новым решением и датой (конвенция раздела — не удалять, а пометить изменённым с причиной), снять Q15 и Q17, поднять Q13 до блокирующего, добавить вопросы, которые впервые ставит новая модель
+- [x] T070 [P] [US4] Обновить `docs/client-backend/roadmap-stage2.md` (034 отменена), `docs/client-backend/demo-runbook.md` (сценарий круга из двух), `docs/client-backend/README.md`, `docs/README.md`
+- [x] T071 [P] [US4] Поправить `docs/client-backend/protocol/wire-surface.md`: строку про экономию открытой модели («нет ростера, управления членством») и обоснование `chat.rename`
+- [x] T072 [US4] Поправить `docs/design/system/nox-desktop-screens/screens/01-chats.md`: шапка треда десктопа описана как несущая **одно** info-действие, а фаза добавляет второе. Корпус — авторитет по десктопной раскладке (Принцип IV), и он обязан следовать решению владельца, а не наоборот
+- [x] T073 [US4] Обновить корневой `CLAUDE.md`: продуктовая модель, заметки по 034, список экранов, описание фаз
 
 ---
 

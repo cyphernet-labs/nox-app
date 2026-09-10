@@ -21,12 +21,12 @@ NavigationRail + settings menu pane (340, grouped nav items) + detail pane (cont
 - `terms` — Terms
 - `about` — About
 - `logout` — Logout dialog
-- `account-member` — Account, ownership not stated or not held: no badge
+- ~~`account-member`~~ — dropped by phase 037 along with the badge: there is only one Account state now
 
 ## Behavior
 - Selecting a menu item highlights it (secondaryContainer) and swaps the detail pane — no push.
-- Account: identity card carrying the name, the `Server owner` badge and the ID. Editing → inline name field, with the badge **above** it: ownership has nothing to do with editing a name.
-- Owner badge (phase 033): shown only when the server states that this person owns it; "not stated" and "not the owner" both render nothing. Same rule and same placement as the narrow width — one builder feeds both, so the two cannot drift apart.
+- Account: identity card carrying the name and the ID. Editing → inline name field, with no availability spinner: names are not unique and, on a one-person server, there is nobody to collide with.
+- ⚠️ **Phase 037 (2026-09-10) removed the `Server owner` badge** (added by 033) and there is no `People` menu item. The machine holds one person, so a mark that separated the owner from an invited member separates nothing. Same rule as the narrow width — one builder feeds both, so the two cannot drift apart.
 - ⚠️ Phase 032 removed both the mask and the inline account QR: the ID is public now, and a QR of it added nobody. `Show QR` selects the Devices pane, where an invite is minted with a real one-shot token.
 - Notifications: enable switch; OS-denied → InfoBanner + Open settings, switch off.
 - Appearance: System / Light / Dark theme cards. Language: System / English / Українська.
@@ -38,7 +38,6 @@ NavigationRail + settings menu pane (340, grouped nav items) + detail pane (cont
 
 ## Copy (EN)
 - Pane title: Settings
-- Owner badge: Server owner
 - Logout: Log out? / Your ID and local data will be removed from this device.
 
 ## Design-system components
