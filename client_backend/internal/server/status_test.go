@@ -413,3 +413,44 @@ func TestTheLinkFollowsTheAddressWhileTheTokenStaysPut(t *testing.T) {
 		t.Fatalf("unspent claim tokens = %d, want 1: the address changed, the token must not", got)
 	}
 }
+
+// The two situations behind one page state. A store that lost its ownership
+// marker still holds a person and their whole conversation, and presenting the
+// link there signs the device in AS them - so the page must not say "the first
+// device to use it becomes the owner", which is the copy for an empty machine.
+func TestAStoreThatHoldsSomebodySaysSoOnTheClaimPage(t *testing.T) {
+	ts, srv := newTestServer(t)
+	dialable(srv)
+	d, _ := claimDevice(t, ts, srv)
+	ctx := context.Background()
+	if err := srv.store.RevokeDevice(ctx, d.pub); err != nil {
+		t.Fatalf("RevokeDevice: %v", err)
+	}
+	forgetOwnerOnDisk(t, srv)
+
+	body := statusBody(t, srv)
+	if !strings.Contains(body, "This server holds a conversation") {
+		t.Fatalf("the page offers an empty machine's copy over a store that holds somebody: %s", body)
+	}
+	if strings.Contains(body, "becomes the owner of this server") {
+		t.Fatalf("the page still promises ownership of an empty machine: %s", body)
+	}
+	// The link is still offered: this state is recoverable, not fatal.
+	if !strings.Contains(body, "https://nox.app/p/#") {
+		t.Fatalf("no way back in is offered: %s", body)
+	}
+}
+
+// forgetOwnerOnDisk drops the ownership marker through a second handle on the
+// same file - what a partial restore or a hand edit leaves behind.
+func forgetOwnerOnDisk(t *testing.T, srv *Server) {
+	t.Helper()
+	handle, err := sql.Open("sqlite", srv.cfg.DBPath)
+	if err != nil {
+		t.Fatalf("open the database again: %v", err)
+	}
+	defer func() { _ = handle.Close() }()
+	if _, err := handle.Exec("UPDATE server_identity SET owner_user_id = NULL WHERE id = 1"); err != nil {
+		t.Fatalf("forget the owner: %v", err)
+	}
+}

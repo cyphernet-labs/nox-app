@@ -862,3 +862,36 @@ func TestAMissingOwnerMarkerDoesNotMakeTheMachineLookEmpty(t *testing.T) {
 		t.Fatal("a paired device is still a way in; saying otherwise prints a claim link over a live machine")
 	}
 }
+
+// The replay path answers only while the device that spent the token still
+// belongs to the person it produced. Without that join a revoked-and-re-paired
+// key would be handed the original person's id and label - and the client would
+// write both into a device the token never produced.
+func TestAReplayIsRefusedOnceTheDeviceIsNoLongerTheOneThatSpentIt(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	owner := claimOwner(t, s, "dev-owner")
+
+	invite, err := s.IssueDeviceInvite(ctx, owner.UserID, 200)
+	if err != nil {
+		t.Fatalf("IssueDeviceInvite: %v", err)
+	}
+	if _, err := pairID(ctx, s, invite, "dev-second", "test", 200); err != nil {
+		t.Fatalf("pair the second device: %v", err)
+	}
+	// The replay works while the device is still there.
+	if _, err := pairID(ctx, s, invite, "dev-second", "test", 210); err != nil {
+		t.Fatalf("replay before revocation: %v", err)
+	}
+
+	if err := s.RevokeDevice(ctx, "dev-second"); err != nil {
+		t.Fatalf("RevokeDevice: %v", err)
+	}
+
+	// And stops the moment it is not. Refused as a spent token rather than
+	// answered: the row says who the token produced, but the device that
+	// presented it is no longer that person's.
+	if _, err := pairID(ctx, s, invite, "dev-second", "test", 220); !errors.Is(err, ErrTokenInvalid) {
+		t.Fatalf("replay answered %v, want it refused once the device was revoked", err)
+	}
+}

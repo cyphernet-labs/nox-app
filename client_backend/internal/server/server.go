@@ -578,13 +578,18 @@ func announceClaim(
 	if err != nil {
 		return "", fmt.Errorf("build pairing link: %w", err)
 	}
-	// Two different situations, and until this feature they were indistinguishable:
-	// nobody has ever claimed the machine, or its owner has no device left to get
-	// back in with. Saying "no owner yet" in the second case is simply false, and
-	// it tells the person the wrong story about what is about to happen.
-	if ownership.Owned {
+	// Three situations, and saying the wrong one tells the operator the wrong
+	// story about what is about to happen. The machine may never have been
+	// claimed; its owner may have run out of devices; or the ownership marker
+	// may be missing from a store that still holds a person and their whole
+	// conversation - in which case presenting this link signs the device in AS
+	// that person rather than making it the owner of an empty machine.
+	switch {
+	case ownership.Owned:
 		logger.Info("this server has an owner but no devices left - present this link in the app to get back in", "link", link)
-	} else {
+	case ownership.HasPerson:
+		logger.Info("this server holds a conversation but records no owner - present this link to sign in as the person it belongs to", "link", link)
+	default:
 		logger.Info("this server has no owner yet - present this link in the app to claim it", "link", link)
 	}
 	return token, nil

@@ -71,10 +71,24 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   /// rescue a device from.
   bool _onboardingStartedHere = false;
 
+  /// True once the legacy sweep has run in this process.
+  ///
+  /// readSession is the app's hottest repository read - app-state derivation,
+  /// own-vs-other resolution, the seeding path - and the thing being swept is
+  /// settled once, forever, on the first launch after an upgrade. A bool is
+  /// what keeps a one-time migration from riding every one of those calls.
+  bool _legacySwept = false;
+
+  Future<void> _sweepLegacyKeys() async {
+    if (_legacySwept) return;
+    _legacySwept = true;
+    if (_prefs.containsKey(_kLegacyIsOwner)) await _prefs.remove(_kLegacyIsOwner);
+  }
+
   @override
   Future<RepositoryResult<SessionModel?>> readSession() {
     return execute<SessionModel?>(() async {
-      if (_prefs.containsKey(_kLegacyIsOwner)) await _prefs.remove(_kLegacyIsOwner);
+      await _sweepLegacyKeys();
       final identifier = await _secureStorage.read(key: _kIdentifier);
       if (identifier == null || identifier.isEmpty) {
         return const RepositoryResult<SessionModel?>.success(data: null);
@@ -266,8 +280,6 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       // Leaving it behind would let the next sign-in inherit it and mark that
       // stranger's messages as its own until the next greeting overwrote it.
       await _prefs.remove(_kAuthorId);
-      // Swept rather than maintained: nothing writes this any more, and an
-      // install upgraded from a build that did would otherwise keep it forever.
       _emitLabel(null); // logout resets every label surface to the fallback
       return const RepositoryResult<bool>.success(data: true);
     });

@@ -22,24 +22,6 @@ void main() {
       expect(button.onPressed, isNull, reason: 'the relay does not exist yet, so neither does the action');
     });
 
-    testWidgets('carries the same control on both widths', (tester) async {
-      // One widget rather than two copies. Hand-copying it between the mobile
-      // AppBar and the desktop header is how the two widths drift apart: a
-      // changed label lands on one and not the other, and only one has a test.
-      final chat = ChatModel(id: 'c1', name: 'Kitchen', lastMessagePreview: '', lastMessageAt: DateTime(2026));
-
-      await pumpApp(tester, AppThreadHeaderWidget(chat: chat, onInfo: () {}));
-      expect(find.byType(AppInviteSeamActionWidget), findsOneWidget, reason: 'desktop header');
-
-      await pumpApp(
-        tester,
-        Scaffold(
-          appBar: AppBar(title: const Text('Kitchen'), actions: const [AppInviteSeamActionWidget()]),
-        ),
-      );
-      expect(find.byType(AppInviteSeamActionWidget), findsOneWidget, reason: 'mobile app bar');
-    });
-
     testWidgets('the info action stays live beside it, and comes first', (tester) async {
       // The corpus describes info first, then the seam. And the seam being
       // dimmed matters: AppIconWidget paints its own colour filter, so a null

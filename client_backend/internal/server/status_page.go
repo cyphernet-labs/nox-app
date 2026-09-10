@@ -35,9 +35,16 @@ footer { margin-top: 2.5rem; font-size: .85rem; opacity: .6; }
 </style></head><body>
 
 {{if eq .State 0}}
+{{if .HasPerson}}
+<h1>This server holds a conversation</h1>
+<p class="lead">It records no owner, which no normal sequence of events produces &mdash; a restore or a
+hand edit most likely. Scan this from the NOX app, or paste the link below into it: the device that
+presents it signs in as the person this server already belongs to, with their chats and messages.</p>
+{{else}}
 <h1>Nobody has claimed this server yet</h1>
 <p class="lead">Scan this from the NOX app on your phone, or paste the link below into it.
 The first device to use it becomes the owner of this server.</p>
+{{end}}
 {{if .QR}}<div class="qr">{{.QR}}</div>{{else}}
 <p class="warn">This server is reachable from this machine only, so there is no code for a phone to
 scan &mdash; but the link below works in the NOX app running here. To claim it from a phone instead,
@@ -81,6 +88,7 @@ type statusView struct {
 	Devices   int64
 	Chats     int64
 	Messages  int64
+	HasPerson bool
 }
 
 // handleStatusPage serves the service page.
@@ -119,6 +127,7 @@ func (s *Server) handleStatusPage(w http.ResponseWriter, r *http.Request) {
 		Devices:   status.Counts.Devices,
 		Chats:     status.Counts.Chats,
 		Messages:  status.Counts.Messages,
+		HasPerson: status.HasPerson,
 	}
 	// The code is drawn only when something other than this machine could dial
 	// the address in it. The LINK is shown either way: pasting it into the app

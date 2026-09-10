@@ -4,13 +4,17 @@ import 'package:injectable/injectable.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/presentation/pages/chat_thread_page/chat_thread_page.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/widgets/chat/app_composer_widget.dart';
+import 'package:nox_app/presentation/widgets/chat/app_invite_seam_action_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_message_bubble_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_thread_header_widget.dart';
 
 import '../../../utils/pump_app.dart';
 
 ChatModel _sampleChat() => ChatModel(id: 'chat_0', name: 'Design crit', lastMessagePreview: '', lastMessageAt: DateTime(2024, 1, 1));
+
+final l10nEn = AppLocalizationsEn();
 
 void main() {
   setUpAll(() async {
@@ -40,6 +44,19 @@ void main() {
       expect(find.text('Design crit'), findsOneWidget);
       expect(find.byType(AppMessageBubbleWidget), findsWidgets);
       expect(find.byType(AppComposerWidget), findsOneWidget);
+    });
+
+    testWidgets('the app bar carries the same invite seam the desktop header does', (tester) async {
+      // The real page, not a hand-built AppBar: the invariant is that both
+      // widths carry this control, and a test that assembles the tree itself
+      // proves nothing about the page it is meant to guard.
+      await pumpMobile(tester);
+
+      expect(find.byType(AppInviteSeamActionWidget), findsOneWidget);
+      final button = tester.widget<IconButton>(
+        find.ancestor(of: find.byTooltip(l10nEn.chatInvitePerson), matching: find.byType(IconButton)).first,
+      );
+      expect(button.onPressed, isNull);
     });
 
     testWidgets('sending a message appends it to the thread', (tester) async {

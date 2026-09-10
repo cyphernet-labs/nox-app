@@ -15,12 +15,15 @@ import (
 // machineState is which of the two pages to show: "somebody still has to claim
 // this" and "it is claimed".
 //
-// There used to be a third, for a store holding people with no owner. That
-// state is gone rather than hidden: with one person on the machine a claim
-// ATTACHES to them instead of being refused, so the anomaly repairs itself and
-// there is nothing left for a page to explain. Do not restore the refusal
-// without reading the claim path first - it guards on devices, not on the
-// ownership marker, and that is what keeps a live machine from being taken.
+// There used to be a third, for a store holding people with no owner. Feature
+// 037 traded the refusal that state carried for recoverability: a claim there
+// ATTACHES to the one person on the machine rather than leaving their whole
+// conversation locked away with no way in.
+//
+// The trade rests on the claim path counting DEVICES rather than reading the
+// ownership marker - the marker is missing in exactly this case. Restoring the
+// refusal without that in mind takes the recovery away again; removing the
+// device count offers a live machine to whoever reads the startup log.
 type machineState int
 
 const (
@@ -41,6 +44,10 @@ type machineStatus struct {
 	// what that app needs. It only means there is no point drawing a code for a
 	// camera.
 	Scannable bool
+	// HasPerson picks the copy on the needs-claim page: presenting the link on a
+	// store that already holds somebody signs the device in as them, rather than
+	// making it the owner of an empty machine.
+	HasPerson bool
 	JournalID string
 	Schema    int
 	Counts    store.Counts
@@ -89,6 +96,7 @@ func (s *Server) collectStatus(ctx context.Context) (machineStatus, error) {
 			return machineStatus{}, err
 		}
 		status.Link, status.Scannable = link, scannable
+		status.HasPerson = ownership.HasPerson
 	}
 	return status, nil
 }

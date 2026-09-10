@@ -127,6 +127,12 @@ func setOwner(ctx context.Context, tx *sql.Tx, userID string, now int64) error {
 type OwnershipState struct {
 	// Owned is true when the machine has an owner recorded.
 	Owned bool
+	// HasPerson is true when the store already holds somebody, whether or not
+	// the ownership marker survived. It exists because "unclaimed" and "empty"
+	// stopped being the same thing: a claim on a store that holds a person
+	// ATTACHES to them and their whole conversation, and telling the operator
+	// "the first device to use this becomes the owner" there is simply false.
+	HasPerson bool
 	// OwnerCanGetIn is true when a device can still reach this machine. Read
 	// without the owner id on purpose: a store that lost its ownership marker
 	// still has a person who can get in, and answering "no" there is what makes
@@ -155,7 +161,11 @@ func (s *Store) ReadOwnershipState(ctx context.Context) (OwnershipState, error) 
 	if err != nil {
 		return OwnershipState{}, err
 	}
-	return OwnershipState{Owned: owner != "", OwnerCanGetIn: devices > 0}, nil
+	people, err := countPeople(ctx, tx)
+	if err != nil {
+		return OwnershipState{}, err
+	}
+	return OwnershipState{Owned: owner != "", HasPerson: people > 0, OwnerCanGetIn: devices > 0}, nil
 }
 
 // countDevices is the ONE spelling of "can anybody still reach this machine".
@@ -170,20 +180,6 @@ func countDevices(ctx context.Context, q rowQuerier) (int, error) {
 		return 0, fmt.Errorf("count devices: %w", err)
 	}
 	return devices, nil
-}
-
-// OwnerUserID reads who owns this machine, or empty if nobody does.
-//
-// Exported for the one caller outside a transaction that needs it: the sweeper,
-// which has to tell the owner about invites that expired without them. The
-// owner is a property of the machine and cannot change while a request waits,
-// so one read serves a whole batch.
-func (s *Store) OwnerUserID(ctx context.Context) (string, error) {
-	owner, err := ownerUserID(ctx, s.read)
-	if errors.Is(err, ErrNoServerIdentity) {
-		return "", nil
-	}
-	return owner, err
 }
 
 // ownerUserID reads the owner inside a transaction that is already open.

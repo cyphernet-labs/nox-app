@@ -223,12 +223,18 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 		// claim and no device to issue an invite from locks it forever (recovery
 		// is Q16).
 		//
-		// Counted regardless of whether an owner is RECORDED, and that is the
-		// whole point: the guard used to sit inside the owner branch, so a store
-		// whose ownership marker was lost handed the person's identity and their
-		// whole history to whoever presented the reprinted claim link - while
-		// their own device was paired and online. There is one person here, so
-		// every device is theirs and no guest can hold the machine hostage.
+		// Counted regardless of whether an owner is RECORDED, and that is what
+		// makes the relaxation below safe. Feature 037 traded the old blanket
+		// refusal of an ownerless store for recoverability: a claim ATTACHES to
+		// the one person there instead of leaving their conversation locked away
+		// forever. That trade is only sound while nobody can still reach the
+		// machine - so the count must not be scoped to a marker that is, by
+		// definition, missing in exactly this case. Scoping it there (which this
+		// phase briefly did) offers a live machine to whoever reads the log.
+		//
+		// Counting every device rather than the owner's is right now for a
+		// reason it was not before: there is one person here, so every device is
+		// theirs and no guest can hold the machine hostage.
 		devices, err := countDevices(ctx, tx)
 		if err != nil {
 			return Identity{}, err
@@ -335,6 +341,12 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 	//
 	// Refusing is the other way to satisfy "the row and the reply must agree",
 	// and it is the one that does not hand a device away.
+	//
+	// Unreachable while the schema admits one person - `bound` is then either
+	// empty or that person - and kept anyway: it is two lines on the one command
+	// that runs without a signature, and it should hold the invariant rather
+	// than assume it. The reachable half, re-pairing your OWN device, is
+	// exercised by TestPairingYourOwnDeviceKeyAgainIsAccepted.
 	bound, err := deviceOwnerOf(ctx, tx, deviceKey)
 	if err != nil {
 		return Identity{}, err
@@ -393,9 +405,9 @@ func pairedBy(ctx context.Context, tx *sql.Tx, token, deviceKey string) (Identit
 	// that carries no signature.
 	// The device must STILL belong to the person the token produced. Without
 	// that join the replay path answers before Pair's takeover refusal is ever
-	// reached: a key rebound to somebody else - a restore today, an ordinary
-	// invite once 034 lands - would be handed the original person's id, label
-	// and ownership, and the client writes all three into the wrong device.
+	// reached: a key that has since been revoked and re-paired would be handed
+	// the original person's id and label, and the client writes both into a
+	// device that is no longer the one the token spent.
 	var created int
 	err := tx.QueryRowContext(ctx, `
 		SELECT u.user_id, u.label, t.created_person

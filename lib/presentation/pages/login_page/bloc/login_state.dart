@@ -26,9 +26,8 @@ abstract class LoginState with _$LoginState {
 
   /// `Sign in` is enabled for any non-empty input (no format validation, FR-011).
   ///
-  /// Gated on [isLoading], not on `loading` alone: the owner wait is minutes
-  /// long, and a button that stays live under a spinner invites a second tap.
-  /// That second sign-in restarts the channel the first one is waiting on, and
+  /// Gated on [isLoading]: a button that stays live under a spinner invites a
+  /// second tap. That second sign-in restarts the channel the first is on, and
   /// whichever attempt loses discards the session the other just stored.
   bool get canSubmit => id.trim().isNotEmpty && !isLoading;
 }
