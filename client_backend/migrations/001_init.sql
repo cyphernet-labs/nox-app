@@ -108,7 +108,7 @@ CREATE TABLE server_identity (
 -- did. Both exist so that replaying a spent token can answer with what actually
 -- happened instead of re-deriving it:
 --   * without used_by, any device key - a PUBLIC value - could present a spent
---     claim token and be told that person's id, label and ownership;
+--     claim token and be told that person's id and label;
 --   * without created_person, a replay re-derives the outcome from the token
 --     kind, so a re-claim that attached to an existing owner answers "created"
 --     the second time and walks them back through the naming screen;
@@ -116,8 +116,6 @@ CREATE TABLE server_identity (
 --     current binding, so a key that has since been re-paired to somebody else
 --     is answered about whoever holds it now rather than whoever the token
 --     produced - and paired with the token's own recorded outcome.
--- The device that presented is `used_by`. It deliberately gets no second column
--- of its own: one fact written twice is what phase 033 spent itself deleting.
 CREATE TABLE pair_tokens (
     token TEXT PRIMARY KEY,
     kind TEXT NOT NULL CHECK (kind IN ('claim', 'invite_device')),

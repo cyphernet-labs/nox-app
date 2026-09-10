@@ -39,12 +39,11 @@ class IdentityHandshakeTimeout implements Exception {
   String toString() => 'IdentityHandshakeTimeout';
 }
 
-/// The server refused the pairing token. Distinct from a timeout because the
-/// person's next action differs: get a new link rather than try again.
 /// The server refused for a reason that is not about the link: an internal
 /// error, a rate limit, a code this build does not know. Retryable, and
-/// deliberately NOT one of the pairing refusals - telling somebody their invite is
-/// spent over a server hiccup sends them looking for a new one they do not need.
+/// deliberately NOT one of the pairing refusals - telling somebody their invite
+/// is spent over a server hiccup sends them looking for a new one they do not
+/// need.
 class PairingFailed implements Exception {
   const PairingFailed();
 
@@ -52,6 +51,8 @@ class PairingFailed implements Exception {
   String toString() => 'PairingFailed';
 }
 
+/// The server refused the pairing token itself. Distinct from [PairingFailed]
+/// because the person's next action differs: get a new link rather than retry.
 class PairingRefused implements Exception {
   const PairingRefused({required this.reason});
 

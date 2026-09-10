@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// statusPage is the service page: three states, one template, no JavaScript.
+// statusPage is the service page: two states, one template, no JavaScript.
 //
 // The page is NOT an interface. Its markup is fixed by nothing, has no version
 // and changes freely; the machine-readable answer is GET /health and stays

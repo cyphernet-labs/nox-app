@@ -96,15 +96,14 @@ func (c *client) handlePair(cmd protocol.Command) {
 		return
 	}
 
-	id := res
 	// Created is the whole reason this reply exists: it says whether the person
 	// was brought into being by THIS operation, which is what tells the client
 	// to offer the naming step. Computed from whether a row was inserted - not
 	// from the token kind, and not from the fact that pairing succeeded.
 	c.sendFrame(protocol.OKReply(cmd.ID, pairReply{
 		Identity: &identity{
-			greetingIdentity: greetingIdentity{ID: id.UserID, Label: id.Label},
-			Created:          id.Created,
+			greetingIdentity: greetingIdentity{ID: res.UserID, Label: res.Label},
+			Created:          res.Created,
 		},
 	}))
 }

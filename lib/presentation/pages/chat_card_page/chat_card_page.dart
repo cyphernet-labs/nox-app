@@ -196,9 +196,15 @@ class _ChatCardBodyState extends State<ChatCardBody> {
               // Design (ChatInfoDrawer): a divider separates the identity block from
               // the Files section — desktop drawer only (the mobile card is full-screen).
               if (widget.isDrawer) const AppHairlineDividerWidget(),
-              const AppChatPeopleSectionWidget(),
-              const AppHairlineDividerWidget(),
-              SizedBox(height: AppSpacingTokens.s12),
+              // Only once there is something to show. Rendered unconditionally
+              // it stacked a person and a disabled button over the embedded
+              // error screen and over the loading spinner - two states the
+              // spec's table does not put it in.
+              if (state is Initialized) ...[
+                AppChatPeopleSectionWidget(personLabel: state.personLabel),
+                const AppHairlineDividerWidget(),
+                SizedBox(height: AppSpacingTokens.s12),
+              ],
               Expanded(child: _section(context, state)),
               if (kDebugMode && widget.demo) _scenarioControl(),
             ],

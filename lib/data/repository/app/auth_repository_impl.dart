@@ -116,11 +116,11 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
           await _sessionRepository.discardSignIn();
           return stored;
         }
-        // Ownership and identity come from the pair reply, not from the fact
-        // that THIS device presented a claim link: the server is the only one
-        // who knows, and a device that inferred it would be right until the day
-        // it was not. Stored now so the owner sees the badge without waiting
-        // for the greeting that follows.
+        // The identity comes from the pair reply, not from the fact that THIS
+        // device presented a claim link: the server is the only one who knows,
+        // and a device that inferred it would be right until the day it was
+        // not. Stored now so the name is on screen without waiting for the
+        // greeting that follows.
         if (greeting.authorId.isEmpty) {
           // An unreadable `identity.id` degrades to '' upstream, and
           // resolveIdentity treats '' as absent - it then falls back to the

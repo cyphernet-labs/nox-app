@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:nox_app/design/nox_icons.dart';
-import 'package:nox_app/design/theme/nox_opacity.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
+import 'package:nox_app/presentation/widgets/chat/app_invite_seam_action_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/watch_chat.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/l10n_extension.dart';
@@ -74,18 +74,7 @@ class ChatThreadPage extends StatelessWidget {
             ),
             // The same disabled seam the desktop header carries, so the answer
             // to "how do I add somebody?" is in the same place on both widths.
-            actions: [
-              IconButton(
-                onPressed: null,
-                tooltip: '${context.l10n.chatInvitePerson} — ${context.l10n.chatInviteLater}',
-                // Dimmed by hand: AppIconWidget paints its own colour filter and
-                // never reads the disabled IconTheme.
-                icon: AppIconWidget(
-                  NoxIcons.add,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: NoxOpacity.disabled),
-                ),
-              ),
-            ],
+            actions: const [AppInviteSeamActionWidget()],
             // Tapping the chat name opens the chat card (5.4).
             // Reactive to the chat row so a rename (from the card) updates the title live.
             title: WatchChat(

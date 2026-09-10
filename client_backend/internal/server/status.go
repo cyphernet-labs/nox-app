@@ -12,12 +12,15 @@ import (
 	"nox.app/client-backend/internal/store"
 )
 
-// machineState is which of the three pages to show.
+// machineState is which of the two pages to show: "somebody still has to claim
+// this" and "it is claimed".
 //
-// Three, not two. Besides "somebody still has to claim this" and "it is
-// claimed", there is a store holding people with no owner - an anomaly only a
-// hand-edited database reaches (phase 033). Pair refuses a claim there, so a
-// link on that page would be an instruction nobody can follow.
+// There used to be a third, for a store holding people with no owner. That
+// state is gone rather than hidden: with one person on the machine a claim
+// ATTACHES to them instead of being refused, so the anomaly repairs itself and
+// there is nothing left for a page to explain. Do not restore the refusal
+// without reading the claim path first - it guards on devices, not on the
+// ownership marker, and that is what keeps a live machine from being taken.
 type machineState int
 
 const (

@@ -456,11 +456,6 @@ func TestStoryOneProtocolNegatives(t *testing.T) {
 		c.expectErr(2, protocol.ErrInvalidRequest)
 	})
 
-	// A command REMOVED by feature 037, sent by a build that predates the
-	// removal. It has to be refused like any other name the server does not
-	// know: a half-deleted command that answers with an empty success looks to
-	// an older client exactly like one that worked, and it would go on showing
-	// a circle that no longer exists.
 	// Contract §2.1 and §8A list `identity.owner` among the fields feature 037
 	// REMOVED. A struct field left behind keeps serialising - `owner: false` on
 	// every greeting and every pair reply - and a pre-037 client reads that hard
@@ -480,6 +475,11 @@ func TestStoryOneProtocolNegatives(t *testing.T) {
 		assertIdentityKeys(t, greeted, "id", "label")
 	})
 
+	// A command REMOVED by feature 037, sent by a build that predates the
+	// removal. It has to be refused like any other name the server does not
+	// know: a half-deleted command that answers with an empty success looks to
+	// an older client exactly like one that worked, and it would go on showing
+	// a circle that no longer exists.
 	t.Run("a retired person command is refused, not silently accepted", func(t *testing.T) {
 		for _, cmd := range []string{"person.invite", "person.list", "person.confirm"} {
 			c := dialWS(t, ts, srv)

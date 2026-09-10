@@ -9,7 +9,9 @@ import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
+import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
+import 'package:nox_app/general/identity/identity_resolver.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
 import 'package:rxdart/rxdart.dart';
 
@@ -38,6 +40,7 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
   final ChatRepository _chatRepository = getIt<ChatRepository>();
   final MessageRepository _messageRepository = getIt<MessageRepository>();
   final SessionPhaseService _sessionPhaseService = getIt<SessionPhaseService>();
+  final SessionRepository _sessionRepository = getIt<SessionRepository>();
 
   late String _chatId;
   ChatCardScenario _scenario = ChatCardScenario.normal;
@@ -77,6 +80,7 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
     // down, and the socket can be open while replay is still running (FR-005).
     _connSub ??= _sessionPhaseService.watchPhase().listen((phase) => add(ChatCardEvent.connectivityChanged(phase.isCurrent)));
     emit(const ChatCardState.initializing());
+    final person = resolveIdentity((await _sessionRepository.readSession()).data).label;
 
     if (_scenario == ChatCardScenario.fatal) {
       emit(const ChatCardState.error());
@@ -85,7 +89,7 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
 
     await executeLogic(() async {
       if (_scenario == ChatCardScenario.empty) {
-        emit(const ChatCardState.initialized(files: []));
+        emit(ChatCardState.initialized(files: const [], personLabel: person));
         return;
       }
       // Opening the card pulls the newest window; the live re-derive below does not.
@@ -94,11 +98,11 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
       // the debug scenario can have changed while it was in flight. Emitting the
       // late result would overwrite the state the user just selected.
       if (_scenario == ChatCardScenario.empty) {
-        emit(const ChatCardState.initialized(files: []));
+        emit(ChatCardState.initialized(files: const [], personLabel: person));
         return;
       }
       result.match<void>(
-        onData: (files) => emit(ChatCardState.initialized(files: files, isOffline: _isOffline())),
+        onData: (files) => emit(ChatCardState.initialized(files: files, isOffline: _isOffline(), personLabel: person)),
         onError: (_) => emit(const ChatCardState.error()),
       );
     }, onError: (error, exception, stackTrace) => emit(const ChatCardState.error()));
