@@ -6,7 +6,7 @@
 
 **Purpose.** List-detail settings: menu pane (left) + the selected section’s panel (right).
 
-**Adaptation from mobile.** mobile full-screen settings → list-detail · bottom sheet → centered dialog · the identity card, badge included, is the same widget at both widths
+**Adaptation from mobile.** mobile full-screen settings → list-detail · bottom sheet → centered dialog · the identity card is the same widget at both widths
 
 ## Anatomy
 NavigationRail + settings menu pane (340, grouped nav items) + detail pane (content capped to ≤680). Each detail reuses the exact phone widgets.

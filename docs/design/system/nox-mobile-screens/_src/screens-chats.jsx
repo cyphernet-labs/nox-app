@@ -65,7 +65,11 @@ const ChatThreadScreen = ({ t, state = 'filled', bubble = 'neutral' }) => {
   const op = bubblePreset(t, bubble);
   return (
   <>
-    <AppBar t={t} leading="back" title="Night Owls" />
+    {/* The disabled invite seam (037), dimmed to the M3 38% exactly as the app
+        dims it by hand - its icon widget paints its own filter and never reads
+        IconTheme. Pressing it does nothing at all. 5.4 carries the same seam as
+        a button in its People section, not here. */}
+    <AppBar t={t} leading="back" title="Night Owls" actions={[{ name: 'add', color: hexA(t.onSurfaceVariant, 0.38) }]} />
     {state === 'offline' && <MaterialBanner t={t} text="No connection" />}
     <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', padding: '8px 12px 4px' }}>
       <SystemLine t={t} text="Chat created by Aria" />

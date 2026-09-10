@@ -152,7 +152,7 @@ window.NOX_SPECS = [
       "TermsBody",
       "LogoutDialog"
     ],
-    "adapt": "mobile full-screen settings → list-detail · bottom sheet → centered dialog · the identity card, badge included, is the same widget at both widths"
+    "adapt": "mobile full-screen settings → list-detail · bottom sheet → centered dialog · the identity card is the same widget at both widths"
   },
   {
     "id": "d-splash",
@@ -442,7 +442,9 @@ window.NOX_SPECS = [
     ],
     "anatomy": "Scrim + right drawer (380): Details header, chat avatar/name, “People” (one row — the person this machine belongs to — plus a disabled Invite a person button and its caption), hairline, “Files” with List/Grid toggle, file rows or 2-col grid. The body is one scroll.",
     "behavior": [
-      "Mobile’s pushed Chat card (5.4) becomes a right drawer over the thread. Segmented switches List ⇄ Grid; empty → folder_open state."
+      "Mobile’s pushed Chat card (5.4) becomes a right drawer over the thread. Segmented switches List ⇄ Grid; empty → folder_open state.",
+      "People renders only once the card has loaded - never over the spinner or the error state, which the spec's table does not put it in.",
+      "Invite a person: a PERMANENTLY disabled button under the person row, captioned. Pressing it does nothing at all."
     ],
     "navigation": [
       "Opened from the thread header info action (folder-open icon).",
@@ -451,6 +453,10 @@ window.NOX_SPECS = [
     ],
     "copy": [
       "Title: Details",
+      "Section: People",
+      "Person row: the person this machine belongs to (label only, no id)",
+      "Button (disabled): Invite a person",
+      "Caption: Available in a future version",
       "Section: Files",
       "Empty: No files yet / Files sent in this chat will appear here."
     ],

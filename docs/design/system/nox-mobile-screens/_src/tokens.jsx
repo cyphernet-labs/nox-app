@@ -100,6 +100,13 @@ const TYPE = {
   bodyLarge:     { fontSize: 16, lineHeight: '24px', fontWeight: 400, letterSpacing: '0.5px' },
   bodyMedium:    { fontSize: 14, lineHeight: '20px', fontWeight: 400, letterSpacing: '0.25px' },
   labelLarge:    { fontSize: 14, lineHeight: '20px', fontWeight: 500, letterSpacing: '0.1px' },
+  // NOT a NOX token: the DTCG source and noxTextTheme both stop at nine roles
+  // and define no bodySmall, so `textTheme.bodySmall` in the app falls through
+  // to Flutter's stock Material 2021 typography. These numbers mirror that
+  // fallback, which is what the app actually paints - see the invite caption in
+  // app_chat_people_section_widget.dart. Closing the gap properly means adding
+  // the role to the handoff tokens and regenerating, which is a design-system
+  // change, not a cleanup phase's.
   bodySmall:     { fontSize: 12, lineHeight: '16px', fontWeight: 400, letterSpacing: '0.4px' },
   labelMedium:   { fontSize: 12, lineHeight: '16px', fontWeight: 500, letterSpacing: '0.5px' },
   labelSmall:    { fontSize: 11, lineHeight: '16px', fontWeight: 500, letterSpacing: '0.5px' },

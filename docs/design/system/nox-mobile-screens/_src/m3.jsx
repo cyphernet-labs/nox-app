@@ -90,9 +90,13 @@ const AppBar = ({ t, title, wordmark = false, leading = null, actions = [], onCo
           <span style={{ ...ty('titleLarge'), color: fg, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}>{title}</span>
         ) : null}
       </div>
+      {/* An action is either a glyph name or {name, color}. The colour exists
+          for ONE case: a permanently disabled action, dimmed to the M3 38% the
+          same way IconButton has always allowed. Hardcoding onSurfaceVariant
+          here is what kept the mobile invite seam undrawable. */}
       {actions.map((a, i) => (
         <div key={i} style={{ width: 48, height: 48, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-          <Icon name={a} size={24} color={t.onSurfaceVariant} />
+          <Icon name={a.name || a} size={24} color={a.color || t.onSurfaceVariant} />
         </div>
       ))}
     </div>

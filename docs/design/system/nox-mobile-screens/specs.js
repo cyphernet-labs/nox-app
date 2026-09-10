@@ -354,16 +354,19 @@ window.NOX_SPECS = [
       "Own message status: pending (schedule) → sent (check) → error (error, tinted error; tap to retry).",
       "Date separators: Today / Yesterday / 12 May. A system line marks chat creation.",
       "Empty: chat_bubble_outline empty-state. Offline: top banner + queued messages show pending.",
+      "Invite a person: an app-bar action that is PERMANENTLY disabled (037). Pressing it does nothing at all - no screen, no snackbar, no error. Its screen-reader name is the action alone; the caption explaining it lives in 5.4, where there is room.",
       "Composer: attach + text + send. Send enables when there is text or an attachment; attachment shows a removable chip above the row."
     ],
     "navigation": [
       "Back → Chats list (5.1).",
       "Attachment chip / file bubble → File view (5.3).",
-      "(Header affordances to chat card exist on desktop; mobile reaches files via 5.4 entry.)"
+      "Chat name in the app bar → Chat card (5.4).",
+      "Invite action → nowhere: it is disabled and stays disabled until a relay exists."
     ],
     "copy": [
       "System: Chat created by Aria",
-      "Composer placeholder: Message"
+      "Composer placeholder: Message",
+      "Invite action (screen-reader name): Invite a person"
     ],
     "ds": [
       "AppBar (title)",
@@ -434,6 +437,8 @@ window.NOX_SPECS = [
     ],
     "anatomy": "App bar (back + chat name). Header: avatar (56) + name (headlineSmall). “People” section: one row — the person this machine belongs to — then a disabled Invite a person button with its caption. Hairline, then the “Files” section with a List/Grid segmented toggle and file rows or a grid. The body is one scroll.",
     "behavior": [
+      "People renders only once the card has loaded - never over the spinner or the error state, which the spec's table does not put it in.",
+      "Invite a person: a PERMANENTLY disabled button under the person row, captioned. Pressing it does nothing at all.",
       "List rows: file glyph + name (ellipsis) + size + chevron. Grid: square type cells.",
       "Segmented control switches List ⇄ Grid (single-select).",
       "Empty: folder_open empty-state."
@@ -443,6 +448,10 @@ window.NOX_SPECS = [
       "File row / cell → File view (5.3)."
     ],
     "copy": [
+      "Section: People",
+      "Person row: the person this machine belongs to (label only, no id)",
+      "Button (disabled): Invite a person",
+      "Caption: Available in a future version",
       "Section: Files",
       "Empty: No files yet / Files sent in this chat will appear here."
     ],

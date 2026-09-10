@@ -1,6 +1,6 @@
 # 7.1 · Settings root
 
-> ⚠️ **Feature 037 (2026-09-10):** the `Server owner` badge is GONE. The machine holds one person, so a mark that told the owner apart from an invited member tells nothing apart — the states `loaded-member` and the badge copy below are dead and kept only to say so. There is no `People` row either.
+> ⚠️ **Feature 037 (2026-09-10):** the `Server owner` badge is GONE. The machine holds one person, so a mark that told the owner apart from an invited member tells nothing apart — the state `loaded-member` is struck through below and kept only to say so; the badge copy line is gone outright. There is no `People` row either.
 
 > ⚠️ **Feature 032:** `Your ID` shows the PUBLIC author id with no Show/Hide — it stopped being a secret. The account QR is gone: scanning an id adds nobody, so `Show QR` leads to **Devices**, where an invite is minted with a one-shot token. Logout is irreversible now (the device revokes its own key), and its copy says so.
 

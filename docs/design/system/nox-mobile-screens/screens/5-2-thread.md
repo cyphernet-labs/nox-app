@@ -28,7 +28,8 @@ App bar (back + chat name + a disabled **Invite a person** action). Message stre
 ## Navigation
 - Back → Chats list (5.1).
 - Attachment chip / file bubble → File view (5.3); an image thumbnail → full-screen image viewer (zoom / close) (F4).
-- (Header affordances to chat card exist on desktop; mobile reaches files via 5.4 entry.)
+- Tapping the chat name in the app bar opens the chat card (5.4).
+- Invite action → nowhere: it is disabled and stays disabled until a relay exists.
 
 ## Copy (EN)
 - System: Chat created by Aria
