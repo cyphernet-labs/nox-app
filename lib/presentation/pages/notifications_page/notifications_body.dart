@@ -24,8 +24,10 @@ class NotificationsBody extends StatefulWidget {
 
 class _NotificationsBodyState extends State<NotificationsBody> {
   bool _enabled = true;
-  // Real OS notification-permission (P5), queried on open; the push SCOPE ("own chats")
-  // still lands in the backend phase.
+  // Real OS notification-permission (P5), queried on open. There is no push
+  // SCOPE any more: the "own chats" filter went with the shared chat list in
+  // 037, because every chat on this server is already this person's. A scope
+  // returns when a relay makes somebody else's chats reachable.
   NotificationPermissionStatus _permission = NotificationPermissionStatus.granted;
 
   bool get _granted => _permission == NotificationPermissionStatus.granted;
@@ -90,8 +92,8 @@ class _NotificationsBodyState extends State<NotificationsBody> {
             ),
           ],
         ),
-        // Dev-only override to preview the denied state (real OS permission is queried on
-        // open); the push SCOPE ("own chats") still lands in the backend phase.
+        // Dev-only override to preview the denied state (real OS permission is
+        // queried on open).
         if (kDebugMode) const AppHairlineDividerWidget(),
         if (kDebugMode) _PermissionDevControl(status: _permission, onChanged: (status) => setState(() => _permission = status)),
       ],

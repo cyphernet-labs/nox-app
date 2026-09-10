@@ -6,7 +6,7 @@
 
 ## Anatomy
 App bar (back + chat name + a disabled **Invite a person** action). Message stream with date separators, author headers and bubbles. Composer pinned at bottom.
-> **Changed 2026-09-10 (phase 037).** The client backend serves one person; talking to anybody else moves to a relay that does not exist yet. The invite is present as a disabled seam — the place the relay will attach to.
+> **Changed 2026-09-10 (phase 037).** The client backend serves one person; talking to anybody else moves to a relay that does not exist yet. The invite is present as a disabled seam — the place the relay will attach to. The live screen in `_src/` does NOT draw it yet: the corpus AppBar renders every action at full strength and has no disabled variant, so adding it there would show an ENABLED control — the one thing this seam must never look like. Spec first, live screen when the primitive grows a disabled state.
 
 
 ## States

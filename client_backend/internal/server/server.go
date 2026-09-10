@@ -543,13 +543,16 @@ func staleSchemaError(dbPath string) error {
 // announceClaim mints the server's own key on first start and, while nobody
 // owns this server yet, prints the pairing link.
 //
-// The link goes to the log and nowhere else: a local HTTP page serving the QR
-// would hand ownership to everyone on the network as long as the transport is
-// not TLS. It is reprinted on every start until somebody claims the server,
-// because a terminal scrolls and an unclaimed server has to stay claimable.
+// The link goes to the log, and since 035 to the service page as well - which
+// is why that page binds to loopback and refuses to start anywhere else. What
+// the pre-035 rule guarded against (a page serving the QR to everyone on the
+// network while the transport is not TLS) is answered by the bind, checked on
+// the socket rather than on the address somebody typed. It is reprinted on
+// every start until somebody claims the server, because a terminal scrolls and
+// an unclaimed server has to stay claimable.
 //
-// This is the ONE place a token is deliberately written to output. It is the
-// claim mechanism itself, and it is only visible to whoever can already read
+// This is a place a token is deliberately written to output. It is the claim
+// mechanism itself, and it is only visible to whoever can already read
 // the machine's logs - which is whoever could take the database anyway.
 func announceClaim(
 	ctx context.Context,

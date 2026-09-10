@@ -312,20 +312,26 @@ void main() {
       expect(written, isNot(contains(link.split('#').last)));
     });
 
-    test('ownership never reaches the log beside the person it belongs to', () async {
-      // A role logged next to the person holding it is a record of who runs the
-      // machine (Principle I, FR-024). The app has no reason to write either.
+    test('a sign-in that works says nothing at all in the log', () async {
+      // Asserted as SILENCE, not as the absence of two substrings. The version
+      // this replaces looked for an id and the word "owner" in a log nothing
+      // had ever reached: both matched an empty string, so it could not fail -
+      // and "owner" stopped meaning anything when 037 removed ownership.
+      //
+      // Silence is the stronger claim and the one Principle I / FR-024 want:
+      // an author id or a name written on the happy path is a record of who
+      // this device belongs to. The FormatException test above proves the
+      // capture is wired, so an empty list here is a result rather than a
+      // broken harness.
       final logs = <String>[];
       getIt.registerSingleton<LogRepository>(_CapturingLog(logs));
       when(
         handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
-      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_owner_7', label: 'Anna', created: true));
+      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_person_7', label: 'Anna', created: true));
 
       await repository.signIn(identifier: link);
 
-      final written = logs.join('\n').toLowerCase();
-      expect(written, isNot(contains('u_owner_7')));
-      expect(written, isNot(contains('owner')));
+      expect(logs, isEmpty, reason: 'the happy path of sign-in wrote to the log: ${logs.join(" | ")}');
     });
 
     test('an outcome the server did not state is not treated as an outcome', () async {

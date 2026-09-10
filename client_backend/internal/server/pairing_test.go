@@ -306,9 +306,9 @@ func mustRaw(t *testing.T, data map[string]json.RawMessage) json.RawMessage {
 
 var _ = websocket.StatusNormalClosure
 
-// Ownership answers about the ASKER. The machine never names its owner on the
-// wire: rules are enforced server-side, so another person's id has no reason
-// to travel, and a field carrying it would have to be explained later.
+// The machine never names its owner on the wire. It has no reason to: there is
+// one person here, so "who owns this" answers nothing a device could act on -
+// and a field carrying an id would have to be explained, and honoured, later.
 func TestTheOwnersIdentifierNeverReachesTheWire(t *testing.T) {
 	ts, srv := newTestServer(t)
 	dev, claimed := claimDevice(t, ts, srv)
@@ -329,9 +329,10 @@ func TestTheOwnersIdentifierNeverReachesTheWire(t *testing.T) {
 }
 
 // US3 end to end: the machine outlives its devices and gives the same person
-// back the same identity and the same ownership. The path is rare and
-// irreversible - getting it wrong costs either the machine or the history.
-func TestReClaimAfterLosingEveryDeviceReturnsTheSameOwner(t *testing.T) {
+// back the SAME identity - the same id, and no naming step, because they
+// existed before the claim. The path is rare and irreversible: getting it wrong
+// costs either the machine or the history.
+func TestReClaimAfterLosingEveryDeviceReturnsTheSamePerson(t *testing.T) {
 	ts, srv := newTestServer(t)
 	dev, claimed := claimDevice(t, ts, srv)
 	var before identity

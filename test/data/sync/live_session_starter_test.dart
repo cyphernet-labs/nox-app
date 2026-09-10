@@ -220,16 +220,47 @@ void main() {
       expect(hello.toString(), isNot(contains(seed!)));
     });
 
-    test('a greeting with no session behind it persists nobody', () async {
-      // The window `pair` runs in: the connection was greeted BEFORE anyone
-      // signed in, so the server served a one-off identity. Persisting it hands
-      // the next person to sign in a stranger's author id, and every message
-      // they send comes back looking like somebody else's.
+    test('the greeting hands the server\'s identity to the session', () async {
+      // The ONE path that reaches _adoptGreeting, and 037 deleted the test that
+      // drove it - it asserted the ownership flag this phase removed - without
+      // putting an ownership-free one back. What it covers is load-bearing: the
+      // author id is what the server stamps on every message, so a regression
+      // that stopped adopting it makes own-vs-other detection wrong and every
+      // message this person sent comes back looking like somebody else's.
+      await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
+      await session.saveServer(address: '10.0.0.5:9000', serverKey: 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=');
+
+      await starter.start();
+      await settle();
+      factory.latest.pushGreeting();
+      for (var i = 0; i < 40 && factory.latest.commandNamed('session.hello') == null; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      // A label the device has never seen: the server is the authority on it,
+      // and it may have been changed from another device while this one was
+      // offline.
+      factory.latest.replyToHello(cursor: 0, id: 'u_person_9', label: 'Renamed elsewhere');
+      for (var i = 0; i < 40 && (await SharedPreferences.getInstance()).getString('session.author_id') == null; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+
+      // BOTH halves, because they fail differently: the label is what the
+      // person reads, the author id is what own-vs-other keys on.
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('session.author_id'), 'u_person_9');
+      expect(prefs.getString('session.label'), 'Renamed elsewhere');
+    });
+
+    test('an install with a server but no identifier never greets, and writes nobody', () async {
+      // A device that has not paired has nothing to say: `_credentials` answers
+      // unpaired, so no `session.hello` leaves at all. Asserted on the frame,
+      // not only on storage - "nothing was written" is true of a device that
+      // greeted and was refused too, and those are different failures.
       //
-      // Asserted on the STORED key rather than through readSession: the guard
-      // could be deleted and a session-shaped assertion would still pass,
-      // because there is no session either way. This is the only thing standing
-      // between the guard and silence.
+      // The guard further in (_adoptGreeting refusing to persist an identity
+      // when readSession is empty) is NOT what this covers: nothing on the
+      // public surface can put a server-stated identity in front of an empty
+      // session any more, now that a greeting cannot create anyone (032).
       await session.saveServer(address: '10.0.0.5:9000', serverKey: 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=');
 
       await starter.start();
@@ -237,6 +268,7 @@ void main() {
       factory.latest.pushGreeting();
       await settle();
 
+      expect(factory.latest.commandNamed('session.hello'), isNull, reason: 'an unpaired device introduced itself');
       final prefs = await SharedPreferences.getInstance();
       expect(prefs.getString('session.author_id'), isNull, reason: 'a pre-pair greeting was written onto this device');
       expect(prefs.getString('session.label'), isNull);

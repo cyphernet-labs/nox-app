@@ -245,9 +245,12 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   warns that a backup holding only the DB breaks pinning for every device at
   once; one artifact makes that impossible, and anyone who can read the file
   already has every message.
-- The claim link is printed to the log and nowhere else. A local HTTP page
+- The claim link goes to the log AND to the service page (035), which is why
+  that page listens on loopback only and refuses to start anywhere else. The
+  pre-035 rule was "the log and nowhere else", on the reasoning that a page
   serving the QR would hand ownership to everyone on the network while the
-  transport is not TLS.
+  transport is not TLS - the loopback bind is what answers that, and
+  `assertLoopback` checks the socket rather than the string somebody typed.
 - The CLAIM link falls back to loopback under a wildcard bind (it is read on the
   machine), while an INVITE link uses the address the requesting device dialled
   (its `Host` header). The two differ because an invite is carried to another
