@@ -559,10 +559,14 @@ func announceClaim(
 	machine store.ServerIdentity,
 	logger *slog.Logger,
 ) (string, error) {
-	// Silent while THE OWNER can still reach this server, and while the store is
-	// It comes from the snapshot startup already took: re-deriving it here
-	// would evaluate the same rule twice against a store another connection
-	// could have changed in between.
+	// Silent while a device can still reach this server. Not "while an owner is
+	// recorded": a store that lost its ownership marker still has a person who
+	// can get in, and printing a claim link there offers their machine to
+	// whoever reads the log.
+	//
+	// The answer comes from the snapshot startup already took: re-deriving it
+	// here would evaluate the same rule twice against a store another
+	// connection could have changed in between.
 	if ownership.OwnerCanGetIn {
 		return "", nil
 	}

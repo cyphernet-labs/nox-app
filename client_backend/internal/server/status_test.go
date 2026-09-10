@@ -215,22 +215,6 @@ func TestHealthAnswersExactlyWhatItAnswered(t *testing.T) {
 	}
 }
 
-// orphanStore removes the owner from a store that has people, reaching the
-// anomaly of phase 033 that no code path produces. A second handle on the same
-// file, in the same process: the invariant is one PROCESS, and a test that
-// cannot reach the state cannot check what the page says about it.
-func orphanStore(t *testing.T, srv *Server) {
-	t.Helper()
-	handle, err := sql.Open("sqlite", srv.cfg.DBPath)
-	if err != nil {
-		t.Fatalf("open the database again: %v", err)
-	}
-	defer func() { _ = handle.Close() }()
-	if _, err := handle.Exec("UPDATE server_identity SET owner_user_id = NULL WHERE id = 1"); err != nil {
-		t.Fatalf("orphan the store: %v", err)
-	}
-}
-
 // linkOf pulls the claim link out of the rendered page.
 func linkOf(t *testing.T, body string) string {
 	t.Helper()

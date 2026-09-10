@@ -127,10 +127,10 @@ func setOwner(ctx context.Context, tx *sql.Tx, userID string, now int64) error {
 type OwnershipState struct {
 	// Owned is true when the machine has an owner recorded.
 	Owned bool
-	// OwnerCanGetIn is true when that owner still has a device to reach it
-	// with. "Occupied" means this, never "any device is here": counting every
-	// device locks an owner out of their own machine as soon as somebody else's
-	// is running.
+	// OwnerCanGetIn is true when a device can still reach this machine. Read
+	// without the owner id on purpose: a store that lost its ownership marker
+	// still has a person who can get in, and answering "no" there is what makes
+	// startup print a claim link over a machine somebody is using.
 	OwnerCanGetIn bool
 }
 
@@ -149,23 +149,23 @@ func (s *Store) ReadOwnershipState(ctx context.Context) (OwnershipState, error) 
 	if err != nil {
 		return OwnershipState{}, err
 	}
-	if owner == "" {
-		return OwnershipState{}, nil
-	}
-	devices, err := ownerDeviceCount(ctx, tx, owner)
+	devices, err := countDevices(ctx, tx)
 	if err != nil {
 		return OwnershipState{}, err
 	}
-	return OwnershipState{Owned: true, OwnerCanGetIn: devices > 0}, nil
+	return OwnershipState{Owned: owner != "", OwnerCanGetIn: devices > 0}, nil
 }
 
-// ownerDeviceCount is the ONE spelling of "how many devices can the owner still
-// reach this machine with".
-func ownerDeviceCount(ctx context.Context, q rowQuerier, owner string) (int, error) {
+// countDevices is the ONE spelling of "can anybody still reach this machine".
+//
+// Not scoped to a person: this machine holds one, so every device is theirs.
+// Reading it without the owner id matters - the claim path needs the answer
+// even when the ownership marker is missing, which is exactly the state where
+// scoping by owner silently counted zero and let the machine be taken over.
+func countDevices(ctx context.Context, q rowQuerier) (int, error) {
 	var devices int
-	if err := q.QueryRowContext(ctx,
-		"SELECT COUNT(1) FROM devices WHERE user_id = ?", owner).Scan(&devices); err != nil {
-		return 0, fmt.Errorf("count owner devices: %w", err)
+	if err := q.QueryRowContext(ctx, "SELECT COUNT(1) FROM devices").Scan(&devices); err != nil {
+		return 0, fmt.Errorf("count devices: %w", err)
 	}
 	return devices, nil
 }

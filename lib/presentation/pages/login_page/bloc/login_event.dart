@@ -13,6 +13,4 @@ sealed class LoginEvent with _$LoginEvent {
 
   /// The page consumed a terminal `nav*` status (navigated away) → reset to idle.
   const factory LoginEvent.navigationHandled() = NavigationHandled;
-
-  /// The server accepted the invite and is asking the owner.
 }

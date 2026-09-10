@@ -88,7 +88,7 @@ func run(rawLink string) error {
 	ok("device.list shows %d devices", len(devices["devices"].([]any)))
 
 	step(3, "The two devices exchange a message")
-	if err := talk(ctx, ownerConn, phoneConn, ownerID); err != nil {
+	if err := talk(ownerConn, phoneConn, ownerID); err != nil {
 		return err
 	}
 
@@ -157,8 +157,7 @@ func addDevice(ctx context.Context, addr string, owner *conn, ownerID string) (d
 // marked as their own - that is the whole assertion. Nothing here needs a
 // second person: this machine has one, and talking to anybody else goes
 // through a relay that does not exist yet.
-func talk(ctx context.Context, desktop, phone *conn, ownerID string) error {
-	_ = ctx
+func talk(desktop, phone *conn, ownerID string) error {
 	created, err := desktop.call("chat.create", data{"name": "Kitchen"})
 	if err != nil {
 		return err

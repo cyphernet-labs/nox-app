@@ -217,23 +217,24 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 		if err != nil {
 			return Identity{}, err
 		}
-		// Owned means "the OWNER can still get in", not "somebody once did" and
-		// not "anybody is here". Revoking the last device - which logout is -
-		// would otherwise lock the machine forever: the claim is spent, there is
-		// no device to issue an invite from, and recovery is Q16.
+		// "Occupied" means somebody can still reach this machine, and with one
+		// person on it that is simply "a device exists". Revoking the last one -
+		// which logout is - has to leave the machine claimable again, or a spent
+		// claim and no device to issue an invite from locks it forever (recovery
+		// is Q16).
 		//
-		// Counting every device on the server would reintroduce that lockout the
-		// moment a second person exists (034): a guest's device left running
-		// would keep the owner's own claim link refused for ever, on a machine
-		// that is theirs.
-		if owner != "" {
-			devices, err := ownerDeviceCount(ctx, tx, owner)
-			if err != nil {
-				return Identity{}, err
-			}
-			if devices > 0 {
-				return Identity{}, ErrTokenInvalid
-			}
+		// Counted regardless of whether an owner is RECORDED, and that is the
+		// whole point: the guard used to sit inside the owner branch, so a store
+		// whose ownership marker was lost handed the person's identity and their
+		// whole history to whoever presented the reprinted claim link - while
+		// their own device was paired and online. There is one person here, so
+		// every device is theirs and no guest can hold the machine hostage.
+		devices, err := countDevices(ctx, tx)
+		if err != nil {
+			return Identity{}, err
+		}
+		if devices > 0 {
+			return Identity{}, ErrTokenInvalid
 		}
 
 		switch {
@@ -269,7 +270,8 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 			if err != nil {
 				return Identity{}, err
 			}
-			if people > 0 {
+			switch {
+			case people == 1:
 				existing, err := soleUser(ctx, tx)
 				if err != nil {
 					return Identity{}, err
@@ -277,12 +279,19 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 				id = existing
 				// Not Created: this person existed before the claim, so there
 				// is no naming step ahead of them.
-			} else {
+			case people == 0:
 				id, err = insertUser(ctx, tx, "", now)
 				if err != nil {
 					return Identity{}, err
 				}
 				id.Created = true
+			default:
+				// More than one person, which the singleton index makes
+				// impossible - so the schema this store carries is not the one
+				// this build wrote. Attaching to a row picked by order is the
+				// hazard the branch above exists to avoid, and here there is
+				// genuinely something to pick between. Refuse.
+				return Identity{}, ErrTokenInvalid
 			}
 		}
 		// Ownership is recorded HERE, in the transaction that creates the
@@ -422,12 +431,13 @@ func loadUser(ctx context.Context, tx *sql.Tx, userID string, id *Identity) erro
 
 // soleUser reads the one person this server holds.
 //
-// Safe to call only after countPeople reported exactly one, which the schema
-// guarantees is the most there can ever be.
+// Called only where countPeople has just reported exactly one - the caller
+// refuses on any other count rather than trusting the schema, because this path
+// exists for stores whose schema may not be the one this build wrote.
 func soleUser(ctx context.Context, tx *sql.Tx) (Identity, error) {
 	var id Identity
 	if err := tx.QueryRowContext(ctx,
-		"SELECT user_id, label FROM users").Scan(&id.UserID, &id.Label); err != nil {
+		"SELECT user_id, label FROM users LIMIT 1").Scan(&id.UserID, &id.Label); err != nil {
 		return Identity{}, fmt.Errorf("read sole person: %w", err)
 	}
 	return id, nil

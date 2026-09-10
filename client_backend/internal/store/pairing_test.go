@@ -737,7 +737,7 @@ func countAllDevices(ctx context.Context, q rowQuerier) (int, error) {
 func TestASecondPersonCannotBeCreatedByAnyMeans(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	owner := claimOwner(t, s, "dev-owner")
+	claimOwner(t, s, "dev-owner")
 
 	_, err := s.write.ExecContext(ctx,
 		"INSERT INTO users (user_id, label, created_at) VALUES (?, ?, ?)", "u_second", "Second", 500)
@@ -759,5 +759,106 @@ func TestASecondPersonCannotBeCreatedByAnyMeans(t *testing.T) {
 	if _, err := s.ResolveIdentity(ctx, "dev-owner", "", 600); err != nil {
 		t.Fatalf("the owner stopped resolving: %v", err)
 	}
-	_ = owner
+}
+
+// forgetOwner drops the ownership marker while leaving everything else intact -
+// what a partial restore or a hand edit produces.
+func forgetOwner(t *testing.T, s *Store) {
+	t.Helper()
+	if _, err := s.write.ExecContext(context.Background(),
+		"UPDATE server_identity SET owner_user_id = NULL WHERE id = 1"); err != nil {
+		t.Fatalf("forget owner: %v", err)
+	}
+}
+
+// The repair this phase introduced. A store that lost its ownership marker used
+// to be permanently unclaimable: the claim was refused, no link was printed, and
+// the whole conversation sat there with no way in. There is one person to attach
+// to now, so refusing buys nothing.
+func TestAClaimOnAStoreThatLostItsOwnerAttachesToTheOnePersonThere(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	owner := claimOwner(t, s, "dev-owner")
+	if err := s.RevokeDevice(ctx, "dev-owner"); err != nil {
+		t.Fatalf("RevokeDevice: %v", err)
+	}
+	forgetOwner(t, s)
+
+	token, err := s.IssueClaimToken(ctx, 500)
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+	back, err := pairID(ctx, s, token, "dev-new", "test", 500)
+	if err != nil {
+		t.Fatalf("claim on a store with no owner marker: %v", err)
+	}
+	if back.UserID != owner.UserID {
+		t.Fatalf("attached to %q, want the person who was already here (%q)", back.UserID, owner.UserID)
+	}
+	if back.Created {
+		t.Fatal("reported as created; this person existed before the claim and has a name already")
+	}
+	machine, err := s.ReadOwnershipState(ctx)
+	if err != nil {
+		t.Fatalf("ReadOwnershipState: %v", err)
+	}
+	if !machine.Owned {
+		t.Fatal("the marker was not written back, so the next start prints a claim link again")
+	}
+}
+
+// The other half, and the one that matters. A missing ownership marker is not
+// permission to take the machine: while a device is still paired, the person is
+// reachable and the claim has to be refused - otherwise the reprinted link hands
+// their identity and their whole history to whoever presents it.
+func TestAClaimIsRefusedWhileADeviceIsPairedEvenWithNoOwnerMarker(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	owner := claimOwner(t, s, "dev-owner")
+	forgetOwner(t, s)
+
+	token, err := s.IssueClaimToken(ctx, 500)
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+	if _, err := pairID(ctx, s, token, "dev-attacker", "test", 500); !errors.Is(err, ErrTokenInvalid) {
+		t.Fatalf("claim answered %v, want it refused while the person still has a device", err)
+	}
+
+	// And the person is untouched: same identity, same devices.
+	still, err := s.ResolveIdentity(ctx, "dev-owner", "", 600)
+	if err != nil {
+		t.Fatalf("the owner stopped resolving: %v", err)
+	}
+	if still.UserID != owner.UserID {
+		t.Fatalf("resolved %q, want %q", still.UserID, owner.UserID)
+	}
+	devices, err := s.ListDevices(ctx, owner.UserID)
+	if err != nil {
+		t.Fatalf("ListDevices: %v", err)
+	}
+	if len(devices) != 1 {
+		t.Fatalf("devices = %d, want the one that was already there", len(devices))
+	}
+}
+
+// Startup reads the same fact, and it has to read it WITHOUT the owner id: a
+// store missing the marker still has somebody who can get in, and answering "no"
+// there is what makes startup print a claim link over a machine in use.
+func TestAMissingOwnerMarkerDoesNotMakeTheMachineLookEmpty(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	claimOwner(t, s, "dev-owner")
+	forgetOwner(t, s)
+
+	machine, err := s.ReadOwnershipState(ctx)
+	if err != nil {
+		t.Fatalf("ReadOwnershipState: %v", err)
+	}
+	if machine.Owned {
+		t.Fatal("the marker is gone, so Owned must say so")
+	}
+	if !machine.OwnerCanGetIn {
+		t.Fatal("a paired device is still a way in; saying otherwise prints a claim link over a live machine")
+	}
 }

@@ -220,6 +220,29 @@ void main() {
       expect(hello.toString(), isNot(contains(seed!)));
     });
 
+    test('a greeting with no session behind it persists nobody', () async {
+      // The window `pair` runs in: the connection was greeted BEFORE anyone
+      // signed in, so the server served a one-off identity. Persisting it hands
+      // the next person to sign in a stranger's author id, and every message
+      // they send comes back looking like somebody else's.
+      //
+      // Asserted on the STORED key rather than through readSession: the guard
+      // could be deleted and a session-shaped assertion would still pass,
+      // because there is no session either way. This is the only thing standing
+      // between the guard and silence.
+      await session.saveServer(address: '10.0.0.5:9000', serverKey: 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=');
+
+      await starter.start();
+      await settle();
+      factory.latest.pushGreeting();
+      await settle();
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('session.author_id'), isNull, reason: 'a pre-pair greeting was written onto this device');
+      expect(prefs.getString('session.label'), isNull);
+      expect((await session.readSession()).data, isNull);
+    });
+
     test('a refusal while unpaired clears nothing', () async {
       // The brick: a device that has not paired is refused as a matter of
       // course, and treating that as a revocation wiped the key and the address

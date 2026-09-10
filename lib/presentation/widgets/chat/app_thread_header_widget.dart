@@ -3,6 +3,7 @@ import 'package:nox_app/presentation/widgets/primitives/app_hairline_divider_wid
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
+import 'package:nox_app/design/theme/nox_opacity.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
@@ -66,7 +67,12 @@ class AppThreadHeaderWidget extends StatelessWidget {
                 IconButton(
                   onPressed: null,
                   tooltip: '${context.l10n.chatInvitePerson} — ${context.l10n.chatInviteLater}',
-                  icon: AppIconWidget(NoxIcons.add, color: colorScheme.onSurfaceVariant),
+                  // Dimmed by hand. AppIconWidget paints its own colour filter
+                  // and never consults IconTheme, so a null onPressed alone
+                  // leaves the glyph at full strength - identical to the live
+                  // action beside it, which is exactly the "looks live and does
+                  // nothing" this control exists to avoid.
+                  icon: AppIconWidget(NoxIcons.add, color: colorScheme.onSurfaceVariant.withValues(alpha: NoxOpacity.disabled)),
                 ),
                 IconButton(
                   onPressed: onInfo,

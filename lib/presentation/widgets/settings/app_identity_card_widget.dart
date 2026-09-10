@@ -47,14 +47,6 @@ class AppIdentityCardWidget extends StatelessWidget {
   final bool idRevealed;
   final VoidCallback? onToggleReveal;
 
-  /// Whether this person owns the server (contract §3).
-  ///
-  /// Three states, and only two of them draw anything: `true` shows the badge,
-  /// `false` and `null` show nothing. They are kept apart anyway because they
-  /// mean different things — `null` is "the server has not said yet" — and
-  /// rendering "not the owner" before the answer arrives would be a claim the
-  /// app is not entitled to make, followed by a flicker when it is corrected.
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);

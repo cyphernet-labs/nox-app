@@ -67,11 +67,6 @@ type helloReply struct {
 type greetingIdentity struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
-	// Owner says whether THIS person owns the machine. No omitempty, for the
-	// same reason `created` carries none: a dropped false reads as "not stated"
-	// on the wire (§3), and a client cannot tell that apart from a server too
-	// old to know the field - so the owner would silently lose their badge.
-	Owner bool `json:"owner"`
 }
 
 // identity is the object both the greeting and the pair reply carry, so the

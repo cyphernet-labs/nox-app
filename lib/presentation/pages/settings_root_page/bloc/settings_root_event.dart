@@ -21,6 +21,4 @@ sealed class SettingsRootEvent with _$SettingsRootEvent {
 
   /// Toggle the masked ↔ revealed identifier (mobile only).
   const factory SettingsRootEvent.idRevealToggled() = IdRevealToggled;
-
-  /// The server's standing answer about ownership changed (or arrived at all).
 }
