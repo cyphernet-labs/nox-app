@@ -6,7 +6,7 @@
 
 ## Anatomy
 App bar (back + chat name + a disabled **Invite a person** action). Message stream with date separators, author headers and bubbles. Composer pinned at bottom.
-> **Изменено 2026-09-10 (фаза 037).** Клиент-бэкенд обслуживает одного человека; общение с другими людьми уходит на relay, которого ещё нет. Приглашение присутствует как выключенный шов — место, к которому relay прирастёт.
+> **Changed 2026-09-10 (phase 037).** The client backend serves one person; talking to anybody else moves to a relay that does not exist yet. The invite is present as a disabled seam — the place the relay will attach to.
 
 
 ## States

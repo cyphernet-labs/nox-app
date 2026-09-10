@@ -248,7 +248,8 @@ class _ChatCardBodyState extends State<ChatCardBody> {
                   style: textTheme.headlineSmall?.copyWith(color: colorScheme.onSurface),
                 ),
               ),
-              // Rename — open shared space, no owners, so anyone may rename (5.4).
+              // Rename — every device here belongs to the same person, so any of
+              // them may rename (5.4).
               IconButton(
                 tooltip: context.l10n.renameChatTitle,
                 icon: AppIconWidget(NoxIcons.edit, color: colorScheme.onSurfaceVariant),

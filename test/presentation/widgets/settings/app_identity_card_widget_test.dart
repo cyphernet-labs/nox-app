@@ -62,19 +62,25 @@ void main() {
       expect(find.byKey(const Key('edit')), findsOneWidget);
     });
 
-    testWidgets('a long name keeps its width, with and without the badge', (tester) async {
-      // The regression this pins: a Row of two flexible children splits the
-      // free space by flex, so the name was laid out at HALF the row and
-      // ellipsized with blank space beside it - for everyone, badge or not.
+    testWidgets('a long name takes the whole row the edit button leaves it', (tester) async {
+      // The regression this pins: the name shared its Row with a SECOND
+      // flexible child, and two of those split the free space by flex - so the
+      // name was laid out at half the row and ellipsized with blank space
+      // beside it. The competitor was the owner badge, which 037 deleted; what
+      // still has to hold is that the name is the only flexible child in that
+      // row, next to a fixed-width edit button. Measured as a share of the row
+      // rather than against a pixel count, because half is exactly the number
+      // this is guarding against.
       const long = 'Alexandra_Smirnova_QQ';
       await tester.binding.setSurfaceSize(const Size(390, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
 
       await pumpApp(tester, card(name: long));
-      final plain = tester.getSize(find.text(long)).width;
 
-      // The name renders at its natural width, not at a fraction of the row.
-      expect(plain, greaterThan(150));
+      final row = tester.getSize(find.ancestor(of: find.text(long), matching: find.byType(Row)).first).width;
+      final name = tester.getSize(find.text(long)).width;
+
+      expect(name, greaterThan(row * 0.7), reason: 'something else in the row is taking flexible space from the name');
     });
 
     testWidgets('desktop (non-revealable): no reveal toggle, and no QR inside the card', (tester) async {

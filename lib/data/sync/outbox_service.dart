@@ -19,8 +19,8 @@ import 'package:nox_app/domain/service/session_phase_service.dart';
 ///
 /// Single sender is the load-bearing rule. Before this feature two places sent
 /// (typing in the thread, and the reconnect re-delivery), and a connectivity
-/// flap could run both over the same message. A duplicate in an open space with
-/// no deletion cannot be taken back, so the whole design collapses into one
+/// flap could run both over the same message. A duplicate in a journal with no
+/// deletion cannot be taken back, so the whole design collapses into one
 /// serialised drain.
 @LazySingleton(env: [Environment.dev, Environment.prod, Environment.test])
 class OutboxService {
@@ -193,7 +193,7 @@ class OutboxService {
       // A discard that landed while this send was in flight has already deleted
       // the record, and this remove is a no-op. The message still shows as sent,
       // which is correct: discarding means "do not send it", and once the server
-      // has it, an open space with no deletion cannot take it back.
+      // has it, a journal with no deletion cannot take it back.
       await _outbox.remove(clientMessageId: entry.clientMessageId);
       return true;
     }

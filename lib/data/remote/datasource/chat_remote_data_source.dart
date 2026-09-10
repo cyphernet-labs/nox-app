@@ -22,8 +22,8 @@ abstract class ChatRemoteDataSource {
   /// A taken name comes back as the typed `name_taken` failure.
   Future<ResponseEntity<ChatWireEntity>> createChat({required String name});
 
-  /// Renames a chat (open space: anyone may). Uniqueness excludes the chat
-  /// itself, per contract §4.
+  /// Renames a chat (any of this person's devices may). Uniqueness excludes the
+  /// chat itself, per contract §4.
   Future<ResponseEntity<ChatWireEntity>> renameChat({required String chatId, required String name});
 
   /// Whether a name is free, checked by the server (case-insensitive).

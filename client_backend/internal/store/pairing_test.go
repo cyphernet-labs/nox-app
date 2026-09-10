@@ -437,8 +437,9 @@ func TestRevokingADeviceRetiresTheInvitesItCouldHaveIssued(t *testing.T) {
 }
 
 // Ownership arrives with the claim, in the transaction that creates the person.
-// The whole point of the phase: before it, "who owns this machine" could only
-// be guessed from row order, which stops being even a proxy in feature 034.
+// The whole point of the phase: before it, "who owns this machine" could only be
+// guessed from row order - a record of a fact rather than the fact, and one that
+// says nothing at all on a store that has been restored or hand edited.
 func TestClaimMakesThePersonTheOwner(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
@@ -665,8 +666,8 @@ func TestAClaimIsStillRefusedWhileTheOwnerHasADevice(t *testing.T) {
 }
 
 // A replay reproduces the recorded answer, not the device's current binding.
-// After a logout and a re-pair the same key can belong to a different moment in
-// this person's life - and once 034 lands, to a different person entirely.
+// After a logout and a re-pair the same key belongs to a different moment in this
+// person's life, and the token has to keep answering with the one it settled.
 func TestAReplayAnswersWithWhatTheTokenProducedNotWhoHoldsTheKeyNow(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()

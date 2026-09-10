@@ -9,8 +9,8 @@ import 'package:nox_app/presentation/widgets/primitives/app_spinner_widget.dart'
 /// Rename-chat dialog (edit chat name), launched from the 5.4 chat card. A single name
 /// field (prefilled + selected) with the same debounced uniqueness + 64-char rules as
 /// create-chat, over [RenameChatBloc]. Resolves `true` (via `Navigator.pop`) once the
-/// chat is renamed; Cancel / dismiss resolves null. Anyone may rename (open shared space,
-/// no owners).
+/// chat is renamed; Cancel / dismiss resolves null. Any device may rename — they all
+/// belong to the same person.
 class AppRenameChatDialogWidget extends StatefulWidget {
   const AppRenameChatDialogWidget({super.key, required this.chatId, required this.currentName});
 
