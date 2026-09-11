@@ -94,11 +94,19 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
     final result = await repository.getDevices();
     result.match<void>(
       onData: (devices) => emit(state.copyWith(loading: false, devices: devices, failed: false)),
-      // A refresh that fails keeps what is on screen. The list shown is the
-      // last thing the server actually said; replacing it with an error would
-      // throw away the truth we have in exchange for news about a request
-      // nobody made. The next event or reconnect tries again.
-      onError: (_) => emit(state.copyWith(loading: false, failed: !event.refresh)),
+      // A refresh that fails LEAVES THE SCREEN AS IT FOUND IT — it neither
+      // raises the error nor lowers one that is already up.
+      //
+      // Both halves are load-bearing, and the first draft of this only had the
+      // one. Not raising it keeps the list: what is shown is the last thing the
+      // server actually said, and trading it for an error screen over a request
+      // nobody made is the wrong direction. Not LOWERING it matters just as
+      // much: a failed first load leaves the error on screen, and a background
+      // refresh that also failed would otherwise clear it — swapping a truthful
+      // "we could not load your devices" for an empty list and an invitation to
+      // add one. The same erasure would silently take away the notice that a
+      // revoke did not work.
+      onError: (_) => emit(state.copyWith(loading: false, failed: event.refresh ? state.failed : true)),
     );
   }
 

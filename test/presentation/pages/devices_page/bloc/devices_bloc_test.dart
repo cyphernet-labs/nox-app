@@ -281,6 +281,55 @@ void main() {
         expect(bloc.state.failed, isFalse, reason: 'an unasked-for refresh reported itself as a screen-level failure');
       },
     );
+    blocTest<DevicesBloc, DevicesState>(
+      'a failed catch-up does not erase an error that is already on screen',
+      // The first cut of this guard overshot: it cleared `failed` on every
+      // refresh instead of leaving it alone. Open the section while the channel
+      // is down and the error screen is right; when the channel comes back and
+      // that read ALSO fails, clearing the flag swaps a truthful "we could not
+      // load your devices" for an empty list and an `Add a device` button —
+      // with no retry and no way back short of leaving the section.
+      build: () {
+        when(
+          devices.getDevices(),
+        ).thenAnswer((_) async => const RepositoryResult<List<DeviceModel>>.error(exception: RepositoryException.connection));
+        return DevicesBloc();
+      },
+      act: (bloc) async {
+        bloc.add(const DevicesEvent.initialize());
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        // Still broken when the catch-up runs.
+        paired.add(null);
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      },
+      verify: (bloc) {
+        expect(bloc.state.failed, isTrue, reason: 'the catch-up wiped an error the person still needed to see');
+        expect(bloc.state.devices, isEmpty);
+      },
+    );
+
+    blocTest<DevicesBloc, DevicesState>(
+      'and a catch-up that works clears it',
+      // The other direction, so the flag cannot become sticky: once the server
+      // has actually answered, the error is over.
+      build: () {
+        when(
+          devices.getDevices(),
+        ).thenAnswer((_) async => const RepositoryResult<List<DeviceModel>>.error(exception: RepositoryException.connection));
+        return DevicesBloc();
+      },
+      act: (bloc) async {
+        bloc.add(const DevicesEvent.initialize());
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
+        paired.add(null);
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      },
+      verify: (bloc) {
+        expect(bloc.state.failed, isFalse);
+        expect(bloc.state.devices, hasLength(1));
+      },
+    );
   });
 
   group('the channel coming back (038)', () {
