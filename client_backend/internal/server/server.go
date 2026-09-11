@@ -256,7 +256,9 @@ func (s *Server) refreshLabel(userID, label string, origin *client) {
 //
 // Collected under s.mu and sent outside it, for refreshLabel's reason:
 // sendFrame writes to a bounded queue, and a full one under the registry lock
-// would hold up every other connection of every other person.
+// would hold up every other connection on the server. (refreshLabel says "of
+// every other person", which this server has not had since 037 - one machine,
+// one person - but the lock is shared by every connection all the same.)
 //
 // origin is a live exclusion, not a statement of intent. It is easy to read
 // the code as one - handlePair refuses an already-greeted connection, so the
@@ -308,7 +310,8 @@ func (s *Server) setDeviceKey(c *client, key string) {
 // other goroutines touch it through.
 //
 // A connection joins s.conns when it is accepted, long before it greets, so
-// refreshLabel and announcePaired walk it while this write is still to come. Writing it bare made the greeting race every one of them. (The
+// refreshLabel and announcePaired walk it while this write is still to
+// come. Writing it bare made the greeting race every one of them. (The
 // ten-second sweeper that once widened this window went with the person invite
 // in 037; the race it exposed is the same one either way.)
 func (s *Server) setIdentity(c *client, id store.Identity) {

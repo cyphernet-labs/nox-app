@@ -847,6 +847,42 @@ void main() {
       expect(phase.watched, isFalse, reason: 'a phase subscription outlived the screen that made it');
     });
 
+    test('and so is a reconnect that lands the same way', () async {
+      final phase = _FakePhase(SessionPhase.live);
+      getIt.registerSingleton<SessionPhaseService>(phase);
+      when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
+      final bloc = DevicesBloc();
+      bloc.add(const DevicesEvent.initialize());
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      // The same shape as the pairing above: queued, then the section closes
+      // before the handler that would start the re-read gets to run.
+      bloc.add(const DevicesEvent.connectionRestored());
+      await bloc.close();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    });
+
+    test('both streams are subscribed once, not once per read', () async {
+      final phase = _FakePhase(SessionPhase.live);
+      getIt.registerSingleton<SessionPhaseService>(phase);
+      when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
+      final bloc = DevicesBloc();
+      // Subscribing lives in _onInitialize, which runs on EVERY read. Without
+      // the ??= each pairing would leave another listener on top of the last,
+      // every one of them re-reading the list, and close() would cancel only
+      // the newest - a doubling nobody sees until the screen is busy.
+      bloc.add(const DevicesEvent.initialize());
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      paired.add(null);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      paired.add(null);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      verify(devices.watchDeviceListChanged()).called(1);
+      expect(phase.watchCalls, 1, reason: 'a second phase subscription on top of the first');
+      await bloc.close();
+    });
+
     test('a pairing that lands as the screen closes is not an error', () async {
       when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
       final bloc = DevicesBloc();
@@ -911,6 +947,10 @@ class _FakePhase implements SessionPhaseService {
     _controller.add(next);
   }
 
+  /// How many times the bloc asked for the stream. The screen must subscribe
+  /// once, not once per read.
+  int watchCalls = 0;
+
   /// Whether the bloc is still listening. The teardown asserts on it: a phase
   /// subscription left behind outlives the screen on a stream the socket owns.
   bool get watched => _controller.hasListener;
@@ -920,6 +960,7 @@ class _FakePhase implements SessionPhaseService {
 
   @override
   Stream<SessionPhase> watchPhase() async* {
+    watchCalls++;
     yield _phase;
     yield* _controller.stream;
   }

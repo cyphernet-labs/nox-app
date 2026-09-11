@@ -73,10 +73,13 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
    event-less: file metadata (upload registration, mark-uploaded, orphan
    sweep), because files surface to other clients only through
    `message.send`; and identity resolution (`internal/store/identity.go`),
-   because a PERSON coming into being is not visible on the wire at all. A
-   DEVICE coming into being is, since 038: `pair` announces it off-journal to
-   the person's other connections (`announcePaired`). It still writes nothing
-   to the journal - the event carries no cursor coordinate and is not replayed.
+   because a PERSON coming into being is not visible on the wire at all.
+   The rule is about the JOURNAL, and the three off-journal events sit outside
+   it by construction: `device.revoked`, `identity.updated` and - since 038 -
+   `device.paired` carry `seq: 0`, write no `events` row, take no cursor
+   coordinate and are never replayed. They describe who a connection is or what
+   it may still do, not what happened in the shared world, which is why a
+   disconnect may lose them and nothing breaks.
 4. **Write transactions are milliseconds.** No network I/O, no WebSocket
    sends, no sleeping between `BeginTx` and `Commit`.
 5. **`seq` is a strictly increasing total order** (single writer +

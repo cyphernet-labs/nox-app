@@ -570,6 +570,39 @@ func TestTheRenamingDeviceIsAnsweredEvenWhileAnotherConnectionIsWedged(t *testin
 	owner.expectOK(2)
 }
 
+// The third fan-out, and the one that set the order the other two now follow.
+//
+// It had no test of its own: moving `dropDevice` above the reply passes the
+// whole package, because the only connection it usually reaches is the caller's
+// own and an empty queue swallows the difference. Give the revoked key a wedged
+// connection and the defect is plain - `device.revoked` blocks on it, and the
+// OK for a revocation the store has already applied never leaves.
+func TestTheRevokingDeviceIsAnsweredEvenWhileTheRevokedOneIsWedged(t *testing.T) {
+	ts, srv := newTestServer(t)
+	dev, _ := claimDevice(t, ts, srv)
+
+	owner := dialWS(t, ts, srv)
+	owner.expectGreeting()
+	owner.greet(t, 1, dev, "")
+	token := inviteFrom(t, owner, 2)
+
+	joiner := newDevice(t)
+	pairing := dialWS(t, ts, srv)
+	pairing.expectGreeting()
+	pairing.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"device_key":%q,"platform":"test"}}`, token, joiner.pub))
+	pairing.expectOK(1)
+	// The owner is told about the pairing; read it so the assertion below is
+	// about the revoke and nothing else.
+	owner.expectEvent()
+
+	// The joined device, as a connection nobody is draining.
+	wedged := stubClientWithKey(t, srv, personOn(t, srv), joiner.pub, 1)
+	wedged.out <- []byte("{}")
+
+	owner.send(fmt.Sprintf(`{"id":3,"cmd":"device.revoke","data":{"device_key":%q}}`, joiner.pub))
+	owner.expectOK(3)
+}
+
 // The exclusion of the connection the pairing came from, asked directly.
 //
 // It cannot be asked through a socket: a device that is pairing has not greeted
@@ -609,11 +642,20 @@ func TestTheAnnouncementSkipsTheConnectionItCameFrom(t *testing.T) {
 // this entry gone first.
 func stubClient(t *testing.T, srv *Server, userID string, queue int) *client {
 	t.Helper()
+	return stubClientWithKey(t, srv, userID, "", queue)
+}
+
+// stubClientWithKey is stubClient for the fan-out that matches on the DEVICE
+// key rather than on the person: dropDevice looks for the connections holding
+// one key and closes them.
+func stubClientWithKey(t *testing.T, srv *Server, userID, deviceKey string, queue int) *client {
+	t.Helper()
 	c := &client{
-		srv:      srv,
-		logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-		out:      make(chan []byte, queue),
-		identity: store.Identity{UserID: userID},
+		srv:       srv,
+		logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		out:       make(chan []byte, queue),
+		identity:  store.Identity{UserID: userID},
+		deviceKey: deviceKey,
 	}
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 	srv.mu.Lock()
