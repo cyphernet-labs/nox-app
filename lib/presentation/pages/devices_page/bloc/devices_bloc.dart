@@ -34,7 +34,7 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
     on<DevicesInviteRequested>(_onInviteRequested);
     on<DevicesInviteDismissed>((_, emit) => emit(state.copyWith(inviteLink: null, inviteFailed: false)));
     on<DevicesDeviceListChanged>(_onDeviceListChanged);
-    on<DevicesConnectionRestored>((_, _) => add(const DevicesEvent.initialize()));
+    on<DevicesConnectionRestored>((_, _) => add(const DevicesEvent.initialize(refresh: true)));
   }
 
   DeviceRepository? get _repository => getIt.isRegistered<DeviceRepository>() ? getIt<DeviceRepository>() : null;
@@ -60,7 +60,10 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
   }
 
   Future<void> _onInitialize(DevicesInitialize event, Emitter<DevicesState> emit) async {
-    emit(state.copyWith(loading: true, failed: false));
+    // A refresh leaves the screen alone: the list stays visible while the new
+    // one is fetched. Only a first load is allowed to show a spinner, because
+    // only then is there nothing to look at.
+    if (!event.refresh) emit(state.copyWith(loading: true, failed: false));
     final repository = _repository;
     if (repository == null) {
       // Mock flavors have no live channel and therefore no devices to show.
@@ -91,7 +94,11 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
     final result = await repository.getDevices();
     result.match<void>(
       onData: (devices) => emit(state.copyWith(loading: false, devices: devices, failed: false)),
-      onError: (_) => emit(state.copyWith(loading: false, failed: true)),
+      // A refresh that fails keeps what is on screen. The list shown is the
+      // last thing the server actually said; replacing it with an error would
+      // throw away the truth we have in exchange for news about a request
+      // nobody made. The next event or reconnect tries again.
+      onError: (_) => emit(state.copyWith(loading: false, failed: !event.refresh)),
     );
   }
 
@@ -107,7 +114,7 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
   /// server will now refuse, and the refusal reads as the app being broken.
   Future<void> _onDeviceListChanged(DevicesDeviceListChanged event, Emitter<DevicesState> emit) async {
     emit(state.copyWith(inviteLink: null, inviteFailed: false));
-    add(const DevicesEvent.initialize());
+    add(const DevicesEvent.initialize(refresh: true));
   }
 
   SessionPhaseService get _phaseService => getIt<SessionPhaseService>();

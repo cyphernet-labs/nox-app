@@ -2,7 +2,12 @@ part of 'devices_bloc.dart';
 
 @freezed
 sealed class DevicesEvent with _$DevicesEvent {
-  const factory DevicesEvent.initialize() = DevicesInitialize;
+  /// [refresh] means "the list is already on screen, bring it up to date".
+  ///
+  /// The difference is visible: a first load may show a spinner, a refresh must
+  /// not — the screen would blank out under somebody who did not ask for
+  /// anything, and on a flapping link it would strobe.
+  const factory DevicesEvent.initialize({@Default(false) bool refresh}) = DevicesInitialize;
 
   const factory DevicesEvent.revokeRequested(String deviceKey) = DevicesRevokeRequested;
 

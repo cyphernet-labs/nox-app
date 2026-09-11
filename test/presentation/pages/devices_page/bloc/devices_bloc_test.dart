@@ -226,6 +226,61 @@ void main() {
       },
       verify: (bloc) => expect(bloc.state.inviteLink, 'https://nox.app/p/#second'),
     );
+    blocTest<DevicesBloc, DevicesState>(
+      'the screen never blanks while it catches up',
+      // The first cut of this delivered US1 as "the list vanishes, then comes
+      // back": both new triggers re-entered initialize, which raised `loading`,
+      // and the body renders a bare spinner whenever that is set. Nobody asked
+      // for anything, and on a flapping link it strobes.
+      build: () {
+        when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
+        return DevicesBloc();
+      },
+      act: (bloc) async {
+        bloc.add(const DevicesEvent.initialize());
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        // A DIFFERENT list on the second read, so the catch-up actually emits:
+        // a bloc swallows a state equal to the one before it, and with an
+        // identical list this test would pass without proving anything.
+        when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone, tablet]));
+        paired.add(null);
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      },
+      // Exactly three states, and the spinner appears in the first only. A
+      // `loading: true` raised by the catch-up would show up here as a fourth.
+      expect: () => [
+        predicate<DevicesState>((s) => s.loading, 'the opening load shows a spinner'),
+        predicate<DevicesState>((s) => !s.loading && s.devices.length == 1, 'the list arrives'),
+        predicate<DevicesState>(
+          (s) => !s.loading && s.devices.length == 2,
+          'the fresh list replaces it in place, with no blank in between',
+        ),
+      ],
+    );
+
+    blocTest<DevicesBloc, DevicesState>(
+      'a catch-up that fails leaves the list on screen',
+      // The list shown is the last thing the server actually said. Replacing it
+      // with an error screen would trade the truth we have for news about a
+      // request nobody made.
+      build: () {
+        when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone, tablet]));
+        return DevicesBloc();
+      },
+      act: (bloc) async {
+        bloc.add(const DevicesEvent.initialize());
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        when(
+          devices.getDevices(),
+        ).thenAnswer((_) async => const RepositoryResult<List<DeviceModel>>.error(exception: RepositoryException.connection));
+        paired.add(null);
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      },
+      verify: (bloc) {
+        expect(bloc.state.devices, hasLength(2), reason: 'a failed catch-up threw away a list the server had confirmed');
+        expect(bloc.state.failed, isFalse, reason: 'an unasked-for refresh reported itself as a screen-level failure');
+      },
+    );
   });
 
   group('the channel coming back (038)', () {

@@ -242,7 +242,6 @@ func (c *wsClient) expectReply(id int) map[string]json.RawMessage {
 	return nil
 }
 
-// expectEvent reads frames until an event arrives and returns (seq, type, data).
 // expectJournalEvent is expectEvent for tests that assert on the shared world:
 // it skips off-journal frames (seq 0), which describe this connection or this
 // person rather than the journal and carry no cursor coordinate.
@@ -263,6 +262,7 @@ func (c *wsClient) expectJournalEvent() (int64, string, map[string]json.RawMessa
 	return 0, "", nil
 }
 
+// expectEvent reads frames until an event arrives and returns (seq, type, data).
 func (c *wsClient) expectEvent() (int64, string, map[string]json.RawMessage) {
 	c.t.Helper()
 	for range 50 {

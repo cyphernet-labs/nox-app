@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mockito/annotations.dart';
@@ -109,5 +111,48 @@ void main() {
     when(socket.send('identity.setLabel', any)).thenAnswer((_) async => ok(const {'label': 'Anna'}));
     expect((await repository.setLabel(label: 'Anna')).data, isTrue);
     verify(socket.send('identity.setLabel', {'label': 'Anna'})).called(1);
+  });
+
+  group('watchDeviceListChanged (038)', () {
+    // The one line that joins the wire to the screen, and the only place the
+    // event NAME is compared. Everything above this in the client is tested
+    // against a mock of this repository, so a wrong constant here would ship
+    // silently and reproduce the very defect 038 exists to fix - with a green
+    // gate, because nothing else looks at the string.
+    late StreamController<ServerEvent> frames;
+
+    setUp(() {
+      frames = StreamController<ServerEvent>.broadcast();
+      when(socket.events).thenAnswer((_) => frames.stream);
+      repository = DeviceRepositoryImpl(socket, FakeSessionRepository());
+    });
+    tearDown(() => frames.close());
+
+    test('a device.paired frame becomes a signal', () async {
+      final signals = <void>[];
+      final sub = repository.watchDeviceListChanged().listen(signals.add);
+      addTearDown(sub.cancel);
+
+      frames.add(const ServerEvent(seq: 0, event: 'device.paired', data: <String, dynamic>{}));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(signals, hasLength(1));
+    });
+
+    test('and nothing else on the wire does', () async {
+      // The negative half is the one that catches a filter left too wide: a
+      // stream that fires on every frame would pass the test above and make
+      // the screen re-read on every message that arrives.
+      final signals = <void>[];
+      final sub = repository.watchDeviceListChanged().listen(signals.add);
+      addTearDown(sub.cancel);
+
+      frames.add(const ServerEvent(seq: 0, event: 'device.revoked', data: <String, dynamic>{'device_key': 'k'}));
+      frames.add(const ServerEvent(seq: 0, event: 'identity.updated', data: <String, dynamic>{'label': 'Anna'}));
+      frames.add(const ServerEvent(seq: 7, event: 'message.new', data: <String, dynamic>{}));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(signals, isEmpty);
+    });
   });
 }
