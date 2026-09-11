@@ -76,7 +76,8 @@ class ServerEvent extends ServerFrame {
   static const String deviceRevoked = 'device.revoked';
 
   /// Sent to the OTHER live connections of a person who has just added a
-  /// device (contract §8A). Seq 0 and not journal content, like the two above.
+  /// device (contract §8A). Seq 0 and not journal content, like [deviceRevoked]
+  /// above and [identityUpdated] below.
   ///
   /// Carries nothing: it says "the set of devices changed", not how, and the
   /// receiver re-reads `device.list`. Anything in the payload would either

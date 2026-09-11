@@ -23,8 +23,11 @@ Detail scaffold (back + title). Current device in its own group, marked `This de
 - The invite card disappears when a device joins — the token is one-shot and spent, and a QR the server will now refuse is worse than no QR.
 - The list is also re-read when the live channel comes back: the pairing event does not survive a disconnect, and the person whose connection blinked would otherwise keep a wrong list.
 - A revoke that fails says so in its own sentence, above the list. Separate from the load error since phase 038: the screen now re-reads
-  the list by itself, so a revoke can fail on a list that loaded fine, and one shared sentence would blame the wrong thing. The notice
-  comes down when the next revoke is attempted.
+  the list by itself, so a revoke can fail on a list that loaded fine, and one shared sentence would blame the wrong thing.
+- That notice belongs to ONE device, and leaves on either of two events: another attempt on the same device (the person is retrying it),
+  or a list that comes back without that device at all. The second is not a formality - a revoke whose reply was lost still happened, and
+  once the row is gone there is nothing left to press "try again" on. Revoking a DIFFERENT device does not take it down: the first one is
+  still authorised, and this sentence is the only thing that says so.
 - After a revoke the list is re-read from the server rather than edited locally. That read keeps the list on screen - no spinner - but it
   does report its own failure: the person asked for it, and silence would leave the revoked device listed with nothing to explain it.
 
