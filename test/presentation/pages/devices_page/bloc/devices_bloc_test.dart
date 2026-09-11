@@ -42,6 +42,14 @@ void main() {
     isCurrent: false,
   );
 
+  final laptop = DeviceModel(
+    deviceKey: 'k-laptop',
+    platform: 'macos',
+    pairedAt: DateTime(2026, 9, 10),
+    lastSeenAt: DateTime(2026, 9, 10),
+    isCurrent: false,
+  );
+
   setUp(() async {
     await configureDependencies(Environment.test);
     getIt.allowReassignment = true;
@@ -211,6 +219,38 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 50));
       },
       verify: (bloc) => expect(bloc.state.inviteLink, isNull, reason: 'the QR stayed up for a token the server will now refuse'),
+    );
+
+    blocTest<DevicesBloc, DevicesState>(
+      'an invite minted while the catch-up is still in flight survives it',
+      // The read answers about the world as it was when it was asked. A person
+      // who taps `Add a device` a moment after a pairing gets a QR for a token
+      // nobody has touched, and an answer that set out before it existed must
+      // not take it down - that card is the one thing on the screen they are
+      // waiting on, and it would vanish with no explanation.
+      build: () {
+        when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
+        when(devices.inviteDevice()).thenAnswer((_) async => const RepositoryResult<String>.success(data: 'https://nox.app/p/#fresh'));
+        return DevicesBloc();
+      },
+      act: (bloc) async {
+        bloc.add(const DevicesEvent.initialize());
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        // A slow catch-up, so the window the defect lived in is wide enough to
+        // aim at. sequential() makes it wider still on a real screen.
+        when(devices.getDevices()).thenAnswer((_) async {
+          await Future<void>.delayed(const Duration(milliseconds: 80));
+          return RepositoryResult<List<DeviceModel>>.success(data: [phone, tablet]);
+        });
+        paired.add(null);
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        bloc.add(const DevicesEvent.inviteRequested());
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+      },
+      verify: (bloc) {
+        expect(bloc.state.devices, hasLength(2), reason: 'the catch-up never landed, so this proves nothing');
+        expect(bloc.state.inviteLink, 'https://nox.app/p/#fresh', reason: 'a read that started first threw away a later invite');
+      },
     );
 
     blocTest<DevicesBloc, DevicesState>(
@@ -432,7 +472,13 @@ void main() {
         phase.emit(SessionPhase.live);
         await Future<void>.delayed(const Duration(milliseconds: 50));
       },
-      verify: (bloc) => expect(bloc.state.inviteLink, 'https://nox.app/p/#live'),
+      verify: (bloc) {
+        // The call count, not just the link: without it this passes with the
+        // whole reconnect subscription deleted, because a screen that never
+        // re-reads also never touches the invite.
+        verify(devices.getDevices()).called(2);
+        expect(bloc.state.inviteLink, 'https://nox.app/p/#live');
+      },
     );
 
     blocTest<DevicesBloc, DevicesState>(
@@ -459,9 +505,74 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 50));
       },
       verify: (bloc) {
+        // Again the count first: the notice also survives a screen that never
+        // re-reads at all, and that is not what is being claimed here.
+        verify(devices.getDevices()).called(2);
         expect(bloc.state.actionFailed, isTrue, reason: 'a background read answered a question nobody asked it');
         expect(bloc.state.others, hasLength(1), reason: 'the device is still there, so the notice must be too');
       },
+    );
+
+    blocTest<DevicesBloc, DevicesState>(
+      'a pairing hidden behind a revocation still takes the spent QR down',
+      // The count is the same on both sides - one device joined by this very
+      // QR while another was cut off - so a list that only watches its length
+      // sees nothing happen and leaves a dead QR on screen, in exactly the case
+      // the card is dismissed for. The keys are what say a device is new.
+      build: () {
+        when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone, tablet]));
+        when(devices.inviteDevice()).thenAnswer((_) async => const RepositoryResult<String>.success(data: 'https://nox.app/p/#tok'));
+        return DevicesBloc();
+      },
+      act: (bloc) async {
+        bloc.add(const DevicesEvent.initialize());
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        bloc.add(const DevicesEvent.inviteRequested());
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        phase.emit(SessionPhase.connecting);
+        when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone, laptop]));
+        phase.emit(SessionPhase.live);
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      },
+      verify: (bloc) {
+        expect(bloc.state.devices, hasLength(2));
+        expect(bloc.state.inviteLink, isNull, reason: 'the list changed hands and the spent QR stayed up');
+      },
+    );
+
+    blocTest<DevicesBloc, DevicesState>(
+      'the notice about a failed revoke comes down when the next one is tried',
+      // It has no other way off the screen: there is no dismiss control, and
+      // the list re-reading itself must not take it down. So a second attempt
+      // is the person's one answer to it, and while that attempt is in flight
+      // the screen must not still be blaming the first.
+      build: () {
+        when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone, tablet]));
+        when(
+          devices.revoke(deviceKey: anyNamed('deviceKey')),
+        ).thenAnswer((_) async => const RepositoryResult<bool>.error(exception: RepositoryException.connection));
+        return DevicesBloc();
+      },
+      act: (bloc) async {
+        bloc.add(const DevicesEvent.initialize());
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        bloc.add(const DevicesEvent.revokeRequested('k-tablet'));
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect(bloc.state.actionFailed, isTrue, reason: 'the failed revoke never raised a notice to begin with');
+
+        // The second attempt is held open, so the state below is the one the
+        // person is actually looking at while they wait.
+        final second = Completer<RepositoryResult<bool>>();
+        when(devices.revoke(deviceKey: anyNamed('deviceKey'))).thenAnswer((_) => second.future);
+        bloc.add(const DevicesEvent.revokeRequested('k-tablet'));
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+        expect(bloc.state.actionFailed, isFalse, reason: 'the notice about the first attempt stayed up over the second');
+
+        second.complete(const RepositoryResult<bool>.error(exception: RepositoryException.connection));
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+      },
+      // And it comes back, because this one failed too.
+      verify: (bloc) => expect(bloc.state.actionFailed, isTrue),
     );
   });
 }

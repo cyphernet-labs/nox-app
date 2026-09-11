@@ -62,6 +62,7 @@
   "devicesRevokeSelfMessage": "This is the device you're using. Revoking it signs you out here.",
   "devicesEmpty": "No other devices",
   "devicesError": "Couldn't load your devices.",
+  "devicesRevokeError": "Couldn't revoke that device. Try again.",
   "devicesAdd": "Add a device",
   "devicesInviteMessage": "Scan this from the other device. The link works for 10 minutes.",
   "devicesInviteError": "Couldn't create an invite.",

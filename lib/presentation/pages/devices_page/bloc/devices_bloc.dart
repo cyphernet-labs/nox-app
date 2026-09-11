@@ -98,16 +98,30 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
       add(const DevicesEvent.connectionRestored());
     });
 
+    // Both of these are taken BEFORE the read, and for the same reason: an
+    // answer describes the world as it was when the question was asked.
+    //
+    // The KEYS are what says a device joined while this one was away - the live
+    // event never reached us, and the list is the only evidence. Not the
+    // length: a pairing that coincides with a revocation leaves the count
+    // exactly where it was, and the spent QR would then survive the one
+    // reconnect it exists to be dismissed on.
+    //
+    // The INVITE is captured so this read cannot outlive its own subject. It
+    // may take a second to answer; the person may mint a new invite while it is
+    // in flight; and that one is not the token the joining device spent. Only
+    // the invite that was on screen when the read started can be.
+    final knownKeys = state.devices.map((d) => d.deviceKey).toSet();
+    final inviteAtStart = state.inviteLink;
     final result = await repository.getDevices();
     result.match<void>(
       onData: (devices) {
-        // A device joined while this one was away: the live event never reached
-        // us, and the only evidence is that the list GREW. The card has to go
-        // for the reason it goes on the event - the QR on it is spent, and the
-        // server will refuse it. Without this the reconnect path shows the new
-        // device and the dead QR above it at the same time.
-        final joined = devices.length > state.devices.length;
-        emit(state.copyWith(loading: false, devices: devices, failed: false, inviteLink: joined ? null : state.inviteLink));
+        // The card has to go for the reason it goes on the event - the QR on it
+        // is spent, and the server will refuse it. Without this the reconnect
+        // path shows the new device and the dead QR above it at the same time.
+        final joined = devices.any((d) => !knownKeys.contains(d.deviceKey));
+        final spent = joined && state.inviteLink == inviteAtStart;
+        emit(state.copyWith(loading: false, devices: devices, failed: false, inviteLink: spent ? null : state.inviteLink));
       },
       // A refresh that fails LEAVES THE SCREEN AS IT FOUND IT — it neither
       // raises the error nor lowers one that is already up.
@@ -145,6 +159,13 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
   Future<void> _onRevokeRequested(DevicesRevokeRequested event, Emitter<DevicesState> emit) async {
     final repository = _repository;
     if (repository == null) return;
+
+    // A fresh attempt takes down the notice about the previous one. It has no
+    // other way off the screen - there is no dismiss control and the person is
+    // already where the list lives - so without this it describes a revoke that
+    // is no longer the one being watched. If this attempt fails too it comes
+    // straight back, which is the whole of what the notice is for.
+    emit(state.copyWith(actionFailed: false));
 
     // Revoking the device in your hand IS a logout - the contract calls logout
     // a special case of revocation. Going through the logout path wipes the

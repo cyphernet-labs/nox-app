@@ -27,6 +27,7 @@
 | Loaded | Текущее устройство + остальные. |
 | Alone | Кроме текущего никого — строка `No other devices`. |
 | Error | `Couldn't load your devices.` |
+| Action failed | `Couldn't revoke that device. Try again.` — плашка над списком, отдельная от ошибки загрузки. Разделены с фазы 038: экран перечитывает список сам, и одна строка на оба случая обвиняла бы загрузку, которая прошла. |
 | Invite | Карточка с QR и ссылкой; ссылка живёт **10 минут**. |
 
 ## Взаимодействия
@@ -47,4 +48,4 @@
 - Revoke this device? / It will be signed out and won't be able to connect again.
 - (для текущего) This is the device you're using. Revoking it signs you out here.
 - Scan this from the other device. The link works for 10 minutes.
-- Couldn't load your devices. / Couldn't create an invite.
+- Couldn't load your devices. / Couldn't revoke that device. Try again. / Couldn't create an invite.

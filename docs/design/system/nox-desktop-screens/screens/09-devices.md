@@ -12,6 +12,7 @@ Fills the Settings detail pane (7.1); no push, selection swaps the pane. Current
 - `loaded` — current device plus the others
 - `alone` — nothing but this device
 - `error` — Couldn't load your devices.
+- `action error` — Couldn't revoke that device. Try again. (its own line above the list, never the list's)
 - `invite` — QR card, link valid for 10 minutes
 
 ## Behavior
@@ -21,6 +22,9 @@ Fills the Settings detail pane (7.1); no push, selection swaps the pane. Current
 - A device paired from elsewhere appears in the open list on its own (phase 038): the server says so, and the screen re-reads. Leaving the section and coming back is no longer how you find out.
 - The invite card disappears when a device joins — the token is one-shot and spent, and a QR the server will now refuse is worse than no QR.
 - The list is also re-read when the live channel comes back: the pairing event does not survive a disconnect, and the person whose connection blinked would otherwise keep a wrong list.
+- A revoke that fails says so in its own sentence, above the list. Separate from the load error since phase 038: the screen now re-reads
+  the list by itself, so a revoke can fail on a list that loaded fine, and one shared sentence would blame the wrong thing. The notice
+  comes down when the next revoke is attempted.
 - After a revoke the list is re-read from the server rather than edited locally.
 
 ## Copy (EN)
