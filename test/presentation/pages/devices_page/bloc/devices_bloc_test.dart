@@ -605,6 +605,66 @@ void main() {
     );
 
     blocTest<DevicesBloc, DevicesState>(
+      'a revoke that works and then cannot be confirmed says so',
+      // The third case, and the reason the read carries a cause rather than a
+      // flag. This read shows no spinner, like one nobody asked for - and MUST
+      // report its failure, unlike one. Silence leaves the revoked device
+      // sitting in the list with nothing on screen to say the confirmation
+      // never came, which reads as the revoke having done nothing.
+      build: () {
+        when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone, tablet]));
+        when(devices.revoke(deviceKey: anyNamed('deviceKey'))).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
+        return DevicesBloc();
+      },
+      act: (bloc) async {
+        bloc.add(const DevicesEvent.initialize());
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        when(
+          devices.getDevices(),
+        ).thenAnswer((_) async => const RepositoryResult<List<DeviceModel>>.error(exception: RepositoryException.connection));
+        bloc.add(const DevicesEvent.revokeRequested('k-tablet'));
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      },
+      verify: (bloc) {
+        expect(bloc.state.failed, isTrue, reason: 'the read the person was waiting on failed silently');
+        expect(bloc.state.devices, hasLength(2), reason: 'the list we still had was thrown away');
+        expect(bloc.state.loading, isFalse, reason: 'a read with the list on screen raised a spinner');
+      },
+    );
+
+    blocTest<DevicesBloc, DevicesState>(
+      'the notice about one device survives a revoke of another',
+      // The notice belongs to a device, not to the screen. Cutting off a second
+      // device is not an answer about the first - it is still authorised, and
+      // this notice is the only thing that says so.
+      build: () {
+        when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone, tablet, laptop]));
+        when(devices.revoke(deviceKey: anyNamed('deviceKey'))).thenAnswer((invocation) async {
+          final key = invocation.namedArguments[#deviceKey] as String;
+          return key == 'k-tablet'
+              ? const RepositoryResult<bool>.error(exception: RepositoryException.connection)
+              : const RepositoryResult<bool>.success(data: true);
+        });
+        return DevicesBloc();
+      },
+      act: (bloc) async {
+        bloc.add(const DevicesEvent.initialize());
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        bloc.add(const DevicesEvent.revokeRequested('k-tablet'));
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect(bloc.state.actionFailed, isTrue, reason: 'the failed revoke raised no notice to begin with');
+        // The laptop goes, and the tablet stays exactly as unrevoked as it was.
+        when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone, tablet]));
+        bloc.add(const DevicesEvent.revokeRequested('k-laptop'));
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      },
+      verify: (bloc) {
+        expect(bloc.state.actionFailedKey, 'k-tablet', reason: 'a revoke of another device answered for this one');
+        expect(bloc.state.others.map((d) => d.deviceKey), contains('k-tablet'));
+      },
+    );
+
+    blocTest<DevicesBloc, DevicesState>(
       'a re-read queued by one revoke does not answer for another that failed',
       // The worst shape of the same defect. The re-read a SUCCESSFUL revoke
       // starts is queued behind whatever is in flight, and if it clears the
@@ -664,7 +724,7 @@ void main() {
       act: (bloc) async {
         bloc.add(const DevicesEvent.initialize());
         await Future<void>.delayed(const Duration(milliseconds: 10));
-        bloc.add(const DevicesEvent.initialize(refresh: true));
+        bloc.add(const DevicesEvent.initialize(cause: DevicesReadCause.noticed));
         await Future<void>.delayed(const Duration(milliseconds: 300));
       },
       verify: (bloc) => expect(

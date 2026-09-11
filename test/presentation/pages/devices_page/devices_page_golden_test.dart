@@ -38,8 +38,8 @@ void main() {
   // A revoke that did not happen. Pinned on both widths because it is the one
   // thing 038 added to the LAYOUT of this screen - its own sentence above the
   // list, deliberately not the list's own "Couldn't load your devices."
-  goldenTest('devices_page_action_error', () => DevicesPage(initialState: _state().copyWith(actionFailed: true)));
-  goldenTestDesktop('devices_page_action_error', () => DevicesPage(initialState: _state().copyWith(actionFailed: true)));
+  goldenTest('devices_page_action_error', () => DevicesPage(initialState: _state().copyWith(actionFailedKey: 'k-desktop')));
+  goldenTestDesktop('devices_page_action_error', () => DevicesPage(initialState: _state().copyWith(actionFailedKey: 'k-desktop')));
 
   // Nothing but this device: the sentence has to say so rather than showing a
   // blank pane.

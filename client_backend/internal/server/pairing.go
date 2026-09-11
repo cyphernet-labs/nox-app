@@ -118,6 +118,13 @@ func (c *client) handlePair(cmd protocol.Command) {
 	// device waits out the client's send timeout for a command that has already
 	// burned a one-shot token and written its row.
 	//
+	// What it does NOT buy: the fan-out still runs on this connection's read
+	// goroutine, so the same wedged recipient delays whatever this device sends
+	// NEXT - its greeting. That wait is bounded by the library's close handshake
+	// rather than open-ended, and moving the fan-out onto its own goroutine
+	// would buy the difference at the cost of making these events the only ones
+	// with no order relative to the frames around them.
+	//
 	// It fires on a replayed pair too, where nothing changed: the store answers
 	// a device that spent this token before, and the handler cannot tell that
 	// from a first pass. The receiver re-reads either way, so the cost of the
@@ -259,6 +266,11 @@ func (c *client) handleIdentitySetLabel(cmd protocol.Command) {
 	// name into history permanently. The others are told as well: a stable
 	// socket never re-greets, so without the event they would show the old name
 	// until something happened to reconnect them.
-	c.srv.refreshLabel(c.identity.UserID, label, c)
 	c.sendFrame(protocol.OKReply(cmd.ID, setLabelReply{Label: label}))
+	// After the reply, for the reason `pair` and `device.revoke` do it that way:
+	// send blocks on a full write queue until that connection's context is
+	// cancelled, so a fan-out ahead of the answer puts the caller behind a
+	// stranger's backlog. Nothing in the reply depends on the fan-out - the
+	// label it echoes is the one that was just written to the store.
+	c.srv.refreshLabel(c.identity.UserID, label, c)
 }

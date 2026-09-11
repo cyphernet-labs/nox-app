@@ -36,7 +36,7 @@ void main() {
   // revoke can fail on a list that loaded perfectly well, and blaming the load
   // sends the person looking at their connection instead of trying again.
   testWidgets('a revoke that failed says so, and does not blame the list', (tester) async {
-    await pumpApp(tester, DevicesPage(initialState: _state().copyWith(actionFailed: true)));
+    await pumpApp(tester, DevicesPage(initialState: _state().copyWith(actionFailedKey: 'k-desktop')));
 
     expect(find.text(l10nEn.devicesRevokeError), findsOneWidget);
     expect(find.text(l10nEn.devicesError), findsNothing);

@@ -309,9 +309,9 @@ func (s *Server) setDeviceKey(c *client, key string) {
 //
 // A connection joins s.conns when it is accepted, long before it greets, so
 // refreshLabel and the two notify helpers walk it while this write is still to
-// come. Writing it bare made the greeting race every one of them - and the pair
-// sweeper turned that from a rename-only window into something a tick hits
-// every ten seconds.
+// come. Writing it bare made the greeting race every one of them. (The
+// ten-second sweeper that once widened this window went with the person invite
+// in 037; the race it exposed is the same one either way.)
 func (s *Server) setIdentity(c *client, id store.Identity) {
 	s.mu.Lock()
 	c.identity = id

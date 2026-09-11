@@ -87,9 +87,13 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
    `seq`); loss is not. The client is caught up when it has processed
    `seq >= cursor` from the hello reply.
 7. **The hub owns the subscriber set.** Interaction only via its
-   channels (register/unregister/broadcast). This program contains no
-   mutex; if a change seems to need one, restructure so one goroutine
-   owns the state.
+   channels (register/unregister/broadcast) - the hub itself holds no
+   mutex, and a change that seems to need one there means restructuring
+   so one goroutine owns the state. The connection REGISTRY is the
+   deliberate exception: `Server.mu` guards `conns` and the per-connection
+   fields other connections read (identity, device key), because the
+   fan-out helpers walk one person's connections from another's goroutine.
+   `Server.claim` and the token bucket hold the only other two.
 8. **One reader goroutine per connection** (library invariant); writes
    to a client go through its buffered channel (~16 frames); overflow →
    `Close(StatusPolicyViolation)` — replay heals the client on
@@ -230,7 +234,12 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   write queue until that connection's context is cancelled, so announcing first
   puts the caller's own answer behind a stranger's backlog - and a wedged
   connection whose drop is still finishing its close handshake is seconds wide.
-  `device.revoke` set the order; `pair` follows it since 038.
+  `device.revoke` set the order; `pair` and `identity.setLabel` follow it since
+  038. What the order does NOT buy: the fan-out still runs on the caller's read
+  goroutine, so the same wedged recipient delays that connection's NEXT command.
+  That wait is bounded by the close handshake rather than open-ended, and taking
+  it away means putting the fan-out on its own goroutine - which would make
+  these the only frames with no order relative to the ones around them.
 - The claim token has NO expiry. It dies by being used, only someone with
   access to the machine ever sees it, and an expiring one would leave an
   installed-then-forgotten server unclaimable with no way to mint another.

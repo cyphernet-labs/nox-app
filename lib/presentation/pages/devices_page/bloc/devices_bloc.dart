@@ -41,7 +41,7 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
     on<DevicesInviteRequested>(_onInviteRequested);
     on<DevicesInviteDismissed>((_, emit) => emit(state.copyWith(inviteLink: null, inviteFailed: false)));
     on<DevicesDeviceListChanged>(_onDeviceListChanged);
-    on<DevicesConnectionRestored>((_, _) => add(const DevicesEvent.initialize(refresh: true)));
+    on<DevicesConnectionRestored>((_, _) => add(const DevicesEvent.initialize(cause: DevicesReadCause.noticed)));
   }
 
   DeviceRepository? get _repository => getIt.isRegistered<DeviceRepository>() ? getIt<DeviceRepository>() : null;
@@ -67,10 +67,11 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
   }
 
   Future<void> _onInitialize(DevicesInitialize event, Emitter<DevicesState> emit) async {
-    // A refresh leaves the screen alone: the list stays visible while the new
-    // one is fetched. Only a first load is allowed to show a spinner, because
-    // only then is there nothing to look at.
-    if (!event.refresh) emit(state.copyWith(loading: true, failed: false, actionFailed: false));
+    // Only the read that OPENS the section may blank it: that is the one moment
+    // when there is nothing to look at. Every other read leaves the list up
+    // while the new one is fetched - the screen would otherwise strobe on a
+    // flapping link, and go blank under a person watching a device disappear.
+    if (event.cause == DevicesReadCause.opened) emit(state.copyWith(loading: true, failed: false, actionFailedKey: null));
     final repository = _repository;
     if (repository == null) {
       // Mock flavors have no live channel and therefore no devices to show.
@@ -128,19 +129,25 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
         final spent = joined && state.inviteLink == inviteAtStart;
         emit(state.copyWith(loading: false, devices: devices, failed: false, inviteLink: spent ? null : state.inviteLink));
       },
-      // A refresh that fails LEAVES THE SCREEN AS IT FOUND IT — it neither
-      // raises the error nor lowers one that is already up.
+      // A read NOBODY ASKED FOR leaves the screen as it found it — it neither
+      // raises the error nor lowers one that is already up. A read the person
+      // is waiting on reports its failure, spinner or no spinner.
       //
       // Both halves are load-bearing, and the first draft of this only had the
       // one. Not raising it keeps the list: what is shown is the last thing the
       // server actually said, and trading it for an error screen over a request
       // nobody made is the wrong direction. Not LOWERING it matters just as
-      // much: a failed first load leaves the error on screen, and a background
-      // refresh that also failed would otherwise clear it — swapping a truthful
-      // "we could not load your devices" for an empty list and an invitation to
-      // add one. The same erasure would silently take away the notice that a
-      // revoke did not work.
-      onError: (_) => emit(state.copyWith(loading: false, failed: event.refresh ? state.failed : true)),
+      // much: a failed first load leaves the error on screen, and a read the
+      // screen started that also failed would otherwise clear it — swapping a
+      // truthful "we could not load your devices" for an empty list and an
+      // invitation to add one.
+      //
+      // `asked` is the third case, and the reason this is not a boolean. The
+      // read that confirms a revoke shows no spinner, like a read nobody asked
+      // for, and reports its failure, like a first load. Silence there is the
+      // worst of the three answers: the revoke went through, the list on screen
+      // still shows the device, and nothing says the confirmation never came.
+      onError: (_) => emit(state.copyWith(loading: false, failed: event.cause == DevicesReadCause.noticed ? state.failed : true)),
     );
   }
 
@@ -156,7 +163,12 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
   /// server will now refuse, and the refusal reads as the app being broken.
   Future<void> _onDeviceListChanged(DevicesDeviceListChanged event, Emitter<DevicesState> emit) async {
     emit(state.copyWith(inviteLink: null, inviteFailed: false));
-    add(const DevicesEvent.initialize(refresh: true));
+    // No isClosed guard here, unlike the two stream listeners above and the
+    // revoke below: this add() runs INSIDE a handler, on the event loop the
+    // bloc is draining, so close() cannot land between the check and the call.
+    // The guards elsewhere are on continuations that resume from an await or
+    // from a stream the screen does not own.
+    add(const DevicesEvent.initialize(cause: DevicesReadCause.noticed));
   }
 
   SessionPhaseService get _phaseService => getIt<SessionPhaseService>();
@@ -165,12 +177,14 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
     final repository = _repository;
     if (repository == null) return;
 
-    // A fresh attempt takes down the notice about the previous one. It has no
-    // other way off the screen - there is no dismiss control and the person is
-    // already where the list lives - so without this it describes a revoke that
-    // is no longer the one being watched. If this attempt fails too it comes
-    // straight back, which is the whole of what the notice is for.
-    emit(state.copyWith(actionFailed: false));
+    // A fresh attempt on the SAME device takes down the notice about the last
+    // one: it has no other way off the screen - there is no dismiss control -
+    // and it comes straight back if this attempt fails too.
+    //
+    // On a different device it must stay. The first device is still authorised
+    // and the notice is still true; taking it down because the person moved on
+    // to another row loses the only thing on screen that says so.
+    if (state.actionFailedKey == event.deviceKey) emit(state.copyWith(actionFailedKey: null));
 
     // Revoking the device in your hand IS a logout - the contract calls logout
     // a special case of revocation. Going through the logout path wipes the
@@ -179,10 +193,11 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
     if (state.devices.any((d) => d.isCurrent && d.deviceKey == event.deviceKey)) {
       final out = await authRepository.logout();
       // A failed wipe leaves the person signed in with data that should be
-      // gone. Settings surfaces the same failure; so does this. isClosed for
-      // the same reason as below - a logout that takes a while outlives the
-      // screen that asked for it, and it moves the navigation itself.
-      if (!out.hasData && !isClosed) emit(state.copyWith(actionFailed: true));
+      // gone. Settings surfaces the same failure; so does this. No isClosed
+      // guard: emitting from a closed bloc is a silent no-op (the emitter is
+      // cancelled by close()), and a guard that changes nothing is a line the
+      // next reader has to disprove.
+      if (!out.hasData) emit(state.copyWith(actionFailedKey: event.deviceKey));
       return;
     }
 
@@ -191,22 +206,21 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
     // on what is still allowed, and a revoke that silently failed would
     // otherwise leave a device looking gone while it is still connecting.
     //
-    // refresh: true, like every other read this screen starts by itself. A
-    // plain initialize raises the spinner - the list the person is watching
-    // change is replaced by a blank pane - and clears `actionFailed`, which
-    // with sequential() can land on a NOTICE ABOUT A DIFFERENT DEVICE: revoke
-    // A (it works, its re-read queues behind a background one), revoke B (it
-    // fails, the notice goes up), and A's re-read then wipes B's notice while
-    // B stays authorised.
+    // `asked`, which is neither of the other two: no spinner, because the list
+    // is on screen and the person is watching this very device leave it; and a
+    // failure that is reported, because they asked. A plain `opened` read here
+    // blanks the screen and clears a notice that may belong to another device;
+    // a `noticed` one swallows the failure and leaves the revoked device listed
+    // with nothing on screen to explain it.
     //
-    // isClosed, because both arms run on the far side of an await: leaving the
-    // section while a revoke is in flight would otherwise add an event to - or
-    // emit from - a closed bloc, which throws into the zone guard rather than
-    // anywhere a person could see.
+    // isClosed guards the add(): leaving the section while a revoke is in
+    // flight would otherwise add an event to a closed bloc, which throws into
+    // the zone guard rather than anywhere a person could see. The emit in the
+    // other arm needs no guard - it is a no-op after close.
     if (isClosed) return;
     result.match<void>(
-      onData: (_) => add(const DevicesEvent.initialize(refresh: true)),
-      onError: (_) => emit(state.copyWith(actionFailed: true)),
+      onData: (_) => add(const DevicesEvent.initialize(cause: DevicesReadCause.asked)),
+      onError: (_) => emit(state.copyWith(actionFailedKey: event.deviceKey)),
     );
   }
 

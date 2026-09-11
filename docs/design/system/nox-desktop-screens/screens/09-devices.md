@@ -25,7 +25,8 @@ Fills the Settings detail pane (7.1); no push, selection swaps the pane. Current
 - A revoke that fails says so in its own sentence, above the list. Separate from the load error since phase 038: the screen now re-reads
   the list by itself, so a revoke can fail on a list that loaded fine, and one shared sentence would blame the wrong thing. The notice
   comes down when the next revoke is attempted.
-- After a revoke the list is re-read from the server rather than edited locally.
+- After a revoke the list is re-read from the server rather than edited locally. That read keeps the list on screen - no spinner - but it
+  does report its own failure: the person asked for it, and silence would leave the revoked device listed with nothing to explain it.
 
 ## Copy (EN)
 - Title: Devices

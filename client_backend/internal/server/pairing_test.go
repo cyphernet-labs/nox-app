@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"strings"
 	"sync"
@@ -539,25 +540,8 @@ func TestTheJoiningDeviceIsAnsweredEvenWhileAnotherConnectionIsWedged(t *testing
 	owner.greet(t, 1, dev, "")
 	token := inviteFrom(t, owner, 2)
 
-	var userID string
-	srv.mu.Lock()
-	for conn := range srv.conns {
-		if conn.identity.UserID != "" {
-			userID = conn.identity.UserID
-		}
-	}
-	srv.mu.Unlock()
-	if userID == "" {
-		t.Fatal("the greeted connection has no identity, so this test cannot build its twin")
-	}
-
-	wedged := &client{srv: srv, out: make(chan []byte, 1), identity: store.Identity{UserID: userID}}
-	wedged.ctx, wedged.cancel = context.WithCancel(context.Background())
-	t.Cleanup(wedged.cancel)
+	wedged := stubClient(t, srv, personOn(t, srv), 1)
 	wedged.out <- []byte("{}") // full from here on
-	srv.mu.Lock()
-	srv.conns[wedged] = struct{}{}
-	srv.mu.Unlock()
 
 	joiner := newDevice(t)
 	c := dialWS(t, ts, srv)
@@ -566,6 +550,93 @@ func TestTheJoiningDeviceIsAnsweredEvenWhileAnotherConnectionIsWedged(t *testing
 	// Fails by timing out rather than by comparing anything: with the fan-out
 	// first, this reply is behind a queue nobody is draining.
 	c.expectOK(1)
+}
+
+// The same for a rename, which fans out through the same helper and had the
+// same defect until this was written: `identity.setLabel` told the other
+// devices BEFORE answering the one that asked.
+func TestTheRenamingDeviceIsAnsweredEvenWhileAnotherConnectionIsWedged(t *testing.T) {
+	ts, srv := newTestServer(t)
+	dev, _ := claimDevice(t, ts, srv)
+
+	owner := dialWS(t, ts, srv)
+	owner.expectGreeting()
+	owner.greet(t, 1, dev, "")
+
+	wedged := stubClient(t, srv, personOn(t, srv), 1)
+	wedged.out <- []byte("{}")
+
+	owner.send(`{"id":2,"cmd":"identity.setLabel","data":{"label":"Nyx"}}`)
+	owner.expectOK(2)
+}
+
+// The exclusion of the connection the pairing came from, asked directly.
+//
+// It cannot be asked through a socket: a device that is pairing has not greeted
+// and therefore has no identity to match on, so the person filter excludes it
+// anyway and the term is invisible from outside. It is still live - a greeting
+// that fails on the journal id or the cursor leaves the identity written and
+// `helloDone` false, and `pair` is still admitted on such a connection - so it
+// is asked of the helper itself, with the registry entries built by hand.
+func TestTheAnnouncementSkipsTheConnectionItCameFrom(t *testing.T) {
+	_, srv := newTestServer(t)
+	origin := stubClient(t, srv, "u_someone", 4)
+	other := stubClient(t, srv, "u_someone", 4)
+	stranger := stubClient(t, srv, "u_else", 4)
+
+	srv.announcePaired("u_someone", origin)
+
+	if len(origin.out) != 0 {
+		t.Fatal("the connection the pairing came from was told about its own pairing")
+	}
+	if len(other.out) != 1 {
+		t.Fatalf("the other connection of this person got %d frames, want 1", len(other.out))
+	}
+	if len(stranger.out) != 0 {
+		t.Fatal("a connection of somebody else was told")
+	}
+}
+
+// stubClient is a registry entry and nothing else: no socket, no read
+// goroutine, just a queue to look into afterwards. It is how a test asks what
+// the fan-out DID rather than what a device saw.
+//
+// It is removed from the registry on cleanup and carries a real logger, because
+// a half-built client left in s.conns is a nil dereference waiting for the day
+// something walks the registry and touches more than the identity.
+func stubClient(t *testing.T, srv *Server, userID string, queue int) *client {
+	t.Helper()
+	c := &client{
+		srv:      srv,
+		logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		out:      make(chan []byte, queue),
+		identity: store.Identity{UserID: userID},
+	}
+	c.ctx, c.cancel = context.WithCancel(context.Background())
+	srv.mu.Lock()
+	srv.conns[c] = struct{}{}
+	srv.mu.Unlock()
+	t.Cleanup(func() {
+		srv.mu.Lock()
+		delete(srv.conns, c)
+		srv.mu.Unlock()
+		c.cancel()
+	})
+	return c
+}
+
+// personOn returns the id of the one person a greeted connection speaks as.
+func personOn(t *testing.T, srv *Server) string {
+	t.Helper()
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	for c := range srv.conns {
+		if c.identity.UserID != "" {
+			return c.identity.UserID
+		}
+	}
+	t.Fatal("no greeted connection, so there is no person to build a second connection for")
+	return ""
 }
 
 // Principle I on a frame nobody thinks to look at: the event must not carry the

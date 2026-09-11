@@ -2,12 +2,15 @@ part of 'devices_bloc.dart';
 
 @freezed
 sealed class DevicesEvent with _$DevicesEvent {
-  /// [refresh] means "the list is already on screen, bring it up to date".
+  /// [cause] is WHY the list is being read, and it decides two different
+  /// things: whether a spinner is allowed, and whether a failure is news.
   ///
-  /// The difference is visible: a first load may show a spinner, a refresh must
-  /// not — the screen would blank out under somebody who did not ask for
-  /// anything, and on a flapping link it would strobe.
-  const factory DevicesEvent.initialize({@Default(false) bool refresh}) = DevicesInitialize;
+  /// It is an enum rather than a flag because folding the two questions into
+  /// one boolean has now produced a defect twice. A flag that starts life
+  /// meaning "do not show a spinner" is read a round later as "say nothing at
+  /// all", and the failure of a read the person is actually waiting on
+  /// disappears with it.
+  const factory DevicesEvent.initialize({@Default(DevicesReadCause.opened) DevicesReadCause cause}) = DevicesInitialize;
 
   const factory DevicesEvent.revokeRequested(String deviceKey) = DevicesRevokeRequested;
 
@@ -20,4 +23,24 @@ sealed class DevicesEvent with _$DevicesEvent {
 
   /// The live channel came back after a break.
   const factory DevicesEvent.connectionRestored() = DevicesConnectionRestored;
+}
+
+/// Why the list is being read. The three answers differ in what the person
+/// should see, and nothing else about the read differs at all.
+enum DevicesReadCause {
+  /// The section was just opened. Nothing is on screen yet, so a spinner is
+  /// honest and a failure is the entire answer.
+  opened,
+
+  /// The person asked for something that changes the list — a revoke — and this
+  /// read is how the change is confirmed. The list stays up, because they are
+  /// watching it change; but a failure is theirs to see, because they asked.
+  /// Silence here leaves a device they meant to cut off sitting in the list
+  /// with nothing on screen to say the confirmation never came.
+  asked,
+
+  /// The screen noticed by itself: a pairing was announced, or the channel came
+  /// back. Nobody asked, so this read neither raises an error nor takes down
+  /// one that is already up — it leaves the screen as it found it.
+  noticed,
 }
