@@ -16,7 +16,7 @@ part 'devices_bloc.freezed.dart';
 part 'devices_event.dart';
 part 'devices_state.dart';
 
-/// 7.3 Devices — the list of keys allowed to speak as this person, and the way
+/// 7.8 Devices — the list of keys allowed to speak as this person, and the way
 /// to cut one off.
 ///
 /// Always read from the server, never from a cache: a stale list would offer to

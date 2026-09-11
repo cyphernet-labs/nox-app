@@ -8,7 +8,7 @@ import 'package:nox_app/presentation/pages/devices_page/bloc/devices_bloc.dart';
 import 'package:nox_app/presentation/widgets/settings/app_invite_card_widget.dart';
 import 'package:nox_app/presentation/widgets/settings/app_settings_group_widget.dart';
 
-/// 7.3 Devices, chrome-less so the same body fills the desktop Settings detail
+/// 7.8 Devices, chrome-less so the same body fills the desktop Settings detail
 /// pane (7.1) — the split every settings leaf uses.
 class DevicesBody extends StatefulWidget {
   const DevicesBody({super.key, this.initialState});

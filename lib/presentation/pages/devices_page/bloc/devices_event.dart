@@ -40,7 +40,11 @@ enum DevicesReadCause {
   asked,
 
   /// The screen noticed by itself: a pairing was announced, or the channel came
-  /// back. Nobody asked, so this read neither raises an error nor takes down
-  /// one that is already up — it leaves the screen as it found it.
+  /// back. Nobody asked, so a read that FAILS leaves the screen exactly as it
+  /// found it — it neither raises an error nor takes down one already up.
+  ///
+  /// A read that SUCCEEDS clears the error like any other, whoever started it:
+  /// the server has answered, and "we could not load your devices" has stopped
+  /// being true.
   noticed,
 }
