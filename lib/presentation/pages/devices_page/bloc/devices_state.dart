@@ -7,7 +7,21 @@ abstract class DevicesState with _$DevicesState {
   const factory DevicesState({
     @Default(true) bool loading,
     @Default(<DeviceModel>[]) List<DeviceModel> devices,
+
+    /// The LIST could not be read. Drives the whole-screen error when there is
+    /// nothing to show, and a notice above the list when there is.
     @Default(false) bool failed,
+
+    /// Something the person ASKED FOR did not happen — a revoke, or the logout
+    /// a revoke of this device turns into.
+    ///
+    /// Separate from [failed] because the two answer different questions, and
+    /// 038 made the difference matter: the screen now re-reads the list on its
+    /// own, and a background read that succeeds would otherwise "answer" a
+    /// question nobody asked it — quietly clearing the notice that a revoke
+    /// failed, leaving a device the person meant to cut off still authorised
+    /// and nothing on screen saying so.
+    @Default(false) bool actionFailed,
 
     /// The invite link currently on screen, or null. Held in state rather than
     /// re-fetched, because every fetch burns a new token on the server.

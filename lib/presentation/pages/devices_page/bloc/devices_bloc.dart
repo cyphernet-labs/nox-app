@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:bloc_concurrency/bloc_concurrency.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
@@ -29,7 +30,13 @@ part 'devices_state.dart';
 /// break, because that event does not survive a disconnect.
 class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
   DevicesBloc() : super(const DevicesState()) {
-    on<DevicesInitialize>(_onInitialize);
+    // sequential(), like every other paginated load in the project. Two reads
+    // can now be in flight at once - the person's own, and one the screen
+    // started by itself - and letting them race means the slower answer wins:
+    // a stale list overwrites a fresher one, or a failed background read lands
+    // on a state the pending first load had already cleared and leaves an empty
+    // list looking loaded.
+    on<DevicesInitialize>(_onInitialize, transformer: sequential());
     on<DevicesRevokeRequested>(_onRevokeRequested);
     on<DevicesInviteRequested>(_onInviteRequested);
     on<DevicesInviteDismissed>((_, emit) => emit(state.copyWith(inviteLink: null, inviteFailed: false)));
@@ -63,7 +70,7 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
     // A refresh leaves the screen alone: the list stays visible while the new
     // one is fetched. Only a first load is allowed to show a spinner, because
     // only then is there nothing to look at.
-    if (!event.refresh) emit(state.copyWith(loading: true, failed: false));
+    if (!event.refresh) emit(state.copyWith(loading: true, failed: false, actionFailed: false));
     final repository = _repository;
     if (repository == null) {
       // Mock flavors have no live channel and therefore no devices to show.
@@ -93,7 +100,15 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
 
     final result = await repository.getDevices();
     result.match<void>(
-      onData: (devices) => emit(state.copyWith(loading: false, devices: devices, failed: false)),
+      onData: (devices) {
+        // A device joined while this one was away: the live event never reached
+        // us, and the only evidence is that the list GREW. The card has to go
+        // for the reason it goes on the event - the QR on it is spent, and the
+        // server will refuse it. Without this the reconnect path shows the new
+        // device and the dead QR above it at the same time.
+        final joined = devices.length > state.devices.length;
+        emit(state.copyWith(loading: false, devices: devices, failed: false, inviteLink: joined ? null : state.inviteLink));
+      },
       // A refresh that fails LEAVES THE SCREEN AS IT FOUND IT — it neither
       // raises the error nor lowers one that is already up.
       //
@@ -139,7 +154,7 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
       final out = await authRepository.logout();
       // A failed wipe leaves the person signed in with data that should be
       // gone. Settings surfaces the same failure; so does this.
-      if (!out.hasData) emit(state.copyWith(failed: true));
+      if (!out.hasData) emit(state.copyWith(actionFailed: true));
       return;
     }
 
@@ -147,7 +162,7 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
     // Re-read rather than removing the row locally: the server is the authority
     // on what is still allowed, and a revoke that silently failed would
     // otherwise leave a device looking gone while it is still connecting.
-    result.match<void>(onData: (_) => add(const DevicesEvent.initialize()), onError: (_) => emit(state.copyWith(failed: true)));
+    result.match<void>(onData: (_) => add(const DevicesEvent.initialize()), onError: (_) => emit(state.copyWith(actionFailed: true)));
   }
 
   Future<void> _onInviteRequested(DevicesInviteRequested event, Emitter<DevicesState> emit) async {

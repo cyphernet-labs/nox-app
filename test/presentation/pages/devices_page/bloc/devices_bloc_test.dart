@@ -129,7 +129,11 @@ void main() {
     },
     wait: const Duration(milliseconds: 100),
     verify: (bloc) {
-      expect(bloc.state.failed, isTrue);
+      // actionFailed, not failed: since 038 the screen re-reads the list on its
+      // own, and the two facts had to be told apart — a background read that
+      // succeeds must not answer for the revoke that did not.
+      expect(bloc.state.actionFailed, isTrue);
+      expect(bloc.state.failed, isFalse, reason: 'a failed revoke is not a failed list read');
       // And the row is still there: a device that is still connecting must not
       // look gone.
       expect(bloc.state.others.length, 1);
@@ -380,6 +384,84 @@ void main() {
       // Without the edge check this reads on every tick, which is the same
       // defect as polling and just as invisible.
       verify: (_) => verify(devices.getDevices()).called(1),
+    );
+    blocTest<DevicesBloc, DevicesState>(
+      'a device that joined while we were away takes the dead QR with it',
+      // The live event cannot reach a connection that is down, so the only
+      // evidence of the pairing is that the list grew. Without acting on that,
+      // the reconnect path shows the new device AND the spent QR above it —
+      // half the fix, in the one case the fix exists for.
+      build: () {
+        when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
+        when(devices.inviteDevice()).thenAnswer((_) async => const RepositoryResult<String>.success(data: 'https://nox.app/p/#tok'));
+        return DevicesBloc();
+      },
+      act: (bloc) async {
+        bloc.add(const DevicesEvent.initialize());
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        bloc.add(const DevicesEvent.inviteRequested());
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        // Away while somebody joins by that very QR.
+        phase.emit(SessionPhase.connecting);
+        when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone, tablet]));
+        phase.emit(SessionPhase.live);
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      },
+      verify: (bloc) {
+        expect(bloc.state.devices, hasLength(2));
+        expect(bloc.state.inviteLink, isNull, reason: 'the spent QR survived the reconnect that revealed the new device');
+      },
+    );
+
+    blocTest<DevicesBloc, DevicesState>(
+      'but a reconnect that reveals nothing new leaves a live invite alone',
+      // The other half. Links blink; hiding a freshly minted invite every time
+      // one does would make the card unusable on exactly the connections where
+      // pairing takes longest.
+      build: () {
+        when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
+        when(devices.inviteDevice()).thenAnswer((_) async => const RepositoryResult<String>.success(data: 'https://nox.app/p/#live'));
+        return DevicesBloc();
+      },
+      act: (bloc) async {
+        bloc.add(const DevicesEvent.initialize());
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        bloc.add(const DevicesEvent.inviteRequested());
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        phase.emit(SessionPhase.connecting);
+        phase.emit(SessionPhase.live);
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      },
+      verify: (bloc) => expect(bloc.state.inviteLink, 'https://nox.app/p/#live'),
+    );
+
+    blocTest<DevicesBloc, DevicesState>(
+      'a catch-up that works does not answer for a revoke that failed',
+      // `failed` used to mean both "the list could not be read" and "what you
+      // asked for did not happen". Once the screen re-reads on its own, a
+      // successful background read cleared the notice about the revoke —
+      // leaving a device the person meant to cut off still listed, still
+      // authorised, and nothing on screen saying so.
+      build: () {
+        when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone, tablet]));
+        when(
+          devices.revoke(deviceKey: anyNamed('deviceKey')),
+        ).thenAnswer((_) async => const RepositoryResult<bool>.error(exception: RepositoryException.connection));
+        return DevicesBloc();
+      },
+      act: (bloc) async {
+        bloc.add(const DevicesEvent.initialize());
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        bloc.add(const DevicesEvent.revokeRequested('k-tablet'));
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        phase.emit(SessionPhase.connecting);
+        phase.emit(SessionPhase.live);
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      },
+      verify: (bloc) {
+        expect(bloc.state.actionFailed, isTrue, reason: 'a background read answered a question nobody asked it');
+        expect(bloc.state.others, hasLength(1), reason: 'the device is still there, so the notice must be too');
+      },
     );
   });
 }
