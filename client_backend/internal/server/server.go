@@ -260,14 +260,30 @@ func (s *Server) refreshLabel(userID, label string, origin *client) {
 // every other person", which this server has not had since 037 - one machine,
 // one person - but the lock is shared by every connection all the same.)
 //
-// origin is a live exclusion, not a statement of intent. It is easy to read
+// The loop is sequential and send blocks, so a recipient whose queue is full
+// holds up the recipients AFTER it, in an order map iteration does not fix. It
+// is a delay rather than a loss: the wait ends when that connection's context
+// is cancelled, which the slow-consumer drop is already on its way to doing.
+// Dropping the frame on a full queue instead is defensible for events that do
+// not survive a disconnect anyway - and is deliberately not done here, because
+// it would change delivery for device.revoked too, which deserves its own
+// decision rather than arriving as a side effect of this one.
+//
+// The connection it came from is the RECEIVER, not a parameter, and that is
+// deliberate: excluding the wrong one is then unrepresentable. refreshLabel
+// takes an origin because its caller could legitimately pass a different one;
+// this caller never can - and no test could catch it passing nil, because the
+// pairing connection has no identity to match on in the ordinary case, so the
+// mistake would look correct through every socket in the suite.
+//
+// The exclusion is live, not a statement of intent. It is easy to read
 // the code as one - handlePair refuses an already-greeted connection, so the
 // pairing device usually has no identity to match on - but "greeted" and "has
 // an identity" are two different marks, and handleSessionHello sets the second
 // several steps before the first: a greeting that fails on the journal id or
 // the cursor leaves identity.UserID written and helloDone false, and dispatch
-// still admits `pair` on that connection. Then origin DOES match, and without
-// this it would be told about its own pairing.
+// still admits `pair` on that connection. Then it DOES match, and without this
+// the device would be told about its own pairing.
 //
 // Inherited with the shape: a connection in the MIDDLE of greeting also has an
 // empty identity.UserID, because the greeting reads the person from the store
@@ -276,7 +292,8 @@ func (s *Server) refreshLabel(userID, label string, origin *client) {
 // device that was offline ends up anyway. It is the same window the rename
 // carries (see client_backend/CLAUDE.md), and it closes here when it closes
 // there.
-func (s *Server) announcePaired(userID string, origin *client) {
+func (origin *client) announcePaired(userID string) {
+	s := origin.srv
 	s.mu.Lock()
 	notify := make([]*client, 0, 1)
 	for c := range s.conns {

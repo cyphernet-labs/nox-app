@@ -99,7 +99,7 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
    `Server.claim` and the transfer-token store (`internal/server/tokens.go`)
    hold the only other two.
 8. **One reader goroutine per connection** (library invariant); writes
-   to a client go through its buffered channel (~16 frames); overflow →
+   to a client go through its buffered channel (`outBuffer` = 64 frames); overflow →
    `Close(StatusPolicyViolation)` — replay heals the client on
    reconnect. Keepalive: own ticker with `Ping(ctx)` ~25s.
    `SetReadLimit(max_frame_bytes)`.

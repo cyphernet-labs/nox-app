@@ -131,7 +131,7 @@ func (c *client) handlePair(cmd protocol.Command) {
 	// repeat is one list read - and the alternative, teaching the store to
 	// report a replay, spreads a pairing detail through a type the greeting
 	// shares. Written down in contract §8A rather than papered over.
-	c.srv.announcePaired(res.UserID, c)
+	c.announcePaired(res.UserID)
 }
 
 type deviceListReply struct {

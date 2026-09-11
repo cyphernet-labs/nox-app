@@ -947,8 +947,10 @@ class _FakePhase implements SessionPhaseService {
     _controller.add(next);
   }
 
-  /// How many times the bloc asked for the stream. The screen must subscribe
-  /// once, not once per read.
+  /// How many times this stream was LISTENED to - the counter lives inside the
+  /// async* body, so calling watchPhase() without listening does not move it.
+  /// That is the number the screen must keep at one: one subscription, not one
+  /// per read.
   int watchCalls = 0;
 
   /// Whether the bloc is still listening. The teardown asserts on it: a phase

@@ -617,7 +617,7 @@ func TestTheAnnouncementSkipsTheConnectionItCameFrom(t *testing.T) {
 	other := stubClient(t, srv, "u_someone", 4)
 	stranger := stubClient(t, srv, "u_else", 4)
 
-	srv.announcePaired("u_someone", origin)
+	origin.announcePaired("u_someone")
 
 	if len(origin.out) != 0 {
 		t.Fatal("the connection the pairing came from was told about its own pairing")

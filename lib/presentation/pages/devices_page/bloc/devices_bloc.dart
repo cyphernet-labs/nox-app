@@ -183,6 +183,13 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
   /// the rare cost (two live invites, the unused one hidden early) is one tap
   /// on `Add a device`. Leaving the card up is worse: it offers a QR that the
   /// server will now refuse, and the refusal reads as the app being broken.
+  ///
+  /// The invite ERROR goes with it, and that is deliberate too: the whole
+  /// invite surface is being reset, and a device has just joined - the outcome
+  /// the failed request was asking for. It is the opposite call from the one
+  /// made for a failed revoke, which a read nobody asked for must never clear,
+  /// and the difference is the subject: that notice is about a device still
+  /// sitting in the list, this one about a request whose surface is gone.
   Future<void> _onDeviceListChanged(DevicesDeviceListChanged event, Emitter<DevicesState> emit) async {
     emit(state.copyWith(inviteLink: null, inviteFailed: false));
     // isClosed like every other add() in this class. The first draft argued
@@ -209,7 +216,16 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
     if (state.actionFailedKey == event.deviceKey) emit(state.copyWith(actionFailedKey: null));
 
     // Revoking the device in your hand IS a logout - the contract calls logout
-    // a special case of revocation. Going through the logout path wipes the
+    // a special case of revocation.
+    //
+    // `isCurrent` comes from comparing the row's key with this install's own,
+    // and the repository can only do that if the device secret reads back. If
+    // it does not, NO row is current and this branch is skipped: the plain
+    // revoke goes out, the server cuts the connection, and the client meets its
+    // own `device.revoked` - which lands as a forced logout. The same wipe, by
+    // a longer road and with a "session expired" notice the person did not
+    // earn. Nothing better is available here: a device that cannot read its own
+    // key cannot tell which row it is. Going through the logout path wipes the
     // local data and moves the navigation; merely deleting the row would leave
     // the app sitting there with a session the server no longer honours.
     if (state.devices.any((d) => d.isCurrent && d.deviceKey == event.deviceKey)) {
