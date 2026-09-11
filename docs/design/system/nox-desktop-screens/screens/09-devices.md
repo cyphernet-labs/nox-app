@@ -20,7 +20,8 @@ Fills the Settings detail pane (7.1); no push, selection swaps the pane. Current
 - `Revoke` opens a confirm dialog. Revoking the current device is a logout and says so in its own words.
 - Revocation applies immediately — the revoked device's live connection drops rather than waiting for its next attempt.
 - A device paired from elsewhere appears in the open list on its own (phase 038): the server says so, and the screen re-reads. Leaving the section and coming back is no longer how you find out.
-- The invite card disappears when a device joins — the token is one-shot and spent, and a QR the server will now refuse is worse than no QR.
+- The whole invite surface disappears when a device joins: the card, because the token is one-shot and the server will now refuse that QR, and
+  the "Couldn't create an invite." line with it, because a device joined anyway - which is what the failed request was asking for.
 - The list is also re-read when the live channel comes back: the pairing event does not survive a disconnect, and the person whose connection blinked would otherwise keep a wrong list.
 - A revoke that fails says so in its own sentence, above the list. Separate from the load error since phase 038: the screen now re-reads
   the list by itself, so a revoke can fail on a list that loaded fine, and one shared sentence would blame the wrong thing.

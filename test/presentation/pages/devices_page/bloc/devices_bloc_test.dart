@@ -550,6 +550,34 @@ void main() {
     );
 
     blocTest<DevicesBloc, DevicesState>(
+      'but one that reveals nothing leaves that error alone',
+      // The other half, and the reason the clearing is tied to `spent` rather
+      // than to the read succeeding: nobody joined, so the failed request is
+      // still the last thing that happened, and a list that came back unchanged
+      // is no answer to it.
+      build: () {
+        when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
+        when(
+          devices.inviteDevice(),
+        ).thenAnswer((_) async => const RepositoryResult<String>.error(exception: RepositoryException.connection));
+        return DevicesBloc();
+      },
+      act: (bloc) async {
+        bloc.add(const DevicesEvent.initialize());
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        bloc.add(const DevicesEvent.inviteRequested());
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        phase.emit(SessionPhase.connecting);
+        phase.emit(SessionPhase.live);
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      },
+      verify: (bloc) {
+        verify(devices.getDevices()).called(2);
+        expect(bloc.state.inviteFailed, isTrue, reason: 'a read that revealed nothing answered for a request that failed');
+      },
+    );
+
+    blocTest<DevicesBloc, DevicesState>(
       'a reconnect that reveals a new device clears the invite error as well',
       // The same decision as on the event path. The event does not survive a
       // disconnect, so this is the only way a person whose channel blinked ever

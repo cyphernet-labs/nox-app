@@ -76,12 +76,13 @@ docs/client-backend/protocol/
 └── contract-draft.md                     # §8A: новое событие device.paired  ← ПЕРВЫМ
 
 client_backend/internal/
-├── protocol/frames.go                    # константа EventDevicePaired
+├── protocol/
+│   ├── frames.go                         # константа EventDevicePaired
+│   └── frames_test.go                    # имена событий = строки контракта
 └── server/
     ├── server.go                         # announcePaired — по образцу refreshLabel
     ├── pairing.go                        # вызов ПОСЛЕ ответа; тот же порядок у setLabel
     ├── pairing_test.go                   # кому ушло, кому нет, и что ответ не ждёт веера
-    ├── protocol/frames_test.go           # имена событий = строки контракта
     ├── integration_test.go               # expectJournalEvent, expectNoFrame
     └── lifecycle_test.go                 # чтение кадров мимо внежурнальных
 
