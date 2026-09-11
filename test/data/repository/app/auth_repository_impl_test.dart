@@ -76,7 +76,7 @@ void main() {
     when(session.setOnboardingComplete(label: anyNamed('label'))).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
     when(session.clear()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
     when(
-      session.adoptServerIdentity(authorId: anyNamed('authorId'), label: anyNamed('label'), isOwner: anyNamed('isOwner')),
+      session.adoptServerIdentity(authorId: anyNamed('authorId'), label: anyNamed('label')),
     ).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
     when(session.discardSignIn()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
     when(
@@ -195,7 +195,7 @@ void main() {
     test('claiming a server brings the person into being, so naming is ahead', () async {
       when(
         handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
-      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_2', label: 'User1234', created: true, isOwner: null));
+      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_2', label: 'User1234', created: true));
 
       final result = await repository.signIn(identifier: link);
 
@@ -209,7 +209,7 @@ void main() {
     test('a device added to an existing person skips onboarding entirely', () async {
       when(
         handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
-      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false, isOwner: null));
+      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
 
       final result = await repository.signIn(identifier: link);
 
@@ -221,7 +221,7 @@ void main() {
     test('only the PUBLIC key is presented - the seed never leaves', () async {
       when(
         handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
-      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false, isOwner: null));
+      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
 
       await repository.signIn(identifier: link);
 
@@ -232,15 +232,12 @@ void main() {
       expect(presented, isNot(contains('AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=')));
     });
 
-    test('the four refusals stay apart, because each says a different thing to do next', () async {
-      // Get a new invite; this one is not usable at all; the owner said no;
-      // the owner never answered. Four answers, four next actions - collapsing
-      // any two would tell somebody the wrong thing to do.
+    test('the two refusals stay apart, because each says a different thing to do next', () async {
+      // Get a new invite; this one is not usable at all. Two answers, two next
+      // actions - collapsing them would tell somebody the wrong thing to do.
       const expectations = <PairRefusal, RepositoryException>{
         PairRefusal.expired: RepositoryException.notFound,
         PairRefusal.notUsable: RepositoryException.authentication,
-        PairRefusal.declined: RepositoryException.pairDeclined,
-        PairRefusal.noAnswer: RepositoryException.pairTimeout,
       };
       for (final entry in expectations.entries) {
         when(
@@ -250,7 +247,7 @@ void main() {
         final refused = await repository.signIn(identifier: link);
         expect(refused.exception, entry.value, reason: '${entry.key.name} must stay distinguishable');
       }
-      expect(expectations.values.toSet(), hasLength(4), reason: 'no two refusals may share an answer');
+      expect(expectations.values.toSet(), hasLength(2), reason: 'no two refusals may share an answer');
     });
 
     test('a successful pairing re-greets, so the session stops speaking as the pre-pair identity', () async {
@@ -260,10 +257,8 @@ void main() {
       // stranger's on the sender's own screen.
       when(
         handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
-      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false, isOwner: null));
-      when(
-        handshake.greet(),
-      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false, isOwner: null));
+      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
+      when(handshake.greet()).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
 
       await repository.signIn(identifier: link);
 
@@ -275,7 +270,7 @@ void main() {
       // it for nothing - an ordinary reconnect is enough.
       when(
         handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
-      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false, isOwner: null));
+      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
       when(handshake.greet()).thenThrow(const IdentityHandshakeTimeout());
 
       final result = await repository.signIn(identifier: link);
@@ -317,20 +312,26 @@ void main() {
       expect(written, isNot(contains(link.split('#').last)));
     });
 
-    test('ownership never reaches the log beside the person it belongs to', () async {
-      // A role logged next to the person holding it is a record of who runs the
-      // machine (Principle I, FR-024). The app has no reason to write either.
+    test('a sign-in that works says nothing at all in the log', () async {
+      // Asserted as SILENCE, not as the absence of two substrings. The version
+      // this replaces looked for an id and the word "owner" in a log nothing
+      // had ever reached: both matched an empty string, so it could not fail -
+      // and "owner" stopped meaning anything when 037 removed ownership.
+      //
+      // Silence is the stronger claim and the one Principle I / FR-024 want:
+      // an author id or a name written on the happy path is a record of who
+      // this device belongs to. The FormatException test above proves the
+      // capture is wired, so an empty list here is a result rather than a
+      // broken harness.
       final logs = <String>[];
       getIt.registerSingleton<LogRepository>(_CapturingLog(logs));
       when(
         handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
-      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_owner_7', label: 'Anna', created: true, isOwner: true));
+      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_person_7', label: 'Anna', created: true));
 
       await repository.signIn(identifier: link);
 
-      final written = logs.join('\n').toLowerCase();
-      expect(written, isNot(contains('u_owner_7')));
-      expect(written, isNot(contains('owner')));
+      expect(logs, isEmpty, reason: 'the happy path of sign-in wrote to the log: ${logs.join(" | ")}');
     });
 
     test('an outcome the server did not state is not treated as an outcome', () async {
@@ -339,7 +340,7 @@ void main() {
       // name.
       when(
         handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
-      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_3', label: 'Anna', created: null, isOwner: null));
+      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_3', label: 'Anna', created: null));
 
       final result = await repository.signIn(identifier: link);
 

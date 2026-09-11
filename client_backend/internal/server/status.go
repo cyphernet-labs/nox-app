@@ -12,18 +12,23 @@ import (
 	"nox.app/client-backend/internal/store"
 )
 
-// machineState is which of the three pages to show.
+// machineState is which of the two pages to show: "somebody still has to claim
+// this" and "it is claimed".
 //
-// Three, not two. Besides "somebody still has to claim this" and "it is
-// claimed", there is a store holding people with no owner - an anomaly only a
-// hand-edited database reaches (phase 033). Pair refuses a claim there, so a
-// link on that page would be an instruction nobody can follow.
+// There used to be a third, for a store holding people with no owner. Feature
+// 037 traded the refusal that state carried for recoverability: a claim there
+// ATTACHES to the one person on the machine rather than leaving their whole
+// conversation locked away with no way in.
+//
+// The trade rests on the claim path counting DEVICES rather than reading the
+// ownership marker - the marker is missing in exactly this case. Restoring the
+// refusal without that in mind takes the recovery away again; removing the
+// device count offers a live machine to whoever reads the startup log.
 type machineState int
 
 const (
 	stateNeedsClaim machineState = iota
 	stateClaimed
-	stateOwnerless
 )
 
 // machineStatus is everything the service page shows, gathered per request.
@@ -39,18 +44,24 @@ type machineStatus struct {
 	// what that app needs. It only means there is no point drawing a code for a
 	// camera.
 	Scannable bool
+	// Owned and HasPerson pick the copy on the needs-claim page, on the SAME
+	// three-way split the startup announcement uses: an owner who ran out of
+	// devices is getting back in, a store that holds somebody without a marker
+	// is being recovered, and an empty machine is being claimed. Two of those
+	// were once told they had been hand-edited.
+	Owned     bool
+	HasPerson bool
 	JournalID string
 	Schema    int
 	Counts    store.Counts
 	DBBytes   int64
 	Version   string
 	Uptime    time.Duration
-	Warnings  []string
 }
 
 // collectStatus reads the machine's own state.
 //
-// Ownership comes from the same ReadOwnershipState the startup announcement
+// Reachability comes from the same ReadOwnershipState the startup announcement
 // reads, and the SAME predicate decides: "claimed" means the owner can still
 // get in. A second definition here is how phase 033's one fact would go back to
 // living in two records - and this one would show a status page to somebody
@@ -70,18 +81,21 @@ func (s *Server) collectStatus(ctx context.Context) (machineStatus, error) {
 	}
 
 	status := machineStatus{
+		// Set before the switch, not inside a branch. Both states read them -
+		// the claimed page to say whether an owner is recorded, the needs-claim
+		// page to pick which of three stories it is telling - and filling them
+		// on one path only told every healthy server it had been hand edited.
+		Owned:     ownership.Owned,
+		HasPerson: ownership.HasPerson,
 		JournalID: journalID,
 		Schema:    s.schemaVersion,
 		Counts:    counts,
 		DBBytes:   fileSize(s.cfg.DBPath),
 		Version:   buildVersion(),
 		Uptime:    time.Since(s.startedAt),
-		Warnings:  s.warnings,
 	}
 
 	switch {
-	case ownership.Stranded:
-		status.State = stateOwnerless
 	case ownership.OwnerCanGetIn:
 		status.State = stateClaimed
 	default:

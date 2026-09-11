@@ -16,6 +16,11 @@ sealed class ChatCardEvent with _$ChatCardEvent {
   /// Live device-connectivity change (P1): drives the real offline banner.
   const factory ChatCardEvent.connectivityChanged(bool online) = ConnectivityChanged;
 
+  /// The person of this machine renamed themselves, possibly from another
+  /// device. Watched rather than read once: the desktop side sheet stays open
+  /// while it happens.
+  const factory ChatCardEvent.personLabelChanged(String? label) = PersonLabelChanged;
+
   /// Debug-only: reproduce a scenario (empty / offline / fatal).
   const factory ChatCardEvent.setScenario(ChatCardScenario scenario) = SetScenario;
 }

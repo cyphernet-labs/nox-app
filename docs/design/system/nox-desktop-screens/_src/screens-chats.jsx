@@ -65,7 +65,11 @@ const ChatThreadScreen = ({ t, state = 'filled', bubble = 'neutral' }) => {
   const op = bubblePreset(t, bubble);
   return (
   <>
-    <AppBar t={t} leading="back" title="Night Owls" />
+    {/* The disabled invite seam (037), dimmed to the M3 38% exactly as the app
+        dims it by hand - its icon widget paints its own filter and never reads
+        IconTheme. Pressing it does nothing at all. 5.4 carries the same seam as
+        a button in its People section, not here. */}
+    <AppBar t={t} leading="back" title="Night Owls" actions={[{ name: 'add', color: hexA(t.onSurfaceVariant, 0.38) }]} />
     {state === 'offline' && <MaterialBanner t={t} text="No connection" />}
     <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', padding: '8px 12px 4px' }}>
       <SystemLine t={t} text="Chat created by Aria" />
@@ -139,6 +143,27 @@ const ChatCardScreen = ({ t, view = 'list' }) => (
         </div>
         <div style={{ ...ty('headlineSmall'), color: t.onSurface }}>Night Owls</div>
       </div>
+      {/* People (037): one row - the person this machine belongs to - then the
+          permanently disabled invite seam and its caption. Not a roster: the
+          machine holds one person, and anybody else goes through a relay that
+          does not exist yet. */}
+      <div style={{ padding: '0 16px 12px' }}>
+        <span style={{ ...ty('titleMedium'), color: t.onSurface }}>People</span>
+      </div>
+      <div style={{ padding: '0 16px 12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ borderRadius: '50%', boxShadow: `0 0 0 2px ${hexA(t.onSurface, 0.06)}` }}>
+            <Avatar name="Nyx" initials="N" size={36} />
+          </div>
+          <span style={{ ...ty('bodyLarge'), color: t.onSurface }}>Nyx</span>
+        </div>
+        <div style={{ height: 12 }} />
+        <FilledButton t={t} label="Invite a person" full disabled />
+        <div style={{ height: 4 }} />
+        <div style={{ ...ty('bodySmall'), color: t.onSurfaceVariant, textAlign: 'center' }}>Available in a future version</div>
+      </div>
+      <div style={{ height: 1, background: t.outlineVariant }} />
+      <div style={{ height: 12 }} />
       <div style={{ padding: '0 16px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span style={{ ...ty('titleMedium'), color: t.onSurface }}>Files</span>
         {view !== 'empty' && <Segmented t={t} options={['List', 'Grid']} value={view === 'grid' ? 'Grid' : 'List'} />}

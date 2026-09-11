@@ -18,6 +18,17 @@ CREATE TABLE users (
     created_at INTEGER NOT NULL
 ) STRICT;
 
+-- Exactly one person, enforced rather than assumed. A unique index over a
+-- CONSTANT admits a single row: the second insert collides with the first no
+-- matter what its user_id is.
+--
+-- This machine belongs to ONE human being (feature 037). Talking to other
+-- people goes through a relay, and their servers never become rows here. The
+-- rule used to live only in the fact that nothing but a claim inserts, which
+-- holds until the next command is written - and an invariant that depends on
+-- nobody adding code is not an invariant.
+CREATE UNIQUE INDEX idx_users_singleton ON users ((1));
+
 -- One app installation, and the key that authorises it. device_key is the
 -- device's Ed25519 PUBLIC key in base64: the private half is generated on the
 -- device and never leaves it, so a row here authorises nothing on its own -
@@ -97,7 +108,7 @@ CREATE TABLE server_identity (
 -- did. Both exist so that replaying a spent token can answer with what actually
 -- happened instead of re-deriving it:
 --   * without used_by, any device key - a PUBLIC value - could present a spent
---     claim token and be told that person's id, label and ownership;
+--     claim token and be told that person's id and label;
 --   * without created_person, a replay re-derives the outcome from the token
 --     kind, so a re-claim that attached to an existing owner answers "created"
 --     the second time and walks them back through the naming screen;
@@ -105,41 +116,17 @@ CREATE TABLE server_identity (
 --     current binding, so a key that has since been re-paired to somebody else
 --     is answered about whoever holds it now rather than whoever the token
 --     produced - and paired with the token's own recorded outcome.
--- A one-shot pairing right. Two facts used to be one column: `used_at` said
--- both "spent" and "finished". A person invite splits them - it is spent the
--- moment the link is presented, so a second presenter cannot raise a second
--- question about it, while the outcome is decided by a human later and written
--- to `outcome`.
---
--- The device that presented is `used_by`. It deliberately gets no second column
--- of its own: one fact written twice is what phase 033 spent itself deleting.
 CREATE TABLE pair_tokens (
     token TEXT PRIMARY KEY,
-    kind TEXT NOT NULL CHECK (kind IN ('claim', 'invite_device', 'invite_user')),
+    kind TEXT NOT NULL CHECK (kind IN ('claim', 'invite_device')),
     user_id TEXT REFERENCES users (user_id),
     created_at INTEGER NOT NULL,
     expires_at INTEGER,
     used_at INTEGER,
     used_by TEXT,
     paired_user_id TEXT REFERENCES users (user_id),
-    created_person INTEGER NOT NULL DEFAULT 0,
-    -- The waiting request's name on the wire. Random and unique: it travels to
-    -- the owner's devices, and the invite token deliberately does not - the
-    -- confirming device names a request, it does not present a right.
-    request_id TEXT UNIQUE,
-    -- Claimed by the presenting device, kept so the device row can be written
-    -- if and when the owner approves.
-    awaiting_platform TEXT,
-    -- Deadline for the owner's answer, chosen for a person rather than for a
-    -- network. NULL on every token that never waits for one.
-    awaiting_until INTEGER,
-    outcome TEXT CHECK (outcome IS NULL OR outcome IN ('approved', 'declined', 'expired'))
+    created_person INTEGER NOT NULL DEFAULT 0
 ) STRICT;
-
--- The sweeper's only query. `outcome IS NULL` alone is true of every claim and
--- every device invite as well - they have no outcome and never will - so
--- `awaiting_until IS NOT NULL` is what actually means "waiting".
-CREATE INDEX idx_pair_tokens_pending ON pair_tokens (outcome, awaiting_until);
 
 -- name_ci is the Unicode case-folded name computed in Go: SQLite's own
 -- lower() folds ASCII only, which would let Cyrillic duplicates through.

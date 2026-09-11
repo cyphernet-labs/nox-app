@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -455,6 +456,40 @@ func TestStoryOneProtocolNegatives(t *testing.T) {
 		c.expectErr(2, protocol.ErrInvalidRequest)
 	})
 
+	// Contract §2.1 and §8A list `identity.owner` among the fields feature 037
+	// REMOVED. A struct field left behind keeps serialising - `owner: false` on
+	// every greeting and every pair reply - and a pre-037 client reads that hard
+	// false as "you do not own this machine", which is the opposite of true. The
+	// assertion is on the raw JSON keys rather than on a decoded struct, because
+	// a decoded struct is exactly what cannot see a field nobody asked for.
+	t.Run("the identity object carries only what the contract lists", func(t *testing.T) {
+		// Its own server: the shared one above is already claimed and has a
+		// device, and a claim there is now refused - correctly.
+		ts, srv := newTestServer(t)
+		d, paired := pairDevice(t, ts, mustClaimToken(t, srv))
+		assertIdentityKeys(t, paired, "id", "label", "created")
+
+		c := dialWS(t, ts, srv)
+		c.expectGreeting()
+		greeted := c.greet(t, 1, d, ``)
+		assertIdentityKeys(t, greeted, "id", "label")
+	})
+
+	// A command REMOVED by feature 037, sent by a build that predates the
+	// removal. It has to be refused like any other name the server does not
+	// know: a half-deleted command that answers with an empty success looks to
+	// an older client exactly like one that worked, and it would go on showing
+	// a circle that no longer exists.
+	t.Run("a retired person command is refused, not silently accepted", func(t *testing.T) {
+		for _, cmd := range []string{"person.invite", "person.list", "person.confirm"} {
+			c := dialWS(t, ts, srv)
+			c.expectGreeting()
+			c.hello(1, ``)
+			c.send(`{"id":2,"cmd":"` + cmd + `","data":{}}`)
+			c.expectErr(2, protocol.ErrInvalidRequest)
+		}
+	})
+
 	t.Run("duplicate hello", func(t *testing.T) {
 		c := dialWS(t, ts, srv)
 		c.expectGreeting()
@@ -569,5 +604,41 @@ func assertHealthy(t *testing.T, ts *httptest.Server) {
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("health status = %d", resp.StatusCode)
+	}
+}
+
+// mustClaimToken mints the claim for a server that has none yet.
+func mustClaimToken(t *testing.T, srv *Server) string {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := srv.store.EnsureServerIdentity(ctx); err != nil {
+		t.Fatalf("EnsureServerIdentity: %v", err)
+	}
+	token, err := srv.store.IssueClaimToken(ctx, time.Now().Unix())
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+	return token
+}
+
+// assertIdentityKeys checks the identity object's key SET, not its values: the
+// point is that no field the contract dropped is still being written.
+func assertIdentityKeys(t *testing.T, data map[string]json.RawMessage, want ...string) {
+	t.Helper()
+	raw, ok := data["identity"]
+	if !ok {
+		t.Fatalf("reply carries no identity: %v", data)
+	}
+	var obj map[string]json.RawMessage
+	mustUnmarshal(t, raw, &obj)
+	got := make([]string, 0, len(obj))
+	for k := range obj {
+		got = append(got, k)
+	}
+	sort.Strings(got)
+	expected := append([]string(nil), want...)
+	sort.Strings(expected)
+	if strings.Join(got, ",") != strings.Join(expected, ",") {
+		t.Fatalf("identity keys = %v, want %v", got, expected)
 	}
 }

@@ -27,7 +27,7 @@ import 'package:nox_app/domain/repository/chat/message_repository.dart';
 /// store is a CACHE of what has been seen rather than a claim to hold
 /// everything. That matters against a live server: the previous design walked
 /// every page on first read, which is fine for a 28-chat mock world and an
-/// unbounded preload against a shared space of unknown size (FR-016).
+/// unbounded preload against a server whose history is of unknown size (FR-016).
 ///
 /// Writes go to the server too — it owns chat ids and name uniqueness (§4) — and
 /// what comes back is MERGED onto the stored row, never written over it: the
@@ -146,7 +146,8 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
       try {
         // Search goes to the server: once pages are fetched on demand the cache
         // holds only what has been scrolled, and filtering it locally would
-        // quietly turn "search the shared space" into "search what I loaded".
+        // quietly turn "search everything on the server" into "search what I
+        // loaded".
         final response = await _chatRemote.getChats(config: config);
         final data = unwrapEnvelope(response, 'chats');
         final page = await _persistWire(_wireMapper.toListModel(entities: data.chats));
@@ -231,7 +232,7 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
       //
       // CASE-INSENSITIVE, to match the case-insensitive list search (getChats): this
       // stops two case-variant chats ('Design crit' / 'design crit') both surfacing
-      // under one search in the open shared space. (Chat names have no spec'd case
+      // under one search. (Chat names have no spec'd case
       // rule — unlike the case-sensitive username/label.)
       final needle = name.toLowerCase();
       // excludeChatId (rename): a chat never collides with its OWN current name — only a

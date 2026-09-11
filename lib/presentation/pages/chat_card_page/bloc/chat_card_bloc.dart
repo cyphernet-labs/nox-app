@@ -9,7 +9,10 @@ import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
+import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
+import 'package:nox_app/general/constants.dart';
+import 'package:nox_app/general/identity/identity_resolver.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
 import 'package:rxdart/rxdart.dart';
 
@@ -33,11 +36,16 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
     on<FilesRefreshed>(_onFilesRefreshed);
     on<ConnectivityChanged>(_onConnectivityChanged);
     on<SetScenario>(_onSetScenario);
+    on<PersonLabelChanged>(_onPersonLabelChanged);
   }
 
   final ChatRepository _chatRepository = getIt<ChatRepository>();
   final MessageRepository _messageRepository = getIt<MessageRepository>();
   final SessionPhaseService _sessionPhaseService = getIt<SessionPhaseService>();
+  final SessionRepository _sessionRepository = getIt<SessionRepository>();
+
+  StreamSubscription<String?>? _labelSub;
+  String _person = Constants.defaultUserLabel;
 
   late String _chatId;
   ChatCardScenario _scenario = ChatCardScenario.normal;
@@ -60,6 +68,7 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
   Future<void> close() {
     _filesSub?.cancel();
     _connSub?.cancel();
+    _labelSub?.cancel();
     return super.close();
   }
 
@@ -76,6 +85,21 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
     // data on screen is current: a device can be online while the socket is
     // down, and the socket can be open while replay is still running (FR-005).
     _connSub ??= _sessionPhaseService.watchPhase().listen((phase) => add(ChatCardEvent.connectivityChanged(phase.isCurrent)));
+    // Watched, not read once. The desktop side sheet stays open while the
+    // person renames themselves from another device, and a snapshot would keep
+    // rendering the old name until the card was closed and reopened - the exact
+    // reason WatchChat exists forty lines above for the chat's own name.
+    //
+    // It also removes the await that used to sit in front of the fatal
+    // short-circuit: a suspension point there let a second Initialize (the demo
+    // dropdown re-dispatches one) interleave with the first.
+    // isClosed first: logout emits null on this exact channel while the card is
+    // being torn down, and cancel() is asynchronous through the generator - so a
+    // null can land on a closed bloc in that window.
+    _labelSub ??= _sessionRepository.watchLabel().listen((label) {
+      if (isClosed) return;
+      add(ChatCardEvent.personLabelChanged(label));
+    });
     emit(const ChatCardState.initializing());
 
     if (_scenario == ChatCardScenario.fatal) {
@@ -85,7 +109,7 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
 
     await executeLogic(() async {
       if (_scenario == ChatCardScenario.empty) {
-        emit(const ChatCardState.initialized(files: []));
+        emit(ChatCardState.initialized(files: const [], personLabel: _person));
         return;
       }
       // Opening the card pulls the newest window; the live re-derive below does not.
@@ -94,14 +118,25 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
       // the debug scenario can have changed while it was in flight. Emitting the
       // late result would overwrite the state the user just selected.
       if (_scenario == ChatCardScenario.empty) {
-        emit(const ChatCardState.initialized(files: []));
+        emit(ChatCardState.initialized(files: const [], personLabel: _person));
         return;
       }
       result.match<void>(
-        onData: (files) => emit(ChatCardState.initialized(files: files, isOffline: _isOffline())),
+        onData: (files) => emit(ChatCardState.initialized(files: files, isOffline: _isOffline(), personLabel: _person)),
         onError: (_) => emit(const ChatCardState.error()),
       );
     }, onError: (error, exception, stackTrace) => emit(const ChatCardState.error()));
+  }
+
+  void _onPersonLabelChanged(PersonLabelChanged event, Emitter<ChatCardState> emit) {
+    // Through the resolver, not a copy of its rule: null is logout, empty is a
+    // greeting that stated no name, and both mean "absent" everywhere else in
+    // the app. A hand-matched second copy agrees only until this one changes.
+    final next = resolveLabel(event.label);
+    if (next == _person) return;
+    _person = next;
+    final current = state;
+    if (current is Initialized) emit(current.copyWith(personLabel: next));
   }
 
   void _onViewModeChanged(ViewModeChanged event, Emitter<ChatCardState> emit) {

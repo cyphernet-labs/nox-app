@@ -24,7 +24,7 @@ part 'chats_list_bloc.freezed.dart';
 part 'chats_list_event.dart';
 part 'chats_list_state.dart';
 
-/// Chats list (5.1) — the open shared space. Paginated list mirroring [ItemListBloc]
+/// Chats list (5.1) — every chat on this person's own server. Paginated list mirroring [ItemListBloc]
 /// (PagingState-in-state, sequential() loads, executeLogic + onError) over the
 /// cache-first chat repository, kept live by a `watchChats()` change-signal.
 /// Resolves [ChatRepository] from DI (mock-backed until the 016 flip). Search filters

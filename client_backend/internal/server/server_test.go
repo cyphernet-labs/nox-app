@@ -187,55 +187,32 @@ func TestTheStartupLineDistinguishesAnUnclaimedServerFromAnEmptyOne(t *testing.T
 	if !strings.Contains(owned.String(), "get back in") {
 		t.Fatalf("owned-but-empty store announced %q", owned.String())
 	}
-}
 
-// One rule, one predicate. Startup and Pair must agree about "the owner can
-// still get in": while they disagreed, a claimed server whose owner had logged
-// out stayed silent because a GUEST device was running - so the owner never got
-// a link, on a machine Pair would have let them back into.
-func TestAGuestDeviceDoesNotSilenceTheOwnersClaimLink(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "announce.db")
-	dbs, err := db.Open(path)
+	// And the third: a store that holds the person but lost the marker. This is
+	// the state feature 037 traded the old refusal for, so it is the one line an
+	// operator reads while recovering. Ordering matters here - Owned implies
+	// HasPerson, so a switch that tested HasPerson first would swallow the case
+	// above and pass every other assertion in this test.
+	handle, err := sql.Open("sqlite", path)
 	if err != nil {
-		t.Fatalf("db.Open: %v", err)
+		t.Fatalf("open the database again: %v", err)
 	}
-	t.Cleanup(func() { _ = dbs.Close() })
-	if _, err := db.Migrate(context.Background(), dbs.Write, os.DirFS("../../migrations")); err != nil {
-		t.Fatalf("db.Migrate: %v", err)
+	if _, err := handle.Exec("UPDATE server_identity SET owner_user_id = NULL WHERE id = 1"); err != nil {
+		t.Fatalf("forget the owner: %v", err)
 	}
-	ctx := context.Background()
-	st := store.New(dbs.Read, dbs.Write)
+	_ = handle.Close()
 
-	if _, err := st.EnsureServerIdentity(ctx); err != nil {
-		t.Fatalf("EnsureServerIdentity: %v", err)
+	stranded := &syncBuffer{}
+	if _, err := announceClaim(ctx, st, "127.0.0.1:8080", mustOwnership(t, st), mustIdentity(t, st), slog.New(slog.NewTextHandler(stranded, nil))); err != nil {
+		t.Fatalf("announceClaim on a store with no marker: %v", err)
 	}
-	token, err := st.IssueClaimToken(ctx, 100)
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
+	if !strings.Contains(stranded.String(), "sign in as the person it belongs to") {
+		t.Fatalf("a store that holds somebody announced %q", stranded.String())
 	}
-	if _, err := st.Pair(ctx, token, "dev-owner", "test", 100); err != nil {
-		t.Fatalf("Pair: %v", err)
-	}
-	// A guest with a live device, which 034 makes ordinary.
-	if _, err := dbs.Write.ExecContext(ctx,
-		"INSERT INTO users (user_id, label, created_at) VALUES ('u_guest', 'Guest', 200)"); err != nil {
-		t.Fatalf("insert guest: %v", err)
-	}
-	if _, err := dbs.Write.ExecContext(ctx,
-		"INSERT INTO devices (device_key, user_id, platform, created_at, last_seen_at) VALUES ('dev-guest', 'u_guest', 'test', 200, 200)"); err != nil {
-		t.Fatalf("insert guest device: %v", err)
-	}
-	// The owner logs out.
-	if err := st.RevokeDevice(ctx, "dev-owner"); err != nil {
-		t.Fatalf("RevokeDevice: %v", err)
-	}
-
-	out := &syncBuffer{}
-	if _, err := announceClaim(ctx, st, "127.0.0.1:8080", mustOwnership(t, st), mustIdentity(t, st), slog.New(slog.NewTextHandler(out, nil))); err != nil {
-		t.Fatalf("announceClaim: %v", err)
-	}
-	if !strings.Contains(out.String(), "get back in") {
-		t.Fatalf("the owner was left with no link on their own machine: %q", out.String())
+	for _, wrong := range []string{"no owner yet", "get back in"} {
+		if strings.Contains(stranded.String(), wrong) {
+			t.Fatalf("announced %q, which is the copy for another state: %q", wrong, stranded.String())
+		}
 	}
 }
 

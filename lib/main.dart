@@ -34,6 +34,12 @@ void main() {
       // transfer fails as a connection error, and the outbox — which treats
       // that as retryable — pauses on the head of the queue forever.
       getIt<ApiClient>().initBase();
+      // One-time upgrade housekeeping, HERE and not inside a read: it is
+      // settled forever on the first launch after an update, and a repository
+      // read that also migrates puts that work inside the envelope which
+      // decides whether a signed-in person lands on their chats or on Login.
+      // The call reports rather than throws, so nothing is guarded around it.
+      await sessionRepository.sweepLegacyKeys();
       // Bring the live channel up before the first screen resolves: the world
       // check and the applier subscription both have to precede the greeting,
       // and only the dev environment binds a starter at all.

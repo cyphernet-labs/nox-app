@@ -112,7 +112,7 @@ const NavRail = ({ t, active = 'chats', onFab }) => {
       </div>
       <div style={{ flex: 1 }} />
       <div style={{ borderRadius: '50%', boxShadow: `0 0 0 2px ${hexA(t.onSurface, 0.06)}` }}>
-        <Avatar name="Nyx" size={36} />
+        <Avatar name="Nyx" initials="N" size={36} />
       </div>
     </div>
   );

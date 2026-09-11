@@ -6,8 +6,10 @@ import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
+import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/service/connectivity_service.dart';
+import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/presentation/pages/chat_card_page/bloc/chat_card_bloc.dart';
 
 void main() {
@@ -30,6 +32,39 @@ void main() {
         expect(state, isA<Initialized>());
         expect((state as Initialized).files, isNotEmpty);
       },
+    );
+
+    blocTest<ChatCardBloc, ChatCardState>(
+      'a rename from another device reaches the open card',
+      // The whole reason the label is WATCHED rather than read once. The desktop
+      // side sheet stays open across a rename, and a snapshot would keep drawing
+      // the old name until the card was closed and reopened. Every other test
+      // here leaves the label at its fallback, where the watch and a missing
+      // watch are indistinguishable - so this one has to move it.
+      build: ChatCardBloc.new,
+      act: (bloc) async {
+        bloc.add(const ChatCardEvent.initialize('chat_0'));
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        await getIt<SessionRepository>().updateLabel(label: 'Renamed');
+      },
+      wait: const Duration(milliseconds: 200),
+      verify: (bloc) => expect((bloc.state as Initialized).personLabel, 'Renamed'),
+    );
+
+    blocTest<ChatCardBloc, ChatCardState>(
+      'signing out does not leave the card naming the person who left',
+      // Logout emits null on the same channel. It must resolve to the fallback,
+      // not to the name that was there a moment ago.
+      build: ChatCardBloc.new,
+      act: (bloc) async {
+        bloc.add(const ChatCardEvent.initialize('chat_0'));
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        await getIt<SessionRepository>().updateLabel(label: 'Renamed');
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        await getIt<SessionRepository>().clear();
+      },
+      wait: const Duration(milliseconds: 200),
+      verify: (bloc) => expect((bloc.state as Initialized).personLabel, Constants.defaultUserLabel),
     );
 
     blocTest<ChatCardBloc, ChatCardState>(

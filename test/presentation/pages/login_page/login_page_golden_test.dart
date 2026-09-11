@@ -27,7 +27,7 @@ void main() {
   goldenTest('login_page_no_scan', () => _login(scannerAvailable: false));
   goldenTestDesktop('login_page_no_scan', () => _login(scannerAvailable: false));
 
-  // A link that will not parse. Pinned because the three refusals must stay
+  // A link that will not parse. Pinned because the refusals must stay
   // visibly different: this one means "scan it again", not "check your
   // connection", and a shared message would lose that.
   goldenTest('login_page_bad_link', () => _login(scannerAvailable: true, status: LoginStatus.errorFormat));

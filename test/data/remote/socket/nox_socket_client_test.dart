@@ -105,38 +105,6 @@ void main() {
       expect(client.currentPhase, SessionPhase.catchingUp);
     });
 
-    test('a greeting that states ownership is read, and one that does not stays unstated', () async {
-      const seed = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=';
-      await client.start(
-        url: url,
-        credentialsProvider: () async => const GreetingCredentials(deviceSeed: seed),
-      );
-      final socket = factory.latest;
-      socket.pushGreeting();
-      await waitUntil(() => socket.commandNamed('session.hello') != null);
-      socket.replyToHello(cursor: 0);
-      await waitUntil(() => client.identity != null);
-
-      // The fake replies without the field, which is exactly what an older
-      // server sends. Null must survive: read as false it would strip the
-      // badge from an owner, and the app cannot tell the two apart afterwards.
-      expect(client.identity!.isOwner, isNull);
-
-      // And a server that does state it is read as stated.
-      await client.stop();
-      await client.start(
-        url: url,
-        credentialsProvider: () async => const GreetingCredentials(deviceSeed: seed),
-      );
-      final second = factory.latest;
-      second.pushGreeting();
-      await waitUntil(() => second.commandNamed('session.hello') != null);
-      second.replyToHello(cursor: 0, owner: true);
-      await waitUntil(() => client.identity?.isOwner == true);
-
-      expect(client.identity!.isOwner, isTrue);
-    });
-
     test('an unpaired install holds the connection open instead of greeting', () async {
       // The window `pair` runs in. Greeting here sends an unsigned hello, the
       // server refuses it, and the refusal used to be read as a revocation -

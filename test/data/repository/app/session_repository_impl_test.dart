@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -203,93 +202,80 @@ void main() {
     expect((await repository.readSession()).data?.authorId, isNull);
   });
 
-  group('server ownership (033)', () {
-    test('the flag is stored, survives a restart and is wiped by logout', () async {
-      await repository.saveIdentifier(identifier: 'sess-1', onboardingComplete: true, label: 'Anna');
-      await repository.adoptServerIdentity(authorId: 'srv-anna', label: 'Anna', isOwner: true);
-
-      expect((await SharedPreferences.getInstance()).getBool('session.is_owner'), isTrue);
-
-      // A second repository over the same prefs is what a relaunch looks like:
-      // the badge has to be there before any server answers, or an offline
-      // start would show the owner as somebody who owns nothing.
-      final prefs = await SharedPreferences.getInstance();
-      final restarted = SessionRepositoryImpl(const FlutterSecureStorage(), prefs);
-      expect((await restarted.watchOwnership().first), isTrue);
-
-      await repository.clear();
-      await repository.saveIdentifier(identifier: 'sess-2', onboardingComplete: true);
-      expect(
-        (await SharedPreferences.getInstance()).getBool('session.is_owner'),
-        isNull,
-        reason: 'the next person inherits nobody else\'s machine',
-      );
-    });
-
-    test('a silent server never overwrites an answer heard earlier', () async {
-      await repository.saveIdentifier(identifier: 'sess-1', onboardingComplete: true, label: 'Anna');
-      await repository.adoptServerIdentity(authorId: 'srv-anna', label: 'Anna', isOwner: true);
-
-      // Null is "did not state it", which an older server sends on every
-      // reconnect. Treating it as false would strip the badge silently.
-      await repository.adoptServerIdentity(authorId: 'srv-anna', label: 'Anna');
-
-      expect((await SharedPreferences.getInstance()).getBool('session.is_owner'), isTrue);
-    });
-
-    test('a sign-in that never landed leaves no ownership behind', () async {
-      await repository.saveIdentifier(identifier: 'sess-1', onboardingComplete: false);
-      await repository.adoptServerIdentity(authorId: 'srv-anna', label: 'Anna', isOwner: true);
+  group('discarding a sign-in and forgetting a world', () {
+    // Both survived feature 037 and both had their only coverage deleted with
+    // the ownership group they happened to sit in. Their own comments call the
+    // consequences severe, and deleting either `remove` would leave the suite
+    // green while a stranger's name and author id stayed on screen.
+    test('a discarded sign-in leaves neither the author id nor the label behind', () async {
+      await repository.saveIdentifier(identifier: 'sess-1', onboardingComplete: true);
+      await repository.adoptServerIdentity(authorId: 'u_serverA', label: 'Anna');
 
       await repository.discardSignIn();
 
-      // The pair reply may well have claimed the machine before the step that
-      // failed; a badge with no session behind it is a lie. Asserted on the
-      // STORED keys - readSession() returns null on a missing identifier alone,
-      // so reading through it would pass whatever the prefs still held.
-      expect((await repository.readSession()).data, isNull);
       final prefs = await SharedPreferences.getInstance();
-      expect(prefs.getBool('session.is_owner'), isNull);
-      expect(prefs.getString('session.author_id'), isNull);
-      // The label came from the same call and names the failed server's person.
-      expect(prefs.getString('session.label'), isNull);
+      expect(prefs.getString('session.author_id'), isNull, reason: "the next sign-in would mark a stranger's messages as its own");
+      expect(prefs.getString('session.label'), isNull, reason: "settings and both avatars would render a stranger's name");
     });
 
-    test('a change landing between the read and the subscribe is not lost', () async {
+    test('forgetting the world drops the author id, and only that', () async {
       await repository.saveIdentifier(identifier: 'sess-1', onboardingComplete: true);
-      await repository.adoptServerIdentity(authorId: 'u_1', label: 'Anna', isOwner: false);
-
-      final seen = <bool?>[];
-      final sub = repository.watchOwnership().listen(seen.add);
-      addTearDown(sub.cancel);
-      // No await before this: with a plain broadcast controller the stream is
-      // still between yielding the seed and subscribing, and this emission is
-      // dropped with no replay.
-      unawaited(repository.adoptServerIdentity(authorId: 'u_1', label: 'Anna', isOwner: true));
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-
-      expect(seen, contains(true));
-    });
-
-    test('a rebuilt server world takes the badge with the author id', () async {
-      await repository.saveIdentifier(identifier: 'sess-1', onboardingComplete: true);
-      await repository.adoptServerIdentity(authorId: 'u_1', label: 'Anna', isOwner: true);
+      await repository.adoptServerIdentity(authorId: 'u_serverA', label: 'Anna');
 
       await repository.forgetAuthorId();
 
-      // A rebuilt store knows nothing about this person, so a badge carried
-      // over from the old world claims a role the new machine never granted.
       final prefs = await SharedPreferences.getInstance();
       expect(prefs.getString('session.author_id'), isNull);
+      // The session itself is untouched: this is a rebuilt store, not a logout.
+      expect((await repository.readSession()).data?.identifier, 'sess-1');
+    });
+  });
+
+  group('the ownership key left by older builds', () {
+    test('the bootstrap sweep drops it, without waiting for a logout', () async {
+      // Written by builds that still had an owner badge. Nothing reads it now -
+      // this machine belongs to one person - but the install this sweep exists
+      // for is one upgraded from such a build, and an install that never signs
+      // out never reaches logout.
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('session.is_owner', true);
+      await repository.saveIdentifier(identifier: 'sess-1', onboardingComplete: true);
+
+      expect((await repository.sweepLegacyKeys()).hasData, isTrue);
+
       expect(prefs.getBool('session.is_owner'), isNull);
     });
 
-    test('an unstated flag reads as null, not as false', () async {
+    test('a signed-out install loses it too, where there is no session at all', () async {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('session.is_owner', false);
+
+      expect((await repository.sweepLegacyKeys()).hasData, isTrue);
+
+      expect(prefs.getBool('session.is_owner'), isNull);
+    });
+
+    test('a session read migrates nothing', () async {
+      // The sweep belongs to bootstrap. Riding it on readSession - the app's
+      // hottest repository call - made a read perform a write and put a
+      // one-time migration inside the envelope that decides whether a
+      // signed-in person lands on their chats or on the Login screen.
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('session.is_owner', true);
       await repository.saveIdentifier(identifier: 'sess-1', onboardingComplete: true);
 
-      // "Not stated" and "not the owner" draw the same thing and mean different
-      // things. Collapsing them here would make FR-022 unimplementable above.
-      expect((await SharedPreferences.getInstance()).getBool('session.is_owner'), isNull);
+      await repository.readSession();
+
+      expect(prefs.getBool('session.is_owner'), isTrue, reason: 'a read wrote to storage');
+    });
+
+    test('sweeping twice is not an error, and neither is sweeping a key that was never there', () async {
+      final prefs = await SharedPreferences.getInstance();
+
+      expect((await repository.sweepLegacyKeys()).hasData, isTrue);
+      expect((await repository.sweepLegacyKeys()).hasData, isTrue);
+
+      expect(prefs.getBool('session.is_owner'), isNull);
     });
   });
 }

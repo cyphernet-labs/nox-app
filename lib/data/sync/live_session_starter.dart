@@ -219,9 +219,7 @@ class LiveSessionStarter {
     // the server stamps on every message, so own-vs-other detection is wrong
     // without it — every message the user sent would come back looking like
     // someone else's.
-    // Ownership rides along: the greeting is the server's standing answer about
-    // this person, and the badge has to survive an offline launch.
-    await _session.adoptServerIdentity(authorId: identity.id, label: identity.label, isOwner: identity.isOwner);
+    await _session.adoptServerIdentity(authorId: identity.id, label: identity.label);
     // The onboarding rescue that used to live here is gone. The greeting no
     // longer carries `created` - the outcome moved to the pair reply (§3),
     // where the decision is actually taken - so this could never fire again,

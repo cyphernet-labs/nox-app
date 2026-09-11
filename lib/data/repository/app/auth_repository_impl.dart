@@ -6,7 +6,6 @@ import 'package:nox_app/general/pairing/pairing_link.dart';
 import 'package:nox_app/general/platform_utils.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
 import 'package:nox_app/data/sync/outbox_service.dart';
-import 'package:nox_app/data/sync/pair_request_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/di/global_aliases.dart';
@@ -56,9 +55,9 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
   /// compile-time address would pair with one server and send messages to
   /// another.
   ///
-  /// The three refusals stay apart because the person's next action differs: a
-  /// link that will not parse means "scan it again", an expired token means
-  /// "issue a new invite", a rejected one means "this is not usable". A failed
+  /// The refusals stay apart because the person's next action differs: a link
+  /// that will not parse means "scan it again", an expired token means "issue a
+  /// new invite", a rejected one means "this is not usable". A failed
   /// attempt rolls the session back, because a stored identity with no settled
   /// outcome would strand the next launch in onboarding.
   @override
@@ -117,11 +116,11 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
           await _sessionRepository.discardSignIn();
           return stored;
         }
-        // Ownership and identity come from the pair reply, not from the fact
-        // that THIS device presented a claim link: the server is the only one
-        // who knows, and a device that inferred it would be right until the day
-        // it was not. Stored now so the owner sees the badge without waiting
-        // for the greeting that follows.
+        // The identity comes from the pair reply, not from the fact that THIS
+        // device presented a claim link: the server is the only one who knows,
+        // and a device that inferred it would be right until the day it was
+        // not. Stored now so the name is on screen without waiting for the
+        // greeting that follows.
         if (greeting.authorId.isEmpty) {
           // An unreadable `identity.id` degrades to '' upstream, and
           // resolveIdentity treats '' as absent - it then falls back to the
@@ -129,11 +128,7 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
           // nothing is stored, and the greeting that follows repairs it.
           logRepository.debug(target: this, message: 'sign-in: the pair reply named nobody, waiting for the greeting');
         } else {
-          final adopted = await _sessionRepository.adoptServerIdentity(
-            authorId: greeting.authorId,
-            label: greeting.label,
-            isOwner: greeting.isOwner,
-          );
+          final adopted = await _sessionRepository.adoptServerIdentity(authorId: greeting.authorId, label: greeting.label);
           if (!adopted.hasData) {
             // NOT fatal, and deliberately not a rollback: the claim token is
             // already spent, so discarding here would leave the device unable
@@ -161,14 +156,12 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         return const RepositoryResult<bool>.error(exception: RepositoryException.internal);
       } on PairingRefused catch (e) {
         await _sessionRepository.discardSignIn();
-        // Four refusals, four answers. The owner's decision and the owner's
-        // silence are NOT the same thing to the person reading it: one means
-        // stop asking, the other means ask again.
+        // Two refusals, two answers. Both are about the LINK, because a link
+        // is all there is to refuse now: nobody waits on a human being for
+        // permission to pair a device with their own machine.
         return RepositoryResult<bool>.error(
           exception: switch (e.reason) {
             PairRefusal.expired => RepositoryException.notFound,
-            PairRefusal.declined => RepositoryException.pairDeclined,
-            PairRefusal.noAnswer => RepositoryException.pairTimeout,
             PairRefusal.notUsable => RepositoryException.authentication,
           },
         );
@@ -182,14 +175,6 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         return const RepositoryResult<bool>.error(exception: RepositoryException.connection);
       }
     });
-  }
-
-  /// Forgets any question waiting for an answer. A question belongs to the
-  /// session that received it: left behind, it would surface after the next
-  /// sign-in, possibly to somebody who is not the owner and cannot answer it.
-  void _forgetPairRequests() {
-    if (!getIt.isRegistered<PairRequestService>()) return;
-    getIt<PairRequestService>().clear();
   }
 
   /// Revokes this device's own key before the local wipe, when there is a
@@ -297,10 +282,6 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         // for the life of the process while the app still shows the user signed
         // in — so a failed wipe puts it back.
         if (getIt.isRegistered<OutboxService>()) await getIt<OutboxService>().stop();
-        // A question waiting for an answer belongs to the session that received
-        // it. Nothing else removes it — the socket is down, so the outcome that
-        // would have will never arrive.
-        _forgetPairRequests();
         try {
           // The queue goes FIRST of the stores. It holds message texts that were
           // never sent, and a crash later in the wipe would leave them for the

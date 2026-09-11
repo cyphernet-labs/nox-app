@@ -1,6 +1,7 @@
 // Command noxd is the NOX client server: a self-hosted messenger backend for
-// a small circle, speaking wire contract v0 over one WebSocket command
-// channel plus a small REST surface, backed by embedded SQLite.
+// ONE person and the devices they own, speaking wire contract v0 over one
+// WebSocket command channel plus a small REST surface, backed by embedded
+// SQLite.
 package main
 
 import (

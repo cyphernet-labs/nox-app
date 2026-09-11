@@ -5,14 +5,15 @@ import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/general/l10n_extension.dart';
+import 'package:nox_app/presentation/widgets/chat/app_invite_seam_action_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_ringed_avatar_widget.dart';
 
 /// Persistent thread header for the DESKTOP thread pane (5.2 in the 5.1 list-detail).
 /// Reconciled to the NOX model: avatar + chat name (tap → chat card) + an info action
-/// (→ chat card drawer). No members / per-chat search / folder (open shared space;
-/// those corpus affordances are out of scope this iteration). Mobile uses the AppBar
-/// instead, so this widget is desktop-only.
+/// (→ chat card drawer) plus a DISABLED invite action - the seam a relay will
+/// attach to. No per-chat search or folder (out of scope this iteration). Mobile
+/// uses the AppBar instead, so this widget is desktop-only.
 class AppThreadHeaderWidget extends StatelessWidget {
   const AppThreadHeaderWidget({super.key, required this.chat, required this.onInfo});
 
@@ -62,6 +63,9 @@ class AppThreadHeaderWidget extends StatelessWidget {
                   tooltip: context.l10n.tooltipChatInfo,
                   icon: AppIconWidget(NoxIcons.folderOpen, color: colorScheme.onSurfaceVariant),
                 ),
+                // Second, as the desktop corpus describes it: info first, then
+                // the seam a relay will attach to.
+                const AppInviteSeamActionWidget(),
               ],
             ),
           ),

@@ -39,6 +39,14 @@ void main() {
     final session = getIt<SessionRepository>();
     final devices = getIt<DeviceRepository>();
 
+    // An install upgraded from a build that still wrote the ownership key. The
+    // sweep has nothing to prove on a fresh one, and this probe is the only
+    // place the whole path runs against a real server. Seeded and then swept in
+    // the same order main() does it - the key is written by the OLD build, and
+    // the new one drops it at bootstrap rather than on the first read.
+    await (await SharedPreferences.getInstance()).setBool('session.is_owner', true);
+    await session.sweepLegacyKeys();
+
     final signedIn = await auth.signIn(identifier: link);
     stdout.writeln('SIGN IN: ${signedIn.hasData ? 'ok' : signedIn.exception}');
     expect(signedIn.hasData, isTrue, reason: 'the whole flow starts here');
@@ -48,12 +56,6 @@ void main() {
     stdout.writeln('SERVER: ${(await session.serverAddress()).data}');
     expect((await session.serverAddress()).data, isNotNull, reason: 'the paired server must survive the sign-in');
     expect((await session.deviceSecret()).hasData, isTrue, reason: 'the device key must survive the sign-in');
-
-    // Ownership arrives with the pair reply, so it is already stored before the
-    // greeting that follows - no waiting, no second round trip.
-    final owning = (await SharedPreferences.getInstance()).getBool('session.is_owner');
-    stdout.writeln('OWNER: $owning');
-    expect(owning, isTrue, reason: 'the person who claimed the server must own it');
 
     final named = await auth.completeOnboarding(label: 'LiveAnna');
     stdout.writeln('NAME: ${named.hasData ? 'ok' : named.exception}');
@@ -84,21 +86,16 @@ void main() {
 
     // Signing out revokes this device's own key, so the key stops being a way
     // in rather than merely being forgotten here.
-    // And it survives the greeting rather than being overwritten by it: the
-    // greeting states ownership too, and the two must agree.
-    expect((await SharedPreferences.getInstance()).getBool('session.is_owner'), isTrue);
-
     final out = await auth.logout();
     stdout.writeln('LOGOUT: ${out.hasData ? 'ok' : out.exception}');
     expect(out.hasData, isTrue);
     expect((await session.readSession()).data, isNull);
     expect((await session.serverAddress()).data, isNull);
-    // Ownership goes with the session: the next person to sign in on this
-    // device inherits nobody else's machine. Asserted on the STORED key, not on
-    // the session - the line above already proved the session is null, so
-    // `data?.isOwner` would be null whatever clear() did.
+    // The key an older build wrote is gone. Seeded above BEFORE the sign-in,
+    // because a fresh install never has it - and an assertion on a key nothing
+    // ever wrote passes whether the sweep exists or not.
     final prefs = await SharedPreferences.getInstance();
-    expect(prefs.getBool('session.is_owner'), isNull);
+    expect(prefs.getBool('session.is_owner'), isNull, reason: 'the legacy key survived a full session');
     expect(prefs.getString('session.author_id'), isNull);
 
     // And the key really is gone on the server: the same link cannot be reused,

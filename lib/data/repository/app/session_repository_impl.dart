@@ -7,7 +7,6 @@ import 'package:nox_app/domain/model/app/session_model.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/general/pairing/device_keys.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
-import 'package:rxdart/rxdart.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Security-sensitive identifier → secure storage; non-secret onboarding flag and
@@ -31,54 +30,18 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
 
   void _emitLabel(String? label) => _labelController.add(label);
 
-  /// A `BehaviorSubject`, not a plain broadcast controller.
-  ///
-  /// `async*` yields the seeded value first and subscribes only after that
-  /// yield resumes, a microtask later. A change landing in that window on a
-  /// broadcast controller is dropped with no replay — and since ownership then
-  /// never changes again, the badge would be absent for the life of the
-  /// process. Which is exactly the miss this channel was added to close.
-  final BehaviorSubject<bool?> _ownershipController = BehaviorSubject<bool?>();
-
-  void _emitOwnership(bool? isOwner) => _ownershipController.add(isOwner);
-
-  /// Writes ownership and announces it, together.
-  ///
-  /// The two were hand-paired at four call sites, and the emit gate reads back
-  /// from PREFS rather than from the subject - so a writer who forgot the
-  /// announcement left every mounted surface rendering a badge the storage no
-  /// longer holds, invisibly, until the process restarted.
-  Future<void> _setOwnership(bool? value) async {
-    // The same rule on both branches: announce a real change and nothing else.
-    // Clearing what was already absent used to push a null through the shared
-    // subject anyway - and three mistyped pairing links meant three identical
-    // rebuilds of every mounted listener for a value that never moved.
-    if (value == null) {
-      if (!_prefs.containsKey(_kIsOwner)) return;
-      await _prefs.remove(_kIsOwner);
-    } else {
-      if (_prefs.getBool(_kIsOwner) == value) return;
-      await _prefs.setBool(_kIsOwner, value);
-    }
-    _emitOwnership(value);
-  }
-
   /// The author id the server assigned; open data, so prefs rather than the
   /// keychain — the login identifier is the secret, this is not.
   static const String _kAuthorId = 'session.author_id';
 
-  /// Whether this person owns the server (contract §3, §8A).
+  /// Written by builds that still had an owner badge. Nothing reads it any
+  /// more — this machine belongs to one person, so the answer was the same on
+  /// every server that ever ran.
   ///
-  /// Deliberately NOT part of [SessionModel]: the badge reads it through
-  /// [watchOwnership], and a second copy on the session aggregate would be a
-  /// value nothing keeps current - the first reader to trust it would be
-  /// holding an answer the watch had already superseded.
-  ///
-  /// Plain prefs, not the secure store: the project puts in the keychain what
-  /// grants ACCESS, and this grants none — it states a role whose rules the
-  /// server enforces. Calling it a secret would cost a platform channel on
-  /// every read to protect nothing.
-  static const String _kIsOwner = 'session.is_owner';
+  /// Swept at bootstrap rather than at logout: the install this exists for is
+  /// one upgraded from such a build, and an install that never signs out never
+  /// reaches logout.
+  static const String _kLegacyIsOwner = 'session.is_owner';
 
   /// This device's Ed25519 seed. The private half of the pair whose public
   /// half the server knows as `device_key` — it is generated here, stays here,
@@ -106,6 +69,16 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   /// restart: after one, the naming screen is exactly where a greeting SHOULD
   /// rescue a device from.
   bool _onboardingStartedHere = false;
+
+  @override
+  Future<RepositoryResult<bool>> sweepLegacyKeys() {
+    // Inside `execute`, which logs and never throws, so bootstrap needs no
+    // guard of its own and a refusing storage cannot stop the app from opening.
+    return execute<bool>(() async {
+      if (_prefs.containsKey(_kLegacyIsOwner)) await _prefs.remove(_kLegacyIsOwner);
+      return const RepositoryResult<bool>.success(data: true);
+    });
+  }
 
   @override
   Future<RepositoryResult<SessionModel?>> readSession() {
@@ -157,15 +130,9 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   }
 
   @override
-  Future<RepositoryResult<bool>> adoptServerIdentity({required String authorId, required String label, bool? isOwner}) {
+  Future<RepositoryResult<bool>> adoptServerIdentity({required String authorId, required String label}) {
     return execute<bool>(() async {
       await _prefs.setString(_kAuthorId, authorId);
-      // Null is "the server did not say", and that must not overwrite an answer
-      // heard earlier: a build talking to an older server would otherwise lose
-      // the badge on the first reconnect. Only a real change is announced, for
-      // the same reason the label is - a reconnect confirming the current
-      // answer should not ripple through the surfaces that render it.
-      if (isOwner != null) await _setOwnership(isOwner);
       final cached = _prefs.getString(_kLabel);
       final changed = cached != label;
       if (changed) {
@@ -186,15 +153,6 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       _emitLabel(label);
       return const RepositoryResult<bool>.success(data: true);
     });
-  }
-
-  @override
-  Stream<bool?> watchOwnership() {
-    // No `async*` seed: the subject replays its latest value to a new listener
-    // itself, so there is no gap between reading and subscribing. Seeded from
-    // storage on first listen, because nothing may have emitted yet.
-    if (!_ownershipController.hasValue) _ownershipController.add(_prefs.getBool(_kIsOwner));
-    return _ownershipController.stream;
   }
 
   @override
@@ -264,11 +222,6 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   Future<RepositoryResult<bool>> forgetAuthorId() {
     return execute<bool>(() async {
       await _prefs.remove(_kAuthorId);
-      // Ownership belongs to the world being discarded too. A rebuilt store
-      // knows nothing about this person, so a badge carried over from the old
-      // one claims a role on a machine that never granted it - and it would
-      // stay on screen until some later refusal happened to force a logout.
-      await _setOwnership(null);
       return const RepositoryResult<bool>.success(data: true);
     });
   }
@@ -292,10 +245,6 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       await _secureStorage.delete(key: _kServerAddress);
       await _secureStorage.delete(key: _kServerKey);
       await _prefs.remove(_kOnboardingComplete);
-      // An attempt that never landed leaves no trace of ownership either: the
-      // pair reply may well have arrived and claimed the machine before the
-      // step that failed, and a badge with no session behind it is a lie.
-      await _setOwnership(null);
       // And the author id written by the SAME call. Left behind it would point
       // at the previous server's person, and the next sign-in would inherit it
       // and mark that stranger's messages as its own - the hazard clear() names
@@ -309,7 +258,6 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       await _prefs.remove(_kLabel);
       // Live listeners are told, exactly as clear() tells them. Without this a
       // mounted surface keeps rendering values the storage no longer holds.
-      // Ownership went through _setOwnership above, which announces its own.
       _emitLabel(null);
       return const RepositoryResult<bool>.success(data: true);
     });
@@ -326,9 +274,6 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       // Leaving it behind would let the next sign-in inherit it and mark that
       // stranger's messages as its own until the next greeting overwrote it.
       await _prefs.remove(_kAuthorId);
-      // Ownership belongs to the person signing out. The next person to sign in
-      // on this device inherits neither their name nor their machine.
-      await _setOwnership(null);
       _emitLabel(null); // logout resets every label surface to the fallback
       return const RepositoryResult<bool>.success(data: true);
     });

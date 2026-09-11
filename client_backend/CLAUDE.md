@@ -1,29 +1,33 @@
 # CLAUDE.md — NOX client server (Go)
 
-Self-hosted messenger backend for a circle of ~10 users: one WebSocket
-command channel (JSON envelope, global `seq` event log, cursor replay)
-plus a small REST surface (file upload/download, /health), embedded
-SQLite, single static CGO-free binary.
+Self-hosted messenger backend for ONE person and the devices they own:
+one WebSocket command channel (JSON envelope, global `seq` event log,
+cursor replay) plus a small REST surface (file upload/download, /health),
+embedded SQLite, single static CGO-free binary. Different people never
+share a machine and their machines never talk to each other — everything
+between people goes through a relay whose protocol does not exist yet
+(Q13).
 
 **The contract is law:** `docs/client-backend/protocol/contract-draft.md`
 (v0). Every command, event, field name, error code and rule comes from
 there; a change needed on the wire is first a contract edit, then code.
 
-**Stage 2 is under way (features 032, 033, 034).** The server now CHECKS who connects:
+**Stage 2 is under way (features 032, 033, 037).** The server now CHECKS who connects:
 `device_key` is an Ed25519 public key, `signature` over
 `"nox/challenge/v1:" ‖ challenge` is verified on every greeting, and the
 person is found by that key. `login_ref` is gone from the wire, the lookup
 and the schema — presenting a secret was replaced by proving possession of
 a key that never leaves the device. A greeting can no longer create anyone:
 an unknown key is refused (`unauthenticated`), and people come into being
-only through `pair` (§8A). Feature 033 named the OWNER: the person a claim
-token created, recorded on the machine's own row, reported to the asker as
-`identity.owner` in both the greeting and the pair reply. Feature 034 added the
-PERSON invite (§8B): only the owner may issue one, it takes effect only after
-they confirm on their own device, and `pair` therefore stopped always finishing
-— it answers `pending` and the outcome arrives as a seq-0 event. Still out of
-scope and blocked: `recover` and the recovery phrase (Q16), revoking a person
-(Q17), TLS with pinning.
+only through `pair` (§8A). Feature 033 named the OWNER on the machine's own
+row; feature 037 collapsed the machine to that one person (owner, 2026-09-10)
+and the mark stopped being reportable — with nobody to tell apart, `identity.owner`
+said the same thing to everybody and left the wire. Gone with it: the person
+invite (§8B), the waiting branch of `pair`, and a second person as a
+possibility at all — a unique index on `users` makes one unrepresentable.
+`owner_user_id` survives as the "this machine has been claimed" marker and
+nothing else. Still out of scope and blocked: `recover` and the recovery
+phrase (Q16), the protocol to the relay (Q13), TLS with pinning.
 
 Architecture rationale lives in `docs/blueprints/client-backend/README.md`;
 Go style rules live in the `go-style` skill; WebSocket/REST runtime
@@ -95,8 +99,9 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
    DB closes. Preserve it.
 10. **Idempotency:** `message.send` is keyed by `(author_id,
     client_message_id)`; a replayed command returns the original echo,
-    never a duplicate row. Per person, so two people colliding on a send
-    key do not collide with each other.
+    never a duplicate row. The key keeps `author_id` because that is the
+    column the message write path and its index are built on — not to keep
+    two people from colliding, since there is only one.
 11. **Envelope discipline (contract §2):** four frame kinds only
     (`srv`/`cmd`/`ok`+`error`/`event`); unknown fields in incoming
     frames are ignored (v0 evolves); unknown commands answer
@@ -140,11 +145,6 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   machine, and `claimed_at` is only a timestamp nothing decides by
 - `internal/store/pairing.go` — one-shot tokens and `Pair`; burning is a
   conditional UPDATE whose affected-row count settles a two-device race
-- `internal/store/approval.go` — the owner's decision about a person invite:
-  the waiting request, the recorded outcome, and the sweep that settles the ones
-  nobody answered
-- `internal/store/people.go` — the circle: names and the owner mark, and
-  nothing else
 - `internal/store/devices.go` — device list, revocation (DELETE, so a revoked
   device is indistinguishable from an unknown one), rename
 - `internal/hub/`        — fan-out goroutine owning the subscriber set
@@ -172,29 +172,6 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 
 ## Known deliberate omissions (do not "fix" silently)
 
-- A person invite is spent WHEN IT IS PRESENTED, not when the owner answers.
-  Otherwise a second presenter during the wait raises a second question about one
-  invite. The outcome is a separate column written once, and presenting the link
-  again returns what was recorded — still waiting, the person, declined, or
-  unanswered. Re-deriving any of that from the state of the store is the mistake
-  031 spent a phase removing and 032 wrote into the contract.
-- The waiting request lives in the ROW, not in the process. It has to outlive a
-  restart and a dropped socket, and the device that presented is `used_by` — the
-  column that already means that. A second column for it would be one fact
-  written twice, which is what 033 spent itself deleting.
-- The sweeper's predicate needs all three conditions:
-  `outcome IS NULL AND awaiting_until IS NOT NULL AND awaiting_until <= ?`. The
-  first is true of every claim and device token as well; the second is what
-  actually means "waiting for a human".
-- The waiting connection is found by a MARK on the connection, because it is
-  unauthenticated by construction: it has no person and no device key on it, and
-  there would otherwise be nothing to address the outcome to.
-- Both person events carry `seq: 0` and never enter the journal, like
-  `device.revoked` and `identity.updated`: who is joining this machine is not the
-  shared world (invariant 3).
-- A device key that already belongs to somebody is refused AT PRESENTATION,
-  before the owner is asked. Waking them with a question whose "yes" could not
-  work would let them authorise something that will not happen.
 - **The service page lives on its OWN loopback listener** (`-status-addr`), and
   the main mux serves it nowhere. That separation IS the protection: a check on
   RemoteAddr inside a handler is one somebody eventually routes around with a
@@ -232,20 +209,11 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   a wildcard bind, which is right for the line printed in the terminal and
   useless for the phone reading the code off the screen. The page resolves a
   dialable address instead, and shows no code at all when the machine has none.
-- **The page decides between its three states on the SAME ownership predicate**
+- **The page decides between its two states on the SAME ownership predicate**
   the startup announcement uses. A second definition of "claimed" is how phase
   033's one fact would go back to living in two records - and this one would
   show a status page to somebody locked out of their own machine.
-- **Two known, bounded windows in the person-invite path.** (1) If the owner
-  decides between `markPendingRequest` and the pending reply being queued, the
-  outcome frame is queued BEFORE that reply and the client - which subscribes
-  after parsing it - misses it; the next re-presentation, at most twenty seconds
-  later, answers from the recorded outcome. (2) `notifyPairResolved` and
-  `sendToOwnerDevices` deliver with the blocking send rather than the dropping
-  one, so a device that has filled its 64-frame queue stalls the sender for up
-  to the write timeout - the sweeper included. The dropping alternative loses
-  the outcome instead, which costs more than a bounded stall.
-- **Known narrow window, predating 034:** the greeting reads the person from the
+- **Known narrow window:** the greeting reads the person from the
   store and writes it to the connection a few lines later, and `refreshLabel`
   matches connections by `identity.UserID` - which is empty in between. A rename
   landing in that gap is overwritten by the write, and no `identity.updated` goes
@@ -260,8 +228,14 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - Ownership is a reference on `server_identity`, not a flag on `users`. The
   table holds one row by CHECK, so "two owners" is unrepresentable without an
   index anyone has to remember. It is written in the transaction that creates
-  the person and never derived from who is oldest: row order is not a right,
-  and it stops being even a proxy once invite-user lands.
+  the person and never derived from who is oldest: row order is not a right.
+- A second PERSON is unrepresentable by index (`idx_users_singleton` over the
+  constant expression `(1)`), not by convention. The consequence is deliberate
+  and easy to undo by accident: a claim against a store that holds a person but
+  no ownership mark now ATTACHES to that person instead of being refused. The
+  refusal existed because picking an owner out of several rows by order would
+  hand somebody else's history away; with one row there is nobody to pick
+  wrongly, and refusing would leave a full history permanently unreachable.
 - `claimed_at` is NOT the state machine. "Claimed" means "has an owner", and
   nothing reads the timestamp to decide anything - one fact in two records is
   the shape that eventually disagrees with itself. The timestamp is still
@@ -271,9 +245,12 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   warns that a backup holding only the DB breaks pinning for every device at
   once; one artifact makes that impossible, and anyone who can read the file
   already has every message.
-- The claim link is printed to the log and nowhere else. A local HTTP page
+- The claim link goes to the log AND to the service page (035), which is why
+  that page listens on loopback only and refuses to start anywhere else. The
+  pre-035 rule was "the log and nowhere else", on the reasoning that a page
   serving the QR would hand ownership to everyone on the network while the
-  transport is not TLS.
+  transport is not TLS - the loopback bind is what answers that, and
+  `assertLoopback` checks the socket rather than the string somebody typed.
 - The CLAIM link falls back to loopback under a wildcard bind (it is read on the
   machine), while an INVITE link uses the address the requesting device dialled
   (its `Host` header). The two differ because an invite is carried to another

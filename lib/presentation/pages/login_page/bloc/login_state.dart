@@ -9,30 +9,7 @@ enum LoginOutcome { auto, newId, registered, errorFormat, errorNetwork, fatal }
 /// that will not parse means scan it again, an expired token means ask for a
 /// new invite, a rejected one means this link cannot be used at all. One
 /// shared "it did not work" leaves them guessing which.
-/// The refusals stay apart because each leads somewhere different: a link that
-/// will not parse means "scan it again", an expired one means "get a new one",
-/// a rejected one means "this is not usable", [errorDeclined] means "the owner
-/// said no, do not insist" and [errorNoAnswer] means "they did not answer, ask
-/// again". Collapsing any two would make the app tell somebody the wrong thing
-/// to do next.
-enum LoginStatus {
-  idle,
-  loading,
-
-  /// The invite was accepted and the OWNER is being asked. Not an error and not
-  /// ordinary loading: it can last minutes, because it waits on a person rather
-  /// than on a network, and a bare spinner would say none of that.
-  waitingForOwner,
-  errorFormat,
-  errorExpired,
-  errorRejected,
-  errorDeclined,
-  errorNoAnswer,
-  errorNetwork,
-  navNewId,
-  navRegistered,
-  navFatal,
-}
+enum LoginStatus { idle, loading, errorFormat, errorExpired, errorRejected, errorNetwork, navNewId, navRegistered, navFatal }
 
 @freezed
 abstract class LoginState with _$LoginState {
@@ -41,13 +18,12 @@ abstract class LoginState with _$LoginState {
   const factory LoginState({@Default('') String id, @Default(LoginStatus.idle) LoginStatus status, @Default(false) bool canPaste}) =
       _LoginState;
 
-  bool get isLoading => status == LoginStatus.loading || status == LoginStatus.waitingForOwner;
+  bool get isLoading => status == LoginStatus.loading;
 
   /// `Sign in` is enabled for any non-empty input (no format validation, FR-011).
   ///
-  /// Gated on [isLoading], not on `loading` alone: the owner wait is minutes
-  /// long, and a button that stays live under a spinner invites a second tap.
-  /// That second sign-in restarts the channel the first one is waiting on, and
+  /// Gated on [isLoading]: a button that stays live under a spinner invites a
+  /// second tap. That second sign-in restarts the channel the first is on, and
   /// whichever attempt loses discards the session the other just stored.
   bool get canSubmit => id.trim().isNotEmpty && !isLoading;
 }

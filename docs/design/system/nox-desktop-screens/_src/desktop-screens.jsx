@@ -61,11 +61,17 @@ const ThreadHeader = ({ t }) => (
     </div>
     <div style={{ flex: 1, minWidth: 0 }}>
       <div style={{ ...ty('titleMedium'), color: t.onSurface, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Night Owls</div>
-      <div style={{ ...ty('bodyMedium'), color: t.onSurfaceVariant }}>Aria, Mox and you</div>
     </div>
-    <IconButton t={t} name="search" />
-    <IconButton t={t} name="folder" />
-    <IconButton t={t} name="info" />
+    {/* Two actions, in this order: info (drawn with folder_open, which is the
+        glyph the app ships and the one this corpus's icon set has - there is no
+        `info` icon in NOX), then the seam a relay will attach to.
+        The invite is drawn through IconButton's own `color`, dimmed to the M3
+        disabled 38% - the same treatment the app applies by hand, because its
+        icon widget paints its own filter and never consults IconTheme.
+        Per-chat search and folders were never in the spec, and the member
+        subtitle went with the roster: this machine holds one person. */}
+    <IconButton t={t} name="folder_open" />
+    <IconButton t={t} name="add" color={hexA(t.onSurfaceVariant, 0.38)} />
   </div>
 );
 
@@ -206,10 +212,7 @@ const SettingsListPane = ({ t, selected }) => (
 );
 
 // detail content — every panel reuses the phone widgets verbatim
-// Defaults to NOT stated, like the shipped widget: "not stated" and "not the
-// owner" both render nothing, so a screen built from this corpus without
-// saying otherwise must not show a badge.
-const SettingsDetail = ({ t, section, detailState = null, isOwner = false }) => {
+const SettingsDetail = ({ t, section, detailState = null }) => {
   const wrap = (children) => (
     <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', background: t.surfaceContainerLowest, display: 'flex', flexDirection: 'column' }}>
       <PaneHeader t={t} title={section} />
@@ -222,7 +225,7 @@ const SettingsDetail = ({ t, section, detailState = null, isOwner = false }) => 
   if (section === 'Account') {
     return wrap(
       <div>
-        <IdentityCard t={t} editing={detailState === 'editing'} isOwner={isOwner} />
+        <IdentityCard t={t} editing={detailState === 'editing'} />
       </div>
     );
   }
@@ -270,11 +273,11 @@ const SettingsDetail = ({ t, section, detailState = null, isOwner = false }) => 
   return wrap(<TermsBody t={t} />);
 };
 
-const SettingsDesktop = ({ t, section = 'Appearance', dialog = null, detailState = null, isOwner = false }) => (
+const SettingsDesktop = ({ t, section = 'Appearance', dialog = null, detailState = null }) => (
   <DesktopWindow t={t} subtitle="Settings">
     <NavRail t={t} active="settings" />
     <SettingsListPane t={t} selected={section} />
-    <SettingsDetail t={t} section={section} detailState={detailState} isOwner={isOwner} />
+    <SettingsDetail t={t} section={section} detailState={detailState} />
     {dialog === 'logout' && <LogoutDialog t={t} />}
     {dialog === 'logout-loading' && <LogoutDialog t={t} loading />}
   </DesktopWindow>

@@ -110,10 +110,15 @@ func TestAClaimedServerShowsTheMachineAndNoLink(t *testing.T) {
 	if strings.Contains(body, "<svg") {
 		t.Fatalf("a claimed server still draws a QR: %s", body)
 	}
-	for _, want := range []string{"Version", "Uptime", "Schema", "Storage id", "Database", "People", "Devices", "Chats", "Messages"} {
+	for _, want := range []string{"Version", "Uptime", "Schema", "Storage id", "Database", "Devices", "Chats", "Messages"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the claimed page does not show %q: %s", want, body)
 		}
+	}
+	// Nothing counts people any more: this machine holds exactly one, so the
+	// number would say the same thing on every server that ever runs.
+	if strings.Contains(body, "People") {
+		t.Fatalf("the page still counts people: %s", body)
 	}
 	// This one refreshes: uptime and counters shown without one read as now.
 	if !strings.Contains(body, `http-equiv="refresh"`) {
@@ -137,23 +142,6 @@ func TestAnOwnerWithNoDevicesLeftIsOfferedTheLinkAgain(t *testing.T) {
 	}
 	if !strings.Contains(statusBody(t, srv), "https://nox.app/p/#") {
 		t.Fatal("an owner who lost every device is not offered a way back in")
-	}
-}
-
-// The anomaly of phase 033: people, no owner. Pair refuses a claim there, so a
-// link would be an instruction nobody can follow.
-func TestAStoreWithPeopleAndNoOwnerOffersNothingToScan(t *testing.T) {
-	ts, srv := newTestServer(t)
-	dialable(srv)
-	claimDevice(t, ts, srv)
-	orphanStore(t, srv)
-
-	body := statusBody(t, srv)
-	if strings.Contains(body, "https://nox.app/p/#") || strings.Contains(body, "<svg") {
-		t.Fatalf("an ownerless store offers a claim it would refuse: %s", body)
-	}
-	if !strings.Contains(body, "no owner") {
-		t.Fatalf("an ownerless store does not say so: %s", body)
 	}
 }
 
@@ -224,22 +212,6 @@ func TestHealthAnswersExactlyWhatItAnswered(t *testing.T) {
 	}
 	if len(got) != 1 || got["status"] != "ok" {
 		t.Fatalf("/health = %v, want exactly {\"status\":\"ok\"}", got)
-	}
-}
-
-// orphanStore removes the owner from a store that has people, reaching the
-// anomaly of phase 033 that no code path produces. A second handle on the same
-// file, in the same process: the invariant is one PROCESS, and a test that
-// cannot reach the state cannot check what the page says about it.
-func orphanStore(t *testing.T, srv *Server) {
-	t.Helper()
-	handle, err := sql.Open("sqlite", srv.cfg.DBPath)
-	if err != nil {
-		t.Fatalf("open the database again: %v", err)
-	}
-	defer func() { _ = handle.Close() }()
-	if _, err := handle.Exec("UPDATE server_identity SET owner_user_id = NULL WHERE id = 1"); err != nil {
-		t.Fatalf("orphan the store: %v", err)
 	}
 }
 
@@ -439,5 +411,125 @@ func TestTheLinkFollowsTheAddressWhileTheTokenStaysPut(t *testing.T) {
 	// And it is the same right, not a second one.
 	if got := countLiveClaimTokens(t, srv); got != 1 {
 		t.Fatalf("unspent claim tokens = %d, want 1: the address changed, the token must not", got)
+	}
+}
+
+// forgetOwnerOnDisk drops the ownership marker through a second handle on the
+// same file - what a partial restore or a hand edit leaves behind.
+func forgetOwnerOnDisk(t *testing.T, srv *Server) {
+	t.Helper()
+	handle, err := sql.Open("sqlite", srv.cfg.DBPath)
+	if err != nil {
+		t.Fatalf("open the database again: %v", err)
+	}
+	defer func() { _ = handle.Close() }()
+	if _, err := handle.Exec("UPDATE server_identity SET owner_user_id = NULL WHERE id = 1"); err != nil {
+		t.Fatalf("forget the owner: %v", err)
+	}
+}
+
+// Every state of the page, enumerated, because the last three defects here were
+// all "the branch I did not think about". Each row is a store shape, the copy it
+// must show, the copy it must NOT, and whether the page hands out a claim
+// credential at all.
+//
+// offersClaim is the load-bearing column. Copy alone cannot pin this: two of the
+// five states share a sentence, so a row asserting only what is written passes
+// whichever page was rendered - including a claimed, reachable machine printing a
+// live claim link and QR, which is the one outcome here that costs somebody their
+// identity.
+func TestTheServicePageSaysTheRightThingInEveryState(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		arrange     func(t *testing.T, ts *httptest.Server, srv *Server)
+		want        string
+		notWant     []string
+		offersClaim bool
+	}{
+		{
+			name:        "fresh, nobody has claimed it",
+			arrange:     func(*testing.T, *httptest.Server, *Server) {},
+			want:        "Nobody has claimed this server yet",
+			notWant:     []string{"records no owner", "Your server is waiting", "Running and claimed"},
+			offersClaim: true,
+		},
+		{
+			name: "claimed and reachable",
+			arrange: func(t *testing.T, ts *httptest.Server, srv *Server) {
+				claimDevice(t, ts, srv)
+			},
+			want:        "Running and claimed",
+			notWant:     []string{"records no owner", "Nobody has claimed", "Your server is waiting"},
+			offersClaim: false,
+		},
+		{
+			name: "owner is there, their last device is not",
+			arrange: func(t *testing.T, ts *httptest.Server, srv *Server) {
+				d, _ := claimDevice(t, ts, srv)
+				if err := srv.store.RevokeDevice(context.Background(), d.pub); err != nil {
+					t.Fatalf("RevokeDevice: %v", err)
+				}
+			},
+			want:        "Your server is waiting for you",
+			notWant:     []string{"records no owner", "Nobody has claimed", "Running and claimed"},
+			offersClaim: true,
+		},
+		{
+			name: "reachable, but the marker is gone",
+			arrange: func(t *testing.T, ts *httptest.Server, srv *Server) {
+				claimDevice(t, ts, srv)
+				forgetOwnerOnDisk(t, srv)
+			},
+			// "records no owner" alone does NOT identify this page: the
+			// needs-claim branch says it too. The state is pinned by the
+			// sentence that belongs only to the other one, and by the absence
+			// of a claim credential.
+			want:        "records no owner",
+			notWant:     []string{"Running and claimed", "Nobody has claimed", "This server holds a conversation"},
+			offersClaim: false,
+		},
+		{
+			name: "the marker is gone and so is the last device",
+			arrange: func(t *testing.T, ts *httptest.Server, srv *Server) {
+				d, _ := claimDevice(t, ts, srv)
+				if err := srv.store.RevokeDevice(context.Background(), d.pub); err != nil {
+					t.Fatalf("RevokeDevice: %v", err)
+				}
+				forgetOwnerOnDisk(t, srv)
+			},
+			want:        "This server holds a conversation",
+			notWant:     []string{"Nobody has claimed", "Running and claimed", "Your server is waiting"},
+			offersClaim: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ts, srv := newTestServer(t)
+			dialable(srv)
+			// Startup mints the machine key before it ever draws a page.
+			if _, err := srv.store.EnsureServerIdentity(context.Background()); err != nil {
+				t.Fatalf("EnsureServerIdentity: %v", err)
+			}
+			tc.arrange(t, ts, srv)
+
+			body := statusBody(t, srv)
+			if !strings.Contains(body, tc.want) {
+				t.Fatalf("the page does not say %q: %s", tc.want, body)
+			}
+			for _, wrong := range tc.notWant {
+				if strings.Contains(body, wrong) {
+					t.Fatalf("the page also says %q, which belongs to another state: %s", wrong, body)
+				}
+			}
+			// The credential itself, not the words around it. A page that offers
+			// a claim carries the link (and the QR, when the server is dialable
+			// from anywhere but this machine); presenting it signs a device in as
+			// the person this store belongs to.
+			if got := strings.Contains(body, `class="link"`); got != tc.offersClaim {
+				t.Fatalf("page offers a claim link = %v, want %v: %s", got, tc.offersClaim, body)
+			}
+			if got := strings.Contains(body, "<svg"); got != tc.offersClaim {
+				t.Fatalf("page offers a claim QR = %v, want %v: %s", got, tc.offersClaim, body)
+			}
+		})
 	}
 }

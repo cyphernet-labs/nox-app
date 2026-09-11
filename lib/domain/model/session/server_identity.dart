@@ -27,17 +27,5 @@ abstract class ServerIdentity with _$ServerIdentity {
     /// onboarding decision it feeds is monotonic (a later greeting may declare
     /// onboarding done, never undone).
     bool? created,
-
-    /// Whether THIS person owns the server (contract §3, §8A).
-    ///
-    /// Nullable for the same reason as [created], and the difference matters:
-    /// `null` means the server did not state it — an older build, or a frame
-    /// that predates the field — and that is NOT the same as "does not own".
-    /// Both render no badge, but only one of them is an answer.
-    ///
-    /// Unlike [created] it describes the PERSON rather than this answer, so it
-    /// is the same in every reply about the same human being, and it is worth
-    /// persisting: the badge has to survive an offline launch.
-    bool? isOwner,
   }) = _ServerIdentity;
 }

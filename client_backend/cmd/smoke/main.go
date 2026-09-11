@@ -1,11 +1,11 @@
 // Command smoke walks the whole stage-2 flow against a RUNNING noxd and says
 // whether it works.
 //
-// It exists because the flow crosses three devices and a human decision, which
-// no unit test reaches end to end and no person wants to click through twice
+// It exists because the flow crosses two devices and a real socket, which no
+// unit test reaches end to end and no person wants to click through twice
 // before a demo. Point it at the claim link a fresh server printed and it
-// claims the machine, adds a second device, invites a person, answers the
-// question from the other device, and has the two of them talk.
+// claims the machine, adds a second device of the same person, and has the two
+// of them exchange a message.
 //
 // It talks to the wire directly rather than through the app: what is being
 // checked is the server, and a failure here is the server's.
@@ -87,33 +87,9 @@ func run(rawLink string) error {
 	}
 	ok("device.list shows %d devices", len(devices["devices"].([]any)))
 
-	step(3, "The owner invites a PERSON and answers on their other device")
-	guest, err := invitePerson(ctx, target.addr, ownerConn, phoneConn)
-	if err != nil {
+	step(3, "The two devices exchange a message")
+	if err := talk(ownerConn, phoneConn, ownerID); err != nil {
 		return err
-	}
-
-	step(4, "The guest names themselves and the two of them talk")
-	if err := talk(ctx, target.addr, ownerConn, guest, ownerID); err != nil {
-		return err
-	}
-
-	step(5, "The circle")
-	people, err := ownerConn.call("person.list", data{})
-	if err != nil {
-		return err
-	}
-	rows := people["people"].([]any)
-	for _, row := range rows {
-		p := row.(map[string]any)
-		mark := ""
-		if p["owner"] == true {
-			mark = "   <- server owner"
-		}
-		ok("%-10v%v", p["label"], mark)
-	}
-	if len(rows) != 2 {
-		return fmt.Errorf("the circle holds %d people, want 2", len(rows))
 	}
 
 	fmt.Printf("\n  every step passed\n\n")
@@ -133,14 +109,14 @@ func claim(ctx context.Context, target link, dev device) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if reply["status"] != "paired" {
-		return "", fmt.Errorf("the claim did not finish: %v", reply)
+	id, okID := reply["identity"].(map[string]any)
+	if !okID {
+		return "", fmt.Errorf("the claim carried no identity: %v", reply)
 	}
-	id := reply["identity"].(map[string]any)
-	if id["created"] != true || id["owner"] != true {
-		return "", fmt.Errorf("a claim must create the owner, got %v", id)
+	if id["created"] != true {
+		return "", fmt.Errorf("a claim must create the person, got %v", id)
 	}
-	ok("claimed: created=%v owner=%v", id["created"], id["owner"])
+	ok("claimed: created=%v", id["created"])
 	return id["id"].(string), nil
 }
 
@@ -175,102 +151,34 @@ func addDevice(ctx context.Context, addr string, owner *conn, ownerID string) (d
 	return dev, nil
 }
 
-func invitePerson(ctx context.Context, addr string, owner, phone *conn) (device, error) {
-	invite, err := owner.call("person.invite", data{})
-	if err != nil {
-		return device{}, err
-	}
-	ok("person invite issued (24 hours)")
-
-	dev := newDevice()
-	waiting, err := dial(ctx, addr)
-	if err != nil {
-		return device{}, err
-	}
-	defer waiting.close()
-	if _, err := waiting.greeting(); err != nil {
-		return device{}, err
-	}
-	pending, err := waiting.call("pair", data{"token": invite["token"], "device_key": dev.pub, "platform": "ios"})
-	if err != nil {
-		return device{}, err
-	}
-	if pending["status"] != "pending" {
-		return device{}, fmt.Errorf("a person invite finished without being asked: %v", pending)
-	}
-	ok("the guest waits - nobody is in yet")
-
-	asked, err := owner.event("person.pairRequested")
-	if err != nil {
-		return device{}, err
-	}
-	alsoAsked, err := phone.event("person.pairRequested")
-	if err != nil {
-		return device{}, err
-	}
-	if asked["request_id"] != alsoAsked["request_id"] {
-		return device{}, errors.New("the two devices were asked about different requests")
-	}
-	if len(asked) != 3 {
-		return device{}, fmt.Errorf("the question carries more than it should: %v", asked)
-	}
-	ok("BOTH owner devices asked, and the question carries nothing about the guest")
-
-	// Answered on the OTHER device on purpose: the question has to close on the
-	// first one too, or that screen is a dead end.
-	if _, err := phone.call("person.confirm", data{"request_id": asked["request_id"], "approve": true}); err != nil {
-		return device{}, err
-	}
-	closed, err := owner.event("person.pairResolved")
-	if err != nil {
-		return device{}, err
-	}
-	ok("answered on the phone, and the question closed on the other device too")
-
-	resolved, err := waiting.event("person.pairResolved")
-	if err != nil {
-		return device{}, err
-	}
-	id := resolved["identity"].(map[string]any)
-	if id["created"] != true || id["owner"] != false {
-		return device{}, fmt.Errorf("the guest came in wrong: %v", id)
-	}
-	ok("guest let in: created=true owner=false (outcome=%v)", closed["outcome"])
-	return dev, nil
-}
-
-func talk(ctx context.Context, addr string, owner *conn, guest device, ownerID string) error {
-	guestConn, err := greet(ctx, addr, guest)
-	if err != nil {
-		return err
-	}
-	defer guestConn.close()
-	if _, err := guestConn.call("identity.setLabel", data{"label": "Boris"}); err != nil {
-		return err
-	}
-	ok("named: Boris")
-
-	created, err := owner.call("chat.create", data{"name": "Kitchen"})
+// talk has the person's two devices exchange a message through the server.
+//
+// Both connections belong to the SAME human being, so the echo must come back
+// marked as their own - that is the whole assertion. Nothing here needs a
+// second person: this machine has one, and talking to anybody else goes
+// through a relay that does not exist yet.
+func talk(desktop, phone *conn, ownerID string) error {
+	created, err := desktop.call("chat.create", data{"name": "Kitchen"})
 	if err != nil {
 		return err
 	}
 	chat := created["chat"].(map[string]any)
-	ok("Anna created the chat %q", chat["name"])
+	ok("Anna created the chat %q on her desktop", chat["name"])
 
-	if _, err := guestConn.call("message.send", data{
+	if _, err := phone.call("message.send", data{
 		"chat_id": chat["chat_id"], "client_message_id": "smoke-1",
 		"body": data{"type": "text", "text": "the boiler is leaking"},
 	}); err != nil {
 		return err
 	}
-	msg, err := owner.event("message.new")
+	msg, err := desktop.event("message.new")
 	if err != nil {
 		return err
 	}
-	if msg["author_id"] == ownerID {
-		return errors.New("the guest's message is attributed to the owner")
+	if msg["author_id"] != ownerID {
+		return fmt.Errorf("a message sent from her own phone came back as somebody else: %v", msg["author_id"])
 	}
-	ok("Anna received it, author %v - not her own", msg["author_label"])
+	ok("the desktop received it, authored by %v - her own", msg["author_label"])
 	return nil
 }
 

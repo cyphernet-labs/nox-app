@@ -21,12 +21,6 @@ import (
 type Identity struct {
 	UserID string
 	Label  string
-	// Owner reports whether this PERSON owns the server. Unlike Created it
-	// describes the person rather than the answer, so it is the same in every
-	// reply about the same human being - which is why it rides both the
-	// greeting and the pair reply, while Created is meaningful only in the
-	// latter.
-	Owner bool
 	// Created reports whether THIS resolution brought the person into being,
 	// which is what tells the client to offer the naming step (contract §3).
 	// It describes the answer, not the person: a reconnect before the person
@@ -110,21 +104,14 @@ func (s *Store) ResolveIdentity(ctx context.Context, deviceKey, label string, no
 // revocation, because from where it stands the two are the same event.
 var ErrDeviceUnknown = errors.New("device key not paired")
 
-// Ownership is answered by the SAME statement, as a correlated subquery rather
-// than a second round trip. This runs inside the single-connection write pool
-// on every greeting, and reconnects arrive in bursts on a flaky link - so an
-// extra statement here is an extra statement in the serialized critical
-// section, paid by every device, for a value that changes at most once in a
-// server's lifetime.
 func lookupByDevice(ctx context.Context, tx *sql.Tx, deviceKey string) (Identity, bool, error) {
 	var id Identity
 	err := tx.QueryRowContext(ctx, `
-		SELECT u.user_id, u.label,
-		       COALESCE((SELECT owner_user_id FROM server_identity WHERE id = 1), '') = u.user_id
+		SELECT u.user_id, u.label
 		FROM devices d
 		JOIN users u ON u.user_id = d.user_id
 		WHERE d.device_key = ?`,
-		deviceKey).Scan(&id.UserID, &id.Label, &id.Owner)
+		deviceKey).Scan(&id.UserID, &id.Label)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Identity{}, false, nil
 	}

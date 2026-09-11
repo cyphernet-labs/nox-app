@@ -39,15 +39,6 @@ abstract class SessionRepository {
   /// The paired server's address, or null when this install is not paired.
   Future<RepositoryResult<String?>> serverAddress();
 
-  /// Whether this device has renamed since the server last confirmed a name.
-  ///
-  /// A greeting states a label only when the answer is true. Stating it every
-  /// time turns a stale cache into a rename ping-pong: a device that was offline
-  /// through a rename would push the old name back over the new one, and the
-
-  /// Raises the flag without changing the name. Used when the world the name
-  /// was confirmed in is gone: the server has never heard it, so it has to be
-
   /// Advances the onboarding flag when the server says the person is already
   /// known, and never the other way round. Called from the greeting-adoption
   /// path, so a device sitting on the naming screen leaves it as soon as the
@@ -56,42 +47,19 @@ abstract class SessionRepository {
   Future<RepositoryResult<bool>> advanceOnboardingIfKnown({required bool created});
 
   /// Records the identity the server declared at greeting time (contract §3):
-  /// its author id, the label it considers current, and whether this person
-  /// owns the server. All three are the server's to decide — the label may
-  /// have been changed from another device, and ownership is never inferred
-  /// locally from having presented the claim link.
-  ///
-  /// [isOwner] null means the server did not state it, and the stored value is
-  /// then left alone: "did not say" must not overwrite a real answer heard
-  /// earlier, or an older server would silently strip the badge.
-  Future<RepositoryResult<bool>> adoptServerIdentity({required String authorId, required String label, bool? isOwner});
-
-  /// Reactive ownership signal: emits the cached answer on listen, then every
-  /// subsequent change (the server states it, logout clears it).
-  ///
-  /// Exists for the same reason [watchLabel] does. The settings screen is built
-  /// once and stays mounted, so a value read at build time is the value it
-  /// shows forever — and ownership is settled by a frame that may arrive after
-  /// that, or change later when ownership can be transferred.
-  ///
-  /// Unlike [watchLabel] this is ONE shared broadcast stream that replays its
-  /// latest value to every new listener and never completes. Listening twice is
-  /// fine; waiting for `onDone` is not — it will not arrive.
-  ///
-  /// Shared on purpose: a per-call generator has to yield the stored value and
-  /// only then subscribe, and a change landing in that gap is lost with no
-  /// replay — which is the exact miss this channel was added to close.
-  Stream<bool?> watchOwnership();
+  /// its author id and the label it considers current. Both are the server's to
+  /// decide — the label may have been changed from another device.
+  Future<RepositoryResult<bool>> adoptServerIdentity({required String authorId, required String label});
 
   /// Reactive display-label signal: emits the current cached label on listen, then
   /// every subsequent change (rename → new label, logout/clear → null). Broadcast —
   /// multiple surfaces (shell avatar, future consumers) may listen concurrently.
   Stream<String?> watchLabel();
 
-  /// Forgets who this device is on the server it cached: the author id and
-  /// the ownership answer both belong to that world. Called when the server's store
-  /// turns out to be a different world: an id from the old one would mark
-  /// strangers' messages as this user's own.
+  /// Forgets who this device is on the server it cached: the author id belongs
+  /// to that world. Called when the server's store turns out to be a different
+  /// world: an id from the old one would mark strangers' messages as this
+  /// user's own.
   Future<RepositoryResult<bool>> forgetAuthorId();
 
   /// Records that this process created the person and is now naming them.
@@ -105,6 +73,18 @@ abstract class SessionRepository {
   /// [clear] on purpose: the device id survives, because a sign-in that never
   /// reached the server did not change which install this is.
   Future<RepositoryResult<bool>> discardSignIn();
+
+  /// Drops keys that only builds before this one ever wrote.
+  ///
+  /// Called ONCE at bootstrap, not from a read. It is a one-time upgrade step,
+  /// settled forever on the first launch after an install updates, and riding
+  /// it on [readSession] - the app's hottest repository call - made a read
+  /// perform a write and put a migration inside the error envelope that decides
+  /// whether a signed-in person sees their chats or the Login screen.
+  ///
+  /// Never fails a boot: the result is reported, not thrown, and a caller is
+  /// free to ignore it. A key that outlives one more launch costs nothing.
+  Future<RepositoryResult<bool>> sweepLegacyKeys();
 
   /// Full wipe: secure storage deleteAll + remove prefs keys (logout).
   Future<RepositoryResult<bool>> clear();

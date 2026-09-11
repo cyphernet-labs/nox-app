@@ -10,7 +10,6 @@ import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/sync/live_identity_handshake.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
-import 'package:nox_app/domain/model/session/pair_refusal.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_app/general/pairing/pairing_link.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -26,11 +25,11 @@ const kTestLink = 'https://nox.app/p/#AQF_AAABH5CjZmMytIk_2XvPJ-jonqlQtYsZD3SB33
 void main() {
   group('IdentityHandshake', () {
     test('an outcome the server stated is usable', () {
-      const known = IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false, isOwner: null);
+      const known = IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false);
       expect(known.outcomeStated, isTrue);
       expect(known.created, isFalse);
 
-      const newcomer = IdentityHandshake(authorId: 'u_2', label: 'User1234', created: true, isOwner: null);
+      const newcomer = IdentityHandshake(authorId: 'u_2', label: 'User1234', created: true);
       expect(newcomer.outcomeStated, isTrue);
       expect(newcomer.created, isTrue);
     });
@@ -39,7 +38,7 @@ void main() {
       // The third wire state is the load-bearing one. Collapsing it into
       // either boolean costs the person something: false steals a newcomer's
       // naming step, true overwrites a returning person's name.
-      const silent = IdentityHandshake(authorId: 'u_3', label: 'Anna', created: null, isOwner: null);
+      const silent = IdentityHandshake(authorId: 'u_3', label: 'Anna', created: null);
       expect(silent.outcomeStated, isFalse);
       expect(silent.created, isNull);
     });
@@ -48,7 +47,7 @@ void main() {
       // FR-006d: at stage 2 the same distinction arrives on the pairing reply.
       // Nothing outside the transport layer may notice that it moved, so the
       // type that carries the decision must not mention the greeting at all.
-      const value = IdentityHandshake(authorId: 'u_1', label: 'Anna', created: true, isOwner: null);
+      const value = IdentityHandshake(authorId: 'u_1', label: 'Anna', created: true);
       expect(value.toString(), isNot(contains('hello')));
       expect(value.toString(), isNot(contains('greet')));
     });
@@ -181,85 +180,6 @@ void main() {
       expect(result.created, isNull);
     });
 
-    test('a pending reply waits for the outcome instead of taking it for a failure', () async {
-      // The whole shape of a person invite: pair does not finish, and reading
-      // the absent identity as a refusal would send the person back to the
-      // pairing screen while the owner is still being asked.
-      when(starter.restart()).thenAnswer((_) async {
-        await client.stop();
-        await client.start(url: url, credentialsProvider: () async => const GreetingCredentials.unpaired());
-        factory.latest.pushGreeting();
-      });
-
-      IdentityHandshake? settled;
-      Object? failed;
-      unawaited(
-        handshake.pair(link: PairingLink.parse(kTestLink), deviceKey: 'k', platform: 'ios').then((value) => settled = value).catchError((
-          Object e,
-        ) {
-          failed = e;
-          return const IdentityHandshake(authorId: '', label: '', created: null, isOwner: null);
-        }),
-      );
-
-      await waitUntil(() => factory.created.isNotEmpty && factory.latest.commandNamed('pair') != null, reason: 'presented');
-      final socket = factory.latest;
-      socket.reply(
-        socket.sent.indexWhere((f) => f['cmd'] == 'pair'),
-        data: {'status': 'pending', 'request_id': 'r_1', 'expires_at': 4102444800},
-      );
-
-      // Nothing decided yet, and nothing given up on.
-      await Future<void>.delayed(const Duration(milliseconds: 60));
-      expect(settled, isNull);
-      expect(failed, isNull);
-      expect(await handshake.waitingForOwner.first, isTrue, reason: 'the screen has to be able to say what it is waiting for');
-
-      socket.pushEvent(
-        seq: 0,
-        event: 'person.pairResolved',
-        data: {
-          'request_id': 'r_1',
-          'outcome': 'approved',
-          'identity': {'id': 'u_guest', 'label': 'User3140', 'created': true, 'owner': false},
-        },
-      );
-      await waitUntil(() => settled != null, reason: 'the outcome arrived');
-      expect(settled!.authorId, 'u_guest');
-      expect(settled!.created, isTrue);
-      expect(settled!.isOwner, isFalse);
-    });
-
-    test('the owner declining is told apart from the owner never answering', () async {
-      when(starter.restart()).thenAnswer((_) async {
-        await client.stop();
-        await client.start(url: url, credentialsProvider: () async => const GreetingCredentials.unpaired());
-        factory.latest.pushGreeting();
-      });
-
-      Object? failed;
-      unawaited(
-        handshake.pair(link: PairingLink.parse(kTestLink), deviceKey: 'k', platform: 'ios').catchError((Object e) {
-          failed = e;
-          return const IdentityHandshake(authorId: '', label: '', created: null, isOwner: null);
-        }),
-      );
-
-      await waitUntil(() => factory.created.isNotEmpty && factory.latest.commandNamed('pair') != null, reason: 'presented');
-      final socket = factory.latest;
-      socket.reply(
-        socket.sent.indexWhere((f) => f['cmd'] == 'pair'),
-        data: {'status': 'pending', 'request_id': 'r_2', 'expires_at': 4102444800},
-      );
-      socket.pushEvent(seq: 0, event: 'person.pairResolved', data: {'request_id': 'r_2', 'outcome': 'declined'});
-
-      await waitUntil(() => failed != null, reason: 'the refusal arrived');
-      expect(failed, isA<PairingRefused>());
-      // "Do not insist", not "ask again". One error for both would make the app
-      // tell somebody the wrong thing to do next.
-      expect((failed! as PairingRefused).reason, PairRefusal.declined);
-    });
-
     test('a code that is not a pairing refusal is not reported as a spent link', () async {
       // Contract §2.1: an unknown code is `internal` and retryable. Calling a
       // server hiccup "this link cannot be used" sends the person hunting for
@@ -274,7 +194,7 @@ void main() {
       unawaited(
         handshake.pair(link: PairingLink.parse(kTestLink), deviceKey: 'k', platform: 'ios').catchError((Object e) {
           failed = e;
-          return const IdentityHandshake(authorId: '', label: '', created: null, isOwner: null);
+          return const IdentityHandshake(authorId: '', label: '', created: null);
         }),
       );
 
@@ -283,7 +203,32 @@ void main() {
       socket.reply(socket.sent.indexWhere((f) => f['cmd'] == 'pair'), ok: false, code: 'internal');
 
       await waitUntil(() => failed != null, reason: 'the failure arrived');
+      // Not PairingRefused: the link is fine, the server hiccupped.
       expect(failed, isA<PairingFailed>());
+    });
+
+    test('pairing finishes on the reply, with no waiting state to fall into', () async {
+      when(starter.restart()).thenAnswer((_) async {
+        await client.stop();
+        await client.start(url: url, credentialsProvider: () async => const GreetingCredentials.unpaired());
+        factory.latest.pushGreeting();
+      });
+
+      IdentityHandshake? settled;
+      unawaited(handshake.pair(link: PairingLink.parse(kTestLink), deviceKey: 'k', platform: 'ios').then((v) => settled = v));
+
+      await waitUntil(() => factory.created.isNotEmpty && factory.latest.commandNamed('pair') != null, reason: 'presented');
+      final socket = factory.latest;
+      socket.reply(
+        socket.sent.indexWhere((f) => f['cmd'] == 'pair'),
+        data: {
+          'identity': {'id': 'u_me', 'label': 'User3140', 'created': true},
+        },
+      );
+
+      await waitUntil(() => settled != null, reason: 'the identity arrived');
+      expect(settled!.authorId, 'u_me');
+      expect(settled!.created, isTrue);
     });
   });
 }

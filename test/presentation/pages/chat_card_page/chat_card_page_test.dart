@@ -9,6 +9,7 @@ import 'package:nox_app/presentation/pages/chat_card_page/bloc/chat_card_bloc.da
 import 'package:nox_app/presentation/pages/chat_card_page/chat_card_page.dart';
 import 'package:nox_app/presentation/pages/file_view_page/file_view_page.dart';
 import 'package:nox_app/presentation/widgets/chat/app_segmented_widget.dart';
+import 'package:nox_app/presentation/widgets/state/app_notice_strip_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_file_glyph_widget.dart';
 
 import '../../../utils/pump_app.dart';
@@ -24,6 +25,81 @@ void main() {
 
   tearDownAll(() async {
     await getIt.reset();
+  });
+
+  group('the People seam (5.4)', () {
+    Future<void> pumpCard(WidgetTester tester, {ChatCardScenario? scenario}) async {
+      tester.view.devicePixelRatio = 3.0;
+      tester.view.physicalSize = Constants.designSize * 3.0;
+      addTearDown(() {
+        tester.view.resetDevicePixelRatio();
+        tester.view.resetPhysicalSize();
+      });
+      await pumpApp(tester, ChatCardPage(chat: _sampleChat(), initialScenario: scenario));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('the last file row stays clear of the phone\'s system inset', (tester) async {
+      // The card became one CustomScrollView, and unlike the ListView it
+      // replaced, a CustomScrollView does not read MediaQuery.padding for
+      // itself - BoxScrollView is what used to wrap the sliver in a
+      // SliverPadding built from it. Dropping that put the last row of files
+      // under a phone's gesture bar. No golden can see this: the test view has
+      // no padding until one is set, as here.
+      const inset = 34.0;
+      tester.view.devicePixelRatio = 3.0;
+      tester.view.physicalSize = Constants.designSize * 3.0;
+      tester.view.padding = const FakeViewPadding(bottom: inset * 3.0);
+      addTearDown(() {
+        tester.view.resetDevicePixelRatio();
+        tester.view.resetPhysicalSize();
+        tester.view.resetPadding();
+      });
+      await pumpApp(tester, ChatCardPage(chat: _sampleChat()), settle: false);
+      for (var i = 0; i < 24; i++) {
+        await tester.pump(const Duration(milliseconds: 150));
+      }
+
+      final padding = tester.widget<SliverPadding>(find.ancestor(of: find.byType(SliverList), matching: find.byType(SliverPadding)).first);
+
+      expect(
+        padding.padding.resolve(TextDirection.ltr).bottom,
+        inset,
+        reason: 'the files sliver does not consume the system inset the ListView used to',
+      );
+    });
+
+    testWidgets('a loaded card lists the person and offers the disabled invite', (tester) async {
+      await pumpCard(tester);
+
+      expect(find.text(l10nEn.chatPeopleTitle), findsOneWidget);
+      final button = tester.widget<FilledButton>(find.widgetWithText(FilledButton, l10nEn.chatInvitePerson));
+      expect(button.onPressed, isNull);
+      expect(find.text(l10nEn.chatInviteLater), findsOneWidget);
+    });
+
+    testWidgets('the offline banner stays above the People section', (tester) async {
+      // The spec pins the banner to the top of the card. Pushed below the
+      // People block it lands ~150dp down, and on a phone at a large text scale
+      // it can fall off the first fold - which is the one place it is read.
+      await pumpCard(tester, scenario: ChatCardScenario.offline);
+
+      final banner = tester.getTopLeft(find.byType(AppNoticeStripWidget)).dy;
+      final people = tester.getTopLeft(find.text(l10nEn.chatPeopleTitle)).dy;
+      expect(banner, lessThan(people), reason: 'the banner was pushed below the people block');
+    });
+
+    testWidgets('the error state carries no people at all', (tester) async {
+      // Rendered unconditionally the section stacked a person and a disabled
+      // button over the embedded 3.1 error screen - a state the spec's table
+      // does not put it in, and one where neither says anything true.
+      await pumpCard(tester, scenario: ChatCardScenario.fatal);
+
+      expect(find.text(l10nEn.chatPeopleTitle), findsNothing);
+      expect(find.text(l10nEn.chatInvitePerson), findsNothing);
+      expect(find.text(l10nEn.chatInviteLater), findsNothing);
+    });
   });
 
   group('ChatCardPage (mobile)', () {

@@ -48,7 +48,7 @@ window.NOX_SPECS = [
     "behavior": [
       "Selecting a row highlights it (secondaryContainer) and loads the thread on the right — no navigation push.",
       "No-selection: the thread pane shows a “Select a chat” placeholder; the “+” lives on the rail.",
-      "Thread header is persistent (avatar + chat name + a single info action) — NOX open-space model: no members, no per-chat search, no folders. Source of truth: docs/design/spec/screens/chat.md §Десктоп.",
+      "Thread header is persistent (avatar + chat name + a disabled Invite a person action + an info action). Phase 037: two actions, not one, and the reason there is no member list is that the machine holds one person — not the revoked open-space model. No per-chat search, no folders. Source of truth: docs/design/spec/screens/chat.md §Десктоп.",
       "Offline: “No connection” banner appears in both panes. Loading: spinner in the list pane.",
       "Search filters the list pane in place; no match → “No chats found”.",
       "Transient feedback floats as a Snackbar centered over the thread pane."
@@ -56,13 +56,13 @@ window.NOX_SPECS = [
     "navigation": [
       "Row → loads thread in right pane.",
       "Rail + → Create chat dialog (04).",
-      "Thread header (avatar / chat name / info action) → Chat card / Chat info (04).",
+      "Thread header (avatar / chat name / info action) → Chat card / Chat info (04). The Invite a person action beside it is permanently disabled and leads nowhere: the relay it needs does not exist yet.",
       "Attachment / file bubble → File view lightbox (04)."
     ],
     "copy": [
       "Pane titles: Chats",
       "No-selection: Select a chat / Choose a conversation on the left, or press + to start a new one.",
-      "Thread sub: Aria, Mox and you"
+      "Invite action: Invite a person (always disabled)"
     ],
     "ds": [
       "NavRail",
@@ -121,17 +121,13 @@ window.NOX_SPECS = [
       {
         "key": "logout",
         "label": "Logout dialog"
-      },
-      {
-        "key": "account-member",
-        "label": "Account, ownership not stated or not held"
       }
     ],
     "anatomy": "NavigationRail + settings menu pane (340, grouped nav items) + detail pane (content capped to ≤680). Each detail reuses the exact phone widgets.",
     "behavior": [
       "Selecting a menu item highlights it (secondaryContainer) and swaps the detail pane — no push.",
-      "Account: identity card carrying the name, the Server owner badge and the public ID. Editing → inline name field, with the badge above it.",
-      "Owner badge (phase 033): shown only when the server states that this person owns it; \"not stated\" and \"not the owner\" both render nothing. Same rule and same widget as the narrow width.",
+      "Account: identity card carrying the name and the public ID. Editing → inline name field.",
+      "Phase 037 removed the Server owner badge and its 'ownership not stated' state, at both widths: the machine holds one person, so a mark that told the owner apart from an invited member tells nothing apart.",
       "Notifications: enable switch; OS-denied → InfoBanner + Open settings, switch off.",
       "Appearance: System / Light / Dark theme cards. Language: System / English / Українська.",
       "Log out → centered confirm Dialog (mobile’s sheet/dialog becomes a centered dialog); destructive action tinted error.",
@@ -143,7 +139,6 @@ window.NOX_SPECS = [
     ],
     "copy": [
       "Pane title: Settings",
-      "Owner badge: Server owner",
       "Logout: Log out? / Your ID and local data will be removed from this device."
     ],
     "ds": [
@@ -157,7 +152,7 @@ window.NOX_SPECS = [
       "TermsBody",
       "LogoutDialog"
     ],
-    "adapt": "mobile full-screen settings → list-detail · bottom sheet → centered dialog · the identity card, badge included, is the same widget at both widths"
+    "adapt": "mobile full-screen settings → list-detail · bottom sheet → centered dialog · the identity card is the same widget at both widths"
   },
   {
     "id": "d-splash",
@@ -445,17 +440,23 @@ window.NOX_SPECS = [
         "label": "Empty"
       }
     ],
-    "anatomy": "Scrim + right drawer (380): Details header, chat avatar/name, “Files” with List/Grid toggle, file rows or 2-col grid.",
+    "anatomy": "Scrim + right drawer (380): Details header, chat avatar/name, “People” (one row — the person this machine belongs to — plus a disabled Invite a person button and its caption), hairline, “Files” with List/Grid toggle, file rows or 2-col grid. The body is one scroll.",
     "behavior": [
-      "Mobile’s pushed Chat card (5.4) becomes a right drawer over the thread. Segmented switches List ⇄ Grid; empty → folder_open state."
+      "Mobile’s pushed Chat card (5.4) becomes a right drawer over the thread. Segmented switches List ⇄ Grid; empty → folder_open state.",
+      "People renders only once the card has loaded - never over the spinner or the error state, which the spec's table does not put it in.",
+      "Invite a person: a PERMANENTLY disabled button under the person row, captioned. Pressing it does nothing at all."
     ],
     "navigation": [
-      "Opened from the thread header info/folder action.",
+      "Opened from the thread header info action (folder-open icon).",
       "File row / cell → File view lightbox.",
       "Close / scrim → dismiss."
     ],
     "copy": [
       "Title: Details",
+      "Section: People",
+      "Person row: the person this machine belongs to (label only, no id)",
+      "Button (disabled): Invite a person",
+      "Caption: Available in a future version",
       "Section: Files",
       "Empty: No files yet / Files sent in this chat will appear here."
     ],

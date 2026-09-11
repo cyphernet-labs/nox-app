@@ -220,7 +220,13 @@ void main() {
       expect(hello.toString(), isNot(contains(seed!)));
     });
 
-    test('the greeting hands ownership to the session', () async {
+    test('the greeting hands the server\'s identity to the session', () async {
+      // The ONE path that reaches _adoptGreeting, and 037 deleted the test that
+      // drove it - it asserted the ownership flag this phase removed - without
+      // putting an ownership-free one back. What it covers is load-bearing: the
+      // author id is what the server stamps on every message, so a regression
+      // that stopped adopting it makes own-vs-other detection wrong and every
+      // message this person sent comes back looking like somebody else's.
       await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
       await session.saveServer(address: '10.0.0.5:9000', serverKey: 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=');
 
@@ -230,19 +236,88 @@ void main() {
       for (var i = 0; i < 40 && factory.latest.commandNamed('session.hello') == null; i++) {
         await Future<void>.delayed(const Duration(milliseconds: 5));
       }
-      factory.latest.replyToHello(cursor: 0, owner: true);
-      for (var i = 0; i < 40 && (await SharedPreferences.getInstance()).getBool('session.is_owner') != true; i++) {
+      // A label the device has never seen: the server is the authority on it,
+      // and it may have been changed from another device while this one was
+      // offline.
+      factory.latest.replyToHello(cursor: 0, id: 'u_person_9', label: 'Renamed elsewhere');
+      for (var i = 0; i < 40 && (await SharedPreferences.getInstance()).getString('session.author_id') == null; i++) {
         await Future<void>.delayed(const Duration(milliseconds: 5));
       }
 
-      // The badge has to outlive the connection that brought it: the next
-      // launch may well be offline.
-      expect((await SharedPreferences.getInstance()).getBool('session.is_owner'), isTrue);
+      // BOTH halves, because they fail differently: the label is what the
+      // person reads, the author id is what own-vs-other keys on.
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('session.author_id'), 'u_person_9');
+      expect(prefs.getString('session.label'), 'Renamed elsewhere');
     });
 
-    test('a greeting with no session behind it writes no ownership', () async {
-      // The window `pair` runs in. Stamping a badge on an empty session would
-      // hand it to whoever signs in next.
+    test('a greeting that lands after logout writes nobody back', () async {
+      // The guard inside _adoptGreeting, and it IS reachable - the comment that
+      // used to sit here said otherwise, which is precisely the argument that
+      // would justify deleting the guard.
+      //
+      // logout() clears the session inside `mutate` and only stops the live
+      // channel afterwards, so a phase that flips in that gap - or an adopt
+      // already suspended on the session read - resumes with an empty session
+      // while the socket still holds the identity the server stated. Without
+      // the guard the signed-out device is handed the previous person's author
+      // id back, and adoptServerIdentity re-emits their label on watchLabel(),
+      // so the account avatars go on naming somebody who just logged out.
+      await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
+      await session.saveServer(address: '10.0.0.5:9000', serverKey: 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=');
+
+      await starter.start();
+      await settle();
+      factory.latest.pushGreeting();
+      for (var i = 0; i < 40 && factory.latest.commandNamed('session.hello') == null; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      factory.latest.replyToHello(cursor: 5, id: 'u_person_9', label: 'Anna');
+      for (var i = 0; i < 40 && (await SharedPreferences.getInstance()).getString('session.author_id') == null; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+
+      // Reconnect. The server's cursor has moved past ours, so the new
+      // connection parks at catchingUp instead of going straight to live -
+      // which is what leaves a phase transition still to come.
+      final before = factory.created.length;
+      await factory.latest.drop();
+      for (var i = 0; i < 200 && factory.created.length == before; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      factory.latest.pushGreeting();
+      for (var i = 0; i < 40 && factory.latest.commandNamed('session.hello') == null; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      factory.latest.replyToHello(cursor: 9, id: 'u_person_9', label: 'Anna');
+      await settle();
+
+      // Logout, at the point logout() actually reaches: the session is gone and
+      // the starter is still listening.
+      await session.clear();
+      expect((await SharedPreferences.getInstance()).getString('session.author_id'), isNull, reason: 'clear() left the id behind');
+
+      // Catch-up completes, the phase flips to live, and _adoptGreeting fires
+      // with the identity still on the socket and nothing behind it.
+      factory.latest.pushEvent(seq: 9);
+      await settle();
+      await settle();
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('session.author_id'), isNull, reason: 'a greeting wrote a signed-out identity back onto this device');
+      expect(prefs.getString('session.label'), isNull, reason: 'the signed-out name came back');
+    });
+
+    test('an install with a server but no identifier never greets, and writes nobody', () async {
+      // A device that has not paired has nothing to say: `_credentials` answers
+      // unpaired, so no `session.hello` leaves at all. Asserted on the frame,
+      // not only on storage - "nothing was written" is true of a device that
+      // greeted and was refused too, and those are different failures.
+      //
+      // The guard further in - _adoptGreeting refusing to persist an identity
+      // over an empty session - is a DIFFERENT case and has its own test above.
+      // This comment used to claim that guard was unreachable; it is reachable
+      // through logout, and saying otherwise is the argument for deleting it.
       await session.saveServer(address: '10.0.0.5:9000', serverKey: 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=');
 
       await starter.start();
@@ -250,13 +325,10 @@ void main() {
       factory.latest.pushGreeting();
       await settle();
 
-      // Asserted on the STORED keys, not through readSession(): that returns
-      // null whenever the identifier is absent, whatever else the prefs hold -
-      // so the guard could be deleted and this test would still pass while the
-      // greeting stamped a stranger's identity onto the device.
+      expect(factory.latest.commandNamed('session.hello'), isNull, reason: 'an unpaired device introduced itself');
       final prefs = await SharedPreferences.getInstance();
-      expect(prefs.getBool('session.is_owner'), isNull);
-      expect(prefs.getString('session.author_id'), isNull);
+      expect(prefs.getString('session.author_id'), isNull, reason: 'a pre-pair greeting was written onto this device');
+      expect(prefs.getString('session.label'), isNull);
       expect((await session.readSession()).data, isNull);
     });
 
