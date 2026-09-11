@@ -7,7 +7,7 @@ import 'package:nox_app/presentation/widgets/settings/app_qr_surface_widget.dart
 ///
 /// Extracted when 7.8 Devices and 7.9 People both needed it, differing in one
 /// thing — how long the link lives, which the caller states in [message]. 037
-/// deleted 7.4 along with the person invite, so Devices is the only caller left;
+/// deleted 7.9 along with the person invite, so Devices is the only caller left;
 /// the widget stays because the device invite is untouched and because the relay
 /// will need this shape again.
 ///

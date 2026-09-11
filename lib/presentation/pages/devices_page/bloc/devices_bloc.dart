@@ -134,6 +134,12 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
         // path shows the new device and the dead QR above it at the same time.
         final joined = devices.any((d) => !knownKeys.contains(d.deviceKey));
         final spent = joined && state.inviteLink == inviteAtStart;
+        // The invite ERROR goes when the card does, on this path as well as on
+        // the event one. A device has joined - the outcome the failed request
+        // was asking for - and leaving "Couldn't create an invite." up makes
+        // the screen contradict its own list. The two paths reach the same
+        // decision and must not disagree about it.
+
         // The notice about a revoke that did not work cannot outlive the device
         // it is about. A revoke whose reply was lost still happened, and the
         // next list says so: with the row gone there is nothing left to try
@@ -147,6 +153,7 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
             devices: devices,
             failed: false,
             inviteLink: spent ? null : state.inviteLink,
+            inviteFailed: spent ? false : state.inviteFailed,
             actionFailedKey: stillListed ? state.actionFailedKey : null,
           ),
         );

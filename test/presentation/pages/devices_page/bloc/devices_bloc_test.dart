@@ -262,6 +262,67 @@ void main() {
     );
 
     blocTest<DevicesBloc, DevicesState>(
+      'and it takes the whole invite surface down before the read even answers',
+      // The event is enough on its own: a device joined, so the QR is spent and
+      // the failed request it came from is stale - whatever the list read that
+      // follows does. Waiting for that read means showing a QR we already know
+      // the server will refuse, and if the read fails, showing it for good.
+      build: () {
+        when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
+        when(devices.inviteDevice()).thenAnswer((_) async => const RepositoryResult<String>.success(data: 'https://nox.app/p/#tok'));
+        return DevicesBloc();
+      },
+      act: (bloc) async {
+        bloc.add(const DevicesEvent.initialize());
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        bloc.add(const DevicesEvent.inviteRequested());
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        // A second request that fails, so both halves of the surface are up.
+        when(
+          devices.inviteDevice(),
+        ).thenAnswer((_) async => const RepositoryResult<String>.error(exception: RepositoryException.connection));
+        bloc.add(const DevicesEvent.inviteRequested());
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        when(
+          devices.getDevices(),
+        ).thenAnswer((_) async => const RepositoryResult<List<DeviceModel>>.error(exception: RepositoryException.connection));
+        paired.add(null);
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      },
+      verify: (bloc) {
+        expect(bloc.state.inviteLink, isNull, reason: 'a QR the server will refuse survived because the read after it failed');
+        expect(bloc.state.inviteFailed, isFalse, reason: 'the invite error survived the pairing it was asking for');
+      },
+    );
+
+    blocTest<DevicesBloc, DevicesState>(
+      'a device joining takes the invite ERROR down too, on both paths',
+      // "Couldn't create an invite." has no dismiss control of its own, and a
+      // device has just joined - the outcome the failed request was asking for.
+      // Both self-started reads reach this decision, and for a while only one
+      // of them acted on it: the event path cleared the error, the reconnect
+      // path left it up for good.
+      build: () {
+        when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
+        when(
+          devices.inviteDevice(),
+        ).thenAnswer((_) async => const RepositoryResult<String>.error(exception: RepositoryException.connection));
+        return DevicesBloc();
+      },
+      act: (bloc) async {
+        bloc.add(const DevicesEvent.initialize());
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        bloc.add(const DevicesEvent.inviteRequested());
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect(bloc.state.inviteFailed, isTrue, reason: 'the failed invite raised no notice to begin with');
+        when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone, tablet]));
+        paired.add(null);
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      },
+      verify: (bloc) => expect(bloc.state.inviteFailed, isFalse, reason: 'the invite error outlived the pairing it was asking for'),
+    );
+
+    blocTest<DevicesBloc, DevicesState>(
       'and a new invite can still be minted afterwards',
       build: () {
         when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
@@ -486,6 +547,32 @@ void main() {
         expect(bloc.state.devices, hasLength(2));
         expect(bloc.state.inviteLink, isNull, reason: 'the spent QR survived the reconnect that revealed the new device');
       },
+    );
+
+    blocTest<DevicesBloc, DevicesState>(
+      'a reconnect that reveals a new device clears the invite error as well',
+      // The same decision as on the event path. The event does not survive a
+      // disconnect, so this is the only way a person whose channel blinked ever
+      // gets that notice off the screen.
+      build: () {
+        when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
+        when(
+          devices.inviteDevice(),
+        ).thenAnswer((_) async => const RepositoryResult<String>.error(exception: RepositoryException.connection));
+        return DevicesBloc();
+      },
+      act: (bloc) async {
+        bloc.add(const DevicesEvent.initialize());
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        bloc.add(const DevicesEvent.inviteRequested());
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect(bloc.state.inviteFailed, isTrue);
+        phase.emit(SessionPhase.connecting);
+        when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone, tablet]));
+        phase.emit(SessionPhase.live);
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      },
+      verify: (bloc) => expect(bloc.state.inviteFailed, isFalse, reason: 'the two self-started reads disagree about the invite error'),
     );
 
     blocTest<DevicesBloc, DevicesState>(
