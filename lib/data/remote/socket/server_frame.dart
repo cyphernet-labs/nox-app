@@ -75,6 +75,18 @@ class ServerEvent extends ServerFrame {
   /// connection rather than the shared world.
   static const String deviceRevoked = 'device.revoked';
 
+  /// Sent to the OTHER live connections of a person who has just added a
+  /// device (contract §8A). Seq 0 and not journal content, like the two above.
+  ///
+  /// Carries nothing: it says "the set of devices changed", not how, and the
+  /// receiver re-reads `device.list`. Anything in the payload would either
+  /// repeat what arrives a moment later or disagree with it.
+  ///
+  /// Does NOT survive a disconnect, and that is sound here: the device list is
+  /// always read from the server when the screen opens, so a device that was
+  /// offline simply learns the truth the next time somebody looks.
+  static const String devicePaired = 'device.paired';
+
   /// Sent to the OTHER live connections of a person who has just renamed
   /// (contract §8A). Also seq 0 and also not journal content, for the same
   /// reason: it describes who this connection is, not what happened in the

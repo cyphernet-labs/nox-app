@@ -18,6 +18,9 @@ Detail scaffold (back + title). Current device in its own group, marked `This de
 - A row shows the OS family and two moments (paired, last seen). The key itself is never shown: 32 base64 bytes look identical across rows. The exact hardware model is deliberately not collected.
 - `Revoke` opens a confirm dialog. Revoking the current device is a logout and says so in its own words.
 - Revocation applies immediately — the revoked device's live connection drops rather than waiting for its next attempt.
+- A device paired from elsewhere appears in the open list on its own (phase 038): the server says so, and the screen re-reads. Leaving the section and coming back is no longer how you find out.
+- The invite card disappears when a device joins — the token is one-shot and spent, and a QR the server will now refuse is worse than no QR.
+- The list is also re-read when the live channel comes back: the pairing event does not survive a disconnect, and the person whose connection blinked would otherwise keep a wrong list.
 - After a revoke the list is re-read from the server rather than edited locally.
 
 ## Copy (EN)

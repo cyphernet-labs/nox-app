@@ -1,6 +1,7 @@
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
+import 'package:nox_app/data/remote/socket/server_frame.dart';
 import 'package:nox_app/domain/model/device/device_model.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
@@ -9,6 +10,14 @@ import 'package:nox_app/general/pairing/device_keys.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 
 /// Devices over the live socket (contract §8A).
+///
+/// It also listens: `device.paired` is picked up HERE rather than in
+/// `SyncService`, which handles the other two off-journal events. Those two
+/// apply something to local storage — a revocation signs the person out, a
+/// rename writes the name into the session. The device list has no local
+/// storage at all, so there would be nothing to apply; a branch there would
+/// only be a channel from the sync loop up to the screen, which that loop does
+/// not have and should not grow.
 ///
 /// Deliberately NOT cache-first, unlike chats and messages: a stale list would
 /// offer to revoke a device that is already gone, and show one that was added
@@ -20,6 +29,9 @@ class DeviceRepositoryImpl with BaseRepositoryHelper implements DeviceRepository
 
   final NoxSocketClient _socket;
   final SessionRepository _session;
+
+  @override
+  Stream<void> watchDeviceListChanged() => _socket.events.where((event) => event.event == ServerEvent.devicePaired);
 
   @override
   Future<RepositoryResult<List<DeviceModel>>> getDevices() {

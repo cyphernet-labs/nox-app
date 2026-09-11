@@ -96,6 +96,12 @@ func (c *client) handlePair(cmd protocol.Command) {
 		return
 	}
 
+	// The other devices of this person learn about the new one here, and only
+	// here: nothing else on the wire says the set of devices changed. Before
+	// the reply rather than after it - the order does not matter to either
+	// side, and putting it here keeps the two exits of this function adjacent.
+	c.srv.announcePaired(res.UserID, c)
+
 	// Created is the whole reason this reply exists: it says whether the person
 	// was brought into being by THIS operation, which is what tells the client
 	// to offer the naming step. Computed from whether a row was inserted - not

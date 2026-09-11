@@ -243,6 +243,26 @@ func (c *wsClient) expectReply(id int) map[string]json.RawMessage {
 }
 
 // expectEvent reads frames until an event arrives and returns (seq, type, data).
+// expectJournalEvent is expectEvent for tests that assert on the shared world:
+// it skips off-journal frames (seq 0), which describe this connection or this
+// person rather than the journal and carry no cursor coordinate.
+//
+// Needed because hello() silently pairs a device when the caller did not supply
+// one, so a second or third connection in a test makes the earlier ones receive
+// device.paired. A test reading events positionally would otherwise fail on a
+// frame that has nothing to do with what it is checking.
+func (c *wsClient) expectJournalEvent() (int64, string, map[string]json.RawMessage) {
+	c.t.Helper()
+	for range 50 {
+		seq, name, data := c.expectEvent()
+		if seq != 0 {
+			return seq, name, data
+		}
+	}
+	c.t.Fatal("no journal event arrived")
+	return 0, "", nil
+}
+
 func (c *wsClient) expectEvent() (int64, string, map[string]json.RawMessage) {
 	c.t.Helper()
 	for range 50 {

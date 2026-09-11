@@ -42,7 +42,7 @@ func TestStoryThreeSlowClientDropped(t *testing.T) {
 	const flood = 120
 	for i := range flood {
 		sendText(t, anna, 100+i, chatID, fmt.Sprintf("f%d", i), body)
-		if seq, name, _ := observer.expectEvent(); name != protocol.EventMessageNew || seq != int64(2+i) {
+		if seq, name, _ := observer.expectJournalEvent(); name != protocol.EventMessageNew || seq != int64(2+i) {
 			t.Fatalf("observer frame %d = %s/%d, want message.new/%d", i, name, seq, 2+i)
 		}
 	}
@@ -50,7 +50,7 @@ func TestStoryThreeSlowClientDropped(t *testing.T) {
 	// The healthy client is unaffected: one more message lands in under 1s.
 	before := time.Now()
 	sendText(t, anna, 900, chatID, "probe", "after flood")
-	if seq, name, _ := observer.expectEvent(); name != protocol.EventMessageNew || seq != flood+2 {
+	if seq, name, _ := observer.expectJournalEvent(); name != protocol.EventMessageNew || seq != flood+2 {
 		t.Fatalf("probe frame = %s/%d, want message.new/%d", name, seq, flood+2)
 	}
 	if latency := time.Since(before); latency >= time.Second {

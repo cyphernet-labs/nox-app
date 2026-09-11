@@ -427,3 +427,117 @@ func (b *syncBuffer) String() string {
 	defer b.mu.Unlock()
 	return b.buf.String()
 }
+
+// inviteFrom mints a device invite on an already greeted connection and returns
+// the token, so the two tests below can share a setup without sharing a subject.
+func inviteFrom(t *testing.T, owner *wsClient, id int) string {
+	t.Helper()
+	reply := owner.expectOKAfter(id, fmt.Sprintf(`{"id":%d,"cmd":"device.invite","data":{}}`, id))
+	var got struct {
+		Token string `json:"token"`
+	}
+	mustUnmarshal(t, mustRaw(t, reply), &got)
+	if got.Token == "" {
+		t.Fatal("invite reply carried no token")
+	}
+	return got.Token
+}
+
+// The point of the phase: a device joining is news to the person's OTHER
+// devices, and to nobody else.
+//
+// Both halves are asserted, and the negative one is not decoration: a broadcast
+// that simply tells everyone would pass the positive half alone.
+func TestPairingTellsTheOtherDevicesAndNotTheOneThatJustJoined(t *testing.T) {
+	ts, srv := newTestServer(t)
+	dev, _ := claimDevice(t, ts, srv)
+
+	owner := dialWS(t, ts, srv)
+	owner.expectGreeting()
+	owner.greet(t, 1, dev, "")
+	token := inviteFrom(t, owner, 2)
+
+	// Kept open, unlike pairDevice's connection: what this one does NOT receive
+	// is half the assertion.
+	joiner := newDevice(t)
+	c := dialWS(t, ts, srv)
+	c.expectGreeting()
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"device_key":%q,"platform":"test"}}`, token, joiner.pub))
+
+	// announcePaired runs BEFORE the reply is written, so a connection wrongly
+	// included would see the event ahead of its own answer. Reading the raw
+	// frame rather than expectReply, which skips events and would hide exactly
+	// the mistake this is looking for.
+	first := c.read()
+	if _, isEvent := first["event"]; isEvent {
+		t.Fatalf("the device that just joined was told about itself: %v", first)
+	}
+
+	// And the device that was already here finds out without asking.
+	seq, name, data := owner.expectEvent()
+	if name != protocol.EventDevicePaired || seq != 0 {
+		t.Fatalf("event = %s/%d, want %s/0", name, seq, protocol.EventDevicePaired)
+	}
+	if len(data) != 0 {
+		t.Fatalf("device.paired carries %v, want an empty object", data)
+	}
+}
+
+// Principle I on a frame nobody thinks to look at: the event must not carry the
+// token that was just spent or the key of the device that joined.
+func TestThePairedEventCarriesNoCredentialAndNoKey(t *testing.T) {
+	ts, srv := newTestServer(t)
+	dev, _ := claimDevice(t, ts, srv)
+
+	owner := dialWS(t, ts, srv)
+	owner.expectGreeting()
+	owner.greet(t, 1, dev, "")
+	token := inviteFrom(t, owner, 2)
+
+	joiner := newDevice(t)
+	c := dialWS(t, ts, srv)
+	c.expectGreeting()
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"device_key":%q,"platform":"test"}}`, token, joiner.pub))
+	c.expectOK(1)
+
+	seq, name, data := owner.expectEvent()
+	if name != protocol.EventDevicePaired || seq != 0 {
+		t.Fatalf("event = %s/%d, want %s/0", name, seq, protocol.EventDevicePaired)
+	}
+	// Serialised back rather than inspected field by field: a field added later
+	// under any name is caught, which is the whole point of asking this way.
+	whole, err := json.Marshal(map[string]any{"seq": seq, "event": name, "data": data})
+	if err != nil {
+		t.Fatalf("marshal the event back: %v", err)
+	}
+	if strings.Contains(string(whole), token) {
+		t.Fatalf("device.paired carries the spent token: %s", whole)
+	}
+	if strings.Contains(string(whole), joiner.pub) {
+		t.Fatalf("device.paired carries the new device key: %s", whole)
+	}
+}
+
+// The claim is the one pairing with nobody to tell: it is only allowed while no
+// device exists, so there is no live connection of this person to find.
+func TestClaimingAnEmptyServerAnnouncesToNobody(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+	if _, err := srv.store.EnsureServerIdentity(ctx); err != nil {
+		t.Fatalf("EnsureServerIdentity: %v", err)
+	}
+	token, err := srv.store.IssueClaimToken(ctx, time.Now().Unix())
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+
+	first := newDevice(t)
+	c := dialWS(t, ts, srv)
+	c.expectGreeting()
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"device_key":%q,"platform":"test"}}`, token, first.pub))
+
+	frame := c.read()
+	if _, isEvent := frame["event"]; isEvent {
+		t.Fatalf("claiming an empty server produced an event: %v", frame)
+	}
+}

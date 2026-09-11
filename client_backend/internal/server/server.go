@@ -245,6 +245,54 @@ func (s *Server) refreshLabel(userID, label string, origin *client) {
 	}
 }
 
+// announcePaired tells a person's OTHER live connections that a device has just
+// been added, so an open device list refreshes itself instead of showing a
+// stale one until somebody leaves the screen and comes back.
+//
+// Shaped after refreshLabel and NOT after dropDevice: the two answer different
+// questions. dropDevice looks for the connections holding ONE KEY and closes
+// them; this needs every connection of ONE PERSON, left running. Only the frame
+// shape is shared with the revocation.
+//
+// Collected under s.mu and sent outside it, for refreshLabel's reason:
+// sendFrame writes to a bounded queue, and a full one under the registry lock
+// would hold up every other connection of every other person.
+//
+// origin never matches today, and the parameter is still not dead. The
+// connection that just paired has NOT greeted - handlePair refuses an
+// already-greeted one - so its identity.UserID is empty and it falls outside
+// the filter by itself. The exclusion states the intent, and is the safety net
+// for the day `pair` learns to run on a greeted connection.
+//
+// Inherited with the shape: a connection in the MIDDLE of greeting also has an
+// empty identity.UserID, because the greeting reads the person from the store
+// and writes it to the connection a few lines later. Such a connection misses
+// this event - and reads the list when its screen opens, which is where every
+// device that was offline ends up anyway. It is the same window the rename
+// carries (see client_backend/CLAUDE.md), and it closes here when it closes
+// there.
+func (s *Server) announcePaired(userID string, origin *client) {
+	s.mu.Lock()
+	notify := make([]*client, 0, 1)
+	for c := range s.conns {
+		if c.identity.UserID == userID && c != origin {
+			notify = append(notify, c)
+		}
+	}
+	s.mu.Unlock()
+
+	if len(notify) == 0 {
+		return
+	}
+	// Empty on purpose (contract §8A): the event says the set of devices
+	// changed, not how, and the receiver re-reads device.list. A device key here
+	// would be a public key on a frame nobody reads it from, and a spent token
+	// would be a credential.
+	for _, c := range notify {
+		c.sendFrame(protocol.Event{Seq: 0, Event: protocol.EventDevicePaired, Data: json.RawMessage(`{}`)})
+	}
+}
+
 // setDeviceKey records which key a connection authenticated with, under the
 // same lock dropDevice reads it through.
 func (s *Server) setDeviceKey(c *client, key string) {
