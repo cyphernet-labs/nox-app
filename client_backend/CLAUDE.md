@@ -93,7 +93,8 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
    deliberate exception: `Server.mu` guards `conns` and the per-connection
    fields other connections read (identity, device key), because the
    fan-out helpers walk one person's connections from another's goroutine.
-   `Server.claim` and the token bucket hold the only other two.
+   `Server.claim` and the transfer-token store (`internal/server/tokens.go`)
+   hold the only other two.
 8. **One reader goroutine per connection** (library invariant); writes
    to a client go through its buffered channel (~16 frames); overflow →
    `Close(StatusPolicyViolation)` — replay heals the client on

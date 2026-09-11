@@ -9,6 +9,7 @@ import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/device/device_model.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
+import 'package:nox_app/domain/repository/app/auth_repository.dart';
 import 'package:nox_app/domain/repository/device/device_repository.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
@@ -16,13 +17,14 @@ import 'package:nox_app/presentation/pages/devices_page/bloc/devices_bloc.dart';
 
 import 'devices_bloc_test.mocks.dart';
 
-@GenerateMocks([DeviceRepository])
+@GenerateMocks([DeviceRepository, AuthRepository])
 void main() {
   provideDummy<RepositoryResult<List<DeviceModel>>>(const RepositoryResult<List<DeviceModel>>.success(data: []));
   provideDummy<RepositoryResult<bool>>(const RepositoryResult<bool>.success(data: true));
   provideDummy<RepositoryResult<String>>(const RepositoryResult<String>.success(data: ''));
 
   late MockDeviceRepository devices;
+  late MockAuthRepository auth;
   // Drives the "another device was paired" signal. A controller rather than a
   // fixed stream because the tests below need to decide WHEN it fires.
   late StreamController<void> paired;
@@ -54,6 +56,11 @@ void main() {
     await configureDependencies(Environment.test);
     getIt.allowReassignment = true;
     devices = MockDeviceRepository();
+    auth = MockAuthRepository();
+    // The self-revoke path goes through logout, and the test environment's real
+    // one answers with a MissingStubError - which looks exactly like a failure
+    // the screen is supposed to report, so it has to be said out loud here.
+    when(auth.logout()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
     paired = StreamController<void>.broadcast();
     // Stubbed for EVERY test, not only the ones that use it: the bloc
     // subscribes during initialize, and mockito cannot invent a Stream — an
@@ -61,6 +68,7 @@ void main() {
     // with pairing.
     when(devices.watchDeviceListChanged()).thenAnswer((_) => paired.stream);
     getIt.registerSingleton<DeviceRepository>(devices);
+    getIt.registerSingleton<AuthRepository>(auth);
   });
   tearDown(() async {
     await paired.close();
@@ -426,6 +434,33 @@ void main() {
       verify: (_) => verify(devices.getDevices()).called(1),
     );
     blocTest<DevicesBloc, DevicesState>(
+      'a reconnect that reads nothing is not an error on screen',
+      // The channel coming back is not a question the person asked. A read it
+      // starts that fails must leave the screen exactly as it found it - the
+      // list from before is still the last thing the server actually said, and
+      // an error over it would blame the person's own reconnection.
+      build: () {
+        when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone, tablet]));
+        return DevicesBloc();
+      },
+      act: (bloc) async {
+        bloc.add(const DevicesEvent.initialize());
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        when(
+          devices.getDevices(),
+        ).thenAnswer((_) async => const RepositoryResult<List<DeviceModel>>.error(exception: RepositoryException.connection));
+        phase.emit(SessionPhase.connecting);
+        phase.emit(SessionPhase.live);
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      },
+      verify: (bloc) {
+        verify(devices.getDevices()).called(2);
+        expect(bloc.state.failed, isFalse, reason: 'a read nobody asked for reported itself as a screen-level failure');
+        expect(bloc.state.devices, hasLength(2), reason: 'the list we still had was thrown away');
+      },
+    );
+
+    blocTest<DevicesBloc, DevicesState>(
       'a device that joined while we were away takes the dead QR with it',
       // The live event cannot reach a connection that is down, so the only
       // evidence of the pairing is that the list grew. Without acting on that,
@@ -605,6 +640,56 @@ void main() {
     );
 
     blocTest<DevicesBloc, DevicesState>(
+      'the notice goes when the device it is about leaves the list',
+      // A revoke whose reply was lost still happened, and the next list says
+      // so. Keeping the notice then is worse than useless: the row it refers to
+      // is gone, the only way to "try again" is that row's own button, and the
+      // sentence would sit there until the person left the section.
+      build: () {
+        when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone, tablet]));
+        when(
+          devices.revoke(deviceKey: anyNamed('deviceKey')),
+        ).thenAnswer((_) async => const RepositoryResult<bool>.error(exception: RepositoryException.connection));
+        return DevicesBloc();
+      },
+      act: (bloc) async {
+        bloc.add(const DevicesEvent.initialize());
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        bloc.add(const DevicesEvent.revokeRequested('k-tablet'));
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect(bloc.state.actionFailed, isTrue, reason: 'the failed revoke raised no notice to begin with');
+        // The server had applied it after all, and the next read shows that.
+        when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
+        paired.add(null);
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      },
+      verify: (bloc) =>
+          expect(bloc.state.actionFailedKey, isNull, reason: 'the notice outlived the device it named, with no row left to try again on'),
+    );
+
+    blocTest<DevicesBloc, DevicesState>(
+      'a logout that fails is reported like any other revoke that did not happen',
+      // Revoking THIS device is a logout, and a logout that does not wipe
+      // leaves the person signed in with data that should be gone. Silence
+      // there reads as "it worked".
+      build: () {
+        when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone, tablet]));
+        when(auth.logout()).thenAnswer((_) async => const RepositoryResult<bool>.error(exception: RepositoryException.unknown));
+        return DevicesBloc();
+      },
+      act: (bloc) async {
+        bloc.add(const DevicesEvent.initialize());
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        bloc.add(const DevicesEvent.revokeRequested('k-phone'));
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      },
+      verify: (bloc) {
+        expect(bloc.state.actionFailedKey, 'k-phone', reason: 'a logout that failed said nothing at all');
+        verifyNever(devices.revoke(deviceKey: 'k-phone'));
+      },
+    );
+
+    blocTest<DevicesBloc, DevicesState>(
       'a revoke that works and then cannot be confirmed says so',
       // The third case, and the reason the read carries a cause rather than a
       // flag. This read shows no spinner, like one nobody asked for - and MUST
@@ -748,6 +833,34 @@ void main() {
       expect(paired.hasListener, isFalse, reason: 'the socket keeps a dead screen alive for the rest of the process');
     });
 
+    test('including the phase stream, which the socket owns', () async {
+      final phase = _FakePhase(SessionPhase.live);
+      getIt.registerSingleton<SessionPhaseService>(phase);
+      when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
+      final bloc = DevicesBloc();
+      bloc.add(const DevicesEvent.initialize());
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(phase.watched, isTrue, reason: 'the screen never subscribed, so this proves nothing');
+
+      await bloc.close();
+
+      expect(phase.watched, isFalse, reason: 'a phase subscription outlived the screen that made it');
+    });
+
+    test('a pairing that lands as the screen closes is not an error', () async {
+      when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
+      final bloc = DevicesBloc();
+      bloc.add(const DevicesEvent.initialize());
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      // Queued, then the section closes before the handler runs: the bloc
+      // drains what it already has, and the re-read it would start lands on a
+      // closed bloc.
+      bloc.add(const DevicesEvent.deviceListChanged());
+      await bloc.close();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    });
+
     test('a read that lands after it is gone subscribes to nothing', () async {
       when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
       final bloc = DevicesBloc();
@@ -797,6 +910,10 @@ class _FakePhase implements SessionPhaseService {
     _phase = next;
     _controller.add(next);
   }
+
+  /// Whether the bloc is still listening. The teardown asserts on it: a phase
+  /// subscription left behind outlives the screen on a stream the socket owns.
+  bool get watched => _controller.hasListener;
 
   @override
   SessionPhase get phase => _phase;

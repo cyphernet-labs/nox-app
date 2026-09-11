@@ -260,17 +260,19 @@ func (c *client) handleIdentitySetLabel(cmd protocol.Command) {
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to set the label"))
 		return
 	}
+	c.sendFrame(protocol.OKReply(cmd.ID, setLabelReply{Label: label}))
+
 	// Every live connection of this person, not just the one that asked. The
 	// name is copied into `messages.author_label` at send time and frozen
 	// there, so a second device left with a stale identity would stamp the OLD
 	// name into history permanently. The others are told as well: a stable
 	// socket never re-greets, so without the event they would show the old name
 	// until something happened to reconnect them.
-	c.sendFrame(protocol.OKReply(cmd.ID, setLabelReply{Label: label}))
-	// After the reply, for the reason `pair` and `device.revoke` do it that way:
-	// send blocks on a full write queue until that connection's context is
-	// cancelled, so a fan-out ahead of the answer puts the caller behind a
-	// stranger's backlog. Nothing in the reply depends on the fan-out - the
-	// label it echoes is the one that was just written to the store.
+	//
+	// After the reply, the way `pair` and `device.revoke` do it: send blocks on
+	// a full write queue until that connection's context is cancelled, so a
+	// fan-out ahead of the answer puts the caller behind a stranger's backlog.
+	// Nothing in the reply depends on this - the label it echoes is the one
+	// already written to the store.
 	c.srv.refreshLabel(c.identity.UserID, label, c)
 }

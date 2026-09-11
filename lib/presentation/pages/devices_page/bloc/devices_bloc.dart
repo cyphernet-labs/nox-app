@@ -41,7 +41,10 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
     on<DevicesInviteRequested>(_onInviteRequested);
     on<DevicesInviteDismissed>((_, emit) => emit(state.copyWith(inviteLink: null, inviteFailed: false)));
     on<DevicesDeviceListChanged>(_onDeviceListChanged);
-    on<DevicesConnectionRestored>((_, _) => add(const DevicesEvent.initialize(cause: DevicesReadCause.noticed)));
+    on<DevicesConnectionRestored>((_, _) {
+      if (isClosed) return;
+      add(const DevicesEvent.initialize(cause: DevicesReadCause.noticed));
+    });
   }
 
   DeviceRepository? get _repository => getIt.isRegistered<DeviceRepository>() ? getIt<DeviceRepository>() : null;
@@ -71,7 +74,11 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
     // when there is nothing to look at. Every other read leaves the list up
     // while the new one is fetched - the screen would otherwise strobe on a
     // flapping link, and go blank under a person watching a device disappear.
-    if (event.cause == DevicesReadCause.opened) emit(state.copyWith(loading: true, failed: false, actionFailedKey: null));
+    // Nothing to clear alongside it: `opened` is dispatched once, from
+    // initState, on a bloc built a line earlier, so `failed` is already false
+    // and `actionFailedKey` already null. Clearing them here would be two lines
+    // no test could ever tell from their absence.
+    if (event.cause == DevicesReadCause.opened) emit(state.copyWith(loading: true));
     final repository = _repository;
     if (repository == null) {
       // Mock flavors have no live channel and therefore no devices to show.
@@ -127,7 +134,22 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
         // path shows the new device and the dead QR above it at the same time.
         final joined = devices.any((d) => !knownKeys.contains(d.deviceKey));
         final spent = joined && state.inviteLink == inviteAtStart;
-        emit(state.copyWith(loading: false, devices: devices, failed: false, inviteLink: spent ? null : state.inviteLink));
+        // The notice about a revoke that did not work cannot outlive the device
+        // it is about. A revoke whose reply was lost still happened, and the
+        // next list says so: with the row gone there is nothing left to try
+        // again on - the only way to retry is the row's own button - and the
+        // sentence would sit there, permanently true-sounding and permanently
+        // wrong, until the person left the section.
+        final stillListed = devices.any((d) => d.deviceKey == state.actionFailedKey);
+        emit(
+          state.copyWith(
+            loading: false,
+            devices: devices,
+            failed: false,
+            inviteLink: spent ? null : state.inviteLink,
+            actionFailedKey: stillListed ? state.actionFailedKey : null,
+          ),
+        );
       },
       // A read NOBODY ASKED FOR leaves the screen as it found it — it neither
       // raises the error nor lowers one that is already up. A read the person
@@ -163,11 +185,11 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
   /// server will now refuse, and the refusal reads as the app being broken.
   Future<void> _onDeviceListChanged(DevicesDeviceListChanged event, Emitter<DevicesState> emit) async {
     emit(state.copyWith(inviteLink: null, inviteFailed: false));
-    // No isClosed guard here, unlike the two stream listeners above and the
-    // revoke below: this add() runs INSIDE a handler, on the event loop the
-    // bloc is draining, so close() cannot land between the check and the call.
-    // The guards elsewhere are on continuations that resume from an await or
-    // from a stream the screen does not own.
+    // isClosed like every other add() in this class. The first draft argued
+    // this one was safe because it runs inside a handler - and the argument was
+    // wrong: an event queued before close() is still delivered to its handler
+    // while the bloc drains, and the add() below then lands on a closed one.
+    if (isClosed) return;
     add(const DevicesEvent.initialize(cause: DevicesReadCause.noticed));
   }
 

@@ -601,9 +601,12 @@ func TestTheAnnouncementSkipsTheConnectionItCameFrom(t *testing.T) {
 // goroutine, just a queue to look into afterwards. It is how a test asks what
 // the fan-out DID rather than what a device saw.
 //
-// It is removed from the registry on cleanup and carries a real logger, because
-// a half-built client left in s.conns is a nil dereference waiting for the day
-// something walks the registry and touches more than the identity.
+// It carries a real logger and is removed from the registry on cleanup, and the
+// ORDER of that cleanup is what keeps it safe: stubClient is called after
+// newTestServer, so its t.Cleanup runs before the one that closes the stack.
+// CloseConnections would dereference the nil conn - a test that calls it
+// directly, or a stack that learns to shut down through Config.Shutdown, needs
+// this entry gone first.
 func stubClient(t *testing.T, srv *Server, userID string, queue int) *client {
 	t.Helper()
 	c := &client{
