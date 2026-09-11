@@ -69,6 +69,29 @@ func (c *wsClient) read() map[string]json.RawMessage {
 	return frame
 }
 
+// expectNoFrame asserts that NOTHING arrives within d.
+//
+// The wait is what makes this an assertion rather than a hope: a frame the
+// server means to send goes out immediately after the one before it, so a
+// window of silence is the only way to say "and nothing else".
+//
+// It leaves the connection unusable - a read that times out tears the
+// transport down - so it belongs at the end of a test and on a client nothing
+// else will speak to.
+func (c *wsClient) expectNoFrame(d time.Duration) {
+	c.t.Helper()
+	rctx, cancel := context.WithTimeout(c.ctx, d)
+	defer cancel()
+	// Any error is silence; only a frame is a failure. Insisting the error be
+	// the deadline is what the first cut did, and it flaked: when the window
+	// expires the library tears the transport down, and which of the two
+	// errors surfaces - the expired context or the closed connection - is a
+	// race between goroutines rather than anything about the assertion.
+	if _, raw, err := c.conn.Read(rctx); err == nil {
+		c.t.Fatalf("expected silence, got %s", raw)
+	}
+}
+
 // expectGreeting consumes the srv greeting frame and remembers the challenge,
 // which every later greeting on this connection has to sign.
 func (c *wsClient) expectGreeting() {

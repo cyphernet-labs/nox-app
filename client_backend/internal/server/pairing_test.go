@@ -14,6 +14,7 @@ import (
 	"github.com/coder/websocket"
 
 	"nox.app/client-backend/internal/protocol"
+	"nox.app/client-backend/internal/store"
 )
 
 func TestPairClaimCreatesThePersonAndRefusesASecondClaim(t *testing.T) {
@@ -464,10 +465,9 @@ func TestPairingTellsTheOtherDevicesAndNotTheOneThatJustJoined(t *testing.T) {
 	c.expectGreeting()
 	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"device_key":%q,"platform":"test"}}`, token, joiner.pub))
 
-	// announcePaired runs BEFORE the reply is written, so a connection wrongly
-	// included would see the event ahead of its own answer. Reading the raw
-	// frame rather than expectReply, which skips events and would hide exactly
-	// the mistake this is looking for.
+	// Raw frames, not expectReply: that helper SKIPS events, which is exactly
+	// the mistake being looked for here. The reply comes first (the fan-out
+	// runs after it), and then nothing at all.
 	first := c.read()
 	if _, isEvent := first["event"]; isEvent {
 		t.Fatalf("the device that just joined was told about itself: %v", first)
@@ -481,6 +481,91 @@ func TestPairingTellsTheOtherDevicesAndNotTheOneThatJustJoined(t *testing.T) {
 	if len(data) != 0 {
 		t.Fatalf("device.paired carries %v, want an empty object", data)
 	}
+
+	// Last, because it spends the connection: the owner has its event by now,
+	// so anything still on its way to the joiner would have arrived.
+	c.expectNoFrame(300 * time.Millisecond)
+}
+
+// The event is addressed to the connections of ONE PERSON, and the filter that
+// does that is the only thing keeping it off a connection that has not said who
+// it is - the pairing screen of some other install, dialled in and waiting.
+//
+// Worth its own test because the exclusion of the joining connection hides it:
+// a fan-out to EVERYONE except the sender passes every other test in this file.
+func TestThePairedEventGoesOnlyToConnectionsOfThisPerson(t *testing.T) {
+	ts, srv := newTestServer(t)
+	dev, _ := claimDevice(t, ts, srv)
+
+	owner := dialWS(t, ts, srv)
+	owner.expectGreeting()
+	owner.greet(t, 1, dev, "")
+	token := inviteFrom(t, owner, 2)
+
+	// Dialled, greeted BY the server, and silent ever since: identity.UserID is
+	// empty, so it belongs to nobody and must hear nothing.
+	bystander := dialWS(t, ts, srv)
+	bystander.expectGreeting()
+
+	joiner := newDevice(t)
+	c := dialWS(t, ts, srv)
+	c.expectGreeting()
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"device_key":%q,"platform":"test"}}`, token, joiner.pub))
+	c.expectOK(1)
+
+	// The owner first: it proves the fan-out ran at all, so the silence below
+	// is a filter doing its job rather than an event that never happened.
+	seq, name, _ := owner.expectEvent()
+	if name != protocol.EventDevicePaired || seq != 0 {
+		t.Fatalf("event = %s/%d, want %s/0", name, seq, protocol.EventDevicePaired)
+	}
+	bystander.expectNoFrame(300 * time.Millisecond)
+}
+
+// The answer to `pair` must not be able to queue behind a stranger's backlog.
+//
+// A connection with a full write queue and a live context is not a contrivance:
+// it is where a slow consumer sits while its drop finishes the close handshake,
+// and send() waits there until the context is cancelled. Announcing before
+// replying puts the joining device's answer behind that wait - on a command
+// that has already burned a one-shot token and written the device row, so the
+// client times out on work the server has committed.
+func TestTheJoiningDeviceIsAnsweredEvenWhileAnotherConnectionIsWedged(t *testing.T) {
+	ts, srv := newTestServer(t)
+	dev, _ := claimDevice(t, ts, srv)
+
+	owner := dialWS(t, ts, srv)
+	owner.expectGreeting()
+	owner.greet(t, 1, dev, "")
+	token := inviteFrom(t, owner, 2)
+
+	var userID string
+	srv.mu.Lock()
+	for conn := range srv.conns {
+		if conn.identity.UserID != "" {
+			userID = conn.identity.UserID
+		}
+	}
+	srv.mu.Unlock()
+	if userID == "" {
+		t.Fatal("the greeted connection has no identity, so this test cannot build its twin")
+	}
+
+	wedged := &client{srv: srv, out: make(chan []byte, 1), identity: store.Identity{UserID: userID}}
+	wedged.ctx, wedged.cancel = context.WithCancel(context.Background())
+	t.Cleanup(wedged.cancel)
+	wedged.out <- []byte("{}") // full from here on
+	srv.mu.Lock()
+	srv.conns[wedged] = struct{}{}
+	srv.mu.Unlock()
+
+	joiner := newDevice(t)
+	c := dialWS(t, ts, srv)
+	c.expectGreeting()
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"device_key":%q,"platform":"test"}}`, token, joiner.pub))
+	// Fails by timing out rather than by comparing anything: with the fan-out
+	// first, this reply is behind a queue nobody is draining.
+	c.expectOK(1)
 }
 
 // Principle I on a frame nobody thinks to look at: the event must not carry the
@@ -531,6 +616,12 @@ func TestClaimingAnEmptyServerAnnouncesToNobody(t *testing.T) {
 		t.Fatalf("IssueClaimToken: %v", err)
 	}
 
+	// A second connection that is simply there. Without it this test watches
+	// only the claiming connection, which every version of the fan-out excludes
+	// anyway - so it would assert nothing at all.
+	bystander := dialWS(t, ts, srv)
+	bystander.expectGreeting()
+
 	first := newDevice(t)
 	c := dialWS(t, ts, srv)
 	c.expectGreeting()
@@ -540,4 +631,5 @@ func TestClaimingAnEmptyServerAnnouncesToNobody(t *testing.T) {
 	if _, isEvent := frame["event"]; isEvent {
 		t.Fatalf("claiming an empty server produced an event: %v", frame)
 	}
+	bystander.expectNoFrame(300 * time.Millisecond)
 }

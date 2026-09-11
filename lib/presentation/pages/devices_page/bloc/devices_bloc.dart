@@ -77,6 +77,11 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
       emit(state.copyWith(loading: false, devices: const <DeviceModel>[]));
       return;
     }
+    // The screen can be gone before a queued read gets this far - close()
+    // cancels the subscriptions that exist at the time, and one made after it
+    // would outlive the bloc, holding it and the socket's long-lived event
+    // stream alive for the rest of the process.
+    if (isClosed) return;
     // Subscribed here rather than in the constructor, for the same reason the
     // repository is resolved here: it exists only on the live environment, and
     // a mock flavour has nothing to listen to.
@@ -174,8 +179,10 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
     if (state.devices.any((d) => d.isCurrent && d.deviceKey == event.deviceKey)) {
       final out = await authRepository.logout();
       // A failed wipe leaves the person signed in with data that should be
-      // gone. Settings surfaces the same failure; so does this.
-      if (!out.hasData) emit(state.copyWith(actionFailed: true));
+      // gone. Settings surfaces the same failure; so does this. isClosed for
+      // the same reason as below - a logout that takes a while outlives the
+      // screen that asked for it, and it moves the navigation itself.
+      if (!out.hasData && !isClosed) emit(state.copyWith(actionFailed: true));
       return;
     }
 
@@ -183,7 +190,24 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
     // Re-read rather than removing the row locally: the server is the authority
     // on what is still allowed, and a revoke that silently failed would
     // otherwise leave a device looking gone while it is still connecting.
-    result.match<void>(onData: (_) => add(const DevicesEvent.initialize()), onError: (_) => emit(state.copyWith(actionFailed: true)));
+    //
+    // refresh: true, like every other read this screen starts by itself. A
+    // plain initialize raises the spinner - the list the person is watching
+    // change is replaced by a blank pane - and clears `actionFailed`, which
+    // with sequential() can land on a NOTICE ABOUT A DIFFERENT DEVICE: revoke
+    // A (it works, its re-read queues behind a background one), revoke B (it
+    // fails, the notice goes up), and A's re-read then wipes B's notice while
+    // B stays authorised.
+    //
+    // isClosed, because both arms run on the far side of an await: leaving the
+    // section while a revoke is in flight would otherwise add an event to - or
+    // emit from - a closed bloc, which throws into the zone guard rather than
+    // anywhere a person could see.
+    if (isClosed) return;
+    result.match<void>(
+      onData: (_) => add(const DevicesEvent.initialize(refresh: true)),
+      onError: (_) => emit(state.copyWith(actionFailed: true)),
+    );
   }
 
   Future<void> _onInviteRequested(DevicesInviteRequested event, Emitter<DevicesState> emit) async {

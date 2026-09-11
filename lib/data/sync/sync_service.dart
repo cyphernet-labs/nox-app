@@ -122,16 +122,13 @@ class SyncService {
         await _applyOwnLabel(event.data);
         return;
       }
-      // A device of this person was just paired. Nothing to apply: the device
-      // list is never cached, so there is no local state to bring up to date —
-      // DeviceRepository watches this same stream and the open screen re-reads
-      // from the server.
+      // device.paired is deliberately absent from this file. Nothing here can
+      // apply it: the device list is never cached, so there is no local state
+      // to bring up to date — DeviceRepository watches this same stream and the
+      // open screen re-reads from the server. It carries seq 0 and is dropped
+      // by the guard below like any other duplicate; a handler that only
+      // returned would be a line nothing could ever tell from a missing one.
       //
-      // Listed anyway, ahead of the cursor guard, because silence here is
-      // indistinguishable from a forgotten handler: seq 0 would be dropped as a
-      // duplicate and the reader would have no way to tell deliberate from
-      // overlooked.
-      if (event.event == ServerEvent.devicePaired) return;
       // Duplicates are allowed at the replay/live boundary (§3) — the cursor is
       // what tells them apart, so anything at or below it has been applied.
       if (event.seq <= await _syncRepository.getCursor()) return;

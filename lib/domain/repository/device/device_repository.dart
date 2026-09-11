@@ -24,8 +24,16 @@ abstract interface class DeviceRepository {
   /// second one.
   ///
   /// LIVE, not durable: a device that was offline when it happened hears
-  /// nothing. It does not need to — the list is read from the server whenever
-  /// the screen opens, so the truth is one glance away.
+  /// nothing, and nothing replays it afterwards. That is survivable rather than
+  /// harmless. A device that comes BACK to this screen reads the list from the
+  /// server and sees the truth at once; a screen that was already open when the
+  /// channel dropped is the case this signal cannot reach, and it is covered
+  /// instead by re-reading when the channel returns.
+  ///
+  /// It can also fire when nothing changed: a device whose `pair` reply was
+  /// lost retries with the same token, and the server announces again. Nothing
+  /// is carried and the answer is a re-read, so a repeat costs one list read
+  /// and says the same true thing twice.
   Stream<void> watchDeviceListChanged();
 
   /// Sends the person's new name to the server.

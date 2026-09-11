@@ -258,11 +258,14 @@ func (s *Server) refreshLabel(userID, label string, origin *client) {
 // sendFrame writes to a bounded queue, and a full one under the registry lock
 // would hold up every other connection of every other person.
 //
-// origin never matches today, and the parameter is still not dead. The
-// connection that just paired has NOT greeted - handlePair refuses an
-// already-greeted one - so its identity.UserID is empty and it falls outside
-// the filter by itself. The exclusion states the intent, and is the safety net
-// for the day `pair` learns to run on a greeted connection.
+// origin is a live exclusion, not a statement of intent. It is easy to read
+// the code as one - handlePair refuses an already-greeted connection, so the
+// pairing device usually has no identity to match on - but "greeted" and "has
+// an identity" are two different marks, and handleSessionHello sets the second
+// several steps before the first: a greeting that fails on the journal id or
+// the cursor leaves identity.UserID written and helloDone false, and dispatch
+// still admits `pair` on that connection. Then origin DOES match, and without
+// this it would be told about its own pairing.
 //
 // Inherited with the shape: a connection in the MIDDLE of greeting also has an
 // empty identity.UserID, because the greeting reads the person from the store

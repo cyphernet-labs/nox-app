@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:injectable/injectable.dart';
+import 'package:injectable/injectable.dart' show Environment;
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
@@ -574,6 +574,151 @@ void main() {
       // And it comes back, because this one failed too.
       verify: (bloc) => expect(bloc.state.actionFailed, isTrue),
     );
+  });
+
+  group('a revoke and the reads around it (038)', () {
+    blocTest<DevicesBloc, DevicesState>(
+      'a revoke that works does not blank the screen either',
+      // The re-read a revoke starts is a read the screen started by itself,
+      // like the other two, and must behave like them. A plain initialize
+      // raises the spinner, and the person watching a device disappear gets a
+      // blank pane instead of the list it disappeared from.
+      build: () {
+        when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone, tablet]));
+        when(devices.revoke(deviceKey: anyNamed('deviceKey'))).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
+        return DevicesBloc();
+      },
+      act: (bloc) async {
+        bloc.add(const DevicesEvent.initialize());
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
+        bloc.add(const DevicesEvent.revokeRequested('k-tablet'));
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      },
+      // Three states, and the spinner is in the first only - a fourth with
+      // `loading` would be the blank pane.
+      expect: () => [
+        predicate<DevicesState>((s) => s.loading, 'the opening load shows a spinner'),
+        predicate<DevicesState>((s) => !s.loading && s.devices.length == 2, 'the list arrives'),
+        predicate<DevicesState>((s) => !s.loading && s.devices.length == 1, 'the revoked device leaves, with no blank in between'),
+      ],
+    );
+
+    blocTest<DevicesBloc, DevicesState>(
+      'a re-read queued by one revoke does not answer for another that failed',
+      // The worst shape of the same defect. The re-read a SUCCESSFUL revoke
+      // starts is queued behind whatever is in flight, and if it clears the
+      // notice, it clears the one a DIFFERENT revoke just raised - the device
+      // that failed to be cut off stays listed, stays authorised, and the
+      // screen says nothing.
+      build: () {
+        when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone, tablet, laptop]));
+        when(devices.revoke(deviceKey: anyNamed('deviceKey'))).thenAnswer((invocation) async {
+          final key = invocation.namedArguments[#deviceKey] as String;
+          return key == 'k-laptop'
+              ? const RepositoryResult<bool>.error(exception: RepositoryException.connection)
+              : const RepositoryResult<bool>.success(data: true);
+        });
+        return DevicesBloc();
+      },
+      act: (bloc) async {
+        bloc.add(const DevicesEvent.initialize());
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        // A slow background read, so the revoke's own re-read has to queue.
+        when(devices.getDevices()).thenAnswer((_) async {
+          await Future<void>.delayed(const Duration(milliseconds: 80));
+          return RepositoryResult<List<DeviceModel>>.success(data: [phone, laptop]);
+        });
+        paired.add(null);
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        bloc.add(const DevicesEvent.revokeRequested('k-tablet'));
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        bloc.add(const DevicesEvent.revokeRequested('k-laptop'));
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+      },
+      verify: (bloc) => expect(
+        bloc.state.actionFailed,
+        isTrue,
+        reason: 'a re-read started by a different revoke wiped the notice about the one that failed',
+      ),
+    );
+
+    blocTest<DevicesBloc, DevicesState>(
+      'the slower of two reads does not get the last word',
+      // What sequential() is for. Two reads can be in flight at once - the
+      // person's own and one the screen started - and unordered, the slower
+      // answer lands last and a stale list overwrites a fresher one.
+      build: () {
+        var call = 0;
+        when(devices.getDevices()).thenAnswer((_) async {
+          call++;
+          if (call == 1) {
+            await Future<void>.delayed(const Duration(milliseconds: 120));
+            return RepositoryResult<List<DeviceModel>>.success(data: [phone]);
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+          return RepositoryResult<List<DeviceModel>>.success(data: [phone, tablet]);
+        });
+        return DevicesBloc();
+      },
+      act: (bloc) async {
+        bloc.add(const DevicesEvent.initialize());
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        bloc.add(const DevicesEvent.initialize(refresh: true));
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+      },
+      verify: (bloc) => expect(
+        bloc.state.devices,
+        hasLength(2),
+        reason: 'the second read answered first and the first one overwrote it with a stale list',
+      ),
+    );
+  });
+
+  group('letting go of the screen (038)', () {
+    test('closing it lets go of the streams it listened to', () async {
+      when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
+      final bloc = DevicesBloc();
+      bloc.add(const DevicesEvent.initialize());
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(paired.hasListener, isTrue, reason: 'the screen never subscribed, so this proves nothing');
+
+      await bloc.close();
+
+      expect(paired.hasListener, isFalse, reason: 'the socket keeps a dead screen alive for the rest of the process');
+    });
+
+    test('a read that lands after it is gone subscribes to nothing', () async {
+      when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
+      final bloc = DevicesBloc();
+      // Closed before the queued read gets as far as subscribing: close()
+      // cancels what exists at the time, and a subscription made after it is
+      // cancelled by nobody.
+      bloc.add(const DevicesEvent.initialize());
+      await bloc.close();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(paired.hasListener, isFalse);
+    });
+
+    test('a revoke that outlives it is not an error', () async {
+      when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone, tablet]));
+      final answer = Completer<RepositoryResult<bool>>();
+      when(devices.revoke(deviceKey: anyNamed('deviceKey'))).thenAnswer((_) => answer.future);
+      final bloc = DevicesBloc();
+      bloc.add(const DevicesEvent.initialize());
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      bloc.add(const DevicesEvent.revokeRequested('k-tablet'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      // The person leaves Devices while the server is still thinking.
+      await bloc.close();
+      answer.complete(const RepositoryResult<bool>.success(data: true));
+      // Long enough for the handler to resume on the far side of its await and
+      // throw `Cannot add new events after calling close` into the zone, which
+      // fails this test.
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    });
   });
 }
 

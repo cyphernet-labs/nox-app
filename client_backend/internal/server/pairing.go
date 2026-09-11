@@ -96,12 +96,6 @@ func (c *client) handlePair(cmd protocol.Command) {
 		return
 	}
 
-	// The other devices of this person learn about the new one here, and only
-	// here: nothing else on the wire says the set of devices changed. Before
-	// the reply rather than after it - the order does not matter to either
-	// side, and putting it here keeps the two exits of this function adjacent.
-	c.srv.announcePaired(res.UserID, c)
-
 	// Created is the whole reason this reply exists: it says whether the person
 	// was brought into being by THIS operation, which is what tells the client
 	// to offer the naming step. Computed from whether a row was inserted - not
@@ -112,6 +106,25 @@ func (c *client) handlePair(cmd protocol.Command) {
 			Created:          res.Created,
 		},
 	}))
+
+	// The other devices of this person learn about the new one here, and only
+	// here: nothing else on the wire says the set of devices changed.
+	//
+	// AFTER the reply, the way device.revoke does it, and the order is
+	// load-bearing. send blocks on a full queue until that connection's context
+	// is cancelled, so announcing first puts this device's answer behind a
+	// stranger's backlog: one wedged connection of the same person - a slow
+	// consumer whose drop is still finishing its close handshake - and the
+	// device waits out the client's send timeout for a command that has already
+	// burned a one-shot token and written its row.
+	//
+	// It fires on a replayed pair too, where nothing changed: the store answers
+	// a device that spent this token before, and the handler cannot tell that
+	// from a first pass. The receiver re-reads either way, so the cost of the
+	// repeat is one list read - and the alternative, teaching the store to
+	// report a replay, spreads a pairing detail through a type the greeting
+	// shares. Written down in contract §8A rather than papered over.
+	c.srv.announcePaired(res.UserID, c)
 }
 
 type deviceListReply struct {
