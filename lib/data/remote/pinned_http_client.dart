@@ -55,14 +55,28 @@ class PinnedHttpClient {
   /// After a logout there is nothing this install is entitled to talk to. The
   /// fingerprint alone would not achieve that: connections already open are
   /// never re-checked.
+  ///
+  /// It hangs up on the HTTP half only. A live WebSocket detaches its socket
+  /// from this client at the 101 and is beyond reach here - `NoxSocketClient`
+  /// closes it, and `LiveSessionStarter.stop()` does that BEFORE calling this.
+  /// That order is the guarantee; this method is not a substitute for it.
   void unpin() {
     _fingerprint = null;
     _discard();
   }
 
+  /// Called after the client underneath has been thrown away.
+  ///
+  /// Dio's `IOHttpClientAdapter` asks for a client ONCE and caches it, so it
+  /// would go on using the closed one and turn every later attachment transfer
+  /// into an unexplained failure. [ApiClient] uses this to re-install its
+  /// adapter; nothing else needs it.
+  void Function()? onDiscarded;
+
   void _discard() {
     _client?.close(force: true);
     _client = null;
+    onDiscarded?.call();
   }
 
   /// The client. Built once, on first use.

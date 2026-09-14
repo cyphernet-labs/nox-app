@@ -59,7 +59,17 @@ class WebSocketChannelFactory implements SocketChannelFactory {
 }
 
 class _IoSocketConnection implements SocketConnection {
-  _IoSocketConnection(this._channel, this._wasRefused);
+  _IoSocketConnection(this._channel, this._wasRefused) {
+    // Nobody awaits `ready`, and nobody should: the app learns that a
+    // connection failed from the frames stream, which is the one place that
+    // also carries frames. But the channel completes `ready` with an error as
+    // well, and an error on a future with no listener is an unhandled zone
+    // error - raised on EVERY rung of the reconnect ladder while offline, and
+    // on every pin refusal, which is to say at the choosing of anyone who
+    // answers at the paired address. Marking it handled is the whole fix; the
+    // failure itself is still reported below, once.
+    _channel.ready.ignore();
+  }
 
   final IOWebSocketChannel _channel;
 

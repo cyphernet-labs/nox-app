@@ -35,12 +35,19 @@ class ApiClient {
     if (address.isNotEmpty) {
       dio.options.baseUrl = address.contains('://') ? address : 'https://$address';
     }
-    // The same HttpClient the socket uses, handed over on every call because
-    // Dio asks for one per request and a fresh client per request would be a
-    // fresh TLS session per attachment.
-    dio.httpClientAdapter = IOHttpClientAdapter(createHttpClient: () => _pinned.client);
+    _installAdapter();
+    // Dio's adapter asks for a client ONCE and caches it, so it would keep the
+    // one that was thrown away when the pin changed - and every attachment
+    // transfer after a re-pairing would fail for no reason anybody could see.
+    _pinned.onDiscarded = _installAdapter;
     if (dio.interceptors.whereType<AuthInterceptor>().isEmpty) {
       dio.interceptors.add(AuthInterceptor(_config));
     }
+  }
+
+  /// Points Dio at the shared, checked client. A fresh adapter each time,
+  /// because that is the only way to clear the one it caches.
+  void _installAdapter() {
+    dio.httpClientAdapter = IOHttpClientAdapter(createHttpClient: () => _pinned.client);
   }
 }

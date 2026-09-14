@@ -79,22 +79,64 @@ echo "==> starting the server"
 "$STAND-noxd" -addr "0.0.0.0:$PORT" -db "$STAND/nox.db" -status-addr "127.0.0.1:$STATUS_PORT" \
   > "$STAND/server.log" 2>&1 &
 
-# Polled, not slept. A fixed wait is either too short on a cold build - and the
-# script then reports "no claim link" over a server that was merely still
-# starting - or wasted time on every run after that.
+# Waiting for OUR server, which is not the same as waiting for the port.
+#
+# Two traps, both hit in practice. noxd writes "listening" one statement BEFORE
+# it binds, so a server whose port is taken prints that line and then dies -
+# this script used to believe it and announce a stand that was not running,
+# with a fingerprint and a claim link for a dead process. And probing the port
+# is no better on its own: a clash means somebody ELSE answers there, healthily.
+# So: wait for our process to settle, refuse on any ERROR it logged, and then
+# confirm the machine on that port is the one whose key we just minted.
 echo -n "==> waiting for the server"
 for _ in $(seq 1 100); do
-  if grep -q '"msg":"listening"' "$STAND/server.log" 2>/dev/null; then break; fi
+  if grep -q '"level":"ERROR"' "$STAND/server.log" 2>/dev/null; then
+    echo
+    echo "the server refused to start:" >&2
+    grep '"level":"ERROR"' "$STAND/server.log" >&2
+    exit 1
+  fi
   if ! pgrep -f "$STAND-noxd" >/dev/null 2>&1; then
     echo
     echo "the server stopped while starting:" >&2
-    cat "$STAND/server.log" >&2
+    tail -20 "$STAND/server.log" >&2
     exit 1
   fi
+  # OUR log, not the port: on a clash the port answers perfectly - with
+  # somebody else's server - and breaking on that is how the clash got missed.
+  if grep -q '"msg":"listening"' "$STAND/server.log" 2>/dev/null; then break; fi
   echo -n "."
   sleep 0.2
 done
 echo
+
+# "listening" is written before the bind, so give the bind a moment to fail and
+# re-read the error before believing the line.
+sleep 0.3
+if grep -q '"level":"ERROR"' "$STAND/server.log" 2>/dev/null; then
+  echo "the server refused to start:" >&2
+  grep '"level":"ERROR"' "$STAND/server.log" >&2
+  exit 1
+fi
+
+fingerprint="$(grep -oE '"fingerprint":"[^"]+"' "$STAND/server.log" | head -1 | cut -d'"' -f4 || true)"
+if [ -z "$fingerprint" ]; then
+  echo "the server never announced a fingerprint:" >&2
+  tail -20 "$STAND/server.log" >&2
+  exit 1
+fi
+served="$(echo | openssl s_client -connect "127.0.0.1:$PORT" 2>/dev/null \
+  | openssl x509 -noout -pubkey 2>/dev/null \
+  | openssl pkey -pubin -outform DER 2>/dev/null \
+  | openssl dgst -sha256 -binary 2>/dev/null | base64 || true)"
+if [ "$served" != "$fingerprint" ]; then
+  echo "port $PORT is answering, but not with THIS stand's key." >&2
+  echo "  this stand minted: $fingerprint" >&2
+  echo "  the port serves:   ${served:-nothing}" >&2
+  echo "Another noxd is almost certainly holding the port - stop it, or pass --port." >&2
+  tail -5 "$STAND/server.log" >&2
+  exit 1
+fi
 
 # Two links, one token. The startup line addresses the machine itself, because
 # that is who reads a terminal; the page addresses the network, because that is

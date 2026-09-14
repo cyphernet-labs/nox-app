@@ -207,14 +207,20 @@ void main() {
     // The client is a DI singleton that outlives pairing, re-pairing and
     // logout. A naive implementation reads the fingerprint once at
     // construction - and on a fresh install that value is nothing at all.
-    final client = PinnedHttpClient();
-    final firstUse = client.client; // built here, before anything is pinned
-    expect(firstUse, isNotNull);
-
+    //
+    // The USE before the pin is what makes this test able to fail: an
+    // implementation that captured the fingerprint would capture `null` here
+    // and refuse afterwards. Without a real connection attempt first it was a
+    // test that could not fail, because nothing had read anything yet.
     final server = await _serve('valid.pem', 'server_key.pem');
     addTearDown(() => server.close(force: true));
 
+    final client = PinnedHttpClient();
+    await expectLater(_statusFrom(server, client), throwsA(isA<HandshakeException>()));
+    expect(client.refusals, 1, reason: 'unpinned, so refused - and the client has now been built and used');
+
     client.pinTo(_fingerprint);
+
     expect(await _statusFrom(server, client), HttpStatus.ok);
   });
 }
