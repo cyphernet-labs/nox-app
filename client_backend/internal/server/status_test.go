@@ -1,8 +1,10 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -34,6 +36,19 @@ func TestAnUnclaimedServerOffersTheLinkAndACodeToScan(t *testing.T) {
 	body := statusBody(t, srv)
 	if !strings.Contains(body, "https://nox.app/p/#") {
 		t.Fatalf("no claim link on an unclaimed server's page: %s", body)
+	}
+	// The page and the QR beside it are how the first device learns what to
+	// pin. A link carrying anything else hands out a server nobody can reach.
+	id, err := srv.store.ServerIdentity(context.Background())
+	if err != nil {
+		t.Fatalf("ServerIdentity: %v", err)
+	}
+	want, err := base64.StdEncoding.DecodeString(id.Fingerprint)
+	if err != nil {
+		t.Fatalf("decode the fingerprint: %v", err)
+	}
+	if got := fingerprintInLink(t, linkOf(t, body)); !bytes.Equal(got, want) {
+		t.Fatalf("the page's link carries %x, want this machine's fingerprint %x", got, want)
 	}
 	if !strings.Contains(body, "<svg") {
 		t.Fatalf("no QR on an unclaimed server's page: %s", body)

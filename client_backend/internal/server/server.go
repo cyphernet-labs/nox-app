@@ -5,6 +5,7 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -454,7 +455,24 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 		return fmt.Errorf("sweep orphans: %w", err)
 	}
 
-	httpServer := &http.Server{Addr: cfg.Addr, Handler: srv.Handler(), ReadHeaderTimeout: readHeaderTimeout}
+	// The certificate is built here, once, from the key settled above. There is
+	// no flag to serve without it: a channel that can be asked to downgrade is
+	// a channel somebody downgrades, and the phase exists to remove that.
+	tlsConfig, err := srv.serverTLSConfig(ctx)
+	if err != nil {
+		return err
+	}
+	httpServer := &http.Server{
+		Addr:              cfg.Addr,
+		Handler:           srv.Handler(),
+		ReadHeaderTimeout: readHeaderTimeout,
+		TLSConfig:         tlsConfig,
+		// A non-nil empty map means "I am managing the protocols myself", which
+		// is how HTTP/2 is kept off. ServeTLS otherwise appends h2 to NextProtos
+		// regardless of what was set there, and the WebSocket upgrade this whole
+		// server is built around does not exist over h2.
+		TLSNextProto: map[string]func(*http.Server, *tls.Conn, http.Handler){},
+	}
 	httpServer.RegisterOnShutdown(srv.CloseConnections)
 
 	// The service page gets its OWN listener, on loopback, and the main one
@@ -500,8 +518,10 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 		return srv.runDispatcher(gctx)
 	})
 	g.Go(func() error {
-		logger.Info("listening", "addr", cfg.Addr)
-		if err := httpServer.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+		logger.Info("listening", "addr", cfg.Addr, "tls", "1.3", "fingerprint", machine.Fingerprint)
+		// Empty file names: the certificate and key are already in TLSConfig,
+		// and there are no files for them to be read from by design.
+		if err := httpServer.ListenAndServeTLS("", ""); !errors.Is(err, http.ErrServerClosed) {
 			return fmt.Errorf("listen on %s: %w", cfg.Addr, err)
 		}
 		return nil
@@ -647,7 +667,7 @@ func announceClaim(
 	if err != nil {
 		return "", fmt.Errorf("issue claim token: %w", err)
 	}
-	link, err := BuildPairingLink(listenAddress(addr), machine.PublicKey, token)
+	link, err := BuildPairingLink(listenAddress(addr), machine.Fingerprint, token)
 	if err != nil {
 		return "", fmt.Errorf("build pairing link: %w", err)
 	}
