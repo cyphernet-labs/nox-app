@@ -26,8 +26,12 @@ said the same thing to everybody and left the wire. Gone with it: the person
 invite (§8B), the waiting branch of `pair`, and a second person as a
 possibility at all — a unique index on `users` makes one unrepresentable.
 `owner_user_id` survives as the "this machine has been claimed" marker and
-nothing else. Still out of scope and blocked: `recover` and the recovery
-phrase (Q16), the protocol to the relay (Q13), TLS with pinning.
+nothing else. **Feature 036 closed the transport**: the main listener speaks
+TLS 1.3 and nothing else, on a self-signed certificate built from the machine's
+own key, and the pairing link carries that key's FINGERPRINT for the device to
+pin against. Still out of scope and blocked: `recover` and the recovery phrase
+(Q16), the protocol to the relay (Q13), and ATS / App Review for a self-signed
+personal server (Q14, due before release).
 
 Architecture rationale lives in `docs/blueprints/client-backend/README.md`;
 Go style rules live in the `go-style` skill; WebSocket/REST runtime
@@ -160,6 +164,10 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - `internal/hub/`        — fan-out goroutine owning the subscriber set
 - `internal/protocol/`   — envelope v0 types, error codes, frame (un)marshal
 - `internal/server/`     — ServeMux wiring: `/ws`, REST (§1 of contract), middleware
+- `internal/server/tls.go` — both halves of one rule: the self-signed certificate
+  the server presents, and `PinnedTLSConfig`, the check a client runs against it.
+  Together on purpose - they are one decision read from two ends, and apart they
+  drift
 - `migrations/`          — append-only numbered `.sql` (embedded)
 
 ## Testing
@@ -167,15 +175,19 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - Table tests; each test opens its own DB file in `t.TempDir()` and
   migrates from zero. **Never `:memory:` with `database/sql`** — each
   pooled connection gets a private database.
-- HTTP via `httptest` against the real mux; WS via `httptest.NewServer`
-  + `websocket.Dial(ctx, srv.URL, nil)`.
+- HTTP and WS go through `httptest.NewUnstartedServer` + the server's OWN
+  `tls.Config` + `StartTLS`, with the test client's transport replaced by
+  `PinnedTLSConfig`. NOT `httptest.NewTLSServer`: it installs a stock
+  certificate and leaves this feature's one real question untested.
 - Concurrency/replay tests may use `testing/synctest` (GA since 1.25).
 - Always `go test -race ./...`.
 
 ## Operational constraints
 
-- Bind loopback in dev; TLS/pinning arrives with the pairing work — do
-  not add certificate code casually.
+- Bind loopback in dev. The listener is TLS 1.3 either way: there is no flag
+  to serve plaintext, and adding one would be adding the downgrade the whole
+  phase removed. The SERVICE PAGE is the deliberate exception and stays plain
+  HTTP on its own loopback listener.
 - Backups: `VACUUM INTO` a temp file + rename; never copy a live DB;
   local filesystem only (WAL breaks on network mounts).
 - Build: `CGO_ENABLED=0 go build -trimpath -ldflags="-s"`.
@@ -268,12 +280,39 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   warns that a backup holding only the DB breaks pinning for every device at
   once; one artifact makes that impossible, and anyone who can read the file
   already has every message.
+- **The machine's key is ECDSA P-256, not Ed25519** — measured, not preferred.
+  Dart's BoringSSL does not offer `ed25519` in `signature_algorithms`, so a
+  certificate on such a key kills the handshake BEFORE the client's certificate
+  callback runs, and pinning cannot intervene at all. DEVICE keys stay Ed25519:
+  they sign a challenge, they do not present a certificate. Confusing the two is
+  the most expensive mistake available here - one pair names the MACHINE, the
+  other names a DEVICE.
+- **The link carries `sha256(SubjectPublicKeyInfo)`, not the key.** A raw
+  uncompressed P-256 point is 65 bytes and does not fit the thirty-two the
+  format has. The fingerprint is DERIVED on every read and never stored: a
+  stored derivative is a second copy of one fact.
+- **The certificate is rebuilt from the stored key on every start and lives in
+  memory only.** No SAN, no hostname in the subject, dates a century wide -
+  because the verifying side ignores all of it, and a name or an expiry would
+  become a refusal a home server's owner can neither explain nor repair. A
+  restart therefore hands out a NEW certificate on the same key, and every
+  paired device must go on accepting it.
+- **There is no migration for a pre-036 key and there will not be one.** A
+  32-byte row is refused by `ErrLegacyServerKey`, which says the cure out loud:
+  delete the development database. Nothing has shipped, so there is nothing to
+  migrate.
+- **HTTP/2 is kept off** (`TLSNextProto` set to an empty non-nil map).
+  `ServeTLS` otherwise appends `h2` to `NextProtos` regardless of what was set,
+  and the WebSocket upgrade this whole server is built around does not exist
+  there.
 - The claim link goes to the log AND to the service page (035), which is why
   that page listens on loopback only and refuses to start anywhere else. The
   pre-035 rule was "the log and nowhere else", on the reasoning that a page
-  serving the QR would hand ownership to everyone on the network while the
-  transport is not TLS - the loopback bind is what answers that, and
-  `assertLoopback` checks the socket rather than the string somebody typed.
+  serving the QR would hand ownership to everyone on the network. TLS (036) does
+  NOT retire that reasoning: encryption stops somebody reading the link off the
+  wire, and does nothing about a page that hands it to whoever asks. The
+  loopback bind is what answers that, and `assertLoopback` checks the socket
+  rather than the string somebody typed.
 - The CLAIM link falls back to loopback under a wildcard bind (it is read on the
   machine), while an INVITE link uses the address the requesting device dialled
   (its `Host` header). The two differ because an invite is carried to another
