@@ -13,6 +13,8 @@ import 'package:nox_app/domain/repository/device/device_repository.dart';
 import 'package:nox_app/general/pairing/pairing_link.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'live_target.dart';
+
 /// Drives the REAL client code against a running `noxd`, which is the gap the
 /// first live run left: it spoke the wire directly and so never exercised the
 /// client's own greeting, which turned out to be the defect that mattered.
@@ -30,6 +32,7 @@ void main() {
       stdout.writeln('SKIP: pass --dart-define=link=<pairing link>');
       return;
     }
+    LiveTarget.letTheNetworkThrough();
     FlutterSecureStorage.setMockInitialValues({});
     SharedPreferences.setMockInitialValues({});
     await configureDependencies(Environment.dev);
