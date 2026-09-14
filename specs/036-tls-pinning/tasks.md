@@ -1,73 +1,93 @@
-# Tasks: TLS с пиннингом по ключу сервера
+# Tasks: TLS с пиннингом по отпечатку ключа сервера
 
 **Prerequisites**: [plan.md](./plan.md), [spec.md](./spec.md), [research.md](./research.md)
 
 **Гейт снят 2026-09-14.** Прежнее «не начинать до живого прогона 034/035» относилось к отменённой фазе и к двум смерженным; ничего из того, что оно защищало, больше не ждёт.
 
+**Три слова, которые нельзя путать** (разведено по итогам `/speckit-analyze`): **ключ** — ECDSA-пара личности машины, живёт в `server_identity`; **отпечаток** — `sha256(SubjectPublicKeyInfo)`, тридцать два байта, едет в ссылке и хранится в сессии; **пиннинг** — операция сверки отпечатка предъявленного сертификата с сохранённым.
+
 ## Phase 1: Контракт (первым — Принцип VII)
 
-- [ ] T001 Record in `docs/client-backend/protocol/contract-draft.md` §1 that the address is `wss` and the bytes are `https`, and that trust comes from the pairing link rather than from a certificate authority — commands, events and codes are untouched
-- [ ] T002 Record in §3 that the link's 32 bytes are a FINGERPRINT — `sha256(SubjectPublicKeyInfo)` of the server's ECDSA P-256 identity key — not a public key, and rename the field accordingly
-- [ ] T003 Record that the service page (035) stays plain HTTP on loopback: it has no network traffic, so TLS there is complexity with no purpose
+- [ ] T001 В `docs/client-backend/protocol/contract-draft.md` §8A, строка таблицы ссылки (:290): `server_key` → `server_fingerprint`, значение — `sha256(SubjectPublicKeyInfo)` ключа **ECDSA P-256**, а не «публичный ключ сервера, Ed25519»
+- [ ] T002 Убрать оттуда же ⚠️-абзац (:301) «разбирается и хранится, но пока ни с чем не сверяется» — с этой фазой сверяется, и обещание «не потребует пере-спаривания» больше не нужно защищать: развёрнутых установок нет
+- [ ] T003 Поправить §1 (:18): адрес `wss`, байты файлов `https`, минимальная версия **TLS 1.3**, доверие — из отпечатка в ссылке, а не из центра сертификации; команды, события и коды не меняются
+- [ ] T004 Поправить строку §8.1 (:265): пиннинг перестаёт быть «следующей фазой»
+- [ ] T005 Записать в §1, что служебная страница (035) остаётся открытым HTTP на loopback: сетевого трафика у неё нет, и TLS там — сложность без цели
+- [ ] T006 [P] Привести `docs/client-backend/architecture/authentication.md` (:18 и упоминания «ключа сервера» ниже) к новому значению поля — одобренная модель аутентификации, на которую §1 ссылается как на авторитет, иначе становится ложной
 
 ## Phase 2: Ключ сервера
 
-- [ ] T004 Mint the machine identity as ECDSA P-256 in `client_backend/internal/store/serverkey.go` — Ed25519 is refused by the client outright (research.md, decision 1). Device keys stay Ed25519 and are not touched
-- [ ] T005 Store the private half as PKCS#8 and the public half as SPKI, both base64, in `client_backend/internal/store/serverkey.go` — a raw scalar carries no curve and silently changes meaning when written without left padding
-- [ ] T006 Expose the private half through a narrow accessor returning a `crypto.Signer`, NOT through a field on `ServerIdentity` in `client_backend/internal/store/serverkey.go` — that struct is returned to the status page and to `device.invite`, two paths a secret must not reach
-- [ ] T007 Derive the fingerprint when reading, never store it, in `client_backend/internal/store/serverkey.go` — a stored derivative is a second copy of one fact
-- [ ] T008 Fix the doc comment on `ServerIdentity` in `client_backend/internal/store/serverkey.go`: it describes a `PrivateKey` field that does not exist and a form that is about to change
-- [ ] T009 [P] Store test in `client_backend/internal/store/serverkey_test.go`: the stored private half parses as a P-256 key, the public half parses as its SPKI, the two agree, and the fingerprint survives a restart
+- [ ] T007 Чеканить личность машины как **ECDSA P-256** в `client_backend/internal/store/serverkey.go` — Ed25519 клиент отвергает целиком (`research.md`, решение 1). Ключи **устройств** остаются Ed25519 и не трогаются
+- [ ] T008 Хранить приватную половину как PKCS#8, публичную — как SPKI, обе base64, в `client_backend/internal/store/serverkey.go`: сырой скаляр не несёт кривую и молча меняет смысл, если записан без дополнения слева
+- [ ] T009 Отдавать приватную половину узким методом, возвращающим `crypto.Signer`, а **не** полем `ServerIdentity` в `client_backend/internal/store/serverkey.go` — эту структуру получают служебная страница и `device.invite`, два пути, куда секрет попадать не должен
+- [ ] T010 Считать отпечаток при чтении и никогда не хранить его в `client_backend/internal/store/serverkey.go` — хранимая производная это второй экземпляр одного факта
+- [ ] T011 Переписать докстринг `ServerIdentity` в `client_backend/internal/store/serverkey.go`: он описывает поле `PrivateKey`, которого в структуре нет, и форму хранения, которая меняется
+- [ ] T012 Ронять старт с внятным сообщением, если в `server_identity` лежит ключ старой формы (32 байта Ed25519), в `client_backend/internal/store/serverkey.go` — миграции нет и не будет, лечится удалением базы разработки, и сказать это должен сервер, а не stack trace
+- [ ] T013 [P] Тест хранилища в `client_backend/internal/store/serverkey_test.go`: приватная половина разбирается как ключ P-256, публичная — как её SPKI, обе соответствуют друг другу, отпечаток переживает рестарт, а строка старого формата даёт ту самую внятную ошибку
 
 ## Phase 3: Сертификат и слушатель
 
-- [ ] T010 Build a self-signed certificate from the identity key in `client_backend/internal/server/tls.go` — no SAN (the client ignores names, FR-004a), `NotBefore` a day back (home clocks lie), a far `NotAfter` (an expiry must never become an unrepairable refusal, FR-006), and `Leaf` filled so the DER is parsed once rather than per handshake
-- [ ] T011 Rebuild the certificate at every start and keep it in memory only in `client_backend/internal/server/tls.go` — storing it is a second record of one fact that can drift from the key, and a drifted certificate is indistinguishable from a man in the middle
-- [ ] T012 Serve the main listener over TLS in `client_backend/internal/server/server.go`, and refuse a plain connection — with no `-tls=false` escape, which would be a way to bypass the whole phase (FR-010b)
-- [ ] T013 Leave the status listener as plain HTTP on loopback in `client_backend/internal/server/server.go`, and say so in the startup log lines
-- [ ] T014 Put the fingerprint into the pairing link in `client_backend/internal/server/pairing_link.go` and at its three call sites (startup, status page, `device.invite`)
-- [ ] T015 [P] Server test in `client_backend/internal/server/tls_test.go`: the certificate's SPKI fingerprint equals the one the pairing link carries
-- [ ] T016 [P] Server test in `client_backend/internal/server/tls_test.go`: a restart produces a DIFFERENT certificate over the SAME key, and a client pinned to that fingerprint accepts it
-- [ ] T017 Dial TLS from the test helpers in `client_backend/internal/server/server_test.go` using the server's own `tls.Config` — NOT `httptest.NewTLSServer`, whose stock certificate would make T015 vacuous
+- [ ] T014 Научить тестовые хелперы в `client_backend/internal/server/server_test.go` дозваниваться по TLS через **собственный** `tls.Config` сервера — **до** T015, иначе весь пакет идёт красным четыре задачи подряд. Не `httptest.NewTLSServer`: он ставит стоковый сертификат, и главная проверка фазы стала бы пустой
+- [ ] T015 Собрать самоподписанный сертификат из ключа личности в `client_backend/internal/server/tls.go` — без SAN (клиент имена игнорирует, FR-004a), `NotBefore` на сутки назад (часы домашней машины врут), далёкий `NotAfter` (срок не должен становиться неисправимым отказом, FR-006), заполненный `Leaf` (иначе DER разбирается на каждом рукопожатии)
+- [ ] T016 Пересобирать сертификат при каждом запуске и держать только в памяти в `client_backend/internal/server/tls.go` — хранимый может разойтись с ключом, а разошедшийся неотличим от человека посередине
+- [ ] T017 Перевести основной слушатель на TLS в `client_backend/internal/server/server.go`, минимальная версия — TLS 1.3, открытое подключение не принимается; **без** флага `-tls=false`: это был бы способ обойти всю фазу (FR-010b)
+- [ ] T018 Оставить служебный слушатель открытым HTTP на loopback в `client_backend/internal/server/server.go` и сказать это в стартовых строках лога
+- [ ] T019 Класть отпечаток в ссылку спаривания в `client_backend/internal/server/pairing_link.go` и в трёх местах сборки (старт, служебная страница, `device.invite`)
+- [ ] T020 [P] Тест в `client_backend/internal/server/tls_test.go`: отпечаток SPKI сертификата равен тому, что едет в ссылке
+- [ ] T021 [P] Тест в `client_backend/internal/server/tls_test.go`: рестарт даёт **другой** сертификат на **том же** ключе, и клиент, пиннутый на этот отпечаток, его принимает
 
 ## Phase 4: Клиент — сверка
 
-- [ ] T018 Write the pure check in `lib/general/pairing/server_pin.dart`: find the fixed 26-byte P-256 SPKI header in `cert.der`, take 91 bytes, `sha256`, compare against the stored fingerprint. First match only, require 91 bytes to remain, and RETURN false rather than throw on anything unexpected — the callback runs inside BoringSSL
-- [ ] T019 Ignore the certificate's name, expiry and issuer in `lib/general/pairing/server_pin.dart` — a server that sits in a flat changes address, and each of those three is a refusal nobody can repair
-- [ ] T020 Rename the link field from key to fingerprint in `lib/general/pairing/pairing_link.dart` and at every call site — a field named "key" holding a hash lies to its first reader
-- [ ] T021 Add a reader for the stored fingerprint to `lib/domain/repository/app/session_repository.dart` and its impl — today `saveServer` writes it and nothing ever reads it back
-- [ ] T022 Hold ONE `HttpClient` on `lib/data/remote/socket/socket_channel_factory.dart` and pass it to `IOWebSocketChannel.connect(customClient:)` — `WebSocket.connect` does not close the client it is given, so one per connect leaks on every reconnect of an infinite ladder
-- [ ] T023 Give Dio the same pinned client through `IOHttpClientAdapter` in `lib/data/remote/api_client.dart` — the file bytes have gone over plain HTTP since 028 and are half of SC-007
-- [ ] T024 Build `wss` and `https` addresses in `lib/data/sync/live_session_starter.dart` and `lib/data/remote/api_client.dart`, with no fallback to a clear channel
-- [ ] T025 Stop treating `AppConfig.apiUrl` as a live fallback in `lib/data/sync/live_session_starter.dart` — an address from the build has no fingerprint and can never be checked (FR-013)
-- [ ] T026 [P] Client test in `test/general/pairing/server_pin_test.dart`: a certificate on another key is refused, the same key with a new certificate is accepted, a truncated or headerless DER is refused without throwing
+- [ ] T022 Написать чистую сверку в `lib/general/pairing/server_pin.dart`: найти фиксированный 26-байтовый заголовок SPKI P-256 в `cert.der`, взять 91 байт, `sha256`, сравнить с сохранённым отпечатком. Только первое вхождение, требовать остаток в 91 байт, и **возвращать false, а не бросать** на любом неожиданном вводе — колбэк исполняется внутри BoringSSL
+- [ ] T023 Игнорировать в `lib/general/pairing/server_pin.dart` имя, срок и издателя сертификата — сервер стоит в квартире и меняет адрес, а каждое из трёх это отказ, который человек не может ни объяснить, ни починить
+- [ ] T024 Переименовать поле ссылки из ключа в отпечаток в `lib/general/pairing/pairing_link.dart` и во всех местах употребления — поле по имени «ключ», хранящее хеш, врёт первому же читателю
+- [ ] T025 Добавить чтение сохранённого отпечатка в `lib/domain/repository/app/session_repository.dart` и реализацию — сегодня `saveServer` его пишет, и не читает никто
+- [ ] T026 Провести отпечаток до колбэка и записать, **кто его перечитывает**: фабрика сокета и `ApiClient` — синглтоны, собираемые в DI, а отпечаток появляется при спаривании, меняется при пере-спаривании и исчезает при выходе. Наивная реализация прочитает его один раз при сборке DI и на свежей установке запинит пустую строку навсегда
+- [ ] T027 Отказывать, когда отпечатка нет вовсе (FR-013) — «нет отпечатка» это отказ, а не «принять что угодно»
+- [ ] T028 Держать **один** `HttpClient` на `lib/data/remote/socket/socket_channel_factory.dart` и передавать его в `IOWebSocketChannel.connect(customClient:)` — `WebSocket.connect` переданный клиент не закрывает, поэтому клиент на каждое подключение течёт на каждой переподключке бесконечной лестницы
+- [ ] T029 Отдать Dio тот же пиннутый клиент через `IOHttpClientAdapter` в `lib/data/remote/api_client.dart` — байты файлов едут открытым HTTP с фазы 028 и составляют половину SC-007
+- [ ] T030 Собирать адреса `wss` и `https` в `lib/data/sync/live_session_starter.dart` и `lib/data/remote/api_client.dart`, без отката на открытый канал
+- [ ] T031 Убрать `AppConfig.apiUrl` как запасной адрес живого соединения — **в трёх местах**: `live_session_starter.dart`, второй запасной путь внутри `ApiClient.initBase` и вызов `initBase()` без адреса в `lib/main.dart`. У адреса из сборки отпечатка нет по построению (FR-013)
+- [ ] T032 [P] Тест в `test/general/pairing/server_pin_test.dart`: сертификат на другом ключе отвергается; тот же ключ с новым сертификатом принимается; обрезанный и безголовый DER отвергаются без исключения
+- [ ] T033 [P] Тест там же на терпимость (FR-004a, FR-006): на **пиннутом** ключе принимаются сертификат с истёкшим сроком, с чужим именем в SAN/CN и с неизвестным издателем. Без этих трёх фикстур реализация, отказывающая по сроку, пройдёт весь T032 и сломает FR-006 на первом же домашнем сервере
+- [ ] T034 [P] Тест в `test/data/remote/` на FR-013: при отсутствии сохранённого отпечатка соединение не открывается вовсе
 
 ## Phase 5: Клиент — отказ, который читается
 
-- [ ] T027 Add a terminal phase for "this is not your server" in `lib/domain/model/session/session_phase.dart`, separate from `unauthenticated`
-- [ ] T028 Route a pin refusal to that phase in `lib/data/remote/socket/nox_socket_client.dart` WITHOUT the retry ladder (FR-007a) and WITHOUT the forced-logout path (FR-007b) — routing it through `unauthenticated` would hand an interposed server a remote wipe of every device
-- [ ] T029 Carry the phase, not a boolean, into the three blocs that render the connection strip — `chats_list_bloc.dart`, `chat_thread_bloc.dart`, `chat_card_bloc.dart`: today every consumer reduces it through `isCurrent`, which is why a refusal is indistinguishable from a dead network
-- [ ] T030 Add two l10n keys to `lib/l10n/app_en.arb` and `app_uk.arb` — one for the paired case, one for the pairing screen, where the relationship does not exist yet
-- [ ] T031 Show the refusal on 5.1, 5.2 and 5.4 through the existing `AppNoticeStripWidget` with the stock `error` glyph — no new widget, no new asset
-- [ ] T032 Show the refusal on the login screen in `lib/presentation/pages/login_page/` — at pairing time the fingerprint comes from the link being scanned, not from the session
-- [ ] T033 [P] Bloc tests: a refusal raises the notice, stops the ladder, and wipes nothing — mutation-check the non-consequence as firmly as the consequence
-- [ ] T034 [P] Goldens for the refusal on both widths wherever the screen already has them
+- [ ] T035 Добавить терминальное значение фазы «это не ваш сервер» в `lib/domain/model/session/session_phase.dart`, отдельно от `unauthenticated` (сегодня в перечислении его нет — там `disconnected`, `connecting`, `catchingUp`, `live`, `unsupported`)
+- [ ] T036 Направить отказ пиннинга в это значение в `lib/data/remote/socket/nox_socket_client.dart` **без** лестницы переподключения (FR-007a) и **без** пути принудительного выхода (FR-007b) — через `unauthenticated` это дало бы вставшему посередине удалённое стирание всех устройств человека
+- [ ] T037 Провести фазу, а не булев признак, в три блока, рисующих плашку связи — `chats_list_bloc.dart`, `chat_thread_bloc.dart`, `chat_card_bloc.dart`: сегодня каждый потребитель сводит фазу через `isCurrent`, отчего отказ неотличим от мёртвой сети
+- [ ] T038 Добавить два ключа локализации в `lib/l10n/app_en.arb` и `app_uk.arb` — для спаренного случая и для экрана входа, где отношений с сервером ещё нет
+- [ ] T039 Показать отказ на 5.1, 5.2 и 5.4 существующей плашкой `AppNoticeStripWidget` со штатным глифом `error` — без нового виджета и без нового ассета
+- [ ] T040 Показать отказ на экране входа в `lib/presentation/pages/login_page/` — при спаривании отпечаток берётся из предъявляемой ссылки, а не из сессии
+- [ ] T041 Нарисовать плашку **в обеих панелях** десктопной 5.1 — двухпанельная раскладка этого требует, и ни одна задача этого раньше не покрывала
+- [ ] T042 [P] Блок-тесты: отказ поднимает плашку, останавливает лестницу и **ничего не стирает** — непоследствие прогнать мутацией так же строго, как последствие
+- [ ] T043 [P] Эталоны поимённо, обе ширины: `chats_list_page_pin_refused{,_desktop}_{light,dark}`, то же для `chat_thread_page`, `chat_card_page` и `login_page`. У 5.1 нет даже десктопного эталона `offline` — новый набор заводится сразу парой, как требует норма о продуктовой странице
 
-## Phase 6: Платформа
+## Phase 6: Дизайн-документация (Принципы II, IV, VI)
 
-- [ ] T035 Remove `usesCleartextTraffic` from `android/app/src/debug/AndroidManifest.xml` — together with the reason it was added
-- [ ] T036 Check the four other platforms open a pinned connection: macOS, Windows, Linux, iOS
+- [ ] T044 Внести новое состояние в таблицы состояний и микрокопии `docs/design/spec/screens/`: чаты, тред, карточка чата, вход — со **дословными** строками, как там принято
+- [ ] T045 [P] То же в `docs/design/system/nox-mobile-screens/screens/` (5-1, 5-2, 5-4, 2-1)
+- [ ] T046 [P] То же в `docs/design/system/nox-desktop-screens/screens/` (01-chats, 04-login), с указанием поведения в двухпанельной раскладке; после правки оба корпуса сверить дифом
 
-## Phase 7: Стенд, смоук, живой прогон
+## Phase 7: Платформа
 
-- [ ] T037 Teach `cmd/smoke` to read the fingerprint out of the link and dial `wss` with it in `client_backend/cmd/smoke/main.go` — it currently skips those 32 bytes with a comment that says TLS will check them
-- [ ] T038 Replace the `sleep 2` in `scripts/demo-stand.sh` with a readiness poll and say in the banner that a fresh stand means a fresh key, so every earlier link is dead
-- [ ] T039 Pass the fingerprint into the four probes under `test/live/` — they dial `ws://127.0.0.1:8080` directly and never pair, so they hold no stored fingerprint
-- [ ] T040 Write `specs/036-tls-pinning/quickstart.md` the way 038's is written: the stand, two devices, a packet capture proving no text on the wire, and a deliberately wrong fingerprint proving the refusal is real
+- [ ] T047 Снять `usesCleartextTraffic` из `android/app/src/debug/AndroidManifest.xml` — вместе с причиной, по которой он там появился
+- [ ] T048 Проверить, что остальные четыре платформы открывают пиннутое соединение: macOS, Windows, Linux, iOS
 
-## Phase 8: Polish
+## Phase 8: Стенд, смоук, живой прогон
 
-- [ ] T041 [P] Record the phase's invariants in `client_backend/CLAUDE.md`: one key for identity and for the channel, ECDSA because the client refuses Ed25519, the certificate rebuilt every start, no fallback
-- [ ] T042 [P] Mark 036 ☑ in `docs/client-backend/roadmap-stage2.md` and note that Q14 (ATS, App Review) stays open
-- [ ] T043 Run `gofmt -l .`, `go vet ./...`, `go test -race ./...`, `make gate`, `make golden-verify`
-- [ ] T044 Live run by the owner per [quickstart.md](./quickstart.md)
+- [ ] T049 Научить `cmd/smoke` читать отпечаток из ссылки и дозваниваться по `wss` с ним в `client_backend/cmd/smoke/main.go` — сейчас он эти 32 байта пропускает с комментарием, что их проверит TLS
+- [ ] T050 Заменить `sleep 2` в `scripts/demo-stand.sh` на опрос готовности и сказать в баннере, что свежий стенд означает свежий ключ, а значит все прежние ссылки мертвы
+- [ ] T051 Передать отпечаток в пробники `test/live/` — они дозваниваются по `ws://127.0.0.1:8080` напрямую и никогда не спариваются, поэтому сохранённого отпечатка у них нет
+- [ ] T052a Проверить, что смена схемы не стирает локальный мир: эпоха мира это `live:$apiUrl` (`live_session_starter.dart`), и у спаренной установки `apiUrl` — голый `host:port` из ссылки, который не меняется. Убедиться тестом, а не рассуждением: смена схемы не должна проходить по пути `_wipeWorld`
+- [ ] T052 Написать `specs/036-tls-pinning/quickstart.md` по образцу 038: стенд, два устройства, перехват трафика (включая **байты вложения** — это SC-007) намеренно неверный отпечаток, доказывающий, что отказ настоящий, и проверку US4 — служебная страница по-прежнему открывается без сертификата и без предупреждения браузера
+
+## Phase 9: Polish
+
+- [ ] T053 [P] Записать инварианты фазы в `client_backend/CLAUDE.md`: одна личность на машину, ECDSA потому что клиент отвергает Ed25519, сертификат пересобирается каждый старт, отката нет — и **поправить** там же утверждения, которые фаза делает ложными
+- [ ] T054 [P] Отметить 036 ☑ в `docs/client-backend/roadmap-stage2.md` и указать, что Q14 (ATS, App Review) остаётся открытым
+- [ ] T055 [P] Привести блюпринты `docs/blueprints/mobile/` (14 — транспорт, 02 — слои данных, 05 — презентация) к тому, что фаза меняет: адрес, схема, новая терминальная фаза сессии
+- [ ] T056 [P] Переписать `checklists/requirements.md` — он фиксирует как принятое решение «ключ TLS — тот же Ed25519 личности», отменённое 2026-09-14
+- [ ] T057 Прогнать `gofmt -l .`, `go vet ./...`, `go test -race ./...`, `make gate`, `make golden-verify`
+- [ ] T058 Живой прогон владельцем по [quickstart.md](./quickstart.md)
