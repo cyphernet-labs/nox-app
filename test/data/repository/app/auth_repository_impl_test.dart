@@ -93,7 +93,7 @@ void main() {
     // Without this the app pairs with the server a person presented and then
     // sends their messages to the address baked into the build.
     await repository.signIn(identifier: link);
-    verify(session.saveServer(address: '127.0.0.1:8080', serverKey: anyNamed('serverKey'))).called(1);
+    verify(session.saveServer(address: '127.0.0.1:8080', serverFingerprint: anyNamed('serverFingerprint'))).called(1);
   });
 
   test('a link that will not parse is refused before anything is stored', () async {
@@ -101,7 +101,7 @@ void main() {
 
     expect(result.hasData, isFalse);
     expect(result.exception, RepositoryException.invalidRequest);
-    verifyNever(session.saveServer(address: anyNamed('address'), serverKey: anyNamed('serverKey')));
+    verifyNever(session.saveServer(address: anyNamed('address'), serverFingerprint: anyNamed('serverFingerprint')));
     verifyNever(session.saveIdentifier(identifier: anyNamed('identifier'), onboardingComplete: anyNamed('onboardingComplete')));
   });
 
@@ -188,7 +188,7 @@ void main() {
         session.deviceSecret(),
       ).thenAnswer((_) async => const RepositoryResult<String>.success(data: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8='));
       when(
-        session.saveServer(address: anyNamed('address'), serverKey: anyNamed('serverKey')),
+        session.saveServer(address: anyNamed('address'), serverFingerprint: anyNamed('serverFingerprint')),
       ).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
     });
 

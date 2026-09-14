@@ -7,6 +7,7 @@ import 'package:nox_app/data/mapper/chat/chat_mapper.dart';
 import 'package:nox_app/data/mapper/chat/chat_wire_mapper.dart';
 import 'package:nox_app/data/mapper/chat/message_mapper.dart';
 import 'package:nox_app/data/mapper/chat/message_wire_mapper.dart';
+import 'package:nox_app/data/remote/pinned_http_client.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/repository/app/session_repository_impl.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
@@ -32,6 +33,11 @@ import '../remote/socket/fake_socket.dart';
 /// nothing stops a test from constructing it, and the decisions that bricked an
 /// install twice - a greeting sent with nothing to greet with, and a refusal
 /// read as a revocation - live in the object, not in the storage it reads.
+/// Two fingerprints, distinct on sight. Their VALUES mean nothing here - the
+/// starter only carries them - so a readable pair beats a real hash.
+const String kPinA = 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=';
+const String kPinB = 'ZZZZv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -75,7 +81,7 @@ void main() {
   test('the device key survives a rollback, so a retry is the same install', () async {
     final before = (await session.deviceSecret()).data;
     await session.saveIdentifier(identifier: 'tok', onboardingComplete: false);
-    await session.saveServer(address: '10.0.0.1:9000', serverKey: 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=');
+    await session.saveServer(address: '10.0.0.1:9000', serverFingerprint: kPinA);
 
     await session.discardSignIn();
 
@@ -88,7 +94,7 @@ void main() {
   test('logout takes the key and the server with it', () async {
     await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
     final before = (await session.deviceSecret()).data;
-    await session.saveServer(address: '10.0.0.1:9000', serverKey: 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=');
+    await session.saveServer(address: '10.0.0.1:9000', serverFingerprint: kPinA);
 
     await session.clear();
 
@@ -116,7 +122,7 @@ void main() {
 
   test('the paired server address is what a later connection uses', () async {
     await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
-    await session.saveServer(address: '10.0.0.5:9000', serverKey: 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=');
+    await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
 
     // Not the build-time address: pairing with the server a person presented
     // and then talking to another one is the opposite of "your own server".
@@ -127,6 +133,7 @@ void main() {
     late FakeSocketFactory factory;
     late NoxSocketClient socket;
     late LiveSessionStarter starter;
+    late PinnedHttpClient pinned;
 
     setUp(() async {
       await getIt<AppConfigRepository>().initialize(flavorType: AppFlavorType.stage);
@@ -143,6 +150,7 @@ void main() {
         getIt<MessageWireMapper>(),
         getIt<OutboxRepository>(),
       );
+      pinned = PinnedHttpClient();
       starter = LiveSessionStarter(
         socket,
         sync,
@@ -153,6 +161,7 @@ void main() {
         getIt<MessageRepository>(),
         getIt<OutboxRepository>(),
         getIt<FileRepository>(),
+        pinned,
       );
     });
     tearDown(() async => starter.stop());
@@ -174,7 +183,7 @@ void main() {
 
     test('it connects to the address the pairing link carried', () async {
       await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
-      await session.saveServer(address: '10.0.0.5:9000', serverKey: 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=');
+      await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
 
       await starter.start();
       await settle();
@@ -183,10 +192,85 @@ void main() {
       expect(socket.currentPhase, isNot(equals(null)));
     });
 
+    test('it dials wss, with no way to ask for anything else', () async {
+      await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
+      await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
+
+      await starter.start();
+      await settle();
+
+      expect(factory.urls.single.scheme, 'wss');
+      expect(factory.urls.single.toString(), 'wss://10.0.0.5:9000/ws');
+    });
+
+    test('the fingerprint from the link reaches the thing that checks certificates', () async {
+      // Threaded on every start rather than read once: the client is a
+      // singleton built long before anybody pairs, and a naive implementation
+      // would pin nothing at all for the life of a fresh install.
+      expect(pinned.pinnedFingerprint, isNull);
+
+      await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
+      await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
+      await starter.start();
+      await settle();
+
+      expect(pinned.pinnedFingerprint, kPinA);
+    });
+
+    test('pairing with a DIFFERENT server pins the new one, not the cached one', () async {
+      await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
+      await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
+      await starter.start();
+      await settle();
+      expect(pinned.pinnedFingerprint, kPinA);
+
+      // Logout, then pair with another machine - the sequence a person goes
+      // through when they rebuild their server.
+      await starter.stop();
+      expect(pinned.pinnedFingerprint, isNull, reason: 'a logout leaves nothing this install may talk to');
+      await session.clear();
+      await session.saveIdentifier(identifier: 'tok2', onboardingComplete: true);
+      await session.saveServer(address: '10.0.0.9:9000', serverFingerprint: kPinB);
+
+      await starter.start();
+      await settle();
+
+      expect(pinned.pinnedFingerprint, kPinB);
+    });
+
+    test('a paired address with no fingerprint opens no socket (FR-009)', () async {
+      // "Nothing to check against" is a refusal, never a waiver. Reachable by a
+      // half-written session, and connecting anyway would accept whatever
+      // answered at that address - which is the state this phase ends.
+      await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
+      await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
+      await FlutterSecureStorage().delete(key: 'session.server_fingerprint');
+
+      await starter.start();
+      await settle();
+
+      expect(factory.created, isEmpty);
+      expect(pinned.pinnedFingerprint, isNull);
+    });
+
+    test('the world epoch does not move when the scheme does', () async {
+      // The epoch is keyed on the stored ADDRESS, which a paired install holds
+      // as a bare host:port. If it were keyed on the URL, turning ws into wss
+      // would read as a different server and wipe every chat on every device at
+      // once, on upgrade, silently.
+      await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
+      await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
+
+      await starter.start();
+      await settle();
+
+      expect(await getIt<SyncRepository>().getEpoch(), 'live:10.0.0.5:9000');
+    });
+
     test('an unpaired install connects but says nothing, leaving room for pair', () async {
       // No session at all: this is the state a fresh install signs in from, and
       // greeting here would spend the claim token on a refusal.
-      await session.saveServer(address: '10.0.0.5:9000', serverKey: 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=');
+      await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
 
       await starter.start();
       await settle();
@@ -199,7 +283,7 @@ void main() {
 
     test('a paired install greets with a signature over the challenge', () async {
       await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
-      await session.saveServer(address: '10.0.0.5:9000', serverKey: 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=');
+      await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
 
       await starter.start();
       await settle();
@@ -228,7 +312,7 @@ void main() {
       // that stopped adopting it makes own-vs-other detection wrong and every
       // message this person sent comes back looking like somebody else's.
       await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
-      await session.saveServer(address: '10.0.0.5:9000', serverKey: 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=');
+      await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
 
       await starter.start();
       await settle();
@@ -264,7 +348,7 @@ void main() {
       // id back, and adoptServerIdentity re-emits their label on watchLabel(),
       // so the account avatars go on naming somebody who just logged out.
       await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
-      await session.saveServer(address: '10.0.0.5:9000', serverKey: 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=');
+      await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
 
       await starter.start();
       await settle();
@@ -318,7 +402,7 @@ void main() {
       // over an empty session - is a DIFFERENT case and has its own test above.
       // This comment used to claim that guard was unreachable; it is reachable
       // through logout, and saying otherwise is the argument for deleting it.
-      await session.saveServer(address: '10.0.0.5:9000', serverKey: 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=');
+      await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
 
       await starter.start();
       await settle();
@@ -336,7 +420,7 @@ void main() {
       // The brick: a device that has not paired is refused as a matter of
       // course, and treating that as a revocation wiped the key and the address
       // a sign-in in progress had just written.
-      await session.saveServer(address: '10.0.0.5:9000', serverKey: 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=');
+      await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
       final before = (await session.deviceSecret()).data;
 
       await starter.start();

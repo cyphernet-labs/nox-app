@@ -13,7 +13,7 @@ void main() {
     final link = PairingLink.parse(fromServer);
     expect(link.host, '127.0.0.1');
     expect(link.port, 8080);
-    expect(link.serverKey.length, 44, reason: '32 bytes in base64');
+    expect(link.serverFingerprint.length, 44, reason: '32 bytes in base64');
     expect(link.token.length, 22, reason: '16 bytes in base64url without padding');
     expect(link.authority, '127.0.0.1:8080');
   });
@@ -31,16 +31,16 @@ void main() {
   });
 
   group('every address type survives a round trip', () {
-    const key = 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=';
+    const fingerprint = 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=';
     const token = 'AAECAwQFBgcICQoLDA0ODw';
 
     for (final host in ['192.168.1.7', '2001:db8:0:0:0:0:0:1', 'nox.example.org']) {
       test(host, () {
-        final built = PairingLink(host: host, port: 443, serverKey: key, token: token).encode();
+        final built = PairingLink(host: host, port: 443, serverFingerprint: fingerprint, token: token).encode();
         final parsed = PairingLink.parse(built);
         expect(parsed.host, host);
         expect(parsed.port, 443);
-        expect(parsed.serverKey, key);
+        expect(parsed.serverFingerprint, fingerprint);
         expect(parsed.token, token);
       });
     }

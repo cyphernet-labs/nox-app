@@ -85,12 +85,18 @@ class FakeSocket implements SocketConnection {
 class FakeSocketFactory implements SocketChannelFactory {
   final List<FakeSocket> created = <FakeSocket>[];
 
+  /// Every URL dialled, in order. Recorded because the SCHEME is a decision
+  /// now: a fallback to `ws://` would be invisible to every other assertion
+  /// here and would put the whole conversation back in the clear.
+  final List<Uri> urls = <Uri>[];
+
   FakeSocket get latest => created.last;
 
   @override
   SocketConnection connect(Uri url) {
     final socket = FakeSocket();
     created.add(socket);
+    urls.add(url);
     return socket;
   }
 }

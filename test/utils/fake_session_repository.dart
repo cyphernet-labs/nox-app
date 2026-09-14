@@ -18,6 +18,10 @@ const SessionModel kTestSession = SessionModel(
   onboardingComplete: true,
 );
 
+/// A stand-in for the thirty-two bytes a pairing link carries: base64 of a
+/// sha256, which is all any caller of the fake needs it to look like.
+const String kTestFingerprint = 'tVP0vGf0PzSYF6Lg5lg6Nsgxwkar8AVxzhHQIRP7SUs=';
+
 /// Hand-written session double — callers exercise [readSession] plus the feature-015
 /// label channel ([watchLabel] / [updateLabel]).
 class FakeSessionRepository implements SessionRepository {
@@ -67,11 +71,16 @@ class FakeSessionRepository implements SessionRepository {
       const RepositoryResult<String>.success(data: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=');
 
   @override
-  Future<RepositoryResult<bool>> saveServer({required String address, required String serverKey}) async =>
+  Future<RepositoryResult<bool>> saveServer({required String address, required String serverFingerprint}) async =>
       const RepositoryResult<bool>.success(data: true);
 
   @override
   Future<RepositoryResult<String?>> serverAddress() async => const RepositoryResult<String?>.success(data: '127.0.0.1:8080');
+
+  /// A paired install has one, always: an address without a fingerprint is a
+  /// connection nothing can check, and the starter refuses to make it.
+  @override
+  Future<RepositoryResult<String?>> serverFingerprint() async => const RepositoryResult<String?>.success(data: kTestFingerprint);
 
   /// Raised by [updateLabel] the way the real store raises it: a greeting states
   /// a name only after a rename.
