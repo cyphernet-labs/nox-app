@@ -13,9 +13,11 @@ App bar (back + chat name). Header: avatar (56) + name (headlineSmall). **“Peo
 - `list` — Files · list
 - `grid` — Files · grid
 - `empty` — Empty
+- `server-mismatch` — Wrong server
 
 ## Behavior
 - The People section renders only once the card has loaded. While files are still coming, and on the embedded error screen, it is absent: a person and a disabled button stacked over a spinner or over an error say nothing true about either.
+- Wrong server (036): the machine at the paired address presented a key the pairing link did not name. A persistent banner “This isn't the server you paired with” with a “Try again” action, INSTEAD of the offline one — something answered, so “No connection” would be false — and with the error glyph rather than wifi_off. Nothing local is thrown away, and nothing on screen is cleared: the banner sits over what was already there. It does not pass on its own; the action is the only way out. It sits at the TOP of the card, above the header: pushed below the People block it lands ~150dp down and can fall off the first fold on a phone at a large text scale.
 - List rows: file glyph + name (ellipsis) + size + chevron. Grid: square type cells.
 - Segmented control switches List ⇄ Grid (single-select).
 - Empty: folder_open empty-state.

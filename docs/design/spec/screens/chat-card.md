@@ -53,6 +53,7 @@ Material Scaffold; адаптируется под тему. Сверху вни
 | Loaded | Header + People section + Files section отображаются. |
 | Empty (files) | Файлов нет. **Empty state**: иллюстрация + текст в области Files section. Header и People section при этом остаются видны. |
 | Offline / Inline-error | Не удалось загрузить — `MaterialBanner` сверху (persistent, см. [overview.md / Уровни ошибок](../overview.md#уровни-ошибок-и-обратной-связи)). |
+| Server mismatch | Машина по сохранённому адресу предъявила не тот ключ, что назвала ссылка спаривания. Постоянная плашка `This isn't the server you paired with` с действием `Try again`, там же, где и остальные — над Header'ом. **Вместо** `Offline`, а не вместе с ним: сервер ответил, и «нет соединения» здесь — неправда. Файлы остаются перечисленными под плашкой. |
 | Fatal | Передача в 3.1 (embedded). |
 
 ## Взаимодействия
@@ -90,6 +91,8 @@ Material Scaffold; адаптируется под тему. Сверху вни
 | Files empty title | `No files yet` |
 | Files empty message | `Files sent in this chat will appear here.` |
 | Inline-error (network) | `Could not load chat info. Check your connection and try again.` |
+| Server-mismatch banner | `This isn't the server you paired with` |
+| Server-mismatch action | `Try again` |
 
 ## Принятые решения (Q1–Q9)
 
