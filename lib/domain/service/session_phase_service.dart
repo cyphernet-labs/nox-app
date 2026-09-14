@@ -11,4 +11,14 @@ abstract class SessionPhaseService {
 
   /// Emits the current phase on listen, then every change.
   Stream<SessionPhase> watchPhase();
+
+  /// Brings the channel up again, from the beginning.
+  ///
+  /// Here rather than on the transport because a terminal phase
+  /// ([SessionPhase.isTerminal]) has no ladder left to climb: without a way to
+  /// ask for one more attempt, an app that once refused a server never comes
+  /// back, not even after the cause is fixed and not even after a reconnect.
+  /// The screens that show the refusal are the ones that must offer the way
+  /// out, and this is the seam they reach it through.
+  Future<void> reconnect();
 }

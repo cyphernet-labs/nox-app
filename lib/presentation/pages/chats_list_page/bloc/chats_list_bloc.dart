@@ -38,7 +38,8 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
     on<SearchChanged>(_onSearchChanged, transformer: debounceRestartable());
     on<ChatSelected>(_onChatSelected);
     on<SetScenario>(_onSetScenario);
-    on<ConnectivityChanged>(_onConnectivityChanged);
+    on<SessionPhaseChanged>(_onSessionPhaseChanged);
+    on<RetryConnection>(_onRetryConnection);
   }
 
   final ChatRepository _chatRepository = getIt<ChatRepository>();
@@ -56,17 +57,19 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
   // real device connectivity now ALSO drives it (feature F3) — see `_isOffline`.
   ChatsListScenario _scenario = ChatsListScenario.normal;
 
-  // Live device-online state (feature F3): a real connectivity signal (connectivity_plus,
-  // seeded then live). The Offline banner is reachable in the real flow — go offline and
-  // the cached list shows under the "No connection" banner. NOTE: the mock phase is
-  // local-only (Sembast), so sends still succeed offline; the banner is informational
-  // until real sync lands. Backend reachability (vs device connectivity) is the eventual
-  // authority — this is the closest real-flow proxy for now.
+  // The live channel's phase (feature F3, widened by 036). The whole phase is
+  // kept, not a boolean derived from it: "not current" answers "is the data
+  // fresh" and nothing else, and a server presenting the wrong key is not a
+  // stale-data problem — it is a different sentence, with a different action.
   StreamSubscription<SessionPhase>? _connSub;
-  bool _isDeviceOnline = true;
+  SessionPhase _phase = SessionPhase.live;
 
-  /// The Offline banner shows when the device is offline OR the debug scenario forces it.
-  bool _isOffline() => !_isDeviceOnline || _scenario == ChatsListScenario.offline;
+  /// The wrong machine answered. Takes precedence over the offline banner: both
+  /// would otherwise show at once, and "no connection" is simply false here.
+  bool _isServerMismatch() => _phase.isServerMismatch || _scenario == ChatsListScenario.pinRefused;
+
+  /// The Offline banner shows when the channel is not current OR the debug scenario forces it.
+  bool _isOffline() => !_isServerMismatch() && (!_phase.isCurrent || _scenario == ChatsListScenario.offline);
 
   /// Marks the first two chats read and drops messages above the mark, so the
   /// list shows badges produced by the recount rather than by a seeded number.
@@ -95,7 +98,7 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
     // The session phase, not raw device connectivity, is what says whether the
     // data on screen is current: a device can be online while the socket is
     // down, and the socket can be open while replay is still running (FR-005).
-    _connSub ??= _sessionPhaseService.watchPhase().listen((phase) => add(ChatsListEvent.connectivityChanged(phase.isCurrent)));
+    _connSub ??= _sessionPhaseService.watchPhase().listen((phase) => add(ChatsListEvent.sessionPhaseChanged(phase)));
   }
 
   @override
@@ -105,12 +108,18 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
     return super.close();
   }
 
-  void _onConnectivityChanged(ConnectivityChanged event, Emitter<ChatsListState> emit) {
-    _isDeviceOnline = event.online;
+  void _onSessionPhaseChanged(SessionPhaseChanged event, Emitter<ChatsListState> emit) {
+    _phase = event.phase;
     final current = state;
     // Update the banner in place (no reload) — like the reactive card's files re-derive.
-    if (current is Initialized) emit(current.copyWith(isOffline: _isOffline()));
+    if (current is Initialized) emit(current.copyWith(isOffline: _isOffline(), isServerMismatch: _isServerMismatch()));
   }
+
+  /// One more attempt, asked for by the person.
+  ///
+  /// Nothing is emitted here: the phase stream is what moves the banner, and
+  /// guessing at the outcome would clear it before there is an outcome.
+  Future<void> _onRetryConnection(RetryConnection event, Emitter<ChatsListState> emit) => _sessionPhaseService.reconnect();
 
   void _onChatSelected(ChatSelected event, Emitter<ChatsListState> emit) {
     final current = state;
@@ -213,6 +222,7 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
                 // cached list under a retry banner (both keep the data visible). Offline =
                 // real device connectivity OR the debug scenario (feature F3).
                 isOffline: _isOffline(),
+                isServerMismatch: _isServerMismatch(),
                 hasLoadError: _scenario == ChatsListScenario.inlineError,
               ),
             );

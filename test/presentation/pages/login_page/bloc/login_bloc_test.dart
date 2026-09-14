@@ -11,13 +11,45 @@ import 'package:nox_app/domain/repository/app/auth_repository.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/presentation/pages/login_page/bloc/login_bloc.dart';
 
+import 'package:nox_app/domain/model/session/session_phase.dart';
+import 'package:nox_app/domain/service/session_phase_service.dart';
+
 import 'login_bloc_test.mocks.dart';
+
+/// A phase this test drives by hand. The real one is the socket's.
+class _FakePhase implements SessionPhaseService {
+  final StreamController<SessionPhase> _controller = StreamController<SessionPhase>.broadcast();
+  SessionPhase _phase = SessionPhase.disconnected;
+
+  void emit(SessionPhase next) {
+    _phase = next;
+    _controller.add(next);
+  }
+
+  @override
+  SessionPhase get phase => _phase;
+
+  @override
+  Stream<SessionPhase> watchPhase() => _controller.stream;
+
+  @override
+  Future<void> reconnect() async {}
+}
 
 @GenerateMocks([AuthRepository])
 void main() {
   provideDummy<RepositoryResult<bool>>(const RepositoryResult.success(data: true));
 
   group('LoginBloc', () {
+    // The bloc watches the session phase since feature 036 - the pin is checked
+    // during the handshake, so a refusal never reaches the sign-in result - and
+    // that service comes from the container.
+    setUp(() async {
+      await configureDependencies(Environment.test);
+      getIt.allowReassignment = true;
+    });
+    tearDown(() async => getIt.reset());
+
     blocTest<LoginBloc, LoginState>(
       'enables submit once the id is non-empty',
       build: () => LoginBloc(demo: true),
@@ -87,6 +119,58 @@ void main() {
       seed: () => const LoginState(id: 'kept-id', status: LoginStatus.navNewId),
       act: (bloc) => bloc.add(const LoginEvent.navigationHandled()),
       expect: () => [predicate<LoginState>((s) => s.status == LoginStatus.idle && s.id == 'kept-id')],
+    );
+  });
+
+  group('LoginBloc and the server that is not the one the link named', () {
+    late _FakePhase phase;
+
+    setUp(() async {
+      await configureDependencies(Environment.test);
+      getIt.allowReassignment = true;
+      phase = _FakePhase();
+      getIt.registerSingleton<SessionPhaseService>(phase);
+    });
+    tearDown(() async => getIt.reset());
+
+    blocTest<LoginBloc, LoginState>(
+      'a refused server is its own error, not a network one',
+      // Telling the person to check their connection here sends them after
+      // something that is working perfectly and will never be the cause.
+      build: () => LoginBloc(demo: true),
+      act: (bloc) async {
+        await Future<void>.delayed(Duration.zero);
+        phase.emit(SessionPhase.serverMismatch);
+      },
+      expect: () => [predicate<LoginState>((s) => s.status == LoginStatus.errorServerMismatch)],
+    );
+
+    blocTest<LoginBloc, LoginState>(
+      'an ordinary disconnection says nothing at all here',
+      // Only the refusal is the screen's business: every other phase is the
+      // banner's job on the screens behind sign-in.
+      build: () => LoginBloc(demo: true),
+      act: (bloc) async {
+        await Future<void>.delayed(Duration.zero);
+        phase.emit(SessionPhase.disconnected);
+        phase.emit(SessionPhase.connecting);
+      },
+      expect: () => <LoginState>[],
+    );
+
+    blocTest<LoginBloc, LoginState>(
+      'typing clears it, because the next link may well be the right one',
+      build: () => LoginBloc(demo: true),
+      act: (bloc) async {
+        await Future<void>.delayed(Duration.zero);
+        phase.emit(SessionPhase.serverMismatch);
+        await Future<void>.delayed(Duration.zero);
+        bloc.add(const LoginEvent.idChanged('another-link'));
+      },
+      expect: () => [
+        predicate<LoginState>((s) => s.status == LoginStatus.errorServerMismatch),
+        predicate<LoginState>((s) => s.status == LoginStatus.idle && s.id == 'another-link'),
+      ],
     );
   });
 

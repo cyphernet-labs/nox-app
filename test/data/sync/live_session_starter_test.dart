@@ -14,6 +14,7 @@ import 'package:nox_app/data/sync/live_session_starter.dart';
 import 'package:nox_app/data/sync/sync_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/app_config/app_flavor_type.dart';
+import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
@@ -265,6 +266,55 @@ void main() {
       await settle();
 
       expect(await getIt<SyncRepository>().getEpoch(), 'live:10.0.0.5:9000');
+    });
+
+    test('a refused server stops the ladder, and the retry is the way back', () async {
+      await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
+      await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
+      await starter.start();
+      await settle();
+      expect(factory.created, hasLength(1));
+
+      factory.latest.refusePin();
+      await settle();
+
+      expect(socket.currentPhase, SessionPhase.serverMismatch);
+      // No ladder. Waited out well past the first rung: an app that kept
+      // calling would show "no connection" for ever over a server that answers
+      // perfectly well and will never be accepted.
+      await Future<void>.delayed(const Duration(milliseconds: 700));
+      expect(factory.created, hasLength(1), reason: 'nothing may retry a refusal on its own');
+
+      // The banner action. Without it the app never comes back, not even once
+      // the cause is fixed.
+      await starter.restart();
+      await settle();
+
+      expect(factory.created, hasLength(2));
+      expect(socket.currentPhase, isNot(SessionPhase.serverMismatch));
+    });
+
+    test('a refusal does not take the path that wipes the device', () async {
+      // The security requirement of the whole phase, asserted as a
+      // non-consequence: the revocation path ends in a forced logout with a
+      // full local wipe, so routing a bad certificate through it would let
+      // anyone able to stand in the middle erase this person's messages on
+      // every device they own, by presenting one.
+      await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
+      await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
+      await starter.start();
+      await settle();
+
+      factory.latest.refusePin();
+      await settle();
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+
+      // Still signed in, still pointed at the same server, still holding the
+      // same device key.
+      final live = await session.readSession();
+      expect(live.data, isNotNull, reason: 'the session survived');
+      expect((await session.serverAddress()).data, '10.0.0.5:9000');
+      expect((await session.serverFingerprint()).data, kPinA);
     });
 
     test('an unpaired install connects but says nothing, leaving room for pair', () async {

@@ -34,7 +34,8 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
     on<Initialize>(_onInitialize);
     on<ViewModeChanged>(_onViewModeChanged);
     on<FilesRefreshed>(_onFilesRefreshed);
-    on<ConnectivityChanged>(_onConnectivityChanged);
+    on<SessionPhaseChanged>(_onSessionPhaseChanged);
+    on<RetryConnection>(_onRetryConnection);
     on<SetScenario>(_onSetScenario);
     on<PersonLabelChanged>(_onPersonLabelChanged);
   }
@@ -50,13 +51,16 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
   late String _chatId;
   ChatCardScenario _scenario = ChatCardScenario.normal;
 
-  // Live device-online state (P1): the offline banner is reachable in the real flow, not
-  // just via the debug scenario. Mirrors ChatsListBloc / ChatThreadBloc.
+  // The live channel's phase (P1, widened by 036). The whole phase is kept, not
+  // a boolean derived from it. Mirrors ChatsListBloc / ChatThreadBloc.
   StreamSubscription<SessionPhase>? _connSub;
-  bool _deviceOnline = true;
+  SessionPhase _phase = SessionPhase.live;
 
-  /// The card is offline when the device is offline OR the debug scenario forces it.
-  bool _isOffline() => !_deviceOnline || _scenario == ChatCardScenario.offline;
+  /// The wrong machine answered. Takes precedence over the offline banner: both
+  /// would otherwise show at once, and "no connection" is simply false here.
+  bool _isServerMismatch() => _phase.isServerMismatch || _scenario == ChatCardScenario.pinRefused;
+
+  bool _isOffline() => !_isServerMismatch() && (!_phase.isCurrent || _scenario == ChatCardScenario.offline);
 
   // Live change-signal (feature 017 / R5): a new attachment sent to this chat writes
   // to the message store → re-derive the files. Value ignored — getChatFiles stays the
@@ -84,7 +88,7 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
     // The session phase, not raw device connectivity, is what says whether the
     // data on screen is current: a device can be online while the socket is
     // down, and the socket can be open while replay is still running (FR-005).
-    _connSub ??= _sessionPhaseService.watchPhase().listen((phase) => add(ChatCardEvent.connectivityChanged(phase.isCurrent)));
+    _connSub ??= _sessionPhaseService.watchPhase().listen((phase) => add(ChatCardEvent.sessionPhaseChanged(phase)));
     // Watched, not read once. The desktop side sheet stays open while the
     // person renames themselves from another device, and a snapshot would keep
     // rendering the old name until the card was closed and reopened - the exact
@@ -122,7 +126,9 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
         return;
       }
       result.match<void>(
-        onData: (files) => emit(ChatCardState.initialized(files: files, isOffline: _isOffline(), personLabel: _person)),
+        onData: (files) => emit(
+          ChatCardState.initialized(files: files, isOffline: _isOffline(), isServerMismatch: _isServerMismatch(), personLabel: _person),
+        ),
         onError: (_) => emit(const ChatCardState.error()),
       );
     }, onError: (error, exception, stackTrace) => emit(const ChatCardState.error()));
@@ -162,12 +168,16 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
     );
   }
 
-  void _onConnectivityChanged(ConnectivityChanged event, Emitter<ChatCardState> emit) {
-    _deviceOnline = event.online;
+  void _onSessionPhaseChanged(SessionPhaseChanged event, Emitter<ChatCardState> emit) {
+    _phase = event.phase;
     final current = state;
     // Update the banner in place (no reload) — like the reactive files re-derive.
-    if (current is Initialized) emit(current.copyWith(isOffline: _isOffline()));
+    if (current is Initialized) emit(current.copyWith(isOffline: _isOffline(), isServerMismatch: _isServerMismatch()));
   }
+
+  /// One more attempt, asked for by the person. Emits nothing: the phase stream
+  /// moves the banner.
+  Future<void> _onRetryConnection(RetryConnection event, Emitter<ChatCardState> emit) => _sessionPhaseService.reconnect();
 
   FutureOr<void> _onSetScenario(SetScenario event, Emitter<ChatCardState> emit) async {
     _scenario = event.scenario;

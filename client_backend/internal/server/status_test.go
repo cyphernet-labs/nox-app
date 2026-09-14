@@ -6,6 +6,8 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -546,5 +548,44 @@ func TestTheServicePageSaysTheRightThingInEveryState(t *testing.T) {
 				t.Fatalf("page offers a claim QR = %v, want %v: %s", got, tc.offersClaim, body)
 			}
 		})
+	}
+}
+
+// The page stays on plain HTTP while everything else moved to TLS.
+//
+// Not an oversight: its socket carries no network traffic by construction, so
+// there is nothing in transit to protect - and a self-signed certificate there
+// would teach an operator's browser to expect a warning on the one page whose
+// job is to hand out the right to own this machine.
+func TestTheServicePageIsStillPlainHTTPOnLoopback(t *testing.T) {
+	_, srv := newTestServer(t)
+	dialable(srv)
+	if _, err := srv.store.EnsureServerIdentity(context.Background()); err != nil {
+		t.Fatalf("EnsureServerIdentity: %v", err)
+	}
+
+	// Its own listener, dialled without a certificate of any kind.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	page := &http.Server{Handler: srv.StatusHandler(), ReadHeaderTimeout: readHeaderTimeout}
+	go func() { _ = page.Serve(listener) }()
+	t.Cleanup(func() { _ = page.Close() })
+
+	resp, err := http.Get("http://" + listener.Addr().String() + "/") //nolint:noctx // a page fetch
+	if err != nil {
+		t.Fatalf("the service page refused a plain request: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("service page = %d, want 200", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read the page: %v", err)
+	}
+	if !strings.Contains(string(body), "https://nox.app/p/#") {
+		t.Fatalf("the page came back without its claim link: %s", body)
 	}
 }

@@ -1,8 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
+import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/general/onboarding_mock_data.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
 
@@ -21,6 +26,22 @@ class LoginBloc extends BaseBloc<LoginEvent, LoginState> {
     on<ClipboardChecked>(_onClipboardChecked);
     on<SignInRequested>(_onSignInRequested);
     on<NavigationHandled>(_onNavigationHandled);
+    on<ServerRefused>(_onServerRefused);
+    // Watched from here rather than read from the sign-in result: the pin is
+    // checked during the TLS handshake, which happens before `pair` goes out -
+    // so the repository can only report that there was no channel, and the
+    // person would be told to check a connection that is working perfectly.
+    _phaseSub = getIt<SessionPhaseService>().watchPhase().listen((phase) {
+      if (phase.isServerMismatch) add(const LoginEvent.serverRefused());
+    });
+  }
+
+  StreamSubscription<SessionPhase>? _phaseSub;
+
+  @override
+  Future<void> close() {
+    _phaseSub?.cancel();
+    return super.close();
   }
 
   /// In demo mode (gallery) the sign-in outcome is a debug stand-in and navigation
@@ -39,6 +60,14 @@ class LoginBloc extends BaseBloc<LoginEvent, LoginState> {
 
   void _onNavigationHandled(NavigationHandled event, Emitter<LoginState> emit) {
     emit(state.copyWith(status: LoginStatus.idle));
+  }
+
+  /// Shown even when nothing is in flight: a refusal that arrives while the
+  /// person is still typing is about the link they just pasted, and hiding it
+  /// until they press the button again would let them press it into the same
+  /// wall twice.
+  void _onServerRefused(ServerRefused event, Emitter<LoginState> emit) {
+    emit(state.copyWith(status: LoginStatus.errorServerMismatch));
   }
 
   Future<void> _onSignInRequested(SignInRequested event, Emitter<LoginState> emit) async {
@@ -83,6 +112,7 @@ class LoginBloc extends BaseBloc<LoginEvent, LoginState> {
       LoginOutcome.registered => LoginStatus.navRegistered,
       LoginOutcome.errorFormat => LoginStatus.errorFormat,
       LoginOutcome.errorNetwork => LoginStatus.errorNetwork,
+      LoginOutcome.errorServerMismatch => LoginStatus.errorServerMismatch,
       LoginOutcome.fatal => LoginStatus.navFatal,
       LoginOutcome.auto => LoginStatus.navNewId,
     };

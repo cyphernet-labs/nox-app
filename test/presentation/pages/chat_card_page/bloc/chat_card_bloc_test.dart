@@ -8,7 +8,9 @@ import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/service/connectivity_service.dart';
+import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/presentation/pages/chat_card_page/bloc/chat_card_bloc.dart';
 
@@ -218,6 +220,56 @@ void main() {
       expect((bloc.state as Initialized).isOffline, isFalse); // banner cleared
     });
   });
+
+  group('the server that is not the one the link named (036)', () {
+    late _FakePhase phase;
+
+    Future<ChatCardBloc> boot(SessionPhase initial) async {
+      phase = _FakePhase(initial);
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<SessionPhaseService>(phase);
+      addTearDown(() => getIt.registerSingleton<SessionPhaseService>(_FakePhase()));
+      final bloc = ChatCardBloc()..add(const ChatCardEvent.initialize('chat_0'));
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      return bloc;
+    }
+
+    test('a refused server raises its own banner, and not the offline one', () async {
+      final bloc = await boot(SessionPhase.serverMismatch);
+
+      final state = bloc.state as Initialized;
+      expect(state.isServerMismatch, isTrue);
+      expect(state.isOffline, isFalse);
+    });
+
+    test('the files stay listed under it - nothing local is thrown away', () async {
+      final bloc = await boot(SessionPhase.serverMismatch);
+
+      expect((bloc.state as Initialized).files, isNotEmpty);
+    });
+
+    test('the banner action asks for another attempt', () async {
+      final bloc = await boot(SessionPhase.serverMismatch);
+
+      bloc.add(const ChatCardEvent.retryConnection());
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(phase.reconnects, 1);
+    });
+
+    test('a fixed cause clears it', () async {
+      final bloc = await boot(SessionPhase.serverMismatch);
+      expect((bloc.state as Initialized).isServerMismatch, isTrue);
+
+      phase.emit(SessionPhase.live);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      final state = bloc.state as Initialized;
+      expect(state.isServerMismatch, isFalse);
+      expect(state.isOffline, isFalse);
+    });
+  });
 }
 
 /// A controllable [ConnectivityService] for the P1 tests (seed-then-live).
@@ -239,4 +291,32 @@ class _FakeConnectivity implements ConnectivityService {
     yield _online;
     yield* _controller.stream;
   }
+}
+
+/// A session phase this test drives by hand, plus a count of how many times the
+/// screen asked for another attempt.
+class _FakePhase implements SessionPhaseService {
+  _FakePhase([this._phase = SessionPhase.live]);
+
+  SessionPhase _phase;
+  final StreamController<SessionPhase> _controller = StreamController<SessionPhase>.broadcast();
+
+  int reconnects = 0;
+
+  void emit(SessionPhase next) {
+    _phase = next;
+    _controller.add(next);
+  }
+
+  @override
+  SessionPhase get phase => _phase;
+
+  @override
+  Stream<SessionPhase> watchPhase() async* {
+    yield _phase;
+    yield* _controller.stream;
+  }
+
+  @override
+  Future<void> reconnect() async => reconnects++;
 }

@@ -208,10 +208,7 @@ class _ChatCardBodyState extends State<ChatCardBody> {
                     // The banner stays at the top of the card, where the spec pins
                     // it: pushed below the People block it lands ~150dp down, and on a
                     // phone at a large text scale it can fall off the first fold.
-                    if (state is Initialized && state.isOffline)
-                      SliverToBoxAdapter(
-                        child: AppNoticeStripWidget(message: context.l10n.noConnection, icon: NoxIcons.wifiOff),
-                      ),
+                    SliverToBoxAdapter(child: _banner(context, state)),
                     // Only once there is something to show. Rendered unconditionally
                     // it stacked a person and a disabled button over the embedded
                     // error screen and over the loading spinner - two states the
@@ -237,6 +234,26 @@ class _ChatCardBodyState extends State<ChatCardBody> {
   // by AppPanelHeaderWidget itself, so no extra divider is added here.
   Widget _drawerHeader(BuildContext context) =>
       AppPanelHeaderWidget(title: context.l10n.chatInfoTitle, largeTitle: true, onClose: () => Navigator.of(context).maybePop());
+
+  /// The connection notice, at the top of the card where the spec pins it:
+  /// pushed below the People block it lands ~150dp down, and on a phone at a
+  /// large text scale it can fall off the first fold.
+  ///
+  /// The wrong machine comes FIRST. It is not a connection problem - something
+  /// answered - and the action is the only way back from it.
+  Widget _banner(BuildContext context, ChatCardState state) {
+    if (state is! Initialized) return const SizedBox.shrink();
+    if (state.isServerMismatch) {
+      return AppNoticeStripWidget(
+        message: context.l10n.serverNotRecognised,
+        icon: NoxIcons.error,
+        actionLabel: context.l10n.actionTryAgain,
+        onAction: () => _bloc.add(const ChatCardEvent.retryConnection()),
+      );
+    }
+    if (state.isOffline) return AppNoticeStripWidget(message: context.l10n.noConnection, icon: NoxIcons.wifiOff);
+    return const SizedBox.shrink();
+  }
 
   Widget _header(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;

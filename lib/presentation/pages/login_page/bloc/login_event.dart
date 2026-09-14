@@ -13,4 +13,10 @@ sealed class LoginEvent with _$LoginEvent {
 
   /// The page consumed a terminal `nav*` status (navigated away) → reset to idle.
   const factory LoginEvent.navigationHandled() = NavigationHandled;
+
+  /// The channel refused the machine the link named. Comes from the session
+  /// phase rather than from the sign-in result: the refusal happens in the TLS
+  /// handshake, before `pair` is sent, so what the sign-in call reports is the
+  /// absence of a channel and not the reason for it.
+  const factory LoginEvent.serverRefused() = ServerRefused;
 }

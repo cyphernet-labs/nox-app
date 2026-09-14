@@ -278,10 +278,22 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
     if (selected == null) {
       // No selection (or the selected chat dropped out of the list, e.g. filtered
       // by search) → the illustrated empty state, not a stale thread placeholder.
-      content = AppEmptyContentWidget(
-        illustration: Assets.svg.illustrations.emptyChats,
-        title: context.l10n.chatsNoSelectionTitle,
-        message: context.l10n.chatsNoSelectionMessage,
+      //
+      // The banner rides above it, because this pane is half the window and
+      // would otherwise be the one place on the desktop screen that says
+      // nothing at all. With a chat selected the thread inside draws its own -
+      // it has the same state and the same action - and two would be two.
+      content = Column(
+        children: [
+          _banners(context, state),
+          Expanded(
+            child: AppEmptyContentWidget(
+              illustration: Assets.svg.illustrations.emptyChats,
+              title: context.l10n.chatsNoSelectionTitle,
+              message: context.l10n.chatsNoSelectionMessage,
+            ),
+          ),
+        ],
       );
     } else {
       // Desktop list-detail: the real thread (5.2) loads in the pane (no push),
@@ -312,6 +324,18 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
 
   Widget _banners(BuildContext context, ChatsListState state) {
     if (state is! Initialized) return const SizedBox.shrink();
+    // The wrong machine comes FIRST. It is not a connection problem: something
+    // answered, promptly, and "No connection" over it would send the person to
+    // check their wifi over a thing no network can fix. The action is the only
+    // way back - nothing about this changes on its own.
+    if (state.isServerMismatch) {
+      return AppNoticeStripWidget(
+        message: context.l10n.serverNotRecognised,
+        icon: NoxIcons.error,
+        actionLabel: context.l10n.actionTryAgain,
+        onAction: () => _bloc.add(const ChatsListEvent.retryConnection()),
+      );
+    }
     if (state.isOffline) return AppNoticeStripWidget(message: context.l10n.noConnection, icon: NoxIcons.wifiOff);
     if (state.hasLoadError) {
       return AppNoticeStripWidget(message: context.l10n.chatsLoadError);

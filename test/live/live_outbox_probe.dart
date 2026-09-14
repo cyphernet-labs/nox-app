@@ -72,6 +72,8 @@ class _Phase implements SessionPhaseService {
   SessionPhase get phase => phaseValue;
   @override
   Stream<SessionPhase> watchPhase() => const Stream<SessionPhase>.empty();
+  @override
+  Future<void> reconnect() async {}
 }
 
 /// The thin slice of MessageRepository the drain uses: send through the REAL

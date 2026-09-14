@@ -150,7 +150,7 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
                   initial: widget.chat,
                   builder: (context, chat) => AppThreadHeaderWidget(chat: chat, onInfo: widget.onInfo ?? () {}),
                 ),
-              if (state is Initialized && state.isOffline) AppNoticeStripWidget(message: context.l10n.noConnection, icon: NoxIcons.wifiOff),
+              _banner(context, state),
               Expanded(child: _body(context, state)),
               if (state is Initialized) _composerBar(state),
               if (kDebugMode && widget.demo) _scenarioControl(),
@@ -159,6 +159,24 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
         },
       ),
     );
+  }
+
+  /// The connection notice. The wrong machine comes FIRST: it is not a
+  /// connection problem, and saying "No connection" over a server that answered
+  /// sends the person to check their wifi over something no network can fix.
+  /// The action is the only way back - nothing about this changes on its own.
+  Widget _banner(BuildContext context, ChatThreadState state) {
+    if (state is! Initialized) return const SizedBox.shrink();
+    if (state.isServerMismatch) {
+      return AppNoticeStripWidget(
+        message: context.l10n.serverNotRecognised,
+        icon: NoxIcons.error,
+        actionLabel: context.l10n.actionTryAgain,
+        onAction: () => _bloc.add(const ChatThreadEvent.retryConnection()),
+      );
+    }
+    if (state.isOffline) return AppNoticeStripWidget(message: context.l10n.noConnection, icon: NoxIcons.wifiOff);
+    return const SizedBox.shrink();
   }
 
   Widget _body(BuildContext context, ChatThreadState state) {

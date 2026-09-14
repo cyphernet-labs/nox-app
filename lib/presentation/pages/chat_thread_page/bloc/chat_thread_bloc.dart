@@ -55,7 +55,8 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     on<OutboxChanged>(_onOutboxChanged, transformer: sequential());
     on<AttachmentPicked>(_onAttachmentPicked);
     on<AttachmentRemoved>(_onAttachmentRemoved);
-    on<ConnectivityChanged>(_onConnectivityChanged, transformer: sequential());
+    on<SessionPhaseChanged>(_onSessionPhaseChanged, transformer: sequential());
+    on<RetryConnection>(_onRetryConnection);
     on<SetScenario>(_onSetScenario);
   }
 
@@ -90,10 +91,18 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   // message reappear after a restart: the bloc reads the queue, it does not
   // hold it.
   StreamSubscription<List<OutboxEntry>>? _outboxSub;
-  bool _deviceOnline = true;
+  SessionPhase _phase = SessionPhase.live;
 
-  /// The thread is offline when the device is offline OR the debug scenario forces it.
-  bool _isOffline() => !_deviceOnline || _scenario == ChatThreadScenario.offline;
+  /// The wrong machine answered. Takes precedence over the offline banner: both
+  /// would otherwise show at once, and "no connection" is simply false here.
+  bool _isServerMismatch() => _phase.isServerMismatch || _scenario == ChatThreadScenario.pinRefused;
+
+  /// The thread is offline when the channel is not current OR the debug scenario forces it.
+  bool _isOffline() => !_isServerMismatch() && (!_phase.isCurrent || _scenario == ChatThreadScenario.offline);
+
+  /// Whether a send may go out at all. Both states hold it back, and neither
+  /// marks anything as failed: a queued message waits, it is not lost.
+  bool _isHeld() => _isOffline() || _isServerMismatch();
 
   FutureOr<void> _onInitialize(Initialize event, Emitter<ChatThreadState> emit) async {
     _chatId = event.chatId;
@@ -117,7 +126,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     // The session phase, not raw device connectivity, is what says whether the
     // data on screen is current: a device can be online while the socket is
     // down, and the socket can be open while replay is still running (FR-005).
-    _connSub ??= _sessionPhaseService.watchPhase().listen((phase) => add(ChatThreadEvent.connectivityChanged(phase.isCurrent)));
+    _connSub ??= _sessionPhaseService.watchPhase().listen((phase) => add(ChatThreadEvent.sessionPhaseChanged(phase)));
     // The durable queue for this chat. No skip(1): the FIRST snapshot is the
     // point — it is what restores a message written before the app was closed.
     _outboxSub ??= _outboxRepository.watchQueue(chatId: _chatId).listen((entries) => add(ChatThreadEvent.outboxChanged(entries)));
@@ -171,7 +180,14 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
             keyExtractor: (m) => m.id,
           );
           emit(
-            live.copyWith(items: const [], pagingState: r.pagingState, oldestLoadedSeq: null, loadingInProgress: false, isOffline: false),
+            live.copyWith(
+              items: const [],
+              pagingState: r.pagingState,
+              oldestLoadedSeq: null,
+              loadingInProgress: false,
+              isOffline: false,
+              isServerMismatch: false,
+            ),
           );
           return;
         }
@@ -207,6 +223,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
                 oldestLoadedSeq: newOldest,
                 loadingInProgress: false,
                 isOffline: _isOffline(),
+                isServerMismatch: _isServerMismatch(),
               ),
             );
             // Received pictures need their bytes to render at all. Fire and
@@ -268,7 +285,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
       await _outboxRepository.recordFailure(clientMessageId: entry.clientMessageId, code: 'internal', terminal: true, serverAnswered: true);
       return;
     }
-    if (_isOffline()) return; // stays queued until the channel is back
+    if (_isHeld()) return; // stays queued until the channel is back
     unawaited(_outboxService.flush());
   }
 
@@ -278,7 +295,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
       await _outboxRepository.recordFailure(clientMessageId: event.localId, code: 'internal', terminal: true, serverAnswered: true);
       return;
     }
-    if (_isOffline()) return;
+    if (_isHeld()) return;
     unawaited(_outboxService.flush());
   }
 
@@ -470,16 +487,28 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     add(state is Initialized ? const ChatThreadEvent.loadMessages(reset: true) : ChatThreadEvent.initialize(_chatId));
   }
 
-  Future<void> _onConnectivityChanged(ConnectivityChanged event, Emitter<ChatThreadState> emit) async {
+  Future<void> _onSessionPhaseChanged(SessionPhaseChanged event, Emitter<ChatThreadState> emit) async {
     final wasOffline = _isOffline();
-    _deviceOnline = event.online;
+    final wasMismatch = _isServerMismatch();
+    _phase = event.phase;
     final nowOffline = _isOffline();
-    if (wasOffline == nowOffline) return; // no effective change (a debug scenario may pin offline)
+    final nowMismatch = _isServerMismatch();
+    // No effective change (a debug scenario may pin either one).
+    if (wasOffline == nowOffline && wasMismatch == nowMismatch) return;
     final current = state;
-    if (current is Initialized) emit(current.copyWith(isOffline: nowOffline)); // banner in place, no reload
+    // Banner in place, no reload.
+    if (current is Initialized) emit(current.copyWith(isOffline: nowOffline, isServerMismatch: nowMismatch));
     // Reconnected → ask for a drain. Re-delivery itself is no longer this
     // bloc's job: a single sender is what keeps a connectivity flap from
-    // posting the same message twice.
-    if (!nowOffline) unawaited(_outboxService.flush());
+    // posting the same message twice. A refused server is NOT a reconnection:
+    // draining into it would send this person's messages to a machine that
+    // just failed to prove who it is.
+    if (!nowOffline && !nowMismatch) unawaited(_outboxService.flush());
   }
+
+  /// One more attempt, asked for by the person.
+  ///
+  /// Emits nothing: the phase stream moves the banner, and guessing the outcome
+  /// here would clear it before there is one.
+  Future<void> _onRetryConnection(RetryConnection event, Emitter<ChatThreadState> emit) => _sessionPhaseService.reconnect();
 }

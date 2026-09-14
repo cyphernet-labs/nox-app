@@ -10,6 +10,7 @@ import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
+import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/general/app_clock.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
 
@@ -32,6 +33,7 @@ class FileViewBloc extends BaseBloc<FileViewEvent, FileViewState> {
 
   final FileRepository _files = getIt<FileRepository>();
   final MessageRepository _messages = getIt<MessageRepository>();
+  final SessionPhaseService _phase = getIt<SessionPhaseService>();
 
   /// The message this attachment belongs to, when it has one. Fetched bytes are
   /// recorded against it so the thumbnail and Save find them next time without
@@ -72,6 +74,18 @@ class FileViewBloc extends BaseBloc<FileViewEvent, FileViewState> {
           status: FileViewStatus.ready,
         ),
       );
+      return;
+    }
+
+    // The OTHER downloader. It reaches Dio directly, without going through the
+    // socket, so the phase that stopped everything else does not reach it on
+    // its own - and a tap here would ask a machine that just failed to prove
+    // who it is for this person's file.
+    //
+    // `failed`, not `gone`: the bytes exist and the screen keeps its retry,
+    // which is the same way out the banner offers.
+    if (_phase.phase.isServerMismatch) {
+      emit(state.copyWith(status: FileViewStatus.failed));
       return;
     }
 

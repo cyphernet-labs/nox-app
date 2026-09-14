@@ -1,5 +1,6 @@
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
+import 'package:nox_app/data/sync/live_session_starter.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/service/connectivity_service.dart';
@@ -17,6 +18,15 @@ class SocketSessionPhaseService implements SessionPhaseService {
 
   @override
   Stream<SessionPhase> watchPhase() => _socket.phase;
+
+  /// Resolved here rather than injected: the starter is what owns the order the
+  /// channel comes up in, and taking it in the constructor would put this
+  /// service inside that lifecycle instead of beside it.
+  @override
+  Future<void> reconnect() async {
+    if (!getIt.isRegistered<LiveSessionStarter>()) return;
+    await getIt<LiveSessionStarter>().restart();
+  }
 }
 
 /// The answer where there is no socket (mock-backed flavors).
@@ -43,4 +53,9 @@ class ConnectivitySessionPhaseService implements SessionPhaseService {
     _last = online ? SessionPhase.live : SessionPhase.disconnected;
     return _last;
   });
+
+  /// Nothing to reconnect: there is no channel in a mock-backed flavor, and
+  /// device connectivity comes back on its own or not at all.
+  @override
+  Future<void> reconnect() async {}
 }
