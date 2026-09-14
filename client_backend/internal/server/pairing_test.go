@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"strings"
 	"sync"
@@ -14,6 +15,7 @@ import (
 	"github.com/coder/websocket"
 
 	"nox.app/client-backend/internal/protocol"
+	"nox.app/client-backend/internal/store"
 )
 
 func TestPairClaimCreatesThePersonAndRefusesASecondClaim(t *testing.T) {
@@ -426,4 +428,324 @@ func (b *syncBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.String()
+}
+
+// inviteFrom mints a device invite on an already greeted connection and returns
+// the token, so the two tests below can share a setup without sharing a subject.
+func inviteFrom(t *testing.T, owner *wsClient, id int) string {
+	t.Helper()
+	reply := owner.expectOKAfter(id, fmt.Sprintf(`{"id":%d,"cmd":"device.invite","data":{}}`, id))
+	var got struct {
+		Token string `json:"token"`
+	}
+	mustUnmarshal(t, mustRaw(t, reply), &got)
+	if got.Token == "" {
+		t.Fatal("invite reply carried no token")
+	}
+	return got.Token
+}
+
+// The point of the phase: a device joining is news to the person's OTHER
+// devices, and to nobody else.
+//
+// Both halves are asserted, and the negative one is not decoration: a broadcast
+// that simply tells everyone would pass the positive half alone.
+func TestPairingTellsTheOtherDevicesAndNotTheOneThatJustJoined(t *testing.T) {
+	ts, srv := newTestServer(t)
+	dev, _ := claimDevice(t, ts, srv)
+
+	owner := dialWS(t, ts, srv)
+	owner.expectGreeting()
+	owner.greet(t, 1, dev, "")
+	token := inviteFrom(t, owner, 2)
+
+	// Kept open, unlike pairDevice's connection: what this one does NOT receive
+	// is half the assertion.
+	joiner := newDevice(t)
+	c := dialWS(t, ts, srv)
+	c.expectGreeting()
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"device_key":%q,"platform":"test"}}`, token, joiner.pub))
+
+	// Raw frames, not expectReply: that helper SKIPS events, which is exactly
+	// the mistake being looked for here. The reply comes first (the fan-out
+	// runs after it), and then nothing at all.
+	first := c.read()
+	if _, isEvent := first["event"]; isEvent {
+		t.Fatalf("the device that just joined was told about itself: %v", first)
+	}
+
+	// And the device that was already here finds out without asking.
+	seq, name, data := owner.expectEvent()
+	if name != protocol.EventDevicePaired || seq != 0 {
+		t.Fatalf("event = %s/%d, want %s/0", name, seq, protocol.EventDevicePaired)
+	}
+	if len(data) != 0 {
+		t.Fatalf("device.paired carries %v, want an empty object", data)
+	}
+
+	// Last, because it spends the connection: the owner has its event by now,
+	// so anything still on its way to the joiner would have arrived.
+	c.expectNoFrame(300 * time.Millisecond)
+}
+
+// The event is addressed to the connections of ONE PERSON, and the filter that
+// does that is the only thing keeping it off a connection that has not said who
+// it is - the pairing screen of some other install, dialled in and waiting.
+//
+// Worth its own test because the exclusion of the joining connection hides it:
+// a fan-out to EVERYONE except the sender passes every other test in this file.
+func TestThePairedEventGoesOnlyToConnectionsOfThisPerson(t *testing.T) {
+	ts, srv := newTestServer(t)
+	dev, _ := claimDevice(t, ts, srv)
+
+	owner := dialWS(t, ts, srv)
+	owner.expectGreeting()
+	owner.greet(t, 1, dev, "")
+	token := inviteFrom(t, owner, 2)
+
+	// Dialled, greeted BY the server, and silent ever since: identity.UserID is
+	// empty, so it belongs to nobody and must hear nothing.
+	bystander := dialWS(t, ts, srv)
+	bystander.expectGreeting()
+
+	joiner := newDevice(t)
+	c := dialWS(t, ts, srv)
+	c.expectGreeting()
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"device_key":%q,"platform":"test"}}`, token, joiner.pub))
+	c.expectOK(1)
+
+	// The owner first: it proves the fan-out ran at all, so the silence below
+	// is a filter doing its job rather than an event that never happened.
+	seq, name, _ := owner.expectEvent()
+	if name != protocol.EventDevicePaired || seq != 0 {
+		t.Fatalf("event = %s/%d, want %s/0", name, seq, protocol.EventDevicePaired)
+	}
+	bystander.expectNoFrame(300 * time.Millisecond)
+}
+
+// The answer to `pair` must not be able to queue behind a stranger's backlog.
+//
+// A connection with a full write queue and a live context is not a contrivance:
+// it is where a slow consumer sits while its drop finishes the close handshake,
+// and send() waits there until the context is cancelled. Announcing before
+// replying puts the joining device's answer behind that wait - on a command
+// that has already burned a one-shot token and written the device row, so the
+// client times out on work the server has committed.
+func TestTheJoiningDeviceIsAnsweredEvenWhileAnotherConnectionIsWedged(t *testing.T) {
+	ts, srv := newTestServer(t)
+	dev, _ := claimDevice(t, ts, srv)
+
+	owner := dialWS(t, ts, srv)
+	owner.expectGreeting()
+	owner.greet(t, 1, dev, "")
+	token := inviteFrom(t, owner, 2)
+
+	wedged := stubClient(t, srv, personOn(t, srv), 1)
+	wedged.out <- []byte("{}") // full from here on
+
+	joiner := newDevice(t)
+	c := dialWS(t, ts, srv)
+	c.expectGreeting()
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"device_key":%q,"platform":"test"}}`, token, joiner.pub))
+	// Fails by timing out rather than by comparing anything: with the fan-out
+	// first, this reply is behind a queue nobody is draining.
+	c.expectOK(1)
+}
+
+// The same for a rename, which fans out through the same helper and had the
+// same defect until this was written: `identity.setLabel` told the other
+// devices BEFORE answering the one that asked.
+func TestTheRenamingDeviceIsAnsweredEvenWhileAnotherConnectionIsWedged(t *testing.T) {
+	ts, srv := newTestServer(t)
+	dev, _ := claimDevice(t, ts, srv)
+
+	owner := dialWS(t, ts, srv)
+	owner.expectGreeting()
+	owner.greet(t, 1, dev, "")
+
+	wedged := stubClient(t, srv, personOn(t, srv), 1)
+	wedged.out <- []byte("{}")
+
+	owner.send(`{"id":2,"cmd":"identity.setLabel","data":{"label":"Nyx"}}`)
+	owner.expectOK(2)
+}
+
+// The third fan-out, and the one that set the order the other two now follow.
+//
+// It had no test of its own: moving `dropDevice` above the reply passes the
+// whole package, because the only connection it usually reaches is the caller's
+// own and an empty queue swallows the difference. Give the revoked key a wedged
+// connection and the defect is plain - `device.revoked` blocks on it, and the
+// OK for a revocation the store has already applied never leaves.
+func TestTheRevokingDeviceIsAnsweredEvenWhileTheRevokedOneIsWedged(t *testing.T) {
+	ts, srv := newTestServer(t)
+	dev, _ := claimDevice(t, ts, srv)
+
+	owner := dialWS(t, ts, srv)
+	owner.expectGreeting()
+	owner.greet(t, 1, dev, "")
+	token := inviteFrom(t, owner, 2)
+
+	joiner := newDevice(t)
+	pairing := dialWS(t, ts, srv)
+	pairing.expectGreeting()
+	pairing.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"device_key":%q,"platform":"test"}}`, token, joiner.pub))
+	pairing.expectOK(1)
+	// The owner is told about the pairing; read it so the assertion below is
+	// about the revoke and nothing else.
+	owner.expectEvent()
+
+	// The joined device, as a connection nobody is draining.
+	wedged := stubClientWithKey(t, srv, personOn(t, srv), joiner.pub, 1)
+	wedged.out <- []byte("{}")
+
+	owner.send(fmt.Sprintf(`{"id":3,"cmd":"device.revoke","data":{"device_key":%q}}`, joiner.pub))
+	owner.expectOK(3)
+}
+
+// The exclusion of the connection the pairing came from, asked directly.
+//
+// It cannot be asked through a socket: a device that is pairing has not greeted
+// and therefore has no identity to match on, so the person filter excludes it
+// anyway and the term is invisible from outside. It is still live - a greeting
+// that fails on the journal id or the cursor leaves the identity written and
+// `helloDone` false, and `pair` is still admitted on such a connection - so it
+// is asked of the helper itself, with the registry entries built by hand.
+func TestTheAnnouncementSkipsTheConnectionItCameFrom(t *testing.T) {
+	_, srv := newTestServer(t)
+	origin := stubClient(t, srv, "u_someone", 4)
+	other := stubClient(t, srv, "u_someone", 4)
+	stranger := stubClient(t, srv, "u_else", 4)
+
+	origin.announcePaired("u_someone")
+
+	if len(origin.out) != 0 {
+		t.Fatal("the connection the pairing came from was told about its own pairing")
+	}
+	if len(other.out) != 1 {
+		t.Fatalf("the other connection of this person got %d frames, want 1", len(other.out))
+	}
+	if len(stranger.out) != 0 {
+		t.Fatal("a connection of somebody else was told")
+	}
+}
+
+// stubClient is a registry entry and nothing else: no socket, no read
+// goroutine, just a queue to look into afterwards. It is how a test asks what
+// the fan-out DID rather than what a device saw.
+//
+// It carries a real logger and is removed from the registry on cleanup, and the
+// ORDER of that cleanup is what keeps it safe: stubClient is called after
+// newTestServer, so its t.Cleanup runs before the one that closes the stack.
+// CloseConnections would dereference the nil conn - a test that calls it
+// directly, or a stack that learns to shut down through Config.Shutdown, needs
+// this entry gone first.
+func stubClient(t *testing.T, srv *Server, userID string, queue int) *client {
+	t.Helper()
+	return stubClientWithKey(t, srv, userID, "", queue)
+}
+
+// stubClientWithKey is stubClient for the fan-out that matches on the DEVICE
+// key rather than on the person: dropDevice looks for the connections holding
+// one key and closes them.
+func stubClientWithKey(t *testing.T, srv *Server, userID, deviceKey string, queue int) *client {
+	t.Helper()
+	c := &client{
+		srv:       srv,
+		logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		out:       make(chan []byte, queue),
+		identity:  store.Identity{UserID: userID},
+		deviceKey: deviceKey,
+	}
+	c.ctx, c.cancel = context.WithCancel(context.Background())
+	srv.mu.Lock()
+	srv.conns[c] = struct{}{}
+	srv.mu.Unlock()
+	t.Cleanup(func() {
+		srv.mu.Lock()
+		delete(srv.conns, c)
+		srv.mu.Unlock()
+		c.cancel()
+	})
+	return c
+}
+
+// personOn returns the id of the one person a greeted connection speaks as.
+func personOn(t *testing.T, srv *Server) string {
+	t.Helper()
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	for c := range srv.conns {
+		if c.identity.UserID != "" {
+			return c.identity.UserID
+		}
+	}
+	t.Fatal("no greeted connection, so there is no person to build a second connection for")
+	return ""
+}
+
+// Principle I on a frame nobody thinks to look at: the event must not carry the
+// token that was just spent or the key of the device that joined.
+func TestThePairedEventCarriesNoCredentialAndNoKey(t *testing.T) {
+	ts, srv := newTestServer(t)
+	dev, _ := claimDevice(t, ts, srv)
+
+	owner := dialWS(t, ts, srv)
+	owner.expectGreeting()
+	owner.greet(t, 1, dev, "")
+	token := inviteFrom(t, owner, 2)
+
+	joiner := newDevice(t)
+	c := dialWS(t, ts, srv)
+	c.expectGreeting()
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"device_key":%q,"platform":"test"}}`, token, joiner.pub))
+	c.expectOK(1)
+
+	seq, name, data := owner.expectEvent()
+	if name != protocol.EventDevicePaired || seq != 0 {
+		t.Fatalf("event = %s/%d, want %s/0", name, seq, protocol.EventDevicePaired)
+	}
+	// Serialised back rather than inspected field by field: a field added later
+	// under any name is caught, which is the whole point of asking this way.
+	whole, err := json.Marshal(map[string]any{"seq": seq, "event": name, "data": data})
+	if err != nil {
+		t.Fatalf("marshal the event back: %v", err)
+	}
+	if strings.Contains(string(whole), token) {
+		t.Fatalf("device.paired carries the spent token: %s", whole)
+	}
+	if strings.Contains(string(whole), joiner.pub) {
+		t.Fatalf("device.paired carries the new device key: %s", whole)
+	}
+}
+
+// The claim is the one pairing with nobody to tell: it is only allowed while no
+// device exists, so there is no live connection of this person to find.
+func TestClaimingAnEmptyServerAnnouncesToNobody(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ctx := context.Background()
+	if _, err := srv.store.EnsureServerIdentity(ctx); err != nil {
+		t.Fatalf("EnsureServerIdentity: %v", err)
+	}
+	token, err := srv.store.IssueClaimToken(ctx, time.Now().Unix())
+	if err != nil {
+		t.Fatalf("IssueClaimToken: %v", err)
+	}
+
+	// A second connection that is simply there. Without it this test watches
+	// only the claiming connection, which every version of the fan-out excludes
+	// anyway - so it would assert nothing at all.
+	bystander := dialWS(t, ts, srv)
+	bystander.expectGreeting()
+
+	first := newDevice(t)
+	c := dialWS(t, ts, srv)
+	c.expectGreeting()
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"device_key":%q,"platform":"test"}}`, token, first.pub))
+
+	frame := c.read()
+	if _, isEvent := frame["event"]; isEvent {
+		t.Fatalf("claiming an empty server produced an event: %v", frame)
+	}
+	bystander.expectNoFrame(300 * time.Millisecond)
 }

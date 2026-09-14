@@ -12,13 +12,25 @@ Fills the Settings detail pane (7.1); no push, selection swaps the pane. Current
 - `loaded` — current device plus the others
 - `alone` — nothing but this device
 - `error` — Couldn't load your devices.
+- `action error` — Couldn't revoke that device. Try again. (its own line above the list, never the list's)
 - `invite` — QR card, link valid for 10 minutes
 
 ## Behavior
 - A row shows the OS family and two moments (paired, last seen). The key itself is never shown: 32 base64 bytes look identical across rows. The exact hardware model is deliberately not collected.
 - `Revoke` opens a confirm dialog. Revoking the current device is a logout and says so in its own words.
 - Revocation applies immediately — the revoked device's live connection drops rather than waiting for its next attempt.
-- After a revoke the list is re-read from the server rather than edited locally.
+- A device paired from elsewhere appears in the open list on its own (phase 038): the server says so, and the screen re-reads. Leaving the section and coming back is no longer how you find out.
+- The whole invite surface disappears when a device joins: the card, because the token is one-shot and the server will now refuse that QR, and
+  the "Couldn't create an invite." line with it, because a device joined anyway - which is what the failed request was asking for.
+- The list is also re-read when the live channel comes back: the pairing event does not survive a disconnect, and the person whose connection blinked would otherwise keep a wrong list.
+- A revoke that fails says so in its own sentence, above the list. Separate from the load error since phase 038: the screen now re-reads
+  the list by itself, so a revoke can fail on a list that loaded fine, and one shared sentence would blame the wrong thing.
+- That notice belongs to ONE device, and leaves on either of two events: another attempt on the same device (the person is retrying it),
+  or a list that comes back without that device at all. The second is not a formality - a revoke whose reply was lost still happened, and
+  once the row is gone there is nothing left to press "try again" on. Revoking a DIFFERENT device does not take it down: the first one is
+  still authorised, and this sentence is the only thing that says so.
+- After a revoke the list is re-read from the server rather than edited locally. That read keeps the list on screen - no spinner - but it
+  does report its own failure: the person asked for it, and silence would leave the revoked device listed with nothing to explain it.
 
 ## Copy (EN)
 - Title: Devices

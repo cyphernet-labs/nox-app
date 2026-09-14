@@ -12,7 +12,7 @@ between people goes through a relay whose protocol does not exist yet
 (v0). Every command, event, field name, error code and rule comes from
 there; a change needed on the wire is first a contract edit, then code.
 
-**Stage 2 is under way (features 032, 033, 037).** The server now CHECKS who connects:
+**Stage 2 is under way (features 032, 033, 037, 038).** The server now CHECKS who connects:
 `device_key` is an Ed25519 public key, `signature` over
 `"nox/challenge/v1:" ‖ challenge` is verified on every greeting, and the
 person is found by that key. `login_ref` is gone from the wire, the lookup
@@ -73,8 +73,13 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
    event-less: file metadata (upload registration, mark-uploaded, orphan
    sweep), because files surface to other clients only through
    `message.send`; and identity resolution (`internal/store/identity.go`),
-   because a person or a device coming into being is not visible on the
-   wire at all.
+   because a PERSON coming into being is not visible on the wire at all.
+   The rule is about the JOURNAL, and the three off-journal events sit outside
+   it by construction: `device.revoked`, `identity.updated` and - since 038 -
+   `device.paired` carry `seq: 0`, write no `events` row, take no cursor
+   coordinate and are never replayed. They describe who a connection is or what
+   it may still do, not what happened in the shared world, which is why a
+   disconnect may lose them and nothing breaks.
 4. **Write transactions are milliseconds.** No network I/O, no WebSocket
    sends, no sleeping between `BeginTx` and `Commit`.
 5. **`seq` is a strictly increasing total order** (single writer +
@@ -85,11 +90,16 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
    `seq`); loss is not. The client is caught up when it has processed
    `seq >= cursor` from the hello reply.
 7. **The hub owns the subscriber set.** Interaction only via its
-   channels (register/unregister/broadcast). This program contains no
-   mutex; if a change seems to need one, restructure so one goroutine
-   owns the state.
+   channels (register/unregister/broadcast) - the hub itself holds no
+   mutex, and a change that seems to need one there means restructuring
+   so one goroutine owns the state. The connection REGISTRY is the
+   deliberate exception: `Server.mu` guards `conns` and the per-connection
+   fields other connections read (identity, device key), because the
+   fan-out helpers walk one person's connections from another's goroutine.
+   `Server.claim` and the transfer-token store (`internal/server/tokens.go`)
+   hold the only other two.
 8. **One reader goroutine per connection** (library invariant); writes
-   to a client go through its buffered channel (~16 frames); overflow →
+   to a client go through its buffered channel (`outBuffer` = 64 frames); overflow →
    `Close(StatusPolicyViolation)` — replay heals the client on
    reconnect. Keepalive: own ticker with `Ping(ctx)` ~25s.
    `SetReadLimit(max_frame_bytes)`.
@@ -214,13 +224,26 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   033's one fact would go back to living in two records - and this one would
   show a status page to somebody locked out of their own machine.
 - **Known narrow window:** the greeting reads the person from the
-  store and writes it to the connection a few lines later, and `refreshLabel`
-  matches connections by `identity.UserID` - which is empty in between. A rename
-  landing in that gap is overwritten by the write, and no `identity.updated` goes
-  to that connection, so a stable socket keeps the old name until something
-  reconnects it. Closing it properly means holding the connection registry lock
-  across a store read, which invariant 4 exists to forbid; recorded rather than
-  papered over.
+  store and writes it to the connection a few lines later, and the fan-out
+  helpers match connections by `identity.UserID` - which is empty in between. A
+  rename landing in that gap is overwritten by the write, and no
+  `identity.updated` goes to that connection, so a stable socket keeps the old
+  name until something reconnects it. `announcePaired` (038) inherits the same
+  window with a softer consequence: a connection greeting at that moment is not
+  told about the new device, and reads the list when its screen opens - which is
+  where every device that was offline ends up anyway. Closing it properly means
+  holding the connection registry lock across a store read, which invariant 4
+  exists to forbid; recorded rather than papered over.
+- **Fan-outs run AFTER the reply, never before it.** `send` blocks on a full
+  write queue until that connection's context is cancelled, so announcing first
+  puts the caller's own answer behind a stranger's backlog - and a wedged
+  connection whose drop is still finishing its close handshake is seconds wide.
+  `device.revoke` set the order; `pair` and `identity.setLabel` follow it since
+  038. What the order does NOT buy: the fan-out still runs on the caller's read
+  goroutine, so the same wedged recipient delays that connection's NEXT command.
+  That wait is bounded by the close handshake rather than open-ended, and taking
+  it away means putting the fan-out on its own goroutine - which would make
+  these the only frames with no order relative to the ones around them.
 - The claim token has NO expiry. It dies by being used, only someone with
   access to the machine ever sees it, and an expiring one would leave an
   installed-then-forgotten server unclaimable with no way to mint another.

@@ -106,6 +106,32 @@ func (c *client) handlePair(cmd protocol.Command) {
 			Created:          res.Created,
 		},
 	}))
+
+	// The other devices of this person learn about the new one here, and only
+	// here: nothing else on the wire says the set of devices changed.
+	//
+	// AFTER the reply, the way device.revoke does it, and the order is
+	// load-bearing. send blocks on a full queue until that connection's context
+	// is cancelled, so announcing first puts this device's answer behind a
+	// stranger's backlog: one wedged connection of the same person - a slow
+	// consumer whose drop is still finishing its close handshake - and the
+	// device waits out the client's send timeout for a command that has already
+	// burned a one-shot token and written its row.
+	//
+	// What it does NOT buy: the fan-out still runs on this connection's read
+	// goroutine, so the same wedged recipient delays whatever this device sends
+	// NEXT - its greeting. That wait is bounded by the library's close handshake
+	// rather than open-ended, and moving the fan-out onto its own goroutine
+	// would buy the difference at the cost of making these events the only ones
+	// with no order relative to the frames around them.
+	//
+	// It fires on a replayed pair too, where nothing changed: the store answers
+	// a device that spent this token before, and the handler cannot tell that
+	// from a first pass. The receiver re-reads either way, so the cost of the
+	// repeat is one list read - and the alternative, teaching the store to
+	// report a replay, spreads a pairing detail through a type the greeting
+	// shares. Written down in contract §8A rather than papered over.
+	c.announcePaired(res.UserID)
 }
 
 type deviceListReply struct {
@@ -234,12 +260,19 @@ func (c *client) handleIdentitySetLabel(cmd protocol.Command) {
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to set the label"))
 		return
 	}
+	c.sendFrame(protocol.OKReply(cmd.ID, setLabelReply{Label: label}))
+
 	// Every live connection of this person, not just the one that asked. The
 	// name is copied into `messages.author_label` at send time and frozen
 	// there, so a second device left with a stale identity would stamp the OLD
 	// name into history permanently. The others are told as well: a stable
 	// socket never re-greets, so without the event they would show the old name
 	// until something happened to reconnect them.
+	//
+	// After the reply, the way `pair` and `device.revoke` do it: send blocks on
+	// a full write queue until that connection's context is cancelled, so a
+	// fan-out ahead of the answer puts the caller behind a stranger's backlog.
+	// Nothing in the reply depends on this - the label it echoes is the one
+	// already written to the store.
 	c.srv.refreshLabel(c.identity.UserID, label, c)
-	c.sendFrame(protocol.OKReply(cmd.ID, setLabelReply{Label: label}))
 }

@@ -245,6 +245,76 @@ func (s *Server) refreshLabel(userID, label string, origin *client) {
 	}
 }
 
+// announcePaired tells a person's OTHER live connections that a device has just
+// been added, so an open device list refreshes itself instead of showing a
+// stale one until somebody leaves the screen and comes back.
+//
+// Shaped after refreshLabel and NOT after dropDevice: the two answer different
+// questions. dropDevice looks for the connections holding ONE KEY and closes
+// them; this needs every connection of ONE PERSON, left running. Only the frame
+// shape is shared with the revocation.
+//
+// Collected under s.mu and sent outside it, for refreshLabel's reason:
+// sendFrame writes to a bounded queue, and a full one under the registry lock
+// would hold up every other connection on the server. (refreshLabel says "of
+// every other person", which this server has not had since 037 - one machine,
+// one person - but the lock is shared by every connection all the same.)
+//
+// The loop is sequential and send blocks, so a recipient whose queue is full
+// holds up the recipients AFTER it, in an order map iteration does not fix. It
+// is a delay rather than a loss: the wait ends when that connection's context
+// is cancelled, which the slow-consumer drop is already on its way to doing.
+// Dropping the frame on a full queue instead is defensible for events that do
+// not survive a disconnect anyway - and is deliberately not done here, because
+// it would change delivery for device.revoked too, which deserves its own
+// decision rather than arriving as a side effect of this one.
+//
+// The connection it came from is the RECEIVER, not a parameter, and that is
+// deliberate: excluding the wrong one is then unrepresentable. refreshLabel
+// takes an origin because its caller could legitimately pass a different one;
+// this caller never can - and no test could catch it passing nil, because the
+// pairing connection has no identity to match on in the ordinary case, so the
+// mistake would look correct through every socket in the suite.
+//
+// The exclusion is live, not a statement of intent. It is easy to read
+// the code as one - handlePair refuses an already-greeted connection, so the
+// pairing device usually has no identity to match on - but "greeted" and "has
+// an identity" are two different marks, and handleSessionHello sets the second
+// several steps before the first: a greeting that fails on the journal id or
+// the cursor leaves identity.UserID written and helloDone false, and dispatch
+// still admits `pair` on that connection. Then it DOES match, and without this
+// the device would be told about its own pairing.
+//
+// Inherited with the shape: a connection in the MIDDLE of greeting also has an
+// empty identity.UserID, because the greeting reads the person from the store
+// and writes it to the connection a few lines later. Such a connection misses
+// this event - and reads the list when its screen opens, which is where every
+// device that was offline ends up anyway. It is the same window the rename
+// carries (see client_backend/CLAUDE.md), and it closes here when it closes
+// there.
+func (origin *client) announcePaired(userID string) {
+	s := origin.srv
+	s.mu.Lock()
+	notify := make([]*client, 0, 1)
+	for c := range s.conns {
+		if c.identity.UserID == userID && c != origin {
+			notify = append(notify, c)
+		}
+	}
+	s.mu.Unlock()
+
+	if len(notify) == 0 {
+		return
+	}
+	// Empty on purpose (contract §8A): the event says the set of devices
+	// changed, not how, and the receiver re-reads device.list. A device key here
+	// would be a public key on a frame nobody reads it from, and a spent token
+	// would be a credential.
+	for _, c := range notify {
+		c.sendFrame(protocol.Event{Seq: 0, Event: protocol.EventDevicePaired, Data: json.RawMessage(`{}`)})
+	}
+}
+
 // setDeviceKey records which key a connection authenticated with, under the
 // same lock dropDevice reads it through.
 func (s *Server) setDeviceKey(c *client, key string) {
@@ -257,10 +327,10 @@ func (s *Server) setDeviceKey(c *client, key string) {
 // other goroutines touch it through.
 //
 // A connection joins s.conns when it is accepted, long before it greets, so
-// refreshLabel and the two notify helpers walk it while this write is still to
-// come. Writing it bare made the greeting race every one of them - and the pair
-// sweeper turned that from a rename-only window into something a tick hits
-// every ten seconds.
+// refreshLabel and announcePaired walk it while this write is still to
+// come. Writing it bare made the greeting race every one of them. (The
+// ten-second sweeper that once widened this window went with the person invite
+// in 037; the race it exposed is the same one either way.)
 func (s *Server) setIdentity(c *client, id store.Identity) {
 	s.mu.Lock()
 	c.identity = id

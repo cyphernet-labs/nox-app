@@ -8,7 +8,7 @@ import 'package:nox_app/presentation/pages/devices_page/bloc/devices_bloc.dart';
 import 'package:nox_app/presentation/widgets/settings/app_invite_card_widget.dart';
 import 'package:nox_app/presentation/widgets/settings/app_settings_group_widget.dart';
 
-/// 7.3 Devices, chrome-less so the same body fills the desktop Settings detail
+/// 7.8 Devices, chrome-less so the same body fills the desktop Settings detail
 /// pane (7.1) — the split every settings leaf uses.
 class DevicesBody extends StatefulWidget {
   const DevicesBody({super.key, this.initialState});
@@ -65,11 +65,25 @@ class _DevicesBodyState extends State<DevicesBody> {
               ),
               SizedBox(height: AppSpacingTokens.s16),
             ],
-            // A silent failure here reads as a dead button: the person taps
-            // "Add a device" and nothing at all happens.
             // A failed revoke used to be invisible: the error was rendered only
             // when the list was empty, so a person tapped Revoke, saw the row
             // stay, and had no idea whether it worked.
+            //
+            // Its own sentence, not the list's. The two states are separate
+            // because they answer different questions, and pointing both at
+            // "Couldn't load your devices." puts the blame for a revoke that
+            // did not happen on a list that loaded perfectly well.
+            if (state.actionFailed) ...[
+              Text(
+                context.l10n.devicesRevokeError,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.error),
+              ),
+              SizedBox(height: AppSpacingTokens.s16),
+            ],
+            // The list is there but the last read of it failed - the rows below
+            // are the previous answer, so this says so rather than replacing
+            // them with a full-screen error.
             if (state.failed && state.devices.isNotEmpty) ...[
               Text(
                 context.l10n.devicesError,
@@ -78,6 +92,8 @@ class _DevicesBodyState extends State<DevicesBody> {
               ),
               SizedBox(height: AppSpacingTokens.s16),
             ],
+            // A silent failure here reads as a dead button: the person taps
+            // "Add a device" and nothing at all happens.
             if (state.inviteFailed) ...[
               Text(
                 context.l10n.devicesInviteError,

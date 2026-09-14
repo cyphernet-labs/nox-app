@@ -91,3 +91,23 @@ func jsonHas(t *testing.T, raw []byte, key string) bool {
 	_, ok := m[key]
 	return ok
 }
+
+// The three off-journal event names are the contract, not an implementation
+// detail: §8A fixes these exact strings, the Dart side keeps its own copy of
+// them (lib/data/remote/socket/server_frame.dart), and nothing else in this
+// module compares against a literal. Rename one here and the wire breaks with
+// every test still green.
+func TestTheOffJournalEventNamesAreTheOnesInTheContract(t *testing.T) {
+	for _, tc := range []struct {
+		got  string
+		want string
+	}{
+		{EventDeviceRevoked, "device.revoked"},
+		{EventIdentityUpdated, "identity.updated"},
+		{EventDevicePaired, "device.paired"},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("event name = %q, want %q (contract §8A)", tc.got, tc.want)
+		}
+	}
+}

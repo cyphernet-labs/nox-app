@@ -103,6 +103,16 @@ const EventDeviceRevoked = "device.revoked"
 // which is frozen at send time.
 const EventIdentityUpdated = "identity.updated"
 
+// EventDevicePaired tells a person's OTHER live connections that a device has
+// just been added, so an open device list refreshes itself instead of showing
+// a stale one until somebody leaves the screen and comes back.
+//
+// Not journal content either: seq 0, no cursor, and it does not survive a
+// disconnect. That is sound here because the device list is always read from
+// the server when the screen opens - unlike a revocation, nothing breaks from
+// having missed it.
+const EventDevicePaired = "device.paired"
+
 // Chat is the wire model of contract §4 (022: preview served but unused by
 // any implemented command; it feeds chats.list in phase 023).
 type Chat struct {
