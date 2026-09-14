@@ -9,6 +9,8 @@
 - Go 1.27+ (`go version`)
 - Для ручного смоука: `websocat` (`brew install websocat`) и `curl`
 
+> ⚠️ **С фазы 036 слушатель говорит только TLS 1.3, и выключить это нечем.** Все команды ниже поэтому `https`/`wss`, и обеим утилитам нужен `-k`: сертификат самоподписанный, и **ни `curl`, ни `websocat` не проверяют отпечаток** — доверие берётся из ссылки спаривания, а `-k` его просто отключает. Настоящую сверку делают приложение и `go run ./cmd/smoke '<ссылка>'`; ручной смоук ниже проверяет протокол, а не подлинность машины. Отпечаток сервера печатается в стартовой строке лога (`"fingerprint"`).
+
 ## Сборка и запуск
 
 ```bash
@@ -20,7 +22,7 @@ go build -o noxd .
 При старте сервер применяет миграции (лог slog JSON в stderr) и начинает слушать. Проверка живости:
 
 ```bash
-curl -s http://127.0.0.1:8080/health
+curl -sk https://127.0.0.1:8080/health
 # → {"status":"ok"}
 ```
 
@@ -39,7 +41,7 @@ curl -s http://127.0.0.1:8080/health
 Терминал 1:
 
 ```bash
-websocat ws://127.0.0.1:8080/ws
+websocat -k wss://127.0.0.1:8080/ws
 # ← {"srv":{"schema_max":1,"challenge":"..."}}
 {"id":1,"cmd":"session.hello","data":{"schema":1,"label":"Anna"}}
 # ← {"id":1,"ok":true,"data":{"schema":1,"cursor":0,"limits":{...},"identity":{"id":"Anna","label":"Anna"}}}
@@ -52,7 +54,7 @@ websocat ws://127.0.0.1:8080/ws
 Терминал 2 (открыть **до** отправки следующего сообщения):
 
 ```bash
-websocat ws://127.0.0.1:8080/ws
+websocat -k wss://127.0.0.1:8080/ws
 {"id":1,"cmd":"session.hello","data":{"schema":1,"label":"Bob"}}
 ```
 
@@ -75,7 +77,7 @@ websocat ws://127.0.0.1:8080/ws
 3. Переподключить терминал 2 с курсором:
 
 ```bash
-websocat ws://127.0.0.1:8080/ws
+websocat -k wss://127.0.0.1:8080/ws
 {"id":1,"cmd":"session.hello","data":{"schema":1,"label":"Bob","since":S}}
 ```
 
@@ -148,7 +150,7 @@ Bob держит соединение открытым; Anna:
 Заливка байтов (обычный терминал):
 
 ```bash
-curl -sS -X PUT --data-binary @/tmp/probe.bin http://127.0.0.1:8080/files/<UT> -o /dev/null -w '%{http_code}\n'   # → 204
+curl -skS -X PUT --data-binary @/tmp/probe.bin https://127.0.0.1:8080/files/<UT> -o /dev/null -w '%{http_code}\n'   # → 204
 ```
 
 Сообщение-вложение (текст необязателен, но хотя бы одно из двух — обязательно):
@@ -172,13 +174,13 @@ curl -sS -X PUT --data-binary @/tmp/probe.bin http://127.0.0.1:8080/files/<UT> -
 ```
 
 ```bash
-curl -sS http://127.0.0.1:8080/files/<DT> -o /tmp/got.bin && cmp /tmp/probe.bin /tmp/got.bin && echo identical
+curl -skS https://127.0.0.1:8080/files/<DT> -o /tmp/got.bin && cmp /tmp/probe.bin /tmp/got.bin && echo identical
 ```
 
 Докачка после обрыва: запросить новый токен (`<DT2>`) и передать Range со смещения — сервер отдаёт `206` и только остаток:
 
 ```bash
-curl -sS -r 5242880- http://127.0.0.1:8080/files/<DT2> -o /tmp/tail.bin -w '%{http_code}\n'   # → 206
+curl -skS -r 5242880- https://127.0.0.1:8080/files/<DT2> -o /tmp/tail.bin -w '%{http_code}\n'   # → 206
 cmp <(tail -c 5242880 /tmp/probe.bin) /tmp/tail.bin && echo resumed
 ```
 

@@ -33,6 +33,7 @@ import (
 	"crypto/sha512"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/base64"
 	"encoding/pem"
 	"fmt"
@@ -193,7 +194,48 @@ func run() error {
 		return err
 	}
 
-	// 8. Signed by an authority nothing on earth trusts, on the CORRECT key.
+	// 8. THE ATTACK. A certificate whose real key is the FOREIGN one, carrying a
+	//    verbatim copy of the correct key's SubjectPublicKeyInfo planted in an
+	//    earlier field of the same certificate.
+	//
+	//    This is not exotic. In a TBSCertificate the issuer and subject Names
+	//    come BEFORE subjectPublicKeyInfo, so anything that locates the key by
+	//    scanning for a byte pattern finds the plant first and hashes it - and
+	//    the bytes needed to build the plant are public, handed to every client
+	//    that dials the real server. A verifier must read the certificate's
+	//    ACTUAL subjectPublicKeyInfo, not the first thing shaped like one.
+	planted, err := issue(certSpec{
+		seed:      "planted",
+		key:       stranger,
+		notBefore: issuedAt,
+		notAfter:  farFuture,
+		cn:        "NOX client server",
+		decoy:     spki,
+	}, stranger)
+	if err != nil {
+		return err
+	}
+	if err := writeCert("planted", planted); err != nil {
+		return err
+	}
+	// The fixture is worthless unless the decoy really does come first and the
+	// real key really is the foreign one, so both are asserted here rather than
+	// assumed by whoever reads the file later.
+	plantedLeaf, err := x509.ParseCertificate(planted)
+	if err != nil {
+		return err
+	}
+	decoyAt := bytes.Index(planted, spki)
+	realAt := bytes.Index(planted, plantedLeaf.RawSubjectPublicKeyInfo)
+	if bytes.Equal(plantedLeaf.RawSubjectPublicKeyInfo, spki) {
+		return fmt.Errorf("the planted fixture carries the CORRECT key for real, so it proves nothing")
+	}
+	if decoyAt < 0 || realAt < 0 || decoyAt >= realAt {
+		return fmt.Errorf("the planted fixture does not put the decoy (%d) before the real key (%d)", decoyAt, realAt)
+	}
+	fmt.Printf("  planted: decoy at %d, real key at %d\n", decoyAt, realAt)
+
+	// 9. Signed by an authority nothing on earth trusts, on the CORRECT key.
 	//    Must be ACCEPTED: trust comes from the link, not from an issuer.
 	caDER, err := issueCA(issuer)
 	if err != nil {
@@ -242,6 +284,9 @@ type certSpec struct {
 	cn        string
 	dnsNames  []string
 	ips       []net.IP
+	// decoy, when set, is planted verbatim into the subject as an extra
+	// attribute value - ahead of the real key in the encoding.
+	decoy []byte
 }
 
 func issue(spec certSpec, signer *ecdsa.PrivateKey) ([]byte, error) {
@@ -284,9 +329,17 @@ func issueEd25519() ([]byte, error) {
 }
 
 func template(spec certSpec) *x509.Certificate {
+	subject := pkix.Name{CommonName: spec.cn}
+	if spec.decoy != nil {
+		// asn1.RawValue with FullBytes set is emitted verbatim, so the decoy
+		// lands in the certificate exactly as the real key would look.
+		subject.ExtraNames = []pkix.AttributeTypeAndValue{
+			{Type: asn1.ObjectIdentifier{2, 5, 4, 13}, Value: asn1.RawValue{FullBytes: spec.decoy}},
+		}
+	}
 	return &x509.Certificate{
 		SerialNumber:          serialFor(spec.seed),
-		Subject:               pkix.Name{CommonName: spec.cn},
+		Subject:               subject,
 		NotBefore:             spec.notBefore,
 		NotAfter:              spec.notAfter,
 		KeyUsage:              x509.KeyUsageDigitalSignature,
@@ -407,6 +460,7 @@ Fingerprint of the correct key:
 | ` + "`valid.der`" + ` / ` + "`.pem`" + ` | correct | **accept** | the ordinary case |
 | ` + "`reissued.der`" + ` / ` + "`.pem`" + ` | correct | **accept** | a different certificate on the same key — a server restart must not lock out a paired device |
 | ` + "`stranger.der`" + ` / ` + "`.pem`" + ` | foreign | **refuse** | the whole phase in one file |
+| ` + "`planted.der`" + ` / ` + "`.pem`" + ` | foreign | **refuse** | the attack: the certificate's real key is the foreign one, but a verbatim copy of the correct key's SPKI is planted in the subject, ahead of it. Anything locating the key by byte pattern hashes the plant and accepts a machine that holds only the attacker's private key |
 | ` + "`truncated.der`" + ` | correct | **refuse** | the header is present, the key behind it is not; a check that hashes whatever follows the header would pass this |
 | ` + "`headerless.der`" + ` | — (Ed25519) | **refuse** | no P-256 SubjectPublicKeyInfo at all; not hypothetical, it is what this server issued before 036 |
 | ` + "`expired.der`" + ` / ` + "`.pem`" + ` | correct | **accept** | expired in 2020; a home server's owner may not have touched it for years |
@@ -414,7 +468,7 @@ Fingerprint of the correct key:
 | ` + "`unknown_issuer.der`" + ` / ` + "`.pem`" + ` | correct | **accept** | signed by an authority nothing trusts; trust comes from the link, not from an issuer |
 | ` + "`unknown_issuer_chain.pem`" + ` | correct | — | leaf + that authority, the chain a real server would present |
 | ` + "`server_key.pem`" + ` | correct | — | PKCS#8 of the correct key, so a test can actually SERVE the three tolerance certificates |
-| ` + "`stranger_key.pem`" + ` | foreign | — | PKCS#8 of the foreign key, so the refusal can be proved against a real handshake |
+| ` + "`stranger_key.pem`" + ` | foreign | — | PKCS#8 of the foreign key, so the refusal can be proved against a real handshake — it serves ` + "`stranger.pem`" + ` AND ` + "`planted.pem`" + ` |
 | ` + "`fingerprint.txt`" + ` | correct | — | what the pairing link would carry |
 
 The three tolerance cases are deliberately on the **correct** key. Negative

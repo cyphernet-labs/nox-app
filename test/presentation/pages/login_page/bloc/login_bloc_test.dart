@@ -159,6 +159,57 @@ void main() {
     );
 
     blocTest<LoginBloc, LoginState>(
+      'the refusal outranks the "no channel" that sign-in reports after it',
+      // THE REAL SEQUENCE, and the one the three tests around it miss by
+      // emitting the phase with no sign-in in flight. The pin is checked inside
+      // the handshake, before `pair` goes out, so the socket is already torn
+      // down when signIn gets its answer and that answer can only be
+      // `connection`. Mapped literally it becomes "check your connection" -
+      // emitted AFTER the refusal, over a network that is working perfectly.
+      build: () {
+        final auth = MockAuthRepository();
+        when(auth.signIn(identifier: anyNamed('identifier'))).thenAnswer((_) async {
+          phase.emit(SessionPhase.serverMismatch);
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+          return const RepositoryResult<bool>.error(exception: RepositoryException.connection);
+        });
+        getIt.registerSingleton<AuthRepository>(auth);
+        return LoginBloc();
+      },
+      act: (bloc) async {
+        bloc.add(const LoginEvent.idChanged('a-link'));
+        await Future<void>.delayed(Duration.zero);
+        bloc.add(const LoginEvent.signInRequested());
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+      },
+      verify: (bloc) {
+        expect(bloc.state.status, LoginStatus.errorServerMismatch);
+        expect(bloc.state.status, isNot(LoginStatus.errorNetwork));
+      },
+    );
+
+    blocTest<LoginBloc, LoginState>(
+      'an ordinary connection failure still says so, with no refusal anywhere',
+      // The mutation of the case above: without a refusal the mapping must be
+      // untouched, or every dead network would start blaming the server.
+      build: () {
+        final auth = MockAuthRepository();
+        when(
+          auth.signIn(identifier: anyNamed('identifier')),
+        ).thenAnswer((_) async => const RepositoryResult<bool>.error(exception: RepositoryException.connection));
+        getIt.registerSingleton<AuthRepository>(auth);
+        return LoginBloc();
+      },
+      act: (bloc) async {
+        bloc.add(const LoginEvent.idChanged('a-link'));
+        await Future<void>.delayed(Duration.zero);
+        bloc.add(const LoginEvent.signInRequested());
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+      },
+      verify: (bloc) => expect(bloc.state.status, LoginStatus.errorNetwork),
+    );
+
+    blocTest<LoginBloc, LoginState>(
       'typing clears it, because the next link may well be the right one',
       build: () => LoginBloc(demo: true),
       act: (bloc) async {

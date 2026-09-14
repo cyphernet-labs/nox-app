@@ -25,6 +25,20 @@ void main() {
       expect(ServerPin.matches(_der('stranger'), _fingerprint), isFalse);
     });
 
+    test('a certificate that PLANTS the right key ahead of its own is refused', () {
+      // The attack this check exists to stop, and the one a byte search walks
+      // straight into: the certificate's real key is a stranger's, but a
+      // verbatim copy of the right key's SubjectPublicKeyInfo sits earlier in
+      // the same certificate, inside the subject. In DER the subject comes
+      // BEFORE subjectPublicKeyInfo, and the bytes needed to build the plant
+      // are public - every client that dials the real server is handed them.
+      //
+      // Accepting this means accepting a machine that holds only the
+      // attacker's private key, on both transports, with nothing on screen to
+      // suggest anything is wrong.
+      expect(ServerPin.matches(_der('planted'), _fingerprint), isFalse);
+    });
+
     test('a NEW certificate on the SAME key is accepted, because a restart issues one', () {
       // The server rebuilds its certificate on every start. If this were
       // refused, restarting the machine would lock out every device on it.

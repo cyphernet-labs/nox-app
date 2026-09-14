@@ -31,10 +31,12 @@ class LoginBloc extends BaseBloc<LoginEvent, LoginState> {
     // checked during the TLS handshake, which happens before `pair` goes out -
     // so the repository can only report that there was no channel, and the
     // person would be told to check a connection that is working perfectly.
-    _phaseSub = getIt<SessionPhaseService>().watchPhase().listen((phase) {
+    _phaseSub = _phaseService.watchPhase().listen((phase) {
       if (phase.isServerMismatch) add(const LoginEvent.serverRefused());
     });
   }
+
+  final SessionPhaseService _phaseService = getIt<SessionPhaseService>();
 
   StreamSubscription<SessionPhase>? _phaseSub;
 
@@ -87,19 +89,37 @@ class LoginBloc extends BaseBloc<LoginEvent, LoginState> {
     final result = await authRepository.signIn(identifier: state.id);
     result.match<void>(
       onData: (_) => emit(state.copyWith(status: LoginStatus.idle)),
-      onError: (e) => emit(state.copyWith(status: _statusFor(e))),
+      onError: (e) => emit(state.copyWith(status: _statusFor(e, refused: _refusedServer()))),
     );
   }
 
+  /// Whether the channel refused the machine the link named.
+  ///
+  /// Asked at the moment the sign-in result is mapped, and asked two ways,
+  /// because the refusal and the failure are two different events and either
+  /// can land first: the phase may already say so, or the event carrying it may
+  /// already have moved this screen.
+  bool _refusedServer() => _phaseService.phase.isServerMismatch || state.status == LoginStatus.errorServerMismatch;
+
   /// Each refusal keeps its own message: the repository already told them
   /// apart, and collapsing them here would undo that.
-  static LoginStatus _statusFor(Object? exception) => switch (exception) {
-    RepositoryException.invalidRequest => LoginStatus.errorFormat,
-    RepositoryException.notFound => LoginStatus.errorExpired,
-    RepositoryException.authentication => LoginStatus.errorRejected,
-    RepositoryException.internal => LoginStatus.errorNetwork,
-    _ => LoginStatus.errorNetwork,
-  };
+  ///
+  /// [refused] outranks everything. A pin refusal happens inside the TLS
+  /// handshake, BEFORE `pair` goes out, so the only thing sign-in can report is
+  /// that there was no channel — `connection`. Mapping that to "check your
+  /// connection" sends the person after a network that is working perfectly,
+  /// which is the precise confusion this feature exists to remove, and it made
+  /// the honest message unreachable outside the debug gallery.
+  static LoginStatus _statusFor(Object? exception, {required bool refused}) {
+    if (refused) return LoginStatus.errorServerMismatch;
+    return switch (exception) {
+      RepositoryException.invalidRequest => LoginStatus.errorFormat,
+      RepositoryException.notFound => LoginStatus.errorExpired,
+      RepositoryException.authentication => LoginStatus.errorRejected,
+      RepositoryException.internal => LoginStatus.errorNetwork,
+      _ => LoginStatus.errorNetwork,
+    };
+  }
 
   /// Maps the (debug) outcome to a terminal status. `auto` derives new-vs-registered
   /// from the mock dataset so typing a known id reproduces the registered path.

@@ -106,6 +106,20 @@ void main() {
     }
   });
 
+  test('a certificate that PLANTS the right key ahead of its own is refused by a real handshake', () async {
+    // The whole attack, end to end: this server holds ONLY the foreign private
+    // key, and its certificate carries a verbatim copy of the right key's
+    // SubjectPublicKeyInfo in the subject - ahead of its own key, where the
+    // DER field order puts the subject. Accepting it hands both transports to
+    // a machine that cannot prove it is the paired one.
+    final server = await _serve('planted.pem', 'stranger_key.pem');
+    addTearDown(() => server.close(force: true));
+    final client = PinnedHttpClient()..pinTo(_fingerprint);
+
+    await expectLater(_statusFrom(server, client), throwsA(isA<HandshakeException>()));
+    expect(client.refusals, 1);
+  });
+
   test('a perfectly well-formed certificate on ANOTHER key is refused', () async {
     final server = await _serve('stranger.pem', 'stranger_key.pem');
     addTearDown(() => server.close(force: true));
