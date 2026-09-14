@@ -210,6 +210,32 @@ void main() {
     );
 
     blocTest<LoginBloc, LoginState>(
+      'a refusal from an EARLIER attempt does not label the next failure',
+      // The phase is terminal - it keeps saying serverMismatch until something
+      // restarts the channel - so a later attempt that fails before it ever
+      // dials (an unreadable keychain, say) would inherit the old verdict and
+      // blame a server it never reached.
+      build: () {
+        final auth = MockAuthRepository();
+        when(
+          auth.signIn(identifier: anyNamed('identifier')),
+        ).thenAnswer((_) async => const RepositoryResult<bool>.error(exception: RepositoryException.internal));
+        getIt.registerSingleton<AuthRepository>(auth);
+        return LoginBloc();
+      },
+      act: (bloc) async {
+        await Future<void>.delayed(Duration.zero);
+        phase.emit(SessionPhase.serverMismatch); // a refusal, from before
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        bloc.add(const LoginEvent.idChanged('a-fresh-good-link')); // clears the screen
+        await Future<void>.delayed(Duration.zero);
+        bloc.add(const LoginEvent.signInRequested());
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+      },
+      verify: (bloc) => expect(bloc.state.status, LoginStatus.errorNetwork),
+    );
+
+    blocTest<LoginBloc, LoginState>(
       'typing clears it, because the next link may well be the right one',
       build: () => LoginBloc(demo: true),
       act: (bloc) async {
