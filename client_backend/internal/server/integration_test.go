@@ -38,7 +38,9 @@ func dialWS(t *testing.T, ts *httptest.Server, srv *Server) *wsClient {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	t.Cleanup(cancel)
-	conn, _, err := websocket.Dial(ctx, ts.URL+"/ws", nil)
+	// The pinned client, not the default one: ts.URL is https since the
+	// listener speaks TLS, and nothing else in this process trusts the key.
+	conn, _, err := websocket.Dial(ctx, ts.URL+"/ws", &websocket.DialOptions{HTTPClient: ts.Client()})
 	if err != nil {
 		t.Fatalf("websocket.Dial: %v", err)
 	}
@@ -640,7 +642,7 @@ func waitClosed(t *testing.T, c *wsClient, want websocket.StatusCode) {
 
 func assertHealthy(t *testing.T, ts *httptest.Server) {
 	t.Helper()
-	resp, err := http.Get(ts.URL + "/health")
+	resp, err := ts.Client().Get(ts.URL + "/health")
 	if err != nil {
 		t.Fatalf("health after failure: %v", err)
 	}

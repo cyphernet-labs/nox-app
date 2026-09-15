@@ -220,7 +220,7 @@ func (c *client) handleDeviceInvite(cmd protocol.Command) {
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to read the server identity"))
 		return
 	}
-	link, err := BuildPairingLink(inviteAddress(c.srv.cfg.Addr, c.requestHost), id.PublicKey, token)
+	link, err := BuildPairingLink(inviteAddress(c.srv.cfg.Addr, c.requestHost), id.Fingerprint, token)
 	if err != nil {
 		c.logger.Error("build invite link", "err", err)
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to build the link"))
