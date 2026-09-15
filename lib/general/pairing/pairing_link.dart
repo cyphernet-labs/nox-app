@@ -31,11 +31,15 @@ class PairingLinkException implements Exception {
 /// What a person physically presents to sign in: where the server is, which
 /// key it will be pinned against, and the one-shot right to pair.
 ///
+/// The key travels as its FINGERPRINT. A raw uncompressed P-256 point is 65
+/// bytes and does not fit the thirty-two the format has; the hash does, and it
+/// answers the only question asked of it - is this the same key.
+///
 /// Contract §8A. The token's TYPE is deliberately absent — the server issued
 /// it and knows what it is for, and telling the presenter would let a stolen
 /// link announce whether it grants ownership.
 class PairingLink {
-  const PairingLink({required this.host, required this.port, required this.serverKey, required this.token});
+  const PairingLink({required this.host, required this.port, required this.serverFingerprint, required this.token});
 
   /// Version this build writes and is willing to read.
   static const int version = 1;
@@ -49,11 +53,11 @@ class PairingLink {
   final String host;
   final int port;
 
-  /// The server's public key, base64. Parsed and kept, but nothing verifies it
-  /// yet: there is nothing to pin against while the transport is not TLS. It
-  /// travels now so that pinning arriving later changes no format and forces
-  /// nobody to pair again.
-  final String serverKey;
+  /// `sha256(SubjectPublicKeyInfo)` of the server's key, base64. This is what
+  /// every later connection is checked against, on both transports - the one
+  /// thing that decides whether the machine answering is the one the person
+  /// stood in front of.
+  final String serverFingerprint;
 
   /// The one-shot pairing right, base64url without padding.
   final String token;
@@ -86,7 +90,8 @@ class PairingLink {
       throw const PairingLinkException(PairingLinkError.malformed);
     }
 
-    // Shortest possible: version + type + 4 host + 2 port + 32 key + 16 token.
+    // Shortest possible: version + type + 4 host + 2 port + 32 fingerprint +
+    // 16 token.
     if (bytes.length < 55) throw const PairingLinkException(PairingLinkError.malformed);
     if (bytes[0] != version) throw const PairingLinkException(PairingLinkError.unsupportedVersion);
 
@@ -122,11 +127,11 @@ class PairingLink {
 
     final port = (bytes[offset] << 8) | bytes[offset + 1];
     offset += 2;
-    final key = base64.encode(bytes.sublist(offset, offset + 32));
+    final fingerprint = base64.encode(bytes.sublist(offset, offset + 32));
     offset += 32;
     final token = base64Url.encode(bytes.sublist(offset, offset + 16)).replaceAll('=', '');
 
-    return PairingLink(host: host, port: port, serverKey: key, token: token);
+    return PairingLink(host: host, port: port, serverFingerprint: fingerprint, token: token);
   }
 
   /// Reads a link, or returns null. For places that only need to know whether
@@ -157,7 +162,7 @@ class PairingLink {
       out.addAll([_hostTypeDns, name.length, ...name]);
     }
     out.addAll([(port >> 8) & 0xFF, port & 0xFF]);
-    out.addAll(base64.decode(serverKey));
+    out.addAll(base64.decode(serverFingerprint));
     out.addAll(base64Url.decode(base64Url.normalize(token)));
     return _prefix + base64Url.encode(out).replaceAll('=', '');
   }

@@ -71,7 +71,7 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         return const RepositoryResult<bool>.error(exception: RepositoryException.invalidRequest);
       }
 
-      final saved = await _sessionRepository.saveServer(address: link.authority, serverKey: link.serverKey);
+      final saved = await _sessionRepository.saveServer(address: link.authority, serverFingerprint: link.serverFingerprint);
       if (!saved.hasData) return saved;
 
       final handshake = liveIdentityHandshake;
@@ -87,7 +87,7 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
       if (!seed.hasData) {
         // Rolled back like every other exit in this method. saveServer has
         // already run, so returning without it leaves the address and the
-        // pinned key of a machine this install has no session with - the next
+        // pinned fingerprint of a machine this install has no session with - the next
         // launch dials it, greets as unpaired for ever, and the world epoch is
         // keyed on it.
         await _sessionRepository.discardSignIn();

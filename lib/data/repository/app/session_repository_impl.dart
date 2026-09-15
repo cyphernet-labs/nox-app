@@ -48,15 +48,15 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   /// and dies with a logout through `deleteAll`.
   static const String _kDeviceSecret = 'session.device_secret';
 
-  /// Where this install's server lives, and the key it will be pinned against
-  /// once the transport is TLS. Both come out of the pairing link.
+  /// Where this install's server lives, and the fingerprint of the key it is
+  /// pinned against. Both come out of the pairing link.
   ///
   /// They belong to the SESSION, not to the build: they say which server this
   /// installation belongs to, and they die with it. Keeping the address in a
   /// compile-time config instead would mean pairing with one server and
   /// sending messages to another.
   static const String _kServerAddress = 'session.server_address';
-  static const String _kServerKey = 'session.server_key';
+  static const String _kServerFingerprint = 'session.server_fingerprint';
 
   /// True while THIS process is the one that brought the person into being and
   /// has not finished naming them.
@@ -179,10 +179,10 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   }
 
   @override
-  Future<RepositoryResult<bool>> saveServer({required String address, required String serverKey}) {
+  Future<RepositoryResult<bool>> saveServer({required String address, required String serverFingerprint}) {
     return execute<bool>(() async {
       await _secureStorage.write(key: _kServerAddress, value: address);
-      await _secureStorage.write(key: _kServerKey, value: serverKey);
+      await _secureStorage.write(key: _kServerFingerprint, value: serverFingerprint);
       return const RepositoryResult<bool>.success(data: true);
     });
   }
@@ -191,6 +191,14 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   Future<RepositoryResult<String?>> serverAddress() {
     return execute<String?>(() async {
       final stored = await _secureStorage.read(key: _kServerAddress);
+      return RepositoryResult<String?>.success(data: (stored?.isEmpty ?? true) ? null : stored);
+    });
+  }
+
+  @override
+  Future<RepositoryResult<String?>> serverFingerprint() {
+    return execute<String?>(() async {
+      final stored = await _secureStorage.read(key: _kServerFingerprint);
       return RepositoryResult<String?>.success(data: (stored?.isEmpty ?? true) ? null : stored);
     });
   }
@@ -243,7 +251,7 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       // aim the next connection at a machine this install never paired with,
       // and the world-epoch key would call that the same world.
       await _secureStorage.delete(key: _kServerAddress);
-      await _secureStorage.delete(key: _kServerKey);
+      await _secureStorage.delete(key: _kServerFingerprint);
       await _prefs.remove(_kOnboardingComplete);
       // And the author id written by the SAME call. Left behind it would point
       // at the previous server's person, and the next sign-in would inherit it

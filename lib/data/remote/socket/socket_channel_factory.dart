@@ -1,4 +1,5 @@
 import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/remote/pinned_http_client.dart';
 import 'package:web_socket_channel/io.dart';
 
 /// The narrow port the transport actually needs: frames in, frames out, close.
@@ -21,16 +22,27 @@ abstract class SocketChannelFactory {
 /// Real sockets, with keepalive wired in at the platform level.
 ///
 /// [IOWebSocketChannel] is used rather than `WebSocketChannel.connect` because
-/// only it exposes `pingInterval`. NOX ships on five IO platforms (web is out
-/// of scope), so binding to the IO implementation costs nothing.
+/// only it exposes `pingInterval`, and because only it takes a client of ours -
+/// which is how the socket is checked against the server's fingerprint at all.
+/// NOX ships on five IO platforms (web is out of scope), so binding to the IO
+/// implementation costs nothing.
 @LazySingleton(as: SocketChannelFactory, env: [Environment.dev])
 class WebSocketChannelFactory implements SocketChannelFactory {
+  WebSocketChannelFactory(this._pinned);
+
   /// Contract §9: ~25s, because cellular NATs drop an idle flow at ~30s. A
   /// missed pong surfaces as a socket close, which is the disconnect signal.
   static const Duration pingInterval = Duration(seconds: 25);
 
+  final PinnedHttpClient _pinned;
+
   @override
-  SocketConnection connect(Uri url) => _IoSocketConnection(IOWebSocketChannel.connect(url, pingInterval: pingInterval));
+  SocketConnection connect(Uri url) {
+    // The SHARED client, never a fresh one: `WebSocket.connect` does not close
+    // a client passed to it, so one per connection would leak on every rung of
+    // the reconnect ladder.
+    return _IoSocketConnection(IOWebSocketChannel.connect(url, pingInterval: pingInterval, customClient: _pinned.client));
+  }
 }
 
 class _IoSocketConnection implements SocketConnection {

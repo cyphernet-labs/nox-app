@@ -106,21 +106,28 @@ void main() {
   });
 
   group('the paired server (feature 032)', () {
-    test('address and key survive, so the app talks to the server it paired with', () async {
-      await repository.saveServer(address: '10.0.0.5:9000', serverKey: 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=');
+    const fingerprint = 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=';
+
+    test('address and fingerprint survive, so the app talks to the server it paired with', () async {
+      await repository.saveServer(address: '10.0.0.5:9000', serverFingerprint: fingerprint);
 
       expect((await repository.serverAddress()).data, '10.0.0.5:9000');
+      // Read back as well as written: before this feature nothing ever read it,
+      // and a value nobody reads is a value that can quietly stop being written.
+      expect((await repository.serverFingerprint()).data, fingerprint);
     });
 
-    test('an install that never paired has no address', () async {
+    test('an install that never paired has neither an address nor a fingerprint', () async {
       expect((await repository.serverAddress()).data, isNull);
+      expect((await repository.serverFingerprint()).data, isNull);
     });
 
     test('logout forgets the server, because the next link brings its own', () async {
-      await repository.saveServer(address: '10.0.0.5:9000', serverKey: 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=');
+      await repository.saveServer(address: '10.0.0.5:9000', serverFingerprint: fingerprint);
       await repository.clear();
 
       expect((await repository.serverAddress()).data, isNull);
+      expect((await repository.serverFingerprint()).data, isNull);
     });
 
     test('the device seed is a real 32-byte key, not a random string', () async {
