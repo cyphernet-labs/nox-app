@@ -14,6 +14,7 @@ App bar (back + chat name + a disabled **Invite a person** action). Message stre
 - `empty` — Empty
 - `attachment` — Attachment
 - `offline` — Offline
+- `server-mismatch` — Wrong server
 
 ## Behavior
 - Messages group by author; an AuthorHeader precedes each group (no per-message avatars in the feed).
@@ -21,6 +22,7 @@ App bar (back + chat name + a disabled **Invite a person** action). Message stre
 - Own message status: pending (schedule) → sent (check) → error (error, tinted error; tap to retry).
 - Date separators: Today / Yesterday / 12 May. A system line marks chat creation.
 - Empty: chat_bubble_outline empty-state. Offline: top banner + queued messages show pending.
+- Wrong server (036): the machine at the paired address presented a key the pairing link did not name. A persistent banner “This isn't the server you paired with” with a “Try again” action, INSTEAD of the offline one — something answered, so “No connection” would be false — and with the error glyph rather than wifi_off. Nothing local is thrown away, and nothing on screen is cleared: the banner sits over what was already there. It does not pass on its own; the action is the only way out. A message written in this state waits as `pending` exactly as it does offline, and must never show as an error: the server never saw it, so the failure is not the person's.
 - Composer: attach + text + send. Send enables when there is text or an attachment; attachment shows a removable chip above the row.
 - The invite action is permanently disabled and raises nothing when tapped: a missing control answers «how do I add somebody?» with silence, an error answers it with a fault, and the truth is that the relay it needs does not exist yet. Its screen-reader name is the action alone — a disabled control is already announced as unavailable, and the caption that says it comes later lives under the button in 5.4, where there is room for it.
 - Attachments in the feed: an IMAGE with a real local file renders an inline thumbnail (rounded, bubble-bounded); every other type — and an image with no/unavailable file — renders the type-icon chip (owner-revised F4).

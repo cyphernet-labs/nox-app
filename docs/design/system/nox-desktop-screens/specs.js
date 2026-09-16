@@ -28,6 +28,10 @@ window.NOX_SPECS = [
         "label": "Offline"
       },
       {
+        "key": "server-mismatch",
+        "label": "Wrong server"
+      },
+      {
         "key": "loading",
         "label": "Loading"
       },
@@ -208,6 +212,10 @@ window.NOX_SPECS = [
       {
         "key": "error-format",
         "label": "Format error"
+      },
+      {
+        "key": "error-server",
+        "label": "Wrong server"
       },
       {
         "key": "error-net",
@@ -438,6 +446,10 @@ window.NOX_SPECS = [
       {
         "key": "empty",
         "label": "Empty"
+      },
+      {
+        "key": "server-mismatch",
+        "label": "Wrong server"
       }
     ],
     "anatomy": "Scrim + right drawer (380): Details header, chat avatar/name, “People” (one row — the person this machine belongs to — plus a disabled Invite a person button and its caption), hairline, “Files” with List/Grid toggle, file rows or 2-col grid. The body is one scroll.",

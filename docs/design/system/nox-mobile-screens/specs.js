@@ -55,6 +55,10 @@ window.NOX_SPECS = [
         "label": "Format error"
       },
       {
+        "key": "error-server",
+        "label": "Wrong server"
+      },
+      {
         "key": "error-net",
         "label": "Network error"
       }
@@ -277,6 +281,10 @@ window.NOX_SPECS = [
         "label": "Offline"
       },
       {
+        "key": "server-mismatch",
+        "label": "Wrong server"
+      },
+      {
         "key": "inline-error",
         "label": "Load error"
       },
@@ -345,6 +353,10 @@ window.NOX_SPECS = [
       {
         "key": "offline",
         "label": "Offline"
+      },
+      {
+        "key": "server-mismatch",
+        "label": "Wrong server"
       }
     ],
     "anatomy": "App bar (back + chat name + a disabled Invite a person action). Message stream with date separators, author headers and bubbles. Composer pinned at bottom.",
@@ -433,6 +445,10 @@ window.NOX_SPECS = [
       {
         "key": "empty",
         "label": "Empty"
+      },
+      {
+        "key": "server-mismatch",
+        "label": "Wrong server"
       }
     ],
     "anatomy": "App bar (back + chat name). Header: avatar (56) + name (headlineSmall). “People” section: one row — the person this machine belongs to — then a disabled Invite a person button with its caption. Hairline, then the “Files” section with a List/Grid segmented toggle and file rows or a grid. The body is one scroll.",

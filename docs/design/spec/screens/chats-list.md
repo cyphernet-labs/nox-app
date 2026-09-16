@@ -45,6 +45,7 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 | Searching | В `SearchBar` непустой запрос; список фильтруется по имени в реальном времени. |
 | Search-empty | По запросу ничего не найдено — надпись `No chats found` в области результата. |
 | Offline | Нет соединения — постоянный `MaterialBanner` `No connection` сверху (под AppBar/SearchBar). Список показывает кэш. |
+| Server mismatch | Машина по сохранённому адресу предъявила не тот ключ, что назвала ссылка спаривания. Постоянная плашка `This isn't the server you paired with` с действием `Try again`. **Вместо** `Offline`, а не вместе с ним: сервер ответил, и «нет соединения» здесь — неправда. Ничего локального не стирается, переписка видна под плашкой. Само не проходит: единственный выход — действие. |
 | Inline-error | Не удалось загрузить — `MaterialBanner` сверху с предложением обновить (pull-to-refresh / action). |
 | Fatal | Передача в 3.1 (embedded). |
 
@@ -80,6 +81,8 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 | Empty state message | `Tap + to create the first one.` |
 | Search empty | `No chats found` |
 | Offline banner | `No connection` |
+| Server-mismatch banner | `This isn't the server you paired with` |
+| Server-mismatch action | `Try again` |
 | Inline-error (network) | `Could not load chats. Pull to refresh.` |
 
 ## Принятые решения (Q1–Q10)

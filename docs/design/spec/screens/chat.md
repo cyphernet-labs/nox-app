@@ -71,6 +71,7 @@ Material Scaffold с `resizeToAvoidBottomInset: true`; адаптируется 
 | Sending | Сообщение появляется в ленте сразу со статусом `pending` → `sent`. |
 | Send-error | Не удалось отправить. Статус `error` на сообщении; тап → retry. |
 | Offline | Нет соединения — постоянный `MaterialBanner` `No connection` сверху (см. [overview.md / Offline](../overview.md#offline--нет-соединения)). Отправка офлайн → `pending` до восстановления. |
+| Server mismatch | Машина по сохранённому адресу предъявила не тот ключ, что назвала ссылка спаривания. Постоянная плашка `This isn't the server you paired with` с действием `Try again`. **Вместо** `Offline`, а не вместе с ним: сервер ответил, и «нет соединения» здесь — неправда. Ничего локального не стирается, переписка видна под плашкой, а отправленное ждёт в очереди со статусом `pending` и **не** получает `error`. Само не проходит: единственный выход — действие. |
 | Fatal | Передача в 3.1 (embedded). |
 
 ## Взаимодействия
@@ -111,6 +112,8 @@ Material Scaffold с `resizeToAvoidBottomInset: true`; адаптируется 
 | Empty state message | `Send the first one.` |
 | System event (chat created) | `Chat created by {username}` |
 | Offline banner | `No connection` |
+| Server-mismatch banner | `This isn't the server you paired with` |
+| Server-mismatch action | `Try again` |
 
 (Date-separators — по лестнице из overview; не дублируются здесь.)
 

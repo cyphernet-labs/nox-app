@@ -15,10 +15,12 @@ Scrim + right drawer (380): Details header, chat avatar/name, **“People”** (
 - `list` — Files · list
 - `grid` — Files · grid
 - `empty` — Empty
+- `server-mismatch` — Wrong server
 
 ## Behavior
 - The People section renders only once the card has loaded. While files are still coming, and on the embedded error screen, it is absent: a person and a disabled button stacked over a spinner or over an error say nothing true about either.
 - Mobile’s pushed Chat card (5.4) becomes a right drawer over the thread. Segmented switches List ⇄ Grid; empty → folder_open state.
+- Wrong server (036): the machine at the paired address presented a key the pairing link did not name. A persistent banner “This isn't the server you paired with” with a “Try again” action, at the TOP of the drawer — under its own header, above the chat identity — because pushed below the People block it falls off the first fold. INSTEAD of the offline banner, never alongside it: something answered. The files stay listed under it; nothing local is thrown away.
 
 ## Navigation
 - Opened from the thread header info action (folder-open icon).
@@ -31,6 +33,7 @@ Scrim + right drawer (380): Details header, chat avatar/name, **“People”** (
 - Person row: the label of whoever owns this machine
 - Button (disabled): Invite a person
 - Caption: Available in a future version
+- Wrong-server banner: This isn't the server you paired with / Try again
 - Section: Files
 - Empty: No files yet / Files sent in this chat will appear here.
 
