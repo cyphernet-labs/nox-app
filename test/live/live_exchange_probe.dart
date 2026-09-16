@@ -66,6 +66,7 @@ void main() {
   tearDownAll(() async => getIt.reset());
 
   test('the app stack exchanges messages with a live noxd', () async {
+    LiveTarget.letTheNetworkThrough();
     final target = LiveTarget.orSkip();
     if (target == null) return;
     final socket = NoxSocketClient(WebSocketChannelFactory(target.client()), _MemoryCursor());

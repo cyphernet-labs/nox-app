@@ -44,4 +44,13 @@ class LiveTarget {
 
   /// The base for attachment bytes.
   String get restUrl => 'https://${link.authority}';
+
+  /// Lets a probe reach a real server.
+  ///
+  /// `TestWidgetsFlutterBinding` installs HttpOverrides that answer every
+  /// request with a mock, so the suite cannot touch the network by accident -
+  /// and a probe that dials a live `noxd` fails with `Unsupported operation:
+  /// Mocked response` before a single byte leaves the process. Reaching the
+  /// network is the whole point of these four files, so they lift it.
+  static void letTheNetworkThrough() => HttpOverrides.global = null;
 }

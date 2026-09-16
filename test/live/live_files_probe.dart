@@ -78,6 +78,7 @@ void main() {
   tearDownAll(() async => getIt.reset());
 
   test('a file goes up, a message names it, and the same bytes come back', () async {
+    LiveTarget.letTheNetworkThrough();
     final target = LiveTarget.orSkip();
     if (target == null) return;
     // ONE client for both transports, exactly as the app holds one: two would

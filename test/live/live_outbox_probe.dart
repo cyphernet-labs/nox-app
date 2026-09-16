@@ -123,6 +123,7 @@ void main() {
   tearDownAll(() async => getIt.reset());
 
   test('a queued message survives a restart and arrives exactly once', () async {
+    LiveTarget.letTheNetworkThrough();
     final target = LiveTarget.orSkip();
     if (target == null) return;
     final socket = NoxSocketClient(WebSocketChannelFactory(target.client()), _MemoryCursor());
