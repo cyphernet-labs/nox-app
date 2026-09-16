@@ -3,7 +3,7 @@ part of 'chat_thread_bloc.dart';
 /// Debug-selectable thread scenario (5.2, dev-only) — reproduces the server-dependent
 /// states on stub data (FR-005 / FR-029). `sendError` flips the next send to `error`;
 /// `offline` keeps sends queued as `pending`.
-enum ChatThreadScenario { normal, empty, offline, fatal, sendError }
+enum ChatThreadScenario { normal, empty, offline, pinRefused, fatal, sendError }
 
 @freezed
 sealed class ChatThreadState with _$ChatThreadState {
@@ -21,6 +21,10 @@ sealed class ChatThreadState with _$ChatThreadState {
     int? oldestLoadedSeq,
     @Default(false) bool loadingInProgress,
     @Default(false) bool isOffline,
+
+    /// The machine at the paired address is not this person's server. Apart
+    /// from [isOffline] because waiting fixes one and never the other.
+    @Default(false) bool isServerMismatch,
     MessageAttachment? draftAttachment,
 
     /// Bumped when a picked file was refused for being over the server's

@@ -14,7 +14,12 @@ sealed class ChatCardEvent with _$ChatCardEvent {
   const factory ChatCardEvent.filesRefreshed() = FilesRefreshed;
 
   /// Live device-connectivity change (P1): drives the real offline banner.
-  const factory ChatCardEvent.connectivityChanged(bool online) = ConnectivityChanged;
+  /// The live channel's phase changed. The PHASE, not a boolean: a server
+  /// presenting the wrong key is not a dead network.
+  const factory ChatCardEvent.sessionPhaseChanged(SessionPhase phase) = SessionPhaseChanged;
+
+  /// The person asked for another attempt, from the banner.
+  const factory ChatCardEvent.retryConnection() = RetryConnection;
 
   /// The person of this machine renamed themselves, possibly from another
   /// device. Watched rather than read once: the desktop side sheet stays open

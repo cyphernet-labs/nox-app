@@ -204,5 +204,13 @@
   "attachmentGone": "This file is no longer on the server",
   "@attachmentGone": {
     "description": "Terminal state on the file screen: the bytes are gone. Contract 2.1 forbids offering a retry here."
+  },
+  "serverNotRecognised": "This isn't the server you paired with",
+  "@serverNotRecognised": {
+    "description": "Banner on the chats list, the thread and the chat card when the machine at the paired address presents a key the pairing link did not name. Paired with the existing actionTryAgain. Deliberately not 'no connection': something answered, and waiting will not change it."
+  },
+  "loginServerNotRecognised": "This server doesn't match its link",
+  "@loginServerNotRecognised": {
+    "description": "The same refusal on the sign-in screen, where there is no relationship with a server yet - so it names the link rather than a pairing that has not happened."
   }
 }

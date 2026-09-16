@@ -481,6 +481,13 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 	// header, and the main server is ordinarily bound to every interface -
 	// otherwise no phone could reach it. An empty address removes the listener
 	// rather than the handler, so the port is not even held.
+	//
+	// It stays PLAIN HTTP while the main listener is TLS, and that is a
+	// decision rather than an oversight: the socket carries no network traffic
+	// by construction, so there is nothing in transit to protect, and a
+	// certificate there would only teach an operator's browser to expect a
+	// warning - on the one page whose whole job is to hand out the right to
+	// own this machine.
 	var statusServer *http.Server
 	var statusListener net.Listener
 	if cfg.StatusAddr != "" {
@@ -530,7 +537,11 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 		g.Go(func() error {
 			// Printed, or nobody learns it exists. Next to the claim link,
 			// because the two are read at the same moment.
-			logger.Info("service page for this machine only", "url", "http://"+statusListener.Addr().String())
+			// The scheme is stated on purpose: the main listener is https now,
+			// and an operator who assumes the page followed it gets a browser
+			// error instead of a claim link.
+			logger.Info("service page for this machine only, plain HTTP by design",
+				"url", "http://"+statusListener.Addr().String(), "tls", false)
 			if err := statusServer.Serve(statusListener); !errors.Is(err, http.ErrServerClosed) {
 				// Logged, NOT returned. Returning it cancels the group and
 				// takes the whole messenger down: a port somebody else already

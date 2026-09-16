@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/remote/pinned_http_client.dart';
 import 'package:web_socket_channel/io.dart';
@@ -41,23 +43,58 @@ class WebSocketChannelFactory implements SocketChannelFactory {
     // The SHARED client, never a fresh one: `WebSocket.connect` does not close
     // a client passed to it, so one per connection would leak on every rung of
     // the reconnect ladder.
-    return _IoSocketConnection(IOWebSocketChannel.connect(url, pingInterval: pingInterval, customClient: _pinned.client));
+    //
+    // The refusal count is read BEFORE the attempt and compared after it
+    // fails. The certificate callback cannot throw anything anybody upstream
+    // would recognise - it returns a bool from inside the TLS stack, and what
+    // comes out is an ordinary handshake failure indistinguishable from a
+    // server that is simply down. Without this, a refused pin would climb the
+    // reconnect ladder for ever while the screen blamed the network.
+    final before = _pinned.refusals;
+    return _IoSocketConnection(
+      IOWebSocketChannel.connect(url, pingInterval: pingInterval, customClient: _pinned.client),
+      () => _pinned.refusals > before,
+    );
   }
 }
 
 class _IoSocketConnection implements SocketConnection {
-  _IoSocketConnection(this._channel);
+  _IoSocketConnection(this._channel, this._wasRefused);
 
   final IOWebSocketChannel _channel;
 
+  /// Whether the pin refused a certificate since this connection was started.
+  final bool Function() _wasRefused;
+
   @override
-  Stream<dynamic> get frames => _channel.stream;
+  Stream<dynamic> get frames => _channel.stream.transform(
+    StreamTransformer<dynamic, dynamic>.fromHandlers(
+      handleError: (Object error, StackTrace stack, EventSink<dynamic> sink) {
+        sink.addError(_wasRefused() ? const ServerPinRefusedException() : error, stack);
+      },
+    ),
+  );
 
   @override
   void add(String frame) => _channel.sink.add(frame);
 
   @override
   Future<void> close() => _channel.sink.close();
+}
+
+/// The machine at the paired address presented a key the pairing link did not
+/// name.
+///
+/// Its own type, not a message inside a general transport failure: the whole
+/// point is that it must be told apart from "the network is down". Retrying
+/// cannot help, and nothing here may take the path that ends in a forced
+/// logout - that path wipes the device, which would make presenting a
+/// certificate a way to erase somebody's messages.
+class ServerPinRefusedException implements Exception {
+  const ServerPinRefusedException();
+
+  @override
+  String toString() => 'ServerPinRefusedException: the server presented a key the pairing link did not name';
 }
 
 /// Thrown when the socket cannot carry a command: no connection, or no reply

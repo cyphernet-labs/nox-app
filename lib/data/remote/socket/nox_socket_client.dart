@@ -222,16 +222,36 @@ class NoxSocketClient {
       _frames = connection.frames.listen(
         (raw) => _onRawFrame(raw, epoch),
         onError: (Object e) {
-          if (epoch == _connectionEpoch) _onDropped('stream error: ${e.runtimeType}');
+          if (epoch != _connectionEpoch) return;
+          if (e is ServerPinRefusedException) {
+            _refusedByPin();
+            return;
+          }
+          _onDropped('stream error: ${e.runtimeType}');
         },
         onDone: () {
           if (epoch == _connectionEpoch) _onDropped('closed by peer');
         },
         cancelOnError: false,
       );
+    } on ServerPinRefusedException {
+      _refusedByPin();
     } catch (e) {
       _onDropped('connect failed: ${e.runtimeType}');
     }
+  }
+
+  /// The machine at this address is not this person's server.
+  ///
+  /// Terminal, and terminal in a very particular way: no reconnect ladder,
+  /// because nothing about the answer will change on its own; and NOT through
+  /// [onUnauthenticated], which ends in a forced logout that wipes every
+  /// message on the device. Sending a bad certificate down that path would let
+  /// anyone able to stand in the middle erase this person's data on every
+  /// device they own, by presenting one.
+  void _refusedByPin() {
+    logRepository.debug(target: this, message: 'socket: the server presented a key the pairing link did not name');
+    unawaited(_teardown(SessionPhase.serverMismatch));
   }
 
   /// Counts connections, so a frame can say which one it came from.
@@ -544,6 +564,13 @@ class NoxSocketClient {
   }
 
   void _onDropped(String reason) {
+    // A terminal phase is not a drop to recover from. Both terminal values are
+    // reached by a teardown that then closes the socket, so `onDone` arrives
+    // right behind them - and without this guard it restarted the very ladder
+    // those phases exist to stop. Latent for `unsupported` since it was
+    // introduced; reachable in practice as of the pin refusal, which is
+    // triggered by a live network rather than by a rare protocol mismatch.
+    if (_phase.value.isTerminal) return;
     if (_phase.value != SessionPhase.disconnected) logRepository.debug(target: this, message: 'socket: dropped $reason');
     unawaited(_teardown(SessionPhase.disconnected));
     _scheduleRetry();

@@ -134,8 +134,16 @@ void main() {
       // The remaining debug scenarios (P10): offline (a NOTICE strip over the thread),
       // empty (no messages) and fatal (full-screen error). Each seeded via initialScenario
       // and locked on both the mobile (360) and desktop (`_wide` pane) surfaces.
-      for (final scenario in const [ChatThreadScenario.offline, ChatThreadScenario.empty, ChatThreadScenario.fatal]) {
-        final name = scenario.name;
+      // pinRefused (036) joins them: the wrong machine answered, which is a
+      // different glyph, a different sentence and an action `offline` has not
+      // got - so its own baseline on both surfaces.
+      for (final scenario in const [
+        ChatThreadScenario.offline,
+        ChatThreadScenario.pinRefused,
+        ChatThreadScenario.empty,
+        ChatThreadScenario.fatal,
+      ]) {
+        final name = scenario == ChatThreadScenario.pinRefused ? 'pin_refused' : scenario.name;
 
         testWidgets('mobile $name matches the $suffix theme', (tester) async {
           AppClock.freeze(kGoldenClock);
