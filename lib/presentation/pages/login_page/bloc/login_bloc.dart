@@ -69,11 +69,14 @@ class LoginBloc extends BaseBloc<LoginEvent, LoginState> {
   /// until they press the button again would let them press it into the same
   /// wall twice.
   void _onServerRefused(ServerRefused event, Emitter<LoginState> emit) {
+    _refusedThisAttempt = true;
     emit(state.copyWith(status: LoginStatus.errorServerMismatch));
   }
 
   Future<void> _onSignInRequested(SignInRequested event, Emitter<LoginState> emit) async {
     if (!state.canSubmit) return;
+    // A fresh attempt carries no verdict from the last one.
+    _refusedThisAttempt = false;
     emit(state.copyWith(status: LoginStatus.loading));
     if (demo) {
       await executeLogic(() async {
@@ -93,13 +96,19 @@ class LoginBloc extends BaseBloc<LoginEvent, LoginState> {
     );
   }
 
-  /// Whether the channel refused the machine the link named.
+  /// True when THIS attempt was refused by the pin.
   ///
-  /// Asked at the moment the sign-in result is mapped, and asked two ways,
-  /// because the refusal and the failure are two different events and either
-  /// can land first: the phase may already say so, or the event carrying it may
-  /// already have moved this screen.
-  bool _refusedServer() => _phaseService.phase.isServerMismatch || state.status == LoginStatus.errorServerMismatch;
+  /// Scoped to the attempt, and deliberately not read off the phase. The phase
+  /// is terminal: it keeps saying `serverMismatch` until something restarts the
+  /// channel, so a later attempt that fails BEFORE it ever dials - an
+  /// unreadable keychain, say - would inherit the previous answer and blame a
+  /// server it never reached.
+  bool _refusedThisAttempt = false;
+
+  /// The two ways round, because the refusal and the failure are separate
+  /// events and either can land first: this attempt saw the refusal, or the
+  /// event carrying it has already moved the screen.
+  bool _refusedServer() => _refusedThisAttempt || state.status == LoginStatus.errorServerMismatch;
 
   /// Each refusal keeps its own message: the repository already told them
   /// apart, and collapsing them here would undo that.

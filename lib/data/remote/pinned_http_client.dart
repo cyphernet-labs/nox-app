@@ -44,7 +44,7 @@ class PinnedHttpClient {
     if (_fingerprint == fingerprint) return;
     _fingerprint = fingerprint;
     // A CHANGE of server drops every pooled connection to the old one. The
-    // callback runs during a handshake, and a kept-alive connection performs
+    // check runs during a handshake, and a kept-alive connection performs
     // none - so without this, re-pairing to a different machine would keep
     // reaching the previous one until its socket happened to time out.
     _discard();
@@ -75,27 +75,66 @@ class PinnedHttpClient {
   String? get pinnedFingerprint => _fingerprint;
 
   HttpClient _build() {
-    // An EMPTY trust store, on purpose, and it is load-bearing.
-    //
-    // badCertificateCallback only runs when the built-in verification has
-    // already failed. With the platform's roots in place, a certificate issued
-    // by a public authority for whatever name the link carries would verify -
-    // and the callback below, the only thing that checks WHICH key answered,
-    // would never be consulted at all. Trusting nobody makes every certificate
-    // reach the pin.
-    final client = HttpClient(context: SecurityContext(withTrustedRoots: false));
-    // What arrives here is the TOP of the chain the server presented, not
-    // necessarily its leaf - measured, not assumed. Our server presents exactly
-    // one self-signed certificate, so the two are the same thing and the key
-    // below is the server's own. A server presenting a real chain could not be
-    // pinned through this callback at all; nothing in this product builds one.
-    client.badCertificateCallback = (X509Certificate cert, String host, int port) {
-      // The field is read here, at handshake time, and never captured into this
-      // closure: the client outlives pairing, re-pairing and logout.
-      if (ServerPin.matches(cert.der, _fingerprint)) return true;
-      _refusals++;
-      return false;
-    };
+    final client = HttpClient(context: _emptyTrust);
+    // The check happens in the connection factory, on the LEAF - see there.
+    // This stays as a closed door: with the factory in place nothing
+    // legitimate reaches it, and anything that does is refused rather than
+    // silently judged by weaker means.
+    client.badCertificateCallback = (X509Certificate cert, String host, int port) => false;
+    // The factory below ignores proxies, so make that true rather than assume
+    // it: a personal server is reached directly, and a proxy the factory
+    // quietly skipped would connect somewhere nobody asked for.
+    client.findProxy = (Uri uri) => 'DIRECT';
+    client.connectionFactory = _connect;
     return client;
+  }
+
+  /// An EMPTY trust store, on purpose, and it is load-bearing.
+  ///
+  /// The platform's roots would let a certificate issued by a public authority
+  /// for whatever name the link carries verify on its own, and the pin - the
+  /// only thing that checks WHICH key answered - would then never be consulted
+  /// at all. Trusting nobody makes every certificate reach it.
+  SecurityContext get _emptyTrust => SecurityContext(withTrustedRoots: false);
+
+  /// Opens the connection, and refuses it unless the machine that authenticated
+  /// the handshake is the pinned one.
+  ///
+  /// **The check is on the LEAF, and it has to be.** `badCertificateCallback`
+  /// is handed the TOP of the presented chain, not the certificate whose
+  /// private key completed the handshake - measured, not assumed. A server
+  /// presents whatever chain it likes, so anyone can append the real server's
+  /// certificate (public: handed to every client that ever dialled it) above
+  /// their own leaf, and a check on the top then hashes the right key while the
+  /// session belongs to the wrong one. Reproduced end to end before this was
+  /// written; `SecureSocket.peerCertificate` is the leaf, and the same bytes
+  /// the Go side pins (`rawCerts[0]`).
+  ///
+  /// `HttpClient` uses this socket as it is - it does not wrap a direct
+  /// connection in TLS a second time - so doing the handshake here is what puts
+  /// the leaf within reach. `onBadCertificate` returns true only to let the
+  /// handshake finish; the answer is decided below, before a single byte of the
+  /// request is written, because `HttpClient` waits on this future.
+  Future<ConnectionTask<Socket>> _connect(Uri uri, String? proxyHost, int? proxyPort) async {
+    final task = await SecureSocket.startConnect(
+      uri.host,
+      uri.port,
+      context: _emptyTrust,
+      onBadCertificate: (_) => true,
+      // The server offers exactly this, and the WebSocket upgrade both
+      // transports share does not exist over h2.
+      supportedProtocols: const <String>['http/1.1'],
+    );
+    return ConnectionTask.fromSocket<SecureSocket>(
+      task.socket.then((socket) {
+        // Read at handshake time, never captured: this client outlives
+        // pairing, re-pairing and logout.
+        if (ServerPin.matches(socket.peerCertificate?.der, _fingerprint)) return socket;
+        _refusals++;
+        socket.destroy();
+        throw const HandshakeException('the server presented a key the pairing link did not name');
+      }),
+      task.cancel,
+    );
   }
 }

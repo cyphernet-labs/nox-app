@@ -86,7 +86,14 @@ curl -s http://127.0.0.1:<status-port>/ | head -3
 ## F. Android (SC-010)
 
 ```bash
-grep -c usesCleartextTraffic android/app/src/debug/AndroidManifest.xml   # ожидается 0
+grep -c 'android:usesCleartextTraffic' android/app/src/debug/AndroidManifest.xml   # ожидается 0
+```
+
+Искать надо **атрибут**, а не слово: в манифесте остался комментарий, объясняющий, почему атрибут убран, и `grep -c usesCleartextTraffic` находит именно его — печатает `1` и говорит ровно обратное правде. Настоящая проверка — в собранном APK:
+
+```bash
+fvm flutter build apk --debug --dart-define-from-file=config/stage.json
+python3 -c "import zipfile;print('usesCleartextTraffic'.encode('utf-16-le') in zipfile.ZipFile('build/app/outputs/flutter-apk/app-debug.apk').read('AndroidManifest.xml'))"   # ожидается False
 ```
 
 ## G. Перевыпуск сертификата (SC-004)

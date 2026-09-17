@@ -43,7 +43,8 @@ Fingerprint of the correct key:
 | `expired.der` / `.pem` | correct | **accept** | expired in 2020; a home server's owner may not have touched it for years |
 | `wrong_name.der` / `.pem` | correct | **accept** | names `mail.example.com` and 203.0.113.7; a home server has no name and its address changes |
 | `unknown_issuer.der` / `.pem` | correct | **accept** | signed by an authority nothing trusts; trust comes from the link, not from an issuer |
-| `unknown_issuer_chain.pem` | correct | — | leaf + that authority, the chain a real server would present |
+| `unknown_issuer_chain.pem` | correct | **accept** | leaf + that authority. An honest chain: the LEAF holds the pinned key, so it is this machine |
+| `hostile_chain.pem` | foreign leaf, correct on top | **refuse** | the chain attack. Served with `stranger_key.pem`, it needs no secret of ours — our certificate is public. A check on the TOP of the chain hashes our key while the session belongs to theirs; only the LEAF proves anything |
 | `server_key.pem` | correct | — | PKCS#8 of the correct key, so a test can actually SERVE the three tolerance certificates |
 | `stranger_key.pem` | foreign | — | PKCS#8 of the foreign key, so the refusal can be proved against a real handshake — it serves `stranger.pem` AND `planted.pem` |
 | `fingerprint.txt` | correct | — | what the pairing link would carry |

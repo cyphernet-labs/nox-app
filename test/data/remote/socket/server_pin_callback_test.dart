@@ -171,20 +171,36 @@ void main() {
     expect(await _statusFrom(second, client), HttpStatus.ok);
   });
 
-  test('a server presenting a CHAIN cannot be pinned, and this is where that is written down', () async {
-    // Measured, not assumed: the platform hands the callback the TOP of the
-    // presented chain, so for leaf + authority it is the AUTHORITY key that
-    // arrives - and the server's own key is never seen at all.
+  test('a HOSTILE CHAIN is refused: the right certificate on top does not make the session right', () async {
+    // THE ATTACK, and it needs no secret of ours at all. The server's
+    // certificate is public - handed to every client that ever dialled it -
+    // so anyone can present [their own leaf, our certificate]. The platform
+    // hands badCertificateCallback the TOP of that chain, so a check made
+    // there hashes OUR key while the session belongs to THEIRS.
     //
-    // Nothing in this product presents a chain: the server issues itself one
-    // self-signed certificate and presents that alone, which is why every case
-    // above works. This test exists so that a change to the server making it
-    // present a chain fails HERE, loudly, instead of in somebody's hands.
-    final server = await _serve('unknown_issuer_chain.pem', 'server_key.pem');
+    // This file used to assert the same mechanism in the harmless direction
+    // only - a chain whose top is the WRONG key - and called it a documented
+    // limitation. That was the wrong half. The check now runs on the LEAF,
+    // which is the certificate whose private key actually completed the
+    // handshake, and the same bytes the Go side pins.
+    final server = await _serve('hostile_chain.pem', 'stranger_key.pem');
     addTearDown(() => server.close(force: true));
     final client = PinnedHttpClient()..pinTo(_fingerprint);
 
     await expectLater(_statusFrom(server, client), throwsA(isA<HandshakeException>()));
+    expect(client.refusals, 1, reason: 'the refusal must be visible, not a silent dead connection');
+  });
+
+  test('an honest chain on the right key is accepted, because the LEAF is what answers', () async {
+    // The other side of the same coin. A certificate signed by an authority
+    // nothing trusts, presented WITH that authority, is still this machine:
+    // its leaf holds the pinned key. Checking the top used to refuse this.
+    final server = await _serve('unknown_issuer_chain.pem', 'server_key.pem');
+    addTearDown(() => server.close(force: true));
+    final client = PinnedHttpClient()..pinTo(_fingerprint);
+
+    expect(await _statusFrom(server, client), HttpStatus.ok);
+    expect(client.refusals, 0);
   });
 
   test('the pin is re-read at handshake time, not captured when the client was built', () async {
