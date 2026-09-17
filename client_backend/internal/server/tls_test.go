@@ -132,6 +132,58 @@ func TestARestartIssuesANewCertificateThePinStillAccepts(t *testing.T) {
 	}
 }
 
+// A chain whose LEAF is a stranger's is refused, however right the certificate
+// on top of it is.
+//
+// The Go twin of the Dart check, and it earns its place: the Dart side had
+// exactly this hole - it judged the TOP of the presented chain, so appending
+// this server's public certificate above a stranger's leaf was a complete
+// MITM. `rawCerts[0]` is the leaf and always has been here, but nothing held
+// it: the mutation to `rawCerts[len-1]` passed every Go test.
+func TestAChainWithAStrangerLeafIsRefusedHoweverRightTheTop(t *testing.T) {
+	ts, srv := newTestServer(t)
+	ours := ts.TLS.Certificates[0]
+	id, err := srv.store.ServerIdentity(context.Background())
+	if err != nil {
+		t.Fatalf("ServerIdentity: %v", err)
+	}
+
+	stranger, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate a stranger key: %v", err)
+	}
+	strangerCert, err := buildCertificate(stranger, time.Now())
+	if err != nil {
+		t.Fatalf("buildCertificate: %v", err)
+	}
+
+	// The attacker holds only their own key, and borrows our certificate - it
+	// is public, handed to everyone who ever dialled us.
+	hostile := tls.Certificate{
+		Certificate: [][]byte{strangerCert.Certificate[0], ours.Certificate[0]},
+		PrivateKey:  stranger,
+		Leaf:        strangerCert.Leaf,
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	cfg := &tls.Config{Certificates: []tls.Certificate{hostile}, MinVersion: tls.VersionTLS13, NextProtos: []string{"http/1.1"}}
+	stand := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: readHeaderTimeout}
+	go func() { _ = stand.Serve(tls.NewListener(listener, cfg)) }()
+	t.Cleanup(func() { _ = stand.Close() })
+
+	client := &http.Client{Transport: &http.Transport{TLSClientConfig: PinnedTLSConfig(id.Fingerprint)}}
+	resp, err := client.Get("https://" + listener.Addr().String() + "/health") //nolint:noctx // expected to fail
+	if err == nil {
+		_ = resp.Body.Close()
+		t.Fatal("a chain with a stranger's leaf and our certificate on top was accepted")
+	}
+	if !strings.Contains(err.Error(), ErrPinMismatch.Error()) {
+		t.Fatalf("refused, but not by the pin: %v", err)
+	}
+}
+
 // Somebody else's key is refused, which is the entire point of the phase.
 func TestAnotherKeyIsRefusedNoMatterHowValidItsCertificateLooks(t *testing.T) {
 	ts, _ := newTestServer(t)

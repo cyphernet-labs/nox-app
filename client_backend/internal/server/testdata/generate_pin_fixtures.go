@@ -266,6 +266,14 @@ func run() error {
 	if err := writeFile("hostile_chain.pem", hostile); err != nil {
 		return err
 	}
+	// Guarded like the planted one, and for the same reason: a fixture that
+	// quietly degrades takes its test's power with it and nothing says so. A
+	// one-token slip here turns this into a plain stranger certificate, which
+	// every test still passes - while the regression it exists to catch walks
+	// straight through.
+	if err := assertHostileChain(hostile, spki); err != nil {
+		return err
+	}
 
 	// The chain a server actually presents: leaf first, then the authority.
 	chain := append(
@@ -290,6 +298,41 @@ var spkiPrefix = []byte{
 }
 
 func indexOfSPKIPrefix(der []byte) int { return bytes.Index(der, spkiPrefix) }
+
+// assertHostileChain refuses to emit a chain that does not carry the attack.
+//
+// Three facts make it an attack and none is obvious from reading the file: the
+// chain has to be TWO certificates, the LEAF must be on a key that is not the
+// pinned one, and the certificate ABOVE it must carry the pinned key exactly.
+// Lose any of them and the fixture is an ordinary stranger certificate whose
+// test passes while proving nothing.
+func assertHostileChain(chainPEM, pinnedSPKI []byte) error {
+	var certs []*x509.Certificate
+	rest := chainPEM
+	for {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return fmt.Errorf("hostile chain: %w", err)
+		}
+		certs = append(certs, cert)
+	}
+	if len(certs) != 2 {
+		return fmt.Errorf("hostile chain has %d certificates, want exactly 2 (leaf then the borrowed one)", len(certs))
+	}
+	if bytes.Equal(certs[0].RawSubjectPublicKeyInfo, pinnedSPKI) {
+		return fmt.Errorf("hostile chain's LEAF carries the pinned key, so it is not hostile at all")
+	}
+	if !bytes.Equal(certs[1].RawSubjectPublicKeyInfo, pinnedSPKI) {
+		return fmt.Errorf("hostile chain's second certificate is not the pinned one, so the attack it models is absent")
+	}
+	fmt.Println("  hostile_chain: leaf on a foreign key, pinned key appended above it")
+	return nil
+}
 
 type certSpec struct {
 	seed      string
