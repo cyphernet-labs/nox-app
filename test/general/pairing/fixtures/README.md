@@ -37,6 +37,7 @@ Fingerprint of the correct key:
 | `valid.der` / `.pem` | correct | **accept** | the ordinary case |
 | `reissued.der` / `.pem` | correct | **accept** | a different certificate on the same key — a server restart must not lock out a paired device |
 | `stranger.der` / `.pem` | foreign | **refuse** | the whole phase in one file |
+| `planted.der` / `.pem` | foreign | **refuse** | the attack: the certificate's real key is the foreign one, but a verbatim copy of the correct key's SPKI is planted in the subject, ahead of it. Anything locating the key by byte pattern hashes the plant and accepts a machine that holds only the attacker's private key |
 | `truncated.der` | correct | **refuse** | the header is present, the key behind it is not; a check that hashes whatever follows the header would pass this |
 | `headerless.der` | — (Ed25519) | **refuse** | no P-256 SubjectPublicKeyInfo at all; not hypothetical, it is what this server issued before 036 |
 | `expired.der` / `.pem` | correct | **accept** | expired in 2020; a home server's owner may not have touched it for years |
@@ -44,7 +45,7 @@ Fingerprint of the correct key:
 | `unknown_issuer.der` / `.pem` | correct | **accept** | signed by an authority nothing trusts; trust comes from the link, not from an issuer |
 | `unknown_issuer_chain.pem` | correct | — | leaf + that authority, the chain a real server would present |
 | `server_key.pem` | correct | — | PKCS#8 of the correct key, so a test can actually SERVE the three tolerance certificates |
-| `stranger_key.pem` | foreign | — | PKCS#8 of the foreign key, so the refusal can be proved against a real handshake |
+| `stranger_key.pem` | foreign | — | PKCS#8 of the foreign key, so the refusal can be proved against a real handshake — it serves `stranger.pem` AND `planted.pem` |
 | `fingerprint.txt` | correct | — | what the pairing link would carry |
 
 The three tolerance cases are deliberately on the **correct** key. Negative

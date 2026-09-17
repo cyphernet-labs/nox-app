@@ -189,8 +189,14 @@ func TestTheWrongDatesNameAndIssuerAreAllToleratedOnTheRightKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	stand := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: readHeaderTimeout, TLSConfig: replacement}
-	go func() { _ = stand.ServeTLS(tls.NewListener(listener, replacement), "", "") }()
+	// Serve, not ServeTLS: the listener below is ALREADY wrapped, and ServeTLS
+	// wraps what it is given a second time. That put a tls.Conn inside a
+	// tls.Conn - the handshake the pin cares about still happened on the inner
+	// one, so the dial succeeded, but the outer layer then read decrypted HTTP
+	// as if it were a handshake and answered 400 without a handler ever
+	// running. The test passed because it never looked at the status.
+	stand := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: readHeaderTimeout}
+	go func() { _ = stand.Serve(tls.NewListener(listener, replacement)) }()
 	t.Cleanup(func() { _ = stand.Close() })
 
 	client := &http.Client{Transport: &http.Transport{TLSClientConfig: PinnedTLSConfig(id.Fingerprint)}}
@@ -198,7 +204,20 @@ func TestTheWrongDatesNameAndIssuerAreAllToleratedOnTheRightKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("an expired certificate on the right key was refused: %v", err)
 	}
-	_ = resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
+	// The status IS the assertion. Without it this test proves only that a
+	// connection was made, which is true of a server answering nothing but
+	// errors.
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the expired-certificate stand answered %d, want 200", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read the health answer: %v", err)
+	}
+	if string(body) != `{"status":"ok"}` {
+		t.Fatalf("health over the expired certificate returned %s", body)
+	}
 
 	// The name is not asserted at all - there is no SAN and the subject is not
 	// a host name - and the issuer is the key itself, which no store knows.
