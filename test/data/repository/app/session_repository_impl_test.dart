@@ -52,6 +52,40 @@ void main() {
     expect((await repository.readSession()).data, isNull);
   });
 
+  // The two halves of a session live in different stores, and `deleteAll` is one
+  // query against one of them. A key written under options that query does not
+  // match survives it with no error to catch - which is how a logout emptied the
+  // preferences, left the identifier behind, and put the person who had just
+  // signed out on the naming screen with a token for a server gone from the app.
+  group('clear does not trust deleteAll', () {
+    test('wipes by name, so a sweep that does nothing still empties the session', () async {
+      final prefs = await SharedPreferences.getInstance();
+      final leaky = SessionRepositoryImpl(const _NoSweepStorage(), prefs);
+      await leaky.saveIdentifier(identifier: 'abc', onboardingComplete: true, label: 'Alice');
+
+      expect((await leaky.clear()).hasData, isTrue);
+      expect((await leaky.readSession()).data, isNull);
+    });
+
+    test('refuses when the identifier survives, and leaves the session whole rather than half', () async {
+      final prefs = await SharedPreferences.getInstance();
+      final stuck = SessionRepositoryImpl(const _UndeletableIdentityStorage(), prefs);
+      await stuck.saveIdentifier(identifier: 'abc', onboardingComplete: true, label: 'Alice');
+
+      final result = await stuck.clear();
+
+      expect(result.hasData, isFalse, reason: 'a wipe that did not happen must not report success');
+      // The whole point: the onboarding flag is still there. Removing it while
+      // the identifier survives is what strands a logged-out person mid-flow -
+      // staying signed in is wrong too, but it is recoverable and it is said
+      // out loud.
+      final session = (await stuck.readSession()).data;
+      expect(session, isNotNull);
+      expect(session!.onboardingComplete, isTrue);
+      expect(session.label, 'Alice');
+    });
+  });
+
   group('advanceOnboardingIfKnown (feature 031)', () {
     test('a greeting that created the person does not end onboarding', () async {
       await repository.saveIdentifier(identifier: 'abc', onboardingComplete: false);
@@ -285,4 +319,40 @@ void main() {
       expect(prefs.getBool('session.is_owner'), isNull);
     });
   });
+}
+
+/// Secure storage whose `deleteAll` is a no-op - the macOS behaviour that made
+/// the wipe partial. Everything else goes to the real mock platform.
+class _NoSweepStorage extends FlutterSecureStorage {
+  const _NoSweepStorage();
+
+  @override
+  Future<void> deleteAll({
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {}
+}
+
+/// The worse store: neither the sweep nor a delete of the identifier lands, so
+/// the wipe genuinely cannot happen and `clear` has to say so.
+class _UndeletableIdentityStorage extends _NoSweepStorage {
+  const _UndeletableIdentityStorage();
+
+  @override
+  Future<void> delete({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    if (key == 'session.identifier') return;
+    await super.delete(key: key);
+  }
 }
