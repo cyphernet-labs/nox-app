@@ -5,7 +5,7 @@
 **Purpose.** Show the keys allowed to speak as this person, and let any of them be cut off. Without it pairing has no undo and every lost device stays an open door.
 
 ## Anatomy
-Detail scaffold (back + title). Current device in its own group, marked `This device`. Other devices in a second group, or the line `No other devices`. A filled `Add a device` button at the bottom; pressing it mints an invite and shows a card with the QR **and** the link as selectable text.
+Detail scaffold (back + title). Current device in its own group, marked `This device`. Other devices in a second group; when there are none, there is no second group and no placeholder line. A filled `Add a device` button at the bottom; pressing it mints an invite and shows a card with the QR **and** the link as selectable text, under `Copy` and `Hide`.
 
 ## States
 - `loading` — always read from the server, never from a cache
@@ -38,6 +38,8 @@ Detail scaffold (back + title). Current device in its own group, marked `This de
 - Revoke this device? / It will be signed out and won't be able to connect again.
 - This is the device you're using. Revoking it signs you out here.
 - Scan this from the other device. The link works for 10 minutes.
+- Copy
+- Hide
 
 ## Design-system components
 - AppDetailScaffoldWidget, AppSettingsGroupWidget, ListTile rows, FilledButton, AppQrSurfaceWidget
