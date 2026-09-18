@@ -199,6 +199,21 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   RemoteAddr inside a handler is one somebody eventually routes around with a
   header, and the main server is ordinarily bound to every interface. An empty
   address removes the listener rather than the handler, so the port is not held.
+- **The service page has exactly ONE script, admitted by its HASH.** It reveals a
+  Copy button and puts the claim link on the clipboard - two lines of base64 are
+  not something to select by hand. Three things keep it from being a hole, and
+  undoing any of them reopens one: the button ships HIDDEN and the script
+  reveals it, so a page whose script did not run shows no dead control; the
+  policy names `script-src 'sha256-...'` and never `'unsafe-inline'`, so exactly
+  those bytes may run; and `default-src 'none'` still forbids `connect-src`, so
+  the script can read the link and has nowhere to send it. The hash is DERIVED
+  from the script constant on every response rather than written down - the same
+  rule as the server's fingerprint, for the same reason. A page with no link
+  carries no script and its policy admits none.
+- **Clipboard access needs a secure context, and this page has one without TLS.**
+  `http://127.0.0.1` and `http://localhost` are potentially trustworthy origins;
+  measured in a browser, not assumed. The fallback still exists: if the API is
+  missing or refuses, the script selects the link so one keystroke finishes it.
 - **One claim token per process.** The page shows the token the startup
   announcement already minted; minting per request would leave an unrevocable
   door behind every browser refresh, because a claim token has no expiry.
