@@ -9,7 +9,8 @@ import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_spinner_widget.dart';
 
 /// Identity card (7.1): a Name block (inline-editable) + `Your ID`
-/// block (masked value + Copy / Show QR / optional reveal on one row). Parameterized
+/// block (the value + Copy on one row). Adding a device is 7.8 Devices' job and has
+/// its own screen, so the card no longer carries a QR shortcut into it. Parameterized
 /// per layout (Principle I — minimize secret exposure):
 ///   - `revealable = false` on both widths since feature 032: the id is the
 ///     PUBLIC author id, so there is nothing to hide behind a toggle. What the
@@ -28,7 +29,6 @@ class AppIdentityCardWidget extends StatelessWidget {
     required this.editing,
     required this.onEditName,
     required this.onCopy,
-    required this.onShowQr,
     this.nameEditField,
     this.idRevealed = false,
     this.onToggleReveal,
@@ -42,7 +42,6 @@ class AppIdentityCardWidget extends StatelessWidget {
   final bool editing;
   final VoidCallback onEditName;
   final VoidCallback onCopy;
-  final VoidCallback onShowQr;
   final Widget? nameEditField;
   final bool idRevealed;
   final VoidCallback? onToggleReveal;
@@ -123,11 +122,6 @@ class AppIdentityCardWidget extends StatelessWidget {
         tooltip: context.l10n.idCopyTooltip,
         icon: AppIconWidget(NoxIcons.contentCopy, size: AppDimensionTokens.icon.lg),
         onPressed: onCopy,
-      ),
-      IconButton(
-        tooltip: context.l10n.idShowQrTooltip,
-        icon: AppIconWidget(NoxIcons.qrCode, size: AppDimensionTokens.icon.lg),
-        onPressed: onShowQr,
       ),
     ];
     // Revealed raw ID is long + monospace → keep it on its own line above the actions.

@@ -26,12 +26,11 @@ void main() {
     onToggleReveal: () {},
     onEditName: () {},
     onCopy: () {},
-    onShowQr: () {},
     nameEditField: editing ? const TextField(key: Key('edit')) : null,
   );
 
   group('AppIdentityCardWidget', () {
-    testWidgets('mobile: shows the name, the masked ID and Show/Copy/Show-QR + edit actions', (tester) async {
+    testWidgets('mobile: shows the name, the masked ID and Show/Copy + edit actions', (tester) async {
       await pumpApp(tester, card());
 
       expect(find.text('Aria'), findsOneWidget);
@@ -39,7 +38,9 @@ void main() {
       expect(find.byTooltip(l10nEn.settingsNameEditTooltip), findsOneWidget);
       expect(find.byTooltip(l10nEn.idShowTooltip), findsOneWidget);
       expect(find.byTooltip(l10nEn.idCopyTooltip), findsOneWidget);
-      expect(find.byTooltip(l10nEn.idShowQrTooltip), findsOneWidget);
+      // Those three and nothing else: the QR shortcut into device pairing is gone,
+      // and counting is what notices a fourth action arriving unannounced.
+      expect(find.byType(IconButton), findsNWidgets(3));
     });
 
     testWidgets('Initial-loading swaps the ID for a spinner', (tester) async {

@@ -107,16 +107,17 @@ class _DevicesBodyState extends State<DevicesBody> {
                 children: [_DeviceRow(device: state.current!, onRevoke: () => _confirmRevoke(state.current!))],
               ),
             SizedBox(height: AppSpacingTokens.s16),
-            if (state.others.isEmpty)
-              Padding(
-                padding: EdgeInsets.symmetric(vertical: AppSpacingTokens.s16),
-                child: Text(context.l10n.devicesEmpty, textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodyMedium),
-              )
-            else
+            // No "no other devices" line when this is the only one. By the time the
+            // list renders the answer is settled - loading has its own spinner and a
+            // failed read its own sentence - so an empty second group would state
+            // what the screen already shows: this device listed, nothing under it,
+            // and Add a device directly below.
+            if (state.others.isNotEmpty) ...[
               AppSettingsGroupWidget(
                 children: [for (final device in state.others) _DeviceRow(device: device, onRevoke: () => _confirmRevoke(device))],
               ),
-            SizedBox(height: AppSpacingTokens.s16),
+              SizedBox(height: AppSpacingTokens.s16),
+            ],
             FilledButton(onPressed: () => _bloc.add(const DevicesEvent.inviteRequested()), child: Text(context.l10n.devicesAdd)),
           ],
         );

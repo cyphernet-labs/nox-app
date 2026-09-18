@@ -354,7 +354,6 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
       //
       // On desktop that is a pane selection, not a push: pushing a full-screen
       // page over the shell is how the rest of Settings would never behave.
-      onShowQr: wide ? () => setState(() => _selected = _Section.devices) : () => _openSection(DevicesPage.route()),
       nameEditField: state.editing
           ? AppLabeledFieldWidget(
               controller: _nameController,
