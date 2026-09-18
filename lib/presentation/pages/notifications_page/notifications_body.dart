@@ -1,7 +1,7 @@
-import 'package:flutter/foundation.dart';
+// import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:nox_app/presentation/widgets/primitives/app_hairline_divider_widget.dart';
-import 'package:nox_app/design/app_spacing_tokens.dart';
+// import 'package:nox_app/presentation/widgets/primitives/app_hairline_divider_widget.dart';
+// import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
@@ -92,43 +92,47 @@ class _NotificationsBodyState extends State<NotificationsBody> {
             ),
           ],
         ),
-        // Dev-only override to preview the denied state (real OS permission is
-        // queried on open).
-        if (kDebugMode) const AppHairlineDividerWidget(),
-        if (kDebugMode) _PermissionDevControl(status: _permission, onChanged: (status) => setState(() => _permission = status)),
+        // The OS-permission preview override is withdrawn from the product on every
+        // flavour: it let a debug run fake a denied permission, and a debug run is
+        // what a person is handed. The real status is queried on open.
+        // // Dev-only override to preview the denied state (real OS permission is
+        // // queried on open).
+        // if (kDebugMode) const AppHairlineDividerWidget(),
+        // if (kDebugMode) _PermissionDevControl(status: _permission, onChanged: (status) => setState(() => _permission = status)),
       ],
     );
   }
 }
 
-/// Dev-only control to flip the OS-permission preview while designing.
-class _PermissionDevControl extends StatelessWidget {
-  const _PermissionDevControl({required this.status, required this.onChanged});
-
-  final NotificationPermissionStatus status;
-  final ValueChanged<NotificationPermissionStatus> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    return Padding(
-      padding: EdgeInsets.all(AppSpacingTokens.s16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('System permission (preview)', style: textTheme.labelMedium?.copyWith(color: colorScheme.onSurfaceVariant)),
-          SizedBox(height: AppSpacingTokens.s8),
-          SegmentedButton<NotificationPermissionStatus>(
-            segments: const [
-              ButtonSegment<NotificationPermissionStatus>(value: NotificationPermissionStatus.granted, label: Text('Granted')),
-              ButtonSegment<NotificationPermissionStatus>(value: NotificationPermissionStatus.denied, label: Text('Denied')),
-            ],
-            selected: {status},
-            onSelectionChanged: (selection) => onChanged(selection.first),
-          ),
-        ],
-      ),
-    );
-  }
-}
+// /// Dev-only control to flip the OS-permission preview while designing.
+// class _PermissionDevControl extends StatelessWidget {
+// const _PermissionDevControl({required this.status, required this.onChanged});
+//
+// final NotificationPermissionStatus status;
+// final ValueChanged<NotificationPermissionStatus> onChanged;
+//
+// @override
+// Widget build(BuildContext context) {
+// final colorScheme = Theme.of(context).colorScheme;
+// final textTheme = Theme.of(context).textTheme;
+// return Padding(
+// padding: EdgeInsets.all(AppSpacingTokens.s16),
+// child: Column(
+// crossAxisAlignment: CrossAxisAlignment.start,
+// children: [
+// Text('System permission (preview)', style: textTheme.labelMedium?.copyWith(color: colorScheme.onSurfaceVariant)),
+// SizedBox(height: AppSpacingTokens.s8),
+// SegmentedButton<NotificationPermissionStatus>(
+// segments: const [
+// ButtonSegment<NotificationPermissionStatus>(value: NotificationPermissionStatus.granted, label: Text('Granted')),
+// ButtonSegment<NotificationPermissionStatus>(value: NotificationPermissionStatus.denied, label: Text('Denied')),
+// ],
+// selected: {status},
+// onSelectionChanged: (selection) => onChanged(selection.first),
+// ),
+// ],
+// ),
+// );
+// }
+// }
+//

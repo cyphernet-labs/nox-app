@@ -18,16 +18,16 @@ import 'package:nox_app/presentation/pages/about_page/about_page.dart';
 import 'package:nox_app/presentation/pages/appearance_page/appearance_body.dart';
 import 'package:nox_app/presentation/pages/appearance_page/appearance_page.dart';
 import 'package:nox_app/presentation/pages/base/base_state_page.dart';
-import 'package:nox_app/presentation/pages/error_page/error_page.dart';
-import 'package:nox_app/presentation/pages/error_page/error_page_params.dart';
+// import 'package:nox_app/presentation/pages/error_page/error_page.dart';
+// import 'package:nox_app/presentation/pages/error_page/error_page_params.dart';
 import 'package:nox_app/presentation/pages/language_page/language_body.dart';
 import 'package:nox_app/presentation/pages/language_page/language_page.dart';
 import 'package:nox_app/presentation/pages/notifications_page/notifications_body.dart';
 import 'package:nox_app/presentation/pages/devices_page/devices_body.dart';
 import 'package:nox_app/presentation/pages/devices_page/devices_page.dart';
 import 'package:nox_app/presentation/pages/notifications_page/notifications_page.dart';
-import 'package:nox_app/presentation/pages/screens_gallery_page/screens_gallery_page.dart';
-import 'package:nox_app/presentation/pages/ui_kit_page/ui_kit_page.dart';
+// import 'package:nox_app/presentation/pages/screens_gallery_page/screens_gallery_page.dart';
+// import 'package:nox_app/presentation/pages/ui_kit_page/ui_kit_page.dart';
 import 'package:nox_app/presentation/pages/settings_root_page/bloc/settings_root_bloc.dart';
 import 'package:nox_app/presentation/pages/splash_page/splash_page.dart';
 import 'package:nox_app/presentation/pages/terms_page/terms_body.dart';
@@ -194,23 +194,29 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
           AppSettingsNavRowWidget(title: context.l10n.settingsAboutTitle, onTap: () => _openSection(AboutPage.route())),
           const AppHairlineDividerWidget(),
           AppSettingsNavRowWidget(title: context.l10n.logoutRow, color: Theme.of(context).colorScheme.error, onTap: _logout),
-          ..._devMenuRows(),
+          // ..._devMenuRows(),
         ],
       ),
     );
   }
 
-  // Debug-only rows appended after Log out on both layouts (mobile flat list + desktop
-  // menu pane): the screens gallery, the UI-kit gallery, a forced logout, and — in the
-  // gallery preview — the dev state control. Empty in release (all kDebugMode-gated).
-  List<Widget> _devMenuRows({bool menuPane = false}) => [
-    if (kDebugMode)
-      AppSettingsNavRowWidget(title: 'Screens gallery (dev)', menuPane: menuPane, onTap: () => _openSection(ScreensGalleryPage.route())),
-    if (kDebugMode) AppSettingsNavRowWidget(title: 'UI kit (dev)', menuPane: menuPane, onTap: () => _openSection(UiKitPage.route())),
-    if (kDebugMode && !widget.demo)
-      AppSettingsNavRowWidget(title: 'Force logout (dev)', menuPane: menuPane, onTap: () => unawaited(authRepository.logout(forced: true))),
-    if (kDebugMode && widget.demo) _devControl(),
-  ];
+  // The development rows - the screens gallery, the UI-kit gallery, a forced logout
+  // and the gallery preview’s fatal-state control - are WITHDRAWN from the product on
+  // EVERY flavour. `kDebugMode` kept them out of a release build but left them in
+  // every debug run, which is the build a person is actually handed while the app is
+  // being finished. The screens they opened still exist and still have their tests;
+  // bringing the rows back is uncommenting this block and its two call sites.
+  // // Debug-only rows appended after Log out on both layouts (mobile flat list + desktop
+  // // menu pane): the screens gallery, the UI-kit gallery, a forced logout, and — in the
+  // // gallery preview — the dev state control. Empty in release (all kDebugMode-gated).
+  // List<Widget> _devMenuRows({bool menuPane = false}) => [
+  // if (kDebugMode)
+  // AppSettingsNavRowWidget(title: 'Screens gallery (dev)', menuPane: menuPane, onTap: () => _openSection(ScreensGalleryPage.route())),
+  // if (kDebugMode) AppSettingsNavRowWidget(title: 'UI kit (dev)', menuPane: menuPane, onTap: () => _openSection(UiKitPage.route())),
+  // if (kDebugMode && !widget.demo)
+  // AppSettingsNavRowWidget(title: 'Force logout (dev)', menuPane: menuPane, onTap: () => unawaited(authRepository.logout(forced: true))),
+  // if (kDebugMode && widget.demo) _devControl(),
+  // ];
 
   // ---- Desktop: list-detail -------------------------------------------------
 
@@ -262,7 +268,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
               item(_Section.about, context.l10n.settingsAboutTitle),
               const Spacer(),
               AppSettingsNavRowWidget(title: context.l10n.logoutRow, color: colorScheme.error, menuPane: true, onTap: _logout),
-              ..._devMenuRows(menuPane: true),
+              // ..._devMenuRows(menuPane: true),
             ],
           ),
         ),
@@ -364,18 +370,18 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
     );
   }
 
-  Widget _devControl() {
-    return Padding(
-      padding: EdgeInsets.all(AppSpacingTokens.s16),
-      child: Align(
-        alignment: Alignment.centerLeft,
-        child: OutlinedButton(
-          onPressed: () => Navigator.of(context).push(AppErrorPage.route(params: ErrorPageParams.fatal())),
-          child: const Text('Fatal (preview)'),
-        ),
-      ),
-    );
-  }
+  // Widget _devControl() {
+  // return Padding(
+  // padding: EdgeInsets.all(AppSpacingTokens.s16),
+  // child: Align(
+  // alignment: Alignment.centerLeft,
+  // child: OutlinedButton(
+  // onPressed: () => Navigator.of(context).push(AppErrorPage.route(params: ErrorPageParams.fatal())),
+  // child: const Text('Fatal (preview)'),
+  // ),
+  // ),
+  // );
+  // }
 }
 
 /// Desktop settings pane header (`titleLarge` label with an optional [leading] back
