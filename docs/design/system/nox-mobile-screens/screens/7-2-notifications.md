@@ -5,7 +5,7 @@
 **Purpose.** Toggle push notifications.
 
 ## Anatomy
-App bar (back + Notifications). Grouped switch row “Enable notifications”.
+App bar (back + Notifications). Grouped switch row “Enable notifications”, no leading glyph - settings rows are icon-less. When the OS has refused the permission, a full-bleed banner sits above it with its action at the trailing edge.
 
 ## States
 - `on` — Enabled

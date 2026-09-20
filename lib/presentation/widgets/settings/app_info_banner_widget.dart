@@ -44,9 +44,13 @@ class AppInfoBannerWidget extends StatelessWidget {
               ],
               Text(message, style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant)),
               SizedBox(height: AppSpacingTokens.s8),
-              // Action on its own row under the message (M3 banner convention).
+              // Its own row under the message, aligned to the TRAILING edge -
+              // which is where M3 puts a banner's actions (Flutter's own
+              // MaterialBanner lays them out in an OverflowBar ending there).
+              // Left-aligned it sat in the middle of the banner with air on
+              // every side and read as a link dropped into the text.
               Align(
-                alignment: Alignment.centerLeft,
+                alignment: Alignment.centerRight,
                 child: TextButton(
                   onPressed: onAction,
                   style: TextButton.styleFrom(foregroundColor: colorScheme.primary),
