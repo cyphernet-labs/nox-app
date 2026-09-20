@@ -14,12 +14,12 @@ part 'settings_root_event.dart';
 part 'settings_root_state.dart';
 
 /// Settings-root form state (7.1): the identity card's inline name-edit reuses the
-/// exact 2.3 rules — immediate client charset validation + a debounced (~300ms),
-/// CASE-SENSITIVE uniqueness check against the mock dataset — plus the masked/raw
-/// identifier reveal. The display label is loaded from and persisted to the local
-/// session (feature 015); the uniqueness check is still mock-dataset-backed. Logout
-/// is handled by a self-contained dialog in the page (not here). `// TODO(backend):`
-/// real server uniqueness check.
+/// exact 2.3 rules — charset and length, judged the moment a character is typed.
+/// There is nothing to debounce and nothing to ask: a person's name is not unique
+/// (owner, 2026-09-02), so no uniqueness check is made here or anywhere. The id is
+/// public since 032, so there is no mask and no reveal either. The display label is
+/// loaded from and persisted to the local session (feature 015). Logout is handled
+/// by a self-contained dialog in the page (not here).
 class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
   SettingsRootBloc() : super(const SettingsRootState()) {
     on<SettingsInitialize>(_onInitialize);

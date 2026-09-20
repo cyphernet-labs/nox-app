@@ -95,7 +95,6 @@
   "loginLinkExpired": "This link has expired. Ask for a new one.",
   "loginLinkRejected": "This link can't be used. Ask for a new one.",
   "loginNetworkError": "Could not sign in. Check your connection and try again.",
-  "onboardTitleSignIn": "NOX · Sign in",
   "sessionExpiredMessage": "Your session expired",
   "tooltipFlashlight": "Flashlight",
   "tooltipSwitchCamera": "Switch camera",
@@ -108,7 +107,6 @@
   "qrInvalidSnackbar": "This QR code is invalid. Try another one.",
   "qrDesktopTitle": "Scan a QR code",
   "qrDesktopHelper": "Point your webcam at a code, or enter the ID manually.",
-  "onboardTitleScanQr": "NOX · Scan QR",
   "usernameLabel": "Name",
   "usernameHint": "How others will see you",
   "usernameHelper": "Others see this name. You can change it now or later in Settings.",
@@ -116,7 +114,6 @@
   "nameTakenError": "This name is taken",
   "actionDone": "Done",
   "actionSkip": "Skip",
-  "onboardTitleSetUp": "NOX · Set up",
   "createChatTitle": "New chat",
   "createChatNameLabel": "Chat name",
   "createChatNameHint": "e.g. Random thoughts",
@@ -208,5 +205,21 @@
   "loginServerNotRecognised": "This server doesn't match its link",
   "@loginServerNotRecognised": {
     "description": "The same refusal on the sign-in screen, where there is no relationship with a server yet - so it names the link rather than a pairing that has not happened."
+  },
+  "windowSubtitleSignIn": "Sign in",
+  "@windowSubtitleSignIn": {
+    "description": "Desktop window titlebar subtitle, rendered after the NOX wordmark as \"NOX — <subtitle>\"."
+  },
+  "windowSubtitleSetUp": "Set up",
+  "@windowSubtitleSetUp": {
+    "description": "Desktop window titlebar subtitle, rendered after the NOX wordmark as \"NOX — <subtitle>\"."
+  },
+  "windowSubtitleScanQr": "Scan QR",
+  "@windowSubtitleScanQr": {
+    "description": "Desktop window titlebar subtitle, rendered after the NOX wordmark as \"NOX — <subtitle>\"."
+  },
+  "windowSubtitleError": "Error",
+  "@windowSubtitleError": {
+    "description": "Desktop window titlebar subtitle, rendered after the NOX wordmark as \"NOX — <subtitle>\"."
   }
 }

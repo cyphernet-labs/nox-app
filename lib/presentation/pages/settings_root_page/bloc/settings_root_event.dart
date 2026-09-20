@@ -18,6 +18,4 @@ sealed class SettingsRootEvent with _$SettingsRootEvent {
 
   /// Cancel inline edit → revert to the committed name.
   const factory SettingsRootEvent.nameEditCancelled() = NameEditCancelled;
-
-  /// Toggle the masked ↔ revealed identifier (mobile only).
 }
