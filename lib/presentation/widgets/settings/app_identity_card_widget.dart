@@ -53,6 +53,10 @@ class AppIdentityCardWidget extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     return Card(
+      // Zero, not Material's default 4: the caller places this card with the same
+      // margin `AppSettingsGroupWidget` gives itself, and a 4 of its own put it
+      // out of line with every card under it by exactly that much.
+      margin: EdgeInsets.zero,
       child: Padding(
         padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s16, vertical: AppSpacingTokens.s24),
         child: Column(

@@ -9,7 +9,7 @@
 **Purpose.** Account identity + grouped settings entries.
 
 ## Anatomy
-App bar (Settings). Identity card as an account header: ringed initials avatar, name, the full public ID, and two tonal actions (Edit name / Copy ID). Grouped list: Devices, Notifications, Appearance, Language, Terms, About. Separate destructive Log out group. Bottom bar.
+App bar (Settings). Identity card as an account header: ringed initials avatar, name, the full public ID, and two tonal actions (Edit name / Copy ID). One card of destinations with hairlines between them - the same container the 7.2 / 7.8 lists use: Devices, Notifications, Appearance, Language, Terms, About. Destructive Log out in a card of its own. Bottom bar. The rows used to sit bare on the scaffold background, the one thing on the screen that was not in a container.
 
 ## States
 - `loaded` — Loaded
