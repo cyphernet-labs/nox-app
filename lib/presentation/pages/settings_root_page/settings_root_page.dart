@@ -286,24 +286,43 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
         // itself, transparent until selected, in the three groups the desktop
         // corpus separates with a line UNDER each group rather than with a card.
         // The line sits below the group's padding, so it never crosses a pill.
+        //
+        // The destinations SCROLL and `Log out` stays pinned to the foot. As one
+        // unscrollable Column with a Spacer, a window shorter than ~560 clipped
+        // the last rows behind an overflow stripe with no way to reach them -
+        // and no desktop target here sets a minimum window size.
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _navGroup(context, [
-                item(_Section.account, context.l10n.settingsAccountTitle, NoxIcons.person, NoxIcons.personFill),
-                item(_Section.devices, context.l10n.settingsDevicesTitle, NoxIcons.devices, NoxIcons.devicesFill),
-              ]),
-              _navGroup(context, [
-                item(_Section.notifications, context.l10n.settingsNotificationsTitle, NoxIcons.notifications, NoxIcons.notificationsFill),
-                item(_Section.appearance, context.l10n.settingsAppearanceTitle, NoxIcons.palette, NoxIcons.paletteFill),
-                item(_Section.language, context.l10n.settingsLanguageTitle, NoxIcons.language, NoxIcons.languageFill),
-              ]),
-              _navGroup(context, [
-                item(_Section.terms, context.l10n.settingsTermsTitle, NoxIcons.description, NoxIcons.descriptionFill),
-                item(_Section.about, context.l10n.settingsAboutTitle, NoxIcons.info, NoxIcons.infoFill),
-              ], last: true),
-              const Spacer(),
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _navGroup(context, [
+                        item(_Section.account, context.l10n.settingsAccountTitle, NoxIcons.person, NoxIcons.personFill),
+                        item(_Section.devices, context.l10n.settingsDevicesTitle, NoxIcons.devices, NoxIcons.devicesFill),
+                      ]),
+                      _navGroup(context, [
+                        item(
+                          _Section.notifications,
+                          context.l10n.settingsNotificationsTitle,
+                          NoxIcons.notifications,
+                          NoxIcons.notificationsFill,
+                        ),
+                        item(_Section.appearance, context.l10n.settingsAppearanceTitle, NoxIcons.palette, NoxIcons.paletteFill),
+                        item(_Section.language, context.l10n.settingsLanguageTitle, NoxIcons.language, NoxIcons.languageFill),
+                      ]),
+                      _navGroup(context, [
+                        item(_Section.terms, context.l10n.settingsTermsTitle, NoxIcons.description, NoxIcons.descriptionFill),
+                        item(_Section.about, context.l10n.settingsAboutTitle, NoxIcons.info, NoxIcons.infoFill),
+                      ], last: true),
+                    ],
+                  ),
+                ),
+              ),
               AppSettingsNavRowWidget(
                 title: context.l10n.logoutRow,
                 icon: NoxIcons.logoutFill,
@@ -395,16 +414,16 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
 
   /// How far the centre-docked create FAB stands proud of the bottom bar, plus
   /// air. Scroll views hosted in the shell add it below their last item.
-  static final double _dockedFabClearance = AppSpacingTokens.s40;
+  ///
+  /// A getter, not a `static final`: these tokens are ScreenUtil-scaled, and a
+  /// static final is initialised once per isolate - it would freeze at whatever
+  /// scale happened to be current the first time this screen built.
+  static double get _dockedFabClearance => AppSpacingTokens.s40;
 
   /// The margin `AppSettingsGroupWidget` gives itself. Anything placed beside a
   /// group card uses it, so every card edge on the screen is the same edge.
-  static final EdgeInsets _cardMargin = EdgeInsets.fromLTRB(
-    AppSpacingTokens.s16,
-    AppSpacingTokens.s4,
-    AppSpacingTokens.s16,
-    AppSpacingTokens.s16,
-  );
+  static EdgeInsets get _cardMargin =>
+      EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s4, AppSpacingTokens.s16, AppSpacingTokens.s16);
 
   Widget _identityCard(SettingsRootState state, {required bool wide}) {
     return AppIdentityCardWidget(

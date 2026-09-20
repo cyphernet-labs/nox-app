@@ -23,9 +23,8 @@ import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 /// corpus draws these inside one shared card; they are separate tiles here by an
 /// owner decision taken while this screen was being reworked.
 ///
-/// [danger] is the destructive `Log out` row: `error` throughout, the chip filled
-/// at 14% of it, the glyph always the FILLED variant, and no chevron — it opens a
-/// dialog, it does not navigate.
+/// [danger] is the destructive `Log out` row: `error` throughout, the glyph always
+/// the FILLED variant, and no chevron — it opens a dialog, it does not navigate.
 class AppSettingsNavRowWidget extends StatelessWidget {
   const AppSettingsNavRowWidget({
     super.key,

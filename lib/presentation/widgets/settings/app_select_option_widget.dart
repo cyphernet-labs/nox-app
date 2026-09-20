@@ -17,9 +17,13 @@ class AppSelectOptionWidget extends StatelessWidget {
   final String label;
 
   /// The leading thumbnail, for an option that has something to show. Appearance
-  /// draws a miniature of the theme itself. Language draws nothing: a national
-  /// flag is not what `Українська` selects, it clipped against the row it sat in,
-  /// and full-colour artwork is the one thing NOX's monochrome icon set is not.
+  /// draws a miniature of the theme (96×76); Language draws a 64×48 tile — the
+  /// country's flag, or the device glyph for `System`, which is what that option
+  /// follows. Null leaves the label alone against the card's edge.
+  ///
+  /// The flags were circle-masked icons until 2026-09-20, which is why they used
+  /// to sit in a 40dp circle and clip against the row; the mask is gone and the
+  /// artwork under it always covered a full square.
   final Widget? preview;
   final bool selected;
   final VoidCallback onTap;
