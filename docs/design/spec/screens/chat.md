@@ -65,7 +65,7 @@ Material Scaffold с `resizeToAvoidBottomInset: true`; адаптируется 
 | Состояние | Описание |
 |---|---|
 | Initial-loading | Первая загрузка истории. Centered `CircularProgressIndicator` (как в 5.1). |
-| Empty | В чате нет сообщений. Системная строка «Chat created by …» показывается всегда и **сообщением не считается**; **Empty state** (иллюстрация + заголовок + текст) рисуется ниже неё. |
+| Empty | В чате нет сообщений. Системная строка «Chat created by …» показывается всегда и **сообщением не считается**; **Empty state** (глиф `chat_bubble` + заголовок + текст) рисуется ниже неё. |
 | Filled | Сообщения отображаются. |
 | Loading-older | Подгружается история наверх (auto). Сверху списка — `CircularProgressIndicator`. |
 | Sending | Сообщение появляется в ленте сразу со статусом `pending` → `sent`. |
@@ -95,7 +95,7 @@ Material Scaffold с `resizeToAvoidBottomInset: true`; адаптируется 
 - `Icon` — статусы сообщения (см. таблицу).
 - `CircularProgressIndicator` — Initial-loading и Loading-older.
 - `MaterialBanner` (M3) — offline.
-- Empty-state widget (иллюстрация + текст).
+- Empty-state widget. **Empty state** — композиция дизайна `EmptyState`: квадрат 132 со скруглением 20 и обводкой 1.5 `outlineVariant`, внутри стоковый глиф Material Symbols 56 (`onSurfaceVariant`) и две брендовые точки — teal 14 сверху справа, gold 10 снизу слева; под ним заголовок `headlineSmall` и текст `bodyMedium` (≤260). ⚠️ **Нарисованных иллюстраций нет**: раньше здесь жили три самодельных SVG из `nox-assets/illustrations`, они читались на 132 как дефект отрисовки, и дизайн их никогда не просил. Файлы остались в бандле, на них никто не ссылается.
 
 ## Микрокопирайт
 

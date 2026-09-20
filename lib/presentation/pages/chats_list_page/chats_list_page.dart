@@ -6,7 +6,6 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:infinite_scroll_pagination/infinite_scroll_pagination.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
-import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/theme/nox_brand.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
@@ -297,7 +296,7 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
           _banners(context, state),
           Expanded(
             child: AppEmptyContentWidget(
-              illustration: Assets.svg.illustrations.emptyChats,
+              glyph: NoxIcons.forum,
               title: context.l10n.chatsNoSelectionTitle,
               message: context.l10n.chatsNoSelectionMessage,
             ),
@@ -409,11 +408,7 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
                   ),
                 ),
               )
-            : AppEmptyContentWidget(
-                illustration: Assets.svg.illustrations.emptyChats,
-                title: context.l10n.chatsEmptyTitle,
-                message: context.l10n.chatsEmptyMessage,
-              ),
+            : AppEmptyContentWidget(glyph: NoxIcons.forum, title: context.l10n.chatsEmptyTitle, message: context.l10n.chatsEmptyMessage),
       ),
       separatorBuilder: (context, index) => const SizedBox.shrink(),
     );

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
-import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/app/widgets/app_theme_toggle.dart';
@@ -93,7 +92,7 @@ class UiKitPage extends StatelessWidget {
             SizedBox(
               height: AppSpacingTokens.s280,
               child: AppEmptyContentWidget(
-                illustration: Assets.svg.illustrations.emptyChats,
+                glyph: NoxIcons.forum,
                 title: 'No chats yet',
                 message: 'Create the first chat to get the conversation going.',
               ),
