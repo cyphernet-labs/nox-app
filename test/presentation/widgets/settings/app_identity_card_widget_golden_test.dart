@@ -25,7 +25,6 @@ void main() {
         onToggleReveal: () {},
         onEditName: () {},
         onCopy: () {},
-        onShowQr: () {},
       ),
     ),
   );

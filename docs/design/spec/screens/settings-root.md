@@ -12,7 +12,6 @@
 - **Куда:**
   - **7.2 Уведомления**, **7.3 Внешний вид**, **7.4 Язык**, **7.6 Terms**, **7.7 О приложении** — через `ListTile` секции (раздел Support вне scope).
   - **Edit имени** — inline на 7.1, без перехода.
-  - **Show QR** — modal bottom sheet поверх 7.1.
   - Действие **Logout** (с `AlertDialog` подтверждения) → 1.1 Splash после полной очистки локальных данных (см. [overview.md / Настройки](../overview.md#настройки)).
   - **3.1 Универсальный экран ошибки** — fatal-сценарии.
 
@@ -24,7 +23,7 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 2. **Body:** прокручиваемый `ListView`:
    - **Identity card (Material Card):** визуально выделена.
      - **Блок имени**: label `Name` + текущее имя + edit-аффорданс (pencil-иконка). Тап превращает текстовую строку в inline `TextField`. ⚠️ **С фазы 037 отметки владения (`Server owner`) нет**: на сервере живёт один человек, и признак, у которого один возможный ответ, не различает ничего — он только выглядит информацией.
-     - **Блок идентификатора (одна строка)**: label `Your ID` + **сам публичный идентификатор личности** + action-row справа (`Copy` · `Show QR`). ⚠️ **С фазы 032 раскрытия нет**: строка перестала быть секретом — человек узнаётся по спаренному ключу устройства, — и маскировать её значило бы прятать то, что прятать нечего. `Show QR` ведёт на **7.8 Устройства**, где приглашение выпускается настоящим одноразовым токеном; раньше QR отдавал идентификатор-секрет, и его показ **был** входом.
+     - **Блок идентификатора (одна строка)**: label `Your ID` + **сам публичный идентификатор личности** + `Copy` справа. ⚠️ **С фазы 032 раскрытия нет**: строка перестала быть секретом — человек узнаётся по спаренному ключу устройства, — и маскировать её значило бы прятать то, что прятать нечего. **QR-действия в карте нет**: добавление устройства — отдельный экран **7.8 Устройства**, куда ведёт свой пункт списка. Сначала QR отдавал идентификатор-секрет и его показ **был** входом; потом стал ярлыком в 7.8; теперь карта снова только про аккаунт.
    - **Плоский список** `ListTile`-ов (без group-заголовков):
      - `Devices` → 7.8;
      - `Notifications` → 7.2;
@@ -41,7 +40,6 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 | Initial-loading | Identity card показывает `CircularProgressIndicator` в позиции ID; список остальных пунктов уже доступен. |
 | Loaded | Всё отображается. |
 | Name-editing | Inline `TextField` активен в блоке имени; работает та же валидация, что в 2.3 (charset латиница + цифры + `-`, `_`, `.`, лимит 32; проверки занятости нет). |
-| QR-overlay | Открыт modal bottom sheet: drag-handle, заголовок, **QR на постоянном светлом фоне** (`brand/qr-surface` #FFFFFF, сканируем в обеих темах; токены — [design-system §9.10](../design-system.md)), quiet-zone, кнопка `Close`. Высота — wrap-content. Raw-идентификатор текстом в sheet **не показывается** (только QR-кодирование). |
 | Logout-confirm | Открыт `AlertDialog` подтверждения. |
 | Logout-loading | После confirm: кнопка `Log out` в диалоге → disabled + `CircularProgressIndicator`; диалог модален и не закрывается до завершения очистки и перехода в 1.1. |
 | Inline-error | Не удалось выполнить действие; `SnackBar` (transient) либо `errorText` поля. |
@@ -53,7 +51,6 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 - **Тап на имя / pencil** → блок имени превращается в inline `TextField` с фокусом. Индикатора проверки занятости нет: имена людей не уникальны на этапе 1 (решение владельца 2026-09-02, см. [2.3](./set-username.md)), проверять нечего — решают только charset и длина, и решают сразу. **Save** — по Enter / Done или потере фокуса при валидном имени. При **invalid** — остаёмся в режиме edit с `errorText`, фокус не теряем. **Пустое поле** при сохранении → имя не меняется (у пользователя всегда есть label; очистить в null нельзя). Cancel — системный back, возврат к прежнему значению.
 - **Тап на `Show/Hide`** → toggle между маской `••••••••` и raw-текстом идентификатора.
 - **Тап на `Copy`** → копирование raw-идентификатора в буфер + snackbar `Copied to clipboard`.
-- **Тап на `Show QR`** → modal bottom sheet (`showModalBottomSheet`): QR на светлом фоне (сканируемый в light/dark), drag-handle, `Close`; без текстового raw-ID. QR статичен (кодирует текущий идентификатор).
 - **Тап на `Log out`** → `AlertDialog` с предупреждением о потере локальных данных. На confirm — очистка и переход в 1.1.
 
 ## Material-компоненты
@@ -63,9 +60,8 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 - `ListView` / `Column` с секциями.
 - `Card` (M3, **filled** variant) — обрамление блока идентичности.
 - `ListTile` (M3) — пункты настроек и Logout (последний в `ColorScheme.error`).
-- `IconButton` — `Show/Hide`, `Copy`, `Show QR`.
+- `IconButton` — `Show/Hide`, `Copy`.
 - `TextField` (M3) inline — редактирование имени.
-- Modal bottom sheet (`showModalBottomSheet`, M3) — QR-overlay.
 - `AlertDialog` (M3) — Logout confirmation.
 - `CircularProgressIndicator` — Initial-loading в позиции ID.
 - `SnackBar` (M3) — Copy и обратная связь.
@@ -82,9 +78,6 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 | Show identifier tooltip | `Show` |
 | Hide identifier tooltip | `Hide` |
 | Copy tooltip | `Copy` |
-| Show QR tooltip | `Show QR` |
-| ~~QR bottom sheet title~~ | ~~`Your ID QR`~~ — листа больше нет, `Show QR` ведёт в 7.8 |
-| QR bottom sheet close | `Close` |
 | Copy snackbar | `Copied to clipboard` |
 | Devices row | `Devices` |
 | Notifications row | `Notifications` |
@@ -104,7 +97,7 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 |---|---|---|
 | Q1 | AppBar | Title `Settings` |
 | Q2 | Username edit UX | Inline на 7.1 |
-| Q3 | Show QR UX | Modal bottom sheet |
+| Q3 | ~~Show QR UX~~ | Действия в карте нет — добавление устройства живёт на 7.8 |
 | Q4 | Identifier block layout | Одна строка (label + masked + actions) |
 | Q5 | Identifier mask | Точки фиксированной длины 8 (`••••••••`) |
 | Q6 | Logout visual | `ListTile` в `ColorScheme.error` |
@@ -121,5 +114,5 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 > Добавлено при реализации M3. Сведено с `nox-desktop-screens/screens/02-settings.md`.
 
 - Десктоп (`>= 840dp`) — **list-detail**: `NavigationRail` (шелл) + settings-menu-pane ≈340 (`Account` + разделы 7.2–7.7 + `Log out`) + detail-pane (контент ≤680). Выбор пункта подсвечивает его (`secondaryContainer`) и меняет detail-pane **без** push (контейнер `AppListDetailWidget`); по умолчанию выбран `Account` (карта идентичности). Контент подэкранов 7.2–7.7 в detail-pane — переиспользуемые `…Body`-виджеты (без собственного AppBar).
-- **Раскрытие ID на десктопе отсутствует** (`Show/Hide` нет): ID всегда замаскирован, вместо reveal — inline account-QR в карте идентичности + `Copy` + `Show QR` (центрированный `Dialog`). Обоснование — Принцип I (минимизация раскрытия секрета). Мобайл сохраняет `Show/Hide` (верхняя часть спеки).
+- **Раскрытие ID на десктопе отсутствует** (`Show/Hide` нет): ID всегда замаскирован, вместо reveal — только `Copy` (QR-действия в карте нет). Обоснование — Принцип I (минимизация раскрытия секрета). Мобайл сохраняет `Show/Hide` (верхняя часть спеки).
 - **Logout-таргет — 1.1 Splash** (как в основной части спеки). Десктоп-корпус `02-settings` и мобайл-корпус `7-1-settings` ошибочно ведут на Login — это дрейф корпусов; канон — Splash (Принцип II).

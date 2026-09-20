@@ -88,13 +88,23 @@ void main() {
       expect(find.text(l10nEn.copiedToClipboard), findsOneWidget);
     });
 
-    testWidgets('Show QR leads to Devices, where an invite is actually minted', (tester) async {
-      // It used to render a QR of the login identifier - a bearer secret, and
-      // handing it over WAS the sign-in. Adding a device is a different act
-      // now: it needs a one-shot token the server issues.
+    testWidgets('the card carries no shortcut into device pairing - Devices owns that', (tester) async {
+      // It once rendered a QR of the login identifier - a bearer secret, and handing
+      // it over WAS the sign-in. Then it became a shortcut into 7.8. Adding a device
+      // is a screen of its own now, reached by its own row, so the account card is
+      // back to being about the account.
       await pumpMobile(tester);
 
-      await tester.tap(find.byTooltip(l10nEn.idShowQrTooltip));
+      // Edit name and Copy, and no third action. NOX draws its icons as SVG, so
+      // there is no Material Icon to look for by name - the count is the assertion.
+      expect(find.descendant(of: find.byType(AppIdentityCardWidget), matching: find.byType(IconButton)), findsNWidgets(2));
+      expect(find.widgetWithText(ListTile, l10nEn.settingsDevicesTitle), findsOneWidget);
+    });
+
+    testWidgets('the Devices row opens Devices', (tester) async {
+      await pumpMobile(tester);
+
+      await tester.tap(find.widgetWithText(ListTile, l10nEn.settingsDevicesTitle));
       await tester.pumpAndSettle();
 
       expect(find.text(l10nEn.settingsDevicesTitle), findsWidgets);
