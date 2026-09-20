@@ -46,13 +46,17 @@ void main() {
     expect(LocaleController.instance.language.value, AppLanguage.english);
   });
 
-  testWidgets('the options carry no flags - a flag is not what a language is', (tester) async {
-    // 40dp national flags sat here, clipped by the rows they were in, and in full
-    // colour against an icon set that is monochrome everywhere else.
+  testWidgets('every option carries a leading thumbnail, System included', (tester) async {
+    // The flags used to be 40dp circles in a list row, clipped by the row they sat
+    // in. They are tiles now, in the geometry Appearance 7.3 uses - and System has
+    // one too: an option without one would read as the odd one out rather than as
+    // the default.
     await pumpApp(tester, const LanguagePage());
 
-    for (final card in tester.widgetList<AppSelectOptionWidget>(find.byType(AppSelectOptionWidget))) {
-      expect(card.preview, isNull, reason: '${card.label} still has a leading thumbnail');
+    final cards = tester.widgetList<AppSelectOptionWidget>(find.byType(AppSelectOptionWidget));
+    expect(cards, hasLength(3));
+    for (final card in cards) {
+      expect(card.preview, isNotNull, reason: '${card.label} has no leading thumbnail');
     }
   });
 }
