@@ -129,7 +129,7 @@ Material Scaffold с `resizeToAvoidBottomInset: true`; адаптируется 
 | Q6 | Композер: формат поля | Многострочное растущее; send активна при тексте или вложении |
 | Q7 | Attach UI | Одна иконка → системный file picker; выбранный файл → chip в композере |
 | Q8 | Send icon | Paper-plane |
-| Q9 | Empty state | Иллюстрация + текст |
+| Q9 | Empty state | Композиция `EmptyState`: обведённый квадрат 132 + стоковый глиф 56 + две брендовые точки + заголовок и текст |
 | Q10 | Status сообщений | Только `sent` (+ `pending` / `error`); **delivered / read не используются** |
 | Q11 | Системные события | Только inline «Chat created by `<username>`» в начале истории |
 | — | Вложения | File-chip (иконка + имя + размер), без превью содержимого |

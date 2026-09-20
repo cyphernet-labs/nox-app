@@ -88,9 +88,7 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 | Name block label | `Name` |
 | Name edit tooltip | `Edit` |
 | Identifier block label | `Your ID` (публичный `identity.id`, не секрет) |
-| Identifier mask (default) | `••••••••` (8 точек, фиксированная длина) |
-| Show identifier tooltip | `Show` |
-| Hide identifier tooltip | `Hide` |
+| ~~Identifier mask~~ | ~~`••••••••`~~ — маски нет с фазы 032, ID показан целиком |
 | Copy tooltip | `Copy` |
 | Copy snackbar | `Copied to clipboard` |
 | Devices row | `Devices` |
@@ -113,7 +111,7 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 | Q2 | Username edit UX | Inline на 7.1 |
 | Q3 | ~~Show QR UX~~ | Действия в карте нет — добавление устройства живёт на 7.8 |
 | Q4 | Identifier block layout | Одна строка (label + masked + actions) |
-| Q5 | Identifier mask | Точки фиксированной длины 8 (`••••••••`) |
+| Q5 | ~~Identifier mask~~ | Маски нет — с фазы 032 ID публичный и показан целиком |
 | Q6 | Logout visual | `ListTile` в `ColorScheme.error` |
 | Q7 | Сепарация блока идентичности | Material Card |
 | Q8 | Группировка секций | Плоский список (без group headers) |
