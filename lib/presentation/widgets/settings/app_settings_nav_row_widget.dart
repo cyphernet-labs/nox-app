@@ -6,7 +6,12 @@ import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 
 /// A navigable settings row (7.1), in one of two shapes, each straight from its
-/// own design corpus. Both lead with the 40dp circular chip the corpora draw.
+/// own design corpus. Both lead with a bare glyph.
+///
+/// The corpora draw that glyph inside a 40dp tinted circle. The circle is dropped
+/// by owner decision: six of them stacked down a list read as six buttons rather
+/// than six labels, and the ring competed with the selection pill drawn around it
+/// in the desktop pane.
 ///
 /// [menuPane] (desktop list-detail) — `SettingsNavItem`: a stadium item that is
 /// transparent until [selected], when it fills with `secondaryContainer`. No
@@ -47,38 +52,23 @@ class AppSettingsNavRowWidget extends StatelessWidget {
   final bool selected;
   final bool menuPane;
 
-  /// Chip fill for the selected row: the design tints it with the row's own
-  /// foreground rather than reaching for another container colour.
-  static const double _selectedChipAlpha = 0.12;
-
-  /// Chip fill for the destructive row.
-  static const double _dangerChipAlpha = 0.14;
-
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     final foreground = danger ? colorScheme.error : (selected ? colorScheme.onSecondaryContainer : colorScheme.onSurface);
-    final chipColor = danger
-        ? colorScheme.error.withValues(alpha: _dangerChipAlpha)
-        : (selected ? colorScheme.onSecondaryContainer.withValues(alpha: _selectedChipAlpha) : colorScheme.secondaryContainer);
-    final glyphColor = danger ? colorScheme.error : colorScheme.onSecondaryContainer;
+    // Without a container behind it the glyph takes the ordinary leading-icon
+    // tint: `onSurfaceVariant` at rest, the pill's own foreground when selected.
+    final glyphColor = danger ? colorScheme.error : (selected ? colorScheme.onSecondaryContainer : colorScheme.onSurfaceVariant);
     final glyph = (selected || danger) ? (selectedIcon ?? icon) : icon;
-    final chip = Container(
-      width: AppDimensionTokens.size.avatarSm,
-      height: AppDimensionTokens.size.avatarSm,
-      decoration: BoxDecoration(shape: BoxShape.circle, color: chipColor),
-      child: Center(
-        child: AppIconWidget(glyph, size: AppDimensionTokens.icon.lg, color: glyphColor),
-      ),
-    );
+    final leading = AppIconWidget(glyph, size: AppDimensionTokens.icon.base, color: glyphColor);
     final label = Text(title, style: textTheme.bodyLarge?.copyWith(color: foreground));
 
     if (menuPane) {
       return Padding(
         padding: EdgeInsets.fromLTRB(AppSpacingTokens.s8, 0, AppSpacingTokens.s8, AppSpacingTokens.s4),
         child: ListTile(
-          leading: chip,
+          leading: leading,
           title: label,
           selected: selected,
           selectedTileColor: colorScheme.secondaryContainer,
@@ -95,13 +85,13 @@ class AppSettingsNavRowWidget extends StatelessWidget {
         borderRadius: radius,
         clipBehavior: Clip.antiAlias,
         child: ListTile(
-          leading: chip,
+          leading: leading,
           title: label,
           // No chevron on the destructive row: it opens a dialog rather than
           // going anywhere, and a chevron would promise otherwise.
           trailing: danger
               ? null
-              : AppIconWidget(NoxIcons.chevronRight, size: AppDimensionTokens.icon.lg, color: colorScheme.onSurfaceVariant),
+              : AppIconWidget(NoxIcons.chevronRight, size: AppDimensionTokens.icon.base, color: colorScheme.onSurfaceVariant),
           shape: RoundedRectangleBorder(borderRadius: radius),
           onTap: onTap,
         ),
