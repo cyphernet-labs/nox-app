@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
+import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/app/session_model.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/general/pairing/device_keys.dart';
@@ -275,7 +276,39 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   Future<RepositoryResult<bool>> clear() {
     return execute<bool>(() async {
       _onboardingStartedHere = false;
-      await _secureStorage.deleteAll();
+      // Every key BY NAME, and only then the sweep. `deleteAll` alone is not a
+      // wipe: it is one query against the platform store, and a key written
+      // under options that query does not match survives it - silently, with no
+      // error to catch. What that produces is worse than no wipe at all,
+      // because the two halves of a session live in different stores: the
+      // identifier stays in secure storage while the prefs below go, and
+      // readSession then reports a person who has not finished onboarding. The
+      // app puts them on the naming screen, holding a token for a server it can
+      // no longer reach.
+      await _secureStorage.delete(key: _kIdentifier);
+      await _secureStorage.delete(key: _kDeviceSecret);
+      await _secureStorage.delete(key: _kServerAddress);
+      await _secureStorage.delete(key: _kServerFingerprint);
+      // Kept for anything a later version writes and forgets to name above, and
+      // not allowed to fail a wipe that has already happened.
+      // Swallowed on purpose, and it is not a silent failure: the read-back
+      // below decides whether the wipe happened, which is a stronger answer
+      // than whether the sweep threw.
+      try {
+        await _secureStorage.deleteAll();
+      } on Object {
+        // ignored - see above
+      }
+      // Read back before touching the prefs. Presence is keyed on the
+      // identifier, so an identifier that survived is the whole session; the
+      // prefs are what turn that survival into the stranded state above.
+      // Leaving them alone means a failed wipe leaves the person signed in -
+      // reported, recoverable, and refused by the caller - instead of signed
+      // out into a screen that leads nowhere.
+      final survivor = await _secureStorage.read(key: _kIdentifier);
+      if (survivor != null && survivor.isNotEmpty) {
+        return const RepositoryResult<bool>.error(exception: RepositoryException.unknown);
+      }
       await _prefs.remove(_kOnboardingComplete);
       await _prefs.remove(_kLabel);
       // The server-assigned author id belongs to the identity being logged out.
