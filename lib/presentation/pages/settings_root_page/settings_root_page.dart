@@ -184,6 +184,11 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
     return Scaffold(
       appBar: AppBar(leading: widget.inShell ? null : _backButton(), title: Text(context.l10n.settings)),
       body: ListView(
+        // Room under the last tile for the docked `+`. The shell's Scaffold insets
+        // this body by the bottom BAR, but the FAB is centre-docked and stands
+        // ~28 proud of it, so `Log out` - the last thing on the list, and the one
+        // you least want mis-tapped - sat under it.
+        padding: EdgeInsets.only(bottom: _dockedFabClearance),
         children: [
           Padding(padding: _cardMargin, child: _identityCard(state, wide: false)),
           // One tile per destination, each its own rounded surface with the
@@ -387,6 +392,10 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
           ),
     child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: items),
   );
+
+  /// How far the centre-docked create FAB stands proud of the bottom bar, plus
+  /// air. Scroll views hosted in the shell add it below their last item.
+  static final double _dockedFabClearance = AppSpacingTokens.s40;
 
   /// The margin `AppSettingsGroupWidget` gives itself. Anything placed beside a
   /// group card uses it, so every card edge on the screen is the same edge.

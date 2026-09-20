@@ -5,7 +5,6 @@ import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_brand.dart';
-import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_bottom_bar_widget.dart';
@@ -13,28 +12,34 @@ import 'package:nox_app/presentation/widgets/shell/app_bottom_bar_widget.dart';
 /// Desktop/wide navigation rail for the [TabBarShell] (4.1 desktop branch). A
 /// custom rail built to the design `NavRail` (NOT Material's `NavigationRail`,
 /// whose stock metrics/indicator do not match): an 80-wide `surface` strip with a
-/// right hairline and, top-to-bottom — a **rounded-square** create FAB (radius lg,
-/// elevation 2), the two destinations (Chats / Settings) evenly spaced (gap 12),
-/// each a rounded-square (radius md) ink target with a pill indicator behind the
-/// icon, then a `Spacer`, and the account avatar pinned to the bottom.
+/// right hairline and, top-to-bottom — the two destinations (Chats / Settings)
+/// evenly spaced (gap 12), each a rounded-square (radius md) ink target with a
+/// pill indicator behind the icon, then a `Spacer`, and the account avatar pinned
+/// to the bottom.
+///
+/// **No create FAB.** The design leads the rail with a 56dp rounded-square `+`,
+/// and with only two destinations under it that button was the heaviest thing on
+/// the window — for an action that belongs beside the list it creates into. It
+/// moved to the Chats pane header (owner decision). One consequence, stated
+/// rather than hidden: on the wide branch there is no create affordance while the
+/// Settings tab is open. The phone is untouched — the docked `+` is still there,
+/// on both tabs.
 ///
 /// The account avatar (design: size 36 + subtle ring) renders the user's
 /// [accountLabel] initials via [noxAccountInitials] over the hashed avatar color;
 /// tapping it routes to Settings / Account ([onAccount]). All press/hover feedback
-/// is clipped to the rounded shapes (FAB / destination cells / avatar circle).
+/// is clipped to the rounded shapes (destination cells / avatar circle).
 class AppNavigationRailWidget extends StatelessWidget {
   const AppNavigationRailWidget({
     super.key,
     required this.active,
     required this.onSelect,
-    required this.onCreate,
     required this.accountLabel,
     required this.onAccount,
   });
 
   final AppTab active;
   final ValueChanged<AppTab> onSelect;
-  final VoidCallback onCreate;
 
   /// Display label whose initials + hashed color render the bottom account avatar.
   final String accountLabel;
@@ -64,9 +69,6 @@ class AppNavigationRailWidget extends StatelessWidget {
             padding: EdgeInsets.fromLTRB(AppSpacingTokens.s8, AppSpacingTokens.s16, AppSpacingTokens.s8, AppSpacingTokens.s20),
             child: Column(
               children: [
-                _NavRailCreateFab(onCreate: onCreate),
-                // Breathing room between the FAB and the destinations group (design: 22).
-                SizedBox(height: AppSpacingTokens.s24),
                 _NavRailDestination(
                   icon: NoxIcons.forum,
                   selectedIcon: NoxIcons.forumFill,
@@ -85,38 +87,6 @@ class AppNavigationRailWidget extends StatelessWidget {
                 const Spacer(),
                 _NavRailAccountAvatar(accountLabel: accountLabel, onAccount: onAccount),
               ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Rounded-square create FAB (design: 56, radius lg, primaryContainer, elevation 2).
-/// The Material's borderRadius + antiAlias clip keeps the tap splash square-cornered.
-class _NavRailCreateFab extends StatelessWidget {
-  const _NavRailCreateFab({required this.onCreate});
-
-  final VoidCallback onCreate;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Tooltip(
-      message: context.l10n.tooltipCreateChat,
-      child: Material(
-        color: colorScheme.primaryContainer,
-        elevation: NoxElevation.level2,
-        borderRadius: BorderRadius.circular(AppDimensionTokens.radius.lg),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onCreate,
-          child: SizedBox(
-            width: AppSpacingTokens.s56,
-            height: AppSpacingTokens.s56,
-            child: Center(
-              child: AppIconWidget(NoxIcons.add, size: AppDimensionTokens.icon.fab, color: colorScheme.onPrimaryContainer),
             ),
           ),
         ),

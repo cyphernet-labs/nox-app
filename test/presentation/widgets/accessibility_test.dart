@@ -84,10 +84,7 @@ void main() {
 
     testWidgets('desktop rail destinations announce as selectable buttons, named once (R4 parity)', (tester) async {
       final handle = tester.ensureSemantics();
-      await pumpApp(
-        tester,
-        AppNavigationRailWidget(active: AppTab.chats, onSelect: (_) {}, onCreate: () {}, accountLabel: 'Nova', onAccount: () {}),
-      );
+      await pumpApp(tester, AppNavigationRailWidget(active: AppTab.chats, onSelect: (_) {}, accountLabel: 'Nova', onAccount: () {}));
 
       // The COMPILED SemanticsNode names each destination exactly ONCE: the accessible
       // name comes from the child Text, so the wrapper must not also set `label`, or
