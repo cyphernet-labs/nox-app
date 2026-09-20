@@ -32,12 +32,19 @@ abstract class SessionRepository {
   /// is what the server knows as `device_key`; this half never leaves.
   Future<RepositoryResult<String>> deviceSecret();
 
-  /// Records which server this installation was paired with, from the link.
+  /// Records which server this installation was paired with, from the link:
+  /// where it lives and the fingerprint of the key it will be pinned against.
   /// Without it the app would pair with one server and talk to another.
-  Future<RepositoryResult<bool>> saveServer({required String address, required String serverKey});
+  Future<RepositoryResult<bool>> saveServer({required String address, required String serverFingerprint});
 
   /// The paired server's address, or null when this install is not paired.
   Future<RepositoryResult<String?>> serverAddress();
+
+  /// The paired server's key fingerprint, or null when this install is not
+  /// paired. Read on every connection, on both transports: it is the one thing
+  /// that tells the person's own machine from anything else that answers at
+  /// that address.
+  Future<RepositoryResult<String?>> serverFingerprint();
 
   /// Advances the onboarding flag when the server says the person is already
   /// known, and never the other way round. Called from the greeting-adoption

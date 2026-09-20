@@ -31,15 +31,8 @@ void main() {
     expect(row.value, isTrue);
   });
 
-  testWidgets('denied permission shows the banner and disables the switch', (tester) async {
-    await pumpApp(tester, const NotificationsPage());
-
-    await tester.tap(find.text('Denied')); // dev permission control
-    await tester.pump();
-
-    expect(find.byType(AppInfoBannerWidget), findsOneWidget);
-    final row = tester.widget<SwitchListTile>(find.byType(SwitchListTile));
-    expect(row.value, isFalse);
-    expect(row.onChanged, isNull);
-  });
+  // The denied case is covered by notifications_permission_test.dart, which drives it
+  // through NotificationPermissionService - the thing that actually decides it. The
+  // test that used to live here reached the same state by tapping the dev override,
+  // which is no longer part of the product on any flavour.
 }

@@ -60,7 +60,20 @@ class AppImageAttachmentWidget extends StatelessWidget {
   /// keeps the tap destination (viewer) consistent with what actually renders.
   static bool canRender(MessageAttachment attachment) {
     final path = attachment.localPath;
-    if (attachment.type != FileType.image || path == null || path.isEmpty || !File(path).existsSync()) return false;
+    if (!wouldRender(attachment)) return false;
+    return path != null && path.isNotEmpty && File(path).existsSync();
+  }
+
+  /// Whether this app WOULD draw [attachment] inline once its bytes are here —
+  /// [canRender]'s format rule with the file-on-disk half removed.
+  ///
+  /// It is what tells a picture still ARRIVING apart from a file that was never
+  /// going to be a thumbnail. Both look identical in the data — an image type
+  /// with no local path — and they must not look identical on screen: a TIFF
+  /// stays a chip forever, so putting a spinner over it would promise a picture
+  /// that is never coming.
+  static bool wouldRender(MessageAttachment attachment) {
+    if (attachment.type != FileType.image) return false;
     final ext = attachment.name.contains('.') ? attachment.name.split('.').last.toLowerCase() : '';
     if (_universalDecodableExtensions.contains(ext)) return true;
     // HEIC: Flutter's native codec decodes it on Apple targets (iOS/macOS) but NOT on

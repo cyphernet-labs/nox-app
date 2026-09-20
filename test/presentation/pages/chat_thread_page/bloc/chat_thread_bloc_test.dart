@@ -15,7 +15,9 @@ import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
+import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/service/connectivity_service.dart';
+import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/domain/service/file_picker_service.dart';
 import 'package:nox_app/presentation/pages/chat_thread_page/bloc/chat_thread_bloc.dart';
 
@@ -536,6 +538,71 @@ void main() {
         expect((bloc.state as Initialized).items, isEmpty); // empty applied, not swallowed
       });
     });
+
+    group('the server that is not the one the link named (036)', () {
+      late _FakePhase phase;
+
+      Future<ChatThreadBloc> boot(SessionPhase initial) async {
+        phase = _FakePhase(initial);
+        getIt.allowReassignment = true;
+        getIt.registerSingleton<SessionPhaseService>(phase);
+        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_0'));
+        addTearDown(bloc.close);
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        return bloc;
+      }
+
+      test('a refused server raises its own banner, and not the offline one', () async {
+        final bloc = await boot(SessionPhase.serverMismatch);
+
+        final state = bloc.state as Initialized;
+        expect(state.isServerMismatch, isTrue);
+        expect(state.isOffline, isFalse);
+      });
+
+      test('the history stays on screen - nothing is wiped over a bad certificate', () async {
+        final bloc = await boot(SessionPhase.serverMismatch);
+
+        expect((bloc.state as Initialized).items, isNotEmpty);
+      });
+
+      test('a send waits in the queue and is never marked failed', () async {
+        // The message was never refused - it was never sent. Marking it failed
+        // would tell the person their text was rejected by a server that never
+        // saw it.
+        final bloc = await boot(SessionPhase.serverMismatch);
+
+        bloc.add(const ChatThreadEvent.messageSent(text: 'written while the server was wrong'));
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+
+        final queued = (bloc.state as Initialized).outgoing.firstWhere((m) => m.text == 'written while the server was wrong');
+        expect(queued.status, MessageStatus.pending);
+        expect(queued.status, isNot(MessageStatus.error));
+      });
+
+      test('the banner action asks for another attempt', () async {
+        final bloc = await boot(SessionPhase.serverMismatch);
+
+        bloc.add(const ChatThreadEvent.retryConnection());
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+
+        expect(phase.reconnects, 1);
+      });
+
+      test('a fixed cause clears it and the queue goes out', () async {
+        final bloc = await boot(SessionPhase.serverMismatch);
+        bloc.add(const ChatThreadEvent.messageSent(text: 'held, then delivered'));
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        expect((bloc.state as Initialized).outgoing, isNotEmpty);
+
+        phase.emit(SessionPhase.live);
+        await Future<void>.delayed(const Duration(milliseconds: 600));
+
+        final live = bloc.state as Initialized;
+        expect(live.isServerMismatch, isFalse);
+        expect(live.outgoing, isEmpty, reason: 'the drain was released, not restarted from nothing');
+      });
+    });
   });
 }
 
@@ -558,4 +625,32 @@ class _FakeConnectivity implements ConnectivityService {
     yield _online;
     yield* _controller.stream;
   }
+}
+
+/// A session phase this test drives by hand, plus a count of how many times the
+/// screen asked for another attempt.
+class _FakePhase implements SessionPhaseService {
+  _FakePhase([this._phase = SessionPhase.live]);
+
+  SessionPhase _phase;
+  final StreamController<SessionPhase> _controller = StreamController<SessionPhase>.broadcast();
+
+  int reconnects = 0;
+
+  void emit(SessionPhase next) {
+    _phase = next;
+    _controller.add(next);
+  }
+
+  @override
+  SessionPhase get phase => _phase;
+
+  @override
+  Stream<SessionPhase> watchPhase() async* {
+    yield _phase;
+    yield* _controller.stream;
+  }
+
+  @override
+  Future<void> reconnect() async => reconnects++;
 }

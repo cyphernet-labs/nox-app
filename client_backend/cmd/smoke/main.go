@@ -21,11 +21,14 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/coder/websocket"
+
+	"nox.app/client-backend/internal/server"
 )
 
 const usage = `usage: smoke <pairing link>
@@ -52,7 +55,7 @@ func run(rawLink string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("\nserver %s\n", target.addr)
+	fmt.Printf("\nserver %s, pinned to %s\n", target.addr, target.fingerprint)
 
 	step(1, "The owner claims the server")
 	owner := newDevice()
@@ -61,7 +64,7 @@ func run(rawLink string) error {
 		return err
 	}
 
-	ownerConn, err := greet(ctx, target.addr, owner)
+	ownerConn, err := greet(ctx, target, owner)
 	if err != nil {
 		return err
 	}
@@ -72,11 +75,11 @@ func run(rawLink string) error {
 	ok("named: Anna")
 
 	step(2, "The owner adds a second device of their own")
-	phone, err := addDevice(ctx, target.addr, ownerConn, ownerID)
+	phone, err := addDevice(ctx, target, ownerConn, ownerID)
 	if err != nil {
 		return err
 	}
-	phoneConn, err := greet(ctx, target.addr, phone)
+	phoneConn, err := greet(ctx, target, phone)
 	if err != nil {
 		return err
 	}
@@ -97,7 +100,7 @@ func run(rawLink string) error {
 }
 
 func claim(ctx context.Context, target link, dev device) (string, error) {
-	c, err := dial(ctx, target.addr)
+	c, err := dial(ctx, target)
 	if err != nil {
 		return "", err
 	}
@@ -120,7 +123,7 @@ func claim(ctx context.Context, target link, dev device) (string, error) {
 	return id["id"].(string), nil
 }
 
-func addDevice(ctx context.Context, addr string, owner *conn, ownerID string) (device, error) {
+func addDevice(ctx context.Context, target link, owner *conn, ownerID string) (device, error) {
 	invite, err := owner.call("device.invite", data{})
 	if err != nil {
 		return device{}, err
@@ -128,7 +131,7 @@ func addDevice(ctx context.Context, addr string, owner *conn, ownerID string) (d
 	ok("device invite issued (10 minutes)")
 
 	dev := newDevice()
-	c, err := dial(ctx, addr)
+	c, err := dial(ctx, target)
 	if err != nil {
 		return device{}, err
 	}
@@ -187,12 +190,16 @@ func talk(desktop, phone *conn, ownerID string) error {
 type data = map[string]any
 
 type link struct {
-	addr  string
-	token string
+	addr string
+	// fingerprint is sha256 over the server's SubjectPublicKeyInfo, base64 -
+	// the thirty-two bytes that decide which machine this smoke run is willing
+	// to talk to at all.
+	fingerprint string
+	token       string
 }
 
-// parseLink reads the pairing link's payload: version, host, port, server key,
-// token (contract §8A).
+// parseLink reads the pairing link's payload: version, host, port, server
+// fingerprint, token (contract §8A).
 func parseLink(raw string) (link, error) {
 	if i := strings.Index(raw, "#"); i >= 0 {
 		raw = raw[i+1:]
@@ -237,9 +244,15 @@ func parseLink(raw string) (link, error) {
 		return link{}, errors.New("truncated link")
 	}
 	port := binary.BigEndian.Uint16(payload[at : at+2])
-	at += 2 + 32 // the server key is checked by TLS pinning, not here
+	at += 2
+	fingerprint := base64.StdEncoding.EncodeToString(payload[at : at+32])
+	at += 32
 	token := base64.RawURLEncoding.EncodeToString(payload[at : at+16])
-	return link{addr: net.JoinHostPort(host, fmt.Sprint(port)), token: token}, nil
+	return link{
+		addr:        net.JoinHostPort(host, fmt.Sprint(port)),
+		fingerprint: fingerprint,
+		token:       token,
+	}, nil
 }
 
 type conn struct {
@@ -248,10 +261,14 @@ type conn struct {
 	id  int
 }
 
-func dial(ctx context.Context, addr string) (*conn, error) {
-	ws, _, err := websocket.Dial(ctx, "ws://"+addr+"/ws", nil)
+// dial opens one pinned connection. Every dial in this file goes through it,
+// so there is no unpinned path to forget about - and the smoke run fails the
+// same way a real device would if the machine answering is the wrong one.
+func dial(ctx context.Context, target link) (*conn, error) {
+	client := &http.Client{Transport: &http.Transport{TLSClientConfig: server.PinnedTLSConfig(target.fingerprint)}}
+	ws, _, err := websocket.Dial(ctx, "wss://"+target.addr+"/ws", &websocket.DialOptions{HTTPClient: client})
 	if err != nil {
-		return nil, fmt.Errorf("dial %s: %w", addr, err)
+		return nil, fmt.Errorf("dial %s: %w", target.addr, err)
 	}
 	ws.SetReadLimit(1 << 20)
 	return &conn{ws: ws, ctx: ctx}, nil
@@ -344,8 +361,8 @@ func newDevice() device {
 }
 
 // greet opens a connection and completes a SIGNED greeting for a paired device.
-func greet(ctx context.Context, addr string, dev device) (*conn, error) {
-	c, err := dial(ctx, addr)
+func greet(ctx context.Context, target link, dev device) (*conn, error) {
+	c, err := dial(ctx, target)
 	if err != nil {
 		return nil, err
 	}

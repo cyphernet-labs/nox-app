@@ -2,11 +2,11 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:nox_app/presentation/widgets/primitives/app_hairline_divider_widget.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
+import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
@@ -18,16 +18,16 @@ import 'package:nox_app/presentation/pages/about_page/about_page.dart';
 import 'package:nox_app/presentation/pages/appearance_page/appearance_body.dart';
 import 'package:nox_app/presentation/pages/appearance_page/appearance_page.dart';
 import 'package:nox_app/presentation/pages/base/base_state_page.dart';
-import 'package:nox_app/presentation/pages/error_page/error_page.dart';
-import 'package:nox_app/presentation/pages/error_page/error_page_params.dart';
+// import 'package:nox_app/presentation/pages/error_page/error_page.dart';
+// import 'package:nox_app/presentation/pages/error_page/error_page_params.dart';
 import 'package:nox_app/presentation/pages/language_page/language_body.dart';
 import 'package:nox_app/presentation/pages/language_page/language_page.dart';
 import 'package:nox_app/presentation/pages/notifications_page/notifications_body.dart';
 import 'package:nox_app/presentation/pages/devices_page/devices_body.dart';
 import 'package:nox_app/presentation/pages/devices_page/devices_page.dart';
 import 'package:nox_app/presentation/pages/notifications_page/notifications_page.dart';
-import 'package:nox_app/presentation/pages/screens_gallery_page/screens_gallery_page.dart';
-import 'package:nox_app/presentation/pages/ui_kit_page/ui_kit_page.dart';
+// import 'package:nox_app/presentation/pages/screens_gallery_page/screens_gallery_page.dart';
+// import 'package:nox_app/presentation/pages/ui_kit_page/ui_kit_page.dart';
 import 'package:nox_app/presentation/pages/settings_root_page/bloc/settings_root_bloc.dart';
 import 'package:nox_app/presentation/pages/splash_page/splash_page.dart';
 import 'package:nox_app/presentation/pages/terms_page/terms_body.dart';
@@ -44,8 +44,9 @@ enum _Section { account, devices, notifications, appearance, language, terms, ab
 
 /// 7.1 Settings root — the Settings tab body. Mobile: a flat list (identity card +
 /// nav rows + Log out). Desktop: a list-detail (menu pane 340 + detail pane ≤680,
-/// selection swaps the pane without push; the raw ID is never revealed, an inline
-/// account QR is shown instead). Settings rows open the real 7.2–7.7 subscreens;
+/// selection swaps the pane without push). The id is public since feature 032, so
+/// the card shows it whole - there is no mask, no reveal, and no account QR: adding
+/// a device is its own screen, 7.8. Settings rows open the real 7.2–7.7 subscreens;
 /// Log out → real 1.1 Splash. Owns [SettingsRootBloc]. `[inShell]` suppresses the
 /// back affordance when hosted as a shell tab.
 class SettingsRootPage extends StatefulWidget {
@@ -184,33 +185,76 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
     return Scaffold(
       appBar: AppBar(leading: widget.inShell ? null : _backButton(), title: Text(context.l10n.settings)),
       body: ListView(
+        // Room under the last tile for the docked `+`. The shell's Scaffold insets
+        // this body by the bottom BAR, but the FAB is centre-docked and stands
+        // ~28 proud of it, so `Log out` - the last thing on the list, and the one
+        // you least want mis-tapped - sat under it.
+        padding: EdgeInsets.only(bottom: _dockedFabClearance),
         children: [
-          Padding(padding: EdgeInsets.all(AppSpacingTokens.s16), child: _identityCard(state, revealable: false, wide: false)),
-          AppSettingsNavRowWidget(title: context.l10n.settingsDevicesTitle, onTap: () => _openSection(DevicesPage.route())),
-          AppSettingsNavRowWidget(title: context.l10n.settingsNotificationsTitle, onTap: () => _openSection(NotificationsPage.route())),
-          AppSettingsNavRowWidget(title: context.l10n.settingsAppearanceTitle, onTap: () => _openSection(AppearancePage.route())),
-          AppSettingsNavRowWidget(title: context.l10n.settingsLanguageTitle, onTap: () => _openSection(LanguagePage.route())),
-          AppSettingsNavRowWidget(title: context.l10n.settingsTermsTitle, onTap: () => _openSection(TermsPage.route())),
-          AppSettingsNavRowWidget(title: context.l10n.settingsAboutTitle, onTap: () => _openSection(AboutPage.route())),
-          const AppHairlineDividerWidget(),
-          AppSettingsNavRowWidget(title: context.l10n.logoutRow, color: Theme.of(context).colorScheme.error, onTap: _logout),
-          ..._devMenuRows(),
+          Padding(padding: _cardMargin, child: _identityCard(state, wide: false)),
+          // One tile per destination, each its own rounded surface with a bare
+          // leading glyph. Merged into a single card with hairlines between them
+          // they read as one lump; bare on the scaffold background they read as
+          // an unfinished list.
+          AppSettingsNavRowWidget(
+            title: context.l10n.settingsDevicesTitle,
+            icon: NoxIcons.devices,
+            onTap: () => _openSection(DevicesPage.route()),
+          ),
+          AppSettingsNavRowWidget(
+            title: context.l10n.settingsNotificationsTitle,
+            icon: NoxIcons.notifications,
+            onTap: () => _openSection(NotificationsPage.route()),
+          ),
+          AppSettingsNavRowWidget(
+            title: context.l10n.settingsAppearanceTitle,
+            icon: NoxIcons.palette,
+            onTap: () => _openSection(AppearancePage.route()),
+          ),
+          AppSettingsNavRowWidget(
+            title: context.l10n.settingsLanguageTitle,
+            icon: NoxIcons.language,
+            onTap: () => _openSection(LanguagePage.route()),
+          ),
+          AppSettingsNavRowWidget(
+            title: context.l10n.settingsTermsTitle,
+            icon: NoxIcons.description,
+            onTap: () => _openSection(TermsPage.route()),
+          ),
+          AppSettingsNavRowWidget(
+            title: context.l10n.settingsAboutTitle,
+            icon: NoxIcons.info,
+            onTap: () => _openSection(AboutPage.route()),
+          ),
+          SizedBox(height: AppSpacingTokens.s16),
+          AppSettingsNavRowWidget(title: context.l10n.logoutRow, icon: NoxIcons.logoutFill, danger: true, onTap: _logout),
+          // ..._devMenuRows(),
         ],
       ),
     );
   }
 
-  // Debug-only rows appended after Log out on both layouts (mobile flat list + desktop
-  // menu pane): the screens gallery, the UI-kit gallery, a forced logout, and — in the
-  // gallery preview — the dev state control. Empty in release (all kDebugMode-gated).
-  List<Widget> _devMenuRows({bool menuPane = false}) => [
-    if (kDebugMode)
-      AppSettingsNavRowWidget(title: 'Screens gallery (dev)', menuPane: menuPane, onTap: () => _openSection(ScreensGalleryPage.route())),
-    if (kDebugMode) AppSettingsNavRowWidget(title: 'UI kit (dev)', menuPane: menuPane, onTap: () => _openSection(UiKitPage.route())),
-    if (kDebugMode && !widget.demo)
-      AppSettingsNavRowWidget(title: 'Force logout (dev)', menuPane: menuPane, onTap: () => unawaited(authRepository.logout(forced: true))),
-    if (kDebugMode && widget.demo) _devControl(),
-  ];
+  // The development rows - the screens gallery, the UI-kit gallery, a forced logout
+  // and the gallery preview’s fatal-state control - are WITHDRAWN from the product on
+  // EVERY flavour. `kDebugMode` kept them out of a release build but left them in
+  // every debug run, which is the build a person is actually handed while the app is
+  // being finished. The screens they opened still exist and still have their tests;
+  // bringing the rows back is NOT just uncommenting. This branch also made `icon:`
+  // required on AppSettingsNavRowWidget, so a restore is: uncomment this block, its
+  // two call sites and `_devControl()` below, uncomment the four imports at the top
+  // (error_page, error_page_params, screens_gallery_page, ui_kit_page), and give each
+  // row an `icon:`.
+  // // Debug-only rows appended after Log out on both layouts (mobile flat list + desktop
+  // // menu pane): the screens gallery, the UI-kit gallery, a forced logout, and — in the
+  // // gallery preview — the dev state control. Empty in release (all kDebugMode-gated).
+  // List<Widget> _devMenuRows({bool menuPane = false}) => [
+  // if (kDebugMode)
+  // AppSettingsNavRowWidget(title: 'Screens gallery (dev)', menuPane: menuPane, onTap: () => _openSection(ScreensGalleryPage.route())),
+  // if (kDebugMode) AppSettingsNavRowWidget(title: 'UI kit (dev)', menuPane: menuPane, onTap: () => _openSection(UiKitPage.route())),
+  // if (kDebugMode && !widget.demo)
+  // AppSettingsNavRowWidget(title: 'Force logout (dev)', menuPane: menuPane, onTap: () => unawaited(authRepository.logout(forced: true))),
+  // if (kDebugMode && widget.demo) _devControl(),
+  // ];
 
   // ---- Desktop: list-detail -------------------------------------------------
 
@@ -225,9 +269,10 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
   }
 
   Widget _menuPane(BuildContext context, SettingsRootState state) {
-    final colorScheme = Theme.of(context).colorScheme;
-    AppSettingsNavRowWidget item(_Section section, String title) => AppSettingsNavRowWidget(
+    AppSettingsNavRowWidget item(_Section section, String title, SvgGenImage icon, SvgGenImage selectedIcon) => AppSettingsNavRowWidget(
       title: title,
+      icon: icon,
+      selectedIcon: selectedIcon,
       selected: _selected == section,
       menuPane: true,
       onTap: () => setState(() => _selected = section),
@@ -242,27 +287,58 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
           leading: widget.inShell ? null : _backButton(),
           trailingInset: AppSpacingTokens.s8,
         ),
-        // Grouped nav items (Account / preferences / legal), with the destructive
-        // Log out row pinned to the bottom via a Spacer.
+        // An M3 NavigationDrawer: destinations as stadium items on the pane
+        // itself, transparent until selected, in the three groups the desktop
+        // corpus separates with a line UNDER each group rather than with a card.
+        // The line sits below the group's padding, so it never crosses a pill.
+        //
+        // The destinations SCROLL and `Log out` stays pinned to the foot. As one
+        // unscrollable Column with a Spacer it clipped the last rows behind an
+        // overflow stripe with no way to reach them, from 598px of window height
+        // down (measured at 1280 wide: overflow = 598.4 - height, so 0.4px at 598
+        // and 38px at 560). macOS opens its default window at 800x600 - four
+        // pixels of headroom - and no desktop target here sets a minimum size.
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Group 1: Account.
-              item(_Section.account, context.l10n.settingsAccountTitle),
-              item(_Section.devices, context.l10n.settingsDevicesTitle),
-              const AppHairlineDividerWidget(),
-              // Group 2: Notifications, Appearance, Language.
-              item(_Section.notifications, context.l10n.settingsNotificationsTitle),
-              item(_Section.appearance, context.l10n.settingsAppearanceTitle),
-              item(_Section.language, context.l10n.settingsLanguageTitle),
-              const AppHairlineDividerWidget(),
-              // Group 3: Terms, About.
-              item(_Section.terms, context.l10n.settingsTermsTitle),
-              item(_Section.about, context.l10n.settingsAboutTitle),
-              const Spacer(),
-              AppSettingsNavRowWidget(title: context.l10n.logoutRow, color: colorScheme.error, menuPane: true, onTap: _logout),
-              ..._devMenuRows(menuPane: true),
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _navGroup(context, [
+                        item(_Section.account, context.l10n.settingsAccountTitle, NoxIcons.person, NoxIcons.personFill),
+                        item(_Section.devices, context.l10n.settingsDevicesTitle, NoxIcons.devices, NoxIcons.devicesFill),
+                      ]),
+                      _navGroup(context, [
+                        item(
+                          _Section.notifications,
+                          context.l10n.settingsNotificationsTitle,
+                          NoxIcons.notifications,
+                          NoxIcons.notificationsFill,
+                        ),
+                        item(_Section.appearance, context.l10n.settingsAppearanceTitle, NoxIcons.palette, NoxIcons.paletteFill),
+                        item(_Section.language, context.l10n.settingsLanguageTitle, NoxIcons.language, NoxIcons.languageFill),
+                      ]),
+                      _navGroup(context, [
+                        item(_Section.terms, context.l10n.settingsTermsTitle, NoxIcons.description, NoxIcons.descriptionFill),
+                        item(_Section.about, context.l10n.settingsAboutTitle, NoxIcons.info, NoxIcons.infoFill),
+                      ], last: true),
+                    ],
+                  ),
+                ),
+              ),
+              AppSettingsNavRowWidget(
+                title: context.l10n.logoutRow,
+                icon: NoxIcons.logoutFill,
+                danger: true,
+                menuPane: true,
+                onTap: _logout,
+              ),
+              SizedBox(height: AppSpacingTokens.s8),
+              // ..._devMenuRows(menuPane: true),
             ],
           ),
         ),
@@ -286,7 +362,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
       _Section.account => ListView(
         padding: EdgeInsets.all(AppSpacingTokens.s16),
         children: [
-          _identityCard(state, revealable: false, wide: true),
+          _identityCard(state, wide: true),
           // Design: the account QR + caption sit in a separate centred block BELOW the
           // identity card, on the plain detail-pane background (not inside the card).
         ],
@@ -327,18 +403,43 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
     _ => null,
   };
 
-  Widget _identityCard(SettingsRootState state, {required bool revealable, required bool wide}) {
+  /// One menu-pane group: its items, a little breathing room, and the line that
+  /// closes it. The last group draws no line - there is nothing under it to
+  /// separate from.
+  Widget _navGroup(BuildContext context, List<Widget> items, {bool last = false}) => Container(
+    padding: EdgeInsets.only(bottom: AppSpacingTokens.s6),
+    margin: EdgeInsets.only(bottom: AppSpacingTokens.s6),
+    decoration: last
+        ? null
+        : BoxDecoration(
+            border: Border(
+              bottom: BorderSide(color: Theme.of(context).colorScheme.outlineVariant, width: AppDimensionTokens.border.hairline),
+            ),
+          ),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: items),
+  );
+
+  /// How far the centre-docked create FAB stands proud of the bottom bar, plus
+  /// air. Scroll views hosted in the shell add it below their last item.
+  ///
+  /// A getter, not a `static final`: these tokens are ScreenUtil-scaled, and a
+  /// static final is initialised once per isolate - it would freeze at whatever
+  /// scale happened to be current the first time this screen built.
+  static double get _dockedFabClearance => AppSpacingTokens.s40;
+
+  /// The margin `AppSettingsGroupWidget` gives itself. Anything placed beside a
+  /// group card uses it, so every card edge on the screen is the same edge.
+  static EdgeInsets get _cardMargin =>
+      EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s4, AppSpacingTokens.s16, AppSpacingTokens.s16);
+
+  Widget _identityCard(SettingsRootState state, {required bool wide}) {
     return AppIdentityCardWidget(
       name: state.name,
-      // The id is public now: masking it would hide something that is not a
-      // secret, and leave nothing for Copy to make sense of.
-      maskedId: state.rawId,
+      // The id is public since 032, so it is shown whole - there is no mask left
+      // to lift and nothing for a reveal to reveal.
       rawId: state.rawId,
-      revealable: revealable,
       initialLoading: state.initialLoading,
       editing: state.editing,
-      idRevealed: state.idRevealed,
-      onToggleReveal: () => _bloc.add(const SettingsRootEvent.idRevealToggled()),
       onEditName: _startEdit,
       onCopy: _copyId,
       // Showing a QR of the identity used to hand over a bearer secret. The id
@@ -348,7 +449,6 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
       //
       // On desktop that is a pane selection, not a push: pushing a full-screen
       // page over the shell is how the rest of Settings would never behave.
-      onShowQr: wide ? () => setState(() => _selected = _Section.devices) : () => _openSection(DevicesPage.route()),
       nameEditField: state.editing
           ? AppLabeledFieldWidget(
               controller: _nameController,
@@ -364,18 +464,18 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
     );
   }
 
-  Widget _devControl() {
-    return Padding(
-      padding: EdgeInsets.all(AppSpacingTokens.s16),
-      child: Align(
-        alignment: Alignment.centerLeft,
-        child: OutlinedButton(
-          onPressed: () => Navigator.of(context).push(AppErrorPage.route(params: ErrorPageParams.fatal())),
-          child: const Text('Fatal (preview)'),
-        ),
-      ),
-    );
-  }
+  // Widget _devControl() {
+  // return Padding(
+  // padding: EdgeInsets.all(AppSpacingTokens.s16),
+  // child: Align(
+  // alignment: Alignment.centerLeft,
+  // child: OutlinedButton(
+  // onPressed: () => Navigator.of(context).push(AppErrorPage.route(params: ErrorPageParams.fatal())),
+  // child: const Text('Fatal (preview)'),
+  // ),
+  // ),
+  // );
+  // }
 }
 
 /// Desktop settings pane header (`titleLarge` label with an optional [leading] back

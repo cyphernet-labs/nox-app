@@ -76,6 +76,7 @@ dependencies:
   zxing2: ^0.2.3                # pure-Dart QR DECODE from a picked image (P14); Windows/Linux QR sign-in (no camera plugin there)
   file_selector: ^1.1.0
   connectivity_plus: ^7.3.1
+  video_player: ^2.14.0
 
   # --- Feature-gated (mobile-only / activated with the corresponding blueprint doc) ---
   # firebase_core / firebase_messaging — push (mobile-only; desktop = disabled no-op)

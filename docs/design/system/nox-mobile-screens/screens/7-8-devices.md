@@ -5,7 +5,7 @@
 **Purpose.** Show the keys allowed to speak as this person, and let any of them be cut off. Without it pairing has no undo and every lost device stays an open door.
 
 ## Anatomy
-Detail scaffold (back + title). Current device in its own group, marked `This device`. Other devices in a second group, or the line `No other devices`. A filled `Add a device` button at the bottom; pressing it mints an invite and shows a card with the QR **and** the link as selectable text.
+Detail scaffold (back + title). One group holding every device, the current one first and marked `This device` in a quieter tone - an annotation on the name, not part of it. No placeholder line when it is the only one. A filled `Add a device` button at the bottom; pressing it mints an invite and shows a card with the QR **and** the link as selectable text, under `Copy` and `Hide`.
 
 ## States
 - `loading` — always read from the server, never from a cache
@@ -14,10 +14,11 @@ Detail scaffold (back + title). Current device in its own group, marked `This de
 - `error` — Couldn't load your devices.
 - `action error` — Couldn't revoke that device. Try again. (its own line above the list, never the list's)
 - `invite` — QR card, link valid for 10 minutes
+- `Revoke` is destructive (`error`), not the brand accent: it cannot be undone without a new pairing link, and on the current device it is a logout
 
 ## Behavior
 - A row shows the OS family and two moments (paired, last seen). The key itself is never shown: 32 base64 bytes look identical across rows. The exact hardware model is deliberately not collected.
-- `Revoke` opens a confirm dialog. Revoking the current device is a logout and says so in its own words.
+- `Revoke` opens a confirm dialog. Revoking the current device is a logout, and asks the logout question word for word - but the dialog is this screen's own: the confirm button stays `Revoke`, not the `Log out` that 7.1's logout dialog carries. You press what you asked for and read what it will actually do.
 - Revocation applies immediately — the revoked device's live connection drops rather than waiting for its next attempt.
 - A device paired from elsewhere appears in the open list on its own (phase 038): the server says so, and the screen re-reads. Leaving the section and coming back is no longer how you find out.
 - The whole invite surface disappears when a device joins: the card, because the token is one-shot and the server will now refuse that QR, and
@@ -34,10 +35,12 @@ Detail scaffold (back + title). Current device in its own group, marked `This de
 
 ## Copy (EN)
 - Title: Devices
-- This device · Revoke · Add a device · No other devices
+- This device · Revoke · Add a device · Copy · Hide
 - Revoke this device? / It will be signed out and won't be able to connect again.
-- This is the device you're using. Revoking it signs you out here.
+- (current device) Log out? / This device will be signed out and won't be able to connect again. You'll need a new pairing link to come back.
 - Scan this from the other device. The link works for 10 minutes.
+- Copy
+- Hide
 
 ## Design-system components
 - AppDetailScaffoldWidget, AppSettingsGroupWidget, ListTile rows, FilledButton, AppQrSurfaceWidget

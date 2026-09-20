@@ -81,30 +81,47 @@ void main() {
     testWidgets('Copy puts the ID on the clipboard and shows a snackbar', (tester) async {
       await pumpMobile(tester);
 
-      await tester.tap(find.byTooltip(l10nEn.idCopyTooltip));
+      await tester.tap(find.text(l10nEn.settingsCopyIdAction));
       await tester.pump(); // snackbar in
       await tester.pump();
 
       expect(find.text(l10nEn.copiedToClipboard), findsOneWidget);
     });
 
-    testWidgets('Show QR leads to Devices, where an invite is actually minted', (tester) async {
-      // It used to render a QR of the login identifier - a bearer secret, and
-      // handing it over WAS the sign-in. Adding a device is a different act
-      // now: it needs a one-shot token the server issues.
+    testWidgets('the card carries no shortcut into device pairing - Devices owns that', (tester) async {
+      // It once rendered a QR of the login identifier - a bearer secret, and handing
+      // it over WAS the sign-in. Then it became a shortcut into 7.8. Adding a device
+      // is a screen of its own now, reached by its own row, so the account card is
+      // back to being about the account.
       await pumpMobile(tester);
 
-      await tester.tap(find.byTooltip(l10nEn.idShowQrTooltip));
+      // Edit name and Copy, and no third action. NOX draws its icons as SVG, so
+      // there is no Material Icon to look for by name - the count is the assertion.
+      // Two named actions and nothing else. The card carries no icon-only button
+      // at all now, so counting IconButtons would count zero either way - what is
+      // worth pinning is that a third action has not appeared beside these two.
+      expect(find.descendant(of: find.byType(AppIdentityCardWidget), matching: find.byType(FilledButton)), findsNWidgets(2));
+      expect(find.text(l10nEn.settingsEditNameAction), findsOneWidget);
+      expect(find.text(l10nEn.settingsCopyIdAction), findsOneWidget);
+      expect(find.widgetWithText(ListTile, l10nEn.settingsDevicesTitle), findsOneWidget);
+    });
+
+    testWidgets('the Devices row opens Devices', (tester) async {
+      await pumpMobile(tester);
+
+      await tester.tap(find.widgetWithText(ListTile, l10nEn.settingsDevicesTitle));
       await tester.pumpAndSettle();
 
       expect(find.text(l10nEn.settingsDevicesTitle), findsWidgets);
     });
 
-    testWidgets('there is nothing to reveal any more - the id is public', (tester) async {
+    testWidgets('the id is shown whole - there is nothing left to reveal', (tester) async {
       // The reveal existed because the string was a secret. A person is
       // recognised by a paired key now, so masking it would only pretend.
       await pumpMobile(tester);
-      expect(find.byTooltip(l10nEn.idShowTooltip), findsNothing);
+
+      expect(find.text(kTestSession.authorId!), findsOneWidget);
+      expect(find.textContaining('•'), findsNothing);
     });
 
     testWidgets('Log out opens a confirm dialog that Cancel dismisses', (tester) async {
@@ -133,7 +150,7 @@ void main() {
     testWidgets('blur reverts an invalid inline name-edit (not a one-way trap)', (tester) async {
       await pumpMobile(tester);
 
-      await tester.tap(find.byTooltip(l10nEn.settingsNameEditTooltip));
+      await tester.tap(find.text(l10nEn.settingsEditNameAction));
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextField), 'bad name!'); // invalid charset
       await tester.pump();
@@ -143,14 +160,14 @@ void main() {
 
       // Edit mode exited and the committed name is unchanged (the draft was reverted).
       expect(find.byType(TextField), findsNothing);
-      expect(find.byTooltip(l10nEn.settingsNameEditTooltip), findsOneWidget);
+      expect(find.text(l10nEn.settingsEditNameAction), findsOneWidget);
       expect(find.text('User7421'), findsOneWidget);
     });
 
     testWidgets('blur commits a valid inline name-edit', (tester) async {
       await pumpMobile(tester);
 
-      await tester.tap(find.byTooltip(l10nEn.settingsNameEditTooltip));
+      await tester.tap(find.text(l10nEn.settingsEditNameAction));
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextField), 'Freename'); // valid + free
       await tester.pumpAndSettle(); // debounce + availability check
@@ -193,7 +210,7 @@ void main() {
       await pumpDesktop(tester);
 
       // Nothing to reveal: the id stopped being a secret with feature 032.
-      expect(find.byTooltip(l10nEn.idShowTooltip), findsNothing);
+      expect(find.textContaining('•'), findsNothing);
       // And no QR of it either. Rendering one captioned "let someone add you"
       // promised a pairing that scanning it cannot perform - adding a device
       // needs a one-shot token, which Devices mints.

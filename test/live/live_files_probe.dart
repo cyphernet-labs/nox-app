@@ -1,3 +1,6 @@
+@Tags(['live'])
+library;
+
 import 'dart:io';
 import 'dart:math';
 
@@ -10,6 +13,8 @@ import 'package:nox_app/data/remote/datasource/real/real_file_remote_data_source
 import 'package:nox_app/data/remote/datasource/real/real_message_remote_data_source.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/remote/socket/socket_channel_factory.dart';
+
+import 'live_target.dart';
 import 'package:nox_app/data/repository/file/file_repository_impl.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
@@ -30,7 +35,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// Named without the `_test` suffix so the suite never collects it. Run by hand:
 ///
 ///   client_backend$ go build -o /tmp/noxd . && /tmp/noxd -addr 127.0.0.1:8080 -db /tmp/nox-live.db
-///   fvm flutter test test/live/live_files_probe.dart
+///   fvm flutter test test/live/live_files_probe.dart `--dart-define=link=<pairing link>`
+///
+/// ⚠️ These three probes greet ANONYMOUSLY, with a label and no device key.
+/// The server has refused such a greeting since feature 032 - it answers
+/// `unauthenticated` - so they have been stale since then and feature 036 does
+/// not repair that; it only moves them onto the transport that now exists.
+/// `pairing_live_probe.dart` is the one that pairs properly.
 class _MemoryCursor implements SyncRepository {
   int _cursor = 0;
   String? _epoch;
@@ -67,12 +78,16 @@ void main() {
   tearDownAll(() async => getIt.reset());
 
   test('a file goes up, a message names it, and the same bytes come back', () async {
-    final socket = NoxSocketClient(WebSocketChannelFactory(), _MemoryCursor());
+    LiveTarget.letTheNetworkThrough();
+    final target = LiveTarget.orSkip();
+    if (target == null) return;
+    // ONE client for both transports, exactly as the app holds one: two would
+    // be two TLS sessions and two chances to pin the wrong thing.
+    final pinned = target.client();
+    final socket = NoxSocketClient(WebSocketChannelFactory(pinned), _MemoryCursor());
     addTearDown(socket.stop);
     await socket.start(
-      url: Uri.parse('ws://127.0.0.1:8080/ws'), // A probe names itself and nothing else: no login derivation, no device
-      // id. That is deliberate - the contract forbids refusing such a greeting,
-      // and it is exactly the shape this probe must keep working in.
+      url: target.socketUrl,
       credentialsProvider: () async => const GreetingCredentials(label: 'FilesProbe'),
     );
     await Future<void>.delayed(const Duration(seconds: 2));
@@ -85,7 +100,7 @@ void main() {
     // the base URL here. Doing it by hand is what let a build with no base URL
     // at all pass this probe: every transfer would have failed in the real app
     // and the probe would have been green.
-    final api = ApiClient(config)..initBase();
+    final api = ApiClient(config, pinned)..initBase(address: target.restUrl);
     final files = FileRepositoryImpl(RealFileRemoteDataSource(socket, api), config);
 
     // Bytes that could not be mistaken for anything else.

@@ -11,14 +11,9 @@ sealed class SettingsRootEvent with _$SettingsRootEvent {
   /// Name draft changed (immediate charset / empty feedback).
   const factory SettingsRootEvent.nameChanged(String name) = SettingsNameChanged;
 
-  /// Debounced uniqueness check for [name].
-
   /// Save the draft (Enter / Done / blur) — commits only when valid.
   const factory SettingsRootEvent.nameSubmitted() = NameSubmitted;
 
   /// Cancel inline edit → revert to the committed name.
   const factory SettingsRootEvent.nameEditCancelled() = NameEditCancelled;
-
-  /// Toggle the masked ↔ revealed identifier (mobile only).
-  const factory SettingsRootEvent.idRevealToggled() = IdRevealToggled;
 }

@@ -382,7 +382,7 @@ class _QrScanPageState extends State<QrScanPage> with WidgetsBindingObserver {
     return Scaffold(
       body: Column(
         children: [
-          const AppWindowTitlebarWidget(subtitle: 'Scan QR'),
+          AppWindowTitlebarWidget(subtitle: context.l10n.windowSubtitleScanQr),
           Expanded(child: content),
           ?dev,
         ],

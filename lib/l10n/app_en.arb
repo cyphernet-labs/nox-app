@@ -59,8 +59,6 @@
   "devicesRevoke": "Revoke",
   "devicesRevokeTitle": "Revoke this device?",
   "devicesRevokeMessage": "It will be signed out and won't be able to connect again.",
-  "devicesRevokeSelfMessage": "This is the device you're using. Revoking it signs you out here.",
-  "devicesEmpty": "No other devices",
   "devicesError": "Couldn't load your devices.",
   "devicesRevokeError": "Couldn't revoke that device. Try again.",
   "devicesAdd": "Add a device",
@@ -82,6 +80,7 @@
   },
   "settingsYourIdLabel": "Your ID",
   "actionHide": "Hide",
+  "actionCopy": "Copy",
   "settingsNameSaveError": "Couldn't save your name. Try again.",
   "settingsAboutTitle": "About",
   "loginSignIn": "Sign in",
@@ -95,7 +94,6 @@
   "loginLinkExpired": "This link has expired. Ask for a new one.",
   "loginLinkRejected": "This link can't be used. Ask for a new one.",
   "loginNetworkError": "Could not sign in. Check your connection and try again.",
-  "onboardTitleSignIn": "NOX · Sign in",
   "sessionExpiredMessage": "Your session expired",
   "tooltipFlashlight": "Flashlight",
   "tooltipSwitchCamera": "Switch camera",
@@ -108,7 +106,6 @@
   "qrInvalidSnackbar": "This QR code is invalid. Try another one.",
   "qrDesktopTitle": "Scan a QR code",
   "qrDesktopHelper": "Point your webcam at a code, or enter the ID manually.",
-  "onboardTitleScanQr": "NOX · Scan QR",
   "usernameLabel": "Name",
   "usernameHint": "How others will see you",
   "usernameHelper": "Others see this name. You can change it now or later in Settings.",
@@ -116,7 +113,6 @@
   "nameTakenError": "This name is taken",
   "actionDone": "Done",
   "actionSkip": "Skip",
-  "onboardTitleSetUp": "NOX · Set up",
   "createChatTitle": "New chat",
   "createChatNameLabel": "Chat name",
   "createChatNameHint": "e.g. Random thoughts",
@@ -127,12 +123,8 @@
   "actionCreate": "Create",
   "actionCancel": "Cancel",
   "settingsAccountTitle": "Account",
-  "settingsNameEditTooltip": "Edit",
-  "idMask": "••••••••",
-  "idShowTooltip": "Show",
-  "idHideTooltip": "Hide",
-  "idCopyTooltip": "Copy",
-  "idShowQrTooltip": "Show QR",
+  "settingsEditNameAction": "Edit name",
+  "settingsCopyIdAction": "Copy ID",
   "qrSheetTitle": "Your ID QR",
   "qrAccountCaption": "Show this code to let someone add you",
   "actionClose": "Close",
@@ -204,5 +196,41 @@
   "attachmentGone": "This file is no longer on the server",
   "@attachmentGone": {
     "description": "Terminal state on the file screen: the bytes are gone. Contract 2.1 forbids offering a retry here."
+  },
+  "serverNotRecognised": "This isn't the server you paired with",
+  "@serverNotRecognised": {
+    "description": "Banner on the chats list, the thread and the chat card when the machine at the paired address presents a key the pairing link did not name. Paired with the existing actionTryAgain. Deliberately not 'no connection': something answered, and waiting will not change it."
+  },
+  "loginServerNotRecognised": "This server doesn't match its link",
+  "@loginServerNotRecognised": {
+    "description": "The same refusal on the sign-in screen, where there is no relationship with a server yet - so it names the link rather than a pairing that has not happened."
+  },
+  "windowSubtitleSignIn": "Sign in",
+  "@windowSubtitleSignIn": {
+    "description": "Desktop window titlebar subtitle, rendered after the NOX wordmark as \"NOX — <subtitle>\"."
+  },
+  "windowSubtitleSetUp": "Set up",
+  "@windowSubtitleSetUp": {
+    "description": "Desktop window titlebar subtitle, rendered after the NOX wordmark as \"NOX — <subtitle>\"."
+  },
+  "windowSubtitleScanQr": "Scan QR",
+  "@windowSubtitleScanQr": {
+    "description": "Desktop window titlebar subtitle, rendered after the NOX wordmark as \"NOX — <subtitle>\"."
+  },
+  "windowSubtitleError": "Error",
+  "@windowSubtitleError": {
+    "description": "Desktop window titlebar subtitle, rendered after the NOX wordmark as \"NOX — <subtitle>\"."
+  },
+  "videoPlay": "Play",
+  "@videoPlay": {
+    "description": "Video attachment playback (5.3)."
+  },
+  "videoPause": "Pause",
+  "@videoPause": {
+    "description": "Video attachment playback (5.3)."
+  },
+  "videoPlaybackError": "Couldn't play this video. Save it to open it in another app.",
+  "@videoPlaybackError": {
+    "description": "Video attachment playback (5.3)."
   }
 }

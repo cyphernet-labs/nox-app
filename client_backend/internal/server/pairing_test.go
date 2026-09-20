@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -119,6 +120,20 @@ func TestInviteAddsADeviceToTheSamePerson(t *testing.T) {
 	mustUnmarshal(t, mustRaw(t, invite), &reply)
 	if reply.Token == "" || reply.Link == "" {
 		t.Fatalf("invite reply = %+v, want a token and a link to show", reply)
+	}
+	// The invite is the link a person carries to their second device, and the
+	// second device pins what it finds in it. A link built from anything but
+	// this machine's fingerprint refuses the very server that issued it.
+	id, err := srv.store.ServerIdentity(context.Background())
+	if err != nil {
+		t.Fatalf("ServerIdentity: %v", err)
+	}
+	want, err := base64.StdEncoding.DecodeString(id.Fingerprint)
+	if err != nil {
+		t.Fatalf("decode the fingerprint: %v", err)
+	}
+	if got := fingerprintInLink(t, reply.Link); !bytes.Equal(got, want) {
+		t.Fatalf("the invite carries %x, want this machine's fingerprint %x", got, want)
 	}
 
 	_, added := pairDevice(t, ts, reply.Token)

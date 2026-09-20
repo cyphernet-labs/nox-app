@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
+import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/app/session_model.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/general/pairing/device_keys.dart';
@@ -48,15 +49,15 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   /// and dies with a logout through `deleteAll`.
   static const String _kDeviceSecret = 'session.device_secret';
 
-  /// Where this install's server lives, and the key it will be pinned against
-  /// once the transport is TLS. Both come out of the pairing link.
+  /// Where this install's server lives, and the fingerprint of the key it is
+  /// pinned against. Both come out of the pairing link.
   ///
   /// They belong to the SESSION, not to the build: they say which server this
   /// installation belongs to, and they die with it. Keeping the address in a
   /// compile-time config instead would mean pairing with one server and
   /// sending messages to another.
   static const String _kServerAddress = 'session.server_address';
-  static const String _kServerKey = 'session.server_key';
+  static const String _kServerFingerprint = 'session.server_fingerprint';
 
   /// True while THIS process is the one that brought the person into being and
   /// has not finished naming them.
@@ -179,10 +180,10 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   }
 
   @override
-  Future<RepositoryResult<bool>> saveServer({required String address, required String serverKey}) {
+  Future<RepositoryResult<bool>> saveServer({required String address, required String serverFingerprint}) {
     return execute<bool>(() async {
       await _secureStorage.write(key: _kServerAddress, value: address);
-      await _secureStorage.write(key: _kServerKey, value: serverKey);
+      await _secureStorage.write(key: _kServerFingerprint, value: serverFingerprint);
       return const RepositoryResult<bool>.success(data: true);
     });
   }
@@ -191,6 +192,14 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   Future<RepositoryResult<String?>> serverAddress() {
     return execute<String?>(() async {
       final stored = await _secureStorage.read(key: _kServerAddress);
+      return RepositoryResult<String?>.success(data: (stored?.isEmpty ?? true) ? null : stored);
+    });
+  }
+
+  @override
+  Future<RepositoryResult<String?>> serverFingerprint() {
+    return execute<String?>(() async {
+      final stored = await _secureStorage.read(key: _kServerFingerprint);
       return RepositoryResult<String?>.success(data: (stored?.isEmpty ?? true) ? null : stored);
     });
   }
@@ -243,7 +252,7 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       // aim the next connection at a machine this install never paired with,
       // and the world-epoch key would call that the same world.
       await _secureStorage.delete(key: _kServerAddress);
-      await _secureStorage.delete(key: _kServerKey);
+      await _secureStorage.delete(key: _kServerFingerprint);
       await _prefs.remove(_kOnboardingComplete);
       // And the author id written by the SAME call. Left behind it would point
       // at the previous server's person, and the next sign-in would inherit it
@@ -267,7 +276,39 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   Future<RepositoryResult<bool>> clear() {
     return execute<bool>(() async {
       _onboardingStartedHere = false;
-      await _secureStorage.deleteAll();
+      // Every key BY NAME, and only then the sweep. `deleteAll` alone is not a
+      // wipe: it is one query against the platform store, and a key written
+      // under options that query does not match survives it - silently, with no
+      // error to catch. What that produces is worse than no wipe at all,
+      // because the two halves of a session live in different stores: the
+      // identifier stays in secure storage while the prefs below go, and
+      // readSession then reports a person who has not finished onboarding. The
+      // app puts them on the naming screen, holding a token for a server it can
+      // no longer reach.
+      await _secureStorage.delete(key: _kIdentifier);
+      await _secureStorage.delete(key: _kDeviceSecret);
+      await _secureStorage.delete(key: _kServerAddress);
+      await _secureStorage.delete(key: _kServerFingerprint);
+      // Kept for anything a later version writes and forgets to name above, and
+      // not allowed to fail a wipe that has already happened.
+      // Swallowed on purpose, and it is not a silent failure: the read-back
+      // below decides whether the wipe happened, which is a stronger answer
+      // than whether the sweep threw.
+      try {
+        await _secureStorage.deleteAll();
+      } on Object {
+        // ignored - see above
+      }
+      // Read back before touching the prefs. Presence is keyed on the
+      // identifier, so an identifier that survived is the whole session; the
+      // prefs are what turn that survival into the stranded state above.
+      // Leaving them alone means a failed wipe leaves the person signed in -
+      // reported, recoverable, and refused by the caller - instead of signed
+      // out into a screen that leads nowhere.
+      final survivor = await _secureStorage.read(key: _kIdentifier);
+      if (survivor != null && survivor.isNotEmpty) {
+        return const RepositoryResult<bool>.error(exception: RepositoryException.unknown);
+      }
       await _prefs.remove(_kOnboardingComplete);
       await _prefs.remove(_kLabel);
       // The server-assigned author id belongs to the identity being logged out.

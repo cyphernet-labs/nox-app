@@ -48,12 +48,18 @@ class AppChatItemWidget extends StatelessWidget {
                       fontWeight: hasUnread ? FontWeight.w600 : FontWeight.w500,
                     ),
                   ),
-                  Text(
-                    preview,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: textTheme.bodyMedium?.copyWith(color: hasUnread ? colorScheme.onSurface : colorScheme.onSurfaceVariant),
-                  ),
+                  // Only when there IS one. Rendered unconditionally, an empty
+                  // preview still took a line, so a chat with no messages was a
+                  // two-line column with nothing on its second line - and the
+                  // Row centres the column, which left the title sitting above
+                  // the row's centre with blank space under it.
+                  if (preview.isNotEmpty)
+                    Text(
+                      preview,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: textTheme.bodyMedium?.copyWith(color: hasUnread ? colorScheme.onSurface : colorScheme.onSurfaceVariant),
+                    ),
                 ],
               ),
             ),
@@ -67,7 +73,9 @@ class AppChatItemWidget extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(time, style: textTheme.labelSmall?.copyWith(color: hasUnread ? colorScheme.primary : colorScheme.onSurfaceVariant)),
-                  SizedBox(height: AppSpacingTokens.s6),
+                  // The gap belongs to the badge. Without it the timestamp of an
+                  // unread-free row was pushed up off the centre line by 6.
+                  if (hasUnread) SizedBox(height: AppSpacingTokens.s6),
                   if (hasUnread)
                     Container(
                       constraints: BoxConstraints(minWidth: _badgeSize),

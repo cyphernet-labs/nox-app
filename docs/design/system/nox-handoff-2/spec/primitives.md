@@ -110,8 +110,12 @@ send active → `primary` filled, else `onSurface`@38%.
   VoidCallback? onAttach, VoidCallback? onSend})`
 
 ### NoxEmptyState — empty list state · *custom*
-Illustration placeholder (thin outline + brand accents) + headline + message. Swap the placeholder
-box for a real SVG (`nox-assets/illustrations`) when art ships.
+Outlined 132 box (radius 20, 1.5 `outlineVariant`) holding a 56 glyph, with two brand accents pinned
+inside it — teal 14 top-right, gold 10 bottom-left — over a headline and a message.
+⚠️ This spec used to call the box a *placeholder* and say to "swap it for a real SVG
+(`nox-assets/illustrations`) when art ships". That swap happened, was reverted on 2026-09-20, and the
+instruction is withdrawn: the three illustrations read at 132 as a rendering fault rather than as art,
+and this composition is what the screens were designed around. `glyph` was always the API.
 - **API:** `NoxEmptyState({required IconData glyph, required String title, required String message})`
 
 ### NoxSegmented — single-select segmented · *stock wrapper*

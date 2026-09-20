@@ -30,8 +30,13 @@ const LoginScreen = ({ t, state = 'empty' }) => {
   const hasValue = state !== 'empty';
   const value = hasValue ? SAMPLE_ID : '';
   const loading = state === 'loading';
+  // 036 adds a third refusal. Its own string because the next action differs
+  // again: not "scan it again" and not "check your connection" - the server
+  // behind this link is the wrong one. No relationship with it exists yet, so
+  // the text names the LINK rather than a pairing that never happened.
   const errorText = state === 'error-format' ? 'Invalid identifier'
     : state === 'error-net' ? 'Could not sign in. Check your connection and try again.'
+    : state === 'error-server' ? "This server doesn't match its link"
     : null;
   const pasteColor = state === 'empty' ? hexA(t.onSurface, 0.38) : t.onSurfaceVariant;
   return (

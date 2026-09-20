@@ -6,7 +6,6 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:infinite_scroll_pagination/infinite_scroll_pagination.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
-import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/theme/nox_brand.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
@@ -52,6 +51,7 @@ class ChatsListPage extends StatefulWidget {
     this.initialScenario,
     this.accountLabel,
     this.onAccount,
+    this.onCreate,
   });
 
   final bool demo;
@@ -65,6 +65,12 @@ class ChatsListPage extends StatefulWidget {
   /// (i.e. hosted in the shell) — desktop reaches Account through the rail.
   final String? accountLabel;
   final VoidCallback? onAccount;
+
+  /// Wide branch only: the `+` in the pane header. It used to lead the desktop
+  /// rail, where it was the heaviest element on the window for an action that
+  /// belongs beside the list it creates into. Null on the phone, whose `+` is the
+  /// docked FAB in the bottom bar.
+  final VoidCallback? onCreate;
 
   /// Bumped by the shell with the chat just created via the `+` FAB → the list reloads
   /// (so the new chat appears) and opens it (mobile push / desktop select).
@@ -264,6 +270,8 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
           Expanded(
             child: Text(context.l10n.chats, style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
           ),
+          if (widget.onCreate != null)
+            IconButton(tooltip: context.l10n.tooltipCreateChat, icon: AppIconWidget(NoxIcons.add), onPressed: widget.onCreate),
         ],
       ),
     );
@@ -278,10 +286,22 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
     if (selected == null) {
       // No selection (or the selected chat dropped out of the list, e.g. filtered
       // by search) → the illustrated empty state, not a stale thread placeholder.
-      content = AppEmptyContentWidget(
-        illustration: Assets.svg.illustrations.emptyChats,
-        title: context.l10n.chatsNoSelectionTitle,
-        message: context.l10n.chatsNoSelectionMessage,
+      //
+      // The banner rides above it, because this pane is half the window and
+      // would otherwise be the one place on the desktop screen that says
+      // nothing at all. With a chat selected the thread inside draws its own -
+      // it has the same state and the same action - and two would be two.
+      content = Column(
+        children: [
+          _banners(context, state),
+          Expanded(
+            child: AppEmptyContentWidget(
+              glyph: NoxIcons.forum,
+              title: context.l10n.chatsNoSelectionTitle,
+              message: context.l10n.chatsNoSelectionMessage,
+            ),
+          ),
+        ],
       );
     } else {
       // Desktop list-detail: the real thread (5.2) loads in the pane (no push),
@@ -312,6 +332,18 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
 
   Widget _banners(BuildContext context, ChatsListState state) {
     if (state is! Initialized) return const SizedBox.shrink();
+    // The wrong machine comes FIRST. It is not a connection problem: something
+    // answered, promptly, and "No connection" over it would send the person to
+    // check their wifi over a thing no network can fix. The action is the only
+    // way back - nothing about this changes on its own.
+    if (state.isServerMismatch) {
+      return AppNoticeStripWidget(
+        message: context.l10n.serverNotRecognised,
+        icon: NoxIcons.error,
+        actionLabel: context.l10n.actionTryAgain,
+        onAction: () => _bloc.add(const ChatsListEvent.retryConnection()),
+      );
+    }
     if (state.isOffline) return AppNoticeStripWidget(message: context.l10n.noConnection, icon: NoxIcons.wifiOff);
     if (state.hasLoadError) {
       return AppNoticeStripWidget(message: context.l10n.chatsLoadError);
@@ -328,6 +360,10 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
     final pagedList = PagedListView<String, ChatModel>.separated(
       state: initialized.pagingState,
       scrollController: _scrollController,
+      // Same clearance the settings list leaves: the shell insets this body by the
+      // bottom BAR, but the centre-docked `+` stands ~28 proud of it and would sit
+      // over the last chat in a list short enough to end on screen.
+      padding: wide ? null : EdgeInsets.only(bottom: AppSpacingTokens.s40),
       fetchNextPage: () => _bloc.add(const ChatsListEvent.loadChats()),
       builderDelegate: PagedChildBuilderDelegate<ChatModel>(
         itemBuilder: (context, chat, index) {
@@ -372,13 +408,13 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
                   ),
                 ),
               )
-            : AppEmptyContentWidget(
-                illustration: Assets.svg.illustrations.emptyChats,
-                title: context.l10n.chatsEmptyTitle,
-                message: context.l10n.chatsEmptyMessage,
-              ),
+            : AppEmptyContentWidget(glyph: NoxIcons.forum, title: context.l10n.chatsEmptyTitle, message: context.l10n.chatsEmptyMessage),
       ),
-      separatorBuilder: (context, index) => const SizedBox.shrink(),
+      // A gap on the wide branch, none on the phone. The desktop row draws a
+      // rounded fill when selected, and with the rows flush that fill ran into
+      // its neighbour's edge with nothing between them - two selected-looking
+      // blocks merging into one. The phone row has no fill to merge.
+      separatorBuilder: (context, index) => wide ? SizedBox(height: AppSpacingTokens.s4) : const SizedBox.shrink(),
     );
     if (!FeatureFlags.enablePullToRefresh) return pagedList;
     return RefreshIndicator(onRefresh: _refresh, child: pagedList);

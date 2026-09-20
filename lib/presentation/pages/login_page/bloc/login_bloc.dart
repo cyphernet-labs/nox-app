@@ -1,8 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
+import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/general/onboarding_mock_data.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
 
@@ -21,6 +26,24 @@ class LoginBloc extends BaseBloc<LoginEvent, LoginState> {
     on<ClipboardChecked>(_onClipboardChecked);
     on<SignInRequested>(_onSignInRequested);
     on<NavigationHandled>(_onNavigationHandled);
+    on<ServerRefused>(_onServerRefused);
+    // Watched from here rather than read from the sign-in result: the pin is
+    // checked during the TLS handshake, which happens before `pair` goes out -
+    // so the repository can only report that there was no channel, and the
+    // person would be told to check a connection that is working perfectly.
+    _phaseSub = _phaseService.watchPhase().listen((phase) {
+      if (phase.isServerMismatch) add(const LoginEvent.serverRefused());
+    });
+  }
+
+  final SessionPhaseService _phaseService = getIt<SessionPhaseService>();
+
+  StreamSubscription<SessionPhase>? _phaseSub;
+
+  @override
+  Future<void> close() {
+    _phaseSub?.cancel();
+    return super.close();
   }
 
   /// In demo mode (gallery) the sign-in outcome is a debug stand-in and navigation
@@ -41,8 +64,19 @@ class LoginBloc extends BaseBloc<LoginEvent, LoginState> {
     emit(state.copyWith(status: LoginStatus.idle));
   }
 
+  /// Shown even when nothing is in flight: a refusal that arrives while the
+  /// person is still typing is about the link they just pasted, and hiding it
+  /// until they press the button again would let them press it into the same
+  /// wall twice.
+  void _onServerRefused(ServerRefused event, Emitter<LoginState> emit) {
+    _refusedThisAttempt = true;
+    emit(state.copyWith(status: LoginStatus.errorServerMismatch));
+  }
+
   Future<void> _onSignInRequested(SignInRequested event, Emitter<LoginState> emit) async {
     if (!state.canSubmit) return;
+    // A fresh attempt carries no verdict from the last one.
+    _refusedThisAttempt = false;
     emit(state.copyWith(status: LoginStatus.loading));
     if (demo) {
       await executeLogic(() async {
@@ -58,19 +92,43 @@ class LoginBloc extends BaseBloc<LoginEvent, LoginState> {
     final result = await authRepository.signIn(identifier: state.id);
     result.match<void>(
       onData: (_) => emit(state.copyWith(status: LoginStatus.idle)),
-      onError: (e) => emit(state.copyWith(status: _statusFor(e))),
+      onError: (e) => emit(state.copyWith(status: _statusFor(e, refused: _refusedServer()))),
     );
   }
 
+  /// True when THIS attempt was refused by the pin.
+  ///
+  /// Scoped to the attempt, and deliberately not read off the phase. The phase
+  /// is terminal: it keeps saying `serverMismatch` until something restarts the
+  /// channel, so a later attempt that fails BEFORE it ever dials - an
+  /// unreadable keychain, say - would inherit the previous answer and blame a
+  /// server it never reached.
+  bool _refusedThisAttempt = false;
+
+  /// The two ways round, because the refusal and the failure are separate
+  /// events and either can land first: this attempt saw the refusal, or the
+  /// event carrying it has already moved the screen.
+  bool _refusedServer() => _refusedThisAttempt || state.status == LoginStatus.errorServerMismatch;
+
   /// Each refusal keeps its own message: the repository already told them
   /// apart, and collapsing them here would undo that.
-  static LoginStatus _statusFor(Object? exception) => switch (exception) {
-    RepositoryException.invalidRequest => LoginStatus.errorFormat,
-    RepositoryException.notFound => LoginStatus.errorExpired,
-    RepositoryException.authentication => LoginStatus.errorRejected,
-    RepositoryException.internal => LoginStatus.errorNetwork,
-    _ => LoginStatus.errorNetwork,
-  };
+  ///
+  /// [refused] outranks everything. A pin refusal happens inside the TLS
+  /// handshake, BEFORE `pair` goes out, so the only thing sign-in can report is
+  /// that there was no channel — `connection`. Mapping that to "check your
+  /// connection" sends the person after a network that is working perfectly,
+  /// which is the precise confusion this feature exists to remove, and it made
+  /// the honest message unreachable outside the debug gallery.
+  static LoginStatus _statusFor(Object? exception, {required bool refused}) {
+    if (refused) return LoginStatus.errorServerMismatch;
+    return switch (exception) {
+      RepositoryException.invalidRequest => LoginStatus.errorFormat,
+      RepositoryException.notFound => LoginStatus.errorExpired,
+      RepositoryException.authentication => LoginStatus.errorRejected,
+      RepositoryException.internal => LoginStatus.errorNetwork,
+      _ => LoginStatus.errorNetwork,
+    };
+  }
 
   /// Maps the (debug) outcome to a terminal status. `auto` derives new-vs-registered
   /// from the mock dataset so typing a known id reproduces the registered path.
@@ -83,6 +141,7 @@ class LoginBloc extends BaseBloc<LoginEvent, LoginState> {
       LoginOutcome.registered => LoginStatus.navRegistered,
       LoginOutcome.errorFormat => LoginStatus.errorFormat,
       LoginOutcome.errorNetwork => LoginStatus.errorNetwork,
+      LoginOutcome.errorServerMismatch => LoginStatus.errorServerMismatch,
       LoginOutcome.fatal => LoginStatus.navFatal,
       LoginOutcome.auto => LoginStatus.navNewId,
     };

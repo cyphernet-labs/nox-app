@@ -12,17 +12,27 @@ part 'set_username_bloc.freezed.dart';
 part 'set_username_event.dart';
 part 'set_username_state.dart';
 
-/// Set-username form (2.3). Client charset validation is immediate; the uniqueness
-/// check is debounced (~300ms) and CASE-SENSITIVE against the mock dataset. The
-/// field is pre-filled with the server-assigned `User<random>` (a stub here).
-/// `// TODO(backend): real uniqueness + save.`
+/// Set-username form (2.3). Client charset validation is immediate; a name is never
+/// refused as taken (labels are not unique). The field opens on the name the SERVER
+/// assigned, read from the session - see [_onPrefillRequested].
 class SetUsernameBloc extends BaseBloc<SetUsernameEvent, SetUsernameState> {
-  SetUsernameBloc({String initialName = defaultName, this.demo = false})
-    : super(SetUsernameState(name: initialName, status: UsernameStatus.prefilled)) {
+  SetUsernameBloc({String? initialName, bool demo = false})
+    : demo = demo,
+      super(
+        SetUsernameState(
+          name: initialName ?? (demo ? defaultName : ''),
+          status: (initialName ?? (demo ? defaultName : '')).isEmpty ? UsernameStatus.empty : UsernameStatus.prefilled,
+        ),
+      ) {
     on<NameChanged>(_onNameChanged);
+    on<PrefillRequested>(_onPrefillRequested);
     on<DoneRequested>(_onDoneRequested);
     on<SkipRequested>(_onSkipRequested);
     on<NavigationHandled>(_onNavigationHandled);
+    // The real screen asks the session who the server says this person is. Until
+    // now it opened on a constant compiled into the client, which named anyone who
+    // pressed Done without editing the field.
+    if (!demo && initialName == null) add(const SetUsernameEvent.prefillRequested());
   }
 
   /// In demo mode (gallery) the save outcome is a debug stand-in and navigation is
@@ -34,9 +44,22 @@ class SetUsernameBloc extends BaseBloc<SetUsernameEvent, SetUsernameState> {
     emit(state.copyWith(status: UsernameStatus.valid));
   }
 
-  /// Stand-in for the server-assigned default name. Single source:
-  /// [Constants.defaultUserLabel] (shared with the shell + Settings).
+  /// The gallery preview's placeholder name, and the fallback label the shell and
+  /// Settings fall back to. NOT a prefill for the real screen: [_onPrefillRequested]
+  /// reads that from the session, where the server put it.
   static const String defaultName = Constants.defaultUserLabel;
+
+  /// Fills the field with the name the server assigned at the first greeting, which
+  /// `adoptServerIdentity` cached in the session. Nothing is invented: with no cached
+  /// label the field simply opens empty, and `Skip` still keeps whatever the server
+  /// holds. A person who starts typing before the read returns keeps what they typed.
+  Future<void> _onPrefillRequested(PrefillRequested event, Emitter<SetUsernameState> emit) async {
+    if (state.name.isNotEmpty) return;
+    final result = await sessionRepository.readSession();
+    final label = result.match<String?>(onData: (session) => session?.label, onError: (_) => null);
+    if (label == null || label.isEmpty || state.name.isNotEmpty) return;
+    emit(state.copyWith(name: label, status: UsernameStatus.prefilled));
+  }
 
   void _onNameChanged(NameChanged event, Emitter<SetUsernameState> emit) {
     final name = event.name;

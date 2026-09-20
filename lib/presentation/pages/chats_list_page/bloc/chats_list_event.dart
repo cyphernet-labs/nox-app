@@ -18,6 +18,14 @@ sealed class ChatsListEvent with _$ChatsListEvent {
   /// Debug-only: reproduce a load scenario (offline / inline-error / fatal / empty).
   const factory ChatsListEvent.setScenario(ChatsListScenario scenario) = SetScenario;
 
-  /// Live device-connectivity change (feature F3): drives the real Offline banner.
-  const factory ChatsListEvent.connectivityChanged(bool online) = ConnectivityChanged;
+  /// The live channel's phase changed. The PHASE, not a boolean: "not current"
+  /// used to be the whole story, and it made a server presenting the wrong key
+  /// indistinguishable from a dead network — so the app blamed the network and
+  /// called that server for ever.
+  const factory ChatsListEvent.sessionPhaseChanged(SessionPhase phase) = SessionPhaseChanged;
+
+  /// The person asked for another attempt, from the banner. Nothing about a
+  /// terminal phase changes on its own, so without this the app never comes
+  /// back — not even once the cause is fixed.
+  const factory ChatsListEvent.retryConnection() = RetryConnection;
 }

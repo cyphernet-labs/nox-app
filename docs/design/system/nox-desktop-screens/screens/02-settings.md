@@ -1,6 +1,6 @@
 # 02 · Settings
 
-> ⚠️ **Feature 032:** `Your ID` shows the PUBLIC author id with no Show/Hide — it stopped being a secret. The account QR is gone: scanning an id adds nobody, so `Show QR` leads to **Devices**, where an invite is minted with a one-shot token. Logout is irreversible now (the device revokes its own key), and its copy says so.
+> ⚠️ **Feature 032:** `Your ID` shows the PUBLIC author id with no Show/Hide — it stopped being a secret. **The `Show QR` action is gone outright:** it once handed over a bearer secret, then became a shortcut into **7.8 Devices**, which the `Devices` row already is. Adding a device is that screen's own job, with a one-shot token. Logout is irreversible now (the device revokes its own key), and its copy says so.
 
 > **02 · Settings** · desktop (Windows / Linux / macOS) · Material 3 · window 1440×900
 
@@ -9,7 +9,7 @@
 **Adaptation from mobile.** mobile full-screen settings → list-detail · bottom sheet → centered dialog · the identity card is the same widget at both widths
 
 ## Anatomy
-NavigationRail + settings menu pane (340, grouped nav items) + detail pane (content capped to ≤680). Each detail reuses the exact phone widgets.
+NavigationRail + settings menu pane (340: an M3 NavigationDrawer - stadium destinations on the pane itself, each with a bare leading glyph, transparent until selected; the selected one fills `secondaryContainer`, recolours its glyph `onSecondaryContainer` and swaps it to the FILLED variant (the corpus's 40dp tinted circle around the glyph is dropped by owner decision - it competed with the pill drawn around it); `Log out` pinned to the foot in `error`) + detail pane (content capped to ≤680). Each detail reuses the exact phone widgets. Three groups - Account+Devices · Notifications+Appearance+Language · Terms+About - separated by a line UNDER each group, below its padding, so nothing crosses a pill. No card around the destinations: the pane is the container, and a card gave the selection pill a rounded corner to break out through.
 
 ## States
 - `account` — Account
@@ -25,10 +25,10 @@ NavigationRail + settings menu pane (340, grouped nav items) + detail pane (cont
 
 ## Behavior
 - Selecting a menu item highlights it (secondaryContainer) and swaps the detail pane — no push.
-- Account: identity card carrying the name and the ID. Editing → inline name field, with no availability spinner: names are not unique and, on a one-person server, there is nobody to collide with.
+- Account: identity card as an account header — ringed initials avatar, name, the full public ID in mono, and the two tonal actions `Edit name` / `Copy ID`. Editing → inline name field in place of the name, `Edit name` withdrawn while it is open; no availability spinner, because names are not unique and, on a one-person server, there is nobody to collide with.
 - ⚠️ **Phase 037 (2026-09-10) removed the `Server owner` badge** (added by 033) and there is no `People` menu item. The machine holds one person, so a mark that separated the owner from an invited member separates nothing. Same rule as the narrow width — one builder feeds both, so the two cannot drift apart.
-- ⚠️ Phase 032 removed both the mask and the inline account QR: the ID is public now, and a QR of it added nobody. `Show QR` selects the Devices pane, where an invite is minted with a real one-shot token.
-- Notifications: enable switch; OS-denied → InfoBanner + Open settings, switch off.
+- ⚠️ Phase 032 removed both the mask and the inline account QR: the ID is public now, and a QR of it added nobody. The QR action itself is gone too — the `Devices` menu item is the way to the pane that mints an invite.
+- Notifications: enable switch with a bare leading glyph (22, `onSurfaceVariant`) - no 40dp tinted circle; OS-denied → an inset InfoBanner card above it, in the same geometry as the settings cards, with `Open settings` at its trailing edge, switch off.
 - Appearance: System / Light / Dark theme cards. Language: System / English / Українська.
 - Log out → centered confirm Dialog (mobile’s sheet/dialog becomes a centered dialog); destructive action tinted error.
 

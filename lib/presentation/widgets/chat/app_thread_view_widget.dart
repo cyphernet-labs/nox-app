@@ -4,7 +4,6 @@ import 'package:nox_app/presentation/widgets/app_dev_scenario_dropdown.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
-import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/presentation/widgets/chat/watch_chat.dart';
@@ -20,6 +19,7 @@ import 'package:nox_app/presentation/pages/chat_thread_page/bloc/chat_thread_blo
 import 'package:nox_app/presentation/widgets/chat/app_author_header_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_composer_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_date_separator_widget.dart';
+import 'package:nox_app/presentation/widgets/chat/app_attachment_placeholder_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_file_chip_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_image_attachment_widget.dart';
 import 'package:nox_app/presentation/pages/image_viewer_page/image_viewer_page.dart';
@@ -150,7 +150,7 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
                   initial: widget.chat,
                   builder: (context, chat) => AppThreadHeaderWidget(chat: chat, onInfo: widget.onInfo ?? () {}),
                 ),
-              if (state is Initialized && state.isOffline) AppNoticeStripWidget(message: context.l10n.noConnection, icon: NoxIcons.wifiOff),
+              _banner(context, state),
               Expanded(child: _body(context, state)),
               if (state is Initialized) _composerBar(state),
               if (kDebugMode && widget.demo) _scenarioControl(),
@@ -159,6 +159,24 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
         },
       ),
     );
+  }
+
+  /// The connection notice. The wrong machine comes FIRST: it is not a
+  /// connection problem, and saying "No connection" over a server that answered
+  /// sends the person to check their wifi over something no network can fix.
+  /// The action is the only way back - nothing about this changes on its own.
+  Widget _banner(BuildContext context, ChatThreadState state) {
+    if (state is! Initialized) return const SizedBox.shrink();
+    if (state.isServerMismatch) {
+      return AppNoticeStripWidget(
+        message: context.l10n.serverNotRecognised,
+        icon: NoxIcons.error,
+        actionLabel: context.l10n.actionTryAgain,
+        onAction: () => _bloc.add(const ChatThreadEvent.retryConnection()),
+      );
+    }
+    if (state.isOffline) return AppNoticeStripWidget(message: context.l10n.noConnection, icon: NoxIcons.wifiOff);
+    return const SizedBox.shrink();
   }
 
   Widget _body(BuildContext context, ChatThreadState state) {
@@ -178,7 +196,7 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
           for (final m in all.where((m) => m.isSystem)) AppSystemLineWidget(text: context.l10n.systemChatCreated(m.authorLabel)),
           Expanded(
             child: AppEmptyContentWidget(
-              illustration: Assets.svg.illustrations.emptyMessages,
+              glyph: NoxIcons.chatBubble,
               title: context.l10n.threadEmptyTitle,
               message: context.l10n.threadEmptyMessage,
             ),
@@ -268,6 +286,14 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
         onTap: onImageTap,
         onRemove: onRemove,
       );
+    }
+    // A picture whose bytes have not landed yet is NOT the same thing as a file
+    // that cannot be shown, and the two had been drawing the same chip. Only in
+    // a bubble ([onChipTap] is what makes it one): a composer draft's file is on
+    // disk by definition, and nothing is fetching it, so a spinner there would
+    // wait for an event that never comes.
+    if (AppAttachmentPlaceholderWidget.wants(attachment, inBubble: onChipTap != null)) {
+      return AppAttachmentPlaceholderWidget(name: attachment.name, width: imageSize, height: imageSize, onTap: onChipTap);
     }
     final chip = AppFileChipWidget(
       type: attachment.type,

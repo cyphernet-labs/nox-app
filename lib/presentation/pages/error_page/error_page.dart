@@ -96,7 +96,7 @@ class _AppErrorPageState extends State<AppErrorPage> {
           final scaffold = Scaffold(
             body: Column(
               children: [
-                const AppWindowTitlebarWidget(subtitle: 'Error'),
+                AppWindowTitlebarWidget(subtitle: context.l10n.windowSubtitleError),
                 Expanded(child: content),
               ],
             ),

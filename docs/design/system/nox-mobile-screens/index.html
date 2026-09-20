@@ -95,7 +95,10 @@ function renderScreen(id, st, T) {
     case 'chats':   return P({}, <ChatsListScreen t={T} state={st === 'snack' ? 'filled' : st} snack={st === 'snack' ? { text:'Message sent', action:'Undo' } : null} />);
     case 'thread':  return P({}, <ChatThreadScreen t={T} state={st} />);
     case 'file':    return P({}, <FileViewScreen t={T} state={st} />);
-    case 'card':    return P({}, <ChatCardScreen t={T} view={st} />);
+    // 5.4 takes its files view and its connection state from the same key, so
+    // `server-mismatch` renders the banner over the ordinary list rather than
+    // over nothing at all.
+    case 'card':    return P({}, <ChatCardScreen t={T} view={st === 'server-mismatch' ? 'list' : st} state={st === 'server-mismatch' ? 'server-mismatch' : 'normal'} />);
     case 'create':  return P({}, <CreateChatScreen t={T} state={st} />);
     case 'settings':return P({}, <SettingsRootScreen t={T} state={st} />);
     case 'notifications': return P({}, <NotificationsScreen t={T} denied={st === 'denied'} on={true} />);

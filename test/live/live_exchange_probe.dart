@@ -1,3 +1,6 @@
+@Tags(['live'])
+library;
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
@@ -7,6 +10,8 @@ import 'package:nox_app/data/remote/datasource/real/real_chat_remote_data_source
 import 'package:nox_app/data/remote/datasource/real/real_message_remote_data_source.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/remote/socket/socket_channel_factory.dart';
+
+import 'live_target.dart';
 import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
@@ -18,7 +23,13 @@ import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 /// hand after starting the server:
 ///
 ///   client_backend$ go build -o /tmp/noxd . && /tmp/noxd -addr 127.0.0.1:8080 -db /tmp/nox-live.db
-///   fvm flutter test test/live/live_exchange_probe.dart
+///   fvm flutter test test/live/live_exchange_probe.dart `--dart-define=link=<pairing link>`
+///
+/// ⚠️ These three probes greet ANONYMOUSLY, with a label and no device key.
+/// The server has refused such a greeting since feature 032 - it answers
+/// `unauthenticated` - so they have been stale since then and feature 036 does
+/// not repair that; it only moves them onto the transport that now exists.
+/// `pairing_live_probe.dart` is the one that pairs properly.
 ///
 /// It is the cheapest honest answer to "does the vertical actually work" —
 /// the same classes the dev flavor resolves, no mocks anywhere.
@@ -55,13 +66,14 @@ void main() {
   tearDownAll(() async => getIt.reset());
 
   test('the app stack exchanges messages with a live noxd', () async {
-    final socket = NoxSocketClient(WebSocketChannelFactory(), _MemoryCursor());
+    LiveTarget.letTheNetworkThrough();
+    final target = LiveTarget.orSkip();
+    if (target == null) return;
+    final socket = NoxSocketClient(WebSocketChannelFactory(target.client()), _MemoryCursor());
     addTearDown(socket.stop);
 
     await socket.start(
-      url: Uri.parse('ws://127.0.0.1:8080/ws'), // A probe names itself and nothing else: no login derivation, no device
-      // id. That is deliberate - the contract forbids refusing such a greeting,
-      // and it is exactly the shape this probe must keep working in.
+      url: target.socketUrl,
       credentialsProvider: () async => const GreetingCredentials(label: 'AppProbe'),
     );
     await Future<void>.delayed(const Duration(seconds: 2));

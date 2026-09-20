@@ -36,7 +36,13 @@ sealed class ChatThreadEvent with _$ChatThreadEvent {
   const factory ChatThreadEvent.attachmentRemoved() = AttachmentRemoved;
 
   /// Live device-connectivity change (P1): drives the real offline banner + send-queue.
-  const factory ChatThreadEvent.connectivityChanged(bool online) = ConnectivityChanged;
+  /// The live channel's phase changed. The PHASE, not a boolean: a server
+  /// presenting the wrong key is not a dead network, and collapsing the two
+  /// made the app blame the network and keep calling that server for ever.
+  const factory ChatThreadEvent.sessionPhaseChanged(SessionPhase phase) = SessionPhaseChanged;
+
+  /// The person asked for another attempt, from the banner.
+  const factory ChatThreadEvent.retryConnection() = RetryConnection;
 
   /// Debug-only: reproduce a thread scenario (empty / offline / fatal / send-error).
   const factory ChatThreadEvent.setScenario(ChatThreadScenario scenario) = SetScenario;

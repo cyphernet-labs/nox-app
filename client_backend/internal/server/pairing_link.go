@@ -28,7 +28,7 @@ const (
 //
 // The payload lives in the fragment because a browser never sends a fragment
 // to a server - a link opened in a browser by mistake leaks the token nowhere.
-func BuildPairingLink(addr, serverKey, token string) (string, error) {
+func BuildPairingLink(addr, serverFingerprint, token string) (string, error) {
 	host, portStr, err := net.SplitHostPort(addr)
 	if err != nil {
 		return "", fmt.Errorf("split pairing address: %w", err)
@@ -38,9 +38,9 @@ func BuildPairingLink(addr, serverKey, token string) (string, error) {
 		return "", fmt.Errorf("parse pairing port: %w", err)
 	}
 
-	key, err := base64.StdEncoding.DecodeString(serverKey)
-	if err != nil || len(key) != 32 {
-		return "", errors.New("server key is not 32 bytes")
+	fingerprint, err := base64.StdEncoding.DecodeString(serverFingerprint)
+	if err != nil || len(fingerprint) != 32 {
+		return "", errors.New("server fingerprint is not 32 bytes")
 	}
 	tok, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil || len(tok) != 16 {
@@ -64,7 +64,7 @@ func BuildPairingLink(addr, serverKey, token string) (string, error) {
 	}
 
 	payload = binary.BigEndian.AppendUint16(payload, uint16(port))
-	payload = append(payload, key...)
+	payload = append(payload, fingerprint...)
 	payload = append(payload, tok...)
 
 	return pairingLinkPrefix + base64.RawURLEncoding.EncodeToString(payload), nil

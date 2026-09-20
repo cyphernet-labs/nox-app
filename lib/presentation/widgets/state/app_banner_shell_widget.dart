@@ -1,13 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 
-/// Thin shared shell for the app's inline banners — a `surfaceContainer` [Material]
-/// at `NoxElevation.level3` wrapping a padded [Row]. It reads as a layered banner
-/// beneath the chrome and sidesteps `MaterialBanner`'s non-empty-actions rule.
-/// Callers own the row content (glyph + text + action); this only unifies the
-/// surface/elevation/padding/row scaffold shared by the notice strip and the info
-/// banner. [crossAxisAlignment] defaults to `center` (single-line notice); the
-/// multi-line info banner passes `start`.
+/// Thin shell for the app's FULL-BLEED notice strip — a `surfaceContainer`
+/// [Material] at `NoxElevation.level3` wrapping a padded [Row]. It reads as a
+/// layered band beneath the chrome and sidesteps `MaterialBanner`'s
+/// non-empty-actions rule. Callers own the row content (glyph + text + action).
+///
+/// One caller now: [AppNoticeStripWidget], the offline strip directly under the
+/// chats chrome, where edge-to-edge is right because the band belongs to the
+/// chrome. `AppInfoBannerWidget` left it - on a settings screen the same slab ran
+/// edge to edge over inset cards and looked like nothing else there.
 class AppBannerShellWidget extends StatelessWidget {
   const AppBannerShellWidget({
     super.key,

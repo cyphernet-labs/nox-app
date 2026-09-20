@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:injectable/injectable.dart';
-import 'package:nox_app/data/remote/api_client.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
 import 'package:nox_app/data/sync/outbox_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
@@ -28,12 +27,11 @@ void main() {
       ]);
       await getIt.allReady();
       await getIt<AppConfigRepository>().initialize(flavorType: flavor);
-      // The blob half of the file chain (contract §7) goes over HTTP, and the
-      // server hands out RELATIVE paths because it does not know its own public
-      // address. Without a base URL those resolve to nothing, every byte
-      // transfer fails as a connection error, and the outbox — which treats
-      // that as retryable — pauses on the head of the queue forever.
-      getIt<ApiClient>().initBase();
+      // The blob half of the file chain (contract §7) is pointed at the paired
+      // server by LiveSessionStarter, below, and nowhere else. It used to be
+      // pointed here at the build-time address, which has no fingerprint by
+      // construction - so bytes went to a machine nothing could check, in the
+      // clear, while the socket talked to the person's own server.
       // One-time upgrade housekeeping, HERE and not inside a read: it is
       // settled forever on the first launch after an update, and a repository
       // read that also migrates puts that work inside the envelope which
