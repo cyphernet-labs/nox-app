@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -587,5 +588,100 @@ func TestTheServicePageIsStillPlainHTTPOnLoopback(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "https://nox.app/p/#") {
 		t.Fatalf("the page came back without its claim link: %s", body)
+	}
+}
+
+// statusResponse fetches the page and hands back the recorder, so a test can
+// read the headers as well as the body.
+func statusResponse(t *testing.T, srv *Server) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = "127.0.0.1:8081"
+	srv.StatusHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status page = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	return rec
+}
+
+// The claim link is two lines of base64 nobody should have to select by hand.
+func TestTheClaimLinkCanBeCopied(t *testing.T) {
+	_, srv := newTestServer(t)
+	dialable(srv)
+	if _, err := srv.store.EnsureServerIdentity(context.Background()); err != nil {
+		t.Fatalf("EnsureServerIdentity: %v", err)
+	}
+
+	body := statusResponse(t, srv).Body.String()
+	if !strings.Contains(body, `<button type="button" class="copy" hidden>`) {
+		t.Fatalf("no copy button beside the claim link: %s", body)
+	}
+	// HIDDEN in the markup, revealed by the script. A control that does nothing
+	// when pressed is worse than no control, and that is exactly what a page
+	// whose script did not run would otherwise show.
+	if !strings.Contains(body, `<script>`) {
+		t.Fatal("the button is there but the script that reveals it is not")
+	}
+	// The feedback has to reach a screen reader, not only the eye.
+	if !strings.Contains(body, `class="copied" role="status"`) {
+		t.Fatal("the copy feedback is not announced")
+	}
+}
+
+// The policy admits the script by HASH. This is the test that keeps the two
+// from drifting: it hashes the script the page actually served and demands the
+// header names that hash - so editing one without the other fails here rather
+// than in a browser, silently, as a button that stopped working.
+func TestThePolicyAdmitsExactlyTheScriptThePageServed(t *testing.T) {
+	_, srv := newTestServer(t)
+	dialable(srv)
+	if _, err := srv.store.EnsureServerIdentity(context.Background()); err != nil {
+		t.Fatalf("EnsureServerIdentity: %v", err)
+	}
+
+	rec := statusResponse(t, srv)
+	body := rec.Body.String()
+
+	open := strings.Index(body, "<script>")
+	closing := strings.Index(body, "</script>")
+	if open < 0 || closing < open {
+		t.Fatalf("no script on a page that carries a link: %s", body)
+	}
+	served := body[open+len("<script>") : closing]
+
+	sum := sha256.Sum256([]byte(served))
+	want := "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
+
+	policy := rec.Header().Get("Content-Security-Policy")
+	if !strings.Contains(policy, "script-src "+want) {
+		t.Fatalf("the policy does not admit the script the page served.\n  served hash: %s\n  policy:      %s", want, policy)
+	}
+	// And nothing weaker. 'unsafe-inline' would admit an injected script too,
+	// on the one page that hands out ownership of this machine.
+	if strings.Contains(policy, "unsafe-inline'; script") || strings.Contains(policy, "script-src 'unsafe-inline'") {
+		t.Fatalf("the policy admits inline scripts wholesale: %s", policy)
+	}
+	// The script may read the link. It must have nowhere to send it.
+	if !strings.HasPrefix(policy, "default-src 'none'") {
+		t.Fatalf("default-src is no longer none, so the script has somewhere to send the link: %s", policy)
+	}
+}
+
+// A page with no link carries no script, and the policy says so rather than
+// leaving a permission standing for something that is not there.
+func TestAPageWithNoLinkCarriesNoScriptAndAdmitsNone(t *testing.T) {
+	ts, srv := newTestServer(t)
+	dialable(srv)
+	// A claimed server with a device still on it shows the status page, not the
+	// claim page - so there is no link and nothing to copy.
+	claimDevice(t, ts, srv)
+
+	rec := statusResponse(t, srv)
+	if strings.Contains(rec.Body.String(), "<script>") {
+		t.Fatal("a page with no link is carrying a script anyway")
+	}
+	if policy := rec.Header().Get("Content-Security-Policy"); strings.Contains(policy, "script-src") {
+		t.Fatalf("no script on the page, but the policy still admits one: %s", policy)
 	}
 }
