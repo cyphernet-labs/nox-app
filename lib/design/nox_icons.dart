@@ -98,6 +98,50 @@ abstract final class NoxIcons {
   /// Error — error color (tap to retry); also the universal error glyph (3.1).
   static SvgGenImage get error => Assets.svg.icons.error;
 
+  // --- settings destinations (7.1) — the leading chip of each menu row.
+  // Selected rows in the desktop pane draw the FILLED variant, exactly as the
+  // bottom bar does for its tabs; unselected rows draw the outlined one.
+
+  /// 7.1 `Account` — unselected.
+  static SvgGenImage get person => Assets.svg.icons.person;
+
+  /// 7.1 `Account` — selected.
+  static SvgGenImage get personFill => Assets.svg.icons.personFill;
+
+  /// 7.1 `Devices` — unselected.
+  static SvgGenImage get devices => Assets.svg.icons.devices;
+
+  /// 7.1 `Devices` — selected.
+  static SvgGenImage get devicesFill => Assets.svg.icons.devicesFill;
+
+  /// 7.1 `Notifications` — selected (the outlined bell is [notifications]).
+  static SvgGenImage get notificationsFill => Assets.svg.icons.notificationsFill;
+
+  /// 7.1 `Appearance` — unselected.
+  static SvgGenImage get palette => Assets.svg.icons.palette;
+
+  /// 7.1 `Appearance` — selected.
+  static SvgGenImage get paletteFill => Assets.svg.icons.paletteFill;
+
+  /// 7.1 `Language` — unselected (a globe, not a flag: the option is a language).
+  static SvgGenImage get language => Assets.svg.icons.language;
+
+  /// 7.1 `Language` — selected.
+  static SvgGenImage get languageFill => Assets.svg.icons.languageFill;
+
+  /// 7.1 `Terms` — selected (the outlined sheet is [description]).
+  static SvgGenImage get descriptionFill => Assets.svg.icons.descriptionFill;
+
+  /// 7.1 `About` — unselected.
+  static SvgGenImage get info => Assets.svg.icons.info;
+
+  /// 7.1 `About` — selected.
+  static SvgGenImage get infoFill => Assets.svg.icons.infoFill;
+
+  /// 7.1 `Log out`. Filled at every width: the design draws the destructive row
+  /// filled whether or not it is selected, and it never is.
+  static SvgGenImage get logoutFill => Assets.svg.icons.logoutFill;
+
   // --- notifications / connectivity / disclosure ---
 
   /// 7.2 notifications switch leading chip (bell).

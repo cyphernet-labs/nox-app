@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
+import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
@@ -185,17 +186,42 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
       body: ListView(
         children: [
           Padding(padding: _cardMargin, child: _identityCard(state, wide: false)),
-          // One tile per destination, each its own rounded surface. Merged into a
-          // single card with hairlines between them they read as one lump; bare on
-          // the scaffold background they read as an unfinished list.
-          AppSettingsNavRowWidget(title: context.l10n.settingsDevicesTitle, onTap: () => _openSection(DevicesPage.route())),
-          AppSettingsNavRowWidget(title: context.l10n.settingsNotificationsTitle, onTap: () => _openSection(NotificationsPage.route())),
-          AppSettingsNavRowWidget(title: context.l10n.settingsAppearanceTitle, onTap: () => _openSection(AppearancePage.route())),
-          AppSettingsNavRowWidget(title: context.l10n.settingsLanguageTitle, onTap: () => _openSection(LanguagePage.route())),
-          AppSettingsNavRowWidget(title: context.l10n.settingsTermsTitle, onTap: () => _openSection(TermsPage.route())),
-          AppSettingsNavRowWidget(title: context.l10n.settingsAboutTitle, onTap: () => _openSection(AboutPage.route())),
+          // One tile per destination, each its own rounded surface with the
+          // leading chip the design gives it. Merged into a single card with
+          // hairlines between them they read as one lump; bare on the scaffold
+          // background they read as an unfinished list.
+          AppSettingsNavRowWidget(
+            title: context.l10n.settingsDevicesTitle,
+            icon: NoxIcons.devices,
+            onTap: () => _openSection(DevicesPage.route()),
+          ),
+          AppSettingsNavRowWidget(
+            title: context.l10n.settingsNotificationsTitle,
+            icon: NoxIcons.notifications,
+            onTap: () => _openSection(NotificationsPage.route()),
+          ),
+          AppSettingsNavRowWidget(
+            title: context.l10n.settingsAppearanceTitle,
+            icon: NoxIcons.palette,
+            onTap: () => _openSection(AppearancePage.route()),
+          ),
+          AppSettingsNavRowWidget(
+            title: context.l10n.settingsLanguageTitle,
+            icon: NoxIcons.language,
+            onTap: () => _openSection(LanguagePage.route()),
+          ),
+          AppSettingsNavRowWidget(
+            title: context.l10n.settingsTermsTitle,
+            icon: NoxIcons.description,
+            onTap: () => _openSection(TermsPage.route()),
+          ),
+          AppSettingsNavRowWidget(
+            title: context.l10n.settingsAboutTitle,
+            icon: NoxIcons.info,
+            onTap: () => _openSection(AboutPage.route()),
+          ),
           SizedBox(height: AppSpacingTokens.s16),
-          AppSettingsNavRowWidget(title: context.l10n.logoutRow, color: Theme.of(context).colorScheme.error, onTap: _logout),
+          AppSettingsNavRowWidget(title: context.l10n.logoutRow, icon: NoxIcons.logoutFill, danger: true, onTap: _logout),
           // ..._devMenuRows(),
         ],
       ),
@@ -233,9 +259,10 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
   }
 
   Widget _menuPane(BuildContext context, SettingsRootState state) {
-    final colorScheme = Theme.of(context).colorScheme;
-    AppSettingsNavRowWidget item(_Section section, String title) => AppSettingsNavRowWidget(
+    AppSettingsNavRowWidget item(_Section section, String title, SvgGenImage icon, SvgGenImage selectedIcon) => AppSettingsNavRowWidget(
       title: title,
+      icon: icon,
+      selectedIcon: selectedIcon,
       selected: _selected == section,
       menuPane: true,
       onTap: () => setState(() => _selected = section),
@@ -251,22 +278,34 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
           trailingInset: AppSpacingTokens.s8,
         ),
         // An M3 NavigationDrawer: destinations as stadium items on the pane
-        // itself, transparent until selected. No card and no hairlines - the pane
-        // already separates this list from the detail beside it, and a card around
-        // it only added a second edge for the selection pill to break out through.
+        // itself, transparent until selected, in the three groups the desktop
+        // corpus separates with a line UNDER each group rather than with a card.
+        // The line sits below the group's padding, so it never crosses a pill.
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              item(_Section.account, context.l10n.settingsAccountTitle),
-              item(_Section.devices, context.l10n.settingsDevicesTitle),
-              item(_Section.notifications, context.l10n.settingsNotificationsTitle),
-              item(_Section.appearance, context.l10n.settingsAppearanceTitle),
-              item(_Section.language, context.l10n.settingsLanguageTitle),
-              item(_Section.terms, context.l10n.settingsTermsTitle),
-              item(_Section.about, context.l10n.settingsAboutTitle),
+              _navGroup(context, [
+                item(_Section.account, context.l10n.settingsAccountTitle, NoxIcons.person, NoxIcons.personFill),
+                item(_Section.devices, context.l10n.settingsDevicesTitle, NoxIcons.devices, NoxIcons.devicesFill),
+              ]),
+              _navGroup(context, [
+                item(_Section.notifications, context.l10n.settingsNotificationsTitle, NoxIcons.notifications, NoxIcons.notificationsFill),
+                item(_Section.appearance, context.l10n.settingsAppearanceTitle, NoxIcons.palette, NoxIcons.paletteFill),
+                item(_Section.language, context.l10n.settingsLanguageTitle, NoxIcons.language, NoxIcons.languageFill),
+              ]),
+              _navGroup(context, [
+                item(_Section.terms, context.l10n.settingsTermsTitle, NoxIcons.description, NoxIcons.descriptionFill),
+                item(_Section.about, context.l10n.settingsAboutTitle, NoxIcons.info, NoxIcons.infoFill),
+              ], last: true),
               const Spacer(),
-              AppSettingsNavRowWidget(title: context.l10n.logoutRow, color: colorScheme.error, menuPane: true, onTap: _logout),
+              AppSettingsNavRowWidget(
+                title: context.l10n.logoutRow,
+                icon: NoxIcons.logoutFill,
+                danger: true,
+                menuPane: true,
+                onTap: _logout,
+              ),
               SizedBox(height: AppSpacingTokens.s8),
               // ..._devMenuRows(menuPane: true),
             ],
@@ -332,6 +371,22 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
     SettingsNameStatus.saveFailed => context.l10n.settingsNameSaveError,
     _ => null,
   };
+
+  /// One menu-pane group: its items, a little breathing room, and the line that
+  /// closes it. The last group draws no line - there is nothing under it to
+  /// separate from.
+  Widget _navGroup(BuildContext context, List<Widget> items, {bool last = false}) => Container(
+    padding: EdgeInsets.only(bottom: AppSpacingTokens.s6),
+    margin: EdgeInsets.only(bottom: AppSpacingTokens.s6),
+    decoration: last
+        ? null
+        : BoxDecoration(
+            border: Border(
+              bottom: BorderSide(color: Theme.of(context).colorScheme.outlineVariant, width: AppDimensionTokens.border.hairline),
+            ),
+          ),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: items),
+  );
 
   /// The margin `AppSettingsGroupWidget` gives itself. Anything placed beside a
   /// group card uses it, so every card edge on the screen is the same edge.

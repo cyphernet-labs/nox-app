@@ -9,7 +9,7 @@
 **Purpose.** Account identity + grouped settings entries.
 
 ## Anatomy
-App bar (Settings). Identity card as an account header: ringed initials avatar, name, the full public ID, and two tonal actions (Edit name / Copy ID). One rounded tile per destination (`surfaceContainerLow`, radius lg, 8 apart): Devices, Notifications, Appearance, Language, Terms, About. Destructive Log out in a tile of its own below a wider gap. Bottom bar. Two earlier shapes were wrong and are recorded in the screen spec: bare rows on the scaffold background, and all of them merged into one card with hairlines.
+App bar (Settings). Identity card as an account header: ringed initials avatar, name, the full public ID, and two tonal actions (Edit name / Copy ID). One rounded tile per destination (`surfaceContainerLow`, radius lg, 8 apart), each with a 40dp `secondaryContainer` chip in front and a chevron behind: Devices, Notifications, Appearance, Language, Terms, About. Destructive Log out in a tile of its own below a wider gap - `error` throughout, chip at 14%, glyph filled, no chevron. Bottom bar. Two earlier shapes were wrong and are recorded in the screen spec: bare rows on the scaffold background, and all of them merged into one card with hairlines.
 
 ## States
 - `loaded` — Loaded
