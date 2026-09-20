@@ -5,7 +5,7 @@
 **Purpose.** Choose the app language.
 
 ## Anatomy
-App bar (back + Language). Grouped radio rows with a leading flag/glyph: System, English, Українська.
+App bar (back + Language). Three single-select option cards - the same ones Appearance (7.3) uses, without the leading thumbnail: System, English, Українська.
 
 ## States
 - `System` — System
@@ -24,8 +24,7 @@ App bar (back + Language). Grouped radio rows with a leading flag/glyph: System,
 
 ## Design-system components
 - AppBar (title)
-- SettingsGroup / LangRow
-- FlagUK / FlagUA / SysCircle
+- SelectOption (shared with 7.3 Appearance)
 
 ---
 Live design: open `index.html` → 7.4 Language (switch states with the chips). Components are rendered from the shared design system (`_src/`).

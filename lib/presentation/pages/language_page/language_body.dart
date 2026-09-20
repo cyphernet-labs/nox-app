@@ -1,18 +1,19 @@
 import 'package:flutter/material.dart';
-import 'package:nox_app/design/app_dimension_tokens.dart';
-import 'package:nox_app/design/gen/assets.gen.dart';
-import 'package:nox_app/design/nox_icons.dart';
+import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/general/app_language.dart';
 import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/general/locale_controller.dart';
-import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
-import 'package:nox_app/presentation/widgets/settings/app_settings_group_widget.dart';
+import 'package:nox_app/presentation/widgets/settings/app_select_option_widget.dart';
 
-/// 7.4 Language content — System / English / Українська radio rows inside a settings
-/// group, each with a leading flag/glyph (smartphone chip / UK flag / UA flag) and a
-/// `primary`-tinted selected row (persisted + live via LocaleController). No Scaffold/AppBar so it embeds in
-/// both the mobile leaf chrome (LanguagePage) and the desktop Settings list-detail
-/// pane (7.1). No own BLoC (UI-first exception).
+/// 7.4 Language content — System / English / Українська as single-select option
+/// cards, the same [AppSelectOptionWidget] Appearance 7.3 uses. The screen spec
+/// asks for exactly that ("pattern as in 7.3"); until now this screen was the one
+/// place in Settings still on raw `RadioListTile`s, with 40dp national flags that
+/// clipped against the rows they sat in and a hand-mixed 10%-alpha selection tint
+/// instead of a Material token.
+///
+/// No Scaffold/AppBar so it embeds in both the mobile leaf chrome (LanguagePage)
+/// and the desktop Settings list-detail pane (7.1). No own BLoC (UI-first exception).
 class LanguageBody extends StatefulWidget {
   const LanguageBody({super.key});
 
@@ -29,55 +30,22 @@ class _LanguageBodyState extends State<LanguageBody> {
     AppLanguage.ukrainian => context.l10n.languageUkrainian,
   };
 
-  /// 40dp round leading: a smartphone chip for System, the country flag otherwise.
-  Widget _leading(BuildContext context, AppLanguage language) {
-    final size = AppDimensionTokens.size.avatarSm;
-    switch (language) {
-      case AppLanguage.system:
-        final colorScheme = Theme.of(context).colorScheme;
-        return Container(
-          width: size,
-          height: size,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(shape: BoxShape.circle, color: colorScheme.secondaryContainer),
-          child: AppIconWidget(NoxIcons.smartphone, size: AppDimensionTokens.icon.base, color: colorScheme.onSecondaryContainer),
-        );
-      case AppLanguage.english:
-        return Assets.svg.flags.gb.svg(width: size, height: size);
-      case AppLanguage.ukrainian:
-        return Assets.svg.flags.ua.svg(width: size, height: size);
-    }
+  void _select(AppLanguage language) {
+    setState(() => _selected = language);
+    LocaleController.instance.set(language);
   }
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return RadioGroup<AppLanguage>(
-      groupValue: _selected,
-      onChanged: (value) {
-        if (value == null) return;
-        setState(() => _selected = value);
-        LocaleController.instance.set(value);
-      },
-      child: ListView(
-        children: [
-          AppSettingsGroupWidget(
-            children: [
-              for (final language in AppLanguage.values)
-                RadioListTile<AppLanguage>(
-                  value: language,
-                  // Design: the selected row's title keeps the normal onSurface color (the
-                  // tile tint + radio show selection) — not the M3 default primary tint.
-                  title: Text(_label(context, language), style: TextStyle(color: colorScheme.onSurface)),
-                  secondary: _leading(context, language),
-                  controlAffinity: ListTileControlAffinity.trailing,
-                  selected: _selected == language,
-                  selectedTileColor: colorScheme.primary.withValues(alpha: 0.1),
-                ),
-            ],
+    return ListView(
+      padding: EdgeInsets.all(AppSpacingTokens.s16),
+      children: [
+        for (final language in AppLanguage.values)
+          Padding(
+            padding: EdgeInsets.only(bottom: AppSpacingTokens.s12),
+            child: AppSelectOptionWidget(label: _label(context, language), selected: _selected == language, onTap: () => _select(language)),
           ),
-        ],
-      ),
+      ],
     );
   }
 }

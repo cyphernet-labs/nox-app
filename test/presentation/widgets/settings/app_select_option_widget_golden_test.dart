@@ -3,7 +3,7 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:nox_app/presentation/widgets/settings/app_theme_option_widget.dart';
+import 'package:nox_app/presentation/widgets/settings/app_select_option_widget.dart';
 
 import '../../../utils/golden.dart';
 
@@ -25,7 +25,7 @@ void main() {
   // mainAxisSize.max, so each option is wrapped in IntrinsicHeight to hug its content
   // height rather than stretching to fill the test surface).
   goldenTest(
-    'app_theme_option_widget',
+    'app_select_option_widget',
     () => Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -33,7 +33,7 @@ void main() {
         children: [
           // Selected — shows the selection ring/accent.
           IntrinsicHeight(
-            child: AppThemeOptionWidget(
+            child: AppSelectOptionWidget(
               label: 'Light',
               caption: 'Bright surfaces',
               selected: true,
@@ -44,7 +44,7 @@ void main() {
           const SizedBox(height: 12),
           // Unselected — the resting chrome.
           IntrinsicHeight(
-            child: AppThemeOptionWidget(
+            child: AppSelectOptionWidget(
               label: 'Dark',
               caption: 'Dim surfaces',
               selected: false,
