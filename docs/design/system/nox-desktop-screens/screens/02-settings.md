@@ -28,7 +28,7 @@ NavigationRail + settings menu pane (340, grouped nav items) + detail pane (cont
 - Account: identity card as an account header — ringed initials avatar, name, the full public ID in mono, and the two tonal actions `Edit name` / `Copy ID`. Editing → inline name field in place of the name, `Edit name` withdrawn while it is open; no availability spinner, because names are not unique and, on a one-person server, there is nobody to collide with.
 - ⚠️ **Phase 037 (2026-09-10) removed the `Server owner` badge** (added by 033) and there is no `People` menu item. The machine holds one person, so a mark that separated the owner from an invited member separates nothing. Same rule as the narrow width — one builder feeds both, so the two cannot drift apart.
 - ⚠️ Phase 032 removed both the mask and the inline account QR: the ID is public now, and a QR of it added nobody. The QR action itself is gone too — the `Devices` menu item is the way to the pane that mints an invite.
-- Notifications: enable switch, no leading glyph (settings rows are icon-less); OS-denied → full-bleed InfoBanner with `Open settings` at its trailing edge, switch off.
+- Notifications: enable switch, no leading glyph (settings rows are icon-less); OS-denied → an inset InfoBanner card above it, in the same geometry as the settings cards, with `Open settings` at its trailing edge, switch off.
 - Appearance: System / Light / Dark theme cards. Language: System / English / Українська.
 - Log out → centered confirm Dialog (mobile’s sheet/dialog becomes a centered dialog); destructive action tinted error.
 
