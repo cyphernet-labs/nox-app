@@ -191,10 +191,10 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
         padding: EdgeInsets.only(bottom: _dockedFabClearance),
         children: [
           Padding(padding: _cardMargin, child: _identityCard(state, wide: false)),
-          // One tile per destination, each its own rounded surface with the
-          // leading chip the design gives it. Merged into a single card with
-          // hairlines between them they read as one lump; bare on the scaffold
-          // background they read as an unfinished list.
+          // One tile per destination, each its own rounded surface with a bare
+          // leading glyph. Merged into a single card with hairlines between them
+          // they read as one lump; bare on the scaffold background they read as
+          // an unfinished list.
           AppSettingsNavRowWidget(
             title: context.l10n.settingsDevicesTitle,
             icon: NoxIcons.devices,

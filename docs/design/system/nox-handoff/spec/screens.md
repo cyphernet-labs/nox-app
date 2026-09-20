@@ -64,7 +64,7 @@ Legend: **M** = mobile build, **D** = desktop build.
 
 ## 7 Settings · `uploads/settings-root.md`, `appearance.md`, `language.md`, `notifications.md`, `terms.md`, `about.md`
 - **7.0 Root:** `AppBar` `Settings` + grouped list — Identity card (7.1), Appearance (7.3), Language (7.4), Notifications switch, Terms, About, Logout.
-- **7.1 Identity:** identity `Card` (mask `••••••••` / `Show` / `Copy` / `Show QR`). **Show QR** → bottom sheet (M) with **brand-fixed** white QR surface. **D:** Account masks ID by default + shows account QR (no secret reveal).
+- **7.1 Identity:** identity `Card` as an account header — ringed initials avatar, name, the FULL public ID in mono, and two tonal actions `Edit name` / `Copy ID`. No mask, no `Show`/`Hide`, no QR action at either width: the ID stopped being a secret in 032, and adding a device is 7.8's own screen.
 - **7.3 Appearance:** `RadioListTile` System / Light / Dark → `themeMode`.
 - **7.4 Language:** `RadioListTile` System / English / Українська (system falls back to English if OS ≠ EN/UK).
 - **Logout:** `AlertDialog` confirm (destructive `error`) → wipes ID + local data.

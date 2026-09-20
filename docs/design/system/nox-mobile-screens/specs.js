@@ -568,7 +568,6 @@ window.NOX_SPECS = [
     ],
     "copy": [
       "Title: Settings",
-      "ID mask: ••••••••",
       "Logout title: Log out?",
       "Logout body: Your ID and local data will be removed from this device.",
       "Actions: Cancel · Log out"

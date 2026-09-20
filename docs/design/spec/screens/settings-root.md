@@ -116,8 +116,8 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 | Q7 | Сепарация блока идентичности | Material Card |
 | Q8 | Группировка секций | Плоский список (без group headers) |
 | Q9 | Loading state ID | `CircularProgressIndicator` в позиции ID |
-| — | Раскрытие ID | Text wrap (monospace) в одну колонку; toggle `Show` / `Hide` |
-| — | QR sheet | QR на светлом фоне (сканируем в обеих темах), без raw-ID текстом, drag-handle, wrap-height |
+| — | ~~Раскрытие ID~~ | Раскрывать нечего — ID показан целиком, моноширинным |
+| — | ~~QR sheet~~ | Листа нет; добавление устройства — 7.8 |
 | — | Inline-name-edit | Save по Enter/Done/blur при валидном; invalid — остаётся в edit; отказ сервера — остаётся в edit с сообщением; пустое → не меняет имя |
 | — | Logout-loading | Спиннер в кнопке диалога; диалог модален до перехода в 1.1 |
 
