@@ -100,10 +100,21 @@ class AppIdentityCardWidget extends StatelessWidget {
     //
     // Monospace, and the whole string: it is a key, and a key reads as one only
     // when its characters line up. `Copy ID` below is what it is here for.
-    return Text(
-      rawId.isEmpty ? _unknownId : rawId,
-      textAlign: TextAlign.center,
-      style: AppTextStyleTokens.monoBody(color: colorScheme.onSurfaceVariant),
+    final value = rawId.isEmpty ? _unknownId : rawId;
+    // Named for assistive tech, unnamed on screen. The card deliberately carries
+    // no `Your ID` caption - the string sits under the person's own name, and
+    // `Copy ID` below says what it is - but a screen reader given the bare Text
+    // announces forty opaque characters with nothing to say what they are. The
+    // label carries the value with it, so excluding the child's own semantics
+    // hides nothing.
+    return Semantics(
+      label: '${context.l10n.settingsYourIdLabel}: $value',
+      excludeSemantics: true,
+      child: Text(
+        value,
+        textAlign: TextAlign.center,
+        style: AppTextStyleTokens.monoBody(color: colorScheme.onSurfaceVariant),
+      ),
     );
   }
 

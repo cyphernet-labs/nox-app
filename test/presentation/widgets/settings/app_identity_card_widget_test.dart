@@ -16,11 +16,12 @@ void main() {
     bool initialLoading = false,
     bool editing = false,
     String name = 'Aria',
+    String rawId = _id,
     VoidCallback? onEditName,
     VoidCallback? onCopy,
   }) => AppIdentityCardWidget(
     name: name,
-    rawId: _id,
+    rawId: rawId,
     initialLoading: initialLoading,
     editing: editing,
     onEditName: onEditName ?? () {},
@@ -39,6 +40,39 @@ void main() {
       expect(find.text(_id), findsOneWidget);
       expect(find.widgetWithText(FilledButton, l10nEn.settingsEditNameAction), findsOneWidget);
       expect(find.widgetWithText(FilledButton, l10nEn.settingsCopyIdAction), findsOneWidget);
+    });
+
+    testWidgets('the id line is named for a screen reader, though nothing names it on screen', (tester) async {
+      // No `Your ID` caption is drawn - the string sits under the person's own
+      // name with `Copy ID` beneath it, and a caption adds nothing to the eye.
+      // A screen reader without one gets forty opaque characters and no noun.
+      // The semantics tree is not built unless something asks for it. Disposed
+      // inside the body, not in a tearDown: the handle check runs BEFORE tearDowns.
+      final semantics = tester.ensureSemantics();
+      await pumpApp(tester, card());
+
+      // Nothing on screen says `Your ID`...
+      expect(find.text(l10nEn.settingsYourIdLabel), findsNothing);
+      // ...but the card's semantics node does. The card merges into one node, so
+      // a reader hears `A, Aria, Your ID: u_345…`; without the wrapper the third
+      // part is the bare key.
+      expect(tester.getSemantics(find.text(_id)).label, contains('${l10nEn.settingsYourIdLabel}: $_id'));
+
+      semantics.dispose();
+    });
+
+    testWidgets('with no id yet: an em dash, and Copy withdrawn', (tester) async {
+      // `authorId` is null until a greeting brings one - always on the mock
+      // flavours, and between pairing and the first greeting on a live one.
+      // Rendered bare, that is a gap that reads as a rendering fault; and an
+      // enabled Copy would confirm an empty clipboard to somebody who then
+      // pastes nothing.
+      await pumpApp(tester, card(rawId: ''));
+
+      expect(find.text('—'), findsOneWidget);
+      expect(tester.widget<FilledButton>(find.widgetWithText(FilledButton, l10nEn.settingsCopyIdAction)).onPressed, isNull);
+      // Edit name is untouched: a person has a name before they have an id.
+      expect(tester.widget<FilledButton>(find.widgetWithText(FilledButton, l10nEn.settingsEditNameAction)).onPressed, isNotNull);
     });
 
     testWidgets('the actions are named, not glyphs to be guessed at', (tester) async {
