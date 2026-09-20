@@ -83,13 +83,6 @@ void main() {
       act: (bloc) => bloc.add(const SettingsRootEvent.nameEditCancelled()),
       expect: () => [predicate<SettingsRootState>((s) => !s.editing && s.draftName == 'User7421' && s.status == SettingsNameStatus.idle)],
     );
-
-    blocTest<SettingsRootBloc, SettingsRootState>(
-      'toggles the identifier reveal',
-      build: SettingsRootBloc.new,
-      act: (bloc) => bloc.add(const SettingsRootEvent.idRevealToggled()),
-      expect: () => [predicate<SettingsRootState>((s) => s.idRevealed)],
-    );
   });
 
   // Feature 015 — the display label is loaded from and persisted to the REAL session

@@ -1,149 +1,122 @@
 import 'package:flutter/material.dart';
-import 'package:nox_app/presentation/widgets/primitives/app_hairline_divider_widget.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/app_text_style_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
+import 'package:nox_app/design/theme/nox_brand.dart';
 import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
+import 'package:nox_app/presentation/widgets/primitives/app_ringed_avatar_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_spinner_widget.dart';
 
-/// Identity card (7.1): a Name block (inline-editable) + `Your ID`
-/// block (the value + Copy on one row). Adding a device is 7.8 Devices' job and has
-/// its own screen, so the card no longer carries a QR shortcut into it. Parameterized
-/// per layout (Principle I — minimize secret exposure):
-///   - `revealable = false` on both widths since feature 032: the id is the
-///     PUBLIC author id, so there is nothing to hide behind a toggle. What the
-///     row shows is what Copy copies. The reveal existed when this string was
-///     the login secret;
-///     rendered as a separate block below the card (see settings_root_page).
-/// While [initialLoading], a spinner stands in for the identifier (FR-038).
+/// Identity card (7.1) — the account as a header: the ringed initials avatar the
+/// shell already shows for this person, the name under it, the public id under
+/// that, and two labelled tonal actions at the foot.
+///
+/// It used to be two label-over-value rows, each with a bare glyph pinned to the
+/// far right. That is a form field's idiom with no form behind it; the glyph
+/// carried no container, so nothing said it could be pressed; and in the desktop
+/// Settings pane it sat most of a pane's width away from the value it acted on.
+/// Naming the actions is the other half of the fix - a pencil has to be guessed
+/// at, `Edit name` does not.
+///
+/// The Show/Hide reveal is gone with the rest: since feature 032 the id is the
+/// PUBLIC author id, both call sites passed `revealable: false`, and a card that
+/// shows the value in full has nothing left to reveal.
+///
+/// While [initialLoading] a spinner stands in for the id (FR-038).
 class AppIdentityCardWidget extends StatelessWidget {
   const AppIdentityCardWidget({
     super.key,
     required this.name,
-    required this.maskedId,
     required this.rawId,
-    required this.revealable,
     required this.initialLoading,
     required this.editing,
     required this.onEditName,
     required this.onCopy,
     this.nameEditField,
-    this.idRevealed = false,
-    this.onToggleReveal,
   });
 
   final String name;
-  final String maskedId;
   final String rawId;
-  final bool revealable;
   final bool initialLoading;
   final bool editing;
   final VoidCallback onEditName;
   final VoidCallback onCopy;
+
+  /// The inline rename field, supplied by the page and shown in place of the name
+  /// while [editing].
   final Widget? nameEditField;
-  final bool idRevealed;
-  final VoidCallback? onToggleReveal;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    final textTheme = theme.textTheme;
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
     return Card(
       child: Padding(
-        padding: EdgeInsets.all(AppSpacingTokens.s16),
+        padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s16, vertical: AppSpacingTokens.s24),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _nameBlock(context),
-            Padding(
-              padding: EdgeInsets.symmetric(vertical: AppSpacingTokens.s12),
-              child: const AppHairlineDividerWidget(),
+            Center(
+              child: AppRingedAvatarWidget(name: name, initials: noxAccountInitials(name), size: AppDimensionTokens.size.avatarLg),
             ),
-            // Its own string. It used to borrow the login screen's label, and
-            // when that became "Pairing link" this row started calling the
-            // person's public author id a pairing link.
-            Text(context.l10n.settingsYourIdLabel, style: textTheme.labelMedium?.copyWith(color: colorScheme.onSurfaceVariant)),
-            SizedBox(height: AppSpacingTokens.s4),
-            _idBlock(context),
+            SizedBox(height: AppSpacingTokens.s16),
+            if (editing && nameEditField != null)
+              nameEditField!
+            else
+              Text(
+                name,
+                textAlign: TextAlign.center,
+                style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface),
+              ),
+            SizedBox(height: AppSpacingTokens.s8),
+            _idLine(context),
+            SizedBox(height: AppSpacingTokens.s20),
+            _actions(context),
           ],
         ),
       ),
     );
   }
 
-  Widget _nameBlock(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    final textTheme = theme.textTheme;
-    if (editing && nameEditField != null) return nameEditField!;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(context.l10n.usernameLabel, style: textTheme.labelMedium?.copyWith(color: colorScheme.onSurfaceVariant)),
-        SizedBox(height: AppSpacingTokens.s2),
-        Row(
-          children: [
-            Expanded(
-              child: Text(name, style: textTheme.titleMedium?.copyWith(color: colorScheme.onSurface)),
-            ),
-            IconButton(
-              tooltip: context.l10n.settingsNameEditTooltip,
-              icon: AppIconWidget(NoxIcons.edit, size: AppDimensionTokens.icon.lg),
-              onPressed: onEditName,
-            ),
-          ],
-        ),
-      ],
+  Widget _idLine(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    if (initialLoading) return Center(child: AppSpinnerWidget(size: AppDimensionTokens.icon.lg));
+    // Monospace, and the whole string: it is a key, and a key reads as one only
+    // when its characters line up. `Copy ID` below is what it is here for.
+    return Text(
+      rawId,
+      textAlign: TextAlign.center,
+      style: AppTextStyleTokens.monoBody(color: colorScheme.onSurfaceVariant),
     );
   }
 
-  Widget _idBlock(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    final textTheme = theme.textTheme;
-    if (initialLoading) {
-      return Padding(
-        padding: EdgeInsets.symmetric(vertical: AppSpacingTokens.s8),
-        child: AppSpinnerWidget(size: AppDimensionTokens.icon.lg),
-      );
-    }
-    final revealed = revealable && idRevealed;
-    final actions = <Widget>[
-      if (revealable)
-        IconButton(
-          tooltip: idRevealed ? context.l10n.idHideTooltip : context.l10n.idShowTooltip,
-          icon: AppIconWidget(idRevealed ? NoxIcons.visibilityOff : NoxIcons.visibility, size: AppDimensionTokens.icon.lg),
-          onPressed: onToggleReveal,
-        ),
-      IconButton(
-        tooltip: context.l10n.idCopyTooltip,
-        icon: AppIconWidget(NoxIcons.contentCopy, size: AppDimensionTokens.icon.lg),
-        onPressed: onCopy,
-      ),
-    ];
-    // Revealed raw ID is long + monospace → keep it on its own line above the actions.
-    if (revealed) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(rawId, style: AppTextStyleTokens.monoBody(color: colorScheme.onSurfaceVariant)),
-          SizedBox(height: AppSpacingTokens.s4),
-          Row(children: actions),
-        ],
-      );
-    }
-    // Masked (design): the masked value fills the row, actions aligned to its right.
-    return Row(
+  Widget _actions(BuildContext context) {
+    final l10n = context.l10n;
+    final colorScheme = Theme.of(context).colorScheme;
+    final iconSize = AppDimensionTokens.icon.base;
+    return Wrap(
+      alignment: WrapAlignment.center,
+      spacing: AppSpacingTokens.s12,
+      // Wrap, not Row: at a doubled text scale the two labels are wider than a
+      // phone, and stacking them beats clipping one.
+      runSpacing: AppSpacingTokens.s8,
       children: [
-        Expanded(
-          // An em dash rather than a blank line: the id is simply not known
-          // yet, and an empty row reads as a rendering fault.
-          child: Text(maskedId.isEmpty ? '—' : maskedId, style: textTheme.titleMedium?.copyWith(color: colorScheme.onSurface)),
+        // Withdrawn while the field is open. The state it offers to enter is the
+        // one the card is already in, and a button that changes nothing is worse
+        // than no button.
+        if (!editing)
+          FilledButton.tonalIcon(
+            onPressed: onEditName,
+            icon: AppIconWidget(NoxIcons.edit, size: iconSize, color: colorScheme.onSecondaryContainer),
+            label: Text(l10n.settingsEditNameAction),
+          ),
+        FilledButton.tonalIcon(
+          onPressed: onCopy,
+          icon: AppIconWidget(NoxIcons.contentCopy, size: iconSize, color: colorScheme.onSecondaryContainer),
+          label: Text(l10n.settingsCopyIdAction),
         ),
-        ...actions,
       ],
     );
   }

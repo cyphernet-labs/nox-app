@@ -23,7 +23,6 @@ abstract class SettingsRootState with _$SettingsRootState {
     @Default('') String draftName,
     @Default(false) bool editing,
     @Default(SettingsNameStatus.idle) SettingsNameStatus status,
-    @Default(false) bool idRevealed,
   }) = _SettingsRootState;
 
   /// Save (Enter/Done/blur) is allowed only for a valid draft.

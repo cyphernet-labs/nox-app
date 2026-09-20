@@ -27,7 +27,6 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
     on<SettingsNameChanged>(_onNameChanged);
     on<NameSubmitted>(_onNameSubmitted);
     on<NameEditCancelled>(_onNameEditCancelled);
-    on<IdRevealToggled>(_onIdRevealToggled);
   }
 
   Future<void> _onInitialize(SettingsInitialize event, Emitter<SettingsRootState> emit) async {
@@ -112,9 +111,5 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
 
   void _onNameEditCancelled(NameEditCancelled event, Emitter<SettingsRootState> emit) {
     emit(state.copyWith(editing: false, draftName: state.name, status: SettingsNameStatus.idle));
-  }
-
-  void _onIdRevealToggled(IdRevealToggled event, Emitter<SettingsRootState> emit) {
-    emit(state.copyWith(idRevealed: !state.idRevealed));
   }
 }

@@ -44,13 +44,21 @@ void main() {
 
     // The rail account avatar carries the session label.
     expect(find.byType(AppNavigationRailWidget), findsOneWidget);
-    expect(find.byWidgetPredicate((w) => w is AppAvatarWidget && w.name == 'Alice'), findsOneWidget);
+    expect(railAvatar(tester, 'Alice'), findsOneWidget);
 
     // A rename broadcasts live — the avatar updates in the same session, no restart.
     await getIt<SessionRepository>().updateLabel(label: 'Zed');
     await settle(tester);
 
-    expect(find.byWidgetPredicate((w) => w is AppAvatarWidget && w.name == 'Zed'), findsOneWidget);
-    expect(find.byWidgetPredicate((w) => w is AppAvatarWidget && w.name == 'Alice'), findsNothing);
+    expect(railAvatar(tester, 'Zed'), findsOneWidget);
+    expect(railAvatar(tester, 'Alice'), findsNothing);
   });
 }
+
+/// The avatar inside the rail, by label. Scoped on purpose: the Settings identity
+/// card shows the same person with the same widget, so an unscoped search finds
+/// two and proves neither.
+Finder railAvatar(WidgetTester tester, String label) => find.descendant(
+  of: find.byType(AppNavigationRailWidget),
+  matching: find.byWidgetPredicate((w) => w is AppAvatarWidget && w.name == label),
+);

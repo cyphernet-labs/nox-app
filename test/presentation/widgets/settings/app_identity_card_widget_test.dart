@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/l10n/app_localizations_en.dart';
+import 'package:nox_app/presentation/widgets/primitives/app_ringed_avatar_widget.dart';
 import 'package:nox_app/presentation/widgets/settings/app_identity_card_widget.dart';
 import 'package:nox_app/presentation/widgets/settings/app_qr_surface_widget.dart';
 
@@ -8,39 +9,58 @@ import '../../../utils/pump_app.dart';
 
 final l10nEn = AppLocalizationsEn();
 
+const String _id = 'u_345c2e3c0845d19f';
+
 void main() {
   AppIdentityCardWidget card({
-    bool revealable = true,
     bool initialLoading = false,
     bool editing = false,
-    bool idRevealed = false,
     String name = 'Aria',
+    VoidCallback? onEditName,
+    VoidCallback? onCopy,
   }) => AppIdentityCardWidget(
     name: name,
-    maskedId: l10nEn.idMask,
-    rawId: 'RAWID-0123456789',
-    revealable: revealable,
+    rawId: _id,
     initialLoading: initialLoading,
     editing: editing,
-    idRevealed: idRevealed,
-    onToggleReveal: () {},
-    onEditName: () {},
-    onCopy: () {},
+    onEditName: onEditName ?? () {},
+    onCopy: onCopy ?? () {},
     nameEditField: editing ? const TextField(key: Key('edit')) : null,
   );
 
   group('AppIdentityCardWidget', () {
-    testWidgets('mobile: shows the name, the masked ID and Show/Copy + edit actions', (tester) async {
+    testWidgets('reads as an account header: avatar, name, the whole id, two named actions', (tester) async {
       await pumpApp(tester, card());
 
+      expect(find.byType(AppRingedAvatarWidget), findsOneWidget);
       expect(find.text('Aria'), findsOneWidget);
-      expect(find.text(l10nEn.idMask), findsOneWidget);
-      expect(find.byTooltip(l10nEn.settingsNameEditTooltip), findsOneWidget);
-      expect(find.byTooltip(l10nEn.idShowTooltip), findsOneWidget);
-      expect(find.byTooltip(l10nEn.idCopyTooltip), findsOneWidget);
-      // Those three and nothing else: the QR shortcut into device pairing is gone,
-      // and counting is what notices a fourth action arriving unannounced.
-      expect(find.byType(IconButton), findsNWidgets(3));
+      // The WHOLE id. It stopped being a secret in 032, so there is no mask and
+      // nothing to reveal - showing part of it would only look like there were.
+      expect(find.text(_id), findsOneWidget);
+      expect(find.widgetWithText(FilledButton, l10nEn.settingsEditNameAction), findsOneWidget);
+      expect(find.widgetWithText(FilledButton, l10nEn.settingsCopyIdAction), findsOneWidget);
+    });
+
+    testWidgets('the actions are named, not glyphs to be guessed at', (tester) async {
+      // The card carried two bare IconButtons, one per row, pinned to the far
+      // right - no container to read as a button, and on the desktop pane most
+      // of a pane's width from the value each acted on.
+      await pumpApp(tester, card());
+
+      expect(find.byType(IconButton), findsNothing);
+    });
+
+    testWidgets('each action calls its own callback', (tester) async {
+      var edits = 0;
+      var copies = 0;
+      await pumpApp(tester, card(onEditName: () => edits++, onCopy: () => copies++));
+
+      await tester.tap(find.text(l10nEn.settingsEditNameAction));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(l10nEn.settingsCopyIdAction));
+      await tester.pumpAndSettle();
+
+      expect((edits, copies), (1, 1));
     });
 
     testWidgets('Initial-loading swaps the ID for a spinner', (tester) async {
@@ -48,48 +68,36 @@ void main() {
       await pumpApp(tester, card(initialLoading: true), settle: false);
 
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
-      expect(find.text(l10nEn.idMask), findsNothing);
+      expect(find.text(_id), findsNothing);
     });
 
-    testWidgets('revealed state shows the raw identifier', (tester) async {
-      await pumpApp(tester, card(idRevealed: true));
-
-      expect(find.text('RAWID-0123456789'), findsOneWidget);
-    });
-
-    testWidgets('editing shows the supplied name field', (tester) async {
+    testWidgets('editing shows the supplied name field, and withdraws Edit name', (tester) async {
+      // The state that button offers to enter is the one the card is already in.
       await pumpApp(tester, card(editing: true));
 
       expect(find.byKey(const Key('edit')), findsOneWidget);
+      expect(find.text('Aria'), findsNothing);
+      expect(find.widgetWithText(FilledButton, l10nEn.settingsEditNameAction), findsNothing);
+      expect(find.widgetWithText(FilledButton, l10nEn.settingsCopyIdAction), findsOneWidget);
     });
 
-    testWidgets('a long name takes the whole row the edit button leaves it', (tester) async {
-      // The regression this pins: the name shared its Row with a SECOND
-      // flexible child, and two of those split the free space by flex - so the
-      // name was laid out at half the row and ellipsized with blank space
-      // beside it. The competitor was the owner badge, which 037 deleted; what
-      // still has to hold is that the name is the only flexible child in that
-      // row, next to a fixed-width edit button. Measured as a share of the row
-      // rather than against a pixel count, because half is exactly the number
-      // this is guarding against.
+    testWidgets('a long name is not clipped - it wraps under itself, with nothing beside it', (tester) async {
+      // The old regression: the name shared a Row with the edit button and was
+      // laid out at a fraction of it. Nothing shares its line any more, so the
+      // guard is that the name renders whole at phone width.
       const long = 'Alexandra_Smirnova_QQ';
       await tester.binding.setSurfaceSize(const Size(390, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
 
       await pumpApp(tester, card(name: long));
 
-      final row = tester.getSize(find.ancestor(of: find.text(long), matching: find.byType(Row)).first).width;
-      final name = tester.getSize(find.text(long)).width;
-
-      expect(name, greaterThan(row * 0.7), reason: 'something else in the row is taking flexible space from the name');
+      expect(find.text(long), findsOneWidget);
+      expect(tester.takeException(), isNull);
     });
 
-    testWidgets('desktop (non-revealable): no reveal toggle, and no QR inside the card', (tester) async {
-      await pumpApp(tester, card(revealable: false));
+    testWidgets('no QR inside the card - pairing a device is its own screen', (tester) async {
+      await pumpApp(tester, card());
 
-      expect(find.byTooltip(l10nEn.idShowTooltip), findsNothing);
-      expect(find.byTooltip(l10nEn.idHideTooltip), findsNothing);
-      // The account QR now renders as a separate block below the card (settings_root_page), not inside it.
       expect(find.byType(AppQrSurfaceWidget), findsNothing);
     });
   });

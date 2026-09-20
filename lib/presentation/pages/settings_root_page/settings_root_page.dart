@@ -185,7 +185,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
       appBar: AppBar(leading: widget.inShell ? null : _backButton(), title: Text(context.l10n.settings)),
       body: ListView(
         children: [
-          Padding(padding: EdgeInsets.all(AppSpacingTokens.s16), child: _identityCard(state, revealable: false, wide: false)),
+          Padding(padding: EdgeInsets.all(AppSpacingTokens.s16), child: _identityCard(state, wide: false)),
           AppSettingsNavRowWidget(title: context.l10n.settingsDevicesTitle, onTap: () => _openSection(DevicesPage.route())),
           AppSettingsNavRowWidget(title: context.l10n.settingsNotificationsTitle, onTap: () => _openSection(NotificationsPage.route())),
           AppSettingsNavRowWidget(title: context.l10n.settingsAppearanceTitle, onTap: () => _openSection(AppearancePage.route())),
@@ -292,7 +292,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
       _Section.account => ListView(
         padding: EdgeInsets.all(AppSpacingTokens.s16),
         children: [
-          _identityCard(state, revealable: false, wide: true),
+          _identityCard(state, wide: true),
           // Design: the account QR + caption sit in a separate centred block BELOW the
           // identity card, on the plain detail-pane background (not inside the card).
         ],
@@ -333,18 +333,14 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
     _ => null,
   };
 
-  Widget _identityCard(SettingsRootState state, {required bool revealable, required bool wide}) {
+  Widget _identityCard(SettingsRootState state, {required bool wide}) {
     return AppIdentityCardWidget(
       name: state.name,
-      // The id is public now: masking it would hide something that is not a
-      // secret, and leave nothing for Copy to make sense of.
-      maskedId: state.rawId,
+      // The id is public since 032, so it is shown whole - there is no mask left
+      // to lift and nothing for a reveal to reveal.
       rawId: state.rawId,
-      revealable: revealable,
       initialLoading: state.initialLoading,
       editing: state.editing,
-      idRevealed: state.idRevealed,
-      onToggleReveal: () => _bloc.add(const SettingsRootEvent.idRevealToggled()),
       onEditName: _startEdit,
       onCopy: _copyId,
       // Showing a QR of the identity used to hand over a bearer secret. The id
