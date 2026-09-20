@@ -9,6 +9,7 @@ import 'package:nox_app/domain/repository/app/auth_repository.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/presentation/pages/set_username_page/bloc/set_username_bloc.dart';
 
+import '../../../../utils/fake_session_repository.dart';
 import 'set_username_bloc_test.mocks.dart';
 
 @GenerateMocks([AuthRepository])
@@ -176,6 +177,58 @@ void main() {
       wait: const Duration(milliseconds: 200),
       expect: () => <SetUsernameState>[],
       verify: (_) => verifyNever(mockAuthRepository.completeOnboarding(label: anyNamed('label'))),
+    );
+  });
+
+  // The screen used to open on a constant compiled into the client ('User7421'), so
+  // anyone who pressed Done without editing was named by the build rather than by the
+  // server. The name now comes from the session, where the greeting put it.
+  group('SetUsernameBloc opens on the name the server assigned', () {
+    setUp(() async {
+      await configureDependencies(Environment.test);
+      getIt.allowReassignment = true;
+    });
+    tearDown(() async => getIt.reset());
+
+    blocTest<SetUsernameBloc, SetUsernameState>(
+      'shows the label the session cached from the greeting',
+      build: () {
+        registerFakeSession(session: kTestSession.copyWith(label: 'Lena'));
+        return SetUsernameBloc();
+      },
+      wait: const Duration(milliseconds: 50),
+      expect: () => [predicate<SetUsernameState>((s) => s.name == 'Lena' && s.status == UsernameStatus.prefilled)],
+    );
+
+    blocTest<SetUsernameBloc, SetUsernameState>(
+      'invents no name when the session holds none - the field stays empty',
+      build: () {
+        registerFakeSession(session: kTestSession);
+        return SetUsernameBloc();
+      },
+      wait: const Duration(milliseconds: 50),
+      expect: () => <SetUsernameState>[],
+    );
+
+    blocTest<SetUsernameBloc, SetUsernameState>(
+      'says nothing when the session cannot be read at all',
+      build: () {
+        registerFakeSession(fail: true);
+        return SetUsernameBloc();
+      },
+      wait: const Duration(milliseconds: 50),
+      expect: () => <SetUsernameState>[],
+    );
+
+    blocTest<SetUsernameBloc, SetUsernameState>(
+      'the gallery preview still opens on its placeholder, and asks the session nothing',
+      build: () {
+        registerFakeSession(session: kTestSession.copyWith(label: 'Lena'));
+        return SetUsernameBloc(demo: true);
+      },
+      wait: const Duration(milliseconds: 50),
+      expect: () => <SetUsernameState>[],
+      verify: (bloc) => expect(bloc.state.name, SetUsernameBloc.defaultName),
     );
   });
 }

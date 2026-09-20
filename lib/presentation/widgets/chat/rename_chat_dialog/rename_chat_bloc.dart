@@ -52,7 +52,6 @@ class RenameChatBloc extends BaseBloc<RenameChatEvent, RenameChatState> {
   Future<void> _onAvailabilityRequested(RenameAvailabilityRequested event, Emitter<RenameChatState> emit) async {
     if (state.name != event.name || state.status != RenameChatStatus.checking) return;
     await executeLogic(() async {
-      await Future<void>.delayed(const Duration(milliseconds: 200));
       if (state.name != event.name) return;
       // Excludes THIS chat, since a rename never collides with its own name.
       // The server is the only authority beyond that: the frozen reserved list
