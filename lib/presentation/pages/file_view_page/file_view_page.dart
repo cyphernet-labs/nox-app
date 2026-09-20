@@ -17,8 +17,11 @@ import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/formatters/file_size_formatter.dart';
 import 'package:nox_app/general/l10n_extension.dart';
+import 'package:nox_app/general/video_playback_capability.dart';
 import 'package:nox_app/presentation/helpers/app_feedback_helper.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_file_glyph_widget.dart';
+import 'package:nox_app/presentation/widgets/chat/app_image_attachment_widget.dart';
+import 'package:nox_app/presentation/widgets/media/app_video_player_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_panel_header_widget.dart';
 
@@ -258,6 +261,25 @@ class _FileViewPageState extends State<FileViewPage> {
     );
   }
 
+  /// Whether this screen can play what it just downloaded: a video, on a
+  /// platform that has a player, whose bytes finished arriving. The path is
+  /// read from the STATE rather than from the widget - `widget.file.localPath`
+  /// is the attachment as the thread knew it, which for a file downloaded just
+  /// now is null.
+  /// Whether the downloaded bytes are a picture this app can draw. Same rule as
+  /// the thread's thumbnail, so a format that stays a chip there stays a glyph
+  /// here rather than becoming a broken box on one screen only.
+  bool _showsPicture(FileViewState state) => state.status == FileViewStatus.ready && AppImageAttachmentWidget.canRender(state.file);
+
+  bool _playable(FileViewState state) {
+    final path = state.file.localPath;
+    return widget.file.type == FileType.video &&
+        state.status == FileViewStatus.ready &&
+        VideoPlaybackCapability.isAvailable &&
+        path != null &&
+        path.isNotEmpty;
+  }
+
   // ---- Shared file info (glyph + name + size [+ progress caption]) ------------
 
   Widget _info(BuildContext context, FileViewState state) {
@@ -266,7 +288,32 @@ class _FileViewPageState extends State<FileViewPage> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        AppFileGlyphWidget(type: widget.file.type, iconSize: AppDimensionTokens.icon.heroLg, box: AppDimensionTokens.size.fileGlyphHero),
+        // A video whose bytes are here plays here. Everything else - and a video
+        // on a platform with no player - keeps the type glyph, so the screen
+        // that could not play it looks exactly as it did before playback
+        // existed rather than advertising something absent.
+        if (_playable(state))
+          AppVideoPlayerWidget(key: const Key('video-player'), localPath: state.file.localPath!)
+        // A screen called "file view" that shows a glyph for a picture it has
+        // already downloaded is withholding the thing the person tapped for.
+        else if (_showsPicture(state))
+          ClipRRect(
+            key: const Key('image-preview'),
+            borderRadius: BorderRadius.circular(AppDimensionTokens.radius.md),
+            child: Image.file(
+              File(state.file.localPath!),
+              fit: BoxFit.contain,
+              // Any decode or read failure falls back to the glyph, the same way
+              // the thread's thumbnail does - never a broken-image box.
+              errorBuilder: (context, error, stackTrace) => AppFileGlyphWidget(
+                type: widget.file.type,
+                iconSize: AppDimensionTokens.icon.heroLg,
+                box: AppDimensionTokens.size.fileGlyphHero,
+              ),
+            ),
+          )
+        else
+          AppFileGlyphWidget(type: widget.file.type, iconSize: AppDimensionTokens.icon.heroLg, box: AppDimensionTokens.size.fileGlyphHero),
         SizedBox(height: AppSpacingTokens.s18),
         Text(
           widget.file.name,

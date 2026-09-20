@@ -19,6 +19,7 @@ import 'package:nox_app/presentation/pages/chat_thread_page/bloc/chat_thread_blo
 import 'package:nox_app/presentation/widgets/chat/app_author_header_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_composer_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_date_separator_widget.dart';
+import 'package:nox_app/presentation/widgets/chat/app_attachment_placeholder_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_file_chip_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_image_attachment_widget.dart';
 import 'package:nox_app/presentation/pages/image_viewer_page/image_viewer_page.dart';
@@ -285,6 +286,14 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
         onTap: onImageTap,
         onRemove: onRemove,
       );
+    }
+    // A picture whose bytes have not landed yet is NOT the same thing as a file
+    // that cannot be shown, and the two had been drawing the same chip. Only in
+    // a bubble ([onChipTap] is what makes it one): a composer draft's file is on
+    // disk by definition, and nothing is fetching it, so a spinner there would
+    // wait for an event that never comes.
+    if (AppAttachmentPlaceholderWidget.wants(attachment, inBubble: onChipTap != null)) {
+      return AppAttachmentPlaceholderWidget(name: attachment.name, width: imageSize, height: imageSize, onTap: onChipTap);
     }
     final chip = AppFileChipWidget(
       type: attachment.type,

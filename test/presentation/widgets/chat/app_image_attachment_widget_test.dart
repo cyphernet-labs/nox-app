@@ -98,6 +98,32 @@ void main() {
     expect(taps, 1); // opens the full-screen viewer
   });
 
+  group('wouldRender (arriving-vs-never guard)', () {
+    MessageAttachment att({required FileType type, required String name, String? localPath}) =>
+        MessageAttachment(id: 'a', type: type, name: name, sizeBytes: 1, localPath: localPath);
+
+    test('true for a decodable picture that has no file YET - that is the whole point', () {
+      // The thread draws a spinner on this one, because the bytes are coming.
+      expect(AppImageAttachmentWidget.wouldRender(att(type: FileType.image, name: 'a.png')), isTrue);
+      expect(AppImageAttachmentWidget.wouldRender(att(type: FileType.image, name: 'a.jpg', localPath: '')), isTrue);
+    });
+
+    test('false for a file that was never going to be a thumbnail', () {
+      // Identical in the data to the case above - an image type with no local
+      // path - and it must NOT get a spinner: no bytes will make an svg draw.
+      expect(AppImageAttachmentWidget.wouldRender(att(type: FileType.image, name: 'a.svg')), isFalse);
+      expect(AppImageAttachmentWidget.wouldRender(att(type: FileType.pdf, name: 'a.pdf')), isFalse);
+      expect(AppImageAttachmentWidget.wouldRender(att(type: FileType.video, name: 'a.mp4')), isFalse);
+    });
+
+    test('canRender still demands the file, so the two questions stay different', () {
+      // Refactoring canRender to call wouldRender must not have dropped the
+      // on-disk half: a thumbnail with no file behind it is a broken box.
+      expect(AppImageAttachmentWidget.wouldRender(att(type: FileType.image, name: 'a.png')), isTrue);
+      expect(AppImageAttachmentWidget.canRender(att(type: FileType.image, name: 'a.png')), isFalse);
+    });
+  });
+
   group('canRender (thumbnail-vs-chip guard, F4)', () {
     MessageAttachment att({required FileType type, required String name, String? localPath}) =>
         MessageAttachment(id: 'a', type: type, name: name, sizeBytes: 1, localPath: localPath);
