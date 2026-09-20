@@ -30,9 +30,9 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
   }
 
   Future<void> _onInitialize(SettingsInitialize event, Emitter<SettingsRootState> emit) async {
-    // Load the user's own identifier for Show QR (FR-014) + the display label (7.1)
-    // from the 009 session spine. Empty/error never fabricates a fake id (that would
-    // flow into a real scannable QR) — it degrades to an empty rawId; the label
+    // Load the person's own identifier + display label (7.1) from the 009 session
+    // spine. Empty/error never fabricates a fake id (it would be copied out as if
+    // it were real) — it degrades to an empty rawId; the label
     // degrades to the default via resolveIdentity. Settings is authorized-only, so the
     // id/label are normally present.
     final result = await sessionRepository.readSession();

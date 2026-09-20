@@ -11,8 +11,6 @@ sealed class SettingsRootEvent with _$SettingsRootEvent {
   /// Name draft changed (immediate charset / empty feedback).
   const factory SettingsRootEvent.nameChanged(String name) = SettingsNameChanged;
 
-  /// Debounced uniqueness check for [name].
-
   /// Save the draft (Enter / Done / blur) — commits only when valid.
   const factory SettingsRootEvent.nameSubmitted() = NameSubmitted;
 
