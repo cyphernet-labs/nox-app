@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:nox_app/presentation/widgets/settings/app_settings_group_widget.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
@@ -186,25 +185,17 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
       body: ListView(
         children: [
           Padding(padding: _cardMargin, child: _identityCard(state, wide: false)),
-          // The destinations live in a card, like every other list on a settings
-          // screen. They used to be bare rows on the scaffold background - the one
-          // thing here that was not in a container - under an account card that
-          // was, which read as an unfinished list rather than a quiet one.
-          AppSettingsGroupWidget(
-            children: [
-              AppSettingsNavRowWidget(title: context.l10n.settingsDevicesTitle, onTap: () => _openSection(DevicesPage.route())),
-              AppSettingsNavRowWidget(title: context.l10n.settingsNotificationsTitle, onTap: () => _openSection(NotificationsPage.route())),
-              AppSettingsNavRowWidget(title: context.l10n.settingsAppearanceTitle, onTap: () => _openSection(AppearancePage.route())),
-              AppSettingsNavRowWidget(title: context.l10n.settingsLanguageTitle, onTap: () => _openSection(LanguagePage.route())),
-              AppSettingsNavRowWidget(title: context.l10n.settingsTermsTitle, onTap: () => _openSection(TermsPage.route())),
-              AppSettingsNavRowWidget(title: context.l10n.settingsAboutTitle, onTap: () => _openSection(AboutPage.route())),
-            ],
-          ),
-          // Its own card. A hairline inside the list said "and also this one",
-          // which is not what an irreversible action is.
-          AppSettingsGroupWidget(
-            children: [AppSettingsNavRowWidget(title: context.l10n.logoutRow, color: Theme.of(context).colorScheme.error, onTap: _logout)],
-          ),
+          // One tile per destination, each its own rounded surface. Merged into a
+          // single card with hairlines between them they read as one lump; bare on
+          // the scaffold background they read as an unfinished list.
+          AppSettingsNavRowWidget(title: context.l10n.settingsDevicesTitle, onTap: () => _openSection(DevicesPage.route())),
+          AppSettingsNavRowWidget(title: context.l10n.settingsNotificationsTitle, onTap: () => _openSection(NotificationsPage.route())),
+          AppSettingsNavRowWidget(title: context.l10n.settingsAppearanceTitle, onTap: () => _openSection(AppearancePage.route())),
+          AppSettingsNavRowWidget(title: context.l10n.settingsLanguageTitle, onTap: () => _openSection(LanguagePage.route())),
+          AppSettingsNavRowWidget(title: context.l10n.settingsTermsTitle, onTap: () => _openSection(TermsPage.route())),
+          AppSettingsNavRowWidget(title: context.l10n.settingsAboutTitle, onTap: () => _openSection(AboutPage.route())),
+          SizedBox(height: AppSpacingTokens.s16),
+          AppSettingsNavRowWidget(title: context.l10n.logoutRow, color: Theme.of(context).colorScheme.error, onTap: _logout),
           // ..._devMenuRows(),
         ],
       ),
@@ -259,31 +250,24 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
           leading: widget.inShell ? null : _backButton(),
           trailingInset: AppSpacingTokens.s8,
         ),
-        // The same two cards as the narrow width, so the two do not read as two
-        // different screens. The three sub-groups they used to be split into were
-        // separated by full-bleed hairlines drawn across the pane, and a line that
-        // crosses the selected pill is a line that looks broken.
+        // An M3 NavigationDrawer: destinations as stadium items on the pane
+        // itself, transparent until selected. No card and no hairlines - the pane
+        // already separates this list from the detail beside it, and a card around
+        // it only added a second edge for the selection pill to break out through.
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              AppSettingsGroupWidget(
-                children: [
-                  item(_Section.account, context.l10n.settingsAccountTitle),
-                  item(_Section.devices, context.l10n.settingsDevicesTitle),
-                  item(_Section.notifications, context.l10n.settingsNotificationsTitle),
-                  item(_Section.appearance, context.l10n.settingsAppearanceTitle),
-                  item(_Section.language, context.l10n.settingsLanguageTitle),
-                  item(_Section.terms, context.l10n.settingsTermsTitle),
-                  item(_Section.about, context.l10n.settingsAboutTitle),
-                ],
-              ),
+              item(_Section.account, context.l10n.settingsAccountTitle),
+              item(_Section.devices, context.l10n.settingsDevicesTitle),
+              item(_Section.notifications, context.l10n.settingsNotificationsTitle),
+              item(_Section.appearance, context.l10n.settingsAppearanceTitle),
+              item(_Section.language, context.l10n.settingsLanguageTitle),
+              item(_Section.terms, context.l10n.settingsTermsTitle),
+              item(_Section.about, context.l10n.settingsAboutTitle),
               const Spacer(),
-              AppSettingsGroupWidget(
-                children: [
-                  AppSettingsNavRowWidget(title: context.l10n.logoutRow, color: colorScheme.error, menuPane: true, onTap: _logout),
-                ],
-              ),
+              AppSettingsNavRowWidget(title: context.l10n.logoutRow, color: colorScheme.error, menuPane: true, onTap: _logout),
+              SizedBox(height: AppSpacingTokens.s8),
               // ..._devMenuRows(menuPane: true),
             ],
           ),
