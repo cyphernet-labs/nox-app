@@ -84,7 +84,6 @@ class _NotificationsBodyState extends State<NotificationsBody> {
         AppSettingsGroupWidget(
           children: [
             AppSettingsSwitchRowWidget(
-              leadingIcon: NoxIcons.notifications,
               title: context.l10n.notificationsPushTitle,
               supportingText: context.l10n.notificationsPushSubtitle,
               value: _granted && _enabled,
