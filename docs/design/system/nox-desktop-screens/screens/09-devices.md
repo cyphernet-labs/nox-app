@@ -5,7 +5,7 @@
 **Purpose.** Show the keys allowed to speak as this person, and let any of them be cut off. Without it pairing has no undo and every lost device stays an open door.
 
 ## Anatomy
-Fills the Settings detail pane (7.1); no push, selection swaps the pane. Current device in its own group, marked `This device`. Other devices in a second group; when there are none, there is no second group and no placeholder line. A filled `Add a device` button at the bottom; pressing it mints an invite and shows a card with the QR **and** the link as selectable text, under `Copy` and `Hide`.
+Fills the Settings detail pane (7.1); no push, selection swaps the pane. One group holding every device, the current one first and marked `This device` in a quieter tone - an annotation on the name, not part of it. No placeholder line when it is the only one. A filled `Add a device` button at the bottom; pressing it mints an invite and shows a card with the QR **and** the link as selectable text, under `Copy` and `Hide`.
 
 ## States
 - `loading` — always read from the server, never from a cache
@@ -14,6 +14,7 @@ Fills the Settings detail pane (7.1); no push, selection swaps the pane. Current
 - `error` — Couldn't load your devices.
 - `action error` — Couldn't revoke that device. Try again. (its own line above the list, never the list's)
 - `invite` — QR card, link valid for 10 minutes
+- `Revoke` is destructive (`error`), not the brand accent: it cannot be undone without a new pairing link, and on the current device it is a logout
 
 ## Behavior
 - A row shows the OS family and two moments (paired, last seen). The key itself is never shown: 32 base64 bytes look identical across rows. The exact hardware model is deliberately not collected.
