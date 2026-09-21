@@ -16,10 +16,16 @@ AppBarTheme noxAppBarTheme(ColorScheme cs) => AppBarTheme(
   titleTextStyle: noxTextTheme.titleLarge?.copyWith(color: cs.onSurface),
 );
 
+/// Shape and metrics only - deliberately NOT the colours.
+///
+/// A theme style beats the widget's own variant defaults, so naming
+/// `cs.primary` here made every `FilledButton.tonal` in the app come out
+/// primary-filled: the tonal variant existed and could not be reached. M3's
+/// default for the plain variant is `primary` / `onPrimary` already, so leaving
+/// the colours out changes nothing about it and gives `.tonal` back its
+/// `secondaryContainer`.
 FilledButtonThemeData noxFilledButtonTheme(ColorScheme cs) => FilledButtonThemeData(
   style: FilledButton.styleFrom(
-    backgroundColor: cs.primary,
-    foregroundColor: cs.onPrimary,
     shape: const StadiumBorder(),
     textStyle: noxTextTheme.labelLarge,
     minimumSize: const Size(0, NoxSpacing.minTapTarget),

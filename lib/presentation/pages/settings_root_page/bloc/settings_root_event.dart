@@ -20,5 +20,4 @@ sealed class SettingsRootEvent with _$SettingsRootEvent {
   const factory SettingsRootEvent.nameEditCancelled() = NameEditCancelled;
 
   /// Toggle the masked ↔ revealed identifier (mobile only).
-  const factory SettingsRootEvent.idRevealToggled() = IdRevealToggled;
 }
