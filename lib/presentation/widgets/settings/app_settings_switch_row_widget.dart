@@ -4,14 +4,13 @@ import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 
 /// A settings on/off row: an M3 `SwitchListTile` with a title, optional
-/// supporting text and the 40dp circular `secondaryContainer` chip the corpus
-/// draws in front of it. `onChanged: null` renders the row disabled.
-/// Presentational.
+/// supporting text and a bare leading glyph. `onChanged: null` renders the row
+/// disabled. Presentational.
 ///
-/// The chip was briefly removed, on the grounds that this was the only settings
-/// row in the app carrying a glyph while the nav rows were icon-less. The owner
-/// reversed that: every settings row leads with a chip now, so the odd one out
-/// would be this row WITHOUT one.
+/// The glyph has been through both reversals its neighbours have: removed while
+/// settings rows were icon-less, brought back when that rule was, and now without
+/// the 40dp tinted circle the corpus draws around it - which the owner dropped
+/// for the whole screen.
 class AppSettingsSwitchRowWidget extends StatelessWidget {
   const AppSettingsSwitchRowWidget({
     super.key,
@@ -38,14 +37,7 @@ class AppSettingsSwitchRowWidget extends StatelessWidget {
       subtitle: supportingText == null ? null : Text(supportingText!),
       secondary: leadingIcon == null
           ? null
-          : Container(
-              width: AppDimensionTokens.size.avatarSm,
-              height: AppDimensionTokens.size.avatarSm,
-              decoration: BoxDecoration(shape: BoxShape.circle, color: colorScheme.secondaryContainer),
-              child: Center(
-                child: AppIconWidget(leadingIcon!, size: AppDimensionTokens.icon.lg, color: colorScheme.onSecondaryContainer),
-              ),
-            ),
+          : AppIconWidget(leadingIcon!, size: AppDimensionTokens.icon.base, color: colorScheme.onSurfaceVariant),
     );
   }
 }

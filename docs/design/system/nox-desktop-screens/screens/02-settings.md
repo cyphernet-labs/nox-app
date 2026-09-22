@@ -9,7 +9,7 @@
 **Adaptation from mobile.** mobile full-screen settings → list-detail · bottom sheet → centered dialog · the identity card is the same widget at both widths
 
 ## Anatomy
-NavigationRail + settings menu pane (340: an M3 NavigationDrawer - stadium destinations on the pane itself, each with a 40dp chip, transparent until selected; the selected one fills `secondaryContainer`, tints its chip `onSecondaryContainer`@12% and swaps its glyph to the FILLED variant; `Log out` pinned to the foot in `error`) + detail pane (content capped to ≤680). Each detail reuses the exact phone widgets. Three groups - Account+Devices · Notifications+Appearance+Language · Terms+About - separated by a line UNDER each group, below its padding, so nothing crosses a pill. No card around the destinations: the pane is the container, and a card gave the selection pill a rounded corner to break out through.
+NavigationRail + settings menu pane (340: an M3 NavigationDrawer - stadium destinations on the pane itself, each with a bare leading glyph, transparent until selected; the selected one fills `secondaryContainer`, recolours its glyph `onSecondaryContainer` and swaps it to the FILLED variant (the corpus's 40dp tinted circle around the glyph is dropped by owner decision - it competed with the pill drawn around it); `Log out` pinned to the foot in `error`) + detail pane (content capped to ≤680). Each detail reuses the exact phone widgets. Three groups - Account+Devices · Notifications+Appearance+Language · Terms+About - separated by a line UNDER each group, below its padding, so nothing crosses a pill. No card around the destinations: the pane is the container, and a card gave the selection pill a rounded corner to break out through.
 
 ## States
 - `account` — Account
