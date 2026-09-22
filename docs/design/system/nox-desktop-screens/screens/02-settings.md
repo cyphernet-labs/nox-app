@@ -9,7 +9,7 @@
 **Adaptation from mobile.** mobile full-screen settings → list-detail · bottom sheet → centered dialog · the identity card is the same widget at both widths
 
 ## Anatomy
-NavigationRail + settings menu pane (340: one card of nav items, Log out in its own card at the foot - the same two cards as the phone) + detail pane (content capped to ≤680). Each detail reuses the exact phone widgets. The three sub-groups the pane used to have were separated by hairlines drawn across its full width, which cut through the selected pill.
+NavigationRail + settings menu pane (340: an M3 NavigationDrawer - stadium destinations on the pane itself, transparent until selected, `Log out` pinned to the foot) + detail pane (content capped to ≤680). Each detail reuses the exact phone widgets. No card around the destinations and no hairlines between them: the pane is the container, and a card around them gave the selection pill a rounded corner to break out through.
 
 ## States
 - `account` — Account
