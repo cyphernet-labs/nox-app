@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:nox_app/presentation/widgets/primitives/app_hairline_divider_widget.dart';
+import 'package:nox_app/presentation/widgets/settings/app_settings_group_widget.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
@@ -185,15 +185,26 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
       appBar: AppBar(leading: widget.inShell ? null : _backButton(), title: Text(context.l10n.settings)),
       body: ListView(
         children: [
-          Padding(padding: EdgeInsets.all(AppSpacingTokens.s16), child: _identityCard(state, wide: false)),
-          AppSettingsNavRowWidget(title: context.l10n.settingsDevicesTitle, onTap: () => _openSection(DevicesPage.route())),
-          AppSettingsNavRowWidget(title: context.l10n.settingsNotificationsTitle, onTap: () => _openSection(NotificationsPage.route())),
-          AppSettingsNavRowWidget(title: context.l10n.settingsAppearanceTitle, onTap: () => _openSection(AppearancePage.route())),
-          AppSettingsNavRowWidget(title: context.l10n.settingsLanguageTitle, onTap: () => _openSection(LanguagePage.route())),
-          AppSettingsNavRowWidget(title: context.l10n.settingsTermsTitle, onTap: () => _openSection(TermsPage.route())),
-          AppSettingsNavRowWidget(title: context.l10n.settingsAboutTitle, onTap: () => _openSection(AboutPage.route())),
-          const AppHairlineDividerWidget(),
-          AppSettingsNavRowWidget(title: context.l10n.logoutRow, color: Theme.of(context).colorScheme.error, onTap: _logout),
+          Padding(padding: _cardMargin, child: _identityCard(state, wide: false)),
+          // The destinations live in a card, like every other list on a settings
+          // screen. They used to be bare rows on the scaffold background - the one
+          // thing here that was not in a container - under an account card that
+          // was, which read as an unfinished list rather than a quiet one.
+          AppSettingsGroupWidget(
+            children: [
+              AppSettingsNavRowWidget(title: context.l10n.settingsDevicesTitle, onTap: () => _openSection(DevicesPage.route())),
+              AppSettingsNavRowWidget(title: context.l10n.settingsNotificationsTitle, onTap: () => _openSection(NotificationsPage.route())),
+              AppSettingsNavRowWidget(title: context.l10n.settingsAppearanceTitle, onTap: () => _openSection(AppearancePage.route())),
+              AppSettingsNavRowWidget(title: context.l10n.settingsLanguageTitle, onTap: () => _openSection(LanguagePage.route())),
+              AppSettingsNavRowWidget(title: context.l10n.settingsTermsTitle, onTap: () => _openSection(TermsPage.route())),
+              AppSettingsNavRowWidget(title: context.l10n.settingsAboutTitle, onTap: () => _openSection(AboutPage.route())),
+            ],
+          ),
+          // Its own card. A hairline inside the list said "and also this one",
+          // which is not what an irreversible action is.
+          AppSettingsGroupWidget(
+            children: [AppSettingsNavRowWidget(title: context.l10n.logoutRow, color: Theme.of(context).colorScheme.error, onTap: _logout)],
+          ),
           // ..._devMenuRows(),
         ],
       ),
@@ -248,26 +259,31 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
           leading: widget.inShell ? null : _backButton(),
           trailingInset: AppSpacingTokens.s8,
         ),
-        // Grouped nav items (Account / preferences / legal), with the destructive
-        // Log out row pinned to the bottom via a Spacer.
+        // The same two cards as the narrow width, so the two do not read as two
+        // different screens. The three sub-groups they used to be split into were
+        // separated by full-bleed hairlines drawn across the pane, and a line that
+        // crosses the selected pill is a line that looks broken.
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Group 1: Account.
-              item(_Section.account, context.l10n.settingsAccountTitle),
-              item(_Section.devices, context.l10n.settingsDevicesTitle),
-              const AppHairlineDividerWidget(),
-              // Group 2: Notifications, Appearance, Language.
-              item(_Section.notifications, context.l10n.settingsNotificationsTitle),
-              item(_Section.appearance, context.l10n.settingsAppearanceTitle),
-              item(_Section.language, context.l10n.settingsLanguageTitle),
-              const AppHairlineDividerWidget(),
-              // Group 3: Terms, About.
-              item(_Section.terms, context.l10n.settingsTermsTitle),
-              item(_Section.about, context.l10n.settingsAboutTitle),
+              AppSettingsGroupWidget(
+                children: [
+                  item(_Section.account, context.l10n.settingsAccountTitle),
+                  item(_Section.devices, context.l10n.settingsDevicesTitle),
+                  item(_Section.notifications, context.l10n.settingsNotificationsTitle),
+                  item(_Section.appearance, context.l10n.settingsAppearanceTitle),
+                  item(_Section.language, context.l10n.settingsLanguageTitle),
+                  item(_Section.terms, context.l10n.settingsTermsTitle),
+                  item(_Section.about, context.l10n.settingsAboutTitle),
+                ],
+              ),
               const Spacer(),
-              AppSettingsNavRowWidget(title: context.l10n.logoutRow, color: colorScheme.error, menuPane: true, onTap: _logout),
+              AppSettingsGroupWidget(
+                children: [
+                  AppSettingsNavRowWidget(title: context.l10n.logoutRow, color: colorScheme.error, menuPane: true, onTap: _logout),
+                ],
+              ),
               // ..._devMenuRows(menuPane: true),
             ],
           ),
@@ -332,6 +348,15 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
     SettingsNameStatus.saveFailed => context.l10n.settingsNameSaveError,
     _ => null,
   };
+
+  /// The margin `AppSettingsGroupWidget` gives itself. Anything placed beside a
+  /// group card uses it, so every card edge on the screen is the same edge.
+  static final EdgeInsets _cardMargin = EdgeInsets.fromLTRB(
+    AppSpacingTokens.s16,
+    AppSpacingTokens.s4,
+    AppSpacingTokens.s16,
+    AppSpacingTokens.s16,
+  );
 
   Widget _identityCard(SettingsRootState state, {required bool wide}) {
     return AppIdentityCardWidget(
