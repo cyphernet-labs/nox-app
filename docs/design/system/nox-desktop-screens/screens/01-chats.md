@@ -7,7 +7,7 @@
 **Adaptation from mobile.** mobile BottomBar → NavigationRail · full screens (5.1 + 5.2) → list-detail panes
 
 ## Anatomy
-NavigationRail (80) + chat list pane (360, with pane header + SearchBar) + thread pane (header, message stream capped to a ≤980 reading column, composer). The mobile bottom bar becomes the rail; full-screen list/thread become side-by-side panes. The rail's leading is the `+` create FAB; its **trailing is the account avatar** (size 36, generated initials + hashed color + subtle ring) pinned to the bottom.
+NavigationRail (80) + chat list pane (360, with pane header + SearchBar) + thread pane (header, message stream capped to a ≤980 reading column, composer). The mobile bottom bar becomes the rail; full-screen list/thread become side-by-side panes. The rail carries the two destinations and, **pinned to the bottom, the account avatar** (size 36, generated initials + hashed color + subtle ring). The `+` create button is NOT on the rail: the corpus leads the rail with a 56dp FAB, and under two destinations it was the heaviest element on the window - it sits in the chat-list pane header instead, beside the list it creates into (owner decision).
 
 ## States
 - `filled` — Selected

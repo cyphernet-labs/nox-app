@@ -52,6 +52,7 @@ class ChatsListPage extends StatefulWidget {
     this.initialScenario,
     this.accountLabel,
     this.onAccount,
+    this.onCreate,
   });
 
   final bool demo;
@@ -65,6 +66,12 @@ class ChatsListPage extends StatefulWidget {
   /// (i.e. hosted in the shell) — desktop reaches Account through the rail.
   final String? accountLabel;
   final VoidCallback? onAccount;
+
+  /// Wide branch only: the `+` in the pane header. It used to lead the desktop
+  /// rail, where it was the heaviest element on the window for an action that
+  /// belongs beside the list it creates into. Null on the phone, whose `+` is the
+  /// docked FAB in the bottom bar.
+  final VoidCallback? onCreate;
 
   /// Bumped by the shell with the chat just created via the `+` FAB → the list reloads
   /// (so the new chat appears) and opens it (mobile push / desktop select).
@@ -264,6 +271,8 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
           Expanded(
             child: Text(context.l10n.chats, style: textTheme.titleLarge?.copyWith(color: colorScheme.onSurface)),
           ),
+          if (widget.onCreate != null)
+            IconButton(tooltip: context.l10n.tooltipCreateChat, icon: AppIconWidget(NoxIcons.add), onPressed: widget.onCreate),
         ],
       ),
     );
@@ -352,6 +361,10 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
     final pagedList = PagedListView<String, ChatModel>.separated(
       state: initialized.pagingState,
       scrollController: _scrollController,
+      // Same clearance the settings list leaves: the shell insets this body by the
+      // bottom BAR, but the centre-docked `+` stands ~28 proud of it and would sit
+      // over the last chat in a list short enough to end on screen.
+      padding: wide ? null : EdgeInsets.only(bottom: AppSpacingTokens.s40),
       fetchNextPage: () => _bloc.add(const ChatsListEvent.loadChats()),
       builderDelegate: PagedChildBuilderDelegate<ChatModel>(
         itemBuilder: (context, chat, index) {
