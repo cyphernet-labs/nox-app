@@ -10,7 +10,6 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/app_text_style_tokens.dart';
-import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
@@ -329,11 +328,7 @@ class _ChatCardBodyState extends State<ChatCardBody> {
       if (initialized.files.isEmpty)
         _fillRest(
           context,
-          AppEmptyContentWidget(
-            illustration: Assets.svg.illustrations.emptyFiles,
-            title: context.l10n.filesEmptyTitle,
-            message: context.l10n.filesEmptyMessage,
-          ),
+          AppEmptyContentWidget(glyph: NoxIcons.folderOpen, title: context.l10n.filesEmptyTitle, message: context.l10n.filesEmptyMessage),
         )
       else if (initialized.viewMode == FilesViewMode.list)
         _list(context, initialized.files)

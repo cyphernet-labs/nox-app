@@ -4,7 +4,6 @@ import 'package:nox_app/presentation/widgets/app_dev_scenario_dropdown.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
-import 'package:nox_app/design/gen/assets.gen.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/presentation/widgets/chat/watch_chat.dart';
@@ -196,7 +195,7 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
           for (final m in all.where((m) => m.isSystem)) AppSystemLineWidget(text: context.l10n.systemChatCreated(m.authorLabel)),
           Expanded(
             child: AppEmptyContentWidget(
-              illustration: Assets.svg.illustrations.emptyMessages,
+              glyph: NoxIcons.chatBubble,
               title: context.l10n.threadEmptyTitle,
               message: context.l10n.threadEmptyMessage,
             ),

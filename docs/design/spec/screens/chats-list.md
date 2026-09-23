@@ -40,7 +40,7 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 | Состояние | Описание |
 |---|---|
 | Initial-loading | Первая загрузка. **Centered** `CircularProgressIndicator` в области body. |
-| Empty | Чатов нет. **Empty state**: иллюстрация (из дизайн-системы) + заголовок + поясняющий текст. |
+| Empty | Чатов нет. **Empty state** (глиф `forum`) + заголовок + поясняющий текст. |
 | Filled | Список чатов отображается. |
 | Searching | В `SearchBar` непустой запрос; список фильтруется по имени в реальном времени. |
 | Search-empty | По запросу ничего не найдено — надпись `No chats found` в области результата. |
@@ -69,7 +69,7 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 - `Badge` (M3) с числом — unread; цветовая роль `ColorScheme.primary` (не дефолтный error-red). При N = 0 бейдж не рендерится, правая колонка остаётся выровненной по времени.
 - `CircularProgressIndicator` (центрированный) — Initial-loading.
 - `MaterialBanner` (M3) — offline / inline-error.
-- Empty-state widget (`Column` с иллюстрацией + текст).
+- Empty-state widget. **Empty state** — композиция дизайна `EmptyState`: квадрат 132 со скруглением 20 и обводкой 1.5 `outlineVariant`, внутри стоковый глиф Material Symbols 56 (`onSurfaceVariant`) и две брендовые точки — teal 14 сверху справа, gold 10 снизу слева; под ним заголовок `headlineSmall` и текст `bodyMedium` (≤260). ⚠️ **Нарисованных иллюстраций нет**: раньше здесь жили три самодельных SVG из `nox-assets/illustrations`, они читались на 132 как дефект отрисовки, и дизайн их никогда не просил. Файлы остались в бандле, на них никто не ссылается.
 
 ## Микрокопирайт
 
