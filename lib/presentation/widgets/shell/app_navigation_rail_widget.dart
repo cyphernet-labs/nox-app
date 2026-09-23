@@ -13,9 +13,8 @@ import 'package:nox_app/presentation/widgets/shell/app_bottom_bar_widget.dart';
 /// custom rail built to the design `NavRail` (NOT Material's `NavigationRail`,
 /// whose stock metrics/indicator do not match): an 80-wide `surface` strip with a
 /// right hairline and, top-to-bottom — the two destinations (Chats / Settings)
-/// evenly spaced (gap 12), each a rounded-square (radius md) ink target with a
-/// pill indicator behind the icon, then a `Spacer`, and the account avatar pinned
-/// to the bottom.
+/// evenly spaced (gap 12), each a rounded-square cell that fills when selected,
+/// then a `Spacer`, and the account avatar pinned to the bottom.
 ///
 /// **No create FAB.** The design leads the rail with a 56dp rounded-square `+`,
 /// and with only two destinations under it that button was the heaviest thing on
@@ -95,9 +94,13 @@ class AppNavigationRailWidget extends StatelessWidget {
   }
 }
 
-/// Destination cell (icon-pill + label) — a rounded-square (radius md) ink target,
-/// so hover/press feedback is square-cornered; the selected icon sits in a pill
-/// indicator (radius full, secondaryContainer).
+/// Destination cell (icon + label) — a rounded-square ink target that FILLS with
+/// `secondaryContainer` when selected.
+///
+/// The corpus puts a 56×32 pill indicator behind the icon alone. Two rounded
+/// shapes then marked the same one destination - a pill around its glyph, inside
+/// a cell that also took the press feedback - and the settings menu had just been
+/// cleared of exactly that. One shape, around the whole cell (owner decision).
 class _NavRailDestination extends StatelessWidget {
   const _NavRailDestination({
     required this.icon,
@@ -127,31 +130,29 @@ class _NavRailDestination extends StatelessWidget {
     return Semantics(
       button: true,
       selected: selected,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(AppDimensionTokens.radius.md),
-        child: Padding(
-          padding: EdgeInsets.symmetric(vertical: AppSpacingTokens.s4),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: AppSpacingTokens.s56,
-                height: AppSpacingTokens.s32,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: selected ? colorScheme.secondaryContainer : Colors.transparent,
-                  borderRadius: BorderRadius.circular(AppDimensionTokens.radius.pill),
-                ),
-                child: AppIconWidget(
+      child: Material(
+        color: selected ? colorScheme.secondaryContainer : Colors.transparent,
+        borderRadius: BorderRadius.circular(AppDimensionTokens.radius.lg),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: EdgeInsets.symmetric(vertical: AppSpacingTokens.s8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                AppIconWidget(
                   selected ? selectedIcon : icon,
                   size: AppDimensionTokens.icon.xl,
                   color: selected ? colorScheme.onSecondaryContainer : colorScheme.onSurfaceVariant,
                 ),
-              ),
-              SizedBox(height: AppSpacingTokens.s4),
-              Text(label, style: textTheme.labelMedium?.copyWith(color: selected ? colorScheme.onSurface : colorScheme.onSurfaceVariant)),
-            ],
+                SizedBox(height: AppSpacingTokens.s4),
+                Text(
+                  label,
+                  style: textTheme.labelMedium?.copyWith(color: selected ? colorScheme.onSecondaryContainer : colorScheme.onSurfaceVariant),
+                ),
+              ],
+            ),
           ),
         ),
       ),
