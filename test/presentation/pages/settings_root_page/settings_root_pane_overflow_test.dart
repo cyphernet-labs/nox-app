@@ -23,13 +23,14 @@ void main() {
   });
 
   // No desktop target here sets a minimum window size, so a short window is not
-  // a hypothetical. As one unscrollable Column with a Spacer, the pane clipped
-  // its last rows behind an overflow stripe at 560 and there was no way to reach
-  // them - `Log out` included.
+  // a hypothetical: macOS opens its default window at 800x600. As one
+  // unscrollable Column with a Spacer the pane clipped its last rows behind an
+  // overflow stripe from 598px down - measured at 1280 wide, overflow = 598.4 -
+  // height - and there was no way to reach them, `Log out` included.
   testWidgets('the desktop menu pane survives a short window, and keeps Log out reachable', (tester) async {
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
-    for (final height in <double>[800, 700, 620, 560, 480, 400]) {
+    for (final height in <double>[800, 700, 620, 599, 598, 560, 480, 400]) {
       await tester.binding.setSurfaceSize(Size(1280, height));
       await pumpApp(tester, const SettingsRootPage(inShell: true, forceWide: true), settle: false);
       await tester.pump(const Duration(milliseconds: 300));

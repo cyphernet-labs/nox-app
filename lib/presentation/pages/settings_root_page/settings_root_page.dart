@@ -288,9 +288,11 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
         // The line sits below the group's padding, so it never crosses a pill.
         //
         // The destinations SCROLL and `Log out` stays pinned to the foot. As one
-        // unscrollable Column with a Spacer, a window shorter than ~560 clipped
-        // the last rows behind an overflow stripe with no way to reach them -
-        // and no desktop target here sets a minimum window size.
+        // unscrollable Column with a Spacer it clipped the last rows behind an
+        // overflow stripe with no way to reach them, from 598px of window height
+        // down (measured at 1280 wide: overflow = 598.4 - height, so 0.4px at 598
+        // and 38px at 560). macOS opens its default window at 800x600 - four
+        // pixels of headroom - and no desktop target here sets a minimum size.
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,

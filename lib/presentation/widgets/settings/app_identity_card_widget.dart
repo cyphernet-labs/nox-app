@@ -4,6 +4,7 @@ import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/app_text_style_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_brand.dart';
+import 'package:nox_app/design/theme/nox_opacity.dart';
 import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_ringed_avatar_widget.dart';
@@ -129,9 +130,18 @@ class AppIdentityCardWidget extends StatelessWidget {
         // Disabled while there is no id. `_copyId` already refuses to write an
         // empty clipboard - confirming one would leave somebody pasting nothing -
         // so an enabled button here is a button that does nothing and says nothing.
+        //
+        // The glyph is tinted alongside it. `AppIconWidget` takes a colour and
+        // bakes it into a `ColorFilter`, so it never sees the button's state:
+        // left as-is, a disabled Copy drew a full-strength icon next to a label
+        // Material had already dimmed to 38%, and the button read as half-on.
         FilledButton.tonalIcon(
           onPressed: rawId.isEmpty ? null : onCopy,
-          icon: AppIconWidget(NoxIcons.contentCopy, size: iconSize, color: colorScheme.onSecondaryContainer),
+          icon: AppIconWidget(
+            NoxIcons.contentCopy,
+            size: iconSize,
+            color: rawId.isEmpty ? colorScheme.onSurface.withValues(alpha: NoxOpacity.disabled) : colorScheme.onSecondaryContainer,
+          ),
           label: Text(l10n.settingsCopyIdAction),
         ),
       ],
