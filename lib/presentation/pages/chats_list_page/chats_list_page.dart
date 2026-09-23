@@ -410,7 +410,11 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
               )
             : AppEmptyContentWidget(glyph: NoxIcons.forum, title: context.l10n.chatsEmptyTitle, message: context.l10n.chatsEmptyMessage),
       ),
-      separatorBuilder: (context, index) => const SizedBox.shrink(),
+      // A gap on the wide branch, none on the phone. The desktop row draws a
+      // rounded fill when selected, and with the rows flush that fill ran into
+      // its neighbour's edge with nothing between them - two selected-looking
+      // blocks merging into one. The phone row has no fill to merge.
+      separatorBuilder: (context, index) => wide ? SizedBox(height: AppSpacingTokens.s4) : const SizedBox.shrink(),
     );
     if (!FeatureFlags.enablePullToRefresh) return pagedList;
     return RefreshIndicator(onRefresh: _refresh, child: pagedList);

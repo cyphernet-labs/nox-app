@@ -53,7 +53,7 @@ class AppComposerWidget extends StatelessWidget {
                   ),
                   Expanded(
                     child: Padding(
-                      padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s4, vertical: AppSpacingTokens.s4),
+                      padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s4),
                       child: TextField(
                         controller: controller,
                         focusNode: focusNode,
@@ -64,6 +64,14 @@ class AppComposerWidget extends StatelessWidget {
                         style: textTheme.bodyLarge?.copyWith(color: colorScheme.onSurface),
                         decoration: InputDecoration(
                           isDense: true,
+                          // A single line has to be as tall as the buttons beside
+                          // it. The row aligns to the BOTTOM - which is what keeps
+                          // the buttons in place as the field grows - so a shorter
+                          // field left the 48-tall buttons centring their glyphs
+                          // above the text. The design gives this area the same 48
+                          // minimum and centres the line in it; the padding either
+                          // side of a bodyLarge line is what gets it there.
+                          contentPadding: EdgeInsets.symmetric(vertical: AppSpacingTokens.s12),
                           // Design (NoxComposer): a flush, borderless field on the composer bar
                           // — no outlined box. The global InputDecorationTheme sets an
                           // enabled/focused OutlineInputBorder, so `border: none` alone is not
