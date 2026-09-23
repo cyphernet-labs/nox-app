@@ -67,6 +67,11 @@ class AppNavigationRailWidget extends StatelessWidget {
           child: Padding(
             padding: EdgeInsets.fromLTRB(AppSpacingTokens.s8, AppSpacingTokens.s16, AppSpacingTokens.s8, AppSpacingTokens.s20),
             child: Column(
+              // Stretch, so both destinations are the same cell. Left to size
+              // themselves they were as wide as their own label - `Settings`
+              // noticeably wider than `Chats` - and the selected fill hugged the
+              // word instead of marking a destination.
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 _NavRailDestination(
                   icon: NoxIcons.forum,
@@ -84,7 +89,11 @@ class AppNavigationRailWidget extends StatelessWidget {
                   onTap: () => onSelect(AppTab.settings),
                 ),
                 const Spacer(),
-                _NavRailAccountAvatar(accountLabel: accountLabel, onAccount: onAccount),
+                // Centred explicitly: the stretch above would otherwise pull the
+                // avatar's tap target across the whole rail.
+                Center(
+                  child: _NavRailAccountAvatar(accountLabel: accountLabel, onAccount: onAccount),
+                ),
               ],
             ),
           ),
@@ -137,7 +146,7 @@ class _NavRailDestination extends StatelessWidget {
         child: InkWell(
           onTap: onTap,
           child: Padding(
-            padding: EdgeInsets.symmetric(vertical: AppSpacingTokens.s8),
+            padding: EdgeInsets.symmetric(vertical: AppSpacingTokens.s10, horizontal: AppSpacingTokens.s4),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -149,6 +158,11 @@ class _NavRailDestination extends StatelessWidget {
                 SizedBox(height: AppSpacingTokens.s4),
                 Text(
                   label,
+                  textAlign: TextAlign.center,
+                  // The cell is a fixed width now, so a long label at a doubled
+                  // text scale has to end somewhere other than outside it.
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: textTheme.labelMedium?.copyWith(color: selected ? colorScheme.onSecondaryContainer : colorScheme.onSurfaceVariant),
                 ),
               ],
