@@ -554,9 +554,9 @@ window.NOX_SPECS = [
         "label": "Logging out"
       }
     ],
-    "anatomy": "App bar (Settings). Identity card (name + the public ID). Grouped list: Devices, Notifications, Appearance, Language, Terms, About. Separate destructive Log out group. Bottom bar.",
+    "anatomy": "App bar (Settings). Identity card as an account header: ringed initials avatar, name, the full public ID, and two tonal actions (Edit name / Copy ID). One rounded tile per destination, each with a bare leading glyph and a chevron: Devices, Notifications, Appearance, Language, Terms, About. Destructive Log out in a tile of its own. Bottom bar.",
     "behavior": [
-      "Identity card: name (edit inline) + the public ID with copy / show-QR actions.",
+      "Identity card: avatar + name (edit inline) + the full public ID, with Edit name and Copy ID as named tonal buttons. No QR action - adding a device is 7.8's own screen.",
       "Phase 037 removed the Server owner badge and its 'ownership not stated' state: the machine holds one person, so a mark that told the owner apart from an invited member tells nothing apart.",
       "Editing: name becomes an inline TextField with counter.",
       "Phase 032 removed the mask, the reveal and the account QR: the ID stopped being a secret. Show QR leads to Devices, where an invite is minted with a one-shot token.",
@@ -673,7 +673,7 @@ window.NOX_SPECS = [
         "label": "Українська"
       }
     ],
-    "anatomy": "App bar (back + Language). Grouped radio rows with a leading flag/glyph: System, English, Українська.",
+    "anatomy": "App bar (back + Language). Three single-select option cards - the same ones Appearance (7.3) uses - each with a 64x48 leading tile: System, English, Українська. Flags for the two languages; for System the device glyph, which is what the option follows.",
     "behavior": [
       "Single-select. System follows the OS locale and falls back to English if the OS is neither EN nor UK.",
       "Applies immediately."

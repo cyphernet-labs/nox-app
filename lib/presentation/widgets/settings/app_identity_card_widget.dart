@@ -48,6 +48,9 @@ class AppIdentityCardWidget extends StatelessWidget {
   /// while [editing].
   final Widget? nameEditField;
 
+  /// Stands in for an id the app does not have yet.
+  static const String _unknownId = '—';
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -87,10 +90,17 @@ class AppIdentityCardWidget extends StatelessWidget {
   Widget _idLine(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     if (initialLoading) return Center(child: AppSpinnerWidget(size: AppDimensionTokens.icon.lg));
+    // An em dash rather than a blank line. `authorId` is null until a greeting
+    // brings one - always, on the mock flavours, and for the window between
+    // pairing and the first greeting on a live one - and `rawId` is then ''.
+    // Rendered bare that is a ~23px gap between the name and the buttons, which
+    // reads as a rendering fault rather than as "not known yet". The card this
+    // replaced guarded the same case, and the guard was lost in the rewrite.
+    //
     // Monospace, and the whole string: it is a key, and a key reads as one only
     // when its characters line up. `Copy ID` below is what it is here for.
     return Text(
-      rawId,
+      rawId.isEmpty ? _unknownId : rawId,
       textAlign: TextAlign.center,
       style: AppTextStyleTokens.monoBody(color: colorScheme.onSurfaceVariant),
     );
@@ -116,8 +126,11 @@ class AppIdentityCardWidget extends StatelessWidget {
             icon: AppIconWidget(NoxIcons.edit, size: iconSize, color: colorScheme.onSecondaryContainer),
             label: Text(l10n.settingsEditNameAction),
           ),
+        // Disabled while there is no id. `_copyId` already refuses to write an
+        // empty clipboard - confirming one would leave somebody pasting nothing -
+        // so an enabled button here is a button that does nothing and says nothing.
         FilledButton.tonalIcon(
-          onPressed: onCopy,
+          onPressed: rawId.isEmpty ? null : onCopy,
           icon: AppIconWidget(NoxIcons.contentCopy, size: iconSize, color: colorScheme.onSecondaryContainer),
           label: Text(l10n.settingsCopyIdAction),
         ),

@@ -10,7 +10,9 @@ import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
+import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
+import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/presentation/pages/file_view_page/bloc/file_view_bloc.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -115,4 +117,36 @@ void main() {
       verifyNever(files.download(fileId: anyNamed('fileId'), suggestedName: anyNamed('suggestedName'), onProgress: anyNamed('onProgress')));
     },
   );
+
+  blocTest<FileViewBloc, FileViewState>(
+    'a machine that failed to prove who it is is never asked for the bytes',
+    // The OTHER downloader: this bloc reaches Dio directly, so the phase that
+    // stopped the socket does not reach it on its own. `failed`, not `gone` -
+    // the bytes exist and the screen keeps its retry, the same way out the
+    // banner offers.
+    setUp: () {
+      answerDownload(const RepositoryResult<String>.success(data: '/tmp/spec.pdf'));
+      getIt.registerSingleton<SessionPhaseService>(_RefusedPhase());
+    },
+    build: () => FileViewBloc(file: attachment),
+    act: (bloc) => bloc.add(const FileViewEvent.started()),
+    wait: const Duration(milliseconds: 200),
+    verify: (bloc) {
+      expect(bloc.state.status, FileViewStatus.failed);
+      verifyNever(files.download(fileId: anyNamed('fileId'), suggestedName: anyNamed('suggestedName'), onProgress: anyNamed('onProgress')));
+    },
+  );
+}
+
+/// Stands in for the live phase service at the one value this screen has to
+/// refuse on.
+class _RefusedPhase implements SessionPhaseService {
+  @override
+  SessionPhase get phase => SessionPhase.serverMismatch;
+
+  @override
+  Stream<SessionPhase> watchPhase() => Stream<SessionPhase>.value(SessionPhase.serverMismatch);
+
+  @override
+  Future<void> reconnect() async {}
 }

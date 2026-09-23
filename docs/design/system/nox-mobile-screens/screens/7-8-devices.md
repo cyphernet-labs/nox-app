@@ -35,7 +35,7 @@ Detail scaffold (back + title). One group holding every device, the current one 
 
 ## Copy (EN)
 - Title: Devices
-- This device · Revoke · Add a device · No other devices
+- This device · Revoke · Add a device · Copy · Hide
 - Revoke this device? / It will be signed out and won't be able to connect again.
 - This is the device you're using. Revoking it signs you out here.
 - Scan this from the other device. The link works for 10 minutes.

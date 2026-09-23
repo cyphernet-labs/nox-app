@@ -100,7 +100,7 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 | Q7 | Аватар чата | Generated avatar (общая спека в overview) |
 | Q8 | Формат времени | Относительное (лестница в overview) |
 | Q9 | Initial-loading | Centered `CircularProgressIndicator` |
-| Q10 | Empty state | Иллюстрация + текст |
+| Q10 | Empty state | Композиция `EmptyState`: обведённый квадрат 132 + стоковый глиф 56 + две брендовые точки + заголовок и текст |
 
 ## Десктоп-раскладка (этап M3, сверено с корпусом)
 

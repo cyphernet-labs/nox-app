@@ -5,7 +5,7 @@
 **Purpose.** Toggle push notifications.
 
 ## Anatomy
-App bar (back + Notifications). Grouped switch row “Enable notifications”, no leading glyph - settings rows are icon-less. When the OS has refused the permission, an inset notice card sits above it - same geometry as every settings card, one surface step lighter - with its action at the trailing edge.
+App bar (back + Notifications). Grouped switch row “Enable notifications” with a bare leading glyph (22, `onSurfaceVariant`) - no 40dp tinted circle around it. When the OS has refused the permission, an inset notice card sits above it - same geometry as every settings card, one surface step lighter - with its action at the trailing edge.
 
 ## States
 - `on` — Enabled
