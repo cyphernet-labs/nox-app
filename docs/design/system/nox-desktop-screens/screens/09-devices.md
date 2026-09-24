@@ -37,7 +37,7 @@ Fills the Settings detail pane (7.1); no push, selection swaps the pane. One gro
 - Title: Devices
 - This device · Revoke · Add a device · Copy · Hide
 - Revoke this device? / It will be signed out and won't be able to connect again.
-- This is the device you're using. Revoking it signs you out here.
+- (current device) Log out? / This device will be signed out and won't be able to connect again. You'll need a new pairing link to come back.
 - Scan this from the other device. The link works for 10 minutes.
 - Copy
 - Hide
