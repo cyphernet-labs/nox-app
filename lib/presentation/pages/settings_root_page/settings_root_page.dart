@@ -44,8 +44,9 @@ enum _Section { account, devices, notifications, appearance, language, terms, ab
 
 /// 7.1 Settings root — the Settings tab body. Mobile: a flat list (identity card +
 /// nav rows + Log out). Desktop: a list-detail (menu pane 340 + detail pane ≤680,
-/// selection swaps the pane without push; the raw ID is never revealed, an inline
-/// account QR is shown instead). Settings rows open the real 7.2–7.7 subscreens;
+/// selection swaps the pane without push). The id is public since feature 032, so
+/// the card shows it whole - there is no mask, no reveal, and no account QR: adding
+/// a device is its own screen, 7.8. Settings rows open the real 7.2–7.7 subscreens;
 /// Log out → real 1.1 Splash. Owns [SettingsRootBloc]. `[inShell]` suppresses the
 /// back affordance when hosted as a shell tab.
 class SettingsRootPage extends StatefulWidget {
@@ -238,7 +239,11 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
   // EVERY flavour. `kDebugMode` kept them out of a release build but left them in
   // every debug run, which is the build a person is actually handed while the app is
   // being finished. The screens they opened still exist and still have their tests;
-  // bringing the rows back is uncommenting this block and its two call sites.
+  // bringing the rows back is NOT just uncommenting. This branch also made `icon:`
+  // required on AppSettingsNavRowWidget, so a restore is: uncomment this block, its
+  // two call sites and `_devControl()` below, uncomment the four imports at the top
+  // (error_page, error_page_params, screens_gallery_page, ui_kit_page), and give each
+  // row an `icon:`.
   // // Debug-only rows appended after Log out on both layouts (mobile flat list + desktop
   // // menu pane): the screens gallery, the UI-kit gallery, a forced logout, and — in the
   // // gallery preview — the dev state control. Empty in release (all kDebugMode-gated).

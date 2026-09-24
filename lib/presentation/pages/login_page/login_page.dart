@@ -173,7 +173,7 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
         listenWhen: (previous, current) => previous.status != current.status,
         listener: _onStatus,
         builder: (context, state) => AppOnboardingScaffoldWidget(
-          subtitle: 'Sign in',
+          subtitle: context.l10n.windowSubtitleSignIn,
           mobileActionsPadding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s16, AppSpacingTokens.s16, AppSpacingTokens.s24),
           field: _idField(context, state),
           actions: _actions(context, state),

@@ -95,8 +95,11 @@ class _SetUsernamePageState extends BaseStatePage<SetUsernamePage> {
       child: BlocConsumer<SetUsernameBloc, SetUsernameState>(
         listenWhen: (previous, current) => previous.status != current.status,
         listener: _onStatus,
-        builder: (context, state) =>
-            AppOnboardingScaffoldWidget(subtitle: 'Set up', field: _field(context, state), actions: _actions(context, state)),
+        builder: (context, state) => AppOnboardingScaffoldWidget(
+          subtitle: context.l10n.windowSubtitleSetUp,
+          field: _field(context, state),
+          actions: _actions(context, state),
+        ),
       ),
     );
   }

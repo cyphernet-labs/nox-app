@@ -81,7 +81,6 @@
   "loginLinkExpired": "Термін дії посилання минув. Попросіть нове.",
   "loginLinkRejected": "Це посилання не можна використати. Попросіть нове.",
   "loginNetworkError": "Не вдалося увійти. Перевірте з'єднання та спробуйте ще раз.",
-  "onboardTitleSignIn": "NOX · Вхід",
   "sessionExpiredMessage": "Ваш сеанс завершився",
   "tooltipFlashlight": "Ліхтарик",
   "tooltipSwitchCamera": "Змінити камеру",
@@ -94,7 +93,6 @@
   "qrInvalidSnackbar": "Цей QR-код недійсний. Спробуйте інший.",
   "qrDesktopTitle": "Скануйте QR-код",
   "qrDesktopHelper": "Наведіть вебкамеру на код або введіть ID вручну.",
-  "onboardTitleScanQr": "NOX · Сканування QR",
   "usernameLabel": "Ім'я",
   "usernameHint": "Як вас бачитимуть інші",
   "usernameHelper": "Інші бачать це ім'я. Ви можете змінити його зараз або пізніше в налаштуваннях.",
@@ -102,7 +100,6 @@
   "nameTakenError": "Це ім'я вже зайняте",
   "actionDone": "Готово",
   "actionSkip": "Пропустити",
-  "onboardTitleSetUp": "NOX · Налаштування",
   "createChatTitle": "Новий чат",
   "createChatNameLabel": "Назва чату",
   "createChatNameHint": "напр. Random thoughts",
@@ -178,5 +175,9 @@
   "loginServerNotRecognised": "Сервер не збігається з посиланням",
   "@loginServerNotRecognised": {
     "description": "The same refusal on the sign-in screen, where there is no relationship with a server yet - so it names the link rather than a pairing that has not happened."
-  }
+  },
+  "windowSubtitleSignIn": "Вхід",
+  "windowSubtitleSetUp": "Налаштування",
+  "windowSubtitleScanQr": "Сканування QR",
+  "windowSubtitleError": "Помилка"
 }
