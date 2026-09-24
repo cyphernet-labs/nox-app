@@ -16,8 +16,10 @@ abstract class SettingsRootState with _$SettingsRootState {
   const factory SettingsRootState({
     @Default(true) bool initialLoading,
     @Default(Constants.defaultUserLabel) String name,
-    // The user's own identifier (Your ID), encoded into the Show QR surface (7.1,
-    // FR-014). Loaded from the session on initialize; falls back to the stub.
+    // The person's own server-minted id, shown whole in the 7.1 identity card and
+    // handed to `Copy ID`. Loaded from the session on initialize; absent or
+    // unreadable degrades to '' - never to a stand-in, because a fabricated id
+    // would be copied out as if it were real.
     @Default('') String rawId,
 
     @Default('') String draftName,

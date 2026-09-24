@@ -56,7 +56,13 @@ void main() {
       // ...but the card's semantics node does. The card merges into one node, so
       // a reader hears `A, Aria, Your ID: u_345…`; without the wrapper the third
       // part is the bare key.
-      expect(tester.getSemantics(find.text(_id)).label, contains('${l10nEn.settingsYourIdLabel}: $_id'));
+      final label = tester.getSemantics(find.text(_id)).label;
+      expect(label, contains('${l10nEn.settingsYourIdLabel}: $_id'));
+      // ...and ONCE. `excludeSemantics: true` is the other half of the change: it
+      // stops the child Text announcing the bare key a second time, right after
+      // the named one. `contains` alone leaves that half unguarded - drop the
+      // line and a reader says forty characters twice over.
+      expect(_id.allMatches(label).length, 1, reason: 'the id is announced twice: $label');
 
       semantics.dispose();
     });
