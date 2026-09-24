@@ -66,6 +66,34 @@ void main() {
     expect(find.descendant(of: find.byWidget(tiles.first), matching: find.textContaining(l10nEn.devicesCurrent)), findsOneWidget);
   });
 
+  testWidgets('revoking THIS device asks the logout question, not the revoke one', (tester) async {
+    // Revoking the device in your hand ends the session and wipes the local
+    // data; coming back needs a new pairing link. The revoke wording - `It will
+    // be signed out and won't be able to connect again` - is true of a tablet
+    // you no longer have and undersells this. The owner met the gap the other
+    // way round: revoking their only device dropped them on the naming screen.
+    await pumpApp(tester, DevicesPage(initialState: _state()));
+
+    // The current device is first in the list, so its Revoke is the first one.
+    await tester.tap(find.widgetWithText(TextButton, l10nEn.devicesRevoke).first);
+    await tester.pumpAndSettle();
+
+    expect(find.text(l10nEn.logoutDialogTitle), findsOneWidget);
+    expect(find.text(l10nEn.logoutDialogMessage), findsOneWidget);
+    expect(find.text(l10nEn.devicesRevokeTitle), findsNothing);
+  });
+
+  testWidgets('revoking another device asks the revoke question', (tester) async {
+    await pumpApp(tester, DevicesPage(initialState: _state()));
+
+    await tester.tap(find.widgetWithText(TextButton, l10nEn.devicesRevoke).last);
+    await tester.pumpAndSettle();
+
+    expect(find.text(l10nEn.devicesRevokeTitle), findsOneWidget);
+    expect(find.text(l10nEn.devicesRevokeMessage), findsOneWidget);
+    expect(find.text(l10nEn.logoutDialogTitle), findsNothing);
+  });
+
   testWidgets('Revoke is destructive, and rendered as destructive', (tester) async {
     // It was the brand accent - the same teal as `Add a device` directly below,
     // which is the colour this app uses for the thing it wants you to do. The

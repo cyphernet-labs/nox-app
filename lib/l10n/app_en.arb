@@ -59,7 +59,6 @@
   "devicesRevoke": "Revoke",
   "devicesRevokeTitle": "Revoke this device?",
   "devicesRevokeMessage": "It will be signed out and won't be able to connect again.",
-  "devicesRevokeSelfMessage": "This is the device you're using. Revoking it signs you out here.",
   "devicesError": "Couldn't load your devices.",
   "devicesRevokeError": "Couldn't revoke that device. Try again.",
   "devicesAdd": "Add a device",
