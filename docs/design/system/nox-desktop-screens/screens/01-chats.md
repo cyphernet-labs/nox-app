@@ -23,7 +23,7 @@ NavigationRail (80) + chat list pane (360, with pane header + SearchBar) + threa
 
 ## Behavior
 - Selecting a row highlights it (secondaryContainer) and loads the thread on the right — no navigation push.
-- No-selection: the thread pane shows a “Select a chat” placeholder; the “+” lives on the rail.
+- No-selection: the thread pane shows a “Select a chat” placeholder; the “+” lives in the chat-list pane header.
 - Thread header is persistent (avatar + chat name + **two** actions) — a desktop affordance the mobile thread lacks. Tapping the avatar/name opens the chat card; the info action (folder-open icon) opens Chat info; the second action is **Invite a person, permanently disabled** (phase 037) — inviting anybody at all goes through a relay whose protocol does not exist yet, so the seam is shown honestly rather than hidden. Pressing it does nothing: no screen, no snackbar, no error. It carries a text name for screen readers and is announced unavailable.
 - The header shows **no member list, no per-chat search, no folders**. No members because a chat has no roster to show: the server belongs to one person and serves only their own devices. Search and folders are out of scope. Source of truth: `docs/design/spec/screens/chat.md` §Десктоп.
 
@@ -35,7 +35,7 @@ NavigationRail (80) + chat list pane (360, with pane header + SearchBar) + threa
 
 ## Navigation
 - Row → loads thread in right pane.
-- Rail + → Create chat dialog (04).
+- Pane-header + → Create chat dialog (04).
 - Rail account avatar (bottom) → Settings, landing on the Account section (NOX has no separate profile screen).
 - Thread header (avatar / chat name / info action) → Chat card / Chat info (04).
 - Thread header invite action → nowhere: it is disabled and stays disabled.
