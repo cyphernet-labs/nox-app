@@ -18,7 +18,7 @@ Fills the Settings detail pane (7.1); no push, selection swaps the pane. One gro
 
 ## Behavior
 - A row shows the OS family and two moments (paired, last seen). The key itself is never shown: 32 base64 bytes look identical across rows. The exact hardware model is deliberately not collected.
-- `Revoke` opens a confirm dialog. Revoking the current device is a logout and says so in its own words.
+- `Revoke` opens a confirm dialog. Revoking the current device is a logout, and asks the logout question word for word - but the dialog is this screen's own: the confirm button stays `Revoke`, not the `Log out` that 7.1's logout dialog carries. You press what you asked for and read what it will actually do.
 - Revocation applies immediately — the revoked device's live connection drops rather than waiting for its next attempt.
 - A device paired from elsewhere appears in the open list on its own (phase 038): the server says so, and the screen re-reads. Leaving the section and coming back is no longer how you find out.
 - The whole invite surface disappears when a device joins: the card, because the token is one-shot and the server will now refuse that QR, and
