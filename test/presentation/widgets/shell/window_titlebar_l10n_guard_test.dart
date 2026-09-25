@@ -18,10 +18,21 @@ void main() {
     'lib',
   ).listSync(recursive: true).whereType<File>().where((f) => f.path.replaceAll(r'\', '/').endsWith('.dart')).toList();
 
+  // Everything from `//` to end of line, so a comment that merely MENTIONS the
+  // old shape cannot fail the build and send someone to a file that is correct.
+  // A `//` preceded by a colon is left alone - that is a URL inside a string.
+  final comments = RegExp(r'(?<!:)//[^\n]*');
+
+  // A quote anywhere in the argument, not only glued to the colon: a ternary or
+  // a `?? 'fallback'` is the same defect wearing a different shape. Bounded by
+  // `,`, `)` or the line end so it cannot run on into unrelated code.
+  final rawSubtitle = RegExp(r'''subtitle:[^,)\n]*['"]''');
+
   test('no window titlebar subtitle is a raw string literal', () {
-    // `subtitle:` followed by a quote - i.e. copy that never passed through l10n.
-    final rawSubtitle = RegExp(r'''subtitle:\s*['"]''');
-    final offenders = dartFiles.where((f) => rawSubtitle.hasMatch(f.readAsStringSync())).map((f) => f.path).toList();
+    final offenders = dartFiles
+        .where((f) => rawSubtitle.hasMatch(f.readAsStringSync().replaceAll(comments, '')))
+        .map((f) => f.path)
+        .toList();
     expect(offenders, isEmpty, reason: 'hardcoded window titlebar subtitle in: $offenders');
   });
 }

@@ -176,7 +176,7 @@
     "description": "The same refusal on the sign-in screen, where there is no relationship with a server yet - so it names the link rather than a pairing that has not happened."
   },
   "windowSubtitleSignIn": "Вхід",
-  "windowSubtitleSetUp": "Налаштування",
+  "windowSubtitleSetUp": "Початок роботи",
   "windowSubtitleScanQr": "Сканування QR",
   "windowSubtitleError": "Помилка"
 }
