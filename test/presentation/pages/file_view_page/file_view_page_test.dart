@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -9,6 +10,7 @@ import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/domain/service/file_picker_service.dart';
 import 'package:nox_app/general/app_clock.dart';
+import 'package:nox_app/general/video_playback_capability.dart';
 import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/pages/file_view_page/file_view_page.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_file_glyph_widget.dart';
@@ -31,6 +33,13 @@ class _FakeSaver implements FilePickerService {
   @override
   Future<String?> pickSaveLocation({required String suggestedName}) async => _dest;
 }
+
+/// A 1x1 PNG, so `Image.file` has bytes it really decodes: the preview falls
+/// back to the glyph on a decode failure, and a test that could not tell the
+/// two apart would pass for the wrong reason.
+final Uint8List _onePixelPng = base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+);
 
 void main() {
   setUp(() async {
@@ -266,6 +275,70 @@ void main() {
       // Two glyphs on the desktop lightbox: the small leading one in the header + the hero one in the body.
       expect(find.byType(AppFileGlyphWidget), findsNWidgets(2));
       expect(find.widgetWithText(FilledButton, l10nEn.actionDownload), findsOneWidget);
+    });
+  });
+
+  group('what the screen shows once the bytes are here', () {
+    tearDown(() => VideoPlaybackCapability.debugOverride = null);
+
+    testWidgets('a video plays here instead of showing its type glyph', (tester) async {
+      VideoPlaybackCapability.debugOverride = true;
+      final src = File('${Directory.systemTemp.path}/nox_play.mp4')..writeAsBytesSync(Uint8List.fromList([0, 1, 2]));
+      addTearDown(() => src.existsSync() ? src.deleteSync() : null);
+
+      await pumpApp(
+        tester,
+        FileViewPage(
+          file: MessageAttachment(id: 'v', type: FileType.video, name: 'clip.mp4', sizeBytes: 3, localPath: src.path),
+        ),
+        settle: false,
+      );
+      await tester.pump();
+
+      expect(find.byKey(const Key('video-player')), findsOneWidget);
+      expect(find.byType(AppFileGlyphWidget), findsNothing);
+      // These bytes are not a video, and the point is that saying so is a
+      // message rather than a crash or a blank rectangle.
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('on a platform with no player it is the screen it always was', (tester) async {
+      // Windows and Linux: `video_player` has no implementation there, so the
+      // screen must not advertise playback it cannot do.
+      VideoPlaybackCapability.debugOverride = false;
+      final src = File('${Directory.systemTemp.path}/nox_noplay.mp4')..writeAsBytesSync(Uint8List.fromList([0, 1, 2]));
+      addTearDown(() => src.existsSync() ? src.deleteSync() : null);
+
+      await pumpApp(
+        tester,
+        FileViewPage(
+          file: MessageAttachment(id: 'v', type: FileType.video, name: 'clip.mp4', sizeBytes: 3, localPath: src.path),
+        ),
+        settle: false,
+      );
+      await tester.pump();
+
+      expect(find.byKey(const Key('video-player')), findsNothing);
+      expect(find.byType(AppFileGlyphWidget), findsOneWidget);
+      expect(find.text(l10nEn.tooltipSave), findsNothing); // Save is an icon action, still there
+    });
+
+    testWidgets('a picture is shown, not described by a glyph', (tester) async {
+      final src = File('${Directory.systemTemp.path}/nox_preview.png')..writeAsBytesSync(_onePixelPng);
+      addTearDown(() => src.existsSync() ? src.deleteSync() : null);
+
+      await pumpApp(
+        tester,
+        FileViewPage(
+          file: MessageAttachment(id: 'i', type: FileType.image, name: 'shot.png', sizeBytes: 3, localPath: src.path),
+        ),
+        settle: false,
+      );
+      await tester.pump();
+
+      expect(find.byKey(const Key('image-preview')), findsOneWidget);
+      expect(find.byType(AppFileGlyphWidget), findsNothing);
     });
   });
 }

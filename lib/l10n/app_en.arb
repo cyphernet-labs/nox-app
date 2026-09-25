@@ -220,5 +220,17 @@
   "windowSubtitleError": "Error",
   "@windowSubtitleError": {
     "description": "Desktop window titlebar subtitle, rendered after the NOX wordmark as \"NOX — <subtitle>\"."
+  },
+  "videoPlay": "Play",
+  "@videoPlay": {
+    "description": "Video attachment playback (5.3)."
+  },
+  "videoPause": "Pause",
+  "@videoPause": {
+    "description": "Video attachment playback (5.3)."
+  },
+  "videoPlaybackError": "Couldn't play this video. Save it to open it in another app.",
+  "@videoPlaybackError": {
+    "description": "Video attachment playback (5.3)."
   }
 }

@@ -178,5 +178,8 @@
   "windowSubtitleSignIn": "Вхід",
   "windowSubtitleSetUp": "Початок роботи",
   "windowSubtitleScanQr": "Сканування QR",
-  "windowSubtitleError": "Помилка"
+  "windowSubtitleError": "Помилка",
+  "videoPlay": "Відтворити",
+  "videoPause": "Пауза",
+  "videoPlaybackError": "Не вдалося відтворити це відео. Збережіть його, щоб відкрити в іншій програмі."
 }

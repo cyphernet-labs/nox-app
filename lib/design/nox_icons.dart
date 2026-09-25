@@ -195,4 +195,10 @@ abstract final class NoxIcons {
 
   /// 5.4 no files.
   static SvgGenImage get folderOpen => Assets.svg.icons.folderOpen;
+
+  /// Start playback of a video attachment (5.3).
+  static SvgGenImage get playArrowFill => Assets.svg.icons.playArrowFill;
+
+  /// Pause playback of a video attachment (5.3).
+  static SvgGenImage get pauseFill => Assets.svg.icons.pauseFill;
 }

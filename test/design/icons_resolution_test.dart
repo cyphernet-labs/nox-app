@@ -8,9 +8,9 @@ import 'package:nox_app/design/nox_icons.dart';
 void main() {
   final iconsDir = Directory('assets/svg/icons');
 
-  test('all 56 icon SVGs are bundled', () {
+  test('all 58 icon SVGs are bundled', () {
     final svgs = iconsDir.listSync().whereType<File>().where((f) => f.path.endsWith('.svg')).toList();
-    expect(svgs.length, 56, reason: 'expected 56 bundled icon SVGs');
+    expect(svgs.length, 58, reason: 'expected 58 bundled icon SVGs');
   });
 
   test('every bundled icon SVG uses currentColor and bakes no color (FR-003)', () {
@@ -21,7 +21,7 @@ void main() {
     }
   });
 
-  test('NoxIcons covers the 54 referenced glyphs and each resolves to an existing asset', () {
+  test('NoxIcons covers the 56 referenced glyphs and each resolves to an existing asset', () {
     final registry = <SvgGenImage>[
       NoxIcons.forum,
       NoxIcons.forumFill,
@@ -59,6 +59,8 @@ void main() {
       NoxIcons.draft,
       NoxIcons.chatBubble,
       NoxIcons.folderOpen,
+      NoxIcons.playArrowFill,
+      NoxIcons.pauseFill,
       NoxIcons.notifications,
       NoxIcons.notificationsOff,
       NoxIcons.wifiOff,
@@ -79,16 +81,16 @@ void main() {
       NoxIcons.infoFill,
       NoxIcons.logoutFill,
     ];
-    expect(registry.length, 54, reason: 'NoxIcons should expose the 54 referenced glyphs');
+    expect(registry.length, 56, reason: 'NoxIcons should expose the 56 referenced glyphs');
     for (final icon in registry) {
       expect(File(icon.path).existsSync(), isTrue, reason: '${icon.path}: asset not found');
     }
   });
 
-  test('NoxIcons exposes exactly 54 getters (parsed from source — catches silent drift)', () {
+  test('NoxIcons exposes exactly 56 getters (parsed from source — catches silent drift)', () {
     final src = File('lib/design/nox_icons.dart').readAsStringSync();
     final getters = RegExp(r'static SvgGenImage get ').allMatches(src).length;
-    expect(getters, 54, reason: 'NoxIcons getter count must match the verified registry');
+    expect(getters, 56, reason: 'NoxIcons getter count must match the verified registry');
   });
 
   test('count reconciliation: the 2 unreferenced outlined variants are bundled (54 + 2 = 56)', () {
