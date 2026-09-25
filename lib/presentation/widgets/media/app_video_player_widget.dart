@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -70,7 +71,12 @@ class _AppVideoPlayerWidgetState extends State<AppVideoPlayerWidget> {
   void _toggle() {
     final controller = _controller;
     if (controller == null) return;
-    setState(() => controller.value.isPlaying ? controller.pause() : controller.play());
+    // No setState, for two independent reasons. `play()` and `pause()` return
+    // futures, and `setState` given a callback that returns one throws outright -
+    // which is what the play button did on every press. And there is nothing for
+    // it to do anyway: the controller IS a ValueNotifier, so the badge, the icon
+    // and the clock below rebuild from it through their own listeners.
+    unawaited(controller.value.isPlaying ? controller.pause() : controller.play());
   }
 
   @override
