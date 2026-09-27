@@ -308,7 +308,7 @@ M3 motion. Easing: `emphasized` (вход/выход), `standard` (мелкие 
 | Часть | Токен |
 |---|---|
 | Card | filled, `surfaceContainerLow`, `shape/m`, elevation 1 |
-| Маска ID | `••••••••` (8 знаков), **mono** (§3), `onSurface` |
+| ~~Маска ID~~ | Маски нет с фазы 032 — ID целиком, **mono** (§3), `onSurfaceVariant` |
 | Раскрытый ID | **mono**, text-wrap, `onSurfaceVariant` |
 | Logout `ListTile` | текст+иконка `error` |
 
@@ -366,7 +366,9 @@ M3 motion. Easing: `emphasized` (вход/выход), `standard` (мелкие 
 | Permission-denied overlay | **непрозрачная** поверхность `surface` (не прозрачная над камерой), текст по ролям, кнопка `Open settings` = `FilledButton` |
 | AppBar | сплошной `surface` (см. qr-scan.md) |
 
-### 9.10. QR bottom sheet (7.1 «Show QR») — brand-fixed QR-поверхность
+### 9.10. QR-поверхность (brand-fixed) — 7.8 «Add a device» и 2.2 «Scan QR»
+
+⚠️ Раньше эта поверхность жила в bottom sheet'е 7.1 «Show QR». Действия в карте идентичности нет с 2026-09-20; сама поверхность осталась — её показывает карточка приглашения на 7.8.
 
 | Часть | Токен |
 |---|---|

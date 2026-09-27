@@ -65,6 +65,15 @@ class _SetUsernamePageState extends BaseStatePage<SetUsernamePage> {
   void _skip() => _bloc.add(const SetUsernameEvent.skipRequested());
 
   void _onStatus(BuildContext context, SetUsernameState state) {
+    // The prefill is read from the session after this widget was built, so the
+    // controller has to follow it in. Only ever on the way INTO `prefilled`, which
+    // nothing but the initial read emits - a person's own typing never lands here.
+    if (state.status == UsernameStatus.prefilled && _controller.text != state.name) {
+      _controller.value = TextEditingValue(
+        text: state.name,
+        selection: TextSelection.collapsed(offset: state.name.length),
+      );
+    }
     switch (state.status) {
       case UsernameStatus.navSuccess:
         Navigator.of(context).push(TabBarShell.route());
@@ -86,8 +95,11 @@ class _SetUsernamePageState extends BaseStatePage<SetUsernamePage> {
       child: BlocConsumer<SetUsernameBloc, SetUsernameState>(
         listenWhen: (previous, current) => previous.status != current.status,
         listener: _onStatus,
-        builder: (context, state) =>
-            AppOnboardingScaffoldWidget(subtitle: 'Set up', field: _field(context, state), actions: _actions(context, state)),
+        builder: (context, state) => AppOnboardingScaffoldWidget(
+          subtitle: context.l10n.windowSubtitleSetUp,
+          field: _field(context, state),
+          actions: _actions(context, state),
+        ),
       ),
     );
   }

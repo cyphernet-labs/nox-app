@@ -39,6 +39,11 @@ class _FakePhase implements SessionPhaseService {
   @override
   Stream<SessionPhase> watchPhase() => _controller.stream;
 
+  int reconnects = 0;
+
+  @override
+  Future<void> reconnect() async => reconnects++;
+
   void emit(SessionPhase next) {
     _phase = next;
     _controller.add(next);
@@ -237,6 +242,48 @@ void main() {
     await service.flush();
 
     expect(sentKeys, isEmpty);
+  });
+
+  test('a refused server holds the queue and marks nothing as failed', () async {
+    // The gate itself already exists - the drain keys on `isCurrent` - and that
+    // is exactly why it has to be locked down: it holds only because the new
+    // phase is not the live one, which a later edit could undo without ever
+    // touching this file.
+    //
+    // What must NOT happen is the other half: a message marked `error` here
+    // would be a message the person is told failed, over a server that never
+    // saw it. Their text waits; it is not lost and it is not blamed on them.
+    phase = _FakePhase(SessionPhase.serverMismatch);
+    service = OutboxService(outbox, messages, phase, files);
+    await enqueue(['a', 'b']);
+
+    await service.flush();
+
+    expect(sentKeys, isEmpty, reason: 'nothing may go to a machine that failed to prove who it is');
+    final pending = await outbox.pending();
+    expect(pending, hasLength(2), reason: 'both messages are still queued');
+    for (final entry in pending) {
+      expect(entry.attempts, 0, reason: 'no attempt was made, so none may be counted against the message');
+      expect(entry.refusals, 0, reason: 'the server refused nothing - it never answered');
+    }
+  });
+
+  test('a refused server drains nothing even when the phase arrives while running', () async {
+    // Mutation of the case above: the drain is started live, then the refusal
+    // arrives. A pass triggered by that transition would send into the very
+    // machine the refusal is about.
+    phase = _FakePhase(SessionPhase.disconnected);
+    service = OutboxService(outbox, messages, phase, files);
+    service.start();
+    await enqueue(['a']);
+
+    phase.emit(SessionPhase.serverMismatch);
+    for (var i = 0; i < 20; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+
+    expect(sentKeys, isEmpty);
+    expect((await outbox.pending()).single.attempts, 0);
   });
 
   test('the channel going live drains the queue with no one asking', () async {

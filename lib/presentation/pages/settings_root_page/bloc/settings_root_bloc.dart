@@ -14,12 +14,12 @@ part 'settings_root_event.dart';
 part 'settings_root_state.dart';
 
 /// Settings-root form state (7.1): the identity card's inline name-edit reuses the
-/// exact 2.3 rules — immediate client charset validation + a debounced (~300ms),
-/// CASE-SENSITIVE uniqueness check against the mock dataset — plus the masked/raw
-/// identifier reveal. The display label is loaded from and persisted to the local
-/// session (feature 015); the uniqueness check is still mock-dataset-backed. Logout
-/// is handled by a self-contained dialog in the page (not here). `// TODO(backend):`
-/// real server uniqueness check.
+/// exact 2.3 rules — charset and length, judged the moment a character is typed.
+/// There is nothing to debounce and nothing to ask: a person's name is not unique
+/// (owner, 2026-09-02), so no uniqueness check is made here or anywhere. The id is
+/// public since 032, so there is no mask and no reveal either. The display label is
+/// loaded from and persisted to the local session (feature 015). Logout is handled
+/// by a self-contained dialog in the page (not here).
 class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
   SettingsRootBloc() : super(const SettingsRootState()) {
     on<SettingsInitialize>(_onInitialize);
@@ -27,13 +27,12 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
     on<SettingsNameChanged>(_onNameChanged);
     on<NameSubmitted>(_onNameSubmitted);
     on<NameEditCancelled>(_onNameEditCancelled);
-    on<IdRevealToggled>(_onIdRevealToggled);
   }
 
   Future<void> _onInitialize(SettingsInitialize event, Emitter<SettingsRootState> emit) async {
-    // Load the user's own identifier for Show QR (FR-014) + the display label (7.1)
-    // from the 009 session spine. Empty/error never fabricates a fake id (that would
-    // flow into a real scannable QR) — it degrades to an empty rawId; the label
+    // Load the person's own identifier + display label (7.1) from the 009 session
+    // spine. Empty/error never fabricates a fake id (it would be copied out as if
+    // it were real) — it degrades to an empty rawId; the label
     // degrades to the default via resolveIdentity. Settings is authorized-only, so the
     // id/label are normally present.
     final result = await sessionRepository.readSession();
@@ -112,9 +111,5 @@ class SettingsRootBloc extends BaseBloc<SettingsRootEvent, SettingsRootState> {
 
   void _onNameEditCancelled(NameEditCancelled event, Emitter<SettingsRootState> emit) {
     emit(state.copyWith(editing: false, draftName: state.name, status: SettingsNameStatus.idle));
-  }
-
-  void _onIdRevealToggled(IdRevealToggled event, Emitter<SettingsRootState> emit) {
-    emit(state.copyWith(idRevealed: !state.idRevealed));
   }
 }

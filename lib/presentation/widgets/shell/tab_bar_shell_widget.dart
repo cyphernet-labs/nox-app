@@ -18,7 +18,7 @@ import 'package:nox_app/presentation/widgets/shell/app_window_titlebar_widget.da
 /// 4.1 Tab-bar shell — the app skeleton. Width-driven (`LayoutBuilder` on
 /// `Constants.railBreakpoint` = 840dp): a narrow window gets the [AppBottomBarWidget]
 /// (circular notch) + a center-docked [AppCreateFabWidget]; a wide window gets the
-/// [AppNavigationRailWidget] with the `+` as its leading FAB. Two destinations
+/// [AppNavigationRailWidget], whose `+` moved into the Chats pane header. Two destinations
 /// (Chats / Settings) hosted in a state-preserving cross-fade (`tabFade`). This is
 /// a (currently) BLoC-less shell holding trivial local state — tab index plus a
 /// one-shot, display-only avatar-label read (see the `_accountLabel` note on the
@@ -140,6 +140,10 @@ class _TabBarShellState extends State<TabBarShell> {
         scrollToTop: _chatsScrollToTop,
         openCreated: _chatsOpenCreated,
         forceWide: useRail,
+        // Wide-branch create. The rail no longer carries the `+`; the Chats pane
+        // header does, beside the list it creates into. The narrow branch ignores
+        // this - its `+` is still the docked FAB in the bottom bar.
+        onCreate: () => _onCreate(desktop: true),
         // Mobile-only account affordance (N4) — the app-bar avatar hands off to the
         // same Settings/Account jump as the desktop rail avatar. The page renders it
         // only on the narrow branch, so the desktop rail stays the wide entry point.
@@ -216,13 +220,7 @@ class _TabBarShellState extends State<TabBarShell> {
               children: [
                 // No VerticalDivider here: the rail draws its OWN right hairline
                 // (AppNavigationRailWidget's border), so a divider would double the seam.
-                AppNavigationRailWidget(
-                  active: _active,
-                  onSelect: _onSelect,
-                  onCreate: () => _onCreate(desktop: true),
-                  accountLabel: _accountLabel,
-                  onAccount: _onAccount,
-                ),
+                AppNavigationRailWidget(active: _active, onSelect: _onSelect, accountLabel: _accountLabel, onAccount: _onAccount),
                 Expanded(child: _body(true)),
               ],
             ),

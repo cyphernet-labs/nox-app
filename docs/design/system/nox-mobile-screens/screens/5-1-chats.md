@@ -12,6 +12,7 @@ App bar (wordmark + trailing account avatar) + persistent SearchBar + scrollable
 - `loading` — Loading
 - `empty` — Empty
 - `offline` — Offline
+- `server-mismatch` — Wrong server
 - `inline-error` — Load error
 - `search` — Search
 - `search-empty` — Search empty
@@ -22,6 +23,7 @@ App bar (wordmark + trailing account avatar) + persistent SearchBar + scrollable
 - Unread emphasis: name w600, preview onSurface, time primary, badge shown (caps 99+, hidden at 0).
 - Loading: centered spinner. Empty: forum empty-state.
 - Offline: persistent “No connection” MaterialBanner at top. Load error: banner “Could not load chats. Pull to refresh.”
+- Wrong server (036): the machine at the paired address presented a key the pairing link did not name. A persistent banner “This isn't the server you paired with” with a “Try again” action, INSTEAD of the offline one — something answered, so “No connection” would be false — and with the error glyph rather than wifi_off. Nothing local is thrown away, and nothing on screen is cleared: the banner sits over what was already there. It does not pass on its own; the action is the only way out.
 - Tapping the SearchBar opens the full search view (back + query + caret, clear); results filter live; no match → “No chats found”.
 - Transient one-off feedback appears as a Snackbar floating above the bottom bar.
 

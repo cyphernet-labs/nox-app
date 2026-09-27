@@ -8,6 +8,7 @@ import 'package:nox_app/domain/model/chat/message_model.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
+import 'package:nox_app/domain/service/session_phase_service.dart';
 
 /// Fetches the bytes of received IMAGES so they render in the thread.
 ///
@@ -22,10 +23,11 @@ import 'package:nox_app/domain/repository/file/file_repository.dart';
 /// existing `watchMessages` tick redraws the thread once the path is written.
 @LazySingleton(env: [Environment.dev, Environment.prod, Environment.test])
 class AttachmentPrefetchService {
-  AttachmentPrefetchService(this._files, this._messages);
+  AttachmentPrefetchService(this._files, this._messages, this._phase);
 
   final FileRepository _files;
   final MessageRepository _messages;
+  final SessionPhaseService _phase;
 
   /// Fetches currently running, so the same file is not pulled twice at once.
   ///
@@ -41,6 +43,12 @@ class AttachmentPrefetchService {
 
   /// Fetches anything in [messages] that needs it. Safe to call on every tick.
   Future<void> prefetch(List<MessageModel> messages) async {
+    // The second downloader, and the one easiest to forget: it goes out over
+    // Dio on its own schedule, without passing through the socket at all. A
+    // machine that failed to prove who it is must not be asked for bytes -
+    // and a refusal here would only be logged, so nothing would ever say why
+    // the pictures stopped arriving.
+    if (_phase.phase.isServerMismatch) return;
     for (final message in messages) {
       final attachment = message.attachment;
       if (attachment == null) continue;

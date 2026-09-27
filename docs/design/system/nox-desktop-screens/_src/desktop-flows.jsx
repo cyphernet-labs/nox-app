@@ -63,7 +63,8 @@ const FileViewDialog = ({ t, state = 'loaded' }) => (
 );
 
 // ── 5.4 Chat card / Files · right details drawer ─────────────
-const ChatInfoDrawer = ({ t, view = 'list' }) => (
+// view: 'list' | 'grid' | 'empty'; state: 'normal' | 'server-mismatch'
+const ChatInfoDrawer = ({ t, view = 'list', state = 'normal' }) => (
   <div style={{ position: 'absolute', inset: 0, zIndex: 12, display: 'flex', justifyContent: 'flex-end' }}>
     <div style={{ position: 'absolute', inset: 0, background: hexA(t.scrim, 0.32) }} />
     <div style={{ position: 'relative', width: 380, background: t.surface, borderLeft: `1px solid ${t.outlineVariant}`, boxShadow: elev(4, t.dark), display: 'flex', flexDirection: 'column', minHeight: 0 }}>
@@ -71,6 +72,10 @@ const ChatInfoDrawer = ({ t, view = 'list' }) => (
         <span style={{ ...ty('titleLarge'), color: t.onSurface, flex: 1 }}>Details</span>
         <IconButton t={t} name="close" />
       </div>
+      {/* 036: at the TOP of the drawer, under its own header and above the chat
+          identity - pushed below the People block it lands far enough down to
+          fall off the first fold. */}
+      {state === 'server-mismatch' && <MaterialBanner t={t} icon="error_outline" text="This isn't the server you paired with" action="Try again" />}
       <div style={{ padding: '20px 16px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, borderBottom: `1px solid ${t.outlineVariant}`, flexShrink: 0 }}>
         <div style={{ borderRadius: '50%', boxShadow: `0 0 0 2px ${hexA(t.onSurface, 0.06)}` }}><Avatar name="Night Owls" size={72} /></div>
         <div style={{ ...ty('headlineSmall'), color: t.onSurface }}>Night Owls</div>
@@ -184,8 +189,8 @@ const CreateChatDesktop = ({ t, state = 'valid' }) => (
 const FileViewDesktop = ({ t, state = 'loaded' }) => (
   <ChatsDesktop t={t} overlay={<FileViewDialog t={t} state={state} />} />
 );
-const ChatInfoDesktop = ({ t, view = 'list' }) => (
-  <ChatsDesktop t={t} overlay={<ChatInfoDrawer t={t} view={view} />} />
+const ChatInfoDesktop = ({ t, view = 'list', state = 'normal' }) => (
+  <ChatsDesktop t={t} overlay={<ChatInfoDrawer t={t} view={view} state={state} />} />
 );
 
 Object.assign(window, {

@@ -7,7 +7,9 @@ import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/service/connectivity_service.dart';
+import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/presentation/pages/chats_list_page/bloc/chats_list_bloc.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -332,6 +334,80 @@ void main() {
       expect((bloc.state as Initialized).isOffline, isFalse); // banner cleared
     });
   });
+
+  group('the server that is not the one the link named (036)', () {
+    late _FakePhase phase;
+
+    Future<ChatsListBloc> boot(SessionPhase initial) async {
+      phase = _FakePhase(initial);
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<SessionPhaseService>(phase);
+      final bloc = ChatsListBloc()..add(const ChatsListEvent.initialize());
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      return bloc;
+    }
+
+    test('a refused server raises its own banner, and not the offline one', () async {
+      final bloc = await boot(SessionPhase.serverMismatch);
+
+      final state = bloc.state as Initialized;
+      expect(state.isServerMismatch, isTrue);
+      // The mutation that matters: "no connection" over a server that answered
+      // promptly sends the person to check a network that is working, and the
+      // two banners at once would say two different things about one fact.
+      expect(state.isOffline, isFalse);
+    });
+
+    test('nothing local is thrown away - the chats are still there under it', () async {
+      final bloc = await boot(SessionPhase.serverMismatch);
+
+      expect((bloc.state as Initialized).items, isNotEmpty);
+    });
+
+    test('the refusal arriving live flips the banner without a reload', () async {
+      final bloc = await boot(SessionPhase.live);
+      final before = bloc.state as Initialized;
+      expect(before.isServerMismatch, isFalse);
+
+      var sawReloadSpinner = false;
+      final sub = bloc.stream.listen((s) {
+        if (s is Initialized && s.loadingInProgress) sawReloadSpinner = true;
+      });
+      addTearDown(sub.cancel);
+
+      phase.emit(SessionPhase.serverMismatch);
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+
+      final after = bloc.state as Initialized;
+      expect(after.isServerMismatch, isTrue);
+      expect(after.items, before.items);
+      expect(sawReloadSpinner, isFalse);
+    });
+
+    test('the banner action asks for another attempt', () async {
+      // Without this the app never comes back: a terminal phase has no ladder
+      // left to climb, so nothing else will ever try again.
+      final bloc = await boot(SessionPhase.serverMismatch);
+
+      bloc.add(const ChatsListEvent.retryConnection());
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(phase.reconnects, 1);
+    });
+
+    test('a fixed cause clears it', () async {
+      final bloc = await boot(SessionPhase.serverMismatch);
+      expect((bloc.state as Initialized).isServerMismatch, isTrue);
+
+      phase.emit(SessionPhase.live);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      final state = bloc.state as Initialized;
+      expect(state.isServerMismatch, isFalse);
+      expect(state.isOffline, isFalse);
+    });
+  });
 }
 
 /// A controllable [ConnectivityService] for the F3 tests (seed-then-live).
@@ -353,4 +429,32 @@ class _FakeConnectivity implements ConnectivityService {
     yield _online;
     yield* _controller.stream;
   }
+}
+
+/// A session phase this test drives by hand, plus a count of how many times the
+/// screen asked for another attempt.
+class _FakePhase implements SessionPhaseService {
+  _FakePhase([this._phase = SessionPhase.live]);
+
+  SessionPhase _phase;
+  final StreamController<SessionPhase> _controller = StreamController<SessionPhase>.broadcast();
+
+  int reconnects = 0;
+
+  void emit(SessionPhase next) {
+    _phase = next;
+    _controller.add(next);
+  }
+
+  @override
+  SessionPhase get phase => _phase;
+
+  @override
+  Stream<SessionPhase> watchPhase() async* {
+    yield _phase;
+    yield* _controller.stream;
+  }
+
+  @override
+  Future<void> reconnect() async => reconnects++;
 }

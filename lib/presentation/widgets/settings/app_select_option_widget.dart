@@ -3,22 +3,28 @@ import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 
-/// Selectable theme option card (Appearance 7.3): a mini preview thumbnail + label,
-/// with an always-present radio indicator (filled `primary` dot when selected) and a
-/// `surfaceContainerHigh` fill + primary outline only when selected. Single-select is
-/// owned by the parent. Presentational only.
-class AppThemeOptionWidget extends StatelessWidget {
-  const AppThemeOptionWidget({
-    super.key,
-    required this.label,
-    required this.preview,
-    required this.selected,
-    required this.onTap,
-    this.caption,
-  });
+/// Selectable option card - Appearance 7.3 and Language 7.4: an optional preview
+/// thumbnail + label, with an always-present radio indicator (filled `primary` dot
+/// when selected) and a `surfaceContainerHigh` fill + primary outline only when
+/// selected. Single-select is owned by the parent. Presentational only.
+///
+/// It was `AppThemeOptionWidget` while Appearance was the only caller. Language
+/// picked the same shape up because the screen spec asks for it in those words -
+/// "pattern as in 7.3" - and the name had to stop naming one of two callers.
+class AppSelectOptionWidget extends StatelessWidget {
+  const AppSelectOptionWidget({super.key, required this.label, required this.selected, required this.onTap, this.preview, this.caption});
 
   final String label;
-  final Widget preview;
+
+  /// The leading thumbnail, for an option that has something to show. Appearance
+  /// draws a miniature of the theme (96×76); Language draws a 64×48 tile — the
+  /// country's flag, or the device glyph for `System`, which is what that option
+  /// follows. Null leaves the label alone against the card's edge.
+  ///
+  /// The flags were circle-masked icons until 2026-09-20, which is why they used
+  /// to sit in a 40dp circle and clip against the row; the mask is gone and the
+  /// artwork under it always covered a full square.
+  final Widget? preview;
   final bool selected;
   final VoidCallback onTap;
   final String? caption;
@@ -47,8 +53,7 @@ class AppThemeOptionWidget extends StatelessWidget {
           ),
           child: Row(
             children: [
-              preview,
-              SizedBox(width: AppSpacingTokens.s16),
+              if (preview != null) ...[preview!, SizedBox(width: AppSpacingTokens.s16)],
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,

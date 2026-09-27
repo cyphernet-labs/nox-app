@@ -31,6 +31,11 @@ const ChatsListPane = ({ t, selected, state = 'filled', query }) => {
       <PaneHeader t={t} title="Chats" />
       <SearchBar t={t} value={isSearch ? (query || 'night') : undefined} placeholder="Search" />
       {state === 'offline' && <MaterialBanner t={t} text="No connection" />}
+      {/* 036: the machine that answered is not the one the pairing link named.
+          INSTEAD of the offline banner - something replied, so "No connection"
+          would be false - and in BOTH panes, because either half of a desktop
+          window would otherwise say nothing at all. */}
+      {state === 'server-mismatch' && <MaterialBanner t={t} icon="error_outline" text="This isn't the server you paired with" action="Try again" />}
       {state === 'inline-error' && <MaterialBanner t={t} icon="error_outline" text="Couldn’t load chats." action="Retry" />}
       <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', paddingTop: 2 }}>
         {state === 'loading' ? (
@@ -94,7 +99,7 @@ const ThreadMessages = ({ t, state = 'filled' }) => {
         <AuthorHeader t={t} name="Mox" />
         <MsgBubble t={t} text="Nice. Saving us a spot." time="22:05" last />
         <div style={{ height: 12 }} />
-        {state === 'offline'
+        {state === 'offline' || state === 'server-mismatch'
           ? <MsgBubble t={t} mine ownPreset={op} text="Two minutes." time="22:06" status="pending" last />
           : <MsgBubble t={t} mine ownPreset={op} text="Couldn’t send this one." time="22:06" status="error" last />}
       </div>
@@ -116,6 +121,9 @@ const ThreadPane = ({ t, empty = false, state = 'filled', snack = null }) => {
   if (empty) {
     return (
       <div style={{ flex: 1, minWidth: 0, background: t.surfaceContainerLowest, display: 'flex', flexDirection: 'column' }}>
+        {/* With nothing selected there is no thread to carry the banner, and
+            this pane is half the window - so it carries it itself. */}
+        {state === 'server-mismatch' && <MaterialBanner t={t} icon="error_outline" text="This isn't the server you paired with" action="Try again" />}
         <EmptyState t={t} glyph="forum" title="Select a chat" message="Choose a conversation on the left, or press + to start a new one." />
       </div>
     );
@@ -125,6 +133,7 @@ const ThreadPane = ({ t, empty = false, state = 'filled', snack = null }) => {
     <div style={{ flex: 1, minWidth: 0, background: t.surfaceContainerLowest, display: 'flex', flexDirection: 'column', minHeight: 0, position: 'relative' }}>
       <ThreadHeader t={t} />
       {state === 'offline' && <MaterialBanner t={t} text="No connection" />}
+      {state === 'server-mismatch' && <MaterialBanner t={t} icon="error_outline" text="This isn't the server you paired with" action="Try again" />}
       {isEmpty ? (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
           <EmptyState t={t} glyph="chat_bubble_outline" title="No messages yet" message="Send the first one." />
@@ -300,7 +309,11 @@ const OnboardCard = ({ t, children, width = 440 }) => (
 
 const LoginDesktop = ({ t, state = 'filled' }) => {
   const loading = state === 'loading';
+  // 036 adds a third refusal, with its own string: the next action differs
+  // again, and there is no relationship with a server here yet - so the text
+  // names the LINK rather than a pairing that never happened.
   const errorText = state === 'error-format' ? 'Invalid identifier'
+    : state === 'error-server' ? "This server doesn't match its link"
     : state === 'error-net' ? 'Network error. Try again.' : null;
   const value = state === 'empty' ? '' : SAMPLE_ID;
   return (

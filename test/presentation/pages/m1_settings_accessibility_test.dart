@@ -4,7 +4,7 @@ import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/widgets/settings/app_info_banner_widget.dart';
 import 'package:nox_app/presentation/widgets/settings/app_settings_switch_row_widget.dart';
-import 'package:nox_app/presentation/widgets/settings/app_theme_option_widget.dart';
+import 'package:nox_app/presentation/widgets/settings/app_select_option_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_detail_scaffold_widget.dart';
 
 import '../../utils/pump_app.dart';
@@ -27,7 +27,7 @@ void main() {
     testWidgets('settings widgets survive textScaler 2.0 without overflow', (tester) async {
       await pumpApp(
         tester,
-        AppThemeOptionWidget(
+        AppSelectOptionWidget(
           label: 'System (follows the device theme)',
           preview: const SizedBox(width: 48, height: 36),
           selected: true,

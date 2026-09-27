@@ -6,7 +6,7 @@ import 'package:nox_app/design/theme/nox_brand.dart';
 import 'package:nox_app/design/theme/nox_color_scheme.dart';
 import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/app/bloc/app_root_bloc.dart';
-import 'package:nox_app/presentation/widgets/settings/app_theme_option_widget.dart';
+import 'package:nox_app/presentation/widgets/settings/app_select_option_widget.dart';
 
 /// 7.3 Appearance content — System / Light / Dark theme cards applied app-wide via
 /// the existing [AppRootBloc]. No Scaffold/AppBar so it embeds in both the mobile
@@ -35,7 +35,7 @@ class AppearanceBody extends StatelessWidget {
     final (label, caption) = _labels(context, mode);
     return Padding(
       padding: EdgeInsets.only(bottom: AppSpacingTokens.s12),
-      child: AppThemeOptionWidget(
+      child: AppSelectOptionWidget(
         label: label,
         caption: caption,
         preview: _ThemePreview(mode: mode),

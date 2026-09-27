@@ -33,6 +33,12 @@ void main() {
   goldenTest('chats_list_page_empty', () => const ChatsListPage(inShell: true, initialScenario: ChatsListScenario.empty));
   goldenTest('chats_list_page_offline', () => const ChatsListPage(inShell: true, initialScenario: ChatsListScenario.offline));
   goldenTest('chats_list_page_inline_error', () => const ChatsListPage(inShell: true, initialScenario: ChatsListScenario.inlineError));
+
+  // The wrong machine answered (036). Its own baseline rather than a reuse of
+  // `offline`: the strip carries a different glyph, a different sentence and an
+  // action the offline one does not have, and a shared baseline would let any
+  // of the three quietly become the other.
+  goldenTest('chats_list_page_pin_refused', () => const ChatsListPage(inShell: true, initialScenario: ChatsListScenario.pinRefused));
   goldenTest('chats_list_page_error', () => const ChatsListPage(inShell: true, initialScenario: ChatsListScenario.fatal));
 
   // The ONLY page-level baseline that contains a chat row with a badge, and the
@@ -50,4 +56,11 @@ void main() {
   // Constitution VI: the wide branch renders the badge differently and must be
   // locked too. Same scenario, desktop surface.
   goldenTestDesktop('chats_list_page_unread', () => const ChatsListPage(inShell: false, initialScenario: ChatsListScenario.unread));
+
+  // The wide branch draws the strip in BOTH panes - the list one and, with no
+  // chat selected, the thread one - and only a desktop baseline can see that.
+  goldenTestDesktop(
+    'chats_list_page_pin_refused',
+    () => const ChatsListPage(inShell: false, initialScenario: ChatsListScenario.pinRefused),
+  );
 }

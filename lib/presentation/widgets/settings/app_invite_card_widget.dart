@@ -1,6 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/general/l10n_extension.dart';
+import 'package:nox_app/presentation/helpers/app_feedback_helper.dart';
 import 'package:nox_app/presentation/widgets/settings/app_qr_surface_widget.dart';
 
 /// A freshly minted pairing link, shown as a QR and as text.
@@ -26,6 +30,21 @@ class AppInviteCardWidget extends StatelessWidget {
   /// would promise a revocation that does not happen.
   final VoidCallback onDismiss;
 
+  /// The card copies the link itself instead of handing the job up: it already
+  /// holds the whole string, so a caller could only repeat these three lines.
+  ///
+  /// Selectable text was the only way to get the link out, and selecting a
+  /// hundred wrapped characters with a mouse is not a way to get anything out.
+  /// On Windows and Linux, which have no camera to scan the QR with, this is
+  /// not a convenience - it is the only path the link has to the other machine.
+  Future<void> _copy(BuildContext context) async {
+    // Read before the await: the notice is about this card, and looking the
+    // string up afterwards reads a context the frame may already have disposed.
+    final copied = context.l10n.copiedToClipboard;
+    await Clipboard.setData(ClipboardData(text: link));
+    if (context.mounted) showAppSnackBar(context, text: copied);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Card(
@@ -38,7 +57,15 @@ class AppInviteCardWidget extends StatelessWidget {
             Text(message, textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodyMedium),
             SizedBox(height: AppSpacingTokens.s8),
             SelectableText(link, style: Theme.of(context).textTheme.bodySmall, textAlign: TextAlign.center),
-            TextButton(onPressed: onDismiss, child: Text(context.l10n.actionHide)),
+            // Wrap, not Row: at a doubled text scale on a phone two buttons side
+            // by side are wider than the card, and stacking beats clipping one.
+            Wrap(
+              alignment: WrapAlignment.center,
+              children: [
+                TextButton(onPressed: () => unawaited(_copy(context)), child: Text(context.l10n.actionCopy)),
+                TextButton(onPressed: onDismiss, child: Text(context.l10n.actionHide)),
+              ],
+            ),
           ],
         ),
       ),

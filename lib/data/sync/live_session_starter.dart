@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/remote/pinned_http_client.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
 import 'package:nox_app/data/sync/sync_service.dart';
@@ -39,6 +40,7 @@ class LiveSessionStarter {
     this._messages,
     this._outbox,
     this._files,
+    this._pinned,
   );
 
   final NoxSocketClient _socket;
@@ -50,6 +52,7 @@ class LiveSessionStarter {
   final MessageRepository _messages;
   final OutboxRepository _outbox;
   final FileRepository _files;
+  final PinnedHttpClient _pinned;
 
   StreamSubscription<SessionPhase>? _phaseSub;
 
@@ -72,21 +75,51 @@ class LiveSessionStarter {
       // Deferred, not abandoned: without a retry a single transient keychain
       // failure would leave the app offline until it is restarted.
       logRepository.debug(target: this, message: 'sync: server address unreadable, retrying');
-      _retry?.cancel();
-      _retry = Timer(const Duration(seconds: 2), () => unawaited(start()));
+      _retryLater();
       return;
     }
-    final apiUrl = paired.data ?? _config.config.apiUrl;
+    final apiUrl = paired.data;
+    // No build-time fallback. `AppConfig.apiUrl` names a machine nobody ever
+    // presented, so it has no fingerprint and a connection to it could not be
+    // checked - which is exactly what this phase exists to forbid. An install
+    // that has not paired simply does not connect.
     if (apiUrl == null || apiUrl.isEmpty) return;
+
+    final pin = await _session.serverFingerprint();
+    if (!pin.hasData) {
+      // Treated like an unreadable address, and for the same reason: a
+      // transient keychain failure is not a statement about which server this
+      // is.
+      logRepository.debug(target: this, message: 'sync: server fingerprint unreadable, retrying');
+      _retryLater();
+      return;
+    }
+    final fingerprint = pin.data;
+    if (fingerprint == null || fingerprint.isEmpty) {
+      // An address with nothing to check it against. Connecting anyway would
+      // accept whatever answered, which is the state of affairs this phase
+      // ends; the way out is to pair again, not to trust harder.
+      logRepository.debug(target: this, message: 'sync: paired address has no fingerprint, refusing to connect');
+      return;
+    }
+    // Set on every start, never captured at construction: the client is a
+    // singleton that outlives pairing, re-pairing and logout, and reading the
+    // value once would pin an empty string on a fresh install for ever.
+    _pinned.pinTo(fingerprint);
+
     // Keyed on the address actually in use: two different servers reachable at
     // one configured address would otherwise look like one world, and the
     // device would carry rows with foreign seqs into the new one.
+    //
+    // The address, not the URL: a paired install stores a bare `host:port`, so
+    // the scheme change this phase makes does not move the epoch and does not
+    // wipe anybody's chats.
     await _wipeIfWorldChanged('live:$apiUrl');
     // File bytes travel over REST, and they have to reach the SAME machine the
-    // socket does: an attachment uploaded to the build-time address would be
-    // referenced from a message on the paired server, where its id means
-    // nothing.
-    if (getIt.isRegistered<ApiClient>()) getIt<ApiClient>().initBase(address: apiUrl);
+    // socket does, over the same checked client: an attachment uploaded
+    // anywhere else would be referenced from a message on the paired server,
+    // where its id means nothing.
+    if (getIt.isRegistered<ApiClient>()) getIt<ApiClient>().initBase(address: _restUrl(apiUrl));
     _syncService.start();
     // The greeting is where the server states the payload limits and who we
     // are; both are authoritative and arrive again on every reconnect.
@@ -114,6 +147,17 @@ class LiveSessionStarter {
     _phaseSub = null;
     await _socket.stop();
     await _syncService.stop();
+    // Forget the server. A logout leaves nothing this install is entitled to
+    // talk to, and a pin left behind would let a connection still being torn
+    // down keep reaching it.
+    _pinned.unpin();
+  }
+
+  /// Waits out a transient storage failure. Without it a single unreadable
+  /// keychain read would leave the app offline until it is restarted.
+  void _retryLater() {
+    _retry?.cancel();
+    _retry = Timer(const Duration(seconds: 2), () => unawaited(start()));
   }
 
   /// What this connection states about who is greeting (contract §3).
@@ -275,13 +319,19 @@ class LiveSessionStarter {
     await _messages.clean();
   }
 
-  /// `http(s)` addresses the REST half (blob bytes, phase 028); the socket is
-  /// the same host and port with the matching scheme and the `/ws` path.
-  /// Accepts both shapes an address can arrive in: a full URL from the build
-  /// config, and a bare `host:port` from a pairing link.
+  /// The socket URL: the paired address, `wss`, `/ws`.
+  ///
+  /// Always `wss`, whatever shape the address arrived in - there is no plain
+  /// fallback and no way to ask for one. A channel that can be talked down to
+  /// cleartext is a channel somebody talks down.
   static Uri _socketUrl(String apiUrl) {
-    if (!apiUrl.contains('://')) return Uri.parse('ws://$apiUrl/ws');
-    final base = Uri.parse(apiUrl);
-    return base.replace(scheme: base.scheme == 'https' ? 'wss' : 'ws', path: '/ws');
+    if (!apiUrl.contains('://')) return Uri.parse('wss://$apiUrl/ws');
+    return Uri.parse(apiUrl).replace(scheme: 'wss', path: '/ws');
+  }
+
+  /// The REST base for attachment bytes: the same machine, `https`.
+  static String _restUrl(String apiUrl) {
+    if (!apiUrl.contains('://')) return 'https://$apiUrl';
+    return Uri.parse(apiUrl).replace(scheme: 'https').toString();
   }
 }

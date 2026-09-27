@@ -330,7 +330,7 @@ func (s *Server) claimLink(ctx context.Context) (string, bool, error) {
 	if err != nil {
 		return "", false, fmt.Errorf("read server identity: %w", err)
 	}
-	link, err := BuildPairingLink(host, id.PublicKey, token)
+	link, err := BuildPairingLink(host, id.Fingerprint, token)
 	if err != nil {
 		return "", false, fmt.Errorf("build claim link: %w", err)
 	}

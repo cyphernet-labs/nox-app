@@ -28,7 +28,7 @@ Material Scaffold; адаптируется под тему. Сверху вни
      - заголовок `Files` + переключатель **List / Grid** (`SegmentedButton`);
      - **List:** `ListTile`-ы; каждая ячейка — иконка типа (по маппингу из [overview.md / Файлы](../overview.md#файлы-иконки-типов-без-превью)) + имя файла + размер;
      - **Grid:** ~3 колонки, квадратные тайлы, gap `space/2`; в каждом — та же иконка типа + имя (truncate) + размер. Превью содержимого нет (согласовано с 5.3);
-     - либо empty state (иллюстрация + текст), если вложений нет.
+     - либо empty state (глиф `folder_open` + текст), если вложений нет.
 
 ## Секция `People` (фаза 037)
 
@@ -51,8 +51,9 @@ Material Scaffold; адаптируется под тему. Сверху вни
 |---|---|
 | Initial-loading | Список файлов грузится. Centered `CircularProgressIndicator`. |
 | Loaded | Header + People section + Files section отображаются. |
-| Empty (files) | Файлов нет. **Empty state**: иллюстрация + текст в области Files section. Header и People section при этом остаются видны. |
+| Empty (files) | Файлов нет. **Empty state** (глиф `folder_open`) + текст в области Files section. Header и People section при этом остаются видны. |
 | Offline / Inline-error | Не удалось загрузить — `MaterialBanner` сверху (persistent, см. [overview.md / Уровни ошибок](../overview.md#уровни-ошибок-и-обратной-связи)). |
+| Server mismatch | Машина по сохранённому адресу предъявила не тот ключ, что назвала ссылка спаривания. Постоянная плашка `This isn't the server you paired with` с действием `Try again`, там же, где и остальные — над Header'ом. **Вместо** `Offline`, а не вместе с ним: сервер ответил, и «нет соединения» здесь — неправда. Файлы остаются перечисленными под плашкой. |
 | Fatal | Передача в 3.1 (embedded). |
 
 ## Взаимодействия
@@ -72,7 +73,7 @@ Material Scaffold; адаптируется под тему. Сверху вни
 - `SegmentedButton` (M3, single-select) — переключение List ↔ Grid.
 - `ListView.builder` (List) и `GridView.builder` (Grid) — Files section; ячейка с иконкой типа (общий маппинг), именем и размером.
 - `CircularProgressIndicator` — Initial-loading.
-- Empty-state widget (иллюстрация + текст).
+- Empty-state widget. **Empty state** — композиция дизайна `EmptyState`: квадрат 132 со скруглением 20 и обводкой 1.5 `outlineVariant`, внутри стоковый глиф Material Symbols 56 (`onSurfaceVariant`) и две брендовые точки — teal 14 сверху справа, gold 10 снизу слева; под ним заголовок `headlineSmall` и текст `bodyMedium` (≤260). ⚠️ **Нарисованных иллюстраций нет**: раньше здесь жили три самодельных SVG из `nox-assets/illustrations`, они читались на 132 как дефект отрисовки, и дизайн их никогда не просил. Файлы остались в бандле, на них никто не ссылается.
 - `MaterialBanner` (M3) — persistent inline-error / offline.
 
 ## Микрокопирайт
@@ -90,6 +91,8 @@ Material Scaffold; адаптируется под тему. Сверху вни
 | Files empty title | `No files yet` |
 | Files empty message | `Files sent in this chat will appear here.` |
 | Inline-error (network) | `Could not load chat info. Check your connection and try again.` |
+| Server-mismatch banner | `This isn't the server you paired with` |
+| Server-mismatch action | `Try again` |
 
 ## Принятые решения (Q1–Q9)
 
@@ -102,7 +105,7 @@ Material Scaffold; адаптируется под тему. Сверху вни
 | Q5 | Report action | Нет |
 | Q6 | Files section UI | List / Grid через `SegmentedButton`; ячейка = иконка типа + имя + размер (без превью) |
 | Q7 | Files фильтры | Все вложения вместе, без фильтров по типу |
-| Q8 | Files empty state | Иллюстрация + текст |
+| Q8 | Files empty state | Композиция `EmptyState` (глиф `folder_open`): обведённый квадрат 132 + глиф 56 + две брендовые точки + текст |
 | Q9 | Stats / метаданные | Не показываем (creator/date — только inline-событием в 5.2) |
 | — | Секция `People` (фаза 037) | Представление, а не ростер: одна строка — сам человек, читается из резолвера личности; новой сущности и хранения не заводится |
 | — | Кнопка приглашения (фаза 037) | `Invite a person` **всегда disabled**, под ней подпись `Available in a future version`; нажатие не даёт ничего. Обе ширины |

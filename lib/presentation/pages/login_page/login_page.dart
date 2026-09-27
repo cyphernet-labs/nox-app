@@ -160,6 +160,7 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
       case LoginStatus.errorExpired:
       case LoginStatus.errorRejected:
       case LoginStatus.errorNetwork:
+      case LoginStatus.errorServerMismatch:
         break;
     }
   }
@@ -172,7 +173,7 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
         listenWhen: (previous, current) => previous.status != current.status,
         listener: _onStatus,
         builder: (context, state) => AppOnboardingScaffoldWidget(
-          subtitle: 'Sign in',
+          subtitle: context.l10n.windowSubtitleSignIn,
           mobileActionsPadding: EdgeInsets.fromLTRB(AppSpacingTokens.s16, AppSpacingTokens.s16, AppSpacingTokens.s16, AppSpacingTokens.s24),
           field: _idField(context, state),
           actions: _actions(context, state),
@@ -199,6 +200,7 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
     LoginStatus.errorExpired => context.l10n.loginLinkExpired,
     LoginStatus.errorRejected => context.l10n.loginLinkRejected,
     LoginStatus.errorNetwork => context.l10n.loginNetworkError,
+    LoginStatus.errorServerMismatch => context.l10n.loginServerNotRecognised,
     _ => null,
   };
 
@@ -252,6 +254,7 @@ class _OutcomeControl extends StatelessWidget {
           LoginOutcome.newId: 'new id',
           LoginOutcome.registered: 'registered',
           LoginOutcome.errorFormat: 'format error',
+          LoginOutcome.errorServerMismatch: 'wrong server',
           LoginOutcome.errorNetwork: 'network error',
           LoginOutcome.fatal: 'fatal',
         },

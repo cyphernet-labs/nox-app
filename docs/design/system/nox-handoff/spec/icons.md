@@ -25,7 +25,7 @@ mockups = Material Symbols Rounded.
 | Search | `search` |
 | Show / hide | `visibility` / `visibility_off` |
 | Copy | `content_copy` |
-| Show QR | `qr_code` |
+| Device invite QR (7.8) | `qr_code` |
 | Save / download | `download` |
 | Edit | `edit` |
 | Remove attachment | `close` |

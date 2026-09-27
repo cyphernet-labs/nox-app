@@ -55,13 +55,20 @@ class _DevicesBodyState extends State<DevicesBody> {
           );
         }
         return ListView(
-          padding: EdgeInsets.all(AppSpacingTokens.s16),
+          // Vertical only. The group card sets the screen inset itself, with its
+          // own 16 margin - that is what indents it in Notifications too - so a
+          // horizontal padding here as well pushed the device cards out to 32
+          // while the button below stayed at 16, and the two edges did not line
+          // up. Everything that is not a group card is inset explicitly.
+          padding: EdgeInsets.symmetric(vertical: AppSpacingTokens.s16),
           children: [
             if (state.inviteLink != null) ...[
-              AppInviteCardWidget(
-                link: state.inviteLink!,
-                message: context.l10n.devicesInviteMessage,
-                onDismiss: () => _bloc.add(const DevicesEvent.inviteDismissed()),
+              _inset(
+                AppInviteCardWidget(
+                  link: state.inviteLink!,
+                  message: context.l10n.devicesInviteMessage,
+                  onDismiss: () => _bloc.add(const DevicesEvent.inviteDismissed()),
+                ),
               ),
               SizedBox(height: AppSpacingTokens.s16),
             ],
@@ -74,10 +81,12 @@ class _DevicesBodyState extends State<DevicesBody> {
             // "Couldn't load your devices." puts the blame for a revoke that
             // did not happen on a list that loaded perfectly well.
             if (state.actionFailed) ...[
-              Text(
-                context.l10n.devicesRevokeError,
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.error),
+              _inset(
+                Text(
+                  context.l10n.devicesRevokeError,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.error),
+                ),
               ),
               SizedBox(height: AppSpacingTokens.s16),
             ],
@@ -85,44 +94,58 @@ class _DevicesBodyState extends State<DevicesBody> {
             // are the previous answer, so this says so rather than replacing
             // them with a full-screen error.
             if (state.failed && state.devices.isNotEmpty) ...[
-              Text(
-                context.l10n.devicesError,
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.error),
+              _inset(
+                Text(
+                  context.l10n.devicesError,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.error),
+                ),
               ),
               SizedBox(height: AppSpacingTokens.s16),
             ],
             // A silent failure here reads as a dead button: the person taps
             // "Add a device" and nothing at all happens.
             if (state.inviteFailed) ...[
-              Text(
-                context.l10n.devicesInviteError,
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.error),
+              _inset(
+                Text(
+                  context.l10n.devicesInviteError,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.error),
+                ),
               ),
               SizedBox(height: AppSpacingTokens.s16),
             ],
-            if (state.current != null)
+            // ONE group, this device first. It used to be two - one of them
+            // holding a single row - and two cards with a gap between them read as
+            // two unrelated sections rather than as one list of this person's
+            // devices. What sets the current one apart is that it says so and
+            // comes first, which is enough; a whole separate card said more than
+            // the difference is worth.
+            //
+            // And no "no other devices" line when this is the only one: by the
+            // time the list renders the answer is settled - loading has its own
+            // spinner and a failed read its own sentence - so it would state what
+            // the screen already shows.
+            if (state.current != null || state.others.isNotEmpty)
               AppSettingsGroupWidget(
-                children: [_DeviceRow(device: state.current!, onRevoke: () => _confirmRevoke(state.current!))],
+                children: [
+                  for (final device in [if (state.current != null) state.current!, ...state.others])
+                    _DeviceRow(device: device, onRevoke: () => _confirmRevoke(device)),
+                ],
               ),
-            SizedBox(height: AppSpacingTokens.s16),
-            if (state.others.isEmpty)
-              Padding(
-                padding: EdgeInsets.symmetric(vertical: AppSpacingTokens.s16),
-                child: Text(context.l10n.devicesEmpty, textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodyMedium),
-              )
-            else
-              AppSettingsGroupWidget(
-                children: [for (final device in state.others) _DeviceRow(device: device, onRevoke: () => _confirmRevoke(device))],
-              ),
-            SizedBox(height: AppSpacingTokens.s16),
-            FilledButton(onPressed: () => _bloc.add(const DevicesEvent.inviteRequested()), child: Text(context.l10n.devicesAdd)),
+            _inset(FilledButton(onPressed: () => _bloc.add(const DevicesEvent.inviteRequested()), child: Text(context.l10n.devicesAdd))),
           ],
         );
       },
     );
   }
+
+  /// The horizontal inset the group card gives itself, for the children that are
+  /// not group cards, so every edge on the screen lines up.
+  Widget _inset(Widget child) => Padding(
+    padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s16),
+    child: child,
+  );
 
   Future<void> _confirmRevoke(DeviceModel device) async {
     final l10n = context.l10n;
@@ -155,15 +178,41 @@ class _DeviceRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
+    final colorScheme = Theme.of(context).colorScheme;
     return ListTile(
       // Platform plus two moments, never the key: 32 bytes of base64 look
       // identical across five rows, and a person has to recognise their own.
-      title: Text(device.isCurrent ? '${_platformName(device.platform)} · ${l10n.devicesCurrent}' : _platformName(device.platform)),
+      //
+      // `This device` is an annotation on the name, not part of it, and is
+      // toned down to read that way - glued on in the same colour it looked
+      // like a device called "iPhone · This device".
+      title: device.isCurrent
+          ? Text.rich(
+              TextSpan(
+                children: [
+                  TextSpan(text: _platformName(device.platform)),
+                  TextSpan(
+                    text: ' · ${l10n.devicesCurrent}',
+                    style: TextStyle(color: colorScheme.onSurfaceVariant),
+                  ),
+                ],
+              ),
+            )
+          : Text(_platformName(device.platform)),
       subtitle: Text(
         '${l10n.devicesPairedAt(DateFormatter.momentShort(device.pairedAt, l10n: l10n))} · '
         '${l10n.devicesLastSeen(DateFormatter.momentShort(device.lastSeenAt, l10n: l10n))}',
       ),
-      trailing: TextButton(onPressed: onRevoke, child: Text(l10n.devicesRevoke)),
+      // Destructive, and irreversible: revoking a device cannot be undone without
+      // a new pairing link, and revoking THIS one signs you out. It was rendered
+      // in the brand accent - the same teal as `Add a device` right below it -
+      // which is the colour this app uses for the thing it wants you to do. Log
+      // out already sits in `error` for exactly this reason.
+      trailing: TextButton(
+        onPressed: onRevoke,
+        style: TextButton.styleFrom(foregroundColor: colorScheme.error),
+        child: Text(l10n.devicesRevoke),
+      ),
     );
   }
 

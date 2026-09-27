@@ -72,6 +72,13 @@ class FakeSocket implements SocketConnection {
   /// to the client.
   Future<void> drop() => _incoming.close();
 
+  /// The machine that answered is not the one the pairing link named.
+  ///
+  /// An error on the frame stream, because that is exactly where it arrives in
+  /// life: the certificate is judged during the TLS handshake, so the socket
+  /// never opens and the failure surfaces as the stream's first and only event.
+  void refusePin() => _incoming.addError(const ServerPinRefusedException());
+
   Map<String, dynamic>? commandNamed(String cmd) {
     for (final f in sent) {
       if (f['cmd'] == cmd) return f;
@@ -85,12 +92,18 @@ class FakeSocket implements SocketConnection {
 class FakeSocketFactory implements SocketChannelFactory {
   final List<FakeSocket> created = <FakeSocket>[];
 
+  /// Every URL dialled, in order. Recorded because the SCHEME is a decision
+  /// now: a fallback to `ws://` would be invisible to every other assertion
+  /// here and would put the whole conversation back in the clear.
+  final List<Uri> urls = <Uri>[];
+
   FakeSocket get latest => created.last;
 
   @override
   SocketConnection connect(Uri url) {
     final socket = FakeSocket();
     created.add(socket);
+    urls.add(url);
     return socket;
   }
 }

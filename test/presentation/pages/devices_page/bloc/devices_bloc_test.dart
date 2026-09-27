@@ -1081,4 +1081,7 @@ class _FakePhase implements SessionPhaseService {
     yield _phase;
     yield* _controller.stream;
   }
+
+  @override
+  Future<void> reconnect() async {}
 }

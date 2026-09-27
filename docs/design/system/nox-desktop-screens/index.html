@@ -87,6 +87,8 @@ function renderScreen(id, st, T) {
       const m = {
         'filled': {}, 'no-selection': { empty: true }, 'thread-empty': { threadState: 'empty' },
         'attachment': { threadState: 'attachment' }, 'offline': { listState: 'offline', threadState: 'offline' },
+        // Both panes, because the refusal is about the window's one server.
+        'server-mismatch': { listState: 'server-mismatch', threadState: 'server-mismatch' },
         'loading': { listState: 'loading' }, 'search': { listState: 'search' }, 'search-empty': { listState: 'search-empty' },
         'snack': { snack: { text: 'Message sent', action: 'Undo' } },
       }[st] || {};
@@ -107,7 +109,7 @@ function renderScreen(id, st, T) {
     case 'd-qr':       return <QRDesktop t={T} denied={st === 'denied'} />;
     case 'd-create':   return <CreateChatDesktop t={T} state={st} />;
     case 'd-file':     return <FileViewDesktop t={T} state={st} />;
-    case 'd-drawer':   return <ChatInfoDesktop t={T} view={st} />;
+    case 'd-drawer':   return <ChatInfoDesktop t={T} view={st === 'server-mismatch' ? 'list' : st} state={st === 'server-mismatch' ? 'server-mismatch' : 'normal'} />;
     case 'd-error':    return <ErrorDesktop t={T} />;
     default: return null;
   }

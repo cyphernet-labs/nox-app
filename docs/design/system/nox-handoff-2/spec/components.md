@@ -92,8 +92,11 @@ Attach `IconButton` `onSurfaceVariant`; Send `IconButton` active `primary` / dis
 
 ## Identity card (7.1)
 
-`Card` filled `surfaceContainerLow`, shape `m`, elevation 1. ID mask `••••••••` (8) mono `onSurface`;
-revealed ID mono wrapped `onSurfaceVariant`. Logout `ListTile` text+icon `error`.
+`Card` filled `surfaceContainerLow`, shape `m`, elevation 1, laid out as an account
+header: ringed initials avatar (`avatarLg` 56) over the name (`titleLarge`
+`onSurface`) over the full public ID (mono `onSurfaceVariant`), then two
+`FilledButton.tonal` actions - `Edit name` / `Copy ID` - in a `Wrap`. No mask and no
+reveal: the ID stopped being a secret in 032. Logout `ListTile` text+icon `error`.
 
 ## App bar
 

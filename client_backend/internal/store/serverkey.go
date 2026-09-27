@@ -2,8 +2,12 @@ package store
 
 import (
 	"context"
-	"crypto/ed25519"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
 	"database/sql"
 	"encoding/base64"
 	"errors"
@@ -13,13 +17,30 @@ import (
 // ServerIdentity is the machine's own long-lived identity: the key a device
 // pins the connection against, and the moment somebody claimed this server.
 //
-// PrivateKey is the 32-byte Ed25519 seed, base64. It lives in the database
-// file rather than beside it because the authentication model's case 6 warns
-// that a backup holding only the DB breaks pinning for every paired device at
-// once - one artifact makes that impossible. Anyone who can read this file has
-// already read every message, so the key adds no new class of exposure.
+// The key is ECDSA P-256 and the certificate is issued on it. Ed25519 would be
+// the natural choice and does not work: Dart's BoringSSL does not offer
+// ed25519 in signature_algorithms, so the handshake dies before the client's
+// certificate callback ever runs - measured, not assumed (feature 036).
+//
+// Both halves live in the database file rather than beside it, because the
+// authentication model's case 6 warns that a backup holding only the DB would
+// break pinning for every paired device at once; one artifact makes that
+// impossible. Anyone who can read this file has already read every message, so
+// the key adds no new class of exposure.
+//
+// The private half is deliberately NOT a field here. This struct is handed to
+// the status page and to device.invite, two paths that have no use for a
+// secret - it is reached through ServerSigner instead.
 type ServerIdentity struct {
+	// PublicKey is the DER SubjectPublicKeyInfo, base64. The whole SPKI rather
+	// than the raw point: it is byte-for-byte what the verifying side digs out
+	// of the certificate, so neither end has to reconstruct it.
 	PublicKey string
+	// Fingerprint is sha256 over that SPKI, base64 - the thirty-two bytes the
+	// pairing link carries. DERIVED on every read and never stored: a stored
+	// derivative is a second copy of one fact, and two copies eventually
+	// disagree.
+	Fingerprint string
 	// OwnerUserID is the person this machine belongs to, empty while nobody
 	// owns it. It is the ONLY definition of "claimed": deciding by ClaimedAt
 	// instead would put one fact in two records, and two records of one fact
@@ -73,25 +94,87 @@ func (s *Store) EnsureServerIdentity(ctx context.Context) (ServerIdentity, error
 				"paired device - restore server_identity from the same backup as the rest of the database", people)
 	}
 
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return ServerIdentity{}, fmt.Errorf("generate server key: %w", err)
 	}
-	// The seed, not the expanded private key: 32 bytes instead of 64, and the
-	// pair derives from it deterministically.
-	seed := base64.StdEncoding.EncodeToString(priv.Seed())
-	pubB64 := base64.StdEncoding.EncodeToString(pub)
+	// PKCS#8 for the private half, SPKI for the public one - both
+	// self-describing. A raw scalar would not carry the curve, moving "this is
+	// always P-256" out of the data and into the code, and a scalar written
+	// without left padding silently becomes a different key.
+	pkcs8, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		return ServerIdentity{}, fmt.Errorf("marshal server key: %w", err)
+	}
+	spki, err := x509.MarshalPKIXPublicKey(priv.Public())
+	if err != nil {
+		return ServerIdentity{}, fmt.Errorf("marshal server public key: %w", err)
+	}
+	pubB64 := base64.StdEncoding.EncodeToString(spki)
 
 	_, err = tx.ExecContext(ctx,
 		"INSERT INTO server_identity (id, public_key, private_key, claimed_at) VALUES (1, ?, ?, NULL)",
-		pubB64, seed)
+		pubB64, base64.StdEncoding.EncodeToString(pkcs8))
 	if err != nil {
 		return ServerIdentity{}, fmt.Errorf("insert server identity: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return ServerIdentity{}, fmt.Errorf("commit ensure server identity: %w", err)
 	}
-	return ServerIdentity{PublicKey: pubB64}, nil
+	return ServerIdentity{PublicKey: pubB64, Fingerprint: FingerprintOfSPKI(spki)}, nil
+}
+
+// FingerprintOfSPKI is the ONE place the link's thirty-two bytes are computed.
+//
+// Exported because the verifying side needs the identical function over a
+// certificate's RawSubjectPublicKeyInfo: the whole scheme is that the two
+// inputs are the same bytes, and two spellings of one hash is how that stops
+// being true.
+func FingerprintOfSPKI(spkiDER []byte) string {
+	sum := sha256.Sum256(spkiDER)
+	return base64.StdEncoding.EncodeToString(sum[:])
+}
+
+// ErrLegacyServerKey says the row predates feature 036 and cannot be read.
+//
+// There is no migration by decision: nothing has shipped, so the cure is to
+// delete the development database. Saying that out loud is the whole point -
+// silently trying to parse the old shape would fail somewhere far from here,
+// and a stack trace is a worse answer than a sentence.
+var ErrLegacyServerKey = errors.New(
+	"server_identity holds a pre-036 Ed25519 key: there is no migration before the first release - " +
+		"delete the development database and let the server mint a new identity")
+
+// ServerSigner reads the private half. Narrow on purpose: it is the only way
+// in, and it is reached only by the code that builds the TLS certificate.
+func (s *Store) ServerSigner(ctx context.Context) (crypto.Signer, error) {
+	var privB64 string
+	err := s.read.QueryRowContext(ctx,
+		"SELECT private_key FROM server_identity WHERE id = 1").Scan(&privB64)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNoServerIdentity
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read server private key: %w", err)
+	}
+	der, err := base64.StdEncoding.DecodeString(privB64)
+	if err != nil {
+		return nil, fmt.Errorf("decode server private key: %w", err)
+	}
+	// An Ed25519 seed is 32 raw bytes and parses as nothing; saying so by
+	// length is clearer than letting PKCS#8 fail with its own words.
+	if len(der) == 32 {
+		return nil, ErrLegacyServerKey
+	}
+	key, err := x509.ParsePKCS8PrivateKey(der)
+	if err != nil {
+		return nil, fmt.Errorf("parse server private key: %w", err)
+	}
+	signer, ok := key.(crypto.Signer)
+	if !ok {
+		return nil, fmt.Errorf("server private key is %T, which cannot sign", key)
+	}
+	return signer, nil
 }
 
 // ServerIdentity reads the machine's identity without creating one.
@@ -228,7 +311,21 @@ func readServerIdentity(ctx context.Context, q rowQuerier) (ServerIdentity, erro
 	if err != nil {
 		return ServerIdentity{}, fmt.Errorf("read server identity: %w", err)
 	}
-	return ServerIdentity{PublicKey: pub, OwnerUserID: owner.String, ClaimedAt: claimedAt.Int64}, nil
+	spki, err := base64.StdEncoding.DecodeString(pub)
+	if err != nil {
+		return ServerIdentity{}, fmt.Errorf("decode server public key: %w", err)
+	}
+	// 32 raw bytes is a pre-036 Ed25519 key. Refuse here rather than hand out
+	// an identity whose fingerprint nobody can match.
+	if len(spki) == 32 {
+		return ServerIdentity{}, ErrLegacyServerKey
+	}
+	return ServerIdentity{
+		PublicKey:   pub,
+		Fingerprint: FingerprintOfSPKI(spki),
+		OwnerUserID: owner.String,
+		ClaimedAt:   claimedAt.Int64,
+	}, nil
 }
 
 // ownerRowExists reports whether the person named by the ownership marker is

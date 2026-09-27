@@ -40,7 +40,6 @@ class CreateChatBloc extends BaseBloc<CreateChatEvent, CreateChatState> {
   Future<void> _onAvailabilityRequested(ChatAvailabilityRequested event, Emitter<CreateChatState> emit) async {
     if (state.name != event.name || state.status != CreateChatStatus.checking) return;
     await executeLogic(() async {
-      await Future<void>.delayed(const Duration(milliseconds: 200));
       if (state.name != event.name) return;
       // The server is the ONLY authority on whether a chat name is free. It used
       // to be OR-ed with a frozen list of three words, which declared those
@@ -58,8 +57,7 @@ class CreateChatBloc extends BaseBloc<CreateChatEvent, CreateChatState> {
     emit(state.copyWith(status: CreateChatStatus.submitting, networkError: false));
     await executeLogic(() async {
       // The outcome selector still models network/fatal for previews; a `success`
-      // now persists the chat to the local DB via the cache-first repository.
-      await Future<void>.delayed(const Duration(milliseconds: 400));
+      // persists the chat to the local DB via the cache-first repository.
       switch (event.outcome) {
         case CreateChatOutcome.success:
           // Uniqueness is enforced by the debounced availability pre-check only; the

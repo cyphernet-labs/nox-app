@@ -59,8 +59,6 @@
   "devicesRevoke": "Відкликати",
   "devicesRevokeTitle": "Відкликати цей пристрій?",
   "devicesRevokeMessage": "Його буде відключено, і він більше не зможе підключитися.",
-  "devicesRevokeSelfMessage": "Це пристрій, яким ви користуєтесь. Відкликання вийде з акаунта тут.",
-  "devicesEmpty": "Інших пристроїв немає",
   "devicesError": "Не вдалося завантажити пристрої.",
   "devicesRevokeError": "Не вдалося відкликати цей пристрій. Спробуйте ще раз.",
   "devicesAdd": "Додати пристрій",
@@ -68,6 +66,7 @@
   "devicesInviteError": "Не вдалося створити запрошення.",
   "settingsYourIdLabel": "Ваш ID",
   "actionHide": "Сховати",
+  "actionCopy": "Копіювати",
   "settingsNameSaveError": "Не вдалося зберегти імʼя. Спробуйте ще раз.",
   "settingsAboutTitle": "Про застосунок",
   "loginSignIn": "Увійти",
@@ -81,7 +80,6 @@
   "loginLinkExpired": "Термін дії посилання минув. Попросіть нове.",
   "loginLinkRejected": "Це посилання не можна використати. Попросіть нове.",
   "loginNetworkError": "Не вдалося увійти. Перевірте з'єднання та спробуйте ще раз.",
-  "onboardTitleSignIn": "NOX · Вхід",
   "sessionExpiredMessage": "Ваш сеанс завершився",
   "tooltipFlashlight": "Ліхтарик",
   "tooltipSwitchCamera": "Змінити камеру",
@@ -94,7 +92,6 @@
   "qrInvalidSnackbar": "Цей QR-код недійсний. Спробуйте інший.",
   "qrDesktopTitle": "Скануйте QR-код",
   "qrDesktopHelper": "Наведіть вебкамеру на код або введіть ID вручну.",
-  "onboardTitleScanQr": "NOX · Сканування QR",
   "usernameLabel": "Ім'я",
   "usernameHint": "Як вас бачитимуть інші",
   "usernameHelper": "Інші бачать це ім'я. Ви можете змінити його зараз або пізніше в налаштуваннях.",
@@ -102,7 +99,6 @@
   "nameTakenError": "Це ім'я вже зайняте",
   "actionDone": "Готово",
   "actionSkip": "Пропустити",
-  "onboardTitleSetUp": "NOX · Налаштування",
   "createChatTitle": "Новий чат",
   "createChatNameLabel": "Назва чату",
   "createChatNameHint": "напр. Random thoughts",
@@ -113,12 +109,8 @@
   "actionCreate": "Створити",
   "actionCancel": "Скасувати",
   "settingsAccountTitle": "Обліковий запис",
-  "settingsNameEditTooltip": "Редагувати",
-  "idMask": "••••••••",
-  "idShowTooltip": "Показати",
-  "idHideTooltip": "Приховати",
-  "idCopyTooltip": "Копіювати",
-  "idShowQrTooltip": "Показати QR",
+  "settingsEditNameAction": "Редагувати ім'я",
+  "settingsCopyIdAction": "Копіювати ID",
   "qrSheetTitle": "QR вашого ID",
   "qrAccountCaption": "Покажіть цей код, щоб вас додали",
   "actionClose": "Закрити",
@@ -174,5 +166,20 @@
   "attachmentGone": "Цього файлу вже немає на сервері",
   "@attachmentGone": {
     "description": "Terminal state on the file screen: the bytes are gone. Contract 2.1 forbids offering a retry here."
-  }
+  },
+  "serverNotRecognised": "Це не той сервер, з яким ви з'єдналися",
+  "@serverNotRecognised": {
+    "description": "Banner on the chats list, the thread and the chat card when the machine at the paired address presents a key the pairing link did not name. Paired with the existing actionTryAgain. Deliberately not 'no connection': something answered, and waiting will not change it."
+  },
+  "loginServerNotRecognised": "Сервер не збігається з посиланням",
+  "@loginServerNotRecognised": {
+    "description": "The same refusal on the sign-in screen, where there is no relationship with a server yet - so it names the link rather than a pairing that has not happened."
+  },
+  "windowSubtitleSignIn": "Вхід",
+  "windowSubtitleSetUp": "Початок роботи",
+  "windowSubtitleScanQr": "Сканування QR",
+  "windowSubtitleError": "Помилка",
+  "videoPlay": "Відтворити",
+  "videoPause": "Пауза",
+  "videoPlaybackError": "Не вдалося відтворити це відео. Збережіть його, щоб відкрити в іншій програмі."
 }

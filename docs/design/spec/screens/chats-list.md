@@ -30,7 +30,9 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 - **Аватар** — generated avatar чата по правилам из [overview.md / Generated avatar](../overview.md#generated-avatar-для-чатов) (инициалы + хеш-цвет; fallback-иконка для не-латиницы/символов).
 - **Колонка контента (растягивается):**
   - имя чата (header);
-  - превью последнего сообщения (subtitle, ellipsis при переполнении).
+  - превью последнего сообщения (subtitle, ellipsis при переполнении) — **только если оно есть**. У чата без сообщений строка однострочная и её содержимое стоит на средней линии строки; пустое превью, отрисованное всё равно, забирало вторую строку, и заголовок оказывался выше центра с пустотой под ним.
+
+  На **широкой** ветке между строками зазор 4: выбранная строка рисует скруглённую заливку, и вплотную она упиралась в край соседней — два блока сливались в один.
 - **Колонка справа (вертикальная):**
   - время последнего сообщения — **относительное**, по лестнице из [overview.md / Форматы времени](../overview.md#форматы-времени-и-даты) (`now`, `5 min`, `2 h`, `Yesterday`, `12 May`);
   - **unread badge** — число, считается **от последнего открытия чата этим устройством**; никогда не открытый чат бейджа **не имеет**; переполнение — `99+`.
@@ -40,11 +42,12 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 | Состояние | Описание |
 |---|---|
 | Initial-loading | Первая загрузка. **Centered** `CircularProgressIndicator` в области body. |
-| Empty | Чатов нет. **Empty state**: иллюстрация (из дизайн-системы) + заголовок + поясняющий текст. |
+| Empty | Чатов нет. **Empty state** (глиф `forum`) + заголовок + поясняющий текст. |
 | Filled | Список чатов отображается. |
 | Searching | В `SearchBar` непустой запрос; список фильтруется по имени в реальном времени. |
 | Search-empty | По запросу ничего не найдено — надпись `No chats found` в области результата. |
 | Offline | Нет соединения — постоянный `MaterialBanner` `No connection` сверху (под AppBar/SearchBar). Список показывает кэш. |
+| Server mismatch | Машина по сохранённому адресу предъявила не тот ключ, что назвала ссылка спаривания. Постоянная плашка `This isn't the server you paired with` с действием `Try again`. **Вместо** `Offline`, а не вместе с ним: сервер ответил, и «нет соединения» здесь — неправда. Ничего локального не стирается, переписка видна под плашкой. Само не проходит: единственный выход — действие. |
 | Inline-error | Не удалось загрузить — `MaterialBanner` сверху с предложением обновить (pull-to-refresh / action). |
 | Fatal | Передача в 3.1 (embedded). |
 
@@ -68,7 +71,7 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 - `Badge` (M3) с числом — unread; цветовая роль `ColorScheme.primary` (не дефолтный error-red). При N = 0 бейдж не рендерится, правая колонка остаётся выровненной по времени.
 - `CircularProgressIndicator` (центрированный) — Initial-loading.
 - `MaterialBanner` (M3) — offline / inline-error.
-- Empty-state widget (`Column` с иллюстрацией + текст).
+- Empty-state widget. **Empty state** — композиция дизайна `EmptyState`: квадрат 132 со скруглением 20 и обводкой 1.5 `outlineVariant`, внутри стоковый глиф Material Symbols 56 (`onSurfaceVariant`) и две брендовые точки — teal 14 сверху справа, gold 10 снизу слева; под ним заголовок `headlineSmall` и текст `bodyMedium` (≤260). ⚠️ **Нарисованных иллюстраций нет**: раньше здесь жили три самодельных SVG из `nox-assets/illustrations`, они читались на 132 как дефект отрисовки, и дизайн их никогда не просил. Файлы остались в бандле, на них никто не ссылается.
 
 ## Микрокопирайт
 
@@ -80,6 +83,8 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 | Empty state message | `Tap + to create the first one.` |
 | Search empty | `No chats found` |
 | Offline banner | `No connection` |
+| Server-mismatch banner | `This isn't the server you paired with` |
+| Server-mismatch action | `Try again` |
 | Inline-error (network) | `Could not load chats. Pull to refresh.` |
 
 ## Принятые решения (Q1–Q10)
@@ -95,7 +100,7 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 | Q7 | Аватар чата | Generated avatar (общая спека в overview) |
 | Q8 | Формат времени | Относительное (лестница в overview) |
 | Q9 | Initial-loading | Centered `CircularProgressIndicator` |
-| Q10 | Empty state | Иллюстрация + текст |
+| Q10 | Empty state | Композиция `EmptyState`: обведённый квадрат 132 + стоковый глиф 56 + две брендовые точки + заголовок и текст |
 
 ## Десктоп-раскладка (этап M3, сверено с корпусом)
 

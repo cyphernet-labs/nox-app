@@ -141,6 +141,9 @@ typedef _CardVariant = ({String name, ChatCardScenario? scenario, FilesViewMode?
 
 const List<_CardVariant> _cardVariants = [
   (name: 'offline', scenario: ChatCardScenario.offline, viewMode: null),
+  // The wrong machine answered (036): a different glyph, a different sentence
+  // and an action `offline` does not have, so its own baseline.
+  (name: 'pin_refused', scenario: ChatCardScenario.pinRefused, viewMode: null),
   (name: 'empty', scenario: ChatCardScenario.empty, viewMode: null),
   (name: 'fatal', scenario: ChatCardScenario.fatal, viewMode: null),
   (name: 'grid', scenario: null, viewMode: FilesViewMode.grid),

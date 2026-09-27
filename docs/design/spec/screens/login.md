@@ -40,6 +40,7 @@ Material Scaffold с `resizeToAvoidBottomInset: true`; фон — `ColorScheme.s
 | Filled | В поле есть содержимое (любой длины и формата — клиент не валидирует). `Sign in` enabled. Кнопка `Paste` enabled, если в буфере что-то есть. |
 | Loading | Идёт запрос на проверку. Поле и обе кнопки disabled; внутри primary button — `CircularProgressIndicator`. |
 | Inline-error | Сервер вернул «неверный формат» или произошла ошибка сети. Поле подсвечено error-цветом, под ним — `errorText`. Кнопки возвращаются в enabled. |
+| Inline-error (не тот сервер) | Ссылка разобралась, но машина по её адресу предъявила не тот ключ, что ссылка назвала. Тот же вид, что и у остальных inline-ошибок, но **своя строка**: отношений с сервером здесь ещё нет, поэтому текст называет ссылку, а не спаривание. Отличается от «неверного формата» (пересканировать) и от ошибки сети (проверить связь): следующее действие у человека другое. |
 | Fatal | Неожиданная / server-fatal (HTTP 5xx, не-detail-error) → передача в 3.1 со стрелкой back. |
 
 Граница между Inline-error и Fatal: всё, что сервер возвращает как «ошибку формата» или «нет сети» — inline. Всё, что выходит за классы, — Fatal → 3.1.
@@ -77,6 +78,7 @@ Material Scaffold с `resizeToAvoidBottomInset: true`; фон — `ColorScheme.s
 | Loading | — (no text, only indicator) |
 | Inline-error (формат) | `Invalid identifier` |
 | Inline-error (сеть) | `Could not sign in. Check your connection and try again.` |
+| Inline-error (не тот сервер) | `This server doesn't match its link` |
 
 (Тексты экрана 3.1 для fatal-сценария — в [error.md](error.md).)
 

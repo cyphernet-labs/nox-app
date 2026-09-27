@@ -7,7 +7,7 @@ part of 'chats_list_bloc.dart';
 /// arrive above it. Without it no page-level golden contains a chat row with a
 /// badge at all, and the desktop rendering of one would have no coverage
 /// (Constitution VI).
-enum ChatsListScenario { normal, empty, inlineError, fatal, offline, unread }
+enum ChatsListScenario { normal, empty, inlineError, fatal, offline, pinRefused, unread }
 
 @freezed
 sealed class ChatsListState with _$ChatsListState {
@@ -25,6 +25,12 @@ sealed class ChatsListState with _$ChatsListState {
     @Default(false) bool loadingInProgress,
     @Default('') String query,
     @Default(false) bool isOffline,
+
+    /// Something answered at the paired address and it is not this person's
+    /// server. Separate from [isOffline] because the two say different things
+    /// and lead to different actions: one waits, the other cannot be waited
+    /// out.
+    @Default(false) bool isServerMismatch,
     @Default(false) bool hasLoadError,
     String? selectedChatId,
   }) = Initialized;

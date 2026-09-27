@@ -22,11 +22,12 @@ class AppLogoutDialogWidget extends StatefulWidget {
 class _AppLogoutDialogWidgetState extends State<AppLogoutDialogWidget> {
   bool _loading = false;
 
-  Future<void> _confirm() async {
+  void _confirm() {
+    // The wipe itself is AuthRepositoryImpl.logout, which the caller runs once this
+    // dialog answers true - there was never anything to wait for here. The flag still
+    // disarms both buttons and the back gesture for the frame before the pop.
     setState(() => _loading = true);
-    // TODO(backend): wipe the identifier + all local data, then sign out.
-    await Future<void>.delayed(const Duration(milliseconds: 400));
-    if (mounted) Navigator.of(context).pop(true);
+    Navigator.of(context).pop(true);
   }
 
   @override

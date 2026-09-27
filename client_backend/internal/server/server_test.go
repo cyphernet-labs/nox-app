@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"io"
+	"log"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -76,6 +77,12 @@ func openStack(t *testing.T, path string, logger *slog.Logger) (*httptest.Server
 	if err := st.EnsureJournal(t.Context()); err != nil {
 		t.Fatalf("EnsureJournal: %v", err)
 	}
+	// Mirror Run again: the machine's key is settled before anything serves,
+	// because the certificate is built from it.
+	machine, err := st.EnsureServerIdentity(t.Context())
+	if err != nil {
+		t.Fatalf("EnsureServerIdentity: %v", err)
+	}
 	srv := New(cfg, st, h, bl, logger)
 	srv.pingInterval = 50 * time.Millisecond
 	// Long write timeout keeps slow-consumer tests deterministic: the
@@ -92,8 +99,28 @@ func openStack(t *testing.T, path string, logger *slog.Logger) (*httptest.Server
 		_ = srv.runDispatcher(hubCtx)
 	}()
 
-	ts := httptest.NewServer(srv.Handler())
+	// TLS through the server's OWN config, not httptest.NewTLSServer.
+	//
+	// NewTLSServer installs a stock certificate of its own and hands back a
+	// client that trusts it, which would make every test here pass over a
+	// transport the product never uses - and would leave this feature's one
+	// real question, whether the presented key is the pinned one, untested.
+	tlsCfg, err := srv.serverTLSConfig(t.Context())
+	if err != nil {
+		t.Fatalf("serverTLSConfig: %v", err)
+	}
+	ts := httptest.NewUnstartedServer(srv.Handler())
+	ts.TLS = tlsCfg
+	// Transport-level complaints go nowhere: several tests refuse a handshake
+	// on purpose, and http.Server would print each one to stderr.
+	ts.Config.ErrorLog = log.New(io.Discard, "", 0)
 	ts.Config.RegisterOnShutdown(srv.CloseConnections)
+	ts.StartTLS()
+	// StartTLS hands back a client trusting its own certificate as a root, and
+	// ours is a leaf that is nobody's authority. Replace the transport with the
+	// pin - the same check the app runs, so the tests dial the way the product
+	// does.
+	ts.Client().Transport = &http.Transport{TLSClientConfig: PinnedTLSConfig(machine.Fingerprint)}
 	closeAll := func() {
 		ts.Close()
 		stopHub()
@@ -108,7 +135,7 @@ func openStack(t *testing.T, path string, logger *slog.Logger) (*httptest.Server
 func TestHealthServes200(t *testing.T) {
 	ts, _ := newTestServer(t)
 
-	resp, err := http.Get(ts.URL + "/health")
+	resp, err := ts.Client().Get(ts.URL + "/health")
 	if err != nil {
 		t.Fatalf("GET /health: %v", err)
 	}

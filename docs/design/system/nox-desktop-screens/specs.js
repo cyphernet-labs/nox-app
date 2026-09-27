@@ -28,6 +28,10 @@ window.NOX_SPECS = [
         "label": "Offline"
       },
       {
+        "key": "server-mismatch",
+        "label": "Wrong server"
+      },
+      {
         "key": "loading",
         "label": "Loading"
       },
@@ -47,7 +51,7 @@ window.NOX_SPECS = [
     "anatomy": "NavigationRail (80) + chat list pane (360, with pane header + SearchBar) + thread pane (header, message stream capped to a ≤980 reading column, composer). The mobile bottom bar becomes the rail; full-screen list/thread become side-by-side panes.",
     "behavior": [
       "Selecting a row highlights it (secondaryContainer) and loads the thread on the right — no navigation push.",
-      "No-selection: the thread pane shows a “Select a chat” placeholder; the “+” lives on the rail.",
+      "No-selection: the thread pane shows a “Select a chat” placeholder; the “+” lives in the chat-list pane header.",
       "Thread header is persistent (avatar + chat name + a disabled Invite a person action + an info action). Phase 037: two actions, not one, and the reason there is no member list is that the machine holds one person — not the revoked open-space model. No per-chat search, no folders. Source of truth: docs/design/spec/screens/chat.md §Десктоп.",
       "Offline: “No connection” banner appears in both panes. Loading: spinner in the list pane.",
       "Search filters the list pane in place; no match → “No chats found”.",
@@ -55,7 +59,7 @@ window.NOX_SPECS = [
     ],
     "navigation": [
       "Row → loads thread in right pane.",
-      "Rail + → Create chat dialog (04).",
+      "Pane-header + → Create chat dialog (04).",
       "Thread header (avatar / chat name / info action) → Chat card / Chat info (04). The Invite a person action beside it is permanently disabled and leads nowhere: the relay it needs does not exist yet.",
       "Attachment / file bubble → File view lightbox (04)."
     ],
@@ -123,7 +127,7 @@ window.NOX_SPECS = [
         "label": "Logout dialog"
       }
     ],
-    "anatomy": "NavigationRail + settings menu pane (340, grouped nav items) + detail pane (content capped to ≤680). Each detail reuses the exact phone widgets.",
+    "anatomy": "NavigationRail + settings menu pane (340: an M3 NavigationDrawer - stadium destinations on the pane itself, each with a bare leading glyph, transparent until selected; Log out pinned to the foot in error) + detail pane (content capped to ≤680). Each detail reuses the exact phone widgets.",
     "behavior": [
       "Selecting a menu item highlights it (secondaryContainer) and swaps the detail pane — no push.",
       "Account: identity card carrying the name and the public ID. Editing → inline name field.",
@@ -208,6 +212,10 @@ window.NOX_SPECS = [
       {
         "key": "error-format",
         "label": "Format error"
+      },
+      {
+        "key": "error-server",
+        "label": "Wrong server"
       },
       {
         "key": "error-net",
@@ -438,6 +446,10 @@ window.NOX_SPECS = [
       {
         "key": "empty",
         "label": "Empty"
+      },
+      {
+        "key": "server-mismatch",
+        "label": "Wrong server"
       }
     ],
     "anatomy": "Scrim + right drawer (380): Details header, chat avatar/name, “People” (one row — the person this machine belongs to — plus a disabled Invite a person button and its caption), hairline, “Files” with List/Grid toggle, file rows or 2-col grid. The body is one scroll.",
