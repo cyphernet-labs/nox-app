@@ -97,3 +97,14 @@ lib/design/gen/
 
 # --- Generated l10n (flutter gen-l10n from lib/l10n/*.arb; regenerated on pub get / make generate) ---
 lib/l10n/app_localizations*.dart
+
+# client_backend runtime state. A local noxd writes its database, its
+# attachment bytes and - since 039 - its tor state directory next to the -db
+# path; the tor directory holds the control-port cookie, a secret that must
+# never reach a commit.
+client_backend/noxd
+client_backend/*.db
+client_backend/*.db-wal
+client_backend/*.db-shm
+client_backend/*.db-files/
+client_backend/*.db-tor/

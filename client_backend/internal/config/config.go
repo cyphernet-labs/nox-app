@@ -30,6 +30,24 @@ type Config struct {
 	// eventually routes around with a header.
 	StatusAddr string
 	Limits     Limits
+
+	// Tor turns the onion service on (039). On by default: the server keeps
+	// Tor up for as long as it runs, because a stationary machine has no
+	// battery to save and, without a published address, a phone away from
+	// home cannot reach it at all. false removes tor entirely - no process, no
+	// onion address, nothing announced - while the onion key and the devices'
+	// access keys stay in the database, so turning it back on brings back the
+	// same address.
+	Tor bool
+	// TorBin is an explicit path to the tor binary, or empty. When set it is
+	// FINAL: a path that holds no tor means "not found", never a reason to look
+	// somewhere else - an explicit choice silently replaced by another tor is
+	// worse than a refusal, and "tor not found" would be impossible to test on
+	// a machine that has one in PATH.
+	TorBin string
+	// TorDir is tor's own state directory: its cache of the network and the
+	// control-port cookie. A cache, outside backups; never the database.
+	TorDir string
 }
 
 // DefaultLimits mirrors the contract v0 §3 example values.
@@ -59,12 +77,26 @@ func Load(args []string, getenv func(string) string) (Config, error) {
 	if defStatus == "" {
 		defStatus = "127.0.0.1:8081"
 	}
+	// Anything but an explicit "false" or "0" leaves Tor on: the variable can
+	// turn it off, and a typo in it must not do so silently in the other
+	// direction either - it is parsed below with the flag's own rules.
+	defTor := true
+	if v := getenv("NOX_TOR"); v != "" {
+		parsed, err := parseBool(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid NOX_TOR %q: %w", v, err)
+		}
+		defTor = parsed
+	}
 
 	fs := flag.NewFlagSet("noxd", flag.ContinueOnError)
 	addr := fs.String("addr", defAddr, "listen address (host:port)")
 	dbPath := fs.String("db", defDB, "path to the SQLite database file")
 	filesPath := fs.String("files", defFiles, "attachment bytes directory (default <db>-files)")
 	statusAddr := fs.String("status-addr", defStatus, "loopback address for the service page, empty to disable it")
+	torOn := fs.Bool("tor", defTor, "publish an onion service through tor (false: no tor at all)")
+	torBin := fs.String("tor-bin", getenv("NOX_TOR_BIN"), "path to the tor binary; when set it is final (default: next to noxd, then PATH)")
+	torDir := fs.String("tor-dir", getenv("NOX_TOR_DIR"), "tor state directory (default <db>-tor)")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, fmt.Errorf("parse flags: %w", err)
 	}
@@ -82,8 +114,33 @@ func Load(args []string, getenv func(string) string) (Config, error) {
 	if files == "" {
 		files = *dbPath + "-files"
 	}
+	dir := *torDir
+	if dir == "" {
+		dir = *dbPath + "-tor"
+	}
 
-	return Config{Addr: *addr, DBPath: *dbPath, FilesPath: files, StatusAddr: *statusAddr, Limits: DefaultLimits()}, nil
+	return Config{
+		Addr:       *addr,
+		DBPath:     *dbPath,
+		FilesPath:  files,
+		StatusAddr: *statusAddr,
+		Limits:     DefaultLimits(),
+		Tor:        *torOn,
+		TorBin:     *torBin,
+		TorDir:     dir,
+	}, nil
+}
+
+// parseBool reads NOX_TOR with the same words the -tor flag accepts, so the
+// two spellings of one setting cannot disagree about what "off" looks like.
+func parseBool(v string) (bool, error) {
+	switch v {
+	case "1", "t", "T", "TRUE", "true", "True":
+		return true, nil
+	case "0", "f", "F", "FALSE", "false", "False":
+		return false, nil
+	}
+	return false, fmt.Errorf("want true or false")
 }
 
 // checkStatusAddr refuses anything the service page must not listen on.

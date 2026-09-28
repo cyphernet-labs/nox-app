@@ -3,7 +3,9 @@
 Self-hosted messenger backend for ONE person and the devices they own:
 one WebSocket command channel (JSON envelope, global `seq` event log,
 cursor replay) plus a small REST surface (file upload/download, /health),
-embedded SQLite, single static CGO-free binary. Different people never
+embedded SQLite, single static CGO-free binary - and, since 039, a tor
+process beside it that the server starts, supervises and stops, and that
+never opens the database. Different people never
 share a machine and their machines never talk to each other — everything
 between people goes through a relay whose protocol does not exist yet
 (Q13).
@@ -64,8 +66,13 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 
 ## Architecture invariants (MUST hold after every change)
 
-1. **Exactly one OS process opens the database file.** No sidecars, no
-   cron, no second node.
+1. **Exactly one OS process opens the database file.** No sidecars that
+   touch the database, no cron, no second node. The ONE other process is
+   tor (039): the server starts it with its own empty config and its own
+   state directory `<db>-tor`, commands it over the control port, owns it
+   (`__OwningControllerProcess` + `TAKEOWNERSHIP`, so it dies with the
+   server) and hands it the onion key on every start - tor never opens the
+   database and never persists the key.
 2. **Two pools, one writer.** All writes go through `internal/store`
    using the write handle (`SetMaxOpenConns(1)` + `_txlock=immediate`);
    reads use the read pool. Never `Exec` a mutation on the read handle;
@@ -84,6 +91,9 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
    coordinate and are never replayed. They describe who a connection is or what
    it may still do, not what happened in the shared world, which is why a
    disconnect may lose them and nothing breaks.
+   `server.addresses` (039) is the fourth: it says where this machine can be
+   reached, has ONE sender - the address watcher - and the greeting reply is
+   its reliable half.
 4. **Write transactions are milliseconds.** No network I/O, no WebSocket
    sends, no sleeping between `BeginTx` and `Commit`.
 5. **`seq` is a strictly increasing total order** (single writer +
@@ -101,15 +111,23 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
    fields other connections read (identity, device key), because the
    fan-out helpers walk one person's connections from another's goroutine.
    `Server.claim` and the transfer-token store (`internal/server/tokens.go`)
-   hold the only other two.
+   hold the only other two. Since 039 the registry also carries `greeted`
+   and `addrVersion` per connection, set under `Server.mu` AFTER the greeting
+   reply is queued - which is what keeps `server.addresses` behind it. Tor
+   state reaches readers as an immutable snapshot behind `atomic.Pointer`,
+   not under a lock.
 8. **One reader goroutine per connection** (library invariant); writes
    to a client go through its buffered channel (`outBuffer` = 64 frames); overflow →
    `Close(StatusPolicyViolation)` — replay heals the client on
    reconnect. Keepalive: own ticker with `Ping(ctx)` ~25s.
    `SetReadLimit(max_frame_bytes)`.
-9. **Shutdown order:** HTTP server drains → registered WS conns get
-   `Close(StatusGoingAway)` (Shutdown does NOT wait for hijacked conns —
-   keep the conn registry wired via `RegisterOnShutdown`) → hub stops →
+9. **Shutdown order:** the HTTP servers drain (main, onion, status page) →
+   registered WS conns get `Close(StatusGoingAway)`, IN PARALLEL - one close
+   handshake can take 10 s, and over Tor it does (Shutdown does NOT wait for
+   hijacked conns — keep the conn registry wired via `RegisterOnShutdown`) →
+   wait for the handlers, up to 15 s → the address watcher and the tor
+   supervisor stop (the supervisor on its OWN context, so tor outlives the
+   drain the onion clients are still saying goodbye through) → hub stops →
    DB closes. Preserve it.
 10. **Idempotency:** `message.send` is keyed by `(author_id,
     client_message_id)`; a replayed command returns the original echo,
@@ -161,6 +179,16 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   conditional UPDATE whose affected-row count settles a two-device race
 - `internal/store/devices.go` — device list, revocation (DELETE, so a revoked
   device is indistinguishable from an unknown one), rename
+- `internal/store/accesskeys.go` — onion access keys (039): one per device,
+  one-time keys on onion invites, the active set read in one transaction
+- `internal/tor/`        — everything that knows about tor (039): finding and
+  versioning the binary, the control-protocol client, the onion key and
+  address, the supervisor that owns the process and publishes the service,
+  and the log scrubber. The onion seed never leaves this package once handed
+  in at startup
+- `internal/server/addresses.go` — where this machine can be reached: the
+  versioned snapshot, the watcher that is the only sender of
+  `server.addresses`
 - `internal/hub/`        — fan-out goroutine owning the subscriber set
 - `internal/protocol/`   — envelope v0 types, error codes, frame (un)marshal
 - `internal/server/`     — ServeMux wiring: `/ws`, REST (§1 of contract), middleware
@@ -180,6 +208,11 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   `PinnedTLSConfig`. NOT `httptest.NewTLSServer`: it installs a stock
   certificate and leaves this feature's one real question untested.
 - Concurrency/replay tests may use `testing/synctest` (GA since 1.25).
+- Tests through the REAL Tor network are named `TestOnion*` and run only
+  when `NOX_TOR_TEST_BIN` points at a tor binary (0.4.9+); without it they
+  skip, because the network is minutes away and not always reachable.
+  Everything else about tor is tested on fakes of the control connection and
+  the process launcher.
 - Always `go test -race ./...`.
 
 ## Operational constraints
@@ -191,6 +224,14 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - Backups: `VACUUM INTO` a temp file + rename; never copy a live DB;
   local filesystem only (WAL breaks on network mounts).
 - Build: `CGO_ENABLED=0 go build -trimpath -ldflags="-s"`.
+- Tor (039) is ON by default: `-tor=false` turns it off. The binary comes
+  from `-tor-bin` (final - an explicit path that holds no tor is "not
+  found", never a reason to look elsewhere), else next to `noxd`, else
+  `PATH`; 0.4.9 is the floor. Linux distribution packages are often older -
+  use the Tor Project repository. The official macOS tor is UNSIGNED and
+  killed at launch on Apple Silicon until signed (ad-hoc is enough for dev).
+  Its state lives in `<db>-tor` (a cache, outside backups; it holds the
+  control cookie, so never commit it).
 
 ## Known deliberate omissions (do not "fix" silently)
 

@@ -18,13 +18,13 @@ func TestLoad(t *testing.T) {
 			name:   "an empty status address disables the service page",
 			args:   []string{"-status-addr", ""},
 			getenv: noEnv,
-			want:   Config{Addr: "127.0.0.1:8080", DBPath: "nox.db", FilesPath: "nox.db-files", StatusAddr: "", Limits: DefaultLimits()},
+			want:   Config{Addr: "127.0.0.1:8080", DBPath: "nox.db", FilesPath: "nox.db-files", StatusAddr: "", Limits: DefaultLimits(), Tor: true, TorDir: "nox.db-tor"},
 		},
 		{
 			name:   "the service page port can be moved",
 			args:   []string{"-status-addr", "127.0.0.1:9100"},
 			getenv: noEnv,
-			want:   Config{Addr: "127.0.0.1:8080", DBPath: "nox.db", FilesPath: "nox.db-files", StatusAddr: "127.0.0.1:9100", Limits: DefaultLimits()},
+			want:   Config{Addr: "127.0.0.1:8080", DBPath: "nox.db", FilesPath: "nox.db-files", StatusAddr: "127.0.0.1:9100", Limits: DefaultLimits(), Tor: true, TorDir: "nox.db-tor"},
 		},
 		{
 			// The flag moves the port; it does not put the page on a network.
@@ -45,7 +45,7 @@ func TestLoad(t *testing.T) {
 			name:   "defaults apply when nothing is provided",
 			args:   nil,
 			getenv: noEnv,
-			want:   Config{Addr: "127.0.0.1:8080", DBPath: "nox.db", FilesPath: "nox.db-files", StatusAddr: "127.0.0.1:8081", Limits: DefaultLimits()},
+			want:   Config{Addr: "127.0.0.1:8080", DBPath: "nox.db", FilesPath: "nox.db-files", StatusAddr: "127.0.0.1:8081", Limits: DefaultLimits(), Tor: true, TorDir: "nox.db-tor"},
 		},
 		{
 			name: "environment overrides defaults",
@@ -59,7 +59,7 @@ func TestLoad(t *testing.T) {
 				}
 				return ""
 			},
-			want: Config{Addr: "127.0.0.1:9999", DBPath: "/tmp/env.db", FilesPath: "/tmp/env.db-files", StatusAddr: "127.0.0.1:8081", Limits: DefaultLimits()},
+			want: Config{Addr: "127.0.0.1:9999", DBPath: "/tmp/env.db", FilesPath: "/tmp/env.db-files", StatusAddr: "127.0.0.1:8081", Limits: DefaultLimits(), Tor: true, TorDir: "/tmp/env.db-tor"},
 		},
 		{
 			name: "flags win over environment",
@@ -70,7 +70,7 @@ func TestLoad(t *testing.T) {
 				}
 				return ""
 			},
-			want: Config{Addr: "127.0.0.1:7777", DBPath: "flag.db", FilesPath: "flag.db-files", StatusAddr: "127.0.0.1:8081", Limits: DefaultLimits()},
+			want: Config{Addr: "127.0.0.1:7777", DBPath: "flag.db", FilesPath: "flag.db-files", StatusAddr: "127.0.0.1:8081", Limits: DefaultLimits(), Tor: true, TorDir: "flag.db-tor"},
 		},
 		{
 			name:    "address without port is rejected",
@@ -102,6 +102,50 @@ func TestLoad(t *testing.T) {
 				t.Fatalf("Load() = %+v, want %+v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestTorIsOnByDefaultAndCanBeTurnedOff(t *testing.T) {
+	noEnv := func(string) string { return "" }
+
+	cfg, err := Load(nil, noEnv)
+	if err != nil || !cfg.Tor || cfg.TorBin != "" || cfg.TorDir != "nox.db-tor" {
+		t.Fatalf("defaults: tor=%v bin=%q dir=%q err=%v, want on, no explicit binary, <db>-tor", cfg.Tor, cfg.TorBin, cfg.TorDir, err)
+	}
+
+	cfg, err = Load([]string{"-tor=false"}, noEnv)
+	if err != nil || cfg.Tor {
+		t.Fatalf("-tor=false: tor=%v err=%v, want off", cfg.Tor, err)
+	}
+
+	env := func(k string) string {
+		switch k {
+		case "NOX_TOR":
+			return "false"
+		case "NOX_TOR_BIN":
+			return "/opt/tor/bin/tor"
+		case "NOX_TOR_DIR":
+			return "/var/lib/nox-tor"
+		}
+		return ""
+	}
+	cfg, err = Load(nil, env)
+	if err != nil || cfg.Tor || cfg.TorBin != "/opt/tor/bin/tor" || cfg.TorDir != "/var/lib/nox-tor" {
+		t.Fatalf("env: tor=%v bin=%q dir=%q err=%v", cfg.Tor, cfg.TorBin, cfg.TorDir, err)
+	}
+	cfg, err = Load([]string{"-tor=true", "-tor-bin", "/flag/tor", "-tor-dir", "/flag/dir"}, env)
+	if err != nil || !cfg.Tor || cfg.TorBin != "/flag/tor" || cfg.TorDir != "/flag/dir" {
+		t.Fatalf("flags over env: tor=%v bin=%q dir=%q err=%v", cfg.Tor, cfg.TorBin, cfg.TorDir, err)
+	}
+
+	// A typo must not quietly decide either way.
+	if _, err := Load(nil, func(k string) string {
+		if k == "NOX_TOR" {
+			return "nope"
+		}
+		return ""
+	}); err == nil {
+		t.Fatal("NOX_TOR=nope was accepted")
 	}
 }
 
