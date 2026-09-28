@@ -58,6 +58,11 @@ type helloReply struct {
 	JournalID string           `json:"journal_id"`
 	Limits    config.Limits    `json:"limits"`
 	Identity  greetingIdentity `json:"identity"`
+	// Addresses is where this machine can be reached now (039, contract §3).
+	// Always present - `direct` possibly empty - and its presence is the
+	// capability signal: a client sends device.setAccessKey only to a server
+	// that sent this.
+	Addresses *addressSet `json:"addresses"`
 }
 
 // greetingIdentity is the identity WITHOUT `created`. A greeting is by
@@ -167,6 +172,12 @@ func (c *client) handleSessionHello(cmd protocol.Command) {
 	}
 	c.helloDone = true
 
+	addrs := c.srv.addrs.Load()
+	if addrs == nil {
+		// Only a harness that skipped the startup snapshot gets here; the
+		// contract promises the field, so an empty list it is.
+		addrs = &addressSet{Direct: []string{}}
+	}
 	c.sendFrame(protocol.OKReply(cmd.ID, helloReply{
 		Schema:    protocol.SchemaVersion,
 		Cursor:    cursor,
@@ -176,8 +187,14 @@ func (c *client) handleSessionHello(cmd protocol.Command) {
 		// pair reply, and a greeting that still states it invites the client to
 		// read the decision from two places - which is exactly the second
 		// source of one truth the phase set out to remove.
-		Identity: greetingIdentity{ID: id.UserID, Label: id.Label},
+		Identity:  greetingIdentity{ID: id.UserID, Label: id.Label},
+		Addresses: addrs,
 	}))
+	// Only now - the reply is queued - may server.addresses reach this
+	// connection, so the event can never overtake it. The poke makes the
+	// watcher send at once if the list moved between the read above and here.
+	c.srv.markGreeted(c, addrs.Version)
+	c.srv.pokeAddresses()
 
 	if req.Since != nil {
 		since := *req.Since

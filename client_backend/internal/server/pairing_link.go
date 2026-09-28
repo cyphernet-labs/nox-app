@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
@@ -13,7 +14,12 @@ import (
 // parser, one scanner and one set of tests.
 const (
 	pairingLinkVersion = 1
-	pairingLinkPrefix  = "https://nox.app/p/#"
+	// pairingLinkVersionOnion is the onion invite (039): version 1's fields,
+	// then the onion service's public key, its port, and the one-time access
+	// key's PRIVATE half. Only device.invite with onion: true produces it; a
+	// claim never does.
+	pairingLinkVersionOnion = 2
+	pairingLinkPrefix       = "https://nox.app/p/#"
 
 	hostTypeIPv4 = 1
 	hostTypeIPv6 = 2
@@ -29,29 +35,66 @@ const (
 // The payload lives in the fragment because a browser never sends a fragment
 // to a server - a link opened in a browser by mistake leaks the token nowhere.
 func BuildPairingLink(addr, serverFingerprint, token string) (string, error) {
+	payload, err := linkPayload(pairingLinkVersion, addr, serverFingerprint, token)
+	if err != nil {
+		return "", err
+	}
+	return pairingLinkPrefix + base64.RawURLEncoding.EncodeToString(payload), nil
+}
+
+// BuildPairingLinkV2 renders an onion invite (039): everything version 1
+// carries, then onion_pub (32), onion_port (2, big-endian) and one_time_priv
+// (32) - contract §8A.
+//
+// The field names say which half each key is, because the two kinds would
+// otherwise read alike: onion_pub is PUBLIC, one_time_priv is the PRIVATE
+// half of a one-time key whose public half is all the server keeps.
+func BuildPairingLinkV2(addr, serverFingerprint, token string, onionPub ed25519.PublicKey, onionPort int, oneTimePriv []byte) (string, error) {
+	if len(onionPub) != ed25519.PublicKeySize {
+		return "", errors.New("onion public key is not 32 bytes")
+	}
+	if onionPort <= 0 || onionPort > 0xffff {
+		return "", errors.New("onion port out of range")
+	}
+	if len(oneTimePriv) != 32 {
+		return "", errors.New("one-time access key is not 32 bytes")
+	}
+	payload, err := linkPayload(pairingLinkVersionOnion, addr, serverFingerprint, token)
+	if err != nil {
+		return "", err
+	}
+	payload = append(payload, onionPub...)
+	payload = binary.BigEndian.AppendUint16(payload, uint16(onionPort))
+	payload = append(payload, oneTimePriv...)
+	return pairingLinkPrefix + base64.RawURLEncoding.EncodeToString(payload), nil
+}
+
+// linkPayload is the part both versions share: version, host, port,
+// fingerprint, token.
+func linkPayload(version byte, addr, serverFingerprint, token string) ([]byte, error) {
 	host, portStr, err := net.SplitHostPort(addr)
 	if err != nil {
-		return "", fmt.Errorf("split pairing address: %w", err)
+		return nil, fmt.Errorf("split pairing address: %w", err)
 	}
 	port, err := strconv.ParseUint(portStr, 10, 16)
 	if err != nil {
-		return "", fmt.Errorf("parse pairing port: %w", err)
+		return nil, fmt.Errorf("parse pairing port: %w", err)
 	}
 
 	fingerprint, err := base64.StdEncoding.DecodeString(serverFingerprint)
 	if err != nil || len(fingerprint) != 32 {
-		return "", errors.New("server fingerprint is not 32 bytes")
+		return nil, errors.New("server fingerprint is not 32 bytes")
 	}
 	tok, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil || len(tok) != 16 {
-		return "", errors.New("token is not 16 bytes")
+		return nil, errors.New("token is not 16 bytes")
 	}
 
-	payload := []byte{pairingLinkVersion}
+	payload := []byte{version}
 	switch ip := net.ParseIP(host); {
 	case ip == nil:
 		if len(host) == 0 || len(host) > 255 {
-			return "", errors.New("host name does not fit the link")
+			return nil, errors.New("host name does not fit the link")
 		}
 		payload = append(payload, hostTypeDNS, byte(len(host)))
 		payload = append(payload, host...)
@@ -66,8 +109,7 @@ func BuildPairingLink(addr, serverFingerprint, token string) (string, error) {
 	payload = binary.BigEndian.AppendUint16(payload, uint16(port))
 	payload = append(payload, fingerprint...)
 	payload = append(payload, tok...)
-
-	return pairingLinkPrefix + base64.RawURLEncoding.EncodeToString(payload), nil
+	return payload, nil
 }
 
 // listenAddress turns a bind address into one a device can actually reach.

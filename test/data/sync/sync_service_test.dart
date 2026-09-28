@@ -218,6 +218,25 @@ void main() {
     await outbox.clean();
   });
 
+  // Phase 039's server.addresses (seq 0) is not journal content. This build
+  // drops it at the cursor guard like any other seq-0 frame it has no handler
+  // for, and the journal goes on past it (spec 039, SC-011).
+  test('a server.addresses event is passed over without touching the cursor', () async {
+    final socket = await connected();
+    socket.pushEvent(
+      seq: 0,
+      event: 'server.addresses',
+      data: {
+        'direct': ['192.168.1.20:8080'],
+        'onion': '${'a' * 56}.onion:443',
+      },
+    );
+    socket.pushEvent(seq: 5, event: 'chat.created', data: chatFrame('c_1'));
+    await waitUntil(() async => await sync.getCursor() == 5, reason: 'the journal goes on past the address event');
+
+    expect((await chatDao.getById('c_1'))?.name, 'Live chat');
+  });
+
   test('a new chat event lands in the store and the cursor follows it', () async {
     final socket = await connected();
     socket.pushEvent(seq: 5, event: 'chat.created', data: chatFrame('c_1'));

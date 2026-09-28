@@ -10,8 +10,15 @@ import (
 )
 
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
+	onion := viaOnion(r.Context())
 	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {
+		if onion {
+			// The library's message quotes Host, and on this entry Host is the
+			// onion name (FR-031). The fact of the failure is all that is said.
+			s.logger.Warn("websocket accept failed on the onion entry")
+			return
+		}
 		s.logger.Warn("websocket accept failed", "err", err)
 		return
 	}
@@ -23,6 +30,11 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	logger := s.logger.With("conn", randomConnID())
 	c := newClient(s, conn, r.Context(), logger)
 	c.requestHost = r.Host
+	c.viaOnion = onion
+	c.writeTimeout = s.writeTimeout
+	if onion {
+		c.writeTimeout = s.onionTimeout
+	}
 	s.track(c)
 	defer s.untrack(c)
 	defer c.close(websocket.StatusNormalClosure, "")
@@ -100,6 +112,8 @@ func (c *client) dispatch(cmd protocol.Command) {
 		c.handleDeviceInvite(cmd)
 	case protocol.CmdIdentitySetLabel:
 		c.handleIdentitySetLabel(cmd)
+	case protocol.CmdDeviceSetAccessKey:
+		c.handleDeviceSetAccessKey(cmd)
 	case protocol.CmdChatsList:
 		c.handleChatsList(cmd)
 	case protocol.CmdChatGet:

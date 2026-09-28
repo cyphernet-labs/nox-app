@@ -329,7 +329,7 @@ func person(t *testing.T, s *store.Store, name string) store.Identity {
 	if err != nil {
 		t.Fatalf("IssueClaimToken: %v", err)
 	}
-	if _, err := s.Pair(ctx, token, deviceKey, "test", 1); err != nil {
+	if _, err := s.Pair(ctx, token, deviceKey, "test", store.PairOptions{}, 1); err != nil {
 		t.Fatalf("Pair(%s): %v", name, err)
 	}
 	// State the chosen name the way onboarding does.

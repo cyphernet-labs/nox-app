@@ -397,6 +397,62 @@ void main() {
     });
   });
 
+  // A server from phase 039 adds `addresses` to the greeting reply and sends a
+  // `server.addresses` event (seq 0). This build knows neither and must not
+  // notice: the server's side of the change shipped first, the app's comes with
+  // stage 2 of the Tor track (contract §3, §8A; spec 039, SC-011).
+  group('a server from phase 039', () {
+    test('a greeting reply that also names where the server is goes through untouched', () async {
+      await client.start(
+        url: url,
+        credentialsProvider: () async => const GreetingCredentials(label: 'Anna'),
+      );
+      final socket = factory.latest;
+      socket.pushGreeting();
+      await waitUntil(() => socket.commandNamed('session.hello') != null, reason: 'the client greets back');
+      socket.reply(
+        socket.sent.indexWhere((f) => f['cmd'] == 'session.hello'),
+        data: {
+          'schema': 1,
+          'cursor': 3,
+          'journal_id': 'j_test',
+          'limits': {'max_message_bytes': 65536, 'max_attachment_bytes': 104857600, 'max_frame_bytes': 131072},
+          'identity': {'id': 'u_1', 'label': 'Anna'},
+          'addresses': {
+            'direct': ['192.168.1.20:8080', '[fd12:3456::20]:8080'],
+            'onion': '${'a' * 56}.onion:443',
+          },
+        },
+      );
+      await waitUntil(
+        () => client.currentPhase == SessionPhase.live || client.currentPhase == SessionPhase.catchingUp,
+        reason: 'the greeting reply is applied',
+      );
+      expect(client.identity?.label, 'Anna');
+      expect(client.limits?.maxMessageBytes, 65536);
+    });
+
+    test('the server.addresses event leaves the session as it was', () async {
+      final socket = await connect(cursor: 0);
+      final seen = <String>[];
+      final sub = client.events.listen((e) => seen.add(e.event));
+
+      socket.pushEvent(
+        seq: 0,
+        event: 'server.addresses',
+        data: {
+          'direct': ['192.168.1.21:8080'],
+        },
+      );
+      socket.pushEvent(seq: 1);
+      await settle();
+      await sub.cancel();
+
+      expect(client.currentPhase, SessionPhase.live);
+      expect(seen, ['server.addresses', 'message.new']);
+    });
+  });
+
   test('events reach subscribers in order', () async {
     final socket = await connect(cursor: 0);
     final seen = <int>[];

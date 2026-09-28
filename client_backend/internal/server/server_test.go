@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -41,7 +42,10 @@ func newTestServerLogging(t *testing.T, logger *slog.Logger) (*httptest.Server, 
 // openStack assembles db + hub + server over the given database file and
 // returns an explicit close function, so lifecycle tests can stop and restart
 // the whole stack against the same file.
-func openStack(t *testing.T, path string, logger *slog.Logger) (*httptest.Server, *Server, func()) {
+//
+// tweak runs on the Server after New and before anything serves - where a test
+// swaps in a fake tor, fixes the machine's interfaces or scales a timeout.
+func openStack(t *testing.T, path string, logger *slog.Logger, tweak ...func(*Server)) (*httptest.Server, *Server, func()) {
 	t.Helper()
 
 	dbs, err := db.Open(path)
@@ -84,6 +88,9 @@ func openStack(t *testing.T, path string, logger *slog.Logger) (*httptest.Server
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
 	srv := New(cfg, st, h, bl, logger)
+	// The machine "has" no interfaces unless a test says otherwise: the
+	// address list must not depend on the network of whoever runs the suite.
+	srv.listIPs = func() []net.IP { return nil }
 	srv.pingInterval = 50 * time.Millisecond
 	// Long write timeout keeps slow-consumer tests deterministic: the
 	// overflow drop (policy violation) must win over a ping/write timeout.
@@ -92,6 +99,18 @@ func openStack(t *testing.T, path string, logger *slog.Logger) (*httptest.Server
 	if err := srv.sweepOrphans(context.Background(), time.Now().Add(-24*time.Hour).Unix()); err != nil {
 		t.Fatalf("startup sweep: %v", err)
 	}
+	for _, fn := range tweak {
+		fn(srv)
+	}
+	// Mirror Run again: the first address snapshot exists before anything
+	// serves, and the watcher - the only sender of server.addresses - runs.
+	srv.refreshAddresses()
+	watchCtx, stopWatch := context.WithCancel(context.Background())
+	watchDone := make(chan struct{})
+	go func() {
+		defer close(watchDone)
+		srv.runAddressWatcher(watchCtx)
+	}()
 
 	dispDone := make(chan struct{})
 	go func() {
@@ -123,6 +142,8 @@ func openStack(t *testing.T, path string, logger *slog.Logger) (*httptest.Server
 	ts.Client().Transport = &http.Transport{TLSClientConfig: PinnedTLSConfig(machine.Fingerprint)}
 	closeAll := func() {
 		ts.Close()
+		stopWatch()
+		<-watchDone
 		stopHub()
 		<-hubDone
 		<-dispDone
@@ -197,7 +218,7 @@ func TestTheStartupLineDistinguishesAnUnclaimedServerFromAnEmptyOne(t *testing.T
 	if err != nil {
 		t.Fatalf("IssueClaimToken: %v", err)
 	}
-	if _, err := st.Pair(ctx, token, "dev-a", "test", 100); err != nil {
+	if _, err := st.Pair(ctx, token, "dev-a", "test", store.PairOptions{}, 100); err != nil {
 		t.Fatalf("Pair: %v", err)
 	}
 	if err := st.RevokeDevice(ctx, "dev-a"); err != nil {

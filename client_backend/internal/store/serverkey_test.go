@@ -184,3 +184,32 @@ func TestTheServerIdentityHasNoOnionField(t *testing.T) {
 		}
 	}
 }
+
+// A backup is the database file and nothing else, so restoring it - anywhere -
+// brings back the same onion address (SC-003). VACUUM INTO is how this project
+// takes a backup of a live database.
+func TestABackupRestoresTheSameOnionKey(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	live := openStoreAt(t, filepath.Join(dir, "live.db"))
+	if _, err := live.EnsureServerIdentity(ctx); err != nil {
+		t.Fatalf("EnsureServerIdentity: %v", err)
+	}
+	want, err := live.OnionSeed(ctx)
+	if err != nil {
+		t.Fatalf("OnionSeed: %v", err)
+	}
+	backup := filepath.Join(dir, "backup.db")
+	if _, err := live.write.ExecContext(ctx, "VACUUM INTO ?", backup); err != nil {
+		t.Fatalf("VACUUM INTO: %v", err)
+	}
+
+	restored := openStoreAt(t, backup)
+	if _, err := restored.EnsureServerIdentity(ctx); err != nil {
+		t.Fatalf("EnsureServerIdentity on the restored copy: %v", err)
+	}
+	got, err := restored.OnionSeed(ctx)
+	if err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("restored seed = %x (err %v), want %x", got, err, want)
+	}
+}
