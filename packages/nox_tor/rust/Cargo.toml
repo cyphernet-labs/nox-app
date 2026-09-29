@@ -1,0 +1,47 @@
+[package]
+name = "nox_tor"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.92"
+publish = false
+description = "The embedded Tor client of the NOX app: Arti behind a C ABI and a loopback bridge."
+
+[lib]
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+# Pinned exactly: experimental-api carries no semver promise, and the keystore
+# calls this crate makes (insert/remove_service_discovery_key) live there.
+arti-client = { version = "=0.47.0", default-features = false, features = [
+    "tokio",
+    "rustls",
+    "onion-service-client",
+    "static-sqlite",
+    "compression",
+    "keymgr",
+    "experimental-api",
+    "ephemeral-keystore",
+] }
+tor-hscrypto = "=0.47.0"
+tor-llcrypto = "=0.47.0"
+tor-keymgr = { version = "=0.47.0", features = ["ephemeral-keystore"] }
+tor-config = "=0.47.0"
+tor-rtcompat = "=0.47.0"
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "time", "sync", "macros"] }
+futures = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
+sha3 = "0.10"
+data-encoding = "2"
+subtle = "2"
+getrandom = "0.3"
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+strip = true
+# unwind, not abort: tokio keeps a panicking Arti task from taking the whole app
+# down, and the C ABI turns a panic into an error code instead of a crash.
+panic = "unwind"

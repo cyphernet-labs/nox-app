@@ -108,3 +108,6 @@ client_backend/*.db-wal
 client_backend/*.db-shm
 client_backend/*.db-files/
 client_backend/*.db-tor/
+
+# Phase 040: the embedded Tor client crate builds here.
+/packages/nox_tor/rust/target/

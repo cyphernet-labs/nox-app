@@ -6,6 +6,8 @@
 	<string>NOX uses the camera to scan a QR code containing a sign-in ID. Frames are processed on your device and are never stored or transmitted.</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>NOX connects to your server on your home network.</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>

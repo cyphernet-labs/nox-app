@@ -1,0 +1,19 @@
+name: nox_tor
+description: The embedded Tor client of the NOX app (Arti behind a C ABI), built by a native-assets hook.
+publish_to: none
+resolution: workspace
+version: 0.1.0
+
+environment:
+  sdk: ">=3.12.0 <4.0.0"
+
+dependencies:
+  # Held at what objective_c 9.4.1 (path_provider_foundation) already resolves:
+  # native_toolchain_rust 1.0.5+ needs hooks ^2.1.0 and 1.0.7 code_assets ^2.0.0.
+  code_assets: 1.2.1
+  ffi: ^2.1.0
+  hooks: 2.0.2
+  native_toolchain_rust: 1.0.4+0
+
+dev_dependencies:
+  test: any

@@ -15,7 +15,7 @@
 
 ## Phase 1: Setup — пакет `nox_tor`, тулчейн, платформы
 
-- [ ] T001 Create the Rust crate `packages/nox_tor/rust/`:
+- [X] T001 Create the Rust crate `packages/nox_tor/rust/`:
   - `Cargo.toml`:
     - deps: `arti-client =0.47.0` with tokio, rustls, onion-service-client, static-sqlite, compression, keymgr, experimental-api, ephemeral-keystore; `tor-hscrypto`, `tor-llcrypto`, `tor-keymgr`, `tor-config` `=0.47.0`; tokio (rt-multi-thread, net, io-util, time, sync); rustls with ring; tracing; tracing-subscriber; sha3; data-encoding; subtle;
     - `crate-type = ["staticlib","cdylib"]`;
@@ -23,7 +23,7 @@
   - `rust-toolchain.toml`: 1.93.1, targets aarch64/x86_64 apple darwin, aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios, aarch64/armv7/x86_64 android, x86_64/aarch64 windows msvc.
   - `Cargo.lock` with `libc` held at 0.2.189 (`cargo update -p libc --precise 0.2.189`).
   - Empty `src/lib.rs` that builds.
-- [ ] T002 Create the Dart package `packages/nox_tor/`:
+- [X] T002 Create the Dart package `packages/nox_tor/`:
   - `pubspec.yaml`: `resolution: workspace`; deps `hooks`, `code_assets`, `native_toolchain_rust: 1.0.4+0`, `ffi`; dev `test`.
   - `hook/build.dart`, per research decision 1:
     - `OS.linux` → no assets;
@@ -31,9 +31,9 @@
     - iOS `IPHONEOS_DEPLOYMENT_TARGET=13.0`;
     - `Cargo.toml`, `Cargo.lock` and `rust-toolchain.toml` in `output.dependencies`.
   - Placeholders for `lib/nox_tor.dart` and `lib/src/nox_tor_bindings.dart`.
-- [ ] T003 Add `workspace: [packages/nox_tor]` and `nox_tor: {path: packages/nox_tor}` to the root `pubspec.yaml`, run `fvm flutter pub get`, and confirm in `pubspec.lock` that only `native_toolchain_rust`, `toml`, `hooks`, `code_assets` and `nox_tor` were added (mockito stays 5.6.4).
-- [ ] T004 [P] Update `Makefile`: the `format` target also covers `packages/nox_tor`; add a `tor-test` target (`cd packages/nox_tor/rust && cargo test` and `cd packages/nox_tor && fvm dart test`).
-- [ ] T005 [P] Platform files:
+- [X] T003 Add `workspace: [packages/nox_tor]` and `nox_tor: {path: packages/nox_tor}` to the root `pubspec.yaml`, run `fvm flutter pub get`, and confirm in `pubspec.lock` that only `native_toolchain_rust`, `toml`, `hooks`, `code_assets` and `nox_tor` were added (mockito stays 5.6.4).
+- [X] T004 [P] Update `Makefile`: the `format` target also covers `packages/nox_tor`; add a `tor-test` target (`cd packages/nox_tor/rust && cargo test` and `cd packages/nox_tor && fvm dart test`).
+- [X] T005 [P] Platform files:
   - `NSLocalNetworkUsageDescription` "NOX connects to your server on your home network." in `ios/Runner/Info.plist` and `macos/Runner/Info.plist`;
   - `com.apple.security.network.server` in `macos/Runner/Release.entitlements`;
   - an explicit `android.permission.INTERNET` in `android/app/src/main/AndroidManifest.xml`.
@@ -48,23 +48,23 @@
 
 **Independent Test**: the numbers in `research.md` → «Замер» are repeatable by its method.
 
-- [ ] T006 [US7] Implement the engine in `packages/nox_tor/rust/src/engine.rs` and `src/status.rs`:
+- [X] T006 [US7] Implement the engine in `packages/nox_tor/rust/src/engine.rs` and `src/status.rs`:
   - an owned tokio runtime on its own thread;
   - `start(state_dir, cache_dir)`: install the rustls ring provider, `TorClientConfigBuilder::from_directories`, ephemeral primary keystore, `create_bootstrapped` within a 90 s budget;
   - `stop()`;
   - a status snapshot under a short lock (`NoxTorStatus` from contracts/ffi.md);
   - bootstrap progress from `bootstrap_status()`;
   - `set_dormant`.
-- [ ] T007 [US7] Implement target, key and bridge in `packages/nox_tor/rust/src/bridge.rs`:
+- [X] T007 [US7] Implement target, key and bridge in `packages/nox_tor/rust/src/bridge.rs`:
   - `set_target(onion, port, key32)`: remove the previous key via `remove_service_discovery_key`, then `insert_service_discovery_key`;
   - bind `127.0.0.1:0` and draw a new 32-byte secret;
   - per connection: read the secret within 5 s and compare it in constant time (`subtle`), `TorClient::connect((onion, port))` within 45 s, then `copy_bidirectional`;
   - record `missing_client_auth`, `wrong_client_auth`, `timeout` or `network` in the snapshot;
   - `clear_target()`.
-- [ ] T008 [P] [US7] Implement the remaining modules:
+- [X] T008 [P] [US7] Implement the remaining modules:
   - `packages/nox_tor/rust/src/onion.rs`: `onion_from_pubkey` per rend-spec-v3 (SHA3-256 checksum, base32 lowercase, `.onion`);
   - `packages/nox_tor/rust/src/obsolete.rs`: a `tracing-subscriber` layer that turns a WARN+ event from target `arti_client::protostatus` into `obsolete` and asks the control thread to `shutdown_background` the runtime (research decision 6); `SoftwareDeprecated` at bootstrap → `obsolete`.
-- [ ] T009 [US7] Export the C ABI from contracts/ffi.md in `packages/nox_tor/rust/src/lib.rs`:
+- [X] T009 [US7] Export the C ABI from contracts/ffi.md in `packages/nox_tor/rust/src/lib.rs`:
   - functions: `nox_tor_start`, `stop`, `set_target`, `clear_target`, `set_dormant`, `status`, `bridge_secret`, `onion_from_pubkey`, `version`;
   - no panic crosses the boundary (`catch_unwind` → `internal`);
   - `#[cfg(test)]` tests:
@@ -73,11 +73,11 @@
     - the onion vector from 039 (RFC 8032 seed → `25njqamcweflpvkl73j4szahhihoc4xt3ktcgjnpaingr5yhkenl5sid`);
     - a synthetic `arti_client::protostatus` ERROR event sets `obsolete` and triggers the shutdown;
     - `set_target` rejects a non-onion host and a short key.
-- [ ] T010 [US7] Implement the Dart wrapper:
+- [X] T010 [US7] Implement the Dart wrapper:
   - `packages/nox_tor/lib/src/nox_tor_bindings.dart`: `@Native` externals for every function;
   - `packages/nox_tor/lib/nox_tor.dart`: `NoxTor` with `isSupported` (false on Linux or when the symbol lookup fails), `NoxTorSnapshot` and the typed codes;
   - `packages/nox_tor/test/hook_test.dart`: `testCodeBuildHook(targetOS: OS.linux)` yields no assets.
-- [ ] T011 [US7] Add the timing harness `packages/nox_tor/rust/examples/bootstrap.rs`:
+- [X] T011 [US7] Add the timing harness `packages/nox_tor/rust/examples/bootstrap.rs`:
   - cold and warm bootstrap time;
   - first and repeated keyed connect time against an onion and key given on the command line (a local `noxd` with Tor, 039);
   - process RSS.

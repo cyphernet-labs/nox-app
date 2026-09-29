@@ -1,0 +1,138 @@
+/// The embedded Tor client of the NOX app (phase 040), as Dart sees it.
+///
+/// A thin, synchronous wrapper over the C ABI: every call returns at once, and
+/// the work happens on the client's own runtime. The app never uses this
+/// directly - it goes through its `TorService`, which a test environment
+/// replaces with a fake, so widget and BLoC tests never load the library.
+library;
+
+import 'dart:ffi';
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:ffi/ffi.dart';
+
+import 'src/nox_tor_bindings.dart';
+
+/// `NoxTorStatus.state`.
+enum NoxTorState { stopped, bootstrapping, ready, dormant, failed, obsolete }
+
+/// `NoxTorStatus.error` - the last failure, as a kind and never as text.
+enum NoxTorError { none, missingClientAuth, wrongClientAuth, timeout, network, internal, softwareDeprecated }
+
+/// One status snapshot.
+class NoxTorSnapshot {
+  const NoxTorSnapshot({required this.state, required this.bootstrapPercent, required this.error, required this.port});
+
+  final NoxTorState state;
+  final int bootstrapPercent;
+  final NoxTorError error;
+
+  /// The bridge's port on 127.0.0.1; null while no target is set.
+  final int? port;
+
+  static const NoxTorSnapshot stopped = NoxTorSnapshot(
+    state: NoxTorState.stopped,
+    bootstrapPercent: 0,
+    error: NoxTorError.none,
+    port: null,
+  );
+
+  @override
+  String toString() => 'NoxTorSnapshot(${state.name}, $bootstrapPercent%, ${error.name}, port: $port)';
+}
+
+/// A C ABI call that did not succeed. Carries the code only: a message could
+/// name the onion service.
+class NoxTorException implements Exception {
+  const NoxTorException(this.code);
+
+  final int code;
+
+  @override
+  String toString() => 'NoxTorException($code)';
+}
+
+abstract final class NoxTor {
+  static bool? _supported;
+
+  /// False on Linux (no library is built there) and wherever the library
+  /// failed to load.
+  static bool get isSupported => _supported ??= !Platform.isLinux && _probe();
+
+  static bool _probe() {
+    try {
+      noxTorVersion();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static String get version => noxTorVersion().toDartString();
+
+  static void start({required String stateDir, required String cacheDir}) {
+    _check(using((arena) => noxTorStart(stateDir.toNativeUtf8(allocator: arena), cacheDir.toNativeUtf8(allocator: arena))));
+  }
+
+  static void stop() => noxTorStop();
+
+  /// Points the bridge at one onion service with its client-authorization key.
+  /// [clientKey] is the 32-byte x25519 private key; it is copied and the
+  /// native copy is wiped with the arena.
+  static void setTarget({required String onionHost, required int port, required Uint8List clientKey}) {
+    if (clientKey.length != 32) throw ArgumentError.value(clientKey.length, 'clientKey', 'must be 32 bytes');
+    _check(
+      using((arena) {
+        final key = arena<Uint8>(32);
+        key.asTypedList(32).setAll(0, clientKey);
+        try {
+          return noxTorSetTarget(onionHost.toNativeUtf8(allocator: arena), port, key);
+        } finally {
+          key.asTypedList(32).fillRange(0, 32, 0);
+        }
+      }),
+    );
+  }
+
+  static void clearTarget() => _check(noxTorClearTarget());
+
+  static void setDormant(bool dormant) => noxTorSetDormant(dormant);
+
+  static NoxTorSnapshot status() => using((arena) {
+    final out = arena<NoxTorStatusStruct>();
+    _check(noxTorStatus(out));
+    final s = out.ref;
+    return NoxTorSnapshot(
+      state: NoxTorState.values[s.state.clamp(0, NoxTorState.values.length - 1)],
+      bootstrapPercent: s.bootstrapPercent,
+      error: NoxTorError.values[s.error.clamp(0, NoxTorError.values.length - 1)],
+      port: s.port == 0 ? null : s.port,
+    );
+  });
+
+  /// The 32 bytes a connection to the bridge must open with.
+  static Uint8List bridgeSecret() => using((arena) {
+    final out = arena<Uint8>(32);
+    _check(noxTorBridgeSecret(out));
+    final secret = Uint8List.fromList(out.asTypedList(32));
+    out.asTypedList(32).fillRange(0, 32, 0);
+    return secret;
+  });
+
+  /// The `<56>.onion` address of a v3 onion service's public key.
+  static String onionFromPublicKey(Uint8List publicKey) {
+    if (publicKey.length != 32) throw ArgumentError.value(publicKey.length, 'publicKey', 'must be 32 bytes');
+    return using((arena) {
+      final pub = arena<Uint8>(32);
+      pub.asTypedList(32).setAll(0, publicKey);
+      final out = arena<Uint8>(64).cast<Utf8>();
+      _check(noxTorOnionFromPubkey(pub, out, 64));
+      return out.toDartString();
+    });
+  }
+
+  static void _check(int code) {
+    if (code != 0) throw NoxTorException(code);
+  }
+}

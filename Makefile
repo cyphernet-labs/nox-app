@@ -16,7 +16,7 @@ build-linux-stage:
 	mise run build:linux:stage
 
 # --- dev helpers (US3 / blueprint 12) ---
-.PHONY: deps generate format analyze test golden-update golden-verify gate
+.PHONY: deps generate format analyze test golden-update golden-verify gate tor-test
 
 deps:
 	fvm flutter pub get
@@ -26,7 +26,7 @@ generate:
 	fvm flutter gen-l10n
 
 format:
-	fvm dart format -l 140 lib test
+	fvm dart format -l 140 lib test packages/nox_tor/lib packages/nox_tor/test packages/nox_tor/hook
 
 analyze:
 	fvm flutter analyze
@@ -43,3 +43,9 @@ golden-verify:
 	fvm flutter test --tags golden $(FILE)
 
 gate: generate format analyze test
+
+# The embedded Tor client (phase 040): the crate's own tests, then the Dart
+# package's - the latter loads the library the hook builds for this host.
+tor-test:
+	cd packages/nox_tor/rust && cargo test
+	cd packages/nox_tor && fvm dart test
