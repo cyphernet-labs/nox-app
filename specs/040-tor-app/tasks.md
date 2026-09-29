@@ -117,10 +117,14 @@
   - `fake_tor_service.dart`, `env: [test]`: scriptable;
   - `tor_capability.dart`: false on Linux, like `VideoPlaybackCapability`.
 
+  When the module reports `obsolete`, the native service writes `tor.obsolete_build` = the app build number to `SharedPreferences` (FR-026).
+
   Run `make generate`. Tests: `test/data/service/tor/native_tor_service_test.dart` with an injected `NoxTor` facade fake.
 - [ ] T016 Implement the repositories in `lib/data/repository/connection/`:
   - `server_addresses_repository_impl.dart`: `session.server_addresses` JSON;
   - `access_key_repository_impl.dart`: X25519 via `cryptography`, `session.access_key`, `session.access_key_registered`, `session.invite_onion`, `session.invite_access_key`.
+
+  The private keys are written with `IOSOptions`/`MacOsOptions(accessibility: KeychainAccessibility.unlocked_this_device)`, so no backup carries them to another device (FR-014).
 
   Add every new key to `clear()` and to `discardSignIn()` (except `session.access_key`) in `lib/data/repository/app/session_repository_impl.dart`. Tests: `test/data/repository/connection/server_addresses_repository_impl_test.dart`, `access_key_repository_impl_test.dart`, `test/data/repository/app/session_repository_impl_test.dart` (clear removes the new keys).
 - [ ] T017 [P] Implement `lib/data/service/app_lifecycle_service_impl.dart` (`AppLifecycleListener` → `Stream<AppLifecycleState>`, dev/prod) and a test-env fake; tests in `test/data/service/app_lifecycle_service_impl_test.dart`.
@@ -220,7 +224,7 @@
   - a Tor client not ready within 10 s → stop + start from the same dirs.
 
   Desktop ignores it. Tests in `connection_path_selector_test.dart` with a fake lifecycle.
-- [ ] T031 [US2] Lossless switch test in `test/data/sync/live_session_starter_test.dart`: a message sent during the switch goes out once (outbox idempotency + replay `since`) and incoming events are not duplicated (seq de-dup).
+- [ ] T031 [US2] Lossless switch test in `test/data/sync/live_session_starter_test.dart`, run over 20 switches (SC-005): a message sent during each switch goes out once (outbox idempotency + replay `since`) and incoming events are not duplicated (seq de-dup).
 
 ---
 
@@ -258,7 +262,7 @@
   - ARB EN/UK.
 
   Tests: `device_repository_impl_test.dart`, `devices_bloc_test.dart`, `app_invite_card_widget_test.dart`. Goldens: the invite card widget with and without the note, plus the devices page mobile and desktop with the note.
-- [ ] T037 [US4] Login: a v1 link whose server does not answer shows `loginHomeNetworkOnly` (`lib/presentation/pages/login_page/bloc/login_bloc.dart`, `login_page.dart`, ARB EN/UK). Tests in `test/presentation/pages/login_page/bloc/login_bloc_test.dart`.
+- [ ] T037 [US4] Login: a v1 link whose server does not answer, or answers with a key the link does not name, shows `loginHomeNetworkOnly` (`lib/presentation/pages/login_page/bloc/login_bloc.dart`, `login_page.dart`, ARB EN/UK). Tests in `test/presentation/pages/login_page/bloc/login_bloc_test.dart`.
 
 ---
 
@@ -289,7 +293,7 @@
     - tap → bottom sheet on narrow, dialog on wide, with `connectionInfo*`; the local-network line on iOS and macOS only.
 
   Tests:
-  - widget tests in `test/presentation/widgets/state/app_connection_indicator_widget_test.dart`;
+  - widget tests in `test/presentation/widgets/state/app_connection_indicator_widget_test.dart`, including one under the `uk` locale (SC-006);
   - bloc test;
   - widget goldens: four states, light and dark;
   - accessibility checks next to `test/presentation/widgets/accessibility_test.dart`.
@@ -324,7 +328,14 @@
 - [ ] T047 [P] Update `CLAUDE.md` (implementation notes: Tor transport, path selection, epoch by fingerprint, access key, build prerequisites) and `docs/client-backend/roadmap-tor.md` (stage 2 status).
 - [ ] T048 Run the quickstart end-to-end scenarios on macOS, the iOS simulator and the Android emulator against a local `noxd` with Tor. Record bring-up timings and memory in `research.md` «Замер», and note anything that differs.
 - [ ] T049 Run the gates: `make gate`, `make golden-verify`, `make tor-test`. The Go gate is not touched: no Go changes.
-- [ ] T050 Put the owner's device checks (quickstart «Проверки на устройстве») into the PR description: iOS local-network prompt and background, mobile network away from home, Windows build and bootstrap.
+- [ ] T050 Keep the onion address and keys out of the logs (FR-013, SC-008, Constitution I):
+  - Audit every `logRepository` call in `lib/data/remote/socket/`, `lib/data/remote/pinned_http_client.dart`, `lib/data/sync/connection/` and `lib/data/service/tor/`.
+  - Hosts ending in `.onion` are logged as `[onion]`; keys and secrets are never logged.
+  - Test in `test/data/sync/connection/log_redaction_test.dart`: capture `LogRepository` output through a selector run with Tor, a pairing with a v2 link, and a bridge failure; assert there is no `.onion` and no base64 key material.
+- [ ] T051 [P] Prepare CI for the native package for when the paused workflows are re-enabled:
+  - `.github/workflows/compile-check.yml`: install rustup with the toolchain from `packages/nox_tor/rust/rust-toolchain.toml`; on Android, also NDK 28.2 before the build. The Linux job needs nothing.
+  - `.github/workflows/ci.yml`: the macOS gate job needs rustup too, because `flutter test` runs the hook.
+- [ ] T052 Put the owner's device checks (quickstart «Проверки на устройстве») into the PR description: iOS local-network prompt and background, mobile network away from home, Windows build and bootstrap.
 
 ---
 
@@ -353,7 +364,7 @@ Tests come with each task, in the same change. Models come before services, and 
 - T024 in US1 (independent file).
 - T034 in US4.
 - T040 in US6.
-- T045, T046 and T047 in Polish.
+- T045, T046, T047 and T051 in Polish.
 
 ## Parallel Example: User Story 6
 
@@ -381,6 +392,6 @@ Each phase ends with green gates and its own commit.
 
 ## Notes
 
-- Windows is not buildable from this machine: `cargo check` for MSVC fails on C headers. Its verification is in T050 for the owner.
-- Device-only checks (iOS background, the local-network prompt, a real mobile network) are listed for the owner in T050.
+- Windows is not buildable from this machine: `cargo check` for MSVC fails on C headers. Its verification is in T052 for the owner.
+- Device-only checks (iOS background, the local-network prompt, a real mobile network) are listed for the owner in T052.
 - Commit after each phase. Never commit with red gates.
