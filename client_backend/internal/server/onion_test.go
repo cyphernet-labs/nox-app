@@ -399,8 +399,13 @@ func TestOnionAccess(t *testing.T) {
 	oc.expectGreeting()
 	oc.greet(t, 1, second, "")
 
-	ownerConn.send(fmt.Sprintf(`{"id":3,"cmd":"device.revoke","data":{"device_key":%q}}`, second.pub))
-	ownerConn.expectOK(3)
+	// A connection of its own for the revocation: the onion dial above can
+	// take minutes on a slow network, longer than a test connection lives.
+	revoker := dialWS(t, l.ts, l.srv)
+	revoker.expectGreeting()
+	revoker.greet(t, 1, owner, "")
+	revoker.send(fmt.Sprintf(`{"id":2,"cmd":"device.revoke","data":{"device_key":%q}}`, second.pub))
+	revoker.expectOK(2)
 	deadline := time.Now().Add(time.Minute)
 	for !onionRefused(device, l, 1) {
 		if time.Now().After(deadline) {
