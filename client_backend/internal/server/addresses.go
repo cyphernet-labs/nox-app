@@ -1,11 +1,13 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"net"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"nox.app/client-backend/internal/protocol"
@@ -75,32 +77,40 @@ func dialableIP(ip net.IP) bool {
 // A wildcard bind lists every usable interface address with the port of the
 // main entry. A concrete bind lists itself - unless it is loopback, which a
 // device elsewhere can never use and a device on this machine already knows
-// from its link. Sorted, so a reshuffle of interfaces is not a change; IPv4
-// sorts ahead of bracketed IPv6.
-func directAddresses(bindAddr string, ips func() []net.IP) []string {
+// from its link. The order is addressRank's, then the text: a reshuffle of
+// interfaces is not a change, and the cap drops the least likely addresses
+// rather than whichever happen to sort last.
+//
+// A host NAME is listed when it resolves to something dialable, and a
+// resolver that fails is not the name moving: ok is false then, and the
+// caller keeps the list it had rather than announcing an empty one to every
+// device and the old one again a poll later.
+func directAddresses(bindAddr string, ips func() []net.IP, resolve func(string) ([]net.IP, error)) (list []string, ok bool) {
 	host, port, err := net.SplitHostPort(bindAddr)
 	if err != nil || port == "" || port == "0" {
-		return []string{}
+		return []string{}, true
 	}
 	if host != "" && host != "0.0.0.0" && host != "::" {
 		if ip := net.ParseIP(host); ip != nil {
 			if !dialableIP(ip) {
-				return []string{}
+				return []string{}, true
 			}
-			return []string{net.JoinHostPort(ip.String(), port)}
+			return []string{net.JoinHostPort(ip.String(), port)}, true
 		}
-		resolved, err := net.LookupIP(host)
+		resolved, err := resolve(host)
 		if err != nil {
-			return []string{}
+			return nil, false
 		}
-		for _, ip := range resolved {
-			if dialableIP(ip) {
-				return []string{net.JoinHostPort(host, port)}
-			}
+		if slices.ContainsFunc(resolved, dialableIP) {
+			return []string{net.JoinHostPort(host, port)}, true
 		}
-		return []string{}
+		return []string{}, true
 	}
-	out := make([]string, 0, 4)
+	type ranked struct {
+		rank int
+		addr string
+	}
+	all := make([]ranked, 0, 4)
 	for _, ip := range ips() {
 		if !dialableIP(ip) {
 			continue
@@ -109,19 +119,67 @@ func directAddresses(bindAddr string, ips func() []net.IP) []string {
 		if v4 := ip.To4(); v4 != nil {
 			s = v4.String()
 		}
-		out = append(out, net.JoinHostPort(s, port))
+		all = append(all, ranked{addressRank(ip), net.JoinHostPort(s, port)})
 	}
-	slices.Sort(out)
-	out = slices.Compact(out)
-	if len(out) > maxDirectAddresses {
-		out = out[:maxDirectAddresses]
+	slices.SortFunc(all, func(a, b ranked) int {
+		return cmp.Or(cmp.Compare(a.rank, b.rank), strings.Compare(a.addr, b.addr))
+	})
+	all = slices.CompactFunc(all, func(a, b ranked) bool { return a.addr == b.addr })
+	out := make([]string, 0, min(len(all), maxDirectAddresses))
+	for _, r := range all[:min(len(all), maxDirectAddresses)] {
+		out = append(out, r.addr)
 	}
-	return out
+	return out, true
+}
+
+// addressRank orders the direct list by how likely an address is to be the one
+// a device at home dials: the usual home range first, then the other private
+// ranges, then public ones, then the shared range that CGNAT and VPNs such as
+// Tailscale use, and IPv6 after all of IPv4. 172.16/12 trails 10/8 because
+// container bridges live there. Only a preference - the device keeps the
+// address that answered last and tries the rest - but it is what an invite
+// carries, and what survives the cap.
+func addressRank(ip net.IP) int {
+	if v4 := ip.To4(); v4 != nil {
+		switch {
+		case v4[0] == 192 && v4[1] == 168:
+			return 0
+		case v4[0] == 10:
+			return 1
+		case v4[0] == 172 && v4[1]&0xf0 == 16:
+			return 2
+		case v4[0] == 100 && v4[1]&0xc0 == 64:
+			return 4
+		}
+		return 3
+	}
+	if ip.IsPrivate() {
+		return 5
+	}
+	return 6
+}
+
+// resolveTimeout bounds one lookup of a bind host name: the watcher waits for
+// it, and so does shutdown.
+const resolveTimeout = 5 * time.Second
+
+// resolveHost is the production resolver behind directAddresses.
+func resolveHost(host string) ([]net.IP, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), resolveTimeout)
+	defer cancel()
+	return net.DefaultResolver.LookupIP(ctx, "ip", host)
 }
 
 // computeAddresses builds the list as it stands now.
 func (s *Server) computeAddresses() *addressSet {
-	set := &addressSet{Direct: directAddresses(s.cfg.Addr, s.listIPs)}
+	direct, ok := directAddresses(s.cfg.Addr, s.listIPs, s.resolveHost)
+	if !ok {
+		direct = []string{}
+		if cur := s.addrs.Load(); cur != nil {
+			direct = cur.Direct
+		}
+	}
+	set := &addressSet{Direct: direct}
 	if s.tor.Offered() {
 		set.Onion = s.tor.Address() + ".onion:" + strconv.Itoa(tor.OnionPort)
 	}
@@ -215,22 +273,18 @@ func (s *Server) markGreeted(c *client, version uint64) {
 	c.greeted = true
 	c.addrVersion = version
 	s.mu.Unlock()
+	if s.afterGreeted != nil {
+		s.afterGreeted(c)
+	}
 }
 
 // inviteDirectAddress is the direct host for an invite requested over onion,
-// where the Host header holds the onion name: the first IPv4 of the list, else
-// its first address, else the bind address as the claim link would print it.
+// where the Host header holds the onion name: the head of the list, which is
+// in order of preference with IPv4 first, else the bind address as the claim
+// link would print it.
 func (s *Server) inviteDirectAddress() string {
-	if cur := s.addrs.Load(); cur != nil {
-		for _, a := range cur.Direct {
-			host, _, err := net.SplitHostPort(a)
-			if err == nil && net.ParseIP(host).To4() != nil {
-				return a
-			}
-		}
-		if len(cur.Direct) > 0 {
-			return cur.Direct[0]
-		}
+	if cur := s.addrs.Load(); cur != nil && len(cur.Direct) > 0 {
+		return cur.Direct[0]
 	}
 	return listenAddress(s.cfg.Addr)
 }

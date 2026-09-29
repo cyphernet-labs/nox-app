@@ -195,7 +195,48 @@ func TestAnInviteAskedOverOnionCarriesADirectAddressNotTheOnionName(t *testing.T
 	if version != pairingLinkVersion {
 		t.Fatalf("version = %d, want 1 without onion", version)
 	}
-	if host != "10.0.0.5" {
-		t.Fatalf("host = %q, want the first IPv4 of the list rather than the Host the onion request carried", host)
+	if host != "192.168.1.20" {
+		t.Fatalf("host = %q, want the head of the list - the home address - rather than the Host the onion request carried", host)
+	}
+}
+
+// A ping waiting for its pong does not hold the writer. Over Tor a round trip
+// is seconds; a writer parked on that wait let a burst of live frames fill the
+// queue behind it until a healthy connection was dropped as a slow consumer.
+// Here the onion device answers no ping at all - it reads nothing during the
+// burst - and must still be there, with every frame, when it reads again.
+func TestAPingWaitingForItsPongDoesNotStallTheWriter(t *testing.T) {
+	st := newOnionStack(t, func(s *Server) {
+		s.pingInterval = 20 * time.Millisecond
+		s.onionTimeout = time.Minute
+	})
+	home := dialWS(t, st.ts, st.srv)
+	home.expectGreeting()
+	home.hello(1, "")
+	slow := dialWS(t, st.onion, st.srv)
+	slow.expectGreeting()
+	slow.hello(1, "")
+	_, onionBefore := connsBy(st.srv)
+	// Several ticks with nobody reading on the onion side: a ping is now
+	// waiting for a pong that will not come for as long as the burst lasts.
+	time.Sleep(100 * time.Millisecond)
+
+	const burst = 120 // more than the 64-frame queue and the hub's buffer hold together
+	for i := range burst {
+		home.send(fmt.Sprintf(`{"id":%d,"cmd":"chat.create","data":{"name":"burst-%d"}}`, 10+i, i))
+		home.expectOK(10 + i)
+	}
+	if _, onion := connsBy(st.srv); onion != onionBefore {
+		t.Fatalf("onion connections %d -> %d: the device was dropped while its pong was outstanding", onionBefore, onion)
+	}
+	for seen := 0; seen < burst; {
+		frame := slow.read()
+		var event string
+		if raw, ok := frame["event"]; ok {
+			mustUnmarshal(t, raw, &event)
+		}
+		if event == protocol.EventChatCreated {
+			seen++
+		}
 	}
 }

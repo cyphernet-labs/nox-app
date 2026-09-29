@@ -83,6 +83,15 @@ type Server struct {
 	// listIPs enumerates the machine's dialable addresses. A field so tests can
 	// fix what the machine "has".
 	listIPs func() []net.IP
+	// resolveHost resolves a bind host NAME for the address list. A field for
+	// the same reason as listIPs.
+	resolveHost func(string) ([]net.IP, error)
+	// Test seams at the two moments the greeting's ordering rests on: right
+	// after the hello handler reads the address snapshot, and right after
+	// markGreeted. Nil outside tests; nothing else can put the watcher there
+	// on demand.
+	afterAddressRead func()
+	afterGreeted     func(*client)
 	// What the service page shows about the process itself. Set once at
 	// startup: the schema version the migrator reported, the moment this
 	// process began. A person who closed that terminal has no other way to it.
@@ -121,6 +130,7 @@ func New(cfg config.Config, st *store.Store, h *hub.Hub, bl *blob.Store, logger 
 		addrKick:     make(chan struct{}, 1),
 		addressPoll:  defaultAddressPoll,
 		listIPs:      usableIPs,
+		resolveHost:  resolveHost,
 		startedAt:    time.Now(),
 		kick:         make(chan struct{}, 1),
 		conns:        make(map[*client]struct{}),
@@ -569,6 +579,9 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 			// moments is a claim link on a network.
 			_ = statusListener.Close()
 			statusListener = nil
+			if onionListener != nil {
+				_ = onionListener.Close()
+			}
 			return err
 		}
 		if statusListener != nil {
@@ -646,8 +659,6 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 	}
 	g.Go(func() error {
 		<-gctx.Done()
-		shCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-		defer cancel()
 		// The onion entry stops accepting FIRST: the main server's Shutdown
 		// closes its own listener and then closes every registered
 		// connection, and an onion connection accepted after that snapshot
@@ -658,7 +669,15 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 			err = onionServer.Shutdown(onionCtx)
 			cancelOnion()
 		}
-		if mainErr := httpServer.Shutdown(shCtx); mainErr != nil && err == nil {
+		// The main server's deadline starts only now. A slow onion request -
+		// an upload over Tor - can hold the onion drain to its end, and a
+		// clock started before it would hand the main server an expired
+		// context: its listener would close with nothing drained, leaving
+		// requests it accepted meanwhile to race the database close.
+		shCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		mainErr := httpServer.Shutdown(shCtx)
+		cancel()
+		if mainErr != nil && err == nil {
 			err = mainErr
 		}
 		if statusServer != nil {

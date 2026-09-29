@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestLoad(t *testing.T) {
 	noEnv := func(string) string { return "" }
@@ -175,5 +178,19 @@ func TestFilesPathDefaultsAndOverrides(t *testing.T) {
 	cfg, err = Load([]string{"-files", "/flag/blob"}, env)
 	if err != nil || cfg.FilesPath != "/flag/blob" {
 		t.Fatalf("flag-over-env files path = %q err=%v", cfg.FilesPath, err)
+	}
+}
+
+// "-tor false" is the spelling the usage text invites, and a boolean flag does
+// not consume the next word: tor would stay on and parsing would stop there,
+// dropping every flag after it. A stray argument is refused instead.
+func TestAStrayArgumentIsRefusedRatherThanEndingTheFlags(t *testing.T) {
+	noEnv := func(string) string { return "" }
+	_, err := Load([]string{"-tor", "false", "-addr", "0.0.0.0:8080", "-db", "/data/nox.db"}, noEnv)
+	if err == nil || !strings.Contains(err.Error(), "-tor=false") {
+		t.Fatalf("err = %v, want a refusal that shows the right spelling", err)
+	}
+	if _, err := Load([]string{"extra"}, noEnv); err == nil {
+		t.Fatal("a positional argument was accepted")
 	}
 }
