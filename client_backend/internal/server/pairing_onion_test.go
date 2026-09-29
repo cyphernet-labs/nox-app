@@ -282,3 +282,89 @@ func TestTheClaimLinkStaysVersionOneWithTorReady(t *testing.T) {
 		t.Fatalf("claim link version = %d, want 1", v)
 	}
 }
+
+// A small-order point - the all-zero key among them - is refused at both
+// doors: tor asserts on the zero key, and every such point leaves a
+// descriptor entry keyed by the onion address alone.
+func TestAnAccessKeyOfSmallOrderIsRefused(t *testing.T) {
+	st := newOnionStack(t)
+	zero := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	token := mustClaimToken(t, st.srv)
+	if _, ok, code := pairWithKey(t, st, token, zero); ok || code != protocol.ErrInvalidRequest {
+		t.Fatalf("pair with the zero key: ok=%v code=%q, want invalid_request", ok, code)
+	}
+	d, ok, code := pairWithKey(t, st, token, access(1))
+	if !ok {
+		t.Fatalf("the refusal spent the claim: %s", code)
+	}
+	c := dialWS(t, st.ts, st.srv)
+	c.expectGreeting()
+	c.dev = d
+	c.hello(1, "")
+	c.send(fmt.Sprintf(`{"id":2,"cmd":"device.setAccessKey","data":{"access_key":%q}}`, zero))
+	c.expectErr(2, protocol.ErrInvalidRequest)
+	if got := storedAccessKey(t, st.srv, d.pub); got != access(1) {
+		t.Fatalf("stored access key = %q, want the one it had", got)
+	}
+}
+
+// A key another device holds is refused at both doors - a shared key would
+// survive the revocation of either device - and a refused pairing spends
+// nothing.
+func TestAnAccessKeyAnotherDeviceHoldsIsRefused(t *testing.T) {
+	st := newOnionStack(t)
+	first, ok, code := pairWithKey(t, st, mustClaimToken(t, st.srv), access(1))
+	if !ok {
+		t.Fatalf("claim: %s", code)
+	}
+	invite, err := st.srv.store.IssueDeviceInvite(context.Background(), first.pub, time.Now().Unix())
+	if err != nil {
+		t.Fatalf("IssueDeviceInvite: %v", err)
+	}
+	if _, ok, code := pairWithKey(t, st, invite, access(1)); ok || code != protocol.ErrInvalidRequest {
+		t.Fatalf("pair with the first device's key: ok=%v code=%q, want invalid_request", ok, code)
+	}
+	second, ok, code := pairWithKey(t, st, invite, access(2))
+	if !ok {
+		t.Fatalf("the refusal spent the invite: %s", code)
+	}
+
+	c := dialWS(t, st.ts, st.srv)
+	c.expectGreeting()
+	c.dev = second
+	c.hello(1, "")
+	c.send(fmt.Sprintf(`{"id":2,"cmd":"device.setAccessKey","data":{"access_key":%q}}`, access(1)))
+	c.expectErr(2, protocol.ErrInvalidRequest)
+	if got := storedAccessKey(t, st.srv, second.pub); got != access(2) {
+		t.Fatalf("stored access key = %q, want its own", got)
+	}
+}
+
+// A device revoked while its connection is still open cannot mint an invite:
+// the command gets the answer its next greeting would get, and no token - and
+// so no one-time onion key - comes into being.
+func TestADeviceRevokedMidSessionCannotIssueAnInvite(t *testing.T) {
+	st := newOnionStack(t)
+	st.tor.set(true, true)
+	c := dialWS(t, st.ts, st.srv)
+	c.expectGreeting()
+	c.hello(1, "")
+	// Revoked from elsewhere: straight in the store, so this socket stays open
+	// the way it does between a revocation's commit and the server's close.
+	if err := st.srv.store.RevokeDevice(context.Background(), c.dev.pub); err != nil {
+		t.Fatalf("RevokeDevice: %v", err)
+	}
+	c.send(`{"id":2,"cmd":"device.invite","data":{}}`)
+	c.expectErr(2, protocol.ErrUnauthenticated)
+	c.send(`{"id":3,"cmd":"device.invite","data":{"onion":true}}`)
+	c.expectErr(3, protocol.ErrUnauthenticated)
+
+	var live int
+	if err := readDB(t, st.srv).QueryRowContext(context.Background(),
+		"SELECT COUNT(1) FROM pair_tokens WHERE kind = 'invite_device'").Scan(&live); err != nil {
+		t.Fatalf("count invites: %v", err)
+	}
+	if live != 0 {
+		t.Fatalf("%d invites written for a revoked device, want none", live)
+	}
+}

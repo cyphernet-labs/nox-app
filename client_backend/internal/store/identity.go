@@ -146,6 +146,13 @@ func insertDevice(ctx context.Context, tx *sql.Tx, deviceKey, userID, platform, 
 	// away, and re-pairing with one replaces it - one key per device (039).
 	var access any
 	if accessKey != "" {
+		taken, err := accessKeyTaken(ctx, tx, deviceKey, accessKey)
+		if err != nil {
+			return err
+		}
+		if taken {
+			return ErrAccessKeyTaken
+		}
 		access = accessKey
 	}
 	_, err := tx.ExecContext(ctx,

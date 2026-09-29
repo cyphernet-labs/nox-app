@@ -17,6 +17,29 @@ import (
 // Both are switched off by the same writes that already end what they belong
 // to: deleting the device row, or spending, expiring or burning the token.
 
+// ErrAccessKeyTaken is returned for an access key that is already somebody
+// else's: another device holds it, or an onion invite was issued with it. A
+// device makes its own key (contract §8A), and the two cases are the two ways a
+// key outlives what is meant to end it. A key two devices share survives the
+// revocation of either; a one-time key's private half travels in a link - a QR,
+// perhaps a screenshot - and must never become anybody's permanent key.
+var ErrAccessKeyTaken = errors.New("access key already in use")
+
+// accessKeyTaken reports whether accessKey belongs to anything but the device
+// deviceKey. Every onion invite counts - live, spent or expired - because the
+// link holding a one-time key's private half outlives the token, and token rows
+// are never deleted.
+func accessKeyTaken(ctx context.Context, tx *sql.Tx, deviceKey, accessKey string) (bool, error) {
+	var n int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT (SELECT COUNT(1) FROM devices WHERE access_key = ? AND device_key <> ?)
+		     + (SELECT COUNT(1) FROM pair_tokens WHERE access_key = ?)`,
+		accessKey, deviceKey, accessKey).Scan(&n); err != nil {
+		return false, fmt.Errorf("check access key: %w", err)
+	}
+	return n > 0, nil
+}
+
 // SetAccessKey registers a device's access key, replacing any it had: one per
 // device. changed is false when the device already had exactly this key, so the
 // caller can skip a republish that would cut every onion connection for
@@ -24,7 +47,8 @@ import (
 //
 // A device that is no longer there gets ErrDeviceUnknown - revoked in the
 // middle of its session - which the wire answers exactly as it answers that
-// device's next greeting.
+// device's next greeting. A key that is somebody else's gets
+// ErrAccessKeyTaken.
 func (s *Store) SetAccessKey(ctx context.Context, deviceKey, accessKey string) (changed bool, err error) {
 	tx, err := s.write.BeginTx(ctx, nil)
 	if err != nil {
@@ -42,6 +66,13 @@ func (s *Store) SetAccessKey(ctx context.Context, deviceKey, accessKey string) (
 	}
 	if current.Valid && current.String == accessKey {
 		return false, tx.Commit()
+	}
+	taken, err := accessKeyTaken(ctx, tx, deviceKey, accessKey)
+	if err != nil {
+		return false, err
+	}
+	if taken {
+		return false, ErrAccessKeyTaken
 	}
 	if _, err := tx.ExecContext(ctx,
 		"UPDATE devices SET access_key = ? WHERE device_key = ?", accessKey, deviceKey); err != nil {

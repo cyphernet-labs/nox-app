@@ -10,6 +10,7 @@
 package tor
 
 import (
+	"crypto/ecdh"
 	"crypto/ed25519"
 	"crypto/sha3"
 	"crypto/sha512"
@@ -38,9 +39,9 @@ const (
 var base32NoPad = base32.StdEncoding.WithPadding(base32.NoPadding)
 
 // ErrBadAccessKey is returned for an access key that is not 32 bytes of
-// standard base64. It names the shape, never the value: what failed to parse
-// may still be somebody's key.
-var ErrBadAccessKey = errors.New("access key is not 32 bytes of base64")
+// standard base64, or is a point of small order. It names the rule, never the
+// value: what failed to parse may still be somebody's key.
+var ErrBadAccessKey = errors.New("access key is not a usable x25519 public key")
 
 // PublicKey derives the onion service's public key from its seed.
 func PublicKey(seed []byte) (ed25519.PublicKey, error) {
@@ -104,12 +105,41 @@ func ClientAuthKey(pub []byte) (string, error) {
 }
 
 // ParseAccessKey decodes an access key as it travels on the wire: standard
-// base64 of 32 bytes. x25519 has no invalid points worth rejecting here - tor
-// takes any 32 bytes, and a wrong key simply never decrypts a descriptor.
+// base64 of 32 bytes that make a usable x25519 public key.
+//
+// A point of small order is refused, the all-zero key among them, and either
+// would break the service for everybody rather than for its sender. tor
+// asserts on an all-zero client key while building the descriptor, so it
+// would crash on every start. Any other small-order point makes the
+// x25519 exchange come out as zeros, which tor does not check: that client's
+// entry in the descriptor is then keyed by nothing but the onion address, and
+// anyone who knows the address can decrypt the descriptor - client
+// authorisation undone for every device at once.
+//
+// x25519 with a clamped scalar reaches zero exactly on those points, and
+// crypto/ecdh refuses a zero result, so one exchange with a fixed scalar is
+// the whole check.
 func ParseAccessKey(b64 string) ([]byte, error) {
 	raw, err := base64.StdEncoding.DecodeString(b64)
 	if err != nil || len(raw) != AccessKeySize {
 		return nil, ErrBadAccessKey
 	}
+	pub, err := ecdh.X25519().NewPublicKey(raw)
+	if err != nil {
+		return nil, ErrBadAccessKey
+	}
+	probe, err := ecdh.X25519().NewPrivateKey([]byte(lowOrderProbe))
+	if err != nil {
+		return nil, fmt.Errorf("x25519 probe key: %w", err)
+	}
+	if _, err := probe.ECDH(pub); err != nil {
+		return nil, ErrBadAccessKey
+	}
 	return raw, nil
 }
+
+// lowOrderProbe is the fixed scalar ParseAccessKey multiplies by. Any 32
+// bytes serve: clamping makes the scalar a multiple of eight and too small to
+// be a multiple of either large prime order - the curve's or its twist's - so
+// the product is zero for the small-order points and for nothing else.
+const lowOrderProbe = "nox/onion-access-key-order-probe"

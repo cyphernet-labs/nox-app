@@ -94,7 +94,7 @@ func (c *client) handlePair(cmd protocol.Command) {
 	accessKey := strings.TrimSpace(req.AccessKey)
 	if accessKey != "" {
 		if _, err := tor.ParseAccessKey(accessKey); err != nil {
-			c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "access_key is not 32 bytes of base64"))
+			c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "access_key is not a usable x25519 public key"))
 			return
 		}
 	}
@@ -107,6 +107,9 @@ func (c *client) handlePair(cmd protocol.Command) {
 		return
 	case errors.Is(err, store.ErrTokenExpired):
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrTokenExpired, "pairing token has expired"))
+		return
+	case errors.Is(err, store.ErrAccessKeyTaken):
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "access_key is already in use"))
 		return
 	case err != nil:
 		c.logger.Error("pair", "err", err)
@@ -241,12 +244,16 @@ func (c *client) handleDeviceSetAccessKey(cmd protocol.Command) {
 	}
 	accessKey := strings.TrimSpace(req.AccessKey)
 	if _, err := tor.ParseAccessKey(accessKey); err != nil {
-		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "access_key is not 32 bytes of base64"))
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "access_key is not a usable x25519 public key"))
 		return
 	}
 	changed, err := c.srv.store.SetAccessKey(c.ctx, c.srv.currentDeviceKey(c), accessKey)
 	if errors.Is(err, store.ErrDeviceUnknown) {
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrUnauthenticated, "device is not paired"))
+		return
+	}
+	if errors.Is(err, store.ErrAccessKeyTaken) {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "access_key is already in use"))
 		return
 	}
 	if err != nil {
@@ -279,7 +286,10 @@ type inviteRequest struct {
 // and renders the link to show.
 //
 // The link is built here rather than on the device because only the server
-// knows its own public key and the address it is reachable at.
+// knows its own public key and the address it is reachable at. A device
+// revoked while this command was on its way is told unauthenticated, as
+// device.setAccessKey tells it: the store issues nothing for a device that is
+// gone.
 func (c *client) handleDeviceInvite(cmd protocol.Command) {
 	var req inviteRequest
 	_ = json.Unmarshal(cmd.Data, &req) // lenient by contract: anything odd is "no onion"
@@ -305,7 +315,11 @@ func (c *client) handleDeviceInvite(cmd protocol.Command) {
 		return
 	}
 
-	token, err := c.srv.store.IssueDeviceInvite(c.ctx, c.identity.UserID, time.Now().Unix())
+	token, err := c.srv.store.IssueDeviceInvite(c.ctx, c.srv.currentDeviceKey(c), time.Now().Unix())
+	if errors.Is(err, store.ErrDeviceUnknown) {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrUnauthenticated, "device is not paired"))
+		return
+	}
 	if err != nil {
 		c.logger.Error("device.invite", "err", err)
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to issue an invite"))
@@ -335,7 +349,11 @@ func (c *client) issueOnionInvite(cmd protocol.Command, addr, fingerprint string
 		return
 	}
 	accessPub := base64.StdEncoding.EncodeToString(oneTime.PublicKey().Bytes())
-	token, err := c.srv.store.IssueOnionInvite(c.ctx, c.identity.UserID, accessPub, time.Now().Unix())
+	token, err := c.srv.store.IssueOnionInvite(c.ctx, c.srv.currentDeviceKey(c), accessPub, time.Now().Unix())
+	if errors.Is(err, store.ErrDeviceUnknown) {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrUnauthenticated, "device is not paired"))
+		return
+	}
 	if err != nil {
 		c.logger.Error("device.invite onion", "err", err)
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to issue an invite"))

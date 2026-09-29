@@ -127,9 +127,9 @@ func TestClaimTokenNeverExpires(t *testing.T) {
 func TestDeviceInviteExpiresAndIsDistinguishableFromASpentOne(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	owner := claimPerson(t, s, "dev-phone")
+	claimPerson(t, s, "dev-phone")
 
-	expired, err := s.IssueDeviceInvite(ctx, owner.UserID, 100)
+	expired, err := s.IssueDeviceInvite(ctx, "dev-phone", 100)
 	if err != nil {
 		t.Fatalf("IssueDeviceInvite: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestDeviceInviteExpiresAndIsDistinguishableFromASpentOne(t *testing.T) {
 		t.Fatalf("expired invite err = %v, want ErrTokenExpired", err)
 	}
 
-	spent, err := s.IssueDeviceInvite(ctx, owner.UserID, 200)
+	spent, err := s.IssueDeviceInvite(ctx, "dev-phone", 200)
 	if err != nil {
 		t.Fatalf("IssueDeviceInvite: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestOneInviteProducesExactlyOneDevice(t *testing.T) {
 		ctx := context.Background()
 		owner := claimPerson(t, s, "dev-phone")
 
-		token, err := s.IssueDeviceInvite(ctx, owner.UserID, 200)
+		token, err := s.IssueDeviceInvite(ctx, "dev-phone", 200)
 		if err != nil {
 			t.Fatalf("IssueDeviceInvite: %v", err)
 		}
@@ -421,9 +421,9 @@ func TestASuccessfulClaimRetiresEveryOtherClaimToken(t *testing.T) {
 func TestRevokingADeviceRetiresTheInvitesItCouldHaveIssued(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	owner := claimPerson(t, s, "dev-phone")
+	claimPerson(t, s, "dev-phone")
 
-	invite, err := s.IssueDeviceInvite(ctx, owner.UserID, 200)
+	invite, err := s.IssueDeviceInvite(ctx, "dev-phone", 200)
 	if err != nil {
 		t.Fatalf("IssueDeviceInvite: %v", err)
 	}
@@ -536,7 +536,7 @@ func TestPairingYourOwnDeviceKeyAgainIsAccepted(t *testing.T) {
 	ctx := context.Background()
 	owner := claimPerson(t, s, "dev-mine")
 
-	token, err := s.IssueDeviceInvite(ctx, owner.UserID, 200)
+	token, err := s.IssueDeviceInvite(ctx, "dev-mine", 200)
 	if err != nil {
 		t.Fatalf("IssueDeviceInvite: %v", err)
 	}
@@ -570,7 +570,7 @@ func TestASpentTokenAnswersOnlyTheDeviceThatSpentIt(t *testing.T) {
 	}
 
 	// A second device of the same person, joined the ordinary way.
-	invite, err := s.IssueDeviceInvite(ctx, owner.UserID, 200)
+	invite, err := s.IssueDeviceInvite(ctx, "dev-a", 200)
 	if err != nil {
 		t.Fatalf("IssueDeviceInvite: %v", err)
 	}
@@ -701,7 +701,7 @@ func TestAReplayAnswersWithWhatTheTokenProducedNotWhoHoldsTheKeyNow(t *testing.T
 	if back.Created {
 		t.Fatal("the re-claim created a person who already existed")
 	}
-	invite, err := s.IssueDeviceInvite(ctx, back.UserID, 300)
+	invite, err := s.IssueDeviceInvite(ctx, "dev-new", 300)
 	if err != nil {
 		t.Fatalf("IssueDeviceInvite: %v", err)
 	}
@@ -871,9 +871,9 @@ func TestAMissingOwnerMarkerDoesNotMakeTheMachineLookEmpty(t *testing.T) {
 func TestAReplayIsRefusedOnceTheDeviceIsNoLongerTheOneThatSpentIt(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	owner := claimOwner(t, s, "dev-owner")
+	claimOwner(t, s, "dev-owner")
 
-	invite, err := s.IssueDeviceInvite(ctx, owner.UserID, 200)
+	invite, err := s.IssueDeviceInvite(ctx, "dev-owner", 200)
 	if err != nil {
 		t.Fatalf("IssueDeviceInvite: %v", err)
 	}

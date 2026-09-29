@@ -60,6 +60,11 @@ CREATE TABLE devices (
 
 CREATE INDEX idx_devices_user ON devices (user_id);
 
+-- No access key belongs to two devices (039): a shared key would outlive the
+-- revocation of either. The store refuses one before writing it; the index
+-- makes it unrepresentable rather than merely unlikely.
+CREATE UNIQUE INDEX idx_devices_access_key ON devices (access_key) WHERE access_key IS NOT NULL;
+
 -- The identity of this store, minted in Go once the schema exists. A client
 -- that sees a different value knows the world it cached is gone and resets;
 -- a rebuilt store that has already overtaken the client's mark is otherwise
