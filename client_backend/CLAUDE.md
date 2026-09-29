@@ -119,9 +119,14 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 8. **One reader goroutine per connection** (library invariant); writes
    to a client go through its buffered channel (`outBuffer` = 64 frames); overflow →
    `Close(StatusPolicyViolation)` — replay heals the client on
-   reconnect. Keepalive: own ticker with `Ping(ctx)` ~25s.
+   reconnect. Keepalive: own ticker with `Ping(ctx)` ~25s, on a goroutine
+   BESIDE the writer - Ping waits a whole round trip, which over Tor is
+   seconds, and a writer parked on it lets live frames overflow the queue.
    `SetReadLimit(max_frame_bytes)`.
-9. **Shutdown order:** the HTTP servers drain (main, onion, status page) →
+9. **Shutdown order:** the HTTP servers drain (onion FIRST - an onion
+   connection accepted after the main server closed the registered ones would
+   never be told to go - then main, then the status page, each on its OWN
+   deadline) →
    registered WS conns get `Close(StatusGoingAway)`, IN PARALLEL - one close
    handshake can take 10 s, and over Tor it does (Shutdown does NOT wait for
    hijacked conns — keep the conn registry wired via `RegisterOnShutdown`) →
@@ -231,7 +236,10 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   use the Tor Project repository. The official macOS tor is UNSIGNED and
   killed at launch on Apple Silicon until signed (ad-hoc is enough for dev).
   Its state lives in `<db>-tor` (a cache, outside backups; it holds the
-  control cookie, so never commit it).
+  control cookie, so never commit it). tor runs in a process group of its
+  own, so a terminal's Ctrl+C reaches only the server, which drains and then
+  stops tor; a systemd unit needs `KillMode=mixed`, because the default
+  `control-group` signals every process of the unit at once.
 
 ## Known deliberate omissions (do not "fix" silently)
 
