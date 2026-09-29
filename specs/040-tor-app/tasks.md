@@ -81,7 +81,7 @@
   - cold and warm bootstrap time;
   - first and repeated keyed connect time against an onion and key given on the command line (a local `noxd` with Tor, 039);
   - process RSS.
-- [ ] T012 [US7] Measure per research decision 14 and quickstart «Замер»:
+- [X] T012 [US7] Measure per research decision 14 and quickstart «Замер»:
   - release APK arm64 with and without `nox_tor`;
   - iOS release `nox_tor.framework`;
   - macOS framework size;
