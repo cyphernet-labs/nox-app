@@ -171,9 +171,12 @@ func TestAMissingTorKeepsTheServerGoingAndSaysWhy(t *testing.T) {
 func TestAnOldTorIsNamedAndNotRun(t *testing.T) {
 	l := &fakeLauncher{locateErr: errors.Join(errTooOld), version: Version{0, 4, 8, 17}}
 	h := newHarness(t, l, &keySource{})
+	// A distribution's own package is the usual old tor, so the way out is
+	// named: the Tor Project's repository.
 	eventually(t, "binary-too-old", func() bool {
 		st := h.s.Status()
-		return st.Phase == PhaseBinaryTooOld && strings.Contains(st.LastError, "0.4.8.17")
+		return st.Phase == PhaseBinaryTooOld && strings.Contains(st.LastError, "0.4.8.17") &&
+			strings.Contains(st.LastError, "Tor Project's repository")
 	})
 	if l.startCount() != 0 {
 		t.Fatal("started a tor below the floor")

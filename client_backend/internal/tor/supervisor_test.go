@@ -127,9 +127,14 @@ type fakeLauncher struct {
 	locateErr error
 	version   Version
 	startErr  error
-	starts    int
-	runs      []*fakeRun
-	next      func() *fakeCtl
+	// startLines is what a failing start printed, handed back the way the
+	// real launcher hands it back.
+	startLines []string
+	starts     int
+	runs       []*fakeRun
+	next       func() *fakeCtl
+	// started, when set, sees each run before the supervisor does.
+	started func(*fakeRun)
 }
 
 func (l *fakeLauncher) locate(context.Context) (string, Version, error) {
@@ -143,7 +148,7 @@ func (l *fakeLauncher) start(context.Context, string) (running, error) {
 	defer l.mu.Unlock()
 	l.starts++
 	if l.startErr != nil {
-		return nil, l.startErr
+		return nil, &startFailure{err: l.startErr, lines: slices.Clone(l.startLines)}
 	}
 	c := newFakeCtl()
 	if l.next != nil {
@@ -151,6 +156,9 @@ func (l *fakeLauncher) start(context.Context, string) (running, error) {
 	}
 	r := &fakeRun{c: c, exit: make(chan struct{}), out: make(chan string, 16)}
 	l.runs = append(l.runs, r)
+	if l.started != nil {
+		l.started(r)
+	}
 	return r, nil
 }
 
@@ -175,6 +183,8 @@ type keySource struct {
 	keys   []string
 	expiry time.Time
 	reads  int
+	// fail is how many of the next reads fail; negative fails every one.
+	fail int
 }
 
 func (k *keySource) set(keys []string, expiry time.Time) {
@@ -183,10 +193,28 @@ func (k *keySource) set(keys []string, expiry time.Time) {
 	k.keys, k.expiry = slices.Clone(keys), expiry
 }
 
+func (k *keySource) failReads(n int) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.fail = n
+}
+
+func (k *keySource) readCount() int {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.reads
+}
+
 func (k *keySource) read(context.Context, time.Time) ([]string, time.Time, error) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	k.reads++
+	if k.fail != 0 {
+		if k.fail > 0 {
+			k.fail--
+		}
+		return nil, time.Time{}, errors.New("disk I/O error")
+	}
 	return slices.Clone(k.keys), k.expiry, nil
 }
 
@@ -402,9 +430,19 @@ func TestTheNetworksVerdictIsMappedNotComputed(t *testing.T) {
 	}}
 	h := newHarness(t, l, &keySource{})
 	eventually(t, "obsolete verdict", func() bool { return h.s.Status().Verdict == VerdictObsolete })
-	l.run(0).c.setAnswer("status/version/current", "status/version/current=recommended", "OK")
-	l.run(0).c.events <- "STATUS_GENERAL NOTICE CONSENSUS_ARRIVED"
-	eventually(t, "verdict re-read on STATUS_GENERAL", func() bool { return h.s.Status().Verdict == VerdictRecommended })
+
+	// A fresh consensus is a STATUS_CLIENT event, and the only one a tor the
+	// network recommends ever gets: after a cold start it is the first moment
+	// a verdict exists.
+	c := l.run(0).c
+	c.setAnswer("status/version/current", "status/version/current=recommended", "OK")
+	c.events <- "STATUS_CLIENT NOTICE CONSENSUS_ARRIVED"
+	eventually(t, "verdict re-read on CONSENSUS_ARRIVED", func() bool { return h.s.Status().Verdict == VerdictRecommended })
+
+	// A version the network turns against is a STATUS_GENERAL event.
+	c.setAnswer("status/version/current", "status/version/current=unrecommended", "OK")
+	c.events <- `STATUS_GENERAL WARN DANGEROUS_VERSION CURRENT=0.4.9.13 REASON=UNRECOMMENDED RECOMMENDED="0.4.9.14"`
+	eventually(t, "verdict re-read on DANGEROUS_VERSION", func() bool { return h.s.Status().Verdict == VerdictOutdated })
 }
 
 func TestConnectionWarningsBecomeTheLastErrorScrubbed(t *testing.T) {
@@ -417,7 +455,8 @@ func TestConnectionWarningsBecomeTheLastErrorScrubbed(t *testing.T) {
 		return strings.Contains(h.s.Status().LastError, "Connection refused") &&
 			strings.Contains(h.s.Status().LastError, "CONNECTREFUSED")
 	})
-	l.run(0).c.events <- "STATUS_CLIENT WARN CLOCK_SKEW SKEW=-7200 SOURCE=CONSENSUS"
+	// tor reports a skewed clock as a STATUS_GENERAL event, never a client one.
+	l.run(0).c.events <- "STATUS_GENERAL WARN CLOCK_SKEW SKEW=-7200 SOURCE=CONSENSUS"
 	eventually(t, "clock skew named", func() bool { return strings.Contains(h.s.Status().LastError, "clock") })
 }
 
@@ -475,6 +514,12 @@ func TestStartArgumentsOpenNoOtherDoors(t *testing.T) {
 	}
 }
 
+// protocolRefusal is what tor prints, at err, right before it exits when the
+// consensus requires a protocol it lacks (networkstatus.c) - word for word,
+// because the supervisor recognises it by those words.
+const protocolRefusal = "At least one protocol listed as required in the consensus is not supported by this version of Tor. " +
+	"You should upgrade. This version of Tor will not work as a client on the Tor network. The missing protocols are: HSDir=3"
+
 func TestTorsOwnLogIsRetoldScrubbed(t *testing.T) {
 	l := &fakeLauncher{version: Version{0, 4, 9, 13}}
 	h := newHarness(t, l, &keySource{})
@@ -485,11 +530,11 @@ func TestTorsOwnLogIsRetoldScrubbed(t *testing.T) {
 	r.out <- "Oct 03 11:13:50.000 [notice] Bootstrapped 100% (done): Done"
 	r.out <- "Oct 03 11:13:51.000 [warn] Problem with service " + addr + ".onion"
 	r.out <- "Oct 03 11:13:52.000 [info] chatter nobody needs"
-	r.out <- "Oct 03 11:13:53.000 [err] At least one required protocol is not supported by this version of Tor"
+	r.out <- "Oct 03 11:13:53.000 [err] " + protocolRefusal
 
 	eventually(t, "the protocol refusal reached the verdict", func() bool {
 		st := h.s.Status()
-		return st.Verdict == VerdictObsolete && strings.Contains(st.LastError, "required protocol")
+		return st.Verdict == VerdictObsolete && strings.Contains(st.LastError, "listed as required in the consensus")
 	})
 	logged := h.logged()
 	if !strings.Contains(logged, "Bootstrapped 100%") || !strings.Contains(logged, "Problem with service [onion]") {

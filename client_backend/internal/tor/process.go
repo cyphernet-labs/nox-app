@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,6 +28,12 @@ const (
 	// commandTimeout bounds one control command. tor answers locally, so a
 	// command that takes this long means tor is wedged.
 	commandTimeout = 30 * time.Second
+	// lineBuffer is how many of tor's lines wait for the supervisor. Nobody
+	// reads while tor starts, and the last lines of a start that fails are
+	// its reason.
+	lineBuffer = 256
+	// cookieSize is the length of tor's control cookie.
+	cookieSize = 32
 )
 
 // controller is the control connection as the supervisor uses it. *Conn is
@@ -44,17 +51,32 @@ type launcher interface {
 	// locate finds the binary and checks its version.
 	locate(ctx context.Context) (path string, v Version, err error)
 	// start runs tor and returns it with an authenticated control connection
-	// that owns the process.
+	// that owns the process. A tor that dies on the way comes back as a
+	// *startFailure carrying what it printed.
 	start(ctx context.Context, path string) (running, error)
 }
 
 // running is one tor process.
 type running interface {
 	ctl() controller
+	// exited is closed once tor is gone AND every line it printed is in
+	// lines or was dropped, so its last words can be read without a race.
 	exited() <-chan struct{}
 	lines() <-chan string
 	stop()
 }
+
+// startFailure is a start that ended before tor was usable, together with what
+// tor printed on its way out. tor's own reason - a data directory it may not
+// use, a lock another tor holds, a consensus that rejects its protocols - is
+// in those lines and nowhere else.
+type startFailure struct {
+	err   error
+	lines []string
+}
+
+func (e *startFailure) Error() string { return e.err.Error() }
+func (e *startFailure) Unwrap() error { return e.err }
 
 // procLauncher runs the real tor.
 type procLauncher struct {
@@ -117,22 +139,27 @@ func (l procLauncher) start(ctx context.Context, path string) (running, error) {
 		return nil, fmt.Errorf("write the empty torrc: %w", err)
 	}
 	portFile := filepath.Join(l.dataDir, "control.port")
-	// A file left by the previous run names a port nobody listens on any more.
-	_ = os.Remove(portFile)
+	cookieFile := filepath.Join(l.dataDir, "control_auth_cookie")
+	// Files left by the previous run name a port nobody listens on any more and
+	// a cookie nobody accepts. tor writes the port before the cookie, so a stale
+	// cookie read beside a fresh port would fail the authentication for nothing.
+	for _, f := range []string{portFile, cookieFile} {
+		if err := os.Remove(f); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("remove a stale tor file: %w", err)
+		}
+	}
 
 	cmd := exec.Command(path, startArgs(l.dataDir, os.Getpid())...)
+	detach(cmd)
 	pr, pw := io.Pipe()
 	cmd.Stdout, cmd.Stderr = pw, pw
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start tor: %w", err)
 	}
-	p := &proc{cmd: cmd, exit: make(chan struct{}), out: make(chan string, 256)}
+	p := &proc{cmd: cmd, exit: make(chan struct{}), out: make(chan string, lineBuffer)}
+	scanned := make(chan struct{})
 	go func() {
-		_ = cmd.Wait()
-		_ = pw.Close()
-		close(p.exit)
-	}()
-	go func() {
+		defer close(scanned)
 		defer close(p.out)
 		scanner := bufio.NewScanner(pr)
 		for scanner.Scan() {
@@ -143,59 +170,72 @@ func (l procLauncher) start(ctx context.Context, path string) (running, error) {
 				// keep up with loses log lines, never the process.
 			}
 		}
+		// A line too long for the scanner ends it, and tor must still be able
+		// to write: on a full pipe it would block, and Wait below with it.
+		_, _ = io.Copy(io.Discard, pr)
+	}()
+	go func() {
+		_ = cmd.Wait()
+		_ = pw.Close()
+		// Only once every line is in out or dropped: whoever sees tor gone can
+		// then read its last words without racing the reader for them.
+		<-scanned
+		close(p.exit)
 	}()
 
-	addr, err := waitControlPort(ctx, portFile, p.exit)
-	if err != nil {
+	// Until TAKEOWNERSHIP, hanging up does not stop tor - only its owner's pid
+	// going away would - so every failure up to there kills it outright rather
+	// than waiting stopWait for an exit that is not coming.
+	fail := func(err error) (running, error) {
 		p.kill()
-		return nil, err
+		return nil, &startFailure{err: err, lines: p.rest()}
+	}
+	addr, cookie, err := waitStartup(ctx, portFile, cookieFile, p.exit)
+	if err != nil {
+		return fail(err)
 	}
 	conn, err := Dial(ctx, addr)
 	if err != nil {
-		p.kill()
-		return nil, err
+		return fail(err)
 	}
 	p.conn = conn
-	cookie, err := os.ReadFile(filepath.Join(l.dataDir, "control_auth_cookie"))
-	if err != nil {
-		p.stop()
-		return nil, fmt.Errorf("read the control cookie: %w", err)
-	}
 	actx, cancel := context.WithTimeout(ctx, commandTimeout)
 	defer cancel()
 	if err := conn.Authenticate(actx, cookie); err != nil {
-		p.stop()
-		return nil, err
+		return fail(err)
 	}
 	// From here tor exits the moment this connection closes - including when
 	// the server dies and the OS closes it (measured: 2 s, research decision
 	// 1). __OwningControllerProcess above is the second net.
 	if _, err := conn.Command(actx, "TAKEOWNERSHIP"); err != nil {
-		p.stop()
-		return nil, err
+		return fail(err)
 	}
 	return p, nil
 }
 
-// waitControlPort waits for tor to write the port it picked.
-func waitControlPort(ctx context.Context, file string, exited <-chan struct{}) (string, error) {
+// waitStartup waits for tor to write the port it picked and the cookie that
+// opens it. Both, because tor writes the port first - before it has even
+// taken its data directory's lock - and the cookie only after.
+func waitStartup(ctx context.Context, portFile, cookieFile string, exited <-chan struct{}) (string, []byte, error) {
 	deadline := time.NewTimer(controlPortWait)
 	defer deadline.Stop()
 	tick := time.NewTicker(100 * time.Millisecond)
 	defer tick.Stop()
 	for {
-		if raw, err := os.ReadFile(file); err == nil {
+		if raw, err := os.ReadFile(portFile); err == nil {
 			if line := strings.TrimSpace(string(raw)); strings.HasPrefix(line, "PORT=") {
-				return strings.TrimPrefix(line, "PORT="), nil
+				if cookie, err := os.ReadFile(cookieFile); err == nil && len(cookie) == cookieSize {
+					return strings.TrimPrefix(line, "PORT="), cookie, nil
+				}
 			}
 		}
 		select {
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return "", nil, ctx.Err()
 		case <-exited:
-			return "", errors.New("tor exited before opening its control port")
+			return "", nil, errors.New("tor exited before opening its control port")
 		case <-deadline.C:
-			return "", errors.New("tor did not open its control port in time")
+			return "", nil, errors.New("tor did not open its control port in time")
 		case <-tick.C:
 		}
 	}
@@ -215,19 +255,39 @@ func (p *proc) lines() <-chan string    { return p.out }
 
 // stop hangs up the control connection - which, after TAKEOWNERSHIP, is tor's
 // cue to exit - and kills it only if it has not left in time.
+//
+// The wait follows no context on purpose: hanging up IS the request to leave,
+// tor answers it within a second or two, and cutting the wait short whenever
+// the server is shutting down would turn every orderly stop into a kill.
 func (p *proc) stop() {
 	if p.conn != nil {
 		_ = p.conn.Close()
 	}
+	t := time.NewTimer(stopWait)
+	defer t.Stop()
 	select {
 	case <-p.exit:
 		return
-	case <-time.After(stopWait):
+	case <-t.C:
 	}
 	p.kill()
 }
 
+// kill ends tor at once and waits until it is gone.
 func (p *proc) kill() {
+	if p.conn != nil {
+		_ = p.conn.Close()
+	}
 	_ = p.cmd.Process.Kill()
 	<-p.exit
+}
+
+// rest is every line tor printed that nobody has read. Called once tor is
+// gone: out is closed by then, so the range ends.
+func (p *proc) rest() []string {
+	var lines []string
+	for line := range p.out {
+		lines = append(lines, line)
+	}
+	return lines
 }

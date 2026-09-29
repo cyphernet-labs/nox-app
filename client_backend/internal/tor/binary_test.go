@@ -78,6 +78,35 @@ func TestAnExplicitPathThatHoldsTorIsUsed(t *testing.T) {
 	}
 }
 
+// A bare name is a path like any other: the file in the working directory, made
+// absolute - exec would otherwise look a bare name up in PATH and run a tor
+// other than the one whose version was checked.
+func TestABareNameForTorBinMeansTheFileInTheWorkingDirectory(t *testing.T) {
+	here, herePath := fakeTor(t)
+	elsewhere, _ := fakeTor(t)
+	t.Setenv("PATH", elsewhere)
+	t.Chdir(here)
+
+	got, err := Find(binaryName())
+	if err != nil || !filepath.IsAbs(got) {
+		t.Fatalf("Find(%q) = %q, %v; want an absolute path", binaryName(), got, err)
+	}
+	if sameFile(t, got) != sameFile(t, herePath) {
+		t.Fatalf("Find(%q) = %q, want the working directory's %q", binaryName(), got, herePath)
+	}
+}
+
+// sameFile resolves symlinks - a temporary directory may sit behind one - so
+// two names for one file compare equal.
+func sameFile(t *testing.T, path string) string {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(%q): %v", path, err)
+	}
+	return resolved
+}
+
 func TestWithoutAPathTorIsLookedUpInPath(t *testing.T) {
 	dir, path := fakeTor(t)
 	t.Setenv("PATH", dir)

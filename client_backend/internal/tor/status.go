@@ -9,10 +9,14 @@ const (
 	PhaseDisabled      Phase = "disabled"
 	PhaseBinaryMissing Phase = "binary-missing"
 	PhaseBinaryTooOld  Phase = "binary-too-old"
-	PhaseStarting      Phase = "starting"
-	PhaseConnecting    Phase = "connecting"
-	PhaseRunning       Phase = "running"
-	PhaseWaitingRetry  Phase = "waiting-retry"
+	// PhaseBinaryUnusable is a tor that was found and would not even report
+	// its version - killed at launch, as the unsigned macOS tor is, or not
+	// executable. Told apart from "not found": the cure is a different one.
+	PhaseBinaryUnusable Phase = "binary-unusable"
+	PhaseStarting       Phase = "starting"
+	PhaseConnecting     Phase = "connecting"
+	PhaseRunning        Phase = "running"
+	PhaseWaitingRetry   Phase = "waiting-retry"
 )
 
 // Verdict is the network's own judgement of the running tor's version, from
@@ -34,6 +38,10 @@ const (
 	PublicationTorDown    Publication = "not-published-tor-down"
 	PublicationPublishing Publication = "publishing"
 	PublicationPublished  Publication = "published"
+	// PublicationKeysUnreadable is a service taken down because the access
+	// keys kept failing to read: a list nobody can check is a list a revoked
+	// device may still be on.
+	PublicationKeysUnreadable Publication = "not-published-keys-unreadable"
 )
 
 // Status is an immutable snapshot of the supervisor, published through an
