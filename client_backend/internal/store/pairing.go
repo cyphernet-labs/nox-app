@@ -50,13 +50,44 @@ var (
 // and an expiring claim would leave a freshly installed server unclaimable
 // forever with no way to mint another.
 func (s *Store) IssueClaimToken(ctx context.Context, now int64) (string, error) {
-	return s.issueToken(ctx, TokenClaim, "", now, 0)
+	token, err := newTokenValue()
+	if err != nil {
+		return "", err
+	}
+	if _, err := s.write.ExecContext(ctx,
+		"INSERT INTO pair_tokens (token, kind, user_id, created_at, expires_at, used_at, access_key) VALUES (?, ?, NULL, ?, NULL, NULL, NULL)",
+		token, TokenClaim, now); err != nil {
+		return "", fmt.Errorf("insert claim token: %w", err)
+	}
+	return token, nil
 }
 
-// IssueDeviceInvite mints a token that binds a new device to an EXISTING
-// person. Any already-paired device of that person may issue one.
-func (s *Store) IssueDeviceInvite(ctx context.Context, userID string, now int64) (string, error) {
-	return s.issueToken(ctx, TokenInviteDevice, userID, now, now+InviteTTLSeconds)
+// IssueDeviceInvite mints a token that binds a new device to the person whose
+// device - issuer - asks for it.
+//
+// The person is read from the ISSUER's row by the very statement that writes
+// the token, and a device that is no longer there gets ErrDeviceUnknown. A
+// device revoked from another one may still have a command on the way; the
+// single writer puts that command and the revocation in one order, and only
+// this way does the order decide. Checked any earlier, the revocation could
+// land in between, and its burning of the person's live invites would miss
+// the one minted after it - a door opened by a device that had just been told
+// to leave.
+func (s *Store) IssueDeviceInvite(ctx context.Context, issuer string, now int64) (string, error) {
+	return s.issueInvite(ctx, issuer, now, "")
+}
+
+// IssueOnionInvite mints a device invite that also carries a one-time onion
+// access key (039): accessKey is the PUBLIC half, and the private half lives
+// only in the link the caller builds - never here. The issuer is checked as
+// for IssueDeviceInvite.
+//
+// The key works exactly as long as the invite does. Spending, expiring and
+// burning the token - a revocation burns every live invite of the person -
+// switch it off with no write of their own, because ActiveAccessKeys reads it
+// through the token's own state.
+func (s *Store) IssueOnionInvite(ctx context.Context, issuer, accessKey string, now int64) (string, error) {
+	return s.issueInvite(ctx, issuer, now, accessKey)
 }
 
 // ClaimTokenUsable reports whether a claim token can still be presented.
@@ -91,26 +122,28 @@ func newTokenValue() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(raw[:]), nil
 }
 
-func (s *Store) issueToken(ctx context.Context, kind, userID string, now, expiresAt int64) (string, error) {
+func (s *Store) issueInvite(ctx context.Context, issuer string, now int64, accessKey string) (string, error) {
 	token, err := newTokenValue()
 	if err != nil {
 		return "", err
 	}
-
-	var user any
-	if userID != "" {
-		user = userID
+	var access any
+	if accessKey != "" {
+		access = accessKey
 	}
-	var expires any
-	if expiresAt > 0 {
-		expires = expiresAt
-	}
-
-	_, err = s.write.ExecContext(ctx,
-		"INSERT INTO pair_tokens (token, kind, user_id, created_at, expires_at, used_at) VALUES (?, ?, ?, ?, ?, NULL)",
-		token, kind, user, now, expires)
+	res, err := s.write.ExecContext(ctx,
+		`INSERT INTO pair_tokens (token, kind, user_id, created_at, expires_at, used_at, access_key)
+		 SELECT ?, ?, user_id, ?, ?, NULL, ? FROM devices WHERE device_key = ?`,
+		token, TokenInviteDevice, now, now+InviteTTLSeconds, access, issuer)
 	if err != nil {
-		return "", fmt.Errorf("insert pairing token: %w", err)
+		return "", fmt.Errorf("insert invite: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return "", fmt.Errorf("insert invite: %w", err)
+	}
+	if n == 0 {
+		return "", ErrDeviceUnknown
 	}
 	return token, nil
 }
@@ -174,7 +207,21 @@ func burnToken(ctx context.Context, tx *sql.Tx, token, deviceKey string, now int
 // from what actually happened, not from the token kind: that distinction is
 // what tells the client to offer the naming step, and deriving it from
 // anything else is the mistake feature 031 spent a phase removing.
-func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now int64) (Identity, error) {
+// PairOptions carries what `pair` adds to the token and the device key (039).
+type PairOptions struct {
+	// AccessKey is the device's onion access key - an x25519 PUBLIC key,
+	// base64, already validated - written in the same transaction as the
+	// device row, or empty for none. A device that came in over onion by an
+	// invite's one-time key keeps its way in only because its own key is
+	// written here: the one-time key dies with the token this call spends.
+	AccessKey string
+	// ViaOnion says the connection arrived through the onion entry. A claim is
+	// refused there - including the replay of one already spent - and the
+	// refusal happens before the commit, so the token is left as it was.
+	ViaOnion bool
+}
+
+func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, opts PairOptions, now int64) (Identity, error) {
 	tx, err := s.write.BeginTx(ctx, nil)
 	if err != nil {
 		return Identity{}, fmt.Errorf("begin pair: %w", err)
@@ -188,9 +235,14 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 	// chance: the token is burned, the server is owned, and a single-device
 	// install would be locked out for good. Answering with the same identity is
 	// the at-least-once story `message.send` gets from its idempotency key.
-	same, found, err := pairedBy(ctx, tx, token, deviceKey)
+	same, kind, found, err := pairedBy(ctx, tx, token, deviceKey)
 	if err != nil {
 		return Identity{}, err
+	}
+	// The replay of a claim is still a claim: over onion it is refused like
+	// the first presentation would have been (contract §1), whoever spent it.
+	if found && kind == TokenClaim && opts.ViaOnion {
+		return Identity{}, ErrTokenInvalid
 	}
 	if found {
 		if err := tx.Commit(); err != nil {
@@ -207,6 +259,14 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 	var id Identity
 	switch pt.Kind {
 	case TokenClaim:
+		// Never over onion (039). Returning before Commit rolls the burn back:
+		// the token stays good for the direct path, which is the only path a
+		// claim belongs on - the first device pairs at home. Structurally this
+		// cannot happen today: an unclaimed server has no access key, so no
+		// onion service either; this is the second net.
+		if opts.ViaOnion {
+			return Identity{}, ErrTokenInvalid
+		}
 		// A claim on an already-owned server is refused with the same answer as
 		// a token that never existed: the claim died the moment somebody used
 		// it, and staying silent about which is which says nothing useful.
@@ -356,7 +416,7 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 	if bound != "" && bound != id.UserID {
 		return Identity{}, ErrTokenInvalid
 	}
-	if err := insertDevice(ctx, tx, deviceKey, id.UserID, platform, now); err != nil {
+	if err := insertDevice(ctx, tx, deviceKey, id.UserID, platform, opts.AccessKey, now); err != nil {
 		return Identity{}, err
 	}
 	// Record WHO this spending produced and WHAT it did, so a replay can answer
@@ -390,8 +450,9 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, now
 // replayed: a claim that minted the person reported created, and a retry that
 // says otherwise walks the owner of a brand-new server straight past the
 // naming step, into the chats list under an auto-assigned User<random>.
-func pairedBy(ctx context.Context, tx *sql.Tx, token, deviceKey string) (Identity, bool, error) {
+func pairedBy(ctx context.Context, tx *sql.Tx, token, deviceKey string) (Identity, string, bool, error) {
 	var id Identity
+	var kind string
 	// The whole answer comes from the TOKEN's own record - who it produced and
 	// what it did - and it is handed only to the device that spent it.
 	//
@@ -412,20 +473,20 @@ func pairedBy(ctx context.Context, tx *sql.Tx, token, deviceKey string) (Identit
 	// device that is no longer the one the token spent.
 	var created int
 	err := tx.QueryRowContext(ctx, `
-		SELECT u.user_id, u.label, t.created_person
+		SELECT u.user_id, u.label, t.created_person, t.kind
 		FROM pair_tokens t
 		JOIN users u ON u.user_id = t.paired_user_id
 		JOIN devices d ON d.device_key = t.used_by AND d.user_id = t.paired_user_id
 		WHERE t.token = ? AND t.used_at IS NOT NULL AND t.used_by = ?`,
-		token, deviceKey).Scan(&id.UserID, &id.Label, &created)
+		token, deviceKey).Scan(&id.UserID, &id.Label, &created, &kind)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Identity{}, false, nil
+		return Identity{}, "", false, nil
 	}
 	if err != nil {
-		return Identity{}, false, fmt.Errorf("read pairing replay: %w", err)
+		return Identity{}, "", false, fmt.Errorf("read pairing replay: %w", err)
 	}
 	id.Created = created != 0
-	return id, true, nil
+	return id, kind, true, nil
 }
 
 // loadUser fills id with the person named by userID.

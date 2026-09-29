@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -189,16 +191,17 @@ func (c *wsClient) hello(id int, extra string) map[string]json.RawMessage {
 	return c.expectOK(id)
 }
 
-// pairedDevice pairs a fresh key: by claiming the server if nobody owns it
-// yet, otherwise by inviting a device to the person who does.
+// pairedDevice pairs a fresh key: by claiming the server while no device can
+// reach it, otherwise by an invite one of the person's devices issues.
 func pairedDevice(t *testing.T, ts *httptest.Server, srv *Server) *device {
 	t.Helper()
 	ctx := context.Background()
-	id, err := srv.store.EnsureServerIdentity(ctx)
-	if err != nil {
+	if _, err := srv.store.EnsureServerIdentity(ctx); err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
-	if id.OwnerUserID == "" {
+	var issuer string
+	err := readDB(t, srv).QueryRowContext(ctx, "SELECT device_key FROM devices LIMIT 1").Scan(&issuer)
+	if errors.Is(err, sql.ErrNoRows) {
 		token, err := srv.store.IssueClaimToken(ctx, time.Now().Unix())
 		if err != nil {
 			t.Fatalf("IssueClaimToken: %v", err)
@@ -206,11 +209,10 @@ func pairedDevice(t *testing.T, ts *httptest.Server, srv *Server) *device {
 		d, _ := pairDevice(t, ts, token)
 		return d
 	}
-	var owner string
-	if err := readDB(t, srv).QueryRowContext(ctx, "SELECT user_id FROM users LIMIT 1").Scan(&owner); err != nil {
-		t.Fatalf("read owner: %v", err)
+	if err != nil {
+		t.Fatalf("read a paired device: %v", err)
 	}
-	token, err := srv.store.IssueDeviceInvite(ctx, owner, time.Now().Unix())
+	token, err := srv.store.IssueDeviceInvite(ctx, issuer, time.Now().Unix())
 	if err != nil {
 		t.Fatalf("IssueDeviceInvite: %v", err)
 	}
