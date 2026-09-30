@@ -97,7 +97,7 @@
 
 **⚠️ CRITICAL**: no user-story phase starts before this one is done.
 
-- [ ] T013 [P] Domain models in `lib/domain/model/connection/` and `lib/domain/model/device/device_invite.dart`, per data-model.md, with `freezed` where the neighbours use it:
+- [X] T013 [P] Domain models in `lib/domain/model/connection/` and `lib/domain/model/device/device_invite.dart`, per data-model.md, with `freezed` where the neighbours use it:
   - `server_addresses.dart`: `ServerAddresses` with `candidates(linkAddress)`;
   - `connection_path.dart`;
   - `connection_status.dart`: `ConnectionStatus`, `ConnectionState`, with derived `isOffline`, `isServerMismatch`, `showsTorBadge`;
@@ -105,14 +105,14 @@
   - `DeviceInvite`.
 
   Unit tests in `test/domain/model/connection/`.
-- [ ] T014 [P] Domain interfaces:
+- [X] T014 [P] Domain interfaces:
   - `lib/domain/service/tor_service.dart`: start, stop, setTarget, clearTarget, setDormant, status stream, bridge port and secret, onionFromPublicKey, isSupported;
   - `lib/domain/service/connection_status_service.dart`;
   - `lib/domain/service/app_lifecycle_service.dart`;
   - `lib/domain/repository/connection/server_addresses_repository.dart`;
   - `lib/domain/repository/connection/access_key_repository.dart`;
-  - extend `lib/domain/service/connectivity_service.dart` with `watchNetworkChanges()`, implemented in `lib/data/service/connectivity_service_impl.dart` (connectivity_plus result changes) and in its test mock.
-- [ ] T015 Implement the Tor services in `lib/data/service/tor/`:
+  - `lib/domain/service/network_change_service.dart`: `NetworkChangeService.watchChanges()`, implemented in `lib/data/service/network_change_service_impl.dart` (connectivity_plus result changes; a quiet one for the test env). It is a service of its own rather than a new method on `ConnectivityService`, whose interface three private test fakes implement.
+- [X] T015 Implement the Tor services in `lib/data/service/tor/`:
   - `native_tor_service.dart`, `@LazySingleton(env: [dev, prod])`: over `NoxTor`, the status stream polled every 250 ms while bootstrapping and every 2 s otherwise, state and cache dirs from `path_provider` (support/`nox_tor_state`, cache/`nox_tor_cache`);
   - `fake_tor_service.dart`, `env: [test]`: scriptable;
   - `tor_capability.dart`: false on Linux, like `VideoPlaybackCapability`.
@@ -120,14 +120,14 @@
   When the module reports `obsolete`, the native service writes `tor.obsolete_build` = the app build number to `SharedPreferences` (FR-026).
 
   Run `make generate`. Tests: `test/data/service/tor/native_tor_service_test.dart` with an injected `NoxTor` facade fake.
-- [ ] T016 Implement the repositories in `lib/data/repository/connection/`:
+- [X] T016 Implement the repositories in `lib/data/repository/connection/`:
   - `server_addresses_repository_impl.dart`: `session.server_addresses` JSON;
   - `access_key_repository_impl.dart`: X25519 via `cryptography`, `session.access_key`, `session.access_key_registered`, `session.invite_onion`, `session.invite_access_key`.
 
   The private keys are written with `IOSOptions`/`MacOsOptions(accessibility: KeychainAccessibility.unlocked_this_device)`, so no backup carries them to another device (FR-014).
 
   Add every new key to `clear()` and to `discardSignIn()` (except `session.access_key`) in `lib/data/repository/app/session_repository_impl.dart`. Tests: `test/data/repository/connection/server_addresses_repository_impl_test.dart`, `access_key_repository_impl_test.dart`, `test/data/repository/app/session_repository_impl_test.dart` (clear removes the new keys).
-- [ ] T017 [P] Implement `lib/data/service/app_lifecycle_service_impl.dart` (`AppLifecycleListener` → `Stream<AppLifecycleState>`, dev/prod) and a test-env fake; tests in `test/data/service/app_lifecycle_service_impl_test.dart`.
+- [X] T017 [P] Implement `lib/data/service/app_lifecycle_service_impl.dart` (`AppLifecycleListener` → `Stream<AppLifecycleState>`, dev/prod) and a test-env fake; tests in `test/data/service/app_lifecycle_service_impl_test.dart`.
 - [ ] T018 Read the server's addresses:
   - in `lib/data/remote/socket/nox_socket_client.dart`: parse `addresses` from the greeting reply into a `ServerAddresses` stream, cleared in `_teardown`, and expose the greeting's capability flag (`supportsAccessKeys`);
   - in `lib/data/sync/sync_service.dart`: handle the seq-0 `server.addresses` event next to `device.revoked`/`identity.updated`, saving through `ServerAddressesRepository` without touching the cursor.
@@ -283,7 +283,7 @@
 
 **Independent Test**: indicator goldens and widget tests; quickstart scenarios 2–3 visually.
 
-- [ ] T040 [P] [US6] Add the keys from contracts/ui-states.md to `lib/l10n/app_en.arb` and `lib/l10n/app_uk.arb` (same key sets), then run `make generate`.
+- [X] T040 [P] [US6] Add the keys from contracts/ui-states.md to `lib/l10n/app_en.arb` and `lib/l10n/app_uk.arb` (same key sets), then run `make generate`.
 - [ ] T041 [US6] Implement the indicator:
   - `ConnectionIndicatorBloc` (Freezed, over `ConnectionStatusService`): `lib/presentation/widgets/state/connection_indicator/bloc/`;
   - `AppConnectionIndicatorWidget`: `lib/presentation/widgets/state/app_connection_indicator_widget.dart`, per contracts/ui-states.md:

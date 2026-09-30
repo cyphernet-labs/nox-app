@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/data/repository/app/session_repository_impl.dart';
+import 'package:nox_app/data/repository/connection/connection_storage.dart';
 import 'package:nox_app/general/pairing/device_keys.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -317,6 +318,53 @@ void main() {
       expect((await repository.sweepLegacyKeys()).hasData, isTrue);
 
       expect(prefs.getBool('session.is_owner'), isNull);
+    });
+  });
+
+  group('phase 040 records', () {
+    const storage = FlutterSecureStorage();
+
+    Future<void> writeAll() async {
+      await storage.write(key: ConnectionStorage.serverAddresses, value: '{"direct":["10.0.0.5:8443"]}');
+      await storage.write(key: ConnectionStorage.accessKeyRegistered, value: '1');
+      await storage.write(key: ConnectionStorage.inviteOnion, value: 'abc.onion:443');
+      await storage.write(
+        key: ConnectionStorage.inviteAccessKey,
+        value: 'AAAA',
+        iOptions: ConnectionStorage.keyIOSOptions,
+        mOptions: ConnectionStorage.keyMacOsOptions,
+      );
+      await storage.write(
+        key: ConnectionStorage.accessKey,
+        value: 'BBBB',
+        iOptions: ConnectionStorage.keyIOSOptions,
+        mOptions: ConnectionStorage.keyMacOsOptions,
+      );
+    }
+
+    test('logout removes the addresses, the access key and any invite key', () async {
+      await repository.saveIdentifier(identifier: 'abc', onboardingComplete: true);
+      await writeAll();
+      await repository.clear();
+      for (final key in [
+        ConnectionStorage.serverAddresses,
+        ConnectionStorage.accessKeyRegistered,
+        ConnectionStorage.inviteOnion,
+        ConnectionStorage.inviteAccessKey,
+        ConnectionStorage.accessKey,
+      ]) {
+        expect(await storage.read(key: key), isNull, reason: key);
+      }
+    });
+
+    test('a failed sign-in keeps the device access key and drops the rest', () async {
+      await writeAll();
+      await repository.discardSignIn();
+      expect(await storage.read(key: ConnectionStorage.serverAddresses), isNull);
+      expect(await storage.read(key: ConnectionStorage.accessKeyRegistered), isNull);
+      expect(await storage.read(key: ConnectionStorage.inviteOnion), isNull);
+      expect(await storage.read(key: ConnectionStorage.inviteAccessKey), isNull);
+      expect(await storage.read(key: ConnectionStorage.accessKey), 'BBBB');
     });
   });
 }

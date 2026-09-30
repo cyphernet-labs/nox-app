@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
+import 'package:nox_app/data/repository/connection/connection_storage.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/app/session_model.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
@@ -253,6 +254,10 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       // and the world-epoch key would call that the same world.
       await _secureStorage.delete(key: _kServerAddress);
       await _secureStorage.delete(key: _kServerFingerprint);
+      // And what that server said about where it lives (phase 040), and any
+      // invite key the attempt was carrying. The device's own access key
+      // stays: like the device key, it names this install.
+      await ConnectionStorage.delete(_secureStorage, includeDeviceAccessKey: false);
       await _prefs.remove(_kOnboardingComplete);
       // And the author id written by the SAME call. Left behind it would point
       // at the previous server's person, and the next sign-in would inherit it
@@ -289,6 +294,9 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       await _secureStorage.delete(key: _kDeviceSecret);
       await _secureStorage.delete(key: _kServerAddress);
       await _secureStorage.delete(key: _kServerFingerprint);
+      // Phase 040: addresses, the access key and any invite key - each with the
+      // options it was written under, which `deleteAll` alone may not match.
+      await ConnectionStorage.delete(_secureStorage, includeDeviceAccessKey: true);
       // Kept for anything a later version writes and forgets to name above, and
       // not allowed to fail a wipe that has already happened.
       // Swallowed on purpose, and it is not a silent failure: the read-back

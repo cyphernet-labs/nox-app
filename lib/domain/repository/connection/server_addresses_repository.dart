@@ -1,0 +1,15 @@
+import 'package:nox_app/domain/model/connection/server_addresses.dart';
+import 'package:nox_app/domain/repository/base/repository_result.dart';
+
+/// The server's addresses as it last stated them, kept across restarts and
+/// wiped with the session (phase 040).
+abstract class ServerAddressesRepository {
+  Future<RepositoryResult<ServerAddresses>> read();
+
+  /// Replaces what the server said - the direct list and the onion address -
+  /// and keeps the last good direct address.
+  Future<RepositoryResult<bool>> saveFromServer({required List<String> direct, required String? onion});
+
+  /// The direct address that just answered with the right key.
+  Future<RepositoryResult<bool>> recordLastGood(String address);
+}

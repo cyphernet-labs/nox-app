@@ -10,6 +10,7 @@ class PlatformUtils {
   static bool get isAndroid => Platform.isAndroid;
   static bool get isIOS => Platform.isIOS;
   static bool get isMacOS => Platform.isMacOS;
+  static bool get isLinux => Platform.isLinux;
 
   /// The OS family, as the server records it against a device key.
   ///

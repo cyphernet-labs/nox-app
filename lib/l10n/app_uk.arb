@@ -181,5 +181,17 @@
   "windowSubtitleError": "Помилка",
   "videoPlay": "Відтворити",
   "videoPause": "Пауза",
-  "videoPlaybackError": "Не вдалося відтворити це відео. Збережіть його, щоб відкрити в іншій програмі."
+  "videoPlaybackError": "Не вдалося відтворити це відео. Збережіть його, щоб відкрити в іншій програмі.",
+  "connectionTorBadge": "Tor",
+  "connectionConnecting": "Підключення…",
+  "connectionSemanticsTor": "Підключено через Tor",
+  "connectionSemanticsConnecting": "Підключення до вашого сервера",
+  "connectionSemanticsConnectingTor": "Підключення до вашого сервера через Tor",
+  "connectionInfoTitle": "З'єднання",
+  "connectionInfoTor": "NOX не може дістатися до вашого сервера напряму, тож підключається через Tor. Це повільніше, але працює з будь-якої мережі.",
+  "connectionInfoConnecting": "NOX підключається до вашого сервера.",
+  "connectionInfoLocalNetwork": "Якщо ви вдома, перевірте, що NOX має доступ до локальної мережі в Параметрах.",
+  "connectionTorObsolete": "Оновіть NOX, щоб підключатися поза домом",
+  "devicesInviteHomeOnly": "Це посилання працює лише у вашій домашній мережі.",
+  "loginHomeNetworkOnly": "Не вдалося зв'язатися з вашим сервером. Під'єднання пристрою працює у вашій домашній мережі."
 }
