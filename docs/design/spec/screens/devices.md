@@ -27,7 +27,8 @@
 | Alone | Кроме текущего никого — в группе один ряд и кнопка `Add a device` под ней. |
 | Error | `Couldn't load your devices.` |
 | Action failed | `Couldn't revoke that device. Try again.` — плашка над списком, отдельная от ошибки загрузки. Принадлежит **одному** устройству и уходит по двум событиям: повторная попытка на том же устройстве или список, вернувшийся уже без него (отзыв, чей ответ потерялся, всё-таки прошёл — а нажать «ещё раз» можно только в строке, которой больше нет). Отзыв другого устройства её не снимает: первое всё ещё авторизовано. Разделены с фазы 038: экран перечитывает список сам, и одна строка на оба случая обвиняла бы загрузку, которая прошла. |
-| Invite | Карточка с QR и ссылкой; ссылка живёт **10 минут**. |
+| Invite | Карточка с QR и ссылкой; ссылка живёт **10 минут**. Приглашение всегда просится с onion-адресом сервера: такая ссылка (версии 2) работает из любой сети. |
+| Invite, только дома | Сервер выдал обычную ссылку — Tor у него выключен или не подключён. Под ссылкой пометка `This link works only on your home network.` (`onSurfaceVariant`): приглашение, которое заведомо не сработает снаружи, должно сказать об этом сразу. |
 
 ## Взаимодействия
 
@@ -54,4 +55,5 @@
 - Revoke this device? / It will be signed out and won't be able to connect again.
 - (для текущего устройства) **вопрос и предупреждение — logout'овские**: `Log out?` / `This device will be signed out and won't be able to connect again. You'll need a new pairing link to come back.` Кнопка подтверждения при этом остаётся `Revoke` — человек нажимает то, что просил, и читает то, что это на самом деле сделает. Отдельная фраза «This is the device you're using. Revoking it signs you out here.» **снята**: отозвать устройство, на котором сидишь, — это и есть выход из аккаунта (локальные данные стираются, вернуться можно только по новой pairing-ссылке), и предупреждать об этом мягче, чем предупреждает сам logout, значит недоговаривать.
 - Scan this from the other device. The link works for 10 minutes.
+- This link works only on your home network.
 - Couldn't load your devices. / Couldn't revoke that device. Try again. / Couldn't create an invite.

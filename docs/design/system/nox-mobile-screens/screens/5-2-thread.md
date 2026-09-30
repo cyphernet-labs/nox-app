@@ -13,8 +13,12 @@ App bar (back + chat name + a disabled **Invite a person** action). Message stre
 - `filled` — Filled
 - `empty` — Empty
 - `attachment` — Attachment
+- `connecting` — Connecting (corner)
+- `tor` — Through Tor (corner badge)
 - `offline` — Offline
 - `server-mismatch` — Wrong server
+
+Connection corner (phase 040): the same rule as 5.1 — only deviations, right of the app bar before the invite action: a `Tor` badge on the Tor path, “Connecting…” (with the badge on Tor) while the path comes up. A message sent meanwhile waits as `pending`, it does not fail. “No connection” appears only after a whole round of path finding found nothing. The wrong-server banner is for the onion address only.
 
 ## Behavior
 - Messages group by author; an AuthorHeader precedes each group (no per-message avatars in the feed).
@@ -37,6 +41,7 @@ App bar (back + chat name + a disabled **Invite a person** action). Message stre
 - System: Chat created by Aria
 - Composer placeholder: Message
 - Invite action (screen-reader name): Invite a person
+- Corner: Connecting… · Tor
 
 ## Design-system components
 - AppBar (title)

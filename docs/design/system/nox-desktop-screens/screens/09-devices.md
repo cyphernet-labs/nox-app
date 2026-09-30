@@ -13,7 +13,8 @@ Fills the Settings detail pane (7.1); no push, selection swaps the pane. One gro
 - `alone` — nothing but this device
 - `error` — Couldn't load your devices.
 - `action error` — Couldn't revoke that device. Try again. (its own line above the list, never the list's)
-- `invite` — QR card, link valid for 10 minutes
+- `invite` — QR card, link valid for 10 minutes. Always asked for with the server's onion address (phase 040): such a link (version 2) works from any network
+- `invite-home-only` — the server gave an ordinary link (its Tor is off or not connected): a note under the link, “This link works only on your home network.” (`onSurfaceVariant`)
 - `Revoke` is destructive (`error`), not the brand accent: it cannot be undone without a new pairing link, and on the current device it is a logout
 
 ## Behavior
@@ -39,6 +40,7 @@ Fills the Settings detail pane (7.1); no push, selection swaps the pane. One gro
 - Revoke this device? / It will be signed out and won't be able to connect again.
 - (current device) Log out? / This device will be signed out and won't be able to connect again. You'll need a new pairing link to come back.
 - Scan this from the other device. The link works for 10 minutes.
+- This link works only on your home network.
 - Copy
 - Hide
 

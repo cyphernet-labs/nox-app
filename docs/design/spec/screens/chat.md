@@ -76,8 +76,10 @@ Material Scaffold с `resizeToAvoidBottomInset: true`; адаптируется 
 | Loading-older | Подгружается история наверх (auto). Сверху списка — `CircularProgressIndicator`. |
 | Sending | Сообщение появляется в ленте сразу со статусом `pending` → `sent`. |
 | Send-error | Не удалось отправить. Статус `error` на сообщении; тап → retry. |
-| Offline | Нет соединения — постоянный `MaterialBanner` `No connection` сверху (см. [overview.md / Offline](../overview.md#offline--нет-соединения)). Отправка офлайн → `pending` до восстановления. |
-| Server mismatch | Машина по сохранённому адресу предъявила не тот ключ, что назвала ссылка спаривания. Постоянная плашка `This isn't the server you paired with` с действием `Try again`. **Вместо** `Offline`, а не вместе с ним: сервер ответил, и «нет соединения» здесь — неправда. Ничего локального не стирается, переписка видна под плашкой, а отправленное ждёт в очереди со статусом `pending` и **не** получает `error`. Само не проходит: единственный выход — действие. |
+| Connecting | Путь до сервера ищется или поднимается: в углу AppBar (перед действием приглашения) `Connecting…`, через Tor — с бейджем `Tor` ([overview / Состояние связи](../overview.md#состояние-связи-в-углу-экрана)). Баннера нет; отправленное ждёт подъёма пути в `pending`. |
+| Через Tor | Связь есть, путь — Tor: в углу бейдж `Tor`. |
+| Offline | Целый раунд поиска пути не дал ничего — постоянный `MaterialBanner` `No connection` сверху (см. [overview.md / Offline](../overview.md#offline--нет-соединения)), угол пуст. Отправка офлайн → `pending` до восстановления. |
+| Server mismatch | Сервер, до которого приложение дошло по его **onion-адресу**, предъявил не тот ключ, что назвала ссылка спаривания (чужой ключ на прямом адресе — «не дома», не это состояние). Постоянная плашка `This isn't the server you paired with` с действием `Try again`. **Вместо** `Offline`, а не вместе с ним: сервер ответил, и «нет соединения» здесь — неправда. Ничего локального не стирается, переписка видна под плашкой, а отправленное ждёт в очереди со статусом `pending` и **не** получает `error`. Само не проходит: единственный выход — действие. |
 | Fatal | Передача в 3.1 (embedded). |
 
 ## Взаимодействия
@@ -120,6 +122,8 @@ Material Scaffold с `resizeToAvoidBottomInset: true`; адаптируется 
 | Offline banner | `No connection` |
 | Server-mismatch banner | `This isn't the server you paired with` |
 | Server-mismatch action | `Try again` |
+| Corner, connecting | `Connecting…` |
+| Corner, Tor badge | `Tor` |
 
 (Date-separators — по лестнице из overview; не дублируются здесь.)
 

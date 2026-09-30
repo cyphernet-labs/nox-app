@@ -156,7 +156,7 @@
   - `unauthenticated` → the existing revocation path.
 
   Tests in `test/data/sync/connection/access_key_registrar_test.dart` and the handshake test.
-- [ ] T023 Implement `ConnectionStatusService`:
+- [X] T023 Implement `ConnectionStatusService`:
   - `lib/data/sync/connection/connection_status_service_impl.dart` (dev): socket phase plus selector events, path, `torObsolete` from `tor.obsolete_build`; offline smoothing per research decision 12;
   - `lib/data/service/phase_connection_status_service.dart` (prod/test): from `SessionPhaseService`.
 
@@ -284,7 +284,7 @@
 **Independent Test**: indicator goldens and widget tests; quickstart scenarios 2–3 visually.
 
 - [X] T040 [P] [US6] Add the keys from contracts/ui-states.md to `lib/l10n/app_en.arb` and `lib/l10n/app_uk.arb` (same key sets), then run `make generate`.
-- [ ] T041 [US6] Implement the indicator:
+- [X] T041 [US6] Implement the indicator:
   - `ConnectionIndicatorBloc` (Freezed, over `ConnectionStatusService`): `lib/presentation/widgets/state/connection_indicator/bloc/`;
   - `AppConnectionIndicatorWidget`: `lib/presentation/widgets/state/app_connection_indicator_widget.dart`, per contracts/ui-states.md:
     - states: nothing / `Tor` / `Connecting…` / `Connecting…` + `Tor`;
@@ -297,15 +297,15 @@
   - bloc test;
   - widget goldens: four states, light and dark;
   - accessibility checks next to `test/presentation/widgets/accessibility_test.dart`.
-- [ ] T042 [US6] Place the indicator:
+- [X] T042 [US6] Place the indicator:
   - narrow: chats list app bar before the account avatar (`lib/presentation/pages/chats_list_page/chats_list_page.dart`) and chat thread app bar before the invite action (`lib/presentation/pages/chat_thread_page/chat_thread_page.dart`);
   - wide: an optional `trailing` on `AppWindowTitlebarWidget` (`lib/presentation/widgets/shell/app_window_titlebar_widget.dart`), filled by `TabBarShell` (`lib/presentation/widgets/shell/tab_bar_shell_widget.dart`).
 
   Tests in `app_window_titlebar_widget_test.dart` and the shell test. Page goldens:
   - 5.1 and 5.2 mobile with `online(tor)` and `connecting(tor)`;
   - shell desktop with the same two states.
-- [ ] T043 [US6] Drive banners from `ConnectionStatusService` instead of `!phase.isCurrent` in `ChatsListBloc`, `ChatThreadBloc` (the outbox flush edge stays on «became current») and `ChatCardBloc`. Update their tests and fakes. The «No connection» banner shows only for `offline`.
-- [ ] T044 [US6] Show `connectionTorObsolete` as a notice strip on 5.1 (both widths) when `torObsolete`. Tests plus goldens mobile and desktop.
+- [X] T043 [US6] Drive banners from `ConnectionStatusService` instead of `!phase.isCurrent` in `ChatsListBloc`, `ChatThreadBloc` (the outbox flush edge stays on «became current») and `ChatCardBloc`. Update their tests and fakes. The «No connection» banner shows only for `offline`.
+- [X] T044 [US6] Show `connectionTorObsolete` as a notice strip on 5.1 (both widths) when `torObsolete`. Tests plus goldens mobile and desktop.
 
 **Checkpoint**: `make gate` and `make golden-verify` green; all user stories work independently.
 
@@ -313,26 +313,26 @@
 
 ## Phase 10: Polish & Cross-Cutting Concerns
 
-- [ ] T045 [P] Update the blueprints in `docs/blueprints/mobile/`:
+- [X] T045 [P] Update the blueprints in `docs/blueprints/mobile/`:
   - `14-networking-and-auth.md`: path selection, Tor transport, bridge, lifecycle, network changes;
   - `04-data-layer.md`: onion dial in §7а pinning;
   - `02-dependency-injection.md`: new registrations and env splits;
   - `01-stack-and-tooling.md`: Rust toolchain, native assets, workspace package;
   - `09-build-and-secrets-infra.md`: Rust prerequisite, NDK, CI compile-check needs rustup.
-- [ ] T046 [P] Update the design docs:
+- [X] T046 [P] Update the design docs:
   - `docs/design/spec/` (5.1, 5.2, devices invite, shell titlebar; decisions table);
   - `docs/design/system/nox-mobile-screens/screens/5-1-chats.md`, `5-2-thread.md`, `7-8-devices.md`;
   - `docs/design/system/nox-desktop-screens/screens/01-chats.md`, `09-devices.md`.
 
   Content: indicator states and placement, the home-only invite note, the obsolete strip.
-- [ ] T047 [P] Update `CLAUDE.md` (implementation notes: Tor transport, path selection, epoch by fingerprint, access key, build prerequisites) and `docs/client-backend/roadmap-tor.md` (stage 2 status).
-- [ ] T048 Run the quickstart end-to-end scenarios on macOS, the iOS simulator and the Android emulator against a local `noxd` with Tor. Record bring-up timings and memory in `research.md` «Замер», and note anything that differs.
-- [ ] T049 Run the gates: `make gate`, `make golden-verify`, `make tor-test`. The Go gate is not touched: no Go changes.
-- [ ] T050 Keep the onion address and keys out of the logs (FR-013, SC-008, Constitution I):
+- [X] T047 [P] Update `CLAUDE.md` (implementation notes: Tor transport, path selection, epoch by fingerprint, access key, build prerequisites) and `docs/client-backend/roadmap-tor.md` (stage 2 status).
+- [X] T048 Run the quickstart end-to-end scenarios on macOS, the iOS simulator and the Android emulator against a local `noxd` with Tor. Record bring-up timings and memory in `research.md` «Замер», and note anything that differs.
+- [X] T049 Run the gates: `make gate`, `make golden-verify`, `make tor-test`. The Go gate is not touched: no Go changes.
+- [X] T050 Keep the onion address and keys out of the logs (FR-013, SC-008, Constitution I):
   - Audit every `logRepository` call in `lib/data/remote/socket/`, `lib/data/remote/pinned_http_client.dart`, `lib/data/sync/connection/` and `lib/data/service/tor/`.
   - Hosts ending in `.onion` are logged as `[onion]`; keys and secrets are never logged.
   - Test in `test/data/sync/connection/log_redaction_test.dart`: capture `LogRepository` output through a selector run with Tor, a pairing with a v2 link, and a bridge failure; assert there is no `.onion` and no base64 key material.
-- [ ] T051 [P] Prepare CI for the native package for when the paused workflows are re-enabled:
+- [X] T051 [P] Prepare CI for the native package for when the paused workflows are re-enabled:
   - `.github/workflows/compile-check.yml`: install rustup with the toolchain from `packages/nox_tor/rust/rust-toolchain.toml`; on Android, also NDK 28.2 before the build. The Linux job needs nothing.
   - `.github/workflows/ci.yml`: the macOS gate job needs rustup too, because `flutter test` runs the hook.
 - [ ] T052 Put the owner's device checks (quickstart «Проверки на устройстве») into the PR description: iOS local-network prompt and background, mobile network away from home, Windows build and bootstrap.

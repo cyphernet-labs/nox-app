@@ -14,6 +14,9 @@ NavigationRail (80) + chat list pane (360, with pane header + SearchBar) + threa
 - `no-selection` — No selection
 - `thread-empty` — Thread empty
 - `attachment` — Attachment
+- `connecting` — Connecting (titlebar)
+- `tor` — Through Tor (titlebar badge)
+- `tor-obsolete` — Update NOX strip
 - `offline` — Offline
 - `server-mismatch` — Wrong server
 - `loading` — Loading
@@ -28,8 +31,10 @@ NavigationRail (80) + chat list pane (360, with pane header + SearchBar) + threa
 - The header shows **no member list, no per-chat search, no folders**. No members because a chat has no roster to show: the server belongs to one person and serves only their own devices. Search and folders are out of scope. Source of truth: `docs/design/spec/screens/chat.md` §Десктоп.
 
 > **Changed 2026-09-10 (phase 037).** This file used to describe the header as carrying a *single* info action, and justified the missing member list by the "open shared space" model. Both statements are superseded: there are two actions now, and the reason for no members is that the machine holds one person. The corpus follows the owner's decision, not the other way round. The live screen in `_src/` draws it too: this header composes `IconButton`, which takes an explicit `color`, so the seam is dimmed to the M3 disabled 38% exactly as the app dims it. The excuse first written here — "the corpus AppBar has no disabled variant" — was about a widget this screen does not use. Per-chat search and folders went at the same time (never in the spec), and so did the `Aria, Mox and you` subtitle: a chat has no roster.
-- Offline: “No connection” banner appears in both panes. Loading: spinner in the list pane.
-- Wrong server (036): the machine at the paired address presented a key the pairing link did not name. A persistent banner “This isn't the server you paired with” with a “Try again” action, in **both panes** — with no chat selected the thread pane carries it itself, because half the window would otherwise say nothing at all. INSTEAD of the offline banner, never alongside it: something answered, so “No connection” would be false, and the glyph is `error_outline` rather than `wifi_off`. Nothing local is thrown away and nothing is cleared; a message written in this state waits as `pending` and must never show as an error, because the server never saw it. It does not pass on its own — the action is the only way out.
+- Connection state (phase 040) lives at the right edge of the window titlebar, so it is visible on every screen of the shell: a `Tor` badge on the Tor path, “Connecting…” (with the badge on Tor) while a path comes up or catches up, nothing when direct and current. Clicking it opens a dialog explaining the path (on macOS also where to allow Local Network access).
+- Update NOX (phase 040): a notice strip “Update NOX to connect away from home” over the list pane when the Tor network has declared the built-in client obsolete.
+- Offline: “No connection” banner appears in both panes, once a whole round of path finding found nothing. Loading: spinner in the list pane.
+- Wrong server (036, narrowed by 040): the server reached through its ONION address presented a key the pairing link did not name; another key at a direct address is “not home”, never this state. A persistent banner “This isn't the server you paired with” with a “Try again” action, in **both panes** — with no chat selected the thread pane carries it itself, because half the window would otherwise say nothing at all. INSTEAD of the offline banner, never alongside it: something answered, so “No connection” would be false, and the glyph is `error_outline` rather than `wifi_off`. Nothing local is thrown away and nothing is cleared; a message written in this state waits as `pending` and must never show as an error, because the server never saw it. It does not pass on its own — the action is the only way out.
 - Search filters the list pane in place; no match → “No chats found”.
 - Transient feedback floats as a Snackbar centered over the thread pane.
 
@@ -46,6 +51,8 @@ NavigationRail (80) + chat list pane (360, with pane header + SearchBar) + threa
 - No-selection: Select a chat / Choose a conversation on the left, or press + to start a new one.
 - Invite action: Invite a person (always disabled)
 - Wrong-server banner: This isn't the server you paired with / Try again
+- Titlebar: Connecting… · Tor
+- Update strip: Update NOX to connect away from home
 
 > The thread subtitle that named members ("Aria, Mox and you") was corpus drift before phase 037 and wrong outright after it — a chat has no roster. Removed from the live screen with the rest of this revision; the header shows the chat name and nothing under it.
 

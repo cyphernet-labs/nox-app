@@ -587,7 +587,9 @@ Future<void> mutate({
 
 ### 7а. Dio `ApiClient`
 
-**Реальный код.** Один host, один экземпляр Dio. `ApiClient` — `@lazySingleton`, инжектирующий `AppConfigRepository` и `PinnedHttpClient`; `initBase({required String address})` ставит base URL (`https` по умолчанию, не `http`), вешает `IOHttpClientAdapter` на общий проверенный клиент и **один раз** — `AuthInterceptor`. Адрес **обязателен с фазы 036**, и `AppConfig.apiUrl` перестал быть его источником: у адреса из сборки нет отпечатка по построению, значит соединение с ним нечем проверить. Зовёт `initBase` только `LiveSessionStarter`, передавая спаренный адрес; `main.dart` не зовёт его вовсе. Data source, инжектирующий `ApiClient`, приехал с файловой цепочкой (фаза 028).
+**Реальный код.** Один host, один экземпляр Dio. `ApiClient` — `@lazySingleton`, инжектирующий `AppConfigRepository` и `PinnedHttpClient`; `initBase({required String address})` ставит base URL (`https` по умолчанию, не `http`), вешает `IOHttpClientAdapter` на общий проверенный клиент и **один раз** — `AuthInterceptor`. Адрес **обязателен с фазы 036**, и `AppConfig.apiUrl` перестал быть его источником: у адреса из сборки нет отпечатка по построению, значит соединение с ним нечем проверить. Зовёт `initBase` только `LiveSessionStarter`: при старте — со спаренным адресом, затем на каждом приветствии — с адресом соединения, через которое оно пришло, потому что байты вложений идут тем же путём, что команды (прямой адрес или onion, [14-networking-and-auth.md](14-networking-and-auth.md) §6). `main.dart` не зовёт его вовсе. Data source, инжектирующий `ApiClient`, приехал с файловой цепочкой (фаза 028).
+
+**Хост `.onion`** `PinnedHttpClient` набирает через локальный мост Tor-клиента: `127.0.0.1:<порт моста>`, затем 32-байтный секрет моста, затем TLS к onion-имени и та же проверка листа против отпечатка. Порт и секрет читаются в момент рукопожатия из `onionBridge` (его ставит `LiveSessionStarter`: `() => TorService.bridge`). Моста нет — набор падает сразу (`SocketException`), а не уходит в обычный DNS.
 
 `lib/data/remote/api_client.dart`:
 
