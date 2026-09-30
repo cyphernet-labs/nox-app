@@ -224,7 +224,7 @@
   - a Tor client not ready within 10 s → stop + start from the same dirs.
 
   Desktop ignores it. Tests in `connection_path_selector_test.dart` with a fake lifecycle.
-- [ ] T031 [US2] Lossless switch test in `test/data/sync/live_session_starter_test.dart`, run over 20 switches (SC-005): a message sent during each switch goes out once (outbox idempotency + replay `since`) and incoming events are not duplicated (seq de-dup).
+- [X] T031 [US2] Lossless switch test in `test/data/sync/connection/lossless_switch_test.dart` (the real socket, selector, journal applier, outgoing queue and message repository over a served fake), run over 20 switches (SC-005): a message sent during each switch goes out once (outbox idempotency + replay `since`) and incoming events are not duplicated (seq de-dup).
 
 ---
 
@@ -249,7 +249,7 @@
   - replace 'a future version is refused' with v2 vectors built like the server's (IPv4, IPv6, DNS);
   - version 3 is still refused;
   - v1 is unchanged.
-- [ ] T035 [US4] Sign in with a v2 link in `lib/data/repository/app/auth_repository_impl.dart` `signIn` and `lib/data/sync/live_identity_handshake.dart`:
+- [X] T035 [US4] Sign in with a v2 link in `lib/data/repository/app/auth_repository_impl.dart` `signIn` and `lib/data/sync/live_identity_handshake.dart`:
   - store `session.invite_onion` (derived through `TorService.onionFromPublicKey`; skipped where Tor is unsupported) and `session.invite_access_key`;
   - the selector uses the invite key when the device has no registered key;
   - after the `pair` reply, success or not, erase both invite records and switch the Tor target to the own key.
@@ -272,7 +272,7 @@
 
 **Independent Test**: registrar tests; logout tests; quickstart scenario 7.
 
-- [ ] T038 [US5] Wipe on logout in `lib/data/repository/app/auth_repository_impl.dart`: right after `LiveSessionStarter.stop`, call `TorService.stop()` and delete the Tor state and cache directories. `clear()` already covers the keys and addresses (T016). Tests in `test/data/repository/app/auth_repository_impl_test.dart`: Tor stopped, dirs deleted, keys gone (SC-007).
+- [X] T038 [US5] Wipe on logout in `lib/data/repository/app/auth_repository_impl.dart`: right after `LiveSessionStarter.stop`, call `TorService.stop()` and delete the Tor state and cache directories. `clear()` already covers the keys and addresses (T016). Tests in `test/data/repository/app/auth_repository_impl_test.dart`: Tor stopped, dirs deleted, keys gone (SC-007).
 - [X] T039 [US5] Handle a key the service does not know: a `wrong_client_auth` from the bridge marks the key unregistered, so the next direct greeting re-registers it, and the selector stops retrying Tor until then (`access_key_registrar.dart`, `connection_path_selector.dart`). Tests in both test files.
 
 ---

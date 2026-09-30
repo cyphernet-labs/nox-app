@@ -82,6 +82,17 @@ class NoxSocketClient {
   /// event with `seq >= _helloCursor` has been applied (contract §3).
   int _helloCursor = 0;
 
+  /// The highest journal `seq` seen on the CURRENT connection.
+  ///
+  /// The replay follows the greeting reply on the wire, and a burst of frames
+  /// can be delivered before the code awaiting that reply resumes - more so
+  /// through Tor, which hands bytes over in cells. Events seen in that window
+  /// arrive while the phase is still `connecting`, so the catch-up rule never
+  /// looks at them; without this the socket would sit in `catchingUp` until
+  /// the next live event, and nothing that waits for `live` - the outgoing
+  /// queue among them - would move.
+  int _seenSeq = 0;
+
   /// Asked for an address before every attempt (phase 040).
   SocketTargetProvider? _targets;
 
@@ -421,6 +432,7 @@ class NoxSocketClient {
       case CommandReply(:final id):
         _pending.remove(id)?.complete(frame);
       case ServerEvent():
+        if (frame.seq > _seenSeq) _seenSeq = frame.seq;
         _events.add(frame);
         _maybeGoLive(frame.seq);
       case null:
@@ -644,8 +656,9 @@ class NoxSocketClient {
         // point and the bootstrap happens through ordinary list reads (§3).
         await _syncRepository.advanceCursor(_helloCursor);
         _phase.add(SessionPhase.live);
-      } else if (since >= _helloCursor) {
-        // Already level with the server: the catch-up rule resolves instantly.
+      } else if (since >= _helloCursor || _seenSeq >= _helloCursor) {
+        // Already level with the server, or the replay overtook this very
+        // continuation: either way the catch-up rule has been met.
         _phase.add(SessionPhase.live);
       }
     } on SocketUnavailableException {
@@ -762,6 +775,7 @@ class NoxSocketClient {
     limits = null;
     addresses = null;
     _dialled = null;
+    _seenSeq = 0;
     // Guarded too: dispose() closes the subject while an unawaited greeting can
     // still be in flight, and adding to a closed subject throws. Nobody is
     // listening by then, so there is nothing to tell and nothing to fail.

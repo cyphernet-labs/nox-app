@@ -12,9 +12,9 @@ import 'package:rxdart/rxdart.dart';
 /// one and script it.
 @LazySingleton(as: TorService, env: [Environment.test])
 class FakeTorService implements TorService {
-  FakeTorService({this.supported = false});
+  FakeTorService();
 
-  bool supported;
+  bool supported = false;
 
   /// What start() moves to; tests set it before the path selector runs.
   TorStatus afterStart = const TorStatus(state: TorState.ready, bootstrapPercent: 100);

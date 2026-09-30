@@ -22,6 +22,7 @@ import 'package:nox_app/domain/repository/device/device_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
+import 'package:nox_app/domain/service/tor_service.dart';
 
 /// Mutate source-of-truth (session) → re-derive app state. Single logout path;
 /// only forced logout passes `sessionExpired`. Sign-in is a stub (backend TBD).
@@ -274,6 +275,18 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         // mid-wipe would repopulate the stores this is in the middle of
         // clearing, leaving a logged-out device holding someone's messages.
         if (getIt.isRegistered<LiveSessionStarter>()) await getIt<LiveSessionStarter>().stop();
+        // The Tor client's state goes with the session (FR-018, FR-024): its
+        // directories hold the guards and descriptors it learned on the way to
+        // THIS person's server. Best-effort like the file cache below - a
+        // directory that will not delete is no reason to leave the previous
+        // identity's chats on disk.
+        if (getIt.isRegistered<TorService>()) {
+          try {
+            await getIt<TorService>().wipe();
+          } catch (error, stackTrace) {
+            logRepository.error(target: this, error: error.runtimeType, stackTrace: stackTrace);
+          }
+        }
         // The outgoing drain closes with it, and for the same reason: a pass
         // still in flight would persist a message into the store being emptied.
         //

@@ -351,6 +351,25 @@ void main() {
       expect(client.currentPhase, SessionPhase.live);
     });
 
+    test('a replay that overtakes the greeting reply still ends the catch-up', () async {
+      // The reply and the replay can land in one burst - through Tor bytes
+      // come in cells - and be delivered before the code awaiting the reply
+      // resumes. The catch-up rule must still see them, or the socket sits in
+      // catchingUp until the next live event and the outgoing queue waits.
+      await sync.setJournal('j_test');
+      await sync.advanceCursor(4);
+      await client.start(url: url, credentialsProvider: () async => const GreetingCredentials());
+      final socket = factory.latest;
+      socket.pushGreeting();
+      await waitUntil(() => socket.commandNamed('session.hello') != null, reason: 'the client greets back');
+
+      socket.replyToHello(cursor: 6);
+      socket.pushEvent(seq: 5);
+      socket.pushEvent(seq: 6);
+
+      await waitUntil(() => client.currentPhase == SessionPhase.live, reason: 'caught up from the burst');
+    });
+
     test('a schema the server does not speak is terminal, not retried', () async {
       await client.start(url: url);
       final socket = factory.latest;

@@ -254,6 +254,16 @@ class ConnectionPathSelector implements SocketTargetProvider {
     }
   }
 
+  /// Drops a one-time key a version-2 link lent, once its pairing has been
+  /// answered (FR-021). The Tor client holds keys in memory only; the next
+  /// round sets this device's own key instead.
+  void forgetLentKey() {
+    final target = _torTarget;
+    if (target == null || !target.invite) return;
+    _tor.clearTarget();
+    _torTarget = null;
+  }
+
   @override
   void reportPinRefused(Uri url) {
     // Nothing to remember beyond the log: the next round probes again, and the
