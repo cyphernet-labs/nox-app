@@ -6,6 +6,8 @@ import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
+import 'package:nox_app/domain/model/connection/connection_path.dart';
+import 'package:nox_app/domain/model/connection/connection_status.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/domain/model/qr/camera_permission_status.dart';
 import 'package:nox_app/presentation/pages/qr_scan_page/bloc/qr_scan_bloc.dart';
@@ -31,6 +33,7 @@ import 'package:nox_app/presentation/widgets/primitives/file_type.dart';
 import 'package:nox_app/presentation/widgets/shell/app_bottom_bar_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_create_fab_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_navigation_rail_widget.dart';
+import 'package:nox_app/presentation/widgets/state/app_connection_indicator_widget.dart';
 
 import '../../utils/pump_app.dart';
 
@@ -59,6 +62,27 @@ void main() {
         expect(size.width, greaterThanOrEqualTo(48));
         expect(size.height, greaterThanOrEqualTo(48));
       }
+    });
+
+    testWidgets('the connection corner is >= 48x48 and named for a screen reader at 2.0 text scale (FR-029)', (tester) async {
+      final handle = tester.ensureSemantics();
+      await pumpApp(
+        tester,
+        const Center(
+          child: AppConnectionIndicatorWidget(
+            wide: false,
+            status: ConnectionStatus(state: LinkState.connecting, path: ConnectionPath.tor),
+          ),
+        ),
+        textScale: 2.0,
+      );
+
+      final size = tester.getSize(find.byType(InkWell));
+      expect(size.width, greaterThanOrEqualTo(48));
+      expect(size.height, greaterThanOrEqualTo(48));
+      expect(find.bySemanticsLabel(l10nEn.connectionSemanticsConnectingTor), findsOneWidget);
+      expect(tester.takeException(), isNull, reason: 'no overflow at 2.0');
+      handle.dispose();
     });
 
     testWidgets('create FAB tap target is >= 48x48 with a tooltip', (tester) async {

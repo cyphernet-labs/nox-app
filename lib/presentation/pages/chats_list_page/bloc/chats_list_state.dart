@@ -7,7 +7,7 @@ part of 'chats_list_bloc.dart';
 /// arrive above it. Without it no page-level golden contains a chat row with a
 /// badge at all, and the desktop rendering of one would have no coverage
 /// (Constitution VI).
-enum ChatsListScenario { normal, empty, inlineError, fatal, offline, pinRefused, unread }
+enum ChatsListScenario { normal, empty, inlineError, fatal, offline, pinRefused, unread, torObsolete }
 
 @freezed
 sealed class ChatsListState with _$ChatsListState {
@@ -31,6 +31,10 @@ sealed class ChatsListState with _$ChatsListState {
     /// and lead to different actions: one waits, the other cannot be waited
     /// out.
     @Default(false) bool isServerMismatch,
+
+    /// The Tor network has declared the client built into this version
+    /// obsolete: the person is asked to update (phase 040, FR-026).
+    @Default(false) bool torObsolete,
     @Default(false) bool hasLoadError,
     String? selectedChatId,
   }) = Initialized;

@@ -41,6 +41,11 @@ sealed class ChatThreadEvent with _$ChatThreadEvent {
   /// made the app blame the network and keep calling that server for ever.
   const factory ChatThreadEvent.sessionPhaseChanged(SessionPhase phase) = SessionPhaseChanged;
 
+  /// Where the connection stands changed (phase 040): drives the banners.
+  /// Sending stays on the phase above - only a current channel takes a send,
+  /// whatever the corner says.
+  const factory ChatThreadEvent.connectionStatusChanged(ConnectionStatus status) = ConnectionStatusChanged;
+
   /// The person asked for another attempt, from the banner.
   const factory ChatThreadEvent.retryConnection() = RetryConnection;
 

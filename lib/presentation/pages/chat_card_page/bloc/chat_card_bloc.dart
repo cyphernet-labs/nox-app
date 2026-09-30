@@ -8,8 +8,9 @@ import 'package:nox_app/domain/model/chat/message_model.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
-import 'package:nox_app/domain/model/session/session_phase.dart';
+import 'package:nox_app/domain/model/connection/connection_status.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
+import 'package:nox_app/domain/service/connection_status_service.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/identity/identity_resolver.dart';
@@ -34,7 +35,7 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
     on<Initialize>(_onInitialize);
     on<ViewModeChanged>(_onViewModeChanged);
     on<FilesRefreshed>(_onFilesRefreshed);
-    on<SessionPhaseChanged>(_onSessionPhaseChanged);
+    on<ConnectionStatusChanged>(_onConnectionStatusChanged);
     on<RetryConnection>(_onRetryConnection);
     on<SetScenario>(_onSetScenario);
     on<PersonLabelChanged>(_onPersonLabelChanged);
@@ -43,6 +44,7 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
   final ChatRepository _chatRepository = getIt<ChatRepository>();
   final MessageRepository _messageRepository = getIt<MessageRepository>();
   final SessionPhaseService _sessionPhaseService = getIt<SessionPhaseService>();
+  final ConnectionStatusService _connectionStatus = getIt<ConnectionStatusService>();
   final SessionRepository _sessionRepository = getIt<SessionRepository>();
 
   StreamSubscription<String?>? _labelSub;
@@ -51,16 +53,17 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
   late String _chatId;
   ChatCardScenario _scenario = ChatCardScenario.normal;
 
-  // The live channel's phase (P1, widened by 036). The whole phase is kept, not
-  // a boolean derived from it. Mirrors ChatsListBloc / ChatThreadBloc.
-  StreamSubscription<SessionPhase>? _connSub;
-  SessionPhase _phase = SessionPhase.live;
+  // Where the connection stands (P1, widened by 036 and 040). The whole status
+  // is kept, not a boolean derived from it. Mirrors ChatsListBloc / ChatThreadBloc.
+  StreamSubscription<ConnectionStatus>? _connSub;
+  late ConnectionStatus _status = _connectionStatus.status;
 
   /// The wrong machine answered. Takes precedence over the offline banner: both
   /// would otherwise show at once, and "no connection" is simply false here.
-  bool _isServerMismatch() => _phase.isServerMismatch || _scenario == ChatCardScenario.pinRefused;
+  bool _isServerMismatch() => _status.isServerMismatch || _scenario == ChatCardScenario.pinRefused;
 
-  bool _isOffline() => !_isServerMismatch() && (!_phase.isCurrent || _scenario == ChatCardScenario.offline);
+  /// «No connection» only once a whole round of path finding found nothing.
+  bool _isOffline() => !_isServerMismatch() && (_status.isOffline || _scenario == ChatCardScenario.offline);
 
   // Live change-signal (feature 017 / R5): a new attachment sent to this chat writes
   // to the message store → re-derive the files. Value ignored — getChatFiles stays the
@@ -88,7 +91,7 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
     // The session phase, not raw device connectivity, is what says whether the
     // data on screen is current: a device can be online while the socket is
     // down, and the socket can be open while replay is still running (FR-005).
-    _connSub ??= _sessionPhaseService.watchPhase().listen((phase) => add(ChatCardEvent.sessionPhaseChanged(phase)));
+    _connSub ??= _connectionStatus.watchStatus().listen((status) => add(ChatCardEvent.connectionStatusChanged(status)));
     // Watched, not read once. The desktop side sheet stays open while the
     // person renames themselves from another device, and a snapshot would keep
     // rendering the old name until the card was closed and reopened - the exact
@@ -168,8 +171,8 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
     );
   }
 
-  void _onSessionPhaseChanged(SessionPhaseChanged event, Emitter<ChatCardState> emit) {
-    _phase = event.phase;
+  void _onConnectionStatusChanged(ConnectionStatusChanged event, Emitter<ChatCardState> emit) {
+    _status = event.status;
     final current = state;
     // Update the banner in place (no reload) — like the reactive files re-derive.
     if (current is Initialized) emit(current.copyWith(isOffline: _isOffline(), isServerMismatch: _isServerMismatch()));

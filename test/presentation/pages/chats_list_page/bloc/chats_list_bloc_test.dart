@@ -7,11 +7,16 @@ import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/model/connection/connection_path.dart';
+import 'package:nox_app/domain/model/connection/connection_status.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
+import 'package:nox_app/domain/service/connection_status_service.dart';
 import 'package:nox_app/domain/service/connectivity_service.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/presentation/pages/chats_list_page/bloc/chats_list_bloc.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import '../../../../utils/fixed_connection_status.dart';
 
 void main() {
   // Per-test DB isolation — the reactive test mutates the DB (createChat), so each test
@@ -332,6 +337,46 @@ void main() {
       conn.emit(true); // device reconnects
       await Future<void>.delayed(const Duration(milliseconds: 100));
       expect((bloc.state as Initialized).isOffline, isFalse); // banner cleared
+    });
+  });
+
+  group('the connection status (phase 040)', () {
+    late FixedConnectionStatusService status;
+
+    Future<ChatsListBloc> boot(ConnectionStatus initial) async {
+      status = FixedConnectionStatusService(initial);
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<ConnectionStatusService>(status);
+      final bloc = ChatsListBloc()..add(const ChatsListEvent.initialize());
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      return bloc;
+    }
+
+    test('a path still coming up is not an outage: no banner, the corner speaks', () async {
+      final bloc = await boot(FixedConnectionStatusService.connectingTor);
+
+      final state = bloc.state as Initialized;
+      expect(state.isOffline, isFalse);
+      expect(state.isServerMismatch, isFalse);
+    });
+
+    test('a whole failed round is: the banner goes up, and comes down on a greeting', () async {
+      final bloc = await boot(const ConnectionStatus(state: LinkState.offline));
+      expect((bloc.state as Initialized).isOffline, isTrue);
+
+      status.emit(FixedConnectionStatusService.tor);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect((bloc.state as Initialized).isOffline, isFalse);
+    });
+
+    test('a refused Tor client asks for an update, whatever the path (FR-026)', () async {
+      final bloc = await boot(const ConnectionStatus(state: LinkState.online, path: ConnectionPath.direct, torObsolete: true));
+
+      final state = bloc.state as Initialized;
+      expect(state.torObsolete, isTrue);
+      expect(state.isOffline, isFalse);
     });
   });
 

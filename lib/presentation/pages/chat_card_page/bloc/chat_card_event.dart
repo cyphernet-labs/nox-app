@@ -13,10 +13,10 @@ sealed class ChatCardEvent with _$ChatCardEvent {
   /// loading flash or resetting the user's List/Grid choice (unlike a full re-init).
   const factory ChatCardEvent.filesRefreshed() = FilesRefreshed;
 
-  /// Live device-connectivity change (P1): drives the real offline banner.
-  /// The live channel's phase changed. The PHASE, not a boolean: a server
-  /// presenting the wrong key is not a dead network.
-  const factory ChatCardEvent.sessionPhaseChanged(SessionPhase phase) = SessionPhaseChanged;
+  /// Where the connection stands changed (phase 040): drives the banners. The
+  /// whole status, not a boolean: a server presenting the wrong key is not a
+  /// dead network, and a path still coming up is neither.
+  const factory ChatCardEvent.connectionStatusChanged(ConnectionStatus status) = ConnectionStatusChanged;
 
   /// The person asked for another attempt, from the banner.
   const factory ChatCardEvent.retryConnection() = RetryConnection;

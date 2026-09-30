@@ -22,7 +22,9 @@ import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
 import 'package:nox_app/data/sync/outbox_service.dart';
+import 'package:nox_app/domain/model/connection/connection_status.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
+import 'package:nox_app/domain/service/connection_status_service.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/domain/service/file_picker_service.dart';
 import 'package:nox_app/general/identity/identity_resolver.dart';
@@ -56,6 +58,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     on<AttachmentPicked>(_onAttachmentPicked);
     on<AttachmentRemoved>(_onAttachmentRemoved);
     on<SessionPhaseChanged>(_onSessionPhaseChanged, transformer: sequential());
+    on<ConnectionStatusChanged>(_onConnectionStatusChanged);
     on<RetryConnection>(_onRetryConnection);
     on<SetScenario>(_onSetScenario);
   }
@@ -65,6 +68,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   final SessionRepository _sessionRepository = getIt<SessionRepository>();
   final FilePickerService _filePickerService = getIt<FilePickerService>();
   final SessionPhaseService _sessionPhaseService = getIt<SessionPhaseService>();
+  final ConnectionStatusService _connectionStatus = getIt<ConnectionStatusService>();
   final OutboxRepository _outboxRepository = getIt<OutboxRepository>();
   final OutboxService _outboxService = getIt<OutboxService>();
   final AttachmentPrefetchService _prefetch = getIt<AttachmentPrefetchService>();
@@ -93,16 +97,24 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   StreamSubscription<List<OutboxEntry>>? _outboxSub;
   SessionPhase _phase = SessionPhase.live;
 
+  // Where the connection stands, for the banners (phase 040). Separate from the
+  // phase on purpose: «No connection» waits for a whole failed round of path
+  // finding, while a send must wait for nothing less than a current channel.
+  StreamSubscription<ConnectionStatus>? _statusSub;
+  late ConnectionStatus _status = _connectionStatus.status;
+
   /// The wrong machine answered. Takes precedence over the offline banner: both
   /// would otherwise show at once, and "no connection" is simply false here.
-  bool _isServerMismatch() => _phase.isServerMismatch || _scenario == ChatThreadScenario.pinRefused;
+  bool _isServerMismatch() => _status.isServerMismatch || _phase.isServerMismatch || _scenario == ChatThreadScenario.pinRefused;
 
-  /// The thread is offline when the channel is not current OR the debug scenario forces it.
-  bool _isOffline() => !_isServerMismatch() && (!_phase.isCurrent || _scenario == ChatThreadScenario.offline);
+  /// The offline BANNER: a whole round of path finding found nothing, or the
+  /// debug scenario forces it.
+  bool _isOffline() => !_isServerMismatch() && (_status.isOffline || _scenario == ChatThreadScenario.offline);
 
-  /// Whether a send may go out at all. Both states hold it back, and neither
-  /// marks anything as failed: a queued message waits, it is not lost.
-  bool _isHeld() => _isOffline() || _isServerMismatch();
+  /// Whether a send may go out at all: only on a current channel, never to a
+  /// refused server, and never while the debug scenario plays offline. None of
+  /// these marks anything as failed: a queued message waits, it is not lost.
+  bool _isHeld() => _isServerMismatch() || !_phase.isCurrent || _scenario == ChatThreadScenario.offline;
 
   FutureOr<void> _onInitialize(Initialize event, Emitter<ChatThreadState> emit) async {
     _chatId = event.chatId;
@@ -127,6 +139,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     // data on screen is current: a device can be online while the socket is
     // down, and the socket can be open while replay is still running (FR-005).
     _connSub ??= _sessionPhaseService.watchPhase().listen((phase) => add(ChatThreadEvent.sessionPhaseChanged(phase)));
+    _statusSub ??= _connectionStatus.watchStatus().listen((status) => add(ChatThreadEvent.connectionStatusChanged(status)));
     // The durable queue for this chat. No skip(1): the FIRST snapshot is the
     // point — it is what restores a message written before the app was closed.
     _outboxSub ??= _outboxRepository.watchQueue(chatId: _chatId).listen((entries) => add(ChatThreadEvent.outboxChanged(entries)));
@@ -136,6 +149,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   Future<void> close() {
     _messagesSub?.cancel();
     _connSub?.cancel();
+    _statusSub?.cancel();
     _outboxSub?.cancel();
     return super.close();
   }
@@ -460,7 +474,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   }
 
   FutureOr<void> _onSetScenario(SetScenario event, Emitter<ChatThreadState> emit) async {
-    final wasOffline = _isOffline();
+    final wasHeld = _isHeld();
     _scenario = event.scenario;
     // send-error only affects the next send.
     if (event.scenario == ChatThreadScenario.sendError) return;
@@ -470,7 +484,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     // re-deliver the messages queued as pending while offline, keeping the loaded history.
     // Scoped to `normal` so offline→empty / offline→fatal fall through to the reset branch
     // below and render the target debug state (they are NOT a reconnect).
-    if (event.scenario == ChatThreadScenario.normal && wasOffline && !_isOffline() && current is Initialized) {
+    if (event.scenario == ChatThreadScenario.normal && wasHeld && !_isHeld() && current is Initialized) {
       unawaited(_outboxService.flush());
       return;
     }
@@ -488,22 +502,37 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   }
 
   Future<void> _onSessionPhaseChanged(SessionPhaseChanged event, Emitter<ChatThreadState> emit) async {
-    final wasOffline = _isOffline();
-    final wasMismatch = _isServerMismatch();
+    final wasHeld = _isHeld();
     _phase = event.phase;
-    final nowOffline = _isOffline();
-    final nowMismatch = _isServerMismatch();
-    // No effective change (a debug scenario may pin either one).
-    if (wasOffline == nowOffline && wasMismatch == nowMismatch) return;
+    _afterConnectionChange(wasHeld, emit);
+  }
+
+  void _onConnectionStatusChanged(ConnectionStatusChanged event, Emitter<ChatThreadState> emit) {
+    final wasHeld = _isHeld();
+    _status = event.status;
+    _afterConnectionChange(wasHeld, emit);
+  }
+
+  /// The phase and the status arrive on two streams, in either order, and the
+  /// hold depends on both - so either one can be the change that releases it.
+  void _afterConnectionChange(bool wasHeld, Emitter<ChatThreadState> emit) {
+    _emitBanners(emit);
+    // Released → ask for a drain. Re-delivery itself is no longer this bloc's
+    // job: a single sender is what keeps a connectivity flap from posting the
+    // same message twice. A refused server is NOT a reconnection: draining
+    // into it would send this person's messages to a machine that just failed
+    // to prove who it is.
+    if (wasHeld && !_isHeld()) unawaited(_outboxService.flush());
+  }
+
+  /// The banners in place, no reload - and only on a real change.
+  void _emitBanners(Emitter<ChatThreadState> emit) {
     final current = state;
-    // Banner in place, no reload.
-    if (current is Initialized) emit(current.copyWith(isOffline: nowOffline, isServerMismatch: nowMismatch));
-    // Reconnected → ask for a drain. Re-delivery itself is no longer this
-    // bloc's job: a single sender is what keeps a connectivity flap from
-    // posting the same message twice. A refused server is NOT a reconnection:
-    // draining into it would send this person's messages to a machine that
-    // just failed to prove who it is.
-    if (!nowOffline && !nowMismatch) unawaited(_outboxService.flush());
+    if (current is! Initialized) return;
+    final offline = _isOffline();
+    final mismatch = _isServerMismatch();
+    if (current.isOffline == offline && current.isServerMismatch == mismatch) return;
+    emit(current.copyWith(isOffline: offline, isServerMismatch: mismatch));
   }
 
   /// One more attempt, asked for by the person.

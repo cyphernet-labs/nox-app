@@ -13,10 +13,14 @@ import 'package:nox_app/presentation/widgets/shell/app_wordmark_widget.dart';
 /// out of scope (desktop-infra phase). Reused by the onboarding desktop layouts,
 /// the error screen and the desktop Chats shell.
 class AppWindowTitlebarWidget extends StatelessWidget {
-  const AppWindowTitlebarWidget({super.key, this.subtitle});
+  const AppWindowTitlebarWidget({super.key, this.subtitle, this.trailing});
 
   /// Optional screen label shown after the wordmark (e.g. 'Sign in'). Null → wordmark only.
   final String? subtitle;
+
+  /// Optional widget at the right edge - the connection corner of the shell
+  /// (phase 040). Null → the strip is laid out exactly as before.
+  final Widget? trailing;
 
   static double get _height => AppDimensionTokens.size.windowTitlebarH;
 
@@ -38,7 +42,7 @@ class AppWindowTitlebarWidget extends StatelessWidget {
           padding: EdgeInsets.symmetric(horizontal: AppSpacingTokens.s16),
           color: colorScheme.surfaceContainerLow,
           child: Row(
-            mainAxisSize: MainAxisSize.min,
+            mainAxisSize: trailing == null ? MainAxisSize.min : MainAxisSize.max,
             children: [
               Assets.png.logo.image(height: AppDimensionTokens.icon.md),
               SizedBox(width: AppSpacingTokens.s8),
@@ -50,6 +54,7 @@ class AppWindowTitlebarWidget extends StatelessWidget {
                 // Design: `— <label>` in bodyMedium regular (not middle-dot / titleSmall medium).
                 Text('— $subtitle', style: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant)),
               ],
+              if (trailing != null) ...[const Spacer(), trailing!],
             ],
           ),
         ),

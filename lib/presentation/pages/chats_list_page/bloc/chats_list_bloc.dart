@@ -9,7 +9,8 @@ import 'package:nox_app/domain/exception/base_repository_exception.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/domain/repository/base/page_metadata.dart';
-import 'package:nox_app/domain/model/session/session_phase.dart';
+import 'package:nox_app/domain/model/connection/connection_status.dart';
+import 'package:nox_app/domain/service/connection_status_service.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
@@ -38,13 +39,14 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
     on<SearchChanged>(_onSearchChanged, transformer: debounceRestartable());
     on<ChatSelected>(_onChatSelected);
     on<SetScenario>(_onSetScenario);
-    on<SessionPhaseChanged>(_onSessionPhaseChanged);
+    on<ConnectionStatusChanged>(_onConnectionStatusChanged);
     on<RetryConnection>(_onRetryConnection);
   }
 
   final ChatRepository _chatRepository = getIt<ChatRepository>();
   final MessageRepository _messageRepository = getIt<MessageRepository>();
   final SessionPhaseService _sessionPhaseService = getIt<SessionPhaseService>();
+  final ConnectionStatusService _connectionStatus = getIt<ConnectionStatusService>();
 
   // Live change-signal over the cache-first DB (Feature 014): a DB write (create / send /
   // incoming / read) re-reads the loaded page prefix. The stream VALUE is ignored — the
@@ -57,19 +59,23 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
   // real device connectivity now ALSO drives it (feature F3) — see `_isOffline`.
   ChatsListScenario _scenario = ChatsListScenario.normal;
 
-  // The live channel's phase (feature F3, widened by 036). The whole phase is
-  // kept, not a boolean derived from it: "not current" answers "is the data
-  // fresh" and nothing else, and a server presenting the wrong key is not a
-  // stale-data problem — it is a different sentence, with a different action.
-  StreamSubscription<SessionPhase>? _connSub;
-  SessionPhase _phase = SessionPhase.live;
+  // Where the connection stands (feature F3, widened by 036 and 040). The whole
+  // status is kept, not a boolean derived from it: a server presenting the
+  // wrong key is not a stale-data problem, and a path still coming up - the
+  // corner says `Connecting…` then - is not an outage either.
+  StreamSubscription<ConnectionStatus>? _connSub;
+  late ConnectionStatus _status = _connectionStatus.status;
 
   /// The wrong machine answered. Takes precedence over the offline banner: both
   /// would otherwise show at once, and "no connection" is simply false here.
-  bool _isServerMismatch() => _phase.isServerMismatch || _scenario == ChatsListScenario.pinRefused;
+  bool _isServerMismatch() => _status.isServerMismatch || _scenario == ChatsListScenario.pinRefused;
 
-  /// The Offline banner shows when the channel is not current OR the debug scenario forces it.
-  bool _isOffline() => !_isServerMismatch() && (!_phase.isCurrent || _scenario == ChatsListScenario.offline);
+  /// «No connection» is for a whole round of path finding that found nothing,
+  /// not for a path still on its way (phase 040) - or the debug scenario.
+  bool _isOffline() => !_isServerMismatch() && (_status.isOffline || _scenario == ChatsListScenario.offline);
+
+  /// The Tor network refused the client built into this version (FR-026).
+  bool _isTorObsolete() => _status.torObsolete || _scenario == ChatsListScenario.torObsolete;
 
   /// Marks the first two chats read and drops messages above the mark, so the
   /// list shows badges produced by the recount rather than by a seeded number.
@@ -94,11 +100,11 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
         .skip(1)
         .debounceTime(const Duration(milliseconds: 100))
         .listen((_) => add(const ChatsListEvent.loadChats(refresh: true)));
-    // Live connectivity → the Offline banner (seeded current value, then every change).
-    // The session phase, not raw device connectivity, is what says whether the
-    // data on screen is current: a device can be online while the socket is
-    // down, and the socket can be open while replay is still running (FR-005).
-    _connSub ??= _sessionPhaseService.watchPhase().listen((phase) => add(ChatsListEvent.sessionPhaseChanged(phase)));
+    // Where the connection stands → the banners (current value, then every
+    // change). Not raw device connectivity: a device can be online while its
+    // server is out of reach, and offline is only decided once a whole round
+    // of path finding has come back empty (phase 040).
+    _connSub ??= _connectionStatus.watchStatus().listen((status) => add(ChatsListEvent.connectionStatusChanged(status)));
   }
 
   @override
@@ -108,11 +114,13 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
     return super.close();
   }
 
-  void _onSessionPhaseChanged(SessionPhaseChanged event, Emitter<ChatsListState> emit) {
-    _phase = event.phase;
+  void _onConnectionStatusChanged(ConnectionStatusChanged event, Emitter<ChatsListState> emit) {
+    _status = event.status;
     final current = state;
-    // Update the banner in place (no reload) — like the reactive card's files re-derive.
-    if (current is Initialized) emit(current.copyWith(isOffline: _isOffline(), isServerMismatch: _isServerMismatch()));
+    // Update the banners in place (no reload) — like the reactive card's files re-derive.
+    if (current is Initialized) {
+      emit(current.copyWith(isOffline: _isOffline(), isServerMismatch: _isServerMismatch(), torObsolete: _isTorObsolete()));
+    }
   }
 
   /// One more attempt, asked for by the person.
@@ -223,6 +231,7 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
                 // real device connectivity OR the debug scenario (feature F3).
                 isOffline: _isOffline(),
                 isServerMismatch: _isServerMismatch(),
+                torObsolete: _isTorObsolete(),
                 hasLoadError: _scenario == ChatsListScenario.inlineError,
               ),
             );
