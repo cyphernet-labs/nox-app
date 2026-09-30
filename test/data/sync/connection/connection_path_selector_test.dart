@@ -127,6 +127,7 @@ void main() {
   Future<void> torWorks() async {
     tor.supported = true;
     await addresses.saveFromServer(direct: const <String>[], onion: _onion);
+    await keys.deviceKey();
     await keys.markRegistered(true);
   }
 
@@ -232,13 +233,72 @@ void main() {
     test('an invite lends its one-time key for the pairing it carries (FR-020)', () async {
       tor.supported = true;
       final lent = Uint8List.fromList(List<int>.generate(32, (i) => i));
-      await keys.saveInvite(onion: _onion, oneTimeKey: lent);
+      selector.lendInvite(onion: _onion, oneTimeKey: lent);
       prober.home = <String>{};
 
       final target = await selector.nextTarget();
 
       expect(target, Uri.parse('wss://$_onionHost/ws'));
       expect(tor.target?.key, lent);
+    });
+
+    test('the lent key leaves with its pairing: out of Tor and wiped, the link untouched (FR-021)', () async {
+      tor.supported = true;
+      final lent = Uint8List.fromList(List<int>.generate(32, (i) => i + 1));
+      selector.lendInvite(onion: _onion, oneTimeKey: lent);
+      prober.home = <String>{};
+      await selector.nextTarget();
+      final inTor = tor.target!.key;
+
+      selector.forgetLentKey();
+
+      expect(tor.target, isNull);
+      expect(inTor, everyElement(0), reason: 'the copy the selector held is wiped');
+      expect(lent, isNot(everyElement(0)), reason: 'the link the caller holds is left as it was');
+      expect(await selector.nextTarget(), isNull, reason: 'no key, no Tor');
+    });
+
+    test('a lent key dropped while Tor starts is not set again (FR-021)', () async {
+      tor.supported = true;
+      final gate = Completer<void>();
+      tor.startGate = gate;
+      selector.lendInvite(onion: _onion, oneTimeKey: Uint8List.fromList(List<int>.filled(32, 3)));
+      prober.home = <String>{};
+      final round = selector.nextTarget();
+      await waitUntil(() => tor.starts == 1, reason: 'Tor is starting');
+
+      selector.forgetLentKey();
+      gate.complete();
+
+      expect(await round, isNull);
+      expect(tor.target, isNull, reason: 'the pairing is over; its key stays out');
+    });
+
+    test('a registered key that is gone is not minted anew on the way to Tor (FR-018)', () async {
+      // A round racing a logout reads "registered" and then finds the key
+      // wiped; a key minted there would survive the logout.
+      tor.supported = true;
+      await addresses.saveFromServer(direct: const <String>[], onion: _onion);
+      await keys.markRegistered(true);
+      prober.home = <String>{};
+
+      expect(await selector.nextTarget(), isNull);
+      expect((await keys.storedDeviceKey()).data, isNull, reason: 'nothing was minted');
+    });
+
+    test('a Tor client that failed is started afresh, not waited on', () async {
+      await torWorks();
+      tor.afterStart = const TorStatus(state: TorState.failed, error: TorError.network);
+      prober.home = <String>{};
+      final watch = Stopwatch()..start();
+
+      expect(await selector.nextTarget(), isNull);
+      expect(watch.elapsed, lessThan(const Duration(milliseconds: 350)), reason: 'a failed client ends the 400 ms wait at once');
+
+      tor.afterStart = const TorStatus(state: TorState.ready, bootstrapPercent: 100);
+      expect(await selector.nextTarget(), Uri.parse('wss://$_onionHost/ws'));
+      expect(tor.stops, 1, reason: 'stopped before it was started again');
+      expect(tor.starts, 2);
     });
 
     test('the debug switch skips the direct addresses', () async {
@@ -494,15 +554,102 @@ void main() {
 
     test('a lent key turned away is kept: its pairing ends on its own deadline', () async {
       tor.supported = true;
-      await keys.saveInvite(onion: _onion, oneTimeKey: Uint8List(32));
+      final lent = Uint8List.fromList(List<int>.filled(32, 5));
+      selector.lendInvite(onion: _onion, oneTimeKey: lent);
       prober.home = <String>{};
       await selector.nextTarget();
 
       tor.emit(refused);
       await Future<void>.delayed(const Duration(milliseconds: 20));
 
-      expect((await keys.invite()).data, isNotNull);
+      expect(await selector.nextTarget(), Uri.parse('wss://$_onionHost/ws'), reason: 'still lent');
+      expect(tor.target?.key, lent);
     });
+
+    test('a greeting at home ends the run of refusals: an old one is no evidence later', () async {
+      await selector.end();
+      selector = ConnectionPathSelector.forTest(
+        prober,
+        tor,
+        addresses,
+        keys,
+        network,
+        lifecycle,
+        socket,
+        keyRefusalGrace: const Duration(milliseconds: 100),
+        torReadyBudget: const Duration(milliseconds: 400),
+      )..begin(linkAddress: _link, fingerprint: _pin);
+      await torWorks();
+      prober.home = <String>{};
+      expect(await selector.nextTarget(), isNotNull);
+      tor.emit(refused);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      prober.home = <String>{_link};
+      final direct = await selector.nextTarget();
+      selector.reportGreeted(direct!);
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+
+      prober.home = <String>{};
+      expect(await selector.nextTarget(), Uri.parse('wss://$_onionHost/ws'), reason: 'the key is not called unknown');
+      expect((await keys.isRegistered()).data, isTrue);
+    });
+  });
+
+  test('a stale bring-up finishing does not clear the mark of the round that replaced it', () async {
+    // The mark is what lets a command wait out a Tor bring-up instead of
+    // failing on the short timeout; a newer round must keep it.
+    await torWorks();
+    tor.afterStart = const TorStatus(state: TorState.bootstrapping, bootstrapPercent: 30);
+    prober.home = <String>{};
+
+    final first = selector.nextTarget();
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    final second = selector.nextTarget();
+    await first; // times out at 400 ms, a stale round by then
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    expect(selector.bringingUpSlowPath, isTrue, reason: 'the second round is still bringing Tor up');
+    await second;
+    expect(selector.bringingUpSlowPath, isFalse);
+  });
+
+  test('a newer round that went direct leaves no slow-path mark behind', () async {
+    // The mark stretches the greeting and command waits to the slow budget;
+    // a stale round still waiting on Tor must not hold it over a direct link.
+    await torWorks();
+    tor.afterStart = const TorStatus(state: TorState.bootstrapping, bootstrapPercent: 30);
+    prober.home = <String>{};
+    final first = selector.nextTarget();
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+
+    prober.home = <String>{_link};
+    expect(await selector.nextTarget(), Uri.parse('wss://$_link/ws'));
+
+    expect(selector.bringingUpSlowPath, isFalse);
+    expect(await first.timeout(const Duration(milliseconds: 200)), isNull, reason: 'the stale round stops waiting at once');
+  });
+
+  test('an attempt a network change cut short is not a failed round', () async {
+    prober.home = <String>{_link};
+    await socket.start(targets: selector, credentialsProvider: () async => const GreetingCredentials());
+    await waitUntil(() => factory.created.isNotEmpty, reason: 'dialled');
+    expect(socket.currentPhase, SessionPhase.connecting);
+
+    network.changes.add(null);
+    await waitUntil(() => factory.created.length == 2, reason: 'dialled again at once');
+
+    expect(selector.selection.roundFailed, isFalse, reason: 'no round finished, so none failed');
+  });
+
+  test('a restart keeps the session shown as coming up', () async {
+    // Shown as idle, the gap before begin() would read as "no connection" and
+    // flash the banner on every rename.
+    await selector.end(keepTor: true);
+    expect(selector.selection.active, isTrue);
+
+    selector.begin(linkAddress: _link, fingerprint: _pin);
+    expect(selector.selection.active, isTrue);
   });
 
   test('ending does not wait on a source whose cancel never finishes', () async {

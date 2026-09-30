@@ -117,12 +117,13 @@ class LiveIdentityHandshake {
   /// there. `pair` is then the one command allowed before a greeting.
   ///
   /// A version-2 link also lends the server's onion address and a one-time key
-  /// for exactly this pairing (FR-020): they are stored before the channel
-  /// comes up, so the path selector can go through Tor when the link's direct
-  /// address does not answer, and erased the moment the reply is in, whatever
-  /// it said (FR-021).
+  /// for exactly this pairing (FR-020): handed to the path selector, in memory
+  /// only, before the channel comes up, so a round can go through Tor when the
+  /// link's direct address does not answer; dropped the moment the reply is
+  /// in, whatever it said (FR-021). Never written to disk, so a pairing the
+  /// process did not survive leaves nothing behind.
   Future<IdentityHandshake> pair({required PairingLink link, required String deviceKey, required String platform}) async {
-    final lent = await _lendInvite(link);
+    final lent = _lendInvite(link);
     try {
       // The onion access key goes with the pairing itself (FR-015): a server
       // from phase 039 on registers it in the same transaction, so a device
@@ -134,19 +135,16 @@ class LiveIdentityHandshake {
       if (lent != null) await _adoptOnion(lent, keyPaired: accessKey != null);
       return identity;
     } finally {
-      if (lent != null) {
-        await _keys.clearInvite();
-        // The Tor client still holds the lent key in memory; the next round
-        // sets this device's own one instead.
-        _selector.forgetLentKey();
-      }
+      // Out of the Tor client and wiped; the next round sets this device's
+      // own key instead.
+      if (lent != null) _selector.forgetLentKey();
     }
   }
 
-  /// Stores what a version-2 link lends, where the path selector looks. Null
-  /// when the link lends nothing, or where Tor cannot run - there the fields
-  /// are read and left unused (research decision 11).
-  Future<String?> _lendInvite(PairingLink link) async {
+  /// Lends the path selector what a version-2 link carries, and returns the
+  /// onion address. Null when the link lends nothing, or where Tor cannot run
+  /// - there the fields are read and left unused (research decision 11).
+  String? _lendInvite(PairingLink link) {
     final pub = link.onionPub;
     final port = link.onionPort;
     final oneTime = link.oneTimePriv;
@@ -154,7 +152,7 @@ class LiveIdentityHandshake {
     final host = _tor.onionFromPublicKey(pub);
     if (host == null) return null;
     final onion = '$host:$port';
-    if (!(await _keys.saveInvite(onion: onion, oneTimeKey: oneTime)).hasData) return null;
+    _selector.lendInvite(onion: onion, oneTimeKey: oneTime);
     return onion;
   }
 

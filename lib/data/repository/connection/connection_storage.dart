@@ -16,22 +16,18 @@ abstract final class ConnectionStorage {
   /// `1` once the server accepted the key above.
   static const String accessKeyRegistered = 'session.access_key_registered';
 
-  /// The onion address and one-time private key a version-2 link lent this
-  /// device for one pairing.
-  static const String inviteOnion = 'session.invite_onion';
-  static const String inviteAccessKey = 'session.invite_access_key';
-
-  /// Private keys are kept out of any backup that could restore them on
-  /// another device (FR-014): `this_device` items never migrate.
+  /// The private key is kept out of any backup that could restore it on
+  /// another phone (FR-014): `this_device` items never migrate.
   static const IOSOptions keyIOSOptions = IOSOptions(accessibility: KeychainAccessibility.unlocked_this_device);
 
   /// macOS keeps the legacy keychain the rest of the app uses (see
   /// RegisterModule): the data-protection keychain needs a signing setup the
-  /// project does not have yet.
-  static const MacOsOptions keyMacOsOptions = MacOsOptions(
-    accessibility: KeychainAccessibility.unlocked_this_device,
-    usesDataProtectionKeychain: false,
-  );
+  /// project does not have yet. That keychain has no `this_device` class - it
+  /// ignores the attribute - so nothing is claimed here: the key lives in the
+  /// login keychain like the device key does, never synced to iCloud, and a
+  /// whole-machine migration carries both together, which the server sees as
+  /// the same device moving.
+  static const MacOsOptions keyMacOsOptions = MacOsOptions(usesDataProtectionKeychain: false);
 
   /// Deletes every record of this phase. [includeDeviceAccessKey] is false for
   /// a failed sign-in: the access key names this install, like the device key,
@@ -39,8 +35,6 @@ abstract final class ConnectionStorage {
   static Future<void> delete(FlutterSecureStorage storage, {required bool includeDeviceAccessKey}) async {
     await storage.delete(key: serverAddresses);
     await storage.delete(key: accessKeyRegistered);
-    await storage.delete(key: inviteOnion);
-    await storage.delete(key: inviteAccessKey, iOptions: keyIOSOptions, mOptions: keyMacOsOptions);
     if (includeDeviceAccessKey) {
       await storage.delete(key: accessKey, iOptions: keyIOSOptions, mOptions: keyMacOsOptions);
     }

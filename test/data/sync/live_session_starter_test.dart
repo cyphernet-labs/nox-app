@@ -201,6 +201,7 @@ void main() {
       prober.home = <String>{};
       tor.supported = true;
       await getIt<ServerAddressesRepository>().saveFromServer(direct: const <String>[], onion: '${'a' * 56}.onion:443');
+      await getIt<AccessKeyRepository>().deviceKey();
       await getIt<AccessKeyRepository>().markRegistered(true);
     }
 

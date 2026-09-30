@@ -19,6 +19,10 @@ class FakeTorService implements TorService {
   /// What start() moves to; tests set it before the path selector runs.
   TorStatus afterStart = const TorStatus(state: TorState.ready, bootstrapPercent: 100);
 
+  /// Holds start() until completed - how a test lands something in the middle
+  /// of a bring-up.
+  Completer<void>? startGate;
+
   final BehaviorSubject<TorStatus> _status = BehaviorSubject<TorStatus>.seeded(TorStatus.stopped);
 
   int starts = 0;
@@ -46,6 +50,7 @@ class FakeTorService implements TorService {
   Future<void> start() async {
     if (!supported) return;
     starts++;
+    await startGate?.future;
     emit(afterStart);
   }
 

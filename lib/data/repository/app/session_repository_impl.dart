@@ -183,6 +183,11 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   @override
   Future<RepositoryResult<bool>> saveServer({required String address, required String serverFingerprint}) {
     return execute<bool>(() async {
+      // What any earlier server said about itself goes first (phase 040): its
+      // addresses, and whether it holds this device's access key. A sign-in
+      // the process did not survive leaves them behind, and kept they would
+      // send the next server's connection to the old one's onion address.
+      await ConnectionStorage.delete(_secureStorage, includeDeviceAccessKey: false);
       await _secureStorage.write(key: _kServerAddress, value: address);
       await _secureStorage.write(key: _kServerFingerprint, value: serverFingerprint);
       return const RepositoryResult<bool>.success(data: true);

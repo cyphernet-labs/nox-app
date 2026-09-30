@@ -1,4 +1,6 @@
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/repository/connection/connection_storage.dart';
 import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
 import 'package:nox_app/data/sync/live_identity_handshake.dart';
 import 'package:nox_app/general/pairing/device_keys.dart';
@@ -91,7 +93,7 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         // pinned fingerprint of a machine this install has no session with - the next
         // launch dials it, greets as unpaired for ever, and the world epoch is
         // keyed on it.
-        await _sessionRepository.discardSignIn();
+        await _rollBackSignIn();
         return RepositoryResult<bool>.error(exception: seed.exception!);
       }
 
@@ -102,7 +104,7 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
           platform: PlatformUtils.family,
         );
         if (!greeting.outcomeStated) {
-          await _sessionRepository.discardSignIn();
+          await _rollBackSignIn();
           return const RepositoryResult<bool>.error(exception: RepositoryException.connection);
         }
         // The identifier slot now holds the token this install paired with: it
@@ -114,7 +116,7 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
           // attempt stored. The pairing itself landed server-side, so the token
           // is spent either way - what must not survive is a device pointed at
           // a machine it has no session with.
-          await _sessionRepository.discardSignIn();
+          await _rollBackSignIn();
           return stored;
         }
         // The identity comes from the pair reply, not from the fact that THIS
@@ -153,10 +155,10 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
       } on PairingFailed {
         // Not about the link. Retryable, and the person is told so rather than
         // sent looking for an invite they already have.
-        await _sessionRepository.discardSignIn();
+        await _rollBackSignIn();
         return const RepositoryResult<bool>.error(exception: RepositoryException.internal);
       } on PairingRefused catch (e) {
-        await _sessionRepository.discardSignIn();
+        await _rollBackSignIn();
         // Two refusals, two answers. Both are about the LINK, because a link
         // is all there is to refuse now: nobody waits on a human being for
         // permission to pair a device with their own machine.
@@ -172,10 +174,19 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         // key seed - and a token in a log is still a usable pairing credential
         // (Principle I, FR-035).
         logRepository.error(target: this, error: e.runtimeType, stackTrace: st);
-        await _sessionRepository.discardSignIn();
+        await _rollBackSignIn();
         return const RepositoryResult<bool>.error(exception: RepositoryException.connection);
       }
     });
+  }
+
+  /// Undoes a sign-in that did not land: the channel it brought up towards the
+  /// server it named stops first - the socket and, behind it, any Tor client a
+  /// version-2 link started (phase 040) - so nothing in flight writes back
+  /// what [SessionRepository.discardSignIn] then removes.
+  Future<void> _rollBackSignIn() async {
+    if (getIt.isRegistered<LiveSessionStarter>()) await getIt<LiveSessionStarter>().stop();
+    await _sessionRepository.discardSignIn();
   }
 
   /// Revokes this device's own key before the local wipe, when there is a
@@ -275,6 +286,16 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         // mid-wipe would repopulate the stores this is in the middle of
         // clearing, leaving a logged-out device holding someone's messages.
         if (getIt.isRegistered<LiveSessionStarter>()) await getIt<LiveSessionStarter>().stop();
+        // Swept once more with the channel down. A greeting that landed
+        // between the wipe and the stop could have registered a freshly minted
+        // access key or stored the server's addresses again (FR-018).
+        if (getIt.isRegistered<FlutterSecureStorage>()) {
+          try {
+            await ConnectionStorage.delete(getIt<FlutterSecureStorage>(), includeDeviceAccessKey: true);
+          } catch (error, stackTrace) {
+            logRepository.error(target: this, error: error.runtimeType, stackTrace: stackTrace);
+          }
+        }
         // The Tor client's state goes with the session (FR-018, FR-024): its
         // directories hold the guards and descriptors it learned on the way to
         // THIS person's server. Best-effort like the file cache below - a

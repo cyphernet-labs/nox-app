@@ -139,6 +139,10 @@ class ConnectionPathSelector implements SocketTargetProvider {
   /// Counts rounds; a stop, or a newer round, makes an older one stale.
   int _round = 0;
 
+  /// Ticks with every new round, so a stale one stops waiting on Tor at once
+  /// instead of holding its wait for the whole budget.
+  final StreamController<void> _roundChanged = StreamController<void>.broadcast();
+
   /// What the current round handed the socket, and how it went.
   Uri? _handedOut;
   String? _handedOutAddress;
@@ -146,11 +150,19 @@ class ConnectionPathSelector implements SocketTargetProvider {
   bool _handedOutGreeted = false;
   bool _handedOutWasSwitch = false;
 
+  /// The attempt was cut short by a network change before it could answer -
+  /// interrupted, not failed: its round never finished.
+  bool _handedOutInterrupted = false;
+
   /// A direct address a background check verified a moment ago. The next
   /// round hands it over without asking again: that is the switch.
   String? _verified;
 
-  bool _bringingUpTor = false;
+  /// The round that is bringing Tor up, if any. A round, not a flag: a
+  /// stale round finishing its bring-up must not clear the mark of the round
+  /// that replaced it, or a command sent meanwhile would fail on the short
+  /// timeout.
+  int? _torRound;
   bool _probing = false;
 
   /// The visibility last seen. Only a CHANGE is news: the lifecycle service
@@ -159,10 +171,18 @@ class ConnectionPathSelector implements SocketTargetProvider {
   /// waiting on.
   AppVisibility _visibility = AppVisibility.foreground;
   _TorTarget? _torTarget;
+
+  /// The onion address and one-time key a version-2 link lent its pairing
+  /// (FR-020). In memory only, from [lendInvite] to [forgetLentKey]: nothing
+  /// on disk can outlive the pairing, not even one the process did not survive
+  /// (FR-021).
+  _TorTarget? _lent;
   TorError _lastTorError = TorError.none;
 
   /// When the onion service started turning this device's key away, in the
-  /// current run of refusals; cleared by a greeting through Tor.
+  /// current run of refusals. The run ends with any greeting - home or through
+  /// Tor - with a new key, and with the session: an old refusal is no
+  /// evidence about a key the service may have learned since.
   Stopwatch? _keyRefused;
 
   PathSelection get selection => _selection.value;
@@ -173,8 +193,10 @@ class ConnectionPathSelector implements SocketTargetProvider {
   /// The path of the connection that was greeted; null while none is.
   ConnectionPath? get currentPath => _handedOutGreeted ? _handedOutPath : null;
 
+  /// Only the CURRENT round's bring-up counts: a stale round still waiting on
+  /// Tor says nothing about the path the socket is on now.
   @override
-  bool get bringingUpSlowPath => _bringingUpTor;
+  bool get bringingUpSlowPath => _torRound != null && _torRound == _round;
 
   /// Starts serving a session: [linkAddress] is the address the pairing link
   /// carried, [fingerprint] the key every path is checked against.
@@ -198,7 +220,7 @@ class ConnectionPathSelector implements SocketTargetProvider {
   /// only answer by bringing it up again.
   Future<void> end({bool keepTor = false}) async {
     _active = false;
-    _round++;
+    _nextRound();
     _recheck?.cancel();
     _recheck = null;
     // Not awaited. A cancel can take as long as its source wants - an `async*`
@@ -216,18 +238,26 @@ class ConnectionPathSelector implements SocketTargetProvider {
     _forgetHandedOut();
     _verified = null;
     _probing = false;
-    _publish(PathSelection.idle);
-    if (!keepTor) await _stopTor();
+    _torRound = null;
+    _keyRefused = null;
+    // A restart is still a session coming up: shown as idle, the gap before
+    // the next begin() would read as "no connection" and flash the banner on
+    // every rename.
+    _publish(keepTor ? const PathSelection(active: true) : PathSelection.idle);
+    if (keepTor) return;
+    _dropLent();
+    await _stopTor();
   }
 
   @override
   Future<Uri?> nextTarget() async {
     if (!_active) return null;
-    final round = ++_round;
+    final round = _nextRound();
     // Asked again with the last target never greeted: that round failed. A
     // switch that did not take is not a failed round - the path it left is
-    // tried again right now.
-    if (_handedOut != null && !_handedOutGreeted && !_handedOutWasSwitch) _markFailed();
+    // tried again right now - and neither is an attempt a network change cut
+    // short.
+    if (_handedOut != null && !_handedOutGreeted && !_handedOutWasSwitch && !_handedOutInterrupted) _markFailed();
     _forgetHandedOut();
     final fingerprint = _fingerprint;
     if (fingerprint == null || fingerprint.isEmpty) return _noPath();
@@ -263,6 +293,7 @@ class ConnectionPathSelector implements SocketTargetProvider {
   void reportGreeted(Uri url) {
     if (url != _handedOut) return;
     _handedOutGreeted = true;
+    _keyRefused = null;
     _publish(_selection.value.copyWith(path: _handedOutPath, roundFailed: false));
     if (_handedOutPath == ConnectionPath.direct) {
       final address = _handedOutAddress;
@@ -274,20 +305,45 @@ class ConnectionPathSelector implements SocketTargetProvider {
       unawaited(_stopTor());
       logRepository.debug(target: this, message: 'path: direct');
     } else {
-      _keyRefused = null;
       _recheck ??= Timer.periodic(_recheckEvery, (_) => unawaited(_recheckDirect(reason: 'periodic')));
       logRepository.debug(target: this, message: 'path: tor');
     }
   }
 
-  /// Drops a one-time key a version-2 link lent, once its pairing has been
-  /// answered (FR-021). The Tor client holds keys in memory only; the next
-  /// round sets this device's own key instead.
+  /// Lends the pairing about to run the onion address [onion] and the one-time
+  /// key a version-2 link carries (FR-020): a round whose direct addresses do
+  /// not answer goes through Tor with them. A copy, so wiping it later leaves
+  /// the link the caller holds as it was.
+  void lendInvite({required String onion, required Uint8List oneTimeKey}) {
+    _dropLent();
+    final lent = ServerAddresses(onion: onion);
+    final host = lent.onionHost;
+    if (host == null) return;
+    _lent = _TorTarget(host: host, port: lent.onionPort, key: Uint8List.fromList(oneTimeKey), invite: true);
+  }
+
+  /// Drops the lent key once its pairing has been answered (FR-021), whatever
+  /// the answer: out of the Tor client, and wiped here. A round bringing Tor
+  /// up with it right now checks before it sets it, so it stays dropped.
   void forgetLentKey() {
     final target = _torTarget;
-    if (target == null || !target.invite) return;
-    _tor.clearTarget();
-    _torTarget = null;
+    if (target != null && target.invite) {
+      _tor.clearTarget();
+      _torTarget = null;
+    }
+    _dropLent();
+  }
+
+  /// What a version-2 link has lent right now; for tests.
+  @visibleForTesting
+  ({String onion, Uint8List key})? get lent {
+    final lent = _lent;
+    return lent == null ? null : (onion: '${lent.host}:${lent.port}', key: lent.key);
+  }
+
+  void _dropLent() {
+    _lent?.key.fillRange(0, _lent!.key.length, 0);
+    _lent = null;
   }
 
   @override
@@ -298,6 +354,12 @@ class ConnectionPathSelector implements SocketTargetProvider {
   }
 
   bool _current(int round) => _active && round == _round;
+
+  int _nextRound() {
+    _round++;
+    _roundChanged.add(null);
+    return _round;
+  }
 
   Uri _hand(String address, ConnectionPath path, {bool switching = false}) {
     final url = Uri.parse('wss://$address/ws');
@@ -315,6 +377,7 @@ class ConnectionPathSelector implements SocketTargetProvider {
     _handedOutPath = null;
     _handedOutGreeted = false;
     _handedOutWasSwitch = false;
+    _handedOutInterrupted = false;
   }
 
   Uri? _noPath() {
@@ -340,21 +403,34 @@ class ConnectionPathSelector implements SocketTargetProvider {
     if (!_tor.isSupported) return _noTor('not on this platform');
     // The Tor network refused this build (FR-026): direct only until an update.
     if (_tor.status.isObsolete) return _noTor('this build is obsolete');
-    final target = await _torTargetFor(addresses);
+    final target = await _torTargetFor(addresses, round);
     if (!_current(round)) return null;
     if (target == null) return _noTor(addresses.onionHost == null ? 'no onion address' : 'no registered key');
-    _bringingUpTor = true;
+    _torRound = round;
     _publish(_selection.value.copyWith(path: ConnectionPath.tor));
     final watch = Stopwatch()..start();
     logRepository.debug(target: this, message: 'path: bringing Tor up (${target.invite ? 'invite key' : 'device key'})');
     try {
+      // A client whose bootstrap failed is started afresh rather than reused:
+      // it has stopped trying, and waiting on it would spend the whole budget
+      // of every round that follows on a client that will never be ready.
+      if (_tor.status.state == TorState.failed) await _stopTor();
+      if (!_current(round)) return null;
       await _tor.start();
       if (!_current(round) || _tor.status.isObsolete) return null;
-      if (_torTarget != target) {
+      // A lent key its pairing has finished with while Tor was starting is
+      // not set again (FR-021).
+      if (target.invite && !identical(target, _lent)) return null;
+      // Set again when the bridge is gone with the target unchanged: a client
+      // rebuilt after a failure can come back without its listener.
+      if (_torTarget != target || _tor.bridge == null) {
+        // A new key starts a new run: the old one's refusals say nothing
+        // about it.
+        if (_torTarget != target) _keyRefused = null;
         _tor.setTarget(onionHost: target.host, port: target.port, clientKey: target.key);
         _torTarget = target;
       }
-      final ready = await _waitForTor(_torReadyBudget);
+      final ready = await _waitForTor(_torReadyBudget, round: round);
       logRepository.debug(
         target: this,
         message: 'path: Tor ${ready ? 'ready' : 'not ready'} after ${watch.elapsedMilliseconds} ms (${_tor.status.state.name})',
@@ -362,7 +438,7 @@ class ConnectionPathSelector implements SocketTargetProvider {
       if (!ready || !_current(round)) return null;
       return Uri(scheme: 'wss', host: target.host, port: target.port == 443 ? null : target.port, path: '/ws');
     } finally {
-      _bringingUpTor = false;
+      if (_torRound == round) _torRound = null;
     }
   }
 
@@ -376,7 +452,11 @@ class ConnectionPathSelector implements SocketTargetProvider {
   /// The onion address and the key that opens it: this device's own key once
   /// the server has it (FR-016), else the one-time key a version-2 link lent
   /// for its pairing (FR-020).
-  Future<_TorTarget?> _torTargetFor(ServerAddresses addresses) async {
+  ///
+  /// The own key is READ, never created: one minted here would be registered
+  /// nowhere, and minted while a logout wipes the store it would survive the
+  /// logout (FR-018).
+  Future<_TorTarget?> _torTargetFor(ServerAddresses addresses, int round) async {
     final host = addresses.onionHost;
     final refused = _keyRefused;
     if (refused != null && refused.elapsed >= _keyRefusalGrace) {
@@ -387,26 +467,33 @@ class ConnectionPathSelector implements SocketTargetProvider {
       _keyRefused = null;
       logRepository.debug(target: this, message: 'path: the server does not know this device key, Tor waits for a direct greeting');
       await _keys.markRegistered(false);
+      if (!_current(round)) return null;
     }
     final registered = (await _keys.isRegistered()).data ?? false;
+    if (!_current(round)) return null;
     if (host != null && registered) {
-      final own = (await _keys.deviceKey()).data;
+      final own = (await _keys.storedDeviceKey()).data;
+      if (!_current(round)) return null;
       if (own != null) return _TorTarget(host: host, port: addresses.onionPort, key: own.privateKey, invite: false);
     }
-    final invite = (await _keys.invite()).data;
-    if (invite == null) return null;
-    final lent = ServerAddresses(onion: invite.onion);
-    final lentHost = lent.onionHost;
-    if (lentHost == null) return null;
-    return _TorTarget(host: lentHost, port: lent.onionPort, key: invite.oneTimeKey, invite: true);
+    return _lent;
   }
 
   /// Whether Tor is bootstrapped with the bridge open, within [budget].
-  Future<bool> _waitForTor(Duration budget) async {
+  ///
+  /// Ends early when there is nothing left to wait for: the client failed or
+  /// was refused as obsolete, the session ended, or - given its [round] - a
+  /// newer round took over.
+  Future<bool> _waitForTor(Duration budget, {int? round}) async {
     bool ready(TorStatus status) => status.isReady && _tor.bridge != null;
-    if (ready(_tor.status)) return true;
+    bool settled() {
+      final status = _tor.status;
+      return ready(status) || status.isObsolete || status.state == TorState.failed || !_active || (round != null && round != _round);
+    }
+
+    if (settled()) return ready(_tor.status);
     try {
-      await _tor.watchStatus().firstWhere((s) => ready(s) || s.isObsolete || !_active).timeout(budget);
+      await Rx.merge<Object?>([_tor.watchStatus(), _roundChanged.stream]).firstWhere((_) => settled()).timeout(budget);
     } on TimeoutException {
       return false;
     } on StateError {
@@ -449,7 +536,9 @@ class ConnectionPathSelector implements SocketTargetProvider {
     final phase = _socket.currentPhase;
     if (phase.isTerminal) return;
     if (!_greeted(phase)) {
-      // A new network is a reason to try now, not at the next rung.
+      // A new network is a reason to try now, not at the next rung. An
+      // attempt still under way is cut short, which is not a failed round.
+      if (phase == SessionPhase.connecting) _handedOutInterrupted = true;
       await _socket.reconnect();
       return;
     }
@@ -529,7 +618,10 @@ class ConnectionPathSelector implements SocketTargetProvider {
     logRepository.debug(target: this, message: 'path: Tor did not wake up, restarting it');
     await _tor.stop();
     await _tor.start();
-    if (!_active || _tor.status.isObsolete) return;
+    // Checked again after the awaits: a round may have moved Tor elsewhere
+    // meanwhile, and a lent key may have been dropped (FR-021).
+    if (!_active || _tor.status.isObsolete || _torTarget != target) return;
+    if (target.invite && !identical(target, _lent)) return;
     _tor.setTarget(onionHost: target.host, port: target.port, clientKey: target.key);
     _torTarget = target;
   }

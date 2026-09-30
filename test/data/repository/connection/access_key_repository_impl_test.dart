@@ -41,14 +41,11 @@ void main() {
     expect((await repository.deviceKey()).data!.publicKey, next.publicKey);
   });
 
-  test('an invite lends an onion address and a one-time key until cleared', () async {
-    expect((await repository.invite()).data, isNull);
-    final key = Uint8List.fromList(List<int>.generate(32, (i) => i));
-    await repository.saveInvite(onion: 'abc.onion:443', oneTimeKey: key);
-    final invite = (await repository.invite()).data!;
-    expect(invite.onion, 'abc.onion:443');
-    expect(invite.oneTimeKey, key);
-    await repository.clearInvite();
-    expect((await repository.invite()).data, isNull);
+  test('the stored key is read without minting one', () async {
+    expect((await repository.storedDeviceKey()).data, isNull);
+    expect((await repository.storedDeviceKey()).data, isNull, reason: 'reading twice created nothing');
+
+    final minted = (await repository.deviceKey()).data!;
+    expect((await repository.storedDeviceKey()).data!.publicKey, minted.publicKey);
   });
 }

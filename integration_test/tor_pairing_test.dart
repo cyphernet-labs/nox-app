@@ -60,7 +60,6 @@ void main() {
     final signedIn = await getIt<AuthRepository>().signIn(identifier: link);
     debugPrint('MEASURE: paired through Tor in ${watch.elapsedMilliseconds} ms (${signedIn.hasData ? 'ok' : signedIn.exception})');
     expect(signedIn.hasData, isTrue, reason: 'the pairing through Tor');
-    expect((await getIt<AccessKeyRepository>().invite()).data, isNull, reason: 'the lent key is gone once answered (FR-021)');
 
     await _until('live through Tor on its own key', const Duration(minutes: 4), () {
       return socket.currentPhase == SessionPhase.live && selector.currentPath == ConnectionPath.tor;

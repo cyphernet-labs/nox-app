@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -97,6 +98,7 @@ void main() {
     late MockLiveSessionStarter starter;
     late LiveIdentityHandshake handshake;
     late FakeTorService tor;
+    late ConnectionPathSelector selector;
 
     final url = Uri.parse('ws://127.0.0.1:8080/ws');
 
@@ -118,22 +120,16 @@ void main() {
       client = NoxSocketClient(factory, sync);
       starter = MockLiveSessionStarter();
       tor = FakeTorService();
-      handshake = LiveIdentityHandshake(
-        client,
-        starter,
-        getIt<AccessKeyRepository>(),
+      selector = ConnectionPathSelector.forTest(
+        FakeDirectProber(),
         tor,
         getIt<ServerAddressesRepository>(),
-        ConnectionPathSelector.forTest(
-          FakeDirectProber(),
-          tor,
-          getIt<ServerAddressesRepository>(),
-          getIt<AccessKeyRepository>(),
-          getIt<NetworkChangeService>(),
-          getIt<AppLifecycleService>(),
-          client,
-        ),
+        getIt<AccessKeyRepository>(),
+        getIt<NetworkChangeService>(),
+        getIt<AppLifecycleService>(),
+        client,
       );
+      handshake = LiveIdentityHandshake(client, starter, getIt<AccessKeyRepository>(), tor, getIt<ServerAddressesRepository>(), selector);
     });
 
     tearDown(() async {
@@ -280,11 +276,13 @@ void main() {
     group('a version-2 link (FR-020, FR-021)', () {
       AccessKeyRepository keys() => getIt<AccessKeyRepository>();
       final onion = '${'a' * 56}.onion:443';
-      InviteAccess? lentDuringPairing;
+      ({String onion, Uint8List key})? lentDuringPairing;
 
       void serveTheChannel() {
         when(starter.restart()).thenAnswer((_) async {
-          lentDuringPairing = (await keys().invite()).data;
+          final lent = selector.lent;
+          // A copy: the selector wipes its own once the pairing is answered.
+          lentDuringPairing = lent == null ? null : (onion: lent.onion, key: Uint8List.fromList(lent.key));
           await client.stop();
           await client.start(url: url, credentialsProvider: () async => const GreetingCredentials.unpaired());
           factory.latest.pushGreeting();
@@ -325,8 +323,8 @@ void main() {
         await pairAndAnswer(ok: true);
 
         expect(lentDuringPairing?.onion, onion, reason: 'there when the channel came up');
-        expect(lentDuringPairing?.oneTimeKey, PairingLink.parse(kTestLinkV2).oneTimePriv);
-        expect((await keys().invite()).data, isNull, reason: 'gone once the reply is in');
+        expect(lentDuringPairing?.key, PairingLink.parse(kTestLinkV2).oneTimePriv);
+        expect(selector.lent, isNull, reason: 'gone once the reply is in');
       });
 
       test('a paired device keeps the onion address, and its own key counts as registered', () async {
@@ -340,7 +338,7 @@ void main() {
         final outcome = await pairAndAnswer(ok: false);
 
         expect(outcome, isA<PairingRefused>());
-        expect((await keys().invite()).data, isNull);
+        expect(selector.lent, isNull);
         expect((await keys().isRegistered()).data, isFalse);
         expect((await getIt<ServerAddressesRepository>().read()).data?.onion, isNull);
       });

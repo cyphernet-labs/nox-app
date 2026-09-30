@@ -327,13 +327,6 @@ void main() {
     Future<void> writeAll() async {
       await storage.write(key: ConnectionStorage.serverAddresses, value: '{"direct":["10.0.0.5:8443"]}');
       await storage.write(key: ConnectionStorage.accessKeyRegistered, value: '1');
-      await storage.write(key: ConnectionStorage.inviteOnion, value: 'abc.onion:443');
-      await storage.write(
-        key: ConnectionStorage.inviteAccessKey,
-        value: 'AAAA',
-        iOptions: ConnectionStorage.keyIOSOptions,
-        mOptions: ConnectionStorage.keyMacOsOptions,
-      );
       await storage.write(
         key: ConnectionStorage.accessKey,
         value: 'BBBB',
@@ -342,17 +335,11 @@ void main() {
       );
     }
 
-    test('logout removes the addresses, the access key and any invite key', () async {
+    test('logout removes the addresses and the access key', () async {
       await repository.saveIdentifier(identifier: 'abc', onboardingComplete: true);
       await writeAll();
       await repository.clear();
-      for (final key in [
-        ConnectionStorage.serverAddresses,
-        ConnectionStorage.accessKeyRegistered,
-        ConnectionStorage.inviteOnion,
-        ConnectionStorage.inviteAccessKey,
-        ConnectionStorage.accessKey,
-      ]) {
+      for (final key in [ConnectionStorage.serverAddresses, ConnectionStorage.accessKeyRegistered, ConnectionStorage.accessKey]) {
         expect(await storage.read(key: key), isNull, reason: key);
       }
     });
@@ -362,9 +349,18 @@ void main() {
       await repository.discardSignIn();
       expect(await storage.read(key: ConnectionStorage.serverAddresses), isNull);
       expect(await storage.read(key: ConnectionStorage.accessKeyRegistered), isNull);
-      expect(await storage.read(key: ConnectionStorage.inviteOnion), isNull);
-      expect(await storage.read(key: ConnectionStorage.inviteAccessKey), isNull);
       expect(await storage.read(key: ConnectionStorage.accessKey), 'BBBB');
+    });
+
+    test('a new server starts with nothing an earlier one said about itself', () async {
+      // A sign-in the process did not survive leaves the old server's records
+      // behind; kept, they would send the next connection to its onion.
+      await writeAll();
+      await repository.saveServer(address: '10.0.0.9:8443', serverFingerprint: 'fp');
+      expect(await storage.read(key: ConnectionStorage.serverAddresses), isNull);
+      expect(await storage.read(key: ConnectionStorage.accessKeyRegistered), isNull);
+      expect(await storage.read(key: ConnectionStorage.accessKey), 'BBBB', reason: 'the key names this install');
+      expect((await repository.serverAddress()).data, '10.0.0.9:8443');
     });
   });
 }
