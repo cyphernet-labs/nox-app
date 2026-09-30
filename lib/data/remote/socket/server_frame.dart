@@ -96,4 +96,10 @@ class ServerEvent extends ServerFrame {
   /// shared world. Without it a second device holds the old name until
   /// something reconnects it, and a stable socket never re-greets.
   static const String identityUpdated = 'identity.updated';
+
+  /// Where the server can be found, sent to greeted connections whenever the
+  /// list changes (contract §8A, phase 039). Seq 0 and not journal content: it
+  /// describes the machine, not the shared world. The payload is the same
+  /// object as `addresses` in the greeting reply.
+  static const String serverAddresses = 'server.addresses';
 }

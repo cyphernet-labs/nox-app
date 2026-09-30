@@ -7,6 +7,7 @@ import 'package:nox_app/data/sync/live_session_starter.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/session/pair_refusal.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
+import 'package:nox_app/domain/repository/connection/access_key_repository.dart';
 import 'package:nox_app/general/pairing/pairing_link.dart';
 
 /// What the server said about who just connected. A domain value on purpose:
@@ -73,10 +74,11 @@ class PairingRefused implements Exception {
 /// connecting; now the server decides, so somebody has to own the wait.
 @LazySingleton(env: [Environment.dev])
 class LiveIdentityHandshake {
-  LiveIdentityHandshake(this._socket, this._starter);
+  LiveIdentityHandshake(this._socket, this._starter, this._keys);
 
   final NoxSocketClient _socket;
   final LiveSessionStarter _starter;
+  final AccessKeyRepository _keys;
 
   /// How long a person waits before being told to try again. Meaningful only
   /// because `stop()` resets the reconnect ladder: without that reset a device
@@ -109,9 +111,15 @@ class LiveIdentityHandshake {
   /// there. `pair` is then the one command allowed before a greeting.
   Future<IdentityHandshake> pair({required PairingLink link, required String deviceKey, required String platform}) async {
     await _starter.restart();
+    // The onion access key goes with the pairing itself (FR-015): a server
+    // from phase 039 on registers it in the same transaction, so a device that
+    // paired through Tor keeps its way in once the invite's one-time key is
+    // gone. Unreadable is not a reason to fail the pairing - the key is then
+    // registered by command on the first greeting (FR-016).
+    final accessKey = (await _keys.deviceKey()).data?.publicBase64;
     final CommandReply reply;
     try {
-      reply = await _socket.pair(token: link.token, deviceKey: deviceKey, platform: platform);
+      reply = await _socket.pair(token: link.token, deviceKey: deviceKey, platform: platform, accessKey: accessKey);
     } on Object {
       // No channel, or no answer within the command timeout. Nothing was
       // decided, so this is "try again" rather than an outcome.

@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:injectable/injectable.dart';
+import 'package:nox_app/domain/service/tor_service.dart';
 import 'package:nox_app/general/pairing/server_pin.dart';
 
 /// The one HTTP client both transports go through, and the place the server's
@@ -79,6 +80,12 @@ class PinnedHttpClient {
     onDiscarded?.call();
   }
 
+  /// Where a `.onion` host is dialled instead: the loopback bridge of the Tor
+  /// client built into the app (phase 040). Read at handshake time, like the
+  /// fingerprint - the bridge opens, moves and closes as the path changes.
+  /// Null, or a null answer, means there is no Tor path right now.
+  TorBridgeEndpoint? Function()? onionBridge;
+
   /// The client. Built once, on first use.
   HttpClient get client => _client ??= _build();
 
@@ -130,6 +137,7 @@ class PinnedHttpClient {
   /// handshake finish; the answer is decided below, before a single byte of the
   /// request is written, because `HttpClient` waits on this future.
   Future<ConnectionTask<Socket>> _connect(Uri uri, String? proxyHost, int? proxyPort) async {
+    if (uri.host.endsWith('.onion')) return _connectThroughTor(uri);
     final task = await SecureSocket.startConnect(
       uri.host,
       uri.port,
@@ -139,16 +147,43 @@ class PinnedHttpClient {
       // transports share does not exist over h2.
       supportedProtocols: const <String>['http/1.1'],
     );
-    return ConnectionTask.fromSocket<SecureSocket>(
-      task.socket.then((socket) {
-        // Read at handshake time, never captured: this client outlives
-        // pairing, re-pairing and logout.
-        if (ServerPin.matches(socket.peerCertificate?.der, _fingerprint)) return socket;
-        _refusals++;
-        socket.destroy();
-        throw const HandshakeException('the server presented a key the pairing link did not name');
-      }),
-      task.cancel,
-    );
+    return ConnectionTask.fromSocket<SecureSocket>(task.socket.then(_checked), task.cancel);
+  }
+
+  /// The onion path (phase 040): the same TLS and the same leaf check, over a
+  /// loopback socket to the Tor client's bridge instead of a TCP connection to
+  /// the host. The bridge lets a connection through only after its 32-byte
+  /// secret; the TLS that follows names the onion host, as the server expects.
+  ///
+  /// Tor proves nothing about WHICH server answered - the onion address is a
+  /// place, like any other - so the fingerprint is checked exactly as on the
+  /// direct path, and a refusal here is the one that means "not your server"
+  /// (FR-030).
+  Future<ConnectionTask<Socket>> _connectThroughTor(Uri uri) async {
+    final bridge = onionBridge?.call();
+    if (bridge == null) throw const SocketException('no Tor path to an onion host');
+    final raw = await Socket.startConnect(InternetAddress.loopbackIPv4, bridge.port);
+    final secured = raw.socket.then((socket) async {
+      socket.add(bridge.secret);
+      await socket.flush();
+      final secure = await SecureSocket.secure(
+        socket,
+        host: uri.host,
+        context: _emptyTrust,
+        onBadCertificate: (_) => true,
+        supportedProtocols: const <String>['http/1.1'],
+      );
+      return _checked(secure);
+    });
+    return ConnectionTask.fromSocket<SecureSocket>(secured, raw.cancel);
+  }
+
+  SecureSocket _checked(SecureSocket socket) {
+    // Read at handshake time, never captured: this client outlives pairing,
+    // re-pairing and logout.
+    if (ServerPin.matches(socket.peerCertificate?.der, _fingerprint)) return socket;
+    _refusals++;
+    socket.destroy();
+    throw const HandshakeException('the server presented a key the pairing link did not name');
   }
 }

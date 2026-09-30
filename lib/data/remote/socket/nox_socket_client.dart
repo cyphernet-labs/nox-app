@@ -3,10 +3,13 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/remote/socket/server_addresses_parser.dart';
 import 'package:nox_app/data/remote/socket/server_frame.dart';
 import 'package:nox_app/data/remote/socket/socket_channel_factory.dart';
+import 'package:nox_app/data/remote/socket/socket_target_provider.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/model/app_config/server_limits.dart';
+import 'package:nox_app/domain/model/connection/server_addresses.dart';
 import 'package:nox_app/domain/model/session/server_identity.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/general/pairing/device_keys.dart';
@@ -43,6 +46,12 @@ class NoxSocketClient {
   /// caller may retry under the same idempotency key.
   static const Duration sendTimeout = Duration(seconds: 10);
 
+  /// How long a command waits for the greeting while the slow path comes up:
+  /// Tor's bring-up budget, one onion dial and the greeting itself (research
+  /// decision 5). Without it a command sent at the start of a Tor bring-up
+  /// would fail on [sendTimeout] while the path was still on its way (FR-023).
+  static const Duration slowPathBudget = Duration(seconds: 145);
+
   /// `rate_limited` is the only contract code marked repeatable (§2.1), so it
   /// is retried here and never shown to the user (FR-018).
   static const int _rateLimitRetries = 3;
@@ -73,7 +82,16 @@ class NoxSocketClient {
   /// event with `seq >= _helloCursor` has been applied (contract §3).
   int _helloCursor = 0;
 
-  Uri? _url;
+  /// Asked for an address before every attempt (phase 040).
+  SocketTargetProvider? _targets;
+
+  /// The address the current attempt dialled, for as long as it is current.
+  Uri? _dialled;
+
+  /// Counts attempts. Choosing a path can take long - a Tor bring-up is the
+  /// better part of two minutes - and a stop, a restart or a switch in the
+  /// meantime makes the attempt that was choosing a stale one.
+  int _attempt = 0;
 
   /// Asked at every greeting rather than handed once at start: the login
   /// derivation and the device id are read fresh so a sign-in or a logout in
@@ -113,17 +131,34 @@ class NoxSocketClient {
   void Function()? onUnauthenticated;
   ServerLimits? limits;
 
+  /// Where the server can be found, as the last greeting stated it (contract
+  /// §3, phase 039). Null before a greeting, and from a server older than 039.
+  ServerAddresses? addresses;
+
+  /// Whether the server reads what phase 039 added to the wire,
+  /// `device.setAccessKey` among it. The greeting carrying `addresses` is that
+  /// flag (contract §2.1).
+  bool get supportsAccessKeys => addresses != null;
+
+  /// The address of the current connection; null between connections.
+  Uri? get currentUrl => _connection == null ? null : _dialled;
+
   Stream<SessionPhase> get phase => _phase.stream;
   SessionPhase get currentPhase => _phase.value;
   Stream<ServerEvent> get events => _events.stream;
 
   /// Opens the connection and keeps it open until [stop]. Safe to call twice.
+  ///
+  /// [targets] is asked for an address before every attempt; [url] is the
+  /// shorthand for one address that never changes. Exactly one is given.
   Future<void> start({
-    required Uri url,
+    Uri? url,
+    SocketTargetProvider? targets,
     Future<GreetingCredentials?> Function()? credentialsProvider,
     void Function()? onJournalChanged,
   }) async {
-    _url = url;
+    assert((url == null) != (targets == null), 'either a url or a target provider');
+    _targets = targets ?? FixedSocketTarget(url!);
     _credentialsProvider = credentialsProvider;
     _onJournalChanged = onJournalChanged;
     if (_started) return;
@@ -133,6 +168,7 @@ class NoxSocketClient {
 
   Future<void> stop() async {
     _started = false;
+    _attempt++;
     _retryTimer?.cancel();
     _retryTimer = null;
     // The ladder lives for the process and otherwise only resets on a
@@ -143,6 +179,26 @@ class NoxSocketClient {
     // making a single connection attempt.
     _backoff = _minBackoff;
     await _teardown(SessionPhase.disconnected);
+  }
+
+  /// Drops the current connection and dials again at once, asking the target
+  /// provider afresh (phase 040).
+  ///
+  /// How the path selector moves the socket to a path it has just verified,
+  /// and how a return from the background skips the ladder. Lossless by the
+  /// protocol rather than by holding two sockets: the replay resumes from the
+  /// cursor, a duplicate falls to its `seq`, and a resent command is idempotent
+  /// under its own key (FR-004).
+  ///
+  /// A terminal phase stays terminal: nothing about a refused onion key or an
+  /// unsupported server changes because the network did.
+  Future<void> reconnect() async {
+    if (!_started || _phase.value.isTerminal) return;
+    _retryTimer?.cancel();
+    _retryTimer = null;
+    _backoff = _minBackoff;
+    await _teardown(SessionPhase.disconnected);
+    await _openOnce();
   }
 
   /// Sends one command and waits for its reply.
@@ -167,30 +223,37 @@ class NoxSocketClient {
   /// Sent through [_sendOnce] with the greeting flag for exactly that reason —
   /// not because it is a greeting, but because it shares the one property that
   /// matters here: it must not wait for one.
-  Future<CommandReply> pair({required String token, required String deviceKey, required String platform}) {
-    return _sendOnce(isGreeting: true, 'pair', <String, dynamic>{'token': token, 'device_key': deviceKey, 'platform': platform});
+  ///
+  /// [accessKey] - the public half of this device's onion access key - goes
+  /// with every pairing (phase 040): a server that does not know the field
+  /// skips it, and one that does registers the key in the same transaction,
+  /// so a device that paired through Tor keeps its way in once the invite's
+  /// one-time key is gone (contract §2.1, §8A).
+  Future<CommandReply> pair({required String token, required String deviceKey, required String platform, String? accessKey}) {
+    return _sendOnce(isGreeting: true, 'pair', <String, dynamic>{
+      'token': token,
+      'device_key': deviceKey,
+      'platform': platform,
+      'access_key': ?accessKey,
+    });
   }
 
   Future<CommandReply> _sendOnce(String cmd, Map<String, dynamic> data, {bool isGreeting = false}) async {
-    if (!isGreeting) {
-      final greeted = _greeted;
-      if (greeted == null) throw const SocketUnavailableException('no connection');
-      // Wait for the handshake rather than racing it — but never longer than a
-      // command is allowed to take.
-      try {
-        await greeted.future.timeout(sendTimeout);
-      } on TimeoutException {
-        throw const SocketUnavailableException('handshake did not complete');
-      }
-    }
+    if (!isGreeting) await _awaitGreeting();
     final connection = _connection;
     if (connection == null) throw const SocketUnavailableException('no connection');
     final id = _nextId++;
     final completer = Completer<CommandReply>();
     _pending[id] = completer;
     connection.add(jsonEncode(<String, dynamic>{'id': id, 'cmd': cmd, 'data': data}));
+    // `pair` goes out before any greeting - possibly before the connection
+    // itself is up, the channel queueing the frame meanwhile. Through Tor that
+    // dial alone can outlast the short timeout (research decision 5), and a
+    // pairing that timed out while its frame was still on the way would tell
+    // the person to try again over a pairing that is about to succeed.
+    final wait = isGreeting && _slowPath ? slowPathBudget : sendTimeout;
     try {
-      return await completer.future.timeout(sendTimeout);
+      return await completer.future.timeout(wait);
     } on TimeoutException {
       _pending.remove(id);
       logRepository.debug(target: this, message: 'socket: command timed out: cmd=$cmd');
@@ -198,9 +261,43 @@ class NoxSocketClient {
     }
   }
 
+  /// Waits for the handshake rather than racing it - but never longer than a
+  /// command is allowed to take, unless the slow path is coming up.
+  ///
+  /// The budget is looked at again whenever the short one runs out: a command
+  /// sent while the direct addresses are being tried cannot know yet that Tor
+  /// will follow, and it must not fail on the short timeout once it has
+  /// (FR-023). It never waits past [slowPathBudget] in all.
+  Future<void> _awaitGreeting() async {
+    final waited = Stopwatch()..start();
+    while (true) {
+      final greeted = _greeted;
+      if (greeted == null) throw const SocketUnavailableException('no connection');
+      final budget = _slowPath ? slowPathBudget : sendTimeout;
+      final left = budget - waited.elapsed;
+      if (left <= Duration.zero) throw const SocketUnavailableException('handshake did not complete');
+      try {
+        await greeted.future.timeout(left);
+        return;
+      } on TimeoutException {
+        if (!_slowPath) throw const SocketUnavailableException('handshake did not complete');
+      }
+    }
+  }
+
+  /// Whether the attempt in progress is bringing up the slow path: the target
+  /// provider is starting Tor, or the address being dialled is an onion one.
+  bool get _slowPath {
+    if (_targets?.bringingUpSlowPath ?? false) return true;
+    final dialled = _dialled;
+    return dialled != null && isOnionUrl(dialled);
+  }
+
   Future<void> _openOnce() async {
-    final url = _url;
-    if (!_started || url == null) return;
+    final targets = _targets;
+    if (!_started || targets == null) return;
+    final attempt = ++_attempt;
+    _dialled = null;
     _phase.add(SessionPhase.connecting);
     final greeted = Completer<void>();
     // Nobody may be waiting when the handshake fails, and an unobserved error
@@ -208,8 +305,24 @@ class NoxSocketClient {
     // affecting callers that DO await it.
     greeted.future.ignore();
     _greeted = greeted;
+    Uri? url;
     try {
-      final connection = _factory.connect(url);
+      url = await targets.nextTarget();
+    } on Object catch (e, st) {
+      // A path that cannot be chosen is a path that is not there; the ladder
+      // asks again. Never a reason for the socket to stop trying.
+      logRepository.error(target: this, error: 'choosing a path failed: ${e.runtimeType}', stackTrace: st);
+    }
+    // Stopped, restarted or switched while the path was being chosen.
+    if (attempt != _attempt || !_started) return;
+    if (url == null) {
+      _onDropped('no path to the server');
+      return;
+    }
+    final target = url;
+    _dialled = target;
+    try {
+      final connection = _factory.connect(target);
       _connection = connection;
       // Every connection gets a number, and every callback carries the one it
       // was born with. Closing a socket can FAIL - that is the whole reason
@@ -224,7 +337,7 @@ class NoxSocketClient {
         onError: (Object e) {
           if (epoch != _connectionEpoch) return;
           if (e is ServerPinRefusedException) {
-            _refusedByPin();
+            _refusedByPin(target);
             return;
           }
           _onDropped('stream error: ${e.runtimeType}');
@@ -235,23 +348,42 @@ class NoxSocketClient {
         cancelOnError: false,
       );
     } on ServerPinRefusedException {
-      _refusedByPin();
+      _refusedByPin(target);
     } catch (e) {
       _onDropped('connect failed: ${e.runtimeType}');
     }
   }
 
-  /// The machine at this address is not this person's server.
+  /// The machine at [url] presented a key the pairing link did not name.
   ///
-  /// Terminal, and terminal in a very particular way: no reconnect ladder,
-  /// because nothing about the answer will change on its own; and NOT through
-  /// [onUnauthenticated], which ends in a forced logout that wipes every
-  /// message on the device. Sending a bad certificate down that path would let
-  /// anyone able to stand in the middle erase this person's data on every
-  /// device they own, by presenting one.
-  void _refusedByPin() {
-    logRepository.debug(target: this, message: 'socket: the server presented a key the pairing link did not name');
-    unawaited(_teardown(SessionPhase.serverMismatch));
+  /// At an ONION address that is not this person's server (FR-030): nobody can
+  /// answer there without the server's own keys, so the store was rebuilt or
+  /// the machine replaced. Terminal, and terminal in a very particular way: no
+  /// reconnect ladder, because nothing about the answer will change on its
+  /// own; and NOT through [onUnauthenticated], which ends in a forced logout
+  /// that wipes every message on the device. Sending a bad certificate down
+  /// that path would let anyone able to stand in the middle erase this
+  /// person's data on every device they own, by presenting one.
+  ///
+  /// At a DIRECT address it means "not home" (FR-005): addresses are reused,
+  /// and on another network the same one is somebody else's machine. The
+  /// address is reported and the socket goes on to the next path.
+  void _refusedByPin(Uri url) {
+    if (isOnionUrl(url)) {
+      logRepository.debug(
+        target: this,
+        message: 'socket: the server behind the onion address presented a key the pairing link did not name',
+      );
+      unawaited(_teardown(SessionPhase.serverMismatch));
+      return;
+    }
+    logRepository.debug(target: this, message: 'socket: a direct address answered with another key, so it does not lead home now');
+    try {
+      _targets?.reportPinRefused(url);
+    } on Object catch (e, st) {
+      logRepository.error(target: this, error: 'pin refusal report failed: ${e.runtimeType}', stackTrace: st);
+    }
+    _onDropped('another key at a direct address');
   }
 
   /// Counts connections, so a frame can say which one it came from.
@@ -474,6 +606,10 @@ class NoxSocketClient {
         created: id['created'] is bool ? id['created'] as bool : null,
       );
       greetingGeneration++;
+      // Read before the limits and kept with them: what the server says about
+      // where it can be found belongs to this connection, and its presence is
+      // the support flag for everything phase 039 added to the wire (§2.1).
+      addresses = ServerAddressesParser.parse(data['addresses']);
       final lim = data['limits'];
       if (lim is Map<String, dynamic>) {
         // `num`, like the cursor above and for the same reason: a JSON layer
@@ -493,6 +629,14 @@ class NoxSocketClient {
       _greetFailures = 0;
       // Commands may flow from here: the server has accepted this connection.
       if (_greeted?.isCompleted == false) _greeted!.complete();
+      final dialled = _dialled;
+      if (dialled != null) {
+        try {
+          _targets?.reportGreeted(dialled);
+        } on Object catch (e, st) {
+          logRepository.error(target: this, error: 'greeting report failed: ${e.runtimeType}', stackTrace: st);
+        }
+      }
       _phase.add(SessionPhase.catchingUp);
       logRepository.debug(target: this, message: 'socket: greeted: first=$firstEver cursor=$_helloCursor');
       if (firstEver) {
@@ -616,6 +760,8 @@ class NoxSocketClient {
     // socket by design.
     identity = null;
     limits = null;
+    addresses = null;
+    _dialled = null;
     // Guarded too: dispose() closes the subject while an unawaited greeting can
     // still be in flight, and adding to a closed subject throws. Nobody is
     // listening by then, so there is nothing to tell and nothing to fail.

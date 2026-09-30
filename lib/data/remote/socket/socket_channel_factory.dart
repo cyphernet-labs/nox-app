@@ -36,6 +36,10 @@ class WebSocketChannelFactory implements SocketChannelFactory {
   /// missed pong surfaces as a socket close, which is the disconnect signal.
   static const Duration pingInterval = Duration(seconds: 25);
 
+  /// How long one dial may take (phase 040).
+  static const Duration directConnectTimeout = Duration(seconds: 10);
+  static const Duration onionConnectTimeout = Duration(seconds: 45);
+
   final PinnedHttpClient _pinned;
 
   @override
@@ -52,7 +56,16 @@ class WebSocketChannelFactory implements SocketChannelFactory {
     // reconnect ladder for ever while the screen blamed the network.
     final before = _pinned.refusals;
     return _IoSocketConnection(
-      IOWebSocketChannel.connect(url, pingInterval: pingInterval, customClient: _pinned.client),
+      IOWebSocketChannel.connect(
+        url,
+        pingInterval: pingInterval,
+        // Bounded, which it never was: a dial that hangs held the reconnect
+        // ladder with it. Longer through Tor, where one keyed connection
+        // fetches the onion service's descriptor anew and sometimes stalls
+        // (phase 040, research decision 5).
+        connectTimeout: url.host.endsWith('.onion') ? onionConnectTimeout : directConnectTimeout,
+        customClient: _pinned.client,
+      ),
       () => _pinned.refusals > before,
     );
   }

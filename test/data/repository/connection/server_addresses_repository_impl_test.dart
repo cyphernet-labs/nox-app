@@ -48,4 +48,18 @@ void main() {
     FlutterSecureStorage.setMockInitialValues({ConnectionStorage.serverAddresses: '{not json'});
     expect((await repository.read()).data, ServerAddresses.empty);
   });
+
+  test('watch gives what is stored, then every change, and nothing for a write that changes nothing', () async {
+    await repository.saveFromServer(direct: ['192.168.1.20:8443'], onion: null);
+    final seen = <ServerAddresses>[];
+    final sub = repository.watch().listen(seen.add);
+    await Future<void>.delayed(Duration.zero);
+
+    await repository.saveFromServer(direct: ['192.168.1.20:8443'], onion: null);
+    await repository.saveFromServer(direct: ['192.168.1.30:8443'], onion: null);
+    await Future<void>.delayed(Duration.zero);
+    await sub.cancel();
+
+    expect(seen.map((a) => a.direct.single), ['192.168.1.20:8443', '192.168.1.30:8443']);
+  });
 }

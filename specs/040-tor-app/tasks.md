@@ -128,28 +128,28 @@
 
   Add every new key to `clear()` and to `discardSignIn()` (except `session.access_key`) in `lib/data/repository/app/session_repository_impl.dart`. Tests: `test/data/repository/connection/server_addresses_repository_impl_test.dart`, `access_key_repository_impl_test.dart`, `test/data/repository/app/session_repository_impl_test.dart` (clear removes the new keys).
 - [X] T017 [P] Implement `lib/data/service/app_lifecycle_service_impl.dart` (`AppLifecycleListener` → `Stream<AppLifecycleState>`, dev/prod) and a test-env fake; tests in `test/data/service/app_lifecycle_service_impl_test.dart`.
-- [ ] T018 Read the server's addresses:
+- [X] T018 Read the server's addresses:
   - in `lib/data/remote/socket/nox_socket_client.dart`: parse `addresses` from the greeting reply into a `ServerAddresses` stream, cleared in `_teardown`, and expose the greeting's capability flag (`supportsAccessKeys`);
   - in `lib/data/sync/sync_service.dart`: handle the seq-0 `server.addresses` event next to `device.revoked`/`identity.updated`, saving through `ServerAddressesRepository` without touching the cursor.
 
   Rewrite the 039 compatibility tests: group 'a server from phase 039' in `test/data/remote/socket/nox_socket_client_test.dart` and the `server.addresses` test in `test/data/sync/sync_service_test.dart`. They now assert the addresses are read and stored, and the cursor is still untouched.
-- [ ] T019 Let the socket ask for a target before each attempt:
+- [X] T019 Let the socket ask for a target before each attempt:
   - `NoxSocketClient.start` takes a `SocketTargetProvider` (async: next `Uri` or none);
   - `_openOnce` asks it on every attempt;
   - add a `connectTimeout` in `lib/data/remote/socket/socket_channel_factory.dart`: 45 s for `.onion`, 10 s otherwise;
   - make the pin-refusal attribution per connection rather than a process-wide counter delta.
 
   Tests in `test/data/remote/socket/nox_socket_client_test.dart` with `FakeSocketFactory`: the target is asked per attempt; none → backoff; onion refusal → `serverMismatch`.
-- [ ] T020 Dial onion hosts through the bridge in `lib/data/remote/pinned_http_client.dart`:
+- [X] T020 Dial onion hosts through the bridge in `lib/data/remote/pinned_http_client.dart`:
   - a host ending in `.onion` → `Socket.connect(127.0.0.1, bridgePort)` → write the 32-byte secret → `SecureSocket.secure(socket, host: onion, supportedProtocols: ['http/1.1'])` → the existing leaf `ServerPin.matches`;
   - the bridge port and secret come from an injected `TorBridgeEndpoint` read at handshake time.
 
   Tests in `test/data/remote/pinned_http_client_onion_test.dart` with a loopback fake bridge in front of the honest and hostile TLS fixtures: the honest one passes, the hostile one is refused, a wrong secret closes.
-- [ ] T021 Key the epoch on the fingerprint in `lib/data/sync/live_session_starter.dart`: `fp:<fingerprint>`. Migrate a stored `live:` epoch without wiping it (`lib/data/local/sync/sync_dao.dart` if a helper is needed). Tests in `test/data/sync/live_session_starter_test.dart`:
+- [X] T021 Key the epoch on the fingerprint in `lib/data/sync/live_session_starter.dart`: `fp:<fingerprint>`. Migrate a stored `live:` epoch without wiping it (`lib/data/local/sync/sync_dao.dart` if a helper is needed). Tests in `test/data/sync/live_session_starter_test.dart`:
   - a `live:` epoch migrates and the chats stay;
   - a different `fp:` wipes;
   - the same `fp:` is a no-op.
-- [ ] T022 Implement `lib/data/sync/connection/access_key_registrar.dart`:
+- [X] T022 Implement `lib/data/sync/connection/access_key_registrar.dart`:
   - `pair` always sends `access_key` (own public), in `nox_socket_client.dart` `pair()` and `lib/data/sync/live_identity_handshake.dart`;
   - after the first greeting with `addresses` while not registered → `device.setAccessKey`; success → registered;
   - `invalid_request` → new key, at most 3 per session;
@@ -172,13 +172,13 @@
 
 **Independent Test**: quickstart scenario 2 (`nox.forceTor=true`) on macOS: messages and a file go through Tor.
 
-- [ ] T024 [P] [US1] Implement `lib/data/sync/connection/direct_prober.dart`:
+- [X] T024 [P] [US1] Implement `lib/data/sync/connection/direct_prober.dart`:
   - its own `PinnedHttpClient`, TLS + leaf pin + `GET /health` per candidate;
   - 2.5 s per attempt; the first candidate at once, the rest after 300 ms in parallel; first success wins; 5 s budget;
   - a pin refusal marks the candidate «not home» (FR-005).
 
   Tests in `test/data/sync/connection/direct_prober_test.dart` with loopback honest and hostile TLS servers.
-- [ ] T025 [US1] Implement `lib/data/sync/connection/connection_path_selector.dart`:
+- [X] T025 [US1] Implement `lib/data/sync/connection/connection_path_selector.dart`:
   - direct candidates via the prober, else Tor when available: platform, onion known, key registered or invite key, not obsolete for this build;
   - `TorService.start` + `setTarget(onion, 443, key)`, wait for ready ≤ 90 s, yield `wss://<onion>:443/ws`;
   - publish path events for `ConnectionStatusService`;
@@ -191,13 +191,13 @@
   - Linux → direct only;
   - obsolete → no Tor;
   - forceTor ignored in release mode.
-- [ ] T026 [US1] Wire the selector into `lib/data/sync/live_session_starter.dart`:
+- [X] T026 [US1] Wire the selector into `lib/data/sync/live_session_starter.dart`:
   - start the socket with the selector as target provider;
   - `ApiClient.initBase` follows the selected path;
   - `TorBridgeEndpoint` is fed from `TorService`.
 
   Tests in `test/data/sync/live_session_starter_test.dart`: the socket gets the onion URL when direct fails; file base URL follows.
-- [ ] T027 [US1] Make sure commands sent while the path comes up wait instead of failing: the outbox drains on live, and interactive commands surface `connection` only after the bring-up budget (`lib/data/sync/outbox_service.dart` and the socket send path). Test in `test/data/sync/outbox_service_test.dart`.
+- [X] T027 [US1] Make sure commands sent while the path comes up wait instead of failing: the outbox drains on live, and interactive commands surface `connection` only after the bring-up budget (`lib/data/sync/outbox_service.dart` and the socket send path). Test in `test/data/sync/outbox_service_test.dart`.
 
 **Checkpoint**: US1 works with `nox.forceTor` on macOS against a local `noxd` with Tor.
 
@@ -209,7 +209,7 @@
 
 **Independent Test**: quickstart scenario 3; the selector tests with a fake clock.
 
-- [ ] T028 [US2] Return to the direct path in `connection_path_selector.dart`:
+- [X] T028 [US2] Return to the direct path in `connection_path_selector.dart`:
   - while on Tor: on `watchNetworkChanges` and every 2 min, probe direct candidates;
   - when one answers: switch the socket to it (probe verified first), then `TorService.clearTarget` + `stop` once the new connection is live (≤ 10 s).
 
@@ -217,8 +217,8 @@
   - switch happens;
   - Tor stops within 10 s;
   - no switch on a hostile direct answer.
-- [ ] T029 [US2] On the direct path, a network change probes the current address; if it does not answer, reconnect through the selector. Test in the same file.
-- [ ] T030 [US2] Background (iOS/Android) via `AppLifecycleService`:
+- [X] T029 [US2] On the direct path, a network change probes the current address; if it does not answer, reconnect through the selector. Test in the same file.
+- [X] T030 [US2] Background (iOS/Android) via `AppLifecycleService`:
   - paused → `setDormant(true)`;
   - resumed → `setDormant(false)` and an immediate reconnect when not live;
   - a Tor client not ready within 10 s → stop + start from the same dirs.
@@ -234,8 +234,8 @@
 
 **Independent Test**: quickstart scenario 8; selector scenario test.
 
-- [ ] T032 [US3] Record `last_good` in `ServerAddressesRepository` on every successful direct connection (`connection_path_selector.dart`). Candidate order is `last_good`, then the server list, then the link address. Tests in the repository and selector tests.
-- [ ] T033 [US3] Scenario test in `test/data/sync/connection/connection_path_selector_test.dart`: the old address is dead → Tor → `server.addresses` brings a new direct address → the next probe switches to it; the epoch does not change (fingerprint), so no wipe.
+- [X] T032 [US3] Record `last_good` in `ServerAddressesRepository` on every successful direct connection (`connection_path_selector.dart`). Candidate order is `last_good`, then the server list, then the link address. Tests in the repository and selector tests.
+- [X] T033 [US3] Scenario test in `test/data/sync/connection/connection_path_selector_test.dart`: the old address is dead → Tor → `server.addresses` brings a new direct address → the next probe switches to it; the epoch does not change (fingerprint), so no wipe.
 
 ---
 
@@ -273,7 +273,7 @@
 **Independent Test**: registrar tests; logout tests; quickstart scenario 7.
 
 - [ ] T038 [US5] Wipe on logout in `lib/data/repository/app/auth_repository_impl.dart`: right after `LiveSessionStarter.stop`, call `TorService.stop()` and delete the Tor state and cache directories. `clear()` already covers the keys and addresses (T016). Tests in `test/data/repository/app/auth_repository_impl_test.dart`: Tor stopped, dirs deleted, keys gone (SC-007).
-- [ ] T039 [US5] Handle a key the service does not know: a `wrong_client_auth` from the bridge marks the key unregistered, so the next direct greeting re-registers it, and the selector stops retrying Tor until then (`access_key_registrar.dart`, `connection_path_selector.dart`). Tests in both test files.
+- [X] T039 [US5] Handle a key the service does not know: a `wrong_client_auth` from the bridge marks the key unregistered, so the next direct greeting re-registers it, and the selector stops retrying Tor until then (`access_key_registrar.dart`, `connection_path_selector.dart`). Tests in both test files.
 
 ---
 

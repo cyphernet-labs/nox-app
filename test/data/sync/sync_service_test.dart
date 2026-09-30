@@ -16,6 +16,7 @@ import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/repository/app/app_state_repository.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
+import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -84,6 +85,7 @@ void main() {
       getIt<MessageMapper>(),
       getIt<MessageWireMapper>(),
       getIt<OutboxRepository>(),
+      getIt<ServerAddressesRepository>(),
     );
     service.start();
   });
@@ -218,23 +220,51 @@ void main() {
     await outbox.clean();
   });
 
-  // Phase 039's server.addresses (seq 0) is not journal content. This build
-  // drops it at the cursor guard like any other seq-0 frame it has no handler
-  // for, and the journal goes on past it (spec 039, SC-011).
-  test('a server.addresses event is passed over without touching the cursor', () async {
+  // Phase 039's server.addresses (seq 0) is not journal content: it says where
+  // the machine can be found, so it is stored and the cursor is left alone
+  // (contract §8A; phase 040, FR-010).
+  test('a server.addresses event is stored, and the cursor does not move for it', () async {
     final socket = await connected();
     socket.pushEvent(
       seq: 0,
       event: 'server.addresses',
       data: {
-        'direct': ['192.168.1.20:8080'],
+        'direct': ['192.168.1.20:8080', '[fd12:3456::20]:8080'],
         'onion': '${'a' * 56}.onion:443',
       },
     );
+    final addresses = getIt<ServerAddressesRepository>();
+    await waitUntil(() async => (await addresses.read()).data?.direct.isNotEmpty ?? false, reason: 'the addresses are stored');
+
+    final stored = (await addresses.read()).data!;
+    expect(stored.direct, ['192.168.1.20:8080', '[fd12:3456::20]:8080']);
+    expect(stored.onion, '${'a' * 56}.onion:443');
+    expect(await sync.getCursor(), 0, reason: 'seq 0 is not a journal position');
+
+    // And the journal goes on past it.
     socket.pushEvent(seq: 5, event: 'chat.created', data: chatFrame('c_1'));
     await waitUntil(() async => await sync.getCursor() == 5, reason: 'the journal goes on past the address event');
-
     expect((await chatDao.getById('c_1'))?.name, 'Live chat');
+  });
+
+  test('an address event that says nothing usable changes nothing', () async {
+    final addresses = getIt<ServerAddressesRepository>();
+    await addresses.saveFromServer(direct: const ['192.168.1.20:8080'], onion: null);
+    final socket = await connected();
+    socket.pushEvent(
+      seq: 0,
+      event: 'server.addresses',
+      data: {
+        'direct': ['not an address', 42, '/etc/passwd'],
+        'onion': 'example.com:443',
+      },
+    );
+    socket.pushEvent(seq: 5, event: 'chat.created', data: chatFrame('c_1'));
+    await waitUntil(() async => await sync.getCursor() == 5, reason: 'the journal goes on');
+
+    final stored = (await addresses.read()).data!;
+    expect(stored.direct, isEmpty, reason: 'the server said its list is empty of anything dialable');
+    expect(stored.onion, isNull, reason: 'only an onion address is an onion address');
   });
 
   test('a new chat event lands in the store and the cursor follows it', () async {

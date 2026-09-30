@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -10,6 +11,7 @@ import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/sync/live_identity_handshake.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/repository/connection/access_key_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_app/general/pairing/pairing_link.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -103,7 +105,7 @@ void main() {
       factory = FakeSocketFactory();
       client = NoxSocketClient(factory, sync);
       starter = MockLiveSessionStarter();
-      handshake = LiveIdentityHandshake(client, starter);
+      handshake = LiveIdentityHandshake(client, starter, getIt<AccessKeyRepository>());
     });
 
     tearDown(() async {
@@ -229,6 +231,22 @@ void main() {
       await waitUntil(() => settled != null, reason: 'the identity arrived');
       expect(settled!.authorId, 'u_me');
       expect(settled!.created, isTrue);
+    });
+
+    test('pairing carries this device\'s onion access key (FR-015)', () async {
+      when(starter.restart()).thenAnswer((_) async {
+        await client.stop();
+        await client.start(url: url, credentialsProvider: () async => const GreetingCredentials.unpaired());
+        factory.latest.pushGreeting();
+      });
+
+      unawaited(handshake.pair(link: PairingLink.parse(kTestLink), deviceKey: 'k', platform: 'ios').then((_) {}, onError: (Object _) {}));
+      await waitUntil(() => factory.created.isNotEmpty && factory.latest.commandNamed('pair') != null, reason: 'presented');
+
+      final sent = factory.latest.commandNamed('pair')!['data'] as Map<String, dynamic>;
+      final own = (await getIt<AccessKeyRepository>().deviceKey()).data!;
+      expect(sent['access_key'], own.publicBase64);
+      expect(sent['access_key'], isNot(contains(base64Encode(own.privateKey))), reason: 'only the public half travels');
     });
   });
 }

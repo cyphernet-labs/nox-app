@@ -301,6 +301,31 @@ void main() {
     expect(await outbox.pending(), isEmpty);
   });
 
+  test('a message written while the path comes up waits for it and goes out once (FR-023)', () async {
+    // Through Tor the path can take the better part of two minutes to come up.
+    // The queue neither tries early - which would only grow the backoff - nor
+    // counts the wait against the message; it goes out on the live edge, once.
+    phase = _FakePhase(SessionPhase.disconnected);
+    service = OutboxService(outbox, messages, phase, files);
+    service.start();
+    await enqueue(['written during the bring-up']);
+
+    for (final step in [SessionPhase.connecting, SessionPhase.disconnected, SessionPhase.connecting, SessionPhase.catchingUp]) {
+      phase.emit(step);
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    expect(sentKeys, isEmpty, reason: 'not before the path is up and caught up');
+    expect((await outbox.pending()).single.attempts, 0, reason: 'waiting is not an attempt');
+
+    phase.emit(SessionPhase.live);
+    for (var i = 0; i < 100 && sentKeys.isEmpty; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+
+    expect(sentKeys, hasLength(1));
+    expect(await outbox.pending(), isEmpty);
+  });
+
   test('start() twice does not open a second subscription (one live edge, one drain)', () async {
     phase = _FakePhase(SessionPhase.disconnected);
     service = OutboxService(outbox, messages, phase, files);

@@ -4,6 +4,8 @@ import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/remote/pinned_http_client.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
+import 'package:nox_app/data/sync/connection/access_key_registrar.dart';
+import 'package:nox_app/data/sync/connection/connection_path_selector.dart';
 import 'package:nox_app/data/sync/sync_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/data/remote/api_client.dart';
@@ -13,9 +15,11 @@ import 'package:nox_app/domain/repository/app_config/app_config_repository.dart'
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
+import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
+import 'package:nox_app/domain/service/tor_service.dart';
 
 /// Owns the order in which the live channel comes up, which is load-bearing:
 ///
@@ -41,6 +45,10 @@ class LiveSessionStarter {
     this._outbox,
     this._files,
     this._pinned,
+    this._selector,
+    this._registrar,
+    this._addresses,
+    this._tor,
   );
 
   final NoxSocketClient _socket;
@@ -53,6 +61,10 @@ class LiveSessionStarter {
   final OutboxRepository _outbox;
   final FileRepository _files;
   final PinnedHttpClient _pinned;
+  final ConnectionPathSelector _selector;
+  final AccessKeyRegistrar _registrar;
+  final ServerAddressesRepository _addresses;
+  final TorService _tor;
 
   StreamSubscription<SessionPhase>? _phaseSub;
 
@@ -106,51 +118,66 @@ class LiveSessionStarter {
     // singleton that outlives pairing, re-pairing and logout, and reading the
     // value once would pin an empty string on a fresh install for ever.
     _pinned.pinTo(fingerprint);
+    // Where an onion host is dialled: the bridge of the Tor client built into
+    // the app, read at handshake time because it opens, moves and closes as
+    // the path changes (phase 040).
+    _pinned.onionBridge = () => _tor.bridge;
 
-    // Keyed on the address actually in use: two different servers reachable at
-    // one configured address would otherwise look like one world, and the
-    // device would carry rows with foreign seqs into the new one.
-    //
-    // The address, not the URL: a paired install stores a bare `host:port`, so
-    // the scheme change this phase makes does not move the epoch and does not
-    // wipe anybody's chats.
-    await _wipeIfWorldChanged('live:$apiUrl');
+    // Keyed on the SERVER, by its fingerprint (phase 040, FR-011). An address
+    // is a place: the server moves between them, and the same one leads to
+    // somebody else's machine on another network. The fingerprint is what
+    // every connection is checked against, so two worlds cannot share one.
+    await _wipeIfWorldChanged(fingerprint);
     // File bytes travel over REST, and they have to reach the SAME machine the
     // socket does, over the same checked client: an attachment uploaded
     // anywhere else would be referenced from a message on the paired server,
-    // where its id means nothing.
+    // where its id means nothing. The link's address until a path is chosen;
+    // every greeting then points it at the path in use (FR-009).
     if (getIt.isRegistered<ApiClient>()) getIt<ApiClient>().initBase(address: _restUrl(apiUrl));
     _syncService.start();
+    _registrar.start();
     // The greeting is where the server states the payload limits and who we
     // are; both are authoritative and arrive again on every reconnect.
     _phaseSub ??= _socket.phase.listen((phase) {
       if (phase == SessionPhase.catchingUp || phase == SessionPhase.live) unawaited(_adoptGreeting());
     });
     _socket.onUnauthenticated = () => unawaited(_deviceRejected());
-    await _socket.start(url: _socketUrl(apiUrl), credentialsProvider: _credentials, onJournalChanged: () => unawaited(_worldChanged()));
+    // Asked before every attempt: direct first, then Tor (phase 040).
+    _selector.begin(linkAddress: _hostPort(apiUrl), fingerprint: fingerprint);
+    await _socket.start(targets: _selector, credentialsProvider: _credentials, onJournalChanged: () => unawaited(_worldChanged()));
   }
 
   /// Brings the channel back after a sign-in. Logout stops it, and without
   /// this a re-login in the same process would leave the device permanently
   /// disconnected until the app is restarted.
+  ///
+  /// The Tor client is left running across it: a restart is a sign-in's
+  /// re-greeting or the way back from a refusal, and the next round would
+  /// only bring it up again from its directories.
   Future<void> restart() async {
-    await stop();
+    await _stop(keepTor: true);
     await start();
   }
 
   /// Tears the channel down. Called before the logout wipe so live events
   /// cannot repopulate the stores it is in the middle of emptying.
-  Future<void> stop() async {
+  Future<void> stop() => _stop(keepTor: false);
+
+  Future<void> _stop({required bool keepTor}) async {
     _retry?.cancel();
     _retry = null;
     await _phaseSub?.cancel();
     _phaseSub = null;
     await _socket.stop();
     await _syncService.stop();
+    await _registrar.stop();
+    // After the socket, so no new round starts; Tor stops here on a logout.
+    await _selector.end(keepTor: keepTor);
     // Forget the server. A logout leaves nothing this install is entitled to
     // talk to, and a pin left behind would let a connection still being torn
     // down keep reaching it.
     _pinned.unpin();
+    if (!keepTor) _pinned.onionBridge = null;
   }
 
   /// Waits out a transient storage failure. Without it a single unreadable
@@ -251,6 +278,15 @@ class LiveSessionStarter {
   Future<void> _adoptGreeting() async {
     final limits = _socket.limits;
     if (limits != null) _config.updateLimits(limits);
+    // Attachment bytes follow the path the socket took: the same machine, by
+    // the same way, under the same check (FR-009).
+    final url = _socket.currentUrl;
+    if (url != null && getIt.isRegistered<ApiClient>()) getIt<ApiClient>().initBase(address: _restUrlOf(url));
+    // Where the server can be found, as it says itself (FR-010). Stored before
+    // anything that can return early below: an install that has not finished
+    // signing in needs the onion address as much as one that has.
+    final stated = _socket.addresses;
+    if (stated != null) await _addresses.saveFromServer(direct: stated.direct, onion: stated.onion);
     final identity = _socket.identity;
     if (identity == null || identity.id.isEmpty) return;
     // A connection made before anyone signed in was served a one-off identity.
@@ -274,8 +310,19 @@ class LiveSessionStarter {
   /// from the clock and a server counts from 1, so carrying either across is
   /// worse than starting clean: the cursor would ask for the future and the
   /// rows would mix two id spaces.
-  Future<void> _wipeIfWorldChanged(String epoch) async {
-    if (await _syncRepository.getEpoch() == epoch) return;
+  Future<void> _wipeIfWorldChanged(String fingerprint) async {
+    final epoch = 'fp:$fingerprint';
+    final stored = await _syncRepository.getEpoch();
+    if (stored == epoch) return;
+    if (stored != null && stored.startsWith('live:')) {
+      // Every install from before phase 040 named its world by the server's
+      // ADDRESS. The machine behind that address has been checked against this
+      // very fingerprint on every connection since phase 036, so it is the
+      // same world under a new name: renamed, never wiped (FR-012).
+      logRepository.debug(target: this, message: 'sync: the local world is now named by the server key');
+      await _syncRepository.setEpoch(epoch);
+      return;
+    }
     logRepository.debug(target: this, message: 'sync: data source changed, dropping the local cache once');
     await _wipeWorld();
     await _syncRepository.setEpoch(epoch);
@@ -319,14 +366,15 @@ class LiveSessionStarter {
     await _messages.clean();
   }
 
-  /// The socket URL: the paired address, `wss`, `/ws`.
+  /// The stored address as a bare `host:port`, whatever shape it arrived in.
   ///
-  /// Always `wss`, whatever shape the address arrived in - there is no plain
-  /// fallback and no way to ask for one. A channel that can be talked down to
-  /// cleartext is a channel somebody talks down.
-  static Uri _socketUrl(String apiUrl) {
-    if (!apiUrl.contains('://')) return Uri.parse('wss://$apiUrl/ws');
-    return Uri.parse(apiUrl).replace(scheme: 'wss', path: '/ws');
+  /// The path selector dials `wss://<host:port>/ws` and nothing else - there is
+  /// no plain fallback and no way to ask for one. A channel that can be talked
+  /// down to cleartext is a channel somebody talks down.
+  static String _hostPort(String apiUrl) {
+    if (!apiUrl.contains('://')) return apiUrl;
+    final uri = Uri.parse(apiUrl);
+    return uri.hasPort ? '${uri.host.contains(':') ? '[${uri.host}]' : uri.host}:${uri.port}' : uri.host;
   }
 
   /// The REST base for attachment bytes: the same machine, `https`.
@@ -334,4 +382,8 @@ class LiveSessionStarter {
     if (!apiUrl.contains('://')) return 'https://$apiUrl';
     return Uri.parse(apiUrl).replace(scheme: 'https').toString();
   }
+
+  /// The REST base for the machine a socket URL names.
+  static String _restUrlOf(Uri socketUrl) =>
+      Uri(scheme: 'https', host: socketUrl.host, port: socketUrl.hasPort ? socketUrl.port : null).toString();
 }

@@ -22,6 +22,9 @@ class ServerAddressesRepositoryImpl with BaseRepositoryHelper implements ServerA
   /// direct connection) would otherwise lose one of them.
   Future<void> _writes = Future<void>.value();
 
+  /// Every value written, after it is on disk.
+  final StreamController<ServerAddresses> _changes = StreamController<ServerAddresses>.broadcast();
+
   @override
   Future<RepositoryResult<ServerAddresses>> read() {
     return execute<ServerAddresses>(() async => RepositoryResult<ServerAddresses>.success(data: await _read()));
@@ -32,7 +35,9 @@ class ServerAddressesRepositoryImpl with BaseRepositoryHelper implements ServerA
     return execute<bool>(() async {
       await _serialised(() async {
         final current = await _read();
-        await _write(current.copyWith(direct: List<String>.unmodifiable(direct), onion: onion));
+        final next = current.copyWith(direct: List<String>.unmodifiable(direct), onion: onion);
+        if (next == current) return;
+        await _write(next);
       });
       return const RepositoryResult<bool>.success(data: true);
     });
@@ -48,6 +53,26 @@ class ServerAddressesRepositoryImpl with BaseRepositoryHelper implements ServerA
       });
       return const RepositoryResult<bool>.success(data: true);
     });
+  }
+
+  @override
+  Stream<ServerAddresses> watch() {
+    StreamSubscription<ServerAddresses>? changes;
+    late final StreamController<ServerAddresses> controller;
+    controller = StreamController<ServerAddresses>(
+      onListen: () async {
+        // Subscribed BEFORE the first read, so a write landing in between is
+        // not lost: at worst the same value arrives twice.
+        changes = _changes.stream.listen(controller.add);
+        try {
+          controller.add(await _read());
+        } on Object catch (e, st) {
+          controller.addError(e, st);
+        }
+      },
+      onCancel: () => changes?.cancel(),
+    );
+    return controller.stream;
   }
 
   Future<void> _serialised(Future<void> Function() body) {
@@ -75,8 +100,11 @@ class ServerAddressesRepositoryImpl with BaseRepositoryHelper implements ServerA
     }
   }
 
-  Future<void> _write(ServerAddresses addresses) => _storage.write(
-    key: ConnectionStorage.serverAddresses,
-    value: jsonEncode(<String, dynamic>{'direct': addresses.direct, 'onion': addresses.onion, 'last_good': addresses.lastGood}),
-  );
+  Future<void> _write(ServerAddresses addresses) async {
+    await _storage.write(
+      key: ConnectionStorage.serverAddresses,
+      value: jsonEncode(<String, dynamic>{'direct': addresses.direct, 'onion': addresses.onion, 'last_good': addresses.lastGood}),
+    );
+    _changes.add(addresses);
+  }
 }

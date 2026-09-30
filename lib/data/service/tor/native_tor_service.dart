@@ -64,7 +64,21 @@ class NativeTorService implements TorService {
   TorStatus get status => _status.value;
 
   @override
-  Stream<TorStatus> watchStatus() => _status.stream.distinct();
+  Stream<TorStatus> watchStatus() {
+    unawaited(_announceObsolete());
+    return _status.stream.distinct();
+  }
+
+  bool _obsoleteChecked = false;
+
+  /// A build the Tor network refused says so from the first look, not only
+  /// once something tries to start Tor: the request to update is shown on the
+  /// direct path too (FR-026).
+  Future<void> _announceObsolete() async {
+    if (_obsoleteChecked || !isSupported) return;
+    _obsoleteChecked = true;
+    if (await _obsoleteInThisBuild()) _publish(const TorStatus(state: TorState.obsolete, error: TorError.softwareDeprecated));
+  }
 
   @override
   TorBridgeEndpoint? get bridge => _bridge;
@@ -182,6 +196,9 @@ class NativeTorService implements TorService {
   }
 
   void _publish(TorStatus next) {
+    // Final for the build: a later `stopped` from a library that was never
+    // started must not take the request to update off the screen.
+    if (_status.value.isObsolete) return;
     if (_status.value != next) _status.add(next);
   }
 

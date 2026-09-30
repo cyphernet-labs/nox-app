@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
+import 'package:nox_app/data/remote/socket/socket_target_provider.dart';
 import 'package:nox_app/general/pairing/device_keys.dart';
 import 'package:nox_app/data/remote/socket/socket_channel_factory.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
@@ -398,11 +399,11 @@ void main() {
   });
 
   // A server from phase 039 adds `addresses` to the greeting reply and sends a
-  // `server.addresses` event (seq 0). This build knows neither and must not
-  // notice: the server's side of the change shipped first, the app's comes with
-  // stage 2 of the Tor track (contract §3, §8A; spec 039, SC-011).
+  // `server.addresses` event (seq 0). Since phase 040 the app reads both: the
+  // greeting's list is kept with the connection, and its presence is the
+  // support flag for `device.setAccessKey` (contract §2.1, §3, §8A).
   group('a server from phase 039', () {
-    test('a greeting reply that also names where the server is goes through untouched', () async {
+    Future<FakeSocket> greetedWith(Map<String, dynamic>? addresses) async {
       await client.start(
         url: url,
         credentialsProvider: () async => const GreetingCredentials(label: 'Anna'),
@@ -418,18 +419,50 @@ void main() {
           'journal_id': 'j_test',
           'limits': {'max_message_bytes': 65536, 'max_attachment_bytes': 104857600, 'max_frame_bytes': 131072},
           'identity': {'id': 'u_1', 'label': 'Anna'},
-          'addresses': {
-            'direct': ['192.168.1.20:8080', '[fd12:3456::20]:8080'],
-            'onion': '${'a' * 56}.onion:443',
-          },
+          'addresses': ?addresses,
         },
       );
       await waitUntil(
         () => client.currentPhase == SessionPhase.live || client.currentPhase == SessionPhase.catchingUp,
         reason: 'the greeting reply is applied',
       );
+      return socket;
+    }
+
+    test('the greeting says where the server is, and that it reads access keys', () async {
+      await greetedWith({
+        'direct': ['192.168.1.20:8080', '[fd12:3456::20]:8080'],
+        'onion': '${'a' * 56}.onion:443',
+      });
+
       expect(client.identity?.label, 'Anna');
-      expect(client.limits?.maxMessageBytes, 65536);
+      expect(client.addresses?.direct, ['192.168.1.20:8080', '[fd12:3456::20]:8080']);
+      expect(client.addresses?.onion, '${'a' * 56}.onion:443');
+      expect(client.supportsAccessKeys, isTrue);
+    });
+
+    test('a server older than 039 states nothing, and is not asked to register a key', () async {
+      await greetedWith(null);
+
+      expect(client.addresses, isNull);
+      expect(client.supportsAccessKeys, isFalse);
+    });
+
+    test('an empty list is still the support flag: the server says it has no direct address', () async {
+      await greetedWith({'direct': <String>[]});
+
+      expect(client.addresses?.direct, isEmpty);
+      expect(client.addresses?.onion, isNull);
+      expect(client.supportsAccessKeys, isTrue);
+    });
+
+    test('what the greeting said about addresses dies with its connection', () async {
+      final socket = await greetedWith({
+        'direct': ['192.168.1.20:8080'],
+      });
+      await socket.drop();
+      await waitUntil(() => client.addresses == null, reason: 'the teardown forgets it');
+      expect(client.supportsAccessKeys, isFalse);
     });
 
     test('the server.addresses event leaves the session as it was', () async {
@@ -450,6 +483,125 @@ void main() {
 
       expect(client.currentPhase, SessionPhase.live);
       expect(seen, ['server.addresses', 'message.new']);
+    });
+  });
+
+  group('the target provider (phase 040)', () {
+    test('it is asked before every attempt, and the socket dials what it says', () async {
+      final targets = ScriptedTargets([Uri.parse('wss://10.0.0.1:9000/ws'), Uri.parse('wss://10.0.0.2:9000/ws')]);
+      await client.start(targets: targets);
+      expect(factory.urls, [Uri.parse('wss://10.0.0.1:9000/ws')]);
+
+      await factory.latest.drop();
+      await waitUntil(() => factory.urls.length == 2, reason: 'the ladder asks again');
+
+      expect(factory.urls.last, Uri.parse('wss://10.0.0.2:9000/ws'));
+      expect(targets.asked, 2);
+    });
+
+    test('no path means waiting on the ladder, and asking again', () async {
+      final targets = ScriptedTargets([null, Uri.parse('wss://10.0.0.1:9000/ws')]);
+      await client.start(targets: targets);
+
+      expect(factory.created, isEmpty, reason: 'nothing to dial');
+      await waitUntil(() => client.currentPhase == SessionPhase.disconnected, reason: 'on the ladder');
+      await waitUntil(() => factory.created.length == 1, reason: 'asked again after the first rung');
+      expect(targets.asked, 2);
+    });
+
+    test('a greeting is reported against the address it came over', () async {
+      final targets = ScriptedTargets([Uri.parse('wss://10.0.0.1:9000/ws')]);
+      await client.start(targets: targets, credentialsProvider: () async => const GreetingCredentials());
+      final socket = factory.latest;
+      socket.pushGreeting();
+      await waitUntil(() => socket.commandNamed('session.hello') != null, reason: 'the client greets back');
+      socket.replyToHello(cursor: 0);
+      await waitUntil(() => targets.greeted.isNotEmpty, reason: 'the greeting is reported');
+
+      expect(targets.greeted, [Uri.parse('wss://10.0.0.1:9000/ws')]);
+      expect(client.currentUrl, Uri.parse('wss://10.0.0.1:9000/ws'));
+    });
+
+    test('another key at a direct address is reported and the next path is tried (FR-005)', () async {
+      final targets = ScriptedTargets([Uri.parse('wss://192.168.1.20:8080/ws'), Uri.parse('wss://${'a' * 56}.onion/ws')]);
+      await client.start(targets: targets);
+
+      factory.latest.refusePin();
+      await waitUntil(() => factory.created.length == 2, reason: 'the ladder goes on');
+
+      expect(targets.refused, [Uri.parse('wss://192.168.1.20:8080/ws')]);
+      expect(client.currentPhase, isNot(SessionPhase.serverMismatch));
+    });
+
+    test('another key behind the onion address is the wrong server, terminal (FR-030)', () async {
+      final targets = ScriptedTargets([Uri.parse('wss://${'a' * 56}.onion/ws'), Uri.parse('wss://10.0.0.1:9000/ws')]);
+      await client.start(targets: targets);
+
+      factory.latest.refusePin();
+      await settle();
+
+      expect(client.currentPhase, SessionPhase.serverMismatch);
+      expect(targets.refused, isEmpty, reason: 'not reported as "not home"');
+      await Future<void>.delayed(const Duration(milliseconds: 1500));
+      expect(factory.created, hasLength(1), reason: 'nothing retries a refusal on its own');
+    });
+
+    test('a stop while the path is being chosen dials nothing afterwards', () async {
+      final gate = Completer<Uri?>();
+      final targets = ScriptedTargets.gated(gate);
+      final starting = client.start(targets: targets);
+      await settle();
+      await client.stop();
+      gate.complete(Uri.parse('wss://10.0.0.1:9000/ws'));
+      await starting;
+      await settle();
+
+      expect(factory.created, isEmpty);
+    });
+
+    test('reconnect drops the connection and asks for a target at once', () async {
+      final targets = ScriptedTargets([Uri.parse('wss://${'a' * 56}.onion/ws'), Uri.parse('wss://10.0.0.1:9000/ws')]);
+      await client.start(targets: targets);
+      final first = factory.latest;
+
+      await client.reconnect();
+
+      expect(first.closed, isTrue);
+      expect(factory.urls.last, Uri.parse('wss://10.0.0.1:9000/ws'));
+    });
+
+    test('a command sent while the slow path comes up waits past the short timeout (FR-023)', () async {
+      final gate = Completer<Uri?>();
+      final targets = ScriptedTargets.gated(gate)..slow = true;
+      unawaited(client.start(targets: targets, credentialsProvider: () async => const GreetingCredentials()));
+      await settle();
+
+      final pending = client.send('chats.list', {'page': 1});
+      var failed = false;
+      unawaited(pending.then((_) {}, onError: (Object _) => failed = true));
+      // Longer than a command may otherwise wait for its greeting.
+      await Future<void>.delayed(NoxSocketClient.sendTimeout + const Duration(milliseconds: 500));
+      expect(failed, isFalse, reason: 'still waiting for the path');
+
+      targets.slow = false;
+      gate.complete(Uri.parse('wss://10.0.0.1:9000/ws'));
+      await waitUntil(() => factory.created.isNotEmpty, reason: 'the path arrived');
+      final socket = factory.latest;
+      socket.pushGreeting();
+      await waitUntil(() => socket.commandNamed('session.hello') != null, reason: 'the client greets back');
+      socket.replyToHello(cursor: 0);
+      await waitUntil(() => socket.commandNamed('chats.list') != null, reason: 'the command goes out after the greeting');
+      socket.reply(socket.sent.indexWhere((f) => f['cmd'] == 'chats.list'), data: {'chats': const [], 'has_more': false});
+      expect((await pending).ok, isTrue);
+    }, timeout: const Timeout(Duration(seconds: 30)));
+
+    test('pairing carries the public half of the access key (FR-015)', () async {
+      await client.start(url: url, credentialsProvider: () async => const GreetingCredentials.unpaired());
+      final socket = factory.latest;
+      unawaited(client.pair(token: 't', deviceKey: 'k', platform: 'macos', accessKey: 'QUJD').then((_) {}, onError: (Object _) {}));
+      await waitUntil(() => socket.commandNamed('pair') != null, reason: 'pair is sent');
+
+      expect((socket.commandNamed('pair')!['data'] as Map<String, dynamic>)['access_key'], 'QUJD');
     });
   });
 
@@ -505,4 +657,38 @@ void main() {
       await expectLater(pending, throwsA(isA<SocketUnavailableException>()));
     });
   });
+}
+
+/// Hands out addresses from a script, one per attempt, and records what the
+/// socket reports back.
+class ScriptedTargets implements SocketTargetProvider {
+  ScriptedTargets(List<Uri?> script) : _script = List<Uri?>.of(script), _gate = null;
+
+  /// Holds the first answer until [gate] completes.
+  ScriptedTargets.gated(Completer<Uri?> gate) : _script = <Uri?>[], _gate = gate;
+
+  final List<Uri?> _script;
+  final Completer<Uri?>? _gate;
+  int asked = 0;
+  bool slow = false;
+  final List<Uri> greeted = <Uri>[];
+  final List<Uri> refused = <Uri>[];
+
+  @override
+  Future<Uri?> nextTarget() async {
+    asked++;
+    final gate = _gate;
+    if (gate != null && asked == 1) return gate.future;
+    if (_script.isEmpty) return null;
+    return _script.length == 1 ? _script.first : _script.removeAt(0);
+  }
+
+  @override
+  bool get bringingUpSlowPath => slow;
+
+  @override
+  void reportGreeted(Uri url) => greeted.add(url);
+
+  @override
+  void reportPinRefused(Uri url) => refused.add(url);
 }
