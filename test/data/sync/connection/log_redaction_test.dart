@@ -126,10 +126,15 @@ void main() {
 
   test('a run through Tor names no onion address', () async {
     await getIt<ServerAddressesRepository>().saveFromServer(direct: const ['10.0.0.5:9000'], onion: '$_onionHost:443');
+    await getIt<AccessKeyRepository>().deviceKey();
     await getIt<AccessKeyRepository>().markRegistered(true);
     selector.begin(linkAddress: '10.0.0.5:9000', fingerprint: 'pin');
 
     await socket.start(targets: selector, credentialsProvider: () async => const GreetingCredentials());
+    // The path is chosen after start() returns.
+    for (var i = 0; i < 200 && factory.created.isEmpty; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
     final peer = factory.latest;
     peer.pushGreeting();
     for (var i = 0; i < 200 && peer.commandNamed('session.hello') == null; i++) {

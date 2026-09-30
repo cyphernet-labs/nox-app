@@ -67,6 +67,9 @@ class _Lifecycle implements AppLifecycleService {
 
 /// One connection, served by [_Server].
 class _ServedSocket implements SocketConnection {
+  @override
+  bool get opened => true;
+
   _ServedSocket(this._server);
 
   final _Server _server;
@@ -230,6 +233,7 @@ void main() {
     tor = FakeTorService()..supported = true;
     network = _Network();
     await getIt<ServerAddressesRepository>().saveFromServer(direct: const [_link], onion: _onion);
+    await getIt<AccessKeyRepository>().deviceKey();
     await getIt<AccessKeyRepository>().markRegistered(true);
     selector = ConnectionPathSelector.forTest(
       prober,

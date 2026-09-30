@@ -370,6 +370,58 @@ void main() {
       await waitUntil(() => client.currentPhase == SessionPhase.live, reason: 'caught up from the burst');
     });
 
+    test('a greeting held up past its connection is dropped, never sent on the next one', () async {
+      // Signed over the first connection's challenge, a hello sent on the
+      // second reads as a forged one: the server answers `unauthenticated`,
+      // and that is the forced logout that wipes the device.
+      var gate = Completer<GreetingCredentials?>();
+      var asked = 0;
+      await client.start(
+        url: url,
+        credentialsProvider: () {
+          asked++;
+          return gate.future;
+        },
+      );
+      await waitUntil(() => factory.created.isNotEmpty, reason: 'dialled');
+      final first = factory.latest;
+      first.pushGreeting();
+      await waitUntil(() => asked == 1, reason: 'the greeting reads who we are');
+
+      await first.drop();
+      await waitUntil(() => factory.created.length == 2, reason: 'the ladder dials again');
+      final second = factory.latest;
+      gate.complete(const GreetingCredentials());
+      await settle();
+
+      expect(first.commandNamed('session.hello'), isNull);
+      expect(second.commandNamed('session.hello'), isNull, reason: 'the old greeting stays with its connection');
+      expect(second.closed, isFalse, reason: 'and does not tear the new one down');
+
+      gate = Completer<GreetingCredentials?>()..complete(const GreetingCredentials());
+      second.pushGreeting();
+      await waitUntil(() => second.commandNamed('session.hello') != null, reason: 'the new connection greets for itself');
+      second.replyToHello(cursor: 0);
+      await waitUntil(() => client.currentPhase == SessionPhase.live, reason: 'greeted');
+      expect(second.sent.where((f) => f['cmd'] == 'session.hello'), hasLength(1));
+    });
+
+    test('a reconnect under an unanswered greeting leaves the new connection alone', () async {
+      await client.start(url: url, credentialsProvider: () async => const GreetingCredentials());
+      await waitUntil(() => factory.created.isNotEmpty, reason: 'dialled');
+      final first = factory.latest;
+      first.pushGreeting();
+      await waitUntil(() => first.commandNamed('session.hello') != null, reason: 'the hello is out');
+
+      await client.reconnect();
+      final second = factory.latest;
+      await Future<void>.delayed(const Duration(milliseconds: 1500));
+
+      expect(factory.created, hasLength(2), reason: 'the failed hello schedules no dial of its own');
+      expect(second.closed, isFalse);
+      expect(client.currentPhase, SessionPhase.connecting, reason: 'the new attempt is still the one in progress');
+    });
+
     test('a schema the server does not speak is terminal, not retried', () async {
       await client.start(url: url);
       final socket = factory.latest;
@@ -645,6 +697,52 @@ void main() {
 
       await expectLater(client.pair(token: 't', deviceKey: 'k', platform: 'macos'), throwsA(isA<SocketUnavailableException>()));
     }, timeout: const Timeout(Duration(seconds: 30)));
+
+    test('a pairing whose connection never opened is presented again on the next', () async {
+      // Through Tor one dial can run out its time while the next gets through;
+      // the token never left the device, so presenting it again spends nothing.
+      await client.start(
+        targets: ScriptedTargets([Uri.parse('wss://10.0.0.1:9000/ws'), Uri.parse('wss://10.0.0.2:9000/ws')]),
+        credentialsProvider: () async => const GreetingCredentials.unpaired(),
+      );
+      await waitUntil(() => factory.created.isNotEmpty, reason: 'dialled');
+      final first = factory.latest..opened = false;
+      final pairing = client.pair(token: 't', deviceKey: 'k', platform: 'macos');
+      await waitUntil(() => first.commandNamed('pair') != null, reason: 'handed to the first');
+
+      await first.drop();
+      await waitUntil(() => factory.created.length == 2, reason: 'the ladder dials again');
+      final second = factory.latest;
+      await waitUntil(() => second.commandNamed('pair') != null, reason: 'presented again');
+      second.reply(
+        second.sent.indexWhere((f) => f['cmd'] == 'pair'),
+        data: {
+          'identity': {'id': 'u_me', 'label': 'Anna', 'created': true},
+        },
+      );
+
+      expect((await pairing).ok, isTrue);
+    });
+
+    test('a pairing whose connection did open is not presented twice', () async {
+      // It may have reached the server, and the token is one-shot: presented
+      // again it would come back refused as spent.
+      await client.start(
+        targets: ScriptedTargets([Uri.parse('wss://10.0.0.1:9000/ws'), Uri.parse('wss://10.0.0.2:9000/ws')]),
+        credentialsProvider: () async => const GreetingCredentials.unpaired(),
+      );
+      await waitUntil(() => factory.created.isNotEmpty, reason: 'dialled');
+      final first = factory.latest;
+      final pairing = client.pair(token: 't', deviceKey: 'k', platform: 'macos');
+      await waitUntil(() => first.commandNamed('pair') != null, reason: 'sent on the first');
+
+      await first.drop();
+
+      await expectLater(pairing, throwsA(isA<SocketUnavailableException>()));
+      await waitUntil(() => factory.created.length == 2, reason: 'the ladder dials again');
+      await settle();
+      expect(factory.latest.commandNamed('pair'), isNull);
+    });
 
     test('pairing carries the public half of the access key (FR-015)', () async {
       await client.start(url: url, credentialsProvider: () async => const GreetingCredentials.unpaired());

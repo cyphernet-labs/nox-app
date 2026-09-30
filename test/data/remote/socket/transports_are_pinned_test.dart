@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
@@ -145,6 +146,22 @@ void main() {
 
       await expectLater(connection.frames.first, throwsA(isNot(isA<ServerPinRefusedException>())));
       expect(pinned.refusals, 0);
+    });
+
+    test('a dial that never opens says so, and raises nothing on its own', () async {
+      // `opened` is what lets a pairing be presented again on the next
+      // connection. Read from the channel's `ready`, whose error must stay
+      // handled: on every rung of the reconnect ladder it fails once more.
+      final pinned = PinnedHttpClient()..pinTo(_fingerprint);
+      final errors = <Object>[];
+      await runZonedGuarded(() async {
+        final connection = WebSocketChannelFactory(pinned).connect(Uri.parse('wss://127.0.0.1:1/ws'));
+        await expectLater(connection.frames.first, throwsA(anything));
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect(connection.opened, isFalse);
+      }, (error, _) => errors.add(error));
+
+      expect(errors, isEmpty);
     });
   });
 }

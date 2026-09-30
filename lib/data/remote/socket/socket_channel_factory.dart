@@ -14,6 +14,10 @@ abstract class SocketConnection {
   Stream<dynamic> get frames;
   void add(String frame);
   Future<void> close();
+
+  /// Whether the connection ever opened. A frame added to one that never did
+  /// never left the device.
+  bool get opened;
 }
 
 /// Opens a [SocketConnection].
@@ -73,18 +77,20 @@ class WebSocketChannelFactory implements SocketChannelFactory {
 
 class _IoSocketConnection implements SocketConnection {
   _IoSocketConnection(this._channel, this._wasRefused) {
-    // Nobody awaits `ready`, and nobody should: the app learns that a
-    // connection failed from the frames stream, which is the one place that
-    // also carries frames. But the channel completes `ready` with an error as
+    // Read for [opened] only: the app learns that a connection failed from the
+    // frames stream, which is the one place that also carries frames. The
+    // error is handled here because the channel completes `ready` with it as
     // well, and an error on a future with no listener is an unhandled zone
     // error - raised on EVERY rung of the reconnect ladder while offline, and
-    // on every pin refusal, which is to say at the choosing of anyone who
-    // answers at the paired address. Marking it handled is the whole fix; the
-    // failure itself is still reported below, once.
-    _channel.ready.ignore();
+    // on every pin refusal. The failure itself is still reported below, once.
+    _channel.ready.then<void>((_) => _opened = true, onError: (Object _) {});
   }
 
   final IOWebSocketChannel _channel;
+  bool _opened = false;
+
+  @override
+  bool get opened => _opened;
 
   /// Whether the pin refused a certificate since this connection was started.
   final bool Function() _wasRefused;

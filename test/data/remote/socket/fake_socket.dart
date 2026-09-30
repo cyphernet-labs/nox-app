@@ -10,6 +10,10 @@ class FakeSocket implements SocketConnection {
   final List<Map<String, dynamic>> sent = <Map<String, dynamic>>[];
   bool closed = false;
 
+  /// False for a dial that never completed: what it was handed never left.
+  @override
+  bool opened = true;
+
   @override
   Stream<dynamic> get frames => _incoming.stream;
 

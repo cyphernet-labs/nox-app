@@ -134,9 +134,6 @@ class NoxSocketClient {
   /// exactly the guess the sign-in path exists to stop making.
   int greetingGeneration = 0;
 
-  /// The challenge of the CURRENT connection, from the server's greeting.
-  String _challenge = '';
-
   /// Called when the server does not recognise this device any more. Set by
   /// the session starter, which owns what happens next.
   void Function()? onUnauthenticated;
@@ -174,7 +171,12 @@ class NoxSocketClient {
     _onJournalChanged = onJournalChanged;
     if (_started) return;
     _started = true;
-    await _openOnce();
+    // Not awaited. Choosing a path can take a while - the direct addresses are
+    // probed first, and Tor may come up behind them - and nothing about
+    // starting needs that choice made. The app's first screen waits on this
+    // method; a person away from home would otherwise look at the launch
+    // screen for as long as Tor takes.
+    unawaited(_openOnce());
   }
 
   Future<void> stop() async {
@@ -240,19 +242,40 @@ class NoxSocketClient {
   /// skips it, and one that does registers the key in the same transaction,
   /// so a device that paired through Tor keeps its way in once the invite's
   /// one-time key is gone (contract §2.1, §8A).
-  Future<CommandReply> pair({required String token, required String deviceKey, required String platform, String? accessKey}) {
-    return _sendOnce(isGreeting: true, 'pair', <String, dynamic>{
-      'token': token,
-      'device_key': deviceKey,
-      'platform': platform,
-      'access_key': ?accessKey,
-    });
+  ///
+  /// A connection that never opened takes nothing with it: the frame never
+  /// left this device, so the token is presented again on the next one, within
+  /// the same budget. Through Tor one dial can run out its time while the next
+  /// gets through, and a pairing that gave up there sent the person off to try
+  /// again by hand. A connection that DID open may have delivered the token,
+  /// which is one-shot, so its loss is reported - a second presentation would
+  /// come back refused as spent.
+  Future<CommandReply> pair({required String token, required String deviceKey, required String platform, String? accessKey}) async {
+    final data = <String, dynamic>{'token': token, 'device_key': deviceKey, 'platform': platform, 'access_key': ?accessKey};
+    final waited = Stopwatch()..start();
+    while (true) {
+      final connection = await _awaitConnection();
+      // Read now, while the dial is current: the teardown that fails the
+      // command also forgets which address it went to.
+      final budget = _slowPath ? slowPathBudget : sendTimeout;
+      try {
+        return await _sendOnce(isGreeting: true, via: connection, 'pair', data);
+      } on SocketUnavailableException {
+        if (connection.opened || !_started || waited.elapsed >= budget) rethrow;
+        logRepository.debug(target: this, message: 'socket: the connection carrying pair never opened, presenting it on the next');
+      }
+    }
   }
 
-  Future<CommandReply> _sendOnce(String cmd, Map<String, dynamic> data, {bool isGreeting = false}) async {
+  /// [via] pins the command to one connection: the greeting answers a
+  /// challenge that only that connection's server session knows, so it must
+  /// never wait for - or go out on - the next one.
+  Future<CommandReply> _sendOnce(String cmd, Map<String, dynamic> data, {bool isGreeting = false, SocketConnection? via}) async {
     if (!isGreeting) await _awaitGreeting();
-    final connection = isGreeting ? await _awaitConnection() : _connection;
-    if (connection == null) throw const SocketUnavailableException('no connection');
+    final connection = via ?? (isGreeting ? await _awaitConnection() : _connection);
+    if (connection == null || (via != null && !identical(_connection, via))) {
+      throw const SocketUnavailableException('no connection');
+    }
     final id = _nextId++;
     final completer = Completer<CommandReply>();
     _pending[id] = completer;
@@ -453,10 +476,11 @@ class NoxSocketClient {
     final frame = ServerFrame.parse(json);
     switch (frame) {
       case SrvGreeting(:final challenge):
-        // Kept per connection: a signature made over one connection's challenge
-        // is useless on the next, which is what makes replay pointless.
-        _challenge = challenge;
-        unawaited(_greet());
+        // Answered on the connection that asked, over its own challenge: a
+        // signature made over one connection's challenge is useless on the
+        // next, which is what makes replay pointless.
+        final connection = _connection;
+        if (connection != null) unawaited(_greet(connection: connection, epoch: epoch, challenge: challenge));
       case CommandReply(:final id):
         _pending.remove(id)?.complete(frame);
       case ServerEvent():
@@ -476,12 +500,24 @@ class NoxSocketClient {
   /// no extra state is needed to tell the two apart. Sending `since: 0` instead
   /// would ask the server to replay its ENTIRE journal, which is exactly what
   /// happens after the epoch wipe puts a device back to zero.
-  Future<void> _greet() async {
+  ///
+  /// Bound to the [connection] whose [challenge] it answers. Every await below
+  /// can outlive that connection - a network change, a Tor circuit that
+  /// drops, a restart - and from then on the greeting has nothing left to
+  /// say: it is dropped without a word. Sent on the next connection instead,
+  /// a signature over the old challenge reads as a forged one, the server
+  /// answers `unauthenticated`, and that is the forced logout that wipes the
+  /// device. Its failure branches would tear down and retry a connection that
+  /// is not theirs.
+  Future<void> _greet({required SocketConnection connection, required int epoch, required String challenge}) async {
+    bool stale() => epoch != _connectionEpoch || !identical(_connection, connection);
     try {
       final since = await _syncRepository.getCursor();
+      if (stale()) return;
       final firstEver = since == 0;
       final provider = _credentialsProvider;
       final credentials = provider == null ? const GreetingCredentials() : await provider();
+      if (stale()) return;
       if (credentials == null) {
         // The provider could not tell who we are - a transient storage failure.
         // Greeting anyway would send an unsigned hello, which the server
@@ -501,11 +537,12 @@ class NoxSocketClient {
       String? deviceKey;
       String? signature;
       final seed = credentials.deviceSeed;
-      if (seed != null && seed.isNotEmpty && _challenge.isNotEmpty) {
+      if (seed != null && seed.isNotEmpty && challenge.isNotEmpty) {
         try {
           deviceKey = await DeviceKeys.publicKey(seed);
-          signature = await DeviceKeys.signChallenge(seed: seed, challenge: _challenge);
+          signature = await DeviceKeys.signChallenge(seed: seed, challenge: challenge);
         } on Object catch (e) {
+          if (stale()) return;
           // Fail CLOSED. Greeting unsigned would ask the server to accept us
           // without proof - and if it ever did, this path would be the way in.
           // A challenge that will not decode is a broken peer; tear down and
@@ -515,8 +552,9 @@ class NoxSocketClient {
           _scheduleRetry();
           return;
         }
+        if (stale()) return;
       }
-      final reply = await _sendOnce(isGreeting: true, 'session.hello', <String, dynamic>{
+      final reply = await _sendOnce(isGreeting: true, via: connection, 'session.hello', <String, dynamic>{
         'schema': 1,
         if (!firstEver) 'since': since,
         // Stated only after a rename: a greeting that repeats a cached name
@@ -529,6 +567,7 @@ class NoxSocketClient {
         'device_key': ?deviceKey,
         'signature': ?signature,
       });
+      if (stale()) return;
       if (!reply.ok) {
         logRepository.debug(target: this, message: 'socket: greeting refused: code=${reply.errorCode}');
         // A version mismatch or a malformed greeting is a programmer error, not
@@ -567,6 +606,7 @@ class NoxSocketClient {
       // would apply strangers' events under numbers we already believe we hold.
       final serverJournal = data['journal_id'] as String?;
       final knownJournal = await _syncRepository.getJournal();
+      if (stale()) return;
       // A device holding a cursor but no remembered journal learned that cursor
       // from a world that predates this field — every install from before this
       // release. Treating that as "no divergence" would opt the check out of
@@ -594,6 +634,7 @@ class NoxSocketClient {
       }
       if (serverJournal != null) {
         if (knownJournal != serverJournal) await _syncRepository.setJournal(serverJournal);
+        if (stale()) return;
         journalId = serverJournal;
       }
 
@@ -683,6 +724,7 @@ class NoxSocketClient {
         // No replay was requested, so the reply's cursor becomes our starting
         // point and the bootstrap happens through ordinary list reads (§3).
         await _syncRepository.advanceCursor(_helloCursor);
+        if (stale()) return;
         _phase.add(SessionPhase.live);
       } else if (since >= _helloCursor || _seenSeq >= _helloCursor) {
         // Already level with the server, or the replay overtook this very
@@ -690,9 +732,13 @@ class NoxSocketClient {
         _phase.add(SessionPhase.live);
       }
     } on SocketUnavailableException {
+      // The connection went away under the greeting - its own drop already
+      // tore it down and scheduled what comes next.
+      if (stale()) return;
       await _teardown(SessionPhase.disconnected);
       _scheduleRetry();
     } on Object catch (e, st) {
+      if (stale()) return;
       // Everything else, and deliberately so. This method runs through
       // `unawaited()`, so any escaping throw becomes an unhandled async error:
       // no teardown, no retry, `_greeted` never completed - the channel is dead
