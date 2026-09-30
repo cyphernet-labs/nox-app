@@ -27,7 +27,6 @@ import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_app/domain/service/network_change_service.dart';
 import 'package:nox_app/domain/service/tor_service.dart';
 import 'package:nox_app/general/pairing/pairing_link.dart';
-import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
@@ -84,13 +83,6 @@ void main() {
     // network changes. Registered before anything resolves the selector.
     FlutterSecureStorage.setMockInitialValues({});
     SharedPreferences.setMockInitialValues({});
-    PackageInfo.setMockInitialValues(
-      appName: 'nox',
-      packageName: 'com.cyphernetlabs.noxapp',
-      version: '0.0.0',
-      buildNumber: 'probe',
-      buildSignature: '',
-    );
     await configureDependencies(Environment.dev);
     await getIt.allReady();
     getIt.allowReassignment = true;

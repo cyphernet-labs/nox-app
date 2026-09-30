@@ -2171,6 +2171,7 @@ dependencies = [
  "tor-rtcompat",
  "tracing",
  "tracing-subscriber",
+ "zeroize",
 ]
 
 [[package]]

@@ -7,12 +7,13 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
+import 'package:nox_app/data/service/network_change_service_impl.dart';
 import 'package:nox_app/data/sync/connection/connection_path_selector.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/connection/connection_path.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/app/auth_repository.dart';
-import 'package:package_info_plus/package_info_plus.dart';
+import 'package:nox_app/domain/service/network_change_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'live_target.dart';
@@ -34,9 +35,12 @@ void main() {
     LiveTarget.letTheNetworkThrough();
     FlutterSecureStorage.setMockInitialValues({});
     SharedPreferences.setMockInitialValues({});
-    PackageInfo.setMockInitialValues(appName: 'nox', packageName: 'nox', version: '0', buildNumber: 'b', buildSignature: '');
     await configureDependencies(Environment.dev);
     await getIt.allReady();
+    // No platform plugins on the host: the network watch is not what this
+    // probe is about.
+    getIt.allowReassignment = true;
+    getIt.registerSingleton<NetworkChangeService>(QuietNetworkChangeService());
 
     final watch = Stopwatch()..start();
     final signedIn = await getIt<AuthRepository>().signIn(identifier: link);

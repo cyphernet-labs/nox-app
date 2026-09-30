@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use data_encoding::BASE64;
 use nox_tor::engine;
 use nox_tor::status::{state, NoxTorStatus};
+use zeroize::Zeroizing;
 
 fn wait_ready(budget: Duration) -> Result<Duration, NoxTorStatus> {
     let started = Instant::now();
@@ -73,7 +74,7 @@ fn main() {
     if let (Some(onion), Some(key)) = (args.get(1), args.get(2)) {
         let port: u16 = args.get(3).and_then(|p| p.parse().ok()).unwrap_or(443);
         let key: [u8; 32] = BASE64.decode(key.as_bytes()).expect("key is base64").try_into().expect("32 bytes");
-        assert_eq!(engine::set_target(onion, port, key), 0);
+        assert_eq!(engine::set_target(onion, port, Box::new(Zeroizing::new(key))), 0);
         for label in ["first keyed connect", "repeated keyed connect"] {
             match through_bridge() {
                 Ok(t) => println!("{label}: {:.2}s, rss {} KB", t.as_secs_f64(), rss_kb()),

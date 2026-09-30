@@ -14,6 +14,7 @@ use std::ffi::{c_char, CStr};
 use std::panic::{catch_unwind, UnwindSafe};
 
 use status::{error, NoxTorStatus};
+use zeroize::Zeroizing;
 
 const VERSION: &CStr = c"arti-client 0.47.0";
 
@@ -61,7 +62,9 @@ pub unsafe extern "C" fn nox_tor_set_target(onion_host: *const c_char, port: u16
         if client_key32.is_null() || !host.ends_with(".onion") {
             return error::RET_INVALID_ARGUMENT;
         }
-        let mut key = [0u8; 32];
+        // Straight from the caller's bytes into a heap buffer that wipes
+        // itself: no copy of the key is left on this stack.
+        let mut key = Box::new(Zeroizing::new([0u8; 32]));
         key.copy_from_slice(std::slice::from_raw_parts(client_key32, 32));
         engine::set_target(host, port, key)
     })
@@ -141,10 +144,42 @@ pub extern "C" fn nox_tor_version() -> *const c_char {
 mod tests {
     use super::*;
     use std::ffi::CString;
+    use std::io::{Read, Write};
+    use std::path::PathBuf;
     use std::sync::Mutex;
+    use std::time::Duration;
 
     /// The engine is process-wide; tests that start it take turns.
     static SERIAL: Mutex<()> = Mutex::new(());
+
+    const ONION: &str = "25njqamcweflpvkl73j4szahhihoc4xt3ktcgjnpaingr5yhkenl5sid.onion";
+
+    /// A directory that cannot be created, because its parent is a file: the
+    /// client cannot be built, so the engine fails without touching the
+    /// network. Returns the blocking file, to remove afterwards.
+    fn unusable_dir(name: &str) -> (PathBuf, CString) {
+        let blocker = std::env::temp_dir().join(format!("nox_tor_{name}_{}", std::process::id()));
+        std::fs::write(&blocker, b"").unwrap();
+        let dir = CString::new(blocker.join("tor").to_str().unwrap()).unwrap();
+        (blocker, dir)
+    }
+
+    fn status_now() -> NoxTorStatus {
+        let mut seen = NoxTorStatus::default();
+        unsafe { nox_tor_status(&mut seen) };
+        seen
+    }
+
+    /// Polls until the engine reaches `want`, for ten seconds at most.
+    fn wait_for(want: u8) -> NoxTorStatus {
+        for _ in 0..500 {
+            if status_now().state == want {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        status_now()
+    }
 
     #[test]
     fn set_target_rejects_what_is_not_an_onion_service_or_a_key() {
@@ -199,5 +234,78 @@ mod tests {
         assert_eq!(seen.state, status::state::OBSOLETE);
         engine::reset_for_test();
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_failed_client_is_rebuilt_by_the_next_start() {
+        let _turn = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
+        engine::reset_for_test();
+        let (blocker, bad) = unusable_dir("failed");
+        assert_eq!(unsafe { nox_tor_start(bad.as_ptr(), bad.as_ptr()) }, 0);
+        let failed = wait_for(status::state::FAILED);
+        assert_eq!(failed.state, status::state::FAILED);
+        // A directory out of reach is this device's problem, not the network's.
+        assert_eq!(failed.error, error::INTERNAL);
+        // The retry is a plain start, with no stop in between. The rebuilt
+        // client bootstraps for real; the test needs no network, and stops it
+        // before it gets far.
+        let dir = std::env::temp_dir().join(format!("nox_tor_retry_{}", std::process::id()));
+        let state_dir = dir.join("state");
+        let state = CString::new(state_dir.to_str().unwrap()).unwrap();
+        let cache = CString::new(dir.join("cache").to_str().unwrap()).unwrap();
+        assert_eq!(unsafe { nox_tor_start(state.as_ptr(), cache.as_ptr()) }, 0);
+        assert_eq!(status_now().state, status::state::BOOTSTRAPPING);
+        // A new client was built, from the new directories.
+        for _ in 0..500 {
+            if state_dir.exists() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(state_dir.exists());
+        engine::reset_for_test();
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_file(blocker);
+    }
+
+    #[test]
+    fn a_rebuild_keeps_the_target_and_the_bridge_the_app_holds() {
+        let _turn = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
+        engine::reset_for_test();
+        let (blocker, bad) = unusable_dir("carried");
+        assert_eq!(unsafe { nox_tor_start(bad.as_ptr(), bad.as_ptr()) }, 0);
+        assert_eq!(wait_for(status::state::FAILED).state, status::state::FAILED);
+        let onion = CString::new(ONION).unwrap();
+        let key = [1u8; 32];
+        assert_eq!(unsafe { nox_tor_set_target(onion.as_ptr(), 443, key.as_ptr()) }, 0);
+        let port = status_now().port;
+        assert_ne!(port, 0);
+        let mut secret = [0u8; 32];
+        assert_eq!(unsafe { nox_tor_bridge_secret(secret.as_mut_ptr()) }, 0);
+        // Rebuilt - and failing again, which is beside the point here.
+        assert_eq!(unsafe { nox_tor_start(bad.as_ptr(), bad.as_ptr()) }, 0);
+        assert_eq!(status_now().port, port);
+        let mut kept = [0u8; 32];
+        assert_eq!(unsafe { nox_tor_bridge_secret(kept.as_mut_ptr()) }, 0);
+        assert_eq!(kept, secret);
+        assert_eq!(engine::target_host_for_test().as_deref(), Some(ONION));
+        // The old runtime is gone by now, and the bridge answers from the new
+        // one: a wrong secret is turned away at once instead of sitting in the
+        // listen queue with nobody accepting.
+        std::thread::sleep(Duration::from_millis(200));
+        let mut socket = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        socket.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        let wrong: [u8; 32] = std::array::from_fn(|i| !secret[i]);
+        socket.write_all(&wrong).unwrap();
+        let mut byte = [0u8; 1];
+        let answer = socket.read(&mut byte);
+        let closed = match &answer {
+            Ok(0) => true,
+            Err(e) => e.kind() == std::io::ErrorKind::ConnectionReset,
+            Ok(_) => false,
+        };
+        assert!(closed, "the bridge did not answer: {answer:?}");
+        engine::reset_for_test();
+        let _ = std::fs::remove_file(blocker);
     }
 }

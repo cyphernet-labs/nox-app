@@ -9,7 +9,6 @@ import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/model/connection/tor_status.dart';
 import 'package:nox_app/domain/service/tor_service.dart';
 import 'package:nox_tor/nox_tor.dart';
-import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:rxdart/rxdart.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -24,38 +23,46 @@ class NativeTorService implements TorService {
   NativeTorService(this._prefs)
     : _api = const NoxTorApi(),
       _directoriesOf = _platformDirectories,
-      _buildOf = _platformBuild,
-      _supported = null;
+      _supported = null,
+      _wipeRetryPause = const Duration(milliseconds: 200);
 
   @visibleForTesting
   NativeTorService.forTest(
     this._prefs, {
     required this._api,
     required Future<(String, String)> Function() directories,
-    required Future<String> Function() build,
     bool this._supported = true,
-  }) : _directoriesOf = directories,
-       _buildOf = build;
+    this._wipeRetryPause = Duration.zero,
+  }) : _directoriesOf = directories;
 
   final SharedPreferences _prefs;
   final NoxTorApi _api;
   final Future<(String, String)> Function() _directoriesOf;
-  final Future<String> Function() _buildOf;
   final bool? _supported;
+  final Duration _wipeRetryPause;
 
-  /// The build in which the Tor network refused this client (FR-026). Tor is
-  /// not started again in that build: Arti would read the same consensus and
-  /// try to exit. A new build clears it by having a different number.
-  static const String kObsoleteBuild = 'tor.obsolete_build';
+  /// The Tor client the network refused (FR-026), by the version the library
+  /// reports. It is not started again: Arti would read the same consensus and
+  /// try to exit. Being refused is a property of the CLIENT, so an update that
+  /// ships a newer one clears it, and one that ships the same one does not -
+  /// the network would refuse it again. Keyed on the app's build number it
+  /// could never clear: that number does not move with every release.
+  static const String kObsoleteClient = 'tor.obsolete_client';
 
   static const Duration _fastPoll = Duration(milliseconds: 250);
   static const Duration _slowPoll = Duration(seconds: 2);
+
+  /// How many times a directory that will not delete is tried again.
+  static const int _wipeAttempts = 5;
 
   final BehaviorSubject<TorStatus> _status = BehaviorSubject<TorStatus>.seeded(TorStatus.stopped);
   Timer? _poll;
   Duration? _pollEvery;
   TorBridgeEndpoint? _bridge;
-  String? _buildNumber;
+
+  /// Counts stops, so a start still awaiting its preparations sees that the
+  /// session it was for has ended meanwhile.
+  int _stops = 0;
 
   @override
   bool get isSupported => _supported ?? TorCapability.isAvailable;
@@ -77,7 +84,7 @@ class NativeTorService implements TorService {
   Future<void> _announceObsolete() async {
     if (_obsoleteChecked || !isSupported) return;
     _obsoleteChecked = true;
-    if (await _obsoleteInThisBuild()) _publish(const TorStatus(state: TorState.obsolete, error: TorError.softwareDeprecated));
+    if (_obsoleteClient()) _publish(const TorStatus(state: TorState.obsolete, error: TorError.softwareDeprecated));
   }
 
   @override
@@ -86,11 +93,16 @@ class NativeTorService implements TorService {
   @override
   Future<void> start() async {
     if (!isSupported) return;
-    if (await _obsoleteInThisBuild()) {
+    final stops = _stops;
+    if (_obsoleteClient()) {
       _publish(const TorStatus(state: TorState.obsolete, error: TorError.softwareDeprecated));
       return;
     }
     final (stateDir, cacheDir) = await _directories();
+    // Stopped - or wiped by a logout - while the directories were looked up:
+    // starting now would bring Tor up for nobody and write back the very
+    // directories the wipe just removed.
+    if (stops != _stops) return;
     try {
       _api.start(stateDir: stateDir, cacheDir: cacheDir);
     } on NoxTorException catch (e) {
@@ -101,6 +113,7 @@ class NativeTorService implements TorService {
 
   @override
   Future<void> stop() async {
+    _stops++;
     _poll?.cancel();
     _poll = null;
     _pollEvery = null;
@@ -116,11 +129,24 @@ class NativeTorService implements TorService {
     if (!isSupported) return;
     final (stateDir, cacheDir) = await _directories();
     for (final path in [stateDir, cacheDir]) {
-      final dir = Directory(path);
+      await _delete(Directory(path));
+    }
+  }
+
+  /// Tried again for a moment before giving up. `stop` returns before the
+  /// client's tasks have let go of their files - its lock files and its
+  /// directory database - and Windows will not delete a file that is open.
+  Future<void> _delete(Directory dir) async {
+    for (var attempt = 1; ; attempt++) {
       try {
         if (await dir.exists()) await dir.delete(recursive: true);
+        return;
       } on FileSystemException catch (e) {
-        logRepository.debug(target: this, message: 'tor: a directory would not delete (${e.osError?.errorCode})');
+        if (attempt >= _wipeAttempts) {
+          logRepository.error(target: this, error: 'tor: a directory would not delete (${e.osError?.errorCode})');
+          return;
+        }
+        await Future<void>.delayed(_wipeRetryPause);
       }
     }
   }
@@ -177,6 +203,10 @@ class NativeTorService implements TorService {
       error: TorError.values[snapshot.error.index],
       port: snapshot.port,
     );
+    // No port, no bridge: a client that went away on its own - refused as
+    // obsolete, say - took its listener with it, and the port it had may
+    // belong to somebody else by the next dial.
+    if (next.port == null) _bridge = null;
     _publish(next);
     if (next.isObsolete) unawaited(_recordObsolete());
     if (!schedule) return;
@@ -210,16 +240,12 @@ class NativeTorService implements TorService {
     return ('${support.path}${Platform.pathSeparator}nox_tor_state', '${cache.path}${Platform.pathSeparator}nox_tor_cache');
   }
 
-  static Future<String> _platformBuild() async => (await PackageInfo.fromPlatform()).buildNumber;
-
-  Future<String> _build() async => _buildNumber ??= await _buildOf();
-
-  Future<bool> _obsoleteInThisBuild() async => _prefs.getString(kObsoleteBuild) == await _build();
+  bool _obsoleteClient() => _prefs.getString(kObsoleteClient) == _api.version();
 
   Future<void> _recordObsolete() async {
-    final build = await _build();
-    if (_prefs.getString(kObsoleteBuild) == build) return;
-    await _prefs.setString(kObsoleteBuild, build);
+    final client = _api.version();
+    if (_prefs.getString(kObsoleteClient) == client) return;
+    await _prefs.setString(kObsoleteClient, client);
     logRepository.debug(target: this, message: 'tor: the network no longer accepts this client');
   }
 }

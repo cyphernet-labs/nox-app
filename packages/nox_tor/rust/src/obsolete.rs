@@ -52,10 +52,9 @@ mod tests {
     fn an_error_from_protostatus_fires_and_nothing_else_does() {
         let fired = Arc::new(AtomicUsize::new(0));
         let counter = Arc::clone(&fired);
-        let subscriber =
-            tracing_subscriber::registry().with(ObsoleteLayer::new(move || {
-                counter.fetch_add(1, Ordering::SeqCst);
-            }));
+        let subscriber = tracing_subscriber::registry().with(ObsoleteLayer::new(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+        }));
         tracing::subscriber::with_default(subscriber, || {
             tracing::warn!(target: "arti_client::protostatus", "Bug: Got DirEvent::NewProtocolRecommendation");
             tracing::info!(target: "arti_client::protostatus", "listed as recommended");

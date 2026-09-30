@@ -7,6 +7,8 @@
 //! 127.0.0.1, and without the secret it could ride this client - and its
 //! access key - to the person's server.
 
+use std::collections::VecDeque;
+use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -14,6 +16,7 @@ use subtle::ConstantTimeEq;
 use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::runtime::Runtime;
+use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 use crate::engine::{lock, Shared};
@@ -21,6 +24,15 @@ use crate::status::{classify, error};
 
 /// How long a fresh loopback connection may take to present the secret.
 const SECRET_WAIT: Duration = Duration::from_secs(5);
+/// How many connections may be waiting to present the secret at once. Anyone
+/// on the device can dial, and each of these holds a socket for SECRET_WAIT:
+/// unbounded, a stranger could fill the process's descriptor table and starve
+/// Arti, the app's own sockets and its files.
+const PENDING_CAP: usize = 16;
+/// The pause after an accept that failed for more than the connection it was
+/// taking. A full descriptor table fails again at once, and an immediate retry
+/// would spin a worker until it cleared.
+const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 /// One Tor connection to the onion service. A keyed connect fetches the
 /// descriptor anew every time and sometimes hangs (Arti #2166, #2482): this is
 /// the bound, and the app's reconnect ladder is the retry.
@@ -28,8 +40,22 @@ const CONNECT_BUDGET: Duration = Duration::from_secs(45);
 
 pub struct BridgeHandle {
     task: JoinHandle<()>,
+    /// The socket itself. The accept loop works on a handle of its own, so the
+    /// port stays bound when the loop's runtime goes away (see `move_to`).
+    listener: std::net::TcpListener,
     pub port: u16,
     pub secret: Arc<Mutex<[u8; 32]>>,
+}
+
+impl BridgeHandle {
+    /// Serves this bridge from another runtime: same socket, port and secret,
+    /// which the app already holds. How a failed client is rebuilt on a new
+    /// runtime without the app's endpoint going stale.
+    pub(crate) fn move_to(&mut self, runtime: &Runtime, shared: &Arc<Shared>) -> Result<(), ()> {
+        let task = spawn_serve(&self.listener, runtime, shared, &self.secret)?;
+        std::mem::replace(&mut self.task, task).abort();
+        Ok(())
+    }
 }
 
 impl Drop for BridgeHandle {
@@ -53,12 +79,25 @@ pub fn open_or_rotate(runtime: &Runtime, shared: &Arc<Shared>) -> Result<u16, ()
         return Ok(open.port);
     }
     let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).map_err(|_| ())?;
-    listener.set_nonblocking(true).map_err(|_| ())?;
     let port = listener.local_addr().map_err(|_| ())?.port();
     let secret = Arc::new(Mutex::new(secret));
-    let task = runtime.spawn(serve(listener, Arc::clone(shared), Arc::clone(&secret)));
-    *bridge = Some(BridgeHandle { task, port, secret });
+    let task = spawn_serve(&listener, runtime, shared, &secret)?;
+    *bridge = Some(BridgeHandle { task, listener, port, secret });
     Ok(port)
+}
+
+/// Starts the accept loop on `runtime`, on a handle of its own to `listener`.
+fn spawn_serve(
+    listener: &std::net::TcpListener,
+    runtime: &Runtime,
+    shared: &Arc<Shared>,
+    secret: &Arc<Mutex<[u8; 32]>>,
+) -> Result<JoinHandle<()>, ()> {
+    let handle = listener.try_clone().map_err(|_| ())?;
+    // tokio needs it; set on the handle it gets rather than trusted to carry
+    // over from the original on every platform.
+    handle.set_nonblocking(true).map_err(|_| ())?;
+    Ok(runtime.spawn(serve(handle, Arc::clone(shared), Arc::clone(secret))))
 }
 
 async fn serve(listener: std::net::TcpListener, shared: Arc<Shared>, secret: Arc<Mutex<[u8; 32]>>) {
@@ -69,14 +108,42 @@ async fn serve(listener: std::net::TcpListener, shared: Arc<Shared>, secret: Arc
             return;
         }
     };
+    // The connections still waiting to present the secret, oldest first.
+    // Dropping a sender lets that connection go (see relay).
+    let mut waiting: VecDeque<oneshot::Sender<()>> = VecDeque::new();
     loop {
-        let Ok((socket, _)) = listener.accept().await else { continue };
+        let socket = match listener.accept().await {
+            Ok((socket, _)) => socket,
+            Err(e) if gone_before_taken(&e) => continue,
+            Err(_) => {
+                tokio::time::sleep(ACCEPT_BACKOFF).await;
+                continue;
+            }
+        };
+        waiting.retain(|w| !w.is_closed());
+        if waiting.len() >= PENDING_CAP {
+            // The oldest goes, not the newcomer: the app writes the secret the
+            // moment it connects, so a stranger who keeps the slots full by
+            // reconnecting cannot lock it out.
+            waiting.pop_front();
+        }
+        let (evict, evicted) = oneshot::channel();
+        waiting.push_back(evict);
         let expected = *lock(&secret);
         let shared = Arc::clone(&shared);
         tokio::spawn(async move {
-            let _ = relay(socket, shared, expected).await;
+            let _ = relay(socket, shared, expected, evicted).await;
         });
     }
+}
+
+/// An accept that failed over the one connection it was taking - gone before
+/// it was taken - says nothing about the next one.
+fn gone_before_taken(e: &io::Error) -> bool {
+    matches!(
+        e.kind(),
+        io::ErrorKind::ConnectionAborted | io::ErrorKind::ConnectionReset | io::ErrorKind::ConnectionRefused
+    )
 }
 
 /// Reads and checks the secret. Constant-time, so a stranger learns nothing
@@ -89,12 +156,25 @@ pub async fn read_secret(socket: &mut TcpStream, expected: &[u8; 32]) -> Result<
     }
 }
 
-async fn relay(mut socket: TcpStream, shared: Arc<Shared>, expected: [u8; 32]) -> Result<(), ()> {
-    read_secret(&mut socket, &expected).await?;
-    let target = lock(&shared.target).clone().ok_or(())?;
+async fn relay(
+    mut socket: TcpStream,
+    shared: Arc<Shared>,
+    expected: [u8; 32],
+    evicted: oneshot::Receiver<()>,
+) -> Result<(), ()> {
+    tokio::select! {
+        presented = read_secret(&mut socket, &expected) => presented?,
+        // Pushed out by newer connections while still waiting.
+        _ = evicted => return Err(()),
+    }
+    // Where to go, and nothing more: the key stays with the client.
+    let (host, port) = {
+        let slot = lock(&shared.target);
+        let target = slot.as_ref().ok_or(())?;
+        (target.host.clone(), target.port)
+    };
     let client = lock(&shared.client).clone().ok_or(())?;
-    let mut stream = match tokio::time::timeout(CONNECT_BUDGET, client.connect((target.host.as_str(), target.port))).await
-    {
+    let mut stream = match tokio::time::timeout(CONNECT_BUDGET, client.connect((host.as_str(), port))).await {
         Ok(Ok(stream)) => stream,
         Ok(Err(e)) => {
             let code = classify(&e);
@@ -154,5 +234,26 @@ mod tests {
     #[test]
     fn secrets_are_random() {
         assert_ne!(random_secret().unwrap(), random_secret().unwrap());
+    }
+
+    #[tokio::test]
+    async fn over_the_cap_the_oldest_waiting_connection_goes() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let serving = tokio::spawn(serve(listener, Arc::new(Shared::default()), Arc::new(Mutex::new([7u8; 32]))));
+        // One more than the cap, and none of them presents the secret.
+        let mut waiting = Vec::new();
+        for _ in 0..=PENDING_CAP {
+            waiting.push(TcpStream::connect(addr).await.unwrap());
+        }
+        let mut byte = [0u8; 1];
+        let oldest = tokio::time::timeout(Duration::from_secs(2), waiting[0].read(&mut byte)).await;
+        assert!(matches!(oldest, Ok(Ok(0)) | Ok(Err(_))), "the oldest is still waiting: {oldest:?}");
+        for kept in [1, PENDING_CAP] {
+            let read = tokio::time::timeout(Duration::from_millis(200), waiting[kept].read(&mut byte)).await;
+            assert!(read.is_err(), "connection {kept} was let go: {read:?}");
+        }
+        serving.abort();
     }
 }

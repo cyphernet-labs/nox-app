@@ -23,4 +23,7 @@ class NoxTorApi {
   Uint8List bridgeSecret() => NoxTor.bridgeSecret();
 
   String onionFromPublicKey(Uint8List publicKey) => NoxTor.onionFromPublicKey(publicKey);
+
+  /// Which Tor client the library carries, e.g. `arti-client 0.47.0`.
+  String version() => NoxTor.version;
 }

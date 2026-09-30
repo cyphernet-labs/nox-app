@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -15,6 +16,7 @@ class _FakeApi extends NoxTorApi {
   int starts = 0;
   int stops = 0;
   ({String host, int port})? target;
+  String clientVersion = 'arti-client 0.47.0';
 
   @override
   void start({required String stateDir, required String cacheDir}) {
@@ -48,6 +50,9 @@ class _FakeApi extends NoxTorApi {
 
   @override
   String onionFromPublicKey(Uint8List publicKey) => 'x.onion';
+
+  @override
+  String version() => clientVersion;
 }
 
 void main() {
@@ -62,7 +67,7 @@ void main() {
     await configureDependencies(Environment.test);
     prefs = await SharedPreferences.getInstance();
     api = _FakeApi();
-    service = NativeTorService.forTest(prefs, api: api, directories: () async => ('/s', '/c'), build: () async => '42');
+    service = NativeTorService.forTest(prefs, api: api, directories: () async => ('/s', '/c'));
   });
 
   tearDown(() async {
@@ -87,7 +92,7 @@ void main() {
     expect(service.bridge, isNull);
   });
 
-  test('obsolete is remembered for this build, and this build does not start Tor again', () async {
+  test('obsolete is remembered for this Tor client, and the same client is not started again', () async {
     await service.start();
     api.snapshot = const NoxTorSnapshot(
       state: NoxTorState.obsolete,
@@ -97,28 +102,53 @@ void main() {
     );
     service.setDormant(false); // any call polls the snapshot
     await pumpEventQueue();
-    expect(prefs.getString(NativeTorService.kObsoleteBuild), '42');
+    expect(prefs.getString(NativeTorService.kObsoleteClient), 'arti-client 0.47.0');
 
-    final again = NativeTorService.forTest(prefs, api: _FakeApi(), directories: () async => ('/s', '/c'), build: () async => '42');
+    final again = NativeTorService.forTest(prefs, api: _FakeApi(), directories: () async => ('/s', '/c'));
     await again.start();
-    expect(again.status.isObsolete, isTrue);
+    expect(again.status.isObsolete, isTrue, reason: 'an update with the same client would be refused again');
 
-    final nextBuild = _FakeApi();
-    final updated = NativeTorService.forTest(prefs, api: nextBuild, directories: () async => ('/s', '/c'), build: () async => '43');
+    final nextBuild = _FakeApi()..clientVersion = 'arti-client 0.48.0';
+    final updated = NativeTorService.forTest(prefs, api: nextBuild, directories: () async => ('/s', '/c'));
     await updated.start();
-    expect(nextBuild.starts, 1, reason: 'a new build tries again');
+    expect(nextBuild.starts, 1, reason: 'a newer client tries again');
     await again.stop();
     await updated.stop();
   });
 
-  test('an unsupported platform does nothing at all', () async {
-    final linux = NativeTorService.forTest(
-      prefs,
-      api: api,
-      directories: () async => ('/s', '/c'),
-      build: () async => '42',
-      supported: false,
+  test('a stop while the directories are looked up keeps the client down', () async {
+    // A logout wipes the directories right after the stop; a start that went
+    // ahead would bring Tor up for nobody and write them back.
+    final directories = Completer<(String, String)>();
+    final racing = NativeTorService.forTest(prefs, api: api, directories: () => directories.future);
+    final starting = racing.start();
+    await racing.stop();
+    directories.complete(('/s', '/c'));
+    await starting;
+
+    expect(api.starts, 0);
+  });
+
+  test('a client gone without a port takes its bridge with it', () async {
+    await service.start();
+    service.setTarget(onionHost: 'x.onion', port: 443, clientKey: Uint8List(32));
+    expect(service.bridge, isNotNull);
+
+    // Refused as obsolete: the library tears itself down, listener and all.
+    api.snapshot = const NoxTorSnapshot(
+      state: NoxTorState.obsolete,
+      bootstrapPercent: 0,
+      error: NoxTorError.softwareDeprecated,
+      port: null,
     );
+    service.setDormant(false); // any call polls the snapshot
+    await pumpEventQueue();
+
+    expect(service.bridge, isNull, reason: 'the port may belong to somebody else by the next dial');
+  });
+
+  test('an unsupported platform does nothing at all', () async {
+    final linux = NativeTorService.forTest(prefs, api: api, directories: () async => ('/s', '/c'), supported: false);
     await linux.start();
     linux.setTarget(onionHost: 'x.onion', port: 443, clientKey: Uint8List(32));
     expect(api.starts, 0);

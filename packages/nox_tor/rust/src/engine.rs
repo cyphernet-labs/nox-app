@@ -17,6 +17,7 @@ use tor_hscrypto::pk::HsClientDescEncSecretKey;
 use tor_keymgr::config::ArtiKeystoreKind;
 use tor_llcrypto::pk::curve25519;
 use tor_rtcompat::PreferredRuntime;
+use zeroize::Zeroizing;
 
 use crate::bridge::{self, BridgeHandle};
 use crate::status::{classify, error, state, NoxTorStatus, StatusCell};
@@ -26,14 +27,18 @@ const BOOTSTRAP_BUDGET: Duration = Duration::from_secs(90);
 
 pub type Client = TorClient<PreferredRuntime>;
 
+/// The client key of a target. Wiped when dropped, and boxed so that moving a
+/// `Target` moves a pointer rather than leaving copies of the key behind.
+pub type ClientKey = Box<Zeroizing<[u8; 32]>>;
+
 /// What the bridge connects to: one onion service and the client key that
-/// opens it. Nothing else is reachable through this module.
-#[derive(Clone)]
+/// opens it. Nothing else is reachable through this module. Not `Clone`: the
+/// key has one home, the target slot.
 pub struct Target {
     pub host: String,
     pub hsid: HsId,
     pub port: u16,
-    pub key: [u8; 32],
+    pub key: ClientKey,
 }
 
 /// State shared between the C ABI and the runtime's tasks.
@@ -101,25 +106,47 @@ pub fn start(state_dir: &str, cache_dir: &str) -> i32 {
     if OBSOLETE.load(Ordering::SeqCst) {
         return -(error::SOFTWARE_DEPRECATED as i32);
     }
-    if guard.as_ref().is_some_and(|e| e.runtime.is_some()) {
+    // Running, or still coming up: nothing to do. A client that FAILED is
+    // rebuilt instead - this call is how the app retries it, and nothing else
+    // would ever bootstrap it again.
+    if guard.as_ref().is_some_and(|e| e.runtime.is_some() && e.shared.status.get().state != state::FAILED) {
         return 0;
     }
-    let runtime = match tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
-        .thread_name("nox-tor")
-        .enable_all()
-        .build()
-    {
-        Ok(rt) => rt,
-        Err(_) => return -(error::INTERNAL as i32),
-    };
+    let runtime =
+        match tokio::runtime::Builder::new_multi_thread().worker_threads(2).thread_name("nox-tor").enable_all().build()
+        {
+            Ok(rt) => rt,
+            Err(_) => return -(error::INTERNAL as i32),
+        };
     let shared = Arc::new(Shared::default());
-    shared.status.update(|s| *s = NoxTorStatus { state: state::BOOTSTRAPPING, ..NoxTorStatus::default() });
+    let port = guard.take().map_or(0, |failed| carry_over(failed, &runtime, &shared));
+    shared.status.update(|s| *s = NoxTorStatus { state: state::BOOTSTRAPPING, port, ..NoxTorStatus::default() });
     let task_shared = Arc::clone(&shared);
     let (state_dir, cache_dir) = (state_dir.to_owned(), cache_dir.to_owned());
     runtime.spawn(async move { run_client(task_shared, state_dir, cache_dir).await });
     *guard = Some(Engine { runtime: Some(runtime), shared });
     0
+}
+
+/// Takes a failed engine down the way `stop` does, except for what the app
+/// still holds: the target, and the bridge's port and secret. Those move to
+/// `shared` and are served from `runtime`, so the app's endpoint stays good
+/// across the retry. Returns the bridge's port, 0 without one.
+fn carry_over(mut failed: Engine, runtime: &Runtime, shared: &Arc<Shared>) -> u16 {
+    let target = lock(&failed.shared.target).take();
+    *lock(&shared.target) = target;
+    let bridge = lock(&failed.shared.bridge).take();
+    lock(&failed.shared.client).take();
+    if let Some(rt) = failed.runtime.take() {
+        rt.shutdown_background();
+    }
+    let Some(mut bridge) = bridge else { return 0 };
+    if bridge.move_to(runtime, shared).is_err() {
+        return 0;
+    }
+    let port = bridge.port;
+    *lock(&shared.bridge) = Some(bridge);
+    port
 }
 
 fn build_client(state_dir: &str, cache_dir: &str) -> Result<Arc<Client>, u8> {
@@ -138,11 +165,16 @@ async fn run_client(shared: Arc<Shared>, state_dir: String, cache_dir: String) {
         Err(code) => return fail(&shared, code),
     };
     *lock(&shared.client) = Some(Arc::clone(&client));
-    // A target set while the client was still being built.
-    let pending = lock(&shared.target).clone();
-    if let Some(target) = pending {
-        if apply_key(&client, &target).is_err() {
-            shared.status.update(|s| s.error = error::INTERNAL);
+    // A target set while the client was still being built. Applied under the
+    // target's lock, as every key change is: a set_target or clear_target
+    // landing meanwhile either finds this client or waits for this apply,
+    // never slips between the read and the insert.
+    {
+        let target = lock(&shared.target);
+        if let Some(target) = target.as_ref() {
+            if apply_key(&client, target).is_err() {
+                shared.status.update(|s| s.error = error::INTERNAL);
+            }
         }
     }
 
@@ -190,14 +222,11 @@ fn fail(shared: &Shared, code: u8) {
 /// the device's own is remove-then-insert.
 fn apply_key(client: &Client, target: &Target) -> Result<(), ()> {
     let _ = client.remove_service_discovery_key(KeystoreSelector::Primary, target.hsid);
-    let key = HsClientDescEncSecretKey::from(curve25519::StaticSecret::from(target.key));
-    client
-        .insert_service_discovery_key(KeystoreSelector::Primary, target.hsid, key)
-        .map(|_| ())
-        .map_err(|_| ())
+    let key = HsClientDescEncSecretKey::from(curve25519::StaticSecret::from(**target.key));
+    client.insert_service_discovery_key(KeystoreSelector::Primary, target.hsid, key).map(|_| ()).map_err(|_| ())
 }
 
-pub fn set_target(host: &str, port: u16, key: [u8; 32]) -> i32 {
+pub fn set_target(host: &str, port: u16, key: ClientKey) -> i32 {
     let hsid: HsId = match host.parse() {
         Ok(h) => h,
         Err(_) => return error::RET_INVALID_ARGUMENT,
@@ -213,17 +242,19 @@ pub fn set_target(host: &str, port: u16, key: [u8; 32]) -> i32 {
         return error::RET_NOT_STARTED;
     };
     let shared = &engine.shared;
-    let target = Target { host: host.to_owned(), hsid, port, key };
-    let previous = lock(&shared.target).replace(target.clone());
-    let client = lock(&shared.client).clone();
-    if let Some(client) = client {
-        if let Some(prev) = previous {
-            if prev.hsid != target.hsid {
+    {
+        // The slot and the keystore change together, under the target's lock
+        // (see run_client).
+        let mut slot = lock(&shared.target);
+        let previous = slot.replace(Target { host: host.to_owned(), hsid, port, key });
+        let client = lock(&shared.client).clone();
+        if let (Some(client), Some(target)) = (client, slot.as_ref()) {
+            if let Some(prev) = previous.filter(|prev| prev.hsid != target.hsid) {
                 let _ = client.remove_service_discovery_key(KeystoreSelector::Primary, prev.hsid);
             }
-        }
-        if apply_key(&client, &target).is_err() {
-            return -(error::INTERNAL as i32);
+            if apply_key(&client, target).is_err() {
+                return -(error::INTERNAL as i32);
+            }
         }
     }
     match bridge::open_or_rotate(runtime, shared) {
@@ -241,9 +272,12 @@ pub fn clear_target() -> i32 {
         return error::RET_NOT_STARTED;
     };
     let shared = &engine.shared;
-    let previous = lock(&shared.target).take();
-    if let (Some(prev), Some(client)) = (previous, lock(&shared.client).clone()) {
-        let _ = client.remove_service_discovery_key(KeystoreSelector::Primary, prev.hsid);
+    {
+        // Under the target's lock, like every key change (see run_client).
+        let mut slot = lock(&shared.target);
+        if let (Some(prev), Some(client)) = (slot.take(), lock(&shared.client).clone()) {
+            let _ = client.remove_service_discovery_key(KeystoreSelector::Primary, prev.hsid);
+        }
     }
     lock(&shared.bridge).take();
     shared.status.update(|s| s.port = 0);
@@ -301,6 +335,13 @@ pub fn bridge_secret() -> Option<[u8; 32]> {
 #[cfg(test)]
 pub(crate) fn simulate_obsolete_for_test() {
     on_obsolete();
+}
+
+#[cfg(test)]
+pub(crate) fn target_host_for_test() -> Option<String> {
+    let guard = engine();
+    let target = lock(&guard.as_ref()?.shared.target);
+    target.as_ref().map(|t| t.host.clone())
 }
 
 #[cfg(test)]

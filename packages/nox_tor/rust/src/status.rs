@@ -84,7 +84,17 @@ pub fn classify(e: &arti_client::Error) -> u8 {
         ErrorKind::OnionServiceMissingClientAuth => error::MISSING_CLIENT_AUTH,
         ErrorKind::OnionServiceWrongClientAuth => error::WRONG_CLIENT_AUTH,
         ErrorKind::SoftwareDeprecated => error::SOFTWARE_DEPRECATED,
-        ErrorKind::Internal | ErrorKind::BadApiUsage => error::INTERNAL,
+        // On this device rather than out on the network: a bug, or the state,
+        // cache or key store out of reach.
+        ErrorKind::Internal
+        | ErrorKind::BadApiUsage
+        | ErrorKind::FsPermissions
+        | ErrorKind::PersistentStateAccessFailed
+        | ErrorKind::PersistentStateCorrupted
+        | ErrorKind::CacheAccessFailed
+        | ErrorKind::CacheCorrupted
+        | ErrorKind::KeystoreAccessFailed
+        | ErrorKind::KeystoreCorrupted => error::INTERNAL,
         _ => error::NETWORK,
     }
 }
