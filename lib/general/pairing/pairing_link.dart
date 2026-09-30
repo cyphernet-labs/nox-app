@@ -38,11 +38,33 @@ class PairingLinkException implements Exception {
 /// Contract §8A. The token's TYPE is deliberately absent — the server issued
 /// it and knows what it is for, and telling the presenter would let a stolen
 /// link announce whether it grants ownership.
+///
+/// Version 2 (phase 039 on the server, 040 here) is an invite that also works
+/// from outside the home network: everything version 1 carries, then the
+/// onion service's public key, its port, and the PRIVATE half of a one-time
+/// access key that opens the service for this one pairing. The three come and
+/// go together; a version-1 link has none of them.
 class PairingLink {
-  const PairingLink({required this.host, required this.port, required this.serverFingerprint, required this.token});
+  const PairingLink({
+    required this.host,
+    required this.port,
+    required this.serverFingerprint,
+    required this.token,
+    this.onionPub,
+    this.onionPort,
+    this.oneTimePriv,
+  }) : assert(
+         (onionPub == null) == (onionPort == null) && (onionPort == null) == (oneTimePriv == null),
+         'the onion fields come together or not at all',
+       );
 
-  /// Version this build writes and is willing to read.
+  /// The plain version: an address, a fingerprint and a token.
   static const int version = 1;
+
+  /// The onion invite (contract §8A, link version 2).
+  static const int onionVersion = 2;
+
+  static const int _keyLength = 32;
 
   static const String _prefix = 'https://nox.app/p/#';
 
@@ -61,6 +83,22 @@ class PairingLink {
 
   /// The one-shot pairing right, base64url without padding.
   final String token;
+
+  /// The onion service's v3 public key (32 bytes); its `.onion` address is
+  /// derived from it. Null in a version-1 link.
+  final Uint8List? onionPub;
+
+  /// The onion service's virtual port. Null in a version-1 link.
+  final int? onionPort;
+
+  /// The PRIVATE half of the one-time x25519 access key that lets this device
+  /// through the onion service for one pairing (32 bytes). It exists only in
+  /// the link - the server keeps the public half - and must be dropped once
+  /// the pairing has answered. Null in a version-1 link.
+  final Uint8List? oneTimePriv;
+
+  /// Whether this link can pair from outside the home network.
+  bool get carriesOnion => onionPub != null;
 
   /// A readable link for debug surfaces, so the screens gallery can drive the
   /// scanner without a server. Not reachable from the real flow.
@@ -93,7 +131,10 @@ class PairingLink {
     // Shortest possible: version + type + 4 host + 2 port + 32 fingerprint +
     // 16 token.
     if (bytes.length < 55) throw const PairingLinkException(PairingLinkError.malformed);
-    if (bytes[0] != version) throw const PairingLinkException(PairingLinkError.unsupportedVersion);
+    final linkVersion = bytes[0];
+    if (linkVersion != version && linkVersion != onionVersion) {
+      throw const PairingLinkException(PairingLinkError.unsupportedVersion);
+    }
 
     var offset = 2;
     final String host;
@@ -123,15 +164,35 @@ class PairingLink {
         throw const PairingLinkException(PairingLinkError.unsupportedVersion);
     }
 
-    if (bytes.length != offset + 2 + 32 + 16) throw const PairingLinkException(PairingLinkError.malformed);
+    // The onion tail is exact too: a version-2 link a few bytes short is a
+    // truncated one, not a version-1 link with extra luck.
+    final onionTail = linkVersion == onionVersion ? _keyLength + 2 + _keyLength : 0;
+    if (bytes.length != offset + 2 + 32 + 16 + onionTail) throw const PairingLinkException(PairingLinkError.malformed);
 
     final port = (bytes[offset] << 8) | bytes[offset + 1];
     offset += 2;
     final fingerprint = base64.encode(bytes.sublist(offset, offset + 32));
     offset += 32;
     final token = base64Url.encode(bytes.sublist(offset, offset + 16)).replaceAll('=', '');
+    offset += 16;
 
-    return PairingLink(host: host, port: port, serverFingerprint: fingerprint, token: token);
+    if (linkVersion == version) {
+      return PairingLink(host: host, port: port, serverFingerprint: fingerprint, token: token);
+    }
+    final onionPub = Uint8List.fromList(bytes.sublist(offset, offset + _keyLength));
+    offset += _keyLength;
+    final onionPort = (bytes[offset] << 8) | bytes[offset + 1];
+    offset += 2;
+    final oneTimePriv = Uint8List.fromList(bytes.sublist(offset, offset + _keyLength));
+    return PairingLink(
+      host: host,
+      port: port,
+      serverFingerprint: fingerprint,
+      token: token,
+      onionPub: onionPub,
+      onionPort: onionPort,
+      oneTimePriv: oneTimePriv,
+    );
   }
 
   /// Reads a link, or returns null. For places that only need to know whether
@@ -147,7 +208,7 @@ class PairingLink {
 
   /// Renders the link, so a device can show an invite it just obtained.
   String encode() {
-    final out = <int>[version];
+    final out = <int>[if (carriesOnion) onionVersion else version];
     final ipv4 = _asIPv4(host);
     if (ipv4 != null) {
       out.addAll([_hostTypeIPv4, ...ipv4]);
@@ -164,6 +225,14 @@ class PairingLink {
     out.addAll([(port >> 8) & 0xFF, port & 0xFF]);
     out.addAll(base64.decode(serverFingerprint));
     out.addAll(base64Url.decode(base64Url.normalize(token)));
+    final pub = onionPub;
+    final onionPortValue = onionPort;
+    final priv = oneTimePriv;
+    if (pub != null && onionPortValue != null && priv != null) {
+      out.addAll(pub);
+      out.addAll([(onionPortValue >> 8) & 0xFF, onionPortValue & 0xFF]);
+      out.addAll(priv);
+    }
     return _prefix + base64Url.encode(out).replaceAll('=', '');
   }
 

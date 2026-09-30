@@ -269,6 +269,37 @@ func TestTheLinkLayoutPerHostType(t *testing.T) {
 	}
 }
 
+// The same three links are pinned byte for byte in the app's parser test
+// (test/general/pairing/pairing_link_test.dart). Lengths alone do not catch two
+// fields swapped, and a link the two sides read differently would pair nothing.
+// Every field is a different run of bytes for the same reason.
+func TestTheOnionLinkVectorsTheAppPins(t *testing.T) {
+	run := func(from byte, n int) []byte {
+		out := make([]byte, n)
+		for i := range out {
+			out[i] = from + byte(i)
+		}
+		return out
+	}
+	fp := base64.StdEncoding.EncodeToString(run(0x00, 32))
+	tok := base64.RawURLEncoding.EncodeToString(run(0xa0, 16))
+	pub := ed25519.PublicKey(run(0x20, 32))
+	priv := run(0x40, 32)
+	for _, tc := range []struct{ addr, want string }{
+		{"192.168.1.10:8080", "https://nox.app/p/#AgHAqAEKH5AAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eH6ChoqOkpaanqKmqq6ytrq8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-PwG7QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8"},
+		{"[fd00::1]:8080", "https://nox.app/p/#AgL9AAAAAAAAAAAAAAAAAAABH5AAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eH6ChoqOkpaanqKmqq6ytrq8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-PwG7QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8"},
+		{"home.example:8080", "https://nox.app/p/#AgMMaG9tZS5leGFtcGxlH5AAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eH6ChoqOkpaanqKmqq6ytrq8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-PwG7QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8"},
+	} {
+		link, err := BuildPairingLinkV2(tc.addr, fp, tok, pub, 443, priv)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.addr, err)
+		}
+		if link != tc.want {
+			t.Errorf("%s:\n got %s\nwant %s", tc.addr, link, tc.want)
+		}
+	}
+}
+
 // The claim link stays version 1 whatever Tor is doing: a claim never goes
 // over onion.
 func TestTheClaimLinkStaysVersionOneWithTorReady(t *testing.T) {

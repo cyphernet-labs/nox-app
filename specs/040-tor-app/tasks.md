@@ -245,7 +245,7 @@
 
 **Independent Test**: quickstart scenarios 4–6.
 
-- [ ] T034 [P] [US4] Support version 2 in `lib/general/pairing/pairing_link.dart`: `onionPub`, `onionPort`, `oneTimePriv`; lengths 122/134/119+N. Tests in `test/general/pairing/pairing_link_test.dart`:
+- [X] T034 [P] [US4] Support version 2 in `lib/general/pairing/pairing_link.dart`: `onionPub`, `onionPort`, `oneTimePriv`; lengths 122/134/119+N. Tests in `test/general/pairing/pairing_link_test.dart`:
   - replace 'a future version is refused' with v2 vectors built like the server's (IPv4, IPv6, DNS);
   - version 3 is still refused;
   - v1 is unchanged.
