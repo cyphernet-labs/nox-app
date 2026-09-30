@@ -77,7 +77,7 @@ void main() {
     // The link a person carries to their other device has to be dialable from
     // there. A server bound to a wildcard used to put loopback in it, which is
     // reachable from this machine and nowhere else.
-    final parsed = PairingLink.parse(invite.data!);
+    final parsed = PairingLink.parse(invite.data!.link);
     stdout.writeln('INVITE LINK: ${parsed.authority}');
     expect(parsed.authority, (await session.serverAddress()).data);
 

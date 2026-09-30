@@ -18,6 +18,19 @@ void main() {
       onDismiss: _noop,
     ),
   );
+
+  // An invite the server could not put its onion address in (040, FR-019): the
+  // same card with one more line under the message. The card without it is the
+  // baseline above and must not move.
+  goldenTest(
+    'app_invite_card_widget_home_only',
+    () => const AppInviteCardWidget(
+      link: 'https://nox.app/p/#AQHAqAF0H5Bu9MxFvebDjR3m5IXKoY5in1tvLC3A_q4eLtiegalexq6xJeRSWnT-Aa6tOIPffos',
+      message: 'Scan this from the other device. The link works for 10 minutes.',
+      homeOnly: true,
+      onDismiss: _noop,
+    ),
+  );
 }
 
 void _noop() {}

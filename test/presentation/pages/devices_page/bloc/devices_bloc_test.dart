@@ -7,6 +7,7 @@ import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
+import 'package:nox_app/domain/model/device/device_invite.dart';
 import 'package:nox_app/domain/model/device/device_model.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/app/auth_repository.dart';
@@ -21,7 +22,7 @@ import 'devices_bloc_test.mocks.dart';
 void main() {
   provideDummy<RepositoryResult<List<DeviceModel>>>(const RepositoryResult<List<DeviceModel>>.success(data: []));
   provideDummy<RepositoryResult<bool>>(const RepositoryResult<bool>.success(data: true));
-  provideDummy<RepositoryResult<String>>(const RepositoryResult<String>.success(data: ''));
+  provideDummy<RepositoryResult<DeviceInvite>>(const RepositoryResult<DeviceInvite>.success(data: DeviceInvite(link: '', onion: false)));
 
   late MockDeviceRepository devices;
   late MockAuthRepository auth;
@@ -121,12 +122,37 @@ void main() {
   blocTest<DevicesBloc, DevicesState>(
     'an invite is held in state, because every request burns a new token',
     build: () {
-      when(devices.inviteDevice()).thenAnswer((_) async => const RepositoryResult<String>.success(data: 'https://nox.app/p/#abc'));
+      when(devices.inviteDevice()).thenAnswer(
+        (_) async => const RepositoryResult<DeviceInvite>.success(data: DeviceInvite(link: 'https://nox.app/p/#abc', onion: true)),
+      );
       return DevicesBloc();
     },
     act: (bloc) => bloc.add(const DevicesEvent.inviteRequested()),
     wait: const Duration(milliseconds: 100),
-    expect: () => [predicate<DevicesState>((s) => s.inviteLink == 'https://nox.app/p/#abc')],
+    expect: () => [predicate<DevicesState>((s) => s.inviteLink == 'https://nox.app/p/#abc' && !s.inviteHomeOnly)],
+  );
+
+  blocTest<DevicesBloc, DevicesState>(
+    'an invite the server could not give onion to is held as home-only (FR-019)',
+    // The card says so, and it can only say what the state carries: without the
+    // note a link carried to an office fails with nothing to explain why.
+    build: () {
+      when(devices.inviteDevice()).thenAnswer(
+        (_) async => const RepositoryResult<DeviceInvite>.success(data: DeviceInvite(link: 'https://nox.app/p/#home', onion: false)),
+      );
+      return DevicesBloc();
+    },
+    act: (bloc) => bloc.add(const DevicesEvent.inviteRequested()),
+    wait: const Duration(milliseconds: 100),
+    expect: () => [predicate<DevicesState>((s) => s.inviteLink == 'https://nox.app/p/#home' && s.inviteHomeOnly)],
+  );
+
+  blocTest<DevicesBloc, DevicesState>(
+    'hiding a home-only invite takes the note with it',
+    build: () => DevicesBloc(),
+    seed: () => const DevicesState(loading: false, invite: DeviceInvite(link: 'https://nox.app/p/#home', onion: false)),
+    act: (bloc) => bloc.add(const DevicesEvent.inviteDismissed()),
+    expect: () => [predicate<DevicesState>((s) => s.inviteLink == null && !s.inviteHomeOnly)],
   );
 
   blocTest<DevicesBloc, DevicesState>(
@@ -159,7 +185,9 @@ void main() {
   blocTest<DevicesBloc, DevicesState>(
     'a failed invite raises a flag the screen can render',
     build: () {
-      when(devices.inviteDevice()).thenAnswer((_) async => const RepositoryResult<String>.error(exception: RepositoryException.connection));
+      when(
+        devices.inviteDevice(),
+      ).thenAnswer((_) async => const RepositoryResult<DeviceInvite>.error(exception: RepositoryException.connection));
       return DevicesBloc();
     },
     act: (bloc) => bloc.add(const DevicesEvent.inviteRequested()),
@@ -215,7 +243,9 @@ void main() {
       'the spent invite card goes with it',
       build: () {
         when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
-        when(devices.inviteDevice()).thenAnswer((_) async => const RepositoryResult<String>.success(data: 'https://nox.app/p/#tok'));
+        when(devices.inviteDevice()).thenAnswer(
+          (_) async => const RepositoryResult<DeviceInvite>.success(data: DeviceInvite(link: 'https://nox.app/p/#tok', onion: true)),
+        );
         return DevicesBloc();
       },
       act: (bloc) async {
@@ -238,7 +268,9 @@ void main() {
       // waiting on, and it would vanish with no explanation.
       build: () {
         when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
-        when(devices.inviteDevice()).thenAnswer((_) async => const RepositoryResult<String>.success(data: 'https://nox.app/p/#fresh'));
+        when(devices.inviteDevice()).thenAnswer(
+          (_) async => const RepositoryResult<DeviceInvite>.success(data: DeviceInvite(link: 'https://nox.app/p/#fresh', onion: true)),
+        );
         return DevicesBloc();
       },
       act: (bloc) async {
@@ -269,7 +301,9 @@ void main() {
       // the server will refuse, and if the read fails, showing it for good.
       build: () {
         when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
-        when(devices.inviteDevice()).thenAnswer((_) async => const RepositoryResult<String>.success(data: 'https://nox.app/p/#tok'));
+        when(devices.inviteDevice()).thenAnswer(
+          (_) async => const RepositoryResult<DeviceInvite>.success(data: DeviceInvite(link: 'https://nox.app/p/#tok', onion: true)),
+        );
         return DevicesBloc();
       },
       act: (bloc) async {
@@ -280,7 +314,7 @@ void main() {
         // A second request that fails, so both halves of the surface are up.
         when(
           devices.inviteDevice(),
-        ).thenAnswer((_) async => const RepositoryResult<String>.error(exception: RepositoryException.connection));
+        ).thenAnswer((_) async => const RepositoryResult<DeviceInvite>.error(exception: RepositoryException.connection));
         bloc.add(const DevicesEvent.inviteRequested());
         await Future<void>.delayed(const Duration(milliseconds: 50));
         when(
@@ -306,7 +340,7 @@ void main() {
         when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
         when(
           devices.inviteDevice(),
-        ).thenAnswer((_) async => const RepositoryResult<String>.error(exception: RepositoryException.connection));
+        ).thenAnswer((_) async => const RepositoryResult<DeviceInvite>.error(exception: RepositoryException.connection));
         return DevicesBloc();
       },
       act: (bloc) async {
@@ -326,7 +360,9 @@ void main() {
       'and a new invite can still be minted afterwards',
       build: () {
         when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
-        when(devices.inviteDevice()).thenAnswer((_) async => const RepositoryResult<String>.success(data: 'https://nox.app/p/#second'));
+        when(devices.inviteDevice()).thenAnswer(
+          (_) async => const RepositoryResult<DeviceInvite>.success(data: DeviceInvite(link: 'https://nox.app/p/#second', onion: true)),
+        );
         return DevicesBloc();
       },
       act: (bloc) async {
@@ -529,7 +565,9 @@ void main() {
       // half the fix, in the one case the fix exists for.
       build: () {
         when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
-        when(devices.inviteDevice()).thenAnswer((_) async => const RepositoryResult<String>.success(data: 'https://nox.app/p/#tok'));
+        when(devices.inviteDevice()).thenAnswer(
+          (_) async => const RepositoryResult<DeviceInvite>.success(data: DeviceInvite(link: 'https://nox.app/p/#tok', onion: true)),
+        );
         return DevicesBloc();
       },
       act: (bloc) async {
@@ -559,7 +597,7 @@ void main() {
         when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
         when(
           devices.inviteDevice(),
-        ).thenAnswer((_) async => const RepositoryResult<String>.error(exception: RepositoryException.connection));
+        ).thenAnswer((_) async => const RepositoryResult<DeviceInvite>.error(exception: RepositoryException.connection));
         return DevicesBloc();
       },
       act: (bloc) async {
@@ -586,7 +624,7 @@ void main() {
         when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
         when(
           devices.inviteDevice(),
-        ).thenAnswer((_) async => const RepositoryResult<String>.error(exception: RepositoryException.connection));
+        ).thenAnswer((_) async => const RepositoryResult<DeviceInvite>.error(exception: RepositoryException.connection));
         return DevicesBloc();
       },
       act: (bloc) async {
@@ -610,7 +648,9 @@ void main() {
       // pairing takes longest.
       build: () {
         when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
-        when(devices.inviteDevice()).thenAnswer((_) async => const RepositoryResult<String>.success(data: 'https://nox.app/p/#live'));
+        when(devices.inviteDevice()).thenAnswer(
+          (_) async => const RepositoryResult<DeviceInvite>.success(data: DeviceInvite(link: 'https://nox.app/p/#live', onion: true)),
+        );
         return DevicesBloc();
       },
       act: (bloc) async {
@@ -671,7 +711,9 @@ void main() {
       // the card is dismissed for. The keys are what say a device is new.
       build: () {
         when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone, tablet]));
-        when(devices.inviteDevice()).thenAnswer((_) async => const RepositoryResult<String>.success(data: 'https://nox.app/p/#tok'));
+        when(devices.inviteDevice()).thenAnswer(
+          (_) async => const RepositoryResult<DeviceInvite>.success(data: DeviceInvite(link: 'https://nox.app/p/#tok', onion: true)),
+        );
         return DevicesBloc();
       },
       act: (bloc) async {

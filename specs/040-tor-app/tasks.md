@@ -255,7 +255,7 @@
   - after the `pair` reply, success or not, erase both invite records and switch the Tor target to the own key.
 
   Tests in `test/data/repository/app/auth_repository_impl_test.dart` and the handshake test.
-- [ ] T036 [US4] Request onion invites:
+- [X] T036 [US4] Request onion invites:
   - `DeviceRepository.inviteDevice` returns `DeviceInvite` and sends `{"onion": true}` (`lib/domain/repository/device/device_repository.dart`, `lib/data/repository/device/device_repository_impl.dart`);
   - `DevicesBloc` and `DevicesState` carry `inviteHomeOnly` (`lib/presentation/pages/devices_page/bloc/`);
   - `AppInviteCardWidget` shows `devicesInviteHomeOnly` when home-only (`lib/presentation/widgets/settings/app_invite_card_widget.dart`);
