@@ -107,6 +107,62 @@ void main() {
     expect((await repository.inviteDevice()).hasData, isFalse);
   });
 
+  group('onion invites (040, FR-019)', () {
+    // A version-2 link as the Go server builds it, and a version-1 one.
+    const onionLink =
+        'https://nox.app/p/#AgHAqAEKH5AAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eH6ChoqOkpaanqKmqq6ytrq8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-PwG7QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8';
+    const homeLink = 'https://nox.app/p/#AQF_AAABH5CjZmMytIk_2XvPJ-jonqlQtYsZD3SB33P1foxqnrVbFo-VEf6WohQoqA1_na5iVUo';
+
+    test('every invite asks for onion, whatever the server turns out to be', () async {
+      // Only the server knows whether it can offer onion right now, and one
+      // older than 039 skips a field it does not know - so asking costs nothing.
+      when(socket.send('device.invite', any)).thenAnswer((_) async => ok(const {'link': homeLink}));
+
+      await repository.inviteDevice();
+
+      verify(socket.send('device.invite', {'onion': true})).called(1);
+    });
+
+    test('an onion invite says it works from anywhere', () async {
+      when(socket.send('device.invite', any)).thenAnswer((_) async => ok(const {'link': onionLink, 'onion': true}));
+
+      final invite = (await repository.inviteDevice()).data!;
+
+      expect(invite.link, onionLink);
+      expect(invite.onion, isTrue);
+    });
+
+    test('an ordinary invite is home-only, so the card can say so', () async {
+      when(socket.send('device.invite', any)).thenAnswer((_) async => ok(const {'link': homeLink, 'onion': false}));
+
+      final invite = (await repository.inviteDevice()).data!;
+
+      expect(invite.link, homeLink);
+      expect(invite.onion, isFalse);
+    });
+
+    test('a server older than 039 says nothing about onion, which means home-only', () async {
+      when(socket.send('device.invite', any)).thenAnswer((_) async => ok(const {'link': homeLink}));
+
+      expect((await repository.inviteDevice()).data!.onion, isFalse);
+    });
+
+    test('anything but a true flag reads as false', () async {
+      when(socket.send('device.invite', any)).thenAnswer((_) async => ok(const {'link': onionLink, 'onion': 'yes'}));
+
+      expect((await repository.inviteDevice()).data!.onion, isFalse);
+    });
+
+    test('a flag the link does not back is not believed', () async {
+      // The link is what the other device will hold. Promising "works from
+      // anywhere" over a version-1 link sends somebody to the office with a
+      // link that works only at home.
+      when(socket.send('device.invite', any)).thenAnswer((_) async => ok(const {'link': homeLink, 'onion': true}));
+
+      expect((await repository.inviteDevice()).data!.onion, isFalse);
+    });
+  });
+
   test('setLabel sends the name and surfaces a refusal', () async {
     when(socket.send('identity.setLabel', any)).thenAnswer((_) async => ok(const {'label': 'Anna'}));
     expect((await repository.setLabel(label: 'Anna')).data, isTrue);

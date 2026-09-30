@@ -1,3 +1,4 @@
+import 'package:nox_app/domain/model/device/device_invite.dart';
 import 'package:nox_app/domain/model/device/device_model.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 
@@ -12,7 +13,11 @@ abstract interface class DeviceRepository {
   Future<RepositoryResult<bool>> revoke({required String deviceKey});
 
   /// Mints an invite and returns the link to show. Lives ten minutes.
-  Future<RepositoryResult<String>> inviteDevice();
+  ///
+  /// Always asks for the onion invite (FR-019): only the server knows whether
+  /// it can give one right now. [DeviceInvite.onion] says whether it did, so the
+  /// screen can say when the link works only on the home network.
+  Future<RepositoryResult<DeviceInvite>> inviteDevice();
 
   /// Fires when the set of devices has changed on the server — today, when
   /// another device has just been paired.

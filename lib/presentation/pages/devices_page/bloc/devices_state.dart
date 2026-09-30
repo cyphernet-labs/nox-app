@@ -25,11 +25,22 @@ abstract class DevicesState with _$DevicesState {
     /// asked it — quietly clearing the notice that a revoke failed.
     String? actionFailedKey,
 
-    /// The invite link currently on screen, or null. Held in state rather than
+    /// The invite currently on screen, or null. Held in state rather than
     /// re-fetched, because every fetch burns a new token on the server.
-    String? inviteLink,
+    DeviceInvite? invite,
     @Default(false) bool inviteFailed,
   }) = _DevicesState;
+
+  /// The link of the invite on screen, or null.
+  String? get inviteLink => invite?.link;
+
+  /// The invite on screen works only on the home network: the server could not
+  /// put its onion address in it (FR-019), so the card has to say so. False
+  /// when there is no invite - there is nothing to say it about.
+  bool get inviteHomeOnly {
+    final shown = invite;
+    return shown != null && !shown.onion;
+  }
 
   /// Whether a revoke the person asked for did not happen. The screen shows one
   /// notice, so which device it was does not reach the widget - only the fact,

@@ -245,7 +245,7 @@
 
 **Independent Test**: quickstart scenarios 4–6.
 
-- [ ] T034 [P] [US4] Support version 2 in `lib/general/pairing/pairing_link.dart`: `onionPub`, `onionPort`, `oneTimePriv`; lengths 122/134/119+N. Tests in `test/general/pairing/pairing_link_test.dart`:
+- [X] T034 [P] [US4] Support version 2 in `lib/general/pairing/pairing_link.dart`: `onionPub`, `onionPort`, `oneTimePriv`; lengths 122/134/119+N. Tests in `test/general/pairing/pairing_link_test.dart`:
   - replace 'a future version is refused' with v2 vectors built like the server's (IPv4, IPv6, DNS);
   - version 3 is still refused;
   - v1 is unchanged.
@@ -255,14 +255,14 @@
   - after the `pair` reply, success or not, erase both invite records and switch the Tor target to the own key.
 
   Tests in `test/data/repository/app/auth_repository_impl_test.dart` and the handshake test.
-- [ ] T036 [US4] Request onion invites:
+- [X] T036 [US4] Request onion invites:
   - `DeviceRepository.inviteDevice` returns `DeviceInvite` and sends `{"onion": true}` (`lib/domain/repository/device/device_repository.dart`, `lib/data/repository/device/device_repository_impl.dart`);
   - `DevicesBloc` and `DevicesState` carry `inviteHomeOnly` (`lib/presentation/pages/devices_page/bloc/`);
   - `AppInviteCardWidget` shows `devicesInviteHomeOnly` when home-only (`lib/presentation/widgets/settings/app_invite_card_widget.dart`);
   - ARB EN/UK.
 
   Tests: `device_repository_impl_test.dart`, `devices_bloc_test.dart`, `app_invite_card_widget_test.dart`. Goldens: the invite card widget with and without the note, plus the devices page mobile and desktop with the note.
-- [ ] T037 [US4] Login: a v1 link whose server does not answer, or answers with a key the link does not name, shows `loginHomeNetworkOnly` (`lib/presentation/pages/login_page/bloc/login_bloc.dart`, `login_page.dart`, ARB EN/UK). Tests in `test/presentation/pages/login_page/bloc/login_bloc_test.dart`.
+- [X] T037 [US4] Login: a v1 link whose server does not answer, or answers with a key the link does not name, shows `loginHomeNetworkOnly` (`lib/presentation/pages/login_page/bloc/login_bloc.dart`, `login_page.dart`, ARB EN/UK). Tests in `test/presentation/pages/login_page/bloc/login_bloc_test.dart`.
 
 ---
 

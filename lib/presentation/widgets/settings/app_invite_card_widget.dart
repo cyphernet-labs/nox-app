@@ -18,12 +18,19 @@ import 'package:nox_app/presentation/widgets/settings/app_qr_surface_widget.dart
 /// The text under the QR matters as much as the code: Windows and Linux have no
 /// camera, so copying is the only path that works everywhere.
 class AppInviteCardWidget extends StatelessWidget {
-  const AppInviteCardWidget({super.key, required this.link, required this.message, required this.onDismiss});
+  const AppInviteCardWidget({super.key, required this.link, required this.message, required this.onDismiss, this.homeOnly = false});
 
   final String link;
 
   /// What this particular link is and how long it lasts.
   final String message;
+
+  /// The link reaches the server only from the home network: the server could
+  /// not put its onion address in it (FR-019). Said on the card itself, under
+  /// the message, because the person decides here where to carry the link -
+  /// and one carried to an office would otherwise fail with nothing to explain
+  /// why.
+  final bool homeOnly;
 
   /// "Hide", never "Cancel": nothing here revokes anything. The token stays
   /// usable for its whole life whatever this button says, and calling it Cancel
@@ -55,6 +62,14 @@ class AppInviteCardWidget extends StatelessWidget {
             AppQrSurfaceWidget(data: link),
             SizedBox(height: AppSpacingTokens.s12),
             Text(message, textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodyMedium),
+            if (homeOnly) ...[
+              SizedBox(height: AppSpacingTokens.s4),
+              Text(
+                context.l10n.devicesInviteHomeOnly,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+              ),
+            ],
             SizedBox(height: AppSpacingTokens.s8),
             SelectableText(link, style: Theme.of(context).textTheme.bodySmall, textAlign: TextAlign.center),
             // Wrap, not Row: at a doubled text scale on a phone two buttons side

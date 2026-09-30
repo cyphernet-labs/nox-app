@@ -5,6 +5,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/di/global_aliases.dart';
+import 'package:nox_app/domain/model/device/device_invite.dart';
 import 'package:nox_app/domain/model/device/device_model.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
@@ -39,7 +40,7 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
     on<DevicesInitialize>(_onInitialize, transformer: sequential());
     on<DevicesRevokeRequested>(_onRevokeRequested);
     on<DevicesInviteRequested>(_onInviteRequested);
-    on<DevicesInviteDismissed>((_, emit) => emit(state.copyWith(inviteLink: null, inviteFailed: false)));
+    on<DevicesInviteDismissed>((_, emit) => emit(state.copyWith(invite: null, inviteFailed: false)));
     on<DevicesDeviceListChanged>(_onDeviceListChanged);
     on<DevicesConnectionRestored>((_, _) {
       if (isClosed) return;
@@ -152,7 +153,7 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
             loading: false,
             devices: devices,
             failed: false,
-            inviteLink: spent ? null : state.inviteLink,
+            invite: spent ? null : state.invite,
             inviteFailed: spent ? false : state.inviteFailed,
             actionFailedKey: stillListed ? state.actionFailedKey : null,
           ),
@@ -198,7 +199,7 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
   /// and the difference is the subject: that notice is about a device still
   /// sitting in the list, this one about a request whose surface is gone.
   Future<void> _onDeviceListChanged(DevicesDeviceListChanged event, Emitter<DevicesState> emit) async {
-    emit(state.copyWith(inviteLink: null, inviteFailed: false));
+    emit(state.copyWith(invite: null, inviteFailed: false));
     // isClosed like every other add() in this class. The first draft argued
     // this one was safe because it runs inside a handler - and the argument was
     // wrong: an event queued before close() is still delivered to its handler
@@ -279,7 +280,7 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
     }
     final result = await repository.inviteDevice();
     result.match<void>(
-      onData: (link) => emit(state.copyWith(inviteLink: link, inviteFailed: false)),
+      onData: (invite) => emit(state.copyWith(invite: invite, inviteFailed: false)),
       onError: (_) => emit(state.copyWith(inviteFailed: true)),
     );
   }

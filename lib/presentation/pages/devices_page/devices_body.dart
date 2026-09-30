@@ -67,6 +67,7 @@ class _DevicesBodyState extends State<DevicesBody> {
                 AppInviteCardWidget(
                   link: state.inviteLink!,
                   message: context.l10n.devicesInviteMessage,
+                  homeOnly: state.inviteHomeOnly,
                   onDismiss: () => _bloc.add(const DevicesEvent.inviteDismissed()),
                 ),
               ),
