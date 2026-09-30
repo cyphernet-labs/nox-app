@@ -48,6 +48,29 @@ make tor-test        # cargo test + dart test for packages/nox_tor
 | 7 | Выйти из аккаунта | нет ключа доступа, списка адресов и каталогов Tor (SC-007) |
 | 8 | Сменить адрес сервера: перезапустить `noxd` на другом адресе | приложение через Tor получает новый список и возвращается на прямой путь, история на месте (US3, SC-003) |
 
+### Как прогнать автоматически
+
+Сценарии 1–4, 7 и 8 на macOS проходит зонд `test/live/tor_live_probe.dart`. Он сам запускает `noxd` с tor на LAN-адресе машины, изображает «вне дома» проверкой прямых адресов, которая ничего не находит, и меряет время:
+
+```bash
+(cd client_backend && go build -o /tmp/noxd .)
+fvm flutter test test/live/tor_live_probe.dart \
+  --dart-define=noxd=/tmp/noxd --dart-define=tor=/path/to/tor \
+  --dart-define=host=<LAN-адрес машины> --dart-define=work=/tmp/nox_e2e
+```
+
+В конце зонд оставляет `noxd` работать, а в `<work>/invites.txt` — два приглашения версии 2. Они живут 10 минут.
+
+Сценарий 5 на симуляторе и эмуляторе:
+
+```bash
+xcrun simctl keychain <SIM> reset   # связка ключей iOS переживает удаление приложения
+fvm flutter test integration_test/tor_pairing_test.dart -d <SIM|emulator> \
+  --dart-define-from-file=config/stage.json --dart-define=link=<приглашение> --dart-define=nox.forceTor=true
+```
+
+Тест в конце печатает `NEXT_INVITE` — свежее приглашение для следующей платформы. Повторный запуск спаренного устройства вне дома проверяет `integration_test/tor_relaunch_test.dart` с тем же ключом `nox.forceTor`.
+
 ## Проверки на устройстве (владелец)
 
 Симулятор и эмулятор этого не показывают:
