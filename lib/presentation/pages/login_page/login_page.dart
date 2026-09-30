@@ -161,6 +161,7 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
       case LoginStatus.errorRejected:
       case LoginStatus.errorNetwork:
       case LoginStatus.errorServerMismatch:
+      case LoginStatus.errorHomeNetworkOnly:
         break;
     }
   }
@@ -201,6 +202,7 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
     LoginStatus.errorRejected => context.l10n.loginLinkRejected,
     LoginStatus.errorNetwork => context.l10n.loginNetworkError,
     LoginStatus.errorServerMismatch => context.l10n.loginServerNotRecognised,
+    LoginStatus.errorHomeNetworkOnly => context.l10n.loginHomeNetworkOnly,
     _ => null,
   };
 

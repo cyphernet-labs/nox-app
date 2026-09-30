@@ -16,6 +16,15 @@ import 'package:nox_app/domain/service/session_phase_service.dart';
 
 import 'login_bloc_test.mocks.dart';
 
+/// A version-1 link, as every claim and every home-only invite is: the only
+/// road to its server is the direct one.
+const String _homeLink = 'https://nox.app/p/#AQF_AAABH5CjZmMytIk_2XvPJ-jonqlQtYsZD3SB33P1foxqnrVbFo-VEf6WohQoqA1_na5iVUo';
+
+/// A version-2 link as the Go server builds it: the direct road, and the
+/// onion address behind it.
+const String _onionLink =
+    'https://nox.app/p/#AgHAqAEKH5AAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eH6ChoqOkpaanqKmqq6ytrq8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-PwG7QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8';
+
 /// A phase this test drives by hand. The real one is the socket's.
 class _FakePhase implements SessionPhaseService {
   final StreamController<SessionPhase> _controller = StreamController<SessionPhase>.broadcast();
@@ -134,15 +143,32 @@ void main() {
     tearDown(() async => getIt.reset());
 
     blocTest<LoginBloc, LoginState>(
-      'a refused server is its own error, not a network one',
+      'a stranger behind an onion link is its own error, not a network one (FR-030)',
       // Telling the person to check their connection here sends them after
-      // something that is working perfectly and will never be the cause.
+      // something that is working perfectly and will never be the cause. And
+      // behind an onion address a stranger's key is a real anomaly: nobody can
+      // hold that address without the server's keys.
       build: () => LoginBloc(demo: true),
+      seed: () => const LoginState(id: _onionLink),
       act: (bloc) async {
         await Future<void>.delayed(Duration.zero);
         phase.emit(SessionPhase.serverMismatch);
       },
       expect: () => [predicate<LoginState>((s) => s.status == LoginStatus.errorServerMismatch)],
+    );
+
+    blocTest<LoginBloc, LoginState>(
+      'a stranger at the address of a version-1 link means "not home", not "wrong server" (FR-005)',
+      // Away from home a different machine sits at that address, and the link
+      // has no other road. "This server doesn't match its link" would send the
+      // person looking for a rebuilt server that is sitting at home untouched.
+      build: () => LoginBloc(demo: true),
+      seed: () => const LoginState(id: _homeLink),
+      act: (bloc) async {
+        await Future<void>.delayed(Duration.zero);
+        phase.emit(SessionPhase.serverMismatch);
+      },
+      expect: () => [predicate<LoginState>((s) => s.status == LoginStatus.errorHomeNetworkOnly)],
     );
 
     blocTest<LoginBloc, LoginState>(
@@ -157,6 +183,35 @@ void main() {
       },
       expect: () => <LoginState>[],
     );
+
+    for (final (kind, link, expected) in [
+      ('a version-2 link', _onionLink, LoginStatus.errorServerMismatch),
+      ('a version-1 link', _homeLink, LoginStatus.errorHomeNetworkOnly),
+    ]) {
+      blocTest<LoginBloc, LoginState>(
+        'the refusal outranks the "no channel" that sign-in reports after it, on $kind',
+        // The real sequence again, with real links: what the refusal means
+        // depends on the road the link took, and neither answer is "check your
+        // connection".
+        build: () {
+          final auth = MockAuthRepository();
+          when(auth.signIn(identifier: anyNamed('identifier'))).thenAnswer((_) async {
+            phase.emit(SessionPhase.serverMismatch);
+            await Future<void>.delayed(const Duration(milliseconds: 20));
+            return const RepositoryResult<bool>.error(exception: RepositoryException.connection);
+          });
+          getIt.registerSingleton<AuthRepository>(auth);
+          return LoginBloc();
+        },
+        act: (bloc) async {
+          bloc.add(LoginEvent.idChanged(link));
+          await Future<void>.delayed(Duration.zero);
+          bloc.add(const LoginEvent.signInRequested());
+          await Future<void>.delayed(const Duration(milliseconds: 120));
+        },
+        verify: (bloc) => expect(bloc.state.status, expected),
+      );
+    }
 
     blocTest<LoginBloc, LoginState>(
       'the refusal outranks the "no channel" that sign-in reports after it',
@@ -214,7 +269,8 @@ void main() {
       // The phase is terminal - it keeps saying serverMismatch until something
       // restarts the channel - so a later attempt that fails before it ever
       // dials (an unreadable keychain, say) would inherit the old verdict and
-      // blame a server it never reached.
+      // blame a server it never reached. A version-1 link, so that inheriting
+      // it would read as "not home" just as wrongly as "wrong server".
       build: () {
         final auth = MockAuthRepository();
         when(
@@ -227,7 +283,7 @@ void main() {
         await Future<void>.delayed(Duration.zero);
         phase.emit(SessionPhase.serverMismatch); // a refusal, from before
         await Future<void>.delayed(const Duration(milliseconds: 20));
-        bloc.add(const LoginEvent.idChanged('a-fresh-good-link')); // clears the screen
+        bloc.add(const LoginEvent.idChanged(_homeLink)); // clears the screen
         await Future<void>.delayed(Duration.zero);
         bloc.add(const LoginEvent.signInRequested());
         await Future<void>.delayed(const Duration(milliseconds: 120));
@@ -249,6 +305,95 @@ void main() {
         predicate<LoginState>((s) => s.status == LoginStatus.idle && s.id == 'another-link'),
       ],
     );
+  });
+
+  // 040: a version-1 link has one road to its server, the direct one. Away from
+  // home not reaching it is the expected outcome, so the screen says where
+  // pairing works instead of blaming the network (FR-022).
+  group('LoginBloc and a link that works only at home (040)', () {
+    late MockAuthRepository auth;
+
+    setUp(() async {
+      await configureDependencies(Environment.test);
+      getIt.allowReassignment = true;
+      auth = MockAuthRepository();
+      getIt.registerSingleton<AuthRepository>(auth);
+    });
+    tearDown(() async => getIt.reset());
+
+    blocTest<LoginBloc, LoginState>(
+      'a version-1 link whose server did not answer says pairing works at home',
+      build: () {
+        when(
+          auth.signIn(identifier: anyNamed('identifier')),
+        ).thenAnswer((_) async => const RepositoryResult.error(exception: RepositoryException.connection));
+        return LoginBloc();
+      },
+      act: (bloc) => bloc
+        ..add(const LoginEvent.idChanged(_homeLink))
+        ..add(const LoginEvent.signInRequested()),
+      wait: const Duration(milliseconds: 300),
+      expect: () => [
+        predicate<LoginState>((s) => s.id == _homeLink),
+        predicate<LoginState>((s) => s.status == LoginStatus.loading),
+        // Still retryable: at home, the next press is the one that works.
+        predicate<LoginState>((s) => s.status == LoginStatus.errorHomeNetworkOnly && s.canSubmit),
+      ],
+    );
+
+    blocTest<LoginBloc, LoginState>(
+      'a version-2 link that reached nothing keeps the plain network error',
+      // Both roads were tried, the onion one works from any network, and "go
+      // home" would be advice about a limit this link does not have.
+      build: () {
+        when(
+          auth.signIn(identifier: anyNamed('identifier')),
+        ).thenAnswer((_) async => const RepositoryResult.error(exception: RepositoryException.connection));
+        return LoginBloc();
+      },
+      act: (bloc) => bloc
+        ..add(const LoginEvent.idChanged(_onionLink))
+        ..add(const LoginEvent.signInRequested()),
+      wait: const Duration(milliseconds: 300),
+      verify: (bloc) => expect(bloc.state.status, LoginStatus.errorNetwork),
+    );
+
+    blocTest<LoginBloc, LoginState>(
+      'a server that answered with an error is not a question of where the device is',
+      // `internal` means the pairing reached the server and failed there.
+      build: () {
+        when(
+          auth.signIn(identifier: anyNamed('identifier')),
+        ).thenAnswer((_) async => const RepositoryResult.error(exception: RepositoryException.internal));
+        return LoginBloc();
+      },
+      act: (bloc) => bloc
+        ..add(const LoginEvent.idChanged(_homeLink))
+        ..add(const LoginEvent.signInRequested()),
+      wait: const Duration(milliseconds: 300),
+      verify: (bloc) => expect(bloc.state.status, LoginStatus.errorNetwork),
+    );
+
+    for (final (exception, expected) in [
+      (RepositoryException.invalidRequest, LoginStatus.errorFormat),
+      (RepositoryException.notFound, LoginStatus.errorExpired),
+      (RepositoryException.authentication, LoginStatus.errorRejected),
+    ]) {
+      blocTest<LoginBloc, LoginState>(
+        'a refusal of the link itself keeps its own message on a version-1 link (${exception.name})',
+        // The server answered, about the link: none of these is about where the
+        // device is.
+        build: () {
+          when(auth.signIn(identifier: anyNamed('identifier'))).thenAnswer((_) async => RepositoryResult.error(exception: exception));
+          return LoginBloc();
+        },
+        act: (bloc) => bloc
+          ..add(const LoginEvent.idChanged(_homeLink))
+          ..add(const LoginEvent.signInRequested()),
+        wait: const Duration(milliseconds: 300),
+        verify: (bloc) => expect(bloc.state.status, expected),
+      );
+    }
   });
 
   // Sign-in stopped being a local decision in feature 031: the button now waits

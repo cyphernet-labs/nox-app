@@ -262,7 +262,7 @@
   - ARB EN/UK.
 
   Tests: `device_repository_impl_test.dart`, `devices_bloc_test.dart`, `app_invite_card_widget_test.dart`. Goldens: the invite card widget with and without the note, plus the devices page mobile and desktop with the note.
-- [ ] T037 [US4] Login: a v1 link whose server does not answer, or answers with a key the link does not name, shows `loginHomeNetworkOnly` (`lib/presentation/pages/login_page/bloc/login_bloc.dart`, `login_page.dart`, ARB EN/UK). Tests in `test/presentation/pages/login_page/bloc/login_bloc_test.dart`.
+- [X] T037 [US4] Login: a v1 link whose server does not answer, or answers with a key the link does not name, shows `loginHomeNetworkOnly` (`lib/presentation/pages/login_page/bloc/login_bloc.dart`, `login_page.dart`, ARB EN/UK). Tests in `test/presentation/pages/login_page/bloc/login_bloc_test.dart`.
 
 ---
 

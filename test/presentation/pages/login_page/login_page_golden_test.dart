@@ -51,4 +51,11 @@ void main() {
   // this link is the wrong one.
   goldenTest('login_page_pin_refused', () => _login(scannerAvailable: true, status: LoginStatus.errorServerMismatch));
   goldenTestDesktop('login_page_pin_refused', () => _login(scannerAvailable: true, status: LoginStatus.errorServerMismatch));
+
+  // A version-1 link whose server did not answer, or a different machine
+  // answered at its address (040). Apart from both of the above because the
+  // cause is where the device is: neither the link nor the network is wrong,
+  // and the sentence is two lines long where the others are one.
+  goldenTest('login_page_home_only', () => _login(scannerAvailable: true, status: LoginStatus.errorHomeNetworkOnly));
+  goldenTestDesktop('login_page_home_only', () => _login(scannerAvailable: true, status: LoginStatus.errorHomeNetworkOnly));
 }
