@@ -14,14 +14,23 @@ class NetworkChangeServiceImpl implements NetworkChangeService {
 
   @override
   Stream<void> watchChanges() async* {
-    List<ConnectivityResult>? last = await _connectivity.checkConnectivity();
+    // Bounded: on some simulators the first answer never comes, and a stream
+    // still waiting on it can be neither used nor cancelled. Unknown is fine -
+    // the next report is then a change, which costs one extra check.
+    var last = _sorted(await _connectivity.checkConnectivity().timeout(_firstAnswer, onTimeout: () => const <ConnectivityResult>[]));
     await for (final results in _connectivity.onConnectivityChanged) {
-      final sorted = [...results]..sort((a, b) => a.index.compareTo(b.index));
-      if (last != null && const ListEquality<ConnectivityResult>().equals(last, sorted)) continue;
+      final sorted = _sorted(results);
+      if (const ListEquality<ConnectivityResult>().equals(last, sorted)) continue;
       last = sorted;
       yield null;
     }
   }
+
+  static const Duration _firstAnswer = Duration(seconds: 3);
+
+  /// Both sides of the comparison in one order: a platform that lists the
+  /// same transports in another order has not changed network.
+  static List<ConnectivityResult> _sorted(List<ConnectivityResult> results) => [...results]..sort((a, b) => a.index.compareTo(b.index));
 }
 
 /// No changes - the test environment has no network to watch.

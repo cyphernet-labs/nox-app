@@ -244,6 +244,11 @@ class LiveIdentityHandshake {
     // onboarding without the server having been asked about them at all.
     final generation = _socket.greetingGeneration;
     final pending = Completer<IdentityHandshake>();
+    // The timer can fire while restart() is still bringing a slow path up -
+    // through Tor that takes longer than the whole wait - and nobody is
+    // listening yet. Marked handled so that is not an uncaught error; the
+    // await below still receives it.
+    pending.future.ignore();
     _pending = pending;
     _timer = Timer(timeout, () {
       if (!pending.isCompleted) pending.completeError(const IdentityHandshakeTimeout());

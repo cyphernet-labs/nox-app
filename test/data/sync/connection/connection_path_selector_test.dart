@@ -37,6 +37,16 @@ class _Network implements NetworkChangeService {
   Stream<void> watchChanges() => changes.stream;
 }
 
+/// A network source whose first answer never comes, like connectivity_plus on
+/// some simulators: its stream is stuck in an `async*` body at an await.
+class _StuckNetwork implements NetworkChangeService {
+  @override
+  Stream<void> watchChanges() async* {
+    await Completer<void>().future;
+    yield null;
+  }
+}
+
 class _Lifecycle implements AppLifecycleService {
   final StreamController<AppVisibility> changes = StreamController<AppVisibility>.broadcast();
 
@@ -372,13 +382,30 @@ void main() {
       expect(tor.target?.host, _onionHost, reason: 'the target is set again');
     });
 
-    test('back in front with no connection, the path is chosen at once', () async {
+    test('back in front with the socket on the ladder, the path is chosen at once', () async {
       prober.home = <String>{};
       await socket.start(targets: selector, credentialsProvider: () async => const GreetingCredentials());
+      await waitUntil(() => socket.currentPhase == SessionPhase.disconnected, reason: 'on the ladder');
+      final asked = prober.rounds.length;
+
+      lifecycle.go(AppVisibility.background);
+      lifecycle.go(AppVisibility.foreground);
+      await waitUntil(() => prober.rounds.length > asked, reason: 'a new round, not the next rung');
+    });
+
+    test('a foreground that was never left changes nothing', () async {
+      // The lifecycle service replays its current value to a new listener.
+      // Taken as a return from the background, it restarted the attempt a
+      // sign-in was waiting on - and the pairing failed at once.
+      prober.home = <String>{};
+      unawaited(socket.start(targets: selector, credentialsProvider: () async => const GreetingCredentials()));
+      await waitUntil(() => prober.rounds.isNotEmpty, reason: 'the first round ran');
       final asked = prober.rounds.length;
 
       lifecycle.go(AppVisibility.foreground);
-      await waitUntil(() => prober.rounds.length > asked, reason: 'a new round, not the next rung');
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(prober.rounds.length, asked, reason: 'no new round for a replay');
     });
 
     test('a desktop does not sleep', () async {
@@ -424,26 +451,70 @@ void main() {
   });
 
   group('a key the onion service does not know (T039)', () {
-    test('this device key is marked unregistered, and Tor waits for a direct greeting', () async {
+    const refused = TorStatus(state: TorState.ready, bootstrapPercent: 100, error: TorError.wrongClientAuth, port: 9150);
+
+    test('turned away for longer than the grace, this device key counts as unknown, and Tor waits', () async {
+      await selector.end();
+      selector = ConnectionPathSelector.forTest(
+        prober,
+        tor,
+        addresses,
+        keys,
+        network,
+        lifecycle,
+        socket,
+        keyRefusalGrace: const Duration(milliseconds: 100),
+        torReadyBudget: const Duration(milliseconds: 400),
+      )..begin(linkAddress: _link, fingerprint: _pin);
       await torWorks();
       prober.home = <String>{};
-      await connectAndGreet();
+      expect(await selector.nextTarget(), isNotNull);
 
-      tor.emit(const TorStatus(state: TorState.ready, bootstrapPercent: 100, error: TorError.wrongClientAuth, port: 9150));
-      await waitUntil(() async => !((await keys.isRegistered()).data ?? true), reason: 'marked unregistered');
+      tor.emit(refused);
+      await Future<void>.delayed(const Duration(milliseconds: 150));
 
       expect(await selector.nextTarget(), isNull, reason: 'no Tor until the key is registered again');
+      expect((await keys.isRegistered()).data, isFalse, reason: 'the next greeting registers it again');
     });
 
-    test('a lent key that no longer opens the door is dropped', () async {
+    test('a refusal right after the key went in is the description still spreading, not an unknown key', () async {
+      // A pairing a moment ago, or a registration: the service's published
+      // description lags behind. Switching Tor off here would strand a device
+      // that is away from home and has no other way in.
+      await torWorks();
+      prober.home = <String>{};
+      expect(await selector.nextTarget(), isNotNull);
+
+      tor.emit(refused);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(await selector.nextTarget(), Uri.parse('wss://$_onionHost/ws'), reason: 'Tor is tried again');
+      expect((await keys.isRegistered()).data, isTrue);
+    });
+
+    test('a lent key turned away is kept: its pairing ends on its own deadline', () async {
       tor.supported = true;
       await keys.saveInvite(onion: _onion, oneTimeKey: Uint8List(32));
       prober.home = <String>{};
       await selector.nextTarget();
 
-      tor.emit(const TorStatus(state: TorState.ready, bootstrapPercent: 100, error: TorError.wrongClientAuth, port: 9150));
-      await waitUntil(() async => (await keys.invite()).data == null, reason: 'the invite is dropped');
+      tor.emit(refused);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect((await keys.invite()).data, isNotNull);
     });
+  });
+
+  test('ending does not wait on a source whose cancel never finishes', () async {
+    // On an iOS simulator the network source's first answer never came, and an
+    // `async*` stream suspended on it cannot finish cancelling. Awaiting that
+    // cancel wedged the channel restart a sign-in waits on.
+    await selector.end();
+    selector = ConnectionPathSelector.forTest(prober, tor, addresses, keys, _StuckNetwork(), lifecycle, socket)
+      ..begin(linkAddress: _link, fingerprint: _pin);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    await selector.end().timeout(const Duration(seconds: 2), onTimeout: () => fail('end() waited on the stuck source'));
   });
 
   test('ending the session stops Tor and asks nothing more', () async {

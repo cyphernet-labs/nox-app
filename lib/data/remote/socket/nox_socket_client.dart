@@ -251,7 +251,7 @@ class NoxSocketClient {
 
   Future<CommandReply> _sendOnce(String cmd, Map<String, dynamic> data, {bool isGreeting = false}) async {
     if (!isGreeting) await _awaitGreeting();
-    final connection = _connection;
+    final connection = isGreeting ? await _awaitConnection() : _connection;
     if (connection == null) throw const SocketUnavailableException('no connection');
     final id = _nextId++;
     final completer = Completer<CommandReply>();
@@ -296,6 +296,33 @@ class NoxSocketClient {
     }
   }
 
+  /// Waits for the current attempt to have a connection - for the commands
+  /// sent before any greeting, `pair` above all.
+  ///
+  /// A started socket can be between connections: choosing a path, or a
+  /// restart that superseded the attempt a caller was counting on. Failing at
+  /// once there told the person their pairing did not work while the channel
+  /// was a moment from opening. Bounded like the greeting wait: the short
+  /// timeout, or the slow-path budget while Tor comes up.
+  Future<SocketConnection> _awaitConnection() async {
+    final waited = Stopwatch()..start();
+    while (true) {
+      final connection = _connection;
+      if (connection != null) return connection;
+      if (!_started) throw const SocketUnavailableException('no connection');
+      final left = (_slowPath ? slowPathBudget : sendTimeout) - waited.elapsed;
+      if (left <= Duration.zero) throw const SocketUnavailableException('no connection');
+      try {
+        await _opened.stream.first.timeout(left);
+      } on TimeoutException {
+        if (!_slowPath) throw const SocketUnavailableException('no connection');
+      }
+    }
+  }
+
+  /// One event per connection this client opens.
+  final StreamController<void> _opened = StreamController<void>.broadcast();
+
   /// Whether the attempt in progress is bringing up the slow path: the target
   /// provider is starting Tor, or the address being dialled is an onion one.
   bool get _slowPath {
@@ -335,6 +362,7 @@ class NoxSocketClient {
     try {
       final connection = _factory.connect(target);
       _connection = connection;
+      _opened.add(null);
       // Every connection gets a number, and every callback carries the one it
       // was born with. Closing a socket can FAIL - that is the whole reason
       // teardown absorbs its errors - and a socket that would not close keeps
@@ -810,6 +838,7 @@ class NoxSocketClient {
     await stop();
     await _phase.close();
     await _events.close();
+    await _opened.close();
   }
 }
 

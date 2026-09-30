@@ -614,6 +614,38 @@ void main() {
       expect((await pending).ok, isTrue);
     }, timeout: const Timeout(Duration(seconds: 30)));
 
+    test('pairing waits for the connection while the path is still being chosen', () async {
+      // A started socket can be between connections when pairing is asked
+      // for: choosing a path, or a restart that superseded the attempt the
+      // caller was counting on. Failing at once there told the person their
+      // pairing did not work while the channel was a moment from opening.
+      final gate = Completer<Uri?>();
+      unawaited(client.start(targets: ScriptedTargets.gated(gate), credentialsProvider: () async => const GreetingCredentials.unpaired()));
+      await settle();
+
+      final pairing = client.pair(token: 't', deviceKey: 'k', platform: 'macos');
+      var failed = false;
+      unawaited(pairing.then((_) {}, onError: (Object _) => failed = true));
+      await settle();
+      expect(failed, isFalse, reason: 'waiting for the channel, not refused');
+
+      gate.complete(Uri.parse('wss://10.0.0.1:9000/ws'));
+      await waitUntil(() => factory.created.isNotEmpty && factory.latest.commandNamed('pair') != null, reason: 'sent once open');
+      factory.latest.reply(
+        factory.latest.sent.indexWhere((f) => f['cmd'] == 'pair'),
+        data: {
+          'identity': {'id': 'u_me', 'label': 'Anna', 'created': true},
+        },
+      );
+      expect((await pairing).ok, isTrue);
+    });
+
+    test('pairing with no channel coming gives up after the short wait', () async {
+      await client.start(targets: ScriptedTargets(const [null]), credentialsProvider: () async => const GreetingCredentials.unpaired());
+
+      await expectLater(client.pair(token: 't', deviceKey: 'k', platform: 'macos'), throwsA(isA<SocketUnavailableException>()));
+    }, timeout: const Timeout(Duration(seconds: 30)));
+
     test('pairing carries the public half of the access key (FR-015)', () async {
       await client.start(url: url, credentialsProvider: () async => const GreetingCredentials.unpaired());
       final socket = factory.latest;
