@@ -308,4 +308,43 @@ mod tests {
         engine::reset_for_test();
         let _ = std::fs::remove_file(blocker);
     }
+
+    /// The app starts its clock on a refusal when the error ENTERS it. One left
+    /// over from the previous key would never enter again.
+    #[test]
+    fn a_new_target_drops_a_key_refusal_and_nothing_else() {
+        let _turn = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
+        engine::reset_for_test();
+        let (blocker, bad) = unusable_dir("refusal");
+        assert_eq!(unsafe { nox_tor_start(bad.as_ptr(), bad.as_ptr()) }, 0);
+        assert_eq!(wait_for(status::state::FAILED).state, status::state::FAILED);
+        let onion = CString::new(ONION).unwrap();
+        let key = [1u8; 32];
+        for refusal in [error::WRONG_CLIENT_AUTH, error::MISSING_CLIENT_AUTH] {
+            engine::set_error_for_test(refusal);
+            assert_eq!(unsafe { nox_tor_set_target(onion.as_ptr(), 443, key.as_ptr()) }, 0);
+            assert_eq!(status_now().error, error::NONE, "refusal {refusal} outlived the target change");
+        }
+        engine::set_error_for_test(error::TIMEOUT);
+        assert_eq!(unsafe { nox_tor_set_target(onion.as_ptr(), 443, key.as_ptr()) }, 0);
+        assert_eq!(status_now().error, error::TIMEOUT, "only a refusal of the key is about the key");
+        engine::reset_for_test();
+        let _ = std::fs::remove_file(blocker);
+    }
+
+    /// The app remembers a client the network refused by this string, and only
+    /// a different one lets Tor start again. It must move with the pin: one
+    /// left behind would keep Tor off after the very update meant to fix it.
+    #[test]
+    fn the_reported_version_is_the_arti_client_in_the_lock_file() {
+        let lock = include_str!("../Cargo.lock");
+        let pinned = lock
+            .split("[[package]]")
+            .find(|entry| entry.lines().any(|line| line.trim() == r#"name = "arti-client""#))
+            .and_then(|entry| {
+                entry.lines().find_map(|line| line.trim().strip_prefix(r#"version = ""#)?.strip_suffix('"'))
+            })
+            .expect("arti-client in Cargo.lock");
+        assert_eq!(VERSION.to_str().unwrap(), format!("arti-client {pinned}"));
+    }
 }

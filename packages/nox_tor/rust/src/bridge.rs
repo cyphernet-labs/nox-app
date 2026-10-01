@@ -33,6 +33,10 @@ const PENDING_CAP: usize = 16;
 /// taking. A full descriptor table fails again at once, and an immediate retry
 /// would spin a worker until it cleared.
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
+/// How many accepts in a row may fail over the connection each was taking
+/// before the loop pauses anyway: a failure that keeps coming is about the
+/// listener, not about one connection.
+const GONE_IN_A_ROW: u32 = 8;
 /// One Tor connection to the onion service. A keyed connect fetches the
 /// descriptor anew every time and sometimes hangs (Arti #2166, #2482): this is
 /// the bound, and the app's reconnect ladder is the retry.
@@ -111,20 +115,26 @@ async fn serve(listener: std::net::TcpListener, shared: Arc<Shared>, secret: Arc
     // The connections still waiting to present the secret, oldest first.
     // Dropping a sender lets that connection go (see relay).
     let mut waiting: VecDeque<oneshot::Sender<()>> = VecDeque::new();
+    let mut gone_in_a_row = 0;
     loop {
         let socket = match listener.accept().await {
-            Ok((socket, _)) => socket,
-            Err(e) if gone_before_taken(&e) => continue,
-            Err(_) => {
-                tokio::time::sleep(ACCEPT_BACKOFF).await;
+            Ok((socket, _)) => {
+                gone_in_a_row = 0;
+                socket
+            }
+            Err(e) => {
+                if pause_after(&e, &mut gone_in_a_row) {
+                    tokio::time::sleep(ACCEPT_BACKOFF).await;
+                }
                 continue;
             }
         };
         waiting.retain(|w| !w.is_closed());
         if waiting.len() >= PENDING_CAP {
             // The oldest goes, not the newcomer: the app writes the secret the
-            // moment it connects, so a stranger who keeps the slots full by
-            // reconnecting cannot lock it out.
+            // moment it connects, so places merely held do not keep it out. A
+            // sustained flood of fresh connections still can - see the bridge
+            // in contracts/ffi.md.
             waiting.pop_front();
         }
         let (evict, evicted) = oneshot::channel();
@@ -144,6 +154,21 @@ fn gone_before_taken(e: &io::Error) -> bool {
         e.kind(),
         io::ErrorKind::ConnectionAborted | io::ErrorKind::ConnectionReset | io::ErrorKind::ConnectionRefused
     )
+}
+
+/// Whether the accept loop pauses after this failure. Any failure beyond one
+/// connection does at once; one over a single connection only when it keeps
+/// coming, GONE_IN_A_ROW times in a row, and then the count starts again.
+fn pause_after(e: &io::Error, gone_in_a_row: &mut u32) -> bool {
+    if !gone_before_taken(e) {
+        return true;
+    }
+    *gone_in_a_row += 1;
+    if *gone_in_a_row < GONE_IN_A_ROW {
+        return false;
+    }
+    *gone_in_a_row = 0;
+    true
 }
 
 /// Reads and checks the secret. Constant-time, so a stranger learns nothing
@@ -255,5 +280,18 @@ mod tests {
             assert!(read.is_err(), "connection {kept} was let go: {read:?}");
         }
         serving.abort();
+    }
+
+    #[test]
+    fn an_accept_failure_that_keeps_coming_pauses_the_loop() {
+        let gone = io::Error::from(io::ErrorKind::ConnectionAborted);
+        let mut in_a_row = 0;
+        for _ in 1..GONE_IN_A_ROW {
+            assert!(!pause_after(&gone, &mut in_a_row), "one connection gone says nothing about the next");
+        }
+        assert!(pause_after(&gone, &mut in_a_row), "this many in a row is about the listener");
+        assert!(!pause_after(&gone, &mut in_a_row), "and the count starts again after the pause");
+        let other = io::Error::other("too many open files");
+        assert!(pause_after(&other, &mut 0), "a failure beyond one connection pauses at once");
     }
 }

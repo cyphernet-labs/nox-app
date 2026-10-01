@@ -259,7 +259,11 @@ pub fn set_target(host: &str, port: u16, key: ClientKey) -> i32 {
     }
     match bridge::open_or_rotate(runtime, shared) {
         Ok(port) => {
-            shared.status.update(|s| s.port = port);
+            shared.status.update(|s| {
+                s.port = port;
+                // A refusal of the key so far was about the previous key.
+                s.forget_key_refusal();
+            });
             0
         }
         Err(()) => -(error::INTERNAL as i32),
@@ -335,6 +339,13 @@ pub fn bridge_secret() -> Option<[u8; 32]> {
 #[cfg(test)]
 pub(crate) fn simulate_obsolete_for_test() {
     on_obsolete();
+}
+
+#[cfg(test)]
+pub(crate) fn set_error_for_test(code: u8) {
+    if let Some(e) = engine().as_ref() {
+        e.shared.status.update(|s| s.error = code);
+    }
 }
 
 #[cfg(test)]

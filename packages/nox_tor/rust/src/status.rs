@@ -18,6 +18,18 @@ pub struct NoxTorStatus {
     pub reserved2: u16,
 }
 
+impl NoxTorStatus {
+    /// Drops a refusal of the client key, and only that: it was about the key
+    /// last offered, and a new target brings another one. Left in place, it
+    /// would keep the app from ever seeing the next refusal begin. Every other
+    /// code stays until something replaces it.
+    pub fn forget_key_refusal(&mut self) {
+        if matches!(self.error, error::MISSING_CLIENT_AUTH | error::WRONG_CLIENT_AUTH) {
+            self.error = error::NONE;
+        }
+    }
+}
+
 /// `NoxTorStatus::state`.
 pub mod state {
     pub const STOPPED: u8 = 0;
@@ -110,6 +122,22 @@ mod tests {
         cell.update(|s| s.state = state::READY);
         assert_eq!(cell.get().state, state::OBSOLETE);
         assert_eq!(cell.get().error, error::SOFTWARE_DEPRECATED);
+    }
+
+    #[test]
+    fn only_a_key_refusal_is_forgotten() {
+        for (before, after) in [
+            (error::WRONG_CLIENT_AUTH, error::NONE),
+            (error::MISSING_CLIENT_AUTH, error::NONE),
+            (error::NONE, error::NONE),
+            (error::TIMEOUT, error::TIMEOUT),
+            (error::NETWORK, error::NETWORK),
+            (error::INTERNAL, error::INTERNAL),
+        ] {
+            let mut s = NoxTorStatus { state: state::READY, error: before, port: 4242, ..NoxTorStatus::default() };
+            s.forget_key_refusal();
+            assert_eq!(s, NoxTorStatus { state: state::READY, error: after, port: 4242, ..NoxTorStatus::default() });
+        }
     }
 
     #[test]
