@@ -9,13 +9,16 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/data/local/chat/message_dao.dart';
+import 'package:nox_app/data/remote/api_client.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/repository/connection/connection_storage.dart';
 import 'package:nox_app/data/sync/connection/connection_path_selector.dart';
 import 'package:nox_app/data/sync/connection/direct_prober.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/connection/connection_path.dart';
 import 'package:nox_app/domain/model/connection/tor_status.dart';
+import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/app/auth_repository.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
@@ -23,6 +26,7 @@ import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/repository/connection/access_key_repository.dart';
 import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
 import 'package:nox_app/domain/repository/device/device_repository.dart';
+import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_app/domain/service/network_change_service.dart';
 import 'package:nox_app/domain/service/tor_service.dart';
@@ -135,6 +139,27 @@ void main() {
     watch = Stopwatch()..start();
     expect(await send('through Tor 1'), isTrue, reason: 'a message through Tor');
     measure('a message through Tor, round trip: ${watch.elapsedMilliseconds} ms');
+
+    // A file through Tor as well (US1/AC2, FR-009): the bytes travel over HTTPS
+    // through the same bridge, under the same pin, as the commands - and come
+    // back the same.
+    expect(getIt<ApiClient>().dio.options.baseUrl, contains('.onion'), reason: 'the bytes go the way the socket went');
+    watch = Stopwatch()..start();
+    final payload = List<int>.generate(64 * 1024, (i) => (i * 31 + 7) & 0xff);
+    final source = File('$work/through_tor.bin')..writeAsBytesSync(payload);
+    final uploaded = await getIt<FileRepository>().upload(path: source.path, mime: 'application/octet-stream');
+    expect(uploaded.hasData, isTrue, reason: 'upload through Tor: ${uploaded.exception}');
+    final fileId = uploaded.data!;
+    final withFile = await getIt<MessageRepository>().sendMessage(
+      chatId: chatId,
+      clientMessageId: const Uuid().v4(),
+      attachment: MessageAttachment(id: fileId, type: FileType.other, name: 'through_tor.bin', sizeBytes: payload.length),
+    );
+    expect(withFile.hasData, isTrue, reason: 'a message naming the file');
+    final fetched = await getIt<FileRepository>().download(fileId: fileId, suggestedName: 'through_tor.bin');
+    expect(fetched.hasData, isTrue, reason: 'download through Tor: ${fetched.exception}');
+    expect(File(fetched.data!).readAsBytesSync(), payload, reason: 'the same bytes back');
+    measure('a 64 KiB file through Tor, up, sent and down: ${watch.elapsedMilliseconds} ms');
 
     // --- 3. Home: back to direct, Tor stopped within ten seconds (SC-002). ---
     away.away = false;
