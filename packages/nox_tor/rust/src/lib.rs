@@ -332,6 +332,37 @@ mod tests {
         let _ = std::fs::remove_file(blocker);
     }
 
+    /// The group a hedge was won in stays for the service and key it won for,
+    /// and goes with them.
+    #[test]
+    fn the_connect_group_goes_with_its_target() {
+        let _turn = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
+        engine::reset_for_test();
+        let (blocker, bad) = unusable_dir("group");
+        assert_eq!(unsafe { nox_tor_start(bad.as_ptr(), bad.as_ptr()) }, 0);
+        assert_eq!(wait_for(status::state::FAILED).state, status::state::FAILED);
+        let onion = CString::new(ONION).unwrap();
+        let other = CString::new(onion::onion_from_pubkey(&[0u8; 32])).unwrap();
+        let (key, other_key) = ([1u8; 32], [2u8; 32]);
+        let won = arti_client::IsolationToken::new();
+        let set = |host: &CString, key: &[u8; 32]| unsafe { nox_tor_set_target(host.as_ptr(), 443, key.as_ptr()) };
+
+        assert_eq!(set(&onion, &key), 0);
+        engine::connect_group_won_for_test(won);
+        assert_eq!(set(&onion, &key), 0);
+        assert_eq!(engine::connect_group_for_test(), Some(won), "the same target again keeps it");
+        assert_eq!(set(&onion, &other_key), 0);
+        assert_eq!(engine::connect_group_for_test(), None, "another key forgets it");
+        engine::connect_group_won_for_test(won);
+        assert_eq!(set(&other, &other_key), 0);
+        assert_eq!(engine::connect_group_for_test(), None, "another service forgets it");
+        engine::connect_group_won_for_test(won);
+        assert_eq!(nox_tor_clear_target(), 0);
+        assert_eq!(engine::connect_group_for_test(), None, "clearing the target forgets it");
+        engine::reset_for_test();
+        let _ = std::fs::remove_file(blocker);
+    }
+
     /// The app remembers a client the network refused by this string, and only
     /// a different one lets Tor start again. It must move with the pin: one
     /// left behind would keep Tor off after the very update meant to fix it.

@@ -8,10 +8,12 @@
 //! access key - to the person's server.
 
 use std::collections::VecDeque;
+use std::future::Future;
 use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use arti_client::{IsolationToken, StreamPrefs};
 use subtle::ConstantTimeEq;
 use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
@@ -37,10 +39,15 @@ const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 /// before the loop pauses anyway: a failure that keeps coming is about the
 /// listener, not about one connection.
 const GONE_IN_A_ROW: u32 = 8;
-/// One Tor connection to the onion service. A keyed connect fetches the
-/// descriptor anew every time and sometimes hangs (Arti #2166, #2482): this is
-/// the bound, and the app's reconnect ladder is the retry.
+/// One Tor connection to the onion service, both attempts of the hedge
+/// together. A keyed connect fetches the descriptor anew every time and
+/// sometimes hangs (Arti #2166, #2482): this is the bound, and the app's
+/// reconnect ladder is the retry.
 const CONNECT_BUDGET: Duration = Duration::from_secs(45);
+/// When a connect to the onion service that has not finished gets a second
+/// one beside it. One that hangs hangs for the whole CONNECT_BUDGET, while a
+/// fresh attempt usually gets through in a few seconds.
+const HEDGE_AFTER: Duration = Duration::from_secs(15);
 
 pub struct BridgeHandle {
     task: JoinHandle<()>,
@@ -198,8 +205,17 @@ async fn relay(
         let target = slot.as_ref().ok_or(())?;
         (target.host.clone(), target.port)
     };
-    let client = lock(&shared.client).clone().ok_or(())?;
-    let mut stream = match tokio::time::timeout(CONNECT_BUDGET, client.connect((host.as_str(), port))).await {
+    let tor = lock(&shared.client).clone().ok_or(())?;
+    let (client, target) = (&*tor, (host.as_str(), port));
+    let connect = connect_in_groups(
+        &shared.connect_group,
+        move |group| async move {
+            let prefs = prefs_in(group);
+            client.connect_with_prefs(target, &prefs).await
+        },
+        HEDGE_AFTER,
+    );
+    let mut stream = match tokio::time::timeout(CONNECT_BUDGET, connect).await {
         Ok(Ok(stream)) => stream,
         Ok(Err(e)) => {
             let code = classify(&e);
@@ -214,6 +230,96 @@ async fn relay(
     shared.status.update(|s| s.error = error::NONE);
     let _ = tokio::io::copy_bidirectional(&mut socket, &mut stream).await;
     Ok(())
+}
+
+/// The isolation group connects to the onion service go in: Arti's default
+/// until a hedge is won in a fresh group, and that group from then on.
+///
+/// Arti lets connects to an onion service share an attempt only when their
+/// isolation is compatible, and an attempt that hangs runs on in a task of its
+/// own after its connect gives up on it. A later connect in the same group would
+/// join it and wait for the hedge all over again. Isolation decides only which
+/// circuits to this one service are shared, so a new group costs nothing in
+/// privacy. Forgotten when the target changes (see engine).
+#[derive(Default)]
+pub struct ConnectGroup(Mutex<Option<IsolationToken>>);
+
+impl ConnectGroup {
+    /// The group a first attempt goes in: the one the last hedge was won in.
+    pub(crate) fn current(&self) -> Option<IsolationToken> {
+        *lock(&self.0)
+    }
+
+    /// A hedge won in `group`: later connects go there.
+    pub(crate) fn won(&self, group: IsolationToken) {
+        *lock(&self.0) = Some(group);
+    }
+
+    /// Back to Arti's default.
+    pub(crate) fn forget(&self) {
+        *lock(&self.0) = None;
+    }
+}
+
+/// The preferences of a connect in `group`, Arti's default without one.
+fn prefs_in(group: Option<IsolationToken>) -> StreamPrefs {
+    let mut prefs = StreamPrefs::new();
+    if let Some(group) = group {
+        prefs.set_isolation(group);
+    }
+    prefs
+}
+
+/// One connect, hedged: the first attempt in the current group, the hedge in a
+/// fresh one - it starts afresh, descriptor, introduction and rendezvous,
+/// instead of waiting on the attempt that hangs - and once that one wins, its
+/// group is current.
+async fn connect_in_groups<T, E, C, F>(group: &ConnectGroup, connect: C, after: Duration) -> Result<T, E>
+where
+    C: Fn(Option<IsolationToken>) -> F,
+    F: Future<Output = Result<T, E>>,
+{
+    let connect = &connect;
+    let current = group.current();
+    let first = async move { connect(current).await.map(|won| (won, None)) };
+    let second = move || async move {
+        let fresh = IsolationToken::new();
+        connect(Some(fresh)).await.map(|won| (won, Some(fresh)))
+    };
+    let (won, fresh) = hedged(first, second, after).await?;
+    if let Some(fresh) = fresh {
+        group.won(fresh);
+    }
+    Ok(won)
+}
+
+/// Runs `first`, and if it has not settled after `after`, `second()` beside it.
+///
+/// The first success wins. A failure of one waits for the other, and when both
+/// fail the later failure is the answer. Whatever `first` settles to before
+/// `after` is the answer at once, and `second` is never made: a failure that
+/// early is not a hang, and the app's reconnect ladder is the retry.
+async fn hedged<T, E, F1, F2>(first: F1, second: impl FnOnce() -> F2, after: Duration) -> Result<T, E>
+where
+    F1: Future<Output = Result<T, E>>,
+    F2: Future<Output = Result<T, E>>,
+{
+    tokio::pin!(first);
+    if let Ok(settled) = tokio::time::timeout(after, &mut first).await {
+        return settled;
+    }
+    let second = second();
+    tokio::pin!(second);
+    tokio::select! {
+        settled = &mut first => match settled {
+            Ok(won) => Ok(won),
+            Err(_) => second.await,
+        },
+        settled = &mut second => match settled {
+            Ok(won) => Ok(won),
+            Err(_) => first.await,
+        },
+    }
 }
 
 #[cfg(test)]
@@ -280,6 +386,177 @@ mod tests {
             assert!(read.is_err(), "connection {kept} was let go: {read:?}");
         }
         serving.abort();
+    }
+
+    mod hedge {
+        use super::super::{connect_in_groups, hedged, prefs_in, ConnectGroup, HEDGE_AFTER};
+        use arti_client::{IsolationToken, StreamPrefs};
+        use std::cell::{Cell, RefCell};
+        use std::time::Duration;
+        use tokio::time::Instant;
+
+        type Outcome = Result<&'static str, &'static str>;
+
+        fn secs(n: u64) -> Duration {
+            Duration::from_secs(n)
+        }
+
+        /// A connect that settles `after` from when it is made.
+        async fn settles(after: Duration, outcome: Outcome) -> Outcome {
+            tokio::time::sleep(after).await;
+            outcome
+        }
+
+        /// The clock is paused and moves only to the next timer, so a time
+        /// read is exact up to the timer's millisecond.
+        fn at(start: Instant, expected: Duration) {
+            let elapsed = start.elapsed();
+            assert!(elapsed >= expected && elapsed < expected + Duration::from_millis(10), "settled at {elapsed:?}");
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn a_first_in_time_wins_and_no_second_is_made() {
+            let (start, made) = (Instant::now(), Cell::new(false));
+            let got = hedged(
+                settles(secs(3), Ok("first")),
+                || {
+                    made.set(true);
+                    settles(secs(1), Ok("second"))
+                },
+                HEDGE_AFTER,
+            )
+            .await;
+            assert_eq!(got, Ok("first"));
+            assert!(!made.get());
+            at(start, secs(3));
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn a_first_that_hangs_is_overtaken_by_the_second() {
+            let start = Instant::now();
+            let hedge = hedged(std::future::pending::<Outcome>(), || settles(secs(4), Ok("second")), HEDGE_AFTER);
+            // Bounded, so a hedge that never comes fails here instead of hanging.
+            let got = tokio::time::timeout(secs(60), hedge).await.expect("the hang was never overtaken");
+            assert_eq!(got, Ok("second"));
+            at(start, HEDGE_AFTER + secs(4));
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn a_first_that_fails_early_is_the_answer_and_no_second_is_made() {
+            let (start, made) = (Instant::now(), Cell::new(false));
+            let got = hedged(
+                settles(secs(2), Err("first")),
+                || {
+                    made.set(true);
+                    settles(secs(1), Ok("second"))
+                },
+                HEDGE_AFTER,
+            )
+            .await;
+            assert_eq!(got, Err("first"));
+            assert!(!made.get());
+            at(start, secs(2));
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn a_second_that_fails_waits_for_the_first() {
+            let start = Instant::now();
+            let got = hedged(settles(secs(20), Ok("first")), || settles(secs(1), Err("second")), HEDGE_AFTER).await;
+            assert_eq!(got, Ok("first"));
+            at(start, secs(20));
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn when_both_fail_the_later_failure_is_the_answer() {
+            let start = Instant::now();
+            let got = hedged(settles(secs(20), Err("first")), || settles(secs(10), Err("second")), HEDGE_AFTER).await;
+            assert_eq!(got, Err("second"), "the second failed at 25 s, after the first at 20 s");
+            at(start, HEDGE_AFTER + secs(10));
+
+            let start = Instant::now();
+            let got = hedged(settles(secs(30), Err("first")), || settles(secs(1), Err("second")), HEDGE_AFTER).await;
+            assert_eq!(got, Err("first"), "the first failed at 30 s, after the second at 16 s");
+            at(start, secs(30));
+        }
+
+        #[test]
+        fn a_group_goes_into_the_prefs_and_none_leaves_the_default() {
+            let group = IsolationToken::new();
+            // The isolation of StreamPrefs is private; its Debug shows it.
+            assert_eq!(format!("{:?}", prefs_in(None)), format!("{:?}", StreamPrefs::new()));
+            assert!(format!("{:?}", prefs_in(Some(group))).contains(&format!("{group:?}")));
+        }
+
+        /// A connect in `group`, recorded: one group hangs, the others connect
+        /// in two seconds.
+        async fn one_hangs(group: Option<IsolationToken>, hung: Option<IsolationToken>) -> Outcome {
+            if group == hung {
+                std::future::pending::<()>().await;
+            }
+            settles(secs(2), Ok("connected")).await
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn a_won_hedge_takes_the_next_connect_past_the_hung_attempt() {
+            let (group, made) = (ConnectGroup::default(), RefCell::new(Vec::new()));
+            let connect = |g| {
+                made.borrow_mut().push(g);
+                one_hangs(g, None)
+            };
+            let start = Instant::now();
+            assert_eq!(connect_in_groups(&group, connect, HEDGE_AFTER).await, Ok("connected"));
+            at(start, HEDGE_AFTER + secs(2));
+            let won = group.current().expect("the group the hedge won in is current");
+            assert_eq!(*made.borrow(), [None, Some(won)]);
+
+            // The next connect goes straight to the group that works.
+            let start = Instant::now();
+            assert_eq!(connect_in_groups(&group, connect, HEDGE_AFTER).await, Ok("connected"));
+            at(start, secs(2));
+            assert_eq!(*made.borrow(), [None, Some(won), Some(won)]);
+            assert_eq!(group.current(), Some(won));
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn a_current_group_that_hangs_gives_way_to_the_next_winner() {
+            let group = ConnectGroup::default();
+            let hung = IsolationToken::new();
+            group.won(hung);
+            let got = connect_in_groups(&group, |g| one_hangs(g, Some(hung)), HEDGE_AFTER).await;
+            assert_eq!(got, Ok("connected"));
+            assert!(group.current().is_some_and(|now| now != hung), "still {:?}", group.current());
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn a_first_attempt_that_wins_leaves_the_group_as_it_was() {
+            let (group, made) = (ConnectGroup::default(), RefCell::new(Vec::new()));
+            let quick = |g| {
+                made.borrow_mut().push(g);
+                settles(secs(1), Ok("connected"))
+            };
+            assert_eq!(connect_in_groups(&group, quick, HEDGE_AFTER).await, Ok("connected"));
+            assert_eq!(group.current(), None);
+            let stored = IsolationToken::new();
+            group.won(stored);
+            assert_eq!(connect_in_groups(&group, quick, HEDGE_AFTER).await, Ok("connected"));
+            assert_eq!(group.current(), Some(stored));
+            assert_eq!(*made.borrow(), [None, Some(stored)], "no fresh group without a hedge");
+
+            // Won by the first after the hedge was made: still the first's group.
+            let slow_first = |g| settles(if g == Some(stored) { secs(20) } else { secs(30) }, Ok("connected"));
+            assert_eq!(connect_in_groups(&group, slow_first, HEDGE_AFTER).await, Ok("connected"));
+            assert_eq!(group.current(), Some(stored));
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn when_both_fail_the_group_stays() {
+            let group = ConnectGroup::default();
+            let stored = IsolationToken::new();
+            group.won(stored);
+            let refused = |g| settles(if g == Some(stored) { secs(20) } else { secs(1) }, Err("refused"));
+            assert_eq!(connect_in_groups(&group, refused, HEDGE_AFTER).await, Err("refused"));
+            assert_eq!(group.current(), Some(stored));
+        }
     }
 
     #[test]

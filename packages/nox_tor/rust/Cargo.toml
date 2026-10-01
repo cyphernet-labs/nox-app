@@ -39,6 +39,11 @@ getrandom = "0.3"
 # Already in the graph through Arti; named here for the client key's buffers.
 zeroize = "1"
 
+[dev-dependencies]
+# Paused time for the tests of the hedged connect. Tests only: a release build
+# never sees the feature.
+tokio = { version = "1", features = ["test-util"] }
+
 [profile.release]
 opt-level = "z"
 lto = "fat"

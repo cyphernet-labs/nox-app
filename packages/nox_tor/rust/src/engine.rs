@@ -11,6 +11,7 @@ use std::time::Duration;
 use arti_client::config::TorClientConfigBuilder;
 use arti_client::{DormantMode, HsId, KeystoreSelector, TorClient};
 use futures::StreamExt;
+use subtle::ConstantTimeEq;
 use tokio::runtime::Runtime;
 use tor_config::ExplicitOrAuto;
 use tor_hscrypto::pk::HsClientDescEncSecretKey;
@@ -19,7 +20,7 @@ use tor_llcrypto::pk::curve25519;
 use tor_rtcompat::PreferredRuntime;
 use zeroize::Zeroizing;
 
-use crate::bridge::{self, BridgeHandle};
+use crate::bridge::{self, BridgeHandle, ConnectGroup};
 use crate::status::{classify, error, state, NoxTorStatus, StatusCell};
 
 /// First start of the client, from nothing, until it is ready for traffic.
@@ -41,6 +42,14 @@ pub struct Target {
     pub key: ClientKey,
 }
 
+impl Target {
+    /// The same service and the same key: what Arti keeps a connection record
+    /// by, and so what a connect group stays good for.
+    fn same_service_and_key(&self, other: &Target) -> bool {
+        self.hsid == other.hsid && bool::from(self.key[..].ct_eq(&other.key[..]))
+    }
+}
+
 /// State shared between the C ABI and the runtime's tasks.
 #[derive(Default)]
 pub struct Shared {
@@ -48,6 +57,7 @@ pub struct Shared {
     pub client: Mutex<Option<Arc<Client>>>,
     pub target: Mutex<Option<Target>>,
     pub bridge: Mutex<Option<BridgeHandle>>,
+    pub connect_group: ConnectGroup,
 }
 
 struct Engine {
@@ -247,6 +257,10 @@ pub fn set_target(host: &str, port: u16, key: ClientKey) -> i32 {
         // (see run_client).
         let mut slot = lock(&shared.target);
         let previous = slot.replace(Target { host: host.to_owned(), hsid, port, key });
+        if !previous.as_ref().zip(slot.as_ref()).is_some_and(|(prev, now)| prev.same_service_and_key(now)) {
+            // The group a hedge was won in belongs to the target it won for.
+            shared.connect_group.forget();
+        }
         let client = lock(&shared.client).clone();
         if let (Some(client), Some(target)) = (client, slot.as_ref()) {
             if let Some(prev) = previous.filter(|prev| prev.hsid != target.hsid) {
@@ -282,6 +296,7 @@ pub fn clear_target() -> i32 {
         if let (Some(prev), Some(client)) = (slot.take(), lock(&shared.client).clone()) {
             let _ = client.remove_service_discovery_key(KeystoreSelector::Primary, prev.hsid);
         }
+        shared.connect_group.forget();
     }
     lock(&shared.bridge).take();
     shared.status.update(|s| s.port = 0);
@@ -346,6 +361,18 @@ pub(crate) fn set_error_for_test(code: u8) {
     if let Some(e) = engine().as_ref() {
         e.shared.status.update(|s| s.error = code);
     }
+}
+
+#[cfg(test)]
+pub(crate) fn connect_group_won_for_test(group: arti_client::IsolationToken) {
+    if let Some(e) = engine().as_ref() {
+        e.shared.connect_group.won(group);
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn connect_group_for_test() -> Option<arti_client::IsolationToken> {
+    engine().as_ref()?.shared.connect_group.current()
 }
 
 #[cfg(test)]
