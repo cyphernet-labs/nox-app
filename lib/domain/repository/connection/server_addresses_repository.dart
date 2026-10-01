@@ -16,4 +16,9 @@ abstract class ServerAddressesRepository {
   /// What is stored on listen, then every change - how the path selector
   /// learns of a new direct address while it is on Tor (US3).
   Stream<ServerAddresses> watch();
+
+  /// Forgets every address, AFTER any write already under way: a logout's
+  /// wipe must not be overtaken by a greeting stored a moment before the
+  /// channel stopped (FR-018).
+  Future<RepositoryResult<bool>> clear();
 }

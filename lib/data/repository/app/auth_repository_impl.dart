@@ -22,6 +22,7 @@ import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/repository/device/device_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
+import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_app/domain/service/tor_service.dart';
@@ -288,7 +289,10 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         if (getIt.isRegistered<LiveSessionStarter>()) await getIt<LiveSessionStarter>().stop();
         // Swept once more with the channel down. A greeting that landed
         // between the wipe and the stop could have registered a freshly minted
-        // access key or stored the server's addresses again (FR-018).
+        // access key or stored the server's addresses again (FR-018). The
+        // addresses through their own queue, so a write already under way
+        // lands first and is wiped, rather than landing after.
+        if (getIt.isRegistered<ServerAddressesRepository>()) await getIt<ServerAddressesRepository>().clear();
         if (getIt.isRegistered<FlutterSecureStorage>()) {
           try {
             await ConnectionStorage.delete(getIt<FlutterSecureStorage>(), includeDeviceAccessKey: true);

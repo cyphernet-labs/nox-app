@@ -56,6 +56,14 @@ class ServerAddressesRepositoryImpl with BaseRepositoryHelper implements ServerA
   }
 
   @override
+  Future<RepositoryResult<bool>> clear() {
+    return execute<bool>(() async {
+      await _serialised(() => _storage.delete(key: ConnectionStorage.serverAddresses));
+      return const RepositoryResult<bool>.success(data: true);
+    });
+  }
+
+  @override
   Stream<ServerAddresses> watch() {
     StreamSubscription<ServerAddresses>? changes;
     late final StreamController<ServerAddresses> controller;

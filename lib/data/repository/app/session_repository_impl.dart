@@ -45,6 +45,12 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   /// reaches logout.
   static const String _kLegacyIsOwner = 'session.is_owner';
 
+  /// A version-2 invite's onion address and one-time key, as earlier builds of
+  /// phase 040 stored them; a pairing the process did not survive left them
+  /// behind. The key now lives in memory only (FR-021).
+  static const String _kLegacyInviteOnion = 'session.invite_onion';
+  static const String _kLegacyInviteAccessKey = 'session.invite_access_key';
+
   /// This device's Ed25519 seed. The private half of the pair whose public
   /// half the server knows as `device_key` — it is generated here, stays here,
   /// and dies with a logout through `deleteAll`.
@@ -78,6 +84,12 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
     // guard of its own and a refusing storage cannot stop the app from opening.
     return execute<bool>(() async {
       if (_prefs.containsKey(_kLegacyIsOwner)) await _prefs.remove(_kLegacyIsOwner);
+      await _secureStorage.delete(key: _kLegacyInviteOnion);
+      await _secureStorage.delete(
+        key: _kLegacyInviteAccessKey,
+        iOptions: ConnectionStorage.keyIOSOptions,
+        mOptions: ConnectionStorage.keyMacOsOptions,
+      );
       return const RepositoryResult<bool>.success(data: true);
     });
   }
@@ -259,9 +271,9 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       // and the world-epoch key would call that the same world.
       await _secureStorage.delete(key: _kServerAddress);
       await _secureStorage.delete(key: _kServerFingerprint);
-      // And what that server said about where it lives (phase 040), and any
-      // invite key the attempt was carrying. The device's own access key
-      // stays: like the device key, it names this install.
+      // And what that server said about where it lives, and whether it holds
+      // this device's access key (phase 040). The key itself stays: like the
+      // device key, it names this install.
       await ConnectionStorage.delete(_secureStorage, includeDeviceAccessKey: false);
       await _prefs.remove(_kOnboardingComplete);
       // And the author id written by the SAME call. Left behind it would point
@@ -299,8 +311,8 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       await _secureStorage.delete(key: _kDeviceSecret);
       await _secureStorage.delete(key: _kServerAddress);
       await _secureStorage.delete(key: _kServerFingerprint);
-      // Phase 040: addresses, the access key and any invite key - each with the
-      // options it was written under, which `deleteAll` alone may not match.
+      // Phase 040: the addresses and the access key - each with the options it
+      // was written under, which `deleteAll` alone may not match.
       await ConnectionStorage.delete(_secureStorage, includeDeviceAccessKey: true);
       // Kept for anything a later version writes and forgets to name above, and
       // not allowed to fail a wipe that has already happened.

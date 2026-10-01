@@ -124,6 +124,22 @@ void main() {
     expect((await keys.isRegistered()).data, isFalse);
   });
 
+  test('a stop waits for a registration under way', () async {
+    // A logout wipes the key right after this stop; a registration still
+    // running could otherwise write a freshly minted key after the wipe.
+    final peer = await greet(supportsKeys: true);
+    await waitUntil(() => setKeyCommands(peer).isNotEmpty, reason: 'the key is sent');
+    var stopped = false;
+    final stopping = registrar.stop().then((_) => stopped = true);
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(stopped, isFalse, reason: 'still waiting on the registration');
+
+    await socket.stop();
+
+    await stopping.timeout(const Duration(seconds: 2));
+    expect(stopped, isTrue);
+  });
+
   test('a revoked device is left to the revocation path', () async {
     final peer = await greet(supportsKeys: true);
     await waitUntil(() => setKeyCommands(peer).isNotEmpty, reason: 'the key is sent');

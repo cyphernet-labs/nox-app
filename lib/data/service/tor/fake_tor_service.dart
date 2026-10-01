@@ -28,6 +28,8 @@ class FakeTorService implements TorService {
   int starts = 0;
   int stops = 0;
   int wipes = 0;
+  int targetSets = 0;
+  int targetClears = 0;
   final List<bool> dormancy = <bool>[];
   ({String host, int port, Uint8List key})? target;
 
@@ -69,11 +71,15 @@ class FakeTorService implements TorService {
 
   @override
   void setTarget({required String onionHost, required int port, required Uint8List clientKey}) {
+    targetSets++;
     target = (host: onionHost, port: port, key: clientKey);
   }
 
   @override
-  void clearTarget() => target = null;
+  void clearTarget() {
+    targetClears++;
+    target = null;
+  }
 
   @override
   void setDormant(bool dormant) => dormancy.add(dormant);

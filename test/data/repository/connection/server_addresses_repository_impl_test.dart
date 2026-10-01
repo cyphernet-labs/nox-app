@@ -44,6 +44,16 @@ void main() {
     expect(addresses.lastGood, '10.0.0.5:8443');
   });
 
+  test('a clear lands after a write already under way, so nothing survives it', () async {
+    // How a logout wipes them: a greeting stored a moment before the channel
+    // stopped must not land after the wipe (FR-018).
+    final writing = repository.saveFromServer(direct: ['10.0.0.5:8443'], onion: 'abc.onion:443');
+    await repository.clear();
+    await writing;
+
+    expect((await repository.read()).data, ServerAddresses.empty);
+  });
+
   test('a record this build cannot read is treated as absent', () async {
     FlutterSecureStorage.setMockInitialValues({ConnectionStorage.serverAddresses: '{not json'});
     expect((await repository.read()).data, ServerAddresses.empty);

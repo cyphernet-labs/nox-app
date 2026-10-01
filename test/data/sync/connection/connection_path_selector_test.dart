@@ -286,6 +286,18 @@ void main() {
       expect((await keys.storedDeviceKey()).data, isNull, reason: 'nothing was minted');
     });
 
+    test('a start that did not take is no path this round, at once', () async {
+      // Refused by the library, or overtaken by a stop: waiting on a client
+      // that is not running spent the whole budget of the round.
+      await torWorks();
+      tor.afterStart = TorStatus.stopped;
+      prober.home = <String>{};
+      final watch = Stopwatch()..start();
+
+      expect(await selector.nextTarget(), isNull);
+      expect(watch.elapsed, lessThan(const Duration(milliseconds: 350)), reason: 'the budget is 400 ms');
+    });
+
     test('a Tor client that failed is started afresh, not waited on', () async {
       await torWorks();
       tor.afterStart = const TorStatus(state: TorState.failed, error: TorError.network);
@@ -442,6 +454,23 @@ void main() {
       expect(tor.target?.host, _onionHost, reason: 'the target is set again');
     });
 
+    test('back in front on Tor, the bridge listens on a fresh socket', () async {
+      // iOS reclaims a suspended app's sockets, the bridge's listener among
+      // them, and nothing reports it: the old port stays in the status while
+      // every dial to it is refused.
+      await onTor();
+      final clears = tor.targetClears;
+      final sets = tor.targetSets;
+
+      lifecycle.go(AppVisibility.background);
+      lifecycle.go(AppVisibility.foreground);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(tor.targetClears, clears + 1, reason: 'the old listener closed');
+      expect(tor.targetSets, greaterThan(sets), reason: 'a new one bound');
+      expect(tor.target?.host, _onionHost);
+    });
+
     test('back in front with the socket on the ladder, the path is chosen at once', () async {
       prober.home = <String>{};
       await socket.start(targets: selector, credentialsProvider: () async => const GreetingCredentials());
@@ -564,6 +593,42 @@ void main() {
 
       expect(await selector.nextTarget(), Uri.parse('wss://$_onionHost/ws'), reason: 'still lent');
       expect(tor.target?.key, lent);
+    });
+
+    test('a restart in the middle of a run of refusals starts a new run', () async {
+      // The status stream reports changes only, and a client that keeps being
+      // refused keeps one error: without forgetting the last one seen, the
+      // next session never noticed a refusal at all, and Tor went on dialling
+      // with a key the service does not know.
+      await selector.end();
+      ConnectionPathSelector build100() => ConnectionPathSelector.forTest(
+        prober,
+        tor,
+        addresses,
+        keys,
+        network,
+        lifecycle,
+        socket,
+        keyRefusalGrace: const Duration(milliseconds: 100),
+        torReadyBudget: const Duration(milliseconds: 400),
+      );
+      selector = build100()..begin(linkAddress: _link, fingerprint: _pin);
+      await torWorks();
+      prober.home = <String>{};
+      expect(await selector.nextTarget(), isNotNull);
+      tor.emit(refused);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      await selector.end(keepTor: true);
+      selector.begin(linkAddress: _link, fingerprint: _pin);
+      tor.afterStart = refused;
+      for (var i = 0; i < 3; i++) {
+        await selector.nextTarget();
+        await Future<void>.delayed(const Duration(milliseconds: 60));
+      }
+
+      expect(await selector.nextTarget(), isNull, reason: 'the key counts as unknown after the grace');
+      expect((await keys.isRegistered()).data, isFalse);
     });
 
     test('a greeting at home ends the run of refusals: an old one is no evidence later', () async {

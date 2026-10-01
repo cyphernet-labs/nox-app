@@ -352,6 +352,24 @@ void main() {
       expect(await storage.read(key: ConnectionStorage.accessKey), 'BBBB');
     });
 
+    test('the bootstrap sweep drops a one-time invite key left by earlier builds', () async {
+      // Those builds kept a version-2 invite's key on disk for its pairing, and
+      // a pairing the process did not survive left it there; nothing else
+      // names it any more (FR-021).
+      await storage.write(key: 'session.invite_onion', value: 'abc.onion:443');
+      await storage.write(
+        key: 'session.invite_access_key',
+        value: 'AAAA',
+        iOptions: ConnectionStorage.keyIOSOptions,
+        mOptions: ConnectionStorage.keyMacOsOptions,
+      );
+
+      expect((await repository.sweepLegacyKeys()).hasData, isTrue);
+
+      expect(await storage.read(key: 'session.invite_onion'), isNull);
+      expect(await storage.read(key: 'session.invite_access_key'), isNull);
+    });
+
     test('a new server starts with nothing an earlier one said about itself', () async {
       // A sign-in the process did not survive leaves the old server's records
       // behind; kept, they would send the next connection to its onion.

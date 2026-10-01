@@ -30,28 +30,41 @@ class AccessKeyRegistrar {
 
   StreamSubscription<SessionPhase>? _phaseSub;
   int _newKeys = 0;
-  bool _running = false;
+  bool _stopped = true;
+
+  /// The registration under way, if any. A logout waits for it: one about to
+  /// mint a key would otherwise write it after the wipe (FR-018).
+  Future<void>? _inFlight;
 
   void start() {
+    _stopped = false;
     _phaseSub ??= _socket.phase.listen((phase) {
-      if (phase == SessionPhase.catchingUp) unawaited(_register());
+      if (phase == SessionPhase.catchingUp && _inFlight == null) {
+        final run = _register();
+        _inFlight = run;
+        unawaited(run.whenComplete(() => _inFlight = null));
+      }
     });
   }
 
   Future<void> stop() async {
+    _stopped = true;
     await _phaseSub?.cancel();
     _phaseSub = null;
     _newKeys = 0;
+    await _inFlight?.catchError((Object _) {});
   }
 
   Future<void> _register() async {
-    if (_running || !_socket.supportsAccessKeys) return;
-    _running = true;
+    if (!_socket.supportsAccessKeys) return;
     try {
       if ((await _keys.isRegistered()).data ?? false) return;
       while (true) {
+        // Checked before every key that might be minted: a stop is a logout or
+        // a restart, and either way nothing new is written now.
+        if (_stopped) return;
         final key = (await _keys.deviceKey()).data;
-        if (key == null) return;
+        if (key == null || _stopped) return;
         final reply = await _socket.send('device.setAccessKey', <String, dynamic>{'access_key': key.publicBase64});
         if (reply.ok) {
           await _keys.markRegistered(true);
@@ -74,8 +87,6 @@ class AccessKeyRegistrar {
       }
     } on SocketUnavailableException {
       // The connection went; the next greeting tries again.
-    } finally {
-      _running = false;
     }
   }
 }

@@ -240,6 +240,11 @@ class ConnectionPathSelector implements SocketTargetProvider {
     _probing = false;
     _torRound = null;
     _keyRefused = null;
+    // Forgotten with the run it belongs to. The next session's subscription is
+    // handed the current status first, and a refusal still standing there has
+    // to read as news, or no run ever starts again: the status stream reports
+    // changes only, and a client that keeps being refused keeps one error.
+    _lastTorError = TorError.none;
     // A restart is still a session coming up: shown as idle, the gap before
     // the next begin() would read as "no connection" and flash the banner on
     // every rename.
@@ -418,6 +423,9 @@ class ConnectionPathSelector implements SocketTargetProvider {
       if (!_current(round)) return null;
       await _tor.start();
       if (!_current(round) || _tor.status.isObsolete) return null;
+      // A start that did not take - refused by the library, or overtaken by a
+      // stop - leaves nothing to wait for; waiting would spend the whole budget.
+      if (_tor.status.state == TorState.stopped) return _noTor('it did not start');
       // A lent key its pairing has finished with while Tor was starting is
       // not set again (FR-021).
       if (target.invite && !identical(target, _lent)) return null;
@@ -428,6 +436,11 @@ class ConnectionPathSelector implements SocketTargetProvider {
         // about it.
         if (_torTarget != target) _keyRefused = null;
         _tor.setTarget(onionHost: target.host, port: target.port, clientKey: target.key);
+        if (_tor.bridge == null) {
+          // Refused, or the bridge would not open: no way through this round.
+          _torTarget = null;
+          return _noTor('the bridge did not open');
+        }
         _torTarget = target;
       }
       final ready = await _waitForTor(_torReadyBudget, round: round);
@@ -488,7 +501,12 @@ class ConnectionPathSelector implements SocketTargetProvider {
     bool ready(TorStatus status) => status.isReady && _tor.bridge != null;
     bool settled() {
       final status = _tor.status;
-      return ready(status) || status.isObsolete || status.state == TorState.failed || !_active || (round != null && round != _round);
+      return ready(status) ||
+          status.isObsolete ||
+          status.state == TorState.failed ||
+          status.state == TorState.stopped ||
+          !_active ||
+          (round != null && round != _round);
     }
 
     if (settled()) return ready(_tor.status);
@@ -598,6 +616,7 @@ class ConnectionPathSelector implements SocketTargetProvider {
     }
     if (usingTor) {
       _tor.setDormant(false);
+      _renewBridge();
       unawaited(_reviveTor());
     }
     // Back in front with the socket waiting out a rung of the ladder: the path
@@ -605,6 +624,19 @@ class ConnectionPathSelector implements SocketTargetProvider {
     // already under way is left alone - restarting it would only lose its
     // progress.
     if (_socket.currentPhase == SessionPhase.disconnected) unawaited(_socket.reconnect());
+  }
+
+  /// A fresh bridge listener on every return to the foreground. iOS reclaims
+  /// a suspended app's sockets - the bridge's listening one among them - and
+  /// nothing reports it: the port stays in the status while every dial to it
+  /// is refused (TN2277), and setting the same target again keeps the dead
+  /// listener. Clearing the target closes it, setting it binds a new one;
+  /// connections already through the bridge are not touched.
+  void _renewBridge() {
+    final target = _torTarget;
+    if (target == null || (target.invite && !identical(target, _lent))) return;
+    _tor.clearTarget();
+    _tor.setTarget(onionHost: target.host, port: target.port, clientKey: target.key);
   }
 
   /// A Tor client that is not ready soon after the return is started again
