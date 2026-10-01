@@ -1,4 +1,5 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:nox_app/data/local/secure/secure_storage_delete.dart';
 
 /// The secure-storage records of phase 040 and the options they are written
 /// with, in one place: the session wipe must delete each BY NAME and with the
@@ -33,10 +34,10 @@ abstract final class ConnectionStorage {
   /// a failed sign-in: the access key names this install, like the device key,
   /// and an attempt that never reached a server must not rotate it.
   static Future<void> delete(FlutterSecureStorage storage, {required bool includeDeviceAccessKey}) async {
-    await storage.delete(key: serverAddresses);
-    await storage.delete(key: accessKeyRegistered);
+    await storage.deleteIfPresent(key: serverAddresses);
+    await storage.deleteIfPresent(key: accessKeyRegistered);
     if (includeDeviceAccessKey) {
-      await storage.delete(key: accessKey, iOptions: keyIOSOptions, mOptions: keyMacOsOptions);
+      await storage.deleteIfPresent(key: accessKey, iOptions: keyIOSOptions, mOptions: keyMacOsOptions);
     }
   }
 }

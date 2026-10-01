@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:nox_app/data/local/secure/secure_storage_delete.dart';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/data/repository/connection/connection_storage.dart';
@@ -54,7 +55,7 @@ class AccessKeyRepositoryImpl with BaseRepositoryHelper implements AccessKeyRepo
   Future<RepositoryResult<AccessKeyPair>> regenerate() {
     return execute<AccessKeyPair>(() async {
       final pair = await _mint();
-      await _storage.delete(key: ConnectionStorage.accessKeyRegistered);
+      await _storage.deleteIfPresent(key: ConnectionStorage.accessKeyRegistered);
       return RepositoryResult<AccessKeyPair>.success(data: pair);
     });
   }
@@ -73,7 +74,7 @@ class AccessKeyRepositoryImpl with BaseRepositoryHelper implements AccessKeyRepo
       if (registered) {
         await _storage.write(key: ConnectionStorage.accessKeyRegistered, value: '1');
       } else {
-        await _storage.delete(key: ConnectionStorage.accessKeyRegistered);
+        await _storage.deleteIfPresent(key: ConnectionStorage.accessKeyRegistered);
       }
       return const RepositoryResult<bool>.success(data: true);
     });

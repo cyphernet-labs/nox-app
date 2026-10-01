@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:nox_app/data/local/secure/secure_storage_delete.dart';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/data/repository/connection/connection_storage.dart';
@@ -70,7 +71,7 @@ class ServerAddressesRepositoryImpl with BaseRepositoryHelper implements ServerA
   @override
   Future<RepositoryResult<bool>> clear() {
     return execute<bool>(() async {
-      await _serialised(() => _storage.delete(key: ConnectionStorage.serverAddresses));
+      await _serialised(() => _storage.deleteIfPresent(key: ConnectionStorage.serverAddresses));
       return const RepositoryResult<bool>.success(data: true);
     });
   }

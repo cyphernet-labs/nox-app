@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:nox_app/data/local/secure/secure_storage_delete.dart';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/data/repository/connection/connection_storage.dart';
@@ -84,8 +85,8 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
     // guard of its own and a refusing storage cannot stop the app from opening.
     return execute<bool>(() async {
       if (_prefs.containsKey(_kLegacyIsOwner)) await _prefs.remove(_kLegacyIsOwner);
-      await _secureStorage.delete(key: _kLegacyInviteOnion);
-      await _secureStorage.delete(
+      await _secureStorage.deleteIfPresent(key: _kLegacyInviteOnion);
+      await _secureStorage.deleteIfPresent(
         key: _kLegacyInviteAccessKey,
         iOptions: ConnectionStorage.keyIOSOptions,
         mOptions: ConnectionStorage.keyMacOsOptions,
@@ -265,12 +266,12 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       // rotate it - doing so would make one install look like two devices to
       // the server the moment the next attempt succeeds.
       _onboardingStartedHere = false;
-      await _secureStorage.delete(key: _kIdentifier);
+      await _secureStorage.deleteIfPresent(key: _kIdentifier);
       // The server the failed attempt pointed at goes with it. Leaving it would
       // aim the next connection at a machine this install never paired with,
       // and the world-epoch key would call that the same world.
-      await _secureStorage.delete(key: _kServerAddress);
-      await _secureStorage.delete(key: _kServerFingerprint);
+      await _secureStorage.deleteIfPresent(key: _kServerAddress);
+      await _secureStorage.deleteIfPresent(key: _kServerFingerprint);
       // And what that server said about where it lives, and whether it holds
       // this device's access key (phase 040). The key itself stays: like the
       // device key, it names this install.
@@ -307,10 +308,10 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       // readSession then reports a person who has not finished onboarding. The
       // app puts them on the naming screen, holding a token for a server it can
       // no longer reach.
-      await _secureStorage.delete(key: _kIdentifier);
-      await _secureStorage.delete(key: _kDeviceSecret);
-      await _secureStorage.delete(key: _kServerAddress);
-      await _secureStorage.delete(key: _kServerFingerprint);
+      await _secureStorage.deleteIfPresent(key: _kIdentifier);
+      await _secureStorage.deleteIfPresent(key: _kDeviceSecret);
+      await _secureStorage.deleteIfPresent(key: _kServerAddress);
+      await _secureStorage.deleteIfPresent(key: _kServerFingerprint);
       // Phase 040: the addresses and the access key - each with the options it
       // was written under, which `deleteAll` alone may not match.
       await ConnectionStorage.delete(_secureStorage, includeDeviceAccessKey: true);
