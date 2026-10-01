@@ -19,6 +19,7 @@ import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/exception/base_repository_exception.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
+import 'package:nox_app/domain/model/chat/message_status.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
@@ -434,6 +435,20 @@ void main() {
       final (messages, _) = (await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0'))).data!;
       final persisted = messages.firstWhere((m) => m.text == 'Mine');
       expect(persisted.authorId, 'sess-abc'); // persisted with the session identity
+    });
+
+    test('an own row stored with no status is repaired to sent by the next window', () async {
+      // What the live apply used to write for a message typed on another
+      // device of the same person. Keeping the stored status over the wire's
+      // answer would leave it without a tick for good.
+      await signInAs('sess-abc', 'Alice');
+      await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0')); // seed
+      final own = (await messageDao.getByChatSorted('chat_0')).lastWhere((e) => e.authorId == 'sess-abc');
+      await messageDao.upsert(own.copyWith(status: 'none'));
+
+      final (messages, _) = (await repo.getMessages(config: GetMessagesConfig.tail(chatId: 'chat_0'))).data!;
+
+      expect(messages.firstWhere((m) => m.id == own.id).status, MessageStatus.sent);
     });
 
     test('without a session, own rows fall back to the sentinel id', () async {

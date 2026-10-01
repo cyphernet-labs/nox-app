@@ -10,6 +10,7 @@ import 'package:nox_app/domain/model/chat/message_model.dart';
 import 'package:nox_app/domain/model/chat/message_status.dart';
 import 'package:nox_app/domain/model/chat/outbox_entry.dart';
 import 'package:nox_app/domain/model/chat/outbox_status.dart';
+import 'package:nox_app/domain/model/file/attachment_transfer.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/domain/model/file/mime_types.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
@@ -24,6 +25,7 @@ import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
 import 'package:nox_app/data/sync/outbox_service.dart';
 import 'package:nox_app/domain/model/connection/connection_status.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
+import 'package:nox_app/domain/service/attachment_transfer_service.dart';
 import 'package:nox_app/domain/service/connection_status_service.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/domain/service/file_picker_service.dart';
@@ -59,6 +61,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     on<AttachmentRemoved>(_onAttachmentRemoved);
     on<SessionPhaseChanged>(_onSessionPhaseChanged, transformer: sequential());
     on<ConnectionStatusChanged>(_onConnectionStatusChanged);
+    on<TransfersChanged>(_onTransfersChanged);
     on<RetryConnection>(_onRetryConnection);
     on<SetScenario>(_onSetScenario);
   }
@@ -72,6 +75,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   final OutboxRepository _outboxRepository = getIt<OutboxRepository>();
   final OutboxService _outboxService = getIt<OutboxService>();
   final AttachmentPrefetchService _prefetch = getIt<AttachmentPrefetchService>();
+  final AttachmentTransferService _transfers = getIt<AttachmentTransferService>();
   final AppConfigRepository _appConfigRepository = getIt<AppConfigRepository>();
 
   late String _chatId;
@@ -103,6 +107,10 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   StreamSubscription<ConnectionStatus>? _statusSub;
   late ConnectionStatus _status = _connectionStatus.status;
 
+  // Bytes on their way, to and from the server: the ring over a picture being
+  // sent or fetched, and the bar under a file being sent.
+  StreamSubscription<Map<String, AttachmentTransfer>>? _transfersSub;
+
   /// The wrong machine answered. Takes precedence over the offline banner: both
   /// would otherwise show at once, and "no connection" is simply false here.
   bool _isServerMismatch() => _status.isServerMismatch || _phase.isServerMismatch || _scenario == ChatThreadScenario.pinRefused;
@@ -122,7 +130,16 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     // read — the thread still renders). Own rows in the DB were reconciled to this id
     // at seed time, so own-detection is consistent (feature 015).
     _identity = resolveIdentity((await _sessionRepository.readSession()).data);
-    emit(ChatThreadState.initialized(pagingState: PagingState<String, MessageModel>(), currentId: _identity.id));
+    emit(
+      ChatThreadState.initialized(
+        pagingState: PagingState<String, MessageModel>(),
+        currentId: _identity.id,
+        // Seeded rather than left to the watch below: on a second initialize
+        // (the error screen's retry) the subscription already exists and stays
+        // silent until the next change.
+        transfers: _transfers.current,
+      ),
+    );
     add(const ChatThreadEvent.loadMessages(reset: true));
     // Viewing the thread marks the chat read (mobile push / desktop select) — resets the
     // list badge live. No-op at 0.
@@ -143,6 +160,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     // The durable queue for this chat. No skip(1): the FIRST snapshot is the
     // point — it is what restores a message written before the app was closed.
     _outboxSub ??= _outboxRepository.watchQueue(chatId: _chatId).listen((entries) => add(ChatThreadEvent.outboxChanged(entries)));
+    _transfersSub ??= _transfers.watch().listen((transfers) => add(ChatThreadEvent.transfersChanged(transfers)));
   }
 
   @override
@@ -151,6 +169,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     _connSub?.cancel();
     _statusSub?.cancel();
     _outboxSub?.cancel();
+    _transfersSub?.cancel();
     return super.close();
   }
 
@@ -433,6 +452,10 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
         outgoing: outgoing ?? live.outgoing,
       ),
     );
+    // A picture that arrived while the thread was open reaches the screen
+    // through this refresh, not through a load - fetching only on a load left
+    // it a placeholder until the thread was opened again.
+    unawaited(_prefetch.prefetch(r.updatedList));
   }
 
   Future<void> _onAttachmentPicked(AttachmentPicked event, Emitter<ChatThreadState> emit) async {
@@ -522,7 +545,20 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     // same message twice. A refused server is NOT a reconnection: draining
     // into it would send this person's messages to a machine that just failed
     // to prove who it is.
-    if (wasHeld && !_isHeld()) unawaited(_outboxService.flush());
+    if (wasHeld && !_isHeld()) {
+      unawaited(_outboxService.flush());
+      // A fetch the lost channel cut short gets another go; nothing else would
+      // retry it until something new arrived in this chat.
+      final current = state;
+      if (current is Initialized) unawaited(_prefetch.prefetch(current.items));
+    }
+  }
+
+  /// Emits only on a real change: the state compares the map by value.
+  void _onTransfersChanged(TransfersChanged event, Emitter<ChatThreadState> emit) {
+    final current = state;
+    if (current is! Initialized) return;
+    emit(current.copyWith(transfers: event.transfers));
   }
 
   /// The banners in place, no reload - and only on a real change.

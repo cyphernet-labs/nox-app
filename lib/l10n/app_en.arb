@@ -173,6 +173,23 @@
       }
     }
   },
+  "transferDownloading": "Downloading…",
+  "@transferDownloading": {
+    "description": "A received picture whose bytes are on their way, before the first of them has arrived (5.2, spoken by screen readers)"
+  },
+  "transferSending": "Sending…",
+  "@transferSending": {
+    "description": "A message with a file being sent, before its bytes start moving (5.2)"
+  },
+  "transferSendingProgress": "Sending… {percent}%",
+  "@transferSendingProgress": {
+    "description": "A message with a file being sent: how much of the file has reached the server (5.2)",
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
   "filesSectionTitle": "Files",
   "chatPeopleTitle": "People",
   "chatInvitePerson": "Invite a person",

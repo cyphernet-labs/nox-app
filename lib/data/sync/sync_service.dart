@@ -13,6 +13,7 @@ import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/remote/socket/server_addresses_parser.dart';
 import 'package:nox_app/data/remote/socket/server_frame.dart';
 import 'package:nox_app/di/global_aliases.dart';
+import 'package:nox_app/domain/model/chat/message_status.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
@@ -227,6 +228,13 @@ class SyncService {
 
     final wire = _messageWireMapper.toModel(entity: entity);
     final existing = await _messageDao.getById(wire.id);
+    // The same key is also what says the message is this person's own (§5:
+    // own means the identity, not the device), and an own message that came
+    // from the server is `sent` - it is on the server, which is all `sent`
+    // means. Taking the wire's status instead left a message sent from
+    // another device of the same person with no tick at all, which reads as
+    // "not sent".
+    final own = clientMessageId != null && clientMessageId.isNotEmpty;
     // localPath and the local delivery status are device-local; an echo or a
     // redelivery must not wipe the path that makes a sent image previewable.
     //
@@ -234,12 +242,14 @@ class SyncService {
     // the wire never carries one — the queue entry is the only place it still
     // exists, so it has to be read across before the entry is dropped.
     final localPath = existing?.attachmentLocalPath ?? settled?.attachment?.localPath;
-    final merged = existing == null && settled == null
-        ? wire
-        : wire.copyWith(
-            attachment: wire.attachment?.copyWith(localPath: localPath),
-            status: existing == null ? wire.status : _messageMapper.toModel(entity: existing).status,
-          );
+    final merged = wire.copyWith(
+      attachment: wire.attachment?.copyWith(localPath: localPath),
+      status: own
+          ? MessageStatus.sent
+          : existing == null
+          ? wire.status
+          : _messageMapper.toModel(entity: existing).status,
+    );
     await _messageDao.upsert(_messageMapper.toEntity(model: merged));
     // Only now: the same order the drain uses, and for the same reason — the
     // entry is the message's only home until the message itself is stored.

@@ -363,7 +363,8 @@ window.NOX_SPECS = [
     "behavior": [
       "Messages group by author; an AuthorHeader precedes each group (no per-message avatars in the feed).",
       "Own bubbles = primaryContainer (right, bottom-right corner clipped); others = surfaceContainerHigh (left, bottom-left clipped).",
-      "Own message status: pending (schedule) → sent (check) → error (error, tinted error; tap to retry).",
+      "Own message status: pending (schedule) → sent (check) → error (error, tinted error; tap to retry). An own message that came from the server is sent, including one typed on another device of the same person.",
+      "A message with a file shows its bytes going up: a ring on a dark disc over a picture; “Sending… 45%” over a bar in any other file's chip. Before the first byte the ring spins and the bar runs without a percent; the ring leaves with the clock once the server has the message. A received picture's placeholder spinner fills the same way while its bytes come in.",
       "Date separators: Today / Yesterday / 12 May. A system line marks chat creation.",
       "Empty: chat_bubble_outline empty-state. Offline: top banner + queued messages show pending.",
       "Invite a person: an app-bar action that is PERMANENTLY disabled (037). Pressing it does nothing at all - no screen, no snackbar, no error. Its screen-reader name is the action alone; the caption explaining it lives in 5.4, where there is room.",

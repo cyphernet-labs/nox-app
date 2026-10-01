@@ -31,6 +31,10 @@ sealed class ChatThreadState with _$ChatThreadState {
     /// limit. A counter rather than a flag: picking the same oversized file
     /// twice has to say so twice, and a bool would go quiet the second time.
     @Default(0) int oversizedAttachmentTick,
+
+    /// Attachments whose bytes are moving now, by message id - a send under
+    /// the queued bubble's id, a picture fetch under the stored one.
+    @Default(<String, AttachmentTransfer>{}) Map<String, AttachmentTransfer> transfers,
   }) = Initialized;
 
   const factory ChatThreadState.error() = Error;

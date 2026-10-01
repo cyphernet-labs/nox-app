@@ -46,6 +46,10 @@ sealed class ChatThreadEvent with _$ChatThreadEvent {
   /// whatever the corner says.
   const factory ChatThreadEvent.connectionStatusChanged(ConnectionStatus status) = ConnectionStatusChanged;
 
+  /// The attachment transfers in flight changed. The map travels with the
+  /// event, like the queue snapshot above.
+  const factory ChatThreadEvent.transfersChanged(Map<String, AttachmentTransfer> transfers) = TransfersChanged;
+
   /// The person asked for another attempt, from the banner.
   const factory ChatThreadEvent.retryConnection() = RetryConnection;
 

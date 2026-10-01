@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
+import 'package:nox_app/domain/model/file/attachment_transfer.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_opacity.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/presentation/widgets/chat/app_image_attachment_widget.dart';
+import 'package:nox_app/presentation/widgets/chat/app_transfer_progress_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_spinner_widget.dart';
 
@@ -24,13 +26,17 @@ import 'package:nox_app/presentation/widgets/primitives/app_spinner_widget.dart'
 /// the picture replaces it — the swap is the image appearing, not the layout
 /// rearranging around it.
 ///
+/// While the fetch is running, the spinner becomes a ring that fills with the
+/// bytes (`AttachmentPrefetchService` reports the transfer); the thread asks
+/// for the fetch on every load and refresh and when the channel comes back.
+///
 /// Deliberately not a failure surface. A fetch that will never succeed (the
 /// server no longer has the file) still shows this, and the honest report lives
 /// one tap away on the file screen, which already says `attachmentGone` in the
 /// words the contract gives it. Surfacing that inline needs the prefetch
 /// service's per-message verdict, which it does not publish yet.
 class AppAttachmentPlaceholderWidget extends StatelessWidget {
-  const AppAttachmentPlaceholderWidget({super.key, required this.name, this.width, this.height, this.onTap});
+  const AppAttachmentPlaceholderWidget({super.key, required this.name, this.width, this.height, this.onTap, this.transfer});
 
   /// Whether [attachment] should stand in for a picture still arriving, rather
   /// than draw the type chip.
@@ -50,6 +56,9 @@ class AppAttachmentPlaceholderWidget extends StatelessWidget {
 
   /// Opens the file screen, which is where a real failure is reported.
   final VoidCallback? onTap;
+
+  /// The fetch of these bytes, while it runs.
+  final AttachmentTransfer? transfer;
 
   @override
   Widget build(BuildContext context) {
@@ -80,7 +89,12 @@ class AppAttachmentPlaceholderWidget extends StatelessWidget {
                   color: colorScheme.onSurfaceVariant.withValues(alpha: NoxOpacity.disabled),
                 ),
                 SizedBox(height: AppSpacingTokens.s8),
-                AppSpinnerWidget(size: AppDimensionTokens.icon.base),
+                // Same size and colour either way, so the moment the bytes
+                // start moving the spinner simply starts to fill.
+                if (transfer case final running?)
+                  AppTransferRingWidget(transfer: running, size: AppDimensionTokens.icon.base)
+                else
+                  AppSpinnerWidget(size: AppDimensionTokens.icon.base),
               ],
             ),
           ),

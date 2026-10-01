@@ -4,11 +4,15 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
+import 'package:nox_app/domain/model/file/attachment_transfer.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/widgets/chat/app_attachment_placeholder_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_spinner_widget.dart';
 
 import '../../../utils/pump_app.dart';
+
+final l10nEn = AppLocalizationsEn();
 
 void main() {
   group('AppAttachmentPlaceholderWidget', () {
@@ -22,6 +26,21 @@ void main() {
       // An unlabelled grey box is what a screen reader would otherwise meet
       // where a picture is going to be.
       expect(find.bySemanticsLabel('holiday.png'), findsOneWidget);
+    });
+
+    testWidgets('once the bytes are moving, the spinner fills with them', (tester) async {
+      await pumpApp(
+        tester,
+        const AppAttachmentPlaceholderWidget(
+          name: 'holiday.png',
+          transfer: AttachmentTransfer(direction: TransferDirection.download, fraction: 0.3),
+        ),
+        settle: false,
+      );
+
+      expect(find.byType(AppSpinnerWidget), findsNothing);
+      expect(tester.widget<CircularProgressIndicator>(find.byType(CircularProgressIndicator)).value, 0.3);
+      expect(find.bySemanticsLabel(l10nEn.transferDownloading), findsOneWidget);
     });
 
     testWidgets('occupies the thumbnail box it is standing in for', (tester) async {

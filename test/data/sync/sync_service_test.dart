@@ -205,6 +205,30 @@ void main() {
     await outbox.clean();
   });
 
+  test('an own message typed on another device lands as sent, not without a status', () async {
+    // Contract §5: own means the identity, not the device, so the key comes
+    // with it - and an own message that came from the server is `sent`. This
+    // device has no queue entry for it; storing the wire's empty status left
+    // it with no tick, which reads as "not sent".
+    final socket = await connected();
+    socket.pushEvent(
+      seq: 9,
+      event: 'message.new',
+      data: {...messageFrame('m_3', 'c_1', seq: 9), 'client_message_id': 'key-minted-on-the-phone'},
+    );
+    await waitUntil(() async => await messageDao.getById('m_3') != null, reason: 'the event applies');
+
+    expect((await messageDao.getById('m_3'))!.status, 'sent');
+  });
+
+  test('a message without the key is not taken for an own one', () async {
+    final socket = await connected();
+    socket.pushEvent(seq: 10, event: 'message.new', data: messageFrame('m_4', 'c_1', seq: 10));
+    await waitUntil(() async => await messageDao.getById('m_4') != null, reason: 'the event applies');
+
+    expect((await messageDao.getById('m_4'))!.status, 'none');
+  });
+
   test('a message from someone else leaves the queue alone', () async {
     // Only an own message carries the key, so nothing here may touch a queue
     // entry — a stray removal would silently drop an unsent message.

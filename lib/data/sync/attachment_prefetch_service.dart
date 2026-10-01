@@ -5,9 +5,11 @@ import 'package:injectable/injectable.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
+import 'package:nox_app/domain/model/file/attachment_transfer.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
+import 'package:nox_app/domain/service/attachment_transfer_service.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
 
 /// Fetches the bytes of received IMAGES so they render in the thread.
@@ -18,16 +20,22 @@ import 'package:nox_app/domain/service/session_phase_service.dart';
 /// would quietly stop matching its own spec. Other types can be large and may
 /// never be opened, so they wait for a tap.
 ///
-/// Nothing in the presentation layer changes as a result. `AppImageAttachmentWidget`
-/// already asks one question — is this an image with a local path — and the
-/// existing `watchMessages` tick redraws the thread once the path is written.
+/// `AppImageAttachmentWidget` asks one question — is this an image with a
+/// local path — and the `watchMessages` tick redraws the thread once the path
+/// is written. While the bytes are coming, the transfer it reports turns the
+/// placeholder's spinner into a ring that fills.
+///
+/// The thread calls it on every load and refresh and whenever the channel
+/// comes back, so a picture that arrives while the thread is open is fetched
+/// at once, and one whose fetch failed is tried again.
 @LazySingleton(env: [Environment.dev, Environment.prod, Environment.test])
 class AttachmentPrefetchService {
-  AttachmentPrefetchService(this._files, this._messages, this._phase);
+  AttachmentPrefetchService(this._files, this._messages, this._phase, this._transfers);
 
   final FileRepository _files;
   final MessageRepository _messages;
   final SessionPhaseService _phase;
+  final AttachmentTransferService _transfers;
 
   /// Fetches currently running, so the same file is not pulled twice at once.
   ///
@@ -60,8 +68,13 @@ class AttachmentPrefetchService {
       if (_hopeless.contains(message.id)) continue; // it is not coming
       if (!_inFlight.add(message.id)) continue; // one fetch at a time per file
 
+      _transfers.begin(message.id, TransferDirection.download);
       try {
-        final result = await _files.download(fileId: attachment.id, suggestedName: attachment.name);
+        final result = await _files.download(
+          fileId: attachment.id,
+          suggestedName: attachment.name,
+          onProgress: (fraction) => _transfers.report(message.id, fraction),
+        );
         final path = result.data;
         if (path == null) {
           // A refusal the bytes will never survive is worth remembering; a lost
@@ -80,6 +93,7 @@ class AttachmentPrefetchService {
         logRepository.error(target: this, error: error, stackTrace: stackTrace);
       } finally {
         _inFlight.remove(message.id);
+        _transfers.end(message.id);
       }
     }
   }

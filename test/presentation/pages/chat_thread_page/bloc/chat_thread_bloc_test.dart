@@ -5,9 +5,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:infinite_scroll_pagination/infinite_scroll_pagination.dart';
 import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/data/local/chat/chat_dao.dart';
+import 'package:nox_app/data/local/chat/message_dao.dart';
+import 'package:nox_app/data/mapper/chat/message_mapper.dart';
+import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
 import 'package:nox_app/domain/model/chat/message_status.dart';
+import 'package:nox_app/domain/model/file/attachment_transfer.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
@@ -15,7 +20,9 @@ import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
+import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
+import 'package:nox_app/domain/service/attachment_transfer_service.dart';
 import 'package:nox_app/domain/service/connectivity_service.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/domain/service/file_picker_service.dart';
@@ -576,6 +583,92 @@ void main() {
       });
     });
 
+    group('pictures and transfers', () {
+      late _RecordingPrefetch prefetch;
+
+      setUp(() {
+        final original = getIt<AttachmentPrefetchService>();
+        prefetch = _RecordingPrefetch();
+        getIt.allowReassignment = true;
+        getIt.registerSingleton<AttachmentPrefetchService>(prefetch);
+        addTearDown(() => getIt.registerSingleton<AttachmentPrefetchService>(original));
+      });
+
+      /// A picture someone sent, landing in the store the way an applied
+      /// `message.new` does: a write, and nothing else.
+      Future<String> receivePicture(String chatId) async {
+        final dao = getIt<MessageDao>();
+        final id = 'm_pic_${DateTime.now().microsecondsSinceEpoch}';
+        await dao.upsert(
+          getIt<MessageMapper>().toEntity(
+            model: MessageModel(
+              id: id,
+              seq: (await dao.highestSeq(chatId) ?? 0) + 1,
+              chatId: chatId,
+              authorId: 'u_other',
+              authorLabel: 'Aria',
+              sentAt: DateTime.now(),
+              attachment: const MessageAttachment(id: 'f_pic', type: FileType.image, name: 'holiday.jpg', sizeBytes: 253100),
+            ),
+          ),
+        );
+        return id;
+      }
+
+      test('a picture that arrives while the thread is open is fetched without reopening it', () async {
+        // The bug seen on the stand: the fetch ran only on a load, a picture
+        // that came in later reached the screen through a refresh, and it
+        // stayed a spinning placeholder until somebody tapped it.
+        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_0'));
+        addTearDown(bloc.close);
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        prefetch.calls.clear();
+
+        final id = await receivePicture('chat_0');
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+
+        expect((bloc.state as Initialized).items.map((m) => m.id), contains(id), reason: 'precondition: the refresh brought it in');
+        expect(prefetch.calls.any((batch) => batch.any((m) => m.id == id)), isTrue);
+      });
+
+      test('the pictures on screen are asked for again when the channel comes back', () async {
+        // A fetch the lost channel cut short has nothing else to retry it until
+        // something new arrives in this chat.
+        final phase = _FakePhase(SessionPhase.disconnected);
+        getIt.registerSingleton<SessionPhaseService>(phase);
+        addTearDown(() => getIt.registerSingleton<SessionPhaseService>(_FakePhase()));
+        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_0'));
+        addTearDown(bloc.close);
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        prefetch.calls.clear();
+
+        phase.emit(SessionPhase.live);
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+
+        expect(prefetch.calls, isNotEmpty);
+        expect(prefetch.calls.last.map((m) => m.id), (bloc.state as Initialized).items.map((m) => m.id));
+      });
+
+      test('the bytes on their way reach the state by message id, and leave it when they are done', () async {
+        final transfers = getIt<AttachmentTransferService>();
+        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_0'));
+        addTearDown(bloc.close);
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+
+        transfers.begin('cmid-1', TransferDirection.upload);
+        transfers.report('cmid-1', 0.45);
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect(
+          (bloc.state as Initialized).transfers['cmid-1'],
+          const AttachmentTransfer(direction: TransferDirection.upload, fraction: 0.45),
+        );
+
+        transfers.end('cmid-1');
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect((bloc.state as Initialized).transfers, isEmpty);
+      });
+    });
+
     group('the server that is not the one the link named (036)', () {
       late _FakePhase phase;
 
@@ -662,6 +755,17 @@ class _FakeConnectivity implements ConnectivityService {
     yield _online;
     yield* _controller.stream;
   }
+}
+
+/// Records what the thread asks to have fetched, and fetches nothing.
+class _RecordingPrefetch extends AttachmentPrefetchService {
+  _RecordingPrefetch()
+    : super(getIt<FileRepository>(), getIt<MessageRepository>(), getIt<SessionPhaseService>(), getIt<AttachmentTransferService>());
+
+  final List<List<MessageModel>> calls = <List<MessageModel>>[];
+
+  @override
+  Future<void> prefetch(List<MessageModel> messages) async => calls.add(messages);
 }
 
 /// A session phase this test drives by hand, plus a count of how many times the

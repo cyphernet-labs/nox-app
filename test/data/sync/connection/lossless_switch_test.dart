@@ -32,6 +32,7 @@ import 'package:nox_app/domain/repository/connection/server_addresses_repository
 import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_app/domain/service/app_lifecycle_service.dart';
+import 'package:nox_app/domain/service/attachment_transfer_service.dart';
 import 'package:nox_app/domain/service/network_change_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -262,7 +263,13 @@ void main() {
       getIt<ChatDao>(),
       getIt<SessionRepository>(),
     );
-    outbox = OutboxService(getIt<OutboxRepository>(), messages, SocketSessionPhaseService(socket), getIt<FileRepository>())..start();
+    outbox = OutboxService(
+      getIt<OutboxRepository>(),
+      messages,
+      SocketSessionPhaseService(socket),
+      getIt<FileRepository>(),
+      getIt<AttachmentTransferService>(),
+    )..start();
   });
 
   tearDown(() async {

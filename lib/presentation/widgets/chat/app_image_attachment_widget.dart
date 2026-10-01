@@ -6,9 +6,11 @@ import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
+import 'package:nox_app/domain/model/file/attachment_transfer.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/widgets/chat/app_file_chip_widget.dart';
+import 'package:nox_app/presentation/widgets/chat/app_transfer_progress_widget.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 
 /// Inline image attachment (feature F4): renders the picture itself (from the device-
@@ -31,6 +33,7 @@ class AppImageAttachmentWidget extends StatelessWidget {
     this.width,
     this.height,
     this.onRemove,
+    this.transfer,
   });
 
   final String localPath;
@@ -48,6 +51,10 @@ class AppImageAttachmentWidget extends StatelessWidget {
 
   /// When set, overlays a remove × (composer draft preview) — mirrors the chip's remove.
   final VoidCallback? onRemove;
+
+  /// Bytes on their way: a picture being sent carries a ring over its middle
+  /// until the server has the whole message.
+  final AttachmentTransfer? transfer;
 
   /// Raster formats Flutter's native codec decodes on ALL five targets. SVG (no native
   /// support anywhere) is excluded so an image-typed file that can't be decoded stays a
@@ -108,6 +115,18 @@ class AppImageAttachmentWidget extends StatelessWidget {
         ),
       ),
     );
+    final running = transfer;
+    if (running != null) {
+      // Centred on the thumbnail box, which the Image pins to a fixed size, so
+      // the ring sits in the middle of the picture whatever its proportions.
+      content = Stack(
+        alignment: Alignment.center,
+        children: [
+          content,
+          AppTransferBadgeWidget(transfer: running),
+        ],
+      );
+    }
     if (onRemove != null) {
       final colorScheme = Theme.of(context).colorScheme;
       content = Stack(

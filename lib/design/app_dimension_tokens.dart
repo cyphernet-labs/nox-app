@@ -98,6 +98,9 @@ final class AppSizeTokens {
   double get fileGlyphMd => AppSpacingTokens.s48; // chat-card file grid
   double get fileGlyphHero => AppSpacingTokens.s128; // file-view header glyph box
 
+  // Transfer progress.
+  double get transferBadge => AppSpacingTokens.s48; // disc behind the ring over a picture being sent (5.2)
+
   // Component chrome heights.
   double get bottomBarH => AppSpacingTokens.s64; // docked bottom bar
   double get searchBarH => AppSpacingTokens.s56;

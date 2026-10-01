@@ -7,6 +7,11 @@ import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
+import 'package:nox_app/domain/model/chat/message_attachment.dart';
+import 'package:nox_app/domain/model/file/attachment_transfer.dart';
+import 'package:nox_app/domain/model/file/file_type.dart';
+import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
+import 'package:nox_app/domain/service/attachment_transfer_service.dart';
 import 'package:nox_app/general/app_clock.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/presentation/pages/chat_thread_page/bloc/chat_thread_bloc.dart';
@@ -34,6 +39,26 @@ Future<void> _settleThread(WidgetTester tester) async {
   for (var i = 0; i < 14; i++) {
     await tester.pump(const Duration(milliseconds: 150));
   }
+}
+
+/// A message with a file on its way to the server: queued (its clock) with 45%
+/// of its bytes up (the words and the bar under the file). Nothing drains the
+/// queue in this harness, so the frame holds still.
+Future<void> _seedSending() async {
+  final entry = (await getIt<OutboxRepository>().enqueue(
+    chatId: 'chat_0',
+    text: null,
+    attachment: const MessageAttachment(
+      id: 'att_local',
+      type: FileType.pdf,
+      name: 'quarterly-report.pdf',
+      sizeBytes: 2516582,
+      mime: 'application/pdf',
+    ),
+  )).data!;
+  getIt<AttachmentTransferService>()
+    ..begin(entry.clientMessageId, TransferDirection.upload)
+    ..report(entry.clientMessageId, 0.45);
 }
 
 void main() {
@@ -129,6 +154,45 @@ void main() {
         await _settleThread(tester);
 
         await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/chat_thread_page_inline_error_desktop_$suffix.png'));
+      });
+
+      // A file being sent: the bubble says how far its bytes have got, on both
+      // surfaces - the desktop thread pane is narrower than the phone's
+      // screen is tall, and the bar has to fit the chip in both.
+      testWidgets('mobile sending matches the $suffix theme', (tester) async {
+        AppClock.freeze(kGoldenClock);
+        addTearDown(AppClock.reset);
+        tester.view.devicePixelRatio = 3.0;
+        tester.view.physicalSize = Constants.designSize * 3.0;
+        addTearDown(() {
+          tester.view.resetDevicePixelRatio();
+          tester.view.resetPhysicalSize();
+        });
+        // Real async: the store's writes do not run inside the test's fake clock.
+        await tester.runAsync(_seedSending);
+
+        await pumpApp(tester, ChatThreadPage(chat: _chat()), themeMode: mode, settle: false);
+        await _settleThread(tester);
+
+        await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/chat_thread_page_sending_$suffix.png'));
+      });
+
+      testWidgets('desktop sending matches the $suffix theme', (tester) async {
+        AppClock.freeze(kGoldenClock);
+        addTearDown(AppClock.reset);
+        tester.view.devicePixelRatio = 2.0;
+        tester.view.physicalSize = kDesktopGoldenSize * 2.0;
+        addTearDown(() {
+          tester.view.resetDevicePixelRatio();
+          tester.view.resetPhysicalSize();
+        });
+        // Real async: the store's writes do not run inside the test's fake clock.
+        await tester.runAsync(_seedSending);
+
+        await pumpApp(tester, ChatThreadPage(chat: _chat()), themeMode: mode, settle: false);
+        await _settleThread(tester);
+
+        await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/chat_thread_page_sending_desktop_$suffix.png'));
       });
 
       // The remaining debug scenarios (P10): offline (a NOTICE strip over the thread),

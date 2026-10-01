@@ -9,6 +9,7 @@ import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/presentation/widgets/chat/watch_chat.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
+import 'package:nox_app/domain/model/file/attachment_transfer.dart';
 import 'package:nox_app/general/formatters/date_formatter.dart';
 import 'package:nox_app/general/formatters/file_size_formatter.dart';
 import 'package:nox_app/general/l10n_extension.dart';
@@ -219,7 +220,7 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
         if (showLoadingOlder && index == rows.length) {
           return Padding(padding: EdgeInsets.all(AppSpacingTokens.s8), child: const AppProgressWidget(size: 20));
         }
-        return _buildRow(context, rows[index]);
+        return _buildRow(context, rows[index], initialized.transfers);
       },
     );
   }
@@ -249,12 +250,12 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
     return rows;
   }
 
-  Widget _buildRow(BuildContext context, _ThreadRow row) {
+  Widget _buildRow(BuildContext context, _ThreadRow row, Map<String, AttachmentTransfer> transfers) {
     return switch (row) {
       _SystemRow(:final label) => AppSystemLineWidget(text: context.l10n.systemChatCreated(label)),
       _DateRow(:final label) => AppDateSeparatorWidget(label: label),
       _AuthorRow(:final label) => AppAuthorHeaderWidget(label: label),
-      _MessageRow(:final message, :final isOwn) => _bubble(context, message, isOwn),
+      _MessageRow(:final message, :final isOwn) => _bubble(context, message, isOwn, transfers[message.id]),
     };
   }
 
@@ -265,6 +266,9 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
   // back to the type-icon chip. The distinct affordances are threaded in: [onImageTap]/
   // [onChipTap] make it tappable (bubble), [onRemove] makes it removable (composer);
   // a bubble chip (has [onChipTap]) also gets the in-bubble tint via [onColor].
+  // [transfer] is the attachment's bytes on their way, drawn by all three
+  // shapes: a ring over the picture being sent, a filling ring in the
+  // placeholder of one being fetched, a bar under the file being sent.
   Widget _attachmentPreview(
     MessageAttachment attachment, {
     Color? onColor,
@@ -272,6 +276,7 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
     VoidCallback? onImageTap,
     VoidCallback? onChipTap,
     VoidCallback? onRemove,
+    AttachmentTransfer? transfer,
   }) {
     final size = FileSizeFormatter.format(attachment.sizeBytes);
     if (AppImageAttachmentWidget.canRender(attachment)) {
@@ -285,6 +290,7 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
         height: imageSize,
         onTap: onImageTap,
         onRemove: onRemove,
+        transfer: transfer,
       );
     }
     // A picture whose bytes have not landed yet is NOT the same thing as a file
@@ -293,7 +299,13 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
     // disk by definition, and nothing is fetching it, so a spinner there would
     // wait for an event that never comes.
     if (AppAttachmentPlaceholderWidget.wants(attachment, inBubble: onChipTap != null)) {
-      return AppAttachmentPlaceholderWidget(name: attachment.name, width: imageSize, height: imageSize, onTap: onChipTap);
+      return AppAttachmentPlaceholderWidget(
+        name: attachment.name,
+        width: imageSize,
+        height: imageSize,
+        onTap: onChipTap,
+        transfer: transfer,
+      );
     }
     final chip = AppFileChipWidget(
       type: attachment.type,
@@ -303,11 +315,12 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
       onColor: onColor,
       removable: onRemove != null,
       onRemove: onRemove,
+      transfer: transfer,
     );
     return onChipTap != null ? InkWell(onTap: onChipTap, child: chip) : chip;
   }
 
-  Widget _bubble(BuildContext context, MessageModel m, bool isOwn) {
+  Widget _bubble(BuildContext context, MessageModel m, bool isOwn, AttachmentTransfer? transfer) {
     final colorScheme = Theme.of(context).colorScheme;
     final attachment = m.attachment;
     final Widget? file = attachment == null
@@ -317,6 +330,7 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
             onColor: isOwn ? colorScheme.onPrimaryContainer : colorScheme.onSurface,
             onImageTap: () => openImageViewer(context, attachment.localPath!),
             onChipTap: () => widget.onOpenFile?.call(attachment, m.id),
+            transfer: transfer,
           );
     Widget bubble = AppMessageBubbleWidget(isOwn: isOwn, text: m.text, time: DateFormatter.time(m.sentAt), status: m.status, file: file);
     final isFailed = isOwn && m.status == MessageStatus.error;

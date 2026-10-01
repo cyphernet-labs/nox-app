@@ -4,9 +4,12 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
+import 'package:nox_app/domain/model/file/attachment_transfer.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/widgets/chat/app_file_chip_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_image_attachment_widget.dart';
+import 'package:nox_app/presentation/widgets/chat/app_transfer_progress_widget.dart';
 
 import '../../../utils/pump_app.dart';
 
@@ -81,7 +84,40 @@ final Uint8List _png = Uint8List.fromList(<int>[
   0x82,
 ]);
 
+final l10nEn = AppLocalizationsEn();
+
 void main() {
+  testWidgets('a picture being sent carries a ring over it that fills with its bytes', (tester) async {
+    final tmp = File('${Directory.systemTemp.path}/nox_sending_test.png')..writeAsBytesSync(_png);
+    addTearDown(() => tmp.existsSync() ? tmp.deleteSync() : null);
+
+    await pumpApp(
+      tester,
+      AppImageAttachmentWidget(
+        localPath: tmp.path,
+        type: FileType.image,
+        name: 'shot.png',
+        size: '1 KB',
+        transfer: const AttachmentTransfer(direction: TransferDirection.upload, fraction: 0.6),
+      ),
+      settle: false,
+    );
+
+    expect(find.byType(AppTransferBadgeWidget), findsOneWidget);
+    expect(tester.widget<CircularProgressIndicator>(find.byType(CircularProgressIndicator)).value, 0.6);
+    expect(find.bySemanticsLabel(l10nEn.transferSending), findsOneWidget);
+  });
+
+  testWidgets('a picture with nothing moving carries no ring', (tester) async {
+    final tmp = File('${Directory.systemTemp.path}/nox_idle_test.png')..writeAsBytesSync(_png);
+    addTearDown(() => tmp.existsSync() ? tmp.deleteSync() : null);
+
+    await pumpApp(tester, AppImageAttachmentWidget(localPath: tmp.path, type: FileType.image, name: 'shot.png', size: '1 KB'));
+
+    expect(find.byType(AppTransferBadgeWidget), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+  });
+
   testWidgets('renders an Image for a local image and taps through to onTap (F4)', (tester) async {
     final tmp = File('${Directory.systemTemp.path}/nox_thumb_test.png')..writeAsBytesSync(_png);
     addTearDown(() => tmp.existsSync() ? tmp.deleteSync() : null);
