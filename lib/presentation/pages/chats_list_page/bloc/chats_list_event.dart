@@ -23,6 +23,9 @@ sealed class ChatsListEvent with _$ChatsListEvent {
   /// path that is still coming up is neither.
   const factory ChatsListEvent.connectionStatusChanged(ConnectionStatus status) = ConnectionStatusChanged;
 
+  /// The server's first page for [query] is in the cache, or could not be had.
+  const factory ChatsListEvent.firstPageSynced({required String query}) = FirstPageSynced;
+
   /// The person asked for another attempt, from the banner. Nothing about a
   /// terminal phase changes on its own, so without this the app never comes
   /// back — not even once the cause is fixed.

@@ -23,6 +23,10 @@ sealed class ChatsListState with _$ChatsListState {
     // re-folds (reset→1, load-more→+1, refresh→unchanged).
     @Default(1) int loadedPageCount,
     @Default(false) bool loadingInProgress,
+
+    /// The cache had no chats and the server's first page is on its way - the
+    /// one wait the list still shows as a spinner.
+    @Default(false) bool syncing,
     @Default('') String query,
     @Default(false) bool isOffline,
 

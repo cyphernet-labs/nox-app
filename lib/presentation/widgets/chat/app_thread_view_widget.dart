@@ -188,8 +188,10 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
     final initialized = state as Initialized;
     final all = initialized.allMessages; // single merge+sort per build
 
-    // Initial load (no data yet) → spinner, not the empty state.
-    if (all.isEmpty && initialized.loadingInProgress) return const AppProgressWidget();
+    // Initial load (no data yet) → spinner, not the empty state. The cache
+    // answers at once, so this is the server's window on its way to a chat the
+    // device holds nothing for.
+    if (all.isEmpty && (initialized.loadingInProgress || initialized.syncing)) return const AppProgressWidget();
 
     if (!initialized.hasMessages) {
       return Column(

@@ -17,13 +17,15 @@ class RealMessageRemoteDataSource implements MessageRemoteDataSource {
 
   @override
   Future<ResponseEntity<MessagesWireEntity>> getMessages({required GetMessagesConfig config}) async {
+    // A read with a cache behind it: no waiting for a connection that is not
+    // there (the repository serves the cache, the thread reads again when live).
     final reply = await _socket.send('messages.list', <String, dynamic>{
       'chat_id': config.chatId,
       'before_seq': ?config.beforeSeq,
       // wireLimit, not limit: a config built directly could carry a value above
       // the server's ceiling, which it would clamp silently.
       'limit': config.wireLimit,
-    });
+    }, waitForConnection: false);
     return reply.toEnvelope(MessagesWireEntity.fromJson);
   }
 

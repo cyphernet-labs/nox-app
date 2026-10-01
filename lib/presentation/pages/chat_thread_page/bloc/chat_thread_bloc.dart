@@ -62,6 +62,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     on<SessionPhaseChanged>(_onSessionPhaseChanged, transformer: sequential());
     on<ConnectionStatusChanged>(_onConnectionStatusChanged);
     on<TransfersChanged>(_onTransfersChanged);
+    on<WindowSynced>(_onWindowSynced);
     on<RetryConnection>(_onRetryConnection);
     on<SetScenario>(_onSetScenario);
   }
@@ -99,7 +100,9 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   // message reappear after a restart: the bloc reads the queue, it does not
   // hold it.
   StreamSubscription<List<OutboxEntry>>? _outboxSub;
-  SessionPhase _phase = SessionPhase.live;
+  // Seeded from the service, not assumed live: the first load runs before the
+  // phase stream's first event, and it decides whether to wait for the server.
+  late SessionPhase _phase = _sessionPhaseService.phase;
 
   // Where the connection stands, for the banners (phase 040). Separate from the
   // phase on purpose: «No connection» waits for a whole failed round of path
@@ -227,9 +230,18 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
 
         // Cursor request: the tail on reset/first load, otherwise the batch
         // older than the oldest loaded seq.
+        //
+        // The tail is read from the CACHE: what this device already holds is on
+        // screen at once, whatever the connection is doing, and the server's
+        // newest window follows in the background (_syncTail) through the
+        // watch. Asking the server here first held the cached thread behind a
+        // spinner for as long as Tor took to come up. An older batch still goes
+        // to the server - the person scrolled past what the device holds - and
+        // that read never waits for a connection that is not there.
         final oldest = current.oldestLoadedSeq;
-        final config = isReset || oldest == null
-            ? GetMessagesConfig.tail(chatId: _chatId)
+        final fromCache = isReset || oldest == null;
+        final config = fromCache
+            ? GetMessagesConfig.tail(chatId: _chatId, cachedOnly: true)
             : GetMessagesConfig.olderThan(chatId: _chatId, beforeSeq: oldest);
         final result = await _messageRepository.getMessages(config: config);
 
@@ -255,6 +267,11 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
                 pagingState: r.pagingState,
                 oldestLoadedSeq: newOldest,
                 loadingInProgress: false,
+                // Nothing on the device yet, and the server is about to be
+                // asked: a spinner until it answers, not an empty thread that
+                // fills a moment later. With no channel there is nothing to
+                // wait for, and the empty thread is the truth.
+                syncing: fromCache && messages.isEmpty && !_isHeld(),
                 isOffline: _isOffline(),
                 isServerMismatch: _isServerMismatch(),
               ),
@@ -262,6 +279,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
             // Received pictures need their bytes to render at all. Fire and
             // forget: the write wakes the watch, which redraws the thread.
             unawaited(_prefetch.prefetch(r.updatedList));
+            if (fromCache) unawaited(_syncTail());
           },
           onError: (exception) {
             emit(live.copyWith(pagingState: live.pagingState.copyWith(isLoading: false, error: exception), loadingInProgress: false));
@@ -387,6 +405,33 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
       sentAt: entry.createdAt,
       status: entry.status == OutboxStatus.error ? MessageStatus.error : MessageStatus.pending,
     );
+  }
+
+  /// Brings the server's newest window into the cache, off the load handler: a
+  /// read awaited there would hold every refresh behind it. The rows land
+  /// through the watch; what the server says about older history comes back
+  /// as [WindowSynced]. With no live channel the read fails at once and the
+  /// cache answers - the release of the channel calls this again.
+  Future<void> _syncTail() async {
+    if (_scenario == ChatThreadScenario.fatal || _scenario == ChatThreadScenario.empty) return;
+    final result = await _messageRepository.getMessages(config: GetMessagesConfig.tail(chatId: _chatId));
+    if (isClosed) return;
+    add(ChatThreadEvent.windowSynced(hasMore: result.data?.$2.hasMore));
+  }
+
+  /// The server's newest window is in the cache (or could not be had).
+  ///
+  /// `hasNextPage` is only ever switched ON here: the cache can know less
+  /// history than the server, never more, and a scroll-up that finds nothing
+  /// older switches it off again on its own.
+  void _onWindowSynced(WindowSynced event, Emitter<ChatThreadState> emit) {
+    final current = state;
+    if (current is! Initialized) return;
+    final more = event.hasMore == true && !current.pagingState.hasNextPage;
+    emit(current.copyWith(syncing: false, pagingState: more ? current.pagingState.copyWith(hasNextPage: true) : current.pagingState));
+    // Re-read rather than trust the watch with it: the watch skips its first
+    // snapshot, and rows written before that snapshot was taken are in it.
+    add(const ChatThreadEvent.loadMessages(refresh: true));
   }
 
   /// Invisible live re-read of the loaded span, served from the CACHE.
@@ -551,6 +596,9 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
       // retry it until something new arrived in this chat.
       final current = state;
       if (current is Initialized) unawaited(_prefetch.prefetch(current.items));
+      // And the server's newest window, which the thread could not ask for
+      // while there was no channel.
+      unawaited(_syncTail());
     }
   }
 

@@ -46,6 +46,10 @@ sealed class ChatThreadEvent with _$ChatThreadEvent {
   /// whatever the corner says.
   const factory ChatThreadEvent.connectionStatusChanged(ConnectionStatus status) = ConnectionStatusChanged;
 
+  /// The server's newest window has been asked for and is in the cache, or
+  /// could not be had. [hasMore] is what the server said about older history.
+  const factory ChatThreadEvent.windowSynced({bool? hasMore}) = WindowSynced;
+
   /// The attachment transfers in flight changed. The map travels with the
   /// event, like the queue snapshot above.
   const factory ChatThreadEvent.transfersChanged(Map<String, AttachmentTransfer> transfers) = TransfersChanged;

@@ -20,6 +20,10 @@ sealed class ChatThreadState with _$ChatThreadState {
     // older batch; null until the first tail load lands.
     int? oldestLoadedSeq,
     @Default(false) bool loadingInProgress,
+
+    /// The cache had nothing for this chat and the server's newest window is
+    /// on its way - the one wait the thread still shows as a spinner.
+    @Default(false) bool syncing,
     @Default(false) bool isOffline,
 
     /// The machine at the paired address is not this person's server. Apart

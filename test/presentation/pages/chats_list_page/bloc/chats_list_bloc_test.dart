@@ -5,7 +5,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/model/chat/chat_model.dart';
+import 'package:nox_app/domain/repository/base/page_metadata.dart';
+import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
+import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/model/connection/connection_path.dart';
 import 'package:nox_app/domain/model/connection/connection_status.dart';
@@ -453,6 +457,100 @@ void main() {
       expect(state.isOffline, isFalse);
     });
   });
+
+  group('the cache first: the connection never holds the list', () {
+    ChatModel chat(String id, String name) => ChatModel(id: id, name: name, lastMessagePreview: '', lastMessageAt: DateTime(2026, 10, 4));
+
+    void useChats(ChatRepository chats) {
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<ChatRepository>(chats);
+    }
+
+    void useStatus(FixedConnectionStatusService status) {
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<ConnectionStatusService>(status);
+    }
+
+    test('the chats the device holds are on screen at once while the server has not answered', () async {
+      // The bug on the stand: launched with a bad network, the list sat on a
+      // spinner while Tor came up, and the cached chats appeared only once the
+      // connection failed.
+      final chats = _SlowServerChats([chat('c1', 'Holiday'), chat('c2', 'Work')]);
+      useChats(chats);
+      final bloc = ChatsListBloc()..add(const ChatsListEvent.initialize());
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      final state = bloc.state as Initialized;
+      expect(state.items.map((c) => c.id), ['c1', 'c2']);
+      expect(state.loadingInProgress, isFalse);
+      expect(chats.serverReads, 1, reason: 'the server is still asked, in the background');
+    });
+
+    test('with nothing cached, the list waits for the server rather than saying there are no chats', () async {
+      useChats(_SlowServerChats(const []));
+      final bloc = ChatsListBloc()..add(const ChatsListEvent.initialize());
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      final state = bloc.state as Initialized;
+      expect(state.syncing, isTrue);
+      expect(state.pagingState.isLoading, isTrue, reason: 'the spinner, not the empty state');
+    });
+
+    test('with nothing cached and no channel, the empty list is the answer at once', () async {
+      useStatus(FixedConnectionStatusService(FixedConnectionStatusService.connectingTor));
+      useChats(_SlowServerChats(const []));
+      final bloc = ChatsListBloc()..add(const ChatsListEvent.initialize());
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      final state = bloc.state as Initialized;
+      expect(state.syncing, isFalse);
+      expect(state.pagingState.isLoading, isFalse);
+    });
+
+    test('the server is asked again when the channel comes back', () async {
+      final status = FixedConnectionStatusService(FixedConnectionStatusService.connectingTor);
+      useStatus(status);
+      final chats = _SlowServerChats([chat('c1', 'Holiday')]);
+      useChats(chats);
+      final bloc = ChatsListBloc()..add(const ChatsListEvent.initialize());
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      final before = chats.serverReads;
+
+      status.emit(FixedConnectionStatusService.tor);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      expect(chats.serverReads, before + 1);
+    });
+  });
+}
+
+/// A cache that answers at once and a server that never does - Tor still
+/// coming up. Everything else about a chat repository is left out.
+class _SlowServerChats implements ChatRepository {
+  _SlowServerChats(this.cached);
+
+  final List<ChatModel> cached;
+  int serverReads = 0;
+  final Completer<void> _never = Completer<void>();
+
+  @override
+  Future<RepositoryResult<(List<ChatModel>, PageMetadata)>> getChats({required GetChatsConfig config}) async {
+    if (!config.cachedOnly) {
+      serverReads++;
+      await _never.future;
+    }
+    return RepositoryResult<(List<ChatModel>, PageMetadata)>.success(data: (cached, const PageMetadata(hasMore: false)));
+  }
+
+  @override
+  Stream<List<ChatModel>> watchChats() => const Stream<List<ChatModel>>.empty();
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 /// A controllable [ConnectivityService] for the F3 tests (seed-then-live).

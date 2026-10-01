@@ -119,8 +119,11 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
         emit(ChatCardState.initialized(files: const [], personLabel: _person));
         return;
       }
-      // Opening the card pulls the newest window; the live re-derive below does not.
-      final result = await _chatRepository.getChatFiles(chatId: _chatId, refresh: true);
+      // The files the device holds, at once; the newest window is pulled in the
+      // background and lands through the watch above (the live re-derive).
+      // Waiting for it here held the files section behind a spinner for as
+      // long as Tor took to come up.
+      final result = await _chatRepository.getChatFiles(chatId: _chatId);
       // Stale-guard: the read is no longer instant (it may reach the server), so
       // the debug scenario can have changed while it was in flight. Emitting the
       // late result would overwrite the state the user just selected.
@@ -134,7 +137,17 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
         ),
         onError: (_) => emit(const ChatCardState.error()),
       );
+      if (result.hasData) unawaited(_pullNewestWindow());
     }, onError: (error, exception, stackTrace) => emit(const ChatCardState.error()));
+  }
+
+  /// The chat's newest window from the server, then a re-derive. The re-derive
+  /// is asked for here rather than left to the watch: the watch skips its first
+  /// snapshot, and a write that lands before that snapshot is taken is in it -
+  /// so the watch alone could miss exactly this update.
+  Future<void> _pullNewestWindow() async {
+    await _chatRepository.getChatFiles(chatId: _chatId, refresh: true);
+    if (!isClosed) add(const ChatCardEvent.filesRefreshed());
   }
 
   void _onPersonLabelChanged(PersonLabelChanged event, Emitter<ChatCardState> emit) {

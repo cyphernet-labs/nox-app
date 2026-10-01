@@ -15,6 +15,8 @@ import 'package:nox_app/domain/model/chat/message_status.dart';
 import 'package:nox_app/domain/model/file/attachment_transfer.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
+import 'package:nox_app/domain/repository/base/page_metadata.dart';
+import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
@@ -669,6 +671,84 @@ void main() {
       });
     });
 
+    group('the cache first: the connection never holds the thread', () {
+      late MessageRepository original;
+
+      setUp(() {
+        original = getIt<MessageRepository>();
+        getIt.allowReassignment = true;
+        addTearDown(() => getIt.registerSingleton<MessageRepository>(original));
+      });
+
+      MessageModel text(String id, int seq) => MessageModel(
+        id: id,
+        seq: seq,
+        chatId: 'chat_0',
+        authorId: 'u_other',
+        authorLabel: 'Aria',
+        text: id,
+        sentAt: DateTime(2026, 10, 4),
+      );
+
+      test('the messages the device holds are on screen at once while the server has not answered', () async {
+        // The bug on the stand: launched with a bad network, the thread sat on a
+        // spinner while Tor came up, and the cached messages appeared only once
+        // the connection failed.
+        final messages = _SlowServerMessages([text('m1', 1), text('m2', 2)]);
+        getIt.registerSingleton<MessageRepository>(messages);
+        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_0'));
+        addTearDown(bloc.close);
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+
+        final state = bloc.state as Initialized;
+        expect(state.items.map((m) => m.id), ['m1', 'm2']);
+        expect(state.loadingInProgress, isFalse);
+        expect(state.syncing, isFalse);
+        expect(messages.serverReads, 1, reason: 'the server is still asked, in the background');
+      });
+
+      test('with nothing cached, the thread waits for the server rather than looking empty', () async {
+        getIt.registerSingleton<MessageRepository>(_SlowServerMessages(const []));
+        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_0'));
+        addTearDown(bloc.close);
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+
+        expect((bloc.state as Initialized).syncing, isTrue);
+      });
+
+      test('with nothing cached and no channel, the empty thread is the answer at once', () async {
+        // Nothing is coming: a spinner here would wait for a channel that is
+        // not there. The thread reads again when it is.
+        getIt.registerSingleton<SessionPhaseService>(_FakePhase(SessionPhase.disconnected));
+        addTearDown(() => getIt.registerSingleton<SessionPhaseService>(_FakePhase()));
+        getIt.registerSingleton<MessageRepository>(_SlowServerMessages(const []));
+        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_0'));
+        addTearDown(bloc.close);
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+
+        final state = bloc.state as Initialized;
+        expect(state.syncing, isFalse);
+        expect(state.loadingInProgress, isFalse);
+      });
+
+      test('the server is asked again when the channel comes back', () async {
+        final phase = _FakePhase(SessionPhase.disconnected);
+        getIt.registerSingleton<SessionPhaseService>(phase);
+        addTearDown(() => getIt.registerSingleton<SessionPhaseService>(_FakePhase()));
+        final messages = _SlowServerMessages([text('m1', 1)]);
+        getIt.registerSingleton<MessageRepository>(messages);
+        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_0'));
+        addTearDown(bloc.close);
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        final before = messages.serverReads;
+
+        phase.emit(SessionPhase.live);
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+
+        expect(messages.serverReads, before + 1);
+      });
+    });
+
     group('the server that is not the one the link named (036)', () {
       late _FakePhase phase;
 
@@ -755,6 +835,31 @@ class _FakeConnectivity implements ConnectivityService {
     yield _online;
     yield* _controller.stream;
   }
+}
+
+/// A cache that answers at once and a server that never does - Tor still
+/// coming up. Everything else about a message repository is left out.
+class _SlowServerMessages implements MessageRepository {
+  _SlowServerMessages(this.cached);
+
+  final List<MessageModel> cached;
+  int serverReads = 0;
+  final Completer<void> _never = Completer<void>();
+
+  @override
+  Future<RepositoryResult<(List<MessageModel>, PageMetadata)>> getMessages({required GetMessagesConfig config}) async {
+    if (!config.cachedOnly) {
+      serverReads++;
+      await _never.future;
+    }
+    return RepositoryResult<(List<MessageModel>, PageMetadata)>.success(data: (cached, const PageMetadata(hasMore: false)));
+  }
+
+  @override
+  Stream<List<MessageModel>> watchMessages(String chatId) => const Stream<List<MessageModel>>.empty();
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 /// Records what the thread asks to have fetched, and fetches nothing.

@@ -666,6 +666,31 @@ void main() {
       expect((await pending).ok, isTrue);
     }, timeout: const Timeout(Duration(seconds: 30)));
 
+    test('a read with a cache behind it does not wait for the slow path, it fails at once', () async {
+      // The other side of FR-023: a list read waiting up to the slow budget kept
+      // the chats and messages already on the device off the screen for as long
+      // as Tor took. Its caller serves the cache and reads again once live.
+      final gate = Completer<Uri?>();
+      final targets = ScriptedTargets.gated(gate)..slow = true;
+      unawaited(client.start(targets: targets, credentialsProvider: () async => const GreetingCredentials()));
+      await settle();
+
+      final read = client.send('chats.list', {'page': 1}, waitForConnection: false).timeout(const Duration(milliseconds: 200));
+
+      await expectLater(read, throwsA(isA<SocketUnavailableException>()));
+      gate.complete(null);
+    });
+
+    test('a read with a cache behind it goes out as usual once the greeting is done', () async {
+      final socket = await connect();
+
+      final read = client.send('chats.list', {'page': 1}, waitForConnection: false);
+      await waitUntil(() => socket.commandNamed('chats.list') != null, reason: 'the read goes out');
+      socket.reply(socket.sent.indexWhere((f) => f['cmd'] == 'chats.list'), data: {'chats': const [], 'has_more': false});
+
+      expect((await read).ok, isTrue);
+    });
+
     test('pairing waits for the connection while the path is still being chosen', () async {
       // A started socket can be between connections when pairing is asked
       // for: choosing a path, or a restart that superseded the attempt the

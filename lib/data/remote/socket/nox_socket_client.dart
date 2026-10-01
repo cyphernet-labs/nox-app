@@ -220,7 +220,14 @@ class NoxSocketClient {
   /// reply does not arrive within [sendTimeout]; callers turn that into the
   /// domain's `connection` failure, and the caller's idempotency key makes a
   /// retry safe even if the command did in fact reach the server.
-  Future<CommandReply> send(String cmd, Map<String, dynamic> data) async {
+  ///
+  /// [waitForConnection] false is for reads the screen can answer from its
+  /// cache. Without a greeted connection they fail at once instead of waiting
+  /// for one - through Tor that wait is up to [slowPathBudget], and it kept
+  /// the chats and messages already on the device off the screen for all of
+  /// it. The screens read again once the channel is live.
+  Future<CommandReply> send(String cmd, Map<String, dynamic> data, {bool waitForConnection = true}) async {
+    if (!waitForConnection && _greeted?.isCompleted != true) throw const SocketUnavailableException('not connected');
     for (var attempt = 0; ; attempt++) {
       final reply = await _sendOnce(cmd, data);
       if (reply.errorCode != 'rate_limited' || attempt >= _rateLimitRetries) return reply;

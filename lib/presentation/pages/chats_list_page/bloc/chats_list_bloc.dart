@@ -40,6 +40,7 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
     on<ChatSelected>(_onChatSelected);
     on<SetScenario>(_onSetScenario);
     on<ConnectionStatusChanged>(_onConnectionStatusChanged);
+    on<FirstPageSynced>(_onFirstPageSynced);
     on<RetryConnection>(_onRetryConnection);
   }
 
@@ -115,11 +116,15 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
   }
 
   void _onConnectionStatusChanged(ConnectionStatusChanged event, Emitter<ChatsListState> emit) {
+    final wasCurrent = _status.isCurrent;
     _status = event.status;
     final current = state;
     // Update the banners in place (no reload) — like the reactive card's files re-derive.
     if (current is Initialized) {
       emit(current.copyWith(isOffline: _isOffline(), isServerMismatch: _isServerMismatch(), torObsolete: _isTorObsolete()));
+      // The list was read from the cache while there was no channel; now the
+      // server can be asked.
+      if (!wasCurrent && _status.isCurrent) unawaited(_syncFirstPage(current.query));
     }
   }
 
@@ -178,7 +183,14 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
         ? PagingState<String, ChatModel>(isLoading: true)
         : current.pagingState.copyWith(isLoading: true, error: null);
 
-    emit(current.copyWith(loadingInProgress: true, items: existingList, pagingState: basePagingState));
+    // A reset does not blank the list: the cache answers in a moment, and a
+    // spinner in between flashed on every keystroke of a search. Load-more
+    // shows its loader at the bottom as before.
+    emit(
+      isReset
+          ? current.copyWith(loadingInProgress: true)
+          : current.copyWith(loadingInProgress: true, items: existingList, pagingState: basePagingState),
+    );
 
     await executeLogic(
       () async {
@@ -209,8 +221,15 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
         // lock a golden against a value nothing in the app can now produce.
         if (_scenario == ChatsListScenario.unread && isReset) await _seedUnreadForDebug();
 
+        // The first page is read from the CACHE: the chats this device holds
+        // are on screen at once, whatever the connection is doing, and the
+        // server's page follows in the background (_syncFirstPage) through
+        // the watch. Asking the server first kept the list behind a spinner
+        // for as long as Tor took to come up. A later page still goes to the
+        // server - the person scrolled past the cache - and that read never
+        // waits for a connection that is not there.
         final config = GetChatsConfig.nextPage(page: nextPageKey, search: current.query.isEmpty ? null : current.query);
-        final result = await _chatRepository.getChats(config: config);
+        final result = await _chatRepository.getChats(config: isReset ? config.copyWith(cachedOnly: true) : config);
 
         final live = state;
         if (live is! Initialized) return;
@@ -218,14 +237,19 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
         result.match<void>(
           onData: (data) {
             final (chats, PageMetadata metadata) = data;
+            // Nothing on the device yet, and the server is about to be asked:
+            // a spinner until it answers rather than "No chats" a moment
+            // before they arrive. With no channel the empty list is the truth.
+            final syncing = isReset && chats.isEmpty && _status.isCurrent;
             final r = basePagingState.applyPage(existingList: existingList, response: (chats, metadata), keyExtractor: (c) => c.id);
             emit(
               live.copyWith(
                 items: r.updatedList,
-                pagingState: r.pagingState,
+                pagingState: syncing ? PagingState<String, ChatModel>(isLoading: true) : r.pagingState,
                 nextPage: r.nextPage ?? live.nextPage,
                 loadedPageCount: isReset ? 1 : live.loadedPageCount + 1,
                 loadingInProgress: false,
+                syncing: syncing,
                 // Offline shows the cached list under a banner; inline-error shows the
                 // cached list under a retry banner (both keep the data visible). Offline =
                 // real device connectivity OR the debug scenario (feature F3).
@@ -240,6 +264,7 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
             emit(live.copyWith(pagingState: live.pagingState.copyWith(isLoading: false, error: exception), loadingInProgress: false));
           },
         );
+        if (isReset && result.hasData) unawaited(_syncFirstPage(live.query));
       },
       onError: (error, exception, stackTrace) {
         final live = state;
@@ -253,6 +278,30 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
         }
       },
     );
+  }
+
+  /// Asks the server for the first page, off the load handler: a read awaited
+  /// there would hold every refresh behind it. What it brings lands through
+  /// the watch. With no live channel the read fails at once and the cache
+  /// answers; the status turning current calls this again.
+  Future<void> _syncFirstPage(String query) async {
+    if (_scenario == ChatsListScenario.fatal || _scenario == ChatsListScenario.empty) return;
+    await _chatRepository.getChats(
+      config: GetChatsConfig.nextPage(page: GetChatsConfig.defaultPage, search: query.isEmpty ? null : query),
+    );
+    if (isClosed) return;
+    add(ChatsListEvent.firstPageSynced(query: query));
+  }
+
+  /// The server's first page is in the cache, or could not be had: the list
+  /// is re-read now. Not left to the watch: a server with no chats writes
+  /// nothing, so no tick would end a spinner held for it, and the watch skips
+  /// its first snapshot - rows written before that snapshot was taken are in it.
+  void _onFirstPageSynced(FirstPageSynced event, Emitter<ChatsListState> emit) {
+    final current = state;
+    if (current is! Initialized || current.query != event.query) return;
+    if (current.syncing) emit(current.copyWith(syncing: false));
+    add(const ChatsListEvent.loadChats(refresh: true));
   }
 
   /// Invisible live re-read of the currently-loaded page prefix (no spinner, never a
@@ -285,6 +334,9 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
     }
     final live = state;
     if (live is! Initialized || live.query != query || lastMeta == null) return;
+    // Still waiting for the server's first page, and the cache is still empty:
+    // keep the spinner rather than show "No chats" until the answer is in.
+    if (live.syncing && all.isEmpty) return;
     final r = PagingState<String, ChatModel>().applyPage(existingList: const [], response: (all, lastMeta), keyExtractor: (c) => c.id);
     emit(live.copyWith(items: r.updatedList, pagingState: r.pagingState, nextPage: r.nextPage ?? live.nextPage));
   }

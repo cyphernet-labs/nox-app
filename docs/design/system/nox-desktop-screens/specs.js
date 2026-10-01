@@ -53,7 +53,7 @@ window.NOX_SPECS = [
       "Selecting a row highlights it (secondaryContainer) and loads the thread on the right — no navigation push.",
       "No-selection: the thread pane shows a “Select a chat” placeholder; the “+” lives in the chat-list pane header.",
       "Thread header is persistent (avatar + chat name + a disabled Invite a person action + an info action). Phase 037: two actions, not one, and the reason there is no member list is that the machine holds one person — not the revoked open-space model. No per-chat search, no folders. Source of truth: docs/design/spec/screens/chat.md §Десктоп.",
-      "Offline: “No connection” banner appears in both panes. Loading: spinner in the list pane.",
+      "Offline: “No connection” banner appears in both panes. The connection never holds either pane: what the device holds shows at once, the server's answer arrives in the background. Loading: spinner in the list pane only while the device holds no chats and the server is being asked.",
       "Messages in the thread pane follow 5.2, including a file's bytes in transit: a ring on a dark disc over a picture being sent, “Sending… 45%” over a bar in any other file's chip, a filling ring in a received picture's placeholder. An own message typed on another device of the same person carries the sent tick.",
       "Search filters the list pane in place; no match → “No chats found”.",
       "Transient feedback floats as a Snackbar centered over the thread pane."
