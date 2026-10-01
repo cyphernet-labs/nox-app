@@ -10,7 +10,7 @@
 
 | Ключ | Значение | Пишется | Стирается |
 |---|---|---|---|
-| `session.server_addresses` | JSON `{"direct": ["host:port", …], "onion": "<56>.onion:443" \| null, "last_good": "host:port" \| null}` | ответ на приветствие (`addresses`), событие `server.addresses`, успешное соединение (`last_good`) | `clear()`, `discardSignIn()`, `saveServer()` |
+| `session.server_addresses` | JSON `{"direct": ["host:port", …], "onion": "<56>.onion:443" \| null, "last_good": "host:port" \| null, "via_tor": true}` (`via_tor` — только когда последнее приветствие пришло через Tor) | ответ на приветствие (`addresses`), событие `server.addresses`, успешное прямое соединение (`last_good`, снимает `via_tor`), приветствие через Tor (`via_tor`) | `clear()`, `discardSignIn()`, `saveServer()` |
 | `session.access_key` | base64 32 байт — закрытый ключ X25519 устройства | при первом обращении, если его нет; заново при отказе сервера | `clear()`; **не** `discardSignIn()` — как и ключ устройства, он принадлежит установке |
 | `session.access_key_registered` | `"1"` или нет записи | успешный `device.setAccessKey`; спаривание по ссылке v2, в которое ушёл ключ | `clear()`, `discardSignIn()`, `saveServer()`, смена ключа |
 
