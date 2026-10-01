@@ -33,4 +33,11 @@ void main() {
     expect(const ConnectionStatus(state: LinkState.online).isCurrent, isTrue);
     expect(const ConnectionStatus(state: LinkState.catchingUp).isCurrent, isFalse);
   });
+
+  test('No connection covers a server that refuses this build too', () {
+    expect(const ConnectionStatus(state: LinkState.offline).showsNoConnection, isTrue);
+    expect(const ConnectionStatus(state: LinkState.unsupported).showsNoConnection, isTrue);
+    expect(const ConnectionStatus(state: LinkState.connecting).showsNoConnection, isFalse);
+    expect(const ConnectionStatus(state: LinkState.serverMismatch).showsNoConnection, isFalse);
+  });
 }

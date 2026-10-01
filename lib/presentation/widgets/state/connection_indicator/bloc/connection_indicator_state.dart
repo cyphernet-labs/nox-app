@@ -7,6 +7,6 @@ abstract class ConnectionIndicatorState with _$ConnectionIndicatorState {
   const factory ConnectionIndicatorState({required ConnectionStatus status}) = _ConnectionIndicatorState;
 
   /// Nothing to say: direct and current, offline (the banner speaks), or a
-  /// terminal state (its own banner speaks).
+  /// terminal state (a banner speaks).
   bool get isEmpty => !status.showsConnecting && !status.showsTorBadge;
 }

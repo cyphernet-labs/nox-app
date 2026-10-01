@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
+import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_text_style_tokens.dart';
 import 'package:nox_app/design/theme/app_theme.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
@@ -77,6 +78,28 @@ void main() {
 
       expect(find.byType(InkWell), findsNothing);
     });
+  });
+
+  testWidgets('a screen reader can press it, not only read it (FR-029)', (tester) async {
+    final handle = tester.ensureSemantics();
+    await _pumpIndicator(tester, FixedConnectionStatusService.tor);
+
+    expect(
+      tester.getSemantics(find.bySemanticsLabel(l10nEn.connectionSemanticsTor)),
+      matchesSemantics(label: l10nEn.connectionSemanticsTor, isButton: true, hasTapAction: true),
+    );
+    handle.dispose();
+  });
+
+  testWidgets('the wide explanation stays as narrow as the other dialogs', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1400, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await _pumpIndicator(tester, FixedConnectionStatusService.tor, wide: true);
+
+    await tester.tap(find.byType(InkWell));
+    await tester.pumpAndSettle();
+
+    expect(tester.getSize(find.byType(AppConnectionInfoContent)).width, lessThanOrEqualTo(AppDimensionTokens.layout.dialogMaxW));
   });
 
   testWidgets('the tap target is at least 48x48 where a finger is the pointer (FR-029)', (tester) async {

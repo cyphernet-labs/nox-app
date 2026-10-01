@@ -46,6 +46,11 @@ abstract class ConnectionStatus with _$ConnectionStatus {
   static const ConnectionStatus initial = ConnectionStatus(state: LinkState.connecting);
 
   bool get isOffline => state == LinkState.offline;
+
+  /// What raises «No connection»: no path was found, or the server refuses
+  /// this build for good (contract §2.1). The second is silent otherwise - the
+  /// corner shows nothing for it and sending waits for ever.
+  bool get showsNoConnection => state == LinkState.offline || state == LinkState.unsupported;
   bool get isServerMismatch => state == LinkState.serverMismatch;
   bool get isCurrent => state == LinkState.online;
 

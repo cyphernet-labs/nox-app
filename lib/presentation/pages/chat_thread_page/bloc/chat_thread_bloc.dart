@@ -109,7 +109,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
 
   /// The offline BANNER: a whole round of path finding found nothing, or the
   /// debug scenario forces it.
-  bool _isOffline() => !_isServerMismatch() && (_status.isOffline || _scenario == ChatThreadScenario.offline);
+  bool _isOffline() => !_isServerMismatch() && (_status.showsNoConnection || _scenario == ChatThreadScenario.offline);
 
   /// Whether a send may go out at all: only on a current channel, never to a
   /// refused server, and never while the debug scenario plays offline. None of

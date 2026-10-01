@@ -63,7 +63,7 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
   bool _isServerMismatch() => _status.isServerMismatch || _scenario == ChatCardScenario.pinRefused;
 
   /// «No connection» only once a whole round of path finding found nothing.
-  bool _isOffline() => !_isServerMismatch() && (_status.isOffline || _scenario == ChatCardScenario.offline);
+  bool _isOffline() => !_isServerMismatch() && (_status.showsNoConnection || _scenario == ChatCardScenario.offline);
 
   // Live change-signal (feature 017 / R5): a new attachment sent to this chat writes
   // to the message store → re-derive the files. Value ignored — getChatFiles stays the

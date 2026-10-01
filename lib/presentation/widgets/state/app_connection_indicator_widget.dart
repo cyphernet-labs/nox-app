@@ -59,16 +59,20 @@ class AppConnectionIndicatorView extends StatelessWidget {
       (true, false) => l10n.connectionSemanticsConnecting,
       _ => l10n.connectionSemanticsTor,
     };
+    void explain() => showConnectionInfo(context, status: status, wide: wide);
     // One name for the whole corner: the words inside would otherwise be read
-    // as two unrelated labels.
+    // as two unrelated labels. Excluding the children drops the InkWell's own
+    // tap action too, so the node carries it itself - a named button that a
+    // screen reader cannot press is not a button.
     return Semantics(
       button: true,
       label: label,
+      onTap: explain,
       excludeSemantics: true,
       child: Material(
         type: MaterialType.transparency,
         child: InkWell(
-          onTap: () => showConnectionInfo(context, status: status, wide: wide),
+          onTap: explain,
           customBorder: const StadiumBorder(),
           child: ConstrainedBox(
             constraints: BoxConstraints(minWidth: AppDimensionTokens.size.hitTarget, minHeight: _minHeight),
@@ -118,9 +122,16 @@ class _TorBadge extends StatelessWidget {
 Future<void> showConnectionInfo(BuildContext context, {required ConnectionStatus status, required bool wide}) {
   final content = AppConnectionInfoContent(status: status, localNetworkHint: PlatformUtils.isIOS || PlatformUtils.isMacOS);
   if (wide) {
+    // Capped like every other dialog here: unwrapped, the longest sentence
+    // would stretch it across most of the window.
     return showDialog<void>(
       context: context,
-      builder: (_) => Dialog(child: content),
+      builder: (_) => Dialog(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: AppDimensionTokens.layout.dialogMaxW),
+          child: content,
+        ),
+      ),
     );
   }
   return showModalBottomSheet<void>(context: context, showDragHandle: true, builder: (_) => content);

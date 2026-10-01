@@ -539,6 +539,43 @@ void main() {
       });
     });
 
+    group('the connection status and the send hold (phase 040)', () {
+      late _FakePhase phase;
+
+      Future<ChatThreadBloc> boot(SessionPhase initial) async {
+        phase = _FakePhase(initial);
+        getIt.allowReassignment = true;
+        getIt.registerSingleton<SessionPhaseService>(phase);
+        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_0'));
+        addTearDown(bloc.close);
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        return bloc;
+      }
+
+      test('a path still coming up raises no banner, and a send still waits for it', () async {
+        // The corner says Connecting… then; the banner is for a whole failed
+        // round. Sending is a different question: only a current channel takes
+        // a message.
+        final bloc = await boot(SessionPhase.connecting);
+        expect((bloc.state as Initialized).isOffline, isFalse);
+
+        bloc.add(const ChatThreadEvent.messageSent(text: 'written while connecting'));
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        final queued = (bloc.state as Initialized).outgoing.firstWhere((m) => m.text == 'written while connecting');
+        expect(queued.status, MessageStatus.pending);
+
+        phase.emit(SessionPhase.live);
+        await Future<void>.delayed(const Duration(milliseconds: 600));
+        expect((bloc.state as Initialized).outgoing, isEmpty, reason: 'released once the channel is current');
+      });
+
+      test('a server that refuses this build says so with the banner, as it always did', () async {
+        final bloc = await boot(SessionPhase.unsupported);
+
+        expect((bloc.state as Initialized).isOffline, isTrue);
+      });
+    });
+
     group('the server that is not the one the link named (036)', () {
       late _FakePhase phase;
 

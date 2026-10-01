@@ -300,7 +300,9 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
       // it has the same state and the same action - and two would be two.
       content = Column(
         children: [
-          _banners(context, state),
+          // The connection banner only: the request to update belongs to the list
+          // pane, and drawing it twice put the same sentence across the window.
+          if (state is Initialized) _connectionBanner(context, state),
           Expanded(
             child: AppEmptyContentWidget(
               glyph: NoxIcons.forum,

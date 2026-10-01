@@ -72,7 +72,7 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
 
   /// «No connection» is for a whole round of path finding that found nothing,
   /// not for a path still on its way (phase 040) - or the debug scenario.
-  bool _isOffline() => !_isServerMismatch() && (_status.isOffline || _scenario == ChatsListScenario.offline);
+  bool _isOffline() => !_isServerMismatch() && (_status.showsNoConnection || _scenario == ChatsListScenario.offline);
 
   /// The Tor network refused the client built into this version (FR-026).
   bool _isTorObsolete() => _status.torObsolete || _scenario == ChatsListScenario.torObsolete;
