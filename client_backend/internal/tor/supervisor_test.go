@@ -6,6 +6,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -487,12 +489,13 @@ func TestAFailedPublicationLeavesNoKeyOrAddressBehind(t *testing.T) {
 	}
 }
 
+// No proxy, a control port only the server opens, no single onion mode. Never a
+// relay, the rest of FR-004, is TestTorIsAClientAndNeverARelay.
 func TestStartArgumentsOpenNoOtherDoors(t *testing.T) {
 	args := startArgs("/data/nox.db-tor", 4242)
 	joined := " " + strings.Join(args, " ") + " "
 	for _, want := range []string{
 		" --SocksPort 0 ",
-		" --ClientOnly 1 ",
 		" --ControlPort auto ",
 		" --CookieAuthentication 1 ",
 		" --__OwningControllerProcess 4242 ",
@@ -502,7 +505,7 @@ func TestStartArgumentsOpenNoOtherDoors(t *testing.T) {
 			t.Errorf("start arguments lack %q: %v", want, args)
 		}
 	}
-	for _, banned := range []string{"NonAnonymous", "SingleHop", "ORPort", "ExitRelay"} {
+	for _, banned := range []string{"NonAnonymous", "SingleHop"} {
 		if strings.Contains(joined, banned) {
 			t.Errorf("start arguments carry %q", banned)
 		}
@@ -511,6 +514,85 @@ func TestStartArgumentsOpenNoOtherDoors(t *testing.T) {
 	f, d := slices.Index(args, "-f"), slices.Index(args, "--defaults-torrc")
 	if f < 0 || d < 0 || args[f+1] != args[d+1] {
 		t.Fatalf("-f and --defaults-torrc must name the same empty file: %v", args)
+	}
+}
+
+// This machine carries nobody else's traffic: its tor is a client, and never a
+// relay, an exit, a bridge or a directory mirror (FR-004). ClientOnly is the
+// guarantee, and it must be set once, to 1: tor keeps the last of two settings,
+// and a second one would quietly undo it. The settings that make a relay are
+// checked too: ClientOnly makes tor ignore them, and whoever adds one learns
+// here that it has no place in this tor.
+func TestTorIsAClientAndNeverARelay(t *testing.T) {
+	opts := torOptions(t, startArgs("/data/nox.db-tor", 4242))
+	if got := opts["clientonly"]; !slices.Equal(got, []string{"1"}) {
+		t.Errorf("tor is told ClientOnly %q, want it once, as 1 - it keeps tor from relaying even with a relay port set", got)
+	}
+	// Set to anything but 0, each of these carries somebody else's traffic:
+	// ORPort, ExtORPort and DirPort make a relay or a directory mirror,
+	// BridgeRelay a bridge, and ExitRelay, IPv6Exit and ReducedExitPolicy an
+	// exit (tor's manual, under ExitRelay).
+	for _, name := range []string{"ORPort", "ExtORPort", "DirPort", "BridgeRelay", "ExitRelay", "IPv6Exit", "ReducedExitPolicy"} {
+		for _, v := range opts[strings.ToLower(name)] {
+			if v != "0" {
+				t.Errorf("tor is told %s %s", name, v)
+			}
+		}
+	}
+	for _, policy := range opts["exitpolicy"] {
+		if strings.Contains(strings.ToLower(policy), "accept") {
+			t.Errorf("tor is told an exit policy that lets traffic out: %s", policy)
+		}
+	}
+}
+
+// torOptions reads tor's arguments the way tor reads them: an option name in
+// any case, behind up to two dashes and an optional "+", then its value. Every
+// value is kept in order - tor itself keeps only the last - so a second setting
+// cannot hide behind the first.
+func torOptions(t *testing.T, args []string) map[string][]string {
+	t.Helper()
+	if len(args)%2 != 0 {
+		t.Fatalf("tor's arguments are not name/value pairs: %v", args)
+	}
+	opts := make(map[string][]string)
+	for pair := range slices.Chunk(args, 2) {
+		name := strings.ToLower(strings.TrimLeft(pair[0], "-+"))
+		opts[name] = append(opts[name], pair[1])
+	}
+	return opts
+}
+
+// The arguments are what tor is asked; this is tor's own answer. Started the
+// way the supervisor starts it, a real tor must report ClientOnly=1. Runs only
+// when NOX_TOR_TEST_BIN names a tor (0.4.9+), and needs no network: tor answers
+// GETCONF from its configuration as soon as its control port is open.
+func TestOnionClientOnly(t *testing.T) {
+	bin := os.Getenv("NOX_TOR_TEST_BIN")
+	if bin == "" {
+		t.Skip("NOX_TOR_TEST_BIN is not set: this test needs a tor binary")
+	}
+	l := procLauncher{bin: bin, dataDir: filepath.Join(t.TempDir(), "nox.db-tor")}
+	path, _, err := l.locate(t.Context())
+	if err != nil {
+		t.Fatalf("locate tor: %v", err)
+	}
+	run, err := l.start(t.Context(), path)
+	if failed, ok := errors.AsType[*startFailure](err); ok {
+		t.Fatalf("start tor: %v; tor printed %q", err, failed.lines)
+	}
+	if err != nil {
+		t.Fatalf("start tor: %v", err)
+	}
+	t.Cleanup(run.stop)
+	ctx, cancel := context.WithTimeout(t.Context(), commandTimeout)
+	defer cancel()
+	lines, err := run.ctl().Command(ctx, "GETCONF ClientOnly")
+	if err != nil {
+		t.Fatalf("GETCONF ClientOnly: %v", err)
+	}
+	if !slices.ContainsFunc(lines, func(line string) bool { return strings.EqualFold(line, "ClientOnly=1") }) {
+		t.Fatalf("tor reports %q, want ClientOnly=1", lines)
 	}
 }
 
