@@ -329,6 +329,57 @@ void main() {
     });
   });
 
+  group('away from home the last time (T053)', () {
+    test('a greeting through Tor is remembered for the next attempt', () async {
+      await torWorks();
+      prober.home = <String>{};
+      await connectAndGreet();
+
+      await waitUntil(() async => (await addresses.read()).data!.viaTorLast, reason: 'remembered');
+    });
+
+    test('Tor comes up while the direct addresses are tried, not after them', () async {
+      await torWorks();
+      await addresses.recordGreetedViaTor();
+      final probing = Completer<void>();
+      prober.gate = probing.future;
+      prober.home = <String>{};
+
+      final round = selector.nextTarget();
+      await waitUntil(() => prober.rounds.isNotEmpty, reason: 'the probe is under way');
+      await waitUntil(() => tor.starts == 1, reason: 'Tor started during the probe');
+      probing.complete();
+
+      expect(await round, Uri.parse('wss://$_onionHost/ws'));
+    });
+
+    test('a direct answer still wins, and Tor started alongside it stops', () async {
+      await torWorks();
+      await addresses.recordGreetedViaTor();
+      prober.home = <String>{_link};
+
+      await connectAndGreet();
+
+      expect(selector.currentPath, ConnectionPath.direct);
+      await waitUntil(() => tor.status.state == TorState.stopped, reason: 'Tor stopped on the direct greeting (FR-006)');
+      expect((await addresses.read()).data!.viaTorLast, isFalse, reason: 'home again');
+    });
+
+    test('without the mark, Tor waits for the direct addresses as before', () async {
+      await torWorks();
+      final probing = Completer<void>();
+      prober.gate = probing.future;
+      prober.home = <String>{};
+
+      final round = selector.nextTarget();
+      await waitUntil(() => prober.rounds.isNotEmpty, reason: 'the probe is under way');
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(tor.starts, 0);
+      probing.complete();
+      await round;
+    });
+  });
+
   group('the round that failed (research decision 12)', () {
     test('it is held through the retries and cleared by a greeting', () async {
       prober.home = <String>{};

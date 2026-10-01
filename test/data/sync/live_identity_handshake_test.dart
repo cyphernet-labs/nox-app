@@ -182,6 +182,23 @@ void main() {
       expect(result.created, isFalse, reason: 'a returning person is not created, and must not be onboarded');
     });
 
+    test('a short wait gives up on its own deadline, once the restart is done', () async {
+      // How sign-in waits after a pairing: through Tor the answer can be a
+      // minute away, and nothing waits on it.
+      var restarted = false;
+      when(starter.restart()).thenAnswer((_) async {
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+        restarted = true;
+      });
+      final watch = Stopwatch()..start();
+
+      await expectLater(handshake.greet(within: const Duration(milliseconds: 50)), throwsA(isA<IdentityHandshakeTimeout>()));
+
+      expect(restarted, isTrue, reason: 'the restart is always awaited');
+      expect(watch.elapsed, lessThan(const Duration(seconds: 2)));
+      expect(handshake.inFlight, isFalse);
+    });
+
     test('hands back what THIS greeting said about a newcomer', () async {
       when(starter.restart()).thenAnswer((_) async {
         await answerNextGreeting(id: 'u_new', created: true, label: 'User4242');

@@ -14,9 +14,14 @@ class FakeDirectProber implements DirectProber {
   /// The candidates of every round, in order.
   final List<List<String>> rounds = <List<String>>[];
 
+  /// Holds every probe until it completes - how a test lands something while
+  /// the direct addresses are still being tried.
+  Future<void>? gate;
+
   @override
   Future<DirectProbeResult> probe(List<String> candidates, {required String fingerprint}) async {
     rounds.add(List<String>.of(candidates));
+    await gate;
     final notHome = candidates.where(otherKey.contains).toList();
     for (final candidate in candidates) {
       if (otherKey.contains(candidate)) continue;

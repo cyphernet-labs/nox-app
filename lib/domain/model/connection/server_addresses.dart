@@ -20,6 +20,11 @@ abstract class ServerAddresses with _$ServerAddresses {
 
     /// The direct address that most recently answered with the right key.
     String? lastGood,
+
+    /// The last connection greeted came through Tor - the device was away
+    /// from home. The next attempt brings Tor up alongside the direct
+    /// addresses rather than after them.
+    @Default(false) bool viaTorLast,
   }) = _ServerAddresses;
 
   static const ServerAddresses empty = ServerAddresses();

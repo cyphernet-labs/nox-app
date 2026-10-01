@@ -290,7 +290,7 @@ void main() {
       expect(expectations.values.toSet(), hasLength(2), reason: 'no two refusals may share an answer');
     });
 
-    test('a successful pairing re-greets, so the session stops speaking as the pre-pair identity', () async {
+    test('a successful pairing re-greets, so the session stops speaking as the pre-pair identity, and waits only briefly', () async {
       // The connection `pair` ran on was greeted before this device existed to
       // the server. Without a second greeting it keeps speaking as whoever
       // greeted then, and a message sent on it comes back looking like a
@@ -298,11 +298,13 @@ void main() {
       when(
         handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
       ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
-      when(handshake.greet()).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
+      when(
+        handshake.greet(within: anyNamed('within')),
+      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
 
       await repository.signIn(identifier: link);
 
-      verify(handshake.greet()).called(1);
+      verify(handshake.greet(within: const Duration(seconds: 2))).called(1);
     });
 
     test('a greeting that fails after pairing does not undo the pairing', () async {
@@ -311,7 +313,7 @@ void main() {
       when(
         handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
       ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
-      when(handshake.greet()).thenThrow(const IdentityHandshakeTimeout());
+      when(handshake.greet(within: anyNamed('within'))).thenThrow(const IdentityHandshakeTimeout());
 
       final result = await repository.signIn(identifier: link);
 

@@ -233,7 +233,10 @@ class LiveIdentityHandshake {
   /// the caller would be released, this body would keep running, the `finally`
   /// below would never execute, and `inFlight` would stay true for the life of
   /// the process — wedging every later sign-in attempt.
-  Future<IdentityHandshake> greet() async {
+  ///
+  /// [within] bounds the wait for the answer; the restart itself is always
+  /// awaited.
+  Future<IdentityHandshake> greet({Duration within = timeout}) async {
     // Captured BEFORE anything is torn down. The phase stream replays its
     // current value to a new listener, so on an already-connected socket the
     // first event carries the PREVIOUS connection's identity — including the
@@ -248,7 +251,7 @@ class LiveIdentityHandshake {
     // await below still receives it.
     pending.future.ignore();
     _pending = pending;
-    _timer = Timer(timeout, () {
+    _timer = Timer(within, () {
       if (!pending.isCompleted) pending.completeError(const IdentityHandshakeTimeout());
     });
     _phases = _socket.phase.listen((phase) {

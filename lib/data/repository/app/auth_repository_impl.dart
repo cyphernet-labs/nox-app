@@ -147,7 +147,7 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         // back looking like a stranger's on the sender's own screen. Storing
         // the session first is what makes this greeting state a person.
         try {
-          await handshake.greet();
+          await handshake.greet(within: _greetingAfterPairing);
         } on Object {
           // The pairing itself landed. A greeting that did not is an ordinary
           // reconnect away, and the session is already valid.
@@ -189,6 +189,14 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
     if (getIt.isRegistered<LiveSessionStarter>()) await getIt<LiveSessionStarter>().stop();
     await _sessionRepository.discardSignIn();
   }
+
+  /// How long sign-in waits for the greeting that follows a pairing. At home
+  /// it comes in milliseconds. Through Tor right after a pairing it can take
+  /// a minute - the server has to publish this device's new key before the
+  /// onion service lets it in - and nothing waits on it: the restart has
+  /// already happened, and the greeting arrives on its own. The default wait
+  /// spent up to 20 s of that on the sign-in spinner (phase 040, T053).
+  static const Duration _greetingAfterPairing = Duration(seconds: 2);
 
   /// Revokes this device's own key before the local wipe, when there is a
   /// channel to say it on. Never blocks the logout: a person who chose to sign

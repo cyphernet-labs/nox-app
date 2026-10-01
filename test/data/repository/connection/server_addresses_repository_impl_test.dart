@@ -44,6 +44,22 @@ void main() {
     expect(addresses.lastGood, '10.0.0.5:8443');
   });
 
+  test('a greeting through Tor is remembered, and a direct one forgets it', () async {
+    // How the next attempt knows to start Tor alongside the direct addresses.
+    await repository.saveFromServer(direct: ['10.0.0.5:8443'], onion: 'abc.onion:443');
+    await repository.recordGreetedViaTor();
+    expect((await repository.read()).data!.viaTorLast, isTrue);
+    expect(
+      (await ServerAddressesRepositoryImpl(const FlutterSecureStorage()).read()).data!.viaTorLast,
+      isTrue,
+      reason: 'kept across launches',
+    );
+
+    await repository.recordLastGood('10.0.0.5:8443');
+    expect((await repository.read()).data!.viaTorLast, isFalse);
+    expect((await repository.read()).data!.lastGood, '10.0.0.5:8443');
+  });
+
   test('a clear lands after a write already under way, so nothing survives it', () async {
     // How a logout wipes them: a greeting stored a moment before the channel
     // stopped must not land after the wipe (FR-018).

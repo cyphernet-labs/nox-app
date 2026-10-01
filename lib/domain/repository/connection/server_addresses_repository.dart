@@ -13,6 +13,10 @@ abstract class ServerAddressesRepository {
   /// The direct address that just answered with the right key.
   Future<RepositoryResult<bool>> recordLastGood(String address);
 
+  /// A connection through Tor was just greeted: the device is away from home,
+  /// and the next attempt starts Tor without waiting for the direct addresses.
+  Future<RepositoryResult<bool>> recordGreetedViaTor();
+
   /// What is stored on listen, then every change - how the path selector
   /// learns of a new direct address while it is on Tor (US3).
   Stream<ServerAddresses> watch();

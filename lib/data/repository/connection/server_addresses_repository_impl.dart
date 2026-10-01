@@ -48,8 +48,20 @@ class ServerAddressesRepositoryImpl with BaseRepositoryHelper implements ServerA
     return execute<bool>(() async {
       await _serialised(() async {
         final current = await _read();
-        if (current.lastGood == address) return;
-        await _write(current.copyWith(lastGood: address));
+        if (current.lastGood == address && !current.viaTorLast) return;
+        await _write(current.copyWith(lastGood: address, viaTorLast: false));
+      });
+      return const RepositoryResult<bool>.success(data: true);
+    });
+  }
+
+  @override
+  Future<RepositoryResult<bool>> recordGreetedViaTor() {
+    return execute<bool>(() async {
+      await _serialised(() async {
+        final current = await _read();
+        if (current.viaTorLast) return;
+        await _write(current.copyWith(viaTorLast: true));
       });
       return const RepositoryResult<bool>.success(data: true);
     });
@@ -100,6 +112,7 @@ class ServerAddressesRepositoryImpl with BaseRepositoryHelper implements ServerA
         direct: direct is List ? List<String>.unmodifiable(direct.whereType<String>()) : const <String>[],
         onion: json['onion'] is String ? json['onion'] as String : null,
         lastGood: json['last_good'] is String ? json['last_good'] as String : null,
+        viaTorLast: json['via_tor'] == true,
       );
     } on FormatException {
       // A record this build cannot read is a record it does not have; the next
@@ -111,7 +124,12 @@ class ServerAddressesRepositoryImpl with BaseRepositoryHelper implements ServerA
   Future<void> _write(ServerAddresses addresses) async {
     await _storage.write(
       key: ConnectionStorage.serverAddresses,
-      value: jsonEncode(<String, dynamic>{'direct': addresses.direct, 'onion': addresses.onion, 'last_good': addresses.lastGood}),
+      value: jsonEncode(<String, dynamic>{
+        'direct': addresses.direct,
+        'onion': addresses.onion,
+        'last_good': addresses.lastGood,
+        if (addresses.viaTorLast) 'via_tor': true,
+      }),
     );
     _changes.add(addresses);
   }

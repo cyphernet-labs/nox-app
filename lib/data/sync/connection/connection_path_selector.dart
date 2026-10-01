@@ -210,8 +210,13 @@ class ConnectionPathSelector implements SocketTargetProvider {
     // Desktop does not sleep in the background (FR-025 is about phones).
     _visibility = _lifecycle.visibility;
     if (_mobile) _visibilitySub = _lifecycle.watchVisibility().listen(_onVisibility);
-    // The first value is what is stored now; only a CHANGE is news.
-    _addressesSub = _addresses.watch().skip(1).listen((_) => unawaited(_recheckDirect(reason: 'new addresses')));
+    // The first value is what is stored now; only a CHANGE of where the
+    // server can be found is news - not the path this device last took.
+    _addressesSub = _addresses
+        .watch()
+        .distinct((a, b) => listEquals(a.direct, b.direct) && a.onion == b.onion)
+        .skip(1)
+        .listen((_) => unawaited(_recheckDirect(reason: 'new addresses')));
     _torSub = _tor.watchStatus().listen(_onTorStatus);
   }
 
@@ -273,6 +278,9 @@ class ConnectionPathSelector implements SocketTargetProvider {
 
     final addresses = await _readAddresses();
     if (!_current(round)) return null;
+    // Away from home the last time: Tor comes up while the direct addresses
+    // are tried, not after them (T053).
+    if (!_forceTor && addresses.viaTorLast) unawaited(_warmTor(addresses, round));
     if (!_forceTor) {
       _publish(_selection.value.copyWith(clearPath: true));
       final result = await _prober.probe(addresses.candidates(_linkAddress), fingerprint: fingerprint);
@@ -310,6 +318,7 @@ class ConnectionPathSelector implements SocketTargetProvider {
       unawaited(_stopTor());
       logRepository.debug(target: this, message: 'path: direct');
     } else {
+      unawaited(_addresses.recordGreetedViaTor());
       _recheck ??= Timer.periodic(_recheckEvery, (_) => unawaited(_recheckDirect(reason: 'periodic')));
       logRepository.debug(target: this, message: 'path: tor');
     }
@@ -453,6 +462,21 @@ class ConnectionPathSelector implements SocketTargetProvider {
     } finally {
       if (_torRound == round) _torRound = null;
     }
+  }
+
+  /// Starts Tor for a device that was away from home the last time, while the
+  /// direct addresses are still being tried - a warm start is about a second,
+  /// a cold one several, and both used to come after the probe's seconds. A
+  /// direct answer still wins: its greeting stops Tor (FR-006), so back home
+  /// this costs one Tor start of a few seconds.
+  Future<void> _warmTor(ServerAddresses addresses, int round) async {
+    if (!_tor.isSupported || _tor.status.isObsolete || _tor.status.state != TorState.stopped) return;
+    final target = await _torTargetFor(addresses, round);
+    if (target == null || !_current(round)) return;
+    await _tor.start();
+    // The direct greeting may have come while Tor was starting, when there
+    // was nothing yet for it to stop.
+    if (!_active || currentPath == ConnectionPath.direct) await _stopTor();
   }
 
   /// Says why Tor is not an option this round - the reason only, never the
