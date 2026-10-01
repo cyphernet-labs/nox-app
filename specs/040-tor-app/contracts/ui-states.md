@@ -21,7 +21,7 @@
 | `serverMismatch` | пусто | `This isn't the server you paired with` (нынешний) |
 | `torObsolete` (любое состояние) | как выше | `Update NOX to connect away from home` |
 
-Бейдж и текст строятся на токенах: `AppDimensionTokens`, `AppTextStyleTokens.labelSmall`/`labelMedium`, цвета `ColorScheme` — `secondaryContainer`/`onSecondaryContainer` для бейджа, `onSurfaceVariant` для текста. Хардкода нет (Принцип IV).
+Бейдж и текст строятся на токенах: `AppDimensionTokens` и `AppSpacingTokens` для размеров, роли `Theme.of(context).textTheme` — `labelSmall` для бейджа, `labelMedium` для «Connecting…» (у них проектная высота строки), цвета `ColorScheme` — `secondaryContainer`/`onSecondaryContainer` для бейджа, `onSurfaceVariant` для текста. Хардкода нет (Принцип IV).
 
 ## Нажатие
 
@@ -42,7 +42,7 @@
 | `connectionInfoLocalNetwork` | If you're at home, check that NOX has Local Network access in Settings. | Якщо ви вдома, перевірте, що NOX має доступ до локальної мережі в Параметрах. |
 | `connectionTorObsolete` | Update NOX to connect away from home | Оновіть NOX, щоб підключатися поза домом |
 | `devicesInviteHomeOnly` | This link works only on your home network. | Це посилання працює лише у вашій домашній мережі. |
-| `loginHomeNetworkOnly` | Couldn't reach your server. Pairing works on your home network. | Не вдалося зв'язатися з вашим сервером. Під'єднання пристрою працює у вашій домашній мережі. |
+| `loginHomeNetworkOnly` | Couldn't reach your server. Pairing works on your home network. | Не вдалося зв'язатися з вашим сервером. Звʼязування працює у вашій домашній мережі. |
 
 `connectionInfoLocalNetwork` показывается только на iOS и macOS.
 

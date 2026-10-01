@@ -15,327 +15,327 @@
 
 ## Phase 1: Setup — пакет `nox_tor`, тулчейн, платформы
 
-- [X] T001 Create the Rust crate `packages/nox_tor/rust/`:
+- [X] T001 Создать Rust-крейт `packages/nox_tor/rust/`:
   - `Cargo.toml`:
-    - deps: `arti-client =0.47.0` with tokio, rustls, onion-service-client, static-sqlite, compression, keymgr, experimental-api, ephemeral-keystore; `tor-hscrypto`, `tor-llcrypto`, `tor-keymgr`, `tor-config` `=0.47.0`; tokio (rt-multi-thread, net, io-util, time, sync); rustls with ring; tracing; tracing-subscriber; sha3; data-encoding; subtle;
-    - `crate-type = ["staticlib","cdylib"]`;
-    - release profile: opt-level z, fat LTO, codegen-units 1, strip, panic abort.
-  - `rust-toolchain.toml`: 1.93.1, targets aarch64/x86_64 apple darwin, aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios, aarch64/armv7/x86_64 android, x86_64/aarch64 windows msvc.
-  - `Cargo.lock` with `libc` held at 0.2.189 (`cargo update -p libc --precise 0.2.189`).
-  - Empty `src/lib.rs` that builds.
-- [X] T002 Create the Dart package `packages/nox_tor/`:
-  - `pubspec.yaml`: `resolution: workspace`; deps `hooks`, `code_assets`, `native_toolchain_rust: 1.0.4+0`, `ffi`; dev `test`.
-  - `hook/build.dart`, per research decision 1:
-    - `OS.linux` → no assets;
+    - зависимости: `arti-client =0.47.0` с возможностями tokio, rustls, onion-service-client, static-sqlite, compression, keymgr, experimental-api, ephemeral-keystore; `tor-hscrypto`, `tor-llcrypto`, `tor-keymgr`, `tor-config` `=0.47.0`; tokio (rt-multi-thread, net, io-util, time, sync); rustls с ring; tracing; tracing-subscriber; sha3; data-encoding; subtle;
+    - `crate-type = ["staticlib","cdylib","rlib"]` (`rlib` — для примера `examples/bootstrap.rs`);
+    - профиль release: opt-level z, fat LTO, codegen-units 1, strip, panic unwind — не abort: без раскрутки стека не работает `catch_unwind`, под которым идёт каждая экспортируемая функция.
+  - `rust-toolchain.toml`: 1.93.1, цели aarch64/x86_64 apple darwin, aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios, aarch64/armv7/x86_64 android, x86_64/aarch64 windows msvc.
+  - `Cargo.lock` с `libc`, закреплённым на 0.2.189 (`cargo update -p libc --precise 0.2.189`).
+  - Пустой `src/lib.rs`, который собирается.
+- [X] T002 Создать Dart-пакет `packages/nox_tor/`:
+  - `pubspec.yaml`: `resolution: workspace`; зависимости `hooks`, `code_assets`, `native_toolchain_rust: 1.0.4+0`, `ffi`; dev-зависимость `test`.
+  - `hook/build.dart` по research, решение 1:
+    - `OS.linux` → без ассетов;
     - Android `CC_*`/`CXX_*`/`CARGO_TARGET_*_LINKER` → `<triple><targetNdkApi>-clang`;
     - iOS `IPHONEOS_DEPLOYMENT_TARGET=13.0`;
-    - `Cargo.toml`, `Cargo.lock` and `rust-toolchain.toml` in `output.dependencies`.
-  - Placeholders for `lib/nox_tor.dart` and `lib/src/nox_tor_bindings.dart`.
-- [X] T003 Add `workspace: [packages/nox_tor]` and `nox_tor: {path: packages/nox_tor}` to the root `pubspec.yaml`, run `fvm flutter pub get`, and confirm in `pubspec.lock` that only `native_toolchain_rust`, `toml`, `hooks`, `code_assets` and `nox_tor` were added (mockito stays 5.6.4).
-- [X] T004 [P] Update `Makefile`: the `format` target also covers `packages/nox_tor`; add a `tor-test` target (`cd packages/nox_tor/rust && cargo test` and `cd packages/nox_tor && fvm dart test`).
-- [X] T005 [P] Platform files:
-  - `NSLocalNetworkUsageDescription` "NOX connects to your server on your home network." in `ios/Runner/Info.plist` and `macos/Runner/Info.plist`;
-  - `com.apple.security.network.server` in `macos/Runner/Release.entitlements`;
-  - an explicit `android.permission.INTERNET` in `android/app/src/main/AndroidManifest.xml`.
+    - `Cargo.toml`, `Cargo.lock` и `rust-toolchain.toml` в `output.dependencies`.
+  - Заготовки `lib/nox_tor.dart` и `lib/src/nox_tor_bindings.dart`.
+- [X] T003 Добавить `workspace: [packages/nox_tor]` и `nox_tor: {path: packages/nox_tor}` в корневой `pubspec.yaml`, выполнить `fvm flutter pub get` и убедиться по `pubspec.lock`, что добавились только `native_toolchain_rust`, `toml`, `hooks`, `code_assets` и `nox_tor` (mockito остаётся на 5.6.4).
+- [X] T004 [P] Обновить `Makefile`: цель `format` охватывает и `packages/nox_tor`; добавить цель `tor-test` (`cd packages/nox_tor/rust && cargo test` и `cd packages/nox_tor && fvm dart test`).
+- [X] T005 [P] Файлы платформ:
+  - `NSLocalNetworkUsageDescription` "NOX connects to your server on your home network." в `ios/Runner/Info.plist` и `macos/Runner/Info.plist`;
+  - `com.apple.security.network.server` в `macos/Runner/Release.entitlements`;
+  - явное `android.permission.INTERNET` в `android/app/src/main/AndroidManifest.xml`.
 
-**Checkpoint**: `fvm flutter pub get` passes, `cargo build` of the empty crate passes, `fvm flutter build macos --debug` builds with the empty library.
+**Checkpoint**: `fvm flutter pub get` проходит, `cargo build` пустого крейта проходит, `fvm flutter build macos --debug` собирается с пустой библиотекой.
 
 ---
 
 ## Phase 2: User Story 7 — замер до встраивания (Priority: P3, но первым — FR-034) 🔒
 
-**Goal**: the real module is built and measured on the four platforms; the +25 MB gate is checked before any integration into the app.
+**Goal**: настоящий модуль собран и измерен на четырёх платформах; гейт +25 МБ проверен до любого встраивания в приложение.
 
-**Independent Test**: the numbers in `research.md` → «Замер» are repeatable by its method.
+**Independent Test**: числа в `research.md` → «Замер» воспроизводятся по описанной там методике.
 
-- [X] T006 [US7] Implement the engine in `packages/nox_tor/rust/src/engine.rs` and `src/status.rs`:
-  - an owned tokio runtime on its own thread;
-  - `start(state_dir, cache_dir)`: install the rustls ring provider, `TorClientConfigBuilder::from_directories`, ephemeral primary keystore, `create_bootstrapped` within a 90 s budget;
+- [X] T006 [US7] Реализовать движок в `packages/nox_tor/rust/src/engine.rs` и `src/status.rs`:
+  - собственный tokio-runtime в отдельном потоке;
+  - `start(state_dir, cache_dir)`: установить провайдер ring для rustls, `TorClientConfigBuilder::from_directories`, эфемерное основное хранилище ключей, `create_bootstrapped` в пределах 90 с;
   - `stop()`;
-  - a status snapshot under a short lock (`NoxTorStatus` from contracts/ffi.md);
-  - bootstrap progress from `bootstrap_status()`;
+  - снимок статуса под коротким замком (`NoxTorStatus` из contracts/ffi.md);
+  - ход подъёма из `bootstrap_status()`;
   - `set_dormant`.
-- [X] T007 [US7] Implement target, key and bridge in `packages/nox_tor/rust/src/bridge.rs`:
-  - `set_target(onion, port, key32)`: remove the previous key via `remove_service_discovery_key`, then `insert_service_discovery_key`;
-  - bind `127.0.0.1:0` and draw a new 32-byte secret;
-  - per connection: read the secret within 5 s and compare it in constant time (`subtle`), `TorClient::connect((onion, port))` within 45 s, then `copy_bidirectional`;
-  - record `missing_client_auth`, `wrong_client_auth`, `timeout` or `network` in the snapshot;
+- [X] T007 [US7] Реализовать цель, ключ и мост в `packages/nox_tor/rust/src/bridge.rs`:
+  - `set_target(onion, port, key32)`: убрать прежний ключ через `remove_service_discovery_key`, затем `insert_service_discovery_key`;
+  - привязать слушатель к `127.0.0.1:0` и сгенерировать новый 32-байтный секрет;
+  - на каждое соединение: прочитать секрет в пределах 5 с и сравнить его за постоянное время (`subtle`), `TorClient::connect((onion, port))` в пределах 45 с, затем `copy_bidirectional`;
+  - записывать в снимок `missing_client_auth`, `wrong_client_auth`, `timeout` или `network`;
   - `clear_target()`.
-- [X] T008 [P] [US7] Implement the remaining modules:
-  - `packages/nox_tor/rust/src/onion.rs`: `onion_from_pubkey` per rend-spec-v3 (SHA3-256 checksum, base32 lowercase, `.onion`);
-  - `packages/nox_tor/rust/src/obsolete.rs`: a `tracing-subscriber` layer that turns a WARN+ event from target `arti_client::protostatus` into `obsolete` and asks the control thread to `shutdown_background` the runtime (research decision 6); `SoftwareDeprecated` at bootstrap → `obsolete`.
-- [X] T009 [US7] Export the C ABI from contracts/ffi.md in `packages/nox_tor/rust/src/lib.rs`:
-  - functions: `nox_tor_start`, `stop`, `set_target`, `clear_target`, `set_dormant`, `status`, `bridge_secret`, `onion_from_pubkey`, `version`;
-  - no panic crosses the boundary (`catch_unwind` → `internal`);
-  - `#[cfg(test)]` tests:
-    - the bridge refuses a wrong or short secret and closes;
-    - status encoding round-trips;
-    - the onion vector from 039 (RFC 8032 seed → `25njqamcweflpvkl73j4szahhihoc4xt3ktcgjnpaingr5yhkenl5sid`);
-    - a synthetic `arti_client::protostatus` ERROR event sets `obsolete` and triggers the shutdown;
-    - `set_target` rejects a non-onion host and a short key.
-- [X] T010 [US7] Implement the Dart wrapper:
-  - `packages/nox_tor/lib/src/nox_tor_bindings.dart`: `@Native` externals for every function;
-  - `packages/nox_tor/lib/nox_tor.dart`: `NoxTor` with `isSupported` (false on Linux or when the symbol lookup fails), `NoxTorSnapshot` and the typed codes;
-  - `packages/nox_tor/test/hook_test.dart`: `testCodeBuildHook(targetOS: OS.linux)` yields no assets.
-- [X] T011 [US7] Add the timing harness `packages/nox_tor/rust/examples/bootstrap.rs`:
-  - cold and warm bootstrap time;
-  - first and repeated keyed connect time against an onion and key given on the command line (a local `noxd` with Tor, 039);
-  - process RSS.
-- [X] T012 [US7] Measure per research decision 14 and quickstart «Замер»:
-  - release APK arm64 with and without `nox_tor`;
-  - iOS release `nox_tor.framework`;
-  - macOS framework size;
-  - timings and RSS from T011 on macOS.
+- [X] T008 [P] [US7] Реализовать остальные модули:
+  - `packages/nox_tor/rust/src/onion.rs`: `onion_from_pubkey` по rend-spec-v3 (контрольная сумма SHA3-256, base32 в нижнем регистре, `.onion`);
+  - `packages/nox_tor/rust/src/obsolete.rs`: слой `tracing-subscriber`, который по событию уровня WARN и выше от цели `arti_client::protostatus` выставляет `obsolete` и просит управляющий поток свернуть tokio-runtime через `shutdown_background` (research, решение 6); `SoftwareDeprecated` при подъёме → `obsolete`.
+- [X] T009 [US7] Экспортировать C ABI из contracts/ffi.md в `packages/nox_tor/rust/src/lib.rs`:
+  - функции: `nox_tor_start`, `stop`, `set_target`, `clear_target`, `set_dormant`, `status`, `bridge_secret`, `onion_from_pubkey`, `version`;
+  - ни одна паника не пересекает границу (`catch_unwind` → `internal`);
+  - тесты `#[cfg(test)]`:
+    - мост отвергает неверный или короткий секрет и закрывает соединение;
+    - статус кодируется и декодируется без потерь;
+    - вектор onion из 039 (seed RFC 8032 → `25njqamcweflpvkl73j4szahhihoc4xt3ktcgjnpaingr5yhkenl5sid`);
+    - синтетическое событие ERROR от `arti_client::protostatus` выставляет `obsolete` и запускает остановку;
+    - `set_target` отвергает хост, не являющийся onion-адресом, и короткий ключ.
+- [X] T010 [US7] Реализовать обёртку на Dart:
+  - `packages/nox_tor/lib/src/nox_tor_bindings.dart`: внешние объявления `@Native` для каждой функции;
+  - `packages/nox_tor/lib/nox_tor.dart`: `NoxTor` с `isSupported` (false на Linux или если поиск символа не удался), `NoxTorSnapshot` и типизированные коды;
+  - `packages/nox_tor/test/hook_test.dart`: `testCodeBuildHook(targetOS: OS.linux)` не выдаёт ассетов.
+- [X] T011 [US7] Добавить обвязку для замеров `packages/nox_tor/rust/examples/bootstrap.rs`:
+  - время холодного и тёплого подъёма;
+  - время первого и повторного подключения с ключом к onion-адресу; адрес и ключ задаются в командной строке (локальный `noxd` с Tor, 039);
+  - RSS процесса.
+- [X] T012 [US7] Провести замер по research, решение 14, и quickstart, раздел «Замер»:
+  - release APK arm64 с `nox_tor` и без него;
+  - `nox_tor.framework` в release-сборке iOS;
+  - размер фреймворка на macOS;
+  - время и RSS из T011 на macOS.
 
-  Write the numbers into `specs/040-tor-app/research.md` → «Замер». **STOP and report to the owner if any platform adds more than 25 MB to the download size.**
+  Записать числа в `specs/040-tor-app/research.md` → «Замер». **Если хоть одна платформа прибавляет к размеру загрузки больше 25 МБ — ОСТАНОВИТЬСЯ и сообщить владельцу.**
 
-**Checkpoint (gate)**: size within budget on every platform → continue; otherwise stop.
+**Checkpoint (гейт)**: размер в пределах бюджета на каждой платформе → продолжать; иначе — стоп.
 
 ---
 
 ## Phase 3: Foundational — общая основа для всех историй
 
-**⚠️ CRITICAL**: no user-story phase starts before this one is done.
+**⚠️ CRITICAL**: ни одна фаза историй не начинается, пока эта не закончена.
 
-- [X] T013 [P] Domain models in `lib/domain/model/connection/` and `lib/domain/model/device/device_invite.dart`, per data-model.md, with `freezed` where the neighbours use it:
-  - `server_addresses.dart`: `ServerAddresses` with `candidates(linkAddress)`;
+- [X] T013 [P] Доменные модели в `lib/domain/model/connection/` и `lib/domain/model/device/device_invite.dart` по data-model.md, на `freezed` там, где его используют соседние модели:
+  - `server_addresses.dart`: `ServerAddresses` с `candidates(linkAddress)`;
   - `connection_path.dart`;
-  - `connection_status.dart`: `ConnectionStatus`, `ConnectionState`, with derived `isOffline`, `isServerMismatch`, `showsTorBadge`;
+  - `connection_status.dart`: `ConnectionStatus`, `LinkState`, с вычисляемыми `isOffline`, `isServerMismatch`, `showsTorBadge`;
   - `tor_status.dart`: `TorStatus`, `TorState`, `TorError`;
   - `DeviceInvite`.
 
-  Unit tests in `test/domain/model/connection/`.
-- [X] T014 [P] Domain interfaces:
-  - `lib/domain/service/tor_service.dart`: start, stop, setTarget, clearTarget, setDormant, status stream, bridge port and secret, onionFromPublicKey, isSupported;
+  Модульные тесты в `test/domain/model/connection/`.
+- [X] T014 [P] Доменные интерфейсы:
+  - `lib/domain/service/tor_service.dart`: start, stop, setTarget, clearTarget, setDormant, поток статуса, порт и секрет моста, onionFromPublicKey, isSupported;
   - `lib/domain/service/connection_status_service.dart`;
   - `lib/domain/service/app_lifecycle_service.dart`;
   - `lib/domain/repository/connection/server_addresses_repository.dart`;
   - `lib/domain/repository/connection/access_key_repository.dart`;
-  - `lib/domain/service/network_change_service.dart`: `NetworkChangeService.watchChanges()`, implemented in `lib/data/service/network_change_service_impl.dart` (connectivity_plus result changes; a quiet one for the test env). It is a service of its own rather than a new method on `ConnectivityService`, whose interface three private test fakes implement.
-- [X] T015 Implement the Tor services in `lib/data/service/tor/`:
-  - `native_tor_service.dart`, `@LazySingleton(env: [dev, prod])`: over `NoxTor`, the status stream polled every 250 ms while bootstrapping and every 2 s otherwise, state and cache dirs from `path_provider` (support/`nox_tor_state`, cache/`nox_tor_cache`);
-  - `fake_tor_service.dart`, `env: [test]`: scriptable;
-  - `tor_capability.dart`: false on Linux, like `VideoPlaybackCapability`.
+  - `lib/domain/service/network_change_service.dart`: `NetworkChangeService.watchChanges()`, реализация — `lib/data/service/network_change_service_impl.dart` (изменения результата connectivity_plus; для тестового окружения — молчащая). Это отдельный сервис, а не новый метод `ConnectivityService`, чей интерфейс реализуют три приватных фейка в тестах.
+- [X] T015 Реализовать сервисы Tor в `lib/data/service/tor/`:
+  - `native_tor_service.dart`, `@LazySingleton(env: [dev, prod])`: поверх `NoxTor`; поток статуса опрашивается каждые 250 мс во время подъёма и каждые 2 с в остальное время; каталоги состояния и кэша — из `path_provider` (support/`nox_tor_state`, cache/`nox_tor_cache`);
+  - `fake_tor_service.dart`, `env: [test]`: управляется из теста;
+  - `tor_capability.dart`: false на Linux, как `VideoPlaybackCapability`.
 
-  When the module reports `obsolete`, the native service writes `tor.obsolete_build` = the app build number to `SharedPreferences` (FR-026).
+  Когда модуль сообщает `obsolete`, нативный сервис записывает `tor.obsolete_client` = версию Tor-клиента из библиотеки в `SharedPreferences` (FR-026); номер сборки приложения для этого не годится — он не меняется с каждым выпуском.
 
-  Run `make generate`. Tests: `test/data/service/tor/native_tor_service_test.dart` with an injected `NoxTor` facade fake.
-- [X] T016 Implement the repositories in `lib/data/repository/connection/`:
-  - `server_addresses_repository_impl.dart`: `session.server_addresses` JSON;
-  - `access_key_repository_impl.dart`: X25519 via `cryptography`, `session.access_key`, `session.access_key_registered`, `session.invite_onion`, `session.invite_access_key`.
+  Выполнить `make generate`. Тесты: `test/data/service/tor/native_tor_service_test.dart` с внедрённым фейком фасада `NoxTor`.
+- [X] T016 Реализовать репозитории в `lib/data/repository/connection/`:
+  - `server_addresses_repository_impl.dart`: JSON в `session.server_addresses`;
+  - `access_key_repository_impl.dart`: X25519 через `cryptography`, `session.access_key`, `session.access_key_registered`; `storedDeviceKey()` читает ключ, не создавая его. Одноразовый ключ ссылки v2 здесь не хранится — только в памяти селектора (FR-021).
 
-  The private keys are written with `IOSOptions`/`MacOsOptions(accessibility: KeychainAccessibility.unlocked_this_device)`, so no backup carries them to another device (FR-014).
+  Закрытые ключи пишутся с `IOSOptions`/`MacOsOptions(accessibility: KeychainAccessibility.unlocked_this_device)`, чтобы ни одна резервная копия не перенесла их на другое устройство (FR-014).
 
-  Add every new key to `clear()` and to `discardSignIn()` (except `session.access_key`) in `lib/data/repository/app/session_repository_impl.dart`. Tests: `test/data/repository/connection/server_addresses_repository_impl_test.dart`, `access_key_repository_impl_test.dart`, `test/data/repository/app/session_repository_impl_test.dart` (clear removes the new keys).
-- [X] T017 [P] Implement `lib/data/service/app_lifecycle_service_impl.dart` (`AppLifecycleListener` → `Stream<AppLifecycleState>`, dev/prod) and a test-env fake; tests in `test/data/service/app_lifecycle_service_impl_test.dart`.
-- [X] T018 Read the server's addresses:
-  - in `lib/data/remote/socket/nox_socket_client.dart`: parse `addresses` from the greeting reply into a `ServerAddresses` stream, cleared in `_teardown`, and expose the greeting's capability flag (`supportsAccessKeys`);
-  - in `lib/data/sync/sync_service.dart`: handle the seq-0 `server.addresses` event next to `device.revoked`/`identity.updated`, saving through `ServerAddressesRepository` without touching the cursor.
+  Добавить каждый новый ключ в `clear()` и в `discardSignIn()` (кроме `session.access_key`) в `lib/data/repository/app/session_repository_impl.dart`. Тесты: `test/data/repository/connection/server_addresses_repository_impl_test.dart`, `access_key_repository_impl_test.dart`, `test/data/repository/app/session_repository_impl_test.dart` (clear удаляет новые ключи).
+- [X] T017 [P] Реализовать `lib/data/service/app_lifecycle_service_impl.dart` (`AppLifecycleListener` → `Stream<AppLifecycleState>`, dev/prod) и фейк для тестового окружения; тесты в `test/data/service/app_lifecycle_service_impl_test.dart`.
+- [X] T018 Читать адреса сервера:
+  - в `lib/data/remote/socket/nox_socket_client.dart`: разбирать `addresses` из ответа на приветствие в поток `ServerAddresses`, который очищается в `_teardown`, и отдавать наружу признак поддержки из приветствия (`supportsAccessKeys`);
+  - в `lib/data/sync/sync_service.dart`: обрабатывать событие `server.addresses` с seq 0 рядом с `device.revoked`/`identity.updated` и сохранять адреса через `ServerAddressesRepository`, не трогая курсор.
 
-  Rewrite the 039 compatibility tests: group 'a server from phase 039' in `test/data/remote/socket/nox_socket_client_test.dart` and the `server.addresses` test in `test/data/sync/sync_service_test.dart`. They now assert the addresses are read and stored, and the cursor is still untouched.
-- [X] T019 Let the socket ask for a target before each attempt:
-  - `NoxSocketClient.start` takes a `SocketTargetProvider` (async: next `Uri` or none);
-  - `_openOnce` asks it on every attempt;
-  - add a `connectTimeout` in `lib/data/remote/socket/socket_channel_factory.dart`: 45 s for `.onion`, 10 s otherwise;
-  - make the pin-refusal attribution per connection rather than a process-wide counter delta.
+  Переписать тесты совместимости с 039: группу 'a server from phase 039' в `test/data/remote/socket/nox_socket_client_test.dart` и тест `server.addresses` в `test/data/sync/sync_service_test.dart`. Теперь они проверяют, что адреса прочитаны и сохранены, а курсор по-прежнему не тронут.
+- [X] T019 Научить сокет запрашивать цель перед каждой попыткой:
+  - `NoxSocketClient.start` принимает `SocketTargetProvider` (асинхронный: следующий `Uri` или ничего);
+  - `_openOnce` обращается к нему на каждой попытке;
+  - добавить `connectTimeout` в `lib/data/remote/socket/socket_channel_factory.dart`: 45 с для `.onion`, 10 с для остальных;
+  - отказ по пину относить к конкретному соединению, а не вычислять по приращению счётчика, общего на весь процесс.
 
-  Tests in `test/data/remote/socket/nox_socket_client_test.dart` with `FakeSocketFactory`: the target is asked per attempt; none → backoff; onion refusal → `serverMismatch`.
-- [X] T020 Dial onion hosts through the bridge in `lib/data/remote/pinned_http_client.dart`:
-  - a host ending in `.onion` → `Socket.connect(127.0.0.1, bridgePort)` → write the 32-byte secret → `SecureSocket.secure(socket, host: onion, supportedProtocols: ['http/1.1'])` → the existing leaf `ServerPin.matches`;
-  - the bridge port and secret come from an injected `TorBridgeEndpoint` read at handshake time.
+  Тесты в `test/data/remote/socket/nox_socket_client_test.dart` с `FakeSocketFactory`: цель запрашивается на каждой попытке; нет цели → нарастающая пауза; отказ на onion → `serverMismatch`.
+- [X] T020 Подключаться к onion-хостам через мост в `lib/data/remote/pinned_http_client.dart`:
+  - хост, оканчивающийся на `.onion`, → `Socket.connect(127.0.0.1, bridgePort)` → записать 32-байтный секрет → `SecureSocket.secure(socket, host: onion, supportedProtocols: ['http/1.1'])` → существующая проверка листового сертификата `ServerPin.matches`;
+  - порт и секрет моста берутся из внедрённого `TorBridgeEndpoint`, который читается в момент рукопожатия.
 
-  Tests in `test/data/remote/pinned_http_client_onion_test.dart` with a loopback fake bridge in front of the honest and hostile TLS fixtures: the honest one passes, the hostile one is refused, a wrong secret closes.
-- [X] T021 Key the epoch on the fingerprint in `lib/data/sync/live_session_starter.dart`: `fp:<fingerprint>`. Migrate a stored `live:` epoch without wiping it (`lib/data/local/sync/sync_dao.dart` if a helper is needed). Tests in `test/data/sync/live_session_starter_test.dart`:
-  - a `live:` epoch migrates and the chats stay;
-  - a different `fp:` wipes;
-  - the same `fp:` is a no-op.
-- [X] T022 Implement `lib/data/sync/connection/access_key_registrar.dart`:
-  - `pair` always sends `access_key` (own public), in `nox_socket_client.dart` `pair()` and `lib/data/sync/live_identity_handshake.dart`;
-  - after the first greeting with `addresses` while not registered → `device.setAccessKey`; success → registered;
-  - `invalid_request` → new key, at most 3 per session;
-  - `unauthenticated` → the existing revocation path.
+  Тесты в `test/data/remote/pinned_http_client_onion_test.dart` с подставным мостом на loopback перед честной и враждебной TLS-фикстурами: честная проходит, враждебная отвергается, при неверном секрете соединение закрывается.
+- [X] T021 Привязать эпоху к отпечатку в `lib/data/sync/live_session_starter.dart`: `fp:<fingerprint>`. Сохранённую эпоху `live:` перенести без стирания (`lib/data/local/sync/sync_dao.dart`, если нужен помощник). Тесты в `test/data/sync/live_session_starter_test.dart`:
+  - эпоха `live:` переносится, чаты остаются;
+  - другой `fp:` — стирание;
+  - тот же `fp:` ничего не меняет.
+- [X] T022 Реализовать `lib/data/sync/connection/access_key_registrar.dart`:
+  - `pair` всегда отправляет `access_key` (свой открытый ключ) — в `nox_socket_client.dart` `pair()` и в `lib/data/sync/live_identity_handshake.dart`;
+  - после первого приветствия с `addresses`, пока ключ не зарегистрирован, → `device.setAccessKey`; успех → ключ зарегистрирован;
+  - `invalid_request` → новый ключ, не больше 3 за сессию;
+  - `unauthenticated` → существующий путь отзыва.
 
-  Tests in `test/data/sync/connection/access_key_registrar_test.dart` and the handshake test.
-- [X] T023 Implement `ConnectionStatusService`:
-  - `lib/data/sync/connection/connection_status_service_impl.dart` (dev): socket phase plus selector events, path, `torObsolete` from `tor.obsolete_build`; offline smoothing per research decision 12;
-  - `lib/data/service/phase_connection_status_service.dart` (prod/test): from `SessionPhaseService`.
+  Тесты в `test/data/sync/connection/access_key_registrar_test.dart` и в тесте рукопожатия.
+- [X] T023 Реализовать `ConnectionStatusService`:
+  - `lib/data/sync/connection/connection_status_service_impl.dart` (dev): фаза сокета плюс события селектора, путь, `torObsolete` из `tor.obsolete_client`; сглаживание офлайна по research, решение 12;
+  - `lib/data/service/phase_connection_status_service.dart` (prod/test): из `SessionPhaseService`.
 
-  Tests in `test/data/sync/connection/connection_status_service_impl_test.dart`: smoothing — the first failed round → offline, retries keep offline, success clears it.
+  Тесты в `test/data/sync/connection/connection_status_service_impl_test.dart`: сглаживание — первый неудачный раунд → офлайн, повторные попытки его сохраняют, успех снимает.
 
-**Checkpoint**: `make gate` green; nothing user-visible has changed yet.
+**Checkpoint**: `make gate` зелёный; для пользователя пока ничего не изменилось.
 
 ---
 
 ## Phase 4: User Story 1 — переписка вне дома (Priority: P1) 🎯 MVP
 
-**Goal**: when the direct path does not answer, the app connects through Tor and the conversation works.
+**Goal**: когда прямой путь не отвечает, приложение подключается через Tor, и переписка работает.
 
-**Independent Test**: quickstart scenario 2 (`nox.forceTor=true`) on macOS: messages and a file go through Tor.
+**Independent Test**: сценарий 2 из quickstart (`nox.forceTor=true`) на macOS: сообщения и файл идут через Tor.
 
-- [X] T024 [P] [US1] Implement `lib/data/sync/connection/direct_prober.dart`:
-  - its own `PinnedHttpClient`, TLS + leaf pin + `GET /health` per candidate;
-  - 2.5 s per attempt; the first candidate at once, the rest after 300 ms in parallel; first success wins; 5 s budget;
-  - a pin refusal marks the candidate «not home» (FR-005).
+- [X] T024 [P] [US1] Реализовать `lib/data/sync/connection/direct_prober.dart`:
+  - собственный `PinnedHttpClient`, TLS + пин листового сертификата + `GET /health` для каждого кандидата;
+  - 2,5 с на попытку; первый кандидат сразу, остальные через 300 мс параллельно; побеждает первый успех; бюджет 5 с;
+  - отказ по пину помечает кандидата как «не дома» (FR-005).
 
-  Tests in `test/data/sync/connection/direct_prober_test.dart` with loopback honest and hostile TLS servers.
-- [X] T025 [US1] Implement `lib/data/sync/connection/connection_path_selector.dart`:
-  - direct candidates via the prober, else Tor when available: platform, onion known, key registered or invite key, not obsolete for this build;
-  - `TorService.start` + `setTarget(onion, 443, key)`, wait for ready ≤ 90 s, yield `wss://<onion>:443/ws`;
-  - publish path events for `ConnectionStatusService`;
-  - the debug-only `nox.forceTor` define skips direct candidates (`kDebugMode` guard).
+  Тесты в `test/data/sync/connection/direct_prober_test.dart` с честным и враждебным TLS-серверами на loopback.
+- [X] T025 [US1] Реализовать `lib/data/sync/connection/connection_path_selector.dart`:
+  - прямые кандидаты через пробник, иначе Tor, если он доступен: платформа, onion известен, ключ зарегистрирован или есть ключ приглашения, эта сборка не признана устаревшей;
+  - `TorService.start` + `setTarget(onion, 443, key)`, ждать готовности ≤ 90 с, выдать `wss://<onion>:443/ws`;
+  - публиковать события пути для `ConnectionStatusService`;
+  - ключ сборки `nox.forceTor`, действующий только в debug, пропускает прямых кандидатов (проверка `kDebugMode`).
 
-  Tests in `test/data/sync/connection/connection_path_selector_test.dart` with fake prober, Tor and clock:
-  - direct wins;
-  - Tor fallback;
-  - no onion → none;
-  - Linux → direct only;
-  - obsolete → no Tor;
-  - forceTor ignored in release mode.
-- [X] T026 [US1] Wire the selector into `lib/data/sync/live_session_starter.dart`:
-  - start the socket with the selector as target provider;
-  - `ApiClient.initBase` follows the selected path;
-  - `TorBridgeEndpoint` is fed from `TorService`.
+  Тесты в `test/data/sync/connection/connection_path_selector_test.dart` с подставными пробником, Tor и часами:
+  - побеждает прямой путь;
+  - запасной путь через Tor;
+  - нет onion → ничего;
+  - Linux → только прямой путь;
+  - сборка устарела → без Tor;
+  - forceTor в release игнорируется.
+- [X] T026 [US1] Встроить селектор в `lib/data/sync/live_session_starter.dart`:
+  - запускать сокет с селектором в роли поставщика цели;
+  - `ApiClient.initBase` следует за выбранным путём;
+  - `TorBridgeEndpoint` получает данные от `TorService`.
 
-  Tests in `test/data/sync/live_session_starter_test.dart`: the socket gets the onion URL when direct fails; file base URL follows.
-- [X] T027 [US1] Make sure commands sent while the path comes up wait instead of failing: the outbox drains on live, and interactive commands surface `connection` only after the bring-up budget (`lib/data/sync/outbox_service.dart` and the socket send path). Test in `test/data/sync/outbox_service_test.dart`.
+  Тесты в `test/data/sync/live_session_starter_test.dart`: сокет получает onion-URL, когда прямой путь не отвечает; базовый URL для файлов следует за ним.
+- [X] T027 [US1] Добиться, чтобы команды, отправленные во время подъёма пути, ждали, а не завершались ошибкой: очередь отправки разбирается, когда соединение становится живым, а интерактивные команды возвращают `connection` только после истечения бюджета подъёма (`lib/data/sync/outbox_service.dart` и путь отправки через сокет). Тест в `test/data/sync/outbox_service_test.dart`.
 
-**Checkpoint**: US1 works with `nox.forceTor` on macOS against a local `noxd` with Tor.
+**Checkpoint**: US1 работает с `nox.forceTor` на macOS; сервер — локальный `noxd` с Tor.
 
 ---
 
 ## Phase 5: User Story 2 — дома напрямую, Tor выключен (Priority: P1)
 
-**Goal**: back on the direct path when it works; Tor stopped; nothing lost.
+**Goal**: возврат на прямой путь, как только он работает; Tor остановлен; ничего не потеряно.
 
-**Independent Test**: quickstart scenario 3; the selector tests with a fake clock.
+**Independent Test**: сценарий 3 из quickstart; тесты селектора с подставными часами.
 
-- [X] T028 [US2] Return to the direct path in `connection_path_selector.dart`:
-  - while on Tor: on `watchNetworkChanges` and every 2 min, probe direct candidates;
-  - when one answers: switch the socket to it (probe verified first), then `TorService.clearTarget` + `stop` once the new connection is live (≤ 10 s).
+- [X] T028 [US2] Возвращаться на прямой путь в `connection_path_selector.dart`:
+  - пока связь идёт через Tor: по `watchNetworkChanges` и каждые 2 мин проверять прямых кандидатов;
+  - когда один из них отвечает: переключить на него сокет (после проверки пробником), затем `TorService.clearTarget` + `stop`, как только новое соединение живо (≤ 10 с).
 
-  Tests with a fake clock and fake network events:
-  - switch happens;
-  - Tor stops within 10 s;
-  - no switch on a hostile direct answer.
-- [X] T029 [US2] On the direct path, a network change probes the current address; if it does not answer, reconnect through the selector. Test in the same file.
-- [X] T030 [US2] Background (iOS/Android) via `AppLifecycleService`:
+  Тесты с подставными часами и подставными событиями сети:
+  - переключение происходит;
+  - Tor останавливается в пределах 10 с;
+  - на враждебный прямой ответ переключения нет.
+- [X] T029 [US2] На прямом пути смена сети запускает проверку текущего адреса; если он не отвечает — переподключение через селектор. Тест в том же файле.
+- [X] T030 [US2] Фоновый режим (iOS/Android) через `AppLifecycleService`:
   - paused → `setDormant(true)`;
-  - resumed → `setDormant(false)` and an immediate reconnect when not live;
-  - a Tor client not ready within 10 s → stop + start from the same dirs.
+  - resumed → `setDormant(false)` и немедленное переподключение, если соединение не живо;
+  - Tor-клиент не готов в пределах 10 с → stop + start из тех же каталогов.
 
-  Desktop ignores it. Tests in `connection_path_selector_test.dart` with a fake lifecycle.
-- [X] T031 [US2] Lossless switch test in `test/data/sync/connection/lossless_switch_test.dart` (the real socket, selector, journal applier, outgoing queue and message repository over a served fake), run over 20 switches (SC-005): a message sent during each switch goes out once (outbox idempotency + replay `since`) and incoming events are not duplicated (seq de-dup).
+  На десктопе это не действует. Тесты в `connection_path_selector_test.dart` с подставным жизненным циклом.
+- [X] T031 [US2] Тест переключения без потерь в `test/data/sync/connection/lossless_switch_test.dart` (настоящие сокет, селектор, код применения журнала, очередь отправки и репозиторий сообщений поверх подставного сервера), прогон на 20 переключениях (SC-005): сообщение, отправленное во время каждого переключения, уходит один раз (идемпотентность очереди отправки + повтор журнала с `since`), а входящие события не дублируются (дубли отбрасываются по seq).
 
 ---
 
 ## Phase 6: User Story 3 — смена адреса ничего не стирает (Priority: P1)
 
-**Goal**: a new server address is learned (through Tor if needed) and the direct path resumes on it; history intact.
+**Goal**: новый адрес сервера становится известен (при необходимости через Tor), и прямой путь возобновляется по нему; история цела.
 
-**Independent Test**: quickstart scenario 8; selector scenario test.
+**Independent Test**: сценарий 8 из quickstart; сценарный тест селектора.
 
-- [X] T032 [US3] Record `last_good` in `ServerAddressesRepository` on every successful direct connection (`connection_path_selector.dart`). Candidate order is `last_good`, then the server list, then the link address. Tests in the repository and selector tests.
-- [X] T033 [US3] Scenario test in `test/data/sync/connection/connection_path_selector_test.dart`: the old address is dead → Tor → `server.addresses` brings a new direct address → the next probe switches to it; the epoch does not change (fingerprint), so no wipe.
+- [X] T032 [US3] Записывать `last_good` в `ServerAddressesRepository` при каждом успешном прямом соединении (`connection_path_selector.dart`). Порядок кандидатов: `last_good`, затем список сервера, затем адрес из ссылки. Тесты — в тестах репозитория и селектора.
+- [X] T033 [US3] Сценарный тест в `test/data/sync/connection/connection_path_selector_test.dart`: старый адрес мёртв → Tor → `server.addresses` приносит новый прямой адрес → следующая проверка переключает на него; эпоха не меняется (отпечаток), поэтому стирания нет.
 
 ---
 
 ## Phase 7: User Story 4 — второе устройство из другой сети (Priority: P2)
 
-**Goal**: version 2 links pair from another network; invites ask for onion; home-only invites say so.
+**Goal**: по ссылкам версии 2 спаривание проходит из другой сети; приглашения запрашиваются с onion; приглашения «только дома» прямо об этом говорят.
 
-**Independent Test**: quickstart scenarios 4–6.
+**Independent Test**: сценарии 4–6 из quickstart.
 
-- [X] T034 [P] [US4] Support version 2 in `lib/general/pairing/pairing_link.dart`: `onionPub`, `onionPort`, `oneTimePriv`; lengths 122/134/119+N. Tests in `test/general/pairing/pairing_link_test.dart`:
-  - replace 'a future version is refused' with v2 vectors built like the server's (IPv4, IPv6, DNS);
-  - version 3 is still refused;
-  - v1 is unchanged.
-- [X] T035 [US4] Sign in with a v2 link in `lib/data/repository/app/auth_repository_impl.dart` `signIn` and `lib/data/sync/live_identity_handshake.dart`:
-  - store `session.invite_onion` (derived through `TorService.onionFromPublicKey`; skipped where Tor is unsupported) and `session.invite_access_key`;
-  - the selector uses the invite key when the device has no registered key;
-  - after the `pair` reply, success or not, erase both invite records and switch the Tor target to the own key.
+- [X] T034 [P] [US4] Поддержать версию 2 в `lib/general/pairing/pairing_link.dart`: `onionPub`, `onionPort`, `oneTimePriv`; длины 122/134/119+N. Тесты в `test/general/pairing/pairing_link_test.dart`:
+  - заменить 'a future version is refused' векторами v2, построенными так же, как на сервере (IPv4, IPv6, DNS);
+  - версия 3 по-прежнему отвергается;
+  - v1 не изменилась.
+- [X] T035 [US4] Вход по ссылке v2 в `lib/data/repository/app/auth_repository_impl.dart` `signIn` и `lib/data/sync/live_identity_handshake.dart`:
+  - одалживать селектору onion-адрес (выводится через `TorService.onionFromPublicKey`; там, где Tor не поддерживается, пропускается) и одноразовый ключ — только в памяти, `ConnectionPathSelector.lendInvite`; на диск они не пишутся (FR-021);
+  - селектор использует ключ приглашения, если у устройства нет зарегистрированного ключа;
+  - после ответа на `pair`, успешного или нет, забрать одолженное (`forgetLentKey`: ключ уходит из Tor-клиента, копия затирается) и переключить цель Tor на собственный ключ.
 
-  Tests in `test/data/repository/app/auth_repository_impl_test.dart` and the handshake test.
-- [X] T036 [US4] Request onion invites:
-  - `DeviceRepository.inviteDevice` returns `DeviceInvite` and sends `{"onion": true}` (`lib/domain/repository/device/device_repository.dart`, `lib/data/repository/device/device_repository_impl.dart`);
-  - `DevicesBloc` and `DevicesState` carry `inviteHomeOnly` (`lib/presentation/pages/devices_page/bloc/`);
-  - `AppInviteCardWidget` shows `devicesInviteHomeOnly` when home-only (`lib/presentation/widgets/settings/app_invite_card_widget.dart`);
+  Тесты в `test/data/repository/app/auth_repository_impl_test.dart` и в тесте рукопожатия.
+- [X] T036 [US4] Запрашивать приглашения с onion:
+  - `DeviceRepository.inviteDevice` возвращает `DeviceInvite` и отправляет `{"onion": true}` (`lib/domain/repository/device/device_repository.dart`, `lib/data/repository/device/device_repository_impl.dart`);
+  - `DevicesBloc` и `DevicesState` несут `inviteHomeOnly` (`lib/presentation/pages/devices_page/bloc/`);
+  - `AppInviteCardWidget` показывает `devicesInviteHomeOnly` для приглашения «только дома» (`lib/presentation/widgets/settings/app_invite_card_widget.dart`);
   - ARB EN/UK.
 
-  Tests: `device_repository_impl_test.dart`, `devices_bloc_test.dart`, `app_invite_card_widget_test.dart`. Goldens: the invite card widget with and without the note, plus the devices page mobile and desktop with the note.
-- [X] T037 [US4] Login: a v1 link whose server does not answer, or answers with a key the link does not name, shows `loginHomeNetworkOnly` (`lib/presentation/pages/login_page/bloc/login_bloc.dart`, `login_page.dart`, ARB EN/UK). Tests in `test/presentation/pages/login_page/bloc/login_bloc_test.dart`.
+  Тесты: `device_repository_impl_test.dart`, `devices_bloc_test.dart`, `app_invite_card_widget_test.dart`. Голдены: виджет карточки приглашения с пометкой и без неё, а также страница устройств, мобильная и десктопная, с пометкой.
+- [X] T037 [US4] Вход: если сервер ссылки v1 не отвечает или отвечает ключом, которого ссылка не называет, показывается `loginHomeNetworkOnly` (`lib/presentation/pages/login_page/bloc/login_bloc.dart`, `login_page.dart`, ARB EN/UK). Тесты в `test/presentation/pages/login_page/bloc/login_bloc_test.dart`.
 
 ---
 
 ## Phase 8: User Story 5 — ключ доступа живёт только на устройстве (Priority: P2)
 
-**Goal**: the key is created and kept on the device, re-registered when refused, and wiped on logout with all Tor state.
+**Goal**: ключ создаётся и хранится на устройстве, при отказе регистрируется заново, а при выходе стирается вместе со всем состоянием Tor.
 
-**Independent Test**: registrar tests; logout tests; quickstart scenario 7.
+**Independent Test**: тесты регистратора; тесты выхода; сценарий 7 из quickstart.
 
-- [X] T038 [US5] Wipe on logout in `lib/data/repository/app/auth_repository_impl.dart`: right after `LiveSessionStarter.stop`, call `TorService.stop()` and delete the Tor state and cache directories. `clear()` already covers the keys and addresses (T016). Tests in `test/data/repository/app/auth_repository_impl_test.dart`: Tor stopped, dirs deleted, keys gone (SC-007).
-- [X] T039 [US5] Handle a key the service does not know: a `wrong_client_auth` from the bridge marks the key unregistered, so the next direct greeting re-registers it, and the selector stops retrying Tor until then (`access_key_registrar.dart`, `connection_path_selector.dart`). Tests in both test files.
+- [X] T038 [US5] Стирание при выходе в `lib/data/repository/app/auth_repository_impl.dart`: сразу после `LiveSessionStarter.stop` вызвать `TorService.stop()` и удалить каталоги состояния и кэша Tor. `clear()` уже покрывает ключи и адреса (T016). Тесты в `test/data/repository/app/auth_repository_impl_test.dart`: Tor остановлен, каталоги удалены, ключей нет (SC-007).
+- [X] T039 [US5] Обработать ключ, которого сервис не знает: `wrong_client_auth` от моста, не прекращающийся 5 минут подряд, помечает ключ незарегистрированным (раньше — нет: только что принятый ключ появляется в описании сервиса с задержкой; серию обрывает любое приветствие и новый ключ), чтобы следующее прямое приветствие зарегистрировало его заново, а селектор до тех пор не повторяет попытки через Tor (`access_key_registrar.dart`, `connection_path_selector.dart`). Тесты в обоих тестовых файлах.
 
 ---
 
 ## Phase 9: User Story 6 — видно, каким путём идёт связь (Priority: P2)
 
-**Goal**: only deviations are shown — a `Tor` badge and `Connecting…` — in the corner on both widths, EN/UK. «No connection» is smoothed; there is an update prompt for an obsolete client.
+**Goal**: показываются только отклонения — бейдж `Tor` и `Connecting…` — в углу на обеих ширинах, EN/UK. Баннер «No connection» сглажен; при устаревшем клиенте — просьба обновиться.
 
-**Independent Test**: indicator goldens and widget tests; quickstart scenarios 2–3 visually.
+**Independent Test**: голдены и виджет-тесты индикатора; сценарии 2–3 из quickstart — визуально.
 
-- [X] T040 [P] [US6] Add the keys from contracts/ui-states.md to `lib/l10n/app_en.arb` and `lib/l10n/app_uk.arb` (same key sets), then run `make generate`.
-- [X] T041 [US6] Implement the indicator:
-  - `ConnectionIndicatorBloc` (Freezed, over `ConnectionStatusService`): `lib/presentation/widgets/state/connection_indicator/bloc/`;
-  - `AppConnectionIndicatorWidget`: `lib/presentation/widgets/state/app_connection_indicator_widget.dart`, per contracts/ui-states.md:
-    - states: nothing / `Tor` / `Connecting…` / `Connecting…` + `Tor`;
-    - tokens only;
-    - semantics label; 48×48 tap target;
-    - tap → bottom sheet on narrow, dialog on wide, with `connectionInfo*`; the local-network line on iOS and macOS only.
+- [X] T040 [P] [US6] Добавить ключи из contracts/ui-states.md в `lib/l10n/app_en.arb` и `lib/l10n/app_uk.arb` (одинаковые наборы ключей), затем выполнить `make generate`.
+- [X] T041 [US6] Реализовать индикатор:
+  - `ConnectionIndicatorBloc` (Freezed, поверх `ConnectionStatusService`): `lib/presentation/widgets/state/connection_indicator/bloc/`;
+  - `AppConnectionIndicatorWidget`: `lib/presentation/widgets/state/app_connection_indicator_widget.dart`, по contracts/ui-states.md:
+    - состояния: ничего / `Tor` / `Connecting…` / `Connecting…` + `Tor`;
+    - только токены;
+    - подпись для экранного диктора; область касания 48×48;
+    - нажатие → нижний лист на узкой ширине, диалог на широкой, с `connectionInfo*`; строка о локальной сети — только на iOS и macOS.
 
-  Tests:
-  - widget tests in `test/presentation/widgets/state/app_connection_indicator_widget_test.dart`, including one under the `uk` locale (SC-006);
-  - bloc test;
-  - widget goldens: four states, light and dark;
-  - accessibility checks next to `test/presentation/widgets/accessibility_test.dart`.
-- [X] T042 [US6] Place the indicator:
-  - narrow: chats list app bar before the account avatar (`lib/presentation/pages/chats_list_page/chats_list_page.dart`) and chat thread app bar before the invite action (`lib/presentation/pages/chat_thread_page/chat_thread_page.dart`);
-  - wide: an optional `trailing` on `AppWindowTitlebarWidget` (`lib/presentation/widgets/shell/app_window_titlebar_widget.dart`), filled by `TabBarShell` (`lib/presentation/widgets/shell/tab_bar_shell_widget.dart`).
+  Тесты:
+  - виджет-тесты в `test/presentation/widgets/state/app_connection_indicator_widget_test.dart`, в том числе один в локали `uk` (SC-006);
+  - блок-тест;
+  - голдены виджета: четыре состояния, светлая и тёмная тема;
+  - проверки доступности рядом с `test/presentation/widgets/accessibility_test.dart`.
+- [X] T042 [US6] Разместить индикатор:
+  - на узкой ширине: в верхней панели списка чатов перед аватаром аккаунта (`lib/presentation/pages/chats_list_page/chats_list_page.dart`) и в верхней панели переписки перед действием приглашения (`lib/presentation/pages/chat_thread_page/chat_thread_page.dart`);
+  - на широкой ширине: необязательный `trailing` у `AppWindowTitlebarWidget` (`lib/presentation/widgets/shell/app_window_titlebar_widget.dart`), его заполняет `TabBarShell` (`lib/presentation/widgets/shell/tab_bar_shell_widget.dart`).
 
-  Tests in `app_window_titlebar_widget_test.dart` and the shell test. Page goldens:
-  - 5.1 and 5.2 mobile with `online(tor)` and `connecting(tor)`;
-  - shell desktop with the same two states.
-- [X] T043 [US6] Drive banners from `ConnectionStatusService` instead of `!phase.isCurrent` in `ChatsListBloc`, `ChatThreadBloc` (the outbox flush edge stays on «became current») and `ChatCardBloc`. Update their tests and fakes. The «No connection» banner shows only for `offline`.
-- [X] T044 [US6] Show `connectionTorObsolete` as a notice strip on 5.1 (both widths) when `torObsolete`. Tests plus goldens mobile and desktop.
+  Тесты в `app_window_titlebar_widget_test.dart` и в тесте оболочки. Голдены страниц:
+  - 5.1 и 5.2, мобильные, с `online(tor)` и `connecting(tor)`;
+  - оболочка, десктоп, с теми же двумя состояниями.
+- [X] T043 [US6] Управлять баннерами через `ConnectionStatusService` вместо `!phase.isCurrent` в `ChatsListBloc`, `ChatThreadBloc` (сброс очереди отправки по-прежнему срабатывает на переходе «фаза стала текущей») и `ChatCardBloc`. Обновить их тесты и фейки. Баннер «No connection» показывается только при `offline`.
+- [X] T044 [US6] Показывать `connectionTorObsolete` полосой-уведомлением на 5.1 (обе ширины) при `torObsolete`. Тесты и голдены: мобильный и десктопный.
 
-**Checkpoint**: `make gate` and `make golden-verify` green; all user stories work independently.
+**Checkpoint**: `make gate` и `make golden-verify` зелёные; все истории работают независимо.
 
 ---
 
 ## Phase 10: Polish & Cross-Cutting Concerns
 
-- [X] T045 [P] Update the blueprints in `docs/blueprints/mobile/`:
-  - `14-networking-and-auth.md`: path selection, Tor transport, bridge, lifecycle, network changes;
-  - `04-data-layer.md`: onion dial in §7а pinning;
-  - `02-dependency-injection.md`: new registrations and env splits;
-  - `01-stack-and-tooling.md`: Rust toolchain, native assets, workspace package;
-  - `09-build-and-secrets-infra.md`: Rust prerequisite, NDK, CI compile-check needs rustup.
-- [X] T046 [P] Update the design docs:
-  - `docs/design/spec/` (5.1, 5.2, devices invite, shell titlebar; decisions table);
+- [X] T045 [P] Обновить блюпринты в `docs/blueprints/mobile/`:
+  - `14-networking-and-auth.md`: выбор пути, транспорт Tor, мост, жизненный цикл, смены сети;
+  - `04-data-layer.md`: подключение к onion в §7а о пиннинге;
+  - `02-dependency-injection.md`: новые регистрации и разделение по окружениям;
+  - `01-stack-and-tooling.md`: тулчейн Rust, native assets, пакет в workspace;
+  - `09-build-and-secrets-infra.md`: Rust как условие сборки, NDK, rustup для compile-check в CI.
+- [X] T046 [P] Обновить дизайн-документы:
+  - `docs/design/spec/` (5.1, 5.2, приглашение устройства, заголовок окна оболочки; таблица решений);
   - `docs/design/system/nox-mobile-screens/screens/5-1-chats.md`, `5-2-thread.md`, `7-8-devices.md`;
   - `docs/design/system/nox-desktop-screens/screens/01-chats.md`, `09-devices.md`.
 
-  Content: indicator states and placement, the home-only invite note, the obsolete strip.
-- [X] T047 [P] Update `CLAUDE.md` (implementation notes: Tor transport, path selection, epoch by fingerprint, access key, build prerequisites) and `docs/client-backend/roadmap-tor.md` (stage 2 status).
-- [X] T048 Run the quickstart end-to-end scenarios on macOS, the iOS simulator and the Android emulator against a local `noxd` with Tor. Record bring-up timings and memory in `research.md` «Замер», and note anything that differs.
-- [X] T049 Run the gates: `make gate`, `make golden-verify`, `make tor-test`. The Go gate is not touched: no Go changes.
-- [X] T050 Keep the onion address and keys out of the logs (FR-013, SC-008, Constitution I):
-  - Audit every `logRepository` call in `lib/data/remote/socket/`, `lib/data/remote/pinned_http_client.dart`, `lib/data/sync/connection/` and `lib/data/service/tor/`.
-  - Hosts ending in `.onion` are logged as `[onion]`; keys and secrets are never logged.
-  - Test in `test/data/sync/connection/log_redaction_test.dart`: capture `LogRepository` output through a selector run with Tor, a pairing with a v2 link, and a bridge failure; assert there is no `.onion` and no base64 key material.
-- [X] T051 [P] Prepare CI for the native package for when the paused workflows are re-enabled:
-  - `.github/workflows/compile-check.yml`: install rustup with the toolchain from `packages/nox_tor/rust/rust-toolchain.toml`; on Android, also NDK 28.2 before the build. The Linux job needs nothing.
-  - `.github/workflows/ci.yml`: the macOS gate job needs rustup too, because `flutter test` runs the hook.
-- [ ] T052 Put the owner's device checks (quickstart «Проверки на устройстве») into the PR description: iOS local-network prompt and background, mobile network away from home, Windows build and bootstrap.
+  Содержание: состояния и размещение индикатора, пометка «только дома» на приглашении, полоса об устаревшем Tor-клиенте.
+- [X] T047 [P] Обновить `CLAUDE.md` (заметки о реализации: транспорт Tor, выбор пути, эпоха по отпечатку, ключ доступа, условия сборки) и `docs/client-backend/roadmap-tor.md` (статус этапа 2).
+- [X] T048 Прогнать сквозные сценарии quickstart на macOS, симуляторе iOS и эмуляторе Android; сервер — локальный `noxd` с Tor. Записать время подъёма и память в `research.md`, «Замер», и отметить все расхождения.
+- [X] T049 Прогнать гейты: `make gate`, `make golden-verify`, `make tor-test`. Гейт Go не затрагивается: изменений в Go нет.
+- [X] T050 Не допускать onion-адрес и ключи в логи (FR-013, SC-008, конституция, Принцип I):
+  - Проверить каждый вызов `logRepository` в `lib/data/remote/socket/`, `lib/data/remote/pinned_http_client.dart`, `lib/data/sync/connection/` и `lib/data/service/tor/`.
+  - Хосты, оканчивающиеся на `.onion`, пишутся в лог как `[onion]`; ключи и секреты не пишутся никогда.
+  - Тест в `test/data/sync/connection/log_redaction_test.dart`: перехватить вывод `LogRepository` при прогоне селектора с Tor, спаривании по ссылке v2 и сбое моста; убедиться, что в нём нет `.onion` и ключевого материала в base64.
+- [X] T051 [P] Подготовить CI к нативному пакету — на тот момент, когда приостановленные workflow снова включат:
+  - `.github/workflows/compile-check.yml`: установить rustup с тулчейном из `packages/nox_tor/rust/rust-toolchain.toml`; для Android — ещё и NDK 28.2 до сборки. Заданию для Linux ничего не нужно.
+  - `.github/workflows/ci.yml`: заданию гейта на macOS тоже нужен rustup, потому что `flutter test` запускает хук.
+- [X] T052 Перенести в описание PR проверки владельца на устройствах (quickstart, «Проверки на устройстве»): запрос доступа к локальной сети и фоновый режим на iOS, мобильная сеть вне дома, сборка и подъём Tor на Windows.
 
 ---
 
@@ -343,55 +343,55 @@
 
 ### Phase Dependencies
 
-- **Setup (1)** — no dependencies.
-- **US7 Замер (2)** — after Setup. **Gates everything after it** (+25 MB).
-- **Foundational (3)** — after the gate. Blocks all stories.
-- **US1 (4)** — after Foundational. US2 and US3 build on the selector from US1.
-- **US2 (5), US3 (6)** — after US1; independent of each other.
-- **US4 (7), US5 (8)** — after Foundational and US1 (they use the selector); independent of each other.
-- **US6 (9)** — after Foundational (`ConnectionStatusService`); can go in parallel with US2–US5.
-- **Polish (10)** — after the stories.
+- **Setup (1)** — без зависимостей.
+- **US7 Замер (2)** — после Setup. **Запирает всё последующее** (+25 МБ).
+- **Foundational (3)** — после гейта. Блокирует все истории.
+- **US1 (4)** — после Foundational. US2 и US3 строятся на селекторе из US1.
+- **US2 (5), US3 (6)** — после US1; друг от друга не зависят.
+- **US4 (7), US5 (8)** — после Foundational и US1 (используют селектор); друг от друга не зависят.
+- **US6 (9)** — после Foundational (`ConnectionStatusService`); может идти параллельно с US2–US5.
+- **Polish (10)** — после историй.
 
 ### Within Each User Story
 
-Tests come with each task, in the same change. Models come before services, and services before UI. The gates (`make gate` + `make golden-verify`) run before every commit that touches Dart.
+Тесты идут вместе с каждой задачей, в том же изменении. Модели — раньше сервисов, сервисы — раньше UI. Гейты (`make gate` + `make golden-verify`) прогоняются перед каждым коммитом, который затрагивает Dart.
 
 ### Parallel Opportunities
 
-- T004 and T005 in Setup.
-- T008 in Phase 2, beside T006 and T007 in separate files.
-- T013, T014 and T017 in Foundational.
-- T024 in US1 (independent file).
-- T034 in US4.
-- T040 in US6.
-- T045, T046, T047 and T051 in Polish.
+- T004 и T005 в Setup.
+- T008 в Phase 2 — рядом с T006 и T007, файлы разные.
+- T013, T014 и T017 в Foundational.
+- T024 в US1 (независимый файл).
+- T034 в US4.
+- T040 в US6.
+- T045, T046, T047 и T051 в Polish.
 
 ## Parallel Example: User Story 6
 
 ```text
-Task: "T040 Add the connection keys to app_en.arb and app_uk.arb"
-Task (after T040): "T041 Implement ConnectionIndicatorBloc and AppConnectionIndicatorWidget"
-Task (after T041): "T042 Place the indicator on chats list, thread and the window titlebar"
-Task (independent of T041): "T043 Drive the banners from ConnectionStatusService"
+Task: "T040 Добавить ключи соединения в app_en.arb и app_uk.arb"
+Task (после T040): "T041 Реализовать ConnectionIndicatorBloc и AppConnectionIndicatorWidget"
+Task (после T041): "T042 Разместить индикатор в списке чатов, в переписке и в заголовке окна"
+Task (независимо от T041): "T043 Управлять баннерами через ConnectionStatusService"
 ```
 
 ## Implementation Strategy
 
 ### MVP First
 
-Setup → measurement gate → Foundational → US1. That gives the conversation through Tor away from home with `nox.forceTor` on macOS.
+Setup → гейт замера → Foundational → US1. Это даёт переписку через Tor вне дома с `nox.forceTor` на macOS.
 
 ### Incremental Delivery
 
-1. US2 + US3: the path returns home, and addresses change safely.
-2. US4 + US5: pairing from another network; key lifecycle.
-3. US6: the visible connection state.
-4. Polish: docs, end-to-end runs and the owner's device checks.
+1. US2 + US3: путь возвращается домой, а адреса меняются безопасно.
+2. US4 + US5: спаривание из другой сети; жизненный цикл ключа.
+3. US6: видимое состояние связи.
+4. Polish: документы, сквозные прогоны и проверки владельца на устройствах.
 
-Each phase ends with green gates and its own commit.
+Каждая фаза заканчивается зелёными гейтами и собственным коммитом.
 
 ## Notes
 
-- Windows is not buildable from this machine: `cargo check` for MSVC fails on C headers. Its verification is in T052 for the owner.
-- Device-only checks (iOS background, the local-network prompt, a real mobile network) are listed for the owner in T052.
-- Commit after each phase. Never commit with red gates.
+- Windows с этой машины не собирается: `cargo check` для MSVC падает на заголовках C. Проверка Windows — в T052, за владельцем.
+- Проверки, возможные только на устройстве (фоновый режим iOS, запрос доступа к локальной сети, настоящая мобильная сеть), перечислены для владельца в T052.
+- Коммит — после каждой фазы. С красными гейтами не коммитить никогда.

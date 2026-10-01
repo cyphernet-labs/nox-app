@@ -14,7 +14,7 @@ Detail scaffold (back + title). One group holding every device, the current one 
 - `error` — Couldn't load your devices.
 - `action error` — Couldn't revoke that device. Try again. (its own line above the list, never the list's)
 - `invite` — QR card, link valid for 10 minutes. Always asked for with the server's onion address (phase 040): such a link (version 2) works from any network
-- `invite-home-only` — the server gave an ordinary link (its Tor is off or not connected): a note under the link, “This link works only on your home network.” (`onSurfaceVariant`)
+- `invite-home-only` — the server gave an ordinary link (its Tor is off or not connected): a note under the card's message, above the link itself: “This link works only on your home network.” (`onSurfaceVariant`)
 - `Revoke` is destructive (`error`), not the brand accent: it cannot be undone without a new pairing link, and on the current device it is a logout
 
 ## Behavior
