@@ -148,20 +148,68 @@ void main() {
       expect(pinned.refusals, 0);
     });
 
-    test('a dial that never opens says so, and raises nothing on its own', () async {
-      // `opened` is what lets a pairing be presented again on the next
-      // connection. Read from the channel's `ready`, whose error must stay
-      // handled: on every rung of the reconnect ladder it fails once more.
+    test('closing a dial still under way returns at once, and the dial failing raises nothing', () async {
+      // The channel's own close follows the dial, and one that then fails
+      // never completes it: awaited, that wedged a reconnect, a logout half-way
+      // through its wipe and a failed sign-in's rollback.
+      final silent = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      final accepted = <Socket>[];
+      silent.listen(accepted.add);
+      addTearDown(silent.close);
       final pinned = PinnedHttpClient()..pinTo(_fingerprint);
       final errors = <Object>[];
       await runZonedGuarded(() async {
-        final connection = WebSocketChannelFactory(pinned).connect(Uri.parse('wss://127.0.0.1:1/ws'));
-        await expectLater(connection.frames.first, throwsA(anything));
-        await Future<void>.delayed(const Duration(milliseconds: 50));
-        expect(connection.opened, isFalse);
+        final connection = WebSocketChannelFactory(pinned).connect(Uri.parse('wss://127.0.0.1:${silent.port}/ws'));
+        connection.frames.listen((_) {}, onError: (Object _) {});
+        while (accepted.isEmpty) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        connection.add('{"cmd":"pair"}');
+
+        await connection.close().timeout(const Duration(seconds: 1));
+
+        for (final socket in accepted) {
+          socket.destroy();
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 200));
       }, (error, _) => errors.add(error));
 
       expect(errors, isEmpty);
+    });
+
+    test('a dial abandoned before it opened sends nothing once it does', () async {
+      // The channel flushes what it was handed as soon as the upgrade
+      // completes, close or no close: a pairing token given to a dial the app
+      // had already given up on reached the server behind its back.
+      final context = SecurityContext()
+        ..useCertificateChainBytes(File('$_fixtures/valid.pem').readAsBytesSync())
+        ..usePrivateKeyBytes(File('$_fixtures/server_key.pem').readAsBytesSync());
+      final server = await HttpServer.bindSecure(InternetAddress.loopbackIPv4, 0, context);
+      addTearDown(() => server.close(force: true));
+      final upgrade = Completer<void>();
+      final received = <Object?>[];
+      var upgraded = false;
+      server.listen((request) async {
+        await upgrade.future;
+        final socket = await WebSocketTransformer.upgrade(request);
+        upgraded = true;
+        socket.listen(received.add, onError: (Object _) {});
+      });
+      final pinned = PinnedHttpClient()..pinTo(_fingerprint);
+      final connection = WebSocketChannelFactory(pinned).connect(Uri.parse('wss://127.0.0.1:${server.port}/ws'));
+      connection.frames.listen((_) {}, onError: (Object _) {});
+      connection.add('{"cmd":"pair"}');
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      await connection.close().timeout(const Duration(seconds: 1));
+      upgrade.complete();
+      for (var i = 0; i < 100 && !upgraded; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+
+      expect(upgraded, isTrue, reason: 'the dial did complete');
+      expect(received, isEmpty, reason: 'nothing it was handed went out');
     });
   });
 }

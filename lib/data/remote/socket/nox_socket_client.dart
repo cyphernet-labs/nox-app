@@ -243,49 +243,62 @@ class NoxSocketClient {
   /// so a device that paired through Tor keeps its way in once the invite's
   /// one-time key is gone (contract §2.1, §8A).
   ///
-  /// A connection that never opened takes nothing with it: the frame never
-  /// left this device, so the token is presented again on the next one, within
-  /// the same budget. Through Tor one dial can run out its time while the next
-  /// gets through, and a pairing that gave up there sent the person off to try
-  /// again by hand. A connection that DID open may have delivered the token,
-  /// which is one-shot, so its loss is reported - a second presentation would
-  /// come back refused as spent.
+  /// A connection lost under the pairing does not lose the pairing: the token
+  /// is presented again on the next connection, within ONE budget for the
+  /// whole attempt. That is safe whatever became of the first presentation -
+  /// the server answers the same token from the same device with the same
+  /// identity (contract §8A) - and it is what keeps a dial that ran out its
+  /// time through Tor, or a network change mid-pairing, from sending the
+  /// person off to try again by hand.
   Future<CommandReply> pair({required String token, required String deviceKey, required String platform, String? accessKey}) async {
     final data = <String, dynamic>{'token': token, 'device_key': deviceKey, 'platform': platform, 'access_key': ?accessKey};
     final waited = Stopwatch()..start();
+    var slow = false;
+    // The slow budget from the moment the slow path shows, and kept: between
+    // connections the socket no longer knows which way the last one went.
+    Duration left() {
+      slow = slow || _slowPath;
+      return (slow ? slowPathBudget : sendTimeout) - waited.elapsed;
+    }
+
     while (true) {
-      final connection = await _awaitConnection();
-      // Read now, while the dial is current: the teardown that fails the
-      // command also forgets which address it went to.
-      final budget = _slowPath ? slowPathBudget : sendTimeout;
+      final connection = await _awaitConnection(left: left);
       try {
-        return await _sendOnce(isGreeting: true, via: connection, 'pair', data);
+        return await _sendOnce(isGreeting: true, via: connection, 'pair', data, left: left);
       } on SocketUnavailableException {
-        if (connection.opened || !_started || waited.elapsed >= budget) rethrow;
-        logRepository.debug(target: this, message: 'socket: the connection carrying pair never opened, presenting it on the next');
+        if (!_started || left() <= Duration.zero) rethrow;
+        logRepository.debug(target: this, message: 'socket: the connection carrying pair went away, presenting it again');
       }
     }
   }
 
   /// [via] pins the command to one connection: the greeting answers a
   /// challenge that only that connection's server session knows, so it must
-  /// never wait for - or go out on - the next one.
-  Future<CommandReply> _sendOnce(String cmd, Map<String, dynamic> data, {bool isGreeting = false, SocketConnection? via}) async {
+  /// never wait for - or go out on - the next one. [left] is what remains of a
+  /// budget the caller spans over several sends.
+  Future<CommandReply> _sendOnce(
+    String cmd,
+    Map<String, dynamic> data, {
+    bool isGreeting = false,
+    SocketConnection? via,
+    Duration Function()? left,
+  }) async {
     if (!isGreeting) await _awaitGreeting();
     final connection = via ?? (isGreeting ? await _awaitConnection() : _connection);
     if (connection == null || (via != null && !identical(_connection, via))) {
       throw const SocketUnavailableException('no connection');
     }
+    // `pair` goes out before any greeting - possibly before the connection
+    // itself is up, the connection holding the frame meanwhile. Through Tor
+    // that dial alone can outlast the short timeout (research decision 5), and
+    // a pairing that timed out while its frame was still on the way would tell
+    // the person to try again over a pairing that is about to succeed.
+    final wait = left?.call() ?? (isGreeting && _slowPath ? slowPathBudget : sendTimeout);
+    if (wait <= Duration.zero) throw const SocketUnavailableException('no time left');
     final id = _nextId++;
     final completer = Completer<CommandReply>();
     _pending[id] = completer;
     connection.add(jsonEncode(<String, dynamic>{'id': id, 'cmd': cmd, 'data': data}));
-    // `pair` goes out before any greeting - possibly before the connection
-    // itself is up, the channel queueing the frame meanwhile. Through Tor that
-    // dial alone can outlast the short timeout (research decision 5), and a
-    // pairing that timed out while its frame was still on the way would tell
-    // the person to try again over a pairing that is about to succeed.
-    final wait = isGreeting && _slowPath ? slowPathBudget : sendTimeout;
     try {
       return await completer.future.timeout(wait);
     } on TimeoutException {
@@ -326,19 +339,21 @@ class NoxSocketClient {
   /// restart that superseded the attempt a caller was counting on. Failing at
   /// once there told the person their pairing did not work while the channel
   /// was a moment from opening. Bounded like the greeting wait: the short
-  /// timeout, or the slow-path budget while Tor comes up.
-  Future<SocketConnection> _awaitConnection() async {
+  /// timeout, or the slow-path budget while Tor comes up - or by [left], a
+  /// caller's own budget spanning several connections.
+  Future<SocketConnection> _awaitConnection({Duration Function()? left}) async {
     final waited = Stopwatch()..start();
+    final remaining = left ?? () => (_slowPath ? slowPathBudget : sendTimeout) - waited.elapsed;
     while (true) {
       final connection = _connection;
       if (connection != null) return connection;
       if (!_started) throw const SocketUnavailableException('no connection');
-      final left = (_slowPath ? slowPathBudget : sendTimeout) - waited.elapsed;
-      if (left <= Duration.zero) throw const SocketUnavailableException('no connection');
+      final wait = remaining();
+      if (wait <= Duration.zero) throw const SocketUnavailableException('no connection');
       try {
-        await _opened.stream.first.timeout(left);
+        await _opened.stream.first.timeout(wait);
       } on TimeoutException {
-        if (!_slowPath) throw const SocketUnavailableException('no connection');
+        // Looked at again: the slow path may have shown meanwhile.
       }
     }
   }
@@ -450,6 +465,8 @@ class NoxSocketClient {
 
   /// Counts connections, so a frame can say which one it came from.
   int _connectionEpoch = 0;
+
+  static const Duration _closeBound = Duration(seconds: 2);
 
   /// Consecutive greetings this client could not read. Reset by a successful
   /// one, because a peer that greets properly once is not the broken case.
@@ -827,7 +844,9 @@ class NoxSocketClient {
     }
     _frames = null;
     try {
-      await _connection?.close();
+      // Bounded: a peer that never answers the close must not hold the reset -
+      // and with it a reconnect or a logout - for as long as it likes.
+      await _connection?.close().timeout(_closeBound);
     } on Object catch (e) {
       logRepository.debug(target: this, message: 'socket: connection would not close (${e.runtimeType})');
     }

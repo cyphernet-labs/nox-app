@@ -14,10 +14,6 @@ abstract class SocketConnection {
   Stream<dynamic> get frames;
   void add(String frame);
   Future<void> close();
-
-  /// Whether the connection ever opened. A frame added to one that never did
-  /// never left the device.
-  bool get opened;
 }
 
 /// Opens a [SocketConnection].
@@ -77,20 +73,32 @@ class WebSocketChannelFactory implements SocketChannelFactory {
 
 class _IoSocketConnection implements SocketConnection {
   _IoSocketConnection(this._channel, this._wasRefused) {
-    // Read for [opened] only: the app learns that a connection failed from the
-    // frames stream, which is the one place that also carries frames. The
-    // error is handled here because the channel completes `ready` with it as
-    // well, and an error on a future with no listener is an unhandled zone
-    // error - raised on EVERY rung of the reconnect ladder while offline, and
-    // on every pin refusal. The failure itself is still reported below, once.
-    _channel.ready.then<void>((_) => _opened = true, onError: (Object _) {});
+    // The app learns that a connection failed from the frames stream, which is
+    // the one place that also carries frames. The error is handled here
+    // because the channel completes `ready` with it as well, and an error on a
+    // future with no listener is an unhandled zone error - raised on EVERY rung
+    // of the reconnect ladder while offline, and on every pin refusal. The
+    // failure itself is still reported below, once.
+    _channel.ready.then<void>((_) {
+      if (_closed) return;
+      _opened = true;
+      for (final frame in _held) {
+        _channel.sink.add(frame);
+      }
+      _held.clear();
+    }, onError: (Object _) => _held.clear());
   }
 
   final IOWebSocketChannel _channel;
-  bool _opened = false;
 
-  @override
-  bool get opened => _opened;
+  /// Frames handed over before the connection opened, held HERE rather than in
+  /// the channel. The channel's own buffer is flushed once the upgrade
+  /// completes even after a close, so a frame given to a dial the app had
+  /// already abandoned - a pairing token above all - would still reach the
+  /// server, behind the app's back.
+  final List<String> _held = <String>[];
+  bool _opened = false;
+  bool _closed = false;
 
   /// Whether the pin refused a certificate since this connection was started.
   final bool Function() _wasRefused;
@@ -105,10 +113,29 @@ class _IoSocketConnection implements SocketConnection {
   );
 
   @override
-  void add(String frame) => _channel.sink.add(frame);
+  void add(String frame) {
+    if (_closed) return;
+    if (_opened) {
+      _channel.sink.add(frame);
+    } else {
+      _held.add(frame);
+    }
+  }
 
+  /// Returns at once while the dial is still under way. The channel's close
+  /// follows the dial, and one that then fails never completes it: awaited,
+  /// that wedged the reconnect it was part of, a logout half-way through its
+  /// wipe, and a failed sign-in's rollback. A dial that does complete is
+  /// closed by this same call, with nothing sent.
   @override
-  Future<void> close() => _channel.sink.close();
+  Future<void> close() {
+    _closed = true;
+    _held.clear();
+    final closing = _channel.sink.close();
+    if (_opened) return closing;
+    closing.ignore();
+    return Future<void>.value();
+  }
 }
 
 /// The machine at the paired address presented a key the pairing link did not

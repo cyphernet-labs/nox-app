@@ -698,15 +698,17 @@ void main() {
       await expectLater(client.pair(token: 't', deviceKey: 'k', platform: 'macos'), throwsA(isA<SocketUnavailableException>()));
     }, timeout: const Timeout(Duration(seconds: 30)));
 
-    test('a pairing whose connection never opened is presented again on the next', () async {
-      // Through Tor one dial can run out its time while the next gets through;
-      // the token never left the device, so presenting it again spends nothing.
+    test('a pairing whose connection went away is presented again on the next', () async {
+      // Through Tor one dial can run out its time while the next gets through,
+      // and a network change tears the connection down. The server answers the
+      // same token from the same device with the same identity (contract §8A),
+      // so presenting it again is safe whatever became of the first.
       await client.start(
         targets: ScriptedTargets([Uri.parse('wss://10.0.0.1:9000/ws'), Uri.parse('wss://10.0.0.2:9000/ws')]),
         credentialsProvider: () async => const GreetingCredentials.unpaired(),
       );
       await waitUntil(() => factory.created.isNotEmpty, reason: 'dialled');
-      final first = factory.latest..opened = false;
+      final first = factory.latest;
       final pairing = client.pair(token: 't', deviceKey: 'k', platform: 'macos');
       await waitUntil(() => first.commandNamed('pair') != null, reason: 'handed to the first');
 
@@ -724,25 +726,26 @@ void main() {
       expect((await pairing).ok, isTrue);
     });
 
-    test('a pairing whose connection did open is not presented twice', () async {
-      // It may have reached the server, and the token is one-shot: presented
-      // again it would come back refused as spent.
+    test('a pairing keeps one budget across the connections it takes', () async {
+      // Each presentation used to start a fresh wait, so a pairing could run
+      // to twice its budget - three times on the slow path - with the person
+      // watching a spinner.
       await client.start(
         targets: ScriptedTargets([Uri.parse('wss://10.0.0.1:9000/ws'), Uri.parse('wss://10.0.0.2:9000/ws')]),
         credentialsProvider: () async => const GreetingCredentials.unpaired(),
       );
       await waitUntil(() => factory.created.isNotEmpty, reason: 'dialled');
       final first = factory.latest;
+      final waited = Stopwatch()..start();
       final pairing = client.pair(token: 't', deviceKey: 'k', platform: 'macos');
-      await waitUntil(() => first.commandNamed('pair') != null, reason: 'sent on the first');
+      await Future<void>.delayed(NoxSocketClient.sendTimeout - const Duration(milliseconds: 500));
 
+      // Gone just before the budget runs out; the next connection never answers.
       await first.drop();
 
       await expectLater(pairing, throwsA(isA<SocketUnavailableException>()));
-      await waitUntil(() => factory.created.length == 2, reason: 'the ladder dials again');
-      await settle();
-      expect(factory.latest.commandNamed('pair'), isNull);
-    });
+      expect(waited.elapsed, lessThan(NoxSocketClient.sendTimeout + const Duration(seconds: 2)));
+    }, timeout: const Timeout(Duration(seconds: 30)));
 
     test('pairing carries the public half of the access key (FR-015)', () async {
       await client.start(url: url, credentialsProvider: () async => const GreetingCredentials.unpaired());

@@ -67,9 +67,6 @@ class _Lifecycle implements AppLifecycleService {
 
 /// One connection, served by [_Server].
 class _ServedSocket implements SocketConnection {
-  @override
-  bool get opened => true;
-
   _ServedSocket(this._server);
 
   final _Server _server;
