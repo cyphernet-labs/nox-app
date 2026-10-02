@@ -39,7 +39,7 @@ description: "Задачи фичи 041 — чат без связи"
 - [ ] T002 [P] Тесты хранилища в `client_backend/internal/store/store_test.go`: `CreateChat` с id устройства создаёт чат под ним и одно событие `chat.created` с этим id; повтор с тем же id возвращает существующий чат, второй строки и второго события нет; повтор после переименования возвращает нынешнее имя; повтор существующего id никогда не даёт `ErrNameTaken`, даже при совпавшем имени; новый id с занятым именем — `ErrNameTaken`; без id — серверный `c_` + 16 hex
 - [ ] T003 `Store.CreateChat` в `client_backend/internal/store/store.go`: параметр `chatID`; в одной пишущей транзакции сначала поиск по id (найден — возврат без записи и с признаком «не создавался»), затем проверка имени, затем вставка с данным или серверным id и событием
 - [ ] T004 [P] Тесты провода в `client_backend/internal/server/chats_test.go`: `chat.create` с `chat_id` — ответ и событие несут его; повтор — тот же чат и ни одного нового события у подписчиков; неверный вид — `invalid_request`; без `chat_id` — как раньше
-- [ ] T005 Обработчик `chat.create` в `client_backend/internal/server/handlers.go`: поле `chat_id` в `chatCreateRequest`, проверка вида `^c_[0-9a-f]{32}$`, вызов `CreateChat`, `kickDispatcher` только когда чат создан; в логе — id, без имени
+- [ ] T005 Обработчик `chat.create` в `client_backend/internal/server/handlers.go`: поле `chat_id` в `chatCreateRequest`, проверка вида `^c_[0-9a-f]{32}$`, вызов `CreateChat`, `kickDispatcher` только когда чат создан; в строках лога — только id и коды, имя чата не попадает никогда (FR-022, проверяется ревью диффа)
 
 ### Клиент: модель и хранение
 
@@ -70,9 +70,10 @@ description: "Задачи фичи 041 — чат без связи"
 ### Implementation for User Story 1
 
 - [ ] T016 [US1] В `lib/domain/repository/chat/chat_repository.dart` и `lib/data/repository/chat/chat_repository_impl.dart`: `createChat` на устройстве (`mintChatId`, строка с `pending`, `seedCreatedChat`); `pendingCreations()`; `createOnServer({required ChatModel chat})` — `chat.create` с `chat_id`, запись ответа сервера без состояния; `markCreation({chatId, creation, attempts})`; исправить устаревший докстринг о network-only
-- [ ] T017 [US1] `lib/data/sync/outbox_service.dart`: проход создаёт ждущие чаты раньше сообщений; сообщения чатов с `creation != null` пропускаются без попытки; повторяемые отказы — пауза по лестнице очереди с ключом `create:<chat_id>` и попытками из строки чата; в логах id и код, без имени
+- [ ] T017 [US1] `lib/data/sync/outbox_service.dart`: проход создаёт ждущие чаты раньше сообщений; сообщения чатов с `creation != null` пропускаются без попытки; повторяемые отказы — пауза по лестнице очереди с ключом `create:<chat_id>` и попытками из строки чата; в строках лога — только id и коды, имя чата не попадает никогда (FR-022, проверяется ревью диффа)
+- [ ] T017a [US1] `lib/data/repository/chat/message_repository_impl.dart`: окно сообщений (`getMessages` без `cachedOnly`) и `chatFiles(refresh: true)` не ходят на сервер, пока у чата есть состояние создания (FR-007a); тест в `test/data/repository/chat/message_repository_impl_test.dart` — фейковый источник не вызывается, кэш отдаётся
 - [ ] T018 [US1] `lib/data/sync/sync_service.dart` `_applyChat`: строка из провода снимает состояние создания
-- [ ] T019 [US1] `lib/presentation/pages/create_chat_page/bloc/create_chat_bloc.dart`: создание без ожидания сервера и `OutboxService.flush()` после него
+- [ ] T019 [US1] `lib/presentation/pages/create_chat_page/bloc/create_chat_bloc.dart`: создание без ожидания сервера и `OutboxService.flush()` после него; ошибки сети в реальном потоке больше нет (отказ возможен только при сбое локальной записи — `networkError` не показывается за сеть), демонстрационные исходы для голденов остаются
 - [ ] T020 [P] [US1] Строки EN + UK в `lib/l10n/app_en.arb` и `lib/l10n/app_uk.arb`: имя для диктора «ждёт создания», `Name already taken`, `Couldn't create`, плашки ленты для трёх состояний, действие `Rename`
 - [ ] T021 [US1] `lib/presentation/widgets/chat/app_chat_item_widget.dart`: параметр состояния создания — часики вместо времени для `pending` с текстовым именем; тест в `test/presentation/widgets/chat/app_chat_item_widget_test.dart`
 - [ ] T022 [US1] `lib/presentation/pages/chats_list_page/chats_list_page.dart`: передать `chat.creation` в строку на обеих ширинах
@@ -139,8 +140,8 @@ description: "Задачи фичи 041 — чат без связи"
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
-- [ ] T036 [P] Голдены: состояния строки в `test/presentation/widgets/chat/app_chat_item_widget_golden_test.dart`; список с ждущим чатом и чатом «имя занято» на обеих ширинах в `test/presentation/pages/chats_list_page/chats_list_page_golden_test.dart`; лента «имя занято» на обеих ширинах в `test/presentation/pages/chat_thread_page/chat_thread_page_golden_test.dart`
-- [ ] T037 [P] Тест: после выхода из аккаунта ждущие чаты стёрты и создание не уходит — `test/data/repository/app/auth_repository_impl_test.dart`
+- [ ] T036 [P] Голдены (SC-005): все три состояния строки в `test/presentation/widgets/chat/app_chat_item_widget_golden_test.dart`; список с чатами во всех трёх состояниях на обеих ширинах в `test/presentation/pages/chats_list_page/chats_list_page_golden_test.dart`; лента с плашками «ждёт создания» (без канала) и «имя занято» на обеих ширинах в `test/presentation/pages/chat_thread_page/chat_thread_page_golden_test.dart`
+- [ ] T037 [P] Тесты FR-021: после выхода из аккаунта ждущие чаты стёрты и создание не уходит — `test/data/repository/app/auth_repository_impl_test.dart`; после смены мира (другой журнал сервера) — так же — `test/data/sync/live_session_starter_test.dart`
 - [ ] T038 [P] Документация: `docs/design/spec/screens/{chats-list,chat,create-chat,chat-card}.md`; `docs/design/system/nox-mobile-screens/screens/{5-1-chats,5-2-thread,6-1-create}.md` и `specs.js`; `docs/design/system/nox-desktop-screens/screens/{01-chats,07-create}.md` и `specs.js`; `docs/blueprints/mobile/04-data-layer.md` и `14-networking-and-auth.md`; `CLAUDE.md`
 - [ ] T039 Гейты: `make gate`, `make golden-verify`, `(cd client_backend && go test -race ./...)`; счётчики в `CLAUDE.md`
 - [ ] T040 Проверка на стенде по `quickstart.md` (сценарии 1–3) — владелец
