@@ -12,6 +12,9 @@ class SyncRepositoryImpl implements SyncRepository {
   Future<int> getCursor() => _dao.readSince();
 
   @override
+  Future<bool> hasCursor() => _dao.hasSince();
+
+  @override
   Future<void> advanceCursor(int seq) async {
     // Monotonic max: duplicates at the replay/live boundary (contract §3)
     // and out-of-order applications never move the cursor backwards. The

@@ -540,8 +540,12 @@ class NoxSocketClient {
     bool stale() => epoch != _connectionEpoch || !identical(_connection, connection);
     try {
       final since = await _syncRepository.getCursor();
+      // Never greeted (or wiped since) - not "at 0". A first greeting that
+      // found an empty journal stores 0, and the next one must still ask for
+      // what happened in between: read as "first" again, it adopted the head
+      // and the messages that had arrived meanwhile never came.
+      final firstEver = !await _syncRepository.hasCursor();
       if (stale()) return;
-      final firstEver = since == 0;
       final provider = _credentialsProvider;
       final credentials = provider == null ? const GreetingCredentials() : await provider();
       if (stale()) return;

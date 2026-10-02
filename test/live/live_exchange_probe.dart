@@ -39,9 +39,20 @@ class _MemoryCursor implements SyncRepository {
   @override
   Future<int> getCursor() async => _cursor;
   @override
-  Future<void> advanceCursor(int seq) async => _cursor = seq > _cursor ? seq : _cursor;
+  Future<bool> hasCursor() async => _stored;
+  bool _stored = false;
   @override
-  Future<void> clear() async => _cursor = 0;
+  Future<void> advanceCursor(int seq) async {
+    _stored = true;
+    _cursor = seq > _cursor ? seq : _cursor;
+  }
+
+  @override
+  Future<void> clear() async {
+    _stored = false;
+    _cursor = 0;
+  }
+
   @override
   Future<String?> getEpoch() async => _epoch;
   @override

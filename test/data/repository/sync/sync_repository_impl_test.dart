@@ -44,6 +44,21 @@ void main() {
     expect(await repo.getCursor(), 0);
   });
 
+  test('a stored 0 is a position, apart from no cursor at all', () async {
+    // The first greeting adopts the server's cursor, and an empty journal's is
+    // 0. Unwritten, the device read as never greeted, and the next greeting
+    // skipped the replay of everything that came in between.
+    expect(await repo.hasCursor(), isFalse, reason: 'never greeted');
+
+    await repo.advanceCursor(0);
+
+    expect(await repo.hasCursor(), isTrue);
+    expect(await repo.getCursor(), 0);
+
+    await repo.clear();
+    expect(await repo.hasCursor(), isFalse, reason: 'a wiped device starts over');
+  });
+
   group('data-source epoch', () {
     test('the epoch survives a cursor advance, so the one-time wipe stays one-time', () async {
       await repo.setEpoch('live:http://127.0.0.1:8080');

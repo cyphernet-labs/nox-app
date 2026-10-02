@@ -97,6 +97,34 @@ void main() {
       expect(client.currentPhase, SessionPhase.live);
     });
 
+    test('a device whose first greeting found an empty journal asks for a replay from 0 next time', () async {
+      // Read as "first" again, the second greeting adopted the head as its
+      // starting point and skipped what had arrived in between - a message
+      // from another device, lost until something happened to list the chat.
+      const seed = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=';
+      await client.start(
+        url: url,
+        credentialsProvider: () async => const GreetingCredentials(deviceSeed: seed),
+      );
+      final first = factory.latest;
+      first.pushGreeting();
+      await waitUntil(() => first.commandNamed('session.hello') != null, reason: 'the client greets');
+      first.replyToHello(cursor: 0);
+      await waitUntil(() async => await sync.hasCursor(), reason: 'the empty journal\'s cursor is stored');
+
+      // The connection drops before anything was applied.
+      await client.stop();
+      await client.start(
+        url: url,
+        credentialsProvider: () async => const GreetingCredentials(deviceSeed: seed),
+      );
+      final second = factory.latest;
+      second.pushGreeting();
+      await waitUntil(() => second.commandNamed('session.hello') != null, reason: 'the client greets again');
+
+      expect((second.commandNamed('session.hello')!['data'] as Map<String, dynamic>)['since'], 0);
+    });
+
     test('a device that has applied events asks for everything after its cursor', () async {
       await sync.advanceCursor(41);
       final socket = await connect(cursor: 99);
