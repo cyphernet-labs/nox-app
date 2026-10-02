@@ -1,4 +1,5 @@
 import 'package:freezed_annotation/freezed_annotation.dart';
+import 'package:nox_app/domain/model/chat/chat_creation.dart';
 
 part 'chat_model.freezed.dart';
 
@@ -21,5 +22,10 @@ abstract class ChatModel with _$ChatModel {
 
     /// Creator's label from the wire (contract created_by_label).
     String? createdByLabel,
+
+    /// Set while the server does not have this chat yet (phase 041); null for
+    /// a chat the server has. Lives on this device only and never crosses the
+    /// wire.
+    ChatCreation? creation,
   }) = _ChatModel;
 }

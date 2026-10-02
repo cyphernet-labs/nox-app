@@ -71,10 +71,14 @@ class MockChatRemoteDataSource implements ChatRemoteDataSource {
   }
 
   @override
-  Future<ResponseEntity<ChatWireEntity>> createChat({required String name}) async {
+  Future<ResponseEntity<ChatWireEntity>> createChat({required String name, String? chatId}) async {
+    // A repeat of a chat this mock already made returns it, as the server does.
+    for (final written in _written) {
+      if (chatId != null && written.chatId == chatId) return ResponseEntity<ChatWireEntity>(success: true, data: written);
+    }
     final now = AppClock.now().toUtc().millisecondsSinceEpoch ~/ 1000;
     final chat = ChatWireEntity(
-      chatId: 'chat_${_uuid.v4()}',
+      chatId: chatId ?? 'chat_${_uuid.v4()}',
       name: name,
       createdAt: now,
       createdByLabel: '',

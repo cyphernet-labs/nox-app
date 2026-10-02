@@ -37,8 +37,8 @@ class RealChatRemoteDataSource implements ChatRemoteDataSource {
   }
 
   @override
-  Future<ResponseEntity<ChatWireEntity>> createChat({required String name}) async {
-    final reply = await _socket.send('chat.create', <String, dynamic>{'name': name});
+  Future<ResponseEntity<ChatWireEntity>> createChat({required String name, String? chatId}) async {
+    final reply = await _socket.send('chat.create', <String, dynamic>{'name': name, 'chat_id': ?chatId});
     return reply.toWrappedEnvelope('chat', ChatWireEntity.fromJson);
   }
 

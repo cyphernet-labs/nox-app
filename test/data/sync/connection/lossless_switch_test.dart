@@ -26,6 +26,7 @@ import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/connection/connection_path.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
+import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/repository/connection/access_key_repository.dart';
 import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
@@ -269,6 +270,7 @@ void main() {
       SocketSessionPhaseService(socket),
       getIt<FileRepository>(),
       getIt<AttachmentTransferService>(),
+      getIt<ChatRepository>(),
     )..start();
   });
 

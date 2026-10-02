@@ -1,18 +1,75 @@
+import 'dart:async';
+
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart';
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
+import 'package:nox_app/data/entity/base/response_entity.dart';
+import 'package:nox_app/data/entity/chat/wire/chat_wire_entity.dart';
+import 'package:nox_app/data/entity/chat/wire/name_availability_wire_entity.dart';
 import 'package:nox_app/data/local/app_database.dart';
+import 'package:nox_app/data/local/chat/chat_dao.dart';
+import 'package:nox_app/data/local/chat/message_dao.dart';
+import 'package:nox_app/data/mapper/chat/chat_mapper.dart';
+import 'package:nox_app/data/mapper/chat/chat_wire_mapper.dart';
+import 'package:nox_app/data/remote/datasource/chat_remote_data_source.dart';
+import 'package:nox_app/data/repository/chat/chat_repository_impl.dart';
+import 'package:nox_app/data/sync/outbox_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
+import 'package:nox_app/domain/model/chat/chat_creation.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
+import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
+import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
+import 'package:nox_app/domain/repository/file/file_repository.dart';
+import 'package:nox_app/domain/service/attachment_transfer_service.dart';
+import 'package:nox_app/domain/service/session_phase_service.dart';
+import 'package:nox_app/general/id/chat_id.dart';
 import 'package:nox_app/presentation/pages/create_chat_page/bloc/create_chat_bloc.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'create_chat_bloc_test.mocks.dart';
+
+/// A server that never answers a create and whose name check finds no channel
+/// - the shape of a device away from home while Tor is still coming up.
+class _QuietServer implements ChatRemoteDataSource {
+  int creates = 0;
+
+  @override
+  Future<ResponseEntity<ChatWireEntity>> createChat({required String name, String? chatId}) {
+    creates++;
+    return Completer<ResponseEntity<ChatWireEntity>>().future;
+  }
+
+  @override
+  Future<ResponseEntity<NameAvailabilityWireEntity>> isNameAvailable({required String name, String? excludeChatId}) async =>
+      throw RepositoryException.connection;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// Counts the requests to drain, and drains nothing.
+class _CountingOutbox extends OutboxService {
+  _CountingOutbox()
+    : super(
+        getIt<OutboxRepository>(),
+        getIt<MessageRepository>(),
+        getIt<SessionPhaseService>(),
+        getIt<FileRepository>(),
+        getIt<AttachmentTransferService>(),
+        getIt<ChatRepository>(),
+      );
+
+  int flushes = 0;
+
+  @override
+  Future<void> flush() async => flushes++;
+}
 
 @GenerateMocks([ChatRepository])
 void main() {
@@ -160,6 +217,78 @@ void main() {
       seed: () => const CreateChatState(name: 'Chat', status: CreateChatStatus.navSuccess),
       act: (bloc) => bloc.add(const CreateChatEvent.navigationHandled()),
       expect: () => [predicate<CreateChatState>((s) => s.status == CreateChatStatus.valid && !s.networkError)],
+    );
+  });
+
+  group('a chat created on this device (phase 041)', () {
+    late _QuietServer server;
+    late _CountingOutbox outbox;
+
+    setUp(() {
+      server = _QuietServer();
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<ChatRepository>(
+        ChatRepositoryImpl(
+          getIt<ChatDao>(),
+          server,
+          getIt<ChatMapper>(),
+          getIt<ChatWireMapper>(),
+          getIt<MessageRepository>(),
+          getIt<MessageDao>(),
+          getIt<SessionRepository>(),
+        ),
+      );
+      outbox = _CountingOutbox();
+      getIt.registerSingleton<OutboxService>(outbox);
+    });
+
+    blocTest<CreateChatBloc, CreateChatState>(
+      'Create opens the chat at once under an id this device minted, with a server that never answers',
+      build: CreateChatBloc.new,
+      act: (bloc) async {
+        bloc.add(const CreateChatEvent.nameChanged('Kitchen'));
+        await Future<void>.delayed(const Duration(milliseconds: 700));
+        bloc.add(const CreateChatEvent.createRequested());
+      },
+      wait: const Duration(milliseconds: 300),
+      expect: () => [
+        predicate<CreateChatState>((s) => s.status == CreateChatStatus.checking),
+        predicate<CreateChatState>((s) => s.status == CreateChatStatus.valid),
+        predicate<CreateChatState>((s) => s.status == CreateChatStatus.submitting),
+        predicate<CreateChatState>(
+          (s) =>
+              s.status == CreateChatStatus.navSuccess &&
+              deviceChatIdPattern.hasMatch(s.createdChat!.id) &&
+              s.createdChat!.creation == ChatCreation.pending,
+        ),
+      ],
+      verify: (_) {
+        expect(server.creates, 0, reason: 'creating never waits for the server');
+        expect(outbox.flushes, 1, reason: 'the queue is asked to take it there now');
+      },
+    );
+
+    blocTest<CreateChatBloc, CreateChatState>(
+      'a name check the server cannot answer leaves the name valid and Create enabled',
+      build: CreateChatBloc.new,
+      act: (bloc) => bloc.add(const CreateChatEvent.nameChanged('Kitchen')),
+      wait: const Duration(milliseconds: 700),
+      expect: () => [
+        predicate<CreateChatState>((s) => s.status == CreateChatStatus.checking),
+        predicate<CreateChatState>((s) => s.status == CreateChatStatus.valid && s.canSubmit),
+      ],
+    );
+
+    blocTest<CreateChatBloc, CreateChatState>(
+      'the name of a chat still waiting to be created is taken here, before any server is asked',
+      setUp: () async => getIt<ChatRepository>().createChat(name: 'Kitchen'),
+      build: CreateChatBloc.new,
+      act: (bloc) => bloc.add(const CreateChatEvent.nameChanged('kitchen')),
+      wait: const Duration(milliseconds: 700),
+      expect: () => [
+        predicate<CreateChatState>((s) => s.status == CreateChatStatus.checking),
+        predicate<CreateChatState>((s) => s.status == CreateChatStatus.taken),
+      ],
     );
   });
 }

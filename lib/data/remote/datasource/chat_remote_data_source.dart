@@ -18,9 +18,12 @@ abstract class ChatRemoteDataSource {
   /// prefix: `message.new` carries a Message, never the Chat it belongs to.
   Future<ResponseEntity<ChatWireEntity>> getChat({required String chatId});
 
-  /// Creates a chat; the reply carries the server-issued id and timestamps.
+  /// Creates a chat; the reply carries its id and the server's timestamps.
+  /// [chatId] is the id this device minted (phase 041): the server takes it,
+  /// and a repeat with the same id returns the chat it already made. A server
+  /// that does not know the field mints its own - the reply says which.
   /// A taken name comes back as the typed `name_taken` failure.
-  Future<ResponseEntity<ChatWireEntity>> createChat({required String name});
+  Future<ResponseEntity<ChatWireEntity>> createChat({required String name, String? chatId});
 
   /// Renames a chat (any of this person's devices may). Uniqueness excludes the
   /// chat itself, per contract §4.

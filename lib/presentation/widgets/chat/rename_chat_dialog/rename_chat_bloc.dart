@@ -1,5 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
+import 'package:nox_app/data/sync/outbox_service.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
@@ -14,7 +18,11 @@ part 'rename_chat_state.dart';
 /// EXCLUDING the chat's own current name (a chat never collides with itself, incl. case
 /// variants). Save persists via `updateChatName`; a network failure re-enables for retry.
 /// The current name is trivially valid but not submittable (a no-op save is pointless).
-/// `// TODO(backend): real rename.`
+///
+/// A chat not on the server yet (phase 041) is renamed on this device - there
+/// is nothing to rename on the server - and the queue is asked to create it
+/// under the new name at once: that is how a chat whose name was taken gets
+/// there.
 class RenameChatBloc extends BaseBloc<RenameChatEvent, RenameChatState> {
   RenameChatBloc({required this.chatId, required String currentName})
     : super(RenameChatState(initialName: currentName, name: currentName, status: RenameChatStatus.valid)) {
@@ -69,7 +77,10 @@ class RenameChatBloc extends BaseBloc<RenameChatEvent, RenameChatState> {
     await executeLogic(() async {
       final result = await chatRepository.updateChatName(chatId: chatId, name: state.name);
       result.match<void>(
-        onData: (_) => emit(state.copyWith(status: RenameChatStatus.navSuccess)),
+        onData: (renamed) {
+          emit(state.copyWith(status: RenameChatStatus.navSuccess));
+          if (renamed.creation != null) unawaited(getIt<OutboxService>().flush());
+        },
         onError: (_) => emit(state.copyWith(status: RenameChatStatus.valid, networkError: true)),
       );
     }, onError: (error, exception, stackTrace) => emit(state.copyWith(status: RenameChatStatus.valid, networkError: true)));

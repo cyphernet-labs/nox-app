@@ -98,6 +98,9 @@ class OutboxRepositoryImpl with BaseRepositoryHelper implements OutboxRepository
   Future<void> removeForChat({required String chatId}) => _dao.removeForChat(chatId);
 
   @override
+  Future<void> moveChat({required String from, required String to}) => _dao.moveChat(from: from, to: to);
+
+  @override
   Future<void> clean() => _dao.cleanData();
 
   /// Read-modify-write of one record, delegated to the DAO so it happens in a

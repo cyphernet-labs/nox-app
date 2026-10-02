@@ -5,6 +5,9 @@ import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/data/remote/socket/socket_channel_factory.dart';
 import 'package:nox_app/data/local/chat/message_dao.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
+import 'package:nox_app/general/app_clock.dart';
+import 'package:nox_app/general/id/chat_id.dart';
+import 'package:nox_app/general/identity/identity_resolver.dart';
 import 'package:nox_app/general/identity_mock_data.dart';
 import 'package:nox_app/data/entity/chat/chat_entity.dart';
 import 'package:nox_app/data/local/chat/chat_dao.dart';
@@ -13,7 +16,9 @@ import 'package:nox_app/data/mapper/chat/chat_wire_mapper.dart';
 import 'package:nox_app/data/remote/datasource/chat_remote_data_source.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
+import 'package:nox_app/domain/model/chat/chat_creation.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
+import 'package:nox_app/domain/model/chat/pending_chat_creation.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/repository/base/page_metadata.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
@@ -182,6 +187,19 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
   @override
   Future<RepositoryResult<ChatModel>> updateChatName({required String chatId, required String name}) {
     return execute<ChatModel>(() async {
+      final stored = await _chatDao.getById(chatId);
+      // Not on the server yet (phase 041): there is nothing to rename there.
+      // The new name is the one it will be created under, and renaming is what
+      // puts a chat whose name was taken back in line - so it waits again, with
+      // the attempts of the old name forgotten.
+      if (stored?.creation != null) {
+        final renamed = await _chatDao.update(
+          chatId,
+          (c) => c.copyWith(name: name, creation: ChatMapper.creationValue(ChatCreation.pending), creationAttempts: 0),
+        );
+        if (renamed == null) throw RepositoryException.notFound;
+        return RepositoryResult<ChatModel>.success(data: _mapper.toModel(entity: renamed));
+      }
       // The server decides whether the rename is allowed (uniqueness, §4) and a
       // taken name comes back as the typed `name_taken` failure the create/rename
       // screens render at the field.
@@ -201,16 +219,26 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
   @override
   Future<RepositoryResult<ChatModel>> createChat({required String name}) {
     return execute<ChatModel>(() async {
-      // The id comes from the server, not from here: a locally minted uuid would
-      // name a chat nobody else can address, and the server's own row would then
-      // arrive as a second, duplicate entry.
-      final response = await _chatRemote.createChat(name: name);
-      final chat = _wireMapper.toModel(entity: unwrapEnvelope(response, 'chat'));
+      // Created HERE, at once (phase 041): the id is minted on this device and
+      // is the chat's id for good - the server takes it (contract §4). Asking
+      // the server first left creation hanging on the connection, through Tor
+      // for up to two minutes and without one not at all.
+      final now = AppClock.now();
+      final label = resolveIdentity((await _session.readSession()).data).label;
+      final chat = ChatModel(
+        id: mintChatId(),
+        // Trimmed as the server trims it, so the row here and the row there agree.
+        name: name.trim(),
+        lastMessagePreview: '',
+        lastMessageAt: now,
+        createdAt: now,
+        createdByLabel: label,
+        creation: ChatCreation.pending,
+      );
       await _chatDao.upsert(_mapper.toEntity(model: chat));
       // Seed the opening "Chat created by {label}" system line so the new thread shows
-      // its genesis instead of the generic mock history (D5). Best-effort: the chat is
-      // already committed, so a seeding failure MUST NOT fail the create (it would strand
-      // an orphan chat). On failure the thread just falls back to the generic seed.
+      // its genesis. Best-effort: the chat is already committed, so a seeding failure
+      // MUST NOT fail the create (it would strand an orphan chat).
       try {
         await _messageRepository.seedCreatedChat(chatId: chat.id);
       } catch (error, stackTrace) {
@@ -219,6 +247,74 @@ class ChatRepositoryImpl with BaseRepositoryHelper implements ChatRepository {
       return RepositoryResult<ChatModel>.success(data: chat);
     });
   }
+
+  @override
+  Future<List<PendingChatCreation>> pendingCreations() async {
+    return [
+      for (final entity in await _chatDao.pendingCreations())
+        PendingChatCreation(
+          chat: _mapper.toModel(entity: entity),
+          attempts: entity.creationAttempts ?? 0,
+        ),
+    ];
+  }
+
+  @override
+  Future<RepositoryResult<ChatModel>> createOnServer({required ChatModel chat}) {
+    return execute<ChatModel>(() async {
+      final response = await _chatRemote.createChat(name: chat.name, chatId: chat.id);
+      final created = _wireMapper.toModel(entity: unwrapEnvelope(response, 'chat'));
+      // The same id: the server has it, and the row becomes the server's -
+      // without a creation state, with the read mark it had. Another id is a
+      // server older than phase 041; adopting it is the caller's, because the
+      // queued messages have to move first.
+      if (created.id == chat.id) {
+        final existing = await _chatDao.getById(chat.id);
+        await _chatDao.upsert(
+          _mapper.toEntity(
+            model: created.copyWith(unreadCount: existing?.unreadCount ?? 0),
+            lastOpenedSeq: existing?.lastOpenedSeq,
+          ),
+        );
+      }
+      return RepositoryResult<ChatModel>.success(data: created);
+    });
+  }
+
+  @override
+  Future<void> markCreation({required String chatId, required ChatCreation creation, required int attempts}) async {
+    await _chatDao.update(chatId, (c) => c.copyWith(creation: ChatMapper.creationValue(creation), creationAttempts: attempts));
+  }
+
+  @override
+  Future<void> retryCreation({required String chatId}) async {
+    await _chatDao.update(
+      chatId,
+      // Only a chat the server does not have; one it has stays as it is.
+      (c) => c.creation == null ? c : c.copyWith(creation: ChatMapper.creationValue(ChatCreation.pending), creationAttempts: 0),
+    );
+  }
+
+  @override
+  Future<void> adoptServerChat({required String localId, required ChatModel serverChat}) async {
+    final local = await _chatDao.getById(localId);
+    await _chatDao.upsert(
+      _mapper.toEntity(
+        model: serverChat.copyWith(unreadCount: local?.unreadCount ?? 0),
+        lastOpenedSeq: local?.lastOpenedSeq,
+      ),
+    );
+    await _chatDao.delete(localId);
+    await _messageRepository.forgetChat(chatId: localId);
+    try {
+      await _messageRepository.seedCreatedChat(chatId: serverChat.id);
+    } catch (error, stackTrace) {
+      logRepository.error(target: this, error: error, stackTrace: stackTrace);
+    }
+  }
+
+  @override
+  Future<bool> isOnServer({required String chatId}) async => (await _chatDao.getById(chatId))?.creation == null;
 
   @override
   Future<RepositoryResult<bool>> isChatNameTaken({required String name, String? excludeChatId}) {

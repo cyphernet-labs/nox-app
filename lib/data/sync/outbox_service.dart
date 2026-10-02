@@ -5,13 +5,16 @@ import 'package:injectable/injectable.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/exception/base_repository_exception.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
+import 'package:nox_app/domain/model/chat/chat_creation.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/outbox_entry.dart';
 import 'package:nox_app/domain/model/chat/outbox_status.dart';
+import 'package:nox_app/domain/model/chat/pending_chat_creation.dart';
 import 'package:nox_app/domain/model/file/attachment_transfer.dart';
-import 'package:nox_app/domain/model/session/session_phase.dart';
-import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/model/file/mime_types.dart';
+import 'package:nox_app/domain/model/session/session_phase.dart';
+import 'package:nox_app/domain/repository/chat/chat_repository.dart';
+import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/service/attachment_transfer_service.dart';
@@ -26,7 +29,7 @@ import 'package:nox_app/domain/service/session_phase_service.dart';
 /// serialised drain.
 @LazySingleton(env: [Environment.dev, Environment.prod, Environment.test])
 class OutboxService {
-  OutboxService(this._outbox, this._messages, this._phaseService, this._files, this._transfers);
+  OutboxService(this._outbox, this._messages, this._phaseService, this._files, this._transfers, this._chats);
 
   final OutboxRepository _outbox;
   final MessageRepository _messages;
@@ -38,6 +41,19 @@ class OutboxService {
   /// text that goes in a blink and for a picture that takes a minute through
   /// Tor.
   final AttachmentTransferService _transfers;
+
+  /// Chats created on this device and not yet on the server (phase 041). The
+  /// queue creates them before it sends anything, and holds the messages of a
+  /// chat the server does not have.
+  final ChatRepository _chats;
+
+  /// When each chat waiting to be created may be tried again, after a
+  /// failure worth retrying. Its own pause, apart from the messages' one: a
+  /// creation the server keeps failing holds the messages of ITS chat and
+  /// nothing else (FR-006). In memory - after a restart the first pass tries
+  /// at once, and the attempts on the row carry the ladder on from there.
+  final Map<String, DateTime> _creationRetryAt = <String, DateTime>{};
+  Timer? _creationTimer;
 
   static const Duration _minBackoff = Duration(seconds: 1);
   static const Duration _maxBackoff = Duration(seconds: 30);
@@ -93,6 +109,9 @@ class OutboxService {
       _retryTimer?.cancel();
       _retryTimer = null;
       _pausedFor = null;
+      _creationTimer?.cancel();
+      _creationTimer = null;
+      _creationRetryAt.clear();
       unawaited(flush());
     });
   }
@@ -125,6 +144,9 @@ class OutboxService {
     _retryTimer?.cancel();
     _retryTimer = null;
     _pausedFor = null;
+    _creationTimer?.cancel();
+    _creationTimer = null;
+    _creationRetryAt.clear();
   }
 
   Future<void> _drain() async {
@@ -133,12 +155,16 @@ class OutboxService {
     if (!_phaseService.phase.isCurrent) return;
     if (_stopped) return;
 
+    // Chats first: a message can only name a chat the server has.
+    await _createPendingChats();
+    if (_stopped || !_phaseService.phase.isCurrent) return;
+
     final queued = await _outbox.pending();
-    // A pause applies to ONE entry. If that entry is no longer at the head —
-    // discarded, or settled by the server's echo — its pause has outlived its
-    // reason and must not hold the rest of the queue.
+    // A pause applies to ONE entry. If that entry is no longer what the pass
+    // would try first — discarded, or settled by the server's echo — its pause
+    // has outlived its reason and must not hold the rest of the queue.
     if (_pausedFor != null) {
-      if (queued.isNotEmpty && queued.first.clientMessageId == _pausedFor) return;
+      if (await _pauseStillHolds(queued, _pausedFor!)) return;
       _retryTimer?.cancel();
       _retryTimer = null;
       _pausedFor = null;
@@ -151,12 +177,101 @@ class OutboxService {
       // were already shown had been cancelled.
       final entry = await _outbox.find(clientMessageId: snapshot.clientMessageId);
       if (entry == null || entry.status != OutboxStatus.pending) continue;
+      // Held, not failed: its chat is not on the server yet. No attempt is
+      // spent on it - nobody tried to send it - and the messages of other
+      // chats do not wait on it.
+      if (!await _chats.isOnServer(chatId: entry.chatId)) continue;
 
       final sent = await _send(entry);
       // A retryable refusal stops the pass: everything behind this entry has to
       // wait, or the queue would arrive out of order.
       if (!sent) return;
     }
+  }
+
+  /// Whether the entry a pause waits out is still the one the pass would try
+  /// first: the first message whose chat the server has. A held message - its
+  /// chat not created yet - is not tried, so it cannot be "first".
+  Future<bool> _pauseStillHolds(List<OutboxEntry> queued, String key) async {
+    for (final entry in queued) {
+      if (!await _chats.isOnServer(chatId: entry.chatId)) continue;
+      return entry.clientMessageId == key;
+    }
+    return false;
+  }
+
+  /// Creates on the server every chat that waits for it, the oldest first
+  /// (phase 041). Never stops the pass: a creation that fails holds the
+  /// messages of its own chat and waits out its own pause, and the messages of
+  /// other chats go on.
+  Future<void> _createPendingChats() async {
+    final waiting = await _chats.pendingCreations();
+    // A pause outlives its chat when the chat stopped waiting some other way -
+    // the server's own event, a rename after `name_taken` - and a stale one
+    // would wake the queue for nothing and push a live pause's wake-up aside.
+    final ids = {for (final pending in waiting) pending.chat.id};
+    _creationRetryAt.removeWhere((id, _) => !ids.contains(id));
+    for (final pending in waiting) {
+      if (_stopped || !_phaseService.phase.isCurrent) break;
+      final retryAt = _creationRetryAt[pending.chat.id];
+      if (retryAt != null && DateTime.now().isBefore(retryAt)) continue;
+      await _createOnServer(pending);
+    }
+    _armCreationTimer();
+  }
+
+  Future<void> _createOnServer(PendingChatCreation waiting) async {
+    final chatId = waiting.chat.id;
+    final result = await _chats.createOnServer(chat: waiting.chat);
+    final created = result.data;
+    if (created != null) {
+      // A server older than phase 041 skipped the id and made one of its own
+      // (contract §2.1): the messages written into the chat follow it, then the
+      // local copy goes. In this order, so no message is ever left naming a
+      // chat that is no longer anywhere.
+      if (created.id != chatId) {
+        await _outbox.moveChat(from: chatId, to: created.id);
+        await _chats.adoptServerChat(localId: chatId, serverChat: created);
+      }
+      _creationRetryAt.remove(chatId);
+      // Ids and codes only, never the chat's name.
+      logRepository.debug(target: this, message: 'outbox: chat created id=${created.id}');
+      return;
+    }
+
+    final exception = result.exception;
+    final code = exception is RepositoryException ? exception.name : 'unknown';
+    logRepository.debug(target: this, message: 'outbox: chat creation failed id=$chatId code=$code');
+    if (exception == RepositoryException.nameTaken) {
+      _creationRetryAt.remove(chatId);
+      await _chats.markCreation(chatId: chatId, creation: ChatCreation.nameTaken, attempts: waiting.attempts);
+      return;
+    }
+    final attempts = waiting.attempts + 1;
+    // A server that keeps refusing - not a dead channel - would otherwise hold
+    // the one queue for every chat, for good; the same cap as for a message.
+    final refused = exception != RepositoryException.connection;
+    if (_isTerminal(exception) || (refused && attempts >= _autoRetryLimit)) {
+      _creationRetryAt.remove(chatId);
+      await _chats.markCreation(chatId: chatId, creation: ChatCreation.failed, attempts: attempts);
+      return;
+    }
+    await _chats.markCreation(chatId: chatId, creation: ChatCreation.pending, attempts: attempts);
+    // The same ladder a message climbs; the count comes from the row, so it
+    // survives a restart.
+    _creationRetryAt[chatId] = DateTime.now().add(_backoff(attempts));
+  }
+
+  /// Wakes the queue when the earliest creation pause ends.
+  void _armCreationTimer() {
+    _creationTimer?.cancel();
+    _creationTimer = null;
+    if (_stopped || _creationRetryAt.isEmpty) return;
+    final earliest = _creationRetryAt.values.reduce((a, b) => a.isBefore(b) ? a : b);
+    _creationTimer = Timer(earliest.difference(DateTime.now()), () {
+      _creationTimer = null;
+      unawaited(flush());
+    });
   }
 
   /// Returns whether the pass may continue past [entry].
@@ -300,19 +415,24 @@ class OutboxService {
     };
   }
 
-  /// `min(30s, 1s * 2^(attempts - 1))` with ±20% jitter. The count comes from
-  /// the RECORD, not from this pass: a process restart resets everything in
-  /// memory, which is exactly the moment the pause has to be remembered.
-  void _scheduleRetry(String clientMessageId, int attempts) {
-    if (_stopped) return;
-    _retryTimer?.cancel();
+  /// `min(30s, 1s * 2^(attempts - 1))` with ±20% jitter - for a message and
+  /// for a chat creation alike.
+  Duration _backoff(int attempts) {
     final exponent = (attempts - 1).clamp(0, 16);
     final raw = _minBackoff * pow(2, exponent).toDouble();
     final capped = raw > _maxBackoff ? _maxBackoff : raw;
     // Jitter keeps a herd of clients from hitting a recovering server in step.
-    final jittered = capped * (0.8 + _random.nextDouble() * 0.4);
+    return capped * (0.8 + _random.nextDouble() * 0.4);
+  }
+
+  /// Pauses the queue on [clientMessageId]. The count comes from the RECORD,
+  /// not from this pass: a process restart resets everything in memory, which
+  /// is exactly the moment the pause has to be remembered.
+  void _scheduleRetry(String clientMessageId, int attempts) {
+    if (_stopped) return;
+    _retryTimer?.cancel();
     _pausedFor = clientMessageId;
-    _retryTimer = Timer(jittered, () {
+    _retryTimer = Timer(_backoff(attempts), () {
       _retryTimer = null;
       _pausedFor = null;
       unawaited(flush());

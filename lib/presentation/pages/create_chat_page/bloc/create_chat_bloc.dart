@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
+import 'package:nox_app/data/sync/outbox_service.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
@@ -13,8 +15,11 @@ part 'create_chat_event.dart';
 part 'create_chat_state.dart';
 
 /// Create-chat form (6.1). Charset is UNRESTRICTED (no charset error); the
-/// uniqueness check is debounced (~300ms) against the mock dataset. On a network
-/// failure `Create` re-enables for retry. `// TODO(backend): real create.`
+/// availability check is debounced (~300ms), by the local store and by the
+/// server when it can answer at once. `Create` makes the chat on this device
+/// and opens it without waiting for the server (phase 041); the outbox drain
+/// creates it there, so there is no network failure left on this path - only a
+/// failed local write re-enables `Create`.
 class CreateChatBloc extends BaseBloc<CreateChatEvent, CreateChatState> {
   CreateChatBloc() : super(const CreateChatState()) {
     on<ChatNameChanged>(_onNameChanged);
@@ -60,14 +65,15 @@ class CreateChatBloc extends BaseBloc<CreateChatEvent, CreateChatState> {
       // persists the chat to the local DB via the cache-first repository.
       switch (event.outcome) {
         case CreateChatOutcome.success:
-          // Uniqueness is enforced by the debounced availability pre-check only; the
-          // mock createChat has NO data-layer backstop (it upserts by a fresh id), so a
-          // pre-check gap (read error / a check→submit race) could persist a local
-          // duplicate. Acceptable in the mock phase — the real server create is the
-          // uniqueness authority. `// TODO(backend): server-side unique enforcement.`
+          // Created on this device, at once. The server is the authority on the
+          // name and has the last word when the queue creates it there: a taken
+          // name marks the chat for a rename instead of failing here.
           final result = await chatRepository.createChat(name: state.name);
           result.match<void>(
-            onData: (chat) => emit(state.copyWith(status: CreateChatStatus.navSuccess, createdChat: chat)),
+            onData: (chat) {
+              emit(state.copyWith(status: CreateChatStatus.navSuccess, createdChat: chat));
+              unawaited(getIt<OutboxService>().flush());
+            },
             onError: (_) => emit(state.copyWith(status: CreateChatStatus.valid, networkError: true)),
           );
         case CreateChatOutcome.network:

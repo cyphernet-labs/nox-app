@@ -143,4 +143,19 @@ void main() {
     await repository.clean();
     expect(await repository.pending(), isEmpty);
   });
+
+  test('moveChat carries a chat\'s queue to another id, keys and order kept, and leaves other chats alone', () async {
+    // A server older than phase 041 answered a create with its own id: the
+    // messages written into the chat follow it.
+    final first = (await repository.enqueue(chatId: 'c_local', text: 'one')).data!;
+    final other = (await repository.enqueue(chatId: 'c_other', text: 'elsewhere')).data!;
+    final second = (await repository.enqueue(chatId: 'c_local', text: 'two')).data!;
+
+    await repository.moveChat(from: 'c_local', to: 'c_server');
+
+    final moved = await repository.watchQueue(chatId: 'c_server').first;
+    expect(moved.map((e) => e.clientMessageId), [first.clientMessageId, second.clientMessageId]);
+    expect(await repository.watchQueue(chatId: 'c_local').first, isEmpty);
+    expect((await repository.find(clientMessageId: other.clientMessageId))?.chatId, 'c_other');
+  });
 }

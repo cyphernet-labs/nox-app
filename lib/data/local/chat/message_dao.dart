@@ -106,6 +106,17 @@ class MessageDao {
     });
   }
 
+  /// Drops every message of one chat (phase 041: a local copy the server
+  /// replaced with its own id). Filtered in Dart, per the field_rename rule.
+  Future<void> removeByChat(String chatId) async {
+    final db = await _appDatabase.db;
+    await db.transaction((txn) async {
+      for (final entity in _decode(await _store.query().getSnapshots(txn))) {
+        if (entity.chatId == chatId) await _store.record(entity.id).delete(txn);
+      }
+    });
+  }
+
   Future<void> cleanData() async {
     final db = await _appDatabase.db;
     await db.transaction((txn) async {
