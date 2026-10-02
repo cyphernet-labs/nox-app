@@ -154,6 +154,12 @@ func (s *Server) kickDispatcher() {
 func (s *Server) runDispatcher(ctx context.Context) error {
 	last, err := s.store.Cursor(ctx)
 	if err != nil {
+		// A shutdown that lands before this first read is a stop, not a
+		// failure: the read fails BECAUSE of the cancel, and reporting it made
+		// Run return an error for a clean stop.
+		if ctx.Err() != nil {
+			return nil
+		}
 		return fmt.Errorf("dispatcher cursor: %w", err)
 	}
 	for {
