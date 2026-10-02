@@ -16,11 +16,12 @@ App bar (back + “New chat”). Chat-name field with counter N/64. Pinned prima
 
 ## Behavior
 - Max 64 chars, charset unrestricted; counter updates live.
-- Checking: trailing spinner during uniqueness check. Taken: errorText “This name is taken”, Create disabled.
-- Valid → Create enabled. Submitting: button spinner.
+- Checking: trailing spinner during uniqueness check — the local store always, the server only when it can answer at once; a check the server cannot answer leaves the name valid. Taken: a chat on this device (one still waiting to be created included) or the server's answer; errorText “This name is taken”, Create disabled.
+- Valid → Create enabled. Submitting: a local write, practically never visible.
+- Create never waits for the server (phase 041): the chat is made on this device under an id minted there (`c_` + 32 lowercase hex, its id for good) and opens at once, with or without a connection. The outgoing queue creates it on the server before any of its messages. The server has the last word on the name then: a name taken by that time marks the chat for a rename in the list and the thread (5.1, 5.2).
 
 ## Navigation
-- Create success → the new Chat thread (5.2).
+- Create → the new Chat thread (5.2), at once, with or without a connection.
 - Back → Chats list (5.1).
 
 ## Copy (EN)

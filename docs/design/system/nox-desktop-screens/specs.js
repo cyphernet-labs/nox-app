@@ -56,6 +56,7 @@ window.NOX_SPECS = [
       "Offline: “No connection” banner appears in both panes. The connection never holds either pane: what the device holds shows at once, the server's answer arrives in the background. Loading: spinner in the list pane only while the device holds no chats and the server is being asked.",
       "Messages in the thread pane follow 5.2, including a file's bytes in transit: a ring on a contrasting disc over a picture being sent, “Sending… 45%” over a bar in any other file's chip, a filling ring in a received picture's placeholder. An own message typed on another device of the same person carries the sent tick.",
       "Search filters the list pane in place; no match → “No chats found”.",
+      "A chat the server does not have yet (phase 041), as on the phone: a clock in place of the time while it waits; the error glyph and “Name already taken” / “Couldn't create” once refused. In the thread pane ONE notice under the ThreadHeader: wrong server → name taken (Rename) → refused (Try again) → waiting (only while the channel is not current, instead of “No connection”) → “No connection”.",
       "Transient feedback floats as a Snackbar centered over the thread pane."
     ],
     "navigation": [
@@ -67,7 +68,10 @@ window.NOX_SPECS = [
     "copy": [
       "Pane titles: Chats",
       "No-selection: Select a chat / Choose a conversation on the left, or press + to start a new one.",
-      "Invite action: Invite a person (always disabled)"
+      "Invite action: Invite a person (always disabled)",
+      "Waiting chat, clock (screen-reader name): Waiting to be created",
+      "Refused chat, status line: Name already taken · Couldn't create",
+      "Thread notices: This chat isn't on your server yet. It will be once NOX connects. / Another chat already has this name. Rename this one to finish creating it. · Rename / This chat couldn't be created on your server. · Try again"
     ],
     "ds": [
       "NavRail",
@@ -368,10 +372,11 @@ window.NOX_SPECS = [
     "anatomy": "Scrim + centered Dialog (460): “New chat”, chat-name field (counter N/64), Cancel + Create.",
     "behavior": [
       "Mobile’s pushed 6.1 screen becomes a centered dialog over the (deselected) chats window.",
-      "Same validation: ≤64 chars, live uniqueness (spinner), taken → error + Create disabled, submitting → spinner."
+      "Same validation: ≤64 chars, live uniqueness (spinner) — the local store always, the server only when it can answer at once — taken → error + Create disabled.",
+      "Create never waits for the server (phase 041): the chat is made on this device under an id minted there and opens at once; the outgoing queue creates it on the server before its messages. A name taken by then marks the chat for a rename."
     ],
     "navigation": [
-      "Create → opens the new thread in the right pane.",
+      "Create → opens the new thread in the right pane, at once.",
       "Cancel / scrim → dismiss."
     ],
     "copy": [

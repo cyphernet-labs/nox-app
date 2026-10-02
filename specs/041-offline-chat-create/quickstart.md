@@ -2,7 +2,7 @@
 
 ## Что нужно
 
-- Сервер с этой фичей: `go build -o /tmp/noxd ./client_backend/cmd/noxd` (или `scripts/demo-stand.sh`).
+- Сервер с этой фичей: `(cd client_backend && go build -o /tmp/noxd .)` (или `scripts/demo-stand.sh`).
 - Приложение на флейворе `stage`: `fvm flutter run --dart-define-from-file=config/stage.json -d <устройство>`.
 - Два устройства одного человека (например, Мак и телефон), спаренные с этим сервером.
 
