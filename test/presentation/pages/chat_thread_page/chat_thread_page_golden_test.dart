@@ -5,13 +5,18 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/data/local/app_database.dart';
+import 'package:nox_app/data/local/chat/chat_dao.dart';
+import 'package:nox_app/data/mapper/chat/chat_mapper.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/model/chat/chat_creation.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/file/attachment_transfer.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
+import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/service/attachment_transfer_service.dart';
+import 'package:nox_app/domain/service/connectivity_service.dart';
 import 'package:nox_app/general/app_clock.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/presentation/pages/chat_thread_page/bloc/chat_thread_bloc.dart';
@@ -59,6 +64,33 @@ Future<void> _seedSending() async {
   getIt<AttachmentTransferService>()
     ..begin(entry.clientMessageId, TransferDirection.upload, chatId: entry.chatId)
     ..report(entry.clientMessageId, 0.45);
+}
+
+/// A chat this device made that is not on the server yet (phase 041): its
+/// row in [creation], its "Chat created by" line and one message waiting in
+/// the queue for it. Fixed id, so the frame is the same on every run.
+ChatModel _createdHere(ChatCreation creation) => ChatModel(
+  id: 'c_5f0e9c1d2a3b4c5d6e7f8091a2b3c4d5',
+  name: 'Kitchen',
+  lastMessagePreview: '',
+  lastMessageAt: kGoldenClock,
+  creation: creation,
+);
+
+Future<void> _seedCreatedHere(ChatModel chat) async {
+  await getIt<ChatDao>().upsert(getIt<ChatMapper>().toEntity(model: chat, lastOpenedSeq: null));
+  await getIt<MessageRepository>().seedCreatedChat(chatId: chat.id);
+  await getIt<OutboxRepository>().enqueue(chatId: chat.id, text: 'Buy milk on the way home');
+}
+
+/// A device with no network. Not the offline debug scenario: switching to a
+/// scenario empties the chat's queue, and the waiting message is the point.
+class _NoNetwork implements ConnectivityService {
+  @override
+  Future<bool> isOnline() async => false;
+
+  @override
+  Stream<bool> watchOnline() => Stream<bool>.value(false);
 }
 
 void main() {
@@ -250,6 +282,40 @@ void main() {
 
           await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/chat_thread_page_${name}_desktop_$suffix.png'));
         });
+      }
+
+      // A chat not on the server yet (phase 041): waiting with nothing to take
+      // it there (no network), and refused for a taken name, with its Rename.
+      // "Couldn't create" is the same strip with another sentence and action -
+      // the widget test covers it. Its message waits in the queue, clocked.
+      for (final (name, creation, online) in const [
+        ('creation_pending', ChatCreation.pending, false),
+        ('creation_name_taken', ChatCreation.nameTaken, true),
+      ]) {
+        for (final (surface, size, ratio) in [('', Constants.designSize, 3.0), ('_desktop', kDesktopGoldenSize, 2.0)]) {
+          testWidgets('${surface.isEmpty ? 'mobile' : 'desktop'} $name matches the $suffix theme', (tester) async {
+            AppClock.freeze(kGoldenClock);
+            addTearDown(AppClock.reset);
+            tester.view.devicePixelRatio = ratio;
+            tester.view.physicalSize = size * ratio;
+            addTearDown(() {
+              tester.view.resetDevicePixelRatio();
+              tester.view.resetPhysicalSize();
+            });
+            if (!online) {
+              getIt.allowReassignment = true;
+              getIt.registerSingleton<ConnectivityService>(_NoNetwork());
+            }
+            final chat = _createdHere(creation);
+            // Real async: the store's writes do not run inside the test's fake clock.
+            await tester.runAsync(() => _seedCreatedHere(chat));
+
+            await pumpApp(tester, ChatThreadPage(chat: chat), themeMode: mode, settle: false);
+            await _settleThread(tester);
+
+            await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/chat_thread_page_$name${surface}_$suffix.png'));
+          });
+        }
       }
     }
   });

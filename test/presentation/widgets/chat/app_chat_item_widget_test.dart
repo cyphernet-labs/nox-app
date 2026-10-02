@@ -1,7 +1,12 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nox_app/domain/model/chat/chat_creation.dart';
+import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/widgets/chat/app_chat_item_widget.dart';
 
 import '../../../utils/pump_app.dart';
+
+final l10nEn = AppLocalizationsEn();
 
 void main() {
   group('AppChatItemWidget', () {
@@ -66,6 +71,52 @@ void main() {
       // row centre rather than either of them sitting on it.
       expect(find.text('hi'), findsOneWidget);
       expect(tester.getRect(find.text('hi')).top, greaterThan(tester.getRect(find.text('Ann')).bottom - 1));
+    });
+  });
+
+  group('AppChatItemWidget - a chat not on the server yet (phase 041)', () {
+    testWidgets('waiting: a clock in place of the time, named for the screen reader, and the preview kept', (tester) async {
+      final semantics = tester.ensureSemantics();
+      await pumpApp(tester, const AppChatItemWidget(name: 'Kitchen', preview: 'You: hi', time: '09:00', creation: ChatCreation.pending));
+
+      expect(find.text('09:00'), findsNothing, reason: 'there is no time on the server to show yet');
+      // The row is one node for the screen reader; the clock is read in it.
+      expect(tester.getSemantics(find.byType(AppChatItemWidget)).label, contains(l10nEn.chatCreationPending));
+      expect(find.text('You: hi'), findsOneWidget);
+      semantics.dispose();
+    });
+
+    testWidgets('name taken: the reason in place of the preview, in the error colour, and no time', (tester) async {
+      await pumpApp(tester, const AppChatItemWidget(name: 'Kitchen', preview: 'You: hi', time: '09:00', creation: ChatCreation.nameTaken));
+
+      expect(find.text('09:00'), findsNothing);
+      expect(find.text('You: hi'), findsNothing);
+      final reason = tester.widget<Text>(find.text(l10nEn.chatCreationNameTaken));
+      final context = tester.element(find.byType(AppChatItemWidget));
+      expect(reason.style?.color, Theme.of(context).colorScheme.error);
+    });
+
+    testWidgets('could not create: says so in place of the preview', (tester) async {
+      await pumpApp(tester, const AppChatItemWidget(name: 'Kitchen', preview: '', time: '09:00', creation: ChatCreation.failed));
+
+      expect(find.text(l10nEn.chatCreationFailed), findsOneWidget);
+      expect(find.text('09:00'), findsNothing);
+    });
+
+    testWidgets('a refusal is read once, from its words, not again from its glyph', (tester) async {
+      final semantics = tester.ensureSemantics();
+      await pumpApp(tester, const AppChatItemWidget(name: 'Kitchen', preview: '', time: '09:00', creation: ChatCreation.nameTaken));
+
+      final label = tester.getSemantics(find.byType(AppChatItemWidget)).label;
+      expect(l10nEn.chatCreationNameTaken.allMatches(label), hasLength(1));
+      semantics.dispose();
+    });
+
+    testWidgets('a chat the server has shows its time as before', (tester) async {
+      await pumpApp(tester, const AppChatItemWidget(name: 'Kitchen', preview: '', time: '09:00'));
+
+      expect(find.text('09:00'), findsOneWidget);
+      expect(find.text(l10nEn.chatCreationNameTaken), findsNothing);
     });
   });
 }

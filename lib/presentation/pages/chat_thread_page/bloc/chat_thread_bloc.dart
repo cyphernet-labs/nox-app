@@ -64,6 +64,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     on<TransfersChanged>(_onTransfersChanged);
     on<WindowSynced>(_onWindowSynced);
     on<RetryConnection>(_onRetryConnection);
+    on<CreationRetried>(_onCreationRetried);
     on<SetScenario>(_onSetScenario);
   }
 
@@ -245,6 +246,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
               loadingInProgress: false,
               isOffline: false,
               isServerMismatch: false,
+              isHeld: false,
             ),
           );
           return;
@@ -304,6 +306,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
                 syncing: fromCache && messages.isEmpty && _canRead(),
                 isOffline: _isOffline(),
                 isServerMismatch: _isServerMismatch(),
+                isHeld: _isHeld(),
               ),
             );
             // Received pictures need their bytes to render at all. Fire and
@@ -671,8 +674,9 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     if (current is! Initialized) return;
     final offline = _isOffline();
     final mismatch = _isServerMismatch();
-    if (current.isOffline == offline && current.isServerMismatch == mismatch) return;
-    emit(current.copyWith(isOffline: offline, isServerMismatch: mismatch));
+    final held = _isHeld();
+    if (current.isOffline == offline && current.isServerMismatch == mismatch && current.isHeld == held) return;
+    emit(current.copyWith(isOffline: offline, isServerMismatch: mismatch, isHeld: held));
   }
 
   /// One more attempt, asked for by the person.
@@ -680,4 +684,11 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   /// Emits nothing: the phase stream moves the banner, and guessing the outcome
   /// here would clear it before there is one.
   Future<void> _onRetryConnection(RetryConnection event, Emitter<ChatThreadState> emit) => _sessionPhaseService.reconnect();
+
+  /// Puts a chat the server refused back in line and asks the queue to go.
+  /// Emits nothing: the chat row moves the banner, through the watch.
+  Future<void> _onCreationRetried(CreationRetried event, Emitter<ChatThreadState> emit) async {
+    await _chatRepository.retryCreation(chatId: _chatId);
+    unawaited(_outboxService.flush());
+  }
 }

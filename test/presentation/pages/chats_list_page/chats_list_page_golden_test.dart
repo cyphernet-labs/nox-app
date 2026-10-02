@@ -3,7 +3,12 @@ library;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/local/app_database.dart';
+import 'package:nox_app/data/local/chat/chat_dao.dart';
+import 'package:nox_app/data/mapper/chat/chat_mapper.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/model/chat/chat_creation.dart';
+import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/presentation/pages/chats_list_page/bloc/chats_list_bloc.dart';
 import 'package:nox_app/presentation/pages/chats_list_page/chats_list_page.dart';
 import 'package:nox_app/presentation/widgets/shell/tab_bar_shell_widget.dart';
@@ -63,4 +68,33 @@ void main() {
     'chats_list_page_pin_refused',
     () => const ChatsListPage(inShell: false, initialScenario: ChatsListScenario.pinRefused),
   );
+
+  // Chats not on the server yet, one in each state (phase 041), on both
+  // surfaces. Seeded as the queue leaves them, with fixed ids and distinct
+  // times: created here under a frozen clock they would tie, and a tie is
+  // broken by a random id. Last in the file - the rows stay in the store.
+  group('creation', () {
+    setUp(() async {
+      await getIt<AppDatabase>().clearEntireDatabase();
+      final waiting = [
+        ('c_00000000000000000000000000000041', 'Kitchen', ChatCreation.pending),
+        ('c_00000000000000000000000000000042', 'Garden', ChatCreation.nameTaken),
+        ('c_00000000000000000000000000000043', 'Trips', ChatCreation.failed),
+      ];
+      for (final (index, (id, name, creation)) in waiting.indexed) {
+        final chat = ChatModel(
+          id: id,
+          name: name,
+          lastMessagePreview: '',
+          // Newer than anything the mock server lists, so the three lead.
+          lastMessageAt: kGoldenClock.add(Duration(minutes: waiting.length - index)),
+          creation: creation,
+        );
+        await getIt<ChatDao>().upsert(getIt<ChatMapper>().toEntity(model: chat, lastOpenedSeq: null));
+      }
+    });
+
+    goldenTest('chats_list_page_creation', () => const ChatsListPage(inShell: true));
+    goldenTestDesktop('chats_list_page_creation', () => const ChatsListPage(inShell: false));
+  });
 }

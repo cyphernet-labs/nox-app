@@ -5,6 +5,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
+import 'package:nox_app/domain/model/chat/chat_creation.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/presentation/widgets/chat/watch_chat.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
@@ -27,6 +28,7 @@ import 'package:nox_app/presentation/pages/image_viewer_page/image_viewer_page.d
 import 'package:nox_app/presentation/widgets/chat/app_message_bubble_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_system_line_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_thread_header_widget.dart';
+import 'package:nox_app/presentation/widgets/chat/rename_chat_dialog/app_rename_chat_dialog_widget.dart';
 import 'package:nox_app/presentation/widgets/state/app_empty_content_widget.dart';
 import 'package:nox_app/presentation/widgets/state/app_error_widget.dart';
 import 'package:nox_app/presentation/widgets/state/app_notice_strip_widget.dart';
@@ -131,42 +133,49 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
   Widget build(BuildContext context) {
     return BlocProvider<ChatThreadBloc>.value(
       value: _bloc,
-      child: BlocConsumer<ChatThreadBloc, ChatThreadState>(
-        // A file refused for its size is a transient notice, not a screen
-        // state: the composer is unchanged and the person just picks another.
-        listenWhen: (previous, current) =>
-            previous is Initialized && current is Initialized && previous.oversizedAttachmentTick != current.oversizedAttachmentTick,
-        listener: (context, state) {
-          final limit = FileSizeFormatter.format(getIt<AppConfigRepository>().limits.maxAttachmentBytes);
-          showAppSnackBar(context, text: context.l10n.attachmentTooLarge(limit));
-        },
-        builder: (context, state) {
-          return Column(
-            children: [
-              // Reactive to the chat row so a rename (from the side-sheet card) updates the
-              // desktop header's name + avatar live.
-              if (widget.showHeader)
-                WatchChat(
-                  chatId: widget.chat.id,
-                  initial: widget.chat,
-                  builder: (context, chat) => AppThreadHeaderWidget(chat: chat, onInfo: widget.onInfo ?? () {}),
-                ),
-              _banner(context, state),
-              Expanded(child: _body(context, state)),
-              if (state is Initialized) _composerBar(state),
-              if (kDebugMode && widget.demo) _scenarioControl(),
-            ],
-          );
-        },
+      // The chat row, live: a rename (from the side-sheet card) updates the
+      // desktop header's name + avatar, and the creation state (phase 041)
+      // moves the notice. ONE watch, opened outside the bloc's builder: inside
+      // it, every state tick - a transfer's every percent among them - opened
+      // a new one.
+      child: WatchChat(
+        chatId: widget.chat.id,
+        initial: widget.chat,
+        builder: (context, chat) => BlocConsumer<ChatThreadBloc, ChatThreadState>(
+          // A file refused for its size is a transient notice, not a screen
+          // state: the composer is unchanged and the person just picks another.
+          listenWhen: (previous, current) =>
+              previous is Initialized && current is Initialized && previous.oversizedAttachmentTick != current.oversizedAttachmentTick,
+          listener: (context, state) {
+            final limit = FileSizeFormatter.format(getIt<AppConfigRepository>().limits.maxAttachmentBytes);
+            showAppSnackBar(context, text: context.l10n.attachmentTooLarge(limit));
+          },
+          builder: (context, state) {
+            return Column(
+              children: [
+                if (widget.showHeader) AppThreadHeaderWidget(chat: chat, onInfo: widget.onInfo ?? () {}),
+                _banner(context, state, chat),
+                Expanded(child: _body(context, state)),
+                if (state is Initialized) _composerBar(state),
+                if (kDebugMode && widget.demo) _scenarioControl(),
+              ],
+            );
+          },
+        ),
       ),
     );
   }
 
-  /// The connection notice. The wrong machine comes FIRST: it is not a
-  /// connection problem, and saying "No connection" over a server that answered
-  /// sends the person to check their wifi over something no network can fix.
-  /// The action is the only way back - nothing about this changes on its own.
-  Widget _banner(BuildContext context, ChatThreadState state) {
+  /// The one notice over the thread. The wrong machine comes FIRST: it is not
+  /// a connection problem, and saying "No connection" over a server that
+  /// answered sends the person to check their wifi over something no network
+  /// can fix. The action is the only way back - nothing about this changes on
+  /// its own.
+  ///
+  /// A chat the server does not have yet comes next (phase 041): a refusal
+  /// carries the only way out of it, and a wait says why its messages hold,
+  /// which says more than "No connection" would.
+  Widget _banner(BuildContext context, ChatThreadState state, ChatModel chat) {
     if (state is! Initialized) return const SizedBox.shrink();
     if (state.isServerMismatch) {
       return AppNoticeStripWidget(
@@ -175,6 +184,29 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
         actionLabel: context.l10n.actionTryAgain,
         onAction: () => _bloc.add(const ChatThreadEvent.retryConnection()),
       );
+    }
+    switch (chat.creation) {
+      case ChatCreation.nameTaken:
+        return AppNoticeStripWidget(
+          message: context.l10n.chatCreationNameTakenNotice,
+          icon: NoxIcons.error,
+          actionLabel: context.l10n.actionRename,
+          onAction: () => AppRenameChatDialogWidget.show(context, chatId: chat.id, currentName: chat.name),
+        );
+      case ChatCreation.failed:
+        return AppNoticeStripWidget(
+          message: context.l10n.chatCreationFailedNotice,
+          icon: NoxIcons.error,
+          actionLabel: context.l10n.actionTryAgain,
+          onAction: () => _bloc.add(const ChatThreadEvent.creationRetried()),
+        );
+      // Only while nothing can take it there: with a current channel the
+      // creation is going out right now, and the notice would only flash.
+      case ChatCreation.pending when state.isHeld:
+        return AppNoticeStripWidget(message: context.l10n.chatCreationPendingNotice, icon: NoxIcons.schedule);
+      case ChatCreation.pending:
+      case null:
+        break;
     }
     if (state.isOffline) return AppNoticeStripWidget(message: context.l10n.noConnection, icon: NoxIcons.wifiOff);
     return const SizedBox.shrink();

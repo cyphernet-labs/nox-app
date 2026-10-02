@@ -3,6 +3,7 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nox_app/domain/model/chat/chat_creation.dart';
 import 'package:nox_app/presentation/widgets/chat/app_chat_item_widget.dart';
 
 import '../../../utils/golden.dart';
@@ -16,6 +17,19 @@ void main() {
         AppChatItemWidget(name: 'Cyphernet Labs', preview: 'Latest build is green', time: '09:24'),
         AppChatItemWidget(name: 'Ann Lee', preview: 'See you tomorrow', time: '08:10', unread: 5),
         AppChatItemWidget(name: 'Releases', preview: 'v26.1 shipped', time: 'Mon', unread: 120),
+      ],
+    ),
+  );
+
+  // A chat not on the server yet (phase 041): waiting, its name taken, refused.
+  goldenTest(
+    'app_chat_item_widget_creation',
+    () => const Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        AppChatItemWidget(name: 'Kitchen', preview: 'You: Buy milk', time: '09:24', creation: ChatCreation.pending),
+        AppChatItemWidget(name: 'Garden', preview: 'You: Seeds?', time: '08:10', creation: ChatCreation.nameTaken),
+        AppChatItemWidget(name: 'Trips', preview: '', time: 'Mon', creation: ChatCreation.failed),
       ],
     ),
   );

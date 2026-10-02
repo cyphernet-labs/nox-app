@@ -297,5 +297,33 @@
   "loginHomeNetworkOnly": "Couldn't reach your server. Pairing works on your home network.",
   "@loginHomeNetworkOnly": {
     "description": "Pairing link whose server did not answer, or answered with a key the link does not name (phase 040, FR-022)."
+  },
+  "chatCreationPending": "Waiting to be created",
+  "@chatCreationPending": {
+    "description": "Screen-reader name of the clock that replaces the time in a chats-list row whose chat is not on the person's server yet (phase 041)."
+  },
+  "chatCreationNameTaken": "Name already taken",
+  "@chatCreationNameTaken": {
+    "description": "Chats-list row status line (in place of the preview) of a chat the server refused to create because another chat already has the name (phase 041)."
+  },
+  "chatCreationFailed": "Couldn't create",
+  "@chatCreationFailed": {
+    "description": "Chats-list row status line of a chat the server refused to create for a reason a retry can change only when the person asks (phase 041)."
+  },
+  "chatCreationPendingNotice": "This chat isn't on your server yet. It will be once NOX connects.",
+  "@chatCreationPendingNotice": {
+    "description": "Thread notice of a chat created without a connection, shown only while there is none (phase 041)."
+  },
+  "chatCreationNameTakenNotice": "Another chat already has this name. Rename this one to finish creating it.",
+  "@chatCreationNameTakenNotice": {
+    "description": "Thread notice of a chat whose name was taken when it reached the server; paired with actionRename (phase 041)."
+  },
+  "chatCreationFailedNotice": "This chat couldn't be created on your server.",
+  "@chatCreationFailedNotice": {
+    "description": "Thread notice of a chat the server refused to create; paired with the existing actionTryAgain (phase 041)."
+  },
+  "actionRename": "Rename",
+  "@actionRename": {
+    "description": "Action on the thread notice of a chat whose name was taken; opens the rename dialog (phase 041)."
   }
 }
