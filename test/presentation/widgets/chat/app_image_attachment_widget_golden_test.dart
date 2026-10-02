@@ -99,7 +99,7 @@ void main() {
                 name: 'photo.png',
                 size: '128 KB',
                 onTap: () {},
-                transfer: const AttachmentTransfer(direction: TransferDirection.upload, fraction: 0.6),
+                transfer: const AttachmentTransfer(chatId: 'c1', direction: TransferDirection.upload, fraction: 0.6),
               ),
             ),
           ),

@@ -65,8 +65,10 @@ class AppTransferRingWidget extends StatelessWidget {
 }
 
 /// The ring over a picture whose bytes are being sent (5.2). The disc behind
-/// it is the contrast pair the draft thumbnail's remove button already uses,
-/// because a ring drawn straight onto an unknown photo can vanish into it.
+/// it is the contrast pair the draft thumbnail's remove button uses -
+/// `inverseSurface` under `onInverseSurface`, dark in light theme and light in
+/// dark - because a ring drawn straight onto an unknown photo can vanish into
+/// it.
 class AppTransferBadgeWidget extends StatelessWidget {
   const AppTransferBadgeWidget({super.key, required this.transfer});
 
@@ -81,7 +83,7 @@ class AppTransferBadgeWidget extends StatelessWidget {
       height: diameter,
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        color: colorScheme.inverseSurface.withValues(alpha: NoxOpacity.scrim),
+        color: colorScheme.inverseSurface.withValues(alpha: NoxOpacity.overPhoto),
         shape: BoxShape.circle,
       ),
       child: AppTransferRingWidget(

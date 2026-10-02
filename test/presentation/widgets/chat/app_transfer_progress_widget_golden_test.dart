@@ -32,7 +32,7 @@ void main() {
               name: 'quarterly-report.pdf',
               size: '2.4 MB',
               inBubble: true,
-              transfer: AttachmentTransfer(direction: TransferDirection.upload, fraction: 0.45),
+              transfer: AttachmentTransfer(chatId: 'c1', direction: TransferDirection.upload, fraction: 0.45),
             ),
           ),
           AppMessageBubbleWidget(
@@ -44,7 +44,7 @@ void main() {
               name: 'photos.zip',
               size: '18 MB',
               inBubble: true,
-              transfer: AttachmentTransfer(direction: TransferDirection.upload),
+              transfer: AttachmentTransfer(chatId: 'c1', direction: TransferDirection.upload),
             ),
           ),
           AppMessageBubbleWidget(
@@ -52,7 +52,7 @@ void main() {
             time: '21:31',
             file: AppAttachmentPlaceholderWidget(
               name: 'holiday.jpg',
-              transfer: AttachmentTransfer(direction: TransferDirection.download, fraction: 0.3),
+              transfer: AttachmentTransfer(chatId: 'c1', direction: TransferDirection.download, fraction: 0.3),
             ),
           ),
         ],

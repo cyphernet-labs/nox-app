@@ -47,8 +47,9 @@ sealed class ChatThreadEvent with _$ChatThreadEvent {
   const factory ChatThreadEvent.connectionStatusChanged(ConnectionStatus status) = ConnectionStatusChanged;
 
   /// The server's newest window has been asked for and is in the cache, or
-  /// could not be had. [hasMore] is what the server said about older history.
-  const factory ChatThreadEvent.windowSynced({bool? hasMore}) = WindowSynced;
+  /// could not be had. [hasMore] is what the server said about older history;
+  /// [generation] numbers the read, so only the newest ends the spinner.
+  const factory ChatThreadEvent.windowSynced({bool? hasMore, required int generation}) = WindowSynced;
 
   /// The attachment transfers in flight changed. The map travels with the
   /// event, like the queue snapshot above.

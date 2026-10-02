@@ -14,8 +14,9 @@ abstract class AttachmentTransferService {
   /// [current] on listen, then every change.
   Stream<Map<String, AttachmentTransfer>> watch();
 
-  /// A transfer for [messageId] is under way; no bytes have moved yet.
-  void begin(String messageId, TransferDirection direction);
+  /// A transfer for [messageId], in [chatId], is under way; no bytes have
+  /// moved yet.
+  void begin(String messageId, TransferDirection direction, {required String chatId});
 
   /// How far it has got, 0 to 1. Dropped once the transfer has ended, and
   /// when it would not change the whole percent shown: a large file reports

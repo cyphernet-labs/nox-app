@@ -57,7 +57,7 @@ Future<void> _seedSending() async {
     ),
   )).data!;
   getIt<AttachmentTransferService>()
-    ..begin(entry.clientMessageId, TransferDirection.upload)
+    ..begin(entry.clientMessageId, TransferDirection.upload, chatId: entry.chatId)
     ..report(entry.clientMessageId, 0.45);
 }
 

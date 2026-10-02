@@ -21,6 +21,10 @@ abstract class AttachmentTransfer with _$AttachmentTransfer {
   const AttachmentTransfer._();
 
   const factory AttachmentTransfer({
+    /// The chat the message is in. The open thread keeps only its own chat's
+    /// transfers, and it has to tell them apart before the message itself is
+    /// on its screen - a send or a fetch can start first.
+    required String chatId,
     required TransferDirection direction,
 
     /// How much has moved, 0 to 1; null until the first bytes do. Before

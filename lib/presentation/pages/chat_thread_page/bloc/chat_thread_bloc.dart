@@ -127,6 +127,28 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   /// these marks anything as failed: a queued message waits, it is not lost.
   bool _isHeld() => _isServerMismatch() || !_phase.isCurrent || _scenario == ChatThreadScenario.offline;
 
+  /// Whether a read reaches the server now. Once the greeting is done - the
+  /// catch-up included - the socket lets reads out, so the spinner for an
+  /// empty thread follows this, not the stricter hold on sends.
+  bool _canRead() =>
+      !_isServerMismatch() && _scenario != ChatThreadScenario.offline && (_phase == SessionPhase.live || _phase == SessionPhase.catchingUp);
+
+  /// Numbers the background reads of the newest window, so an older one
+  /// finishing late cannot clear the spinner a newer one is holding.
+  int _syncGeneration = 0;
+
+  /// The oldest REAL message among [messages]. The "chat created" line sits
+  /// one seq below the oldest loaded message - a seq a real message can hold
+  /// - and taking it as the scroll-up cursor skipped that message for good.
+  int? _oldestRealSeq(List<MessageModel> messages) {
+    int? oldest;
+    for (final m in messages) {
+      if (m.isSystem) continue;
+      if (oldest == null || m.seq < oldest) oldest = m.seq;
+    }
+    return oldest;
+  }
+
   FutureOr<void> _onInitialize(Initialize event, Emitter<ChatThreadState> emit) async {
     _chatId = event.chatId;
     // Resolve the signed-in own-identity from the session (fallback on absent/failed
@@ -140,7 +162,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
         // Seeded rather than left to the watch below: on a second initialize
         // (the error screen's retry) the subscription already exists and stays
         // silent until the next change.
-        transfers: _transfers.current,
+        transfers: _transfersOf(_transfers.current),
       ),
     );
     add(const ChatThreadEvent.loadMessages(reset: true));
@@ -251,9 +273,17 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
         result.match<void>(
           onData: (data) {
             final (messages, PageMetadata metadata) = data;
-            final r = basePagingState.applyPage(existingList: existingList, response: (messages, metadata), keyExtractor: (m) => m.id);
+            // A row in the batch replaces the one already on screen: the "chat
+            // created" line moves below every older batch, so its new seq is in
+            // the batch, and keeping both drew it twice - once mid-thread.
+            final incoming = {for (final m in messages) m.id};
+            final kept = [
+              for (final m in existingList)
+                if (!incoming.contains(m.id)) m,
+            ];
+            final r = basePagingState.applyPage(existingList: kept, response: (messages, metadata), keyExtractor: (m) => m.id);
             // Batches ascend by seq, so their first row is their oldest.
-            final batchOldest = messages.isEmpty ? null : messages.first.seq;
+            final batchOldest = _oldestRealSeq(messages);
             final newOldest = isReset
                 ? batchOldest
                 : switch ((live.oldestLoadedSeq, batchOldest)) {
@@ -271,7 +301,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
                 // asked: a spinner until it answers, not an empty thread that
                 // fills a moment later. With no channel there is nothing to
                 // wait for, and the empty thread is the truth.
-                syncing: fromCache && messages.isEmpty && !_isHeld(),
+                syncing: fromCache && messages.isEmpty && _canRead(),
                 isOffline: _isOffline(),
                 isServerMismatch: _isServerMismatch(),
               ),
@@ -414,9 +444,10 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   /// cache answers - the release of the channel calls this again.
   Future<void> _syncTail() async {
     if (_scenario == ChatThreadScenario.fatal || _scenario == ChatThreadScenario.empty) return;
+    final generation = ++_syncGeneration;
     final result = await _messageRepository.getMessages(config: GetMessagesConfig.tail(chatId: _chatId));
     if (isClosed) return;
-    add(ChatThreadEvent.windowSynced(hasMore: result.data?.$2.hasMore));
+    add(ChatThreadEvent.windowSynced(hasMore: result.data?.$2.hasMore, generation: generation));
   }
 
   /// The server's newest window is in the cache (or could not be had).
@@ -428,7 +459,14 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     final current = state;
     if (current is! Initialized) return;
     final more = event.hasMore == true && !current.pagingState.hasNextPage;
-    emit(current.copyWith(syncing: false, pagingState: more ? current.pagingState.copyWith(hasNextPage: true) : current.pagingState));
+    emit(
+      current.copyWith(
+        // Only the newest read ends the spinner; an older one finishing late
+        // says nothing about what the newer one will bring.
+        syncing: event.generation == _syncGeneration ? false : current.syncing,
+        pagingState: more ? current.pagingState.copyWith(hasNextPage: true) : current.pagingState,
+      ),
+    );
     // Re-read rather than trust the watch with it: the watch skips its first
     // snapshot, and rows written before that snapshot was taken are in it.
     add(const ChatThreadEvent.loadMessages(refresh: true));
@@ -493,7 +531,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
         items: r.updatedList,
         pagingState: r.pagingState,
         // The scroll-up cursor only ever moves DOWN.
-        oldestLoadedSeq: merged.isEmpty ? live.oldestLoadedSeq : merged.first.seq,
+        oldestLoadedSeq: _oldestRealSeq(merged) ?? live.oldestLoadedSeq,
         outgoing: outgoing ?? live.outgoing,
       ),
     );
@@ -595,18 +633,36 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
       // A fetch the lost channel cut short gets another go; nothing else would
       // retry it until something new arrived in this chat.
       final current = state;
-      if (current is Initialized) unawaited(_prefetch.prefetch(current.items));
+      if (current is Initialized) {
+        unawaited(_prefetch.prefetch(current.items, retryNow: true));
+        // An empty thread is about to be asked for: a spinner until the answer,
+        // not "No messages yet" over history that is on its way.
+        if (!current.hasMessages && _canRead()) emit(current.copyWith(syncing: true));
+      }
       // And the server's newest window, which the thread could not ask for
       // while there was no channel.
       unawaited(_syncTail());
     }
   }
 
-  /// Emits only on a real change: the state compares the map by value.
+  /// Keeps only this chat's transfers, and emits only on a real change (the
+  /// state compares the map by value). Passing the whole map redrew the open
+  /// thread on every percent of a transfer in any other chat.
   void _onTransfersChanged(TransfersChanged event, Emitter<ChatThreadState> emit) {
     final current = state;
     if (current is! Initialized) return;
-    emit(current.copyWith(transfers: event.transfers));
+    emit(current.copyWith(transfers: _transfersOf(event.transfers)));
+  }
+
+  /// By the chat, not by the messages on screen: a send or a fetch can start
+  /// before its message is there, and before its first byte there is no
+  /// progress tick that would bring it in later - through Tor, for seconds.
+  Map<String, AttachmentTransfer> _transfersOf(Map<String, AttachmentTransfer> all) {
+    if (all.isEmpty) return const <String, AttachmentTransfer>{};
+    return <String, AttachmentTransfer>{
+      for (final entry in all.entries)
+        if (entry.value.chatId == _chatId) entry.key: entry.value,
+    };
   }
 
   /// The banners in place, no reload - and only on a real change.

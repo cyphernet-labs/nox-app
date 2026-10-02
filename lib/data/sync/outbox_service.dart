@@ -167,7 +167,7 @@ class OutboxService {
   /// bubble that looks idle while it is still going.
   Future<bool> _send(OutboxEntry snapshot) async {
     if (snapshot.attachment == null) return _sendEntry(snapshot);
-    _transfers.begin(snapshot.clientMessageId, TransferDirection.upload);
+    _transfers.begin(snapshot.clientMessageId, TransferDirection.upload, chatId: snapshot.chatId);
     // The bytes are already there (a restart after the upload): only the
     // message is left, so the ring starts full.
     if (snapshot.fileId != null) _transfers.report(snapshot.clientMessageId, 1);

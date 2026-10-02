@@ -33,7 +33,7 @@ void main() {
         tester,
         const AppAttachmentPlaceholderWidget(
           name: 'holiday.png',
-          transfer: AttachmentTransfer(direction: TransferDirection.download, fraction: 0.3),
+          transfer: AttachmentTransfer(chatId: 'c1', direction: TransferDirection.download, fraction: 0.3),
         ),
         settle: false,
       );

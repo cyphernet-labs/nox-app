@@ -24,7 +24,9 @@ sealed class ChatsListEvent with _$ChatsListEvent {
   const factory ChatsListEvent.connectionStatusChanged(ConnectionStatus status) = ConnectionStatusChanged;
 
   /// The server's first page for [query] is in the cache, or could not be had.
-  const factory ChatsListEvent.firstPageSynced({required String query}) = FirstPageSynced;
+  /// [hasMore] is what the server said about later pages; [generation] numbers
+  /// the read, so only the newest ends the spinner.
+  const factory ChatsListEvent.firstPageSynced({required String query, bool? hasMore, required int generation}) = FirstPageSynced;
 
   /// The person asked for another attempt, from the banner. Nothing about a
   /// terminal phase changes on its own, so without this the app never comes

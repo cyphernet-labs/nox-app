@@ -23,15 +23,15 @@ void main() {
   tearDown(() => subscription.cancel());
 
   test('a transfer starts with no bytes moved', () async {
-    transfers.begin('m1', TransferDirection.upload);
+    transfers.begin('m1', TransferDirection.upload, chatId: 'c1');
     await pumpEventQueue();
 
-    expect(transfers.current, {'m1': const AttachmentTransfer(direction: TransferDirection.upload)});
+    expect(transfers.current, {'m1': const AttachmentTransfer(chatId: 'c1', direction: TransferDirection.upload)});
     expect(published, hasLength(1));
   });
 
   test('progress is published once per whole percent, not once per callback', () async {
-    transfers.begin('m1', TransferDirection.download);
+    transfers.begin('m1', TransferDirection.download, chatId: 'c1');
     for (final fraction in [0.001, 0.004, 0.009, 0.01, 0.012, 0.5, 0.501]) {
       transfers.report('m1', fraction);
     }
@@ -42,7 +42,7 @@ void main() {
   });
 
   test('a fraction past the ends is clamped, so the ring never reads over 100%', () async {
-    transfers.begin('m1', TransferDirection.upload);
+    transfers.begin('m1', TransferDirection.upload, chatId: 'c1');
     transfers.report('m1', 1.7);
 
     expect(transfers.current['m1']?.fraction, 1.0);
@@ -51,7 +51,7 @@ void main() {
 
   test('a report after the end does not bring the transfer back', () async {
     // Dio can deliver a last progress callback after the request settled.
-    transfers.begin('m1', TransferDirection.upload);
+    transfers.begin('m1', TransferDirection.upload, chatId: 'c1');
     transfers.end('m1');
     transfers.report('m1', 0.9);
 
@@ -59,8 +59,8 @@ void main() {
   });
 
   test('ending one transfer leaves the others running', () async {
-    transfers.begin('m1', TransferDirection.upload);
-    transfers.begin('m2', TransferDirection.download);
+    transfers.begin('m1', TransferDirection.upload, chatId: 'c1');
+    transfers.begin('m2', TransferDirection.download, chatId: 'c1');
     transfers.end('m1');
 
     expect(transfers.current.keys, ['m2']);
@@ -74,8 +74,8 @@ void main() {
   });
 
   test('a new listener is handed what is moving now', () async {
-    transfers.begin('m1', TransferDirection.upload);
+    transfers.begin('m1', TransferDirection.upload, chatId: 'c1');
 
-    expect(await transfers.watch().first, {'m1': const AttachmentTransfer(direction: TransferDirection.upload)});
+    expect(await transfers.watch().first, {'m1': const AttachmentTransfer(chatId: 'c1', direction: TransferDirection.upload)});
   });
 }

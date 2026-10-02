@@ -99,11 +99,13 @@ void main() {
         // Everything the cache holds is on screen — the fetched window plus the
         // messages sent locally, which must not be hidden behind a page edge —
         // there is older history behind it, and the scroll-up cursor sits at the
-        // lowest journal number loaded.
+        // lowest journal number of a real message. Not of the "chat created"
+        // line: it sits one below the oldest message, at a seq a real message
+        // can hold, and a cursor there skipped that message.
         expect(tail.items, isNotEmpty);
         expect(tail.items.map((m) => m.id).toSet().length, tail.items.length);
         expect(tail.pagingState.hasNextPage, isTrue);
-        expect(tail.oldestLoadedSeq, tail.items.map((m) => m.seq).reduce((a, b) => a < b ? a : b));
+        expect(tail.oldestLoadedSeq, tail.items.where((m) => !m.isSystem).map((m) => m.seq).reduce((a, b) => a < b ? a : b));
         bloc.add(const ChatThreadEvent.loadMessages()); // scroll-up prefetch -> olderThan(oldestLoadedSeq)
       },
       wait: const Duration(milliseconds: 500),
@@ -112,7 +114,7 @@ void main() {
         // The older batch appended: every row exactly once, and the scroll-up
         // cursor only ever moves DOWN.
         expect(state.items.map((m) => m.id).toSet().length, state.items.length);
-        expect(state.oldestLoadedSeq, state.items.map((m) => m.seq).reduce((a, b) => a < b ? a : b));
+        expect(state.oldestLoadedSeq, state.items.where((m) => !m.isSystem).map((m) => m.seq).reduce((a, b) => a < b ? a : b));
       },
     );
 
@@ -656,18 +658,53 @@ void main() {
         final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_0'));
         addTearDown(bloc.close);
         await Future<void>.delayed(const Duration(milliseconds: 500));
+        final id = (bloc.state as Initialized).items.last.id;
 
-        transfers.begin('cmid-1', TransferDirection.upload);
-        transfers.report('cmid-1', 0.45);
+        transfers.begin(id, TransferDirection.download, chatId: 'chat_0');
+        transfers.report(id, 0.45);
         await Future<void>.delayed(const Duration(milliseconds: 50));
         expect(
-          (bloc.state as Initialized).transfers['cmid-1'],
-          const AttachmentTransfer(direction: TransferDirection.upload, fraction: 0.45),
+          (bloc.state as Initialized).transfers[id],
+          const AttachmentTransfer(chatId: 'chat_0', direction: TransferDirection.download, fraction: 0.45),
         );
 
-        transfers.end('cmid-1');
+        transfers.end(id);
         await Future<void>.delayed(const Duration(milliseconds: 50));
         expect((bloc.state as Initialized).transfers, isEmpty);
+      });
+
+      test('a send that started before the thread was opened shows at once, with no progress tick to bring it', () async {
+        // Before its first byte a transfer reports nothing - through Tor for
+        // seconds - so it has to be picked up when the thread opens.
+        final transfers = getIt<AttachmentTransferService>();
+        transfers.begin('cmid-early', TransferDirection.upload, chatId: 'chat_0');
+        addTearDown(() => transfers.end('cmid-early'));
+
+        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_0'));
+        addTearDown(bloc.close);
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+
+        expect((bloc.state as Initialized).transfers.keys, contains('cmid-early'));
+      });
+
+      test('a transfer in another chat never reaches this thread', () async {
+        // Passing the whole map redrew the open thread on every percent of
+        // every transfer, wherever it was.
+        final transfers = getIt<AttachmentTransferService>();
+        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_0'));
+        addTearDown(bloc.close);
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        final emitted = <ChatThreadState>[];
+        final subscription = bloc.stream.listen(emitted.add);
+        addTearDown(subscription.cancel);
+
+        transfers.begin('m_in_another_chat', TransferDirection.download, chatId: 'chat_another');
+        transfers.report('m_in_another_chat', 0.3);
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        transfers.end('m_in_another_chat');
+
+        expect((bloc.state as Initialized).transfers, isEmpty);
+        expect(emitted, isEmpty, reason: 'nothing to redraw');
       });
     });
 
@@ -870,7 +907,7 @@ class _RecordingPrefetch extends AttachmentPrefetchService {
   final List<List<MessageModel>> calls = <List<MessageModel>>[];
 
   @override
-  Future<void> prefetch(List<MessageModel> messages) async => calls.add(messages);
+  Future<void> prefetch(List<MessageModel> messages, {bool retryNow = false}) async => calls.add(messages);
 }
 
 /// A session phase this test drives by hand, plus a count of how many times the

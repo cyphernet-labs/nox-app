@@ -466,7 +466,7 @@ void main() {
 
       await service.flush();
 
-      expect(beforeBytes, const AttachmentTransfer(direction: TransferDirection.upload));
+      expect(beforeBytes, const AttachmentTransfer(chatId: 'c1', direction: TransferDirection.upload));
       // The bytes are all up (the fake reports the whole file) while the
       // message itself is still on its way: the ring stays, full.
       expect(whileSending?.percent, 100);

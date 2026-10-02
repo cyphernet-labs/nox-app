@@ -227,8 +227,11 @@ class NoxSocketClient {
   /// the chats and messages already on the device off the screen for all of
   /// it. The screens read again once the channel is live.
   Future<CommandReply> send(String cmd, Map<String, dynamic> data, {bool waitForConnection = true}) async {
-    if (!waitForConnection && _greeted?.isCompleted != true) throw const SocketUnavailableException('not connected');
     for (var attempt = 0; ; attempt++) {
+      // Checked before every attempt, not only the first: the connection can be
+      // replaced during the pause after `rate_limited`, and the retry would
+      // otherwise wait for the next greeting after all.
+      if (!waitForConnection && _greeted?.isCompleted != true) throw const SocketUnavailableException('not connected');
       final reply = await _sendOnce(cmd, data);
       if (reply.errorCode != 'rate_limited' || attempt >= _rateLimitRetries) return reply;
       logRepository.debug(target: this, message: 'socket: rate limited, retrying: cmd=$cmd attempt=${attempt + 1}');

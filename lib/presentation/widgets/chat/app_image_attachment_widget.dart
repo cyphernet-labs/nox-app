@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
+import 'package:nox_app/design/theme/nox_opacity.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/file/attachment_transfer.dart';
@@ -119,11 +120,13 @@ class AppImageAttachmentWidget extends StatelessWidget {
     if (running != null) {
       // Centred on the thumbnail box, which the Image pins to a fixed size, so
       // the ring sits in the middle of the picture whatever its proportions.
+      // IgnorePointer: the disc covered the middle of the picture and swallowed
+      // the tap that opens it.
       content = Stack(
         alignment: Alignment.center,
         children: [
           content,
-          AppTransferBadgeWidget(transfer: running),
+          IgnorePointer(child: AppTransferBadgeWidget(transfer: running)),
         ],
       );
     }
@@ -139,7 +142,7 @@ class AppImageAttachmentWidget extends StatelessWidget {
             // themes (over an unpredictable photo); a ≥48 tap target (a11y), which still
             // fits the 72 box (4 + 48 = 52 < 72).
             child: Material(
-              color: colorScheme.inverseSurface.withValues(alpha: 0.6),
+              color: colorScheme.inverseSurface.withValues(alpha: NoxOpacity.overPhoto),
               shape: const CircleBorder(),
               clipBehavior: Clip.antiAlias,
               child: IconButton(

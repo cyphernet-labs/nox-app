@@ -98,7 +98,7 @@ void main() {
         type: FileType.image,
         name: 'shot.png',
         size: '1 KB',
-        transfer: const AttachmentTransfer(direction: TransferDirection.upload, fraction: 0.6),
+        transfer: const AttachmentTransfer(chatId: 'c1', direction: TransferDirection.upload, fraction: 0.6),
       ),
       settle: false,
     );
@@ -106,6 +106,28 @@ void main() {
     expect(find.byType(AppTransferBadgeWidget), findsOneWidget);
     expect(tester.widget<CircularProgressIndicator>(find.byType(CircularProgressIndicator)).value, 0.6);
     expect(find.bySemanticsLabel(l10nEn.transferSending), findsOneWidget);
+  });
+
+  testWidgets('the ring over a picture being sent does not take the tap that opens it', (tester) async {
+    final tmp = File('${Directory.systemTemp.path}/nox_sending_tap_test.png')..writeAsBytesSync(_png);
+    addTearDown(() => tmp.existsSync() ? tmp.deleteSync() : null);
+    var taps = 0;
+
+    await pumpApp(
+      tester,
+      AppImageAttachmentWidget(
+        localPath: tmp.path,
+        type: FileType.image,
+        name: 'shot.png',
+        size: '1 KB',
+        onTap: () => taps++,
+        transfer: const AttachmentTransfer(chatId: 'c1', direction: TransferDirection.upload, fraction: 0.6),
+      ),
+      settle: false,
+    );
+
+    await tester.tapAt(tester.getCenter(find.byType(AppTransferBadgeWidget)));
+    expect(taps, 1);
   });
 
   testWidgets('a picture with nothing moving carries no ring', (tester) async {

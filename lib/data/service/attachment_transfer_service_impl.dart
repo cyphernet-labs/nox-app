@@ -17,8 +17,8 @@ class AttachmentTransferServiceImpl implements AttachmentTransferService {
   Stream<Map<String, AttachmentTransfer>> watch() => _transfers.stream;
 
   @override
-  void begin(String messageId, TransferDirection direction) {
-    _publish({...current, messageId: AttachmentTransfer(direction: direction)});
+  void begin(String messageId, TransferDirection direction, {required String chatId}) {
+    _publish({...current, messageId: AttachmentTransfer(chatId: chatId, direction: direction)});
   }
 
   @override

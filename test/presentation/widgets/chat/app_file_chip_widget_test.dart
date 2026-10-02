@@ -38,7 +38,7 @@ void main() {
           name: 'report.pdf',
           size: '2.4 MB',
           inBubble: true,
-          transfer: AttachmentTransfer(direction: TransferDirection.upload, fraction: 0.456),
+          transfer: AttachmentTransfer(chatId: 'c1', direction: TransferDirection.upload, fraction: 0.456),
         ),
         settle: false,
       );
@@ -55,7 +55,7 @@ void main() {
           type: FileType.pdf,
           name: 'report.pdf',
           size: '2.4 MB',
-          transfer: AttachmentTransfer(direction: TransferDirection.upload),
+          transfer: AttachmentTransfer(chatId: 'c1', direction: TransferDirection.upload),
         ),
         settle: false,
       );
