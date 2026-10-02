@@ -24,7 +24,7 @@ description: "Задачи фичи 041 — чат без связи"
 
 **Purpose**: Принцип VII — изменение провода сначала вносится в контракт.
 
-- [ ] T001 Внести в `docs/client-backend/protocol/contract-draft.md` §4: `chat.create {name, chat_id?}`, вид `^c_[0-9a-f]{32}$`, порядок проверок (вид → существующий id → имя → вставка), повтор существующего id без записи и без события, `invalid_request` на неверный вид, совместимость по правилу §2.1 (сервер без поддержки пропускает поле; клиент сверяет id в ответе) — по `specs/041-offline-chat-create/contracts/chat-create.md`
+- [X] T001 Внести в `docs/client-backend/protocol/contract-draft.md` §4: `chat.create {name, chat_id?}`, вид `^c_[0-9a-f]{32}$`, порядок проверок (вид → существующий id → имя → вставка), повтор существующего id без записи и без события, `invalid_request` на неверный вид, совместимость по правилу §2.1 (сервер без поддержки пропускает поле; клиент сверяет id в ответе) — по `specs/041-offline-chat-create/contracts/chat-create.md`
 
 ---
 
