@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"nox.app/client-backend/internal/store"
+	"nox.app/client-backend/internal/tor"
 )
 
 // machineState is which of the two pages to show: "somebody still has to claim
@@ -57,6 +58,10 @@ type machineStatus struct {
 	DBBytes   int64
 	Version   string
 	Uptime    time.Duration
+	// Tor is the supervisor's snapshot (039) and AccessDevices how many devices
+	// hold an onion access key. Neither carries an address or a key.
+	Tor           tor.Status
+	AccessDevices int
 }
 
 // collectStatus reads the machine's own state.
@@ -80,7 +85,14 @@ func (s *Server) collectStatus(ctx context.Context) (machineStatus, error) {
 		return machineStatus{}, fmt.Errorf("read journal id: %w", err)
 	}
 
+	access, err := s.store.CountDevicesWithAccess(ctx)
+	if err != nil {
+		return machineStatus{}, err
+	}
+
 	status := machineStatus{
+		Tor:           s.tor.Status(),
+		AccessDevices: access,
 		// Set before the switch, not inside a branch. Both states read them -
 		// the claimed page to say whether an owner is recorded, the needs-claim
 		// page to pick which of three stories it is telling - and filling them

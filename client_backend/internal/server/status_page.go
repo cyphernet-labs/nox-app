@@ -3,10 +3,14 @@ package server
 import (
 	"crypto/sha256"
 	"encoding/base64"
+	"fmt"
 	"html/template"
 	"net"
 	"net/http"
 	"strings"
+	"time"
+
+	"nox.app/client-backend/internal/tor"
 )
 
 // statusPage is the service page: two states, one template, and exactly one
@@ -41,6 +45,8 @@ dd { margin: 0; font-variant-numeric: tabular-nums; }
 .warn { margin: 1.5rem 0 0; padding: .75rem 1rem; border-radius: .5rem;
   background: rgba(200,120,0,.16); }
 footer { margin-top: 2.5rem; font-size: .85rem; opacity: .6; }
+h2 { font-size: 1.1rem; margin: 2rem 0 .5rem; }
+p.torline { margin: 1.5rem 0 0; font-size: .9rem; opacity: .75; }
 </style></head><body>
 
 {{if eq .State 0}}
@@ -88,6 +94,13 @@ first.</p>{{end}}
   <dt>Chats</dt><dd>{{.Chats}}</dd>
   <dt>Messages</dt><dd>{{.Messages}}</dd>
 </dl>
+<h2>Tor</h2>
+<p class="{{if .Tor.Warn}}warn{{else}}lead{{end}}">{{.Tor.Line}}</p>
+{{if .Tor.Rows}}<dl>
+{{range .Tor.Rows}}  <dt>{{.Label}}</dt><dd>{{.Value}}</dd>
+{{end}}</dl>{{end}}
+{{else}}
+<p class="torline">Tor: {{.Tor.Line}}</p>
 {{end}}
 
 <footer>This page is only reachable from this machine. It is for people, not for programs &mdash;
@@ -186,6 +199,77 @@ type statusView struct {
 	Messages   int64
 	Owned      bool
 	HasPerson  bool
+	Tor        torView
+}
+
+// torView is the Tor part of the page (039): words only, already chosen, so
+// nothing in the template can reach the onion address or a key (FR-030).
+type torView struct {
+	// Line is the one-line state, shown in both page states.
+	Line string
+	// Warn marks a state the person should act on.
+	Warn bool
+	// Rows are the details of the claimed page.
+	Rows []torRow
+}
+
+type torRow struct {
+	Label, Value string
+}
+
+// buildTorView words the supervisor's snapshot for a person. The English is
+// the page's microcopy (data-model, "Строки страницы").
+func buildTorView(st tor.Status, accessDevices int, devices int64) torView {
+	if !st.Enabled {
+		return torView{Line: "Tor is turned off (-tor=false)"}
+	}
+	v := torView{}
+	switch st.Phase {
+	case tor.PhaseBinaryMissing:
+		v.Line, v.Warn = "tor not found — install tor 0.4.9 or newer", true
+	case tor.PhaseBinaryTooOld:
+		v.Line, v.Warn = "tor "+st.Version+" is too old — install 0.4.9 or newer", true
+	case tor.PhaseRunning:
+		v.Line = "Connected to the Tor network"
+	case tor.PhaseWaitingRetry:
+		v.Line, v.Warn = "tor stopped — retrying in "+st.RetryIn.Round(time.Second).String(), true
+	default:
+		v.Line = fmt.Sprintf("Connecting to the Tor network (%d%%)", st.Bootstrap)
+	}
+
+	verdict := map[tor.Verdict]string{
+		tor.VerdictRecommended: "recommended by the network",
+		tor.VerdictOutdated:    "outdated — update tor",
+		tor.VerdictObsolete:    "no longer accepted by the network — update tor",
+	}[st.Verdict]
+	if verdict == "" {
+		verdict = "not known yet"
+	}
+	if st.Verdict == tor.VerdictOutdated || st.Verdict == tor.VerdictObsolete {
+		v.Warn = true
+	}
+	publication := map[tor.Publication]string{
+		tor.PublicationPublished:  "Published",
+		tor.PublicationPublishing: "Publishing…",
+		tor.PublicationNoKeys:     "Not published: no device has access yet",
+		tor.PublicationTorDown:    "Not published: tor is not running",
+	}[st.Publication]
+	version := st.Version
+	if version == "" {
+		version = "—"
+	}
+	v.Rows = []torRow{
+		{"Version", version},
+		{"Network verdict", verdict},
+		{"Onion address", publication},
+		{"Devices with access from anywhere", fmt.Sprintf("%d of %d", accessDevices, devices)},
+	}
+	if st.LastError != "" {
+		// Scrubbed by the supervisor already; once more here, because this is
+		// the last door before a page.
+		v.Rows = append(v.Rows, torRow{"Last error", tor.Scrub(st.LastError)})
+	}
+	return v
 }
 
 // handleStatusPage serves the service page.
@@ -227,6 +311,7 @@ func (s *Server) handleStatusPage(w http.ResponseWriter, r *http.Request) {
 		Messages:   status.Counts.Messages,
 		Owned:      status.Owned,
 		HasPerson:  status.HasPerson,
+		Tor:        buildTorView(status.Tor, status.AccessDevices, status.Counts.Devices),
 	}
 	// The code is drawn only when something other than this machine could dial
 	// the address in it. The LINK is shown either way: pasting it into the app
