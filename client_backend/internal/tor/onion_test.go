@@ -2,10 +2,13 @@ package tor
 
 import (
 	"bytes"
+	"crypto/ecdh"
 	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"slices"
 	"testing"
 )
 
@@ -99,19 +102,58 @@ func TestWrongSizedKeysAreRefusedRatherThanTruncated(t *testing.T) {
 }
 
 func TestAccessKeysFromTheWireAreExactly32BytesOfBase64(t *testing.T) {
-	good := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	key, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	good := base64.StdEncoding.EncodeToString(key.PublicKey().Bytes())
 	if raw, err := ParseAccessKey(good); err != nil || len(raw) != 32 {
-		t.Fatalf("ParseAccessKey(32 zero bytes) = %x, %v", raw, err)
+		t.Fatalf("ParseAccessKey(a real public key) = %x, %v", raw, err)
 	}
 	for name, in := range map[string]string{
 		"empty":        "",
 		"not base64":   "!!!!",
 		"31 bytes":     base64.StdEncoding.EncodeToString(make([]byte, 31)),
 		"33 bytes":     base64.StdEncoding.EncodeToString(make([]byte, 33)),
-		"url alphabet": "_" + base64.StdEncoding.EncodeToString(make([]byte, 32))[1:],
+		"url alphabet": "_" + good[1:],
 	} {
 		if _, err := ParseAccessKey(in); !errors.Is(err, ErrBadAccessKey) {
 			t.Errorf("%s: err = %v, want ErrBadAccessKey", name, err)
+		}
+	}
+}
+
+// A small-order point is refused: tor asserts on the all-zero key, and any of
+// these makes the exchange come out as zeros, which would key that client's
+// descriptor entry by the onion address alone. The seven encodings libsodium
+// blacklists, and each again with the top bit set - x25519 ignores that bit,
+// so the same points must not slip through with it.
+func TestAccessKeysOfSmallOrderAreRefused(t *testing.T) {
+	ff := func(first, last byte) []byte {
+		b := make([]byte, 32)
+		for i := range b {
+			b[i] = 0xff
+		}
+		b[0], b[31] = first, last
+		return b
+	}
+	points := map[string][]byte{
+		"zero (order 4)": make([]byte, 32),
+		"one (order 1)":  append([]byte{1}, make([]byte, 31)...),
+		"order 8, first": mustHex(t, "e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800"),
+		"order 8, second": mustHex(t,
+			"5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157"),
+		"p-1 (order 2)":   ff(0xec, 0x7f),
+		"p (zero again)":  ff(0xed, 0x7f),
+		"p+1 (one again)": ff(0xee, 0x7f),
+	}
+	for name, point := range points {
+		for _, top := range []byte{0, 0x80} {
+			raw := slices.Clone(point)
+			raw[31] |= top
+			if _, err := ParseAccessKey(base64.StdEncoding.EncodeToString(raw)); !errors.Is(err, ErrBadAccessKey) {
+				t.Errorf("%s (top bit %#x): err = %v, want ErrBadAccessKey", name, top, err)
+			}
 		}
 	}
 }

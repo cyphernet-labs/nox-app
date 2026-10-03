@@ -60,7 +60,7 @@ func TestIdentityOwnKeyReachesTheAuthorOnAllThreePaths(t *testing.T) {
 	// Path 2 - live delivery to a second connection of the same person.
 	// A second connection of the SAME person - which now means a second
 	// device of hers, paired through an invite.
-	invite, err := srv.store.IssueDeviceInvite(context.Background(), ownerOf(t, srv, dev), time.Now().Unix())
+	invite, err := srv.store.IssueDeviceInvite(context.Background(), dev.pub, time.Now().Unix())
 	if err != nil {
 		t.Fatalf("IssueDeviceInvite: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestPairCreatedTellsTheClientWhetherToOnboard(t *testing.T) {
 		t.Fatal("claiming a fresh server brings the person into being")
 	}
 
-	invite, err := srv.store.IssueDeviceInvite(context.Background(), ownerOf(t, srv, dev), time.Now().Unix())
+	invite, err := srv.store.IssueDeviceInvite(context.Background(), dev.pub, time.Now().Unix())
 	if err != nil {
 		t.Fatalf("IssueDeviceInvite: %v", err)
 	}

@@ -142,7 +142,7 @@ func TestGreetingNeverRebindsADeviceToAnotherPerson(t *testing.T) {
 	owner := claimPerson(t, s, "dev-phone")
 
 	// A second device of the SAME person, via an invite.
-	token, err := s.IssueDeviceInvite(ctx, owner.UserID, 200)
+	token, err := s.IssueDeviceInvite(ctx, "dev-phone", 200)
 	if err != nil {
 		t.Fatalf("IssueDeviceInvite: %v", err)
 	}

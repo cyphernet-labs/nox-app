@@ -52,8 +52,8 @@ func TestAReplayedClaimOverOnionIsRefusedToo(t *testing.T) {
 func TestADeviceInviteWorksOverOnion(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	owner := claimOwner(t, s, "dev-a")
-	invite, err := s.IssueOnionInvite(ctx, owner.UserID, accessKey(9), 200)
+	claimOwner(t, s, "dev-a")
+	invite, err := s.IssueOnionInvite(ctx, "dev-a", accessKey(9), 200)
 	if err != nil {
 		t.Fatalf("IssueOnionInvite: %v", err)
 	}
@@ -76,11 +76,10 @@ func TestARePairWithoutAKeyKeepsTheOneTheDeviceHad(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueClaimToken: %v", err)
 	}
-	owner, err := s.Pair(ctx, claim, "dev-a", "test", PairOptions{AccessKey: accessKey(1)}, 100)
-	if err != nil {
+	if _, err := s.Pair(ctx, claim, "dev-a", "test", PairOptions{AccessKey: accessKey(1)}, 100); err != nil {
 		t.Fatalf("claim: %v", err)
 	}
-	invite, err := s.IssueDeviceInvite(ctx, owner.UserID, 200)
+	invite, err := s.IssueDeviceInvite(ctx, "dev-a", 200)
 	if err != nil {
 		t.Fatalf("IssueDeviceInvite: %v", err)
 	}
@@ -91,7 +90,7 @@ func TestARePairWithoutAKeyKeepsTheOneTheDeviceHad(t *testing.T) {
 	if keys, _ := activeKeys(t, s, 201); len(keys) != 1 || keys[0] != accessKey(1) {
 		t.Fatalf("active keys = %v, want the device's key kept", keys)
 	}
-	invite2, err := s.IssueDeviceInvite(ctx, owner.UserID, 300)
+	invite2, err := s.IssueDeviceInvite(ctx, "dev-a", 300)
 	if err != nil {
 		t.Fatalf("IssueDeviceInvite: %v", err)
 	}

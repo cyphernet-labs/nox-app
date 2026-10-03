@@ -50,25 +50,44 @@ var (
 // and an expiring claim would leave a freshly installed server unclaimable
 // forever with no way to mint another.
 func (s *Store) IssueClaimToken(ctx context.Context, now int64) (string, error) {
-	return s.issueToken(ctx, TokenClaim, "", now, 0, "")
+	token, err := newTokenValue()
+	if err != nil {
+		return "", err
+	}
+	if _, err := s.write.ExecContext(ctx,
+		"INSERT INTO pair_tokens (token, kind, user_id, created_at, expires_at, used_at, access_key) VALUES (?, ?, NULL, ?, NULL, NULL, NULL)",
+		token, TokenClaim, now); err != nil {
+		return "", fmt.Errorf("insert claim token: %w", err)
+	}
+	return token, nil
 }
 
-// IssueDeviceInvite mints a token that binds a new device to an EXISTING
-// person. Any already-paired device of that person may issue one.
-func (s *Store) IssueDeviceInvite(ctx context.Context, userID string, now int64) (string, error) {
-	return s.issueToken(ctx, TokenInviteDevice, userID, now, now+InviteTTLSeconds, "")
+// IssueDeviceInvite mints a token that binds a new device to the person whose
+// device - issuer - asks for it.
+//
+// The person is read from the ISSUER's row by the very statement that writes
+// the token, and a device that is no longer there gets ErrDeviceUnknown. A
+// device revoked from another one may still have a command on the way; the
+// single writer puts that command and the revocation in one order, and only
+// this way does the order decide. Checked any earlier, the revocation could
+// land in between, and its burning of the person's live invites would miss
+// the one minted after it - a door opened by a device that had just been told
+// to leave.
+func (s *Store) IssueDeviceInvite(ctx context.Context, issuer string, now int64) (string, error) {
+	return s.issueInvite(ctx, issuer, now, "")
 }
 
 // IssueOnionInvite mints a device invite that also carries a one-time onion
 // access key (039): accessKey is the PUBLIC half, and the private half lives
-// only in the link the caller builds - never here.
+// only in the link the caller builds - never here. The issuer is checked as
+// for IssueDeviceInvite.
 //
 // The key works exactly as long as the invite does. Spending, expiring and
 // burning the token - a revocation burns every live invite of the person -
 // switch it off with no write of their own, because ActiveAccessKeys reads it
 // through the token's own state.
-func (s *Store) IssueOnionInvite(ctx context.Context, userID, accessKey string, now int64) (string, error) {
-	return s.issueToken(ctx, TokenInviteDevice, userID, now, now+InviteTTLSeconds, accessKey)
+func (s *Store) IssueOnionInvite(ctx context.Context, issuer, accessKey string, now int64) (string, error) {
+	return s.issueInvite(ctx, issuer, now, accessKey)
 }
 
 // ClaimTokenUsable reports whether a claim token can still be presented.
@@ -103,30 +122,28 @@ func newTokenValue() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(raw[:]), nil
 }
 
-func (s *Store) issueToken(ctx context.Context, kind, userID string, now, expiresAt int64, accessKey string) (string, error) {
+func (s *Store) issueInvite(ctx context.Context, issuer string, now int64, accessKey string) (string, error) {
 	token, err := newTokenValue()
 	if err != nil {
 		return "", err
-	}
-
-	var user any
-	if userID != "" {
-		user = userID
-	}
-	var expires any
-	if expiresAt > 0 {
-		expires = expiresAt
 	}
 	var access any
 	if accessKey != "" {
 		access = accessKey
 	}
-
-	_, err = s.write.ExecContext(ctx,
-		"INSERT INTO pair_tokens (token, kind, user_id, created_at, expires_at, used_at, access_key) VALUES (?, ?, ?, ?, ?, NULL, ?)",
-		token, kind, user, now, expires, access)
+	res, err := s.write.ExecContext(ctx,
+		`INSERT INTO pair_tokens (token, kind, user_id, created_at, expires_at, used_at, access_key)
+		 SELECT ?, ?, user_id, ?, ?, NULL, ? FROM devices WHERE device_key = ?`,
+		token, TokenInviteDevice, now, now+InviteTTLSeconds, access, issuer)
 	if err != nil {
-		return "", fmt.Errorf("insert pairing token: %w", err)
+		return "", fmt.Errorf("insert invite: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return "", fmt.Errorf("insert invite: %w", err)
+	}
+	if n == 0 {
+		return "", ErrDeviceUnknown
 	}
 	return token, nil
 }

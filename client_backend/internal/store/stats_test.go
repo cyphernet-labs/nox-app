@@ -28,7 +28,7 @@ func TestCountsFollowWhatTheStoreHolds(t *testing.T) {
 	owner := claimOwner(t, s, "dev-owner")
 
 	// Two devices.
-	invite, err := s.IssueDeviceInvite(ctx, owner.UserID, 400)
+	invite, err := s.IssueDeviceInvite(ctx, "dev-owner", 400)
 	if err != nil {
 		t.Fatalf("IssueDeviceInvite: %v", err)
 	}
