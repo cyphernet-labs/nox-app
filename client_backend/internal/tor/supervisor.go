@@ -146,6 +146,18 @@ func Disabled() *Supervisor {
 	return s
 }
 
+// Unavailable is the supervisor of a server that has Tor turned on but could
+// not prepare its side of it - the onion entry would not listen, or the onion
+// key would not read. It behaves exactly like Disabled, and says otherwise:
+// the status page must not tell an operator who never passed -tor=false that
+// they did.
+func Unavailable(reason string) *Supervisor {
+	s := &Supervisor{kick: make(chan struct{}, 1)}
+	s.status.Store(&Status{Enabled: true, Phase: PhaseUnavailable, Verdict: VerdictUnknown,
+		Publication: PublicationTorDown, LastError: Scrub(reason)})
+	return s
+}
+
 // Status returns the current snapshot.
 func (s *Supervisor) Status() Status { return *s.status.Load() }
 

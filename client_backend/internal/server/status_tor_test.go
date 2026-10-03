@@ -41,6 +41,14 @@ func TestTheClaimedPageNamesEveryTorState(t *testing.T) {
 			[]string{"no longer accepted by the network — update tor"}, true},
 		{"restarting", tor.Status{Enabled: true, Phase: tor.PhaseWaitingRetry, RetryIn: 4 * time.Second, LastError: "tor stopped: tor exited"},
 			[]string{"tor stopped — retrying in 4s", "Last error", "tor exited"}, true},
+		{"found but would not run", tor.Status{Enabled: true, Phase: tor.PhaseBinaryUnusable, Publication: tor.PublicationTorDown,
+			LastError: "tor was found but did not run: run tor --version: signal: killed"},
+			[]string{"tor was found but did not run", "Last error", "signal: killed"}, true},
+		{"could not be set up", tor.Status{Enabled: true, Phase: tor.PhaseUnavailable, Publication: tor.PublicationTorDown,
+			LastError: "the onion key could not be read"},
+			[]string{"Tor could not be set up on this server", "the onion key could not be read"}, true},
+		{"keys unreadable", tor.Status{Enabled: true, Phase: tor.PhaseRunning, Publication: tor.PublicationKeysUnreadable},
+			[]string{"Not published: the access keys could not be read"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st.tor.setStatus(tc.status)
@@ -86,6 +94,10 @@ func TestTheUnclaimedTorLineCarriesTorsReason(t *testing.T) {
 			"Tor: tor 0.4.8.17 is too old — install 0.4.9 or newer from the Tor Project&#39;s repository</p>"},
 		{tor.Status{Enabled: true, Phase: tor.PhaseRunning, LastError: "an error from before the restart"},
 			"Tor: Connected to the Tor network</p>"},
+		{tor.Status{Enabled: true, Phase: tor.PhaseBinaryUnusable, LastError: "run tor --version: signal: killed"},
+			"Tor: tor was found but did not run (run tor --version: signal: killed)"},
+		{tor.Status{Enabled: true, Phase: tor.PhaseUnavailable, LastError: "the onion key could not be read"},
+			"Tor: Tor could not be set up on this server (the onion key could not be read)"},
 	} {
 		st.tor.setStatus(tc.status)
 		if body := statusBody(t, st.srv); !strings.Contains(body, tc.want) {

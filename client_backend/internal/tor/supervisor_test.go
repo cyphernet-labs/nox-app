@@ -547,3 +547,31 @@ func TestTorsOwnLogIsRetoldScrubbed(t *testing.T) {
 		t.Fatal("info-level noise reached the log")
 	}
 }
+
+// A server that has Tor on but could not prepare its side of it says so: on,
+// not working, and why - never "turned off", which the operator did not do.
+// Everything else behaves as Disabled, Run included.
+func TestUnavailableSaysTorIsOnAndWhyItIsNot(t *testing.T) {
+	s := Unavailable("the onion entry could not listen: 25njqamcweflpvkl73j4szahhihoc4xt3ktcgjnpaingr5yhkenl5sid.onion")
+	st := s.Status()
+	if !st.Enabled || st.Phase != PhaseUnavailable || st.Publication != PublicationTorDown {
+		t.Fatalf("status = %+v, want enabled, unavailable, not published", st)
+	}
+	if strings.Contains(st.LastError, ".onion") || !strings.Contains(st.LastError, "could not listen") {
+		t.Fatalf("LastError = %q, want the reason, scrubbed", st.LastError)
+	}
+	if s.Offered() || s.ReadyForInvite() {
+		t.Fatal("an unavailable Tor offers its address or onion invites")
+	}
+	s.KeysChanged()
+	done := make(chan struct{})
+	go func() {
+		s.Run(t.Context())
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run of an unavailable supervisor did not return at once")
+	}
+}

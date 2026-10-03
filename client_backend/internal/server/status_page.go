@@ -235,6 +235,14 @@ func buildTorView(st tor.Status, accessDevices int, devices int64) torView {
 		// A distribution's own package is the usual way to end up here: LTS
 		// releases still ship series the network no longer accepts.
 		v.Line, v.Warn = "tor "+st.Version+" is too old — install 0.4.9 or newer from the Tor Project's repository", true
+	case tor.PhaseBinaryUnusable:
+		// Found, and would not even print its version: on macOS that is an
+		// unsigned tor, killed at launch. The reason says which.
+		v.Line, v.Warn = "tor was found but did not run", true
+		v.Reason = tor.Scrub(st.LastError)
+	case tor.PhaseUnavailable:
+		v.Line, v.Warn = "Tor could not be set up on this server", true
+		v.Reason = tor.Scrub(st.LastError)
 	case tor.PhaseRunning:
 		v.Line = "Connected to the Tor network"
 	case tor.PhaseWaitingRetry:
@@ -261,6 +269,9 @@ func buildTorView(st tor.Status, accessDevices int, devices int64) torView {
 		tor.PublicationPublishing: "Publishing…",
 		tor.PublicationNoKeys:     "Not published: no device has access yet",
 		tor.PublicationTorDown:    "Not published: tor is not running",
+		// Taken down on purpose: a list nobody can read may still name a
+		// revoked device.
+		tor.PublicationKeysUnreadable: "Not published: the access keys could not be read",
 	}[st.Publication]
 	version := st.Version
 	if version == "" {

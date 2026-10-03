@@ -77,19 +77,25 @@ SELECT access_key FROM pair_tokens
 | Поле | Значения |
 |---|---|
 | `Enabled` | включён ли Tor флагом |
-| `Phase` | `disabled` · `binary-missing` · `binary-too-old` · `starting` · `connecting` · `running` · `waiting-retry` |
+| `Phase` | `disabled` · `binary-missing` · `binary-too-old` · `binary-unusable` · `unavailable` · `starting` · `connecting` · `running` · `waiting-retry` |
 | `Version` | строка версии tor или пусто |
 | `Verdict` | `recommended` · `outdated` · `obsolete` · `unknown` |
 | `Bootstrap` | процент подключения к сети, 0–100 |
-| `Publication` | `not-published-no-keys` · `publishing` · `published` · `not-published-tor-down` |
-| `AccessDevices` | сколько устройств с ключом доступа — читается из хранилища для страницы |
-| `LastError` | последняя ошибка без адресов и ключей |
-| `Offered` | Tor включён, при последней проверке найден tor подходящей версии, ключей ≥ 1. Вердикт сети не влияет |
-| `ReadyForInvite` | фаза `running` и подключение 100% |
+| `Publication` | `not-published-no-keys` · `publishing` · `published` · `not-published-tor-down` · `not-published-keys-unreadable` |
+| `LastError` | последняя ошибка без адресов и ключей; для остановки tor — по возможности последняя его строка уровня warn/err, если ей не больше минуты |
+| `RetryIn` | пауза до следующего запуска в фазе `waiting-retry` |
+
+В снимок не входят два флага супервизора и одно число страницы:
+
+| Где | Что |
+|---|---|
+| `Supervisor.Offered()` | Tor включён, при последней проверке найден tor подходящей версии, ключей ≥ 1. Вердикт сети не влияет |
+| `Supervisor.ReadyForInvite()` | фаза `running` и подключение 100% |
+| страница статуса | сколько устройств с ключом доступа — читается из хранилища при каждом показе |
 
 Неизменяемый снимок, публикуется супервизором через `atomic.Pointer` (research, решение 11).
 
-Выключенный Tor — та же форма с `Enabled: false` от выключенной реализации (research, решение 17).
+Выключенный Tor — та же форма с `Enabled: false` от выключенной реализации (research, решение 17). Tor, который включён, но сервер не смог подготовить свою сторону (onion-вход не слушает, ключ onion не читается), — та же выключенная реализация, но со снимком `Enabled: true`, `Phase: unavailable` и причиной в `LastError`: страница не должна говорить «выключен» тому, кто его не выключал.
 
 **Строки страницы** (английская микрокопия; ключи — значения полей):
 
@@ -97,7 +103,9 @@ SELECT access_key FROM pair_tokens
 |---|---|---|
 | `Phase` | `disabled` | `Tor is turned off (-tor=false)` |
 | | `binary-missing` | `tor not found — install tor 0.4.9 or newer` |
-| | `binary-too-old` | `tor {version} is too old — install 0.4.9 or newer` |
+| | `binary-too-old` | `tor {version} is too old — install 0.4.9 or newer from the Tor Project's repository` |
+| | `binary-unusable` | `tor was found but did not run` |
+| | `unavailable` | `Tor could not be set up on this server` |
 | | `starting` / `connecting` | `Connecting to the Tor network ({n}%)` |
 | | `running` | `Connected to the Tor network` |
 | | `waiting-retry` | `tor stopped — retrying in {d}` |
@@ -109,6 +117,9 @@ SELECT access_key FROM pair_tokens
 | | `publishing` | `Publishing…` |
 | | `not-published-no-keys` | `Not published: no device has access yet` |
 | | `not-published-tor-down` | `Not published: tor is not running` |
+| | `not-published-keys-unreadable` | `Not published: the access keys could not be read` |
+
+На странице «не забран» строка о Tor одна: `Tor: {строка фазы}`, а для `binary-unusable`, `unavailable`, `waiting-retry`, `starting` и `connecting` к ней в скобках добавляется `LastError` — сама строка этих фаз причину не называет (FR-027).
 
 ## Переходы состояний
 
@@ -117,7 +128,7 @@ SELECT access_key FROM pair_tokens
 ```
 disabled                          ← флаг -tor=false; ничего не запускается
 
-binary-missing / binary-too-old ──(раз в 5 минут перепроверка)──→ starting
+binary-missing / binary-too-old / binary-unusable ──(раз в 5 минут перепроверка)──→ starting
 
 starting ──(управляющий порт поднят, AUTHENTICATE, TAKEOWNERSHIP)──→ connecting
 connecting ──(bootstrap 100%)──→ running

@@ -13,10 +13,13 @@ const (
 	// its version - killed at launch, as the unsigned macOS tor is, or not
 	// executable. Told apart from "not found": the cure is a different one.
 	PhaseBinaryUnusable Phase = "binary-unusable"
-	PhaseStarting       Phase = "starting"
-	PhaseConnecting     Phase = "connecting"
-	PhaseRunning        Phase = "running"
-	PhaseWaitingRetry   Phase = "waiting-retry"
+	// PhaseUnavailable is Tor turned on and the server unable to prepare its
+	// own side of it, so no tor was ever started (see Unavailable).
+	PhaseUnavailable  Phase = "unavailable"
+	PhaseStarting     Phase = "starting"
+	PhaseConnecting   Phase = "connecting"
+	PhaseRunning      Phase = "running"
+	PhaseWaitingRetry Phase = "waiting-retry"
 )
 
 // Verdict is the network's own judgement of the running tor's version, from

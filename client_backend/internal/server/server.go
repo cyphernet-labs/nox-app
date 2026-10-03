@@ -722,17 +722,20 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 // setupOnion prepares the onion side: the loopback entry tor will forward to,
 // and the supervisor. Any failure here is logged and leaves the server on the
 // direct path alone - Tor is an addition to it, never a condition for it
-// (FR-007).
+// (FR-007) - with a supervisor that says Tor is on and why it is not working,
+// rather than one that says it was turned off.
 func (s *Server) setupOnion(ctx context.Context, tlsConfig *tls.Config, logger *slog.Logger) (*tor.Supervisor, *http.Server, net.Listener) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		logger.Error("onion entry unavailable, serving the direct path only", "err", err)
+		s.tor = tor.Unavailable("the onion entry could not listen: " + err.Error())
 		return nil, nil, nil
 	}
 	seed, err := s.store.OnionSeed(ctx)
 	if err != nil {
 		_ = ln.Close()
 		logger.Error("onion key unavailable, serving the direct path only", "err", err)
+		s.tor = tor.Unavailable("the onion key could not be read")
 		return nil, nil, nil
 	}
 	sup, err := tor.New(tor.Config{
@@ -747,6 +750,7 @@ func (s *Server) setupOnion(ctx context.Context, tlsConfig *tls.Config, logger *
 	if err != nil {
 		_ = ln.Close()
 		logger.Error("tor supervisor unavailable, serving the direct path only", "err", err)
+		s.tor = tor.Unavailable("the onion key is not usable")
 		return nil, nil, nil
 	}
 	s.tor = sup
