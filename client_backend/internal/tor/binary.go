@@ -72,13 +72,18 @@ var ErrNotFound = errors.New("tor not found")
 // silently running another would be worse than refusing - it would also make
 // "tor not found" impossible to reproduce on a machine that has a tor in PATH.
 //
+// The explicit path is made absolute first. A bare name like "tor" would be
+// checked here against the working directory and then run by exec through
+// PATH - a different binary from the one whose version was read.
+//
 // Without one: next to the server's own executable first, because that is
 // where a packaged server will ship its tor on macOS and Windows; then PATH,
 // which is where a Linux distribution or Homebrew puts it.
 func Find(explicit string) (string, error) {
 	if explicit != "" {
-		if isFile(explicit) {
-			return explicit, nil
+		abs, err := filepath.Abs(explicit)
+		if err == nil && isFile(abs) {
+			return abs, nil
 		}
 		return "", fmt.Errorf("%w at the path given by -tor-bin", ErrNotFound)
 	}

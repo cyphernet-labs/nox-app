@@ -13,6 +13,15 @@ import (
 	"time"
 )
 
+const (
+	// keyReadGiveUp is how many reads of the access keys in a row may fail
+	// before the onion service is taken down (see keysUnreadable).
+	keyReadGiveUp = 3
+	// problemWindow is how recent tor's last complaint must be to stand as the
+	// reason it stopped. Older, it is about something else.
+	problemWindow = time.Minute
+)
+
 // KeysFunc reads the active access keys - public x25519 keys, base64 - and the
 // moment the earliest one-time key among them stops working (zero when none
 // does). The store answers it; the supervisor never touches the database.
@@ -67,6 +76,12 @@ type Supervisor struct {
 	// a key left the set, and tor keeps letting a client in through a circuit
 	// it already holds (research, decision 15).
 	pendingCut bool
+	// keyFailures counts the reads of the access keys that failed in a row.
+	keyFailures int
+	// lastProblem is the last warning or error tor printed, and when it was
+	// read: tor says why it stops, and says it nowhere else.
+	lastProblem   string
+	lastProblemAt time.Time
 
 	// Timing, overridden by tests.
 	now          func() time.Time
@@ -77,6 +92,7 @@ type Supervisor struct {
 	backoffMin   time.Duration
 	backoffMax   time.Duration
 	stableAfter  time.Duration
+	keyRetryMax  time.Duration
 	// retryHook, when set, sees every pause chosen before a restart. Tests
 	// only: the growth of the pause is the property, and it is gone from the
 	// snapshot the moment the next start begins.
@@ -116,6 +132,7 @@ func New(cfg Config) (*Supervisor, error) {
 		backoffMin:   time.Second,
 		backoffMax:   5 * time.Minute,
 		stableAfter:  time.Minute,
+		keyRetryMax:  time.Minute,
 	}
 	s.status.Store(&Status{Enabled: true, Phase: PhaseStarting, Verdict: VerdictUnknown, Publication: PublicationTorDown})
 	return s, nil
@@ -171,15 +188,13 @@ func (s *Supervisor) Run(ctx context.Context) {
 		s.refreshKeyCount(ctx)
 		path, v, err := s.launcher.locate(ctx)
 		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
 			s.binaryOK = false
 			s.updateOffered()
 			s.ready.Store(false)
-			phase, msg := PhaseBinaryMissing, "tor not found - install tor 0.4.9 or newer"
-			if errors.Is(err, errTooOld) {
-				phase, msg = PhaseBinaryTooOld, "tor "+v.String()+" is too old - install 0.4.9 or newer"
-			} else if !errors.Is(err, ErrNotFound) {
-				msg = "tor could not be checked: " + err.Error()
-			}
+			phase, msg := locateFailure(err, v)
 			s.update(func(st *Status) {
 				st.Phase, st.Version, st.Publication, st.Bootstrap = phase, versionOrEmpty(v), PublicationTorDown, 0
 				st.LastError = Scrub(msg)
@@ -197,11 +212,19 @@ func (s *Supervisor) Run(ctx context.Context) {
 		})
 		s.cfg.Logger.Info("starting tor", "version", v.String())
 
+		s.lastProblem, s.lastProblemAt = "", time.Time{}
 		started := s.now()
 		run, err := s.launcher.start(ctx, path)
 		if err == nil {
 			err = s.serve(ctx, run)
 			run.stop()
+			// What tor printed on its way out may still be waiting: serve
+			// returns on the exit, which can win the race against the lines.
+			s.drainLines(run)
+		} else if failed, ok := errors.AsType[*startFailure](err); ok {
+			for _, line := range failed.lines {
+				s.onLogLine(line)
+			}
 		}
 		s.ready.Store(false)
 		s.serviceUp = false
@@ -213,8 +236,8 @@ func (s *Supervisor) Run(ctx context.Context) {
 			backoff = s.backoffMin
 		}
 		msg := "tor stopped"
-		if err != nil {
-			msg = "tor stopped: " + err.Error()
+		if reason := s.stopReason(err); reason != "" {
+			msg = "tor stopped: " + reason
 		}
 		s.update(func(st *Status) {
 			st.Phase, st.Publication, st.Bootstrap, st.RetryIn = PhaseWaitingRetry, PublicationTorDown, 0, backoff
@@ -229,6 +252,33 @@ func (s *Supervisor) Run(ctx context.Context) {
 		}
 		backoff = min(2*backoff, s.backoffMax)
 	}
+}
+
+// locateFailure names what was wrong with the binary. Each case has its own
+// phase because each has its own cure: install tor, update it, or find out
+// why the one that is there will not run - an unsigned build on macOS is
+// killed before it prints its version.
+func locateFailure(err error, v Version) (Phase, string) {
+	switch {
+	case errors.Is(err, errTooOld):
+		return PhaseBinaryTooOld, "tor " + v.String() + " is too old - install 0.4.9 or newer from the Tor Project's repository"
+	case errors.Is(err, ErrNotFound):
+		return PhaseBinaryMissing, "tor not found - install tor 0.4.9 or newer"
+	default:
+		return PhaseBinaryUnusable, "tor was found but did not run: " + err.Error()
+	}
+}
+
+// stopReason is why the last tor stopped: in tor's own words when it said
+// something lately, else in ours.
+func (s *Supervisor) stopReason(err error) string {
+	if s.lastProblem != "" && s.now().Sub(s.lastProblemAt) <= problemWindow {
+		return s.lastProblem
+	}
+	if err != nil {
+		return err.Error()
+	}
+	return ""
 }
 
 // serve runs one tor process until it ends or ctx is cancelled.
@@ -246,24 +296,24 @@ func (s *Supervisor) serve(ctx context.Context, run running) error {
 
 	verdictTick := time.NewTicker(s.verdictEvery)
 	defer verdictTick.Stop()
-	var coalesce, cut, expiry <-chan time.Time
+	var coalesce, cut, retry <-chan time.Time
 	var expiryTimer *time.Timer
-	resetExpiry := func() {
-		if expiryTimer != nil {
-			expiryTimer.Stop()
-			expiryTimer, expiry = nil, nil
-		}
-		if next := s.nextExpiry; !next.IsZero() {
-			expiryTimer = time.NewTimer(max(next.Sub(s.now()), 0))
-			expiry = expiryTimer.C
-		}
-	}
-	resetExpiry()
+	var expiry <-chan time.Time
 	defer func() {
 		if expiryTimer != nil {
 			expiryTimer.Stop()
 		}
 	}()
+	// rearm follows a republish: the next one-time key to expire, and a retry
+	// while the keys cannot be read - a change whose read failed is otherwise
+	// lost until something unrelated republishes.
+	rearm := func() {
+		expiryTimer, expiry = s.armExpiry(expiryTimer)
+		if s.keyFailures > 0 && retry == nil {
+			retry = time.After(s.keyRetryDelay())
+		}
+	}
+	rearm()
 
 	for {
 		if s.pendingCut {
@@ -294,13 +344,19 @@ func (s *Supervisor) serve(ctx context.Context, run running) error {
 			if err := s.republish(ctx, c); err != nil {
 				return err
 			}
-			resetExpiry()
+			rearm()
 		case <-expiry:
-			expiry, expiryTimer = nil, nil
+			expiryTimer, expiry = nil, nil
 			if err := s.republish(ctx, c); err != nil {
 				return err
 			}
-			resetExpiry()
+			rearm()
+		case <-retry:
+			retry = nil
+			if err := s.republish(ctx, c); err != nil {
+				return err
+			}
+			rearm()
 		case <-cut:
 			cut = nil
 			if err := s.closeCircuits(ctx, c); err != nil {
@@ -324,25 +380,14 @@ func (s *Supervisor) serve(ctx context.Context, run running) error {
 func (s *Supervisor) republish(ctx context.Context, c controller) error {
 	keys, next, err := s.cfg.Keys(ctx, s.now())
 	if err != nil {
-		s.cfg.Logger.Error("read the onion access keys", "err", err)
-		s.setError("the access keys could not be read")
-		return nil
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return s.keysUnreadable(ctx, c, err)
 	}
+	s.keyFailures = 0
 	s.nextExpiry = next
-	clientKeys := make([]string, 0, len(keys))
-	for _, k := range keys {
-		raw, err := ParseAccessKey(k)
-		if err != nil {
-			continue
-		}
-		ck, err := ClientAuthKey(raw)
-		if err != nil {
-			continue
-		}
-		clientKeys = append(clientKeys, ck)
-	}
-	slices.Sort(clientKeys)
-	clientKeys = slices.Compact(clientKeys)
+	clientKeys := clientKeysOf(keys)
 	s.keyCount = len(clientKeys)
 	s.updateOffered()
 
@@ -357,15 +402,9 @@ func (s *Supervisor) republish(ctx context.Context, c controller) error {
 		}
 	}
 	if s.serviceUp {
-		if _, err := s.command(ctx, c, "DEL_ONION "+s.address); err != nil {
-			var refused *CommandError
-			if !errors.As(err, &refused) {
-				return err
-			}
-			// 552: tor does not know the service any more. The goal - no
-			// service - holds either way.
+		if err := s.delOnion(ctx, c); err != nil {
+			return err
 		}
-		s.serviceUp = false
 	}
 	if len(clientKeys) == 0 {
 		s.publishedKeys = nil
@@ -404,6 +443,80 @@ func (s *Supervisor) republish(ctx context.Context, c controller) error {
 	return nil
 }
 
+// keysUnreadable handles a read of the access keys that failed.
+//
+// The set tor holds stays as it is, and serve retries the read with a growing
+// pause. Not knowing the set is no reason to serve the old one forever,
+// though: when the read that failed was the one after a revocation, the
+// revoked device is still on the list. So after keyReadGiveUp failures in a
+// row the service goes down - every onion connection drops, the circuits are
+// cut - and comes back with the first read that succeeds. A store that cannot
+// be read for that long serves no device anyway, onion or direct.
+func (s *Supervisor) keysUnreadable(ctx context.Context, c controller, err error) error {
+	s.keyFailures++
+	// The moment read before the failure may already be past; armed again it
+	// would fire at once, fail again, and spin.
+	s.nextExpiry = time.Time{}
+	s.cfg.Logger.Error("read the onion access keys", "err", err, "failures", s.keyFailures)
+	s.setError("the access keys could not be read")
+	if s.keyFailures < keyReadGiveUp {
+		return nil
+	}
+	if s.serviceUp {
+		if err := s.delOnion(ctx, c); err != nil {
+			return err
+		}
+		s.publishedKeys = nil
+		s.pendingCut = true
+		s.cfg.Logger.Warn("took the onion service down: its access keys cannot be read")
+	}
+	s.update(func(st *Status) { st.Publication = PublicationKeysUnreadable })
+	return nil
+}
+
+// delOnion takes the service down. A 552 means tor no longer knows it - the
+// goal, no service, holds either way.
+func (s *Supervisor) delOnion(ctx context.Context, c controller) error {
+	if _, err := s.command(ctx, c, "DEL_ONION "+s.address); err != nil {
+		var refused *CommandError
+		if !errors.As(err, &refused) {
+			return err
+		}
+	}
+	s.serviceUp = false
+	return nil
+}
+
+// keyRetryDelay is the pause before reading the keys again: one coalesce
+// period, doubled with every failure in a row, capped.
+func (s *Supervisor) keyRetryDelay() time.Duration {
+	d := s.coalesce
+	for i := 1; i < s.keyFailures && d < s.keyRetryMax; i++ {
+		d *= 2
+	}
+	return min(d, s.keyRetryMax)
+}
+
+// clientKeysOf turns the store's keys into ADD_ONION's ClientAuthV3 values,
+// sorted and without repeats. A key that does not parse is left out rather
+// than handed to tor.
+func clientKeysOf(keys []string) []string {
+	out := make([]string, 0, len(keys))
+	for _, k := range keys {
+		raw, err := ParseAccessKey(k)
+		if err != nil {
+			continue
+		}
+		ck, err := ClientAuthKey(raw)
+		if err != nil {
+			continue
+		}
+		out = append(out, ck)
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
 // closeCircuits closes every rendezvous circuit of this onion service. A key
 // taken out of the list does not, by itself, stop a client that already holds
 // a circuit: tor reuses it for new streams (measured - research, decision 15).
@@ -440,7 +553,9 @@ func (s *Supervisor) closeCircuits(ctx context.Context, c controller) error {
 	return nil
 }
 
-// onEvent handles one asynchronous event.
+// onEvent handles one asynchronous event. Each status event is handled under
+// the class tor sends it in (control-spec): CLOCK_SKEW and DANGEROUS_VERSION
+// are STATUS_GENERAL, BOOTSTRAP and CONSENSUS_ARRIVED are STATUS_CLIENT.
 func (s *Supervisor) onEvent(ctx context.Context, c controller, ev string) {
 	f := strings.Fields(ev)
 	if len(f) < 2 {
@@ -459,11 +574,22 @@ func (s *Supervisor) onEvent(ctx context.Context, c controller, ev string) {
 			if f[1] == "WARN" {
 				s.setError("connecting to the Tor network: " + eventValue(ev, "WARNING") + " (" + eventValue(ev, "REASON") + ")")
 			}
-		case "CLOCK_SKEW":
-			s.setError("this machine's clock is off - tor cannot connect until it is set right")
+		case "CONSENSUS_ARRIVED":
+			// The consensus carries the versions the network recommends. After
+			// a cold start this is the first moment a verdict exists, and a
+			// recommended tor gets no other event that would say so.
+			s.refreshVerdict(ctx, c)
 		}
 	case "STATUS_GENERAL":
-		s.refreshVerdict(ctx, c)
+		if len(f) < 3 {
+			return
+		}
+		switch f[2] {
+		case "CLOCK_SKEW":
+			s.setError("this machine's clock is off - tor cannot connect until it is set right")
+		case "DANGEROUS_VERSION":
+			s.refreshVerdict(ctx, c)
+		}
 	case "HS_DESC":
 		// HS_DESC UPLOADED <address> <auth> <hsdir> ...
 		if len(f) >= 3 && f[1] == "UPLOADED" && f[2] == s.address && s.serviceUp {
@@ -475,20 +601,52 @@ func (s *Supervisor) onEvent(ctx context.Context, c controller, ev string) {
 // onLogLine forwards tor's own log, scrubbed, at the level it deserves. The
 // text goes under "line": "msg" is the record's own key, and a second one makes
 // the JSON line ambiguous to every parser that reads it.
+//
+// Every warning and error is kept as the last problem: when tor stops, the
+// line it printed just before is the only account of why.
 func (s *Supervisor) onLogLine(raw string) {
 	l := ParseLogLine(raw)
 	switch l.Level {
 	case "warn", "err":
 		s.cfg.Logger.Warn("tor", "line", l.Message)
-		if strings.Contains(strings.ToLower(l.Message), "required protocol") {
+		s.lastProblem, s.lastProblemAt = l.Message, s.now()
+		msg := strings.ToLower(l.Message)
+		switch {
+		case strings.Contains(msg, "listed as required in the consensus is not supported"):
+			// tor's words (networkstatus.c) right before it exits: the
+			// network no longer lets this version in at all.
 			s.update(func(st *Status) {
 				st.Verdict = VerdictObsolete
 				st.LastError = l.Message
+			})
+		case strings.Contains(msg, "listed as recommended in the consensus is not supported"):
+			// The softer half: it still works, and is told to upgrade.
+			s.update(func(st *Status) {
+				if st.Verdict != VerdictObsolete {
+					st.Verdict = VerdictOutdated
+				}
 			})
 		}
 	case "notice":
 		if strings.HasPrefix(l.Message, "Bootstrapped") {
 			s.cfg.Logger.Info("tor", "line", l.Message)
+		}
+	}
+}
+
+// drainLines takes whatever tor printed that has not been read yet. After
+// stop, tor's channel holds its last lines and is closed; a fake that never
+// closes it is read until it is empty.
+func (s *Supervisor) drainLines(run running) {
+	for {
+		select {
+		case line, ok := <-run.lines():
+			if !ok {
+				return
+			}
+			s.onLogLine(line)
+		default:
+			return
 		}
 	}
 }
@@ -530,13 +688,18 @@ func (s *Supervisor) setBootstrap(p int) {
 }
 
 // refreshKeyCount reads how many keys exist, so Offered stays true across a
-// restart of tor and becomes true while tor is still starting.
+// restart of tor and becomes true while tor is still starting. Counted the way
+// republish counts them, so the two never disagree about a key tor would not
+// be given.
 func (s *Supervisor) refreshKeyCount(ctx context.Context) {
 	keys, next, err := s.cfg.Keys(ctx, s.now())
 	if err != nil {
+		// The count stays - Offered must not flap on one failed read - but
+		// not the moment: armed again from a stale value, wait would spin.
+		s.nextExpiry = time.Time{}
 		return
 	}
-	s.keyCount = len(keys)
+	s.keyCount = len(clientKeysOf(keys))
 	s.nextExpiry = next
 	s.updateOffered()
 }
@@ -549,10 +712,18 @@ func (s *Supervisor) updateOffered() {
 }
 
 // wait sleeps for d, still answering KeysChanged so Offered follows the keys
-// while tor is down.
+// while tor is down - and waking when the earliest one-time key expires, so
+// an invite's key that runs out stops being offered then, not at the end of a
+// five-minute pause.
 func (s *Supervisor) wait(ctx context.Context, d time.Duration) bool {
 	t := time.NewTimer(d)
 	defer t.Stop()
+	expiryTimer, expiry := s.armExpiry(nil)
+	defer func() {
+		if expiryTimer != nil {
+			expiryTimer.Stop()
+		}
+	}()
 	for {
 		select {
 		case <-ctx.Done():
@@ -561,8 +732,33 @@ func (s *Supervisor) wait(ctx context.Context, d time.Duration) bool {
 			return true
 		case <-s.kick:
 			s.refreshKeyCount(ctx)
+			expiryTimer, expiry = s.armExpiry(expiryTimer)
+		case <-expiry:
+			expiryTimer, expiry = nil, nil
+			s.refreshKeyCount(ctx)
+			expiryTimer, expiry = s.armExpiry(nil)
 		}
 	}
+}
+
+// armExpiry returns a timer for the moment the earliest one-time key stops
+// working, or nothing when no such key exists; prev, if any, is stopped. A
+// moment already past is given one coalesce period rather than fired at once:
+// a source that keeps answering with it would otherwise turn the caller into
+// a spin.
+func (s *Supervisor) armExpiry(prev *time.Timer) (*time.Timer, <-chan time.Time) {
+	if prev != nil {
+		prev.Stop()
+	}
+	if s.nextExpiry.IsZero() {
+		return nil, nil
+	}
+	d := s.nextExpiry.Sub(s.now())
+	if d <= 0 {
+		d = s.coalesce
+	}
+	t := time.NewTimer(d)
+	return t, t.C
 }
 
 func (s *Supervisor) update(fn func(*Status)) {
