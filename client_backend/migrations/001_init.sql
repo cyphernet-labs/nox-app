@@ -42,12 +42,20 @@ CREATE UNIQUE INDEX idx_users_singleton ON users ((1));
 --
 -- platform is the OS family and nothing more - enough to recognise one's own
 -- tablet among three, while the exact hardware model would be a fingerprint.
+--
+-- access_key (039) is the device's onion access key: an x25519 PUBLIC key,
+-- base64, that tor puts in the onion service's list of authorised clients.
+-- NULL means the device cannot reach the onion address at all - it never
+-- registered a key, or it predates 039. One per device, replaced on
+-- re-registration, and gone with the row on revocation, which is exactly the
+-- moment it has to stop working. The private half lives on the device only.
 CREATE TABLE devices (
     device_key TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users (user_id),
     platform TEXT NOT NULL CHECK (platform <> ''),
     created_at INTEGER NOT NULL,
-    last_seen_at INTEGER NOT NULL
+    last_seen_at INTEGER NOT NULL,
+    access_key TEXT CHECK (access_key IS NULL OR access_key <> '')
 ) STRICT;
 
 CREATE INDEX idx_devices_user ON devices (user_id);
@@ -80,10 +88,20 @@ CREATE TABLE journal (
 -- was claimed and nothing decides by it: the same fact written twice is the
 -- shape that eventually disagrees with itself. The timestamp survives because
 -- the moment is unrecoverable and the service page will want it.
+--
+-- onion_seed (039) is the Ed25519 SEED of the machine's onion service, base64
+-- - a private key, and kept HERE for the same reason as the TLS key: a backup
+-- is one file, and restoring it brings back the same onion address, so no
+-- device has to learn a new one. It is an ADDRESS, not an identity: trust in
+-- the server still rests on the TLS key's fingerprint alone, and the onion
+-- address reaches devices over a channel that fingerprint already checked.
+-- Minted with the row and never changed for the life of the store. tor is
+-- handed the expanded key on every start and never writes it anywhere.
 CREATE TABLE server_identity (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     public_key TEXT NOT NULL CHECK (public_key <> ''),
     private_key TEXT NOT NULL CHECK (private_key <> ''),
+    onion_seed TEXT NOT NULL CHECK (onion_seed <> ''),
     claimed_at INTEGER,
     owner_user_id TEXT REFERENCES users(user_id)
 ) STRICT;
@@ -116,6 +134,13 @@ CREATE TABLE server_identity (
 --     current binding, so a key that has since been re-paired to somebody else
 --     is answered about whoever holds it now rather than whoever the token
 --     produced - and paired with the token's own recorded outcome.
+--
+-- access_key (039) is the PUBLIC half of the one-time onion access key an
+-- invite carries when it was issued with onion: true. Its private half exists
+-- only in the link handed to the inviting device - never here. It works while
+-- the invite is alive (used_at IS NULL, expires_at in the future), so using,
+-- expiring and burning the token switch it off with no separate step. Only a
+-- device invite can carry one: a claim never goes over onion.
 CREATE TABLE pair_tokens (
     token TEXT PRIMARY KEY,
     kind TEXT NOT NULL CHECK (kind IN ('claim', 'invite_device')),
@@ -125,7 +150,8 @@ CREATE TABLE pair_tokens (
     used_at INTEGER,
     used_by TEXT,
     paired_user_id TEXT REFERENCES users (user_id),
-    created_person INTEGER NOT NULL DEFAULT 0
+    created_person INTEGER NOT NULL DEFAULT 0,
+    access_key TEXT CHECK (access_key IS NULL OR (kind = 'invite_device' AND access_key <> ''))
 ) STRICT;
 
 -- name_ci is the Unicode case-folded name computed in Go: SQLite's own

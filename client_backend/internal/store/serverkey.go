@@ -112,9 +112,18 @@ func (s *Store) EnsureServerIdentity(ctx context.Context) (ServerIdentity, error
 	}
 	pubB64 := base64.StdEncoding.EncodeToString(spki)
 
+	// The onion service's key is minted with the machine's TLS key, in the same
+	// transaction, so a store never exists with one and not the other (039).
+	// A seed, not tor's expanded form: the standard shape of an Ed25519 private
+	// key, from which both the public key and tor's ED25519-V3 blob follow.
+	var onionSeed [32]byte
+	if _, err := rand.Read(onionSeed[:]); err != nil {
+		return ServerIdentity{}, fmt.Errorf("generate onion key: %w", err)
+	}
+
 	_, err = tx.ExecContext(ctx,
-		"INSERT INTO server_identity (id, public_key, private_key, claimed_at) VALUES (1, ?, ?, NULL)",
-		pubB64, base64.StdEncoding.EncodeToString(pkcs8))
+		"INSERT INTO server_identity (id, public_key, private_key, onion_seed, claimed_at) VALUES (1, ?, ?, ?, NULL)",
+		pubB64, base64.StdEncoding.EncodeToString(pkcs8), base64.StdEncoding.EncodeToString(onionSeed[:]))
 	if err != nil {
 		return ServerIdentity{}, fmt.Errorf("insert server identity: %w", err)
 	}
@@ -175,6 +184,33 @@ func (s *Store) ServerSigner(ctx context.Context) (crypto.Signer, error) {
 		return nil, fmt.Errorf("server private key is %T, which cannot sign", key)
 	}
 	return signer, nil
+}
+
+// OnionSeed reads the onion service's private seed (039).
+//
+// Narrow for the same reason as ServerSigner, and read once: startup hands it
+// to the tor supervisor, which derives the public key and the address from it
+// and keeps it from there. Nothing else asks - ServerIdentity, which the status
+// page and device.invite get, carries no onion field at all, so the private
+// half is never one field away from a page.
+func (s *Store) OnionSeed(ctx context.Context) ([]byte, error) {
+	var seedB64 string
+	err := s.read.QueryRowContext(ctx,
+		"SELECT onion_seed FROM server_identity WHERE id = 1").Scan(&seedB64)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNoServerIdentity
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read onion seed: %w", err)
+	}
+	seed, err := base64.StdEncoding.DecodeString(seedB64)
+	if err != nil {
+		return nil, fmt.Errorf("decode onion seed: %w", err)
+	}
+	if len(seed) != 32 {
+		return nil, fmt.Errorf("onion seed is %d bytes, want 32", len(seed))
+	}
+	return seed, nil
 }
 
 // ServerIdentity reads the machine's identity without creating one.

@@ -50,13 +50,25 @@ var (
 // and an expiring claim would leave a freshly installed server unclaimable
 // forever with no way to mint another.
 func (s *Store) IssueClaimToken(ctx context.Context, now int64) (string, error) {
-	return s.issueToken(ctx, TokenClaim, "", now, 0)
+	return s.issueToken(ctx, TokenClaim, "", now, 0, "")
 }
 
 // IssueDeviceInvite mints a token that binds a new device to an EXISTING
 // person. Any already-paired device of that person may issue one.
 func (s *Store) IssueDeviceInvite(ctx context.Context, userID string, now int64) (string, error) {
-	return s.issueToken(ctx, TokenInviteDevice, userID, now, now+InviteTTLSeconds)
+	return s.issueToken(ctx, TokenInviteDevice, userID, now, now+InviteTTLSeconds, "")
+}
+
+// IssueOnionInvite mints a device invite that also carries a one-time onion
+// access key (039): accessKey is the PUBLIC half, and the private half lives
+// only in the link the caller builds - never here.
+//
+// The key works exactly as long as the invite does. Spending, expiring and
+// burning the token - a revocation burns every live invite of the person -
+// switch it off with no write of their own, because ActiveAccessKeys reads it
+// through the token's own state.
+func (s *Store) IssueOnionInvite(ctx context.Context, userID, accessKey string, now int64) (string, error) {
+	return s.issueToken(ctx, TokenInviteDevice, userID, now, now+InviteTTLSeconds, accessKey)
 }
 
 // ClaimTokenUsable reports whether a claim token can still be presented.
@@ -91,7 +103,7 @@ func newTokenValue() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(raw[:]), nil
 }
 
-func (s *Store) issueToken(ctx context.Context, kind, userID string, now, expiresAt int64) (string, error) {
+func (s *Store) issueToken(ctx context.Context, kind, userID string, now, expiresAt int64, accessKey string) (string, error) {
 	token, err := newTokenValue()
 	if err != nil {
 		return "", err
@@ -105,10 +117,14 @@ func (s *Store) issueToken(ctx context.Context, kind, userID string, now, expire
 	if expiresAt > 0 {
 		expires = expiresAt
 	}
+	var access any
+	if accessKey != "" {
+		access = accessKey
+	}
 
 	_, err = s.write.ExecContext(ctx,
-		"INSERT INTO pair_tokens (token, kind, user_id, created_at, expires_at, used_at) VALUES (?, ?, ?, ?, ?, NULL)",
-		token, kind, user, now, expires)
+		"INSERT INTO pair_tokens (token, kind, user_id, created_at, expires_at, used_at, access_key) VALUES (?, ?, ?, ?, ?, NULL, ?)",
+		token, kind, user, now, expires, access)
 	if err != nil {
 		return "", fmt.Errorf("insert pairing token: %w", err)
 	}

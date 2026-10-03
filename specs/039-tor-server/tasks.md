@@ -56,28 +56,28 @@ description: "Задачи фазы 039 — сервер в сети Tor"
 
 **⚠️ CRITICAL**: истории не начинаются, пока фаза не закончена.
 
-- [ ] T006 Столбцы в `client_backend/migrations/001_init.sql` с комментариями в стиле файла:
+- [X] T006 Столбцы в `client_backend/migrations/001_init.sql` с комментариями в стиле файла:
   - `server_identity.onion_seed TEXT NOT NULL CHECK (onion_seed <> '')`;
   - `devices.access_key TEXT CHECK (access_key IS NULL OR access_key <> '')`;
   - `pair_tokens.access_key TEXT CHECK (access_key IS NULL OR (kind = 'invite_device' AND access_key <> ''))`.
 
   Правка на месте — правило до первого релиза. Ручной `INSERT INTO server_identity` в `client_backend/internal/store/serverkey_test.go:124` получает `onion_seed`.
-- [ ] T007 В `client_backend/internal/store/serverkey.go`:
+- [X] T007 В `client_backend/internal/store/serverkey.go`:
   - `EnsureServerIdentity` создаёт seed onion-ключа — 32 байта, base64 — в той же транзакции, что TLS-ключ;
   - узкий доступ `OnionSeed(ctx) ([]byte, error)`;
   - `ServerIdentity` onion-полей **не** получает.
 
   Тесты в `client_backend/internal/store/serverkey_test.go`: seed стабилен между вызовами и переоткрытием базы. Затем `go test ./internal/db/ ./internal/store/` — зелёные.
-- [ ] T008 [P] `client_backend/internal/tor/onion.go`: `PublicKey(seed)`, `ExpandedKey(seed)` (`ED25519-V3`), `Address(pub)` (56 знаков, rend-spec-v3), `ClientAuthKey(pub)` (base32 без выравнивания), `ParseAccessKey(b64)` (32 байта). Тесты в `client_backend/internal/tor/onion_test.go` по независимому вектору:
+- [X] T008 [P] `client_backend/internal/tor/onion.go`: `PublicKey(seed)`, `ExpandedKey(seed)` (`ED25519-V3`), `Address(pub)` (56 знаков, rend-spec-v3), `ClientAuthKey(pub)` (base32 без выравнивания), `ParseAccessKey(b64)` (32 байта). Тесты в `client_backend/internal/tor/onion_test.go` по независимому вектору:
   - seed RFC 8032, тест 1, `9d61b19d…7f60` → открытый `d75a9801…511a` → адрес `25njqamcweflpvkl73j4szahhihoc4xt3ktcgjnpaingr5yhkenl5sid`;
   - раскрытый ключ в base64 — `MHyDhk8oM8tCei7xwAoBPP3/J2jZgMCjpSDwBpBN6U+bTwr+KAt0aneGhOdUQlAgV7dHOgPwj5b1o46Sh+Afjw==`;
   - base32 байтов 0…31 — `AAAQEAYEAUDAOCAJBIFQYDIOB4IBCEQTCQKRMFYYDENBWHA5DYPQ`.
 
   Все три посчитаны Python независимо от кода.
-- [ ] T009 [P] `client_backend/internal/tor/binary.go`: `Find(flagPath)` — явный путь **окончателен**, без провала дальше; иначе рядом с `os.Executable()` (`tor`, `tor.exe`), иначе `exec.LookPath`. Плюс `ReadVersion`, `ParseVersion`, `AtLeast(0,4,9)`. Тесты в `client_backend/internal/tor/binary_test.go`: явный несуществующий путь даёт «не найден», даже если tor есть в `PATH`; `0.4.8.x` — отказ; `0.4.9.13` и `0.5.0.1` — годятся; мусор — ошибка.
-- [ ] T010 [P] `client_backend/internal/tor/control.go`: клиент управляющего протокола. Одна горутина-читатель разводит `650` в канал событий, остальное — в канал ответов; многострочные `250+…` до `.`; `Command(ctx, line)` с тайм-аутом; `Authenticate(cookie)`. **Ошибка называет только глагол команды** — без аргументов и строк ответа. Тесты в `client_backend/internal/tor/control_test.go` через `net.Pipe`: одно- и многострочные ответы, событие посреди ответа, `5xx`, тайм-аут, закрытие; ошибка `ADD_ONION … ClientAuthV3=СЕКРЕТ` не содержит `СЕКРЕТ`.
-- [ ] T011 [P] `client_backend/internal/tor/logscrub.go`: в строке заменить onion-адреса (56 знаков base32 с `.onion` и без) на `[onion]`, цепочки base64 и base32 от 40 знаков на `[key]`; разобрать уровень строки (`[notice]`, `[warn]`, `[err]`). Тесты в `client_backend/internal/tor/logscrub_test.go`.
-- [ ] T012 `client_backend/internal/store/accesskeys.go`:
+- [X] T009 [P] `client_backend/internal/tor/binary.go`: `Find(flagPath)` — явный путь **окончателен**, без провала дальше; иначе рядом с `os.Executable()` (`tor`, `tor.exe`), иначе `exec.LookPath`. Плюс `ReadVersion`, `ParseVersion`, `AtLeast(0,4,9)`. Тесты в `client_backend/internal/tor/binary_test.go`: явный несуществующий путь даёт «не найден», даже если tor есть в `PATH`; `0.4.8.x` — отказ; `0.4.9.13` и `0.5.0.1` — годятся; мусор — ошибка.
+- [X] T010 [P] `client_backend/internal/tor/control.go`: клиент управляющего протокола. Одна горутина-читатель разводит `650` в канал событий, остальное — в канал ответов; многострочные `250+…` до `.`; `Command(ctx, line)` с тайм-аутом; `Authenticate(cookie)`. **Ошибка называет только глагол команды** — без аргументов и строк ответа. Тесты в `client_backend/internal/tor/control_test.go` через `net.Pipe`: одно- и многострочные ответы, событие посреди ответа, `5xx`, тайм-аут, закрытие; ошибка `ADD_ONION … ClientAuthV3=СЕКРЕТ` не содержит `СЕКРЕТ`.
+- [X] T011 [P] `client_backend/internal/tor/logscrub.go`: в строке заменить onion-адреса (56 знаков base32 с `.onion` и без) на `[onion]`, цепочки base64 и base32 от 40 знаков на `[key]`; разобрать уровень строки (`[notice]`, `[warn]`, `[err]`). Тесты в `client_backend/internal/tor/logscrub_test.go`.
+- [X] T012 `client_backend/internal/store/accesskeys.go`:
   - `SetAccessKey(ctx, deviceKey, accessKey)` — заменяет ключ; нет устройства → `ErrDeviceUnknown`;
   - `ActiveAccessKeys(ctx, now) (keys []string, nextExpiry int64, err error)` — одна читающая транзакция, без повторов;
   - `CountDevicesWithAccess(ctx)`.
@@ -99,14 +99,14 @@ description: "Задачи фазы 039 — сервер в сети Tor"
 
 **Independent Test**: `TestOnionReach` через настоящий Tor.
 
-- [ ] T014 [US1] Супервизор в `client_backend/internal/tor/supervisor.go`:
+- [X] T014 [US1] Супервизор в `client_backend/internal/tor/supervisor.go`:
   - **Запуск:** каталог 0700, пустой torrc как `-f` и `--defaults-torrc`, параметры из research, решение 1 — `--SocksPort 0`, `--ClientOnly 1`, без `NonAnonymous`. Ожидание `control.port`, `AUTHENTICATE`, `TAKEOWNERSHIP`, `SETEVENTS STATUS_CLIENT STATUS_GENERAL HS_DESC`, `GETINFO version`, `status/bootstrap-phase`, `status/version/current`.
   - **Публикация** — **только при ключах ≥ 1**: `ADD_ONION ED25519-V3:<раскрытый> Flags=V3Auth Port=443,<цель> ClientAuthV3=…`. «Опубликован» — по `HS_DESC UPLOADED` своего адреса.
   - **Вердикт:** таблица из research, решение 8; перечитывается при `STATUS_GENERAL` и раз в 10 минут. Предупреждения подключения из `STATUS_CLIENT` (`WARNING`, `REASON`, `CLOCK_SKEW`) идут в последнюю ошибку через `logscrub`.
   - **Снимок** `Status` через `atomic.Pointer`. Методы: `Status()`, `KeysChanged()` (неблокирующий пинок, ёмкость 1), `Offered()`, `ReadyForInvite()` (предикаты — data-model), `OnionPublicKey()`, `Address()`. seed пакет не покидает.
   - **Интерфейсы** — управляющее соединение и запуск процесса. Плюс выключенная реализация `Disabled()` с теми же методами (research, решение 17).
   - **Остановка:** закрыть управляющее соединение, ждать выхода до 10 с, затем `Kill`.
-- [ ] T015 [US1] Тесты в `client_backend/internal/tor/supervisor_test.go` на подставных соединении и запуске:
+- [X] T015 [US1] Тесты в `client_backend/internal/tor/supervisor_test.go` на подставных соединении и запуске:
   - при нуле ключей **ни одного** `ADD_ONION`;
   - при ключах — `ADD_ONION` с `Flags=V3Auth`, портом 443 и каждым ключом;
   - аргументы запуска содержат `--SocksPort 0` и `--ClientOnly 1` и не содержат `NonAnonymous`;
@@ -152,8 +152,8 @@ description: "Задачи фазы 039 — сервер в сети Tor"
 
 ## Phase 4: User Story 2 — Чужому onion-адрес ничего не даёт (Priority: P1)
 
-- [ ] T021 [US2] Опустевший список в `client_backend/internal/tor/supervisor.go`: `DEL_ONION` и через 5 с разрыв сервисных цепочек, статус `not-published-no-keys`. Тест в `client_backend/internal/tor/supervisor_test.go`.
-- [ ] T022 [US2] Перепубликация в `client_backend/internal/tor/supervisor.go`:
+- [X] T021 [US2] Опустевший список в `client_backend/internal/tor/supervisor.go`: `DEL_ONION` и через 5 с разрыв сервисных цепочек, статус `not-published-no-keys`. Тест в `client_backend/internal/tor/supervisor_test.go`.
+- [X] T022 [US2] Перепубликация в `client_backend/internal/tor/supervisor.go`:
   - пинки за 1 с объединяются;
   - неизменившееся множество ключей — без перепубликации;
   - иначе `DEL_ONION` + `ADD_ONION`; если хотя бы одного прежнего ключа нет — разность множеств, — через 5 с `GETINFO circuit-status` и `CLOSECIRCUIT` для `PURPOSE=HS_SERVICE_REND` с `REND_QUERY=<адрес>`.
@@ -174,13 +174,13 @@ description: "Задачи фазы 039 — сервер в сети Tor"
 
 ## Phase 5: User Story 3 — Без Tor сервер работает как раньше (Priority: P1)
 
-- [ ] T026 [US3] Сбои в `client_backend/internal/tor/supervisor.go`:
+- [X] T026 [US3] Сбои в `client_backend/internal/tor/supervisor.go`:
   - tor не найден или старее 0.4.9 → `binary-missing` или `binary-too-old`, перепроверка раз в 5 минут, `Offered() == false`;
   - процесс завершился → `waiting-retry` с паузой 1 с … 5 мин, сброс после жизни дольше минуты;
   - `Run` возвращает только при отмене контекста.
 
   Тесты на подставном запуске в `client_backend/internal/tor/supervisor_test.go`.
-- [ ] T027 [US3] Журнал tor в `client_backend/internal/tor/supervisor.go`: stdout процесса построчно через `logscrub`; в журнал сервера — `warn`, `err` и `notice` о ходе подключения; строка про `required protocol` → вердикт `obsolete` и последняя ошибка. Тест на подставном выводе.
+- [X] T027 [US3] Журнал tor в `client_backend/internal/tor/supervisor.go`: stdout процесса построчно через `logscrub`; в журнал сервера — `warn`, `err` и `notice` о ходе подключения; строка про `required protocol` → вердикт `obsolete` и последняя ошибка. Тест на подставном выводе.
 - [ ] T028 [US3] Выключенный Tor в `client_backend/internal/server/server.go`: при `cfg.Tor == false` — `tor.Disabled()`, без onion-входа и onion-адреса. Тест в `client_backend/internal/server/server_test.go` вызывает **`Run` напрямую** на свободном порту и временной базе с `-tor=false`: `/health` отвечает, в приветствии нет `addresses.onion`, остановка по отмене контекста чистая.
 
 ---
@@ -213,7 +213,7 @@ description: "Задачи фазы 039 — сервер в сети Tor"
   - при `viaOnion` прямой адрес — первый IPv4 из снимка, иначе первый адрес, иначе адрес привязки.
 
   Тесты в `client_backend/internal/server/pairing_test.go`: все ветки; закрытого одноразового ключа нет ни в базе, ни в журнале — только в ссылке.
-- [ ] T034 [US5] Истечение в `client_backend/internal/tor/supervisor.go`: таймер на `nextExpiry` перепубликует сервис в момент истечения одноразового ключа — это удаление ключа, значит, с разрывом цепочек. Тест с подставным временем.
+- [X] T034 [US5] Истечение в `client_backend/internal/tor/supervisor.go`: таймер на `nextExpiry` перепубликует сервис в момент истечения одноразового ключа — это удаление ключа, значит, с разрывом цепочек. Тест с подставным временем.
 - [ ] T035 [US5] `TestOnionInvite` в `client_backend/internal/server/onion_test.go`:
   - приглашение `onion: true` → разбор ссылки версии 2;
   - клиент с одноразовым ключом через onion делает `pair` со своим `access_key`;
