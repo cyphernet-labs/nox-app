@@ -21,7 +21,7 @@ description: "Задачи фазы 039 — сервер в сети Tor"
 
 **Purpose**: Принцип VII — сначала контракт, потом код. Правила проекта называют tor раньше, чем он появится в коде, чтобы ни один промежуточный коммит не нарушал инвариант 1.
 
-- [ ] T001 Внести добавления из `specs/039-tor-server/contracts/wire-additions.md` в `docs/client-backend/protocol/contract-draft.md`:
+- [X] T001 Внести добавления из `specs/039-tor-server/contracts/wire-additions.md` в `docs/client-backend/protocol/contract-draft.md`:
   - §1 — onion как второй путь к тому же TLS-входу, порт onion 443, claim через onion (в том числе повтор) → `invalid_token` без траты токена;
   - §2.1 — таблица кодов спаривания и правило эволюции: новая команда — только за признаком поддержки `addresses`;
   - §3 — поле `addresses` в ответе `session.hello` и его роль признака поддержки;
@@ -29,7 +29,7 @@ description: "Задачи фазы 039 — сервер в сети Tor"
   - «внежурнальных событий» — четыре.
 
   У каждого добавления — отметка «сервер — фаза 039; приложение — этап 2 трека Tor». Новых кодов ошибок нет, номер схемы прежний.
-- [ ] T002 Правила сервера в `client_backend/CLAUDE.md`:
+- [X] T002 Правила сервера в `client_backend/CLAUDE.md`:
   - шапка — «один статический бинарь без C-кода и процесс tor рядом»;
   - инвариант 1 — tor как единственный соседний процесс, управляемый сервером и не открывающий базу;
   - инвариант 3 — `server.addresses` в списке внежурнальных событий;
@@ -40,15 +40,15 @@ description: "Задачи фазы 039 — сервер в сети Tor"
   - тесты — `NOX_TOR_TEST_BIN`.
 
   Запуск с tor и без него — в `client_backend/README.md`.
-- [ ] T003 Поправка конституции `.specify/memory/constitution.md` 1.3.1 → 1.3.2 (PATCH): в рабочем режиме «одним статическим бинарником» → «одним статическим бинарником и процессом tor рядом, которым он управляет и который не открывает базу (фаза 039)». Переписать Sync Impact Report — он отстал на 1.2.0 → 1.3.0 — с записью одобрения владельца от 2026-10-03; обновить строку версии и даты. В корневом `CLAUDE.md` — «ratified at v1.3.0» → «v1.3.2», «Three off-journal events» → четыре, с `server.addresses`.
-- [ ] T004 [P] Флаги в `client_backend/internal/config/config.go`:
+- [X] T003 Поправка конституции `.specify/memory/constitution.md` 1.3.1 → 1.3.2 (PATCH): в рабочем режиме «одним статическим бинарником» → «одним статическим бинарником и процессом tor рядом, которым он управляет и который не открывает базу (фаза 039)». Переписать Sync Impact Report — он отстал на 1.2.0 → 1.3.0 — с записью одобрения владельца от 2026-10-03; обновить строку версии и даты. В корневом `CLAUDE.md` — «ratified at v1.3.0» → «v1.3.2», «Three off-journal events» → четыре, с `server.addresses`.
+- [X] T004 [P] Флаги в `client_backend/internal/config/config.go`:
   - `-tor` — bool, по умолчанию `true`, env `NOX_TOR`;
   - `-tor-bin` — env `NOX_TOR_BIN`;
   - `-tor-dir` — по умолчанию `<db>-tor`, env `NOX_TOR_DIR`;
   - поля `Config.Tor`, `Config.TorBin`, `Config.TorDir`.
 
   Тесты разбора и значений по умолчанию в `client_backend/internal/config/config_test.go`.
-- [ ] T005 Только после T001: `CmdDeviceSetAccessKey = "device.setAccessKey"` и `EventServerAddresses = "server.addresses"` с doc-комментариями в `client_backend/internal/protocol/frames.go`; `server.addresses` — в тест внежурнальных имён `client_backend/internal/protocol/frames_test.go`.
+- [X] T005 Только после T001: `CmdDeviceSetAccessKey = "device.setAccessKey"` и `EventServerAddresses = "server.addresses"` с doc-комментариями в `client_backend/internal/protocol/frames.go`; `server.addresses` — в тест внежурнальных имён `client_backend/internal/protocol/frames_test.go`.
 
 ---
 
