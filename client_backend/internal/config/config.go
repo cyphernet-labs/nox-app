@@ -100,6 +100,14 @@ func Load(args []string, getenv func(string) string) (Config, error) {
 	if err := fs.Parse(args); err != nil {
 		return Config{}, fmt.Errorf("parse flags: %w", err)
 	}
+	// Nothing here takes a positional argument, so one is always a mistake -
+	// and the likeliest is "-tor false": a boolean flag does not consume the
+	// word after it, so tor would stay ON and parsing would stop there,
+	// dropping every flag after it and opening a fresh database in the
+	// working directory.
+	if fs.NArg() > 0 {
+		return Config{}, fmt.Errorf("unexpected argument %q (a boolean flag is written -tor=false)", fs.Arg(0))
+	}
 
 	if _, _, err := net.SplitHostPort(*addr); err != nil {
 		return Config{}, fmt.Errorf("invalid -addr %q: %w", *addr, err)

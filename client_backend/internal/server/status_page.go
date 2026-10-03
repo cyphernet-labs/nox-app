@@ -100,7 +100,7 @@ first.</p>{{end}}
 {{range .Tor.Rows}}  <dt>{{.Label}}</dt><dd>{{.Value}}</dd>
 {{end}}</dl>{{end}}
 {{else}}
-<p class="torline">Tor: {{.Tor.Line}}</p>
+<p class="torline">Tor: {{.Tor.Line}}{{if .Tor.Reason}} ({{.Tor.Reason}}){{end}}</p>
 {{end}}
 
 <footer>This page is only reachable from this machine. It is for people, not for programs &mdash;
@@ -209,6 +209,10 @@ type torView struct {
 	Line string
 	// Warn marks a state the person should act on.
 	Warn bool
+	// Reason is tor's own last error for the unclaimed page's single line, set
+	// only where the line does not already say why - a tor that stopped or is
+	// still connecting. The claimed page shows the same under "Last error".
+	Reason string
 	// Rows are the details of the claimed page.
 	Rows []torRow
 }
@@ -228,13 +232,17 @@ func buildTorView(st tor.Status, accessDevices int, devices int64) torView {
 	case tor.PhaseBinaryMissing:
 		v.Line, v.Warn = "tor not found — install tor 0.4.9 or newer", true
 	case tor.PhaseBinaryTooOld:
-		v.Line, v.Warn = "tor "+st.Version+" is too old — install 0.4.9 or newer", true
+		// A distribution's own package is the usual way to end up here: LTS
+		// releases still ship series the network no longer accepts.
+		v.Line, v.Warn = "tor "+st.Version+" is too old — install 0.4.9 or newer from the Tor Project's repository", true
 	case tor.PhaseRunning:
 		v.Line = "Connected to the Tor network"
 	case tor.PhaseWaitingRetry:
 		v.Line, v.Warn = "tor stopped — retrying in "+st.RetryIn.Round(time.Second).String(), true
+		v.Reason = tor.Scrub(st.LastError)
 	default:
 		v.Line = fmt.Sprintf("Connecting to the Tor network (%d%%)", st.Bootstrap)
+		v.Reason = tor.Scrub(st.LastError)
 	}
 
 	verdict := map[tor.Verdict]string{

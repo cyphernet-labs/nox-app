@@ -178,6 +178,9 @@ func (c *client) handleSessionHello(cmd protocol.Command) {
 		// contract promises the field, so an empty list it is.
 		addrs = &addressSet{Direct: []string{}}
 	}
+	if c.srv.afterAddressRead != nil {
+		c.srv.afterAddressRead()
+	}
 	c.sendFrame(protocol.OKReply(cmd.ID, helloReply{
 		Schema:    protocol.SchemaVersion,
 		Cursor:    cursor,

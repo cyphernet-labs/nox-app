@@ -29,7 +29,7 @@ func TestTheClaimedPageNamesEveryTorState(t *testing.T) {
 		{"not installed", tor.Status{Enabled: true, Phase: tor.PhaseBinaryMissing, Publication: tor.PublicationTorDown},
 			[]string{"tor not found — install tor 0.4.9 or newer", "Not published: tor is not running"}, true},
 		{"too old", tor.Status{Enabled: true, Phase: tor.PhaseBinaryTooOld, Version: "0.4.8.17"},
-			[]string{"tor 0.4.8.17 is too old"}, true},
+			[]string{"tor 0.4.8.17 is too old — install 0.4.9 or newer from the Tor Project"}, true},
 		{"connecting", tor.Status{Enabled: true, Phase: tor.PhaseConnecting, Bootstrap: 45, Version: "0.4.9.13", Publication: tor.PublicationNoKeys},
 			[]string{"Connecting to the Tor network (45%)", "Not published: no device has access yet", "0.4.9.13"}, false},
 		{"published", tor.Status{Enabled: true, Phase: tor.PhaseRunning, Bootstrap: 100, Version: "0.4.9.13",
@@ -66,6 +66,31 @@ func TestTheUnclaimedPageHasOneTorLine(t *testing.T) {
 	}
 	if strings.Contains(body, "Devices with access from anywhere") {
 		t.Fatal("the unclaimed page shows the claimed details")
+	}
+}
+
+// FR-027: the one line says WHY when the state itself does not - a fresh
+// install whose tor cannot reach the network is the case it exists for, and
+// the claimed page's "Last error" row is not on this page.
+func TestTheUnclaimedTorLineCarriesTorsReason(t *testing.T) {
+	st := newOnionStack(t)
+	for _, tc := range []struct {
+		status tor.Status
+		want   string
+	}{
+		{tor.Status{Enabled: true, Phase: tor.PhaseConnecting, Bootstrap: 10, LastError: "clock skew of 3 hours"},
+			"Tor: Connecting to the Tor network (10%) (clock skew of 3 hours)"},
+		{tor.Status{Enabled: true, Phase: tor.PhaseWaitingRetry, RetryIn: 2 * time.Second, LastError: "Could not bind to 127.0.0.1"},
+			"Tor: tor stopped — retrying in 2s (Could not bind to 127.0.0.1)"},
+		{tor.Status{Enabled: true, Phase: tor.PhaseBinaryTooOld, Version: "0.4.8.17", LastError: "tor 0.4.8.17 is too old"},
+			"Tor: tor 0.4.8.17 is too old — install 0.4.9 or newer from the Tor Project&#39;s repository</p>"},
+		{tor.Status{Enabled: true, Phase: tor.PhaseRunning, LastError: "an error from before the restart"},
+			"Tor: Connected to the Tor network</p>"},
+	} {
+		st.tor.setStatus(tc.status)
+		if body := statusBody(t, st.srv); !strings.Contains(body, tc.want) {
+			t.Errorf("phase %s: the line lacks %q", tc.status.Phase, tc.want)
+		}
 	}
 }
 
