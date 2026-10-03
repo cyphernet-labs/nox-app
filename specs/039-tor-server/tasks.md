@@ -165,7 +165,7 @@ description: "Задачи фазы 039 — сервер в сети Tor"
 
   Обработчик передаёт `ViaOnion: c.viaOnion`. Тесты в `client_backend/internal/store/pairing_test.go` и `client_backend/internal/server/pairing_test.go`: claim через onion-вход — `invalid_token`, после него тот же токен по прямому пути проходит; повтор claim через onion — `invalid_token`.
 - [X] T024 [US2] Отзыв в `client_backend/internal/server/pairing.go`: после ответа на `device.revoke` — `KeysChanged()`. Тест на подставной реализации Tor в `client_backend/internal/server/pairing_test.go`.
-- [ ] T025 [US2] `TestOnionAccess` в `client_backend/internal/server/onion_test.go`:
+- [X] T025 [US2] `TestOnionAccess` в `client_backend/internal/server/onion_test.go`:
   - 20 попыток клиента без ключа — ни одного соединения (SC-002);
   - claim через onion → `invalid_token` (SC-005);
   - после отзыва устройства его ключ не открывает соединение в течение минуты (SC-004).
@@ -214,7 +214,7 @@ description: "Задачи фазы 039 — сервер в сети Tor"
 
   Тесты в `client_backend/internal/server/pairing_test.go`: все ветки; закрытого одноразового ключа нет ни в базе, ни в журнале — только в ссылке.
 - [X] T034 [US5] Истечение в `client_backend/internal/tor/supervisor.go`: таймер на `nextExpiry` перепубликует сервис в момент истечения одноразового ключа — это удаление ключа, значит, с разрывом цепочек. Тест с подставным временем.
-- [ ] T035 [US5] `TestOnionInvite` в `client_backend/internal/server/onion_test.go`:
+- [X] T035 [US5] `TestOnionInvite` в `client_backend/internal/server/onion_test.go`:
   - приглашение `onion: true` → разбор ссылки версии 2;
   - клиент с одноразовым ключом через onion делает `pair` со своим `access_key`;
   - переподключение своим ключом и приветствие;
@@ -237,12 +237,12 @@ description: "Задачи фазы 039 — сервер в сети Tor"
 
 - [X] T037 [P] Совместимость приложения в `test/data/remote/socket/nox_socket_client_test.dart`: ответ на приветствие с `addresses` проходит как обычно; событие `server.addresses` с `seq: 0` не меняет фазу и не ломает поток. При необходимости — то же для `SyncService` в `test/data/sync/` (SC-011). Коммит — только после `make gate` и `make golden-verify`.
 - [X] T038 [P] Статус этапа 1 в `docs/client-backend/roadmap-tor.md`.
-- [ ] T039 Гейты:
+- [X] T039 Гейты:
   - Go: `gofmt -l .` пусто → `go vet ./...` → `go test -race ./...`;
   - **в `go.mod` по-прежнему ровно четыре прямых `require`** (FR-033, SC-013);
   - сквозные: `NOX_TOR_TEST_BIN=<tor> go test -race -run 'TestOnion' -timeout 15m ./internal/server/`;
   - Dart (T037): `make gate` и `make golden-verify`.
-- [ ] T040 Ручная проверка по `specs/039-tor-server/quickstart.md`: сервер с tor и без, страница статуса в обоих состояниях, `kill -9` сервера и уход tor (SC-007), поиск onion-адреса и ключей в журнале (SC-012).
+- [X] T040 Ручная проверка по `specs/039-tor-server/quickstart.md`: сервер с tor и без, страница статуса в обоих состояниях, `kill -9` сервера и уход tor (SC-007), поиск onion-адреса и ключей в журнале (SC-012).
 
 ---
 

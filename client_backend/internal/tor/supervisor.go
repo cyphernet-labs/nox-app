@@ -472,12 +472,14 @@ func (s *Supervisor) onEvent(ctx context.Context, c controller, ev string) {
 	}
 }
 
-// onLogLine forwards tor's own log, scrubbed, at the level it deserves.
+// onLogLine forwards tor's own log, scrubbed, at the level it deserves. The
+// text goes under "line": "msg" is the record's own key, and a second one makes
+// the JSON line ambiguous to every parser that reads it.
 func (s *Supervisor) onLogLine(raw string) {
 	l := ParseLogLine(raw)
 	switch l.Level {
 	case "warn", "err":
-		s.cfg.Logger.Warn("tor", "msg", l.Message)
+		s.cfg.Logger.Warn("tor", "line", l.Message)
 		if strings.Contains(strings.ToLower(l.Message), "required protocol") {
 			s.update(func(st *Status) {
 				st.Verdict = VerdictObsolete
@@ -486,7 +488,7 @@ func (s *Supervisor) onLogLine(raw string) {
 		}
 	case "notice":
 		if strings.HasPrefix(l.Message, "Bootstrapped") {
-			s.cfg.Logger.Info("tor", "msg", l.Message)
+			s.cfg.Logger.Info("tor", "line", l.Message)
 		}
 	}
 }
