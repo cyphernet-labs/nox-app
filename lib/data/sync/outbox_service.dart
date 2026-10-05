@@ -330,13 +330,26 @@ class OutboxService {
       if (still == null || still.status != OutboxStatus.pending) return true;
     }
 
+    // The id the server knows this file by. Before the upload it held the
+    // composer's local draft id, which means nothing to anyone else.
+    var sending = entry.fileId == null ? attachment : attachment?.copyWith(id: entry.fileId!);
+    final fileId = entry.fileId;
+    if (sending != null && fileId != null) {
+      // The queue's own copy becomes this device's copy of the file (phase
+      // 043): kept where a download of it would land, so the message shows the
+      // bytes from this device - after a restart too, when the file the person
+      // picked may no longer be readable - and the copy is not left behind.
+      // Before the send, not after: the message the server accepts is stored
+      // naming the place the bytes are.
+      final at = await _files.cachePathFor(fileId: fileId, suggestedName: sending.name);
+      if (await _outbox.keepCopy(clientMessageId: entry.clientMessageId, at: at)) sending = sending.copyWith(localPath: at);
+    }
+
     final result = await _messages.sendMessage(
       chatId: entry.chatId,
       clientMessageId: entry.clientMessageId,
       text: entry.text,
-      // The id the server knows this file by. Before the upload it held the
-      // composer's local draft id, which means nothing to anyone else.
-      attachment: entry.fileId == null ? attachment : attachment?.copyWith(id: entry.fileId!),
+      attachment: sending,
     );
 
     if (result.hasData) {

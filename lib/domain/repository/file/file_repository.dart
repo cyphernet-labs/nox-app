@@ -55,6 +55,11 @@ abstract class FileRepository {
   /// Whether the bytes for [fileId] are already on this device.
   Future<String?> localPathFor({required String fileId, required String suggestedName});
 
+  /// Where the bytes of [fileId] live on this device once they are here - the
+  /// place a download writes them, and where the queue keeps a file it has
+  /// just sent (phase 043) - whether they are there yet or not.
+  Future<String> cachePathFor({required String fileId, required String suggestedName});
+
   /// Ends every transfer under way, both ways (logout, change of server). Each
   /// ends as a broken connection would, and each could be continued - but a
   /// download begun before this call writes nothing to this device after it.

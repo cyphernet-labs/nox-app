@@ -415,6 +415,9 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
   }
 
   @override
+  Future<String> cachePathFor({required String fileId, required String suggestedName}) => _cachePathFor(fileId, suggestedName);
+
+  @override
   Future<void> clean() async {
     _epoch++;
     final dir = Directory('${(await getApplicationCacheDirectory()).path}/$_cacheFolder');

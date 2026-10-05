@@ -25,6 +25,7 @@ import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/repository/connection/access_key_repository.dart';
 import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
+import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/service/attachment_download_service.dart';
 import 'package:nox_app/domain/service/attachment_transfer_service.dart';
 import 'package:nox_app/domain/service/network_change_service.dart';
@@ -203,6 +204,13 @@ void main() {
 
       // --- Down again, through Tor, with a break. ---
       final sent = (await getIt<MessageDao>().getByChatSorted(chatId)).lastWhere((m) => m.attachmentId != null);
+      // The queue's own copy became this device's copy of the file, where a
+      // download of it would land - so the download half asks for the bytes
+      // as another device would, with that copy out of the way.
+      final kept = await getIt<FileRepository>().localPathFor(fileId: sent.attachmentId!, suggestedName: 'big.bin');
+      expect(kept, isNotNull, reason: 'the bytes this device sent stay on it');
+      expect(File(kept!).lengthSync(), size);
+      File(kept).deleteSync();
       final attachment = MessageAttachment(
         id: sent.attachmentId!,
         type: FileType.other,

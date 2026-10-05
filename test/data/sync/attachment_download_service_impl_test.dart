@@ -64,6 +64,9 @@ class _ScriptedFiles implements FileRepository {
   Future<String?> localPathFor({required String fileId, required String suggestedName}) async => null;
 
   @override
+  Future<String> cachePathFor({required String fileId, required String suggestedName}) async => '/cache/$fileId';
+
+  @override
   Future<void> clean() async {}
 }
 

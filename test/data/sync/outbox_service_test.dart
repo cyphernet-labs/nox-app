@@ -126,6 +126,13 @@ class _FakeFiles implements FileRepository {
   @override
   Future<String?> localPathFor({required String fileId, required String suggestedName}) async => null;
 
+  /// Where "the cache" keeps a file: a folder of its own per test.
+  String cacheRoot = Directory.systemTemp.path;
+
+  @override
+  Future<String> cachePathFor({required String fileId, required String suggestedName}) async =>
+      '$cacheRoot/$fileId.${suggestedName.split('.').last}';
+
   @override
   Future<void> clean() async {}
 }
@@ -202,6 +209,7 @@ void main() {
   late List<String> sentKeys;
   late List<String> sentChatIds;
   late List<String> sentAttachmentIds;
+  late List<String?> sentLocalPaths;
 
   /// Fails the SEND without touching the upload — the two are separate steps
   /// now, and a test that cannot tell them apart proves nothing about either.
@@ -229,6 +237,7 @@ void main() {
     sentKeys = <String>[];
     sentChatIds = <String>[];
     sentAttachmentIds = <String>[];
+    sentLocalPaths = <String?>[];
     failures = <String, RepositoryException>{};
     sendFailure = null;
     messages = MockMessageRepository();
@@ -245,7 +254,10 @@ void main() {
       final attached = invocation.namedArguments[#attachment] as MessageAttachment?;
       sentKeys.add(key);
       sentChatIds.add(invocation.namedArguments[#chatId] as String);
-      if (attached != null) sentAttachmentIds.add(attached.id);
+      if (attached != null) {
+        sentAttachmentIds.add(attached.id);
+        sentLocalPaths.add(attached.localPath);
+      }
       final failure = failures[text] ?? sendFailure;
       if (failure != null) return RepositoryResult<MessageModel>.error(exception: failure);
       return RepositoryResult<MessageModel>.success(data: echo(invocation.namedArguments[#chatId] as String, text ?? ''));
@@ -494,6 +506,7 @@ void main() {
       source = File('${Directory.systemTemp.path}/nox_outbox_${DateTime.now().microsecondsSinceEpoch}.png')
         ..writeAsBytesSync(List<int>.filled(64, 7));
       addTearDown(() => source.existsSync() ? source.deleteSync() : null);
+      files.cacheRoot = Directory.systemTemp.createTempSync('nox_cache').path;
     });
 
     MessageAttachment picked() => MessageAttachment(
@@ -540,16 +553,44 @@ void main() {
       expect(await outbox.pending(), isEmpty);
     });
 
-    test('a file that vanished from disk fails this message and lets the queue move on', () async {
+    test('the picked file may go once its message is sent: the bytes go up from the queue\'s own copy (phase 043)', () async {
+      // The macOS sandbox forgets a picked file when the app restarts, the iOS
+      // picker's copy can be emptied while the app is not running, and anyone
+      // can clear their photos: none of it may cost a message already sent.
+      final entry = (await outbox.enqueue(chatId: 'c1', text: null, attachment: picked())).data!;
+      source.deleteSync();
+
+      await service.flush();
+
+      expect(sentKeys, [entry.clientMessageId]);
+      expect(await outbox.watchQueue().first, isEmpty);
+    });
+
+    test('a file the queue could not keep fails this message and lets the queue move on', () async {
+      source.deleteSync(); // gone before the message was even sent: there is nothing to copy
       await outbox.enqueue(chatId: 'c1', text: null, attachment: picked());
       final behind = (await outbox.enqueue(chatId: 'c1', text: 'behind it')).data!;
-      source.deleteSync(); // the user cleared their photos between attach and drain
 
       await service.flush();
 
       final left = await outbox.watchQueue().first;
       expect(left.single.status, OutboxStatus.error);
       expect(sentKeys, contains(behind.clientMessageId), reason: 'one bad attachment must not hold the queue');
+    });
+
+    test('the message the server accepts names the bytes where the file\'s bytes live, and no copy is left behind (phase 043)', () async {
+      // A download of the same file would land there: the thumbnail and Save
+      // find the bytes on this device, after a restart too.
+      final entry = (await outbox.enqueue(chatId: 'c1', text: null, attachment: picked())).data!;
+      final copy = File(entry.attachment!.localPath!);
+
+      await service.flush();
+
+      final kept = sentLocalPaths.single!;
+      expect(kept, await files.cachePathFor(fileId: sentAttachmentIds.single, suggestedName: 'shot.png'));
+      expect(File(kept).readAsBytesSync(), List<int>.filled(64, 7));
+      expect(copy.existsSync(), isFalse);
+      expect(copy.parent.existsSync(), isFalse);
     });
 
     test('a file being sent is a transfer from before its first byte until the server has the message', () async {
