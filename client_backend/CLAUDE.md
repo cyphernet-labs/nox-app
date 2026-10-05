@@ -81,9 +81,9 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
    event inserts its `events` row in the SAME transaction; broadcasting
    happens only AFTER `Commit` returns (via the dispatcher). Never
    broadcast inside a transaction. Two lifecycles are deliberately
-   event-less: file metadata (upload registration, mark-uploaded, orphan
-   sweep), because files surface to other clients only through
-   `message.send`; and identity resolution (`internal/store/identity.go`),
+   event-less: file metadata (upload registration, continuation,
+   mark-uploaded, orphan sweep), because files surface to other clients
+   only through `message.send`; and identity resolution (`internal/store/identity.go`),
    because a PERSON coming into being is not visible on the wire at all.
    The rule is about the JOURNAL, and the three off-journal events sit outside
    it by construction: `device.revoked`, `identity.updated` and - since 038 -
@@ -110,8 +110,11 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
    deliberate exception: `Server.mu` guards `conns` and the per-connection
    fields other connections read (identity, device key), because the
    fan-out helpers walk one person's connections from another's goroutine.
-   `Server.claim` and the transfer-token store (`internal/server/tokens.go`)
-   hold the only other two. Since 039 the registry also carries `greeted`
+   `Server.claim`, the transfer-token store (`internal/server/tokens.go`)
+   and - since 043 - the upload-writer registry (`internal/server/writers.go`:
+   which request is writing which part, so a new PUT can interrupt one whose
+   connection died silently instead of writing beside it) hold the only
+   other three. Since 039 the registry also carries `greeted`
    and `addrVersion` per connection, set under `Server.mu` AFTER the greeting
    reply is queued - which is what keeps `server.addresses` behind it. Tor
    state reaches readers as an immutable snapshot behind `atomic.Pointer`,
@@ -206,6 +209,18 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   the server presents, and `PinnedTLSConfig`, the check a client runs against it.
   Together on purpose - they are one decision read from two ends, and apart they
   drift
+- `internal/server/files.go` — the file chain (contract §7): `file.uploadBegin`
+  with its continuation (`file_id` in, `received` out), the PUT that keeps
+  whatever arrives and carries the rest of the file from the offset its token
+  names, the GET with Range/If-Range; a body is cut by silence alone (043)
+- `internal/server/writers.go` — one request writes a part at a time; a newer
+  request for the same file interrupts the old one
+- `internal/blob/`       — attachment bytes on disk, confined by `os.Root`:
+  `<id>` a finished file, `<id>.part` an upload still coming, `<id>.synced`
+  how many leading bytes of the part are on stable storage (043). The record
+  is written only after the part is flushed and lowered before a part is cut
+  back, so it never vouches for a byte that is not on disk; the schema knows
+  nothing of it
 - `migrations/`          — append-only numbered `.sql` (embedded)
 
 ## Testing
@@ -248,6 +263,24 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 
 ## Known deliberate omissions (do not "fix" silently)
 
+- **A file transfer has no time limit, only a stall limit** (043). The body
+  deadline is renewed before every read (PUT) and every write (GET), so a
+  transfer is cut after 60 s without a byte and never for taking long:
+  through Tor 100 MiB take tens of minutes, and any limit on the whole cuts
+  exactly the path away from home. The price is known: a connection trickling
+  a byte a minute holds a goroutine for as long as it likes. Its holder is one
+  of the person's own devices - a token goes only to a greeted connection.
+- **The durable length of a part is a file beside it (`<id>.synced`), not a
+  column.** A column means editing `001`, and every development database -
+  the owner's stand included - would have to be recreated and its devices
+  paired again; how much of a part is safe on disk is a property of the
+  bytes, which `internal/blob` already owns. A crash costs at most the last
+  4 MiB of an upload, sent again.
+- **The continuation waits at most a second for the previous writer, and
+  never refuses on it.** It runs on the connection's read loop, which also
+  reads pongs, and the direct ping gives up after 5 s. A writer that did not
+  let go in time leaves a `received` slightly behind; the PUT cuts the part
+  back to its token's offset either way.
 - **The service page lives on its OWN loopback listener** (`-status-addr`), and
   the main mux serves it nowhere. That separation IS the protection: a check on
   RemoteAddr inside a handler is one somebody eventually routes around with a
