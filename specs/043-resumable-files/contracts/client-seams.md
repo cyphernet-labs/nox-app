@@ -15,8 +15,15 @@ abstract class FileRemoteDataSource {
   });
 
   /// Sends the file from [offset] to its end (possibly nothing). Gives up after
-  /// the stall limit without progress; cancelled by the transfer generation.
-  Future<void> putBytes({required String uploadPath, required File file, required int offset, TransferProgress? onProgress});
+  /// the stall limit without progress; ended by [cancellation] (its message
+  /// was thrown away) or by `cancelTransfers`.
+  Future<void> putBytes({
+    required String uploadPath,
+    required File file,
+    required int offset,
+    TransferProgress? onProgress,
+    TransferCancellation? cancellation,
+  });
 
   Future<ResponseEntity<DownloadTicketWireEntity>> downloadBegin({required String fileId});
 
@@ -39,7 +46,7 @@ class FetchedBytes {
 }
 ```
 
-`FileTransferFailure`: `passRejected` (404), `sizeMismatch` (413, 400), `staleRange` (416, **новое**), `connection` (всё остальное: 408, 409, 5xx, транспорт, застой, `cancelTransfers`).
+`FileTransferFailure`: `passRejected` (404), `sizeMismatch` (413, 400), `staleRange` (416, **новое**), `connection` (408, 409, транспорт, застой, отмена), `pathChanged` (**новое**: передача кончилась при другом `ApiClient.pathGeneration` — путь сменился под ней), `serverError` (**новое**: 5xx, статус вне §7, `200` без размера), `sourceUnreadable` (**новое**: исходник не открылся или отказал при чтении).
 
 `UploadTicketWireEntity` — плюс `received: int?`.
 
@@ -57,10 +64,12 @@ abstract class FileRepository {
     UnfinishedUpload? from,
     Future<void> Function(UnfinishedUpload? upload)? onUnfinished,
     TransferFraction? onProgress,
+    TransferCancellation? cancellation,
   });
 
-  /// ONE attempt, resuming whatever an earlier one left. One attempt per file
-  /// at a time; a second caller joins it.
+  /// ONE attempt, resuming whatever an earlier one left; a change of path
+  /// under it continues at once within the attempt. One attempt per file at a
+  /// time; a second caller joins it.
   Future<RepositoryResult<String>> download({
     required String fileId,
     required String suggestedName,
@@ -70,7 +79,8 @@ abstract class FileRepository {
 
   Future<String?> localPathFor({required String fileId, required String suggestedName});
 
-  /// Stops every transfer under way (logout, change of server).
+  /// Stops every transfer under way (logout, change of server); a download
+  /// begun before writes nothing after it.
   Future<void> cancelTransfers();
 
   /// Drops every downloaded and half-downloaded byte.
@@ -79,17 +89,17 @@ abstract class FileRepository {
 ```
 
 Ошибки `upload`:
-- `notFound` — исходного файла нет или он изменился;
+- `notFound` — исходного файла нет, он изменился или не открывается;
 - `payloadTooLarge`;
 - `invalidRequest` — `413` или `400`;
-- `internal` — второй отказ токена подряд;
-- `connection` — обрыв, застой, `408`, `409`;
+- `internal` — второй отказ токена подряд, 5xx или статус вне §7;
+- `connection` — обрыв, застой, `408`, `409`, отмена, больше пяти смен пути подряд;
 - коды провода из `uploadBegin`.
 
 Ошибки `download`:
 - `attachmentGone`, `notFound` — окончательно;
-- `internal` — второй отказ токена подряд, или размер не сошёлся в конце;
-- `connection` — обрыв, застой.
+- `internal` — второй отказ токена подряд, 5xx, статус вне §7, `200` без размера, или размер не сошёлся в конце;
+- `connection` — обрыв, застой, сброс, больше пяти смен пути подряд.
 
 ## `AttachmentDownloadService` (домен, новый)
 
@@ -102,9 +112,21 @@ abstract class AttachmentDownloadService {
   /// that stopped listening (5.3 closed) loses nothing (FR-007a).
   Future<RepositoryResult<String>> fetch({String? messageId, required MessageAttachment attachment, TransferFraction? onProgress});
 
-  /// Stops every download and waits for them to stop (logout, change of server).
+  /// Stops telling [onProgress] (5.3 closed); the download goes on.
+  void stopListening(TransferFraction onProgress);
+
+  /// Stops every download and waits for them to stop, at most 5 s (logout,
+  /// change of server); refuses a fetch while it runs.
   Future<void> reset();
 }
+```
+
+## `OutboxService` (data)
+
+```dart
+/// Throws a message away: the record goes, then the upload of its file under
+/// way is cancelled, and a pass is asked for.
+Future<void> discard({required String clientMessageId});
 ```
 
 ## `OutboxRepository` (домен)
@@ -127,6 +149,8 @@ FileViewBloc (5.3) ────────┴─fetch──► AttachmentDownlo
                                            └── attachLocalFile ──► MessageRepository
 
 LiveSessionStarter (смена мира), AuthRepositoryImpl (выход):
-    AttachmentDownloadService.reset() → FileRepository.clean()
-LiveSessionStarter._adoptGreeting → ApiClient.initBase(новый адрес) → cancelTransfers() — обрыв передач старого пути
+    AttachmentPrefetchService.reset() → AttachmentDownloadService.reset() → FileRepository.clean()   (последние два — в отдельных try)
+LiveSessionStarter._adoptGreeting → ApiClient.initBase(новый адрес) → pathGeneration++ → cancelTransfers() — передачи старого пути
+    кончаются как pathChanged и продолжаются репозиторием сразу
+ChatThreadBloc (Discard) → OutboxService.discard → OutboxRepository.remove → TransferCancellation.cancel() → flush
 ```

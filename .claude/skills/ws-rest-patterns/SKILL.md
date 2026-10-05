@@ -181,9 +181,10 @@ rc.SetWriteDeadline(time.Now().Add(stall))
 ```
 
 - **Clear the write deadline when the download handler ends** (flush first).
-  net/http resets the READ deadline for every request on a keep-alive
-  connection, but not the write one; left behind, it cuts the next request on
-  that connection at an arbitrary moment. Hijack clears both.
+  Belt and braces: net/http (Go 1.27) clears it itself once a handler
+  returns, before the connection carries another request - but a deadline
+  left behind would cut that request at an arbitrary moment, and a one-line
+  reset costs less than depending on that never changing. Hijack clears both.
 - **A resumable PUT appends from an offset bound to its token** (the
   continuation that issued the token reported that offset): the part on disk
   is cut back to it before writing, whatever a straggler appended since. The
@@ -197,6 +198,14 @@ rc.SetWriteDeadline(time.Now().Add(stall))
 - **Never return from a PUT without a definite status.** A handler that writes
   nothing answers 200, and a client that does read it takes an unfinished
   upload for a finished one.
+- **Commit the last byte on `context.WithoutCancel(r.Context())`.** The client
+  may hang up right after it, which cancels the request's context, and a file
+  whole on disk but unknown to its row would be sent again from byte one. A
+  part already renamed to the file of its declared size counts as complete
+  whatever the row says.
+- **A new upload token revokes the file's earlier upload tokens.** A PUT on
+  an older one that turns up late would cut the part back past bytes a newer
+  attempt wrote.
 
 ## 7. Testing recipes
 
