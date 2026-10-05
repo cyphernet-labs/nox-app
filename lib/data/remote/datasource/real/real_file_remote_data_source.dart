@@ -11,6 +11,7 @@ import 'package:nox_app/data/remote/api_client.dart';
 import 'package:nox_app/data/remote/datasource/file_remote_data_source.dart';
 import 'package:nox_app/data/remote/datasource/real/socket_envelope.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
+import 'package:nox_app/data/remote/socket/socket_channel_factory.dart';
 
 /// The file chain over the live channel (contract v0 §7).
 ///
@@ -60,6 +61,16 @@ class RealFileRemoteDataSource implements FileRemoteDataSource {
   final Duration _stallLimit;
   final Duration _answerWait;
 
+  /// How long opening a connection may take: through Tor, as long as the
+  /// socket's own dial gets (phase 040) - a new stream to the onion service
+  /// sometimes fetches its descriptor anew and stalls, and a byte transfer cut
+  /// sooner than the socket would be cut fails exactly where the socket gets
+  /// through. Directly, Dio's default.
+  Duration? get _connectTimeout {
+    final host = Uri.tryParse(_apiClient.dio.options.baseUrl)?.host ?? '';
+    return host.endsWith('.onion') ? WebSocketChannelFactory.onionConnectTimeout : null;
+  }
+
   @override
   Future<ResponseEntity<UploadTicketWireEntity>> uploadBegin({
     required String name,
@@ -98,6 +109,7 @@ class RealFileRemoteDataSource implements FileRemoteDataSource {
         data: file.openRead(offset), // streamed from where the server stopped; never in RAM
         cancelToken: cancel,
         options: Options(
+          connectTimeout: _connectTimeout,
           headers: <String, dynamic>{Headers.contentLengthHeader: total - offset},
           // The answer comes only once the bytes still in the buffers have
           // drained to the server (see [defaultAnswerWait]).
@@ -141,6 +153,7 @@ class RealFileRemoteDataSource implements FileRemoteDataSource {
         downloadPath,
         cancelToken: cancel,
         options: Options(
+          connectTimeout: _connectTimeout,
           responseType: ResponseType.stream,
           // Dio counts this between chunks of the body, not over the whole of
           // it: silence ends the transfer, time alone never does.

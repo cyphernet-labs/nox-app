@@ -1,6 +1,7 @@
 @Tags(['live'])
 library;
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -12,6 +13,7 @@ import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/repository/connection/connection_storage.dart';
 import 'package:nox_app/data/sync/connection/connection_path_selector.dart';
 import 'package:nox_app/data/sync/connection/direct_prober.dart';
+import 'package:nox_app/data/sync/outbox_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/connection/connection_path.dart';
@@ -119,6 +121,11 @@ void main() {
     final chat = await getIt<ChatRepository>().createChat(name: 'Tor probe ${DateTime.now().millisecondsSinceEpoch}');
     expect(chat.hasData, isTrue, reason: 'a chat to talk in');
     final chatId = chat.data!.id;
+    // A chat is made on the device first since phase 041; the outbox takes it
+    // to the server, and only then can a message name it.
+    getIt<OutboxService>().start();
+    unawaited(getIt<OutboxService>().flush());
+    await liveUntil('the chat on the server', const Duration(seconds: 30), () => getIt<ChatRepository>().isOnServer(chatId: chatId));
     Future<bool> send(String text) async {
       final sent = await getIt<MessageRepository>().sendMessage(chatId: chatId, clientMessageId: const Uuid().v4(), text: text);
       return sent.hasData;

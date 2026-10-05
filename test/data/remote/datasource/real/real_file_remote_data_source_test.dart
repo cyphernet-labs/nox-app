@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:math';
 
+import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/data/exception/file_transfer_exception.dart';
 import 'package:nox_app/data/remote/api_client.dart';
@@ -9,6 +10,7 @@ import 'package:nox_app/data/remote/datasource/real/real_file_remote_data_source
 import 'package:nox_app/data/remote/pinned_http_client.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/remote/socket/server_frame.dart';
+import 'package:nox_app/data/remote/socket/socket_channel_factory.dart';
 import 'package:nox_app/domain/model/app_config/app_config.dart';
 import 'package:nox_app/domain/model/app_config/app_flavor_type.dart';
 import 'package:nox_app/domain/model/app_config/server_limits.dart';
@@ -501,6 +503,46 @@ void main() {
 
       await expectLater(reading, throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.connection)));
       expect(watch.elapsed, lessThan(const Duration(seconds: 2)));
+    });
+  });
+
+  group('opening a connection through Tor (phase 043)', () {
+    /// Records how long each request may take to connect, and goes no further.
+    List<Duration?> watchConnects(ApiClient api) {
+      final seen = <Duration?>[];
+      api.dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            seen.add(options.connectTimeout);
+            handler.reject(DioException(requestOptions: options, type: DioExceptionType.connectionError));
+          },
+        ),
+      );
+      return seen;
+    }
+
+    test('a transfer through the onion service may take as long to connect as the socket does', () async {
+      // A new stream to the onion service sometimes fetches its descriptor
+      // anew; the socket waits 45 s for that, and a transfer cut at 30 s failed
+      // exactly where the socket got through.
+      final onion = ApiClient(_Config(), PinnedHttpClient())
+        ..initBase(address: 'https://abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwx.onion:443');
+      final seen = watchConnects(onion);
+      final transfers = RealFileRemoteDataSource.forTest(socket, onion);
+
+      await expectLater(transfers.putBytes(uploadPath: '/files/t', file: file, offset: 0), throwsA(isA<FileTransferException>()));
+      await expectLater(transfers.openBytes(downloadPath: '/files/t', offset: 0), throwsA(isA<FileTransferException>()));
+
+      expect(seen, [WebSocketChannelFactory.onionConnectTimeout, WebSocketChannelFactory.onionConnectTimeout]);
+    });
+
+    test('a transfer at a direct address keeps the default', () async {
+      final seen = watchConnects(api);
+      final transfers = RealFileRemoteDataSource.forTest(socket, api);
+
+      await expectLater(transfers.putBytes(uploadPath: '/files/t', file: file, offset: 0), throwsA(isA<FileTransferException>()));
+
+      expect(seen.single, api.dio.options.connectTimeout);
     });
   });
 }

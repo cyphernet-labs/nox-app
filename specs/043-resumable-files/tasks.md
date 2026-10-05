@@ -324,8 +324,8 @@ description: "Задачи фичи 043 — файлы с докачкой в о
 
 ## Phase 7: Сквозная проверка — 100 MiB через onion (SC-001 — SC-004)
 
-- [ ] T047 Вынести обвязку `test/live/tor_live_probe.dart` (`_Noxd`, `_AwayProber`, `_Network`, `_until`) в общий `test/live/live_harness.dart`, поведение зонда не меняется. Прогнать `tor_live_probe.dart` на macOS.
-- [ ] T048 Новый `test/live/resumable_files_probe.dart` (`@Tags(['live'])`, без суффикса `_test`) по quickstart, шаги 1–5:
+- [X] T047 Вынести обвязку `test/live/tor_live_probe.dart` (`_Noxd`, `_AwayProber`, `_Network`, `_until`) в общий `test/live/live_harness.dart`, поведение зонда не меняется. Прогнать `tor_live_probe.dart` на macOS.
+- [X] T048 Новый `test/live/resumable_files_probe.dart` (`@Tags(['live'])`, без суффикса `_test`) по quickstart, шаги 1–5:
   - 100 MiB через onion в очередь исходящих;
   - обрыв через `ApiClient.cancelTransfers()` и «перезапуск» очереди посреди загрузки;
   - возврат «домой» посреди второй половины;

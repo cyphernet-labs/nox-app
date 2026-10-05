@@ -182,12 +182,23 @@ void main() {
         for (final line in log)
           if (line['msg'] == 'upload interrupted' || line['msg'] == 'upload stalled') (line['at'] as num).toInt(),
       ];
+      // In the order the server saw them: what a break left, against where the
+      // next attempt began. An attempt whose PUT never reached the server - a
+      // connect through Tor that timed out - resumes twice from one break, and
+      // pairing the two lists by position would charge it the next break.
       var again = 0;
-      for (var i = 0; i < ats.length && i < froms.length; i++) {
-        if (froms[i] < ats[i]) again += ats[i] - froms[i];
+      int? brokenAt;
+      for (final line in log) {
+        if (line['msg'] == 'upload interrupted' || line['msg'] == 'upload stalled') brokenAt = (line['at'] as num).toInt();
+        if (line['msg'] == 'upload resumed' && brokenAt != null) {
+          final from = (line['from'] as num).toInt();
+          if (from < brokenAt) again += brokenAt - from;
+          brokenAt = null;
+        }
       }
       measure('upload attempts resumed from: $froms; broken at: $ats; bytes sent again: $again');
       expect(froms.where((f) => f > 0), isNotEmpty, reason: 'a resumed attempt started past the first byte');
+      expect(again, lessThan(size ~/ 10), reason: 'only what was in flight is sent twice (SC-002)');
       expect(log.any((l) => l['msg'] == 'upload complete'), isTrue);
 
       // --- Down again, through Tor, with a break. ---

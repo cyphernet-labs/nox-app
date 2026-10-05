@@ -531,7 +531,11 @@ void main() {
       final heardByFileView = <double>[];
 
       final first = repository.download(fileId: 'f_same', suggestedName: 'photo.png', onProgress: heardByPrefetch.add);
-      await pumpEventQueue();
+      // Joined only once the first chunk is on disk and heard: under a loaded
+      // run one turn of the event loop is not enough to get that far.
+      for (var i = 0; i < 500 && !heardByPrefetch.contains(0.25); i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
       final second = repository.download(fileId: 'f_same', suggestedName: 'photo.png', onProgress: heardByFileView.add);
       expect(heardByFileView, [0.25], reason: 'where the transfer stands, not silence until the next chunk');
       source.holdDownload!.complete();
