@@ -307,16 +307,16 @@ description: "Задачи фичи 043 — файлы с докачкой в о
 
 ### Tests for User Story 4
 
-- [ ] T043 [P] [US4] `test/data/sync/outbox_service_test.dart`:
+- [X] T043 [P] [US4] `test/data/sync/outbox_service_test.dart`:
   - загрузку, которой сервер раз за разом отказывает (`internal` на `uploadBegin`, второй `404` на каждом проходе), очередь откладывает после `RetryLadder.refusalLimit` отказов. **Сегодня этот тест падает**: в `_uploadFor` нет предела;
   - загрузка при мигающей связи (`connection` много раз подряд) не откладывается никогда;
   - ручной повтор (`markPending`) передаёт записанную ручку как `from` и начинает лестницу заново.
-- [ ] T044 [P] [US4] `test/data/sync/attachment_download_service_impl_test.dart`: после исчерпания новый `fetch` того же файла (ручной повтор) начинает лестницу заново, а репозиторий получает попытку, которая продолжает с части, — часть исчерпание не трогает (FR-011).
+- [X] T044 [P] [US4] `test/data/sync/attachment_download_service_impl_test.dart`: после исчерпания новый `fetch` того же файла (ручной повтор) начинает лестницу заново, а репозиторий получает попытку, которая продолжает с части, — часть исчерпание не трогает (FR-011).
 - [X] T045 [P] [US4] `test/presentation/pages/file_view_page/bloc/file_view_bloc_test.dart`: сервис сообщил об исчерпании → `failed`; `Retried` зовёт `fetch` снова.
 
 ### Implementation for User Story 4
 
-- [ ] T046 [US4] `lib/data/sync/outbox_service.dart`, `_uploadFor`: `exhausted = serverAnswered && entry.refusals + 1 >= RetryLadder.refusalLimit`, окончательность включает `exhausted`; ручку забывает только `_isTerminal`, исчерпание её сохраняет (FR-011).
+- [X] T046 [US4] `lib/data/sync/outbox_service.dart`, `_uploadFor`: `exhausted = serverAnswered && entry.refusals + 1 >= RetryLadder.refusalLimit`, окончательность включает `exhausted`; ручку забывает только `_isTerminal`, исчерпание её сохраняет (FR-011).
 
 **Checkpoint**: все истории работают.
 

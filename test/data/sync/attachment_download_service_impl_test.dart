@@ -136,6 +136,20 @@ void main() {
     expect(messages.attached, isEmpty);
   });
 
+  test('after giving up, a new fetch - Try again - climbs the whole ladder again (FR-011)', () async {
+    files.failures.addAll(List<RepositoryException>.filled(RetryLadder.refusalLimit, RepositoryException.internal));
+    final downloads = service();
+    final first = await downloads.fetch(messageId: 'm1', attachment: attachment);
+    expect(first.exception, RepositoryException.internal);
+    expect(files.attempts, RetryLadder.refusalLimit);
+
+    files.failures.addAll(List<RepositoryException>.filled(RetryLadder.refusalLimit - 1, RepositoryException.internal));
+    final again = await downloads.fetch(messageId: 'm1', attachment: attachment);
+
+    expect(again.data, isNotNull, reason: 'nine refusals do not spend a fresh ladder');
+    expect(files.attempts, RetryLadder.refusalLimit * 2);
+  });
+
   test('bytes the server no longer has end it at once', () async {
     files.failures.add(RepositoryException.attachmentGone);
 

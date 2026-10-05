@@ -17,6 +17,7 @@ import 'package:nox_app/data/remote/datasource/chat_remote_data_source.dart';
 import 'package:nox_app/data/repository/chat/chat_repository_impl.dart';
 import 'package:nox_app/data/service/attachment_transfer_service_impl.dart';
 import 'package:nox_app/data/sync/outbox_service.dart';
+import 'package:nox_app/data/sync/retry_ladder.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
@@ -606,6 +607,68 @@ void main() {
 
       expect(sentKeys, isEmpty, reason: 'the bytes may be up, but no message may name them');
       expect(await outbox.pending(), isEmpty);
+    });
+
+    group('when the automation gives up on an upload (phase 043, US4)', () {
+      Future<void> drainUntilSettled() async {
+        for (var i = 0; i < 25 && (await outbox.pending()).isNotEmpty; i++) {
+          phase.emit(SessionPhase.live); // a live edge lifts the pause and buys an attempt
+          await service.flush();
+        }
+      }
+
+      test('an upload the server keeps refusing is set aside after the ladder, and stops holding the queue', () async {
+        // Without the cap here a refusing endpoint held the one global queue -
+        // every chat, every later message - for good.
+        service.start();
+        files.failure = RepositoryException.internal;
+        await outbox.enqueue(chatId: 'c1', text: null, attachment: picked());
+        final behind = (await outbox.enqueue(chatId: 'c1', text: 'behind it')).data!;
+
+        await drainUntilSettled();
+
+        final stuck = (await outbox.watchQueue().first).single;
+        expect(stuck.status, OutboxStatus.error);
+        expect(stuck.refusals, RetryLadder.refusalLimit);
+        expect(files.uploads, RetryLadder.refusalLimit);
+        expect(sentKeys, contains(behind.clientMessageId));
+      });
+
+      test('a flapping link never sets an upload aside', () async {
+        service.start();
+        files.failure = RepositoryException.connection;
+        await outbox.enqueue(chatId: 'c1', text: null, attachment: picked());
+
+        for (var i = 0; i < 25; i++) {
+          phase.emit(SessionPhase.live);
+          await service.flush();
+        }
+
+        final entry = (await outbox.pending()).single;
+        expect(entry.status, OutboxStatus.pending, reason: 'a tunnel is not the server refusing (SC-005)');
+        expect(entry.refusals, 0);
+        expect(entry.attempts, greaterThan(RetryLadder.refusalLimit));
+      });
+
+      test('a manual retry goes on from the upload the server holds, with the whole ladder again (FR-011)', () async {
+        service.start();
+        final entry = (await outbox.enqueue(chatId: 'c1', text: null, attachment: picked())).data!;
+        final handle = UnfinishedUpload(fileId: 'f_77', sourceSize: 64, sourceModifiedAt: DateTime.utc(2026, 10, 5));
+        await outbox.noteUpload(clientMessageId: entry.clientMessageId, upload: handle);
+        files.failure = RepositoryException.internal;
+        await drainUntilSettled();
+        expect((await outbox.watchQueue().first).single.status, OutboxStatus.error);
+        expect((await outbox.watchQueue().first).single.upload?.fileId, 'f_77', reason: 'giving up does not forget what the server has');
+
+        files.failure = null;
+        final before = files.uploads;
+        await outbox.markPending(clientMessageId: entry.clientMessageId);
+        await drainUntilSettled();
+
+        expect(files.uploads - before, 1);
+        expect(files.continuedFrom.last?.fileId, 'f_77', reason: 'from the last byte the server got, not from the first');
+        expect(await outbox.pending(), isEmpty);
+      });
     });
 
     group('an upload the server holds part of (phase 043)', () {

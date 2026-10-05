@@ -375,24 +375,29 @@ class OutboxService {
     if (result.hasData) return result.data;
 
     final exception = result.exception;
+    // A dead channel is not an answer, but `internal` and `rate_limited` from
+    // `file.uploadBegin` ARE: the server looked at this file and said no.
+    final serverAnswered = exception != RepositoryException.connection;
+    // And they spend the ladder, as they do for the message itself (phase
+    // 043): without the cap an endpoint that refuses every upload held the one
+    // global queue - every chat, every later message - for good, which is the
+    // exact edge case the cap exists to prevent.
+    final exhausted = serverAnswered && entry.refusals + 1 >= RetryLadder.refusalLimit;
     final terminal = _isTerminal(exception);
     // A source that vanished or changed cannot be continued, and neither can
     // anything else a retry would only repeat. Forgetting the upload is what
     // lets a manual retry send the file as it is now, as a new upload; the part
-    // on the server is swept there after a day.
+    // on the server is swept there after a day. A server that merely kept
+    // refusing is another matter: what it holds stays, and a manual retry goes
+    // on from there (FR-011).
     if (terminal) await _outbox.noteUpload(clientMessageId: entry.clientMessageId, upload: null);
     await _outbox.recordFailure(
       clientMessageId: entry.clientMessageId,
       code: exception is RepositoryException ? exception.name : 'unknown',
-      terminal: terminal,
-      // A dead channel is not an answer, but `internal` and `rate_limited` from
-      // `file.uploadBegin` ARE: the server looked at this file and said no. If
-      // none of them counted, an endpoint that refuses every upload would hold
-      // the one global queue — every chat, every later message — for good,
-      // which is the exact edge case the refusal cap exists to prevent.
-      serverAnswered: exception != RepositoryException.connection,
+      terminal: terminal || exhausted,
+      serverAnswered: serverAnswered,
     );
-    if (terminal) return '';
+    if (terminal || exhausted) return '';
     _scheduleRetry(entry.clientMessageId, entry.attempts + 1);
     return null;
   }
