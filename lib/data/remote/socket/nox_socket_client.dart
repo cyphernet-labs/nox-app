@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
+
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/remote/socket/server_addresses_parser.dart';
 import 'package:nox_app/data/remote/socket/server_frame.dart';
@@ -31,7 +33,21 @@ import 'package:rxdart/rxdart.dart';
 /// with nothing to resolve.
 @LazySingleton(env: [Environment.dev])
 class NoxSocketClient {
-  NoxSocketClient(this._factory, this._syncRepository);
+  NoxSocketClient(this._factory, this._syncRepository)
+    : _pathChoiceBudget = defaultPathChoiceBudget,
+      _minBackoff = defaultMinBackoff,
+      _maxBackoff = defaultMaxBackoff;
+
+  /// The same client with its waits shortened, so a test can watch a bound
+  /// run out or a ladder climb without waiting minutes for it.
+  @visibleForTesting
+  NoxSocketClient.forTest(
+    this._factory,
+    this._syncRepository, {
+    this._pathChoiceBudget = defaultPathChoiceBudget,
+    this._minBackoff = defaultMinBackoff,
+    this._maxBackoff = defaultMaxBackoff,
+  });
 
   final SocketChannelFactory _factory;
   final SyncRepository _syncRepository;
@@ -39,8 +55,20 @@ class NoxSocketClient {
   /// Backoff ladder, capped. Reset happens on a successful GREETING, not on a
   /// successful socket open: a half-open connection opens fine and then says
   /// nothing, and resetting there would spin the ladder forever.
-  static const Duration _minBackoff = Duration(seconds: 1);
-  static const Duration _maxBackoff = Duration(seconds: 30);
+  static const Duration defaultMinBackoff = Duration(seconds: 1);
+  static const Duration defaultMaxBackoff = Duration(seconds: 30);
+  final Duration _minBackoff;
+  final Duration _maxBackoff;
+
+  /// How long an attempt waits for its path to be chosen (phase 042). The
+  /// choice is bounded in parts - the direct probe, the wait for Tor to be
+  /// ready - but not in everything it awaits: a Tor client that never
+  /// finished starting held the attempt, and with it every attempt after it,
+  /// until the app was relaunched. Past this the choice counts as "no path"
+  /// and the ladder asks again. Above the probe plus Tor's readiness budget
+  /// (5 s + 90 s), so it never cuts a choice that is merely slow.
+  static const Duration defaultPathChoiceBudget = Duration(seconds: 120);
+  final Duration _pathChoiceBudget;
 
   /// Contract §5: a command with no reply in this window is a failure the
   /// caller may retry under the same idempotency key.
@@ -65,7 +93,7 @@ class NoxSocketClient {
   SocketConnection? _connection;
   StreamSubscription<dynamic>? _frames;
   Timer? _retryTimer;
-  Duration _backoff = _minBackoff;
+  late Duration _backoff = _minBackoff;
   int _nextId = 1;
   bool _started = false;
 
@@ -393,7 +421,11 @@ class NoxSocketClient {
     _greeted = greeted;
     Uri? url;
     try {
-      url = await targets.nextTarget();
+      url = await targets.nextTarget().timeout(_pathChoiceBudget);
+    } on TimeoutException {
+      // Abandoned, not failed by the path: the late answer is dropped by the
+      // attempt check below - this attempt has moved on by then.
+      logRepository.debug(target: this, message: 'socket: choosing a path took over ${_pathChoiceBudget.inSeconds} s, abandoned');
     } on Object catch (e, st) {
       // A path that cannot be chosen is a path that is not there; the ladder
       // asks again. Never a reason for the socket to stop trying.
