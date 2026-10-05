@@ -41,10 +41,10 @@ description: "Задачи фичи 042 — связь восстанавлив�
 ### Tests for User Story 1
 
 - [ ] T001 [P] [US1] Тесты в `test/data/sync/connection/connection_path_selector_test.dart`: `end(keepTor: true)` сохраняет Tor-клиент, который готов, спит или поднимается меньше бюджета готовности с момента запуска селектором; останавливает упавший клиент и клиент, который поднимается дольше бюджета (бюджет — параметр `forTest`); `end(keepTor: false)` останавливает всегда, как раньше
-- [ ] T002 [P] [US1] Тест там же: после `end(keepTor: true)` и нового `begin(...)` выбор активен со снятым флагом неудачного круга (`roundFailed == false`), а часы отказов ключа забыты — следующий отказ onion-сервиса начинает новый отсчёт
-- [ ] T003 [P] [US1] Тесты в `test/data/sync/live_session_starter_test.dart`: `restart()`, вызванный во время уже идущего перезапуска, присоединяется к нему — одна остановка и один запуск канала; `restart()` после завершения предыдущего — новый перезапуск
+- [ ] T002 [P] [US1] Тест там же: после `end(keepTor: true)` и нового `begin(...)` выбор активен со снятым флагом неудачного круга (`roundFailed == false`), а часы отказов ключа забыты — следующий отказ onion-сервиса начинает новый отсчёт; когда новый круг снова не удался, флаг поднимается снова (плашка возвращается, FR-006)
+- [ ] T003 [P] [US1] Тесты в `test/data/sync/live_session_starter_test.dart`: `restart()`, вызванный во время уже идущего перезапуска, присоединяется к нему — одна остановка и один запуск канала; `restart()` после завершения предыдущего — новый перезапуск; после `restart()` сокет просит путь сразу, без паузы лестницы, даже если до этого лестница дошла до 30 с (SC-002)
 - [ ] T004 [P] [US1] Тесты блоков `test/presentation/pages/chats_list_page/bloc/chats_list_bloc_test.dart`, `test/presentation/pages/chat_card_page/bloc/chat_card_bloc_test.dart`, `test/presentation/pages/chat_thread_page/bloc/chat_thread_bloc_test.dart`: статус `offline` даёт `isOffline == true` и `isUnsupported == false`; статус `unsupported` — `isOffline == true` и `isUnsupported == true`; событие `retryConnection` вызывает `SessionPhaseService.reconnect()` ровно один раз
-- [ ] T005 [P] [US1] Виджет-тесты: плашка `No connection` с действием `Try again` при `offline` и без действия при `unsupported`; нажатие отправляет `retryConnection` — `test/presentation/pages/chats_list_page/chats_list_page_test.dart` (обе ширины), `test/presentation/widgets/chat/app_thread_view_widget_test.dart`, `test/presentation/pages/chat_card_page/chat_card_page_test.dart`; действие доступно диктору как кнопка с текстом, область нажатия не меньше 48×48
+- [ ] T005 [P] [US1] Виджет-тесты: плашка `No connection` с действием `Try again` при `offline` и без действия при `unsupported`; при `connecting` ни плашки, ни действия (FR-006a); нажатие отправляет `retryConnection` — `test/presentation/pages/chats_list_page/chats_list_page_test.dart` (обе ширины, на широкой — в обеих панелях: списке и ленте без выбранного чата), `test/presentation/widgets/chat/app_thread_view_widget_test.dart`, `test/presentation/pages/chat_card_page/chat_card_page_test.dart`; действие доступно диктору как кнопка с текстом, область нажатия не меньше 48×48
 
 ### Implementation for User Story 1
 
@@ -65,7 +65,7 @@ description: "Задачи фичи 042 — связь восстанавлив�
 
 ### Tests for User Story 2
 
-- [ ] T010 [P] [US2] Тесты в `test/data/remote/socket/nox_socket_client_test.dart`: поставщик пути, чей первый `nextTarget()` не завершается, — по истечении предела выбора (короткий предел, параметр конструктора) попытка брошена, после паузы лестницы приходит второй `nextTarget()`, и соединение по его адресу приветствуется; поздний ответ первого вызова отброшен
+- [ ] T010 [P] [US2] Тесты в `test/data/remote/socket/nox_socket_client_test.dart`: поставщик пути, чей первый `nextTarget()` не завершается, — по истечении предела выбора (короткий предел, параметр конструктора) попытка брошена, после паузы лестницы приходит второй `nextTarget()`, и соединение по его адресу приветствуется; поздний ответ первого вызова отброшен; остановка и новый запуск сокета во время зависшего `nextTarget()` (так перезапускается канал) сразу просят путь заново, не дожидаясь предела (US1, сценарий 6)
 - [ ] T011 [P] [US2] Тест там же: лестница не останавливается — при череде неудач паузы растут до 30 с и не больше, попытки продолжаются; окончательные состояния (`serverMismatch`, `unsupported`) лестницу останавливают, как раньше (добавить, чего ещё нет)
 
 ### Implementation for User Story 2
