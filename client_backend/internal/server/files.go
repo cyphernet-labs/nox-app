@@ -503,8 +503,59 @@ func (s *stallReader) finish() {
 	s.mu.Unlock()
 }
 
+// stallWriter renews the write deadline before every write (043), so a
+// download that keeps moving - however slowly - is never cut, and one whose
+// reader stopped is. Only Header, Write and WriteHeader are exposed: hiding
+// ReadFrom keeps io.Copy inside ServeContent writing through Write, where the
+// renewal is.
+type stallWriter struct {
+	w     http.ResponseWriter
+	rc    *http.ResponseController
+	stall time.Duration
+	renew bool
+}
+
+func newStallWriter(w http.ResponseWriter, stall time.Duration) *stallWriter {
+	return &stallWriter{w: w, rc: http.NewResponseController(w), stall: stall, renew: true}
+}
+
+func (s *stallWriter) Header() http.Header {
+	return s.w.Header()
+}
+
+func (s *stallWriter) WriteHeader(code int) {
+	s.w.WriteHeader(code)
+}
+
+func (s *stallWriter) Write(p []byte) (int, error) {
+	if s.renew && s.rc.SetWriteDeadline(time.Now().Add(s.stall)) != nil {
+		s.renew = false
+	}
+	return s.w.Write(p)
+}
+
+// finish sends what is still buffered under the stall deadline, then clears
+// it. net/http resets the READ deadline for every request on a connection,
+// but not the write one: left behind, it would cut the next request on the
+// same keep-alive connection at an arbitrary moment.
+func (s *stallWriter) finish() {
+	if !s.renew {
+		return
+	}
+	// A failed flush means the reader is gone; the server finds that out on
+	// its own, and nothing is left to protect.
+	if s.rc.Flush() != nil {
+		return
+	}
+	if s.rc.SetWriteDeadline(time.Time{}) != nil {
+		s.renew = false
+	}
+}
+
 // handleGetFile serves attachment bytes for a one-shot download token.
-// ServeContent brings Range/416 semantics for resumable downloads.
+// ServeContent brings Range/If-Range/416 semantics for resumable downloads:
+// the client continues with Range from what it has and If-Range with the
+// Last-Modified of its first response (contract §7).
 func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 	// The mux routes HEAD through GET patterns; a HEAD would burn the
 	// one-shot token without delivering a byte (an accidental curl -I
@@ -535,14 +586,13 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "storage failure", http.StatusInternalServerError)
 		return
 	}
-	// Per-request deadline: a non-reading client must not pin the fd forever.
-	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(downloadTimeout))
-	w.Header().Set("Content-Type", info.Attachment.Mime)
-	http.ServeContent(w, r, "", stat.ModTime(), f)
+	// A reader that stops must not pin the goroutine and the fd forever, and
+	// one that reads slowly must not be cut: the deadline measures silence.
+	sw := newStallWriter(w, s.stallTimeout)
+	defer sw.finish()
+	sw.Header().Set("Content-Type", info.Attachment.Mime)
+	http.ServeContent(sw, r, "", stat.ModTime(), f)
 }
-
-// downloadTimeout is the per-request deadline for a GET body.
-const downloadTimeout = 15 * time.Minute
 
 // sweepOrphans removes uploads never bound to a message within a day
 // (research R10): bytes first, rows second, so a crash in between leaves

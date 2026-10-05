@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -615,5 +616,143 @@ func TestTheFileNameNeverReachesTheLog(t *testing.T) {
 	}
 	if strings.Contains(log, "secret-holiday") {
 		t.Fatalf("the file's name reached the log:\n%s", log)
+	}
+}
+
+// storeFile puts a finished, unbound file straight into the store and the
+// files directory, the way an upload would have left it.
+func storeFile(t *testing.T, srv *Server, payload []byte) string {
+	t.Helper()
+	att, err := srv.store.CreateUpload(t.Context(), "big.bin", int64(len(payload)), "application/octet-stream", time.Now().Unix())
+	if err != nil {
+		t.Fatalf("CreateUpload: %v", err)
+	}
+	up, err := srv.blob.Create(att.FileID)
+	if err != nil {
+		t.Fatalf("blob.Create: %v", err)
+	}
+	if _, err := up.Write(payload); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := up.Finalize(); err != nil {
+		t.Fatalf("finalize: %v", err)
+	}
+	if err := srv.store.MarkUploaded(t.Context(), att.FileID); err != nil {
+		t.Fatalf("MarkUploaded: %v", err)
+	}
+	return att.FileID
+}
+
+func TestASlowButMovingDownloadIsNeverCut(t *testing.T) {
+	ts, srv, closeAll := openStack(t, filepath.Join(t.TempDir(), "slowget.db"), nil, func(s *Server) {
+		s.stallTimeout = 300 * time.Millisecond
+	})
+	t.Cleanup(closeAll)
+	c := greeted(t, ts, srv)
+
+	payload := randomPayload(t, 16<<20)
+	fileID := storeFile(t, srv, payload)
+	token := downloadBegin(t, c, 3, fileID)
+	resp, err := ts.Client().Get(ts.URL + "/files/" + token)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	// Half a megabyte at a time with a pause between: far longer in all than
+	// the stall timeout, never that long without a byte taken.
+	var got bytes.Buffer
+	chunk := make([]byte, 512<<10)
+	for {
+		n, err := io.ReadFull(resp.Body, chunk)
+		got.Write(chunk[:n])
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("read after %d bytes: %v", got.Len(), err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !bytes.Equal(got.Bytes(), payload) {
+		t.Fatalf("got %d bytes, want the whole %d", got.Len(), len(payload))
+	}
+}
+
+func TestADownloadWhoseReaderStoppedIsCut(t *testing.T) {
+	ts, srv, closeAll := openStack(t, filepath.Join(t.TempDir(), "stopget.db"), nil, func(s *Server) {
+		s.stallTimeout = 300 * time.Millisecond
+	})
+	t.Cleanup(closeAll)
+	c := greeted(t, ts, srv)
+
+	// Larger than what the socket buffers on both ends can hold, so the
+	// server is left waiting to write.
+	payload := randomPayload(t, 32<<20)
+	fileID := storeFile(t, srv, payload)
+	token := downloadBegin(t, c, 3, fileID)
+	resp, err := ts.Client().Get(ts.URL + "/files/" + token)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	head := make([]byte, 64<<10)
+	if _, err := io.ReadFull(resp.Body, head); err != nil {
+		t.Fatalf("read the first bytes: %v", err)
+	}
+	time.Sleep(2 * time.Second)
+	rest, err := io.ReadAll(resp.Body)
+	if err == nil && len(head)+len(rest) == len(payload) {
+		t.Fatal("the whole file arrived after the reader stood still past the stall timeout")
+	}
+}
+
+func TestIfRangeContinuesTheSameFileAndRestartsAnother(t *testing.T) {
+	ts, srv := newTestServer(t)
+	c := greeted(t, ts, srv)
+
+	payload := randomPayload(t, 1000)
+	fileID := storeFile(t, srv, payload)
+
+	code, full, hdr := doGet(t, ts, downloadBegin(t, c, 3, fileID), "")
+	if code != http.StatusOK || !bytes.Equal(full, payload) {
+		t.Fatalf("first GET = %d, %d bytes", code, len(full))
+	}
+	validator := hdr.Get("Last-Modified")
+	if validator == "" {
+		t.Fatal("no Last-Modified: a client would have nothing to continue against")
+	}
+
+	get := func(id int, ifRange string) (int, []byte, http.Header) {
+		req, err := http.NewRequest(http.MethodGet, ts.URL+"/files/"+downloadBegin(t, c, id, fileID), nil)
+		if err != nil {
+			t.Fatalf("build GET: %v", err)
+		}
+		req.Header.Set("Range", "bytes=100-")
+		req.Header.Set("If-Range", ifRange)
+		resp, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatalf("GET: %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		return resp.StatusCode, body, resp.Header
+	}
+
+	code, rest, hdr := get(4, validator)
+	if code != http.StatusPartialContent || !bytes.Equal(rest, payload[100:]) {
+		t.Fatalf("GET with the same validator = %d, %d bytes; want 206 and the rest", code, len(rest))
+	}
+	if cr := hdr.Get("Content-Range"); cr != "bytes 100-999/1000" {
+		t.Fatalf("Content-Range = %q", cr)
+	}
+
+	code, whole, _ := get(5, "Mon, 02 Jan 2006 15:04:05 GMT")
+	if code != http.StatusOK || !bytes.Equal(whole, payload) {
+		t.Fatalf("GET with another validator = %d, %d bytes; want 200 and the whole file", code, len(whole))
 	}
 }
