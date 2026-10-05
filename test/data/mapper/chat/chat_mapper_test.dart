@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/data/entity/chat/chat_entity.dart';
 import 'package:nox_app/data/mapper/chat/chat_mapper.dart';
+import 'package:nox_app/domain/model/chat/chat_creation.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/general/app_clock.dart';
 
@@ -98,5 +99,40 @@ void main() {
     expect(mapper.toEntity(model: model, lastOpenedSeq: 42).lastOpenedSeq, 42);
     // And an explicit absence stays absent rather than becoming zero.
     expect(mapper.toEntity(model: model).lastOpenedSeq, isNull);
+  });
+
+  test('a record from before phase 041 reads as a chat the server has', () {
+    const entity = ChatEntity(
+      id: 'c_old',
+      name: 'Old',
+      lastMessagePreview: '',
+      lastMessageAt: '2026-01-02T03:04:05.000Z',
+      unreadCount: 0,
+      lastOpenedSeq: null,
+    );
+
+    expect(mapper.toModel(entity: entity).creation, isNull);
+  });
+
+  test('every creation state survives the round trip', () {
+    for (final creation in [null, ...ChatCreation.values]) {
+      final model = ChatModel(id: 'c', name: 'n', lastMessagePreview: '', lastMessageAt: DateTime.utc(2026), creation: creation);
+      expect(mapper.toModel(entity: mapper.toEntity(model: model)).creation, creation);
+    }
+  });
+
+  test('a stored value this build does not know reads as pending, never as a chat the server has', () {
+    // Messages of a chat the server may not have must not go out under its id.
+    const entity = ChatEntity(
+      id: 'c',
+      name: 'n',
+      lastMessagePreview: '',
+      lastMessageAt: '2026-01-02T03:04:05.000Z',
+      unreadCount: 0,
+      lastOpenedSeq: null,
+      creation: 'from_the_future',
+    );
+
+    expect(mapper.toModel(entity: entity).creation, ChatCreation.pending);
   });
 }

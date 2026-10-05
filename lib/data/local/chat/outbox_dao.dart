@@ -86,6 +86,19 @@ class OutboxDao {
     await _store.record(clientMessageId).delete(db);
   }
 
+  /// Moves the queue of one chat to another id (phase 041): a server older
+  /// than the phase answered a create with an id of its own, and the messages
+  /// written into the chat must follow it. Order and keys are kept.
+  Future<void> moveChat({required String from, required String to}) async {
+    final db = await _appDatabase.db;
+    await db.transaction((txn) async {
+      for (final entity in _decode(await _store.query().getSnapshots(txn))) {
+        if (entity.chatId != from) continue;
+        await _store.record(entity.clientMessageId).put(txn, entity.copyWith(chatId: to).toJson());
+      }
+    });
+  }
+
   /// Drops the queue of one chat (the debug-scenario reset).
   Future<void> removeForChat(String chatId) async {
     final db = await _appDatabase.db;

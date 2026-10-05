@@ -66,6 +66,10 @@ abstract class OutboxRepository {
   /// Drops one chat's queue (the debug-scenario reset).
   Future<void> removeForChat({required String chatId});
 
+  /// Moves one chat's queue to another chat id, order and keys kept (phase
+  /// 041: a server older than the phase gave a new chat an id of its own).
+  Future<void> moveChat({required String from, required String to});
+
   /// Empties the queue (logout). The rows hold message texts.
   Future<void> clean();
 }

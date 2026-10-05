@@ -29,6 +29,12 @@ sealed class ChatThreadState with _$ChatThreadState {
     /// The machine at the paired address is not this person's server. Apart
     /// from [isOffline] because waiting fixes one and never the other.
     @Default(false) bool isServerMismatch,
+
+    /// Sends wait: the channel is not current, or it belongs to the wrong
+    /// machine. Apart from [isOffline], which waits for a whole failed round
+    /// before it says so - a chat still to be created says it at once, because
+    /// with a current channel its creation is going out right now (phase 041).
+    @Default(false) bool isHeld,
     MessageAttachment? draftAttachment,
 
     /// Bumped when a picked file was refused for being over the server's

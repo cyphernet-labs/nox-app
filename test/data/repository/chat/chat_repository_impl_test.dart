@@ -13,6 +13,7 @@ import 'package:nox_app/data/mapper/chat/chat_wire_mapper.dart';
 import 'package:nox_app/data/remote/datasource/chat_remote_data_source.dart';
 import 'package:nox_app/data/repository/chat/chat_repository_impl.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/model/chat/chat_creation.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
@@ -21,6 +22,7 @@ import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 import 'package:nox_app/data/local/chat/message_dao.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/general/constants.dart';
+import 'package:nox_app/general/id/chat_id.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// A [ChatRemoteDataSource] returning a failed envelope (success:false, data:null) —
@@ -34,7 +36,8 @@ class _ErrorChatRemoteDataSource implements ChatRemoteDataSource {
   Future<ResponseEntity<ChatWireEntity>> getChat({required String chatId}) async => const ResponseEntity<ChatWireEntity>(success: false);
 
   @override
-  Future<ResponseEntity<ChatWireEntity>> createChat({required String name}) async => const ResponseEntity<ChatWireEntity>(success: false);
+  Future<ResponseEntity<ChatWireEntity>> createChat({required String name, String? chatId}) async =>
+      const ResponseEntity<ChatWireEntity>(success: false);
 
   @override
   Future<ResponseEntity<ChatWireEntity>> renameChat({required String chatId, required String name}) async =>
@@ -108,13 +111,14 @@ void main() {
       expect(meta.hasMore, isFalse);
     });
 
-    test('createChat persists a chat that appears at the top on re-query', () async {
+    test('createChat puts the chat at the top of the cached list at once, waiting for the server', () async {
       await repository.getChats(config: GetChatsConfig.firstPage()); // seed
       final created = await repository.createChat(name: 'Fresh chat');
       expect(created.hasData, isTrue);
 
-      final (chats, _) = (await repository.getChats(config: GetChatsConfig.firstPage())).data!;
+      final (chats, _) = (await repository.getChats(config: GetChatsConfig.firstPage().copyWith(cachedOnly: true))).data!;
       expect(chats.first.name, 'Fresh chat'); // created "now" → newest-first
+      expect(chats.first.creation, ChatCreation.pending);
     });
 
     test('re-querying reads from the DB without re-seeding', () async {
@@ -339,4 +343,120 @@ void main() {
       expect((await repository.isChatNameTaken(name: 'Taken Elsewhere', excludeChatId: created.id)).data, isTrue);
     });
   });
+
+  group('a chat created without the server (phase 041)', () {
+    test('createChat asks nothing of the server: a device id, a waiting row and the opening line', () async {
+      final remote = _CountingCreates();
+      final repo = _repositoryOver(remote);
+
+      final created = (await repo.createChat(name: '  Kitchen  ')).data!;
+
+      expect(remote.creates, 0, reason: 'creating never waits for the server');
+      expect(deviceChatIdPattern.hasMatch(created.id), isTrue);
+      expect(created.name, 'Kitchen', reason: 'trimmed as the server trims it');
+      expect(created.creation, ChatCreation.pending);
+      expect((await repo.pendingCreations()).map((p) => p.chat.id), [created.id]);
+      expect(await getIt<MessageDao>().getById('${created.id}_sys'), isNotNull, reason: 'the "Chat created by" line');
+    });
+
+    test('createOnServer sends the device id, and the same id back makes it an ordinary chat', () async {
+      final remote = _CountingCreates();
+      final repo = _repositoryOver(remote);
+      final created = (await repo.createChat(name: 'Kitchen')).data!;
+      await getIt<ChatDao>().advanceReadMark(chatId: created.id, seq: 0, ceiling: 0);
+
+      final onServer = (await repo.createOnServer(chat: created)).data!;
+
+      expect(remote.lastChatId, created.id);
+      expect(onServer.id, created.id);
+      expect(await repo.isOnServer(chatId: created.id), isTrue);
+      expect(await repo.pendingCreations(), isEmpty);
+      expect((await getIt<ChatDao>().getById(created.id))?.lastOpenedSeq, 0, reason: 'the read mark is kept');
+    });
+
+    test('a server that answers with another id leaves the row for the caller to adopt', () async {
+      final remote = _CountingCreates()..answerWithId = 'c_0123456789abcdef';
+      final repo = _repositoryOver(remote);
+      final created = (await repo.createChat(name: 'Kitchen')).data!;
+
+      final onServer = (await repo.createOnServer(chat: created)).data!;
+      expect(onServer.id, 'c_0123456789abcdef');
+      expect(await repo.isOnServer(chatId: created.id), isFalse, reason: 'still waiting until adopted');
+
+      await repo.adoptServerChat(localId: created.id, serverChat: onServer);
+
+      expect(await getIt<ChatDao>().getById(created.id), isNull);
+      expect(await getIt<MessageDao>().getById('${created.id}_sys'), isNull);
+      expect(await repo.isOnServer(chatId: 'c_0123456789abcdef'), isTrue);
+    });
+
+    test('renaming a chat the server does not have is done here and puts it back in line', () async {
+      final remote = _CountingCreates();
+      final repo = _repositoryOver(remote);
+      final created = (await repo.createChat(name: 'Kitchen')).data!;
+      await repo.markCreation(chatId: created.id, creation: ChatCreation.nameTaken, attempts: 3);
+
+      final renamed = (await repo.updateChatName(chatId: created.id, name: 'Kitchen 2')).data!;
+
+      expect(remote.renames, 0, reason: 'nothing to rename on the server');
+      expect(renamed.name, 'Kitchen 2');
+      expect(renamed.creation, ChatCreation.pending);
+      expect((await repo.pendingCreations()).single.attempts, 0, reason: 'the old name\'s attempts are forgotten');
+    });
+
+    test('retryCreation puts a refused chat back in line', () async {
+      final repo = _repositoryOver(_CountingCreates());
+      final created = (await repo.createChat(name: 'Kitchen')).data!;
+      await repo.markCreation(chatId: created.id, creation: ChatCreation.failed, attempts: 1);
+
+      await repo.retryCreation(chatId: created.id);
+
+      expect((await repo.pendingCreations()).single.chat.id, created.id);
+    });
+  });
 }
+
+/// A chat source that counts creates and renames; it answers a create with
+/// the id it was given, or with [answerWithId] - a server older than 041.
+class _CountingCreates implements ChatRemoteDataSource {
+  int creates = 0;
+  int renames = 0;
+  String? lastChatId;
+  String? answerWithId;
+
+  @override
+  Future<ResponseEntity<ChatWireEntity>> createChat({required String name, String? chatId}) async {
+    creates++;
+    lastChatId = chatId;
+    return ResponseEntity<ChatWireEntity>(
+      success: true,
+      data: ChatWireEntity(
+        chatId: answerWithId ?? chatId!,
+        name: name,
+        createdAt: 1759600000,
+        createdByLabel: 'Anna',
+        lastMessagePreview: '',
+        lastActivityAt: 1759600000,
+      ),
+    );
+  }
+
+  @override
+  Future<ResponseEntity<ChatWireEntity>> renameChat({required String chatId, required String name}) async {
+    renames++;
+    return const ResponseEntity<ChatWireEntity>(success: false);
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+ChatRepositoryImpl _repositoryOver(ChatRemoteDataSource remote) => ChatRepositoryImpl(
+  getIt<ChatDao>(),
+  remote,
+  getIt<ChatMapper>(),
+  getIt<ChatWireMapper>(),
+  getIt<MessageRepository>(),
+  getIt<MessageDao>(),
+  getIt<SessionRepository>(),
+);

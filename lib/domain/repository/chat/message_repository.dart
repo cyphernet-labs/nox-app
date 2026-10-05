@@ -35,6 +35,11 @@ abstract class MessageRepository {
   /// non-empty, so the generic mock history is NOT seeded on first open (D5).
   Future<void> seedCreatedChat({required String chatId});
 
+  /// Drops what this device holds for one chat - its opening line, since a
+  /// chat's messages live in the queue until the server takes them. Only for a
+  /// local copy the server replaced with its own id (phase 041).
+  Future<void> forgetChat({required String chatId});
+
   /// The chat's shared files (5.4) — every attachment across its persisted messages,
   /// newest-first. Derived from the local message cache, not a remote fetch (feature 017).
   /// The chat's shared files, newest-first.

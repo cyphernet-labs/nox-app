@@ -58,6 +58,10 @@ sealed class ChatThreadEvent with _$ChatThreadEvent {
   /// The person asked for another attempt, from the banner.
   const factory ChatThreadEvent.retryConnection() = RetryConnection;
 
+  /// The person asked to create this chat on the server again, from the
+  /// banner of a chat the server refused (phase 041).
+  const factory ChatThreadEvent.creationRetried() = CreationRetried;
+
   /// Debug-only: reproduce a thread scenario (empty / offline / fatal / send-error).
   const factory ChatThreadEvent.setScenario(ChatThreadScenario scenario) = SetScenario;
 }

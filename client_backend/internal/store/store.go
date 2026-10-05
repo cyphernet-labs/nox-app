@@ -449,15 +449,39 @@ func (s *Store) RenameChat(ctx context.Context, chatID, name string) (protocol.C
 	return chat, StoredEvent{Seq: seq, Type: protocol.EventChatUpdated, Payload: payload}, true, nil
 }
 
-// CreateChat inserts a chat and its chat.created event atomically. The name
-// must arrive validated (trimmed, non-empty, <=64 runes); uniqueness is
+// CreateChat inserts a chat and its chat.created event atomically, and is
+// idempotent by chatID (contract §4, phase 041): when a chat with that id
+// already exists it comes back AS IT IS NOW with created=false, and nothing is
+// written. chatID is the id the device minted, its shape checked by the
+// caller; "" makes the server mint one, exactly as before 041. The name must
+// arrive validated (trimmed, non-empty, <=64 runes); uniqueness is
 // case-insensitive and returns ErrNameTaken.
-func (s *Store) CreateChat(ctx context.Context, name, creatorLabel string, now int64) (protocol.Chat, StoredEvent, error) {
+//
+// The id is looked up BEFORE the name is checked. A repeat is the device
+// sending the same command again after losing the reply, so its name is taken
+// by then - by the very chat it created - and checking the name first would
+// answer name_taken to a create that succeeded. The request's name is not
+// compared either: the chat may have been renamed since, and a repeat still
+// means "this chat". Both checks run inside the one immediate transaction, so
+// two repeats racing each other serialize and the second finds the first's
+// row.
+func (s *Store) CreateChat(ctx context.Context, chatID, name, creatorLabel string, now int64) (protocol.Chat, StoredEvent, bool, error) {
 	tx, err := s.write.BeginTx(ctx, nil)
 	if err != nil {
-		return protocol.Chat{}, StoredEvent{}, fmt.Errorf("begin create chat: %w", err)
+		return protocol.Chat{}, StoredEvent{}, false, fmt.Errorf("begin create chat: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	if chatID != "" {
+		existing, err := scanChat(tx.QueryRowContext(ctx,
+			"SELECT "+chatColumns+" FROM chats WHERE chat_id = ?", chatID))
+		if err == nil {
+			return existing, StoredEvent{}, false, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return protocol.Chat{}, StoredEvent{}, false, fmt.Errorf("look up chat id: %w", err)
+		}
+	}
 
 	// Uniqueness is checked against the Go-case-folded name: SQLite's lower()
 	// folds ASCII only, so relying on it would admit non-Latin duplicates.
@@ -466,14 +490,17 @@ func (s *Store) CreateChat(ctx context.Context, name, creatorLabel string, now i
 	err = tx.QueryRowContext(ctx,
 		"SELECT COUNT(1) FROM chats WHERE name_ci = ?", nameCI).Scan(&taken)
 	if err != nil {
-		return protocol.Chat{}, StoredEvent{}, fmt.Errorf("check chat name: %w", err)
+		return protocol.Chat{}, StoredEvent{}, false, fmt.Errorf("check chat name: %w", err)
 	}
 	if taken > 0 {
-		return protocol.Chat{}, StoredEvent{}, ErrNameTaken
+		return protocol.Chat{}, StoredEvent{}, false, ErrNameTaken
 	}
 
+	if chatID == "" {
+		chatID = "c_" + randomID()
+	}
 	chat := protocol.Chat{
-		ChatID:         "c_" + randomID(),
+		ChatID:         chatID,
 		Name:           name,
 		CreatedAt:      now,
 		CreatedByLabel: creatorLabel,
@@ -483,27 +510,27 @@ func (s *Store) CreateChat(ctx context.Context, name, creatorLabel string, now i
 		"INSERT INTO chats (chat_id, name, name_ci, created_at, created_by_label, last_activity_at, last_message_preview) VALUES (?, ?, ?, ?, ?, ?, '')",
 		chat.ChatID, chat.Name, nameCI, chat.CreatedAt, chat.CreatedByLabel, chat.LastActivityAt)
 	if err != nil {
-		return protocol.Chat{}, StoredEvent{}, fmt.Errorf("insert chat: %w", err)
+		return protocol.Chat{}, StoredEvent{}, false, fmt.Errorf("insert chat: %w", err)
 	}
 
 	payload, err := json.Marshal(chat)
 	if err != nil {
-		return protocol.Chat{}, StoredEvent{}, fmt.Errorf("marshal chat payload: %w", err)
+		return protocol.Chat{}, StoredEvent{}, false, fmt.Errorf("marshal chat payload: %w", err)
 	}
 	res, err := tx.ExecContext(ctx,
 		"INSERT INTO events (type, payload) VALUES (?, ?)", protocol.EventChatCreated, string(payload))
 	if err != nil {
-		return protocol.Chat{}, StoredEvent{}, fmt.Errorf("insert chat.created event: %w", err)
+		return protocol.Chat{}, StoredEvent{}, false, fmt.Errorf("insert chat.created event: %w", err)
 	}
 	seq, err := res.LastInsertId()
 	if err != nil {
-		return protocol.Chat{}, StoredEvent{}, fmt.Errorf("event seq: %w", err)
+		return protocol.Chat{}, StoredEvent{}, false, fmt.Errorf("event seq: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		return protocol.Chat{}, StoredEvent{}, fmt.Errorf("commit create chat: %w", err)
+		return protocol.Chat{}, StoredEvent{}, false, fmt.Errorf("commit create chat: %w", err)
 	}
-	return chat, StoredEvent{Seq: seq, Type: protocol.EventChatCreated, Payload: payload}, nil
+	return chat, StoredEvent{Seq: seq, Type: protocol.EventChatCreated, Payload: payload}, true, nil
 }
 
 // SendMessage inserts a message and its message.new event atomically, binds

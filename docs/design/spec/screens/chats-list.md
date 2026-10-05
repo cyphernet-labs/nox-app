@@ -37,6 +37,18 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
   - время последнего сообщения — **относительное**, по лестнице из [overview.md / Форматы времени](../overview.md#форматы-времени-и-даты) (`now`, `5 min`, `2 h`, `Yesterday`, `12 May`);
   - **unread badge** — число, считается **от последнего открытия чата этим устройством**; никогда не открытый чат бейджа **не имеет**; переполнение — `99+`.
 
+### Чат, которого ещё нет на сервере (фаза 041)
+
+Чат, созданный на этом устройстве (6.1), стоит в списке сразу и по обычному порядку — по времени последней активности. Пока сервер его не принял, строка показывает, где он, теми же глифами, что и статус сообщения в 5.2:
+
+| Состояние чата | Вместо времени | Вместо превью |
+|---|---|---|
+| Ждёт создания | глиф `schedule` (часики), `onSurfaceVariant`, `icon.sm` 16; имя для чтения с экрана `Waiting to be created` | превью как обычно |
+| Имя занято | глиф `error`, цвет `ColorScheme.error` | строка `Name already taken`, цвет `error` |
+| Не создан | глиф `error`, цвет `ColorScheme.error` | строка `Couldn't create`, цвет `error` |
+
+Строка для чтения с экрана — один узел. Отказ читается один раз, словами строки состояния: глиф ошибки рядом с ней из чтения исключён, иначе одно и то же прозвучало бы дважды. Как только сервер принял чат, строка становится обычной. Выход из аккаунта и смена мира стирают ждущие чаты вместе с остальными.
+
 ## Состояния
 
 | Состояние | Описание |
@@ -88,6 +100,9 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 | Offline banner | `No connection` |
 | Server-mismatch banner | `This isn't the server you paired with` |
 | Server-mismatch action | `Try again` |
+| Waiting chat, clock (имя для чтения с экрана) | `Waiting to be created` |
+| Name-taken chat, status line | `Name already taken` |
+| Refused chat, status line | `Couldn't create` |
 | Corner, connecting | `Connecting…` |
 | Corner, Tor badge | `Tor` |
 | Tor-obsolete strip | `Update NOX to connect away from home` |
@@ -107,6 +122,7 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 | Q8 | Формат времени | Относительное (лестница в overview) |
 | Q9 | Initial-loading | Centered `CircularProgressIndicator` |
 | Q10 | Empty state | Композиция `EmptyState`: обведённый квадрат 132 + стоковый глиф 56 + две брендовые точки + заголовок и текст |
+| — | Чат, которого нет на сервере (фаза 041) | Часики вместо времени, пока ждёт создания; знак ошибки вместо времени и причина вместо превью, если сервер отказал. Обе ширины |
 
 ## Десктоп-раскладка (этап M3, сверено с корпусом)
 
@@ -115,3 +131,4 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 - Десктоп (`>= 840dp`) — **list-detail**: `NavigationRail` (шелл) + chat-list-pane ≈360 (pane-header + поле поиска) + thread-pane. Выбор строки подсвечивает её (`secondaryContainer`) и загружает ленту справа **без** навигационного push (выбор — view-state в `ChatsListBloc`, контейнер `AppListDetailWidget`).
 - **Контент ленты (5.2) на этапе M3 — лёгкий плейсхолдер** «лента — в M4»; состояние no-selection — `Select a chat` / `Choose a conversation on the left, or press + to start a new one.`. Механика master-detail построена полностью; реальная лента 5.2 — этап M4.
 - Офлайн/inline-error — баннер под поиском в list-pane; список показывает кэш.
+- Строка чата, которого ещё нет на сервере, на широкой ветке та же, что на узкой: часики или знак ошибки вместо времени, причина отказа вместо превью.

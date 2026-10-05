@@ -138,7 +138,12 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
     client_message_id)`; a replayed command returns the original echo,
     never a duplicate row. The key keeps `author_id` because that is the
     column the message write path and its index are built on — not to keep
-    two people from colliding, since there is only one.
+    two people from colliding, since there is only one. `chat.create` with
+    a device-minted `chat_id` (`^c_[0-9a-f]{32}$`, 041) is idempotent by
+    that id: the id is looked up BEFORE the name inside the one write
+    transaction, and a repeat returns the chat as it is now, writing no row
+    and no event — checking the name first would answer `name_taken` to a
+    create that succeeded.
 11. **Envelope discipline (contract §2):** four frame kinds only
     (`srv`/`cmd`/`ok`+`error`/`event`); unknown fields in incoming
     frames are ignored (v0 evolves); unknown commands answer

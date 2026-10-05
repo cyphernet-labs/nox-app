@@ -164,8 +164,10 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
       await _backfillLegacySeqIfNeeded(config.chatId);
       bool? sourceHasMore;
       try {
-        // A cache-only read never reaches the wire (the live refresh tick).
-        if (!config.cachedOnly) sourceHasMore = await _fetchWindow(config);
+        // A cache-only read never reaches the wire (the live refresh tick), and
+        // neither does a read of a chat the server does not have yet (phase
+        // 041): it would only come back `not_found`.
+        if (!config.cachedOnly && await _isOnServer(config.chatId)) sourceHasMore = await _fetchWindow(config);
       } on SocketUnavailableException {
         // A dead channel falls back to what is cached; a typed refusal is an
         // answer and must reach the caller.
@@ -268,7 +270,7 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
     // newest-first (feature 017). Pull the newest window first so the view is
     // useful even when the files panel is opened before the thread; a dead
     // channel just shows what is cached.
-    if (refresh) {
+    if (refresh && await _isOnServer(chatId)) {
       try {
         await _fetchWindow(GetMessagesConfig.tail(chatId: chatId));
       } on SocketUnavailableException {
@@ -283,6 +285,13 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
     }
     return files;
   }
+
+  /// Whether the server has [chatId] - false only for a chat waiting to be
+  /// created (phase 041); a chat this device does not know counts as there.
+  Future<bool> _isOnServer(String chatId) async => (await _chatDao.getById(chatId))?.creation == null;
+
+  @override
+  Future<void> forgetChat({required String chatId}) => _messageDao.removeByChat(chatId);
 
   @override
   Future<void> attachLocalFile({required String messageId, required String localPath}) async {

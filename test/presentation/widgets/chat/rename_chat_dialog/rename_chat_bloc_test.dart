@@ -3,13 +3,39 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/data/local/chat/chat_dao.dart';
+import 'package:nox_app/data/sync/outbox_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/model/chat/chat_creation.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
+import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
+import 'package:nox_app/domain/repository/file/file_repository.dart';
+import 'package:nox_app/domain/service/attachment_transfer_service.dart';
+import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/presentation/widgets/chat/rename_chat_dialog/rename_chat_bloc.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// Counts the requests to drain, and drains nothing.
+class _CountingOutbox extends OutboxService {
+  _CountingOutbox()
+    : super(
+        getIt<OutboxRepository>(),
+        getIt<MessageRepository>(),
+        getIt<SessionPhaseService>(),
+        getIt<FileRepository>(),
+        getIt<AttachmentTransferService>(),
+        getIt<ChatRepository>(),
+      );
+
+  int flushes = 0;
+
+  @override
+  Future<void> flush() async => flushes++;
+}
+
 /// RenameChatBloc (edit chat name) over the real test-env repo (Sembast). A target chat
-/// 'Design crit' is created per test; the bloc opens prefilled with its name.
+/// 'Design crit' is created per test - and taken to the (mock) server, so a rename goes
+/// there as it always has; the bloc opens prefilled with its name.
 void main() {
   late String chatId;
 
@@ -17,7 +43,8 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     await configureDependencies(Environment.test);
     await getIt<AppDatabase>().clearEntireDatabase();
-    chatId = (await getIt<ChatRepository>().createChat(name: 'Design crit')).data!.id;
+    final created = (await getIt<ChatRepository>().createChat(name: 'Design crit')).data!;
+    chatId = (await getIt<ChatRepository>().createOnServer(chat: created)).data!.id;
   });
 
   tearDown(() async {
@@ -148,6 +175,56 @@ void main() {
         predicate<RenameChatState>((s) => s.status == RenameChatStatus.checking),
         predicate<RenameChatState>((s) => s.status == RenameChatStatus.valid && s.canSubmit),
       ],
+    );
+  });
+
+  group('RenameChatBloc - a chat not on the server yet (phase 041)', () {
+    late String waitingId;
+    late _CountingOutbox outbox;
+
+    setUp(() async {
+      final chat = (await getIt<ChatRepository>().createChat(name: 'Kitchen')).data!;
+      waitingId = chat.id;
+      await getIt<ChatRepository>().markCreation(chatId: chat.id, creation: ChatCreation.nameTaken, attempts: 1);
+      outbox = _CountingOutbox();
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<OutboxService>(outbox);
+    });
+
+    blocTest<RenameChatBloc, RenameChatState>(
+      'is renamed on this device, put back in line, and handed to the queue at once',
+      build: () => RenameChatBloc(chatId: waitingId, currentName: 'Kitchen'),
+      act: (bloc) async {
+        bloc.add(const RenameChatEvent.nameChanged('Kitchen 2'));
+        await Future<void>.delayed(const Duration(milliseconds: 700));
+        bloc.add(const RenameChatEvent.saveRequested());
+      },
+      wait: const Duration(milliseconds: 500),
+      verify: (bloc) async {
+        expect(bloc.state.status, RenameChatStatus.navSuccess);
+        final stored = (await getIt<ChatDao>().getById(waitingId))!;
+        expect(stored.name, 'Kitchen 2');
+        expect(stored.creation, 'pending', reason: 'a new name is a new attempt');
+        expect(outbox.flushes, 1, reason: 'the creation goes out under the new name now');
+      },
+    );
+
+    blocTest<RenameChatBloc, RenameChatState>(
+      'a chat the server has is renamed there, as before, and the queue is left alone',
+      build: () => RenameChatBloc(chatId: chatId, currentName: 'Design crit'),
+      act: (bloc) async {
+        bloc.add(const RenameChatEvent.nameChanged('Design review'));
+        await Future<void>.delayed(const Duration(milliseconds: 700));
+        bloc.add(const RenameChatEvent.saveRequested());
+      },
+      wait: const Duration(milliseconds: 500),
+      verify: (bloc) async {
+        expect(bloc.state.status, RenameChatStatus.navSuccess);
+        final stored = (await getIt<ChatDao>().getById(chatId))!;
+        expect(stored.name, 'Design review');
+        expect(stored.creation, isNull);
+        expect(outbox.flushes, 0);
+      },
     );
   });
 }

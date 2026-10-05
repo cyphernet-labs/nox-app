@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -31,6 +32,13 @@ func validChatName(raw string) (string, bool) {
 	name := strings.TrimSpace(raw)
 	return name, name != "" && utf8.RuneCountInString(name) <= maxChatNameRunes
 }
+
+// deviceChatIDPattern is the shape of a chat_id a device mints (contract §4,
+// phase 041): c_ and exactly 32 lowercase hex digits, 128 random bits. The
+// server's own ids stay c_ + 16 hex, so the two never overlap and a device
+// cannot present one of the server's as its own. Go's $ is the end of the
+// text, not of a line, so a trailing newline does not slip through.
+var deviceChatIDPattern = regexp.MustCompile(`^c_[0-9a-f]{32}$`)
 
 // helloRequest mirrors contract §3.
 type helloRequest struct {
@@ -227,6 +235,13 @@ func (c *client) handleSessionHello(cmd protocol.Command) {
 
 type chatCreateRequest struct {
 	Name string `json:"name"`
+	// ChatID is the id the device minted, so the chat exists there before any
+	// reply (contract §4, phase 041). A pointer, because the contract tells
+	// ABSENT (the server mints an id, as before 041) from PRESENT BUT NOT THE
+	// SHAPE (invalid_request), and an empty string is the second. JSON null
+	// reads as absent: a serializer that writes every optional field sends it
+	// for a device with no id to give.
+	ChatID *string `json:"chat_id"`
 }
 
 // chatReply is the shared {chat: Chat} reply of chat.create / chat.get /
@@ -242,6 +257,18 @@ func (c *client) handleChatCreate(cmd protocol.Command) {
 		return
 	}
 
+	// The shape is the contract's FIRST check, ahead of anything stored: a
+	// malformed id never reaches the database.
+	chatID := ""
+	if req.ChatID != nil {
+		if !deviceChatIDPattern.MatchString(*req.ChatID) {
+			c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest,
+				"chat_id must be c_ followed by 32 lowercase hex digits"))
+			return
+		}
+		chatID = *req.ChatID
+	}
+
 	name, ok := validChatName(req.Name)
 	if !ok {
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest,
@@ -249,7 +276,7 @@ func (c *client) handleChatCreate(cmd protocol.Command) {
 		return
 	}
 
-	chat, event, err := c.srv.store.CreateChat(c.ctx, name, c.srv.currentIdentity(c).Label, time.Now().Unix())
+	chat, event, created, err := c.srv.store.CreateChat(c.ctx, chatID, name, c.srv.currentIdentity(c).Label, time.Now().Unix())
 	switch {
 	case errors.Is(err, store.ErrNameTaken):
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrNameTaken, "Chat name already exists"))
@@ -261,8 +288,13 @@ func (c *client) handleChatCreate(cmd protocol.Command) {
 	}
 
 	c.sendFrame(protocol.OKReply(cmd.ID, chatReply{Chat: chat}))
-	c.srv.kickDispatcher()
-	c.logger.Info("chat created", "seq", event.Seq)
+	// A repeat of an existing chat_id wrote nothing: no event for the
+	// dispatcher to carry, and no chat created to log. The log line carries
+	// the seq only - a chat's name never goes to the log.
+	if created {
+		c.srv.kickDispatcher()
+		c.logger.Info("chat created", "seq", event.Seq)
+	}
 }
 
 type chatsListRequest struct {

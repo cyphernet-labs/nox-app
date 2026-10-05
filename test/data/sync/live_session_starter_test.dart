@@ -343,6 +343,29 @@ void main() {
         expect(await getIt<ChatDao>().getById('c_1'), isNull);
       });
 
+      test('another world takes a chat still waiting to be created with it (phase 041, FR-021)', () async {
+        // Made against the old server's world: created on this one it would be
+        // a chat nobody asked this server for, under a name from elsewhere.
+        await paired();
+        await getIt<SyncRepository>().setEpoch('fp:$kPinB');
+        await getIt<ChatDao>().upsert(
+          const ChatEntity(
+            id: 'c_00000000000000000000000000000041',
+            name: 'Kitchen',
+            lastMessagePreview: '',
+            lastMessageAt: '2026-01-01T00:00:00.000Z',
+            unreadCount: 0,
+            lastOpenedSeq: null,
+            creation: 'pending',
+          ),
+        );
+
+        await starter.start();
+        await settle();
+
+        expect(await getIt<ChatRepository>().pendingCreations(), isEmpty);
+      });
+
       test('the same key leaves everything where it is', () async {
         await paired();
         await getIt<SyncRepository>().setEpoch('fp:$kPinA');

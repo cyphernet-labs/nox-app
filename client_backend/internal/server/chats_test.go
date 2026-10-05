@@ -3,6 +3,8 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -33,12 +35,12 @@ func TestStoryOneChatsListOrderSearchAndGet(t *testing.T) {
 	// Seed through the store with controlled timestamps: wall-clock writes
 	// land in the same unix second and would leave the order to the random
 	// chat_id tiebreaker.
-	kitchenChat, _, err := srv.store.CreateChat(t.Context(), "Kitchen", "Anna", 100)
+	kitchenChat, _, _, err := srv.store.CreateChat(t.Context(), "", "Kitchen", "Anna", 100)
 	if err != nil {
 		t.Fatalf("seed Kitchen: %v", err)
 	}
 	kitchen := kitchenChat.ChatID
-	obshchiyChat, _, err := srv.store.CreateChat(t.Context(), "Общий", "Anna", 200)
+	obshchiyChat, _, _, err := srv.store.CreateChat(t.Context(), "", "Общий", "Anna", 200)
 	if err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
@@ -98,7 +100,7 @@ func TestStoryOneFirstPageLatencyOverLargeList(t *testing.T) {
 	// Seed 250 chats through the store directly - the wire would dominate
 	// the measurement with 250 round trips.
 	for i := range 250 {
-		if _, _, err := srv.store.CreateChat(t.Context(), fmt.Sprintf("chat-%03d", i), "Seeder", int64(1000+i)); err != nil {
+		if _, _, _, err := srv.store.CreateChat(t.Context(), "", fmt.Sprintf("chat-%03d", i), "Seeder", int64(1000+i)); err != nil {
 			t.Fatalf("seed chat %d: %v", i, err)
 		}
 	}
@@ -158,12 +160,12 @@ func TestStoryThreeRenameLiveNoReorderAndReplay(t *testing.T) {
 	// Controlled distinct timestamps make the no-reorder check
 	// discriminating: same-second rows would tie-break by chat_id and an
 	// accidental activity bump could go unnoticed.
-	kitchenChat, _, err := srv.store.CreateChat(t.Context(), "Kitchen", "Anna", 100)
+	kitchenChat, _, _, err := srv.store.CreateChat(t.Context(), "", "Kitchen", "Anna", 100)
 	if err != nil {
 		t.Fatalf("seed Kitchen: %v", err)
 	}
 	kitchen := kitchenChat.ChatID
-	targetChat, _, err := srv.store.CreateChat(t.Context(), "Старое", "Anna", 200)
+	targetChat, _, _, err := srv.store.CreateChat(t.Context(), "", "Старое", "Anna", 200)
 	if err != nil {
 		t.Fatalf("seed target: %v", err)
 	}
@@ -306,6 +308,174 @@ func TestStoryThreeConcurrentRenameRace(t *testing.T) {
 	}
 	if wins != 1 {
 		t.Fatalf("concurrent rename wins = %d, want exactly 1", wins)
+	}
+}
+
+// deviceChatID is a chat_id the way a device mints it (041): c_ and 32
+// lowercase hex digits.
+const deviceChatID = "c_5f0e9c1d2a3b4c5d6e7f8091a2b3c4d5"
+
+func TestChatCreateWithDeviceChatIDCreatesItOnceAndRepeatsWithoutAnEvent(t *testing.T) {
+	ts, srv := newTestServer(t)
+
+	anna := dialWS(t, ts, srv)
+	anna.expectGreeting()
+	anna.hello(1, `,"label":"Anna"`)
+	bob := dialWS(t, ts, srv)
+	bob.expectGreeting()
+	bob.hello(1, `,"label":"Bob"`)
+
+	create := func(id int) protocol.Chat {
+		t.Helper()
+		reply := anna.expectOKAfter(id, fmt.Sprintf(
+			`{"id":%d,"cmd":"chat.create","data":{"name":"Kitchen","chat_id":%q}}`, id, deviceChatID))
+		var chat protocol.Chat
+		mustUnmarshal(t, reply["chat"], &chat)
+		return chat
+	}
+
+	chat := create(2)
+	if chat.ChatID != deviceChatID || chat.Name != "Kitchen" {
+		t.Fatalf("reply chat = %+v, want Kitchen under the device's id %s", chat, deviceChatID)
+	}
+	seq, name, evData := bob.expectJournalEvent()
+	var evChatID string
+	mustUnmarshal(t, evData["chat_id"], &evChatID)
+	if name != protocol.EventChatCreated || evChatID != deviceChatID {
+		t.Fatalf("bob got %s for %q, want chat.created for %s", name, evChatID, deviceChatID)
+	}
+
+	// The reply was lost and the device sends the same command again: the
+	// same chat comes back - not name_taken over its own name - and nothing
+	// is written.
+	if again := create(3); again != chat {
+		t.Fatalf("repeat = %+v, want %+v", again, chat)
+	}
+	cursor, err := srv.store.Cursor(t.Context())
+	if err != nil || cursor != seq {
+		t.Fatalf("cursor after the repeat = %d err=%v, want %d (a repeat writes no event)", cursor, err, seq)
+	}
+
+	// A NEW id under the same name is another chat, and the name is taken.
+	anna.send(`{"id":4,"cmd":"chat.create","data":{"name":"kitchen","chat_id":"c_0123456789abcdef0123456789abcdef"}}`)
+	anna.expectErr(4, protocol.ErrNameTaken)
+
+	// Bob was sent nothing for either: the next journal event he sees is this
+	// message, one seq after the chat.created.
+	sendText(t, anna, 5, deviceChatID, "probe-1", "probe")
+	probeSeq, probeName, _ := bob.expectJournalEvent()
+	if probeName != protocol.EventMessageNew || probeSeq != seq+1 {
+		t.Fatalf("bob's next event = %s seq %d, want message.new seq %d (no event for a repeat)", probeName, probeSeq, seq+1)
+	}
+}
+
+func TestChatCreateRefusesAMalformedChatID(t *testing.T) {
+	ts, srv := newTestServer(t)
+
+	c := dialWS(t, ts, srv)
+	c.expectGreeting()
+	c.hello(1, ``)
+
+	const hex32 = "5f0e9c1d2a3b4c5d6e7f8091a2b3c4d5"
+	cases := []struct {
+		name   string
+		chatID string // the raw JSON value of chat_id
+	}{
+		{"wrong prefix", `"x_` + hex32 + `"`},
+		{"uppercase hex", `"c_` + strings.ToUpper(hex32) + `"`},
+		{"31 hex digits", `"c_` + hex32[:31] + `"`},
+		{"33 hex digits", `"c_` + hex32 + `0"`},
+		{"the server's own 16 hex digits", `"c_` + hex32[:16] + `"`},
+		{"empty string", `""`},
+		// Go's $ is the end of the TEXT, not of a line, so the newline is one
+		// character too many rather than a line ending.
+		{"trailing newline", `"c_` + hex32 + `\n"`},
+		{"not a string", `42`},
+	}
+	for i, tc := range cases {
+		id := 10 + i
+		c.send(fmt.Sprintf(`{"id":%d,"cmd":"chat.create","data":{"name":"Kitchen","chat_id":%s}}`, id, tc.chatID))
+		raw, refused := c.expectReply(id)["error"]
+		if !refused {
+			t.Fatalf("%s: chat_id %s was accepted, want invalid_request", tc.name, tc.chatID)
+		}
+		var wireErr protocol.WireError
+		mustUnmarshal(t, raw, &wireErr)
+		if wireErr.Code != protocol.ErrInvalidRequest {
+			t.Fatalf("%s: code = %q, want invalid_request", tc.name, wireErr.Code)
+		}
+	}
+
+	// The shape is refused before the store is reached: nothing was written.
+	if cursor, err := srv.store.Cursor(t.Context()); err != nil || cursor != 0 {
+		t.Fatalf("cursor = %d err=%v, want 0", cursor, err)
+	}
+}
+
+func TestChatCreateWithoutChatIDStillGetsAServerID(t *testing.T) {
+	ts, srv := newTestServer(t)
+
+	anna := dialWS(t, ts, srv)
+	anna.expectGreeting()
+	anna.hello(1, `,"label":"Anna"`)
+	bob := dialWS(t, ts, srv)
+	bob.expectGreeting()
+	bob.hello(1, `,"label":"Bob"`)
+
+	serverID := regexp.MustCompile(`^c_[0-9a-f]{16}$`)
+	// null reads as absent: a serializer that writes every optional field
+	// sends it for a device with no id to give.
+	for i, data := range []string{`{"name":"Kitchen"}`, `{"name":"Pantry","chat_id":null}`} {
+		id := 2 + i
+		reply := anna.expectOKAfter(id, fmt.Sprintf(`{"id":%d,"cmd":"chat.create","data":%s}`, id, data))
+		var chat protocol.Chat
+		mustUnmarshal(t, reply["chat"], &chat)
+		if !serverID.MatchString(chat.ChatID) {
+			t.Fatalf("%s: chat_id = %q, want the server's c_<16 hex>", data, chat.ChatID)
+		}
+		_, name, evData := bob.expectJournalEvent()
+		var evChatID string
+		mustUnmarshal(t, evData["chat_id"], &evChatID)
+		if name != protocol.EventChatCreated || evChatID != chat.ChatID {
+			t.Fatalf("%s: bob got %s for %q, want chat.created for %s", data, name, evChatID, chat.ChatID)
+		}
+	}
+}
+
+// Principle I: what a chat is called is what people talk about, and the log is
+// not where it goes. A creation is logged once, by seq; a repeat created
+// nothing and logs nothing.
+func TestChatCreateLogsACreationOnceAndNeverTheName(t *testing.T) {
+	buf := &syncBuffer{}
+	ts, srv := newTestServerLogging(t, slog.New(slog.NewJSONHandler(buf, nil)))
+
+	c := dialWS(t, ts, srv)
+	c.expectGreeting()
+	c.hello(1, ``)
+
+	const name = "Surprise party planning"
+	create := fmt.Sprintf(`{"name":%q,"chat_id":%q}`, name, deviceChatID)
+	c.expectOKAfter(2, fmt.Sprintf(`{"id":2,"cmd":"chat.create","data":%s}`, create))
+	c.expectOKAfter(3, fmt.Sprintf(`{"id":3,"cmd":"chat.create","data":%s}`, create))
+	// Commands on one connection are handled in order, so this reply means the
+	// repeat's handler has finished - including anything it logs after replying.
+	c.expectOKAfter(4, fmt.Sprintf(`{"id":4,"cmd":"chat.get","data":{"chat_id":%q}}`, deviceChatID))
+
+	created := 0
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		if strings.Contains(line, name) {
+			t.Fatalf("the chat's name reached the log: %s", line)
+		}
+		var record map[string]any
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			t.Fatalf("log line is not JSON: %v (%s)", err, line)
+		}
+		if record["msg"] == "chat created" {
+			created++
+		}
+	}
+	if created != 1 {
+		t.Fatalf("chat created logged %d times, want once: the repeat created nothing", created)
 	}
 }
 

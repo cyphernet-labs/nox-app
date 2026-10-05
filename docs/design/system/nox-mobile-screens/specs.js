@@ -305,6 +305,7 @@ window.NOX_SPECS = [
     "behavior": [
       "Rows: avatar (with ring) + name + last-message preview + relative time + unread badge.",
       "Unread emphasis: name w600, preview onSurface, time primary, badge shown (caps 99+, hidden at 0).",
+      "A chat made on this device that the server does not have yet (phase 041): waiting — a clock (schedule, onSurfaceVariant) in place of the time, screen-reader name “Waiting to be created”, preview kept; refused — the error glyph (error colour) in place of the time and the reason in place of the preview, in the error colour: “Name already taken” or “Couldn't create”. Ordered with the rest by last activity; the row reads a refusal once.",
       "Loading: the chats already on the device show at once and the server's page arrives in the background; a centered spinner only when the device holds no chats and the server is being asked. Empty: forum empty-state.",
       "Offline: persistent “No connection” MaterialBanner at top. Load error: banner “Could not load chats. Pull to refresh.”",
       "Tapping the SearchBar opens the full search view (back + query + caret, clear); results filter live; no match → “No chats found”.",
@@ -319,7 +320,9 @@ window.NOX_SPECS = [
       "Search hint: Search",
       "Empty: No chats yet / Tap + to create the first one.",
       "Load error: Could not load chats. Pull to refresh.",
-      "Search empty: No chats found"
+      "Search empty: No chats found",
+      "Waiting chat, clock (screen-reader name): Waiting to be created",
+      "Refused chat, status line: Name already taken · Couldn't create"
     ],
     "ds": [
       "AppBar (wordmark)",
@@ -369,18 +372,23 @@ window.NOX_SPECS = [
       "Empty: chat_bubble_outline empty-state. Offline: top banner + queued messages show pending.",
       "The connection never holds the thread: messages already on the device show at once, the server's newest window arrives in the background; a spinner only when the device holds nothing for the chat and the server is being asked. Writing works offline: a message waits with its clock and goes out over whichever path comes up first.",
       "Invite a person: an app-bar action that is PERMANENTLY disabled (037). Pressing it does nothing at all - no screen, no snackbar, no error. Its screen-reader name is the action alone; the caption explaining it lives in 5.4, where there is room.",
-      "Composer: attach + text + send. Send enables when there is text or an attachment; attachment shows a removable chip above the row."
+      "Composer: attach + text + send. Send enables when there is text or an attachment; attachment shows a removable chip above the row.",
+      "A chat the server does not have yet (phase 041): its messages wait with their clock, never as errors, and its window and files are never asked of the server. ONE notice over the thread, in this order: wrong server → name taken (Rename) → refused (Try again) → waiting (only while the channel is not current, INSTEAD of “No connection”) → “No connection”."
     ],
     "navigation": [
       "Back → Chats list (5.1).",
       "Attachment chip / file bubble → File view (5.3).",
       "Chat name in the app bar → Chat card (5.4).",
-      "Invite action → nowhere: it is disabled and stays disabled until a relay exists."
+      "Invite action → nowhere: it is disabled and stays disabled until a relay exists.",
+      "Rename (name-taken notice) → the rename dialog; the rename is done on the device and the creation goes out again. Try again (refused notice) → the chat waits to be created again."
     ],
     "copy": [
       "System: Chat created by Aria",
       "Composer placeholder: Message",
-      "Invite action (screen-reader name): Invite a person"
+      "Invite action (screen-reader name): Invite a person",
+      "Waiting notice: This chat isn't on your server yet. It will be once NOX connects.",
+      "Name-taken notice: Another chat already has this name. Rename this one to finish creating it. · Rename",
+      "Refused notice: This chat couldn't be created on your server. · Try again"
     ],
     "ds": [
       "AppBar (title)",
@@ -512,11 +520,12 @@ window.NOX_SPECS = [
     "anatomy": "App bar (back + “New chat”). Chat-name field with counter N/64. Pinned primary “Create”.",
     "behavior": [
       "Max 64 chars, charset unrestricted; counter updates live.",
-      "Checking: trailing spinner during uniqueness check. Taken: errorText “This name is taken”, Create disabled.",
-      "Valid → Create enabled. Submitting: button spinner."
+      "Checking: trailing spinner during uniqueness check — the local store always, the server only when it can answer at once. Taken: a chat on this device (one still waiting included) or the server's answer; errorText “This name is taken”, Create disabled.",
+      "Valid → Create enabled. Submitting: a local write, practically never visible.",
+      "Create never waits for the server (phase 041): the chat is made on this device under an id minted there and opens at once; the outgoing queue creates it on the server before its messages. A name taken by then marks the chat for a rename (5.1, 5.2)."
     ],
     "navigation": [
-      "Create success → the new Chat thread (5.2).",
+      "Create → the new Chat thread (5.2), at once, with or without a connection.",
       "Back → Chats list (5.1)."
     ],
     "copy": [

@@ -4,6 +4,7 @@ import 'package:injectable/injectable.dart' show Environment;
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nox_app/data/entity/base/error_wire_entity.dart';
+import 'package:nox_app/data/entity/chat/chat_entity.dart';
 import 'package:nox_app/data/entity/chat/message_entity.dart';
 import 'package:nox_app/data/entity/chat/wire/message_wire_entity.dart';
 import 'package:nox_app/data/local/app_database.dart';
@@ -507,6 +508,60 @@ void main() {
       // Re-anchored, not stranded in the middle of the thread.
       expect(afterOlder.first.isSystem, isTrue);
       expect(afterOlder.where((m) => m.isSystem), hasLength(1));
+    });
+  });
+
+  group('a chat the server does not have yet (phase 041)', () {
+    const waitingId = 'c_5f0e9c1d2a3b4c5d6e7f8091a2b3c4d5';
+    late MockMessageRemoteDataSource remote;
+    late MessageRepository local;
+
+    setUp(() async {
+      await getIt<ChatDao>().upsert(
+        const ChatEntity(
+          id: waitingId,
+          name: 'Kitchen',
+          lastMessagePreview: '',
+          lastMessageAt: '2026-01-01T00:00:00.000Z',
+          unreadCount: 0,
+          lastOpenedSeq: null,
+          creation: 'pending',
+        ),
+      );
+      remote = MockMessageRemoteDataSource();
+      local = MessageRepositoryImpl(
+        getIt<MessageDao>(),
+        remote,
+        getIt<MessageMapper>(),
+        getIt<MessageWireMapper>(),
+        getIt<ChatDao>(),
+        getIt<SessionRepository>(),
+      );
+      await local.seedCreatedChat(chatId: waitingId);
+    });
+
+    test('its window is served from the cache and never asks the server, which could only answer not_found', () async {
+      final page = await local.getMessages(config: GetMessagesConfig.tail(chatId: waitingId));
+
+      expect(page.hasData, isTrue);
+      expect(page.data!.$1.single.isSystem, isTrue, reason: 'the "Chat created by" line written here');
+      verifyZeroInteractions(remote);
+    });
+
+    test('its files are what is cached, with no trip to the server', () async {
+      expect(await local.chatFiles(chatId: waitingId, refresh: true), isEmpty);
+      verifyZeroInteractions(remote);
+    });
+
+    test('once the server has it, the window is asked of the server again', () async {
+      when(
+        remote.getMessages(config: anyNamed('config')),
+      ).thenAnswer((_) async => const ResponseEntity<MessagesWireEntity>(success: true, data: MessagesWireEntity(hasMore: false)));
+      await getIt<ChatDao>().update(waitingId, (c) => c.copyWith(creation: null));
+
+      await local.getMessages(config: GetMessagesConfig.tail(chatId: waitingId));
+
+      verify(remote.getMessages(config: anyNamed('config'))).called(1);
     });
   });
 }

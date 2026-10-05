@@ -196,5 +196,12 @@
   "connectionInfoLocalNetwork": "Якщо ви вдома, перевірте, що NOX має доступ до локальної мережі в Параметрах.",
   "connectionTorObsolete": "Оновіть NOX, щоб підключатися поза домом",
   "devicesInviteHomeOnly": "Це посилання працює лише у вашій домашній мережі.",
-  "loginHomeNetworkOnly": "Не вдалося зв'язатися з вашим сервером. Звʼязування працює у вашій домашній мережі."
+  "loginHomeNetworkOnly": "Не вдалося зв'язатися з вашим сервером. Звʼязування працює у вашій домашній мережі.",
+  "chatCreationPending": "Очікує на створення",
+  "chatCreationNameTaken": "Назву вже зайнято",
+  "chatCreationFailed": "Не вдалося створити",
+  "chatCreationPendingNotice": "Цього чату ще немає на вашому сервері. Він з'явиться там, щойно NOX під'єднається.",
+  "chatCreationNameTakenNotice": "Інший чат уже має цю назву. Перейменуйте цей, щоб завершити створення.",
+  "chatCreationFailedNotice": "Не вдалося створити цей чат на вашому сервері.",
+  "actionRename": "Перейменувати"
 }

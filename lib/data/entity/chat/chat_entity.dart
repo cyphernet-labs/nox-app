@@ -32,6 +32,16 @@ abstract class ChatEntity with _$ChatEntity {
     // with null (the attachmentLocalPath back-compat pattern).
     int? createdAt, // unix seconds
     String? createdByLabel,
+
+    /// Phase 041: `pending`, `name_taken` or `failed` while the server does not
+    /// have this chat yet; absent for a chat it has, and for every record
+    /// written before the phase. Device-local, never on the wire.
+    String? creation,
+
+    /// How many times creating it on the server failed in a way worth
+    /// retrying. Drives the pause before the next attempt, and lives on the
+    /// record because the pause has to outlive a restart.
+    int? creationAttempts,
   }) = _ChatEntity;
 
   factory ChatEntity.fromJson(Map<String, dynamic> json) => _$ChatEntityFromJson(json);

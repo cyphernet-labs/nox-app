@@ -323,6 +323,36 @@ void main() {
     expect(stored?.unreadCount, 7); // the device owns the badge
   });
 
+  test('the server\'s chat.created for a chat made on this device ends its wait and keeps its read mark (phase 041)', () async {
+    // The device minted the id, so the server's event names the very row the
+    // device wrote - nothing is renamed, the wait simply ends.
+    const id = 'c_5f0e9c1d2a3b4c5d6e7f8091a2b3c4d5';
+    await chatDao.upsert(
+      const ChatEntity(
+        id: id,
+        name: 'Kitchen',
+        lastMessagePreview: '',
+        lastMessageAt: '2026-01-01T00:00:00.000Z',
+        unreadCount: 0,
+        lastOpenedSeq: 4,
+        creation: 'pending',
+        creationAttempts: 2,
+      ),
+    );
+    final socket = await connected();
+    socket.pushEvent(
+      seq: 7,
+      event: 'chat.created',
+      data: chatFrame(id, name: 'Kitchen'),
+    );
+    await waitUntil(() async => await sync.getCursor() == 7, reason: 'the chat event is applied');
+
+    final stored = await chatDao.getById(id);
+    expect(stored?.creation, isNull, reason: 'the server has it: nothing is left to create');
+    expect(stored?.creationAttempts, isNull);
+    expect(stored?.lastOpenedSeq, 4, reason: 'the read mark is the device\'s and survives');
+  });
+
   test('an incoming message raises the chat row itself, because the server sends no chat.updated for it', () async {
     await chatDao.upsert(
       const ChatEntity(

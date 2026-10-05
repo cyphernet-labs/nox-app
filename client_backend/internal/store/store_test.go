@@ -7,6 +7,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sync"
 	"testing"
 
 	"nox.app/client-backend/internal/db"
@@ -50,7 +52,7 @@ func TestCreateChatEmitsAtomicEvent(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 
-	chat, ev, err := s.CreateChat(ctx, "smoke", "Anna", 100)
+	chat, ev, _, err := s.CreateChat(ctx, "", "smoke", "Anna", 100)
 	if err != nil {
 		t.Fatalf("CreateChat: %v", err)
 	}
@@ -74,19 +76,19 @@ func TestCreateChatNameTakenCaseInsensitiveLeavesNoEvent(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 
-	if _, _, err := s.CreateChat(ctx, "General", "Anna", 100); err != nil {
+	if _, _, _, err := s.CreateChat(ctx, "", "General", "Anna", 100); err != nil {
 		t.Fatalf("first CreateChat: %v", err)
 	}
-	_, _, err := s.CreateChat(ctx, "general", "Bob", 101)
+	_, _, _, err := s.CreateChat(ctx, "", "general", "Bob", 101)
 	if !errors.Is(err, ErrNameTaken) {
 		t.Fatalf("err = %v, want ErrNameTaken", err)
 	}
 
 	// Case folding must be Unicode-aware, not SQLite's ASCII-only lower().
-	if _, _, err := s.CreateChat(ctx, "Общий", "Anna", 102); err != nil {
+	if _, _, _, err := s.CreateChat(ctx, "", "Общий", "Anna", 102); err != nil {
 		t.Fatalf("Cyrillic CreateChat: %v", err)
 	}
-	if _, _, err := s.CreateChat(ctx, "оБЩИЙ", "Bob", 103); !errors.Is(err, ErrNameTaken) {
+	if _, _, _, err := s.CreateChat(ctx, "", "оБЩИЙ", "Bob", 103); !errors.Is(err, ErrNameTaken) {
 		t.Fatalf("Cyrillic duplicate err = %v, want ErrNameTaken", err)
 	}
 
@@ -99,11 +101,224 @@ func TestCreateChatNameTakenCaseInsensitiveLeavesNoEvent(t *testing.T) {
 	}
 }
 
+// Chat ids a device mints (041): c_ and 32 lowercase hex digits. The store
+// does not check the shape - the handler does - but the tests use real ones.
+const (
+	deviceChatID      = "c_5f0e9c1d2a3b4c5d6e7f8091a2b3c4d5"
+	otherDeviceChatID = "c_0123456789abcdef0123456789abcdef"
+)
+
+func TestCreateChatWithDeviceIDCreatesItUnderThatIDWithOneEvent(t *testing.T) {
+	s := newStore(t)
+	ctx := t.Context()
+
+	chat, ev, created, err := s.CreateChat(ctx, deviceChatID, "Kitchen", "Anna", 100)
+	if err != nil || !created {
+		t.Fatalf("CreateChat: created=%v err=%v", created, err)
+	}
+	if chat.ChatID != deviceChatID {
+		t.Fatalf("chat_id = %q, want the device's %q", chat.ChatID, deviceChatID)
+	}
+	var payload protocol.Chat
+	if err := json.Unmarshal(ev.Payload, &payload); err != nil || payload != chat {
+		t.Fatalf("event payload = %+v err=%v, want %+v", payload, err, chat)
+	}
+
+	events, err := s.EventsSince(ctx, 0)
+	if err != nil {
+		t.Fatalf("EventsSince: %v", err)
+	}
+	if len(events) != 1 || events[0].Type != protocol.EventChatCreated || events[0].Seq != ev.Seq {
+		t.Fatalf("events = %+v, want exactly the one chat.created", events)
+	}
+	if got, err := s.GetChat(ctx, deviceChatID); err != nil || got != chat {
+		t.Fatalf("GetChat = %+v err=%v, want %+v", got, err, chat)
+	}
+}
+
+func TestCreateChatRepeatOfDeviceIDReturnsTheChatAndWritesNothing(t *testing.T) {
+	s := newStore(t)
+	ctx := t.Context()
+
+	first, _, _, err := s.CreateChat(ctx, deviceChatID, "Kitchen", "Anna", 100)
+	if err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+
+	// The device lost the reply and sends the same command again. Its name is
+	// taken by now - by this very chat - and a different clock and creator
+	// prove what comes back is the stored row, not a card built from the call.
+	again, ev, created, err := s.CreateChat(ctx, deviceChatID, "Kitchen", "Bob", 999)
+	if err != nil {
+		t.Fatalf("repeat: %v", err)
+	}
+	if created {
+		t.Fatal("a repeat must not create")
+	}
+	if again != first {
+		t.Fatalf("repeat = %+v, want the stored %+v", again, first)
+	}
+	if ev.Seq != 0 {
+		t.Fatalf("repeat produced event %+v", ev)
+	}
+
+	chats, _, err := s.ListChats(ctx, 1, 10, "")
+	if err != nil || len(chats) != 1 {
+		t.Fatalf("chats = %d err=%v, want exactly 1", len(chats), err)
+	}
+	events, err := s.EventsSince(ctx, 0)
+	if err != nil || len(events) != 1 {
+		t.Fatalf("events = %d err=%v, want exactly 1", len(events), err)
+	}
+}
+
+func TestCreateChatRepeatAfterRenameReturnsTheCurrentName(t *testing.T) {
+	s := newStore(t)
+	ctx := t.Context()
+
+	if _, _, _, err := s.CreateChat(ctx, deviceChatID, "Kitchen", "Anna", 100); err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	renamed, _, _, err := s.RenameChat(ctx, deviceChatID, "Pantry")
+	if err != nil {
+		t.Fatalf("RenameChat: %v", err)
+	}
+	cursor, err := s.Cursor(ctx)
+	if err != nil {
+		t.Fatalf("Cursor: %v", err)
+	}
+
+	// The repeat still carries the name the device sent the first time.
+	again, _, created, err := s.CreateChat(ctx, deviceChatID, "Kitchen", "Anna", 200)
+	if err != nil || created {
+		t.Fatalf("repeat: created=%v err=%v", created, err)
+	}
+	if again != renamed {
+		t.Fatalf("repeat = %+v, want the chat as it is now %+v", again, renamed)
+	}
+	after, err := s.Cursor(ctx)
+	if err != nil {
+		t.Fatalf("Cursor: %v", err)
+	}
+	if after != cursor {
+		t.Fatalf("repeat grew the log: %d -> %d", cursor, after)
+	}
+}
+
+func TestCreateChatRepeatNeverReturnsNameTaken(t *testing.T) {
+	s := newStore(t)
+	ctx := t.Context()
+
+	if _, _, _, err := s.CreateChat(ctx, deviceChatID, "Kitchen", "Anna", 100); err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	if _, _, _, err := s.RenameChat(ctx, deviceChatID, "Pantry"); err != nil {
+		t.Fatalf("RenameChat: %v", err)
+	}
+	// ANOTHER chat now holds the name the device first sent ...
+	if _, _, _, err := s.CreateChat(ctx, "", "kitchen", "Anna", 200); err != nil {
+		t.Fatalf("CreateChat other: %v", err)
+	}
+
+	// ... and the repeat still finds its own chat: the id is looked up before
+	// the name is checked.
+	again, _, created, err := s.CreateChat(ctx, deviceChatID, "Kitchen", "Anna", 300)
+	if errors.Is(err, ErrNameTaken) {
+		t.Fatal("a repeat of an existing chat_id must never be name_taken")
+	}
+	if err != nil || created || again.ChatID != deviceChatID || again.Name != "Pantry" {
+		t.Fatalf("repeat = %+v created=%v err=%v, want the device's chat as it is now", again, created, err)
+	}
+}
+
+func TestCreateChatNewDeviceIDWithTakenNameIsNameTaken(t *testing.T) {
+	s := newStore(t)
+	ctx := t.Context()
+
+	if _, _, _, err := s.CreateChat(ctx, deviceChatID, "Kitchen", "Anna", 100); err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	_, _, created, err := s.CreateChat(ctx, otherDeviceChatID, "KITCHEN", "Anna", 200)
+	if !errors.Is(err, ErrNameTaken) || created {
+		t.Fatalf("err = %v created=%v, want ErrNameTaken", err, created)
+	}
+	if _, err := s.GetChat(ctx, otherDeviceChatID); !errors.Is(err, ErrChatNotFound) {
+		t.Fatalf("a refused create left a row behind: err = %v", err)
+	}
+	events, err := s.EventsSince(ctx, 0)
+	if err != nil || len(events) != 1 {
+		t.Fatalf("events = %d err=%v, want only the first chat.created", len(events), err)
+	}
+}
+
+func TestCreateChatWithoutIDMintsAServerID(t *testing.T) {
+	s := newStore(t)
+	ctx := t.Context()
+
+	chat, ev, created, err := s.CreateChat(ctx, "", "Kitchen", "Anna", 100)
+	if err != nil || !created {
+		t.Fatalf("CreateChat: created=%v err=%v", created, err)
+	}
+	if !regexp.MustCompile(`^c_[0-9a-f]{16}$`).MatchString(chat.ChatID) {
+		t.Fatalf("chat_id = %q, want the server's c_<16 hex>", chat.ChatID)
+	}
+	var payload protocol.Chat
+	if err := json.Unmarshal(ev.Payload, &payload); err != nil || payload.ChatID != chat.ChatID {
+		t.Fatalf("event chat_id = %q err=%v, want %q", payload.ChatID, err, chat.ChatID)
+	}
+}
+
+// Two repeats racing each other - the reply was lost twice, or two passes of
+// the device's queue overlapped - must still make one chat. The id lookup runs
+// inside the write transaction, so the second waits for the first and finds
+// its row; a lookup outside it would see "absent" twice and answer the loser
+// with name_taken.
+func TestCreateChatConcurrentRepeatsCreateOneChat(t *testing.T) {
+	s := newStore(t)
+	ctx := t.Context()
+
+	const attempts = 8
+	type outcome struct {
+		chat    protocol.Chat
+		created bool
+		err     error
+	}
+	results := make([]outcome, attempts)
+	var wg sync.WaitGroup
+	for i := range attempts {
+		wg.Go(func() {
+			chat, _, created, err := s.CreateChat(ctx, deviceChatID, "Kitchen", "Anna", 100)
+			results[i] = outcome{chat: chat, created: created, err: err}
+		})
+	}
+	wg.Wait()
+
+	creators := 0
+	for i, r := range results {
+		if r.err != nil {
+			t.Fatalf("attempt %d: %v", i, r.err)
+		}
+		if r.chat.ChatID != deviceChatID {
+			t.Fatalf("attempt %d chat_id = %q, want %q", i, r.chat.ChatID, deviceChatID)
+		}
+		if r.created {
+			creators++
+		}
+	}
+	if creators != 1 {
+		t.Fatalf("attempts that created = %d, want exactly 1", creators)
+	}
+	events, err := s.EventsSince(ctx, 0)
+	if err != nil || len(events) != 1 {
+		t.Fatalf("events = %d err=%v, want exactly 1", len(events), err)
+	}
+}
+
 func TestSendMessageSeqAndIdempotency(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 
-	chat, _, err := s.CreateChat(ctx, "smoke", "Anna", 100)
+	chat, _, _, err := s.CreateChat(ctx, "", "smoke", "Anna", 100)
 	if err != nil {
 		t.Fatalf("CreateChat: %v", err)
 	}
@@ -151,7 +366,7 @@ func TestEventsSinceOrderingAndRepeatability(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 
-	chat, _, err := s.CreateChat(ctx, "smoke", "Anna", 100)
+	chat, _, _, err := s.CreateChat(ctx, "", "smoke", "Anna", 100)
 	if err != nil {
 		t.Fatalf("CreateChat: %v", err)
 	}
@@ -227,7 +442,7 @@ func TestGetChatMatchesCreatedCardFieldForField(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 
-	created, _, err := s.CreateChat(ctx, "Field parity", "Anna", 100)
+	created, _, _, err := s.CreateChat(ctx, "", "Field parity", "Anna", 100)
 	if err != nil {
 		t.Fatalf("CreateChat: %v", err)
 	}
@@ -250,7 +465,7 @@ func TestListChatsOrderQueryAndPaging(t *testing.T) {
 
 	// Different activity times; two chats share one (tiebreaker case).
 	mk := func(name string, at int64) protocol.Chat {
-		chat, _, err := s.CreateChat(ctx, name, "Anna", at)
+		chat, _, _, err := s.CreateChat(ctx, "", name, "Anna", at)
 		if err != nil {
 			t.Fatalf("CreateChat %s: %v", name, err)
 		}
@@ -302,7 +517,7 @@ func TestListMessagesBackwardPaging(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 
-	chat, _, err := s.CreateChat(ctx, "history", "Anna", 100)
+	chat, _, _, err := s.CreateChat(ctx, "", "history", "Anna", 100)
 	if err != nil {
 		t.Fatalf("CreateChat: %v", err)
 	}
@@ -337,7 +552,7 @@ func TestListMessagesBackwardPaging(t *testing.T) {
 	}
 
 	// Empty chat: empty page, hasMore false.
-	empty, _, err := s.CreateChat(ctx, "empty", "Anna", 200)
+	empty, _, _, err := s.CreateChat(ctx, "", "empty", "Anna", 200)
 	if err != nil {
 		t.Fatalf("CreateChat empty: %v", err)
 	}
@@ -351,11 +566,11 @@ func TestRenameChatEventNoOpAndUniqueness(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 
-	chat, _, err := s.CreateChat(ctx, "Old name", "Anna", 100)
+	chat, _, _, err := s.CreateChat(ctx, "", "Old name", "Anna", 100)
 	if err != nil {
 		t.Fatalf("CreateChat: %v", err)
 	}
-	if _, _, err := s.CreateChat(ctx, "Занято", "Bob", 100); err != nil {
+	if _, _, _, err := s.CreateChat(ctx, "", "Занято", "Bob", 100); err != nil {
 		t.Fatalf("CreateChat second: %v", err)
 	}
 	if _, _, _, err := s.SendMessage(ctx, chat.ChatID, "r1", person(t, s, "Anna"), textBody("hi"), "", 150); err != nil {
@@ -416,7 +631,7 @@ func TestNameAvailable(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 
-	chat, _, err := s.CreateChat(ctx, "Моё имя", "Anna", 100)
+	chat, _, _, err := s.CreateChat(ctx, "", "Моё имя", "Anna", 100)
 	if err != nil {
 		t.Fatalf("CreateChat: %v", err)
 	}
@@ -447,7 +662,7 @@ func TestListChatsHugePageDoesNotPanic(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 
-	if _, _, err := s.CreateChat(ctx, "victim", "Anna", 100); err != nil {
+	if _, _, _, err := s.CreateChat(ctx, "", "victim", "Anna", 100); err != nil {
 		t.Fatalf("CreateChat: %v", err)
 	}
 	// (page-1)*pageSize wraps negative without the guard; the slice
@@ -464,10 +679,10 @@ func TestNameUniquenessUsesCaseFoldingNotLowercase(t *testing.T) {
 
 	// Greek final sigma: ToLower keeps sigma and final sigma distinct, so a
 	// lowercase-based check would admit this duplicate.
-	if _, _, err := s.CreateChat(ctx, "ΒΌΛΟΣ", "Anna", 100); err != nil {
+	if _, _, _, err := s.CreateChat(ctx, "", "ΒΌΛΟΣ", "Anna", 100); err != nil {
 		t.Fatalf("CreateChat: %v", err)
 	}
-	if _, _, err := s.CreateChat(ctx, "βόλος", "Bob", 101); !errors.Is(err, ErrNameTaken) {
+	if _, _, _, err := s.CreateChat(ctx, "", "βόλος", "Bob", 101); !errors.Is(err, ErrNameTaken) {
 		t.Fatalf("final-sigma duplicate err = %v, want ErrNameTaken", err)
 	}
 	if free, err := s.NameAvailable(ctx, "βόλος", ""); err != nil || free {
@@ -484,10 +699,10 @@ func TestListChatsQueryOfSpacesMeansNoFilter(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 
-	if _, _, err := s.CreateChat(ctx, "one", "Anna", 100); err != nil {
+	if _, _, _, err := s.CreateChat(ctx, "", "one", "Anna", 100); err != nil {
 		t.Fatalf("CreateChat: %v", err)
 	}
-	if _, _, err := s.CreateChat(ctx, "two", "Anna", 200); err != nil {
+	if _, _, _, err := s.CreateChat(ctx, "", "two", "Anna", 200); err != nil {
 		t.Fatalf("CreateChat: %v", err)
 	}
 	page, _, err := s.ListChats(ctx, 1, 10, "   ")
@@ -500,7 +715,7 @@ func TestFileLifecycleAndAttachmentBinding(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 
-	chat, _, err := s.CreateChat(ctx, "files", "Anna", 100)
+	chat, _, _, err := s.CreateChat(ctx, "", "files", "Anna", 100)
 	if err != nil {
 		t.Fatalf("CreateChat: %v", err)
 	}
@@ -585,7 +800,7 @@ func TestListChatFilesProjection(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 
-	chat, _, err := s.CreateChat(ctx, "panel", "Anna", 100)
+	chat, _, _, err := s.CreateChat(ctx, "", "panel", "Anna", 100)
 	if err != nil {
 		t.Fatalf("CreateChat: %v", err)
 	}
@@ -622,7 +837,7 @@ func TestListChatFilesProjection(t *testing.T) {
 		t.Fatalf("rest = %+v hasMore=%v err=%v", rest, hasMore, err)
 	}
 	// Empty chat.
-	other, _, err := s.CreateChat(ctx, "nofiles", "Anna", 900)
+	other, _, _, err := s.CreateChat(ctx, "", "nofiles", "Anna", 900)
 	if err != nil {
 		t.Fatalf("CreateChat: %v", err)
 	}
@@ -636,7 +851,7 @@ func TestOrphanSweepQueries(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 
-	chat, _, err := s.CreateChat(ctx, "sweep", "Anna", 100)
+	chat, _, _, err := s.CreateChat(ctx, "", "sweep", "Anna", 100)
 	if err != nil {
 		t.Fatalf("CreateChat: %v", err)
 	}

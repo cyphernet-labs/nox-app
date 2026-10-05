@@ -24,6 +24,7 @@ App bar (wordmark + trailing account avatar) + persistent SearchBar + scrollable
 ## Behavior
 - Rows: avatar (with ring) + name + last-message preview + relative time + unread badge.
 - Unread emphasis: name w600, preview onSurface, time primary, badge shown (caps 99+, hidden at 0).
+- A chat made on this device that the server does not have yet (phase 041) sits in the list at once, ordered like any other by last activity, and says where it stands with the glyphs a message uses for the same thing. Waiting to be created: a clock (`schedule`, onSurfaceVariant, 16) in place of the time, screen-reader name “Waiting to be created”, preview kept. Refused by the server: the error glyph (`error` colour) in place of the time and the reason in place of the preview, in the error colour — “Name already taken” or “Couldn't create”. The row is one node for the screen reader and reads a refusal once, from its words; the glyph beside them is left out. Locked by the goldens `app_chat_item_widget_creation` and `chats_list_page_creation` (no live-design chip yet).
 - Loading: the chats already on the device show at once, whatever the connection is doing; the server's page arrives in the background. A centered spinner only when the device holds no chats and the server is being asked — with no connection the empty state shows at once, and the list asks the server again when the connection returns. Empty: forum empty-state.
 - Connection corner (phase 040): only deviations show, right of the app bar before the account avatar. Through Tor — a `Tor` badge (`secondaryContainer` / `onSecondaryContainer`). While a path comes up or catches up — “Connecting…” (`onSurfaceVariant`), with the `Tor` badge when that path is Tor. Direct and current — nothing. No percentages or bars: a Tor bring-up can be long and the local chats stay usable meanwhile. Tapping it opens a bottom sheet explaining the path (on iOS also where to allow Local Network access). Screen-reader name: “Connected through Tor” / “Connecting to your server” / “Connecting to your server through Tor”; tap target ≥ 48×48.
 - Offline: persistent “No connection” MaterialBanner at top, once a whole round of path finding — direct and Tor — found nothing; the corner is empty then. Load error: banner “Could not load chats. Pull to refresh.”
@@ -45,6 +46,8 @@ App bar (wordmark + trailing account avatar) + persistent SearchBar + scrollable
 - Search empty: No chats found
 - Corner: Connecting… · Tor
 - Update strip: Update NOX to connect away from home
+- Waiting chat, clock (screen-reader name): Waiting to be created
+- Refused chat, status line: Name already taken · Couldn't create
 
 ## Design-system components
 - AppBar (wordmark + account Avatar with ring)

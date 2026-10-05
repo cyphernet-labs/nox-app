@@ -397,6 +397,7 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
             preview: chat.lastMessagePreview,
             time: DateFormatter.relative(chat.lastMessageAt, l10n: context.l10n),
             unread: chat.unreadCount,
+            creation: chat.creation,
             onTap: () => _onTapChat(chat, wide: wide),
           );
           if (wide) {

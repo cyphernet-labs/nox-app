@@ -127,7 +127,7 @@ func TestStoryTwoHistoryEdges(t *testing.T) {
 func TestStoryTwoTailLatencyOverLargeHistory(t *testing.T) {
 	ts, srv := newTestServer(t)
 
-	chat, _, err := srv.store.CreateChat(t.Context(), "big", "Seeder", 100)
+	chat, _, _, err := srv.store.CreateChat(t.Context(), "", "big", "Seeder", 100)
 	if err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}

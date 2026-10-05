@@ -120,4 +120,42 @@ void main() {
       expect((await dao.getById('a'))!.lastOpenedSeq, 8);
     });
   });
+
+  group('chats waiting for the server (phase 041)', () {
+    test('pendingCreations lists only the chats waiting to be created, the oldest first', () async {
+      await dao.upsert(chat('c_new', 'New', '2026-01-03T00:00:00.000Z').copyWith(creation: 'pending', createdAt: 300));
+      await dao.upsert(chat('c_old', 'Old', '2026-01-01T00:00:00.000Z').copyWith(creation: 'pending', createdAt: 100));
+      await dao.upsert(chat('c_taken', 'Taken', '2026-01-02T00:00:00.000Z').copyWith(creation: 'name_taken', createdAt: 200));
+      await dao.upsert(chat('c_server', 'Server', '2026-01-04T00:00:00.000Z'));
+
+      expect((await dao.pendingCreations()).map((c) => c.id), ['c_old', 'c_new']);
+    });
+
+    test('update changes one chat and keeps the rest of it', () async {
+      await dao.upsert(chat('c1', 'Kitchen', '2026-01-01T00:00:00.000Z').copyWith(creation: 'pending'));
+      await dao.advanceReadMark(chatId: 'c1', seq: 4, ceiling: 4);
+
+      final written = await dao.update('c1', (c) => c.copyWith(creation: 'name_taken', creationAttempts: 2));
+
+      expect(written?.creation, 'name_taken');
+      final stored = (await dao.getById('c1'))!;
+      expect(stored.creationAttempts, 2);
+      expect(stored.lastOpenedSeq, 4, reason: 'the read mark is not the update\'s to touch');
+      expect(stored.name, 'Kitchen');
+    });
+
+    test('update of a chat that is not there writes nothing', () async {
+      expect(await dao.update('nobody', (c) => c.copyWith(name: 'x')), isNull);
+      expect(await dao.count(), 0);
+    });
+
+    test('delete removes one chat', () async {
+      await dao.upsert(chat('a', 'A', '2026-01-01T00:00:00.000Z'));
+      await dao.upsert(chat('b', 'B', '2026-01-02T00:00:00.000Z'));
+
+      await dao.delete('a');
+
+      expect((await dao.getAllSorted()).map((c) => c.id), ['b']);
+    });
+  });
 }

@@ -2,6 +2,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
+import 'package:nox_app/data/local/app_database.dart';
+import 'package:nox_app/data/local/chat/chat_dao.dart';
 import 'package:nox_app/data/repository/app/auth_repository_impl.dart';
 import 'package:nox_app/data/sync/live_identity_handshake.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
@@ -160,6 +162,24 @@ void main() {
     // crash later in the wipe would leave them for the next identity to send
     // under their own name.
     verifyInOrder([session.clear(), outbox.clean(), files.clean(), sync.clear(), chats.clean(), messages.clean()]);
+  });
+
+  test('logout takes the chats still waiting to be created with it, and their messages (phase 041, FR-021)', () async {
+    // The real stores this time: what matters is that nothing is LEFT to create
+    // - a chat that outlived the logout would be created on the next person's
+    // server under their name, with the previous person's words in it.
+    await getIt<AppDatabase>().clearEntireDatabase();
+    final realChats = getIt<ChatRepository>();
+    final realOutbox = getIt<OutboxRepository>();
+    final chat = (await realChats.createChat(name: 'Kitchen')).data!;
+    await realOutbox.enqueue(chatId: chat.id, text: 'Buy milk');
+    final wiping = AuthRepositoryImpl(session, appState, realChats, getIt<MessageRepository>(), sync, realOutbox, files);
+
+    await wiping.logout();
+
+    expect(await realChats.pendingCreations(), isEmpty);
+    expect(await getIt<ChatDao>().getById(chat.id), isNull);
+    expect(await realOutbox.pending(), isEmpty);
   });
 
   test('logout stops the Tor client and deletes what it learned (FR-018, SC-007)', () async {

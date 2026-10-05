@@ -56,6 +56,43 @@ class ChatDao {
     return _store.count(db);
   }
 
+  /// Chats waiting to be created on the server (phase 041), the oldest first,
+  /// so they reach it in the order they were made. Filtered in Dart over the
+  /// decoded rows: a Finder on a camelCase key would match nothing under the
+  /// global `field_rename: snake`.
+  Future<List<ChatEntity>> pendingCreations() async {
+    final db = await _appDatabase.db;
+    final pending = _decode(await _store.query().getSnapshots(db)).where((c) => c.creation == 'pending').toList()
+      ..sort((a, b) {
+        final byTime = (a.createdAt ?? 0).compareTo(b.createdAt ?? 0);
+        return byTime != 0 ? byTime : a.id.compareTo(b.id);
+      });
+    return pending;
+  }
+
+  /// Changes one chat inside a transaction and returns what was written, or
+  /// null when there is no such chat. Read-modify-write in ONE transaction:
+  /// the creation state and the name are changed while the list, the sync and
+  /// the read mark write the same row.
+  Future<ChatEntity?> update(String id, ChatEntity Function(ChatEntity current) change) async {
+    final db = await _appDatabase.db;
+    return db.transaction((txn) async {
+      final stored = await _store.record(id).get(txn);
+      final current = stored == null ? null : _tryDecode(stored);
+      if (current == null) return null;
+      final next = change(current);
+      await _store.record(id).put(txn, next.toJson());
+      return next;
+    });
+  }
+
+  /// Removes one chat. Only for a local copy the server replaced with its own
+  /// id (phase 041); chats are never deleted otherwise.
+  Future<void> delete(String id) async {
+    final db = await _appDatabase.db;
+    await _store.record(id).delete(db);
+  }
+
   /// Atomically write/replace a batch (used for the one-time seed).
   Future<void> saveData(List<ChatEntity> chats) async {
     final db = await _appDatabase.db;

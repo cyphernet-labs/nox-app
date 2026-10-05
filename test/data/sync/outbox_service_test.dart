@@ -5,11 +5,21 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
+import 'package:nox_app/data/entity/base/error_wire_entity.dart';
+import 'package:nox_app/data/entity/base/response_entity.dart';
+import 'package:nox_app/data/entity/chat/wire/chat_wire_entity.dart';
 import 'package:nox_app/data/local/app_database.dart';
+import 'package:nox_app/data/local/chat/chat_dao.dart';
+import 'package:nox_app/data/local/chat/message_dao.dart';
+import 'package:nox_app/data/mapper/chat/chat_mapper.dart';
+import 'package:nox_app/data/mapper/chat/chat_wire_mapper.dart';
+import 'package:nox_app/data/remote/datasource/chat_remote_data_source.dart';
+import 'package:nox_app/data/repository/chat/chat_repository_impl.dart';
 import 'package:nox_app/data/service/attachment_transfer_service_impl.dart';
 import 'package:nox_app/data/sync/outbox_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
+import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
 import 'package:nox_app/domain/model/file/attachment_transfer.dart';
@@ -17,7 +27,9 @@ import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/domain/model/chat/message_status.dart';
 import 'package:nox_app/domain/model/chat/outbox_status.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
+import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
+import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
@@ -83,6 +95,63 @@ class _FakeFiles implements FileRepository {
   Future<void> clean() async {}
 }
 
+/// A chat source the test scripts, standing in for the server's side of
+/// `chat.create` (phase 041). Each create takes the next of [answers]: `ok`, a
+/// wire code (`name_taken`, `internal`, ...), `connection` (the channel died
+/// before the server saw it) or `lost` (the server made the chat and the
+/// answer never came back). With no answers left it is `ok`. Like the server
+/// it is idempotent on the id: a repeat gets the chat as the server holds it.
+class _ScriptedChats implements ChatRemoteDataSource {
+  final List<String> answers = <String>[];
+
+  /// The `chat_id` of every create, in order.
+  final List<String?> sentIds = <String?>[];
+
+  /// What the SERVER holds: id -> name.
+  final Map<String, String> made = <String, String>{};
+
+  /// Set to answer like a server older than phase 041, which skips the id it
+  /// does not know and makes one of its own.
+  String? answerWithId;
+
+  void Function()? onCreate;
+
+  @override
+  Future<ResponseEntity<ChatWireEntity>> createChat({required String name, String? chatId}) async {
+    sentIds.add(chatId);
+    onCreate?.call();
+    final answer = answers.isEmpty ? 'ok' : answers.removeAt(0);
+    final id = answerWithId ?? chatId!;
+    switch (answer) {
+      case 'ok':
+        final stored = made.putIfAbsent(id, () => name);
+        return ResponseEntity<ChatWireEntity>(
+          success: true,
+          data: ChatWireEntity(
+            chatId: id,
+            name: stored,
+            createdAt: 1759600000,
+            createdByLabel: 'Anna',
+            lastMessagePreview: '',
+            lastActivityAt: 1759600000,
+          ),
+        );
+      case 'connection':
+        throw RepositoryException.connection;
+      case 'lost':
+        made.putIfAbsent(id, () => name);
+        throw RepositoryException.connection;
+      default:
+        return ResponseEntity<ChatWireEntity>(
+          error: ErrorWireEntity(code: answer, message: answer),
+        );
+    }
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 /// The drain is the only sender in the app, so the properties asserted here —
 /// strict order, one pass at a time, remove-after-persist, and a classification
 /// that does not retry the unretryable — are the ones a duplicate or a lost
@@ -96,6 +165,7 @@ void main() {
   late _FakeFiles files;
   late AttachmentTransferServiceImpl transfers;
   late List<String> sentKeys;
+  late List<String> sentChatIds;
   late List<String> sentAttachmentIds;
 
   /// Fails the SEND without touching the upload — the two are separate steps
@@ -122,6 +192,7 @@ void main() {
     provideDummy<RepositoryResult<MessageModel>>(RepositoryResult.error(exception: RepositoryException.unknown));
 
     sentKeys = <String>[];
+    sentChatIds = <String>[];
     sentAttachmentIds = <String>[];
     failures = <String, RepositoryException>{};
     sendFailure = null;
@@ -138,6 +209,7 @@ void main() {
       final text = invocation.namedArguments[#text] as String?;
       final attached = invocation.namedArguments[#attachment] as MessageAttachment?;
       sentKeys.add(key);
+      sentChatIds.add(invocation.namedArguments[#chatId] as String);
       if (attached != null) sentAttachmentIds.add(attached.id);
       final failure = failures[text] ?? sendFailure;
       if (failure != null) return RepositoryResult<MessageModel>.error(exception: failure);
@@ -147,7 +219,7 @@ void main() {
     files = _FakeFiles();
     transfers = AttachmentTransferServiceImpl();
     phase = _FakePhase(SessionPhase.live);
-    service = OutboxService(outbox, messages, phase, files, transfers);
+    service = OutboxService(outbox, messages, phase, files, transfers, getIt<ChatRepository>());
   });
 
   tearDown(() async {
@@ -227,7 +299,7 @@ void main() {
 
   test('nothing is sent while the channel is down, and the attempt is not burned', () async {
     phase = _FakePhase(SessionPhase.disconnected);
-    service = OutboxService(outbox, messages, phase, files, transfers);
+    service = OutboxService(outbox, messages, phase, files, transfers, getIt<ChatRepository>());
     await enqueue(['a']);
 
     await service.flush();
@@ -240,7 +312,7 @@ void main() {
 
   test('catching up is not live: the drain waits for the replay to finish', () async {
     phase = _FakePhase(SessionPhase.catchingUp);
-    service = OutboxService(outbox, messages, phase, files, transfers);
+    service = OutboxService(outbox, messages, phase, files, transfers, getIt<ChatRepository>());
     await enqueue(['a']);
 
     await service.flush();
@@ -258,7 +330,7 @@ void main() {
     // would be a message the person is told failed, over a server that never
     // saw it. Their text waits; it is not lost and it is not blamed on them.
     phase = _FakePhase(SessionPhase.serverMismatch);
-    service = OutboxService(outbox, messages, phase, files, transfers);
+    service = OutboxService(outbox, messages, phase, files, transfers, getIt<ChatRepository>());
     await enqueue(['a', 'b']);
 
     await service.flush();
@@ -277,7 +349,7 @@ void main() {
     // arrives. A pass triggered by that transition would send into the very
     // machine the refusal is about.
     phase = _FakePhase(SessionPhase.disconnected);
-    service = OutboxService(outbox, messages, phase, files, transfers);
+    service = OutboxService(outbox, messages, phase, files, transfers, getIt<ChatRepository>());
     service.start();
     await enqueue(['a']);
 
@@ -292,7 +364,7 @@ void main() {
 
   test('the channel going live drains the queue with no one asking', () async {
     phase = _FakePhase(SessionPhase.disconnected);
-    service = OutboxService(outbox, messages, phase, files, transfers);
+    service = OutboxService(outbox, messages, phase, files, transfers, getIt<ChatRepository>());
     service.start();
     await enqueue(['written while offline']);
 
@@ -310,7 +382,7 @@ void main() {
     // The queue neither tries early - which would only grow the backoff - nor
     // counts the wait against the message; it goes out on the live edge, once.
     phase = _FakePhase(SessionPhase.disconnected);
-    service = OutboxService(outbox, messages, phase, files, transfers);
+    service = OutboxService(outbox, messages, phase, files, transfers, getIt<ChatRepository>());
     service.start();
     await enqueue(['written during the bring-up']);
 
@@ -332,7 +404,7 @@ void main() {
 
   test('start() twice does not open a second subscription (one live edge, one drain)', () async {
     phase = _FakePhase(SessionPhase.disconnected);
-    service = OutboxService(outbox, messages, phase, files, transfers);
+    service = OutboxService(outbox, messages, phase, files, transfers, getIt<ChatRepository>());
     service.start();
     service.start();
     await enqueue(['once']);
@@ -591,7 +663,7 @@ void main() {
     files = _FakeFiles();
     transfers = AttachmentTransferServiceImpl();
     phase = _FakePhase(SessionPhase.live);
-    service = OutboxService(outbox, messages, phase, files, transfers);
+    service = OutboxService(outbox, messages, phase, files, transfers, getIt<ChatRepository>());
     service.start();
     await enqueue(['a']);
 
@@ -720,5 +792,260 @@ void main() {
 
     expect(sentKeys, [keys[0]]);
     expect(await outbox.pending(), isEmpty);
+  });
+
+  group('a chat created on this device (phase 041)', () {
+    late _ScriptedChats server;
+    late ChatRepository chats;
+
+    setUp(() {
+      server = _ScriptedChats();
+      chats = ChatRepositoryImpl(
+        getIt<ChatDao>(),
+        server,
+        getIt<ChatMapper>(),
+        getIt<ChatWireMapper>(),
+        getIt<MessageRepository>(),
+        getIt<MessageDao>(),
+        getIt<SessionRepository>(),
+      );
+      service = OutboxService(outbox, messages, phase, files, transfers, chats);
+    });
+
+    Future<ChatModel> createHere(String name) async => (await chats.createChat(name: name)).data!;
+
+    Future<String> write(String chatId, String text) async => (await outbox.enqueue(chatId: chatId, text: text)).data!.clientMessageId;
+
+    /// The stored creation state: `pending`, `name_taken`, `failed`, or null
+    /// once the server has the chat.
+    Future<String?> creationOf(String chatId) async => (await getIt<ChatDao>().getById(chatId))?.creation;
+
+    Future<void> until(bool Function() done) async {
+      for (var i = 0; i < 100 && !done(); i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+    }
+
+    test('the chat reaches the server before any of its messages, which then go in order in the same pass', () async {
+      final chat = await createHere('Kitchen');
+      final keys = [await write(chat.id, 'one'), await write(chat.id, 'two')];
+      final sentBeforeCreate = <int>[];
+      server.onCreate = () => sentBeforeCreate.add(sentKeys.length);
+
+      await service.flush();
+
+      expect(server.sentIds, [chat.id], reason: 'the id the device minted, so nothing has to be renamed');
+      expect(sentBeforeCreate, [0], reason: 'no message may name a chat the server does not have');
+      expect(sentKeys, keys);
+      expect(sentChatIds.toSet(), {chat.id});
+      expect(await creationOf(chat.id), isNull);
+      expect(await outbox.pending(), isEmpty);
+    });
+
+    test('the messages of a chat still waiting are held without an attempt, and other chats go on', () async {
+      server.answers.add('internal');
+      final chat = await createHere('Kitchen');
+      final held = await write(chat.id, 'held');
+      final other = await write('c1', 'to a chat the server has');
+
+      await service.flush();
+
+      expect(sentKeys, [other], reason: 'one chat the server will not make yet must not hold every other chat');
+      final entry = (await outbox.find(clientMessageId: held))!;
+      expect(entry.status, OutboxStatus.pending, reason: 'waiting, not failed');
+      expect(entry.attempts, 0, reason: 'nobody tried to send it');
+      expect(entry.refusals, 0);
+    });
+
+    test('a retryable failure keeps the chat waiting, counts the attempt and pauses it', () async {
+      service.start();
+      server.answers.add('internal');
+      final chat = await createHere('Kitchen');
+      await write(chat.id, 'held');
+
+      await service.flush();
+      expect(await creationOf(chat.id), 'pending');
+      expect((await chats.pendingCreations()).single.attempts, 1);
+
+      await service.flush();
+      await service.flush();
+      expect(server.sentIds, hasLength(1), reason: 'the pause holds against other triggers');
+
+      phase.emit(SessionPhase.live); // a fresh channel is a new reason to try
+      await until(() => sentKeys.isNotEmpty);
+
+      expect(server.sentIds, hasLength(2));
+      expect(await creationOf(chat.id), isNull);
+      expect(sentKeys, hasLength(1));
+    });
+
+    test('the pause ends on its own, with nothing else to wake the queue', () async {
+      server.answers.add('internal');
+      final chat = await createHere('Kitchen');
+
+      await service.flush();
+      expect(server.sentIds, hasLength(1));
+
+      // The first rung of the ladder is a second, give or take a fifth.
+      for (var i = 0; i < 60 && server.sentIds.length < 2; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+
+      expect(server.sentIds, hasLength(2));
+      expect(await creationOf(chat.id), isNull);
+    });
+
+    test('a restart picks a waiting chat up and carries its attempts on', () async {
+      server.answers.add('internal');
+      final chat = await createHere('Kitchen');
+      final key = await write(chat.id, 'after the restart');
+      await service.flush();
+      expect((await chats.pendingCreations()).single.attempts, 1, reason: 'counted on the row, not in memory');
+
+      // The process restarts: the pause was in memory and is gone with it.
+      await service.stop();
+      service = OutboxService(outbox, messages, phase, files, transfers, chats);
+      await service.flush();
+
+      expect(server.sentIds, [chat.id, chat.id]);
+      expect(sentKeys, [key]);
+      expect(await creationOf(chat.id), isNull);
+    });
+
+    test('`name_taken` marks the chat and holds its messages, and nothing is tried again', () async {
+      server.answers.add('name_taken');
+      final chat = await createHere('Kitchen');
+      final key = await write(chat.id, 'held');
+
+      await service.flush();
+      await service.flush();
+
+      expect(server.sentIds, hasLength(1), reason: 'only a rename puts it back in line');
+      expect(await creationOf(chat.id), 'name_taken');
+      final entry = (await outbox.find(clientMessageId: key))!;
+      expect(entry.status, OutboxStatus.pending, reason: 'the message waits, it did not fail');
+      expect(entry.attempts, 0);
+      expect(sentKeys, isEmpty);
+    });
+
+    test('a rename after `name_taken` creates the chat under the new name, then its messages go', () async {
+      server.answers.add('name_taken');
+      final chat = await createHere('Kitchen');
+      final key = await write(chat.id, 'held');
+      await service.flush();
+
+      await chats.updateChatName(chatId: chat.id, name: 'Kitchen 2');
+      await service.flush();
+
+      expect(server.made, {chat.id: 'Kitchen 2'});
+      expect(sentKeys, [key]);
+      expect(await creationOf(chat.id), isNull);
+    });
+
+    test('a refusal no retry can change marks the chat failed, and Try again creates it', () async {
+      server.answers.add('invalid_request');
+      final chat = await createHere('Kitchen');
+      final key = await write(chat.id, 'held');
+
+      await service.flush();
+      await service.flush();
+      expect(await creationOf(chat.id), 'failed');
+      expect(server.sentIds, hasLength(1), reason: 'a refusal like this one is not retried on its own');
+      expect(sentKeys, isEmpty);
+
+      await chats.retryCreation(chatId: chat.id);
+      await service.flush();
+
+      expect(await creationOf(chat.id), isNull);
+      expect(sentKeys, [key]);
+    });
+
+    test('a server that keeps refusing sets the chat aside after the same ladder as a message', () async {
+      service.start();
+      server.answers.addAll(List<String>.filled(20, 'internal'));
+      final chat = await createHere('Kitchen');
+
+      for (var i = 0; i < 20 && (await chats.pendingCreations()).isNotEmpty; i++) {
+        phase.emit(SessionPhase.live);
+        await service.flush();
+      }
+
+      expect(await creationOf(chat.id), 'failed');
+      expect(server.sentIds, hasLength(10));
+    });
+
+    test('a flapping link never sets a chat aside - a dead channel is not a refusal', () async {
+      service.start();
+      server.answers.addAll(List<String>.filled(25, 'connection'));
+      final chat = await createHere('Kitchen');
+
+      for (var i = 0; i < 25; i++) {
+        phase.emit(SessionPhase.live);
+        await service.flush();
+      }
+
+      expect(await creationOf(chat.id), 'pending');
+      expect((await chats.pendingCreations()).single.attempts, greaterThan(10));
+    });
+
+    test('an answer lost on the way: the repeat gets the same chat, and the device ends with one', () async {
+      service.start();
+      server.answers.add('lost');
+      final chat = await createHere('Kitchen');
+      final key = await write(chat.id, 'after the loss');
+
+      await service.flush();
+      expect(server.made, {chat.id: 'Kitchen'}, reason: 'the server made it');
+      expect(await creationOf(chat.id), 'pending', reason: 'the device never heard');
+
+      phase.emit(SessionPhase.live);
+      await until(() => sentKeys.isNotEmpty);
+
+      expect(server.sentIds, [chat.id, chat.id]);
+      expect(server.made, hasLength(1));
+      final kitchens = (await getIt<ChatDao>().getAllSorted()).where((c) => c.name == 'Kitchen');
+      expect(kitchens.single.id, chat.id);
+      expect(sentKeys, [key]);
+    });
+
+    test('the server\'s own event arriving before the repeat settles the chat, and it is not created again', () async {
+      server.answers.add('lost');
+      final chat = await createHere('Kitchen');
+      final key = await write(chat.id, 'held');
+      await service.flush();
+
+      // `chat.created` reaches the device first - written as SyncService
+      // writes a chat from the wire, which knows nothing of a creation state.
+      await getIt<ChatDao>().upsert(getIt<ChatMapper>().toEntity(model: chat.copyWith(creation: null), lastOpenedSeq: null));
+      await service.flush();
+
+      expect(server.sentIds, hasLength(1), reason: 'the server already said it has the chat');
+      expect(sentKeys, [key]);
+    });
+
+    test('a server older than phase 041 answers with its own id: one chat under it, the messages moved there', () async {
+      server.answerWithId = 'c_0123456789abcdef';
+      final chat = await createHere('Kitchen');
+      final keys = [await write(chat.id, 'one'), await write(chat.id, 'two')];
+
+      await service.flush();
+
+      expect(sentKeys, keys);
+      expect(sentChatIds, ['c_0123456789abcdef', 'c_0123456789abcdef']);
+      expect(await getIt<ChatDao>().getById(chat.id), isNull, reason: 'the local copy is gone');
+      expect(await getIt<MessageDao>().getById('${chat.id}_sys'), isNull, reason: 'and its "Chat created by" line with it');
+      expect(await creationOf('c_0123456789abcdef'), isNull);
+      expect((await getIt<ChatDao>().getAllSorted()).where((c) => c.name == 'Kitchen'), hasLength(1));
+    });
+
+    test('a stopped queue creates nothing', () async {
+      final chat = await createHere('Kitchen');
+
+      await service.stop();
+      await service.flush();
+
+      expect(server.sentIds, isEmpty);
+      expect(await creationOf(chat.id), 'pending', reason: 'still waiting for whoever starts the queue next');
+    });
   });
 }

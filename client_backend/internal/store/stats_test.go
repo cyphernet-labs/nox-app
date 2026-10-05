@@ -36,7 +36,7 @@ func TestCountsFollowWhatTheStoreHolds(t *testing.T) {
 		t.Fatalf("Pair: %v", err)
 	}
 	// One chat, four messages.
-	chat, _, err := s.CreateChat(ctx, "Kitchen", owner.Label, 500)
+	chat, _, _, err := s.CreateChat(ctx, "", "Kitchen", owner.Label, 500)
 	if err != nil {
 		t.Fatalf("CreateChat: %v", err)
 	}
