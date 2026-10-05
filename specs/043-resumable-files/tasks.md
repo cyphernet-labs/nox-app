@@ -26,7 +26,7 @@ description: "Задачи фичи 043 — файлы с докачкой в о
 
 ## Phase 1: Setup
 
-- [ ] T001 Внести дельту §7 в `docs/client-backend/protocol/contract-draft.md` по `contracts/wire-files.md` (Принцип VII, FR-015):
+- [X] T001 Внести дельту §7 в `docs/client-backend/protocol/contract-draft.md` по `contracts/wire-files.md` (Принцип VII, FR-015):
   - таблица REST в §1 — `PUT` несёт остаток от `received`, `GET` — с `Range`/`If-Range`;
   - §7 — запрос `{name, size, mime, file_id?}` и ответ с `received` (наличие поля — признак поддержки); отказы продолжения `not_found`, `invalid_request`, `internal`; `PUT` с остатком и кодами `204`/`404`/`408`/`409`/`413`/`400`; пустой `PUT` завершает; правило докачки `GET` (`Range` + `If-Range` с `Last-Modified`, `206`/`200`/`416`); время — только застой 60 с; незаконченное хранится по правилу суток;
   - дополнение к §9 п. 6 о ручке продолжения в записи очереди.
