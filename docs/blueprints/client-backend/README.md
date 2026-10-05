@@ -78,7 +78,8 @@ g, ctx := errgroup.WithContext(ctx)
 ```
 
 - REST: `mux.HandleFunc("GET /health", …)`, `PUT /files/{token}`; middleware — `func(http.Handler) http.Handler`.
-- Загрузка: `http.MaxBytesReader` лимитом из контракта. Скачивание: `http.ServeContent` — Range и условные заголовки обрабатывает сам.
+- Загрузка: `http.MaxBytesReader` лимитом — остатком файла от смещения, под которое выдан токен. Пришедшее дописывается в `<id>.part` и сохраняется при любом обрыве; надёжную длину части пакет `blob` пишет в `<id>.synced` — после `fsync` и каждые 4 MiB. Продолжение — `file.uploadBegin` с `file_id`, ответ несёт `received`. Скачивание: `http.ServeContent` — `Range`, `If-Range` и условные заголовки обрабатывает сам.
+- Предела времени на передачу нет: срок чтения (`PUT`) и записи (`GET`) продлевается перед каждым чтением и записью, и передачу обрывает только застой — 60 с без байта. Через Tor 100 MiB идут десятки минут, и предел на всю передачу обрывал бы именно путь вне дома. Пишет в часть один запрос: новый прерывает прежний (`internal/server/writers.go`).
 - Логи: `slog` + `JSONHandler`, request-middleware с методом/путём/статусом/длительностью.
 - Сборка: `CGO_ENABLED=0 go build -trimpath -ldflags="-s -X main.version=$(git describe)"` (`-s` теперь подразумевает `-w`).
 
