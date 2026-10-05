@@ -337,11 +337,11 @@ description: "Задачи фичи 043 — файлы с докачкой в о
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
-- [ ] T049 [P] Экран 5.3:
+- [X] T049 [P] Экран 5.3:
   - `docs/design/spec/screens/file-view.md`: таблица состояний — Loading переживает обрывы и продолжает сама; Inline-error со `Try again` — только когда автоматика исчерпана; скачивание идёт после закрытия; строка в таблицу решений;
   - `docs/design/system/nox-mobile-screens/screens/5-3-file.md` и `docs/design/system/nox-desktop-screens/screens/08-file.md` — то же поведением;
   - записи 5.3 и File view в `docs/design/system/nox-mobile-screens/specs.js` и `docs/design/system/nox-desktop-screens/specs.js` — так же.
-- [ ] T050 [P] Блюпринты:
+- [X] T050 [P] Блюпринты:
   - `docs/blueprints/mobile/16-file-upload.md` — §0, §1, §3, §5 и чеклист §9: продолжение, `received`, остаток в `PUT`, коды, докачка, пределы застоя, сервис скачивания;
   - `docs/blueprints/mobile/14-networking-and-auth.md` — REST с продолжением в обе стороны, только застой, обрыв передач при смене пути;
   - `docs/blueprints/mobile/04-data-layer.md` — §6а: ручка незаконченной загрузки; `data/sync`: `retry_ladder.dart`, `attachment_download_service_impl.dart`;
@@ -350,11 +350,11 @@ description: "Задачи фичи 043 — файлы с докачкой в о
   - долгая передача — срок на каждом чтении и записи (застой), не абсолютный;
   - продолжаемый `PUT` дописывает от смещения, привязанного к токену, с точками сохранения.
 - [X] T052 [P] `client_backend/CLAUDE.md`: инвариант 7 называет реестр писателей загрузки; `<id>.synced` — в описании хранения байтов; метаданные файлов по-прежнему без событий.
-- [ ] T053 [P] `docs/client-backend/roadmap-tor.md` — этап 3 → `043` и статус. Корневой `CLAUDE.md`:
+- [X] T053 [P] `docs/client-backend/roadmap-tor.md` — этап 3 → `043` и статус. Корневой `CLAUDE.md`:
   - пункт «File chain (028)» дополнить продолжением 043;
   - история фич — строка 043;
   - открытая граница из research §12.
-- [ ] T054 Гейты: `make gate`, `make golden-verify`, `(cd client_backend && gofmt -l . && go vet ./... && go test -race ./...)`; счётчики тестов и снимков в `CLAUDE.md`.
+- [X] T054 Гейты: `make gate`, `make golden-verify`, `(cd client_backend && gofmt -l . && go vet ./... && go test -race ./...)`; счётчики тестов и снимков в `CLAUDE.md`.
 - [ ] T055 Проверки на стенде по `quickstart.md` (сценарии 1–11 и старый сервер) — владелец.
 
 ---

@@ -35,6 +35,7 @@ class FetchedBytes {
   final int total;          // the file's full size, from Content-Range or Content-Length
   final String? validator;  // Last-Modified
   final Stream<List<int>> bytes;
+  final void Function() abandon;    // let the bytes go unread (a file of another size) and hand the transfer back
 }
 ```
 

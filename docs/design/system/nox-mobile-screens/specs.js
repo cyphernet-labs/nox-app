@@ -422,7 +422,8 @@ window.NOX_SPECS = [
     "behavior": [
       "No content preview — a large file-type glyph stands in (brand-tinted by type).",
       "Downloading: a determinate LinearProgress under the app bar (primary on surfaceVariant track) + “Downloading… N%”.",
-      "Loaded: shows the file size."
+      "Loaded: shows the file size.",
+      "A broken link is not an error (phase 043): the bar stands still and the download goes on by itself from the byte it reached - and on after the screen is closed; reopened, it shows the same download where it stands. The error with Try again appears only once the server has refused again and again, and Try again goes on from the bytes already on the device."
     ],
     "navigation": [
       "Back → previous (thread 5.2 or chat card 5.4).",
