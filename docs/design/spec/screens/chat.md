@@ -43,7 +43,7 @@ Material Scaffold с `resizeToAvoidBottomInset: true`; адаптируется 
 2. **Имя занято** — `Another chat already has this name. Rename this one to finish creating it.` + `Rename`. Действие открывает обычный диалог переименования; переименование делается на устройстве, без сервера, возвращает чат в «ждёт создания», и создание уходит само.
 3. **Не создан** — `This chat couldn't be created on your server.` + `Try again`. Действие возвращает чат в «ждёт создания» и просит очередь пройти.
 4. **Ждёт создания** — `This chat isn't on your server yet. It will be once NOX connects.` — **только пока канал не текущий**. С текущим каналом создание идёт прямо сейчас, и плашка лишь мелькнула бы. Без связи она стоит **вместо** `No connection`: говорит больше.
-5. **Нет связи** — `No connection`.
+5. **Нет связи** — `No connection` с действием `Try again`; без действия — для сервера, который не поддерживает эту сборку (фаза 042).
 
 Плашка читает состояние чата живьём (`WatchChat`): как только сервер принял чат, она уходит, а сообщения по очереди получают галочку.
 
@@ -94,7 +94,7 @@ Material Scaffold с `resizeToAvoidBottomInset: true`; адаптируется 
 | Send-error | Не удалось отправить. Статус `error` на сообщении; тап → retry. |
 | Connecting | Путь до сервера ищется или поднимается: в углу AppBar (перед действием приглашения) `Connecting…`, через Tor — с бейджем `Tor` ([overview / Состояние связи](../overview.md#состояние-связи-в-углу-экрана)). Баннера нет; отправленное ждёт подъёма пути в `pending`. |
 | Через Tor | Связь есть, путь — Tor: в углу бейдж `Tor`. |
-| Offline | Целый раунд поиска пути не дал ничего — постоянный `MaterialBanner` `No connection` сверху (см. [overview.md / Offline](../overview.md#offline--нет-соединения)), угол пуст. Отправка офлайн → `pending` до восстановления. |
+| Offline | Целый раунд поиска пути не дал ничего — постоянный `MaterialBanner` `No connection` сверху (см. [overview.md / Offline](../overview.md#offline--нет-соединения)), угол пуст. Отправка офлайн → `pending` до восстановления. Плашка несёт действие `Try again` (фаза 042): оно перезапускает канал — новая попытка начинается сразу, плашка уступает углу `Connecting…` и возвращается, если и эта попытка не удалась. Для сервера, который не поддерживает эту сборку, плашка остаётся без действия: повтор не изменит его ответа. |
 | Server mismatch | Сервер, до которого приложение дошло по его **onion-адресу**, предъявил не тот ключ, что назвала ссылка спаривания (чужой ключ на прямом адресе — «не дома», не это состояние). Постоянная плашка `This isn't the server you paired with` с действием `Try again`. **Вместо** `Offline`, а не вместе с ним: сервер ответил, и «нет соединения» здесь — неправда. Ничего локального не стирается, переписка видна под плашкой, а отправленное ждёт в очереди со статусом `pending` и **не** получает `error`. Само не проходит: единственный выход — действие. |
 | Ждёт создания | Чат ещё не на сервере, канала нет: плашка `This chat isn't on your server yet. It will be once NOX connects.` вместо `No connection`; сообщения с часиками. С текущим каналом плашки нет (см. «Чат, которого ещё нет на сервере»). |
 | Имя занято | Сервер ответил, что чат с таким именем уже есть: плашка `Another chat already has this name. Rename this one to finish creating it.` с действием `Rename`. Сообщения ждут с часиками, не ошибкой. |
@@ -141,6 +141,7 @@ Material Scaffold с `resizeToAvoidBottomInset: true`; адаптируется 
 | Empty state message | `Send the first one.` |
 | System event (chat created) | `Chat created by {username}` |
 | Offline banner | `No connection` |
+| Offline action | `Try again` |
 | Server-mismatch banner | `This isn't the server you paired with` |
 | Server-mismatch action | `Try again` |
 | Waiting-chat notice | `This chat isn't on your server yet. It will be once NOX connects.` |

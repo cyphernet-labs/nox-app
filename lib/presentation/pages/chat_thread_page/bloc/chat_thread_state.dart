@@ -30,6 +30,11 @@ sealed class ChatThreadState with _$ChatThreadState {
     /// from [isOffline] because waiting fixes one and never the other.
     @Default(false) bool isServerMismatch,
 
+    /// The server refuses this build for good: «No connection» still shows,
+    /// but with nothing to try - a restart of the channel ends the same way
+    /// (phase 042).
+    @Default(false) bool isUnsupported,
+
     /// Sends wait: the channel is not current, or it belongs to the wrong
     /// machine. Apart from [isOffline], which waits for a whole failed round
     /// before it says so - a chat still to be created says it at once, because

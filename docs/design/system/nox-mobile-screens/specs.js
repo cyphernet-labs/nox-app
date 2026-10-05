@@ -308,6 +308,7 @@ window.NOX_SPECS = [
       "A chat made on this device that the server does not have yet (phase 041): waiting — a clock (schedule, onSurfaceVariant) in place of the time, screen-reader name “Waiting to be created”, preview kept; refused — the error glyph (error colour) in place of the time and the reason in place of the preview, in the error colour: “Name already taken” or “Couldn't create”. Ordered with the rest by last activity; the row reads a refusal once.",
       "Loading: the chats already on the device show at once and the server's page arrives in the background; a centered spinner only when the device holds no chats and the server is being asked. Empty: forum empty-state.",
       "Offline: persistent “No connection” MaterialBanner at top. Load error: banner “Could not load chats. Pull to refresh.”",
+      "Try again on No connection (phase 042): It carries Try again (phase 042), which restarts the channel: a new attempt starts at once, the strip gives way to Connecting… and comes back if that attempt fails too. For a server that refuses this build the strip has no action - trying again cannot change its answer.",
       "Tapping the SearchBar opens the full search view (back + query + caret, clear); results filter live; no match → “No chats found”.",
       "Transient one-off feedback appears as a Snackbar floating above the bottom bar."
     ],
@@ -370,6 +371,7 @@ window.NOX_SPECS = [
       "A message with a file shows its bytes going up: a ring on a contrasting disc over a picture; “Sending… 45%” over a bar in any other file's chip. Before the first byte the ring spins and the bar runs without a percent; the ring gives way to the tick once the server has the message, and starts again with a retried attempt. A received picture's placeholder spinner fills the same way while its bytes come in.",
       "Date separators: Today / Yesterday / 12 May. A system line marks chat creation.",
       "Empty: chat_bubble_outline empty-state. Offline: top banner + queued messages show pending.",
+      "Try again on No connection (phase 042): It carries Try again (phase 042), which restarts the channel: a new attempt starts at once, the strip gives way to Connecting… and comes back if that attempt fails too. For a server that refuses this build the strip has no action - trying again cannot change its answer.",
       "The connection never holds the thread: messages already on the device show at once, the server's newest window arrives in the background; a spinner only when the device holds nothing for the chat and the server is being asked. Writing works offline: a message waits with its clock and goes out over whichever path comes up first.",
       "Invite a person: an app-bar action that is PERMANENTLY disabled (037). Pressing it does nothing at all - no screen, no snackbar, no error. Its screen-reader name is the action alone; the caption explaining it lives in 5.4, where there is room.",
       "Composer: attach + text + send. Send enables when there is text or an attachment; attachment shows a removable chip above the row.",
@@ -465,6 +467,7 @@ window.NOX_SPECS = [
     "behavior": [
       "People renders only once the card has loaded - never over the spinner or the error state, which the spec's table does not put it in.",
       "Invite a person: a PERMANENTLY disabled button under the person row, captioned. Pressing it does nothing at all.",
+      "No connection: the strip at the top, as in the thread. It carries Try again (phase 042), which restarts the channel: a new attempt starts at once, the strip gives way to Connecting… and comes back if that attempt fails too. For a server that refuses this build the strip has no action - trying again cannot change its answer.",
       "List rows: file glyph + name (ellipsis) + size + chevron. Grid: square type cells.",
       "Segmented control switches List ⇄ Grid (single-select).",
       "Empty: folder_open empty-state."

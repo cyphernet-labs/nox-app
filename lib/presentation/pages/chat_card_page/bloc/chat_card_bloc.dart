@@ -65,6 +65,10 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
   /// «No connection» only once a whole round of path finding found nothing.
   bool _isOffline() => !_isServerMismatch() && (_status.showsNoConnection || _scenario == ChatCardScenario.offline);
 
+  /// The server refuses this build (phase 042): the strip stays, its action
+  /// does not - trying again cannot change the answer.
+  bool _isUnsupported() => _status.state == LinkState.unsupported;
+
   // Live change-signal (feature 017 / R5): a new attachment sent to this chat writes
   // to the message store → re-derive the files. Value ignored — getChatFiles stays the
   // single projection path. Emits FilesRefreshed (an INVISIBLE re-derive that preserves
@@ -133,7 +137,13 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
       }
       result.match<void>(
         onData: (files) => emit(
-          ChatCardState.initialized(files: files, isOffline: _isOffline(), isServerMismatch: _isServerMismatch(), personLabel: _person),
+          ChatCardState.initialized(
+            files: files,
+            isOffline: _isOffline(),
+            isServerMismatch: _isServerMismatch(),
+            isUnsupported: _isUnsupported(),
+            personLabel: _person,
+          ),
         ),
         onError: (_) => emit(const ChatCardState.error()),
       );
@@ -188,7 +198,9 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
     _status = event.status;
     final current = state;
     // Update the banner in place (no reload) — like the reactive files re-derive.
-    if (current is Initialized) emit(current.copyWith(isOffline: _isOffline(), isServerMismatch: _isServerMismatch()));
+    if (current is Initialized) {
+      emit(current.copyWith(isOffline: _isOffline(), isServerMismatch: _isServerMismatch(), isUnsupported: _isUnsupported()));
+    }
   }
 
   /// One more attempt, asked for by the person. Emits nothing: the phase stream

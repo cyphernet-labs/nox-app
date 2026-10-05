@@ -123,6 +123,10 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
   /// debug scenario forces it.
   bool _isOffline() => !_isServerMismatch() && (_status.showsNoConnection || _scenario == ChatThreadScenario.offline);
 
+  /// The server refuses this build (phase 042): the strip stays, its action
+  /// does not - trying again cannot change the answer.
+  bool _isUnsupported() => _status.state == LinkState.unsupported;
+
   /// Whether a send may go out at all: only on a current channel, never to a
   /// refused server, and never while the debug scenario plays offline. None of
   /// these marks anything as failed: a queued message waits, it is not lost.
@@ -246,6 +250,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
               loadingInProgress: false,
               isOffline: false,
               isServerMismatch: false,
+              isUnsupported: false,
               isHeld: false,
             ),
           );
@@ -306,6 +311,7 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
                 syncing: fromCache && messages.isEmpty && _canRead(),
                 isOffline: _isOffline(),
                 isServerMismatch: _isServerMismatch(),
+                isUnsupported: _isUnsupported(),
                 isHeld: _isHeld(),
               ),
             );
@@ -674,9 +680,15 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
     if (current is! Initialized) return;
     final offline = _isOffline();
     final mismatch = _isServerMismatch();
+    final unsupported = _isUnsupported();
     final held = _isHeld();
-    if (current.isOffline == offline && current.isServerMismatch == mismatch && current.isHeld == held) return;
-    emit(current.copyWith(isOffline: offline, isServerMismatch: mismatch, isHeld: held));
+    if (current.isOffline == offline &&
+        current.isServerMismatch == mismatch &&
+        current.isUnsupported == unsupported &&
+        current.isHeld == held) {
+      return;
+    }
+    emit(current.copyWith(isOffline: offline, isServerMismatch: mismatch, isUnsupported: unsupported, isHeld: held));
   }
 
   /// One more attempt, asked for by the person.

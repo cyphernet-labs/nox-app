@@ -54,6 +54,7 @@ window.NOX_SPECS = [
       "No-selection: the thread pane shows a “Select a chat” placeholder; the “+” lives in the chat-list pane header.",
       "Thread header is persistent (avatar + chat name + a disabled Invite a person action + an info action). Phase 037: two actions, not one, and the reason there is no member list is that the machine holds one person — not the revoked open-space model. No per-chat search, no folders. Source of truth: docs/design/spec/screens/chat.md §Десктоп.",
       "Offline: “No connection” banner appears in both panes. The connection never holds either pane: what the device holds shows at once, the server's answer arrives in the background. Loading: spinner in the list pane only while the device holds no chats and the server is being asked.",
+      "Try again on No connection (phase 042), in both panes: It carries Try again (phase 042), which restarts the channel: a new attempt starts at once, the strip gives way to Connecting… and comes back if that attempt fails too. For a server that refuses this build the strip has no action - trying again cannot change its answer.",
       "Messages in the thread pane follow 5.2, including a file's bytes in transit: a ring on a contrasting disc over a picture being sent, “Sending… 45%” over a bar in any other file's chip, a filling ring in a received picture's placeholder. An own message typed on another device of the same person carries the sent tick.",
       "Search filters the list pane in place; no match → “No chats found”.",
       "A chat the server does not have yet (phase 041), as on the phone: a clock in place of the time while it waits; the error glyph and “Name already taken” / “Couldn't create” once refused. In the thread pane ONE notice under the ThreadHeader: wrong server → name taken (Rename) → refused (Try again) → waiting (only while the channel is not current, instead of “No connection”) → “No connection”.",
@@ -462,7 +463,8 @@ window.NOX_SPECS = [
     "behavior": [
       "Mobile’s pushed Chat card (5.4) becomes a right drawer over the thread. Segmented switches List ⇄ Grid; empty → folder_open state.",
       "People renders only once the card has loaded - never over the spinner or the error state, which the spec's table does not put it in.",
-      "Invite a person: a PERMANENTLY disabled button under the person row, captioned. Pressing it does nothing at all."
+      "Invite a person: a PERMANENTLY disabled button under the person row, captioned. Pressing it does nothing at all.",
+      "No connection: the strip at the top of the drawer. It carries Try again (phase 042), which restarts the channel: a new attempt starts at once, the strip gives way to Connecting… and comes back if that attempt fails too. For a server that refuses this build the strip has no action - trying again cannot change its answer."
     ],
     "navigation": [
       "Opened from the thread header info action (folder-open icon).",

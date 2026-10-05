@@ -21,6 +21,11 @@ sealed class ChatCardState with _$ChatCardState {
     /// The machine at the paired address is not this person's server.
     @Default(false) bool isServerMismatch,
 
+    /// The server refuses this build for good: «No connection» still shows,
+    /// but with nothing to try - a restart of the channel ends the same way
+    /// (phase 042).
+    @Default(false) bool isUnsupported,
+
     /// Who this machine belongs to, for the People section (5.4).
     ///
     /// Resolved by the BLoC rather than read by the widget: the card owns one,

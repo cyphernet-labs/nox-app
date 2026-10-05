@@ -585,6 +585,61 @@ void main() {
     });
   });
 
+  group('the path choice is bounded (phase 042)', () {
+    test('a choice that never ends is abandoned, and the next attempt dials what the next choice says', () async {
+      final hung = Completer<Uri?>();
+      final targets = ScriptedTargets.gated(hung, then: [Uri.parse('wss://10.0.0.1:9000/ws')]);
+      client = NoxSocketClient.forTest(factory, sync, pathChoiceBudget: const Duration(milliseconds: 100));
+      await client.start(targets: targets, credentialsProvider: () async => const GreetingCredentials());
+
+      await waitUntil(() => targets.asked == 2, reason: 'asked again after the bound and the first rung');
+      await waitUntil(() => factory.created.length == 1, reason: 'the second answer is dialled');
+      final socket = factory.latest;
+      socket.pushGreeting();
+      await waitUntil(() => socket.commandNamed('session.hello') != null, reason: 'the client greets back');
+      socket.replyToHello(cursor: 0);
+      await waitUntil(() => client.currentPhase == SessionPhase.live, reason: 'greeted');
+
+      // The first choice answers at last - too late to count for anything.
+      hung.complete(Uri.parse('wss://10.0.0.9:9000/ws'));
+      await settle();
+
+      expect(factory.urls, [Uri.parse('wss://10.0.0.1:9000/ws')]);
+      expect(client.currentPhase, SessionPhase.live);
+    });
+
+    test('a restart during a hung choice asks again at once, without waiting for the bound', () async {
+      final hung = Completer<Uri?>();
+      final targets = ScriptedTargets.gated(hung, then: [Uri.parse('wss://10.0.0.1:9000/ws')]);
+      client = NoxSocketClient.forTest(factory, sync, pathChoiceBudget: const Duration(minutes: 2));
+      await client.start(targets: targets);
+      await waitUntil(() => targets.asked == 1, reason: 'the first choice is under way');
+
+      // How the channel restarts: Try again on No connection.
+      await client.stop();
+      await client.start(targets: targets);
+
+      await waitUntil(() => factory.created.length == 1, reason: 'dialled at once, not two minutes later');
+      expect(targets.asked, 2);
+      hung.complete(null);
+    });
+
+    test('the ladder never stops on its own, and its pause has a ceiling', () async {
+      final targets = ScriptedTargets([null]);
+      client = NoxSocketClient.forTest(
+        factory,
+        sync,
+        minBackoff: const Duration(milliseconds: 2),
+        maxBackoff: const Duration(milliseconds: 20),
+      );
+      await client.start(targets: targets);
+
+      // Two dozen failed rounds in well under the two seconds waitUntil gives:
+      // only a ceiling on the pause makes that possible.
+      await waitUntil(() => targets.asked >= 25, reason: 'still asking after many failed rounds');
+    });
+  });
+
   group('the target provider (phase 040)', () {
     test('it is asked before every attempt, and the socket dials what it says', () async {
       final targets = ScriptedTargets([Uri.parse('wss://10.0.0.1:9000/ws'), Uri.parse('wss://10.0.0.2:9000/ws')]);
@@ -869,8 +924,8 @@ void main() {
 class ScriptedTargets implements SocketTargetProvider {
   ScriptedTargets(List<Uri?> script) : _script = List<Uri?>.of(script), _gate = null;
 
-  /// Holds the first answer until [gate] completes.
-  ScriptedTargets.gated(Completer<Uri?> gate) : _script = <Uri?>[], _gate = gate;
+  /// Holds the first answer until [gate] completes; later calls follow [then].
+  ScriptedTargets.gated(Completer<Uri?> gate, {List<Uri?> then = const <Uri?>[]}) : _script = List<Uri?>.of(then), _gate = gate;
 
   final List<Uri?> _script;
   final Completer<Uri?>? _gate;

@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/service/session_phase_service_impl.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/model/session/session_phase.dart';
+import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/pages/chat_thread_page/chat_thread_page.dart';
 import 'package:nox_app/presentation/pages/chats_list_page/chats_list_page.dart';
@@ -11,6 +14,7 @@ import 'package:nox_app/presentation/widgets/chat/app_thread_view_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_list_detail_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_wordmark_widget.dart';
 
+import '../../../utils/fixed_session_phase.dart';
 import '../../../utils/pump_app.dart';
 
 final l10nEn = AppLocalizationsEn();
@@ -159,6 +163,66 @@ void main() {
 
       expect(rowMaterial(0).color, scheme.secondaryContainer); // selected row is filled
       expect(rowMaterial(1).color, Colors.transparent); // a sibling row stays transparent
+    });
+  });
+
+  group('No connection (phase 042)', () {
+    late FixedSessionPhaseService phase;
+
+    Future<void> pumpWith(WidgetTester tester, SessionPhase initial, {Size size = const Size(420, 900)}) async {
+      phase = FixedSessionPhaseService(initial);
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<SessionPhaseService>(phase);
+      addTearDown(() => getIt.registerSingleton<SessionPhaseService>(ConnectivitySessionPhaseService()));
+      await tester.binding.setSurfaceSize(size);
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, const ChatsListPage());
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+    }
+
+    Finder tryAgain() => find.widgetWithText(TextButton, l10nEn.actionTryAgain);
+
+    testWidgets('the strip offers Try again, and pressing it asks for another attempt', (tester) async {
+      final semantics = tester.ensureSemantics();
+      await pumpWith(tester, SessionPhase.disconnected);
+
+      expect(find.text(l10nEn.noConnection), findsOneWidget);
+      expect(tryAgain(), findsOneWidget);
+      final size = tester.getSize(tryAgain());
+      expect(size.height, greaterThanOrEqualTo(48));
+      expect(size.width, greaterThanOrEqualTo(48));
+      final node = tester.getSemantics(tryAgain());
+      expect(node.label, contains(l10nEn.actionTryAgain));
+      expect(node.getSemanticsData().flagsCollection.isButton, isTrue);
+
+      await tester.tap(tryAgain());
+      await tester.pump();
+
+      expect(phase.reconnects, 1);
+      semantics.dispose();
+    });
+
+    testWidgets('on desktop both panes offer it', (tester) async {
+      await pumpWith(tester, SessionPhase.disconnected, size: const Size(1200, 900));
+
+      expect(tryAgain(), findsNWidgets(2));
+    });
+
+    testWidgets('a server that refuses this build: the strip, and nothing to press', (tester) async {
+      await pumpWith(tester, SessionPhase.unsupported);
+
+      expect(find.text(l10nEn.noConnection), findsOneWidget);
+      expect(tryAgain(), findsNothing);
+    });
+
+    testWidgets('while an attempt is under way: neither the strip nor the action', (tester) async {
+      await pumpWith(tester, SessionPhase.connecting);
+
+      expect(find.text(l10nEn.noConnection), findsNothing);
+      expect(tryAgain(), findsNothing);
     });
   });
 }

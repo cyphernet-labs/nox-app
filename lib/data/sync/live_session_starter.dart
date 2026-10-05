@@ -151,10 +151,20 @@ class LiveSessionStarter {
   /// this a re-login in the same process would leave the device permanently
   /// disconnected until the app is restarted.
   ///
-  /// The Tor client is left running across it: a restart is a sign-in's
-  /// re-greeting or the way back from a refusal, and the next round would
-  /// only bring it up again from its directories.
-  Future<void> restart() async {
+  /// The Tor client is left running across it while it is healthy: a restart
+  /// is a sign-in's re-greeting, the way back from a refusal, or Try again on
+  /// No connection (phase 042), and the next round would only bring a working
+  /// client up again from its directories. One that failed or is stuck coming
+  /// up is stopped by the selector instead.
+  ///
+  /// A restart asked for while one is under way joins it. Nothing else orders
+  /// a stop against a start here, and two presses of Try again would otherwise
+  /// interleave one restart's stop with the other's start.
+  Future<void> restart() => _restarting ??= _restartOnce().whenComplete(() => _restarting = null);
+
+  Future<void>? _restarting;
+
+  Future<void> _restartOnce() async {
     await _stop(keepTor: true);
     await start();
   }
