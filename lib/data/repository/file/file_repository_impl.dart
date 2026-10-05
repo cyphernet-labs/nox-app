@@ -2,9 +2,12 @@ import 'dart:io';
 
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
+import 'package:nox_app/data/entity/file/upload_ticket_wire_entity.dart';
 import 'package:nox_app/data/exception/file_transfer_exception.dart';
 import 'package:nox_app/data/remote/datasource/file_remote_data_source.dart';
+import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
+import 'package:nox_app/domain/model/file/unfinished_upload.dart';
 import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
@@ -27,64 +30,127 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
   static const String _cacheFolder = 'nox_attachments';
 
   @override
-  Future<RepositoryResult<String>> upload({required String path, required String mime, TransferFraction? onProgress}) {
+  Future<RepositoryResult<String>> upload({
+    required String path,
+    required String mime,
+    UnfinishedUpload? from,
+    Future<void> Function(UnfinishedUpload? upload)? onUnfinished,
+    TransferFraction? onProgress,
+  }) {
     return execute<String>(() async {
       final file = File(path);
       // The file was picked minutes or hours ago and the queue only reaches it
       // now; it may be gone or changed since.
-      if (!file.existsSync()) throw RepositoryException.notFound;
-      final size = await file.length();
+      final source = await _sourceOf(file);
 
       // Checked here as a backstop. The composer checks first, where the person
       // is still looking at the screen — this catches a file that grew, or a
       // build that skipped the composer path.
-      if (size > _config.limits.maxAttachmentBytes) throw RepositoryException.payloadTooLarge;
+      if (source.size > _config.limits.maxAttachmentBytes) throw RepositoryException.payloadTooLarge;
 
-      // A pass is one-shot and lives ten minutes, so it can be dead before the
-      // first byte moves — the contract calls that routine and says to ask for
-      // another. Handling it here means the queue never sees a refusal it would
-      // have to interpret, and it cannot loop: exactly one second chance.
-      final fileId =
-          await _uploadOnce(file, path, mime, size, onProgress) ?? await _uploadOnce(file, path, mime, size, onProgress, lastChance: true);
-      return RepositoryResult<String>.success(data: fileId!);
+      // Bytes already on the server are this source's bytes only if the source
+      // is the one they came from. Going on from a changed file would put the
+      // start of one file and the end of another under one id.
+      if (from != null && !source.isFingerprintOf(from)) throw RepositoryException.notFound;
+
+      var unfinished = from;
+      var passRefused = false;
+      while (true) {
+        final ticket = await _declare(path, mime, source.size, unfinished, onUnfinished);
+        final received = ticket.received;
+        if (received == null) {
+          // A server older than phase 043: it cannot continue, so there is
+          // nothing to remember, and the whole file goes.
+          if (unfinished != null) await onUnfinished?.call(null);
+          unfinished = null;
+        } else if (unfinished?.fileId != ticket.fileId) {
+          unfinished = UnfinishedUpload(fileId: ticket.fileId, sourceSize: source.size, sourceModifiedAt: source.modified);
+          // Written down BEFORE the first byte: a restart in the middle of the
+          // transfer has to find it.
+          await onUnfinished?.call(unfinished);
+        }
+        final offset = received ?? 0;
+        // A server claiming more than the file has is not one to send to.
+        if (offset > source.size) throw RepositoryException.internal;
+        logRepository.debug(target: this, message: 'file: upload ${ticket.fileId} from $offset of ${source.size}');
+        // The share of the WHOLE file is known now, before a single new byte:
+        // a ring that dropped to zero after every break would lie about it.
+        onProgress?.call(source.size == 0 ? 1 : offset / source.size);
+
+        try {
+          await _remote.putBytes(
+            uploadPath: ticket.uploadUrl,
+            file: file,
+            offset: offset,
+            onProgress: onProgress == null ? null : (done, total) => onProgress(total == 0 ? 1 : done / total),
+          );
+        } on FileTransferException catch (e) {
+          switch (e.failure) {
+            case FileTransferFailure.passRejected:
+              // A pass is one-shot and lives ten minutes, so it can be dead
+              // before the first byte moves: the contract calls that routine
+              // and says to ask for another, once. Twice in a row is the server
+              // refusing, and the queue counts that.
+              if (passRefused) throw RepositoryException.internal;
+              passRefused = true;
+              continue;
+            case FileTransferFailure.sizeMismatch:
+              // What was sent is not what was announced — announcing it again
+              // fails identically, so this message is done.
+              throw RepositoryException.invalidRequest;
+            case FileTransferFailure.staleRange:
+            case FileTransferFailure.connection:
+              throw RepositoryException.connection;
+          }
+        }
+
+        // The bytes went from the source as it was when this attempt began. If
+        // it changed while they were going, the server holds a mix of two
+        // files, and no message may name it.
+        if (!(await _sourceOf(file)).isSameAs(source)) throw RepositoryException.notFound;
+        // Only now is the id true: the bytes are on the server.
+        return RepositoryResult<String>.success(data: ticket.fileId);
+      }
     });
   }
 
-  /// One full declare-and-send. Returns null when the pass was refused and it
-  /// is worth asking for another; throws for anything else.
-  Future<String?> _uploadOnce(
-    File file,
+  /// Declares the upload - or continues [unfinished] when there is one. A
+  /// server that no longer has it (swept after a day, or it never got that far)
+  /// is not an error for the person (FR-004): the upload starts over, and the
+  /// handle is forgotten first, so a failure of the new declaration leaves
+  /// nothing stale behind.
+  Future<UploadTicketWireEntity> _declare(
     String path,
     String mime,
     int size,
-    TransferFraction? onProgress, {
-    bool lastChance = false,
-  }) async {
-    final ticket = unwrapEnvelope(await _remote.uploadBegin(name: _nameOf(path), sizeBytes: size, mime: mime), 'uploadBegin');
-    try {
-      await _remote.putBytes(
-        uploadPath: ticket.uploadUrl,
-        file: file,
-        onProgress: onProgress == null ? null : (done, total) => onProgress(total == 0 ? 0 : done / total),
-      );
-    } on FileTransferException catch (e) {
-      switch (e.failure) {
-        case FileTransferFailure.passRejected:
-          // Out of second chances: report it as a connection-class failure so
-          // the queue waits and tries the whole thing again later, rather than
-          // giving up on the message.
-          if (lastChance) throw RepositoryException.connection;
-          return null;
-        case FileTransferFailure.sizeMismatch:
-          // What is on disk is not what was announced — announcing it again
-          // fails identically, so this message is done.
-          throw RepositoryException.invalidRequest;
-        case FileTransferFailure.connection:
-          throw RepositoryException.connection;
+    UnfinishedUpload? unfinished,
+    Future<void> Function(UnfinishedUpload? upload)? onUnfinished,
+  ) async {
+    final name = _nameOf(path);
+    if (unfinished != null) {
+      final reply = await _remote.uploadBegin(name: name, sizeBytes: size, mime: mime, fileId: unfinished.fileId);
+      final code = reply.error?.code;
+      if (code == null || RepositoryException.fromWireCode(code) != RepositoryException.notFound) {
+        return unwrapEnvelope(reply, 'uploadBegin');
       }
+      logRepository.debug(target: this, message: 'file: upload ${unfinished.fileId} is gone from the server, starting over');
+      await onUnfinished?.call(null);
     }
-    // Only now is the id true: the bytes are on the server.
-    return ticket.fileId;
+    return unwrapEnvelope(await _remote.uploadBegin(name: name, sizeBytes: size, mime: mime), 'uploadBegin');
+  }
+
+  /// The source's fingerprint. A file that is not there is `notFound`; so is
+  /// one the platform will not describe - and that error is turned into the
+  /// code HERE, because its message carries the path, the path carries the
+  /// file's name, and execute() would write it into the log (FR-016).
+  Future<_Source> _sourceOf(File file) async {
+    try {
+      final stat = await file.stat();
+      if (stat.type == FileSystemEntityType.notFound) throw RepositoryException.notFound;
+      return _Source(size: stat.size, modified: stat.modified);
+    } on FileSystemException {
+      throw RepositoryException.notFound;
+    }
   }
 
   /// Downloads under way, by file id. ONE transfer per file: two would share
@@ -179,4 +245,22 @@ class _SharedDownload {
       listener(fraction);
     }
   }
+}
+
+/// What the upload knows about its source: enough to tell whether it is still
+/// the file the bytes came from.
+class _Source {
+  const _Source({required this.size, required this.modified});
+
+  final int size;
+  final DateTime modified;
+
+  bool isSameAs(_Source other) => size == other.size && _sameMillisecond(modified, other.modified);
+
+  /// Compared to the millisecond, which is what the queue record keeps: the
+  /// platform reports microseconds, and comparing those against a stored value
+  /// would call every file "changed" after the first restart.
+  bool isFingerprintOf(UnfinishedUpload upload) => size == upload.sourceSize && _sameMillisecond(modified, upload.sourceModifiedAt);
+
+  static bool _sameMillisecond(DateTime a, DateTime b) => a.millisecondsSinceEpoch == b.millisecondsSinceEpoch;
 }

@@ -1,6 +1,7 @@
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/outbox_status.dart';
+import 'package:nox_app/domain/model/file/unfinished_upload.dart';
 
 part 'outbox_entry.freezed.dart';
 
@@ -48,5 +49,12 @@ abstract class OutboxEntry with _$OutboxEntry {
     /// would point at a file the server has no bytes for: the send would be
     /// accepted and the recipient could never download it.
     String? fileId,
+
+    /// The upload of this send's attachment that the server holds part of
+    /// (phase 043). Written as soon as the server names the upload, BEFORE the
+    /// first byte moves, so a restart in the middle goes on from what the server
+    /// has rather than from the first byte. Gone once the bytes are confirmed
+    /// ([fileId] takes over), and forgotten when the source vanished or changed.
+    UnfinishedUpload? upload,
   }) = _OutboxEntry;
 }

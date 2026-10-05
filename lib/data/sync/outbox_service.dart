@@ -366,12 +366,21 @@ class OutboxService {
     final result = await _files.upload(
       path: path,
       mime: attachment.mime ?? MimeTypes.forFileName(attachment.name),
+      // Whatever the server already holds of this file is not sent again
+      // (phase 043) - after a break, a change of path or a restart alike.
+      from: entry.upload,
+      onUnfinished: (upload) => _outbox.noteUpload(clientMessageId: entry.clientMessageId, upload: upload),
       onProgress: (fraction) => _transfers.report(entry.clientMessageId, fraction),
     );
     if (result.hasData) return result.data;
 
     final exception = result.exception;
     final terminal = _isTerminal(exception);
+    // A source that vanished or changed cannot be continued, and neither can
+    // anything else a retry would only repeat. Forgetting the upload is what
+    // lets a manual retry send the file as it is now, as a new upload; the part
+    // on the server is swept there after a day.
+    if (terminal) await _outbox.noteUpload(clientMessageId: entry.clientMessageId, upload: null);
     await _outbox.recordFailure(
       clientMessageId: entry.clientMessageId,
       code: exception is RepositoryException ? exception.name : 'unknown',

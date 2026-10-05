@@ -105,7 +105,7 @@ void main() {
 
     test('cancelTransfers ends a transfer under way, and the next one goes through', () async {
       // A logout or a change of server must not leave bytes moving towards a
-      // machine nobody uses any more; every transfer listens to this token.
+      // machine nobody uses any more.
       final hold = Completer<void>();
       final server = await _honest(hold: hold);
       addTearDown(() async {
@@ -115,17 +115,28 @@ void main() {
       final api = ApiClient(_FakeConfig(null), PinnedHttpClient()..pinTo(_fingerprint))
         ..initBase(address: 'https://127.0.0.1:${server.port}');
 
-      final held = api.dio.get<String>('/held', cancelToken: api.transferToken);
+      final token = api.beginTransfer();
+      final held = api.dio.get<String>('/held', cancelToken: token);
       await Future<void>.delayed(const Duration(milliseconds: 200));
-      final before = api.transferToken;
       api.cancelTransfers();
 
       await expectLater(held, throwsA(isA<DioException>().having((e) => e.type, 'type', DioExceptionType.cancel)));
-      expect(identical(api.transferToken, before), isFalse, reason: 'a new generation starts');
-      expect(api.transferToken.isCancelled, isFalse);
 
-      final next = await api.dio.get<String>('/anything', cancelToken: api.transferToken);
-      expect(next.statusCode, HttpStatus.ok);
+      final next = api.beginTransfer();
+      final response = await api.dio.get<String>('/anything', cancelToken: next);
+      api.endTransfer(next);
+      expect(response.statusCode, HttpStatus.ok);
+      expect(next.isCancelled, isFalse, reason: 'a transfer begun after the cancel is not touched by it');
+    });
+
+    test('a finished transfer is forgotten: a later cancel does not reach it', () {
+      final api = ApiClient(_FakeConfig(null), PinnedHttpClient());
+      final done = api.beginTransfer();
+      api.endTransfer(done);
+
+      api.cancelTransfers();
+
+      expect(done.isCancelled, isFalse);
     });
   });
 }

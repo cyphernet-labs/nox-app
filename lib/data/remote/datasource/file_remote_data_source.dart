@@ -15,13 +15,24 @@ typedef TransferProgress = void Function(int done, int total);
 /// contract says so and says why — on the socket a large file blocks every
 /// interactive command behind it, cannot resume, and buffers into memory.
 abstract class FileRemoteDataSource {
-  /// Declares a file and asks for somewhere to put it. `mime` is derived from
-  /// the name's extension — the picker never reads bytes (§9.2).
-  Future<ResponseEntity<UploadTicketWireEntity>> uploadBegin({required String name, required int sizeBytes, required String mime});
+  /// Declares a file and asks for somewhere to put it — or, with [fileId],
+  /// asks to continue the unfinished upload of that file (contract §7, phase
+  /// 043). `mime` is derived from the name's extension — the picker never reads
+  /// bytes (§9.2). The declaration stays whole when continuing: a server older
+  /// than the phase skips the unknown field and declares a new file.
+  Future<ResponseEntity<UploadTicketWireEntity>> uploadBegin({
+    required String name,
+    required int sizeBytes,
+    required String mime,
+    String? fileId,
+  });
 
-  /// Sends exactly [sizeBytes] bytes. More is refused with 413, fewer with 400,
-  /// and neither is stored — so a torn transfer leaves nothing behind.
-  Future<void> putBytes({required String uploadPath, required File file, TransferProgress? onProgress});
+  /// Sends the file from [offset] to its end — possibly nothing, when the
+  /// server already holds every byte and only has to be told the upload is
+  /// complete. Whatever arrives stays on the server, so a broken transfer is
+  /// continued, not repeated. Ends with a connection failure once no byte has
+  /// moved for the stall limit.
+  Future<void> putBytes({required String uploadPath, required File file, required int offset, TransferProgress? onProgress});
 
   Future<ResponseEntity<DownloadTicketWireEntity>> downloadBegin({required String fileId});
 

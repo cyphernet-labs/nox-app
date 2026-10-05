@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/entity/base/response_entity.dart';
 import 'package:nox_app/data/entity/file/upload_ticket_wire_entity.dart';
@@ -16,16 +18,63 @@ import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 /// the socket, bytes over HTTP. This is also the first real consumer of
 /// [ApiClient] — before this feature `initBase()` was never called from app
 /// code at all, and Dio was held in reserve for exactly this.
+///
+/// No transfer has a time limit (phase 043): through Tor 100 MiB take tens of
+/// minutes, and a limit on the whole transfer cut exactly the slow path it was
+/// supposed to survive. A transfer ends only when its bytes STOP moving for
+/// [defaultStallLimit] - and, being resumable, it then goes on from where it
+/// stopped.
 @LazySingleton(as: FileRemoteDataSource, env: [Environment.dev])
 class RealFileRemoteDataSource implements FileRemoteDataSource {
-  RealFileRemoteDataSource(this._socket, this._apiClient);
+  RealFileRemoteDataSource(this._socket, this._apiClient) : _stallLimit = defaultStallLimit, _answerWait = defaultAnswerWait;
+
+  @visibleForTesting
+  RealFileRemoteDataSource.forTest(
+    this._socket,
+    this._apiClient, {
+    this._stallLimit = defaultStallLimit,
+    this._answerWait = defaultAnswerWait,
+  });
+
+  /// How long bytes may stop moving before a transfer counts as broken.
+  ///
+  /// Shorter than the server's 60 seconds on purpose: the side that runs the
+  /// retry should be the one to give up first, and the server ends the request
+  /// it was still holding as soon as the retry reaches it.
+  static const Duration defaultStallLimit = Duration(seconds: 45);
+
+  /// How long a PUT waits for the server's answer once its last byte has been
+  /// handed to the socket.
+  ///
+  /// Longer than the stall limit, and for a reason that only shows on a slow
+  /// path: "handed to the socket" is not "arrived". Through Tor the socket,
+  /// the bridge and the circuit hold megabytes between them, draining at tens
+  /// of kilobytes a second, and nothing on this side can see them drain - the
+  /// stall limit would cut a healthy upload in its last minute. A path that
+  /// really died ends sooner anyway: the socket notices, the path changes, and
+  /// the change ends every transfer on the old one.
+  static const Duration defaultAnswerWait = Duration(minutes: 3);
 
   final NoxSocketClient _socket;
   final ApiClient _apiClient;
+  final Duration _stallLimit;
+  final Duration _answerWait;
 
   @override
-  Future<ResponseEntity<UploadTicketWireEntity>> uploadBegin({required String name, required int sizeBytes, required String mime}) async {
-    final reply = await _socket.send('file.uploadBegin', <String, dynamic>{'name': name, 'size': sizeBytes, 'mime': mime});
+  Future<ResponseEntity<UploadTicketWireEntity>> uploadBegin({
+    required String name,
+    required int sizeBytes,
+    required String mime,
+    String? fileId,
+  }) async {
+    final reply = await _socket.send('file.uploadBegin', <String, dynamic>{
+      'name': name,
+      'size': sizeBytes,
+      'mime': mime,
+      // Only when continuing: an absent field is a new upload, to this server
+      // and to one that has never heard of continuing.
+      'file_id': ?fileId,
+    });
     return reply.toEnvelope(UploadTicketWireEntity.fromJson);
   }
 
@@ -36,43 +85,66 @@ class RealFileRemoteDataSource implements FileRemoteDataSource {
   }
 
   @override
-  Future<void> putBytes({required String uploadPath, required File file, TransferProgress? onProgress}) async {
+  Future<void> putBytes({required String uploadPath, required File file, required int offset, TransferProgress? onProgress}) async {
     final total = await file.length();
+    final cancel = _apiClient.beginTransfer();
+    // Dio's own sendTimeout bounds the WHOLE body, which is the limit this
+    // phase removes. What it needs instead is a bound on silence: every chunk
+    // the socket takes rearms the watch.
+    final watch = _StallWatch(_stallLimit, () => cancel.cancel('stalled'));
     try {
-      await _apiClient.dio
-          .put<void>(
-            uploadPath,
-            data: file.openRead(), // streamed: a large attachment never lands in RAM
-            options: Options(
-              headers: <String, dynamic>{Headers.contentLengthHeader: total},
-              // The server answers 204 and every token failure as a bare 404; let
-              // this method decide what those mean rather than letting Dio throw a
-              // shape the general mapper would misread.
-              validateStatus: (status) => status != null && status < 500,
-            ),
-            onSendProgress: onProgress == null ? null : (sent, _) => onProgress(sent, total),
-          )
-          .then(_checkTransfer);
+      final response = await _apiClient.dio.put<void>(
+        uploadPath,
+        data: file.openRead(offset), // streamed from where the server stopped; never in RAM
+        cancelToken: cancel,
+        options: Options(
+          headers: <String, dynamic>{Headers.contentLengthHeader: total - offset},
+          // The answer comes only once the bytes still in the buffers have
+          // drained to the server (see [defaultAnswerWait]).
+          receiveTimeout: _answerWait,
+          // The server answers 204 and every token failure as a bare 404; let
+          // this method decide what those mean rather than letting Dio throw a
+          // shape the general mapper would misread.
+          validateStatus: (status) => status != null && status < 500,
+        ),
+        onSendProgress: (sent, _) {
+          if (offset + sent >= total) {
+            watch.wait(_answerWait);
+          } else {
+            watch.moved();
+          }
+          onProgress?.call(offset + sent, total);
+        },
+      );
+      _checkTransfer(response);
     } on DioException {
       // Every status this method cares about is handled above without throwing;
-      // reaching here means the transport itself failed, or the server answered
-      // 5xx. Both are the same thing to the caller: try again later.
+      // reaching here means the transport itself failed, the bytes stopped, the
+      // transfer was ended from outside, or the server answered 5xx. All of it
+      // is the same thing to the caller: try again later, from where it got to.
       throw const FileTransferException(FileTransferFailure.connection);
+    } finally {
+      watch.stop();
+      _apiClient.endTransfer(cancel);
     }
   }
 
   @override
   Future<void> getBytes({required String downloadPath, required File destination, TransferProgress? onProgress}) async {
+    final cancel = _apiClient.beginTransfer();
     try {
       final response = await _apiClient.dio.download(
         downloadPath,
         destination.path,
+        cancelToken: cancel,
         options: Options(validateStatus: (status) => status != null && status < 500),
         onReceiveProgress: onProgress == null ? null : (received, total) => onProgress(received, total),
       );
       _checkTransfer(response);
     } on DioException {
       throw const FileTransferException(FileTransferFailure.connection);
+    } finally {
+      _apiClient.endTransfer(cancel);
     }
   }
 
@@ -86,9 +158,42 @@ class RealFileRemoteDataSource implements FileRemoteDataSource {
     // 404 is the contract's single answer for every token failure — spent,
     // expired, never existed. It is routine, not fatal: ask for a new pass.
     if (status == 404) throw const FileTransferException(FileTransferFailure.passRejected);
-    // 413 too many bytes, 400 too few. Either way what is on disk is not what
+    // 413 too many bytes, 400 too few. Either way what was sent is not what
     // was announced, and announcing it again would fail the same way.
     if (status == 413 || status == 400) throw const FileTransferException(FileTransferFailure.sizeMismatch);
+    // 408 (the server saw the bytes stop), 409 (an earlier attempt still held
+    // the file) and anything else: the transfer broke, and the next attempt
+    // goes on from what the server has.
     throw const FileTransferException(FileTransferFailure.connection);
+  }
+}
+
+/// Fires once bytes have not moved for [limit]. Rearmed by every sign that
+/// they did.
+class _StallWatch {
+  _StallWatch(this._limit, this._onStall) {
+    _arm();
+  }
+
+  final Duration _limit;
+  final void Function() _onStall;
+  Timer? _timer;
+
+  void moved() => _arm(_limit);
+
+  /// Nothing more will move on this side: allow [wait] for what follows.
+  void wait(Duration wait) => _arm(wait);
+
+  void stop() {
+    _timer?.cancel();
+    _timer = null;
+  }
+
+  void _arm([Duration? limit]) {
+    _timer?.cancel();
+    _timer = Timer(limit ?? _limit, () {
+      _timer = null;
+      _onStall();
+    });
   }
 }

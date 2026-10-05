@@ -15,6 +15,11 @@ enum FileTransferFailure {
   /// disk is not the file we announced.
   sizeMismatch,
 
+  /// The part this device holds is not shorter than the file on the server
+  /// (416): it belongs to some other version of the file. Discard it and start
+  /// over - nothing the server did is wrong.
+  staleRange,
+
   /// The channel broke. Retryable like any other connection failure.
   connection,
 }

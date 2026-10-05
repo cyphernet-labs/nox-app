@@ -5,6 +5,7 @@ import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/outbox_entry.dart';
 import 'package:nox_app/domain/model/chat/outbox_status.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
+import 'package:nox_app/domain/model/file/unfinished_upload.dart';
 import 'package:nox_app/general/app_clock.dart';
 
 /// The single place where String<->enum, String<->DateTime and flat<->nested
@@ -28,6 +29,7 @@ class OutboxMapper extends BaseMapper<OutboxEntity, OutboxEntry, dynamic, dynami
       text: entity.text,
       lastErrorCode: entity.lastErrorCode,
       fileId: entity.fileId,
+      upload: _uploadOf(entity),
       attachment: entity.attachmentId == null
           ? null
           : MessageAttachment(
@@ -57,6 +59,9 @@ class OutboxMapper extends BaseMapper<OutboxEntity, OutboxEntry, dynamic, dynami
       text: model.text,
       lastErrorCode: model.lastErrorCode,
       fileId: model.fileId,
+      uploadFileId: model.upload?.fileId,
+      uploadSourceSize: model.upload?.sourceSize,
+      uploadSourceModifiedAt: model.upload?.sourceModifiedAt.toUtc().millisecondsSinceEpoch,
       attachmentId: model.attachment?.id,
       attachmentType: model.attachment?.type.name,
       attachmentName: model.attachment?.name,
@@ -64,6 +69,21 @@ class OutboxMapper extends BaseMapper<OutboxEntity, OutboxEntry, dynamic, dynami
       attachmentLocalPath: model.attachment?.localPath,
       attachmentMime: model.attachment?.mime,
       attachmentExpiresAt: model.attachment?.expiresAt == null ? null : model.attachment!.expiresAt!.toUtc().millisecondsSinceEpoch ~/ 1000,
+    );
+  }
+
+  /// The unfinished upload, or null unless all three of its fields are there:
+  /// a handle missing its fingerprint cannot be checked against the source, and
+  /// continuing it unchecked is exactly what the fingerprint exists to stop.
+  UnfinishedUpload? _uploadOf(OutboxEntity entity) {
+    final fileId = entity.uploadFileId;
+    final size = entity.uploadSourceSize;
+    final modified = entity.uploadSourceModifiedAt;
+    if (fileId == null || size == null || modified == null) return null;
+    return UnfinishedUpload(
+      fileId: fileId,
+      sourceSize: size,
+      sourceModifiedAt: DateTime.fromMillisecondsSinceEpoch(modified, isUtc: true).toLocal(),
     );
   }
 }

@@ -24,6 +24,7 @@ import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
 import 'package:nox_app/domain/model/file/attachment_transfer.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
+import 'package:nox_app/domain/model/file/unfinished_upload.dart';
 import 'package:nox_app/domain/model/chat/message_status.dart';
 import 'package:nox_app/domain/model/chat/outbox_status.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
@@ -74,9 +75,29 @@ class _FakeFiles implements FileRepository {
   RepositoryException? failure;
   Future<void> Function()? duringUpload;
 
+  /// Every `from` the queue handed over, in order.
+  final List<UnfinishedUpload?> continuedFrom = <UnfinishedUpload?>[];
+
+  /// The upload "the server" names before the first byte, when set.
+  UnfinishedUpload? names;
+
+  /// The share already on "the server", reported as soon as it answers.
+  double? alreadyThere;
+
   @override
-  Future<RepositoryResult<String>> upload({required String path, required String mime, TransferFraction? onProgress}) async {
+  Future<RepositoryResult<String>> upload({
+    required String path,
+    required String mime,
+    UnfinishedUpload? from,
+    Future<void> Function(UnfinishedUpload? upload)? onUnfinished,
+    TransferFraction? onProgress,
+  }) async {
     uploads++;
+    continuedFrom.add(from);
+    final named = names;
+    if (named != null) await onUnfinished?.call(named);
+    final share = alreadyThere;
+    if (share != null) onProgress?.call(share);
     await duringUpload?.call();
     if (failure != null) return RepositoryResult<String>.error(exception: failure!);
     if (!File(path).existsSync()) return RepositoryResult<String>.error(exception: RepositoryException.notFound);
@@ -578,6 +599,100 @@ void main() {
 
       expect(sentKeys, isEmpty, reason: 'the bytes may be up, but no message may name them');
       expect(await outbox.pending(), isEmpty);
+    });
+
+    group('an upload the server holds part of (phase 043)', () {
+      final handle = UnfinishedUpload(fileId: 'f_77', sourceSize: 64, sourceModifiedAt: DateTime.utc(2026, 10, 5, 9, 30));
+
+      Matcher sameAs(UnfinishedUpload expected) => isA<UnfinishedUpload>()
+          .having((u) => u.fileId, 'fileId', expected.fileId)
+          .having((u) => u.sourceSize, 'sourceSize', expected.sourceSize)
+          .having((u) => u.sourceModifiedAt.isAtSameMomentAs(expected.sourceModifiedAt), 'same moment', isTrue);
+
+      test('the stored upload is handed to the repository to go on from', () async {
+        final entry = (await outbox.enqueue(chatId: 'c1', text: null, attachment: picked())).data!;
+        await outbox.noteUpload(clientMessageId: entry.clientMessageId, upload: handle);
+
+        await service.flush();
+
+        expect(files.continuedFrom.single, sameAs(handle));
+      });
+
+      test('the upload the server names is written down before the bytes go', () async {
+        final entry = (await outbox.enqueue(chatId: 'c1', text: null, attachment: picked())).data!;
+        files.names = handle;
+        UnfinishedUpload? onRecordWhileSending;
+        files.duringUpload = () async => onRecordWhileSending = (await outbox.find(clientMessageId: entry.clientMessageId))?.upload;
+        files.failure = RepositoryException.connection; // and then the link breaks
+
+        await service.flush();
+
+        expect(onRecordWhileSending, sameAs(handle), reason: 'a restart in the middle has to find it');
+        expect((await outbox.find(clientMessageId: entry.clientMessageId))!.upload, sameAs(handle));
+      });
+
+      test('a restart goes on from the stored upload instead of declaring the file again', () async {
+        await outbox.enqueue(chatId: 'c1', text: null, attachment: picked());
+        files.names = handle;
+        files.failure = RepositoryException.connection;
+        await service.flush();
+        await service.stop();
+
+        // A new process: a fresh queue over the same store.
+        files
+          ..names = null
+          ..failure = null;
+        service = OutboxService(outbox, messages, phase, files, transfers, getIt<ChatRepository>());
+        await service.flush();
+
+        expect(files.continuedFrom.last, sameAs(handle), reason: 'what the server has is not sent again (FR-003)');
+        expect(await outbox.pending(), isEmpty);
+      });
+
+      test('a source that vanished or changed fails the message and forgets the upload', () async {
+        final entry = (await outbox.enqueue(chatId: 'c1', text: null, attachment: picked())).data!;
+        await outbox.noteUpload(clientMessageId: entry.clientMessageId, upload: handle);
+        files.failure = RepositoryException.notFound;
+
+        await service.flush();
+
+        final left = (await outbox.watchQueue().first).single;
+        expect(left.status, OutboxStatus.error);
+        expect(left.upload, isNull, reason: 'a manual retry then sends the file as it is now, as a new upload');
+      });
+
+      test('a broken link keeps the upload for the next attempt', () async {
+        final entry = (await outbox.enqueue(chatId: 'c1', text: null, attachment: picked())).data!;
+        await outbox.noteUpload(clientMessageId: entry.clientMessageId, upload: handle);
+        files.failure = RepositoryException.connection;
+
+        await service.flush();
+
+        expect((await outbox.pending()).single.upload, sameAs(handle));
+      });
+
+      test('confirmed bytes forget the upload: only the message is left to send', () async {
+        final entry = (await outbox.enqueue(chatId: 'c1', text: null, attachment: picked())).data!;
+        await outbox.noteUpload(clientMessageId: entry.clientMessageId, upload: handle);
+        sendFailure = RepositoryException.connection; // the message itself waits
+
+        await service.flush();
+
+        final left = (await outbox.pending()).single;
+        expect(left.fileId, isNotNull);
+        expect(left.upload, isNull);
+      });
+
+      test('the bubble shows what the server already has as soon as it says so, not zero', () async {
+        final entry = (await outbox.enqueue(chatId: 'c1', text: null, attachment: picked())).data!;
+        files.alreadyThere = 0.45;
+        AttachmentTransfer? whileGoing;
+        files.duringUpload = () async => whileGoing = transfers.current[entry.clientMessageId];
+
+        await service.flush();
+
+        expect(whileGoing?.percent, 45, reason: 'FR-012: the share of the whole file');
+      });
     });
   });
 

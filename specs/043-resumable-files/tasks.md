@@ -36,7 +36,7 @@ description: "Задачи фичи 043 — файлы с докачкой в о
 
 ## Phase 2: Foundational
 
-Общее для нескольких историй: лестница пауз (очередь и скачивание) и поколение передач (отмена при выходе, сбросе и смене пути).
+Общее для нескольких историй: лестница пауз (очередь и скачивание) и отмена передач (при выходе, сбросе и смене пути).
 
 - [X] T002 [P] Вынести лестницу пауз из `lib/data/sync/outbox_service.dart` в новый `lib/data/sync/retry_ladder.dart`:
   - `RetryLadder.pause(int attempts)` = `min(30 с, 1 с × 2^(attempts−1))` ±20 %, `Random` подставляется;
@@ -44,9 +44,9 @@ description: "Задачи фичи 043 — файлы с докачкой в о
   - `OutboxService` берёт их оттуда, поведение не меняется.
   Тест `test/data/sync/retry_ladder_test.dart`: границы, рост вдвое, потолок 30 с, джиттер в пределах ±20 %.
 - [X] T003 [P] Поколение передач в `lib/data/remote/api_client.dart`:
-  - `CancelToken get transferToken` (текущее поколение) и `void cancelTransfers()` — отменяет текущее поколение и заводит новое;
+  - реестр идущих передач: `beginTransfer()` / `endTransfer()` (у каждой свой токен) и `void cancelTransfers()` — обрывает все идущие (вместо общего токена «поколения», см. research §9);
   - `FileRemoteDataSource.cancelTransfers()` в интерфейсе `lib/data/remote/datasource/file_remote_data_source.dart`, у настоящего источника — через `ApiClient`, у мока — ничего.
-  Тест в `test/data/remote/api_client_test.dart` против локального TLS-сервера на фикстурах: запрос с токеном поколения, идущий во время `cancelTransfers()`, кончается отменой, а следующий проходит.
+  Тест в `test/data/remote/api_client_test.dart` против локального TLS-сервера на фикстурах: передача, идущая во время `cancelTransfers()`, кончается отменой, а начатая после проходит; законченная передача отменой не задевается.
 
 **Checkpoint**: общая основа готова, истории можно начинать.
 
@@ -124,13 +124,13 @@ description: "Задачи фичи 043 — файлы с докачкой в о
 
 ### Tests for User Story 1 — приложение
 
-- [ ] T014 [P] [US1] Новый `test/data/mapper/chat/outbox_mapper_test.dart`: три поля `uploadFileId`/`uploadSourceSize`/`uploadSourceModifiedAt` (мс) ↔ `UnfinishedUpload`; без любого из трёх — `null`; JSON записи, сделанной до 043, читается.
-- [ ] T015 [P] [US1] `test/data/repository/chat/outbox_repository_impl_test.dart`:
+- [X] T014 [P] [US1] Новый `test/data/mapper/chat/outbox_mapper_test.dart`: три поля `uploadFileId`/`uploadSourceSize`/`uploadSourceModifiedAt` (мс) ↔ `UnfinishedUpload`; без любого из трёх — `null`; JSON записи, сделанной до 043, читается.
+- [X] T015 [P] [US1] `test/data/repository/chat/outbox_repository_impl_test.dart`:
   - `noteUpload` хранит и забывает ручку;
   - `attachFile(fileId)` забывает её;
   - `markPending` и `recordFailure` её сохраняют;
   - `pending()` и `watchQueue` её несут.
-- [ ] T016 [P] [US1] Новый `test/data/remote/datasource/real/real_file_remote_data_source_test.dart`, часть загрузки.
+- [X] T016 [P] [US1] Новый `test/data/remote/datasource/real/real_file_remote_data_source_test.dart`, часть загрузки.
   - **Поддельный сокет** (`implements NoxSocketClient`, остальное — `noSuchMethod`): `uploadBegin` шлёт `file_id` только при продолжении; `received` разбирается, а без поля — `null`.
   - **Против локального TLS-сервера**:
     - `putBytes(offset)` шлёт ровно байты `[offset, size)` с `Content-Length = size − offset`, прогресс — `(offset + отправлено, size)`;
@@ -139,12 +139,12 @@ description: "Задачи фичи 043 — файлы с докачкой в о
     - сервер перестал читать тело → сторож застоя (короткий предел через `forTest`) отменяет с `connection` раньше любых сроков Dio;
     - сервер читает медленно, но непрерывно дольше предела застоя — `PUT` доходит до `204` (FR-009);
     - `cancelTransfers()` посреди `PUT` → `connection`.
-- [ ] T017 [P] [US1] Новый `test/data/remote/datasource/mock/mock_file_remote_data_source_test.dart`:
+- [X] T017 [P] [US1] Новый `test/data/remote/datasource/mock/mock_file_remote_data_source_test.dart`:
   - продолжение известной незаконченной загрузки отвечает тем же id и `received`;
   - неизвестный id → `not_found`;
   - `putBytes(offset)` дописывает;
   - израсходованный пропуск бросает `passRejected` — сегодня мок молча возвращается.
-- [ ] T018 [US1] `test/data/repository/file/file_repository_impl_test.dart`, загрузка. `_FakeSource` получает продолжение и записывает порядок вызовов.
+- [X] T018 [US1] `test/data/repository/file/file_repository_impl_test.dart`, загрузка. `_FakeSource` получает продолжение и записывает порядок вызовов.
   - (a) Новая загрузка на сервере с продолжением: `onUnfinished` получает `{fileId, size, mtime}`, и его `Future` завершается раньше первого байта.
   - (b) С `from` в `uploadBegin` идёт `file_id`, `PUT` начинается с `received`, первым сообщается `received/size`.
   - (c) Сервер забыл загрузку (`not_found`): `onUnfinished(null)`, затем новая загрузка в том же вызове, итог — успех.
@@ -155,7 +155,7 @@ description: "Задачи фичи 043 — файлы с докачкой в о
   - (g) Первый `404` — одна новая просьба продолжения в том же вызове; второй подряд → `internal`.
   - (h) `received == size` → пустой `PUT`, затем id.
   - (i) Обновить существующие тесты: «отказ пропуска — новое объявление» становится «продолжение того же файла», а для старого сервера — по-прежнему новое объявление. Проверка предела 100 MiB до первого байта остаётся как есть (FR-013).
-- [ ] T019 [US1] `test/data/sync/outbox_service_test.dart`, группа `attachments`:
+- [X] T019 [US1] `test/data/sync/outbox_service_test.dart`, группа `attachments`:
   - ручка из записи передаётся как `from`;
   - ручку, о которой сообщил репозиторий, очередь записывает до байтов;
   - новый `OutboxService` над тем же хранилищем (перезапуск) продолжает с записанной ручкой, а не объявляет заново;
@@ -165,28 +165,28 @@ description: "Задачи фичи 043 — файлы с докачкой в о
 
 ### Implementation for User Story 1 — приложение
 
-- [ ] T020 [P] [US1] Новый `lib/domain/model/file/unfinished_upload.dart` (freezed): `fileId`, `sourceSize`, `sourceModifiedAt`.
-- [ ] T021 [US1] Очередь:
+- [X] T020 [P] [US1] Новый `lib/domain/model/file/unfinished_upload.dart` (freezed): `fileId`, `sourceSize`, `sourceModifiedAt`.
+- [X] T021 [US1] Очередь:
   - `lib/domain/model/chat/outbox_entry.dart` — `UnfinishedUpload? upload`;
   - `lib/data/entity/chat/outbox_entity.dart` — три необязательных поля;
   - `lib/data/mapper/chat/outbox_mapper.dart`;
   - `lib/domain/repository/chat/outbox_repository.dart` и `lib/data/repository/chat/outbox_repository_impl.dart` — `noteUpload`, а `attachFile` ещё и забывает ручку.
-- [ ] T022 [US1] Провод и источник данных:
+- [X] T022 [US1] Провод и источник данных:
   - `lib/data/entity/file/upload_ticket_wire_entity.dart` — `received: int?`;
   - в `lib/data/remote/datasource/file_remote_data_source.dart` — `uploadBegin(fileId:)` и `putBytes(offset:)`;
   - `real/real_file_remote_data_source.dart`:
     - `Content-Length` остатка, `file.openRead(offset)`, прогресс `offset + sent`;
     - сторож застоя: таймер перезапускается на каждом `onSendProgress`, отменяет свой `CancelToken`; предел 45 с, конструктор `forTest` задаёт короче;
-    - `receiveTimeout` запроса = предел застоя;
-    - свой токен связан с `ApiClient.transferToken`;
+    - после последнего отданного байта — ожидание ответа до 3 минут (`answerWait`, и `receiveTimeout` запроса): хвост ещё сливается из буферов, и предел застоя оборвал бы здоровую загрузку;
+    - свой токен из реестра `ApiClient` (`beginTransfer`/`endTransfer`);
   - `mock/mock_file_remote_data_source.dart` — продолжение и `passRejected` на израсходованный пропуск.
-- [ ] T023 [US1] `lib/domain/repository/file/file_repository.dart` — `upload(from:, onUnfinished:)`; `lib/data/repository/file/file_repository_impl.dart` — алгоритм research §7:
+- [X] T023 [US1] `lib/domain/repository/file/file_repository.dart` — `upload(from:, onUnfinished:)`; `lib/data/repository/file/file_repository_impl.dart` — алгоритм research §7:
   - слепок исходника — перед попыткой и после каждого `PUT`; ошибки `dart:io` на исходнике → `notFound`;
   - `not_found` → новая загрузка; старый сервер → целиком;
   - один повтор после `404`, второй → `internal`;
   - прогресс с `received`;
   - в логах только id и смещения.
-- [ ] T024 [US1] `lib/data/sync/outbox_service.dart`, `_uploadFor`:
+- [X] T024 [US1] `lib/data/sync/outbox_service.dart`, `_uploadFor`:
   - `from: entry.upload`, `onUnfinished` → `_outbox.noteUpload`;
   - окончательный отказ → `noteUpload(null)`.
   Документ `lib/domain/model/file/attachment_transfer.dart`: перезапуск продолжает с того, что есть у сервера.
@@ -252,7 +252,7 @@ description: "Задачи фичи 043 — файлы с докачкой в о
   - `FetchedBytes` и `openBytes(downloadPath:, offset:, validator:)` вместо `getBytes` в `lib/data/remote/datasource/file_remote_data_source.dart`;
   - настоящий источник — `dio.get` с `ResponseType.stream`:
     - `Range` и `If-Range` только при `offset > 0` и валидаторе;
-    - `receiveTimeout` = предел застоя, токен связан с поколением;
+    - `receiveTimeout` = предел застоя, токен из реестра `ApiClient`;
     - коды: `200`/`206` → `FetchedBytes`, `416` → `staleRange`, `404` → `passRejected`, остальное → `connection`;
   - мок — остаток сохранённого файла.
 - [ ] T035 [US2] `lib/domain/repository/file/file_repository.dart` — `download(expectedSize:)` и `cancelTransfers()`. В `lib/data/repository/file/file_repository_impl.dart` переписать `_downloadOnce` по research §6:
@@ -284,7 +284,7 @@ description: "Задачи фичи 043 — файлы с докачкой в о
 ### Tests for User Story 3
 
 - [ ] T040 [P] [US3] `test/data/remote/api_client_test.dart`:
-  - `initBase` с другим адресом отменяет текущее поколение: идущий к серверу A запрос кончается отменой;
+  - `initBase` с другим адресом обрывает идущие передачи: запрос к серверу A кончается отменой;
   - тот же адрес — не отменяет;
   - первый `initBase` не отменяет ничего.
 - [ ] T041 [P] [US3] `test/data/remote/datasource/real/real_file_remote_data_source_test.dart`, два TLS-сервера на loopback с одним сертификатом:
@@ -343,7 +343,7 @@ description: "Задачи фичи 043 — файлы с докачкой в о
   - записи 5.3 и File view в `docs/design/system/nox-mobile-screens/specs.js` и `docs/design/system/nox-desktop-screens/specs.js` — так же.
 - [ ] T050 [P] Блюпринты:
   - `docs/blueprints/mobile/16-file-upload.md` — §0, §1, §3, §5 и чеклист §9: продолжение, `received`, остаток в `PUT`, коды, докачка, пределы застоя, сервис скачивания;
-  - `docs/blueprints/mobile/14-networking-and-auth.md` — REST с продолжением в обе стороны, только застой, поколение передач при смене пути;
+  - `docs/blueprints/mobile/14-networking-and-auth.md` — REST с продолжением в обе стороны, только застой, обрыв передач при смене пути;
   - `docs/blueprints/mobile/04-data-layer.md` — §6а: ручка незаконченной загрузки; `data/sync`: `retry_ladder.dart`, `attachment_download_service_impl.dart`;
   - `docs/blueprints/client-backend/README.md` — загрузка с продолжением, сроки застоя.
 - [ ] T051 [P] `.claude/skills/ws-rest-patterns/SKILL.md`, §6 и таблица ошибок:
@@ -370,7 +370,7 @@ description: "Задачи фичи 043 — файлы с докачкой в о
 - **US2 (Phase 4)** — после US1:
   - те же файлы `file_remote_data_source.dart`, `real_file_remote_data_source.dart`, `file_repository_impl.dart`, `files.go`;
   - T034 → T035 → T036 → T037/T038/T039.
-- **US3 (Phase 5)** — после T003 и T022/T034 (передачи слушают поколение).
+- **US3 (Phase 5)** — после T003 и T022/T034 (передачи берут токен из реестра).
 - **US4 (Phase 6)** — после US1 (`_uploadFor`) и US2 (сервис скачивания).
 - **Phase 7** — после всех историй.
 - **Polish** — после Phase 7; T054 последним из кода, T055 — владелец.

@@ -24,8 +24,8 @@ abstract class FileRemoteDataSource {
   /// The caller writes them; the reply says which of the two came.
   Future<FetchedBytes> openBytes({required String downloadPath, required int offset, String? validator});
 
-  /// Ends every byte transfer under way: the current transfer generation of
-  /// `ApiClient` is cancelled and a new one starts.
+  /// Ends every byte transfer under way (`ApiClient.cancelTransfers`); a
+  /// transfer started afterwards is not touched.
   void cancelTransfers();
 }
 
@@ -38,7 +38,7 @@ class FetchedBytes {
 }
 ```
 
-`FileTransferFailure`: `passRejected` (404), `sizeMismatch` (413, 400), `staleRange` (416, **новое**), `connection` (всё остальное: 408, 409, 5xx, транспорт, застой, отмена поколения).
+`FileTransferFailure`: `passRejected` (404), `sizeMismatch` (413, 400), `staleRange` (416, **новое**), `connection` (всё остальное: 408, 409, 5xx, транспорт, застой, `cancelTransfers`).
 
 `UploadTicketWireEntity` — плюс `received: int?`.
 
@@ -127,5 +127,5 @@ FileViewBloc (5.3) ────────┴─fetch──► AttachmentDownlo
 
 LiveSessionStarter (смена мира), AuthRepositoryImpl (выход):
     AttachmentDownloadService.reset() → FileRepository.clean()
-LiveSessionStarter._adoptGreeting → ApiClient.initBase(новый адрес) → отмена поколения передач
+LiveSessionStarter._adoptGreeting → ApiClient.initBase(новый адрес) → cancelTransfers() — обрыв передач старого пути
 ```

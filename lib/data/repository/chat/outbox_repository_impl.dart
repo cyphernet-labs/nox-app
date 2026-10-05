@@ -6,6 +6,7 @@ import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/outbox_entry.dart';
 import 'package:nox_app/domain/model/chat/outbox_status.dart';
+import 'package:nox_app/domain/model/file/unfinished_upload.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/general/app_clock.dart';
@@ -83,7 +84,24 @@ class OutboxRepositoryImpl with BaseRepositoryHelper implements OutboxRepository
 
   @override
   Future<void> attachFile({required String clientMessageId, required String? fileId}) async {
-    await _mutate(clientMessageId, (entity) => entity.copyWith(fileId: fileId));
+    // The bytes are confirmed: the unfinished upload is finished, and keeping
+    // its handle would only invite continuing a file that needs nothing more.
+    await _mutate(
+      clientMessageId,
+      (entity) => entity.copyWith(fileId: fileId, uploadFileId: null, uploadSourceSize: null, uploadSourceModifiedAt: null),
+    );
+  }
+
+  @override
+  Future<void> noteUpload({required String clientMessageId, required UnfinishedUpload? upload}) async {
+    await _mutate(
+      clientMessageId,
+      (entity) => entity.copyWith(
+        uploadFileId: upload?.fileId,
+        uploadSourceSize: upload?.sourceSize,
+        uploadSourceModifiedAt: upload?.sourceModifiedAt.toUtc().millisecondsSinceEpoch,
+      ),
+    );
   }
 
   @override

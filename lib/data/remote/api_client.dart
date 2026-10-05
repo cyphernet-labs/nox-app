@@ -22,24 +22,35 @@ class ApiClient {
   final PinnedHttpClient _pinned;
   final Dio dio;
 
-  /// What every byte transfer of the current generation listens to.
+  /// The byte transfers under way, each holding its own token.
   ///
   /// A transfer can outlive the reason it was started: a logout, a change of
-  /// server, a path the socket has just abandoned. Cancelling this token ends
-  /// every one of them at once - each was resumable, so ending it costs only
-  /// the bytes in flight, while letting it run would keep reaching a machine
-  /// or a path nobody uses any more.
-  CancelToken get transferToken => _transferToken;
-  CancelToken _transferToken = CancelToken();
+  /// server, a path the socket has just abandoned. [cancelTransfers] ends every
+  /// one of them at once - each is resumable, so ending it costs only the bytes
+  /// in flight, while letting it run would keep reaching a machine or a path
+  /// nobody uses any more. One token per transfer, not one shared: a transfer
+  /// whose bytes stopped moving is ended on its own, and nothing outlives the
+  /// transfer it belonged to.
+  final Set<CancelToken> _transfers = <CancelToken>{};
 
-  /// Ends every byte transfer under way and starts a new generation.
-  ///
-  /// The new token is in place BEFORE the old one fires: whoever reacts to the
-  /// cancel by starting again must pick up the new generation, not the dead one.
+  /// A token for one byte transfer. Hand it back with [endTransfer] once the
+  /// transfer is over, whichever way it ended.
+  CancelToken beginTransfer() {
+    final token = CancelToken();
+    _transfers.add(token);
+    return token;
+  }
+
+  void endTransfer(CancelToken token) => _transfers.remove(token);
+
+  /// Ends every byte transfer under way. A transfer started after this call is
+  /// not touched by it.
   void cancelTransfers() {
-    final ended = _transferToken;
-    _transferToken = CancelToken();
-    ended.cancel('transfers cancelled');
+    final under = List<CancelToken>.of(_transfers);
+    _transfers.clear();
+    for (final token in under) {
+      token.cancel('transfers cancelled');
+    }
   }
 
   /// Points the client at the paired server and installs the interceptor.

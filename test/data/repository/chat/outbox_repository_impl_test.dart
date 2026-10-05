@@ -5,9 +5,17 @@ import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/outbox_status.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
+import 'package:nox_app/domain/model/file/unfinished_upload.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/general/app_clock.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+/// The same handle, the moment compared as a moment: the store hands the domain
+/// local wall-clock time, as it does for every other timestamp.
+Matcher _same(UnfinishedUpload expected) => isA<UnfinishedUpload>()
+    .having((u) => u.fileId, 'fileId', expected.fileId)
+    .having((u) => u.sourceSize, 'sourceSize', expected.sourceSize)
+    .having((u) => u.sourceModifiedAt.isAtSameMomentAs(expected.sourceModifiedAt), 'same moment', isTrue);
 
 /// The queue's whole reason to exist is that the idempotency key is minted at
 /// enqueue time and stored with the record. These tests hold that line.
@@ -157,5 +165,50 @@ void main() {
     expect(moved.map((e) => e.clientMessageId), [first.clientMessageId, second.clientMessageId]);
     expect(await repository.watchQueue(chatId: 'c_local').first, isEmpty);
     expect((await repository.find(clientMessageId: other.clientMessageId))?.chatId, 'c_other');
+  });
+
+  group('the unfinished upload (phase 043)', () {
+    final upload = UnfinishedUpload(fileId: 'f_77', sourceSize: 2048, sourceModifiedAt: DateTime.utc(2026, 10, 5, 9, 30));
+
+    test('noteUpload remembers the handle, and the drain\'s input carries it', () async {
+      final entry = (await repository.enqueue(chatId: 'c1', text: 'with a file')).data!;
+
+      await repository.noteUpload(clientMessageId: entry.clientMessageId, upload: upload);
+
+      expect((await repository.pending()).single.upload, _same(upload));
+      expect((await repository.find(clientMessageId: entry.clientMessageId))!.upload, _same(upload));
+      expect((await repository.watchQueue().first).single.upload, _same(upload));
+    });
+
+    test('noteUpload with null forgets it', () async {
+      final entry = (await repository.enqueue(chatId: 'c1', text: 'with a file')).data!;
+      await repository.noteUpload(clientMessageId: entry.clientMessageId, upload: upload);
+
+      await repository.noteUpload(clientMessageId: entry.clientMessageId, upload: null);
+
+      expect((await repository.pending()).single.upload, isNull);
+    });
+
+    test('confirmed bytes forget it: there is nothing left to continue', () async {
+      final entry = (await repository.enqueue(chatId: 'c1', text: 'with a file')).data!;
+      await repository.noteUpload(clientMessageId: entry.clientMessageId, upload: upload);
+
+      await repository.attachFile(clientMessageId: entry.clientMessageId, fileId: 'f_77');
+
+      final read = (await repository.pending()).single;
+      expect(read.fileId, 'f_77');
+      expect(read.upload, isNull);
+    });
+
+    test('a failure and a manual retry keep it - the retry goes on from the server\'s bytes', () async {
+      final entry = (await repository.enqueue(chatId: 'c1', text: 'with a file')).data!;
+      await repository.noteUpload(clientMessageId: entry.clientMessageId, upload: upload);
+
+      await repository.recordFailure(clientMessageId: entry.clientMessageId, code: 'internal', terminal: true, serverAnswered: true);
+      expect((await repository.find(clientMessageId: entry.clientMessageId))!.upload, _same(upload));
+
+      await repository.markPending(clientMessageId: entry.clientMessageId);
+      expect((await repository.pending()).single.upload, _same(upload));
+    });
   });
 }

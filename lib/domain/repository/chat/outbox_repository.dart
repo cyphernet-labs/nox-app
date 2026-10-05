@@ -1,5 +1,6 @@
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/outbox_entry.dart';
+import 'package:nox_app/domain/model/file/unfinished_upload.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 
 /// The durable queue of outgoing sends (contract v0 §9.3/§9.8).
@@ -51,6 +52,14 @@ abstract class OutboxRepository {
   /// the server sweeps uploads never bound to a message after a day, and a
   /// remembered id can outlive its file.
   Future<void> attachFile({required String clientMessageId, required String? fileId});
+
+  /// Remembers - or, with null, forgets - the upload of this send's attachment
+  /// that the server holds part of (phase 043).
+  ///
+  /// Written as soon as the server names the upload, before the first byte, so
+  /// a restart goes on from what the server has. [attachFile] forgets it: once
+  /// the bytes are confirmed there is nothing left to continue.
+  Future<void> noteUpload({required String clientMessageId, required UnfinishedUpload? upload});
 
   /// Puts a failed entry back in line (manual retry) and resets BOTH counters.
   ///
