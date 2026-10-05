@@ -130,22 +130,92 @@ class RealFileRemoteDataSource implements FileRemoteDataSource {
   }
 
   @override
-  Future<void> getBytes({required String downloadPath, required File destination, TransferProgress? onProgress}) async {
+  Future<FetchedBytes> openBytes({required String downloadPath, required int offset, String? validator}) async {
     final cancel = _apiClient.beginTransfer();
+    // Only with a validator: bytes whose version nobody wrote down could be the
+    // start of another file, and the server is the only one who can say.
+    final resuming = offset > 0 && validator != null;
+    final Response<ResponseBody> response;
     try {
-      final response = await _apiClient.dio.download(
+      response = await _apiClient.dio.get<ResponseBody>(
         downloadPath,
-        destination.path,
         cancelToken: cancel,
-        options: Options(validateStatus: (status) => status != null && status < 500),
-        onReceiveProgress: onProgress == null ? null : (received, total) => onProgress(received, total),
+        options: Options(
+          responseType: ResponseType.stream,
+          // Dio counts this between chunks of the body, not over the whole of
+          // it: silence ends the transfer, time alone never does.
+          receiveTimeout: _stallLimit,
+          headers: resuming ? <String, dynamic>{'range': 'bytes=$offset-', 'if-range': validator} : null,
+          validateStatus: (status) => status != null && status < 500,
+        ),
       );
-      _checkTransfer(response);
     } on DioException {
+      _apiClient.endTransfer(cancel);
+      throw const FileTransferException(FileTransferFailure.connection);
+    }
+
+    final status = response.statusCode ?? 0;
+    final body = response.data;
+    if ((status == 200 || status == 206) && body != null) {
+      final whole = status == 200;
+      final total = whole ? _lengthOf(response, body) : _rangeTotalFrom(response, offset);
+      if (total != null) {
+        // Armed now, not at the first byte: Dio starts its own clock only once
+        // a chunk arrives, so a body that never sends one would wait forever.
+        final watch = _StallWatch(_stallLimit, () => cancel.cancel('stalled'));
+        return FetchedBytes(
+          whole: whole,
+          total: total,
+          validator: response.headers.value('last-modified'),
+          bytes: _guarded(body.stream, cancel, watch),
+          abandon: () {
+            watch.stop();
+            cancel.cancel('abandoned');
+            _apiClient.endTransfer(cancel);
+          },
+        );
+      }
+    }
+    // Anything else carries no bytes worth reading; let the connection go.
+    cancel.cancel('not a body this download can use');
+    _apiClient.endTransfer(cancel);
+    // 404 is every token failure (ask for a new pass); 416 says the bytes here
+    // are not shorter than the file there - another version of it.
+    if (status == 404) throw const FileTransferException(FileTransferFailure.passRejected);
+    // A range that does not start where this device stopped fits nothing here
+    // either: start the file over rather than ask the same question forever.
+    if (status == 416 || status == 206) throw const FileTransferException(FileTransferFailure.staleRange);
+    throw const FileTransferException(FileTransferFailure.connection);
+  }
+
+  /// The body, with every way it can break turned into a broken connection,
+  /// silence ended by [watch], and the transfer handed back however it ends.
+  Stream<List<int>> _guarded(Stream<List<int>> source, CancelToken cancel, _StallWatch watch) async* {
+    try {
+      await for (final chunk in source) {
+        watch.moved();
+        yield chunk;
+      }
+    } on Object {
       throw const FileTransferException(FileTransferFailure.connection);
     } finally {
+      watch.stop();
       _apiClient.endTransfer(cancel);
     }
+  }
+
+  static int? _lengthOf(Response<ResponseBody> response, ResponseBody body) {
+    final declared = int.tryParse(response.headers.value(Headers.contentLengthHeader) ?? '');
+    return declared ?? (body.contentLength >= 0 ? body.contentLength : null);
+  }
+
+  /// The whole size from `Content-Range: bytes <start>-<end>/<total>`, or null
+  /// when the range does not start where this device stopped - the rest of the
+  /// file only fits here if it begins exactly there.
+  static int? _rangeTotalFrom(Response<ResponseBody> response, int offset) {
+    final match = RegExp(r'^bytes (\d+)-(\d+)/(\d+)$').firstMatch(response.headers.value('content-range') ?? '');
+    if (match == null || int.parse(match.group(1)!) != offset) return null;
+    return int.parse(match.group(3)!);
   }
 
   @override

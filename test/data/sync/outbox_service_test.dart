@@ -106,8 +106,15 @@ class _FakeFiles implements FileRepository {
   }
 
   @override
-  Future<RepositoryResult<String>> download({required String fileId, required String suggestedName, TransferFraction? onProgress}) async =>
-      RepositoryResult<String>.success(data: '/tmp/$fileId');
+  Future<RepositoryResult<String>> download({
+    required String fileId,
+    required String suggestedName,
+    int? expectedSize,
+    TransferFraction? onProgress,
+  }) async => RepositoryResult<String>.success(data: '/tmp/$fileId');
+
+  @override
+  Future<void> cancelTransfers() async {}
 
   @override
   Future<String?> localPathFor({required String fileId, required String suggestedName}) async => null;

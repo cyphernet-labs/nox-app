@@ -36,10 +36,41 @@ abstract class FileRemoteDataSource {
 
   Future<ResponseEntity<DownloadTicketWireEntity>> downloadBegin({required String fileId});
 
-  Future<void> getBytes({required String downloadPath, required File destination, TransferProgress? onProgress});
+  /// Opens the file's bytes: the rest of it from [offset] when [validator] says
+  /// which version of the file the bytes on this device came from, the whole
+  /// file otherwise - or when the server holds another version now. The caller
+  /// writes them; [FetchedBytes.whole] says which of the two arrived. Ends with
+  /// a connection failure once no byte has arrived for the stall limit.
+  Future<FetchedBytes> openBytes({required String downloadPath, required int offset, String? validator});
 
   /// Ends every byte transfer under way: a logout, a change of server, a path
   /// the socket has left. Each ends as a broken connection would, and each was
   /// resumable, so nothing is lost but the bytes in flight.
   void cancelTransfers();
+}
+
+/// What a download request brought (phase 043): the rest of the file from
+/// where this device stopped, or the whole file over again.
+class FetchedBytes {
+  const FetchedBytes({required this.whole, required this.total, required this.validator, required this.bytes, required this.abandon});
+
+  /// The whole file, from its first byte: the server ignored the range,
+  /// because the bytes here belong to another version of the file.
+  final bool whole;
+
+  /// The size of the whole file, however much of it is coming.
+  final int total;
+
+  /// What the server calls this version of the file (`Last-Modified`): the
+  /// next request for the rest names it, so bytes of two versions can never
+  /// meet in one file. Null when the server named none - the bytes then cannot
+  /// be continued.
+  final String? validator;
+
+  /// The bytes, as they arrive. Errors are [FileTransferException]s.
+  final Stream<List<int>> bytes;
+
+  /// Lets the bytes go without reading them - the file turned out to be one
+  /// this device does not want - and hands the transfer back.
+  final void Function() abandon;
 }

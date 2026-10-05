@@ -4,6 +4,7 @@ import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/remote/pinned_http_client.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
+import 'package:nox_app/domain/service/attachment_download_service.dart';
 import 'package:nox_app/data/sync/connection/access_key_registrar.dart';
 import 'package:nox_app/data/sync/connection/connection_path_selector.dart';
 import 'package:nox_app/data/sync/sync_service.dart';
@@ -365,6 +366,9 @@ class LiveSessionStarter {
     // same reason logout treats it that way: a cache directory that will not
     // clear is not worth keeping the app off the screen for.
     try {
+      // Downloads of the old world stop first (phase 043), or one would write
+      // its next chunk into the cache being emptied.
+      if (getIt.isRegistered<AttachmentDownloadService>()) await getIt<AttachmentDownloadService>().reset();
       await _files.clean();
     } on Object catch (e, s) {
       logRepository.error(target: this, error: e, stackTrace: s);

@@ -7,11 +7,9 @@ import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
 import 'package:nox_app/domain/model/file/attachment_transfer.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
-import 'package:nox_app/domain/repository/chat/message_repository.dart';
-import 'package:nox_app/domain/repository/file/file_repository.dart';
+import 'package:nox_app/domain/service/attachment_download_service.dart';
 import 'package:nox_app/domain/service/attachment_transfer_service.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
-import 'package:nox_app/general/app_clock.dart';
 
 /// Fetches the bytes of received IMAGES so they render in the thread.
 ///
@@ -28,13 +26,14 @@ import 'package:nox_app/general/app_clock.dart';
 ///
 /// The thread calls it on every load and refresh and whenever the channel
 /// comes back, so a picture that arrives while the thread is open is fetched
-/// at once, and one whose fetch failed is tried again.
+/// at once. A broken link does not end a fetch: the download service keeps at
+/// it and goes on from the bytes already here (phase 043), and it records the
+/// path itself.
 @LazySingleton(env: [Environment.dev, Environment.prod, Environment.test])
 class AttachmentPrefetchService {
-  AttachmentPrefetchService(this._files, this._messages, this._phase, this._transfers);
+  AttachmentPrefetchService(this._downloads, this._phase, this._transfers);
 
-  final FileRepository _files;
-  final MessageRepository _messages;
+  final AttachmentDownloadService _downloads;
   final SessionPhaseService _phase;
   final AttachmentTransferService _transfers;
 
@@ -56,17 +55,18 @@ class AttachmentPrefetchService {
   /// every picture in the thread until the app restarts.
   final Set<String> _hopeless = <String>{};
 
-  /// When a picture whose fetch failed may be asked for again. Every stored
-  /// path refreshes the thread, and without a pause a file the server keeps
-  /// refusing was asked for again after each of them.
-  final Map<String, DateTime> _retryAfter = <String, DateTime>{};
-  static const Duration _retryPause = Duration(seconds: 15);
+  /// Pictures the download service gave up on after the server kept refusing
+  /// them. They wait for the channel to come back - or for a tap, which opens
+  /// the file view and asks afresh - and not for the next refresh: every new
+  /// message refreshes the thread, and each would start another whole ladder
+  /// of refusals for a picture the automation has already given up on.
+  final Set<String> _exhausted = <String>{};
 
   Future<void>? _worker;
 
   /// Queues anything in [messages] that needs fetching. Safe to call on every
-  /// tick. [retryNow] lifts the pause after failures: the channel has just
-  /// come back, which is the moment a failed fetch deserves another go.
+  /// tick. [retryNow] gives the pictures the automation gave up on another go:
+  /// the channel has just come back, which is the moment that deserves one.
   ///
   /// The future completes when the queue has run dry.
   Future<void> prefetch(List<MessageModel> messages, {bool retryNow = false}) {
@@ -76,8 +76,7 @@ class AttachmentPrefetchService {
     // and a refusal here would only be logged, so nothing would ever say why
     // the pictures stopped arriving.
     if (_phase.phase.isServerMismatch) return Future<void>.value();
-    if (retryNow) _retryAfter.clear();
-    final now = AppClock.now();
+    if (retryNow) _exhausted.clear();
     for (final message in messages) {
       final attachment = message.attachment;
       if (attachment == null) continue;
@@ -87,8 +86,7 @@ class AttachmentPrefetchService {
       final stored = attachment.localPath;
       if (stored != null && File(stored).existsSync()) continue;
       if (_hopeless.contains(message.id)) continue; // it is not coming
-      final notBefore = _retryAfter[message.id];
-      if (notBefore != null && now.isBefore(notBefore)) continue;
+      if (_exhausted.contains(message.id)) continue; // waits for the channel
       if (!_wanted.add(message.id)) continue; // already queued or on its way
       _queue.add(message);
     }
@@ -114,30 +112,23 @@ class AttachmentPrefetchService {
     final attachment = message.attachment!;
     _transfers.begin(message.id, TransferDirection.download, chatId: message.chatId);
     try {
-      final result = await _files.download(
-        fileId: attachment.id,
-        suggestedName: attachment.name,
+      final result = await _downloads.fetch(
+        messageId: message.id,
+        attachment: attachment,
         onProgress: (fraction) => _transfers.report(message.id, fraction),
       );
-      final path = result.data;
-      if (path == null) {
-        // A refusal the bytes will never survive is worth remembering; a lost
-        // connection is not. Marking a network failure permanent would mean
-        // one bad moment costs every picture in the thread until the app is
-        // restarted.
-        if (result.exception == RepositoryException.attachmentGone || result.exception == RepositoryException.notFound) {
-          _hopeless.add(message.id);
-        } else {
-          _retryAfter[message.id] = AppClock.now().add(_retryPause);
-        }
-        return;
+      if (result.hasData) return;
+      // A refusal the bytes will never survive is worth remembering for good;
+      // a server that kept refusing waits for the channel to come back.
+      if (result.exception == RepositoryException.attachmentGone || result.exception == RepositoryException.notFound) {
+        _hopeless.add(message.id);
+      } else {
+        _exhausted.add(message.id);
       }
-      _retryAfter.remove(message.id);
-      await _messages.attachLocalFile(messageId: message.id, localPath: path);
     } catch (error, stackTrace) {
       // A picture nobody asked for is not worth surfacing: the placeholder
       // stays, and a tap still offers the real thing.
-      _retryAfter[message.id] = AppClock.now().add(_retryPause);
+      _exhausted.add(message.id);
       logRepository.error(target: this, error: error, stackTrace: stackTrace);
     } finally {
       _transfers.end(message.id);
@@ -150,6 +141,6 @@ class AttachmentPrefetchService {
     _queue.clear();
     _wanted.clear();
     _hopeless.clear();
-    _retryAfter.clear();
+    _exhausted.clear();
   }
 }

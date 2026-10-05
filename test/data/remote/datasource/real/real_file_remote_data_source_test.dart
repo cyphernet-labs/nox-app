@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/data/exception/file_transfer_exception.dart';
 import 'package:nox_app/data/remote/api_client.dart';
+import 'package:nox_app/data/remote/datasource/file_remote_data_source.dart';
 import 'package:nox_app/data/remote/datasource/real/real_file_remote_data_source.dart';
 import 'package:nox_app/data/remote/pinned_http_client.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
@@ -98,6 +99,73 @@ class _PutServer {
       } on Object {
         // The client went away; nothing to answer.
       }
+    });
+  }
+
+  Future<void> close() => _server.close(force: true);
+}
+
+/// The server's side of a GET, played on the paired machine's certificate:
+/// [HttpRequest.response] with Range and If-Range answered the way
+/// `http.ServeContent` answers them.
+class _GetServer {
+  late HttpServer _server;
+  int get port => _server.port;
+
+  List<int> file = const <int>[];
+  String version = 'Mon, 05 Oct 2026 09:30:00 GMT';
+
+  /// Send this many bytes of the body, then stop - keeping the connection.
+  int? stallAfter;
+
+  /// Answer this status instead, with no body.
+  int? status;
+
+  final List<Map<String, String?>> asked = <Map<String, String?>>[];
+
+  Future<void> start() async {
+    final context = SecurityContext()
+      ..useCertificateChainBytes(File('$_fixtures/valid.pem').readAsBytesSync())
+      ..usePrivateKeyBytes(File('$_fixtures/server_key.pem').readAsBytesSync());
+    _server = await HttpServer.bindSecure(InternetAddress.loopbackIPv4, 0, context);
+    _server.listen((request) async {
+      final range = request.headers.value('range');
+      final ifRange = request.headers.value('if-range');
+      asked.add(<String, String?>{'range': range, 'if-range': ifRange});
+      final response = request.response;
+      final forced = status;
+      if (forced != null) {
+        response.statusCode = forced;
+        await response.close();
+        return;
+      }
+      response.headers.set('last-modified', version);
+      var from = 0;
+      if (range != null && ifRange == version) {
+        from = int.parse(RegExp(r'bytes=(\d+)-').firstMatch(range)!.group(1)!);
+        if (from >= file.length) {
+          response
+            ..statusCode = HttpStatus.requestedRangeNotSatisfiable
+            ..headers.set('content-range', 'bytes */${file.length}');
+          await response.close();
+          return;
+        }
+        response
+          ..statusCode = HttpStatus.partialContent
+          ..headers.set('content-range', 'bytes $from-${file.length - 1}/${file.length}');
+      }
+      final body = file.sublist(from);
+      response.contentLength = body.length;
+      final cut = stallAfter;
+      if (cut != null) {
+        // Unbuffered, or dart:io keeps these bytes back until it has more.
+        response.bufferOutput = false;
+        if (cut > 0) response.add(body.sublist(0, cut));
+        await response.flush();
+        return; // never finishes: the path went quiet
+      }
+      response.add(body);
+      await response.close();
     });
   }
 
@@ -260,6 +328,131 @@ void main() {
       source().cancelTransfers();
 
       await expectLater(put, throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.connection)));
+    });
+  });
+
+  group('openBytes', () {
+    late _GetServer getServer;
+    late ApiClient getApi;
+
+    RealFileRemoteDataSource downloads({Duration stallLimit = const Duration(seconds: 2)}) =>
+        RealFileRemoteDataSource.forTest(socket, getApi, stallLimit: stallLimit);
+
+    Future<List<int>> drain(FetchedBytes fetched) async => [await for (final chunk in fetched.bytes) ...chunk];
+
+    setUp(() async {
+      getServer = _GetServer()..file = List<int>.generate(1000, (i) => i % 251);
+      await getServer.start();
+      getApi = ApiClient(_Config(), PinnedHttpClient()..pinTo(_fingerprint))..initBase(address: 'https://127.0.0.1:${getServer.port}');
+    });
+
+    tearDown(() => getServer.close());
+
+    test('from the start asks for no range and gets the whole file, with its version', () async {
+      final fetched = await downloads().openBytes(downloadPath: '/files/t', offset: 0);
+
+      expect(getServer.asked.single, {'range': null, 'if-range': null});
+      expect(fetched.whole, isTrue);
+      expect(fetched.total, 1000);
+      expect(fetched.validator, getServer.version);
+      expect(await drain(fetched), getServer.file);
+    });
+
+    test('with bytes of the same version here, only the rest comes (FR-006)', () async {
+      final fetched = await downloads().openBytes(downloadPath: '/files/t', offset: 600, validator: getServer.version);
+
+      expect(getServer.asked.single, {'range': 'bytes=600-', 'if-range': getServer.version});
+      expect(fetched.whole, isFalse);
+      expect(fetched.total, 1000, reason: 'the size of the whole file, from Content-Range');
+      expect(await drain(fetched), getServer.file.sublist(600));
+    });
+
+    test('bytes of another version get the whole file again (FR-007)', () async {
+      final fetched = await downloads().openBytes(downloadPath: '/files/t', offset: 600, validator: 'Sun, 04 Oct 2026 09:30:00 GMT');
+
+      expect(fetched.whole, isTrue);
+      expect(await drain(fetched), getServer.file);
+    });
+
+    test('bytes nobody wrote the version of are not continued: no range is asked for', () async {
+      final fetched = await downloads().openBytes(downloadPath: '/files/t', offset: 600);
+
+      expect(getServer.asked.single['range'], isNull);
+      expect(fetched.whole, isTrue);
+    });
+
+    test('a part no shorter than the file is a stale range', () async {
+      await expectLater(
+        downloads().openBytes(downloadPath: '/files/t', offset: 1000, validator: getServer.version),
+        throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.staleRange)),
+      );
+    });
+
+    test('a refused pass is passRejected', () async {
+      getServer.status = HttpStatus.notFound;
+
+      await expectLater(
+        downloads().openBytes(downloadPath: '/files/t', offset: 0),
+        throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.passRejected)),
+      );
+    });
+
+    test('a body that goes quiet ends as a broken connection, keeping what came', () async {
+      getServer.stallAfter = 300;
+      final fetched = await downloads(stallLimit: const Duration(milliseconds: 500)).openBytes(downloadPath: '/files/t', offset: 0);
+
+      final got = <int>[];
+      await expectLater(
+        fetched.bytes.forEach(got.addAll),
+        throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.connection)),
+      );
+      expect(got, getServer.file.sublist(0, 300));
+    });
+
+    test('a body that never sends a byte after its headers ends too - Dio\'s clock would never start', () async {
+      // dart:io sends headers only with the first byte of a body, so this one
+      // is written by hand: the headers of a 1000-byte file, then nothing.
+      final context = SecurityContext()
+        ..useCertificateChainBytes(File('$_fixtures/valid.pem').readAsBytesSync())
+        ..usePrivateKeyBytes(File('$_fixtures/server_key.pem').readAsBytesSync());
+      final raw = await SecureServerSocket.bind(InternetAddress.loopbackIPv4, 0, context);
+      addTearDown(raw.close);
+      final held = <SecureSocket>[];
+      addTearDown(() async {
+        for (final socket in held) {
+          socket.destroy();
+        }
+      });
+      raw.listen((socket) {
+        held.add(socket);
+        socket.listen((_) {
+          socket.write('HTTP/1.1 200 OK\r\ncontent-length: 1000\r\nlast-modified: ${getServer.version}\r\n\r\n');
+        });
+      });
+      final api = ApiClient(_Config(), PinnedHttpClient()..pinTo(_fingerprint))..initBase(address: 'https://127.0.0.1:${raw.port}');
+
+      final fetched = await RealFileRemoteDataSource.forTest(
+        socket,
+        api,
+        stallLimit: const Duration(milliseconds: 500),
+      ).openBytes(downloadPath: '/files/t', offset: 0);
+
+      await expectLater(
+        fetched.bytes.forEach((_) {}).timeout(const Duration(seconds: 10)),
+        throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.connection)),
+      );
+    });
+
+    test('cancelTransfers ends a body under way as a broken connection', () async {
+      getServer.stallAfter = 300;
+      final source = downloads(stallLimit: const Duration(minutes: 1));
+      final fetched = await source.openBytes(downloadPath: '/files/t', offset: 0);
+      final reading = fetched.bytes.forEach((_) {});
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+
+      source.cancelTransfers();
+
+      await expectLater(reading, throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.connection)));
     });
   });
 }

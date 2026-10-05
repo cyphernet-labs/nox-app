@@ -32,11 +32,27 @@ abstract class FileRepository {
   });
 
   /// Brings the bytes to this device and returns where they landed.
-  Future<RepositoryResult<String>> download({required String fileId, required String suggestedName, TransferFraction? onProgress});
+  ///
+  /// ONE attempt, going on from whatever an earlier one left on this device
+  /// (phase 043) - after a break and after a restart alike. Bytes of another
+  /// version of the file are thrown away, and a file is complete only when it
+  /// is as long as [expectedSize] says. A second caller for the same file
+  /// joins the attempt under way and hears its progress from where it stands.
+  Future<RepositoryResult<String>> download({
+    required String fileId,
+    required String suggestedName,
+    int? expectedSize,
+    TransferFraction? onProgress,
+  });
 
   /// Whether the bytes for [fileId] are already on this device.
   Future<String?> localPathFor({required String fileId, required String suggestedName});
 
-  /// Drops every downloaded byte (logout). They are other people's pictures.
+  /// Ends every transfer under way, both ways (logout, change of server). Each
+  /// ends as a broken connection would, and each could be continued.
+  Future<void> cancelTransfers();
+
+  /// Drops every downloaded byte, finished or not (logout). They are other
+  /// people's pictures.
   Future<void> clean();
 }

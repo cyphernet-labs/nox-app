@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:bloc_test/bloc_test.dart';
@@ -12,6 +13,7 @@ import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
+import 'package:nox_app/domain/service/attachment_download_service.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/presentation/pages/file_view_page/bloc/file_view_bloc.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -19,12 +21,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'file_view_bloc_test.mocks.dart';
 
 /// Contract §2.1 draws a line here that is easy to erase by accident: bytes
-/// that are gone are TERMINAL on this screen with no retry, while a connection
-/// failure keeps its retry. Collapsing the two would tell people a file is lost
-/// forever every time their train enters a tunnel.
-@GenerateMocks([FileRepository])
+/// that are gone are TERMINAL on this screen with no retry, while a server that
+/// kept refusing keeps its retry. And since phase 043 a train entering a tunnel
+/// is neither: the download pauses and goes on by itself, so this screen hears
+/// of it only as a progress bar that waits.
+@GenerateMocks([FileRepository, AttachmentDownloadService])
 void main() {
   late MockFileRepository files;
+  late MockAttachmentDownloadService downloads;
 
   const attachment = MessageAttachment(id: 'f1', type: FileType.pdf, name: 'spec.pdf', sizeBytes: 1024);
 
@@ -34,17 +38,21 @@ void main() {
     provideDummy<RepositoryResult<String>>(RepositoryResult.error(exception: RepositoryException.unknown));
     files = MockFileRepository();
     when(files.localPathFor(fileId: anyNamed('fileId'), suggestedName: anyNamed('suggestedName'))).thenAnswer((_) async => null);
+    downloads = MockAttachmentDownloadService();
     getIt.allowReassignment = true;
     getIt.registerSingleton<FileRepository>(files);
+    getIt.registerSingleton<AttachmentDownloadService>(downloads);
   });
 
   tearDown(() async => getIt.reset());
 
-  void answerDownload(RepositoryResult<String> result) {
-    when(
-      files.download(fileId: anyNamed('fileId'), suggestedName: anyNamed('suggestedName'), onProgress: anyNamed('onProgress')),
-    ).thenAnswer((_) async => result);
-  }
+  PostExpectation<Future<RepositoryResult<String>>> whenFetched() =>
+      when(downloads.fetch(messageId: anyNamed('messageId'), attachment: anyNamed('attachment'), onProgress: anyNamed('onProgress')));
+
+  void answerDownload(RepositoryResult<String> result) => whenFetched().thenAnswer((_) async => result);
+
+  VerificationResult verifyFetched() =>
+      verify(downloads.fetch(messageId: anyNamed('messageId'), attachment: anyNamed('attachment'), onProgress: anyNamed('onProgress')));
 
   blocTest<FileViewBloc, FileViewState>(
     'bytes that are gone end the screen — terminal, and never downloading again',
@@ -65,14 +73,57 @@ void main() {
   );
 
   blocTest<FileViewBloc, FileViewState>(
-    'a lost connection is NOT terminal — the retry has to stay available',
-    setUp: () => answerDownload(RepositoryResult<String>.error(exception: RepositoryException.connection)),
+    'a server that kept refusing is NOT terminal — the retry has to stay available',
+    // What the download service answers once its automation gave up (FR-011).
+    setUp: () => answerDownload(RepositoryResult<String>.error(exception: RepositoryException.internal)),
     build: () => FileViewBloc(file: attachment),
     act: (bloc) => bloc.add(const FileViewEvent.started()),
     wait: const Duration(milliseconds: 200),
     verify: (bloc) {
       expect(bloc.state.status, FileViewStatus.failed);
-      expect(bloc.state.status, isNot(FileViewStatus.gone), reason: 'a tunnel is not a deleted file');
+      expect(bloc.state.status, isNot(FileViewStatus.gone), reason: 'a refusal is not a deleted file');
+    },
+  );
+
+  blocTest<FileViewBloc, FileViewState>(
+    'Try again asks for the download afresh - a new ladder, going on from the bytes already here',
+    setUp: () => answerDownload(RepositoryResult<String>.error(exception: RepositoryException.internal)),
+    build: () => FileViewBloc(file: attachment),
+    act: (bloc) async {
+      bloc.add(const FileViewEvent.started());
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      bloc.add(const FileViewEvent.retried());
+    },
+    wait: const Duration(milliseconds: 200),
+    verify: (_) => verifyFetched().called(2),
+  );
+
+  blocTest<FileViewBloc, FileViewState>(
+    'while the download goes on through broken links, the screen stays on its progress - no error, no Try again',
+    setUp: () => whenFetched().thenAnswer((invocation) {
+      (invocation.namedArguments[#onProgress] as void Function(double)?)?.call(0.4);
+      return Completer<RepositoryResult<String>>().future; // still at it
+    }),
+    build: () => FileViewBloc(file: attachment),
+    act: (bloc) => bloc.add(const FileViewEvent.started()),
+    wait: const Duration(milliseconds: 200),
+    verify: (bloc) {
+      expect(bloc.state.status, FileViewStatus.downloading);
+      expect(bloc.state.progress, 0.4, reason: 'reopened mid-download, it shows where the download stands (FR-007a)');
+    },
+  );
+
+  blocTest<FileViewBloc, FileViewState>(
+    'the download is asked for on behalf of the message, so the bytes land there with the screen closed',
+    setUp: () => answerDownload(const RepositoryResult<String>.success(data: '/tmp/f1.pdf')),
+    build: () => FileViewBloc(file: attachment, messageId: 'm_42'),
+    act: (bloc) => bloc.add(const FileViewEvent.started()),
+    wait: const Duration(milliseconds: 200),
+    verify: (_) {
+      final captured = verify(
+        downloads.fetch(messageId: captureAnyNamed('messageId'), attachment: anyNamed('attachment'), onProgress: anyNamed('onProgress')),
+      ).captured;
+      expect(captured.single, 'm_42');
     },
   );
 
@@ -114,7 +165,9 @@ void main() {
     wait: const Duration(milliseconds: 200),
     verify: (bloc) {
       expect(bloc.state.status, FileViewStatus.ready);
-      verifyNever(files.download(fileId: anyNamed('fileId'), suggestedName: anyNamed('suggestedName'), onProgress: anyNamed('onProgress')));
+      verifyNever(
+        downloads.fetch(messageId: anyNamed('messageId'), attachment: anyNamed('attachment'), onProgress: anyNamed('onProgress')),
+      );
     },
   );
 
@@ -133,7 +186,9 @@ void main() {
     wait: const Duration(milliseconds: 200),
     verify: (bloc) {
       expect(bloc.state.status, FileViewStatus.failed);
-      verifyNever(files.download(fileId: anyNamed('fileId'), suggestedName: anyNamed('suggestedName'), onProgress: anyNamed('onProgress')));
+      verifyNever(
+        downloads.fetch(messageId: anyNamed('messageId'), attachment: anyNamed('attachment'), onProgress: anyNamed('onProgress')),
+      );
     },
   );
 }

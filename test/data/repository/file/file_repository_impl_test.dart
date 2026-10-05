@@ -16,6 +16,7 @@ import 'package:nox_app/domain/model/app_config/server_limits.dart';
 import 'package:nox_app/domain/model/file/unfinished_upload.dart';
 import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
 import 'package:nox_app/domain/repository/log_repository.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// A data source the test drives: it records what it was asked, and can refuse
@@ -26,11 +27,30 @@ class _FakeSource implements FileRemoteDataSource {
   String? beginErrorCode;
   String? downloadErrorCode;
   List<int> bytesToReturn = const [1, 2, 3, 4];
-  bool truncateDownload = false;
   int downloadBegins = 0;
 
-  /// Holds a download half-way, after its first bytes are on disk.
+  /// Holds a download half-way, after its first byte is on disk.
   Completer<void>? holdDownload;
+
+  /// The version of the file "the server" holds - its Last-Modified.
+  String serverVersion = 'v1';
+
+  /// The next GET breaks after this many bytes of its body.
+  int? breakAfter;
+
+  /// Failures for the coming GETs, one each, in order.
+  final List<FileTransferFailure> getFailures = <FileTransferFailure>[];
+
+  /// A size to claim instead of the real one: another file under this id.
+  int? claimedTotal;
+
+  /// Every GET's offset and the version it named.
+  final List<(int, String?)> gets = <(int, String?)>[];
+
+  /// Runs as the first byte of a body is handed over.
+  void Function()? onFirstBytes;
+
+  int abandoned = 0;
 
   /// Answers like a server older than phase 043: no `received`, no continuing.
   bool oldServer = false;
@@ -121,19 +141,38 @@ class _FakeSource implements FileRemoteDataSource {
   }
 
   @override
-  Future<void> getBytes({required String downloadPath, required File destination, TransferProgress? onProgress}) async {
-    // Dio writes straight to the path it is handed, so the repository is
-    // responsible for making a torn transfer invisible. Reproduce both halves:
-    // some bytes land, then it fails.
+  Future<FetchedBytes> openBytes({required String downloadPath, required int offset, String? validator}) async {
+    gets.add((offset, validator));
+    if (getFailures.isNotEmpty) throw FileTransferException(getFailures.removeAt(0));
+    // The rest only for bytes of the version the server holds - If-Range.
+    final rest = offset > 0 && validator == serverVersion;
+    if (rest && offset >= bytesToReturn.length) throw const FileTransferException(FileTransferFailure.staleRange);
+    final body = bytesToReturn.sublist(rest ? offset : 0);
+    final cut = breakAfter;
+    breakAfter = null;
     final hold = holdDownload;
-    if (hold != null) {
-      destination.writeAsBytesSync(bytesToReturn.take(1).toList());
-      onProgress?.call(1, bytesToReturn.length);
-      await hold.future;
+    Stream<List<int>> bytes() async* {
+      onFirstBytes?.call();
+      if (hold != null) {
+        yield body.sublist(0, 1);
+        await hold.future;
+        yield body.sublist(1);
+        return;
+      }
+      if (cut != null) {
+        yield body.sublist(0, cut);
+        throw const FileTransferException(FileTransferFailure.connection);
+      }
+      yield body;
     }
-    destination.writeAsBytesSync(truncateDownload ? bytesToReturn.take(1).toList() : bytesToReturn);
-    if (truncateDownload) throw const FileTransferException(FileTransferFailure.connection);
-    onProgress?.call(bytesToReturn.length, bytesToReturn.length);
+
+    return FetchedBytes(
+      whole: !rest,
+      total: claimedTotal ?? bytesToReturn.length,
+      validator: serverVersion,
+      bytes: bytes(),
+      abandon: () => abandoned++,
+    );
   }
 
   int cancels = 0;
@@ -386,6 +425,9 @@ void main() {
   });
 
   group('download', () {
+    Future<File> cached(String fileId, String ext) async =>
+        File('${(await getApplicationCacheDirectory()).path}/nox_attachments/$fileId.$ext');
+
     test('the bytes land in the cache and the path comes back', () async {
       final result = await repository.download(fileId: 'f_1', suggestedName: 'x.bin');
 
@@ -393,10 +435,97 @@ void main() {
       expect(File(result.data!).readAsBytesSync(), [1, 2, 3, 4]);
     });
 
-    test('two callers asking for the same file share ONE transfer, and both hear its progress', () async {
-      // The picture prefetch and the file view ask for the same file. Two
-      // transfers shared one `.part` file: the second deleted the first's
-      // bytes, and the first renamed a still-growing file into place.
+    test('a broken download keeps what arrived, and the version it belongs to', () async {
+      source.breakAfter = 2;
+
+      final failed = await repository.download(fileId: 'f_1', suggestedName: 'x.bin', expectedSize: 4);
+
+      expect(failed.exception, RepositoryException.connection);
+      final destination = await cached('f_1', 'bin');
+      expect(destination.existsSync(), isFalse, reason: 'nothing that looks like a cache hit');
+      expect(File('${destination.path}.part').readAsBytesSync(), [1, 2]);
+      expect(File('${destination.path}.part.tag').readAsStringSync(), 'v1');
+    });
+
+    test('the next attempt asks only for the rest - after a restart too - and appends it (FR-006, FR-007)', () async {
+      source.breakAfter = 2;
+      await repository.download(fileId: 'f_1', suggestedName: 'x.bin', expectedSize: 4);
+      final shares = <double>[];
+
+      // A new repository over the same cache: the process was restarted.
+      final restarted = FileRepositoryImpl(source, getIt<AppConfigRepository>());
+      final result = await restarted.download(fileId: 'f_1', suggestedName: 'x.bin', expectedSize: 4, onProgress: shares.add);
+
+      expect(source.gets.last, (2, 'v1'), reason: 'only the missing bytes, for the version already here');
+      expect(File(result.data!).readAsBytesSync(), [1, 2, 3, 4]);
+      expect(shares.first, 0.5, reason: 'the share of the whole file (FR-012)');
+      expect(File('${result.data!}.part.tag').existsSync(), isFalse);
+    });
+
+    test('another version on the server starts the file over, its version written before its first byte', () async {
+      source.breakAfter = 2;
+      await repository.download(fileId: 'f_1', suggestedName: 'x.bin');
+      source
+        ..serverVersion = 'v2'
+        ..bytesToReturn = const [9, 8, 7, 6];
+      final destination = await cached('f_1', 'bin');
+      String? tagAtFirstByte;
+      int? partAtFirstByte;
+      source.onFirstBytes = () {
+        tagAtFirstByte = File('${destination.path}.part.tag').readAsStringSync();
+        partAtFirstByte = File('${destination.path}.part').lengthSync();
+      };
+
+      final result = await repository.download(fileId: 'f_1', suggestedName: 'x.bin');
+
+      expect(tagAtFirstByte, 'v2', reason: 'a crash now leaves only bytes of the version beside them');
+      expect(partAtFirstByte, 0, reason: 'none of the old version left in the part');
+      expect(File(result.data!).readAsBytesSync(), [9, 8, 7, 6]);
+    });
+
+    test('a part no shorter than the file there is thrown away, and the file comes again from the start', () async {
+      final destination = await cached('f_1', 'bin');
+      await destination.parent.create(recursive: true);
+      File('${destination.path}.part').writeAsBytesSync([1, 2, 3, 4, 5]);
+      File('${destination.path}.part.tag').writeAsStringSync('v1');
+
+      final result = await repository.download(fileId: 'f_1', suggestedName: 'x.bin');
+
+      expect(source.gets, [(5, 'v1'), (0, null)]);
+      expect(File(result.data!).readAsBytesSync(), [1, 2, 3, 4]);
+    });
+
+    test('a part whose version nobody wrote down is not continued', () async {
+      final destination = await cached('f_1', 'bin');
+      await destination.parent.create(recursive: true);
+      File('${destination.path}.part').writeAsBytesSync([7, 7]);
+
+      final result = await repository.download(fileId: 'f_1', suggestedName: 'x.bin');
+
+      expect(source.gets, [(0, null)]);
+      expect(File(result.data!).readAsBytesSync(), [1, 2, 3, 4]);
+    });
+
+    test('a file of another size than the message says is not this file', () async {
+      source.claimedTotal = 99;
+
+      final result = await repository.download(fileId: 'f_1', suggestedName: 'x.bin', expectedSize: 4);
+
+      expect(result.exception, RepositoryException.internal);
+      expect(source.abandoned, 1, reason: 'its bytes are let go unread');
+      final destination = await cached('f_1', 'bin');
+      expect(File('${destination.path}.part').existsSync(), isFalse);
+    });
+
+    test('a rejected pass is asked for again once; twice in a row is the server refusing', () async {
+      source.getFailures.add(FileTransferFailure.passRejected);
+      expect((await repository.download(fileId: 'f_1', suggestedName: 'x.bin')).data, isNotNull);
+
+      source.getFailures.addAll([FileTransferFailure.passRejected, FileTransferFailure.passRejected]);
+      expect((await repository.download(fileId: 'f_2', suggestedName: 'x.bin')).exception, RepositoryException.internal);
+    });
+
+    test('two callers asking for the same file share ONE transfer; the one who joins hears at once how far it is', () async {
       source.holdDownload = Completer<void>();
       final heardByPrefetch = <double>[];
       final heardByFileView = <double>[];
@@ -404,6 +533,7 @@ void main() {
       final first = repository.download(fileId: 'f_same', suggestedName: 'photo.png', onProgress: heardByPrefetch.add);
       await pumpEventQueue();
       final second = repository.download(fileId: 'f_same', suggestedName: 'photo.png', onProgress: heardByFileView.add);
+      expect(heardByFileView, [0.25], reason: 'where the transfer stands, not silence until the next chunk');
       source.holdDownload!.complete();
       final results = await Future.wait([first, second]);
 
@@ -411,7 +541,7 @@ void main() {
       expect(results.map((r) => r.data).toSet(), hasLength(1));
       expect(File(results.first.data!).readAsBytesSync(), [1, 2, 3, 4], reason: 'the whole file, not a torn one');
       expect(heardByPrefetch.last, 1.0);
-      expect(heardByFileView.last, 1.0, reason: 'the caller who joined hears the rest of the transfer');
+      expect(heardByFileView.last, 1.0);
     });
 
     test('a later download of the same file is a new transfer, not the finished one', () async {
@@ -421,21 +551,6 @@ void main() {
       await repository.download(fileId: 'f_again', suggestedName: 'a.bin');
 
       expect(source.downloadBegins, 2);
-    });
-
-    test('a torn transfer leaves NOTHING that looks like a cache hit', () async {
-      // The defect this guards: a half file sitting where a whole one belongs is
-      // served forever as complete, and nothing ever tries again.
-      source.truncateDownload = true;
-
-      final failed = await repository.download(fileId: 'f_1', suggestedName: 'x.bin');
-      expect(failed.hasData, isFalse);
-      expect(await repository.localPathFor(fileId: 'f_1', suggestedName: 'x.bin'), isNull);
-
-      // And a later, working attempt gets the whole file.
-      source.truncateDownload = false;
-      final second = await repository.download(fileId: 'f_1', suggestedName: 'x.bin');
-      expect(File(second.data!).readAsBytesSync(), [1, 2, 3, 4]);
     });
 
     test('bytes the server no longer holds are a terminal refusal, not a retryable one', () async {
@@ -454,13 +569,24 @@ void main() {
       expect(result.exception, RepositoryException.notFound);
     });
 
-    test('clean removes the cache, so logout leaves no pictures behind', () async {
+    test('cancelTransfers ends what is moving', () async {
+      await repository.cancelTransfers();
+
+      expect(source.cancels, 1);
+    });
+
+    test('clean removes the cache, half-downloaded files and their versions too (FR-017)', () async {
       await repository.download(fileId: 'f_1', suggestedName: 'x.bin');
-      expect(await repository.localPathFor(fileId: 'f_1', suggestedName: 'x.bin'), isNotNull);
+      source.breakAfter = 1;
+      await repository.download(fileId: 'f_2', suggestedName: 'y.bin');
+      final half = await cached('f_2', 'bin');
+      expect(File('${half.path}.part').existsSync(), isTrue);
 
       await repository.clean();
 
       expect(await repository.localPathFor(fileId: 'f_1', suggestedName: 'x.bin'), isNull);
+      expect(File('${half.path}.part').existsSync(), isFalse);
+      expect(File('${half.path}.part.tag').existsSync(), isFalse);
     });
   });
 }

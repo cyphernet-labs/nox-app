@@ -54,4 +54,22 @@ void main() {
       throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.passRejected)),
     );
   });
+
+  test('the rest comes for bytes of the version it holds, the whole file for anything else', () async {
+    final ticket = (await source.uploadBegin(name: 'a.bin', sizeBytes: 4, mime: 'application/octet-stream')).data!;
+    await source.putBytes(uploadPath: ticket.uploadUrl, file: file, offset: 0);
+    final pass = (await source.downloadBegin(fileId: ticket.fileId)).data!.downloadUrl;
+
+    final first = await source.openBytes(downloadPath: pass, offset: 0);
+    expect(first.whole, isTrue);
+    expect([await for (final chunk in first.bytes) ...chunk], [1, 2, 3, 4]);
+
+    final rest = await source.openBytes(downloadPath: pass, offset: 2, validator: first.validator);
+    expect(rest.whole, isFalse);
+    expect(rest.total, 4);
+    expect([await for (final chunk in rest.bytes) ...chunk], [3, 4]);
+
+    final other = await source.openBytes(downloadPath: pass, offset: 2, validator: 'another version');
+    expect(other.whole, isTrue);
+  });
 }

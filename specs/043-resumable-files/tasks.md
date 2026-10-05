@@ -207,14 +207,14 @@ description: "Задачи фичи 043 — файлы с докачкой в о
   - `GET` медленно, но непрерывно читающему клиенту дольше `stallTimeout` — доходит целиком;
   - клиент, переставший читать дольше `stallTimeout`, обрывается, обработчик вернулся;
   - `If-Range` с `Last-Modified` первого ответа → `206` с остатком, с другой датой → `200` целиком.
-- [ ] T026 [P] [US2] `test/data/remote/datasource/real/real_file_remote_data_source_test.dart`, часть скачивания (локальный TLS-сервер):
+- [X] T026 [P] [US2] `test/data/remote/datasource/real/real_file_remote_data_source_test.dart`, часть скачивания (локальный TLS-сервер):
   - `offset == 0` — без `Range`, `200` → весь файл, `total` из `Content-Length`, валидатор из `Last-Modified`;
   - `offset > 0` с валидатором — уходят `Range` и `If-Range`; `206` → остаток, `total` из `Content-Range`; `200` вопреки `Range` → весь файл;
   - `416` → `staleRange`; `404` → `passRejected`;
   - остановка посреди тела → `connection` после короткого предела; `cancelTransfers()` посреди тела → `connection`;
   - медленное, но непрерывное тело дольше предела застоя доходит целиком (FR-009).
-- [ ] T027 [P] [US2] `test/data/remote/datasource/mock/mock_file_remote_data_source_test.dart`: `openBytes` с `offset` и валидатором отдаёт остаток; без валидатора — весь файл.
-- [ ] T028 [US2] `test/data/repository/file/file_repository_impl_test.dart`, скачивание:
+- [X] T027 [P] [US2] `test/data/remote/datasource/mock/mock_file_remote_data_source_test.dart`: `openBytes` с `offset` и валидатором отдаёт остаток; без валидатора — весь файл.
+- [X] T028 [US2] `test/data/repository/file/file_repository_impl_test.dart`, скачивание:
   - (a) обрыв посреди тела оставляет `.part` и `.part.tag`;
   - (b) следующая попытка просит от длины части с записанным валидатором и дописывает — в том числе новым экземпляром `FileRepositoryImpl` над тем же каталогом кэша (перезапуск, FR-007);
   - (c) `200` → часть обрезана, новый `.part.tag` записан до первого байта (поддельный источник проверяет порядок), тело с нуля;
@@ -227,7 +227,7 @@ description: "Задачи фичи 043 — файлы с докачкой в о
   - (j) `cancelTransfers()` прерывает попытку с `connection`;
   - (k) `clean()` убирает части и теги (FR-017);
   - обновить «a torn transfer leaves NOTHING that looks like a cache hit»: готового файла нет, а часть теперь остаётся.
-- [ ] T029 [P] [US2] Новый `test/data/sync/attachment_download_service_impl_test.dart` (поддельные `FileRepository` и `MessageRepository`, `FixedSessionPhaseService`, короткая лестница через `forTest`):
+- [X] T029 [P] [US2] Новый `test/data/sync/attachment_download_service_impl_test.dart` (поддельные `FileRepository` и `MessageRepository`, `FixedSessionPhaseService`, короткая лестница через `forTest`):
   - одна передача на файл: второй `fetch` присоединяется и сразу получает последнюю долю;
   - 15 обрывов подряд, затем успех — успех, путь записан (обрывы не исчерпывают);
   - паузы идут по лестнице; фаза, ставшая текущей, будит ждущий повтор сразу;
@@ -235,19 +235,19 @@ description: "Задачи фичи 043 — файлы с докачкой в о
   - `attachmentGone`/`notFound` кончают сразу;
   - отказы (`internal`, `rateLimited`) кончают скачивание с `internal` после `RetryLadder.refusalLimit`, а обрывы в этот счёт не идут;
   - `reset()` останавливает ждущие циклы, вызывает `cancelTransfers()` и ждёт их.
-- [ ] T030 [P] [US2] `test/data/sync/attachment_prefetch_service_test.dart`: подкачка идёт через сервис скачивания и путь сама не пишет; пока сервис повторяет, передача картинки не кончается; картинка с исчерпанной автоматикой не запрашивается на следующем обновлении, а запрашивается снова по `retryNow` (возвращение канала).
-- [ ] T031 [P] [US2] `test/presentation/pages/file_view_page/bloc/file_view_bloc_test.dart`:
+- [X] T030 [P] [US2] `test/data/sync/attachment_prefetch_service_test.dart`: подкачка идёт через сервис скачивания и путь сама не пишет; пока сервис повторяет, передача картинки не кончается; картинка с исчерпанной автоматикой не запрашивается на следующем обновлении, а запрашивается снова по `retryNow` (возвращение канала).
+- [X] T031 [P] [US2] `test/presentation/pages/file_view_page/bloc/file_view_bloc_test.dart`:
   - скачивание идёт через сервис;
   - пока сервис повторяет после обрывов, состояние `downloading` с прогрессом, без `failed`;
   - блок закрыт посреди скачивания — сервис всё равно завершает и записывает путь;
   - новый блок того же файла присоединяется и начинает с последней доли;
   - `gone` — как прежде.
-- [ ] T032 [P] [US2] Порядок сброса: `test/data/repository/app/auth_repository_impl_test.dart` (выход) и `test/data/sync/live_session_starter_test.dart` (смена мира) — `AttachmentDownloadService.reset()` вызывается раньше `FileRepository.clean()`.
+- [X] T032 [P] [US2] Порядок сброса: `test/data/repository/app/auth_repository_impl_test.dart` (выход) и `test/data/sync/live_session_starter_test.dart` (смена мира) — `AttachmentDownloadService.reset()` вызывается раньше `FileRepository.clean()`.
 
 ### Implementation for User Story 2
 
 - [X] T033 [US2] `client_backend/internal/server/files.go`, `handleGetFile`: обёртка над `ResponseWriter` продлевает `SetWriteDeadline(now + stallTimeout)` перед каждой записью и прячет `ReadFrom`, чтобы каждая запись шла через неё; `Last-Modified` остаётся от `ServeContent`.
-- [ ] T034 [US2] Провод скачивания:
+- [X] T034 [US2] Провод скачивания:
   - `FileTransferFailure.staleRange` в `lib/data/exception/file_transfer_exception.dart`;
   - `FetchedBytes` и `openBytes(downloadPath:, offset:, validator:)` вместо `getBytes` в `lib/data/remote/datasource/file_remote_data_source.dart`;
   - настоящий источник — `dio.get` с `ResponseType.stream`:
@@ -255,21 +255,21 @@ description: "Задачи фичи 043 — файлы с докачкой в о
     - `receiveTimeout` = предел застоя, токен из реестра `ApiClient`;
     - коды: `200`/`206` → `FetchedBytes`, `416` → `staleRange`, `404` → `passRejected`, остальное → `connection`;
   - мок — остаток сохранённого файла.
-- [ ] T035 [US2] `lib/domain/repository/file/file_repository.dart` — `download(expectedSize:)` и `cancelTransfers()`. В `lib/data/repository/file/file_repository_impl.dart` переписать `_downloadOnce` по research §6:
+- [X] T035 [US2] `lib/domain/repository/file/file_repository.dart` — `download(expectedSize:)` и `cancelTransfers()`. В `lib/data/repository/file/file_repository_impl.dart` переписать `_downloadOnce` по research §6:
   - часть и тег, порядок записи;
   - `416` — одна немедленная попытка;
   - сверка размера;
   - часть остаётся при неудаче;
   - `lastFraction` в `_SharedDownload`.
-- [ ] T036 [US2] Сервис скачивания: новый `lib/domain/service/attachment_download_service.dart` и `lib/data/sync/attachment_download_service_impl.dart` (`@LazySingleton(as: AttachmentDownloadService, env: [dev, prod, test])`) — research §8 и contracts/client-seams.md:
+- [X] T036 [US2] Сервис скачивания: новый `lib/domain/service/attachment_download_service.dart` и `lib/data/sync/attachment_download_service_impl.dart` (`@LazySingleton(as: AttachmentDownloadService, env: [dev, prod, test])`) — research §8 и contracts/client-seams.md:
   - `RetryLadder`;
   - пробуждение по фазе `SessionPhaseService`;
   - предел отказов;
   - `attachLocalFile`;
   - `reset()`.
-- [ ] T037 [US2] `lib/data/sync/attachment_prefetch_service.dart` — через сервис скачивания: свою запись пути убрать; окончательные отказы — в `_hopeless`, как прежде; исчерпанная картинка ждёт `retryNow`, а не паузы в 15 с (research §8).
-- [ ] T038 [US2] `lib/presentation/pages/file_view_page/bloc/file_view_bloc.dart` — через `AttachmentDownloadService` (передаёт `messageId`, путь сам не пишет).
-- [ ] T039 [US2] `AttachmentDownloadService.reset()` перед `FileRepository.clean()` в `lib/data/repository/app/auth_repository_impl.dart` (выход) и `lib/data/sync/live_session_starter.dart` (смена мира).
+- [X] T037 [US2] `lib/data/sync/attachment_prefetch_service.dart` — через сервис скачивания: свою запись пути убрать; окончательные отказы — в `_hopeless`, как прежде; исчерпанная картинка ждёт `retryNow`, а не паузы в 15 с (research §8).
+- [X] T038 [US2] `lib/presentation/pages/file_view_page/bloc/file_view_bloc.dart` — через `AttachmentDownloadService` (передаёт `messageId`, путь сам не пишет).
+- [X] T039 [US2] `AttachmentDownloadService.reset()` перед `FileRepository.clean()` в `lib/data/repository/app/auth_repository_impl.dart` (выход) и `lib/data/sync/live_session_starter.dart` (смена мира).
 
 **Checkpoint**: обе стороны продолжаются; US1 и US2 проверяются каждая сама по себе.
 
@@ -312,7 +312,7 @@ description: "Задачи фичи 043 — файлы с докачкой в о
   - загрузка при мигающей связи (`connection` много раз подряд) не откладывается никогда;
   - ручной повтор (`markPending`) передаёт записанную ручку как `from` и начинает лестницу заново.
 - [ ] T044 [P] [US4] `test/data/sync/attachment_download_service_impl_test.dart`: после исчерпания новый `fetch` того же файла (ручной повтор) начинает лестницу заново, а репозиторий получает попытку, которая продолжает с части, — часть исчерпание не трогает (FR-011).
-- [ ] T045 [P] [US4] `test/presentation/pages/file_view_page/bloc/file_view_bloc_test.dart`: сервис сообщил об исчерпании → `failed`; `Retried` зовёт `fetch` снова.
+- [X] T045 [P] [US4] `test/presentation/pages/file_view_page/bloc/file_view_bloc_test.dart`: сервис сообщил об исчерпании → `failed`; `Retried` зовёт `fetch` снова.
 
 ### Implementation for User Story 4
 

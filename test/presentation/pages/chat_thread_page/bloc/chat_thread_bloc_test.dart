@@ -22,8 +22,8 @@ import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
-import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
+import 'package:nox_app/domain/service/attachment_download_service.dart';
 import 'package:nox_app/domain/service/attachment_transfer_service.dart';
 import 'package:nox_app/domain/service/connectivity_service.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
@@ -938,8 +938,7 @@ class _SlowServerMessages implements MessageRepository {
 
 /// Records what the thread asks to have fetched, and fetches nothing.
 class _RecordingPrefetch extends AttachmentPrefetchService {
-  _RecordingPrefetch()
-    : super(getIt<FileRepository>(), getIt<MessageRepository>(), getIt<SessionPhaseService>(), getIt<AttachmentTransferService>());
+  _RecordingPrefetch() : super(getIt<AttachmentDownloadService>(), getIt<SessionPhaseService>(), getIt<AttachmentTransferService>());
 
   final List<List<MessageModel>> calls = <List<MessageModel>>[];
 

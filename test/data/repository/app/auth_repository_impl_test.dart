@@ -17,6 +17,7 @@ import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/repository/log_repository.dart';
+import 'package:nox_app/domain/service/attachment_download_service.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
@@ -162,6 +163,20 @@ void main() {
     // crash later in the wipe would leave them for the next identity to send
     // under their own name.
     verifyInOrder([session.clear(), outbox.clean(), files.clean(), sync.clear(), chats.clean(), messages.clean()]);
+  });
+
+  test('logout stops the downloads before it wipes their cache (phase 043)', () async {
+    // A download still running would write its next chunk into the cache being
+    // deleted, or rename a finished file into it right after.
+    final order = <String>[];
+    getIt
+      ..allowReassignment = true
+      ..registerSingleton<AttachmentDownloadService>(_RecordingDownloads(order));
+    when(files.clean()).thenAnswer((_) async => order.add('clean'));
+
+    await repository.logout();
+
+    expect(order, ['reset', 'clean']);
   });
 
   test('logout takes the chats still waiting to be created with it, and their messages (phase 041, FR-021)', () async {
@@ -424,4 +439,17 @@ class _CapturingLog implements LogRepository {
 
   @override
   void error({Object? target, required Object error, StackTrace? stackTrace}) => lines.add(error.toString());
+}
+
+/// Records that every download was stopped, and when.
+class _RecordingDownloads implements AttachmentDownloadService {
+  _RecordingDownloads(this.order);
+
+  final List<String> order;
+
+  @override
+  Future<void> reset() async => order.add('reset');
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

@@ -101,7 +101,7 @@ class MockFileRemoteDataSource implements FileRemoteDataSource {
   }
 
   @override
-  Future<void> getBytes({required String downloadPath, required File destination, TransferProgress? onProgress}) async {
+  Future<FetchedBytes> openBytes({required String downloadPath, required int offset, String? validator}) async {
     final id = downloadPath.split('/').last.replaceFirst('get_', '');
     final source = _stored[id];
     // The server answers a bare 404 here; returning quietly would let the
@@ -110,9 +110,14 @@ class MockFileRemoteDataSource implements FileRemoteDataSource {
     if (source == null || !File(source).existsSync()) {
       throw const FileTransferException(FileTransferFailure.passRejected);
     }
-    await File(source).copy(destination.path);
-    final total = await destination.length();
-    onProgress?.call(total, total);
+    final file = File(source);
+    final total = await file.length();
+    final version = 'v-${(await file.lastModified()).millisecondsSinceEpoch}';
+    // The rest only for bytes of this very version - as the server does with
+    // If-Range - and the whole file for anything else.
+    final rest = offset > 0 && validator == version;
+    if (rest && offset >= total) throw const FileTransferException(FileTransferFailure.staleRange);
+    return FetchedBytes(whole: !rest, total: total, validator: version, bytes: file.openRead(rest ? offset : 0), abandon: () {});
   }
 
   /// Nothing here outlives the call that started it, so there is nothing to end.

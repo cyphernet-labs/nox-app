@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
@@ -27,10 +28,12 @@ import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/repository/connection/access_key_repository.dart';
 import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
+import 'package:nox_app/domain/service/attachment_download_service.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_app/domain/service/app_lifecycle_service.dart';
 import 'package:nox_app/domain/service/network_change_service.dart';
 import 'package:nox_app/general/pairing/device_keys.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../remote/socket/fake_socket.dart';
@@ -341,6 +344,22 @@ void main() {
 
         expect(await getIt<SyncRepository>().getEpoch(), 'fp:$kPinA');
         expect(await getIt<ChatDao>().getById('c_1'), isNull);
+      });
+
+      test('another world stops the downloads before it wipes their cache (phase 043)', () async {
+        await paired();
+        await getIt<SyncRepository>().setEpoch('fp:$kPinB');
+        final cache = Directory('${(await getApplicationCacheDirectory()).path}/nox_attachments')..createSync(recursive: true);
+        final sentinel = File('${cache.path}/f_old.bin')..writeAsBytesSync([1]);
+        final downloads = _CacheWatchingDownloads(sentinel);
+        getIt.allowReassignment = true;
+        getIt.registerSingleton<AttachmentDownloadService>(downloads);
+
+        await starter.start();
+        await settle();
+
+        expect(downloads.cacheStillThereAtReset, isTrue, reason: 'stopped first, then the cache goes');
+        expect(sentinel.existsSync(), isFalse);
       });
 
       test('another world takes a chat still waiting to be created with it (phase 041, FR-021)', () async {
@@ -706,4 +725,18 @@ void main() {
       expect((await session.serverAddress()).data, '10.0.0.5:9000');
     });
   });
+}
+
+/// Notes whether the cache was still there when every download was stopped.
+class _CacheWatchingDownloads implements AttachmentDownloadService {
+  _CacheWatchingDownloads(this.sentinel);
+
+  final File sentinel;
+  bool? cacheStillThereAtReset;
+
+  @override
+  Future<void> reset() async => cacheStillThereAtReset = sentinel.existsSync();
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

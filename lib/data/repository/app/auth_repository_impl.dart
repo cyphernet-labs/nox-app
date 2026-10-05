@@ -2,6 +2,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/repository/connection/connection_storage.dart';
 import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
+import 'package:nox_app/domain/service/attachment_download_service.dart';
 import 'package:nox_app/data/sync/live_identity_handshake.dart';
 import 'package:nox_app/general/pairing/device_keys.dart';
 import 'package:nox_app/general/pairing/pairing_link.dart';
@@ -345,6 +346,10 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
           // messages and cursor on disk, which is far worse than a cached
           // picture surviving. Best-effort here, loud in the log.
           try {
+            // Downloads stop FIRST (phase 043): one still running would write
+            // its next chunk into the directory being deleted, or rename a
+            // finished file into it right after.
+            if (getIt.isRegistered<AttachmentDownloadService>()) await getIt<AttachmentDownloadService>().reset();
             await _fileRepository.clean();
           } catch (error, stackTrace) {
             logRepository.error(target: this, error: error, stackTrace: stackTrace);

@@ -162,55 +162,162 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
   final Map<String, _SharedDownload> _downloads = <String, _SharedDownload>{};
 
   @override
-  Future<RepositoryResult<String>> download({required String fileId, required String suggestedName, TransferFraction? onProgress}) {
+  Future<RepositoryResult<String>> download({
+    required String fileId,
+    required String suggestedName,
+    int? expectedSize,
+    TransferFraction? onProgress,
+  }) {
     final running = _downloads[fileId];
     if (running != null) {
-      if (onProgress != null) running.listeners.add(onProgress);
+      if (onProgress != null) running.join(onProgress);
       return running.result;
     }
     final shared = _SharedDownload();
-    if (onProgress != null) shared.listeners.add(onProgress);
+    if (onProgress != null) shared.join(onProgress);
     _downloads[fileId] = shared;
     shared.result = _downloadOnce(
       fileId: fileId,
       suggestedName: suggestedName,
+      expectedSize: expectedSize,
       onProgress: shared.report,
     ).whenComplete(() => _downloads.remove(fileId));
     return shared.result;
   }
 
-  Future<RepositoryResult<String>> _downloadOnce({required String fileId, required String suggestedName, TransferFraction? onProgress}) {
+  Future<RepositoryResult<String>> _downloadOnce({
+    required String fileId,
+    required String suggestedName,
+    required int? expectedSize,
+    required TransferFraction onProgress,
+  }) {
     return execute<String>(() async {
       final destination = File(await _cachePathFor(fileId, suggestedName));
       if (destination.existsSync()) return RepositoryResult<String>.success(data: destination.path);
       await destination.parent.create(recursive: true);
 
-      // Download to a SIDE file and rename on success. Dio writes straight to
-      // the path it is given, with no atomic finish, so a transfer cut short by
-      // a lost link or a killed process would leave a half file sitting exactly
-      // where a complete one belongs — and every later reader, this method
-      // included, treats existence as proof of completeness. The picture would
-      // render as garbage forever, and nothing would ever try again.
-      final partial = File('${destination.path}.part');
-      if (partial.existsSync()) await partial.delete();
+      // The bytes come into a SIDE file, renamed into place only once whole:
+      // every reader, this method included, takes existence at the final path
+      // as proof of completeness. Beside it, the version of the file those
+      // bytes belong to - without it they could not be continued safely.
+      final part = File('${destination.path}.part');
+      final tag = File('${destination.path}.part.tag');
+      var (offset, validator) = await _partOf(part, tag);
 
-      final ticket = unwrapEnvelope(await _remote.downloadBegin(fileId: fileId), 'downloadBegin');
-      try {
-        await _remote.getBytes(
-          downloadPath: ticket.downloadUrl,
-          destination: partial,
-          onProgress: onProgress == null ? null : (done, total) => onProgress(total <= 0 ? 0 : done / total),
-        );
-      } on FileTransferException catch (e) {
-        if (partial.existsSync()) await partial.delete();
-        throw e.failure == FileTransferFailure.sizeMismatch ? RepositoryException.invalidRequest : RepositoryException.connection;
+      var passRefused = false;
+      var staleRetried = false;
+      while (true) {
+        final ticket = unwrapEnvelope(await _remote.downloadBegin(fileId: fileId), 'downloadBegin');
+        final FetchedBytes fetched;
+        try {
+          fetched = await _remote.openBytes(downloadPath: ticket.downloadUrl, offset: offset, validator: validator);
+        } on FileTransferException catch (e) {
+          switch (e.failure) {
+            case FileTransferFailure.passRejected:
+              // Routine once - a pass is one-shot and short-lived; twice in a
+              // row is the server refusing.
+              if (passRefused) throw RepositoryException.internal;
+              passRefused = true;
+              continue;
+            case FileTransferFailure.staleRange:
+              // The bytes here are not shorter than the file there: some other
+              // version of it. Start over at once; nothing anyone did is wrong.
+              await _discard(part, tag);
+              (offset, validator) = (0, null);
+              if (staleRetried) throw RepositoryException.internal;
+              staleRetried = true;
+              continue;
+            case FileTransferFailure.sizeMismatch:
+              throw RepositoryException.invalidRequest;
+            case FileTransferFailure.connection:
+              throw RepositoryException.connection;
+          }
+        }
+
+        // A file of another size is not the file this message names.
+        if (expectedSize != null && expectedSize > 0 && fetched.total != expectedSize) {
+          fetched.abandon();
+          await _discard(part, tag);
+          logRepository.debug(target: this, message: 'file: download $fileId is ${fetched.total} bytes, not $expectedSize');
+          throw RepositoryException.internal;
+        }
+        if (fetched.whole) {
+          // In THIS order: an empty part first, then the version, then the
+          // bytes. A crash between any two leaves an empty part, or a part
+          // holding only bytes of the version written beside it.
+          await part.writeAsBytes(const <int>[], flush: true);
+          offset = 0;
+          await _writeTag(tag, fetched.validator);
+        }
+        logRepository.debug(target: this, message: 'file: download $fileId from $offset of ${fetched.total}');
+
+        final total = fetched.total;
+        var received = offset;
+        onProgress(total == 0 ? 1 : received / total);
+        final sink = part.openWrite(mode: FileMode.append);
+        try {
+          await for (final chunk in fetched.bytes) {
+            sink.add(chunk);
+            received += chunk.length;
+            onProgress(total == 0 ? 1 : received / total);
+          }
+        } on FileTransferException {
+          // What arrived stays: the next attempt asks only for the rest.
+          throw RepositoryException.connection;
+        } finally {
+          await sink.flush();
+          await sink.close();
+        }
+        // The server ended the body early; what came is kept for the next one.
+        if (received < total) throw RepositoryException.connection;
+        if (received > total) {
+          await _discard(part, tag);
+          throw RepositoryException.internal;
+        }
+        // The rename is the moment the file becomes real. Before it, nothing
+        // that looks like a cache hit exists.
+        await part.rename(destination.path);
+        if (tag.existsSync()) await tag.delete();
+        return RepositoryResult<String>.success(data: destination.path);
       }
-      // The rename is the moment the file becomes real. Before it, nothing that
-      // looks like a cache hit exists.
-      await partial.rename(destination.path);
-      return RepositoryResult<String>.success(data: destination.path);
     });
   }
+
+  /// How much of the file is already here, and which version it belongs to. A
+  /// part with no version written beside it cannot be checked against the
+  /// server, so it is not continued.
+  Future<(int, String?)> _partOf(File part, File tag) async {
+    if (!part.existsSync()) {
+      if (tag.existsSync()) await tag.delete();
+      return (0, null);
+    }
+    final validator = tag.existsSync() ? (await tag.readAsString()).trim() : '';
+    if (validator.isEmpty) {
+      await _discard(part, tag);
+      return (0, null);
+    }
+    return (await part.length(), validator);
+  }
+
+  /// The version beside the part, written whole or not at all.
+  Future<void> _writeTag(File tag, String? validator) async {
+    if (validator == null || validator.isEmpty) {
+      // Nothing to name the version by: these bytes will not be continued.
+      if (tag.existsSync()) await tag.delete();
+      return;
+    }
+    final next = File('${tag.path}.next');
+    await next.writeAsString(validator, flush: true);
+    await next.rename(tag.path);
+  }
+
+  Future<void> _discard(File part, File tag) async {
+    if (part.existsSync()) await part.delete();
+    if (tag.existsSync()) await tag.delete();
+  }
+
+  @override
+  Future<void> cancelTransfers() async => _remote.cancelTransfers();
 
   @override
   Future<String?> localPathFor({required String fileId, required String suggestedName}) async {
@@ -240,7 +347,18 @@ class _SharedDownload {
   late Future<RepositoryResult<String>> result;
   final List<TransferFraction> listeners = <TransferFraction>[];
 
+  /// Where the download stands, so one who joins late is told at once rather
+  /// than at the next chunk - which on a slow path can be a while.
+  double? _last;
+
+  void join(TransferFraction listener) {
+    listeners.add(listener);
+    final last = _last;
+    if (last != null) listener(last);
+  }
+
   void report(double fraction) {
+    _last = fraction;
     for (final listener in List<TransferFraction>.of(listeners)) {
       listener(fraction);
     }
