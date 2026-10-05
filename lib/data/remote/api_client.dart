@@ -63,9 +63,15 @@ class ApiClient {
   /// be referenced from a message on the paired server, where its id means
   /// nothing.
   void initBase({required String address}) {
+    final previous = dio.options.baseUrl;
     if (address.isNotEmpty) {
       dio.options.baseUrl = address.contains('://') ? address : 'https://$address';
     }
+    // A new address is a new path (phase 043): the greeting just arrived some
+    // other way, and the old way is gone or about to be - away from home its
+    // packets go nowhere, and only the stall limit would ever notice. Ended
+    // now, every transfer on it goes on from where it stopped, by the new path.
+    if (previous.isNotEmpty && previous != dio.options.baseUrl) cancelTransfers();
     _installAdapter();
     // Dio's adapter asks for a client ONCE and caches it, so it would keep the
     // one that was thrown away when the pin changed - and every attachment

@@ -139,4 +139,34 @@ void main() {
       expect(done.isCancelled, isFalse);
     });
   });
+
+  group('a change of path (phase 043, FR-008)', () {
+    test('a new address ends the transfers on the old one', () {
+      final api = ApiClient(_FakeConfig(null), PinnedHttpClient())..initBase(address: '10.0.0.5:9000');
+      final under = api.beginTransfer();
+
+      api.initBase(address: 'abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwx.onion:443');
+
+      expect(under.isCancelled, isTrue, reason: 'it continues on the new path at once, not after the stall limit');
+    });
+
+    test('the same address ends nothing - a transfer on a path still in use goes on', () {
+      final api = ApiClient(_FakeConfig(null), PinnedHttpClient())..initBase(address: '10.0.0.5:9000');
+      final under = api.beginTransfer();
+
+      api.initBase(address: '10.0.0.5:9000');
+      api.initBase(address: 'https://10.0.0.5:9000');
+
+      expect(under.isCancelled, isFalse);
+    });
+
+    test('the first address ends nothing', () {
+      final api = ApiClient(_FakeConfig(null), PinnedHttpClient());
+      final under = api.beginTransfer();
+
+      api.initBase(address: '10.0.0.5:9000');
+
+      expect(under.isCancelled, isFalse);
+    });
+  });
 }

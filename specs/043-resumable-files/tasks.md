@@ -283,17 +283,17 @@ description: "Задачи фичи 043 — файлы с докачкой в о
 
 ### Tests for User Story 3
 
-- [ ] T040 [P] [US3] `test/data/remote/api_client_test.dart`:
+- [X] T040 [P] [US3] `test/data/remote/api_client_test.dart`:
   - `initBase` с другим адресом обрывает идущие передачи: запрос к серверу A кончается отменой;
   - тот же адрес — не отменяет;
   - первый `initBase` не отменяет ничего.
-- [ ] T041 [P] [US3] `test/data/remote/datasource/real/real_file_remote_data_source_test.dart`, два TLS-сервера на loopback с одним сертификатом:
+- [X] T041 [P] [US3] `test/data/remote/datasource/real/real_file_remote_data_source_test.dart`, два TLS-сервера на loopback с одним сертификатом:
   - `PUT` к A, медленно читающему тело, кончается `connection` не позже чем через 2 с после `initBase(B)` (не дожидаясь предела застоя), следующий `putBytes` идёт к B;
   - то же для `openBytes`.
 
 ### Implementation for User Story 3
 
-- [ ] T042 [US3] `lib/data/remote/api_client.dart`, `initBase`: сравнить нормализованный адрес с прежним; изменился (и прежний был) → `cancelTransfers()`.
+- [X] T042 [US3] `lib/data/remote/api_client.dart`, `initBase`: сравнить нормализованный адрес с прежним; изменился (и прежний был) → `cancelTransfers()`.
 
 **Checkpoint**: смена пути не начинает передачу заново и не ждёт застоя.
 

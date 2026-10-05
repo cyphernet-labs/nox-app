@@ -455,4 +455,52 @@ void main() {
       await expectLater(reading, throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.connection)));
     });
   });
+
+  group('a change of path (phase 043, FR-008)', () {
+    test('a PUT on the old path ends at once when the path changes, and the next one takes the new path', () async {
+      // Home -> away: the old connection dies without a word, and only the
+      // stall limit would notice it. The new greeting moves REST, and the move
+      // ends the transfer there and then.
+      await writePayload(16 * 1024 * 1024);
+      server.stopReading = true;
+      final other = _PutServer();
+      await other.start();
+      addTearDown(other.close);
+      final transfers = source(stallLimit: const Duration(minutes: 1));
+
+      final stuck = transfers.putBytes(uploadPath: '/files/t', file: file, offset: 0);
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      final watch = Stopwatch()..start();
+      api.initBase(address: 'https://127.0.0.1:${other.port}');
+
+      await expectLater(stuck, throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.connection)));
+      expect(watch.elapsed, lessThan(const Duration(seconds: 2)));
+
+      await writePayload(1024);
+      await transfers.putBytes(uploadPath: '/files/t', file: file, offset: 0);
+      expect(other.received, payload, reason: 'the retry went by the new path');
+    });
+
+    test('a download on the old path ends at once too', () async {
+      final quiet = _GetServer()
+        ..file = List<int>.generate(1000, (i) => i % 251)
+        ..stallAfter = 100;
+      await quiet.start();
+      addTearDown(quiet.close);
+      final getApi = ApiClient(_Config(), PinnedHttpClient()..pinTo(_fingerprint))..initBase(address: 'https://127.0.0.1:${quiet.port}');
+      final fetched = await RealFileRemoteDataSource.forTest(
+        socket,
+        getApi,
+        stallLimit: const Duration(minutes: 1),
+      ).openBytes(downloadPath: '/files/t', offset: 0);
+      final reading = fetched.bytes.forEach((_) {});
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      final watch = Stopwatch()..start();
+
+      getApi.initBase(address: 'https://127.0.0.1:${server.port}');
+
+      await expectLater(reading, throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.connection)));
+      expect(watch.elapsed, lessThan(const Duration(seconds: 2)));
+    });
+  });
 }
