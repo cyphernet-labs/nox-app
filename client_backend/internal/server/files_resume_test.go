@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -754,5 +756,422 @@ func TestIfRangeContinuesTheSameFileAndRestartsAnother(t *testing.T) {
 	code, whole, _ := get(5, "Mon, 02 Jan 2006 15:04:05 GMT")
 	if code != http.StatusOK || !bytes.Equal(whole, payload) {
 		t.Fatalf("GET with another validator = %d, %d bytes; want 200 and the whole file", code, len(whole))
+	}
+}
+
+// --- the edges of a finished upload ---
+
+// holdAfterFinalize stops every upload between the rename that makes its part
+// the file and the commit that tells the database so, until let is called:
+// the window a client hanging up, a continuation or a crash lands in.
+func holdAfterFinalize(t *testing.T) (tweak func(*Server), finalized <-chan string, let func()) {
+	t.Helper()
+	reached := make(chan string, 1)
+	release := make(chan struct{})
+	let = sync.OnceFunc(func() { close(release) })
+	// Released before the stack closes, or a held request would hold its
+	// shutdown too.
+	t.Cleanup(let)
+	return func(s *Server) {
+		s.afterFinalize = func(fileID string) {
+			reached <- fileID
+			<-release
+		}
+	}, reached, let
+}
+
+func waitFinalized(t *testing.T, finalized <-chan string) {
+	t.Helper()
+	select {
+	case <-finalized:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the upload never got as far as its commit")
+	}
+}
+
+func isUploaded(t *testing.T, srv *Server, fileID string) bool {
+	t.Helper()
+	info, err := srv.store.FileByID(t.Context(), fileID)
+	if err != nil {
+		t.Fatalf("FileByID: %v", err)
+	}
+	return info.Uploaded
+}
+
+// putChunked is putBytes with no declared length: the body goes chunked, and
+// only reading it tells how long it is.
+func putChunked(t *testing.T, ts *httptest.Server, token string, payload []byte) int {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPut, ts.URL+"/files/"+token, io.MultiReader(bytes.NewReader(payload)))
+	if err != nil {
+		t.Fatalf("build PUT: %v", err)
+	}
+	req.ContentLength = -1
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("PUT: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	return resp.StatusCode
+}
+
+func TestAClientThatHangsUpAfterItsLastByteStillHasItsFile(t *testing.T) {
+	hold, finalized, let := holdAfterFinalize(t)
+	ts, srv, closeAll := openStack(t, filepath.Join(t.TempDir(), "hangup.db"), nil, hold)
+	t.Cleanup(closeAll)
+	c := greeted(t, ts, srv)
+	chatID := seedChat(t, c, "hangup")
+
+	payload := randomPayload(t, 100000)
+	fileID, token, _ := declare(t, c, 3, "last.bin", len(payload), "application/octet-stream", "")
+	put := openRawPut(t, ts, token, len(payload))
+	put.send(payload)
+	waitFinalized(t, finalized)
+	// Every byte is in and the part is the file; the client goes before the
+	// answer comes. net/http, reading the connection for a next request by
+	// now, sees it close and cancels the request's context.
+	put.breakOff()
+	time.Sleep(200 * time.Millisecond)
+	let()
+	waitIdle(t, srv, fileID)
+
+	if !isUploaded(t, srv, fileID) {
+		t.Fatal("every byte is on disk and the row does not know it: the commit died with the request")
+	}
+	c.expectOKAfter(4, fmt.Sprintf(
+		`{"id":4,"cmd":"message.send","data":{"chat_id":%q,"client_message_id":"m1","attachment":{"file_id":%q}}}`, chatID, fileID))
+}
+
+func TestAContinuationBetweenTheLastByteAndTheCommitFindsTheFileWhole(t *testing.T) {
+	hold, finalized, let := holdAfterFinalize(t)
+	ts, srv, closeAll := openStack(t, filepath.Join(t.TempDir(), "between.db"), nil, hold, func(s *Server) {
+		// Longer than the hold: what is asserted is what the continuation
+		// answers once the writer let go, not what its timeout makes of it.
+		s.continuationWait = 5 * time.Second
+	})
+	t.Cleanup(closeAll)
+	c := greeted(t, ts, srv)
+
+	payload := randomPayload(t, 100000)
+	fileID, token, _ := declare(t, c, 3, "whole.bin", len(payload), "application/octet-stream", "")
+	put := openRawPut(t, ts, token, len(payload))
+	put.send(payload)
+	waitFinalized(t, finalized)
+
+	// The client's watch fired as the last byte left: it asks how much the
+	// server holds while the request is between that byte and its commit.
+	c.send(fmt.Sprintf(`{"id":4,"cmd":"file.uploadBegin","data":{"name":"whole.bin","size":%d,"mime":"application/octet-stream","file_id":%q}}`,
+		len(payload), fileID))
+	time.Sleep(200 * time.Millisecond)
+	let()
+
+	var received int64
+	mustUnmarshal(t, c.expectOK(4)["received"], &received)
+	if received != int64(len(payload)) {
+		t.Fatalf("received = %d, want all %d: the whole file would go up again", received, len(payload))
+	}
+	if code := put.status(5 * time.Second); code != http.StatusNoContent {
+		t.Fatalf("the PUT that delivered every byte = %d, want 204", code)
+	}
+	if !isUploaded(t, srv, fileID) {
+		t.Fatal("the file is whole and the row does not know it")
+	}
+}
+
+func TestAWholeFileTheCommitNeverReachedIsFinishedByAnEmptyPut(t *testing.T) {
+	ts, srv := newTestServer(t)
+	c := greeted(t, ts, srv)
+	chatID := seedChat(t, c, "crash")
+	const mime = "application/octet-stream"
+
+	payload := randomPayload(t, 5000)
+	fileID, _, _ := declare(t, c, 3, "crash.bin", len(payload), mime, "")
+	// Every byte arrived and the part became the file - and the process died
+	// before the commit that says so.
+	up, err := srv.blob.Create(fileID)
+	if err != nil {
+		t.Fatalf("blob.Create: %v", err)
+	}
+	if _, err := up.Write(payload); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := up.Finalize(); err != nil {
+		t.Fatalf("finalize: %v", err)
+	}
+
+	// A token from before the file was whole asks for bytes it no longer
+	// lacks: refused, and the file is not written over.
+	stale := srv.tokens.issue(fileID, opUpload, 0)
+	if code := putBytes(t, ts, stale, randomPayload(t, len(payload))); code != http.StatusNotFound {
+		t.Fatalf("PUT from the first byte of a whole file = %d, want 404", code)
+	}
+	if !bytes.Equal(diskBytes(t, srv, fileID), payload) {
+		t.Fatal("the whole file was written over")
+	}
+
+	_, token, received := declare(t, c, 4, "crash.bin", len(payload), mime, fileID)
+	if received != int64(len(payload)) {
+		t.Fatalf("received = %d, want all %d: the bytes are whole on disk", received, len(payload))
+	}
+	if code := putBytes(t, ts, token, nil); code != http.StatusNoContent {
+		t.Fatalf("empty PUT on a whole file = %d, want 204", code)
+	}
+	if !isUploaded(t, srv, fileID) {
+		t.Fatal("the empty PUT did not land the commit")
+	}
+	c.expectOKAfter(5, fmt.Sprintf(
+		`{"id":5,"cmd":"message.send","data":{"chat_id":%q,"client_message_id":"m1","attachment":{"file_id":%q}}}`, chatID, fileID))
+}
+
+func TestABodyDeclaredLongerThanTheRestIsRefusedBeforeAByteIsRead(t *testing.T) {
+	ts, srv, closeAll := openStack(t, filepath.Join(t.TempDir(), "long.db"), nil, func(s *Server) {
+		// Read instead of refused, the request would wait this long for a
+		// body that never comes.
+		s.stallTimeout = 30 * time.Second
+	})
+	t.Cleanup(closeAll)
+	c := greeted(t, ts, srv)
+
+	const size = 1 << 20
+	fileID, token, _ := declare(t, c, 3, "long.bin", size, "application/octet-stream", "")
+	// One byte more than the whole file, and not one of them sent.
+	put := openRawPut(t, ts, token, size+1)
+	if code := put.status(2 * time.Second); code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("PUT declared past the end = %d, want 413", code)
+	}
+	if _, err := os.Stat(partPath(srv, fileID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the refused request left a part behind (stat err = %v)", err)
+	}
+}
+
+func TestTooManyBytesInABodyOfNoDeclaredLengthRollBackPastItsCheckpoints(t *testing.T) {
+	ts, srv, closeAll := openStack(t, filepath.Join(t.TempDir(), "chunked.db"), nil, func(s *Server) {
+		// Small enough that the request makes its bytes durable before it
+		// turns out to be too long.
+		s.checkpointBytes = 1 << 10
+	})
+	t.Cleanup(closeAll)
+	c := greeted(t, ts, srv)
+	const mime = "application/octet-stream"
+
+	payload := randomPayload(t, 16<<10)
+	fileID, token, _ := declare(t, c, 3, "chunked.bin", len(payload), mime, "")
+	cutAfter(t, ts, srv, fileID, token, payload, 4<<10)
+	_, token, received := declare(t, c, 4, "chunked.bin", len(payload), mime, fileID)
+	if received != 4<<10 {
+		t.Fatalf("received = %d, want 4 KiB", received)
+	}
+
+	// 12 KiB remain; this body carries 14 and says so nowhere.
+	if code := putChunked(t, ts, token, randomPayload(t, 14<<10)); code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized chunked PUT = %d, want 413", code)
+	}
+	_, token, received = declare(t, c, 5, "chunked.bin", len(payload), mime, fileID)
+	if received != 4<<10 {
+		t.Fatalf("received after 413 = %d, want the 4 KiB from before it: "+
+			"the record still vouches for bytes of a request too long to be the file", received)
+	}
+	if code := putBytes(t, ts, token, payload[received:]); code != http.StatusNoContent {
+		t.Fatalf("PUT of the rest = %d", code)
+	}
+	if !bytes.Equal(diskBytes(t, srv, fileID), payload) {
+		t.Fatal("the finished file is not the bytes that were sent")
+	}
+}
+
+func TestALatePutWithAnEarlierTokenCannotCutThePartBack(t *testing.T) {
+	ts, srv := newTestServer(t)
+	c := greeted(t, ts, srv)
+	const mime = "application/octet-stream"
+
+	payload := randomPayload(t, 64<<10)
+	fileID, token, _ := declare(t, c, 3, "late.bin", len(payload), mime, "")
+	cutAfter(t, ts, srv, fileID, token, payload, 16<<10)
+
+	// Two continuations: the PUT on the first is held up on its way, so the
+	// client asks again and goes on with the second.
+	_, earlier, _ := declare(t, c, 4, "late.bin", len(payload), mime, fileID)
+	_, later, received := declare(t, c, 5, "late.bin", len(payload), mime, fileID)
+	put := openRawPut(t, ts, later, len(payload)-int(received))
+	put.send(payload[received : 40<<10])
+	waitPart(t, srv, fileID, 40<<10)
+	put.breakOff()
+	waitIdle(t, srv, fileID)
+
+	// The first one arrives at last.
+	if code := putBytes(t, ts, earlier, payload[16<<10:]); code != http.StatusNotFound {
+		t.Fatalf("PUT on a token the client asked past = %d, want 404", code)
+	}
+	if durable, err := srv.blob.Received(fileID); err != nil || durable != 40<<10 {
+		t.Fatalf("the part holds %d durable bytes after the late PUT (err %v), want the 40 KiB the later one left", durable, err)
+	}
+}
+
+func TestAPutThatWaitedForAFinishingWriterDoesNotWriteOverTheFile(t *testing.T) {
+	ts, srv := newTestServer(t)
+	c := greeted(t, ts, srv)
+
+	payload := randomPayload(t, 5000)
+	fileID, _, _ := declare(t, c, 3, "finishing.bin", len(payload), "application/octet-stream", "")
+
+	// A writer with every byte in: interrupted, it still finishes - the part
+	// becomes the file and the row says so - and only then lets go.
+	interrupted := make(chan struct{}, 1)
+	release, ok := srv.writers.take(fileID, func() {
+		select {
+		case interrupted <- struct{}{}:
+		default:
+		}
+	}, time.Second)
+	if !ok {
+		t.Fatal("could not plant the finishing writer")
+	}
+	finished := make(chan error, 1)
+	go func() {
+		defer release()
+		<-interrupted
+		up, err := srv.blob.Create(fileID)
+		if err == nil {
+			_, err = up.Write(payload)
+		}
+		if err == nil {
+			err = up.Finalize()
+		}
+		if err == nil {
+			err = srv.store.MarkUploaded(context.Background(), fileID)
+		}
+		finished <- err
+	}()
+
+	// A token from the first byte, issued while the file was still being
+	// written: the continuation that issued it had waited its second and
+	// answered with what was durable then.
+	token := srv.tokens.issue(fileID, opUpload, 0)
+	if code := putBytes(t, ts, token, randomPayload(t, len(payload))); code != http.StatusNotFound {
+		t.Fatalf("PUT that waited for the writer that finished the file = %d, want 404", code)
+	}
+	if err := <-finished; err != nil {
+		t.Fatalf("the planted writer failed to finish: %v", err)
+	}
+	if !bytes.Equal(diskBytes(t, srv, fileID), payload) {
+		t.Fatal("the finished file was written over")
+	}
+}
+
+func TestADiskThatFailsMidUploadKeepsWhatWasAlreadyDurable(t *testing.T) {
+	ts, srv, closeAll := openStack(t, filepath.Join(t.TempDir(), "disk.db"), nil, func(s *Server) {
+		s.checkpointBytes = 1 << 10
+	})
+	t.Cleanup(closeAll)
+	c := greeted(t, ts, srv)
+	const mime = "application/octet-stream"
+
+	payload := randomPayload(t, 64<<10)
+	fileID, token, _ := declare(t, c, 3, "disk.bin", len(payload), mime, "")
+	cutAfter(t, ts, srv, fileID, token, payload, 16<<10)
+
+	// The disk refuses the next record: where its temporary file goes, there
+	// is a directory.
+	blocker := filepath.Join(srv.cfg.FilesPath, fileID+".synced.tmp")
+	if err := os.Mkdir(blocker, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	_, token, received := declare(t, c, 4, "disk.bin", len(payload), mime, fileID)
+	if code := putBytes(t, ts, token, payload[received:]); code != http.StatusInternalServerError {
+		t.Fatalf("PUT the disk refused = %d, want 500", code)
+	}
+	if err := os.Remove(blocker); err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("remove: %v", err)
+	}
+
+	_, token, received = declare(t, c, 5, "disk.bin", len(payload), mime, fileID)
+	if received != 16<<10 {
+		t.Fatalf("received after a storage failure = %d, want the 16 KiB durable before it", received)
+	}
+	if code := putBytes(t, ts, token, payload[received:]); code != http.StatusNoContent {
+		t.Fatalf("PUT of the rest = %d", code)
+	}
+	if !bytes.Equal(diskBytes(t, srv, fileID), payload) {
+		t.Fatal("the finished file is not the bytes that were sent")
+	}
+}
+
+func TestAnyByteSentToAFinishedUploadIsRefused(t *testing.T) {
+	ts, srv := newTestServer(t)
+	c := greeted(t, ts, srv)
+	const mime = "application/octet-stream"
+
+	payload := randomPayload(t, 5000)
+	fileID, token, _ := declare(t, c, 3, "done.bin", len(payload), mime, "")
+	if code := putBytes(t, ts, token, payload); code != http.StatusNoContent {
+		t.Fatalf("PUT = %d", code)
+	}
+
+	// Nothing remains, so a single byte is more than the rest - declared, or
+	// found by reading one.
+	for i, put := range []func(token string) int{
+		func(token string) int { return putBytes(t, ts, token, []byte("x")) },
+		func(token string) int { return putChunked(t, ts, token, []byte("x")) },
+	} {
+		_, token, received := declare(t, c, 4+i, "done.bin", len(payload), mime, fileID)
+		if received != int64(len(payload)) {
+			t.Fatalf("received = %d, want all %d", received, len(payload))
+		}
+		if code := put(token); code != http.StatusRequestEntityTooLarge {
+			t.Fatalf("PUT %d of a byte past a finished file = %d, want 413", i, code)
+		}
+	}
+	if !bytes.Equal(diskBytes(t, srv, fileID), payload) {
+		t.Fatal("the finished bytes changed")
+	}
+	// With nothing in it, it is the lost 204 asked for again, however it is sent.
+	_, token, _ = declare(t, c, 6, "done.bin", len(payload), mime, fileID)
+	if code := putChunked(t, ts, token, nil); code != http.StatusNoContent {
+		t.Fatalf("empty chunked PUT on a finished file = %d, want 204", code)
+	}
+}
+
+// deadlineWriter is a ResponseWriter that records the read deadlines it is
+// handed and nothing else.
+type deadlineWriter struct {
+	header http.Header
+	set    []time.Time
+}
+
+func (d *deadlineWriter) Header() http.Header         { return d.header }
+func (d *deadlineWriter) Write(p []byte) (int, error) { return len(p), nil }
+func (d *deadlineWriter) WriteHeader(int)             {}
+
+func (d *deadlineWriter) SetReadDeadline(t time.Time) error {
+	d.set = append(d.set, t)
+	return nil
+}
+
+func TestAnInterruptAfterTheLastByteLeavesTheConnectionAlone(t *testing.T) {
+	w := &deadlineWriter{header: http.Header{}}
+	body := newStallReader(w, io.NopCloser(strings.NewReader("every byte")), time.Minute)
+	if _, err := io.ReadAll(body); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	renewals := len(w.set)
+	body.interrupt()
+	if len(w.set) != renewals {
+		t.Fatal("an interrupt after the last byte moved the read deadline: net/http reads that connection " +
+			"for the next request by then, and a deadline in the past cancels the request's context under its commit")
+	}
+
+	// Before the last byte, the same interrupt wakes the read at once.
+	w = &deadlineWriter{header: http.Header{}}
+	body = newStallReader(w, io.NopCloser(strings.NewReader("more to come")), time.Minute)
+	if _, err := body.Read(make([]byte, 4)); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	body.interrupt()
+	if last := w.set[len(w.set)-1]; last.After(time.Now()) {
+		t.Fatalf("an interrupt mid-body set the deadline to %v, still ahead", last)
+	}
+	if _, err := body.Read(make([]byte, 4)); !errors.Is(err, errSuperseded) {
+		t.Fatalf("a read after the interrupt = %v, want errSuperseded", err)
 	}
 }

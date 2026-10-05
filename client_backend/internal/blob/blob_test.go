@@ -373,6 +373,52 @@ func TestFinalizeLeavesNoRecordBehind(t *testing.T) {
 	}
 }
 
+func TestFinalizeTakesAStrayTemporaryRecordToo(t *testing.T) {
+	s := openStore(t)
+	u, err := s.Resume("f_stray", 0)
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if _, err := u.Write([]byte("whole file")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if err := u.Checkpoint(); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	// A crash in the middle of an earlier record left its temporary behind.
+	if err := s.root.WriteFile("f_stray"+syncedSuffix+tmpSuffix, []byte("7"), 0o666); err != nil {
+		t.Fatalf("seed temporary: %v", err)
+	}
+	if err := u.Finalize(); err != nil {
+		t.Fatalf("Finalize: %v", err)
+	}
+	// Nothing sweeps a file bound to a message, so whatever Finalize leaves
+	// beside it stays for good.
+	for _, name := range []string{"f_stray" + syncedSuffix, "f_stray" + syncedSuffix + tmpSuffix} {
+		if _, err := s.root.Stat(name); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("%s survived Finalize (err=%v)", name, err)
+		}
+	}
+}
+
+func TestAFinalizeThatCannotFlushStillClosesThePart(t *testing.T) {
+	s := openStore(t)
+	// A part the flush fails on: a pipe takes writes and refuses fsync.
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	t.Cleanup(func() { _ = r.Close() })
+	u := &Upload{root: s.root, id: "f_pipe", f: w}
+
+	if err := u.Finalize(); err == nil {
+		t.Fatal("Finalize succeeded on a part that cannot be flushed")
+	}
+	if err := w.Close(); !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("the part is still open after a failed flush (close = %v): every such failure leaks a descriptor", err)
+	}
+}
+
 func TestAbortRemovesThePartAndItsRecord(t *testing.T) {
 	s := openStore(t)
 	u, err := s.Resume("f_abort", 0)

@@ -110,35 +110,12 @@ func (c *client) handleFileUploadBegin(cmd protocol.Command) {
 
 // continueUpload answers a declaration that names an earlier upload (043):
 // how much of the file the server holds, and a token for the rest.
-//
-// Bound, swept or never there all read the same - "no unfinished upload by
-// that id" - and the client starts a new one; for the person that is not an
-// error. A declaration that names the same id with other metadata is a
-// client mistake, and continuing it would put one file's bytes under
-// another's name.
 func (c *client) continueUpload(cmd protocol.Command, fileID, name string, size int64, mime string) {
-	info, err := c.srv.store.FileByID(c.ctx, fileID)
-	switch {
-	case errors.Is(err, store.ErrFileNotFound):
-		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrNotFound, "no unfinished upload with this file_id"))
-		return
-	case err != nil:
-		c.logger.Error("file lookup failed", "err", err)
-		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to look up file"))
+	info, ok := c.unfinishedUpload(cmd, fileID, name, size, mime)
+	if !ok {
 		return
 	}
-	if info.MessageID != "" {
-		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrNotFound, "no unfinished upload with this file_id"))
-		return
-	}
-	att := info.Attachment
-	if att.Name != name || att.Size != size || att.Mime != mime {
-		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest,
-			"name, size and mime differ from the ones this upload was declared with"))
-		return
-	}
-
-	received := att.Size
+	received := size
 	if !info.Uploaded {
 		// A PUT may still be writing it - one whose connection died without a
 		// word goes on waiting for bytes until its stall deadline. Stop it, so
@@ -146,16 +123,64 @@ func (c *client) continueUpload(cmd protocol.Command, fileID, name string, size 
 		// time, answer with what is durable already. The PUT this token admits
 		// cuts the part back to the offset it names either way.
 		c.srv.writers.interrupt(fileID, c.srv.continuationWait)
-		durable, err := c.srv.blob.Received(fileID)
-		if err != nil {
-			c.logger.Error("upload progress lookup failed", "err", err, "file", fileID)
-			c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to read upload progress"))
+		// Read again: a writer whose last byte was already in does not stop,
+		// it finishes - and what the first read said is no longer true.
+		if info, ok = c.unfinishedUpload(cmd, fileID, name, size, mime); !ok {
 			return
 		}
-		received = min(durable, att.Size)
+		if !info.Uploaded && !c.srv.finished(fileID, size) {
+			durable, err := c.srv.blob.Received(fileID)
+			if err != nil {
+				c.logger.Error("upload progress lookup failed", "err", err, "file", fileID)
+				c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to read upload progress"))
+				return
+			}
+			received = min(durable, size)
+		}
 	}
 	c.replyUpload(cmd, fileID, received)
-	c.logger.Info("upload resumed", "file", fileID, "from", received, "size", att.Size)
+	c.logger.Info("upload resumed", "file", fileID, "from", received, "size", size)
+}
+
+// unfinishedUpload looks up the upload a continuation names and answers the
+// refusals itself.
+//
+// Bound, swept or never there all read the same - "no unfinished upload by
+// that id" - and the client starts a new one; for the person that is not an
+// error. A declaration that names the same id with other metadata is a
+// client mistake, and continuing it would put one file's bytes under
+// another's name.
+func (c *client) unfinishedUpload(cmd protocol.Command, fileID, name string, size int64, mime string) (store.FileInfo, bool) {
+	info, err := c.srv.store.FileByID(c.ctx, fileID)
+	switch {
+	case errors.Is(err, store.ErrFileNotFound):
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrNotFound, "no unfinished upload with this file_id"))
+		return store.FileInfo{}, false
+	case err != nil:
+		c.logger.Error("file lookup failed", "err", err)
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to look up file"))
+		return store.FileInfo{}, false
+	}
+	if info.MessageID != "" {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrNotFound, "no unfinished upload with this file_id"))
+		return store.FileInfo{}, false
+	}
+	att := info.Attachment
+	if att.Name != name || att.Size != size || att.Mime != mime {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest,
+			"name, size and mime differ from the ones this upload was declared with"))
+		return store.FileInfo{}, false
+	}
+	return info, true
+}
+
+// finished reports whether fileID's part has become the file, whole: every
+// byte arrived and was flushed before the rename, whatever the row says. The
+// commit that follows the rename can fail to land - a crash, a write the
+// database refused - and the bytes are no less whole for it (043).
+func (s *Server) finished(fileID string, size int64) bool {
+	n, err := s.blob.Size(fileID)
+	return err == nil && n == size
 }
 
 // replyUpload issues a token for the bytes of fileID from received on and
@@ -271,24 +296,17 @@ func (s *Server) handlePutFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	info, err := s.store.FileByID(r.Context(), fileID)
-	if err != nil {
+	if err != nil || offset > info.Attachment.Size {
 		http.NotFound(w, r)
 		return
 	}
 	size := info.Attachment.Size
-	if info.Uploaded {
-		// All of it is here already. An empty PUT is how a client whose 204
-		// was lost on the way back hears it again; anything longer would
-		// write over finished bytes.
-		if offset == size {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		http.NotFound(w, r)
-		return
-	}
-	if offset > size {
-		http.NotFound(w, r)
+	remainder := size - offset
+	if r.ContentLength > remainder {
+		// Declared longer than the rest of the file: not the file the
+		// declaration named. Refused before a byte is read - and before the
+		// request writing the file now is disturbed for it.
+		http.Error(w, "more bytes than the rest of the file", http.StatusRequestEntityTooLarge)
 		return
 	}
 
@@ -304,6 +322,17 @@ func (s *Server) handlePutFile(w http.ResponseWriter, r *http.Request) {
 	defer release()
 	defer body.finish()
 
+	// Read again: the writer this request waited for may have finished the
+	// file meanwhile, and a token issued before that must not write over it.
+	if info, err = s.store.FileByID(r.Context(), fileID); err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if info.Uploaded || s.finished(fileID, size) {
+		s.putFinished(w, r, body, fileID, offset, size, info.Uploaded)
+		return
+	}
+
 	up, err := s.blob.Resume(fileID, offset)
 	if errors.Is(err, blob.ErrShortPart) {
 		// The bytes this token was issued after are no longer all on disk.
@@ -316,40 +345,32 @@ func (s *Server) handlePutFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	remainder := size - offset
 	n, readErr, writeErr := s.receive(up, http.MaxBytesReader(w, body, remainder))
 	at := offset + n
 	var tooBig *http.MaxBytesError
 	switch {
 	case writeErr != nil:
-		// The disk refused. Bytes that may not have reached it cannot be
-		// vouched for, and neither can the part they went into.
-		up.Abort()
+		// The disk refused. What reached stable storage before it stays - the
+		// earlier requests' bytes and this one's up to its last checkpoint -
+		// and the rest cannot be vouched for. Only a part that cannot even be
+		// cut back is thrown away whole.
+		if err := up.Rollback(up.Durable()); err != nil {
+			up.Abort()
+			s.logger.Error("upload rollback failed", "err", err, "file", fileID)
+		}
 		s.logger.Error("upload write failed", "err", writeErr, "file", fileID, "at", at)
 		http.Error(w, "storage failure", http.StatusInternalServerError)
 	case errors.As(readErr, &tooBig):
-		// More than the rest of the file: this request's bytes are not the
-		// file the declaration named. The ones before it stay.
+		// More than the rest of the file in a body of no declared length:
+		// this request's bytes are not the file the declaration named. The
+		// ones before it stay.
 		if err := up.Rollback(offset); err != nil {
 			s.logger.Error("upload rollback failed", "err", err, "file", fileID)
 		}
 		http.Error(w, "more bytes than the rest of the file", http.StatusRequestEntityTooLarge)
 	case readErr != nil:
 		s.suspend(up, fileID)
-		// Answered with a definite failure even when nobody can hear it: a
-		// handler that returns without one answers 200, and a client that
-		// did read it would take an unfinished file for a finished one.
-		switch {
-		case errors.Is(readErr, errSuperseded):
-			s.logger.Info("upload interrupted", "file", fileID, "at", at, "by", "a newer request")
-			http.Error(w, "a newer request for this file took over", http.StatusConflict)
-		case isTimeout(readErr):
-			s.logger.Info("upload stalled", "file", fileID, "at", at)
-			http.Error(w, "no bytes arrived in time; what arrived is kept", http.StatusRequestTimeout)
-		default:
-			s.logger.Info("upload interrupted", "file", fileID, "at", at)
-			http.Error(w, "the upload broke off; what arrived is kept", http.StatusRequestTimeout)
-		}
+		s.answerBroken(w, fileID, at, readErr)
 	case n < remainder:
 		s.suspend(up, fileID)
 		s.logger.Info("upload short", "file", fileID, "at", at, "size", size)
@@ -360,13 +381,83 @@ func (s *Server) handlePutFile(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "storage failure", http.StatusInternalServerError)
 			return
 		}
-		if err := s.store.MarkUploaded(r.Context(), fileID); err != nil {
-			s.logger.Error("mark uploaded failed", "err", err, "file", fileID)
-			http.Error(w, "storage failure", http.StatusInternalServerError)
+		if s.afterFinalize != nil {
+			s.afterFinalize(fileID)
+		}
+		s.commitUpload(w, r, fileID, offset, size)
+	}
+}
+
+// putFinished answers a PUT for a file whose bytes are all here already.
+//
+// An empty one is how a client whose 204 was lost hears it again - and, when
+// the commit that should have followed the bytes never landed, what lands it.
+// A token for an earlier offset was issued before the file was whole: 404,
+// and the client asks again and is told nothing is left to send. With nothing
+// left, any byte at all is more than the rest of the file; one is read to
+// tell when the length was not declared.
+func (s *Server) putFinished(w http.ResponseWriter, r *http.Request, body io.Reader, fileID string, offset, size int64, committed bool) {
+	if offset < size {
+		http.NotFound(w, r)
+		return
+	}
+	if r.ContentLength < 0 {
+		var one [1]byte
+		k, err := io.ReadFull(body, one[:])
+		if k > 0 {
+			http.Error(w, "more bytes than the rest of the file", http.StatusRequestEntityTooLarge)
 			return
 		}
-		s.logger.Info("upload complete", "file", fileID, "size", size, "from", offset)
+		if !errors.Is(err, io.EOF) {
+			s.answerBroken(w, fileID, size, err)
+			return
+		}
+	}
+	if committed {
 		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	s.commitUpload(w, r, fileID, offset, size)
+}
+
+// commitUpload tells the database the file is whole and answers 204.
+//
+// The commit runs on a context the request cannot cancel. Its bytes are all
+// on disk by now, and the client may already be gone - it hung up after its
+// last byte, or a continuation came for the file - which cancels the request
+// before the answer is written. A file left whole on disk and unknown to its
+// row would be sent again from the first byte.
+func (s *Server) commitUpload(w http.ResponseWriter, r *http.Request, fileID string, offset, size int64) {
+	err := s.store.MarkUploaded(context.WithoutCancel(r.Context()), fileID)
+	if errors.Is(err, store.ErrFileNotFound) {
+		// Swept in between: nothing is left to finish.
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		s.logger.Error("mark uploaded failed", "err", err, "file", fileID)
+		http.Error(w, "storage failure", http.StatusInternalServerError)
+		return
+	}
+	s.logger.Info("upload complete", "file", fileID, "size", size, "from", offset)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// answerBroken answers a PUT whose body broke off. It answers with a definite
+// failure even when nobody can hear it: a handler that returns without one
+// answers 200, and a client that did read it would take an unfinished file
+// for a finished one.
+func (s *Server) answerBroken(w http.ResponseWriter, fileID string, at int64, readErr error) {
+	switch {
+	case errors.Is(readErr, errSuperseded):
+		s.logger.Info("upload interrupted", "file", fileID, "at", at, "by", "a newer request")
+		http.Error(w, "a newer request for this file took over", http.StatusConflict)
+	case isTimeout(readErr):
+		s.logger.Info("upload stalled", "file", fileID, "at", at)
+		http.Error(w, "no bytes arrived in time; what arrived is kept", http.StatusRequestTimeout)
+	default:
+		s.logger.Info("upload interrupted", "file", fileID, "at", at)
+		http.Error(w, "the upload broke off; what arrived is kept", http.StatusRequestTimeout)
 	}
 }
 
@@ -435,9 +526,15 @@ type stallReader struct {
 
 	// mu orders a renewal against an interrupt: a renewal landing after the
 	// interrupt set its deadline would push it back by a whole stall timeout,
-	// and the newer request would wait that long.
+	// and the newer request would wait that long. It belongs to one request
+	// and guards nothing any other request reads.
 	mu      sync.Mutex
 	stopped bool
+	// eof is set once the body has been read to its end. From there the
+	// connection is net/http's again: it reads it for a next request, and a
+	// deadline in the past would end that read and cancel this request's
+	// context - with its last bytes still to be committed.
+	eof bool
 	// finished is set as the handler leaves. The controller must not be
 	// touched after that: the connection may already carry the next request,
 	// and a deadline in the past would cut it.
@@ -463,13 +560,19 @@ func (s *stallReader) Read(p []byte) (int, error) {
 	s.mu.Unlock()
 
 	n, err := s.body.Read(p)
-	if err != nil {
-		s.mu.Lock()
-		stopped := s.stopped
-		s.mu.Unlock()
-		if stopped {
-			return n, errSuperseded
-		}
+	if err == nil {
+		return n, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if errors.Is(err, io.EOF) {
+		// Every byte is in, whatever an interrupt says: the request goes on
+		// to finish the file rather than give it up one step short.
+		s.eof = true
+		return n, err
+	}
+	if s.stopped {
+		return n, errSuperseded
 	}
 	return n, err
 }
@@ -480,7 +583,8 @@ func (s *stallReader) Close() error {
 }
 
 // interrupt wakes a Read blocked on the connection and stops every Read
-// after it. A no-op once the handler has finished.
+// after it. A no-op once the handler has finished; past the body's end it
+// only marks the request stopped, because nothing is left to wake.
 func (s *stallReader) interrupt() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -488,6 +592,9 @@ func (s *stallReader) interrupt() {
 		return
 	}
 	s.stopped = true
+	if s.eof {
+		return
+	}
 	// A deadline in the past wakes the blocked read at once. Without deadline
 	// support there is nothing to wake: the read ends with the connection,
 	// and the next one sees stopped.
@@ -535,9 +642,10 @@ func (s *stallWriter) Write(p []byte) (int, error) {
 }
 
 // finish sends what is still buffered under the stall deadline, then clears
-// it. net/http resets the READ deadline for every request on a connection,
-// but not the write one: left behind, it would cut the next request on the
-// same keep-alive connection at an arbitrary moment.
+// it. Belt and braces: net/http (Go 1.27) clears the write deadline itself
+// once a handler returns, before the connection carries another request. A
+// deadline left behind would cut that request at an arbitrary moment, and a
+// one-line reset costs less than depending on that never changing.
 func (s *stallWriter) finish() {
 	if !s.renew {
 		return

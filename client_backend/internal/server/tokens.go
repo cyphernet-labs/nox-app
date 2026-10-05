@@ -47,6 +47,12 @@ func newTokenStore() *tokenStore {
 
 // issue mints an unpredictable one-shot token for the file and operation,
 // remembering the offset an upload starts at.
+//
+// An upload token revokes the upload tokens issued for the same file before
+// it (043). The client asks again only once it has given up on the previous
+// attempt, and a PUT on the older token that turns up late - held up through
+// Tor, say - would cut the part back to its older offset, past bytes the
+// newer attempt has written since.
 func (t *tokenStore) issue(fileID string, op tokenOp, offset int64) string {
 	var buf [32]byte
 	if _, err := rand.Read(buf[:]); err != nil {
@@ -60,7 +66,8 @@ func (t *tokenStore) issue(fileID string, op tokenOp, offset int64) string {
 	// Lazy expiry sweep keeps the map bounded without a background timer.
 	now := t.now()
 	for k, e := range t.tokens {
-		if now.After(e.expires) {
+		superseded := op == opUpload && e.op == opUpload && e.fileID == fileID
+		if superseded || now.After(e.expires) {
 			delete(t.tokens, k)
 		}
 	}

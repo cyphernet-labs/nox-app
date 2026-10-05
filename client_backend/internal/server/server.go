@@ -104,6 +104,10 @@ type Server struct {
 	// on demand.
 	afterAddressRead func()
 	afterGreeted     func(*client)
+	// The same kind of seam in the file chain (043): right after an upload's
+	// part became its file and before the database hears of it - the window a
+	// client hanging up, a continuation or a crash lands in. Nil outside tests.
+	afterFinalize func(fileID string)
 	// What the service page shows about the process itself. Set once at
 	// startup: the schema version the migrator reported, the moment this
 	// process began. A person who closed that terminal has no other way to it.

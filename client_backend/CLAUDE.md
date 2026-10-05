@@ -114,7 +114,11 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
    and - since 043 - the upload-writer registry (`internal/server/writers.go`:
    which request is writing which part, so a new PUT can interrupt one whose
    connection died silently instead of writing beside it) hold the only
-   other three. Since 039 the registry also carries `greeted`
+   other three. The mutex inside each PUT's `stallReader` (`files.go`) is
+   NOT a fourth: it lives and dies with one request, guards nothing another
+   request or connection reads, and only orders that request's read-deadline
+   renewal against an interrupt, so the interrupt is never pushed back by a
+   whole stall timeout. Since 039 the registry also carries `greeted`
    and `addrVersion` per connection, set under `Server.mu` AFTER the greeting
    reply is queued - which is what keeps `server.addresses` behind it. Tor
    state reaches readers as an immutable snapshot behind `atomic.Pointer`,
@@ -212,7 +216,11 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - `internal/server/files.go` — the file chain (contract §7): `file.uploadBegin`
   with its continuation (`file_id` in, `received` out), the PUT that keeps
   whatever arrives and carries the rest of the file from the offset its token
-  names, the GET with Range/If-Range; a body is cut by silence alone (043)
+  names, the GET with Range/If-Range; a body is cut by silence alone (043).
+  A new upload token revokes the file's earlier ones, so a PUT that turns up
+  late cannot cut the part back past what a newer attempt wrote; and the PUT
+  reads the row again once it holds the file, so a token issued before the
+  file was finished cannot write over it
 - `internal/server/writers.go` — one request writes a part at a time; a newer
   request for the same file interrupts the old one
 - `internal/blob/`       — attachment bytes on disk, confined by `os.Root`:
@@ -275,12 +283,20 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   the owner's stand included - would have to be recreated and its devices
   paired again; how much of a part is safe on disk is a property of the
   bytes, which `internal/blob` already owns. A crash costs at most the last
-  4 MiB of an upload, sent again.
+  4 MiB of an upload, sent again. A crash - or any failed commit - between
+  the rename that makes the part the file and `uploaded = 1` costs nothing:
+  a finished `<id>` of the declared size counts as received in full, so the
+  continuation answers `received = size` and the empty PUT lands the commit.
+  The bytes cannot be there unless every one was flushed before the rename.
+  That commit runs on `context.WithoutCancel`: the client may hang up after
+  its last byte, and the request's context dies with it.
 - **The continuation waits at most a second for the previous writer, and
   never refuses on it.** It runs on the connection's read loop, which also
   reads pongs, and the direct ping gives up after 5 s. A writer that did not
   let go in time leaves a `received` slightly behind; the PUT cuts the part
-  back to its token's offset either way.
+  back to its token's offset either way. A writer whose last byte is already
+  in is not interrupted at all - it finishes - and the continuation reads the
+  row again after the wait, so it sees the file it just waited for.
 - **The service page lives on its OWN loopback listener** (`-status-addr`), and
   the main mux serves it nowhere. That separation IS the protection: a check on
   RemoteAddr inside a handler is one somebody eventually routes around with a

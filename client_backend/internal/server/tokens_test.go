@@ -33,6 +33,30 @@ func TestAnUploadTokenCarriesTheOffsetItWasIssuedFor(t *testing.T) {
 	}
 }
 
+func TestIssuingAnUploadTokenRevokesTheEarlierOnesForThatFile(t *testing.T) {
+	ts := newTokenStore()
+	earlier := ts.issue("f_1", opUpload, 100)
+	other := ts.issue("f_2", opUpload, 0)
+	download := ts.issue("f_1", opDownload, 0)
+	later := ts.issue("f_1", opUpload, 200)
+
+	// A PUT held up on its way and arriving after the client asked again
+	// would cut the part back to its older offset, past bytes the newer one
+	// has written since.
+	if _, _, ok := ts.consume(earlier, opUpload); ok {
+		t.Fatal("an upload token outlived the next one issued for its file")
+	}
+	if _, offset, ok := ts.consume(later, opUpload); !ok || offset != 200 {
+		t.Fatalf("the newest upload token = %d, %v; want it valid at 200", offset, ok)
+	}
+	if _, _, ok := ts.consume(other, opUpload); !ok {
+		t.Fatal("another file's upload token was revoked")
+	}
+	if _, _, ok := ts.consume(download, opDownload); !ok {
+		t.Fatal("a download token was revoked by an upload's")
+	}
+}
+
 func TestTokenWrongOpIsRejectedAndBurned(t *testing.T) {
 	ts := newTokenStore()
 	tok := ts.issue("f_1", opDownload, 0)

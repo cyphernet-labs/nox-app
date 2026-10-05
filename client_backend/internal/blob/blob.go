@@ -56,7 +56,8 @@ func (s *Store) Close() error {
 }
 
 // Upload is an in-progress write. Exactly one of Finalize, Suspend, Rollback
-// or Abort must be called.
+// or Abort must be called - except that Abort may follow a Rollback that
+// failed.
 type Upload struct {
 	root *os.Root
 	id   string
@@ -157,6 +158,12 @@ func (u *Upload) Size() int64 {
 	return u.size
 }
 
+// Durable is how many leading bytes of the part are on stable storage and
+// recorded as such: where a request that failed to write goes back to.
+func (u *Upload) Durable() int64 {
+	return u.synced
+}
+
 // Checkpoint makes everything written so far durable and records it: the
 // part is flushed first and the record written second, so the record never
 // names a byte that is not on stable storage.
@@ -216,10 +223,12 @@ func (u *Upload) Rollback(offset int64) error {
 // leave the finalized name holding truncated bytes that the database already
 // promises (uploaded=1 commits right after this returns).
 //
-// The record goes last: a crash before its removal leaves a stray record next
-// to a finished file, which nothing reads and Remove clears.
+// The record goes last, with whatever temporary of it a crash left: a crash
+// before their removal leaves strays next to a finished file, which nothing
+// reads and Remove clears. A failure at any step leaves the part closed.
 func (u *Upload) Finalize() error {
 	if err := u.f.Sync(); err != nil {
+		_ = u.f.Close()
 		return fmt.Errorf("sync part for %s: %w", u.id, err)
 	}
 	if err := u.f.Close(); err != nil {
@@ -228,8 +237,10 @@ func (u *Upload) Finalize() error {
 	if err := u.root.Rename(u.id+partSuffix, u.id); err != nil {
 		return fmt.Errorf("finalize %s: %w", u.id, err)
 	}
-	if err := removeIfPresent(u.root, u.id+syncedSuffix); err != nil {
-		return fmt.Errorf("drop record of %s: %w", u.id, err)
+	for _, name := range []string{u.id + syncedSuffix, u.id + syncedSuffix + tmpSuffix} {
+		if err := removeIfPresent(u.root, name); err != nil {
+			return fmt.Errorf("drop record of %s: %w", u.id, err)
+		}
 	}
 	return nil
 }
