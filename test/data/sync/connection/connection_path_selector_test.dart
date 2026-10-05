@@ -792,4 +792,118 @@ void main() {
     expect(await selector.nextTarget(), isNull);
     expect(selector.selection.active, isFalse);
   });
+
+  group('a restart of the channel (phase 042)', () {
+    Future<void> onTorHere() async {
+      await torWorks();
+      prober.home = <String>{};
+      await connectAndGreet();
+      expect(selector.currentPath, ConnectionPath.tor);
+    }
+
+    test('keeps a Tor client that is ready', () async {
+      await onTorHere();
+      final stops = tor.stops;
+
+      await selector.end(keepTor: true);
+
+      expect(tor.stops, stops, reason: 'a healthy client is worth keeping');
+    });
+
+    test('keeps a Tor client still coming up within its budget, so a second press loses nothing', () async {
+      await torWorks();
+      prober.home = <String>{};
+      tor.afterStart = const TorStatus(state: TorState.bootstrapping, bootstrapPercent: 30);
+      unawaited(selector.nextTarget());
+      await waitUntil(() => tor.starts == 1, reason: 'Tor is coming up');
+      final stops = tor.stops;
+
+      await selector.end(keepTor: true);
+
+      expect(tor.stops, stops);
+    });
+
+    test('stops a Tor client coming up for longer than its budget, and the next round starts it afresh', () async {
+      await torWorks();
+      prober.home = <String>{};
+      tor.afterStart = const TorStatus(state: TorState.bootstrapping, bootstrapPercent: 15);
+      // Waits out the readiness budget (400 ms here) and finds no path.
+      expect(await selector.nextTarget(), isNull);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(tor.status.state, TorState.bootstrapping, reason: 'stuck, the way Arti can stay at 15 %');
+      final stops = tor.stops;
+
+      await selector.end(keepTor: true);
+
+      expect(tor.stops, stops + 1, reason: 'coming up for longer than the budget is not coming up');
+      selector.begin(linkAddress: _link, fingerprint: _pin);
+      tor.afterStart = const TorStatus(state: TorState.ready, bootstrapPercent: 100);
+      final starts = tor.starts;
+      expect(await selector.nextTarget(), isNotNull);
+      expect(tor.starts, starts + 1, reason: 'started afresh');
+    });
+
+    test('stops a Tor client that failed', () async {
+      await onTorHere();
+      tor.emit(const TorStatus(state: TorState.failed));
+      final stops = tor.stops;
+
+      await selector.end(keepTor: true);
+
+      expect(tor.stops, stops + 1);
+    });
+
+    test('the strip gives way after a restart, and comes back when the new round fails too', () async {
+      prober.home = <String>{};
+      expect(await selector.nextTarget(), isNull);
+      expect(selector.selection.roundFailed, isTrue, reason: 'No connection');
+
+      await selector.end(keepTor: true);
+      selector.begin(linkAddress: _link, fingerprint: _pin);
+      expect(selector.selection.roundFailed, isFalse, reason: 'connecting again');
+
+      expect(await selector.nextTarget(), isNull);
+      expect(selector.selection.roundFailed, isTrue, reason: 'No connection again');
+    });
+
+    test('back in front during an attempt under way, the attempt is left to finish', () async {
+      prober.home = <String>{};
+      final gate = Completer<void>();
+      prober.gate = gate.future;
+      unawaited(socket.start(targets: selector, credentialsProvider: () async => const GreetingCredentials()));
+      await waitUntil(() => prober.rounds.isNotEmpty, reason: 'an attempt is under way');
+      expect(socket.currentPhase, SessionPhase.connecting);
+
+      lifecycle.go(AppVisibility.background);
+      lifecycle.go(AppVisibility.foreground);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(prober.rounds, hasLength(1), reason: 'not restarted - the path-choice bound ends a hung one');
+      gate.complete();
+    });
+
+    test('a network change with the socket on the ladder tries again at once', () async {
+      prober.home = <String>{};
+      await socket.start(targets: selector, credentialsProvider: () async => const GreetingCredentials());
+      await waitUntil(() => socket.currentPhase == SessionPhase.disconnected, reason: 'on the ladder');
+      final asked = prober.rounds.length;
+
+      network.changes.add(null);
+
+      await waitUntil(() => prober.rounds.length > asked, reason: 'a new round, not the next rung');
+    });
+
+    test('with a live connection, a return to the front leaves it alone', () async {
+      prober.home = <String>{_link};
+      await connectAndGreet();
+      final dialled = factory.created.length;
+
+      lifecycle.go(AppVisibility.background);
+      lifecycle.go(AppVisibility.foreground);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(factory.created, hasLength(dialled));
+      expect(socket.currentPhase, SessionPhase.live);
+    });
+  });
 }

@@ -250,7 +250,16 @@ class _ChatCardBodyState extends State<ChatCardBody> {
         onAction: () => _bloc.add(const ChatCardEvent.retryConnection()),
       );
     }
-    if (state.isOffline) return AppNoticeStripWidget(message: context.l10n.noConnection, icon: NoxIcons.wifiOff);
+    if (state.isOffline) {
+      // Try again restarts the channel; nothing to try for a server that
+      // refuses this build (phase 042).
+      return AppNoticeStripWidget(
+        message: context.l10n.noConnection,
+        icon: NoxIcons.wifiOff,
+        actionLabel: state.isUnsupported ? null : context.l10n.actionTryAgain,
+        onAction: state.isUnsupported ? null : () => _bloc.add(const ChatCardEvent.retryConnection()),
+      );
+    }
     return const SizedBox.shrink();
   }
 

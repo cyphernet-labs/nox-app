@@ -75,6 +75,10 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
   /// not for a path still on its way (phase 040) - or the debug scenario.
   bool _isOffline() => !_isServerMismatch() && (_status.showsNoConnection || _scenario == ChatsListScenario.offline);
 
+  /// The server refuses this build (phase 042): the strip stays, its action
+  /// does not - trying again cannot change the answer.
+  bool _isUnsupported() => _status.state == LinkState.unsupported;
+
   /// Whether a read reaches the server now: once the greeting is done, the
   /// catch-up included - which is when the socket lets reads out.
   bool _canRead() => _status.state == LinkState.online || _status.state == LinkState.catchingUp;
@@ -129,7 +133,14 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
     final current = state;
     // Update the banners in place (no reload) — like the reactive card's files re-derive.
     if (current is Initialized) {
-      emit(current.copyWith(isOffline: _isOffline(), isServerMismatch: _isServerMismatch(), torObsolete: _isTorObsolete()));
+      emit(
+        current.copyWith(
+          isOffline: _isOffline(),
+          isServerMismatch: _isServerMismatch(),
+          isUnsupported: _isUnsupported(),
+          torObsolete: _isTorObsolete(),
+        ),
+      );
       // The list was read from the cache while there was no channel; now the
       // server can be asked.
       if (!couldRead && _canRead()) unawaited(_syncFirstPage(current.query));
@@ -269,6 +280,7 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
                 // real device connectivity OR the debug scenario (feature F3).
                 isOffline: _isOffline(),
                 isServerMismatch: _isServerMismatch(),
+                isUnsupported: _isUnsupported(),
                 torObsolete: _isTorObsolete(),
                 hasLoadError: _scenario == ChatsListScenario.inlineError,
               ),

@@ -69,6 +69,16 @@ void main() {
     () => const ChatsListPage(inShell: false, initialScenario: ChatsListScenario.pinRefused),
   );
 
+  // No connection with its Try again (phase 042), on the wide branch too -
+  // the strip is drawn in both panes there. From a store of its own: the
+  // tests above leave read marks and arrivals behind, and this baseline must
+  // not depend on where in the file it runs.
+  group('offline, desktop', () {
+    setUp(() async => getIt<AppDatabase>().clearEntireDatabase());
+
+    goldenTestDesktop('chats_list_page_offline', () => const ChatsListPage(inShell: false, initialScenario: ChatsListScenario.offline));
+  });
+
   // Chats not on the server yet, one in each state (phase 041), on both
   // surfaces. Seeded as the queue leaves them, with fixed ids and distinct
   // times: created here under a frozen clock they would tie, and a tie is

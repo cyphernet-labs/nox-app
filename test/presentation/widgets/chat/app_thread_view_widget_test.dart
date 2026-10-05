@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nox_app/data/service/session_phase_service_impl.dart';
+import 'package:nox_app/domain/model/session/session_phase.dart';
+import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/data/entity/chat/chat_entity.dart';
 import 'package:nox_app/data/local/chat/chat_dao.dart';
@@ -20,6 +23,7 @@ import 'package:nox_app/presentation/widgets/state/app_error_widget.dart';
 import 'package:nox_app/presentation/widgets/state/app_notice_strip_widget.dart';
 
 import '../../../utils/pump_app.dart';
+import '../../../utils/fixed_session_phase.dart';
 
 final l10nEn = AppLocalizationsEn();
 
@@ -191,6 +195,42 @@ void main() {
       final stored = await tester.runAsync(() => getIt<ChatDao>().getById(id));
       expect(stored?.creation, isNot('failed'));
       expect(find.text(l10nEn.chatCreationFailedNotice), findsNothing);
+    });
+  });
+
+  group('AppThreadViewWidget - No connection (phase 042)', () {
+    late FixedSessionPhaseService phase;
+
+    Future<void> pumpWith(WidgetTester tester, SessionPhase initial) async {
+      phase = FixedSessionPhaseService(initial);
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<SessionPhaseService>(phase);
+      addTearDown(() => getIt.registerSingleton<SessionPhaseService>(ConnectivitySessionPhaseService()));
+      await tester.binding.setSurfaceSize(const Size(420, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, AppThreadViewWidget(chat: _sampleChat()));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+    }
+
+    Finder tryAgain() => find.widgetWithText(TextButton, l10nEn.actionTryAgain);
+
+    testWidgets('the strip offers Try again, and pressing it asks for another attempt', (tester) async {
+      await pumpWith(tester, SessionPhase.disconnected);
+
+      expect(find.text(l10nEn.noConnection), findsOneWidget);
+      expect(tester.getSize(tryAgain()).height, greaterThanOrEqualTo(48));
+      await tester.tap(tryAgain());
+      await tester.pump();
+
+      expect(phase.reconnects, 1);
+    });
+
+    testWidgets('a server that refuses this build: the strip, and nothing to press', (tester) async {
+      await pumpWith(tester, SessionPhase.unsupported);
+
+      expect(find.text(l10nEn.noConnection), findsOneWidget);
+      expect(tryAgain(), findsNothing);
     });
   });
 }

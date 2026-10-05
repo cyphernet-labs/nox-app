@@ -36,6 +36,11 @@ sealed class ChatsListState with _$ChatsListState {
     /// out.
     @Default(false) bool isServerMismatch,
 
+    /// The server refuses this build for good: «No connection» still shows,
+    /// but with nothing to try - a restart of the channel ends the same way
+    /// (phase 042).
+    @Default(false) bool isUnsupported,
+
     /// The Tor network has declared the client built into this version
     /// obsolete: the person is asked to update (phase 040, FR-026).
     @Default(false) bool torObsolete,

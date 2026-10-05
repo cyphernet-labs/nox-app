@@ -185,6 +185,13 @@ class ConnectionPathSelector implements SocketTargetProvider {
   /// evidence about a key the service may have learned since.
   Stopwatch? _keyRefused;
 
+  /// How long the Tor client this selector last started has been coming up
+  /// (phase 042). A restart of the channel keeps a client still within its
+  /// readiness budget - a second press of Try again must not throw its
+  /// progress away - and stops one past it, which is not coming up but stuck.
+  /// Null once it is ready or stopped.
+  Stopwatch? _torBoot;
+
   PathSelection get selection => _selection.value;
 
   /// The current selection on listen, then every change.
@@ -254,9 +261,27 @@ class ConnectionPathSelector implements SocketTargetProvider {
     // the next begin() would read as "no connection" and flash the banner on
     // every rename.
     _publish(keepTor ? const PathSelection(active: true) : PathSelection.idle);
-    if (keepTor) return;
+    if (keepTor) {
+      if (_torWorthKeeping()) return;
+      // Failed, or coming up for longer than any start takes: kept, it would
+      // hold every round after the restart on a client that will not answer -
+      // what relaunching the app used to be the only cure for.
+      logRepository.debug(target: this, message: 'path: restarting a Tor client that did not come up');
+      await _stopTor();
+      return;
+    }
     _dropLent();
     await _stopTor();
+  }
+
+  /// Whether a restart of the channel may keep the Tor client (phase 042):
+  /// ready, asleep in the background, or still within its readiness budget.
+  bool _torWorthKeeping() {
+    final status = _tor.status;
+    if (status.isReady || status.state == TorState.dormant) return true;
+    if (status.state != TorState.bootstrapping) return false;
+    final boot = _torBoot;
+    return boot == null || boot.elapsed < _torReadyBudget;
   }
 
   @override
@@ -430,6 +455,7 @@ class ConnectionPathSelector implements SocketTargetProvider {
       // of every round that follows on a client that will never be ready.
       if (_tor.status.state == TorState.failed) await _stopTor();
       if (!_current(round)) return null;
+      if (_tor.status.state == TorState.stopped) _torBoot = Stopwatch()..start();
       await _tor.start();
       if (!_current(round) || _tor.status.isObsolete) return null;
       // A start that did not take - refused by the library, or overtaken by a
@@ -473,6 +499,7 @@ class ConnectionPathSelector implements SocketTargetProvider {
     if (!_tor.isSupported || _tor.status.isObsolete || _tor.status.state != TorState.stopped) return;
     final target = await _torTargetFor(addresses, round);
     if (target == null || !_current(round)) return;
+    _torBoot = Stopwatch()..start();
     await _tor.start();
     // The direct greeting may have come while Tor was starting, when there
     // was nothing yet for it to stop.
@@ -546,12 +573,14 @@ class ConnectionPathSelector implements SocketTargetProvider {
 
   Future<void> _stopTor() async {
     _torTarget = null;
+    _torBoot = null;
     if (_tor.status.state == TorState.stopped || _tor.status.isObsolete) return;
     _tor.clearTarget();
     await _tor.stop();
   }
 
   void _onTorStatus(TorStatus status) {
+    if (status.isReady) _torBoot = null;
     final error = status.error;
     final entered = error != _lastTorError;
     _lastTorError = error;
@@ -673,6 +702,7 @@ class ConnectionPathSelector implements SocketTargetProvider {
     if (!_active || _torTarget != target) return;
     logRepository.debug(target: this, message: 'path: Tor did not wake up, restarting it');
     await _tor.stop();
+    _torBoot = Stopwatch()..start();
     await _tor.start();
     // Checked again after the awaits: a round may have moved Tor elsewhere
     // meanwhile, and a lent key may have been dropped (FR-021).

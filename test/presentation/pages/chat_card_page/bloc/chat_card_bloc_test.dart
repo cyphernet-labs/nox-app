@@ -252,6 +252,44 @@ void main() {
     });
   });
 
+  group('Try again on No connection (phase 042)', () {
+    late _FakePhase phase;
+
+    Future<ChatCardBloc> boot(SessionPhase initial) async {
+      phase = _FakePhase(initial);
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<SessionPhaseService>(phase);
+      addTearDown(() => getIt.registerSingleton<SessionPhaseService>(_FakePhase()));
+      final bloc = ChatCardBloc()..add(const ChatCardEvent.initialize('chat_0'));
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      return bloc;
+    }
+
+    test('no path: the strip, and something to try', () async {
+      final state = (await boot(SessionPhase.disconnected)).state as Initialized;
+
+      expect(state.isOffline, isTrue);
+      expect(state.isUnsupported, isFalse);
+    });
+
+    test('a server that refuses this build: the strip, and nothing to try', () async {
+      final state = (await boot(SessionPhase.unsupported)).state as Initialized;
+
+      expect(state.isOffline, isTrue);
+      expect(state.isUnsupported, isTrue);
+    });
+
+    test('the action asks for another attempt, once', () async {
+      final bloc = await boot(SessionPhase.disconnected);
+
+      bloc.add(const ChatCardEvent.retryConnection());
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(phase.reconnects, 1);
+    });
+  });
+
   group('the server that is not the one the link named (036)', () {
     late _FakePhase phase;
 

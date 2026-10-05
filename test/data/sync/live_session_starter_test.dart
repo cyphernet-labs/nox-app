@@ -459,6 +459,63 @@ void main() {
       expect(socket.currentPhase, isNot(SessionPhase.serverMismatch));
     });
 
+    group('Try again on No connection (phase 042)', () {
+      Future<void> paired() async {
+        await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
+        await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
+      }
+
+      test('a restart asked for while one is under way joins it: one stop and one start', () async {
+        await paired();
+        await starter.start();
+        await settle();
+        expect(factory.created, hasLength(1));
+
+        final first = starter.restart();
+        final second = starter.restart();
+        expect(identical(first, second), isTrue, reason: 'two presses during one restart are one restart');
+        await Future.wait([first, second]);
+        await settle();
+
+        expect(factory.created, hasLength(2));
+      });
+
+      test('a restart after the last one finished is a new one', () async {
+        await paired();
+        await starter.start();
+        await settle();
+
+        await starter.restart();
+        await settle();
+        await starter.restart();
+        await settle();
+
+        expect(factory.created, hasLength(3));
+      });
+
+      test('after a restart the path is asked for at once, not after the rung the ladder was waiting out (SC-002)', () async {
+        await paired();
+        prober.home = <String>{};
+        await starter.start();
+        // No address answers and there is no Tor: the round fails, and the
+        // socket waits out its first rung - about a second.
+        for (var i = 0; i < 200 && socket.currentPhase != SessionPhase.disconnected; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+        expect(socket.currentPhase, SessionPhase.disconnected);
+        final asked = prober.rounds.length;
+        final watch = Stopwatch()..start();
+
+        await starter.restart();
+        for (var i = 0; i < 100 && prober.rounds.length == asked; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+
+        expect(prober.rounds.length, greaterThan(asked));
+        expect(watch.elapsed, lessThan(const Duration(milliseconds: 500)), reason: 'within a second of the press, well inside the rung');
+      });
+    });
+
     test('a refusal does not take the path that wipes the device', () async {
       // The security requirement of the whole phase, asserted as a
       // non-consequence: the revocation path ends in a forced logout with a
