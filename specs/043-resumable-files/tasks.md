@@ -65,7 +65,7 @@ description: "Задачи фичи 043 — файлы с докачкой в о
   - запись плюс `Checkpoint()` записывает длину в `<id>.synced`;
   - `Received`: часть длиннее `synced` → `synced`; нет `<id>.synced` → 0; часть короче `synced` → длина части;
   - `Resume(id, offset)` отказывает, когда `Received < offset`;
-  - `Resume` на более длинной части сначала опускает `<id>.synced` до `offset`, потом обрезает часть;
+  - `Resume` на более длинной части сначала опускает `<id>.synced` до `offset`, потом обрезает часть; у новой загрузки `<id>.synced` не появляется до первой точки сохранения;
   - `Suspend()` ставит точку и оставляет часть;
   - `Finalize`, `Abort` и `Remove` убирают `<id>.synced`;
   - id, похожие на обход каталога, по-прежнему отвергаются.
@@ -74,37 +74,42 @@ description: "Задачи фичи 043 — файлы с докачкой в о
   - `take` на свободном файле регистрирует писателя;
   - второй `take` вызывает прерывание первого и возвращается, когда тот отпустил;
   - если не отпустил за `preemptWait` — `ok == false`;
+  - `interrupt(fileID, wait)` вызывает прерывание держателя и возвращается, когда тот отпустил, или по истечении `wait` — ничего не регистрируя;
   - `release` вытесненного писателя не снимает регистрацию нового.
   Всё под `-race`.
-- [ ] T007 [US1] `client_backend/internal/server/files_test.go`. Помощники: `uploadBegin` с `file_id`, чтение `received`, `PUT` с обрывом после N байт, «висящий» `PUT` (соединение открыто, байты не идут). Короткие `stallTimeout`, `checkpointBytes` и `preemptWait` задаются через `tweak` в `openStack`. Случаи:
+- [ ] T007 [US1] `client_backend/internal/server/files_test.go`. Помощники: `uploadBegin` с `file_id`, чтение `received`, `PUT` с обрывом после N байт, «висящий» `PUT` (соединение открыто, байты не идут). Короткие `stallTimeout`, `checkpointBytes`, `preemptWait` и `continuationWait` задаются через `tweak` в `openStack`. Случаи:
   - (a) у новой загрузки в ответе `received: 0`;
   - (b) `PUT`, оборванный клиентом на N байтах, оставляет их: продолжение отвечает тем же `file_id` и `received == N`; `PUT` остатка даёт `204`, байты на диске равны отправленным (SC-002);
   - (c) продолжение загруженного, но не привязанного файла — `received == size`; пустой `PUT` с его токеном — `204`;
   - (d) продолжение неизвестного id, привязанного к сообщению и вычищенного — `not_found`; с другим `size`, `name` или `mime` — `invalid_request`;
   - (e) `PUT`, переставший слать байты дольше `stallTimeout`, кончается `408`, полученное сохранено, обработчик вернулся;
-  - (f) висящий `PUT` прерывается продолжением: оно отвечает за `preemptWait` точным `received`, следующий `PUT` проходит;
+  - (f) висящий `PUT` прерывается продолжением: оно отвечает за `continuationWait` точным `received`, следующий `PUT` проходит; писатель, который не отпускает файл (подменённое прерывание), не заставляет продолжение ждать дольше `continuationWait` и не даёт ошибки — ответ несёт надёжно сохранённую длину;
   - (g) при малом `checkpointBytes` во время идущего `PUT` `<id>.synced` растёт ступенями;
   - (h) `PUT` больше остатка → `413` и откат `received` к смещению токена; чистый короткий `PUT` → `400`, байты сохранены;
   - (i) часть усечена ниже смещения выданного токена → `PUT` получает `404`;
   - (j) расширить `TestOrphanSweepRemovesAbandonedUploads`: старая незаконченная загрузка уходит вместе с `<id>.part` и `<id>.synced`;
-  - (k) обновить отрицательные случаи `TestStoryOneAttachmentChain` под новые правила (`413` — ничего от этого запроса, `400` — байты в части, готовых байтов нет).
+  - (k) обновить отрицательные случаи `TestStoryOneAttachmentChain` под новые правила (`413` — ничего от этого запроса, `400` — байты в части, готовых байтов нет);
+  - (l) `PUT`, медленно, но непрерывно шлющий байты дольше `stallTimeout`, доходит до `204` (FR-009, SC-004);
+  - (m) незаконченная загрузка переживает перезапуск сервера: новый `openStack` над той же базой и каталогом, продолжение отвечает тем же `received`, остаток доходит (FR-004);
+  - (n) через `newTestServerLogging`: объявленное имя файла не встречается в логе ни при загрузке, ни при продолжении, ни при обрыве (FR-016).
 
 ### Implementation for User Story 1 — сервер
 
 - [ ] T008 [US1] `client_backend/internal/blob/blob.go`:
   - `Resume(id, offset)`, `Received(id)`, `(*Upload).Checkpoint()`, `(*Upload).Suspend()`;
-  - `<id>.synced` пишется атомарно (временный файл + `Rename` внутри `os.Root`) и только после `fsync` части;
+  - `<id>.synced` пишется атомарно (временный файл + `Rename` внутри `os.Root`) и только после `fsync` части; `Resume` опускает его до `offset`, если тот больше, а новой загрузке не пишет ничего;
   - `Finalize`, `Abort` и `Remove` убирают `<id>.synced`;
   - `Create` либо становится `Resume(id, 0)`, либо уходит; места вызова и тесты обновить (research §3, data-model).
 - [ ] T009 [US1] `client_backend/internal/server/tokens.go`: поле `offset` в `tokenEntry`; `issue(fileID, op, offset)`, `consume` возвращает `(fileID, offset, ok)`; места вызова обновить.
 - [ ] T010 [US1] Новый `client_backend/internal/server/writers.go`:
   - реестр `uploadWriters` — мьютекс и `map[fileID]*writer{interrupt func(), done chan struct{}}`;
-  - `take(fileID, interrupt)` прерывает прежнего писателя и ждёт его до `preemptWait`, возвращает `(release func(), ok bool)`;
+  - `take(fileID, interrupt)` (для `PUT`) прерывает прежнего писателя и ждёт его до `preemptWait`, возвращает `(release func(), ok bool)`;
+  - `interrupt(fileID, wait)` (для продолжения) прерывает прежнего писателя и ждёт его не дольше `wait`, ничего не регистрируя;
   - комментарий: инфраструктурная блокировка того же класса, что хранилище токенов.
-- [ ] T011 [US1] `client_backend/internal/server/server.go`: поля `stallTimeout` (60 с), `checkpointBytes` (4 MiB), `preemptWait` (5 с) и `writers`; значения по умолчанию в `New`.
+- [ ] T011 [US1] `client_backend/internal/server/server.go`: поля `stallTimeout` (60 с), `checkpointBytes` (4 MiB), `preemptWait` (5 с, для `PUT`), `continuationWait` (1 с, для продолжения: обработчик команды сокета не должен держать цикл чтения, который читает и понги) и `writers`; значения по умолчанию в `New`.
 - [ ] T012 [US1] `handleFileUploadBegin` в `client_backend/internal/server/files.go`:
   - необязательный `file_id`;
-  - продолжение: нет строки или `message_id != NULL` → `not_found`; `name`/`size`/`mime` не те → `invalid_request`; `uploaded` → `received = size`; иначе прервать писателя через `writers.take` (не дождались → `internal`) и взять `received = blob.Received`;
+  - продолжение: нет строки или `message_id != NULL` → `not_found`; `name`/`size`/`mime` не те → `invalid_request`; `uploaded` → `received = size`; иначе `writers.interrupt(fileID, continuationWait)` и `received = blob.Received` — отказа из-за ожидания нет;
   - токен со смещением;
   - `received` в ответе всегда;
   - лог `upload resumed file=… from=…` — без имени.
@@ -132,6 +137,7 @@ description: "Задачи фичи 043 — файлы с докачкой в о
     - `offset == size` — пустое тело;
     - коды: `204` — успех; `404` → `passRejected`; `413`/`400` → `sizeMismatch`; `408`/`409`/`500` → `connection`;
     - сервер перестал читать тело → сторож застоя (короткий предел через `forTest`) отменяет с `connection` раньше любых сроков Dio;
+    - сервер читает медленно, но непрерывно дольше предела застоя — `PUT` доходит до `204` (FR-009);
     - `cancelTransfers()` посреди `PUT` → `connection`.
 - [ ] T017 [P] [US1] Новый `test/data/remote/datasource/mock/mock_file_remote_data_source_test.dart`:
   - продолжение известной незаконченной загрузки отвечает тем же id и `received`;
@@ -143,11 +149,12 @@ description: "Задачи фичи 043 — файлы с докачкой в о
   - (b) С `from` в `uploadBegin` идёт `file_id`, `PUT` начинается с `received`, первым сообщается `received/size`.
   - (c) Сервер забыл загрузку (`not_found`): `onUnfinished(null)`, затем новая загрузка в том же вызове, итог — успех.
   - (d) Исходник изменился (размер или время) → `notFound`, сервер не спрашивается.
-  - (e) Исходника нет → `notFound`; `FileSystemException` при `stat` превращается в `notFound` раньше, чем `execute` залогирует.
+  - (e) Исходника нет → `notFound`; `FileSystemException` при `stat` превращается в `notFound` раньше, чем `execute` залогирует: перехватывающий `LogRepository` не видит пути исходника ни в одной строке (FR-016).
+  - (e2) Исходник изменился во время `PUT` (поддельный источник меняет файл посреди передачи) → после `PUT` слепок не сходится → `notFound`, id не возвращается, даже если `PUT` удался.
   - (f) Старый сервер (`received == null`): `onUnfinished(null)`, файл целиком с нуля.
   - (g) Первый `404` — одна новая просьба продолжения в том же вызове; второй подряд → `internal`.
   - (h) `received == size` → пустой `PUT`, затем id.
-  - (i) Обновить существующие тесты: «отказ пропуска — новое объявление» становится «продолжение того же файла», а для старого сервера — по-прежнему новое объявление.
+  - (i) Обновить существующие тесты: «отказ пропуска — новое объявление» становится «продолжение того же файла», а для старого сервера — по-прежнему новое объявление. Проверка предела 100 MiB до первого байта остаётся как есть (FR-013).
 - [ ] T019 [US1] `test/data/sync/outbox_service_test.dart`, группа `attachments`:
   - ручка из записи передаётся как `from`;
   - ручку, о которой сообщил репозиторий, очередь записывает до байтов;
@@ -174,7 +181,7 @@ description: "Задачи фичи 043 — файлы с докачкой в о
     - свой токен связан с `ApiClient.transferToken`;
   - `mock/mock_file_remote_data_source.dart` — продолжение и `passRejected` на израсходованный пропуск.
 - [ ] T023 [US1] `lib/domain/repository/file/file_repository.dart` — `upload(from:, onUnfinished:)`; `lib/data/repository/file/file_repository_impl.dart` — алгоритм research §7:
-  - слепок исходника; ошибки `dart:io` на исходнике → `notFound`;
+  - слепок исходника — перед попыткой и после каждого `PUT`; ошибки `dart:io` на исходнике → `notFound`;
   - `not_found` → новая загрузка; старый сервер → целиком;
   - один повтор после `404`, второй → `internal`;
   - прогресс с `received`;
@@ -204,11 +211,12 @@ description: "Задачи фичи 043 — файлы с докачкой в о
   - `offset == 0` — без `Range`, `200` → весь файл, `total` из `Content-Length`, валидатор из `Last-Modified`;
   - `offset > 0` с валидатором — уходят `Range` и `If-Range`; `206` → остаток, `total` из `Content-Range`; `200` вопреки `Range` → весь файл;
   - `416` → `staleRange`; `404` → `passRejected`;
-  - остановка посреди тела → `connection` после короткого предела; `cancelTransfers()` посреди тела → `connection`.
+  - остановка посреди тела → `connection` после короткого предела; `cancelTransfers()` посреди тела → `connection`;
+  - медленное, но непрерывное тело дольше предела застоя доходит целиком (FR-009).
 - [ ] T027 [P] [US2] `test/data/remote/datasource/mock/mock_file_remote_data_source_test.dart`: `openBytes` с `offset` и валидатором отдаёт остаток; без валидатора — весь файл.
 - [ ] T028 [US2] `test/data/repository/file/file_repository_impl_test.dart`, скачивание:
   - (a) обрыв посреди тела оставляет `.part` и `.part.tag`;
-  - (b) следующая попытка просит от длины части с записанным валидатором и дописывает;
+  - (b) следующая попытка просит от длины части с записанным валидатором и дописывает — в том числе новым экземпляром `FileRepositoryImpl` над тем же каталогом кэша (перезапуск, FR-007);
   - (c) `200` → часть обрезана, новый `.part.tag` записан до первого байта (поддельный источник проверяет порядок), тело с нуля;
   - (d) `416` → часть и тег выброшены, одна немедленная новая попытка с нуля, отказом не считается;
   - (e) часть без тега выбрасывается;
@@ -225,8 +233,9 @@ description: "Задачи фичи 043 — файлы с докачкой в о
   - паузы идут по лестнице; фаза, ставшая текущей, будит ждущий повтор сразу;
   - успех записывает `attachLocalFile(messageId)`, даже если слушатель ушёл;
   - `attachmentGone`/`notFound` кончают сразу;
+  - отказы (`internal`, `rateLimited`) кончают скачивание с `internal` после `RetryLadder.refusalLimit`, а обрывы в этот счёт не идут;
   - `reset()` останавливает ждущие циклы, вызывает `cancelTransfers()` и ждёт их.
-- [ ] T030 [P] [US2] `test/data/sync/attachment_prefetch_service_test.dart`: подкачка идёт через сервис скачивания и путь сама не пишет; пока сервис повторяет, передача картинки не кончается.
+- [ ] T030 [P] [US2] `test/data/sync/attachment_prefetch_service_test.dart`: подкачка идёт через сервис скачивания и путь сама не пишет; пока сервис повторяет, передача картинки не кончается; картинка с исчерпанной автоматикой не запрашивается на следующем обновлении, а запрашивается снова по `retryNow` (возвращение канала).
 - [ ] T031 [P] [US2] `test/presentation/pages/file_view_page/bloc/file_view_bloc_test.dart`:
   - скачивание идёт через сервис;
   - пока сервис повторяет после обрывов, состояние `downloading` с прогрессом, без `failed`;
@@ -258,7 +267,7 @@ description: "Задачи фичи 043 — файлы с докачкой в о
   - предел отказов;
   - `attachLocalFile`;
   - `reset()`.
-- [ ] T037 [US2] `lib/data/sync/attachment_prefetch_service.dart` — через сервис скачивания: свою запись пути убрать; `_hopeless` и `_retryAfter` оставить для окончательного и исчерпанного.
+- [ ] T037 [US2] `lib/data/sync/attachment_prefetch_service.dart` — через сервис скачивания: свою запись пути убрать; окончательные отказы — в `_hopeless`, как прежде; исчерпанная картинка ждёт `retryNow`, а не паузы в 15 с (research §8).
 - [ ] T038 [US2] `lib/presentation/pages/file_view_page/bloc/file_view_bloc.dart` — через `AttachmentDownloadService` (передаёт `messageId`, путь сам не пишет).
 - [ ] T039 [US2] `AttachmentDownloadService.reset()` перед `FileRepository.clean()` в `lib/data/repository/app/auth_repository_impl.dart` (выход) и `lib/data/sync/live_session_starter.dart` (смена мира).
 
@@ -279,7 +288,7 @@ description: "Задачи фичи 043 — файлы с докачкой в о
   - тот же адрес — не отменяет;
   - первый `initBase` не отменяет ничего.
 - [ ] T041 [P] [US3] `test/data/remote/datasource/real/real_file_remote_data_source_test.dart`, два TLS-сервера на loopback с одним сертификатом:
-  - `PUT` к A, медленно читающему тело, кончается `connection` сразу после `initBase(B)`, следующий `putBytes` идёт к B;
+  - `PUT` к A, медленно читающему тело, кончается `connection` не позже чем через 2 с после `initBase(B)` (не дожидаясь предела застоя), следующий `putBytes` идёт к B;
   - то же для `openBytes`.
 
 ### Implementation for User Story 3
@@ -302,7 +311,7 @@ description: "Задачи фичи 043 — файлы с докачкой в о
   - загрузку, которой сервер раз за разом отказывает (`internal` на `uploadBegin`, второй `404` на каждом проходе), очередь откладывает после `RetryLadder.refusalLimit` отказов. **Сегодня этот тест падает**: в `_uploadFor` нет предела;
   - загрузка при мигающей связи (`connection` много раз подряд) не откладывается никогда;
   - ручной повтор (`markPending`) передаёт записанную ручку как `from` и начинает лестницу заново.
-- [ ] T044 [P] [US4] `test/data/sync/attachment_download_service_impl_test.dart`: отказы кончают скачивание с `internal` после предела, ручка части не трогается; новый `fetch` того же файла начинает лестницу заново.
+- [ ] T044 [P] [US4] `test/data/sync/attachment_download_service_impl_test.dart`: после исчерпания новый `fetch` того же файла (ручной повтор) начинает лестницу заново, а репозиторий получает попытку, которая продолжает с части, — часть исчерпание не трогает (FR-011).
 - [ ] T045 [P] [US4] `test/presentation/pages/file_view_page/bloc/file_view_bloc_test.dart`: сервис сообщил об исчерпании → `failed`; `Retried` зовёт `fetch` снова.
 
 ### Implementation for User Story 4
@@ -330,9 +339,10 @@ description: "Задачи фичи 043 — файлы с докачкой в о
 
 - [ ] T049 [P] Экран 5.3:
   - `docs/design/spec/screens/file-view.md`: таблица состояний — Loading переживает обрывы и продолжает сама; Inline-error со `Try again` — только когда автоматика исчерпана; скачивание идёт после закрытия; строка в таблицу решений;
-  - `docs/design/system/nox-mobile-screens/screens/5-3-file.md` и `docs/design/system/nox-desktop-screens/screens/08-file.md` — то же поведением.
+  - `docs/design/system/nox-mobile-screens/screens/5-3-file.md` и `docs/design/system/nox-desktop-screens/screens/08-file.md` — то же поведением;
+  - записи 5.3 и File view в `docs/design/system/nox-mobile-screens/specs.js` и `docs/design/system/nox-desktop-screens/specs.js` — так же.
 - [ ] T050 [P] Блюпринты:
-  - `docs/blueprints/mobile/16-file-upload.md` — §0, §1, §3, §5: продолжение, `received`, остаток в `PUT`, коды, докачка, пределы застоя, сервис скачивания;
+  - `docs/blueprints/mobile/16-file-upload.md` — §0, §1, §3, §5 и чеклист §9: продолжение, `received`, остаток в `PUT`, коды, докачка, пределы застоя, сервис скачивания;
   - `docs/blueprints/mobile/14-networking-and-auth.md` — REST с продолжением в обе стороны, только застой, поколение передач при смене пути;
   - `docs/blueprints/mobile/04-data-layer.md` — §6а: ручка незаконченной загрузки; `data/sync`: `retry_ladder.dart`, `attachment_download_service_impl.dart`;
   - `docs/blueprints/client-backend/README.md` — загрузка с продолжением, сроки застоя.
@@ -345,7 +355,7 @@ description: "Задачи фичи 043 — файлы с докачкой в о
   - история фич — строка 043;
   - открытая граница из research §12.
 - [ ] T054 Гейты: `make gate`, `make golden-verify`, `(cd client_backend && gofmt -l . && go vet ./... && go test -race ./...)`; счётчики тестов и снимков в `CLAUDE.md`.
-- [ ] T055 Проверки на стенде по `quickstart.md` (сценарии 1–10 и старый сервер) — владелец.
+- [ ] T055 Проверки на стенде по `quickstart.md` (сценарии 1–11 и старый сервер) — владелец.
 
 ---
 
@@ -368,6 +378,14 @@ description: "Задачи фичи 043 — файлы с докачкой в о
 ### Within each story
 
 Тесты пишутся первыми и падают без реализации; затем реализация.
+
+### Коммиты и гейты (конституция, раздел «Рабочий процесс и гейты качества»)
+
+Коммит — по фазам, английское сообщение, без упоминания ИИ. Перед каждым коммитом — гейты затронутых языков:
+- Go-код — `gofmt -l .` (пусто), `go vet ./...`, `go test -race ./...` в `client_backend/`;
+- Dart-код — `make gate` и `make golden-verify`.
+
+Коммит с одной прозой гейтов не требует.
 
 ## Parallel Example: User Story 1
 

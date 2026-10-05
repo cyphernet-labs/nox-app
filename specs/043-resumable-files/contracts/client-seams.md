@@ -23,6 +23,10 @@ abstract class FileRemoteDataSource {
   /// Opens the bytes: from [offset] when [validator] is given, whole otherwise.
   /// The caller writes them; the reply says which of the two came.
   Future<FetchedBytes> openBytes({required String downloadPath, required int offset, String? validator});
+
+  /// Ends every byte transfer under way: the current transfer generation of
+  /// `ApiClient` is cancelled and a new one starts.
+  void cancelTransfers();
 }
 
 /// What a GET brought: `rest` from `offset` (206) or the `whole` file (200).

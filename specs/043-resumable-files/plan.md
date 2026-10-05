@@ -40,7 +40,7 @@
 - 100 MiB доходят через onion в обе стороны (SC-001);
 - после обрыва повторно идёт не больше того, что было в пути (SC-002);
 - передачу, в которой байты идут, ничто не обрывает: 100 MiB на 0,3 Мбит/с — около 45 мин (SC-004);
-- после смены пути передача продолжается сразу.
+- после смены пути передача продолжается по новому адресу не позже чем через 2 с, не дожидаясь предела застоя.
 
 **Constraints**:
 - §7 контракта правится первым (FR-015);
@@ -91,7 +91,7 @@ client_backend/
 ├── internal/server/files.go            # продолжение uploadBegin; PUT с остатком, сроки застоя, точки сохранения; GET со сроком застоя
 ├── internal/server/tokens.go           # токен несёт смещение
 ├── internal/server/writers.go          # НОВЫЙ: один писатель на файл (прерывание прежнего)
-├── internal/server/server.go           # поля Server: предел застоя, шаг точки сохранения, writers
+├── internal/server/server.go           # поля Server: предел застоя, шаг точки сохранения, ожидание прежнего писателя (PUT 5 с, продолжение 1 с), writers
 ├── internal/blob/blob.go               # Resume / Received / Checkpoint / Suspend; Remove и Abort убирают <id>.synced
 ├── internal/server/{files,tokens,writers}_test.go
 ├── internal/blob/blob_test.go
@@ -122,10 +122,12 @@ lib/
 ├── data/repository/app/auth_repository_impl.dart            # то же при выходе
 └── presentation/pages/file_view_page/bloc/file_view_bloc.dart
 
-test/  — зеркально: file_repository_impl_test, real_file_remote_data_source_test (НОВЫЙ, локальный TLS-сервер),
+test/  — зеркально: retry_ladder_test (НОВЫЙ), file_repository_impl_test, real_file_remote_data_source_test (НОВЫЙ, локальный TLS-сервер),
          mock_file_remote_data_source_test (НОВЫЙ), attachment_download_service_impl_test (НОВЫЙ),
          outbox_service_test, outbox_repository_impl_test, outbox_mapper_test (НОВЫЙ), attachment_prefetch_service_test,
-         file_view_bloc_test, api_client_test
+         file_view_bloc_test, api_client_test, auth_repository_impl_test, live_session_starter_test
+test/live/live_harness.dart                    # НОВЫЙ: обвязка, вынесенная из tor_live_probe.dart
+test/live/resumable_files_probe.dart           # НОВЫЙ: 100 MiB через onion в обе стороны (вручную, вне гейтов)
 
 docs/
 ├── client-backend/protocol/contract-draft.md                # §1 (таблица REST), §7, §9 п. 6
