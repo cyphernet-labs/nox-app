@@ -97,8 +97,8 @@ description: "Задачи фичи 042 — связь восстанавлив�
 ## Phase 6: Polish & Cross-Cutting Concerns
 
 - [X] T015 [P] Голдены (SC-005): обновить шесть снимков «нет связи» — `test/presentation/pages/chats_list_page/goldens/chats_list_page_offline_{light,dark}.png`, `test/presentation/pages/chat_thread_page/goldens/chat_thread_page_offline{,_desktop}_{light,dark}.png`, `test/presentation/pages/chat_card_page/goldens/chat_card_page_offline{,_desktop}_{light,dark}.png`; добавить десктопный снимок списка без связи `goldenTestDesktop('chats_list_page_offline', …)` в `test/presentation/pages/chats_list_page/chats_list_page_golden_test.dart`
-- [ ] T016 [P] Документация: `docs/design/spec/screens/{chats-list,chat,chat-card}.md` (плашка с действием, исключение для неподдерживаемого сервера); `docs/design/system/nox-mobile-screens/screens/{5-1-chats,5-2-thread,5-4-card}.md` и `specs.js`; `docs/design/system/nox-desktop-screens/screens/{01-chats,09-drawer}.md` и `specs.js`; `docs/blueprints/mobile/14-networking-and-auth.md` (`Try again` = перезапуск канала, перезапуск сохраняет только здоровый Tor, предел выбора пути 120 с); `CLAUDE.md`
-- [ ] T017 Гейты: `make gate`, `make golden-verify`; счётчики в `CLAUDE.md`
+- [X] T016 [P] Документация: `docs/design/spec/screens/{chats-list,chat,chat-card}.md` (плашка с действием, исключение для неподдерживаемого сервера); `docs/design/system/nox-mobile-screens/screens/{5-1-chats,5-2-thread,5-4-card}.md` и `specs.js`; `docs/design/system/nox-desktop-screens/screens/{01-chats,09-drawer}.md` и `specs.js`; `docs/blueprints/mobile/14-networking-and-auth.md` (`Try again` = перезапуск канала, перезапуск сохраняет только здоровый Tor, предел выбора пути 120 с); `CLAUDE.md`
+- [X] T017 Гейты: `make gate`, `make golden-verify`; счётчики в `CLAUDE.md`
 - [ ] T018 Проверка на стенде по `quickstart.md` (сценарии 1–3) — владелец
 
 ---
