@@ -60,7 +60,7 @@ description: "Задачи фичи 043 — файлы с докачкой в о
 
 ### Tests for User Story 1 — сервер
 
-- [ ] T004 [P] [US1] `client_backend/internal/blob/blob_test.go`:
+- [X] T004 [P] [US1] `client_backend/internal/blob/blob_test.go`:
   - `Resume(id, 0)` на новом id создаёт часть;
   - запись плюс `Checkpoint()` записывает длину в `<id>.synced`;
   - `Received`: часть длиннее `synced` → `synced`; нет `<id>.synced` → 0; часть короче `synced` → длина части;
@@ -69,15 +69,15 @@ description: "Задачи фичи 043 — файлы с докачкой в о
   - `Suspend()` ставит точку и оставляет часть;
   - `Finalize`, `Abort` и `Remove` убирают `<id>.synced`;
   - id, похожие на обход каталога, по-прежнему отвергаются.
-- [ ] T005 [P] [US1] `client_backend/internal/server/tokens_test.go`: токен загрузки несёт смещение, `consume` возвращает id файла и смещение; у токена скачивания смещение 0; одноразовость и срок — как прежде.
-- [ ] T006 [P] [US1] Новый `client_backend/internal/server/writers_test.go`:
+- [X] T005 [P] [US1] `client_backend/internal/server/tokens_test.go`: токен загрузки несёт смещение, `consume` возвращает id файла и смещение; у токена скачивания смещение 0; одноразовость и срок — как прежде.
+- [X] T006 [P] [US1] Новый `client_backend/internal/server/writers_test.go`:
   - `take` на свободном файле регистрирует писателя;
   - второй `take` вызывает прерывание первого и возвращается, когда тот отпустил;
   - если не отпустил за `preemptWait` — `ok == false`;
   - `interrupt(fileID, wait)` вызывает прерывание держателя и возвращается, когда тот отпустил, или по истечении `wait` — ничего не регистрируя;
   - `release` вытесненного писателя не снимает регистрацию нового.
   Всё под `-race`.
-- [ ] T007 [US1] `client_backend/internal/server/files_test.go`. Помощники: `uploadBegin` с `file_id`, чтение `received`, `PUT` с обрывом после N байт, «висящий» `PUT` (соединение открыто, байты не идут). Короткие `stallTimeout`, `checkpointBytes`, `preemptWait` и `continuationWait` задаются через `tweak` в `openStack`. Случаи:
+- [X] T007 [US1] `client_backend/internal/server/files_test.go`. Помощники: `uploadBegin` с `file_id`, чтение `received`, `PUT` с обрывом после N байт, «висящий» `PUT` (соединение открыто, байты не идут). Короткие `stallTimeout`, `checkpointBytes`, `preemptWait` и `continuationWait` задаются через `tweak` в `openStack`. Случаи:
   - (a) у новой загрузки в ответе `received: 0`;
   - (b) `PUT`, оборванный клиентом на N байтах, оставляет их: продолжение отвечает тем же `file_id` и `received == N`; `PUT` остатка даёт `204`, байты на диске равны отправленным (SC-002);
   - (c) продолжение загруженного, но не привязанного файла — `received == size`; пустой `PUT` с его токеном — `204`;
@@ -95,25 +95,25 @@ description: "Задачи фичи 043 — файлы с докачкой в о
 
 ### Implementation for User Story 1 — сервер
 
-- [ ] T008 [US1] `client_backend/internal/blob/blob.go`:
+- [X] T008 [US1] `client_backend/internal/blob/blob.go`:
   - `Resume(id, offset)`, `Received(id)`, `(*Upload).Checkpoint()`, `(*Upload).Suspend()`;
   - `<id>.synced` пишется атомарно (временный файл + `Rename` внутри `os.Root`) и только после `fsync` части; `Resume` опускает его до `offset`, если тот больше, а новой загрузке не пишет ничего;
   - `Finalize`, `Abort` и `Remove` убирают `<id>.synced`;
   - `Create` либо становится `Resume(id, 0)`, либо уходит; места вызова и тесты обновить (research §3, data-model).
-- [ ] T009 [US1] `client_backend/internal/server/tokens.go`: поле `offset` в `tokenEntry`; `issue(fileID, op, offset)`, `consume` возвращает `(fileID, offset, ok)`; места вызова обновить.
-- [ ] T010 [US1] Новый `client_backend/internal/server/writers.go`:
+- [X] T009 [US1] `client_backend/internal/server/tokens.go`: поле `offset` в `tokenEntry`; `issue(fileID, op, offset)`, `consume` возвращает `(fileID, offset, ok)`; места вызова обновить.
+- [X] T010 [US1] Новый `client_backend/internal/server/writers.go`:
   - реестр `uploadWriters` — мьютекс и `map[fileID]*writer{interrupt func(), done chan struct{}}`;
   - `take(fileID, interrupt)` (для `PUT`) прерывает прежнего писателя и ждёт его до `preemptWait`, возвращает `(release func(), ok bool)`;
   - `interrupt(fileID, wait)` (для продолжения) прерывает прежнего писателя и ждёт его не дольше `wait`, ничего не регистрируя;
   - комментарий: инфраструктурная блокировка того же класса, что хранилище токенов.
-- [ ] T011 [US1] `client_backend/internal/server/server.go`: поля `stallTimeout` (60 с), `checkpointBytes` (4 MiB), `preemptWait` (5 с, для `PUT`), `continuationWait` (1 с, для продолжения: обработчик команды сокета не должен держать цикл чтения, который читает и понги) и `writers`; значения по умолчанию в `New`.
-- [ ] T012 [US1] `handleFileUploadBegin` в `client_backend/internal/server/files.go`:
+- [X] T011 [US1] `client_backend/internal/server/server.go`: поля `stallTimeout` (60 с), `checkpointBytes` (4 MiB), `preemptWait` (5 с, для `PUT`), `continuationWait` (1 с, для продолжения: обработчик команды сокета не должен держать цикл чтения, который читает и понги) и `writers`; значения по умолчанию в `New`.
+- [X] T012 [US1] `handleFileUploadBegin` в `client_backend/internal/server/files.go`:
   - необязательный `file_id`;
   - продолжение: нет строки или `message_id != NULL` → `not_found`; `name`/`size`/`mime` не те → `invalid_request`; `uploaded` → `received = size`; иначе `writers.interrupt(fileID, continuationWait)` и `received = blob.Received` — отказа из-за ожидания нет;
   - токен со смещением;
   - `received` в ответе всегда;
   - лог `upload resumed file=… from=…` — без имени.
-- [ ] T013 [US1] Переписать `handlePutFile` в `client_backend/internal/server/files.go`:
+- [X] T013 [US1] Переписать `handlePutFile` в `client_backend/internal/server/files.go`:
   - токен → (id, offset); строки нет → `404`;
   - файл уже загружен: `offset == size` → `204`, иначе `404`;
   - `writers.take` (не дождались → `409`); `blob.Resume(id, offset)` (надёжно меньше `offset` → `404`);
@@ -203,7 +203,7 @@ description: "Задачи фичи 043 — файлы с докачкой в о
 
 ### Tests for User Story 2
 
-- [ ] T025 [P] [US2] `client_backend/internal/server/files_test.go`:
+- [X] T025 [P] [US2] `client_backend/internal/server/files_test.go`:
   - `GET` медленно, но непрерывно читающему клиенту дольше `stallTimeout` — доходит целиком;
   - клиент, переставший читать дольше `stallTimeout`, обрывается, обработчик вернулся;
   - `If-Range` с `Last-Modified` первого ответа → `206` с остатком, с другой датой → `200` целиком.
@@ -246,7 +246,7 @@ description: "Задачи фичи 043 — файлы с докачкой в о
 
 ### Implementation for User Story 2
 
-- [ ] T033 [US2] `client_backend/internal/server/files.go`, `handleGetFile`: обёртка над `ResponseWriter` продлевает `SetWriteDeadline(now + stallTimeout)` перед каждой записью и прячет `ReadFrom`, чтобы каждая запись шла через неё; `Last-Modified` остаётся от `ServeContent`.
+- [X] T033 [US2] `client_backend/internal/server/files.go`, `handleGetFile`: обёртка над `ResponseWriter` продлевает `SetWriteDeadline(now + stallTimeout)` перед каждой записью и прячет `ReadFrom`, чтобы каждая запись шла через неё; `Last-Modified` остаётся от `ServeContent`.
 - [ ] T034 [US2] Провод скачивания:
   - `FileTransferFailure.staleRange` в `lib/data/exception/file_transfer_exception.dart`;
   - `FetchedBytes` и `openBytes(downloadPath:, offset:, validator:)` вместо `getBytes` в `lib/data/remote/datasource/file_remote_data_source.dart`;
@@ -346,10 +346,10 @@ description: "Задачи фичи 043 — файлы с докачкой в о
   - `docs/blueprints/mobile/14-networking-and-auth.md` — REST с продолжением в обе стороны, только застой, обрыв передач при смене пути;
   - `docs/blueprints/mobile/04-data-layer.md` — §6а: ручка незаконченной загрузки; `data/sync`: `retry_ladder.dart`, `attachment_download_service_impl.dart`;
   - `docs/blueprints/client-backend/README.md` — загрузка с продолжением, сроки застоя.
-- [ ] T051 [P] `.claude/skills/ws-rest-patterns/SKILL.md`, §6 и таблица ошибок:
+- [X] T051 [P] `.claude/skills/ws-rest-patterns/SKILL.md`, §6 и таблица ошибок:
   - долгая передача — срок на каждом чтении и записи (застой), не абсолютный;
   - продолжаемый `PUT` дописывает от смещения, привязанного к токену, с точками сохранения.
-- [ ] T052 [P] `client_backend/CLAUDE.md`: инвариант 7 называет реестр писателей загрузки; `<id>.synced` — в описании хранения байтов; метаданные файлов по-прежнему без событий.
+- [X] T052 [P] `client_backend/CLAUDE.md`: инвариант 7 называет реестр писателей загрузки; `<id>.synced` — в описании хранения байтов; метаданные файлов по-прежнему без событий.
 - [ ] T053 [P] `docs/client-backend/roadmap-tor.md` — этап 3 → `043` и статус. Корневой `CLAUDE.md`:
   - пункт «File chain (028)» дополнить продолжением 043;
   - история фич — строка 043;
