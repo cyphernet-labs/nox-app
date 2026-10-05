@@ -134,15 +134,23 @@ Future<void> discard({required String clientMessageId});
 ```dart
 /// Remembers - or, with null, forgets - the unfinished upload of this send.
 Future<void> noteUpload({required String clientMessageId, required UnfinishedUpload? upload});
+
+/// Moves this send's own copy of its file to [at] and names it there; false
+/// when the entry has no copy of its own.
+Future<bool> keepCopy({required String clientMessageId, required String at});
 ```
 
-`attachFile(fileId)` теперь ещё и забывает ручку. `markPending` её сохраняет.
+`enqueue` копирует файл вложения к себе (`OutboxCopies`) и пишет запись, называющую копию. `remove`, `removeForChat` и `clean` уносят копии. `attachFile(fileId)` теперь ещё и забывает ручку. `markPending` её сохраняет.
+
+`FileRepository.cachePathFor({fileId, suggestedName})` — где на устройстве живут байты файла, есть они там или нет: туда пишет скачивание и туда же `keepCopy` переносит отправленную копию.
 
 ## Кто кого зовёт
 
 ```text
+ChatThreadBloc ──enqueue──► OutboxRepository ──keep──► OutboxCopies (копия в nox_outbox/<ключ>/)
 OutboxService ──upload(from, onUnfinished)──► FileRepository ──► FileRemoteDataSource ──► сокет + PUT
-     └── noteUpload / attachFile ──► OutboxRepository
+     ├── noteUpload / attachFile ──► OutboxRepository
+     └── cachePathFor ──► FileRepository; keepCopy ──► OutboxRepository (копия → кэш, перед message.send)
 
 AttachmentPrefetchService ─┐
 FileViewBloc (5.3) ────────┴─fetch──► AttachmentDownloadService ──download──► FileRepository ──► сокет + GET
