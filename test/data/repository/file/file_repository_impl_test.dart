@@ -93,6 +93,11 @@ class _FakeSource implements FileRemoteDataSource {
     if (truncateDownload) throw const FileTransferException(FileTransferFailure.connection);
     onProgress?.call(bytesToReturn.length, bytesToReturn.length);
   }
+
+  int cancels = 0;
+
+  @override
+  void cancelTransfers() => cancels++;
 }
 
 void main() {

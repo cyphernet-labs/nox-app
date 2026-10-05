@@ -26,4 +26,9 @@ abstract class FileRemoteDataSource {
   Future<ResponseEntity<DownloadTicketWireEntity>> downloadBegin({required String fileId});
 
   Future<void> getBytes({required String downloadPath, required File destination, TransferProgress? onProgress});
+
+  /// Ends every byte transfer under way: a logout, a change of server, a path
+  /// the socket has left. Each ends as a broken connection would, and each was
+  /// resumable, so nothing is lost but the bytes in flight.
+  void cancelTransfers();
 }

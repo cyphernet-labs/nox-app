@@ -76,6 +76,9 @@ class RealFileRemoteDataSource implements FileRemoteDataSource {
     }
   }
 
+  @override
+  void cancelTransfers() => _apiClient.cancelTransfers();
+
   /// Turns a non-throwing HTTP status into the failure it actually means.
   void _checkTransfer(Response<dynamic> response) {
     final status = response.statusCode ?? 0;

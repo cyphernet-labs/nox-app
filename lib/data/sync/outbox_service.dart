@@ -1,7 +1,7 @@
 import 'dart:async';
-import 'dart:math';
 
 import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/sync/retry_ladder.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/exception/base_repository_exception.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
@@ -55,22 +55,14 @@ class OutboxService {
   final Map<String, DateTime> _creationRetryAt = <String, DateTime>{};
   Timer? _creationTimer;
 
-  static const Duration _minBackoff = Duration(seconds: 1);
-  static const Duration _maxBackoff = Duration(seconds: 30);
-
-  /// How many times the SERVER may refuse an entry before it is set aside.
+  /// The pause before a retry and the cap on refusals (see [RetryLadder]).
   ///
-  /// Counted against refusals only, never against a broken connection. That
-  /// distinction is the whole point: a flapping link produces failure after
-  /// failure through no fault of the message, and counting those would set a
-  /// perfectly good message aside within seconds of a bad tunnel.
-  ///
-  /// Set aside is not discarded — the entry stays in the queue, visible, and a
-  /// tap replenishes the ladder and sends it again. What the cap buys is the
-  /// spec's edge case: a message the server keeps refusing with a retryable
-  /// code (a persistent `internal`) would otherwise block every later message
-  /// in every chat forever, because the queue is one strictly-ordered line.
-  static const int _autoRetryLimit = 10;
+  /// The cap matters more here than anywhere: the queue is one strictly
+  /// ordered line, so a message the server keeps refusing with a retryable code
+  /// (a persistent `internal`) would otherwise block every later message in
+  /// every chat forever. Set aside is not discarded — the entry stays in the
+  /// queue, visible, and a tap replenishes the ladder and sends it again.
+  final RetryLadder _ladder = RetryLadder();
 
   StreamSubscription<SessionPhase>? _phaseSubscription;
   Timer? _retryTimer;
@@ -95,8 +87,6 @@ class OutboxService {
   /// Serialises drains. A phase flap plus a fresh send would otherwise run two
   /// passes over the same records and post the head of the queue twice.
   Future<void> _queue = Future<void>.value();
-
-  final Random _random = Random();
 
   /// Subscribes to the session phase. Idempotent — main() calls it once, but a
   /// second call must not open a second subscription.
@@ -251,7 +241,7 @@ class OutboxService {
     // A server that keeps refusing - not a dead channel - would otherwise hold
     // the one queue for every chat, for good; the same cap as for a message.
     final refused = exception != RepositoryException.connection;
-    if (_isTerminal(exception) || (refused && attempts >= _autoRetryLimit)) {
+    if (_isTerminal(exception) || (refused && attempts >= RetryLadder.refusalLimit)) {
       _creationRetryAt.remove(chatId);
       await _chats.markCreation(chatId: chatId, creation: ChatCreation.failed, attempts: attempts);
       return;
@@ -259,7 +249,7 @@ class OutboxService {
     await _chats.markCreation(chatId: chatId, creation: ChatCreation.pending, attempts: attempts);
     // The same ladder a message climbs; the count comes from the row, so it
     // survives a restart.
-    _creationRetryAt[chatId] = DateTime.now().add(_backoff(attempts));
+    _creationRetryAt[chatId] = DateTime.now().add(_ladder.pause(attempts));
   }
 
   /// Wakes the queue when the earliest creation pause ends.
@@ -345,7 +335,7 @@ class OutboxService {
     final serverAnswered = exception != RepositoryException.connection;
     // Exhausting the refusals turns a retryable one into a set-aside entry: the
     // message is kept, but it stops holding the line.
-    final exhausted = serverAnswered && entry.refusals + 1 >= _autoRetryLimit;
+    final exhausted = serverAnswered && entry.refusals + 1 >= RetryLadder.refusalLimit;
     final terminal = _isTerminal(exception) || exhausted;
     await _outbox.recordFailure(
       clientMessageId: entry.clientMessageId,
@@ -415,16 +405,6 @@ class OutboxService {
     };
   }
 
-  /// `min(30s, 1s * 2^(attempts - 1))` with ±20% jitter - for a message and
-  /// for a chat creation alike.
-  Duration _backoff(int attempts) {
-    final exponent = (attempts - 1).clamp(0, 16);
-    final raw = _minBackoff * pow(2, exponent).toDouble();
-    final capped = raw > _maxBackoff ? _maxBackoff : raw;
-    // Jitter keeps a herd of clients from hitting a recovering server in step.
-    return capped * (0.8 + _random.nextDouble() * 0.4);
-  }
-
   /// Pauses the queue on [clientMessageId]. The count comes from the RECORD,
   /// not from this pass: a process restart resets everything in memory, which
   /// is exactly the moment the pause has to be remembered.
@@ -432,7 +412,7 @@ class OutboxService {
     if (_stopped) return;
     _retryTimer?.cancel();
     _pausedFor = clientMessageId;
-    _retryTimer = Timer(_backoff(attempts), () {
+    _retryTimer = Timer(_ladder.pause(attempts), () {
       _retryTimer = null;
       _pausedFor = null;
       unawaited(flush());

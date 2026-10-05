@@ -22,6 +22,26 @@ class ApiClient {
   final PinnedHttpClient _pinned;
   final Dio dio;
 
+  /// What every byte transfer of the current generation listens to.
+  ///
+  /// A transfer can outlive the reason it was started: a logout, a change of
+  /// server, a path the socket has just abandoned. Cancelling this token ends
+  /// every one of them at once - each was resumable, so ending it costs only
+  /// the bytes in flight, while letting it run would keep reaching a machine
+  /// or a path nobody uses any more.
+  CancelToken get transferToken => _transferToken;
+  CancelToken _transferToken = CancelToken();
+
+  /// Ends every byte transfer under way and starts a new generation.
+  ///
+  /// The new token is in place BEFORE the old one fires: whoever reacts to the
+  /// cancel by starting again must pick up the new generation, not the dead one.
+  void cancelTransfers() {
+    final ended = _transferToken;
+    _transferToken = CancelToken();
+    ended.cancel('transfers cancelled');
+  }
+
   /// Points the client at the paired server and installs the interceptor.
   /// Idempotent for the interceptor; the base URL is re-pointed on every call.
   ///

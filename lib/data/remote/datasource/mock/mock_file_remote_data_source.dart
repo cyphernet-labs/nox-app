@@ -96,4 +96,8 @@ class MockFileRemoteDataSource implements FileRemoteDataSource {
     final total = await destination.length();
     onProgress?.call(total, total);
   }
+
+  /// Nothing here outlives the call that started it, so there is nothing to end.
+  @override
+  void cancelTransfers() {}
 }

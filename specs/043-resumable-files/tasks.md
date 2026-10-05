@@ -38,12 +38,12 @@ description: "Задачи фичи 043 — файлы с докачкой в о
 
 Общее для нескольких историй: лестница пауз (очередь и скачивание) и поколение передач (отмена при выходе, сбросе и смене пути).
 
-- [ ] T002 [P] Вынести лестницу пауз из `lib/data/sync/outbox_service.dart` в новый `lib/data/sync/retry_ladder.dart`:
+- [X] T002 [P] Вынести лестницу пауз из `lib/data/sync/outbox_service.dart` в новый `lib/data/sync/retry_ladder.dart`:
   - `RetryLadder.pause(int attempts)` = `min(30 с, 1 с × 2^(attempts−1))` ±20 %, `Random` подставляется;
   - `RetryLadder.refusalLimit = 10`;
   - `OutboxService` берёт их оттуда, поведение не меняется.
   Тест `test/data/sync/retry_ladder_test.dart`: границы, рост вдвое, потолок 30 с, джиттер в пределах ±20 %.
-- [ ] T003 [P] Поколение передач в `lib/data/remote/api_client.dart`:
+- [X] T003 [P] Поколение передач в `lib/data/remote/api_client.dart`:
   - `CancelToken get transferToken` (текущее поколение) и `void cancelTransfers()` — отменяет текущее поколение и заводит новое;
   - `FileRemoteDataSource.cancelTransfers()` в интерфейсе `lib/data/remote/datasource/file_remote_data_source.dart`, у настоящего источника — через `ApiClient`, у мока — ничего.
   Тест в `test/data/remote/api_client_test.dart` против локального TLS-сервера на фикстурах: запрос с токеном поколения, идущий во время `cancelTransfers()`, кончается отменой, а следующий проходит.

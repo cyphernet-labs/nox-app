@@ -1,3 +1,7 @@
+import 'dart:async';
+import 'dart:io';
+
+import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/data/remote/api_client.dart';
@@ -25,6 +29,27 @@ class _FakeConfig implements AppConfigRepository {
   ServerLimits get limits => ServerLimits.contractDefaults;
   @override
   void updateLimits(ServerLimits limits) {}
+}
+
+const String _fixtures = 'test/general/pairing/fixtures';
+
+String get _fingerprint => File('$_fixtures/fingerprint.txt').readAsStringSync().trim();
+
+/// The machine the pairing link named. [hold] keeps a request open until it
+/// completes; everything else is answered at once.
+Future<HttpServer> _honest({Completer<void>? hold}) async {
+  final context = SecurityContext()
+    ..useCertificateChainBytes(File('$_fixtures/valid.pem').readAsBytesSync())
+    ..usePrivateKeyBytes(File('$_fixtures/server_key.pem').readAsBytesSync());
+  final server = await HttpServer.bindSecure(InternetAddress.loopbackIPv4, 0, context);
+  server.listen((request) async {
+    if (request.uri.path == '/held' && hold != null) await hold.future;
+    request.response
+      ..statusCode = HttpStatus.ok
+      ..write('ok');
+    await request.response.close();
+  });
+  return server;
 }
 
 void main() {
@@ -68,5 +93,39 @@ void main() {
     final pinned = PinnedHttpClient();
     final first = pinned.client;
     expect(identical(pinned.client, first), isTrue, reason: 'a client per use would leak one on every reconnect');
+  });
+
+  group('the transfer generation (phase 043)', () {
+    late HttpOverrides? saved;
+    setUpAll(() {
+      saved = HttpOverrides.current;
+      HttpOverrides.global = null;
+    });
+    tearDownAll(() => HttpOverrides.global = saved);
+
+    test('cancelTransfers ends a transfer under way, and the next one goes through', () async {
+      // A logout or a change of server must not leave bytes moving towards a
+      // machine nobody uses any more; every transfer listens to this token.
+      final hold = Completer<void>();
+      final server = await _honest(hold: hold);
+      addTearDown(() async {
+        if (!hold.isCompleted) hold.complete();
+        await server.close(force: true);
+      });
+      final api = ApiClient(_FakeConfig(null), PinnedHttpClient()..pinTo(_fingerprint))
+        ..initBase(address: 'https://127.0.0.1:${server.port}');
+
+      final held = api.dio.get<String>('/held', cancelToken: api.transferToken);
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      final before = api.transferToken;
+      api.cancelTransfers();
+
+      await expectLater(held, throwsA(isA<DioException>().having((e) => e.type, 'type', DioExceptionType.cancel)));
+      expect(identical(api.transferToken, before), isFalse, reason: 'a new generation starts');
+      expect(api.transferToken.isCancelled, isFalse);
+
+      final next = await api.dio.get<String>('/anything', cancelToken: api.transferToken);
+      expect(next.statusCode, HttpStatus.ok);
+    });
   });
 }
