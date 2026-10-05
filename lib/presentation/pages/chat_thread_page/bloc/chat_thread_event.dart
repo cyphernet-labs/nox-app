@@ -41,6 +41,20 @@ sealed class ChatThreadEvent with _$ChatThreadEvent {
   /// made the app blame the network and keep calling that server for ever.
   const factory ChatThreadEvent.sessionPhaseChanged(SessionPhase phase) = SessionPhaseChanged;
 
+  /// Where the connection stands changed (phase 040): drives the banners.
+  /// Sending stays on the phase above - only a current channel takes a send,
+  /// whatever the corner says.
+  const factory ChatThreadEvent.connectionStatusChanged(ConnectionStatus status) = ConnectionStatusChanged;
+
+  /// The server's newest window has been asked for and is in the cache, or
+  /// could not be had. [hasMore] is what the server said about older history;
+  /// [generation] numbers the read, so only the newest ends the spinner.
+  const factory ChatThreadEvent.windowSynced({bool? hasMore, required int generation}) = WindowSynced;
+
+  /// The attachment transfers in flight changed. The map travels with the
+  /// event, like the queue snapshot above.
+  const factory ChatThreadEvent.transfersChanged(Map<String, AttachmentTransfer> transfers) = TransfersChanged;
+
   /// The person asked for another attempt, from the banner.
   const factory ChatThreadEvent.retryConnection() = RetryConnection;
 

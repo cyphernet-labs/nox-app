@@ -87,8 +87,33 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
     return ticket.fileId;
   }
 
+  /// Downloads under way, by file id. ONE transfer per file: two would share
+  /// the same `.part` file, the second deleting the first's bytes and the
+  /// first renaming the second's still-growing file into place - a truncated
+  /// picture at the final path, for good. The picture prefetch and the file
+  /// view (5.3) both ask for the same file, so the second caller joins the
+  /// first transfer and hears its progress from then on.
+  final Map<String, _SharedDownload> _downloads = <String, _SharedDownload>{};
+
   @override
   Future<RepositoryResult<String>> download({required String fileId, required String suggestedName, TransferFraction? onProgress}) {
+    final running = _downloads[fileId];
+    if (running != null) {
+      if (onProgress != null) running.listeners.add(onProgress);
+      return running.result;
+    }
+    final shared = _SharedDownload();
+    if (onProgress != null) shared.listeners.add(onProgress);
+    _downloads[fileId] = shared;
+    shared.result = _downloadOnce(
+      fileId: fileId,
+      suggestedName: suggestedName,
+      onProgress: shared.report,
+    ).whenComplete(() => _downloads.remove(fileId));
+    return shared.result;
+  }
+
+  Future<RepositoryResult<String>> _downloadOnce({required String fileId, required String suggestedName, TransferFraction? onProgress}) {
     return execute<String>(() async {
       final destination = File(await _cachePathFor(fileId, suggestedName));
       if (destination.existsSync()) return RepositoryResult<String>.success(data: destination.path);
@@ -142,4 +167,16 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
   }
 
   String _nameOf(String path) => path.split(Platform.pathSeparator).last;
+}
+
+/// One download and everyone waiting on it.
+class _SharedDownload {
+  late Future<RepositoryResult<String>> result;
+  final List<TransferFraction> listeners = <TransferFraction>[];
+
+  void report(double fraction) {
+    for (final listener in List<TransferFraction>.of(listeners)) {
+      listener(fraction);
+    }
+  }
 }

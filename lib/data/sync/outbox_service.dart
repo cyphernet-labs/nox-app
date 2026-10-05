@@ -8,11 +8,13 @@ import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/outbox_entry.dart';
 import 'package:nox_app/domain/model/chat/outbox_status.dart';
+import 'package:nox_app/domain/model/file/attachment_transfer.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/model/file/mime_types.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
+import 'package:nox_app/domain/service/attachment_transfer_service.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
 
 /// Drains the outgoing queue — and is the ONLY thing that sends.
@@ -24,12 +26,18 @@ import 'package:nox_app/domain/service/session_phase_service.dart';
 /// serialised drain.
 @LazySingleton(env: [Environment.dev, Environment.prod, Environment.test])
 class OutboxService {
-  OutboxService(this._outbox, this._messages, this._phaseService, this._files);
+  OutboxService(this._outbox, this._messages, this._phaseService, this._files, this._transfers);
 
   final OutboxRepository _outbox;
   final MessageRepository _messages;
   final SessionPhaseService _phaseService;
   final FileRepository _files;
+
+  /// Where the bubble of a message with a file learns how far its bytes have
+  /// got. Without it the only sign of a send was a clock icon, the same for a
+  /// text that goes in a blink and for a picture that takes a minute through
+  /// Tor.
+  final AttachmentTransferService _transfers;
 
   static const Duration _minBackoff = Duration(seconds: 1);
   static const Duration _maxBackoff = Duration(seconds: 30);
@@ -152,7 +160,25 @@ class OutboxService {
   }
 
   /// Returns whether the pass may continue past [entry].
+  ///
+  /// A message with a file is reported as a transfer for the whole send, not
+  /// just its upload: once the bytes are on the server the message itself
+  /// still has to be accepted, and dropping the ring in between would show a
+  /// bubble that looks idle while it is still going.
   Future<bool> _send(OutboxEntry snapshot) async {
+    if (snapshot.attachment == null) return _sendEntry(snapshot);
+    _transfers.begin(snapshot.clientMessageId, TransferDirection.upload, chatId: snapshot.chatId);
+    // The bytes are already there (a restart after the upload): only the
+    // message is left, so the ring starts full.
+    if (snapshot.fileId != null) _transfers.report(snapshot.clientMessageId, 1);
+    try {
+      return await _sendEntry(snapshot);
+    } finally {
+      _transfers.end(snapshot.clientMessageId);
+    }
+  }
+
+  Future<bool> _sendEntry(OutboxEntry snapshot) async {
     var entry = snapshot;
 
     // An attachment has to be on the server before the message can name it.
@@ -232,7 +258,11 @@ class OutboxService {
       return '';
     }
 
-    final result = await _files.upload(path: path, mime: attachment.mime ?? MimeTypes.forFileName(attachment.name));
+    final result = await _files.upload(
+      path: path,
+      mime: attachment.mime ?? MimeTypes.forFileName(attachment.name),
+      onProgress: (fraction) => _transfers.report(entry.clientMessageId, fraction),
+    );
     if (result.hasData) return result.data;
 
     final exception = result.exception;

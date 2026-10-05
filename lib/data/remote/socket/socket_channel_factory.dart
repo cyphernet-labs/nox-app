@@ -36,6 +36,10 @@ class WebSocketChannelFactory implements SocketChannelFactory {
   /// missed pong surfaces as a socket close, which is the disconnect signal.
   static const Duration pingInterval = Duration(seconds: 25);
 
+  /// How long one dial may take (phase 040).
+  static const Duration directConnectTimeout = Duration(seconds: 10);
+  static const Duration onionConnectTimeout = Duration(seconds: 45);
+
   final PinnedHttpClient _pinned;
 
   @override
@@ -52,7 +56,16 @@ class WebSocketChannelFactory implements SocketChannelFactory {
     // reconnect ladder for ever while the screen blamed the network.
     final before = _pinned.refusals;
     return _IoSocketConnection(
-      IOWebSocketChannel.connect(url, pingInterval: pingInterval, customClient: _pinned.client),
+      IOWebSocketChannel.connect(
+        url,
+        pingInterval: pingInterval,
+        // Bounded, which it never was: a dial that hangs held the reconnect
+        // ladder with it. Longer through Tor, where one keyed connection
+        // fetches the onion service's descriptor anew and sometimes stalls
+        // (phase 040, research decision 5).
+        connectTimeout: url.host.endsWith('.onion') ? onionConnectTimeout : directConnectTimeout,
+        customClient: _pinned.client,
+      ),
       () => _pinned.refusals > before,
     );
   }
@@ -60,18 +73,32 @@ class WebSocketChannelFactory implements SocketChannelFactory {
 
 class _IoSocketConnection implements SocketConnection {
   _IoSocketConnection(this._channel, this._wasRefused) {
-    // Nobody awaits `ready`, and nobody should: the app learns that a
-    // connection failed from the frames stream, which is the one place that
-    // also carries frames. But the channel completes `ready` with an error as
-    // well, and an error on a future with no listener is an unhandled zone
-    // error - raised on EVERY rung of the reconnect ladder while offline, and
-    // on every pin refusal, which is to say at the choosing of anyone who
-    // answers at the paired address. Marking it handled is the whole fix; the
+    // The app learns that a connection failed from the frames stream, which is
+    // the one place that also carries frames. The error is handled here
+    // because the channel completes `ready` with it as well, and an error on a
+    // future with no listener is an unhandled zone error - raised on EVERY rung
+    // of the reconnect ladder while offline, and on every pin refusal. The
     // failure itself is still reported below, once.
-    _channel.ready.ignore();
+    _channel.ready.then<void>((_) {
+      if (_closed) return;
+      _opened = true;
+      for (final frame in _held) {
+        _channel.sink.add(frame);
+      }
+      _held.clear();
+    }, onError: (Object _) => _held.clear());
   }
 
   final IOWebSocketChannel _channel;
+
+  /// Frames handed over before the connection opened, held HERE rather than in
+  /// the channel. The channel's own buffer is flushed once the upgrade
+  /// completes even after a close, so a frame given to a dial the app had
+  /// already abandoned - a pairing token above all - would still reach the
+  /// server, behind the app's back.
+  final List<String> _held = <String>[];
+  bool _opened = false;
+  bool _closed = false;
 
   /// Whether the pin refused a certificate since this connection was started.
   final bool Function() _wasRefused;
@@ -86,10 +113,29 @@ class _IoSocketConnection implements SocketConnection {
   );
 
   @override
-  void add(String frame) => _channel.sink.add(frame);
+  void add(String frame) {
+    if (_closed) return;
+    if (_opened) {
+      _channel.sink.add(frame);
+    } else {
+      _held.add(frame);
+    }
+  }
 
+  /// Returns at once while the dial is still under way. The channel's close
+  /// follows the dial, and one that then fails never completes it: awaited,
+  /// that wedged the reconnect it was part of, a logout half-way through its
+  /// wipe, and a failed sign-in's rollback. A dial that does complete is
+  /// closed by this same call, with nothing sent.
   @override
-  Future<void> close() => _channel.sink.close();
+  Future<void> close() {
+    _closed = true;
+    _held.clear();
+    final closing = _channel.sink.close();
+    if (_opened) return closing;
+    closing.ignore();
+    return Future<void>.value();
+  }
 }
 
 /// The machine at the paired address presented a key the pairing link did not

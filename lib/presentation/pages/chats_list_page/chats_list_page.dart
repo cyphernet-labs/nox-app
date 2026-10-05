@@ -29,6 +29,7 @@ import 'package:nox_app/presentation/widgets/shell/app_splash_hairline_widget.da
 import 'package:nox_app/presentation/widgets/shell/app_wordmark_widget.dart';
 import 'package:nox_app/presentation/widgets/state/app_empty_content_widget.dart';
 import 'package:nox_app/presentation/widgets/state/app_error_widget.dart';
+import 'package:nox_app/presentation/widgets/state/app_connection_indicator_widget.dart';
 import 'package:nox_app/presentation/widgets/state/app_notice_strip_widget.dart';
 import 'package:nox_app/presentation/widgets/state/app_progress_widget.dart';
 
@@ -189,7 +190,13 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
                 onPressed: () => Navigator.of(context).maybePop(),
               ),
         title: const AppWordmarkWidget(),
-        actions: [if (widget.accountLabel != null && widget.onAccount != null) _accountAvatar(context)],
+        // The connection corner first, then the account (phase 040): only
+        // deviations show there - `Tor`, `Connecting…` - so most of the time it
+        // takes no room at all.
+        actions: [
+          const AppConnectionIndicatorWidget(wide: false),
+          if (widget.accountLabel != null && widget.onAccount != null) _accountAvatar(context),
+        ],
         bottom: const AppSplashHairlineWidget(),
       ),
       body: Column(
@@ -293,7 +300,9 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
       // it has the same state and the same action - and two would be two.
       content = Column(
         children: [
-          _banners(context, state),
+          // The connection banner only: the request to update belongs to the list
+          // pane, and drawing it twice put the same sentence across the window.
+          if (state is Initialized) _connectionBanner(context, state),
           Expanded(
             child: AppEmptyContentWidget(
               glyph: NoxIcons.forum,
@@ -332,6 +341,21 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
 
   Widget _banners(BuildContext context, ChatsListState state) {
     if (state is! Initialized) return const SizedBox.shrink();
+    final connection = _connectionBanner(context, state);
+    // The request to update is its own strip, under whatever the connection
+    // says: it is about this build, not about this moment's network, and at
+    // home the connection goes on directly as usual (phase 040, FR-026).
+    if (!state.torObsolete) return connection;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        connection,
+        AppNoticeStripWidget(message: context.l10n.connectionTorObsolete, icon: NoxIcons.info),
+      ],
+    );
+  }
+
+  Widget _connectionBanner(BuildContext context, Initialized state) {
     // The wrong machine comes FIRST. It is not a connection problem: something
     // answered, promptly, and "No connection" over it would send the person to
     // check their wifi over a thing no network can fix. The action is the only

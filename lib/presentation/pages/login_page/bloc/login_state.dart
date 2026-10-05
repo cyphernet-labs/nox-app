@@ -17,11 +17,20 @@ enum LoginStatus {
   errorRejected,
   errorNetwork,
 
-  /// The machine at the address in the link presented a key the link did not
-  /// name. Its own value rather than a shade of [errorNetwork]: nothing about
-  /// the network is wrong, and telling the person to check their connection
-  /// sends them after something that will never be the cause.
+  /// The machine the link led to presented a key the link did not name, where
+  /// that cannot be an accident: behind the onion address of a version-2 link,
+  /// which nobody can hold without the server's keys (FR-030). Its own value
+  /// rather than a shade of [errorNetwork]: nothing about the network is wrong,
+  /// and telling the person to check their connection sends them after
+  /// something that will never be the cause.
   errorServerMismatch,
+
+  /// A version-1 link - a claim, or an invite the server could not put its
+  /// onion address in - and its server did not answer, or a different machine
+  /// answered at its address. Away from home both are what such a link is
+  /// expected to meet, so this says where pairing works rather than blaming the
+  /// network or the server (FR-005, FR-022).
+  errorHomeNetworkOnly,
   navNewId,
   navRegistered,
   navFatal,

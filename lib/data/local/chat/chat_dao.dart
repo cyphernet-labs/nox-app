@@ -61,7 +61,7 @@ class ChatDao {
     final db = await _appDatabase.db;
     await db.transaction((txn) async {
       for (final chat in chats) {
-        await _store.record(chat.id).put(txn, chat.toJson());
+        await _store.record(chat.id).put(txn, (await _keepingReadMark(txn, chat)).toJson());
       }
     });
   }
@@ -70,8 +70,22 @@ class ChatDao {
   Future<void> upsert(ChatEntity chat) async {
     final db = await _appDatabase.db;
     await db.transaction((txn) async {
-      await _store.record(chat.id).put(txn, chat.toJson());
+      await _store.record(chat.id).put(txn, (await _keepingReadMark(txn, chat)).toJson());
     });
+  }
+
+  /// [chat] with the stored read mark kept when [chat] carries an older one.
+  ///
+  /// Writers carry the mark forward from a read made BEFORE this transaction,
+  /// and a mark advanced in between - the chat opened while a page of chats
+  /// was on its way from the server - would be put back by the write, bringing
+  /// a badge back for messages already seen. The mark only moves forward
+  /// ([advanceReadMark]); only [clearReadMarks] takes it away.
+  Future<ChatEntity> _keepingReadMark(Transaction txn, ChatEntity chat) async {
+    final stored = await _store.record(chat.id).get(txn);
+    final mark = stored == null ? null : _tryDecode(stored)?.lastOpenedSeq;
+    if (mark == null || (chat.lastOpenedSeq ?? -1) >= mark) return chat;
+    return chat.copyWith(lastOpenedSeq: mark);
   }
 
   /// Moves the mark forward only, and never past [ceiling].

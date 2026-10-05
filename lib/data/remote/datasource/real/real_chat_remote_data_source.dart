@@ -18,13 +18,15 @@ class RealChatRemoteDataSource implements ChatRemoteDataSource {
   @override
   Future<ResponseEntity<ChatsWireEntity>> getChats({required GetChatsConfig config}) async {
     final search = config.search?.trim();
+    // A read with a cache behind it: no waiting for a connection that is not
+    // there (the repository serves the cache, the list reads again when live).
     final reply = await _socket.send('chats.list', <String, dynamic>{
       'page': config.page,
       'page_size': GetChatsConfig.pageSize,
       // Search belongs on the wire: the cache holds only the pages that were
       // read, so filtering locally would search the prefix, not the space.
       if (search != null && search.isNotEmpty) 'query': search,
-    });
+    }, waitForConnection: false);
     return reply.toEnvelope(ChatsWireEntity.fromJson);
   }
 
@@ -48,7 +50,12 @@ class RealChatRemoteDataSource implements ChatRemoteDataSource {
 
   @override
   Future<ResponseEntity<NameAvailabilityWireEntity>> isNameAvailable({required String name, String? excludeChatId}) async {
-    final reply = await _socket.send('chat.nameAvailable', <String, dynamic>{'name': name, 'exclude_chat_id': ?excludeChatId});
+    // Asked while typing: with no connection the local answer stands at once,
+    // rather than Create staying disabled behind a check that cannot run.
+    final reply = await _socket.send('chat.nameAvailable', <String, dynamic>{
+      'name': name,
+      'exclude_chat_id': ?excludeChatId,
+    }, waitForConnection: false);
     return reply.toEnvelope(NameAvailabilityWireEntity.fromJson);
   }
 }

@@ -305,7 +305,7 @@ window.NOX_SPECS = [
     "behavior": [
       "Rows: avatar (with ring) + name + last-message preview + relative time + unread badge.",
       "Unread emphasis: name w600, preview onSurface, time primary, badge shown (caps 99+, hidden at 0).",
-      "Loading: centered spinner. Empty: forum empty-state.",
+      "Loading: the chats already on the device show at once and the server's page arrives in the background; a centered spinner only when the device holds no chats and the server is being asked. Empty: forum empty-state.",
       "Offline: persistent “No connection” MaterialBanner at top. Load error: banner “Could not load chats. Pull to refresh.”",
       "Tapping the SearchBar opens the full search view (back + query + caret, clear); results filter live; no match → “No chats found”.",
       "Transient one-off feedback appears as a Snackbar floating above the bottom bar."
@@ -363,9 +363,11 @@ window.NOX_SPECS = [
     "behavior": [
       "Messages group by author; an AuthorHeader precedes each group (no per-message avatars in the feed).",
       "Own bubbles = primaryContainer (right, bottom-right corner clipped); others = surfaceContainerHigh (left, bottom-left clipped).",
-      "Own message status: pending (schedule) → sent (check) → error (error, tinted error; tap to retry).",
+      "Own message status: pending (schedule) → sent (check) → error (error, tinted error; tap to retry). An own message that came from the server is sent, including one typed on another device of the same person.",
+      "A message with a file shows its bytes going up: a ring on a contrasting disc over a picture; “Sending… 45%” over a bar in any other file's chip. Before the first byte the ring spins and the bar runs without a percent; the ring gives way to the tick once the server has the message, and starts again with a retried attempt. A received picture's placeholder spinner fills the same way while its bytes come in.",
       "Date separators: Today / Yesterday / 12 May. A system line marks chat creation.",
       "Empty: chat_bubble_outline empty-state. Offline: top banner + queued messages show pending.",
+      "The connection never holds the thread: messages already on the device show at once, the server's newest window arrives in the background; a spinner only when the device holds nothing for the chat and the server is being asked. Writing works offline: a message waits with its clock and goes out over whichever path comes up first.",
       "Invite a person: an app-bar action that is PERMANENTLY disabled (037). Pressing it does nothing at all - no screen, no snackbar, no error. Its screen-reader name is the action alone; the caption explaining it lives in 5.4, where there is room.",
       "Composer: attach + text + send. Send enables when there is text or an attachment; attachment shows a removable chip above the row."
     ],

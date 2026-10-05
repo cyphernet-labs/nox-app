@@ -1,15 +1,20 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
+import 'package:nox_app/data/entity/chat/chat_entity.dart';
 import 'package:nox_app/data/local/chat/chat_dao.dart';
 import 'package:nox_app/data/local/chat/message_dao.dart';
 import 'package:nox_app/data/mapper/chat/chat_mapper.dart';
 import 'package:nox_app/data/mapper/chat/chat_wire_mapper.dart';
 import 'package:nox_app/data/mapper/chat/message_mapper.dart';
 import 'package:nox_app/data/mapper/chat/message_wire_mapper.dart';
+import 'package:nox_app/data/remote/api_client.dart';
 import 'package:nox_app/data/remote/pinned_http_client.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/repository/app/session_repository_impl.dart';
+import 'package:nox_app/data/service/tor/fake_tor_service.dart';
+import 'package:nox_app/data/sync/connection/access_key_registrar.dart';
+import 'package:nox_app/data/sync/connection/connection_path_selector.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
 import 'package:nox_app/data/sync/sync_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
@@ -19,12 +24,17 @@ import 'package:nox_app/domain/repository/app_config/app_config_repository.dart'
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
+import 'package:nox_app/domain/repository/connection/access_key_repository.dart';
+import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
+import 'package:nox_app/domain/service/app_lifecycle_service.dart';
+import 'package:nox_app/domain/service/network_change_service.dart';
 import 'package:nox_app/general/pairing/device_keys.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../remote/socket/fake_socket.dart';
+import 'connection/fake_direct_prober.dart';
 
 /// The client half of pairing and revocation, at the points where getting it
 /// wrong destroys an installation rather than merely inconveniencing it.
@@ -135,6 +145,8 @@ void main() {
     late NoxSocketClient socket;
     late LiveSessionStarter starter;
     late PinnedHttpClient pinned;
+    late FakeDirectProber prober;
+    late FakeTorService tor;
 
     setUp(() async {
       await getIt<AppConfigRepository>().initialize(flavorType: AppFlavorType.stage);
@@ -150,8 +162,20 @@ void main() {
         getIt<MessageMapper>(),
         getIt<MessageWireMapper>(),
         getIt<OutboxRepository>(),
+        getIt<ServerAddressesRepository>(),
       );
       pinned = PinnedHttpClient();
+      prober = FakeDirectProber();
+      tor = FakeTorService();
+      final selector = ConnectionPathSelector.forTest(
+        prober,
+        tor,
+        getIt<ServerAddressesRepository>(),
+        getIt<AccessKeyRepository>(),
+        getIt<NetworkChangeService>(),
+        getIt<AppLifecycleService>(),
+        socket,
+      );
       starter = LiveSessionStarter(
         socket,
         sync,
@@ -163,9 +187,23 @@ void main() {
         getIt<OutboxRepository>(),
         getIt<FileRepository>(),
         pinned,
+        selector,
+        AccessKeyRegistrar(socket, getIt<AccessKeyRepository>()),
+        getIt<ServerAddressesRepository>(),
+        tor,
       );
     });
     tearDown(() async => starter.stop());
+
+    /// A server reachable only through its onion address: the direct ones say
+    /// nothing, Tor works, and this device's key is registered there.
+    Future<void> onlyThroughTor() async {
+      prober.home = <String>{};
+      tor.supported = true;
+      await getIt<ServerAddressesRepository>().saveFromServer(direct: const <String>[], onion: '${'a' * 56}.onion:443');
+      await getIt<AccessKeyRepository>().deviceKey();
+      await getIt<AccessKeyRepository>().markRegistered(true);
+    }
 
     Future<void> settle() async {
       for (var i = 0; i < 10; i++) {
@@ -254,23 +292,127 @@ void main() {
       expect(pinned.pinnedFingerprint, isNull);
     });
 
-    test('the world epoch does not move when the scheme does', () async {
-      // The epoch is keyed on the stored ADDRESS, which a paired install holds
-      // as a bare host:port. If it were keyed on the URL, turning ws into wss
-      // would read as a different server and wipe every chat on every device at
-      // once, on upgrade, silently.
+    group('the world is named by the server key (FR-011, FR-012)', () {
+      Future<void> paired() async {
+        await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
+        await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
+      }
+
+      Future<void> aChat() => getIt<ChatDao>().upsert(
+        const ChatEntity(
+          id: 'c_1',
+          name: 'Kept',
+          lastMessagePreview: 'p',
+          lastMessageAt: '2026-01-01T00:00:00.000Z',
+          unreadCount: 0,
+          lastOpenedSeq: null,
+        ),
+      );
+
+      test('a fresh install names it by the fingerprint', () async {
+        await paired();
+        await starter.start();
+        await settle();
+
+        expect(await getIt<SyncRepository>().getEpoch(), 'fp:$kPinA');
+      });
+
+      test('a world named by the address before this phase is renamed, not wiped', () async {
+        // Every install that updates carries one. Wiping it would empty every
+        // chat on every device of every person, once, on update.
+        await paired();
+        await getIt<SyncRepository>().setEpoch('live:10.0.0.5:9000');
+        await aChat();
+
+        await starter.start();
+        await settle();
+
+        expect(await getIt<SyncRepository>().getEpoch(), 'fp:$kPinA');
+        expect(await getIt<ChatDao>().getById('c_1'), isNotNull, reason: 'the same server, so the same world');
+      });
+
+      test('another key is another world, and the old one goes', () async {
+        await paired();
+        await getIt<SyncRepository>().setEpoch('fp:$kPinB');
+        await aChat();
+
+        await starter.start();
+        await settle();
+
+        expect(await getIt<SyncRepository>().getEpoch(), 'fp:$kPinA');
+        expect(await getIt<ChatDao>().getById('c_1'), isNull);
+      });
+
+      test('the same key leaves everything where it is', () async {
+        await paired();
+        await getIt<SyncRepository>().setEpoch('fp:$kPinA');
+        await aChat();
+
+        await starter.start();
+        await settle();
+
+        expect(await getIt<ChatDao>().getById('c_1'), isNotNull);
+      });
+    });
+
+    test('another key at a direct address is "not home": the ladder goes on (FR-005)', () async {
+      // An address is a place. On another network the same 192.168.1.20 is
+      // somebody else's machine, and calling that "not your server" would put
+      // the banner up every time this person left home.
       await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
       await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
+      await starter.start();
+      await settle();
+      expect(factory.created, hasLength(1));
+
+      factory.latest.refusePin();
+      await settle();
+
+      expect(socket.currentPhase, isNot(SessionPhase.serverMismatch));
+      for (var i = 0; i < 300 && factory.created.length < 2; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(factory.created, hasLength(2), reason: 'the next path is tried');
+      expect((await session.readSession()).data, isNotNull, reason: 'nothing was wiped');
+    });
+
+    test('the socket dials the onion address when no direct one answers (US1)', () async {
+      await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
+      await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
+      await onlyThroughTor();
 
       await starter.start();
       await settle();
 
-      expect(await getIt<SyncRepository>().getEpoch(), 'live:10.0.0.5:9000');
+      expect(factory.urls.single.toString(), 'wss://${'a' * 56}.onion/ws');
+      expect(tor.target?.host, '${'a' * 56}.onion');
+      // The bytes go the same way, through the bridge the Tor client opened.
+      expect(pinned.onionBridge?.call()?.port, 9150);
     });
 
-    test('a refused server stops the ladder, and the retry is the way back', () async {
+    test('attachment bytes follow the path the socket took (FR-009)', () async {
       await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
       await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
+      await onlyThroughTor();
+      await starter.start();
+      await settle();
+
+      factory.latest.pushGreeting();
+      for (var i = 0; i < 40 && factory.latest.commandNamed('session.hello') == null; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      factory.latest.replyToHello(cursor: 0);
+      for (var i = 0; i < 40 && !getIt<ApiClient>().dio.options.baseUrl.contains('.onion'); i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+
+      expect(getIt<ApiClient>().dio.options.baseUrl, 'https://${'a' * 56}.onion');
+    });
+
+    test('another key behind the onion address stops the ladder, and the retry is the way back', () async {
+      await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
+      await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
+      await onlyThroughTor();
       await starter.start();
       await settle();
       expect(factory.created, hasLength(1));
@@ -302,6 +444,7 @@ void main() {
       // every device they own, by presenting one.
       await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
       await session.saveServer(address: '10.0.0.5:9000', serverFingerprint: kPinA);
+      await onlyThroughTor();
       await starter.start();
       await settle();
 

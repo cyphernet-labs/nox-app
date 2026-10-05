@@ -3,15 +3,29 @@ import 'dart:async';
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
+import 'package:nox_app/data/entity/base/response_entity.dart';
+import 'package:nox_app/data/entity/chat/wire/chat_wire_entity.dart';
+import 'package:nox_app/data/entity/chat/wire/chats_wire_entity.dart';
 import 'package:nox_app/data/local/app_database.dart';
+import 'package:nox_app/data/remote/datasource/chat_remote_data_source.dart';
+import 'package:nox_app/data/remote/socket/socket_channel_factory.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/model/chat/chat_model.dart';
+import 'package:nox_app/domain/repository/base/page_metadata.dart';
+import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
+import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/model/connection/connection_path.dart';
+import 'package:nox_app/domain/model/connection/connection_status.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
+import 'package:nox_app/domain/service/connection_status_service.dart';
 import 'package:nox_app/domain/service/connectivity_service.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/presentation/pages/chats_list_page/bloc/chats_list_bloc.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import '../../../../utils/fixed_connection_status.dart';
 
 void main() {
   // Per-test DB isolation — the reactive test mutates the DB (createChat), so each test
@@ -335,6 +349,46 @@ void main() {
     });
   });
 
+  group('the connection status (phase 040)', () {
+    late FixedConnectionStatusService status;
+
+    Future<ChatsListBloc> boot(ConnectionStatus initial) async {
+      status = FixedConnectionStatusService(initial);
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<ConnectionStatusService>(status);
+      final bloc = ChatsListBloc()..add(const ChatsListEvent.initialize());
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      return bloc;
+    }
+
+    test('a path still coming up is not an outage: no banner, the corner speaks', () async {
+      final bloc = await boot(FixedConnectionStatusService.connectingTor);
+
+      final state = bloc.state as Initialized;
+      expect(state.isOffline, isFalse);
+      expect(state.isServerMismatch, isFalse);
+    });
+
+    test('a whole failed round is: the banner goes up, and comes down on a greeting', () async {
+      final bloc = await boot(const ConnectionStatus(state: LinkState.offline));
+      expect((bloc.state as Initialized).isOffline, isTrue);
+
+      status.emit(FixedConnectionStatusService.tor);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect((bloc.state as Initialized).isOffline, isFalse);
+    });
+
+    test('a refused Tor client asks for an update, whatever the path (FR-026)', () async {
+      final bloc = await boot(const ConnectionStatus(state: LinkState.online, path: ConnectionPath.direct, torObsolete: true));
+
+      final state = bloc.state as Initialized;
+      expect(state.torObsolete, isTrue);
+      expect(state.isOffline, isFalse);
+    });
+  });
+
   group('the server that is not the one the link named (036)', () {
     late _FakePhase phase;
 
@@ -408,6 +462,176 @@ void main() {
       expect(state.isOffline, isFalse);
     });
   });
+
+  group('the cache first: the connection never holds the list', () {
+    ChatModel chat(String id, String name) => ChatModel(id: id, name: name, lastMessagePreview: '', lastMessageAt: DateTime(2026, 10, 4));
+
+    void useChats(ChatRepository chats) {
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<ChatRepository>(chats);
+    }
+
+    void useStatus(FixedConnectionStatusService status) {
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<ConnectionStatusService>(status);
+    }
+
+    test('the chats the device holds are on screen at once while the server has not answered', () async {
+      // The bug on the stand: launched with a bad network, the list sat on a
+      // spinner while Tor came up, and the cached chats appeared only once the
+      // connection failed.
+      final chats = _SlowServerChats([chat('c1', 'Holiday'), chat('c2', 'Work')]);
+      useChats(chats);
+      final bloc = ChatsListBloc()..add(const ChatsListEvent.initialize());
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      final state = bloc.state as Initialized;
+      expect(state.items.map((c) => c.id), ['c1', 'c2']);
+      expect(state.loadingInProgress, isFalse);
+      expect(chats.serverReads, 1, reason: 'the server is still asked, in the background');
+    });
+
+    test('with nothing cached, the list waits for the server rather than saying there are no chats', () async {
+      useChats(_SlowServerChats(const []));
+      final bloc = ChatsListBloc()..add(const ChatsListEvent.initialize());
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      final state = bloc.state as Initialized;
+      expect(state.syncing, isTrue);
+      expect(state.pagingState.isLoading, isTrue, reason: 'the spinner, not the empty state');
+    });
+
+    test('with nothing cached and no channel, the empty list is the answer at once', () async {
+      useStatus(FixedConnectionStatusService(FixedConnectionStatusService.connectingTor));
+      useChats(_SlowServerChats(const []));
+      final bloc = ChatsListBloc()..add(const ChatsListEvent.initialize());
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      final state = bloc.state as Initialized;
+      expect(state.syncing, isFalse);
+      expect(state.pagingState.isLoading, isFalse);
+    });
+
+    test('chats past the cache can still be reached once the channel is back', () async {
+      // Scrolled to the end of the cache while Tor came up: the load-more came
+      // back short from the cache and switched paging off, and only page 1 is
+      // read again on the way back - so the rest stayed out of reach.
+      final server = _PagedServer();
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<ChatRemoteDataSource>(server);
+      await getIt<ChatRepository>().getChats(config: GetChatsConfig.firstPage()); // an earlier session cached page 1
+      server.greeted = false;
+      final status = FixedConnectionStatusService(FixedConnectionStatusService.connectingTor);
+      useStatus(status);
+      final bloc = ChatsListBloc()..add(const ChatsListEvent.initialize());
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      bloc.add(const ChatsListEvent.loadChats()); // the end of the cached list
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect((bloc.state as Initialized).pagingState.hasNextPage, isFalse, reason: 'precondition: the cache ran out');
+
+      server.greeted = true;
+      status.emit(FixedConnectionStatusService.tor);
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+
+      expect((bloc.state as Initialized).pagingState.hasNextPage, isTrue);
+      bloc.add(const ChatsListEvent.loadChats());
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      expect((bloc.state as Initialized).items.length, greaterThan(GetChatsConfig.pageSize));
+    });
+
+    test('a list waiting on the spinner does not read a later page of the previous list', () async {
+      // PagedListView asks for the "next page" of any list without pages, and
+      // that request ended the spinner with a page that belonged elsewhere.
+      final chats = _SlowServerChats(const []);
+      useChats(chats);
+      final bloc = ChatsListBloc()..add(const ChatsListEvent.initialize());
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect((bloc.state as Initialized).syncing, isTrue, reason: 'precondition');
+
+      bloc.add(const ChatsListEvent.loadChats()); // what PagedListView sends
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      expect((bloc.state as Initialized).syncing, isTrue);
+      expect(chats.serverReads, 1, reason: 'only the first page, asked once');
+    });
+
+    test('the server is asked again when the channel comes back', () async {
+      final status = FixedConnectionStatusService(FixedConnectionStatusService.connectingTor);
+      useStatus(status);
+      final chats = _SlowServerChats([chat('c1', 'Holiday')]);
+      useChats(chats);
+      final bloc = ChatsListBloc()..add(const ChatsListEvent.initialize());
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      final before = chats.serverReads;
+
+      status.emit(FixedConnectionStatusService.tor);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      expect(chats.serverReads, before + 1);
+    });
+  });
+}
+
+/// 50 chats on the server; `chats.list` fails at once until [greeted], the
+/// way a read with a cache behind it does while the channel comes up.
+class _PagedServer implements ChatRemoteDataSource {
+  bool greeted = true;
+  final List<ChatWireEntity> all = [
+    for (var i = 0; i < 50; i++)
+      ChatWireEntity(
+        chatId: 'c$i',
+        name: 'Chat $i',
+        createdAt: 1759000000,
+        createdByLabel: 'Aria',
+        lastMessagePreview: '',
+        lastActivityAt: 1759600000 - i * 60,
+      ),
+  ];
+
+  @override
+  Future<ResponseEntity<ChatsWireEntity>> getChats({required GetChatsConfig config}) async {
+    if (!greeted) throw const SocketUnavailableException('not connected');
+    final start = (config.page - 1) * GetChatsConfig.pageSize;
+    final slice = all.skip(start).take(GetChatsConfig.pageSize).toList();
+    return ResponseEntity<ChatsWireEntity>(
+      success: true,
+      data: ChatsWireEntity(chats: slice, hasMore: start + GetChatsConfig.pageSize < all.length),
+    );
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// A cache that answers at once and a server that never does - Tor still
+/// coming up. Everything else about a chat repository is left out.
+class _SlowServerChats implements ChatRepository {
+  _SlowServerChats(this.cached);
+
+  final List<ChatModel> cached;
+  int serverReads = 0;
+  final Completer<void> _never = Completer<void>();
+
+  @override
+  Future<RepositoryResult<(List<ChatModel>, PageMetadata)>> getChats({required GetChatsConfig config}) async {
+    if (!config.cachedOnly) {
+      serverReads++;
+      await _never.future;
+    }
+    return RepositoryResult<(List<ChatModel>, PageMetadata)>.success(data: (cached, const PageMetadata(hasMore: false)));
+  }
+
+  @override
+  Stream<List<ChatModel>> watchChats() => const Stream<List<ChatModel>>.empty();
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 /// A controllable [ConnectivityService] for the F3 tests (seed-then-live).

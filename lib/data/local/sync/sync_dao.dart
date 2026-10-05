@@ -35,6 +35,16 @@ class SyncDao {
     return value is int ? value : 0;
   }
 
+  /// Whether a cursor is stored at all - which [readSince]'s 0 cannot say. A
+  /// device whose first greeting found an EMPTY journal stores 0, and must
+  /// still ask for a replay on its next greeting; only one never greeted (or
+  /// wiped since) has nothing to ask from.
+  Future<bool> hasSince() async {
+    final db = await _database.db;
+    final record = await _store.record(_kStateKey).get(db);
+    return record?[_kSinceField] is int;
+  }
+
   Future<void> writeSince(int since) async {
     final db = await _database.db;
     await _store.record(_kStateKey).put(db, {_kSinceField: since});
@@ -48,8 +58,11 @@ class SyncDao {
     await db.transaction((txn) async {
       final record = await _store.record(_kStateKey).get(txn);
       final current = record?[_kSinceField];
-      final since = current is int ? current : 0;
-      if (seq > since) await _store.record(_kStateKey).put(txn, {_kSinceField: seq});
+      // Written when absent even at 0: the first greeting adopts the server's
+      // cursor, and an empty journal's cursor IS 0. Left unwritten, the device
+      // would still read as never greeted, and its next greeting would skip
+      // the replay of everything that happened in between.
+      if (current is! int || seq > current) await _store.record(_kStateKey).put(txn, {_kSinceField: seq});
     });
   }
 

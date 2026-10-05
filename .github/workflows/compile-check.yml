@@ -18,6 +18,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # The Tor client (packages/nox_tor) is Rust, built by the native-assets hook.
+      # Its toolchain is pinned in rust-toolchain.toml; the hook would fetch it on
+      # its own, but installing it here keeps the build log readable and the
+      # targets limited to what this job builds.
+      - name: Rust toolchain for the Tor client
+        shell: bash
+        run: |
+          channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' packages/nox_tor/rust/rust-toolchain.toml)
+          rustup toolchain install "$channel" --profile minimal --target aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+      # The hook links the Tor client with the NDK's clang, before Gradle runs,
+      # so the NDK Flutter 3.44.1 pins has to be there already.
+      - name: Android NDK for the Tor client
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;28.2.13676358" > /dev/null
       - uses: subosito/flutter-action@v2
         with: { flutter-version: '3.44.1', channel: stable, cache: true }
       - run: flutter pub get
@@ -28,6 +41,15 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      # The Tor client (packages/nox_tor) is Rust, built by the native-assets hook.
+      # Its toolchain is pinned in rust-toolchain.toml; the hook would fetch it on
+      # its own, but installing it here keeps the build log readable and the
+      # targets limited to what this job builds.
+      - name: Rust toolchain for the Tor client
+        shell: bash
+        run: |
+          channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' packages/nox_tor/rust/rust-toolchain.toml)
+          rustup toolchain install "$channel" --profile minimal --target aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
       - uses: subosito/flutter-action@v2
         with: { flutter-version: '3.44.1', channel: stable, cache: true }
       - run: flutter pub get
@@ -38,6 +60,15 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      # The Tor client (packages/nox_tor) is Rust, built by the native-assets hook.
+      # Its toolchain is pinned in rust-toolchain.toml; the hook would fetch it on
+      # its own, but installing it here keeps the build log readable and the
+      # targets limited to what this job builds.
+      - name: Rust toolchain for the Tor client
+        shell: bash
+        run: |
+          channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' packages/nox_tor/rust/rust-toolchain.toml)
+          rustup toolchain install "$channel" --profile minimal --target aarch64-apple-darwin,x86_64-apple-darwin
       - uses: subosito/flutter-action@v2
         with: { flutter-version: '3.44.1', channel: stable, cache: true }
       - run: flutter pub get
@@ -48,12 +79,23 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      # The Tor client (packages/nox_tor) is Rust, built by the native-assets hook.
+      # Its toolchain is pinned in rust-toolchain.toml; the hook would fetch it on
+      # its own, but installing it here keeps the build log readable and the
+      # targets limited to what this job builds.
+      - name: Rust toolchain for the Tor client
+        shell: bash
+        run: |
+          channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' packages/nox_tor/rust/rust-toolchain.toml)
+          rustup toolchain install "$channel" --profile minimal --target x86_64-pc-windows-msvc
       - uses: subosito/flutter-action@v2
         with: { flutter-version: '3.44.1', channel: stable, cache: true }
       - run: flutter pub get
       - run: dart run build_runner build --delete-conflicting-outputs
       - run: flutter build windows --debug --dart-define-from-file=config/stage.json
 
+  # No Rust here: the Tor client is not built for Linux yet (stage tor-linux-app),
+  # and its hook returns without touching cargo.
   compile-linux:
     runs-on: ubuntu-latest
     steps:

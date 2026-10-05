@@ -110,6 +110,20 @@ func TestRunWithTorOffServesTheDirectPathAndStopsCleanly(t *testing.T) {
 
 // FR-007 end to end: Tor on, tor nowhere to be found - the messenger still
 // serves, says why in the log, and stops cleanly.
+// A stop that lands before the dispatcher's first read of the cursor is a
+// stop. The read fails because of the cancel, and that failure used to come
+// back out of Run as an error - an intermittent one, whenever shutdown beat
+// the dispatcher's first query.
+func TestDispatcherStoppedBeforeItsFirstReadStopsCleanly(t *testing.T) {
+	_, srv := newTestServer(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := srv.runDispatcher(ctx); err != nil {
+		t.Fatalf("runDispatcher on a cancelled context returned %v, want a clean stop", err)
+	}
+}
+
 func TestRunWithTorMissingStillServesTheDirectPath(t *testing.T) {
 	cfg := testRunConfig(t)
 	cfg.Tor = true

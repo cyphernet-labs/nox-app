@@ -6,11 +6,13 @@ import 'package:injectable/injectable.dart' show Environment;
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nox_app/data/local/app_database.dart';
+import 'package:nox_app/data/service/attachment_transfer_service_impl.dart';
 import 'package:nox_app/data/sync/outbox_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
+import 'package:nox_app/domain/model/file/attachment_transfer.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/domain/model/chat/message_status.dart';
 import 'package:nox_app/domain/model/chat/outbox_status.dart';
@@ -92,6 +94,7 @@ void main() {
   late _FakePhase phase;
   late OutboxService service;
   late _FakeFiles files;
+  late AttachmentTransferServiceImpl transfers;
   late List<String> sentKeys;
   late List<String> sentAttachmentIds;
 
@@ -142,8 +145,9 @@ void main() {
     });
 
     files = _FakeFiles();
+    transfers = AttachmentTransferServiceImpl();
     phase = _FakePhase(SessionPhase.live);
-    service = OutboxService(outbox, messages, phase, files);
+    service = OutboxService(outbox, messages, phase, files, transfers);
   });
 
   tearDown(() async {
@@ -223,7 +227,7 @@ void main() {
 
   test('nothing is sent while the channel is down, and the attempt is not burned', () async {
     phase = _FakePhase(SessionPhase.disconnected);
-    service = OutboxService(outbox, messages, phase, files);
+    service = OutboxService(outbox, messages, phase, files, transfers);
     await enqueue(['a']);
 
     await service.flush();
@@ -236,7 +240,7 @@ void main() {
 
   test('catching up is not live: the drain waits for the replay to finish', () async {
     phase = _FakePhase(SessionPhase.catchingUp);
-    service = OutboxService(outbox, messages, phase, files);
+    service = OutboxService(outbox, messages, phase, files, transfers);
     await enqueue(['a']);
 
     await service.flush();
@@ -254,7 +258,7 @@ void main() {
     // would be a message the person is told failed, over a server that never
     // saw it. Their text waits; it is not lost and it is not blamed on them.
     phase = _FakePhase(SessionPhase.serverMismatch);
-    service = OutboxService(outbox, messages, phase, files);
+    service = OutboxService(outbox, messages, phase, files, transfers);
     await enqueue(['a', 'b']);
 
     await service.flush();
@@ -273,7 +277,7 @@ void main() {
     // arrives. A pass triggered by that transition would send into the very
     // machine the refusal is about.
     phase = _FakePhase(SessionPhase.disconnected);
-    service = OutboxService(outbox, messages, phase, files);
+    service = OutboxService(outbox, messages, phase, files, transfers);
     service.start();
     await enqueue(['a']);
 
@@ -288,7 +292,7 @@ void main() {
 
   test('the channel going live drains the queue with no one asking', () async {
     phase = _FakePhase(SessionPhase.disconnected);
-    service = OutboxService(outbox, messages, phase, files);
+    service = OutboxService(outbox, messages, phase, files, transfers);
     service.start();
     await enqueue(['written while offline']);
 
@@ -301,9 +305,34 @@ void main() {
     expect(await outbox.pending(), isEmpty);
   });
 
+  test('a message written while the path comes up waits for it and goes out once (FR-023)', () async {
+    // Through Tor the path can take the better part of two minutes to come up.
+    // The queue neither tries early - which would only grow the backoff - nor
+    // counts the wait against the message; it goes out on the live edge, once.
+    phase = _FakePhase(SessionPhase.disconnected);
+    service = OutboxService(outbox, messages, phase, files, transfers);
+    service.start();
+    await enqueue(['written during the bring-up']);
+
+    for (final step in [SessionPhase.connecting, SessionPhase.disconnected, SessionPhase.connecting, SessionPhase.catchingUp]) {
+      phase.emit(step);
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    expect(sentKeys, isEmpty, reason: 'not before the path is up and caught up');
+    expect((await outbox.pending()).single.attempts, 0, reason: 'waiting is not an attempt');
+
+    phase.emit(SessionPhase.live);
+    for (var i = 0; i < 100 && sentKeys.isEmpty; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+
+    expect(sentKeys, hasLength(1));
+    expect(await outbox.pending(), isEmpty);
+  });
+
   test('start() twice does not open a second subscription (one live edge, one drain)', () async {
     phase = _FakePhase(SessionPhase.disconnected);
-    service = OutboxService(outbox, messages, phase, files);
+    service = OutboxService(outbox, messages, phase, files, transfers);
     service.start();
     service.start();
     await enqueue(['once']);
@@ -416,6 +445,57 @@ void main() {
       expect(sentKeys, contains(behind.clientMessageId), reason: 'one bad attachment must not hold the queue');
     });
 
+    test('a file being sent is a transfer from before its first byte until the server has the message', () async {
+      // Without it the bubble of a picture taking a minute through Tor looked
+      // exactly like a text that goes in a blink: a small clock, nothing else.
+      final entry = (await outbox.enqueue(chatId: 'c1', text: null, attachment: picked())).data!;
+      AttachmentTransfer? beforeBytes;
+      AttachmentTransfer? whileSending;
+      files.duringUpload = () async => beforeBytes = transfers.current[entry.clientMessageId];
+      when(
+        messages.sendMessage(
+          chatId: anyNamed('chatId'),
+          clientMessageId: anyNamed('clientMessageId'),
+          text: anyNamed('text'),
+          attachment: anyNamed('attachment'),
+        ),
+      ).thenAnswer((_) async {
+        whileSending = transfers.current[entry.clientMessageId];
+        return RepositoryResult<MessageModel>.success(data: echo('c1', ''));
+      });
+
+      await service.flush();
+
+      expect(beforeBytes, const AttachmentTransfer(chatId: 'c1', direction: TransferDirection.upload));
+      // The bytes are all up (the fake reports the whole file) while the
+      // message itself is still on its way: the ring stays, full.
+      expect(whileSending?.percent, 100);
+      expect(transfers.current, isEmpty, reason: 'nothing is moving once the server has the message');
+    });
+
+    test('a failed upload ends its transfer, so the bubble stops claiming bytes are moving', () async {
+      await outbox.enqueue(chatId: 'c1', text: null, attachment: picked());
+      files.failure = RepositoryException.connection;
+
+      await service.flush();
+
+      expect(await outbox.pending(), hasLength(1), reason: 'still queued, to be tried again');
+      expect(transfers.current, isEmpty);
+    });
+
+    test('a text is never a transfer', () async {
+      final published = <Map<String, AttachmentTransfer>>[];
+      final subscription = transfers.watch().listen(published.add);
+      addTearDown(subscription.cancel);
+      await outbox.enqueue(chatId: 'c1', text: 'just words');
+
+      await service.flush();
+      await pumpEventQueue();
+
+      expect(sentKeys, hasLength(1));
+      expect(published.every((m) => m.isEmpty), isTrue);
+    });
+
     test('a message discarded during the upload is not sent', () async {
       // Phase 027 re-reads right before sending so a discard is honoured; an
       // upload stretches that window from milliseconds to minutes.
@@ -509,8 +589,9 @@ void main() {
   test('the pause is lifted by the channel coming back, and the retry then goes out', () async {
     failures['a'] = RepositoryException.connection;
     files = _FakeFiles();
+    transfers = AttachmentTransferServiceImpl();
     phase = _FakePhase(SessionPhase.live);
-    service = OutboxService(outbox, messages, phase, files);
+    service = OutboxService(outbox, messages, phase, files, transfers);
     service.start();
     await enqueue(['a']);
 

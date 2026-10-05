@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/data/repository/app/session_repository_impl.dart';
+import 'package:nox_app/data/repository/connection/connection_storage.dart';
 import 'package:nox_app/general/pairing/device_keys.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -317,6 +318,67 @@ void main() {
       expect((await repository.sweepLegacyKeys()).hasData, isTrue);
 
       expect(prefs.getBool('session.is_owner'), isNull);
+    });
+  });
+
+  group('phase 040 records', () {
+    const storage = FlutterSecureStorage();
+
+    Future<void> writeAll() async {
+      await storage.write(key: ConnectionStorage.serverAddresses, value: '{"direct":["10.0.0.5:8443"]}');
+      await storage.write(key: ConnectionStorage.accessKeyRegistered, value: '1');
+      await storage.write(
+        key: ConnectionStorage.accessKey,
+        value: 'BBBB',
+        iOptions: ConnectionStorage.keyIOSOptions,
+        mOptions: ConnectionStorage.keyMacOsOptions,
+      );
+    }
+
+    test('logout removes the addresses and the access key', () async {
+      await repository.saveIdentifier(identifier: 'abc', onboardingComplete: true);
+      await writeAll();
+      await repository.clear();
+      for (final key in [ConnectionStorage.serverAddresses, ConnectionStorage.accessKeyRegistered, ConnectionStorage.accessKey]) {
+        expect(await storage.read(key: key), isNull, reason: key);
+      }
+    });
+
+    test('a failed sign-in keeps the device access key and drops the rest', () async {
+      await writeAll();
+      await repository.discardSignIn();
+      expect(await storage.read(key: ConnectionStorage.serverAddresses), isNull);
+      expect(await storage.read(key: ConnectionStorage.accessKeyRegistered), isNull);
+      expect(await storage.read(key: ConnectionStorage.accessKey), 'BBBB');
+    });
+
+    test('the bootstrap sweep drops a one-time invite key left by earlier builds', () async {
+      // Those builds kept a version-2 invite's key on disk for its pairing, and
+      // a pairing the process did not survive left it there; nothing else
+      // names it any more (FR-021).
+      await storage.write(key: 'session.invite_onion', value: 'abc.onion:443');
+      await storage.write(
+        key: 'session.invite_access_key',
+        value: 'AAAA',
+        iOptions: ConnectionStorage.keyIOSOptions,
+        mOptions: ConnectionStorage.keyMacOsOptions,
+      );
+
+      expect((await repository.sweepLegacyKeys()).hasData, isTrue);
+
+      expect(await storage.read(key: 'session.invite_onion'), isNull);
+      expect(await storage.read(key: 'session.invite_access_key'), isNull);
+    });
+
+    test('a new server starts with nothing an earlier one said about itself', () async {
+      // A sign-in the process did not survive leaves the old server's records
+      // behind; kept, they would send the next connection to its onion.
+      await writeAll();
+      await repository.saveServer(address: '10.0.0.9:8443', serverFingerprint: 'fp');
+      expect(await storage.read(key: ConnectionStorage.serverAddresses), isNull);
+      expect(await storage.read(key: ConnectionStorage.accessKeyRegistered), isNull);
+      expect(await storage.read(key: ConnectionStorage.accessKey), 'BBBB', reason: 'the key names this install');
+      expect((await repository.serverAddress()).data, '10.0.0.9:8443');
     });
   });
 }

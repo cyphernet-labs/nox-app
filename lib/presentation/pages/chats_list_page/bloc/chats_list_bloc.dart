@@ -9,7 +9,8 @@ import 'package:nox_app/domain/exception/base_repository_exception.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/domain/repository/base/page_metadata.dart';
-import 'package:nox_app/domain/model/session/session_phase.dart';
+import 'package:nox_app/domain/model/connection/connection_status.dart';
+import 'package:nox_app/domain/service/connection_status_service.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
@@ -38,13 +39,15 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
     on<SearchChanged>(_onSearchChanged, transformer: debounceRestartable());
     on<ChatSelected>(_onChatSelected);
     on<SetScenario>(_onSetScenario);
-    on<SessionPhaseChanged>(_onSessionPhaseChanged);
+    on<ConnectionStatusChanged>(_onConnectionStatusChanged);
+    on<FirstPageSynced>(_onFirstPageSynced);
     on<RetryConnection>(_onRetryConnection);
   }
 
   final ChatRepository _chatRepository = getIt<ChatRepository>();
   final MessageRepository _messageRepository = getIt<MessageRepository>();
   final SessionPhaseService _sessionPhaseService = getIt<SessionPhaseService>();
+  final ConnectionStatusService _connectionStatus = getIt<ConnectionStatusService>();
 
   // Live change-signal over the cache-first DB (Feature 014): a DB write (create / send /
   // incoming / read) re-reads the loaded page prefix. The stream VALUE is ignored — the
@@ -57,19 +60,31 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
   // real device connectivity now ALSO drives it (feature F3) — see `_isOffline`.
   ChatsListScenario _scenario = ChatsListScenario.normal;
 
-  // The live channel's phase (feature F3, widened by 036). The whole phase is
-  // kept, not a boolean derived from it: "not current" answers "is the data
-  // fresh" and nothing else, and a server presenting the wrong key is not a
-  // stale-data problem — it is a different sentence, with a different action.
-  StreamSubscription<SessionPhase>? _connSub;
-  SessionPhase _phase = SessionPhase.live;
+  // Where the connection stands (feature F3, widened by 036 and 040). The whole
+  // status is kept, not a boolean derived from it: a server presenting the
+  // wrong key is not a stale-data problem, and a path still coming up - the
+  // corner says `Connecting…` then - is not an outage either.
+  StreamSubscription<ConnectionStatus>? _connSub;
+  late ConnectionStatus _status = _connectionStatus.status;
 
   /// The wrong machine answered. Takes precedence over the offline banner: both
   /// would otherwise show at once, and "no connection" is simply false here.
-  bool _isServerMismatch() => _phase.isServerMismatch || _scenario == ChatsListScenario.pinRefused;
+  bool _isServerMismatch() => _status.isServerMismatch || _scenario == ChatsListScenario.pinRefused;
 
-  /// The Offline banner shows when the channel is not current OR the debug scenario forces it.
-  bool _isOffline() => !_isServerMismatch() && (!_phase.isCurrent || _scenario == ChatsListScenario.offline);
+  /// «No connection» is for a whole round of path finding that found nothing,
+  /// not for a path still on its way (phase 040) - or the debug scenario.
+  bool _isOffline() => !_isServerMismatch() && (_status.showsNoConnection || _scenario == ChatsListScenario.offline);
+
+  /// Whether a read reaches the server now: once the greeting is done, the
+  /// catch-up included - which is when the socket lets reads out.
+  bool _canRead() => _status.state == LinkState.online || _status.state == LinkState.catchingUp;
+
+  /// Numbers the background reads of page 1, so an older one finishing late
+  /// cannot end the spinner a newer one is holding.
+  int _syncGeneration = 0;
+
+  /// The Tor network refused the client built into this version (FR-026).
+  bool _isTorObsolete() => _status.torObsolete || _scenario == ChatsListScenario.torObsolete;
 
   /// Marks the first two chats read and drops messages above the mark, so the
   /// list shows badges produced by the recount rather than by a seeded number.
@@ -94,11 +109,11 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
         .skip(1)
         .debounceTime(const Duration(milliseconds: 100))
         .listen((_) => add(const ChatsListEvent.loadChats(refresh: true)));
-    // Live connectivity → the Offline banner (seeded current value, then every change).
-    // The session phase, not raw device connectivity, is what says whether the
-    // data on screen is current: a device can be online while the socket is
-    // down, and the socket can be open while replay is still running (FR-005).
-    _connSub ??= _sessionPhaseService.watchPhase().listen((phase) => add(ChatsListEvent.sessionPhaseChanged(phase)));
+    // Where the connection stands → the banners (current value, then every
+    // change). Not raw device connectivity: a device can be online while its
+    // server is out of reach, and offline is only decided once a whole round
+    // of path finding has come back empty (phase 040).
+    _connSub ??= _connectionStatus.watchStatus().listen((status) => add(ChatsListEvent.connectionStatusChanged(status)));
   }
 
   @override
@@ -108,11 +123,17 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
     return super.close();
   }
 
-  void _onSessionPhaseChanged(SessionPhaseChanged event, Emitter<ChatsListState> emit) {
-    _phase = event.phase;
+  void _onConnectionStatusChanged(ConnectionStatusChanged event, Emitter<ChatsListState> emit) {
+    final couldRead = _canRead();
+    _status = event.status;
     final current = state;
-    // Update the banner in place (no reload) — like the reactive card's files re-derive.
-    if (current is Initialized) emit(current.copyWith(isOffline: _isOffline(), isServerMismatch: _isServerMismatch()));
+    // Update the banners in place (no reload) — like the reactive card's files re-derive.
+    if (current is Initialized) {
+      emit(current.copyWith(isOffline: _isOffline(), isServerMismatch: _isServerMismatch(), torObsolete: _isTorObsolete()));
+      // The list was read from the cache while there was no channel; now the
+      // server can be asked.
+      if (!couldRead && _canRead()) unawaited(_syncFirstPage(current.query));
+    }
   }
 
   /// One more attempt, asked for by the person.
@@ -154,6 +175,10 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
     }
 
     if (current.loadingInProgress) return;
+    // The list has no pages while it waits for the server's first one, and
+    // PagedListView asks for the "next" page of any list without pages. That
+    // request read a later page of the PREVIOUS query and ended the spinner.
+    if (!event.reset && current.syncing) return;
 
     // Fatal short-circuits to the error state (3.1).
     if (_scenario == ChatsListScenario.fatal) {
@@ -170,7 +195,14 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
         ? PagingState<String, ChatModel>(isLoading: true)
         : current.pagingState.copyWith(isLoading: true, error: null);
 
-    emit(current.copyWith(loadingInProgress: true, items: existingList, pagingState: basePagingState));
+    // A reset does not blank the list: the cache answers in a moment, and a
+    // spinner in between flashed on every keystroke of a search. Load-more
+    // shows its loader at the bottom as before.
+    emit(
+      isReset
+          ? current.copyWith(loadingInProgress: true)
+          : current.copyWith(loadingInProgress: true, items: existingList, pagingState: basePagingState),
+    );
 
     await executeLogic(
       () async {
@@ -201,8 +233,15 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
         // lock a golden against a value nothing in the app can now produce.
         if (_scenario == ChatsListScenario.unread && isReset) await _seedUnreadForDebug();
 
+        // The first page is read from the CACHE: the chats this device holds
+        // are on screen at once, whatever the connection is doing, and the
+        // server's page follows in the background (_syncFirstPage) through
+        // the watch. Asking the server first kept the list behind a spinner
+        // for as long as Tor took to come up. A later page still goes to the
+        // server - the person scrolled past the cache - and that read never
+        // waits for a connection that is not there.
         final config = GetChatsConfig.nextPage(page: nextPageKey, search: current.query.isEmpty ? null : current.query);
-        final result = await _chatRepository.getChats(config: config);
+        final result = await _chatRepository.getChats(config: isReset ? config.copyWith(cachedOnly: true) : config);
 
         final live = state;
         if (live is! Initialized) return;
@@ -210,27 +249,44 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
         result.match<void>(
           onData: (data) {
             final (chats, PageMetadata metadata) = data;
+            // Nothing on the device yet, and the server is about to be asked:
+            // a spinner until it answers rather than "No chats" a moment
+            // before they arrive. With no channel the empty list is the truth.
+            final syncing = isReset && chats.isEmpty && _canRead();
             final r = basePagingState.applyPage(existingList: existingList, response: (chats, metadata), keyExtractor: (c) => c.id);
             emit(
               live.copyWith(
                 items: r.updatedList,
-                pagingState: r.pagingState,
-                nextPage: r.nextPage ?? live.nextPage,
+                pagingState: syncing ? PagingState<String, ChatModel>(isLoading: true, hasNextPage: false) : r.pagingState,
+                // A reset starts the paging over: the previous list's next page
+                // belongs to another query.
+                nextPage: r.nextPage ?? (isReset ? GetChatsConfig.defaultPage + 1 : live.nextPage),
                 loadedPageCount: isReset ? 1 : live.loadedPageCount + 1,
                 loadingInProgress: false,
+                syncing: syncing,
                 // Offline shows the cached list under a banner; inline-error shows the
                 // cached list under a retry banner (both keep the data visible). Offline =
                 // real device connectivity OR the debug scenario (feature F3).
                 isOffline: _isOffline(),
                 isServerMismatch: _isServerMismatch(),
+                torObsolete: _isTorObsolete(),
                 hasLoadError: _scenario == ChatsListScenario.inlineError,
               ),
             );
           },
           onError: (exception) {
-            emit(live.copyWith(pagingState: live.pagingState.copyWith(isLoading: false, error: exception), loadingInProgress: false));
+            emit(
+              live.copyWith(
+                // A reset no longer blanks the list first, so a failed one has to:
+                // the rows on screen belong to the previous query.
+                items: isReset ? const <ChatModel>[] : live.items,
+                pagingState: (isReset ? PagingState<String, ChatModel>() : live.pagingState).copyWith(isLoading: false, error: exception),
+                loadingInProgress: false,
+              ),
+            );
           },
         );
+        if (isReset && result.hasData) unawaited(_syncFirstPage(live.query));
       },
       onError: (error, exception, stackTrace) {
         final live = state;
@@ -244,6 +300,47 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
         }
       },
     );
+  }
+
+  /// Asks the server for the first page, off the load handler: a read awaited
+  /// there would hold every refresh behind it. What it brings lands through
+  /// the watch. With no live channel the read fails at once and the cache
+  /// answers; the status turning current calls this again.
+  Future<void> _syncFirstPage(String query) async {
+    if (_scenario == ChatsListScenario.fatal || _scenario == ChatsListScenario.empty) return;
+    final generation = ++_syncGeneration;
+    final result = await _chatRepository.getChats(
+      config: GetChatsConfig.nextPage(page: GetChatsConfig.defaultPage, search: query.isEmpty ? null : query),
+    );
+    if (isClosed) return;
+    add(ChatsListEvent.firstPageSynced(query: query, hasMore: result.data?.$2.hasMore, generation: generation));
+  }
+
+  /// The server's first page is in the cache, or could not be had: the list
+  /// is re-read now. Not left to the watch: a server with no chats writes
+  /// nothing, so no tick would end a spinner held for it, and the watch skips
+  /// its first snapshot - rows written before that snapshot was taken are in it.
+  ///
+  /// `hasNextPage` is only ever switched ON here, as in the thread: a load-more
+  /// made while the channel was down came back short from the cache and
+  /// switched it off, and only page 1 is read again when the channel returns -
+  /// without this the chats past the cache stayed out of reach of scrolling.
+  /// A load-more that then finds nothing switches it off again.
+  void _onFirstPageSynced(FirstPageSynced event, Emitter<ChatsListState> emit) {
+    final current = state;
+    if (current is! Initialized || current.query != event.query) return;
+    final latest = event.generation == _syncGeneration;
+    final more = event.hasMore == true && !current.pagingState.hasNextPage && current.items.isNotEmpty;
+    if ((current.syncing && latest) || more) {
+      emit(
+        current.copyWith(
+          syncing: latest ? false : current.syncing,
+          pagingState: more ? current.pagingState.copyWith(hasNextPage: true) : current.pagingState,
+          nextPage: more ? current.loadedPageCount + 1 : current.nextPage,
+        ),
+      );
+    }
+    add(const ChatsListEvent.loadChats(refresh: true));
   }
 
   /// Invisible live re-read of the currently-loaded page prefix (no spinner, never a
@@ -276,7 +373,14 @@ class ChatsListBloc extends BaseBloc<ChatsListEvent, ChatsListState> {
     }
     final live = state;
     if (live is! Initialized || live.query != query || lastMeta == null) return;
-    final r = PagingState<String, ChatModel>().applyPage(existingList: const [], response: (all, lastMeta), keyExtractor: (c) => c.id);
+    // Still waiting for the server's first page, and the cache is still empty:
+    // keep the spinner rather than show "No chats" until the answer is in.
+    if (live.syncing && all.isEmpty) return;
+    // The cache reads "more" only off a full last page; the server may know of
+    // more than the cache holds (_onFirstPageSynced). A refresh keeps that,
+    // and a load-more that finds nothing switches it off.
+    final meta = lastMeta.copyWith(hasMore: lastMeta.hasMore || live.pagingState.hasNextPage);
+    final r = PagingState<String, ChatModel>().applyPage(existingList: const [], response: (all, meta), keyExtractor: (c) => c.id);
     emit(live.copyWith(items: r.updatedList, pagingState: r.pagingState, nextPage: r.nextPage ?? live.nextPage));
   }
 }

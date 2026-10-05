@@ -3,10 +3,14 @@ import 'dart:async';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/remote/socket/server_frame.dart';
+import 'package:nox_app/data/sync/connection/connection_path_selector.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/session/pair_refusal.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
+import 'package:nox_app/domain/repository/connection/access_key_repository.dart';
+import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
+import 'package:nox_app/domain/service/tor_service.dart';
 import 'package:nox_app/general/pairing/pairing_link.dart';
 
 /// What the server said about who just connected. A domain value on purpose:
@@ -73,10 +77,14 @@ class PairingRefused implements Exception {
 /// connecting; now the server decides, so somebody has to own the wait.
 @LazySingleton(env: [Environment.dev])
 class LiveIdentityHandshake {
-  LiveIdentityHandshake(this._socket, this._starter);
+  LiveIdentityHandshake(this._socket, this._starter, this._keys, this._tor, this._addresses, this._selector);
 
   final NoxSocketClient _socket;
   final LiveSessionStarter _starter;
+  final AccessKeyRepository _keys;
+  final TorService _tor;
+  final ServerAddressesRepository _addresses;
+  final ConnectionPathSelector _selector;
 
   /// How long a person waits before being told to try again. Meaningful only
   /// because `stop()` resets the reconnect ladder: without that reset a device
@@ -107,11 +115,68 @@ class LiveIdentityHandshake {
   /// The socket has to be brought up against the address from the LINK, which
   /// the caller has already stored — [LiveSessionStarter.restart] reads it from
   /// there. `pair` is then the one command allowed before a greeting.
+  ///
+  /// A version-2 link also lends the server's onion address and a one-time key
+  /// for exactly this pairing (FR-020): handed to the path selector, in memory
+  /// only, before the channel comes up, so a round can go through Tor when the
+  /// link's direct address does not answer; dropped the moment the reply is
+  /// in, whatever it said (FR-021). Never written to disk, so a pairing the
+  /// process did not survive leaves nothing behind.
   Future<IdentityHandshake> pair({required PairingLink link, required String deviceKey, required String platform}) async {
+    final lent = _lendInvite(link);
+    try {
+      // The onion access key goes with the pairing itself (FR-015): a server
+      // from phase 039 on registers it in the same transaction, so a device
+      // that paired through Tor keeps its way in once the invite's one-time
+      // key is gone. Unreadable is not a reason to fail the pairing - the key
+      // is then registered by command on the first greeting (FR-016).
+      final accessKey = (await _keys.deviceKey()).data?.publicBase64;
+      final identity = await _pair(link: link, deviceKey: deviceKey, platform: platform, accessKey: accessKey);
+      if (lent != null) await _adoptOnion(lent, keyPaired: accessKey != null);
+      return identity;
+    } finally {
+      // Out of the Tor client and wiped; the next round sets this device's
+      // own key instead.
+      if (lent != null) _selector.forgetLentKey();
+    }
+  }
+
+  /// Lends the path selector what a version-2 link carries, and returns the
+  /// onion address. Null when the link lends nothing, or where Tor cannot run
+  /// - there the fields are read and left unused (research decision 11).
+  String? _lendInvite(PairingLink link) {
+    final pub = link.onionPub;
+    final port = link.onionPort;
+    final oneTime = link.oneTimePriv;
+    if (pub == null || port == null || oneTime == null || !_tor.isSupported) return null;
+    final host = _tor.onionFromPublicKey(pub);
+    if (host == null) return null;
+    final onion = '$host:$port';
+    _selector.lendInvite(onion: onion, oneTimeKey: oneTime);
+    return onion;
+  }
+
+  /// After a version-2 pairing the onion address is the server's own, and the
+  /// key this device sent with it is registered: a server that issues such
+  /// links writes the key in the same transaction as the pairing (contract
+  /// §8A). Both are needed for the next connection to go through Tor with the
+  /// device's own key once the lent one is gone.
+  Future<void> _adoptOnion(String onion, {required bool keyPaired}) async {
+    final current = (await _addresses.read()).data;
+    await _addresses.saveFromServer(direct: current?.direct ?? const <String>[], onion: onion);
+    if (keyPaired) await _keys.markRegistered(true);
+  }
+
+  Future<IdentityHandshake> _pair({
+    required PairingLink link,
+    required String deviceKey,
+    required String platform,
+    required String? accessKey,
+  }) async {
     await _starter.restart();
     final CommandReply reply;
     try {
-      reply = await _socket.pair(token: link.token, deviceKey: deviceKey, platform: platform);
+      reply = await _socket.pair(token: link.token, deviceKey: deviceKey, platform: platform, accessKey: accessKey);
     } on Object {
       // No channel, or no answer within the command timeout. Nothing was
       // decided, so this is "try again" rather than an outcome.
@@ -168,7 +233,10 @@ class LiveIdentityHandshake {
   /// the caller would be released, this body would keep running, the `finally`
   /// below would never execute, and `inFlight` would stay true for the life of
   /// the process — wedging every later sign-in attempt.
-  Future<IdentityHandshake> greet() async {
+  ///
+  /// [within] bounds the wait for the answer; the restart itself is always
+  /// awaited.
+  Future<IdentityHandshake> greet({Duration within = timeout}) async {
     // Captured BEFORE anything is torn down. The phase stream replays its
     // current value to a new listener, so on an already-connected socket the
     // first event carries the PREVIOUS connection's identity — including the
@@ -177,8 +245,13 @@ class LiveIdentityHandshake {
     // onboarding without the server having been asked about them at all.
     final generation = _socket.greetingGeneration;
     final pending = Completer<IdentityHandshake>();
+    // The timer can fire while restart() is still bringing a slow path up -
+    // through Tor that takes longer than the whole wait - and nobody is
+    // listening yet. Marked handled so that is not an uncaught error; the
+    // await below still receives it.
+    pending.future.ignore();
     _pending = pending;
-    _timer = Timer(timeout, () {
+    _timer = Timer(within, () {
       if (!pending.isCompleted) pending.completeError(const IdentityHandshakeTimeout());
     });
     _phases = _socket.phase.listen((phase) {

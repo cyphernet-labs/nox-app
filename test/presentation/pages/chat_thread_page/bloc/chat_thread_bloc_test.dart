@@ -5,17 +5,26 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:infinite_scroll_pagination/infinite_scroll_pagination.dart';
 import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/data/local/chat/chat_dao.dart';
+import 'package:nox_app/data/local/chat/message_dao.dart';
+import 'package:nox_app/data/mapper/chat/message_mapper.dart';
+import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
 import 'package:nox_app/domain/model/chat/message_status.dart';
+import 'package:nox_app/domain/model/file/attachment_transfer.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
+import 'package:nox_app/domain/repository/base/page_metadata.dart';
+import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 import 'package:nox_app/domain/repository/chat/get_messages_config.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
+import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
+import 'package:nox_app/domain/service/attachment_transfer_service.dart';
 import 'package:nox_app/domain/service/connectivity_service.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/domain/service/file_picker_service.dart';
@@ -90,11 +99,13 @@ void main() {
         // Everything the cache holds is on screen — the fetched window plus the
         // messages sent locally, which must not be hidden behind a page edge —
         // there is older history behind it, and the scroll-up cursor sits at the
-        // lowest journal number loaded.
+        // lowest journal number of a real message. Not of the "chat created"
+        // line: it sits one below the oldest message, at a seq a real message
+        // can hold, and a cursor there skipped that message.
         expect(tail.items, isNotEmpty);
         expect(tail.items.map((m) => m.id).toSet().length, tail.items.length);
         expect(tail.pagingState.hasNextPage, isTrue);
-        expect(tail.oldestLoadedSeq, tail.items.map((m) => m.seq).reduce((a, b) => a < b ? a : b));
+        expect(tail.oldestLoadedSeq, tail.items.where((m) => !m.isSystem).map((m) => m.seq).reduce((a, b) => a < b ? a : b));
         bloc.add(const ChatThreadEvent.loadMessages()); // scroll-up prefetch -> olderThan(oldestLoadedSeq)
       },
       wait: const Duration(milliseconds: 500),
@@ -103,7 +114,7 @@ void main() {
         // The older batch appended: every row exactly once, and the scroll-up
         // cursor only ever moves DOWN.
         expect(state.items.map((m) => m.id).toSet().length, state.items.length);
-        expect(state.oldestLoadedSeq, state.items.map((m) => m.seq).reduce((a, b) => a < b ? a : b));
+        expect(state.oldestLoadedSeq, state.items.where((m) => !m.isSystem).map((m) => m.seq).reduce((a, b) => a < b ? a : b));
       },
     );
 
@@ -539,6 +550,242 @@ void main() {
       });
     });
 
+    group('the connection status and the send hold (phase 040)', () {
+      late _FakePhase phase;
+
+      Future<ChatThreadBloc> boot(SessionPhase initial) async {
+        phase = _FakePhase(initial);
+        getIt.allowReassignment = true;
+        getIt.registerSingleton<SessionPhaseService>(phase);
+        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_0'));
+        addTearDown(bloc.close);
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        return bloc;
+      }
+
+      test('a path still coming up raises no banner, and a send still waits for it', () async {
+        // The corner says Connecting… then; the banner is for a whole failed
+        // round. Sending is a different question: only a current channel takes
+        // a message.
+        final bloc = await boot(SessionPhase.connecting);
+        expect((bloc.state as Initialized).isOffline, isFalse);
+
+        bloc.add(const ChatThreadEvent.messageSent(text: 'written while connecting'));
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        final queued = (bloc.state as Initialized).outgoing.firstWhere((m) => m.text == 'written while connecting');
+        expect(queued.status, MessageStatus.pending);
+
+        phase.emit(SessionPhase.live);
+        await Future<void>.delayed(const Duration(milliseconds: 600));
+        expect((bloc.state as Initialized).outgoing, isEmpty, reason: 'released once the channel is current');
+      });
+
+      test('a server that refuses this build says so with the banner, as it always did', () async {
+        final bloc = await boot(SessionPhase.unsupported);
+
+        expect((bloc.state as Initialized).isOffline, isTrue);
+      });
+    });
+
+    group('pictures and transfers', () {
+      late _RecordingPrefetch prefetch;
+
+      setUp(() {
+        final original = getIt<AttachmentPrefetchService>();
+        prefetch = _RecordingPrefetch();
+        getIt.allowReassignment = true;
+        getIt.registerSingleton<AttachmentPrefetchService>(prefetch);
+        addTearDown(() => getIt.registerSingleton<AttachmentPrefetchService>(original));
+      });
+
+      /// A picture someone sent, landing in the store the way an applied
+      /// `message.new` does: a write, and nothing else.
+      Future<String> receivePicture(String chatId) async {
+        final dao = getIt<MessageDao>();
+        final id = 'm_pic_${DateTime.now().microsecondsSinceEpoch}';
+        await dao.upsert(
+          getIt<MessageMapper>().toEntity(
+            model: MessageModel(
+              id: id,
+              seq: (await dao.highestSeq(chatId) ?? 0) + 1,
+              chatId: chatId,
+              authorId: 'u_other',
+              authorLabel: 'Aria',
+              sentAt: DateTime.now(),
+              attachment: const MessageAttachment(id: 'f_pic', type: FileType.image, name: 'holiday.jpg', sizeBytes: 253100),
+            ),
+          ),
+        );
+        return id;
+      }
+
+      test('a picture that arrives while the thread is open is fetched without reopening it', () async {
+        // The bug seen on the stand: the fetch ran only on a load, a picture
+        // that came in later reached the screen through a refresh, and it
+        // stayed a spinning placeholder until somebody tapped it.
+        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_0'));
+        addTearDown(bloc.close);
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        prefetch.calls.clear();
+
+        final id = await receivePicture('chat_0');
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+
+        expect((bloc.state as Initialized).items.map((m) => m.id), contains(id), reason: 'precondition: the refresh brought it in');
+        expect(prefetch.calls.any((batch) => batch.any((m) => m.id == id)), isTrue);
+      });
+
+      test('the pictures on screen are asked for again when the channel comes back', () async {
+        // A fetch the lost channel cut short has nothing else to retry it until
+        // something new arrives in this chat.
+        final phase = _FakePhase(SessionPhase.disconnected);
+        getIt.registerSingleton<SessionPhaseService>(phase);
+        addTearDown(() => getIt.registerSingleton<SessionPhaseService>(_FakePhase()));
+        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_0'));
+        addTearDown(bloc.close);
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        prefetch.calls.clear();
+
+        phase.emit(SessionPhase.live);
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+
+        expect(prefetch.calls, isNotEmpty);
+        expect(prefetch.calls.last.map((m) => m.id), (bloc.state as Initialized).items.map((m) => m.id));
+      });
+
+      test('the bytes on their way reach the state by message id, and leave it when they are done', () async {
+        final transfers = getIt<AttachmentTransferService>();
+        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_0'));
+        addTearDown(bloc.close);
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        final id = (bloc.state as Initialized).items.last.id;
+
+        transfers.begin(id, TransferDirection.download, chatId: 'chat_0');
+        transfers.report(id, 0.45);
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect(
+          (bloc.state as Initialized).transfers[id],
+          const AttachmentTransfer(chatId: 'chat_0', direction: TransferDirection.download, fraction: 0.45),
+        );
+
+        transfers.end(id);
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect((bloc.state as Initialized).transfers, isEmpty);
+      });
+
+      test('a send that started before the thread was opened shows at once, with no progress tick to bring it', () async {
+        // Before its first byte a transfer reports nothing - through Tor for
+        // seconds - so it has to be picked up when the thread opens.
+        final transfers = getIt<AttachmentTransferService>();
+        transfers.begin('cmid-early', TransferDirection.upload, chatId: 'chat_0');
+        addTearDown(() => transfers.end('cmid-early'));
+
+        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_0'));
+        addTearDown(bloc.close);
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+
+        expect((bloc.state as Initialized).transfers.keys, contains('cmid-early'));
+      });
+
+      test('a transfer in another chat never reaches this thread', () async {
+        // Passing the whole map redrew the open thread on every percent of
+        // every transfer, wherever it was.
+        final transfers = getIt<AttachmentTransferService>();
+        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_0'));
+        addTearDown(bloc.close);
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        final emitted = <ChatThreadState>[];
+        final subscription = bloc.stream.listen(emitted.add);
+        addTearDown(subscription.cancel);
+
+        transfers.begin('m_in_another_chat', TransferDirection.download, chatId: 'chat_another');
+        transfers.report('m_in_another_chat', 0.3);
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        transfers.end('m_in_another_chat');
+
+        expect((bloc.state as Initialized).transfers, isEmpty);
+        expect(emitted, isEmpty, reason: 'nothing to redraw');
+      });
+    });
+
+    group('the cache first: the connection never holds the thread', () {
+      late MessageRepository original;
+
+      setUp(() {
+        original = getIt<MessageRepository>();
+        getIt.allowReassignment = true;
+        addTearDown(() => getIt.registerSingleton<MessageRepository>(original));
+      });
+
+      MessageModel text(String id, int seq) => MessageModel(
+        id: id,
+        seq: seq,
+        chatId: 'chat_0',
+        authorId: 'u_other',
+        authorLabel: 'Aria',
+        text: id,
+        sentAt: DateTime(2026, 10, 4),
+      );
+
+      test('the messages the device holds are on screen at once while the server has not answered', () async {
+        // The bug on the stand: launched with a bad network, the thread sat on a
+        // spinner while Tor came up, and the cached messages appeared only once
+        // the connection failed.
+        final messages = _SlowServerMessages([text('m1', 1), text('m2', 2)]);
+        getIt.registerSingleton<MessageRepository>(messages);
+        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_0'));
+        addTearDown(bloc.close);
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+
+        final state = bloc.state as Initialized;
+        expect(state.items.map((m) => m.id), ['m1', 'm2']);
+        expect(state.loadingInProgress, isFalse);
+        expect(state.syncing, isFalse);
+        expect(messages.serverReads, 1, reason: 'the server is still asked, in the background');
+      });
+
+      test('with nothing cached, the thread waits for the server rather than looking empty', () async {
+        getIt.registerSingleton<MessageRepository>(_SlowServerMessages(const []));
+        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_0'));
+        addTearDown(bloc.close);
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+
+        expect((bloc.state as Initialized).syncing, isTrue);
+      });
+
+      test('with nothing cached and no channel, the empty thread is the answer at once', () async {
+        // Nothing is coming: a spinner here would wait for a channel that is
+        // not there. The thread reads again when it is.
+        getIt.registerSingleton<SessionPhaseService>(_FakePhase(SessionPhase.disconnected));
+        addTearDown(() => getIt.registerSingleton<SessionPhaseService>(_FakePhase()));
+        getIt.registerSingleton<MessageRepository>(_SlowServerMessages(const []));
+        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_0'));
+        addTearDown(bloc.close);
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+
+        final state = bloc.state as Initialized;
+        expect(state.syncing, isFalse);
+        expect(state.loadingInProgress, isFalse);
+      });
+
+      test('the server is asked again when the channel comes back', () async {
+        final phase = _FakePhase(SessionPhase.disconnected);
+        getIt.registerSingleton<SessionPhaseService>(phase);
+        addTearDown(() => getIt.registerSingleton<SessionPhaseService>(_FakePhase()));
+        final messages = _SlowServerMessages([text('m1', 1)]);
+        getIt.registerSingleton<MessageRepository>(messages);
+        final bloc = ChatThreadBloc()..add(const ChatThreadEvent.initialize('chat_0'));
+        addTearDown(bloc.close);
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        final before = messages.serverReads;
+
+        phase.emit(SessionPhase.live);
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+
+        expect(messages.serverReads, before + 1);
+      });
+    });
+
     group('the server that is not the one the link named (036)', () {
       late _FakePhase phase;
 
@@ -625,6 +872,42 @@ class _FakeConnectivity implements ConnectivityService {
     yield _online;
     yield* _controller.stream;
   }
+}
+
+/// A cache that answers at once and a server that never does - Tor still
+/// coming up. Everything else about a message repository is left out.
+class _SlowServerMessages implements MessageRepository {
+  _SlowServerMessages(this.cached);
+
+  final List<MessageModel> cached;
+  int serverReads = 0;
+  final Completer<void> _never = Completer<void>();
+
+  @override
+  Future<RepositoryResult<(List<MessageModel>, PageMetadata)>> getMessages({required GetMessagesConfig config}) async {
+    if (!config.cachedOnly) {
+      serverReads++;
+      await _never.future;
+    }
+    return RepositoryResult<(List<MessageModel>, PageMetadata)>.success(data: (cached, const PageMetadata(hasMore: false)));
+  }
+
+  @override
+  Stream<List<MessageModel>> watchMessages(String chatId) => const Stream<List<MessageModel>>.empty();
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// Records what the thread asks to have fetched, and fetches nothing.
+class _RecordingPrefetch extends AttachmentPrefetchService {
+  _RecordingPrefetch()
+    : super(getIt<FileRepository>(), getIt<MessageRepository>(), getIt<SessionPhaseService>(), getIt<AttachmentTransferService>());
+
+  final List<List<MessageModel>> calls = <List<MessageModel>>[];
+
+  @override
+  Future<void> prefetch(List<MessageModel> messages, {bool retryNow = false}) async => calls.add(messages);
 }
 
 /// A session phase this test drives by hand, plus a count of how many times the

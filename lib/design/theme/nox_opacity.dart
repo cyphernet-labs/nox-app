@@ -13,4 +13,10 @@ abstract final class NoxOpacity {
 
   /// The subtle ring every generated avatar carries (`0 0 0 2px onSurface@0.06`).
   static const double ring = 0.06;
+
+  /// The `inverseSurface` disc behind a control drawn over a photo (the draft
+  /// thumbnail's remove button, the ring of a picture being sent). 0.6, not
+  /// the 0.5 scrim: at 0.5 the ring fell under 3:1 against the disc over a
+  /// white photo in light theme and a black one in dark (WCAG 1.4.11).
+  static const double overPhoto = 0.6;
 }

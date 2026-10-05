@@ -78,13 +78,18 @@ class MessageRepositoryImpl with BaseRepositoryHelper implements MessageReposito
       if (model.authorId == IdentityMockData.fallbackOwnId) {
         model = model.copyWith(authorId: identity.id, authorLabel: identity.label);
       }
-      if (model.authorId == identity.id) model = model.copyWith(status: MessageStatus.sent);
+      final own = model.authorId == identity.id;
       if (existing != null) {
         model = model.copyWith(
           attachment: model.attachment?.copyWith(localPath: existing.attachmentLocalPath),
           status: _mapper.toModel(entity: existing).status,
         );
       }
+      // An own message that came from the server is `sent` (contract §5),
+      // whatever an earlier build stored for it: a message sent from another
+      // device of this person used to be stored with no status, and keeping
+      // that would leave it without a tick for good.
+      if (own) model = model.copyWith(status: MessageStatus.sent);
       rows.add(_mapper.toEntity(model: model));
     }
     await _messageDao.saveData(rows);

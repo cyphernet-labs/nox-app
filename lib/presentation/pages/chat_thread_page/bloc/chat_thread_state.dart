@@ -20,6 +20,10 @@ sealed class ChatThreadState with _$ChatThreadState {
     // older batch; null until the first tail load lands.
     int? oldestLoadedSeq,
     @Default(false) bool loadingInProgress,
+
+    /// The cache had nothing for this chat and the server's newest window is
+    /// on its way - the one wait the thread still shows as a spinner.
+    @Default(false) bool syncing,
     @Default(false) bool isOffline,
 
     /// The machine at the paired address is not this person's server. Apart
@@ -31,6 +35,10 @@ sealed class ChatThreadState with _$ChatThreadState {
     /// limit. A counter rather than a flag: picking the same oversized file
     /// twice has to say so twice, and a bool would go quiet the second time.
     @Default(0) int oversizedAttachmentTick,
+
+    /// Attachments whose bytes are moving now, by message id - a send under
+    /// the queued bubble's id, a picture fetch under the stored one.
+    @Default(<String, AttachmentTransfer>{}) Map<String, AttachmentTransfer> transfers,
   }) = Initialized;
 
   const factory ChatThreadState.error() = Error;

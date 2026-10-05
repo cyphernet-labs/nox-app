@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:nox_app/presentation/widgets/state/app_connection_indicator_widget.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/presentation/widgets/chat/app_invite_seam_action_widget.dart';
@@ -74,7 +75,9 @@ class ChatThreadPage extends StatelessWidget {
             ),
             // The same disabled seam the desktop header carries, so the answer
             // to "how do I add somebody?" is in the same place on both widths.
-            actions: const [AppInviteSeamActionWidget()],
+            // The connection corner first (phase 040), then the seam: only
+            // deviations show in the corner, so most of the time it is empty.
+            actions: const [AppConnectionIndicatorWidget(wide: false), AppInviteSeamActionWidget()],
             // Tapping the chat name opens the chat card (5.4).
             // Reactive to the chat row so a rename (from the card) updates the title live.
             title: WatchChat(

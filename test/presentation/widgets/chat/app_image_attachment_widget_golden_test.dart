@@ -6,6 +6,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nox_app/domain/model/file/attachment_transfer.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/presentation/widgets/chat/app_image_attachment_widget.dart';
@@ -75,6 +76,41 @@ void main() {
       });
       await tester.pump();
       await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/app_image_attachment_widget_$suffix.png'));
+    });
+
+    // A picture being sent (5.2): the ring over its middle on the disc that
+    // keeps it legible over any photo, part-filled.
+    testWidgets('app_image_attachment_widget sending golden matches the $suffix theme', (tester) async {
+      tester.view.devicePixelRatio = 3.0;
+      tester.view.physicalSize = Constants.designSize * 3.0;
+      addTearDown(() {
+        tester.view.resetDevicePixelRatio();
+        tester.view.resetPhysicalSize();
+      });
+      await tester.runAsync(() async {
+        await pumpApp(
+          tester,
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Center(
+              child: AppImageAttachmentWidget(
+                localPath: tmp.path,
+                type: FileType.image,
+                name: 'photo.png',
+                size: '128 KB',
+                onTap: () {},
+                transfer: const AttachmentTransfer(chatId: 'c1', direction: TransferDirection.upload, fraction: 0.6),
+              ),
+            ),
+          ),
+          themeMode: mode,
+          settle: false,
+        );
+        await precacheImage(FileImage(tmp), tester.element(find.byType(MaterialApp)));
+        await tester.pump();
+      });
+      await tester.pump();
+      await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/app_image_attachment_widget_sending_$suffix.png'));
     });
   }
 }

@@ -108,6 +108,13 @@ func (l procLauncher) locate(ctx context.Context) (string, Version, error) {
 // SocksPort 0 and ClientOnly 1 are the "no other doors" of FR-004: no proxy
 // for anyone to use and never a relay. No NonAnonymous anywhere - single onion
 // mode makes the server easy to find.
+//
+// ClientOnly 1 is all of "never a relay": with it tor relays and exits for
+// nobody, is no bridge and serves no directory, even when an ORPort, ExtORPort
+// or DirPort is set. ExitRelay 0 and BridgeRelay 0 stay out on purpose: only a
+// relay acts on them and neither stops one - a relay that is no exit and no
+// bridge still carries other people's traffic - so beside ClientOnly they would
+// read as a second guard and guard nothing.
 func startArgs(dataDir string, pid int) []string {
 	torrc := filepath.Join(dataDir, "torrc")
 	return []string{

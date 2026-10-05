@@ -19,6 +19,16 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      # The Tor client (packages/nox_tor) is Rust, built by the native-assets hook.
+      # Its toolchain is pinned in rust-toolchain.toml; the hook would fetch it on
+      # its own, but installing it here keeps the build log readable and the
+      # targets limited to what this job builds. `flutter test` runs the hook too:
+      # the package's tests load the library built for the host.
+      - name: Rust toolchain for the Tor client
+        shell: bash
+        run: |
+          channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' packages/nox_tor/rust/rust-toolchain.toml)
+          rustup toolchain install "$channel" --profile minimal --target aarch64-apple-darwin,x86_64-apple-darwin
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.44.1'

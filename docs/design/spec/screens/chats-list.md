@@ -41,13 +41,16 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 
 | Состояние | Описание |
 |---|---|
-| Initial-loading | Первая загрузка. **Centered** `CircularProgressIndicator` в области body. |
+| Initial-loading | Первая загрузка. Чаты, которые уже есть на устройстве, показываются сразу, а страница сервера догружается в фоне ([overview / Offline](../overview.md#offline--нет-соединения)). **Centered** `CircularProgressIndicator` в области body — только когда на устройстве чатов нет, а сервер уже спрашивают; без связи сразу показывается пустое состояние. |
 | Empty | Чатов нет. **Empty state** (глиф `forum`) + заголовок + поясняющий текст. |
 | Filled | Список чатов отображается. |
 | Searching | В `SearchBar` непустой запрос; список фильтруется по имени в реальном времени. |
 | Search-empty | По запросу ничего не найдено — надпись `No chats found` в области результата. |
-| Offline | Нет соединения — постоянный `MaterialBanner` `No connection` сверху (под AppBar/SearchBar). Список показывает кэш. |
-| Server mismatch | Машина по сохранённому адресу предъявила не тот ключ, что назвала ссылка спаривания. Постоянная плашка `This isn't the server you paired with` с действием `Try again`. **Вместо** `Offline`, а не вместе с ним: сервер ответил, и «нет соединения» здесь — неправда. Ничего локального не стирается, переписка видна под плашкой. Само не проходит: единственный выход — действие. |
+| Connecting | Путь до сервера ищется или поднимается: в углу AppBar `Connecting…`, через Tor — с бейджем `Tor` ([overview / Состояние связи](../overview.md#состояние-связи-в-углу-экрана)). Баннера нет, список показывает кэш. |
+| Через Tor | Связь есть, путь — Tor: в углу бейдж `Tor`. |
+| Offline | Целый раунд поиска пути не дал ничего — постоянный `MaterialBanner` `No connection` сверху (под AppBar/SearchBar), угол пуст. Список показывает кэш. |
+| Server mismatch | Сервер, до которого приложение дошло по его **onion-адресу**, предъявил не тот ключ, что назвала ссылка спаривания. Постоянная плашка `This isn't the server you paired with` с действием `Try again`. **Вместо** `Offline`, а не вместе с ним: сервер ответил, и «нет соединения» здесь — неправда. Ничего локального не стирается, переписка видна под плашкой. Само не проходит: единственный выход — действие. Чужой ключ на прямом адресе это состояние не вызывает. |
+| Tor устарел | Сеть Tor объявила встроенный клиент устаревшим: плашка `Update NOX to connect away from home` сверху (обе ширины); дома связь идёт напрямую как обычно. |
 | Inline-error | Не удалось загрузить — `MaterialBanner` сверху с предложением обновить (pull-to-refresh / action). |
 | Fatal | Передача в 3.1 (embedded). |
 
@@ -85,6 +88,9 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 | Offline banner | `No connection` |
 | Server-mismatch banner | `This isn't the server you paired with` |
 | Server-mismatch action | `Try again` |
+| Corner, connecting | `Connecting…` |
+| Corner, Tor badge | `Tor` |
+| Tor-obsolete strip | `Update NOX to connect away from home` |
 | Inline-error (network) | `Could not load chats. Pull to refresh.` |
 
 ## Принятые решения (Q1–Q10)

@@ -55,6 +55,22 @@ String.fromEnvironment('API_URL') / AppFlavor.getFlavor() / configureDependencie
 
 ---
 
+## 0a. Rust для Tor-клиента (фаза 040)
+
+Пакет `packages/nox_tor` — Rust-крейт с Arti, и его нативный хук собирает библиотеку при каждой сборке приложения и при `flutter test` на хосте. Что нужно на машине:
+
+| Где | Что |
+|---|---|
+| все платформы, кроме Linux | `rustup`; тулчейн и цели берутся из `packages/nox_tor/rust/rust-toolchain.toml` (1.93.1). На свежей машине один раз `cd packages/nox_tor/rust && rustup show active-toolchain` — два первых запуска хука одновременно сталкиваются при скачивании тулчейна |
+| Android | NDK `28.2.13676358` — тот, что пинит Flutter 3.44.1 (`ndkVersion = flutter.ndkVersion`). Хук линкует библиотеку clang'ом NDK раньше, чем начинает работать Gradle |
+| iOS, macOS | Xcode. Цели развёртывания крейта — iOS 13.0 и macOS 10.15, как у приложения |
+| Windows | MSVC; собирается только на Windows |
+| Linux | ничего: хук возвращается, не трогая cargo |
+
+`make tor-test` гоняет `cargo test` крейта и `dart test` пакета. Профиль release крейта — `opt-level = "z"`, fat LTO, `strip`, `panic = "unwind"` (паника задачи Arti не должна ронять приложение).
+
+---
+
 ## 1. FVM — пин Flutter SDK
 
 `.fvmrc` в корне репозитория, закоммичен. Единственный источник истины для версии SDK.
@@ -594,6 +610,11 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Rust toolchain for the Tor client
+        shell: bash
+        run: |
+          channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' packages/nox_tor/rust/rust-toolchain.toml)
+          rustup toolchain install "$channel" --profile minimal --target aarch64-apple-darwin,x86_64-apple-darwin
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.44.1'
@@ -606,6 +627,8 @@ jobs:
       - run: flutter analyze
       - run: flutter test
 ```
+
+Шаг Rust нужен и гейту: `flutter test` запускает хук пакета `nox_tor` для хоста, а тесты пакета грузят собранную библиотеку. Каждый джоб `compile-check.yml` ставит тот же тулчейн с целями своей платформы; Android-джоб — ещё и NDK `28.2.13676358`; Linux-джоб Rust не ставит.
 
 Замечания:
 - CI использует `subosito/flutter-action` напрямую (не FVM), но **версия совпадает с `.fvmrc`** (`3.44.1`), поэтому поведение идентично.

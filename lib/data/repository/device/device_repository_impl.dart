@@ -2,11 +2,13 @@ import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/remote/socket/server_frame.dart';
+import 'package:nox_app/domain/model/device/device_invite.dart';
 import 'package:nox_app/domain/model/device/device_model.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/device/device_repository.dart';
 import 'package:nox_app/general/pairing/device_keys.dart';
+import 'package:nox_app/general/pairing/pairing_link.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 
 /// Devices over the live socket (contract §8A).
@@ -75,13 +77,25 @@ class DeviceRepositoryImpl with BaseRepositoryHelper implements DeviceRepository
   }
 
   @override
-  Future<RepositoryResult<String>> inviteDevice() {
-    return execute<String>(() async {
-      final reply = await _socket.send('device.invite', const <String, dynamic>{});
+  Future<RepositoryResult<DeviceInvite>> inviteDevice() {
+    return execute<DeviceInvite>(() async {
+      // Always asked for, on every server: a server that cannot offer onion -
+      // Tor off, tor not connected - answers with an ordinary link, and one
+      // older than 039 skips a field it does not know (contract §2.1). Only the
+      // server knows which of these it is right now.
+      final reply = await _socket.send('device.invite', const <String, dynamic>{'onion': true});
       if (!reply.ok) throw RepositoryException.fromWireCode(reply.errorCode ?? '');
       final link = reply.data?['link'] as String? ?? '';
       if (link.isEmpty) throw RepositoryException.internal;
-      return RepositoryResult<String>.success(data: link);
+      // The card promises "works from anywhere" only when both halves say so:
+      // the reply's flag - absent on a pre-039 server, which reads as false -
+      // and the link itself, which is what the other device will actually hold.
+      // The contract names both. Erring the other way sends a person to the
+      // office with a link that works only at home and nothing to say why.
+      final onion = reply.data?['onion'] == true && (PairingLink.tryParse(link)?.carriesOnion ?? false);
+      return RepositoryResult<DeviceInvite>.success(
+        data: DeviceInvite(link: link, onion: onion),
+      );
     });
   }
 

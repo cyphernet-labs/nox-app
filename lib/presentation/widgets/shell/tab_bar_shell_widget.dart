@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:nox_app/presentation/widgets/state/app_connection_indicator_widget.dart';
 import 'package:nox_app/design/theme/nox_tokens.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
@@ -214,7 +215,9 @@ class _TabBarShellState extends State<TabBarShell> {
         children: [
           // Branded window strip + brand-splash hairline at the top of the desktop
           // shell. Native min/max/close controls stay deferred (desktop-infra phase).
-          AppWindowTitlebarWidget(subtitle: subtitle),
+          // The connection corner lives at the right edge of the titlebar on
+          // the wide branch, so every screen of the shell shows it (phase 040).
+          AppWindowTitlebarWidget(subtitle: subtitle, trailing: const AppConnectionIndicatorWidget(wide: true)),
           Expanded(
             child: Row(
               children: [

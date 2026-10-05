@@ -95,5 +95,29 @@ void main() {
       expect(after.name, 'Alpha');
       expect(after.lastMessageAt, '2026-01-01T00:00:00.000Z');
     });
+
+    test('a write carrying an older mark does not put back one advanced in between', () async {
+      // A page of chats read the row, the chat was opened, then the page was
+      // written: the mark it carried is from before the open. Putting it back
+      // brought badges back for messages already seen.
+      await dao.upsert(chat('a', 'Alpha', '2026-01-01T00:00:00.000Z'));
+      final readBefore = (await dao.getById('a'))!;
+      await dao.advanceReadMark(chatId: 'a', seq: 9, ceiling: 9);
+
+      await dao.saveData([readBefore.copyWith(name: 'Alpha (from the server)')]);
+      await dao.upsert(readBefore.copyWith(lastMessagePreview: 'new'));
+
+      final after = (await dao.getById('a'))!;
+      expect(after.lastOpenedSeq, 9);
+      expect(after.lastMessagePreview, 'new', reason: 'the rest of the write still lands');
+    });
+
+    test('a write may still move the mark forward', () async {
+      await dao.upsert(chat('a', 'Alpha', '2026-01-01T00:00:00.000Z').copyWith(lastOpenedSeq: 3));
+
+      await dao.upsert(chat('a', 'Alpha', '2026-01-01T00:00:00.000Z').copyWith(lastOpenedSeq: 8));
+
+      expect((await dao.getById('a'))!.lastOpenedSeq, 8);
+    });
   });
 }

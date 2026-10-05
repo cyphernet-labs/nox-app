@@ -221,6 +221,37 @@ void main() {
     });
   });
 
+  group('the connection status (phase 040)', () {
+    late _FakePhase phase;
+
+    Future<ChatCardBloc> boot(SessionPhase initial) async {
+      phase = _FakePhase(initial);
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<SessionPhaseService>(phase);
+      addTearDown(() => getIt.registerSingleton<SessionPhaseService>(_FakePhase()));
+      final bloc = ChatCardBloc()..add(const ChatCardEvent.initialize('chat_0'));
+      addTearDown(bloc.close);
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      return bloc;
+    }
+
+    test('a path still coming up raises no banner', () async {
+      final bloc = await boot(SessionPhase.connecting);
+
+      expect((bloc.state as Initialized).isOffline, isFalse);
+    });
+
+    test('no path at all raises it, and a greeting takes it down', () async {
+      final bloc = await boot(SessionPhase.disconnected);
+      expect((bloc.state as Initialized).isOffline, isTrue);
+
+      phase.emit(SessionPhase.live);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      expect((bloc.state as Initialized).isOffline, isFalse);
+    });
+  });
+
   group('the server that is not the one the link named (036)', () {
     late _FakePhase phase;
 

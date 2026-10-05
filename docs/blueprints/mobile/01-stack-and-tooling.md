@@ -12,6 +12,7 @@
 - **Dart SDK**: ограничение `>=3.12.0 <4.0.0` (парный к Flutter 3.44.1).
 - **Длина строки**: `140` везде (`formatter: page_width: 140` в `analysis_options.yaml`; команды используют `fvm dart format -l 140`).
 - **Платформы**: iOS, Android, Windows, Linux, macOS (web — вне scope). Desktop-floor по умолчанию Flutter 3.44.1: Windows 10 / macOS 10.15 / GTK3 (Linux).
+- **Rust**: `1.93.1` с целями всех платформ, пин в `packages/nox_tor/rust/rust-toolchain.toml` — как Flutter через FVM. Нужен для встроенного Tor-клиента (Arti 0.47): его собирает нативный хук пакета `nox_tor` при каждой сборке и при `flutter test`. На Linux хук ничего не собирает — Tor там пока не встроен.
 
 `.fvmrc` в корне пакета:
 
@@ -27,7 +28,9 @@
 fvm install   # читает .fvmrc, скачивает Flutter 3.44.1 в gitignored .fvm/
 ```
 
-> **Один пакет.** В этом блюпринте — **единственный Dart-пакет `nox_app`**, без раскладки на несколько path-зависимых пакетов. Слои — это папки внутри одного `lib/` (`lib/domain`, `lib/data`, `lib/presentation`, `lib/di`, `lib/general`, `lib/design`, `lib/resource`). Один `pubspec.yaml`, один `build.yaml`, один прогон `build_runner`. Поэтому ниже — **ровно один** манифест зависимостей. Подробности раскладки — в `00-architecture-overview.md` и `11-scaffolding-plan.md`.
+> **Один пакет приложения.** В этом блюпринте — **единственный Dart-пакет приложения `nox_app`**: слои — это папки внутри одного `lib/` (`lib/domain`, `lib/data`, `lib/presentation`, `lib/di`, `lib/general`, `lib/design`, `lib/resource`). Один `build.yaml`, один прогон `build_runner`. Подробности раскладки — в `00-architecture-overview.md` и `11-scaffolding-plan.md`.
+>
+> **Одно исключение — `packages/nox_tor`** (фаза 040): Tor-клиент на Rust с тонкой Dart-обёрткой, член workspace (`workspace: [packages/nox_tor]` в корневом `pubspec.yaml`, зависимость `nox_tor: {path: packages/nox_tor}`). Отдельный пакет он не ради слоёв, а потому что нативный хук сборки (`hook/build.dart`, native assets) принадлежит пакету: C ABI крейта вызывается через `@Native`, библиотеку под каждую платформу собирает `native_toolchain_rust`. Приложение видит его только через доменный `TorService`; тестовое окружение получает фейк и нативную библиотеку не грузит.
 
 ---
 
@@ -230,6 +233,8 @@ flutter_gen:
 | `flutter_secure_storage` | шифрованное хранилище секретов сессии: сегодня — ключ `session.identifier`, плюс шов `auth_id_token` для Dio-интерцептора (писателя ещё нет — токены появятся с аутентификацией этапа 2, она пока открыта). Кросс-платформенно (macOS Keychain / Windows DPAPI / Linux libsecret). |
 | `logger` | реализация обязательного `LogRepository` (единый канал, без raw `print`). |
 | `package_info_plus` | версия/билд приложения (регистрируется в DI-бутстрапе первым консьюмером). |
+| `nox_tor` (path, workspace) | встроенный Tor-клиент: Arti 0.47 на Rust за C ABI, локальный мост с секретом к onion-сервису своего сервера, сон и пробуждение. Только за `TorService` (`NativeTorService` в `[dev, prod]`). Свои зависимости пакета — `native_toolchain_rust`, `hooks`, `code_assets` (нативный хук сборки). См. `14-networking-and-auth.md` §6. |
+| `cryptography` | Ed25519 ключ устройства (подпись приветствия, фаза 032) и x25519 ключ доступа к onion-сервису (фаза 040). |
 | `app_links` | приём входящих ссылок (deep / universal links) — cold-start + warm-поток; парсятся в `DeepLinkRepository`. **План**: зависимость объявлена, но в `lib/` пока не импортируется — deep links не реализованы и остаются открытым вопросом. См. `13-deep-links.md`. |
 
 ---

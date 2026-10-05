@@ -138,8 +138,12 @@ Future<void> configureDependencies(String env) async {
 - `ChatRemoteDataSource` / `MessageRemoteDataSource` — после флипа фазы 026 `Real*` живут в `[dev]`, моки сужены до `[prod, test]` (§6.2);
 - `SessionPhaseService` — `SocketSessionPhaseService` (фаза сессии из живого канала) в `[dev]`, `ConnectivitySessionPhaseService` (фаза из коннективности) в `[prod, test]`. С фазы 036 у него есть и `reconnect()`: терминальной фазе лестницы переподключения не осталось, и без явного «попробовать ещё раз» приложение, однажды отказавшее серверу, не возвращается никогда. В мок-окружениях это no-op — канала там нет.
 - `PinnedHttpClient` — `@lazySingleton` во **всех трёх** окружениях (фаза 036). Один `HttpClient` на процесс для обоих транспортов: команды идут `wss`, байты вложений `https`, и решение о том, той ли машине они идут, принимается в одном месте.
+- `TorService` (фаза 040) — `NativeTorService` (Arti через `package:nox_tor`) в `[dev, prod]`, `FakeTorService` в `[test]`: тесты никогда не грузят нативную библиотеку, а фейк по умолчанию «не поддерживается», поэтому всё прежнее идёт только прямым путём.
+- `AppLifecycleService` и `NetworkChangeService` (фаза 040) — `AppLifecycleServiceImpl` / `NetworkChangeServiceImpl` в `[dev, prod]`, `ForegroundAppLifecycleService` / `QuietNetworkChangeService` в `[test]`.
+- `ConnectionStatusService` (фаза 040) — `LiveConnectionStatusService` (фаза сокета + выбор пути + статус Tor) в `[dev]`, вывод из `SessionPhaseService` в `[prod, test]`.
+- `ServerAddressesRepository` и `AccessKeyRepository` (фаза 040) — одна реализация на все три окружения поверх защищённого хранилища.
 
-Сверх этого фаза 026 принесла четыре регистрации **без пары** — они существуют только в `[Environment.dev]`, потому что без живого канала бессмысленны: `NoxSocketClient`, `WebSocketChannelFactory` (под `SocketChannelFactory`), `SyncService` и `LiveSessionStarter`. Их потребители обязаны спрашивать `getIt.isRegistered<T>()` перед резолвом — в `prod`/`test` этих типов в контейнере нет (так делает `AuthRepositoryImpl`, см. §5).
+Сверх этого фаза 026 принесла четыре регистрации **без пары** — они существуют только в `[Environment.dev]`, потому что без живого канала бессмысленны: `NoxSocketClient`, `WebSocketChannelFactory` (под `SocketChannelFactory`), `SyncService` и `LiveSessionStarter`. Фаза 040 добавила к ним ещё три: `ConnectionPathSelector`, `TlsDirectProber` (под `DirectProber`) и `AccessKeyRegistrar`. Их потребители обязаны спрашивать `getIt.isRegistered<T>()` перед резолвом — в `prod`/`test` этих типов в контейнере нет (так делает `AuthRepositoryImpl`, см. §5).
 
 Любой новый сервис поверх платформенного плагина обязан следовать той же схеме, иначе widget/BLoC-тесты падают на резолве.
 
@@ -571,16 +575,25 @@ import 'package:nox_app/domain/repository/log_repository.dart';
 /// Single logging channel implementation (logger package). No raw print in lib/.
 @LazySingleton(as: LogRepository)
 class LoggerLogRepository implements LogRepository {
-  final Logger _logger = Logger(printer: SimplePrinter(printTime: true));
+  LoggerLogRepository() : _logger = Logger(printer: SimplePrinter(printTime: true));
+
+  final Logger _logger;
+
+  /// A v3 onion host anywhere in a line.
+  static final RegExp _onion = RegExp(r'[a-z2-7]{56}\.onion', caseSensitive: false);
+
+  /// What every line goes through on its way out (phase 040, FR-013).
+  static String scrub(String line) => line.replaceAll(_onion, '[onion]');
 
   @override
   void debug({Object? target, required String message}) {
-    _logger.d('${_tag(target)}$message');
+    _logger.d(scrub('${_tag(target)}$message'));
   }
 
   @override
   void error({Object? target, required Object error, StackTrace? stackTrace}) {
-    _logger.e('${_tag(target)}$error', error: error, stackTrace: stackTrace);
+    final text = scrub('$error');
+    _logger.e('${_tag(target)}$text', error: text, stackTrace: stackTrace);
   }
 
   String _tag(Object? target) => target == null ? '' : '[${target.runtimeType}] ';
@@ -592,6 +605,7 @@ class LoggerLogRepository implements LogRepository {
 - Реализации репозиториев и API обращаются к логгеру через глобальный алиас `logRepository` (§8).
 - Любое перехваченное-и-проглоченное исключение **обязано** нести инлайн-комментарий, почему это безопасно.
 - `LoggerLogRepository` зарегистрирован без `env`-списка → доступен во всех окружениях (включая `test`), что позволяет `BaseRepositoryHelper` логировать и под тестом.
+- Каждая строка проходит `scrub`: onion-адрес сервера позволяет спросить сеть Tor, в сети ли сервер, и приезжает внутри чужих исключений (`dart:io` кладёт URI запроса в `HttpException`), поэтому чистится на выходе, а не в местах вызова. Ключи и секреты не логируются нигде.
 - Проброс в observability-бэкенд (Sentry / RUM) — точка расширения внутри `error(...)`, помеченная примером/TBD. «Не выбран» здесь — правда, но речь **не** о серверном бэкенде NOX (он выбран: Go-сервер `noxd`, контракт v0): не выбран именно вендор наблюдаемости / crash-репортинга — отдельный открытый вопрос, не зависящий от контракта провода.
 
 ---

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/service/connection_status_service.dart';
 import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/pages/create_chat_page/create_chat_page.dart';
 import 'package:nox_app/presentation/pages/chats_list_page/chats_list_page.dart';
@@ -12,7 +13,9 @@ import 'package:nox_app/presentation/widgets/shell/app_list_detail_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_navigation_rail_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_window_titlebar_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/tab_bar_shell_widget.dart';
+import 'package:nox_app/presentation/widgets/state/app_connection_indicator_widget.dart';
 
+import '../../../utils/fixed_connection_status.dart';
 import '../../../utils/pump_app.dart';
 
 final l10nEn = AppLocalizationsEn();
@@ -159,6 +162,37 @@ void main() {
 
       // Regression guard: previously the subtitle was a hardcoded 'Chats' that never changed.
       expect(subtitle(), l10nEn.settings);
+    });
+
+    testWidgets('the connection corner sits in the window titlebar on the wide branch (phase 040)', (tester) async {
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<ConnectionStatusService>(FixedConnectionStatusService(FixedConnectionStatusService.tor));
+      addTearDown(() => getIt.registerSingleton<ConnectionStatusService>(FixedConnectionStatusService()));
+      await tester.binding.setSurfaceSize(const Size(1200, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, const TabBarShell());
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+
+      final corner = find.descendant(of: find.byType(AppWindowTitlebarWidget), matching: find.byType(AppConnectionIndicatorWidget));
+      expect(corner, findsOneWidget);
+      expect(find.descendant(of: corner, matching: find.text(l10nEn.connectionTorBadge)), findsOneWidget);
+    });
+
+    testWidgets('on the narrow branch the corner rides in the chats app bar instead', (tester) async {
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<ConnectionStatusService>(FixedConnectionStatusService(FixedConnectionStatusService.tor));
+      addTearDown(() => getIt.registerSingleton<ConnectionStatusService>(FixedConnectionStatusService()));
+      await tester.binding.setSurfaceSize(const Size(420, 800));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(tester, const TabBarShell());
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(AppWindowTitlebarWidget), findsNothing);
+      final corner = find.descendant(of: find.byType(AppBar), matching: find.byType(AppConnectionIndicatorWidget));
+      expect(corner, findsWidgets);
+      expect(find.text(l10nEn.connectionTorBadge), findsWidgets);
     });
 
     testWidgets('re-tapping the active Chats tab is a no-op that does not throw', (tester) async {

@@ -9,6 +9,7 @@ import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/general/onboarding_mock_data.dart';
+import 'package:nox_app/general/pairing/pairing_link.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
 
 part 'login_bloc.freezed.dart';
@@ -70,7 +71,7 @@ class LoginBloc extends BaseBloc<LoginEvent, LoginState> {
   /// wall twice.
   void _onServerRefused(ServerRefused event, Emitter<LoginState> emit) {
     _refusedThisAttempt = true;
-    emit(state.copyWith(status: LoginStatus.errorServerMismatch));
+    emit(state.copyWith(status: _refusalStatus(homeOnly: _homeOnlyLink())));
   }
 
   Future<void> _onSignInRequested(SignInRequested event, Emitter<LoginState> emit) async {
@@ -92,8 +93,26 @@ class LoginBloc extends BaseBloc<LoginEvent, LoginState> {
     final result = await authRepository.signIn(identifier: state.id);
     result.match<void>(
       onData: (_) => emit(state.copyWith(status: LoginStatus.idle)),
-      onError: (e) => emit(state.copyWith(status: _statusFor(e, refused: _refusedServer()))),
+      onError: (e) => emit(
+        state.copyWith(
+          status: _statusFor(e, refused: _refusedServer(), homeOnly: _homeOnlyLink()),
+        ),
+      ),
     );
+  }
+
+  /// Whether the link in the field can reach its server only directly: a
+  /// version-1 link, which is every claim and every invite the server could not
+  /// put its onion address in.
+  ///
+  /// Read off the field rather than captured at submit: the field is locked
+  /// while an attempt is in flight, and a refusal that lands outside one is
+  /// about the link the person is looking at. Something that is not a link at
+  /// all keeps the answers it always had - sign-in refuses it before it dials,
+  /// so nothing it reports can be about a server.
+  bool _homeOnlyLink() {
+    final link = PairingLink.tryParse(state.id);
+    return link != null && !link.carriesOnion;
   }
 
   /// True when THIS attempt was refused by the pin.
@@ -108,7 +127,19 @@ class LoginBloc extends BaseBloc<LoginEvent, LoginState> {
   /// The two ways round, because the refusal and the failure are separate
   /// events and either can land first: this attempt saw the refusal, or the
   /// event carrying it has already moved the screen.
-  bool _refusedServer() => _refusedThisAttempt || state.status == LoginStatus.errorServerMismatch;
+  bool _refusedServer() =>
+      _refusedThisAttempt || state.status == LoginStatus.errorServerMismatch || state.status == LoginStatus.errorHomeNetworkOnly;
+
+  /// What a refusal of the server means, which depends on the road the link
+  /// took to it.
+  ///
+  /// Only an onion address makes a stranger's key an anomaly - nobody can hold
+  /// one without the server's keys (FR-030). At a direct address the same
+  /// answer is the expected one away from home, where a different machine sits
+  /// at that address, so a link with no onion part says where pairing works
+  /// instead (FR-005).
+  static LoginStatus _refusalStatus({required bool homeOnly}) =>
+      homeOnly ? LoginStatus.errorHomeNetworkOnly : LoginStatus.errorServerMismatch;
 
   /// Each refusal keeps its own message: the repository already told them
   /// apart, and collapsing them here would undo that.
@@ -119,12 +150,19 @@ class LoginBloc extends BaseBloc<LoginEvent, LoginState> {
   /// connection" sends the person after a network that is working perfectly,
   /// which is the precise confusion this feature exists to remove, and it made
   /// the honest message unreachable outside the debug gallery.
-  static LoginStatus _statusFor(Object? exception, {required bool refused}) {
-    if (refused) return LoginStatus.errorServerMismatch;
+  ///
+  /// [homeOnly] turns "no channel" into where pairing works. A version-1 link
+  /// has no road to its server but the direct one, so outside the home network
+  /// not reaching it is the expected outcome rather than a fault (FR-022). A
+  /// version-2 link that reached nothing has had both roads tried, and keeps
+  /// the plain network error. `internal` stays apart: the server answered.
+  static LoginStatus _statusFor(Object? exception, {required bool refused, required bool homeOnly}) {
+    if (refused) return _refusalStatus(homeOnly: homeOnly);
     return switch (exception) {
       RepositoryException.invalidRequest => LoginStatus.errorFormat,
       RepositoryException.notFound => LoginStatus.errorExpired,
       RepositoryException.authentication => LoginStatus.errorRejected,
+      RepositoryException.connection when homeOnly => LoginStatus.errorHomeNetworkOnly,
       RepositoryException.internal => LoginStatus.errorNetwork,
       _ => LoginStatus.errorNetwork,
     };

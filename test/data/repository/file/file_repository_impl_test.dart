@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -25,6 +26,10 @@ class _FakeSource implements FileRemoteDataSource {
   String? downloadErrorCode;
   List<int> bytesToReturn = const [1, 2, 3, 4];
   bool truncateDownload = false;
+  int downloadBegins = 0;
+
+  /// Holds a download half-way, after its first bytes are on disk.
+  Completer<void>? holdDownload;
 
   @override
   Future<ResponseEntity<UploadTicketWireEntity>> uploadBegin({required String name, required int sizeBytes, required String mime}) async {
@@ -59,6 +64,7 @@ class _FakeSource implements FileRemoteDataSource {
 
   @override
   Future<ResponseEntity<DownloadTicketWireEntity>> downloadBegin({required String fileId}) async {
+    downloadBegins++;
     final code = downloadErrorCode;
     if (code != null) {
       return ResponseEntity<DownloadTicketWireEntity>(
@@ -77,6 +83,12 @@ class _FakeSource implements FileRemoteDataSource {
     // Dio writes straight to the path it is handed, so the repository is
     // responsible for making a torn transfer invisible. Reproduce both halves:
     // some bytes land, then it fails.
+    final hold = holdDownload;
+    if (hold != null) {
+      destination.writeAsBytesSync(bytesToReturn.take(1).toList());
+      onProgress?.call(1, bytesToReturn.length);
+      await hold.future;
+    }
     destination.writeAsBytesSync(truncateDownload ? bytesToReturn.take(1).toList() : bytesToReturn);
     if (truncateDownload) throw const FileTransferException(FileTransferFailure.connection);
     onProgress?.call(bytesToReturn.length, bytesToReturn.length);
@@ -163,6 +175,36 @@ void main() {
 
       expect(result.hasData, isTrue);
       expect(File(result.data!).readAsBytesSync(), [1, 2, 3, 4]);
+    });
+
+    test('two callers asking for the same file share ONE transfer, and both hear its progress', () async {
+      // The picture prefetch and the file view ask for the same file. Two
+      // transfers shared one `.part` file: the second deleted the first's
+      // bytes, and the first renamed a still-growing file into place.
+      source.holdDownload = Completer<void>();
+      final heardByPrefetch = <double>[];
+      final heardByFileView = <double>[];
+
+      final first = repository.download(fileId: 'f_same', suggestedName: 'photo.png', onProgress: heardByPrefetch.add);
+      await pumpEventQueue();
+      final second = repository.download(fileId: 'f_same', suggestedName: 'photo.png', onProgress: heardByFileView.add);
+      source.holdDownload!.complete();
+      final results = await Future.wait([first, second]);
+
+      expect(source.downloadBegins, 1);
+      expect(results.map((r) => r.data).toSet(), hasLength(1));
+      expect(File(results.first.data!).readAsBytesSync(), [1, 2, 3, 4], reason: 'the whole file, not a torn one');
+      expect(heardByPrefetch.last, 1.0);
+      expect(heardByFileView.last, 1.0, reason: 'the caller who joined hears the rest of the transfer');
+    });
+
+    test('a later download of the same file is a new transfer, not the finished one', () async {
+      await repository.download(fileId: 'f_again', suggestedName: 'a.bin');
+      await repository.clean();
+
+      await repository.download(fileId: 'f_again', suggestedName: 'a.bin');
+
+      expect(source.downloadBegins, 2);
     });
 
     test('a torn transfer leaves NOTHING that looks like a cache hit', () async {

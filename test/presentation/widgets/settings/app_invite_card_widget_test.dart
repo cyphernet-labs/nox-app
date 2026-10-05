@@ -39,6 +39,25 @@ void main() {
       expect(dismissed, 1);
     });
 
+    testWidgets('a link that works only at home says so, under the message (FR-019)', (tester) async {
+      // The person decides on this card where to carry the link. Without the
+      // note, one carried to an office fails with nothing to explain why.
+      await pumpApp(tester, AppInviteCardWidget(link: _link, message: 'This link works for 10 minutes.', homeOnly: true, onDismiss: () {}));
+
+      expect(find.text(l10nEn.devicesInviteHomeOnly), findsOneWidget);
+      final message = tester.getTopLeft(find.text('This link works for 10 minutes.'));
+      final note = tester.getTopLeft(find.text(l10nEn.devicesInviteHomeOnly));
+      final link = tester.getTopLeft(find.widgetWithText(SelectableText, _link));
+      expect(note.dy, greaterThan(message.dy), reason: 'the note reads as part of what the link is');
+      expect(note.dy, lessThan(link.dy), reason: 'the note sits above the link it qualifies');
+    });
+
+    testWidgets('a link that works from anywhere carries no note', (tester) async {
+      await pumpApp(tester, AppInviteCardWidget(link: _link, message: 'This link works for 10 minutes.', onDismiss: () {}));
+
+      expect(find.text(l10nEn.devicesInviteHomeOnly), findsNothing);
+    });
+
     testWidgets('Copy puts the whole link on the clipboard and says so', (tester) async {
       // Selectable text was the only way out of this card, and selecting a
       // hundred wrapped characters with a mouse is not a way out of anything.

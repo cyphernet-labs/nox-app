@@ -173,6 +173,23 @@
       }
     }
   },
+  "transferDownloading": "Downloading…",
+  "@transferDownloading": {
+    "description": "A received picture whose bytes are on their way, before the first of them has arrived (5.2, spoken by screen readers)"
+  },
+  "transferSending": "Sending…",
+  "@transferSending": {
+    "description": "A message with a file being sent, before its bytes start moving (5.2)"
+  },
+  "transferSendingProgress": "Sending… {percent}%",
+  "@transferSendingProgress": {
+    "description": "A message with a file being sent: how much of the file has reached the server (5.2)",
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
   "filesSectionTitle": "Files",
   "chatPeopleTitle": "People",
   "chatInvitePerson": "Invite a person",
@@ -232,5 +249,53 @@
   "videoPlaybackError": "Couldn't play this video. Save it to open it in another app.",
   "@videoPlaybackError": {
     "description": "Video attachment playback (5.3)."
+  },
+  "connectionTorBadge": "Tor",
+  "@connectionTorBadge": {
+    "description": "The badge in the corner while the connection goes through Tor (phase 040). A proper name; not translated."
+  },
+  "connectionConnecting": "Connecting…",
+  "@connectionConnecting": {
+    "description": "Corner text while a path to the server is being brought up (phase 040)."
+  },
+  "connectionSemanticsTor": "Connected through Tor",
+  "@connectionSemanticsTor": {
+    "description": "Screen-reader name of the corner indicator (phase 040)."
+  },
+  "connectionSemanticsConnecting": "Connecting to your server",
+  "@connectionSemanticsConnecting": {
+    "description": "Screen-reader name of the corner indicator (phase 040)."
+  },
+  "connectionSemanticsConnectingTor": "Connecting to your server through Tor",
+  "@connectionSemanticsConnectingTor": {
+    "description": "Screen-reader name of the corner indicator (phase 040)."
+  },
+  "connectionInfoTitle": "Connection",
+  "@connectionInfoTitle": {
+    "description": "Title of the explanation opened from the corner indicator (phase 040)."
+  },
+  "connectionInfoTor": "NOX can't reach your server directly, so it connects through Tor. It's slower, but it works from any network.",
+  "@connectionInfoTor": {
+    "description": "Explanation while the connection goes through Tor (phase 040)."
+  },
+  "connectionInfoConnecting": "NOX is connecting to your server.",
+  "@connectionInfoConnecting": {
+    "description": "Explanation while a path is being brought up (phase 040)."
+  },
+  "connectionInfoLocalNetwork": "If you're at home, check that NOX has Local Network access in Settings.",
+  "@connectionInfoLocalNetwork": {
+    "description": "Shown on iOS and macOS only (phase 040, FR-032)."
+  },
+  "connectionTorObsolete": "Update NOX to connect away from home",
+  "@connectionTorObsolete": {
+    "description": "Notice when the Tor network no longer accepts this version's built-in client (phase 040, FR-026)."
+  },
+  "devicesInviteHomeOnly": "This link works only on your home network.",
+  "@devicesInviteHomeOnly": {
+    "description": "Under an invite the server could not make reachable from anywhere (phase 040, FR-019)."
+  },
+  "loginHomeNetworkOnly": "Couldn't reach your server. Pairing works on your home network.",
+  "@loginHomeNetworkOnly": {
+    "description": "Pairing link whose server did not answer, or answered with a key the link does not name (phase 040, FR-022)."
   }
 }

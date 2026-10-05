@@ -18,7 +18,10 @@ import 'package:nox_app/domain/repository/log_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
+import 'package:nox_app/data/service/tor/fake_tor_service.dart';
+import 'package:nox_app/domain/service/tor_service.dart';
 
+import 'package:nox_app/general/pairing/pairing_link.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'auth_repository_impl_test.mocks.dart';
@@ -159,6 +162,23 @@ void main() {
     verifyInOrder([session.clear(), outbox.clean(), files.clean(), sync.clear(), chats.clean(), messages.clean()]);
   });
 
+  test('logout stops the Tor client and deletes what it learned (FR-018, SC-007)', () async {
+    final tor = getIt<TorService>() as FakeTorService;
+    expect(tor.wipes, 0);
+
+    await repository.logout();
+
+    expect(tor.wipes, 1);
+    expect(tor.target, isNull);
+  });
+
+  test('a failed clear() leaves the Tor client alone, like everything else', () async {
+    when(session.clear()).thenAnswer((_) async => const RepositoryResult<bool>.error(exception: RepositoryException.unknown));
+    await repository.logout();
+
+    expect((getIt<TorService>() as FakeTorService).wipes, 0);
+  });
+
   test('ordinary logout clears the session without sessionExpired', () async {
     await repository.logout();
     verify(session.clear()).called(1);
@@ -218,6 +238,26 @@ void main() {
       verifyNever(session.noteOnboardingStartedHere());
     });
 
+    test('a version-2 link reaches the handshake whole, its onion part included (FR-020)', () async {
+      const v2 =
+          'https://nox.app/p/#AgHAqAEKH5AAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eH6ChoqOkpaanqKmqq6ytrq8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-PwG7QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8';
+      when(
+        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
+      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
+
+      final result = await repository.signIn(identifier: v2);
+
+      expect(result.data, isTrue);
+      final handed =
+          verify(
+                handshake.pair(link: captureAnyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
+              ).captured.single
+              as PairingLink;
+      expect(handed.carriesOnion, isTrue);
+      // The direct address is still the one stored and tried first.
+      verify(session.saveServer(address: '192.168.1.10:8080', serverFingerprint: anyNamed('serverFingerprint'))).called(1);
+    });
+
     test('only the PUBLIC key is presented - the seed never leaves', () async {
       when(
         handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
@@ -250,7 +290,7 @@ void main() {
       expect(expectations.values.toSet(), hasLength(2), reason: 'no two refusals may share an answer');
     });
 
-    test('a successful pairing re-greets, so the session stops speaking as the pre-pair identity', () async {
+    test('a successful pairing re-greets, so the session stops speaking as the pre-pair identity, and waits only briefly', () async {
       // The connection `pair` ran on was greeted before this device existed to
       // the server. Without a second greeting it keeps speaking as whoever
       // greeted then, and a message sent on it comes back looking like a
@@ -258,11 +298,13 @@ void main() {
       when(
         handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
       ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
-      when(handshake.greet()).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
+      when(
+        handshake.greet(within: anyNamed('within')),
+      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
 
       await repository.signIn(identifier: link);
 
-      verify(handshake.greet()).called(1);
+      verify(handshake.greet(within: const Duration(seconds: 2))).called(1);
     });
 
     test('a greeting that fails after pairing does not undo the pairing', () async {
@@ -271,7 +313,7 @@ void main() {
       when(
         handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
       ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
-      when(handshake.greet()).thenThrow(const IdentityHandshakeTimeout());
+      when(handshake.greet(within: anyNamed('within'))).thenThrow(const IdentityHandshakeTimeout());
 
       final result = await repository.signIn(identifier: link);
 

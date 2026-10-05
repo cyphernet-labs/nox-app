@@ -7,6 +7,12 @@ abstract class SyncRepository {
   /// or post-logout).
   Future<int> getCursor();
 
+  /// Whether a cursor is stored at all. False only before the first greeting
+  /// and after a wipe - the one case where `session.hello` omits `since`
+  /// (contract §3). A stored 0 is a real position: the journal was empty when
+  /// this device first greeted, and everything after it must be replayed.
+  Future<bool> hasCursor();
+
   /// Advances the cursor monotonically: values at or below the stored one
   /// are ignored (replay/live duplicates must not move it backwards).
   Future<void> advanceCursor(int seq);

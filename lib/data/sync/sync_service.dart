@@ -10,10 +10,13 @@ import 'package:nox_app/data/mapper/chat/chat_wire_mapper.dart';
 import 'package:nox_app/data/mapper/chat/message_mapper.dart';
 import 'package:nox_app/data/mapper/chat/message_wire_mapper.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
+import 'package:nox_app/data/remote/socket/server_addresses_parser.dart';
 import 'package:nox_app/data/remote/socket/server_frame.dart';
 import 'package:nox_app/di/global_aliases.dart';
+import 'package:nox_app/domain/model/chat/message_status.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
+import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_app/general/formatters/chat_preview_formatter.dart';
 
@@ -40,6 +43,7 @@ class SyncService {
     this._messageMapper,
     this._messageWireMapper,
     this._outbox,
+    this._addresses,
   );
 
   final NoxSocketClient _socket;
@@ -51,6 +55,7 @@ class SyncService {
   final MessageMapper _messageMapper;
   final MessageWireMapper _messageWireMapper;
   final OutboxRepository _outbox;
+  final ServerAddressesRepository _addresses;
 
   StreamSubscription<ServerEvent>? _subscription;
   StreamSubscription<SessionPhase>? _phaseSubscription;
@@ -122,6 +127,15 @@ class SyncService {
         await _applyOwnLabel(event.data);
         return;
       }
+      // Where the server can be found now (phase 040). Seq 0 and about the
+      // machine, not the shared world, so it is taken here and the cursor is
+      // left alone. A failed write is logged, not a halt: the greeting carries
+      // the same list on the next connection, and holding the journal back for
+      // it would cost messages for the sake of an address.
+      if (event.event == ServerEvent.serverAddresses) {
+        await _applyAddresses(event.data);
+        return;
+      }
       // device.paired is deliberately absent from this file. Nothing here can
       // apply it: the device list is never cached, so there is no local state
       // to bring up to date — DeviceRepository watches this same stream and the
@@ -150,6 +164,19 @@ class SyncService {
       _halted = true;
       logRepository.error(target: this, error: error, stackTrace: stackTrace);
     }
+  }
+
+  Future<void> _applyAddresses(Map<String, dynamic> data) async {
+    final stated = ServerAddressesParser.parse(data);
+    if (stated == null) return;
+    final saved = await _addresses.saveFromServer(direct: stated.direct, onion: stated.onion);
+    if (!saved.hasData) {
+      logRepository.debug(target: this, message: 'sync: the server addresses could not be stored');
+      return;
+    }
+    // Counts only: the onion address lets anyone who has it ask whether this
+    // server is online, and it stays out of the logs (FR-013).
+    logRepository.debug(target: this, message: 'sync: server addresses: direct=${stated.direct.length} onion=${stated.onion != null}');
   }
 
   /// Takes a rename made from another device of this person.
@@ -201,6 +228,13 @@ class SyncService {
 
     final wire = _messageWireMapper.toModel(entity: entity);
     final existing = await _messageDao.getById(wire.id);
+    // The same key is also what says the message is this person's own (§5:
+    // own means the identity, not the device), and an own message that came
+    // from the server is `sent` - it is on the server, which is all `sent`
+    // means. Taking the wire's status instead left a message sent from
+    // another device of the same person with no tick at all, which reads as
+    // "not sent".
+    final own = clientMessageId != null && clientMessageId.isNotEmpty;
     // localPath and the local delivery status are device-local; an echo or a
     // redelivery must not wipe the path that makes a sent image previewable.
     //
@@ -208,12 +242,14 @@ class SyncService {
     // the wire never carries one — the queue entry is the only place it still
     // exists, so it has to be read across before the entry is dropped.
     final localPath = existing?.attachmentLocalPath ?? settled?.attachment?.localPath;
-    final merged = existing == null && settled == null
-        ? wire
-        : wire.copyWith(
-            attachment: wire.attachment?.copyWith(localPath: localPath),
-            status: existing == null ? wire.status : _messageMapper.toModel(entity: existing).status,
-          );
+    final merged = wire.copyWith(
+      attachment: wire.attachment?.copyWith(localPath: localPath),
+      status: own
+          ? MessageStatus.sent
+          : existing == null
+          ? wire.status
+          : _messageMapper.toModel(entity: existing).status,
+    );
     await _messageDao.upsert(_messageMapper.toEntity(model: merged));
     // Only now: the same order the drain uses, and for the same reason — the
     // entry is the message's only home until the message itself is stored.

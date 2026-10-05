@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nox_app/domain/model/device/device_invite.dart';
 import 'package:nox_app/domain/model/device/device_model.dart';
 import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/pages/devices_page/bloc/devices_bloc.dart';
@@ -50,6 +51,33 @@ void main() {
 
     expect(find.text(l10nEn.devicesError), findsOneWidget);
     expect(find.text(l10nEn.devicesRevokeError), findsNothing);
+  });
+
+  // FR-019: an invite the server could not put its onion address in works only
+  // on the home network, and the card is where the person decides where to
+  // carry it.
+  testWidgets('a home-only invite says where it works', (tester) async {
+    await pumpApp(
+      tester,
+      DevicesPage(
+        initialState: _state().copyWith(invite: const DeviceInvite(link: 'https://nox.app/p/#home', onion: false)),
+      ),
+    );
+
+    expect(find.text(l10nEn.devicesInviteMessage), findsOneWidget);
+    expect(find.text(l10nEn.devicesInviteHomeOnly), findsOneWidget);
+  });
+
+  testWidgets('an onion invite carries no such note', (tester) async {
+    await pumpApp(
+      tester,
+      DevicesPage(
+        initialState: _state().copyWith(invite: const DeviceInvite(link: 'https://nox.app/p/#anywhere', onion: true)),
+      ),
+    );
+
+    expect(find.text(l10nEn.devicesInviteMessage), findsOneWidget);
+    expect(find.text(l10nEn.devicesInviteHomeOnly), findsNothing);
   });
 
   testWidgets('every device sits in ONE group - this one first, and saying so', (tester) async {
