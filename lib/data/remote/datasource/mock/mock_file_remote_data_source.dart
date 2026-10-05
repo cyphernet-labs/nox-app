@@ -7,6 +7,7 @@ import 'package:nox_app/data/entity/base/response_entity.dart';
 import 'package:nox_app/data/entity/file/upload_ticket_wire_entity.dart';
 import 'package:nox_app/data/remote/datasource/file_remote_data_source.dart';
 import 'package:nox_app/domain/model/app_config/server_limits.dart';
+import 'package:nox_app/domain/model/file/transfer_cancellation.dart';
 
 /// Stands in for the server's file chain in the mock-backed ENVIRONMENTS
 /// `[prod, test]`. `Environment.dev` — the one the `stage` flavor boots —
@@ -72,7 +73,14 @@ class MockFileRemoteDataSource implements FileRemoteDataSource {
   }
 
   @override
-  Future<void> putBytes({required String uploadPath, required File file, required int offset, TransferProgress? onProgress}) async {
+  Future<void> putBytes({
+    required String uploadPath,
+    required File file,
+    required int offset,
+    TransferProgress? onProgress,
+    TransferCancellation? cancellation,
+  }) async {
+    if (cancellation?.isCancelled ?? false) throw const FileTransferException(FileTransferFailure.connection);
     final pass = uploadPath.split('/').last;
     // One-shot, like the real one: taking it here is what makes a second
     // attempt with the same pass behave as it does against the server - a 404,
@@ -80,7 +88,14 @@ class MockFileRemoteDataSource implements FileRemoteDataSource {
     // instead would tell it the bytes are there when they are not.
     final granted = _passes.remove(pass);
     if (granted == null || granted.offset != offset) throw const FileTransferException(FileTransferFailure.passRejected);
-    final total = await file.length();
+    // As the real source does: the error of a file that will not open carries
+    // its path, and goes no further than here.
+    final int total;
+    try {
+      total = await file.length();
+    } on FileSystemException {
+      throw const FileTransferException(FileTransferFailure.sourceUnreadable);
+    }
     onProgress?.call(total, total);
     _uploads[granted.fileId] = (size: total, received: total);
     _stored[granted.fileId] = file.path;

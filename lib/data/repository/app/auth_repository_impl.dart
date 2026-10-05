@@ -335,6 +335,23 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
           // next identity — who would then have them sent, under their name, by
           // the drain that re-arms at the next sign-in.
           await _outboxRepository.clean();
+          // The prefetch remembers which files it already tried. That memory
+          // belongs to the identity that was signed in: without clearing it,
+          // the next person's pictures are never fetched for the life of the
+          // process, because their message ids may repeat ours. And it goes
+          // BEFORE the downloads stop (phase 043): its worker would otherwise
+          // take the next picture of this identity as soon as the current one
+          // was stopped, and start it into the wipe.
+          if (getIt.isRegistered<AttachmentPrefetchService>()) getIt<AttachmentPrefetchService>().reset();
+          // Downloads stop FIRST of the bytes (phase 043): one still running
+          // would write its next chunk into the directory being deleted, or
+          // rename a finished file into it right after. On its own, so that a
+          // stop that fails still lets the cache go.
+          try {
+            if (getIt.isRegistered<AttachmentDownloadService>()) await getIt<AttachmentDownloadService>().reset();
+          } catch (error, stackTrace) {
+            logRepository.error(target: this, error: error, stackTrace: stackTrace);
+          }
           // Downloaded bytes go with them, and for the same reason: they are
           // other people's pictures, sitting in a cache on a device that has
           // just been handed back to nobody in particular.
@@ -346,19 +363,10 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
           // messages and cursor on disk, which is far worse than a cached
           // picture surviving. Best-effort here, loud in the log.
           try {
-            // Downloads stop FIRST (phase 043): one still running would write
-            // its next chunk into the directory being deleted, or rename a
-            // finished file into it right after.
-            if (getIt.isRegistered<AttachmentDownloadService>()) await getIt<AttachmentDownloadService>().reset();
             await _fileRepository.clean();
           } catch (error, stackTrace) {
             logRepository.error(target: this, error: error, stackTrace: stackTrace);
           }
-          // The prefetch remembers which files it already tried. That memory
-          // belongs to the identity that was signed in: without clearing it,
-          // the next person's pictures are never fetched for the life of the
-          // process, because their message ids may repeat ours.
-          if (getIt.isRegistered<AttachmentPrefetchService>()) getIt<AttachmentPrefetchService>().reset();
           // The cursor goes next: a crash mid-wipe must leave it behind the
           // stores (safe - replay re-applies idempotently), never ahead of an
           // emptied store (a stale high `since` would skip every row below it

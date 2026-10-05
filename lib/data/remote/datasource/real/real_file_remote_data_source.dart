@@ -12,6 +12,7 @@ import 'package:nox_app/data/remote/datasource/file_remote_data_source.dart';
 import 'package:nox_app/data/remote/datasource/real/socket_envelope.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/remote/socket/socket_channel_factory.dart';
+import 'package:nox_app/domain/model/file/transfer_cancellation.dart';
 
 /// The file chain over the live channel (contract v0 §7).
 ///
@@ -96,17 +97,53 @@ class RealFileRemoteDataSource implements FileRemoteDataSource {
   }
 
   @override
-  Future<void> putBytes({required String uploadPath, required File file, required int offset, TransferProgress? onProgress}) async {
-    final total = await file.length();
+  Future<void> putBytes({
+    required String uploadPath,
+    required File file,
+    required int offset,
+    TransferProgress? onProgress,
+    TransferCancellation? cancellation,
+  }) async {
+    if (cancellation?.isCancelled ?? false) throw const FileTransferException(FileTransferFailure.connection);
+    // The source's own errors carry its path, so they go no further than here.
+    final int total;
+    try {
+      total = await file.length();
+    } on FileSystemException {
+      throw const FileTransferException(FileTransferFailure.sourceUnreadable);
+    }
+
+    final path = _apiClient.pathGeneration;
     final cancel = _apiClient.beginTransfer();
+    // The message was thrown away: its upload stops holding the queue now,
+    // not when its last byte has gone.
+    unawaited(cancellation?.whenCancelled.then((_) => cancel.cancel('discarded')));
     // Dio's own sendTimeout bounds the WHOLE body, which is the limit this
     // phase removes. What it needs instead is a bound on silence: every chunk
     // the socket takes rearms the watch.
     final watch = _StallWatch(_stallLimit, () => cancel.cancel('stalled'));
+    // A file can be there and still not be readable - locked, or no longer
+    // permitted: a sandbox forgets a picked file when the app restarts, while
+    // its size can still be looked up. The body is where that shows, and Dio
+    // reports it exactly as it reports a broken link; taken for one, the
+    // queue retried it - and held everything behind it - for good. The
+    // repository opens the file before declaring anything, so this is the
+    // narrower case: a file that stopped being readable since.
+    var unreadable = false;
+    final body = file
+        .openRead(offset)
+        .transform(
+          StreamTransformer<List<int>, List<int>>.fromHandlers(
+            handleError: (error, stackTrace, sink) {
+              unreadable = true;
+              sink.addError(error, stackTrace);
+            },
+          ),
+        );
     try {
       final response = await _apiClient.dio.put<void>(
         uploadPath,
-        data: file.openRead(offset), // streamed from where the server stopped; never in RAM
+        data: body, // streamed from where the server stopped; never in RAM
         cancelToken: cancel,
         options: Options(
           connectTimeout: _connectTimeout,
@@ -129,12 +166,8 @@ class RealFileRemoteDataSource implements FileRemoteDataSource {
         },
       );
       _checkTransfer(response);
-    } on DioException {
-      // Every status this method cares about is handled above without throwing;
-      // reaching here means the transport itself failed, the bytes stopped, the
-      // transfer was ended from outside, or the server answered 5xx. All of it
-      // is the same thing to the caller: try again later, from where it got to.
-      throw const FileTransferException(FileTransferFailure.connection);
+    } on DioException catch (e) {
+      throw FileTransferException(unreadable ? FileTransferFailure.sourceUnreadable : _failureOf(e, path));
     } finally {
       watch.stop();
       _apiClient.endTransfer(cancel);
@@ -143,6 +176,7 @@ class RealFileRemoteDataSource implements FileRemoteDataSource {
 
   @override
   Future<FetchedBytes> openBytes({required String downloadPath, required int offset, String? validator}) async {
+    final path = _apiClient.pathGeneration;
     final cancel = _apiClient.beginTransfer();
     // Only with a validator: bytes whose version nobody wrote down could be the
     // start of another file, and the server is the only one who can say.
@@ -162,9 +196,9 @@ class RealFileRemoteDataSource implements FileRemoteDataSource {
           validateStatus: (status) => status != null && status < 500,
         ),
       );
-    } on DioException {
+    } on DioException catch (e) {
       _apiClient.endTransfer(cancel);
-      throw const FileTransferException(FileTransferFailure.connection);
+      throw FileTransferException(_failureOf(e, path));
     }
 
     final status = response.statusCode ?? 0;
@@ -180,7 +214,7 @@ class RealFileRemoteDataSource implements FileRemoteDataSource {
           whole: whole,
           total: total,
           validator: response.headers.value('last-modified'),
-          bytes: _guarded(body.stream, cancel, watch),
+          bytes: _guarded(body.stream, cancel, watch, path),
           abandon: () {
             watch.stop();
             cancel.cancel('abandoned');
@@ -198,19 +232,32 @@ class RealFileRemoteDataSource implements FileRemoteDataSource {
     // A range that does not start where this device stopped fits nothing here
     // either: start the file over rather than ask the same question forever.
     if (status == 416 || status == 206) throw const FileTransferException(FileTransferFailure.staleRange);
-    throw const FileTransferException(FileTransferFailure.connection);
+    // A whole file whose size nobody can tell, or a status the contract does
+    // not name: the server answered, and nothing about the link would change
+    // the answer.
+    throw const FileTransferException(FileTransferFailure.serverError);
   }
 
-  /// The body, with every way it can break turned into a broken connection,
-  /// silence ended by [watch], and the transfer handed back however it ends.
-  Stream<List<int>> _guarded(Stream<List<int>> source, CancelToken cancel, _StallWatch watch) async* {
+  /// What a transfer that Dio ended has come to. Checked in this order: a path
+  /// that changed explains whatever else went wrong on the old one, and a 5xx
+  /// is the server answering, not the link breaking.
+  FileTransferFailure _failureOf(DioException e, int path) {
+    if (_apiClient.pathGeneration != path) return FileTransferFailure.pathChanged;
+    if (e.type == DioExceptionType.badResponse) return FileTransferFailure.serverError;
+    return FileTransferFailure.connection;
+  }
+
+  /// The body, with every way it can break turned into a broken connection -
+  /// or a change of path, when that is what ended it - silence ended by
+  /// [watch], and the transfer handed back however it ends.
+  Stream<List<int>> _guarded(Stream<List<int>> source, CancelToken cancel, _StallWatch watch, int path) async* {
     try {
       await for (final chunk in source) {
         watch.moved();
         yield chunk;
       }
     } on Object {
-      throw const FileTransferException(FileTransferFailure.connection);
+      throw FileTransferException(_apiClient.pathGeneration != path ? FileTransferFailure.pathChanged : FileTransferFailure.connection);
     } finally {
       watch.stop();
       _apiClient.endTransfer(cancel);
@@ -244,10 +291,13 @@ class RealFileRemoteDataSource implements FileRemoteDataSource {
     // 413 too many bytes, 400 too few. Either way what was sent is not what
     // was announced, and announcing it again would fail the same way.
     if (status == 413 || status == 400) throw const FileTransferException(FileTransferFailure.sizeMismatch);
-    // 408 (the server saw the bytes stop), 409 (an earlier attempt still held
-    // the file) and anything else: the transfer broke, and the next attempt
-    // goes on from what the server has.
-    throw const FileTransferException(FileTransferFailure.connection);
+    // 408 (the server saw the bytes stop) and 409 (an earlier attempt still
+    // held the file): the transfer broke, and the next attempt goes on from
+    // what the server has.
+    if (status == 408 || status == 409) throw const FileTransferException(FileTransferFailure.connection);
+    // A status the contract does not name is still the server answering, and
+    // one that answers it every time must not hold the queue for good.
+    throw const FileTransferException(FileTransferFailure.serverError);
   }
 }
 

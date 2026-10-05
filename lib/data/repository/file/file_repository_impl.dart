@@ -7,6 +7,7 @@ import 'package:nox_app/data/exception/file_transfer_exception.dart';
 import 'package:nox_app/data/remote/datasource/file_remote_data_source.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
+import 'package:nox_app/domain/model/file/transfer_cancellation.dart';
 import 'package:nox_app/domain/model/file/unfinished_upload.dart';
 import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
@@ -29,6 +30,18 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
 
   static const String _cacheFolder = 'nox_attachments';
 
+  /// How many changes of path one attempt goes on through by itself. A path
+  /// that keeps changing under a transfer is a broken link after all, and the
+  /// caller's pause is the better answer to that.
+  static const int _pathChangeLimit = 5;
+
+  /// Raised by [cancelTransfers] and [clean]: a download begun before either
+  /// writes nothing to this device after it. Ending its transfer is not enough
+  /// on its own - an attempt between two steps (asking for a pass, opening the
+  /// bytes) has no transfer to end, and would go on to write into a cache just
+  /// emptied for somebody else.
+  int _epoch = 0;
+
   @override
   Future<RepositoryResult<String>> upload({
     required String path,
@@ -36,6 +49,7 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
     UnfinishedUpload? from,
     Future<void> Function(UnfinishedUpload? upload)? onUnfinished,
     TransferFraction? onProgress,
+    TransferCancellation? cancellation,
   }) {
     return execute<String>(() async {
       final file = File(path);
@@ -55,7 +69,10 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
 
       var unfinished = from;
       var passRefused = false;
+      var pathChanges = 0;
       while (true) {
+        // Thrown away while it waited its turn, or between two steps.
+        if (cancellation?.isCancelled ?? false) throw RepositoryException.connection;
         final ticket = await _declare(path, mime, source.size, unfinished, onUnfinished);
         final received = ticket.received;
         if (received == null) {
@@ -83,6 +100,7 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
             file: file,
             offset: offset,
             onProgress: onProgress == null ? null : (done, total) => onProgress(total == 0 ? 1 : done / total),
+            cancellation: cancellation,
           );
         } on FileTransferException catch (e) {
           switch (e.failure) {
@@ -94,10 +112,23 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
               if (passRefused) throw RepositoryException.internal;
               passRefused = true;
               continue;
+            case FileTransferFailure.pathChanged:
+              // The path the bytes were going by is gone, and what arrived by
+              // it stays on the server: the rest goes now, by the new one. A
+              // pause first would only wait out a reason that no longer exists.
+              if (++pathChanges > _pathChangeLimit) throw RepositoryException.connection;
+              passRefused = false;
+              continue;
             case FileTransferFailure.sizeMismatch:
               // What was sent is not what was announced — announcing it again
               // fails identically, so this message is done.
               throw RepositoryException.invalidRequest;
+            case FileTransferFailure.sourceUnreadable:
+              throw RepositoryException.notFound;
+            case FileTransferFailure.serverError:
+              // The server answered; one that keeps answering this way is
+              // given up on as a refusing `message.send` is.
+              throw RepositoryException.internal;
             case FileTransferFailure.staleRange:
             case FileTransferFailure.connection:
               throw RepositoryException.connection;
@@ -140,13 +171,20 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
   }
 
   /// The source's fingerprint. A file that is not there is `notFound`; so is
-  /// one the platform will not describe - and that error is turned into the
-  /// code HERE, because its message carries the path, the path carries the
-  /// file's name, and execute() would write it into the log (FR-016).
+  /// one the platform will not describe, or will describe and not open - and
+  /// that error is turned into the code HERE, because its message carries the
+  /// path, the path carries the file's name, and execute() would write it into
+  /// the log (FR-016).
+  ///
+  /// Opened, not only looked up: a sandbox forgets a picked file when the app
+  /// restarts and still lets its size be read, so a fingerprint alone would
+  /// declare an upload whose bytes can never be sent.
   Future<_Source> _sourceOf(File file) async {
     try {
       final stat = await file.stat();
       if (stat.type == FileSystemEntityType.notFound) throw RepositoryException.notFound;
+      final probe = await file.open();
+      await probe.close();
       return _Source(size: stat.size, modified: stat.modified);
     } on FileSystemException {
       throw RepositoryException.notFound;
@@ -192,8 +230,14 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
     required TransferFraction onProgress,
   }) {
     return execute<String>(() async {
+      final epoch = _epoch;
+      void stillWanted() {
+        if (_epoch != epoch) throw RepositoryException.connection;
+      }
+
       final destination = File(await _cachePathFor(fileId, suggestedName));
       if (destination.existsSync()) return RepositoryResult<String>.success(data: destination.path);
+      stillWanted();
       await destination.parent.create(recursive: true);
 
       // The bytes come into a SIDE file, renamed into place only once whole:
@@ -206,8 +250,10 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
 
       var passRefused = false;
       var staleRetried = false;
+      var pathChanges = 0;
       while (true) {
         final ticket = unwrapEnvelope(await _remote.downloadBegin(fileId: fileId), 'downloadBegin');
+        stillWanted();
         final FetchedBytes fetched;
         try {
           fetched = await _remote.openBytes(downloadPath: ticket.downloadUrl, offset: offset, validator: validator);
@@ -222,16 +268,29 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
             case FileTransferFailure.staleRange:
               // The bytes here are not shorter than the file there: some other
               // version of it. Start over at once; nothing anyone did is wrong.
+              stillWanted();
               await _discard(part, tag);
               (offset, validator) = (0, null);
               if (staleRetried) throw RepositoryException.internal;
               staleRetried = true;
               continue;
+            case FileTransferFailure.pathChanged:
+              // Asked by a path that is gone: ask again, now, by the new one.
+              if (++pathChanges > _pathChangeLimit) throw RepositoryException.connection;
+              passRefused = false;
+              continue;
             case FileTransferFailure.sizeMismatch:
               throw RepositoryException.invalidRequest;
+            case FileTransferFailure.serverError:
+            case FileTransferFailure.sourceUnreadable:
+              throw RepositoryException.internal;
             case FileTransferFailure.connection:
               throw RepositoryException.connection;
           }
+        }
+        if (_epoch != epoch) {
+          fetched.abandon();
+          throw RepositoryException.connection;
         }
 
         // A file of another size is not the file this message names.
@@ -241,32 +300,58 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
           logRepository.debug(target: this, message: 'file: download $fileId is ${fetched.total} bytes, not $expectedSize');
           throw RepositoryException.internal;
         }
-        if (fetched.whole) {
-          // In THIS order: an empty part first, then the version, then the
-          // bytes. A crash between any two leaves an empty part, or a part
-          // holding only bytes of the version written beside it.
-          await part.writeAsBytes(const <int>[], flush: true);
-          offset = 0;
-          await _writeTag(tag, fetched.validator);
-        }
-        logRepository.debug(target: this, message: 'file: download $fileId from $offset of ${fetched.total}');
 
         final total = fetched.total;
         var received = offset;
-        onProgress(total == 0 ? 1 : received / total);
-        final sink = part.openWrite(mode: FileMode.append);
+        var pathMoved = false;
+        RandomAccessFile? out;
         try {
+          if (fetched.whole) {
+            // In THIS order: an empty part first, then the version, then the
+            // bytes. A crash between any two leaves an empty part, or a part
+            // holding only bytes of the version written beside it.
+            await part.writeAsBytes(const <int>[], flush: true);
+            received = 0;
+            await _writeTag(tag, fetched.validator);
+          }
+          logRepository.debug(target: this, message: 'file: download $fileId from $received of $total');
+          onProgress(total == 0 ? 1 : received / total);
+          // Written chunk by chunk and awaited, not handed to a buffered sink:
+          // a disk that refuses a write says so at that write, rather than
+          // after the rest of the body has been read for nothing - and the
+          // body waits for the disk instead of piling up in memory.
+          out = await part.open(mode: FileMode.append);
           await for (final chunk in fetched.bytes) {
-            sink.add(chunk);
+            try {
+              await out.writeFrom(chunk);
+            } on Object {
+              fetched.abandon();
+              rethrow;
+            }
             received += chunk.length;
             onProgress(total == 0 ? 1 : received / total);
           }
-        } on FileTransferException {
-          // What arrived stays: the next attempt asks only for the rest.
-          throw RepositoryException.connection;
+        } on FileTransferException catch (e) {
+          // What arrived stays: the next attempt asks only for the rest - and
+          // when only the path changed, this one asks for it now.
+          if (e.failure != FileTransferFailure.pathChanged || ++pathChanges > _pathChangeLimit) {
+            throw RepositoryException.connection;
+          }
+          pathMoved = true;
+        } on Object {
+          // The disk refused the part, its version or a write before the body
+          // was read: let the bytes go, or the connection stays open behind
+          // an attempt that has already failed.
+          fetched.abandon();
+          rethrow;
         } finally {
-          await sink.flush();
-          await sink.close();
+          await out?.close();
+        }
+        if (pathMoved) {
+          stillWanted();
+          (offset, validator) = await _partOf(part, tag);
+          passRefused = false;
+          continue;
         }
         // The server ended the body early; what came is kept for the next one.
         if (received < total) throw RepositoryException.connection;
@@ -276,6 +361,7 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
         }
         // The rename is the moment the file becomes real. Before it, nothing
         // that looks like a cache hit exists.
+        stillWanted();
         await part.rename(destination.path);
         if (tag.existsSync()) await tag.delete();
         return RepositoryResult<String>.success(data: destination.path);
@@ -317,7 +403,10 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
   }
 
   @override
-  Future<void> cancelTransfers() async => _remote.cancelTransfers();
+  Future<void> cancelTransfers() async {
+    _epoch++;
+    _remote.cancelTransfers();
+  }
 
   @override
   Future<String?> localPathFor({required String fileId, required String suggestedName}) async {
@@ -327,6 +416,7 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
 
   @override
   Future<void> clean() async {
+    _epoch++;
     final dir = Directory('${(await getApplicationCacheDirectory()).path}/$_cacheFolder');
     if (dir.existsSync()) await dir.delete(recursive: true);
   }
@@ -375,9 +465,10 @@ class _Source {
 
   bool isSameAs(_Source other) => size == other.size && _sameMillisecond(modified, other.modified);
 
-  /// Compared to the millisecond, which is what the queue record keeps: the
-  /// platform reports microseconds, and comparing those against a stored value
-  /// would call every file "changed" after the first restart.
+  /// Compared as an instant, to the millisecond - which is all the queue record
+  /// keeps (milliseconds since the epoch, UTC). `DateTime ==` would also
+  /// compare the time zone and whatever below a millisecond a platform reports,
+  /// and call a file that never changed "changed" after a restart.
   bool isFingerprintOf(UnfinishedUpload upload) => size == upload.sourceSize && _sameMillisecond(modified, upload.sourceModifiedAt);
 
   static bool _sameMillisecond(DateTime a, DateTime b) => a.millisecondsSinceEpoch == b.millisecondsSinceEpoch;

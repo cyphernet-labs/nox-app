@@ -7,6 +7,7 @@ import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
+import 'package:nox_app/domain/model/file/transfer_cancellation.dart';
 import 'package:nox_app/domain/model/file/unfinished_upload.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
@@ -56,6 +57,7 @@ class _ScriptedFiles implements FileRepository {
     UnfinishedUpload? from,
     Future<void> Function(UnfinishedUpload? upload)? onUnfinished,
     TransferFraction? onProgress,
+    TransferCancellation? cancellation,
   }) => throw UnimplementedError();
 
   @override
@@ -69,8 +71,14 @@ class _ScriptedFiles implements FileRepository {
 class _RecordingMessages implements MessageRepository {
   final Map<String, String> attached = <String, String>{};
 
+  /// The store refuses the write: the database was closed under it.
+  bool refuse = false;
+
   @override
-  Future<void> attachLocalFile({required String messageId, required String localPath}) async => attached[messageId] = localPath;
+  Future<void> attachLocalFile({required String messageId, required String localPath}) async {
+    if (refuse) throw StateError('database closed');
+    attached[messageId] = localPath;
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -85,15 +93,17 @@ void main() {
 
   const attachment = MessageAttachment(id: 'f_big', type: FileType.video, name: 'trip.mp4', sizeBytes: 83886080);
 
-  AttachmentDownloadServiceImpl service() => AttachmentDownloadServiceImpl.forTest(
-    files,
-    messages,
-    phase,
-    pause: (attempts) {
-      pausesAsked.add(attempts);
-      return pause;
-    },
-  );
+  AttachmentDownloadServiceImpl service({Duration resetWait = AttachmentDownloadServiceImpl.defaultResetWait}) =>
+      AttachmentDownloadServiceImpl.forTest(
+        files,
+        messages,
+        phase,
+        pause: (attempts) {
+          pausesAsked.add(attempts);
+          return pause;
+        },
+        resetWait: resetWait,
+      );
 
   setUp(() {
     getIt.registerSingleton<LogRepository>(_SilentLog());
@@ -231,6 +241,66 @@ void main() {
     expect(result.hasData, isFalse);
     expect(files.attempts, 1, reason: 'nothing more is asked after the reset');
     expect(messages.attached, isEmpty);
+  });
+
+  test('a fetch asked for while a reset runs is refused, not started into the wipe', () async {
+    final downloads = service(resetWait: const Duration(milliseconds: 300));
+    files.hold = Completer<void>(); // a download that does not end when stopped
+    unawaited(downloads.fetch(messageId: 'm1', attachment: attachment));
+    await pumpEventQueue();
+
+    final resetting = downloads.reset();
+    final asked = await downloads.fetch(
+      messageId: 'm2',
+      attachment: attachment.copyWith(id: 'f_other'),
+    );
+
+    expect(asked.exception, RepositoryException.connection);
+    expect(files.attempts, 1, reason: 'the second file was never asked for');
+    await resetting;
+    files.hold!.complete();
+  });
+
+  test('a reset waits a bounded time for a download that will not end - a logout waits on it', () async {
+    final downloads = service(resetWait: const Duration(milliseconds: 200));
+    files.hold = Completer<void>();
+    unawaited(downloads.fetch(messageId: 'm1', attachment: attachment));
+    await pumpEventQueue();
+    final watch = Stopwatch()..start();
+
+    await downloads.reset().timeout(const Duration(seconds: 5));
+
+    expect(watch.elapsed, lessThan(const Duration(seconds: 2)));
+    files.hold!.complete();
+  });
+
+  test('a path the store will not record still ends the download with the file, and a reset after it', () async {
+    // A throw here ended the download as a failure, and the reset waiting on
+    // it with it - skipping the wipe of the cache it was meant to protect.
+    messages.refuse = true;
+    final downloads = service();
+
+    final result = await downloads.fetch(messageId: 'm1', attachment: attachment);
+
+    expect(result.data, '/cache/f_big.bin', reason: 'the bytes are here; the next look finds them by file id');
+    await downloads.reset().timeout(const Duration(seconds: 5));
+  });
+
+  test('a listener that stopped listening hears nothing more, and the download goes on', () async {
+    final downloads = service();
+    files.hold = Completer<void>();
+    final heard = <double>[];
+    void screen(double share) => heard.add(share);
+    final running = downloads.fetch(messageId: 'm1', attachment: attachment, onProgress: screen);
+    await pumpEventQueue();
+    expect(heard, [0.3]);
+
+    downloads.stopListening(screen);
+    files.hold!.complete();
+    final result = await running;
+
+    expect(result.hasData, isTrue);
+    expect(heard, [0.3], reason: 'the closed screen is not kept alive by the download');
   });
 }
 

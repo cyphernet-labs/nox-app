@@ -5,6 +5,7 @@ import 'package:mockito/mockito.dart';
 import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/data/local/chat/chat_dao.dart';
 import 'package:nox_app/data/repository/app/auth_repository_impl.dart';
+import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
 import 'package:nox_app/data/sync/live_identity_handshake.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
@@ -177,6 +178,33 @@ void main() {
     await repository.logout();
 
     expect(order, ['reset', 'clean']);
+  });
+
+  test('logout empties the picture queue BEFORE it stops the downloads (phase 043)', () async {
+    // The other way round, the prefetch worker takes this identity's next
+    // picture the moment the current one is stopped, and starts it into the
+    // wipe.
+    final order = <String>[];
+    getIt
+      ..allowReassignment = true
+      ..registerSingleton<AttachmentDownloadService>(_RecordingDownloads(order))
+      ..registerSingleton<AttachmentPrefetchService>(_RecordingPrefetch(order));
+    when(files.clean()).thenAnswer((_) async => order.add('clean'));
+
+    await repository.logout();
+
+    expect(order, ['prefetch', 'reset', 'clean']);
+  });
+
+  test('downloads that fail to stop still let their cache go (phase 043)', () async {
+    getIt
+      ..allowReassignment = true
+      ..registerSingleton<AttachmentDownloadService>(_RecordingDownloads(<String>[], fail: true));
+
+    await repository.logout();
+
+    verify(files.clean()).called(1);
+    verify(messages.clean()).called(1);
   });
 
   test('logout takes the chats still waiting to be created with it, and their messages (phase 041, FR-021)', () async {
@@ -441,14 +469,31 @@ class _CapturingLog implements LogRepository {
   void error({Object? target, required Object error, StackTrace? stackTrace}) => lines.add(error.toString());
 }
 
-/// Records that every download was stopped, and when.
+/// Records that every download was stopped, and when - or fails to stop them.
 class _RecordingDownloads implements AttachmentDownloadService {
-  _RecordingDownloads(this.order);
+  _RecordingDownloads(this.order, {this.fail = false});
+
+  final List<String> order;
+  final bool fail;
+
+  @override
+  Future<void> reset() async {
+    if (fail) throw StateError('a download would not stop');
+    order.add('reset');
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// Records when the picture queue was emptied.
+class _RecordingPrefetch implements AttachmentPrefetchService {
+  _RecordingPrefetch(this.order);
 
   final List<String> order;
 
   @override
-  Future<void> reset() async => order.add('reset');
+  void reset() => order.add('prefetch');
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

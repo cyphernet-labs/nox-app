@@ -22,20 +22,35 @@ import 'package:nox_app/domain/service/session_phase_service.dart';
 /// however many times it breaks - only the server refusing does.
 @LazySingleton(as: AttachmentDownloadService, env: [Environment.dev, Environment.prod, Environment.test])
 class AttachmentDownloadServiceImpl implements AttachmentDownloadService {
-  AttachmentDownloadServiceImpl(this._files, this._messages, this._phase) : _ladder = RetryLadder(), _pauseFor = null;
+  AttachmentDownloadServiceImpl(this._files, this._messages, this._phase)
+    : _ladder = RetryLadder(),
+      _pauseFor = null,
+      _resetWait = defaultResetWait;
 
   /// [pause] stands in for the ladder's pause, so a test does not sit out
-  /// thirty seconds per attempt.
+  /// thirty seconds per attempt; [resetWait] for the bound on a reset.
   @visibleForTesting
-  AttachmentDownloadServiceImpl.forTest(this._files, this._messages, this._phase, {required Duration Function(int attempts) pause})
-    : _ladder = RetryLadder(),
-      _pauseFor = pause;
+  AttachmentDownloadServiceImpl.forTest(
+    this._files,
+    this._messages,
+    this._phase, {
+    required Duration Function(int attempts) pause,
+    this._resetWait = defaultResetWait,
+  }) : _ladder = RetryLadder(),
+       _pauseFor = pause;
+
+  /// How long a reset waits for the downloads it stopped to finish. Bounded,
+  /// because a logout waits on it: a download caught between two steps ends
+  /// at its next one, and the repository makes sure that whatever it does
+  /// after the reset, it writes nothing.
+  static const Duration defaultResetWait = Duration(seconds: 5);
 
   final FileRepository _files;
   final MessageRepository _messages;
   final SessionPhaseService _phase;
   final RetryLadder _ladder;
   final Duration Function(int attempts)? _pauseFor;
+  final Duration _resetWait;
 
   /// Downloads under way, by file id: one per file, joined by everyone who
   /// asks for it while it runs.
@@ -48,8 +63,15 @@ class AttachmentDownloadServiceImpl implements AttachmentDownloadService {
   /// step instead of writing into what the reset is wiping.
   int _generation = 0;
 
+  /// Set while a [reset] runs: a download asked for then belongs to the world
+  /// being wiped, and starting it would write into that wipe.
+  bool _resetting = false;
+
   @override
   Future<RepositoryResult<String>> fetch({String? messageId, required MessageAttachment attachment, TransferFraction? onProgress}) {
+    if (_resetting) {
+      return Future<RepositoryResult<String>>.value(RepositoryResult<String>.error(exception: RepositoryException.connection));
+    }
     final running = _downloads[attachment.id];
     if (running != null) {
       running.join(messageId, onProgress);
@@ -81,7 +103,14 @@ class AttachmentDownloadServiceImpl implements AttachmentDownloadService {
         // Recorded here, not by whoever asked: the file view may be long
         // closed, and the thumbnail and Save still have to find the bytes.
         for (final messageId in download.messageIds) {
-          await _messages.attachLocalFile(messageId: messageId, localPath: path);
+          try {
+            await _messages.attachLocalFile(messageId: messageId, localPath: path);
+          } catch (error, stackTrace) {
+            // The bytes are here all the same, and the next look finds them by
+            // file id. A throw would end this download as a failure - and a
+            // reset waiting on it with it.
+            logRepository.error(target: this, error: error, stackTrace: stackTrace);
+          }
         }
         return result;
       }
@@ -141,15 +170,33 @@ class AttachmentDownloadServiceImpl implements AttachmentDownloadService {
   }
 
   @override
-  Future<void> reset() async {
-    _generation++;
-    for (final pause in List<Completer<void>>.of(_pauses)) {
-      if (!pause.isCompleted) pause.complete();
+  void stopListening(TransferFraction onProgress) {
+    for (final download in _downloads.values) {
+      download.leave(onProgress);
     }
-    await _files.cancelTransfers();
-    final running = [for (final download in _downloads.values) download.result];
-    await Future.wait(running);
-    _downloads.clear();
+  }
+
+  @override
+  Future<void> reset() async {
+    _resetting = true;
+    try {
+      _generation++;
+      for (final pause in List<Completer<void>>.of(_pauses)) {
+        if (!pause.isCompleted) pause.complete();
+      }
+      await _files.cancelTransfers();
+      final running = [for (final download in _downloads.values) download.result];
+      await Future.wait(running).timeout(
+        _resetWait,
+        onTimeout: () {
+          logRepository.debug(target: this, message: 'download: a stopped download did not end within the reset wait');
+          return const <RepositoryResult<String>>[];
+        },
+      );
+    } finally {
+      _downloads.clear();
+      _resetting = false;
+    }
   }
 }
 
@@ -172,6 +219,8 @@ class _Download {
     final last = _last;
     if (last != null) listener(last);
   }
+
+  void leave(TransferFraction listener) => _listeners.remove(listener);
 
   void report(double fraction) {
     _last = fraction;

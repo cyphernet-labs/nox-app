@@ -191,6 +191,49 @@ void main() {
     expect(mostAtOnce, 1);
     expect(order, ['fa', 'fb', 'fc'], reason: 'each picture once, in the order asked');
   });
+
+  test('a reset empties the queue: the worker does not start the next picture of the identity that left', () async {
+    // Reset before the downloads stop (logout, a change of server): otherwise
+    // the worker takes the next picture the moment the current one ends, and
+    // starts it into the wipe.
+    final held = Completer<RepositoryResult<String>>();
+    final asked = <String>[];
+    whenFetched().thenAnswer((invocation) {
+      asked.add((invocation.namedArguments[#attachment] as MessageAttachment).id);
+      return held.future;
+    });
+    final service = AttachmentPrefetchService(downloads, _Phase(SessionPhase.live), AttachmentTransferServiceImpl());
+    final running = service.prefetch([image('a', fileId: 'fa'), image('b', fileId: 'fb')]);
+    await pumpEventQueue();
+
+    service.reset();
+    held.complete(const RepositoryResult<String>.error(exception: RepositoryException.connection));
+    await running;
+
+    expect(asked, ['fa']);
+  });
+
+  test('what a fetch of the identity that left learned is not remembered for the next one', () async {
+    // The same server signed in to again hands out the same message ids: a
+    // picture the stopped fetch marked as given up on would never be fetched
+    // for the next identity until the channel came back.
+    final held = Completer<RepositoryResult<String>>();
+    var calls = 0;
+    whenFetched().thenAnswer((_) {
+      calls++;
+      return calls == 1 ? held.future : Future<RepositoryResult<String>>.value(const RepositoryResult<String>.success(data: '/tmp/p.png'));
+    });
+    final service = AttachmentPrefetchService(downloads, _Phase(SessionPhase.live), AttachmentTransferServiceImpl());
+    final stopped = service.prefetch([image('m1')]);
+    await pumpEventQueue();
+
+    service.reset();
+    held.complete(const RepositoryResult<String>.error(exception: RepositoryException.connection));
+    await stopped;
+    await service.prefetch([image('m1')]);
+
+    expect(calls, 2, reason: 'asked for again by the next identity');
+  });
 }
 
 class _Phase implements SessionPhaseService {

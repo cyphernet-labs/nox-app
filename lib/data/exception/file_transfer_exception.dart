@@ -22,6 +22,24 @@ enum FileTransferFailure {
 
   /// The channel broke. Retryable like any other connection failure.
   connection,
+
+  /// The path changed while the bytes were going (phase 043): the transfer
+  /// ended with the old one, and the rest can go at once by the new one - no
+  /// pause, nothing counted. A change of path is not a fault of the transfer.
+  pathChanged,
+
+  /// The server answered, and the answer was no use: a 5xx, a status the
+  /// contract does not name, a body whose size cannot be told. Not a broken
+  /// link - the server is there and said something - so it counts towards
+  /// giving up, as a refusal of `message.send` does; until then the next
+  /// attempt goes on from what is already there.
+  serverError,
+
+  /// The file on this device cannot be read: removed, locked by another
+  /// program, or no longer permitted - a sandbox forgets a picked file when
+  /// the app restarts. No retry reads it, so the message is done; letting it
+  /// count as a broken link held the whole queue behind it for good.
+  sourceUnreadable,
 }
 
 class FileTransferException implements Exception {

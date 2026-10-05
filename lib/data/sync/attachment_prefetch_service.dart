@@ -64,6 +64,10 @@ class AttachmentPrefetchService {
 
   Future<void>? _worker;
 
+  /// Raised by every [reset]. A fetch that ends after it belongs to the
+  /// identity that left: what it learned is not the next one's to remember.
+  int _generation = 0;
+
   /// Queues anything in [messages] that needs fetching. Safe to call on every
   /// tick. [retryNow] gives the pictures the automation gave up on another go:
   /// the channel has just come back, which is the moment that deserves one.
@@ -100,15 +104,18 @@ class AttachmentPrefetchService {
   Future<void> _work() async {
     while (_queue.isNotEmpty) {
       final message = _queue.removeAt(0);
+      final generation = _generation;
       try {
-        await _fetch(message);
+        await _fetch(message, generation);
       } finally {
-        _wanted.remove(message.id);
+        // The id may be queued again by now - the same server signed in to
+        // again - and that mark is not this fetch's to take away.
+        if (generation == _generation) _wanted.remove(message.id);
       }
     }
   }
 
-  Future<void> _fetch(MessageModel message) async {
+  Future<void> _fetch(MessageModel message, int generation) async {
     final attachment = message.attachment!;
     _transfers.begin(message.id, TransferDirection.download, chatId: message.chatId);
     try {
@@ -117,7 +124,7 @@ class AttachmentPrefetchService {
         attachment: attachment,
         onProgress: (fraction) => _transfers.report(message.id, fraction),
       );
-      if (result.hasData) return;
+      if (result.hasData || generation != _generation) return;
       // A refusal the bytes will never survive is worth remembering for good;
       // a server that kept refusing waits for the channel to come back.
       if (result.exception == RepositoryException.attachmentGone || result.exception == RepositoryException.notFound) {
@@ -128,7 +135,7 @@ class AttachmentPrefetchService {
     } catch (error, stackTrace) {
       // A picture nobody asked for is not worth surfacing: the placeholder
       // stays, and a tap still offers the real thing.
-      _exhausted.add(message.id);
+      if (generation == _generation) _exhausted.add(message.id);
       logRepository.error(target: this, error: error, stackTrace: stackTrace);
     } finally {
       _transfers.end(message.id);
@@ -136,8 +143,11 @@ class AttachmentPrefetchService {
   }
 
   /// Forgets what was tried (logout, or a change of server). The next identity
-  /// starts with no memory of this one's files.
+  /// starts with no memory of this one's files - and the queue empties BEFORE
+  /// the downloads are stopped, or the worker would take the next picture of
+  /// the old world the moment the current one ends.
   void reset() {
+    _generation++;
     _queue.clear();
     _wanted.clear();
     _hopeless.clear();

@@ -41,6 +41,20 @@ class FileViewBloc extends BaseBloc<FileViewEvent, FileViewState> {
   /// last byte arrived (phase 043).
   final String? messageId;
 
+  /// What this screen handed the download to hear its progress by. Taken back
+  /// when the screen closes: the download outlives it - through Tor, by tens
+  /// of minutes - and would otherwise keep the closed screen alive with it,
+  /// one more for every time the file is opened.
+  TransferFraction? _listening;
+
+  @override
+  Future<void> close() {
+    final listening = _listening;
+    _listening = null;
+    if (listening != null) _downloads.stopListening(listening);
+    return super.close();
+  }
+
   Future<void> _onStarted(FileViewEvent event, Emitter<FileViewState> emit) async {
     // Everything below can throw — a directory query on a locked volume, a
     // filesystem error. Unguarded, the screen would sit at "Downloading… 0%"
@@ -95,15 +109,15 @@ class FileViewBloc extends BaseBloc<FileViewEvent, FileViewState> {
     // stop the bytes, and opening it again joins the same download where it
     // stands. A broken link only pauses it - this screen hears an error only
     // when the automation gave up, which is when Try again means something.
-    final result = await _downloads.fetch(
-      messageId: messageId,
-      attachment: file,
-      onProgress: (fraction) {
-        if (isClosed) return;
-        final live = state;
-        if (live.status == FileViewStatus.downloading) emit(live.copyWith(progress: fraction));
-      },
-    );
+    void heard(double fraction) {
+      if (isClosed) return;
+      final live = state;
+      if (live.status == FileViewStatus.downloading) emit(live.copyWith(progress: fraction));
+    }
+
+    _listening = heard;
+    final result = await _downloads.fetch(messageId: messageId, attachment: file, onProgress: heard);
+    if (identical(_listening, heard)) _listening = null;
 
     result.match<void>(
       onData: (path) {

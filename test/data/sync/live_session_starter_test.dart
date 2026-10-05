@@ -14,6 +14,7 @@ import 'package:nox_app/data/remote/pinned_http_client.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/repository/app/session_repository_impl.dart';
 import 'package:nox_app/data/service/tor/fake_tor_service.dart';
+import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
 import 'package:nox_app/data/sync/connection/access_key_registrar.dart';
 import 'package:nox_app/data/sync/connection/connection_path_selector.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
@@ -360,6 +361,24 @@ void main() {
 
         expect(downloads.cacheStillThereAtReset, isTrue, reason: 'stopped first, then the cache goes');
         expect(sentinel.existsSync(), isFalse);
+      });
+
+      test('another world empties the picture queue before it stops the downloads, and a failed stop still lets the cache go', () async {
+        await paired();
+        await getIt<SyncRepository>().setEpoch('fp:$kPinB');
+        final cache = Directory('${(await getApplicationCacheDirectory()).path}/nox_attachments')..createSync(recursive: true);
+        final sentinel = File('${cache.path}/f_old.bin')..writeAsBytesSync([1]);
+        final order = <String>[];
+        getIt.allowReassignment = true;
+        getIt
+          ..registerSingleton<AttachmentDownloadService>(_FailingDownloads(order))
+          ..registerSingleton<AttachmentPrefetchService>(_OrderedPrefetch(order));
+
+        await starter.start();
+        await settle();
+
+        expect(order, ['prefetch', 'downloads'], reason: 'the worker must not start the old world\'s next picture into the wipe');
+        expect(sentinel.existsSync(), isFalse, reason: 'a stop that failed does not keep the old world\'s bytes');
       });
 
       test('another world takes a chat still waiting to be created with it (phase 041, FR-021)', () async {
@@ -736,6 +755,35 @@ class _CacheWatchingDownloads implements AttachmentDownloadService {
 
   @override
   Future<void> reset() async => cacheStillThereAtReset = sentinel.existsSync();
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// Notes that it was asked to stop every download, then fails to.
+class _FailingDownloads implements AttachmentDownloadService {
+  _FailingDownloads(this.order);
+
+  final List<String> order;
+
+  @override
+  Future<void> reset() async {
+    order.add('downloads');
+    throw StateError('a download would not stop');
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// Notes when the picture queue was emptied.
+class _OrderedPrefetch implements AttachmentPrefetchService {
+  _OrderedPrefetch(this.order);
+
+  final List<String> order;
+
+  @override
+  void reset() => order.add('prefetch');
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:nox_app/data/entity/base/response_entity.dart';
 import 'package:nox_app/data/entity/file/upload_ticket_wire_entity.dart';
+import 'package:nox_app/domain/model/file/transfer_cancellation.dart';
 
 /// Reports how much of a transfer has happened, so a determinate progress bar
 /// can exist at all. Without it the screen could only show "working", and the
@@ -31,8 +32,16 @@ abstract class FileRemoteDataSource {
   /// server already holds every byte and only has to be told the upload is
   /// complete. Whatever arrives stays on the server, so a broken transfer is
   /// continued, not repeated. Ends with a connection failure once no byte has
-  /// moved for the stall limit.
-  Future<void> putBytes({required String uploadPath, required File file, required int offset, TransferProgress? onProgress});
+  /// moved for the stall limit, or once [cancellation] is cancelled; with a
+  /// path change when the path changed under it; and with an unreadable source
+  /// before anything goes out when the file cannot be read.
+  Future<void> putBytes({
+    required String uploadPath,
+    required File file,
+    required int offset,
+    TransferProgress? onProgress,
+    TransferCancellation? cancellation,
+  });
 
   Future<ResponseEntity<DownloadTicketWireEntity>> downloadBegin({required String fileId});
 

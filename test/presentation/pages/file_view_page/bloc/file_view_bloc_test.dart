@@ -113,6 +113,21 @@ void main() {
     },
   );
 
+  test('closing the screen takes back what it listened by - the download outlives it, and must not keep it alive', () async {
+    TransferFraction? handed;
+    whenFetched().thenAnswer((invocation) {
+      handed = invocation.namedArguments[#onProgress] as TransferFraction?;
+      return Completer<RepositoryResult<String>>().future; // still at it
+    });
+    final bloc = FileViewBloc(file: attachment)..add(const FileViewEvent.started());
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(handed, isNotNull);
+
+    await bloc.close();
+
+    verify(downloads.stopListening(argThat(same(handed)))).called(1);
+  });
+
   blocTest<FileViewBloc, FileViewState>(
     'the download is asked for on behalf of the message, so the bytes land there with the screen closed',
     setUp: () => answerDownload(const RepositoryResult<String>.success(data: '/tmp/f1.pdf')),

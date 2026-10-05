@@ -89,10 +89,18 @@ void main() {
     expect(client.dio.interceptors.whereType<AuthInterceptor>().length, 1);
   });
 
-  test('one client serves both transports, so there is one pin and one TLS session', () {
+  test('each transport keeps one client of its own for the process, and a new pin replaces both', () {
     final pinned = PinnedHttpClient();
-    final first = pinned.client;
-    expect(identical(pinned.client, first), isTrue, reason: 'a client per use would leak one on every reconnect');
+    final socket = pinned.client;
+    final bytes = pinned.transferClient;
+    expect(identical(pinned.client, socket), isTrue, reason: 'a client per use would leak one on every reconnect');
+    expect(identical(pinned.transferClient, bytes), isTrue);
+    expect(identical(socket, bytes), isFalse, reason: 'what Dio sets on its client must not reach the socket');
+
+    pinned.pinTo('another machine');
+
+    expect(identical(pinned.client, socket), isFalse, reason: 'a connection to the old machine is never re-checked');
+    expect(identical(pinned.transferClient, bytes), isFalse);
   });
 
   group('the transfer generation (phase 043)', () {
@@ -140,24 +148,56 @@ void main() {
     });
   });
 
+  group('the socket and the transfers apart (phase 043)', () {
+    late HttpOverrides? saved;
+    setUpAll(() {
+      saved = HttpOverrides.current;
+      HttpOverrides.global = null;
+    });
+    tearDownAll(() => HttpOverrides.global = saved);
+
+    test('a transfer leaves the socket its own connect budget', () async {
+      // Dio writes its connect timeout onto the client it is given, on every
+      // request, and the socket dials through that same setting: one transfer
+      // at home cut the socket's next dial through Tor at Dio's 30 s instead
+      // of its own 45.
+      final server = await _honest();
+      addTearDown(() => server.close(force: true));
+      final pinned = PinnedHttpClient()..pinTo(_fingerprint);
+      final api = ApiClient(_FakeConfig(null), pinned)..initBase(address: 'https://127.0.0.1:${server.port}');
+
+      final response = await api.dio.get<String>('/anything');
+
+      expect(response.statusCode, HttpStatus.ok);
+      expect(pinned.client.connectionTimeout, isNull, reason: 'the socket bounds its own dial');
+      expect(pinned.transferClient.connectionTimeout, api.dio.options.connectTimeout, reason: 'it went by the transfers\' client');
+    });
+  });
+
   group('a change of path (phase 043, FR-008)', () {
     test('a new address ends the transfers on the old one', () {
       final api = ApiClient(_FakeConfig(null), PinnedHttpClient())..initBase(address: '10.0.0.5:9000');
       final under = api.beginTransfer();
 
+      final before = api.pathGeneration;
+
       api.initBase(address: 'abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwx.onion:443');
 
       expect(under.isCancelled, isTrue, reason: 'it continues on the new path at once, not after the stall limit');
+      expect(api.pathGeneration, before + 1, reason: 'so the transfer it ended can tell why');
     });
 
     test('the same address ends nothing - a transfer on a path still in use goes on', () {
       final api = ApiClient(_FakeConfig(null), PinnedHttpClient())..initBase(address: '10.0.0.5:9000');
       final under = api.beginTransfer();
 
+      final before = api.pathGeneration;
+
       api.initBase(address: '10.0.0.5:9000');
       api.initBase(address: 'https://10.0.0.5:9000');
 
       expect(under.isCancelled, isFalse);
+      expect(api.pathGeneration, before);
     });
 
     test('the first address ends nothing', () {

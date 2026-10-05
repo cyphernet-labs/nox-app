@@ -25,6 +25,7 @@ import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
 import 'package:nox_app/domain/model/file/attachment_transfer.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
+import 'package:nox_app/domain/model/file/transfer_cancellation.dart';
 import 'package:nox_app/domain/model/file/unfinished_upload.dart';
 import 'package:nox_app/domain/model/chat/message_status.dart';
 import 'package:nox_app/domain/model/chat/outbox_status.dart';
@@ -85,6 +86,9 @@ class _FakeFiles implements FileRepository {
   /// The share already on "the server", reported as soon as it answers.
   double? alreadyThere;
 
+  /// How the queue could end the last upload it asked for.
+  TransferCancellation? lastCancellation;
+
   @override
   Future<RepositoryResult<String>> upload({
     required String path,
@@ -92,9 +96,11 @@ class _FakeFiles implements FileRepository {
     UnfinishedUpload? from,
     Future<void> Function(UnfinishedUpload? upload)? onUnfinished,
     TransferFraction? onProgress,
+    TransferCancellation? cancellation,
   }) async {
     uploads++;
     continuedFrom.add(from);
+    lastCancellation = cancellation;
     final named = names;
     if (named != null) await onUnfinished?.call(named);
     final share = alreadyThere;
@@ -597,6 +603,29 @@ void main() {
       expect(published.every((m) => m.isEmpty), isTrue);
     });
 
+    test('a message thrown away while its file goes up ends the upload, and the next message goes at once (phase 043)', () async {
+      // The queue is one strictly ordered line: an upload nobody wanted any
+      // more held every later message for as long as its bytes kept going -
+      // through Tor, tens of minutes.
+      final entry = (await outbox.enqueue(chatId: 'c1', text: null, attachment: picked())).data!;
+      final behind = (await outbox.enqueue(chatId: 'c1', text: 'behind it')).data!;
+      final uploading = Completer<void>();
+      files.failure = RepositoryException.connection; // what an ended transfer reports
+      files.duringUpload = () async {
+        uploading.complete();
+        await files.lastCancellation!.whenCancelled; // goes on until ended from outside
+      };
+
+      final pass = service.flush();
+      await uploading.future;
+      await service.discard(clientMessageId: entry.clientMessageId);
+      await pass.timeout(const Duration(seconds: 5));
+
+      expect(files.lastCancellation!.isCancelled, isTrue);
+      expect(sentKeys, [behind.clientMessageId], reason: 'in the same pass - no pause on a message that is gone');
+      expect(await outbox.pending(), isEmpty);
+    });
+
     test('a message discarded during the upload is not sent', () async {
       // Phase 027 re-reads right before sending so a discard is honoured; an
       // upload stretches that window from milliseconds to minutes.
@@ -951,6 +980,23 @@ void main() {
 
     expect(sentKeys, contains(fresh.clientMessageId), reason: 'a pause must not outlive its reason');
     expect(await outbox.pending(), isEmpty);
+  });
+
+  test('throwing away the message a pause waits on lets the rest go at once', () async {
+    failures['head'] = RepositoryException.internal;
+    final keys = await enqueue(['head', 'next']);
+    await service.flush(); // refused: the queue waits out a pause on it
+    expect(sentKeys, [keys[0]]);
+
+    await service.discard(clientMessageId: keys[0]);
+    // Well inside the shortest pause (0.8 s): the rest went because of the
+    // discard, not because the pause ran out.
+    for (var i = 0; i < 40 && !sentKeys.contains(keys[1]); i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+
+    expect(sentKeys, contains(keys[1]));
+    expect(await outbox.watchQueue().first, isEmpty);
   });
 
   test('a discard landing mid-pass is honoured — the message is not sent', () async {

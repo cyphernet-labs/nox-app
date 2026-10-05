@@ -13,6 +13,7 @@ import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/app_config/app_flavor_type.dart';
 import 'package:nox_app/domain/model/app_config/server_limits.dart';
+import 'package:nox_app/domain/model/file/transfer_cancellation.dart';
 import 'package:nox_app/domain/model/file/unfinished_upload.dart';
 import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
 import 'package:nox_app/domain/repository/log_repository.dart';
@@ -35,8 +36,14 @@ class _FakeSource implements FileRemoteDataSource {
   /// The version of the file "the server" holds - its Last-Modified.
   String serverVersion = 'v1';
 
-  /// The next GET breaks after this many bytes of its body.
+  /// The next GET breaks after this many bytes of its body...
   int? breakAfter;
+
+  /// ...the way this says: a broken link, or a path that changed under it.
+  FileTransferFailure breakWith = FileTransferFailure.connection;
+
+  /// Holds the next download's request for a pass until completed.
+  Completer<void>? holdBegin;
 
   /// Failures for the coming GETs, one each, in order.
   final List<FileTransferFailure> getFailures = <FileTransferFailure>[];
@@ -97,7 +104,13 @@ class _FakeSource implements FileRemoteDataSource {
   }
 
   @override
-  Future<void> putBytes({required String uploadPath, required File file, required int offset, TransferProgress? onProgress}) async {
+  Future<void> putBytes({
+    required String uploadPath,
+    required File file,
+    required int offset,
+    TransferProgress? onProgress,
+    TransferCancellation? cancellation,
+  }) async {
     puts++;
     offsets.add(offset);
     log.add('put:$offset');
@@ -127,6 +140,9 @@ class _FakeSource implements FileRemoteDataSource {
   @override
   Future<ResponseEntity<DownloadTicketWireEntity>> downloadBegin({required String fileId}) async {
     downloadBegins++;
+    final held = holdBegin;
+    holdBegin = null;
+    if (held != null) await held.future;
     final code = downloadErrorCode;
     if (code != null) {
       return ResponseEntity<DownloadTicketWireEntity>(
@@ -150,6 +166,8 @@ class _FakeSource implements FileRemoteDataSource {
     final body = bytesToReturn.sublist(rest ? offset : 0);
     final cut = breakAfter;
     breakAfter = null;
+    final cutWith = breakWith;
+    breakWith = FileTransferFailure.connection;
     final hold = holdDownload;
     Stream<List<int>> bytes() async* {
       onFirstBytes?.call();
@@ -161,7 +179,7 @@ class _FakeSource implements FileRemoteDataSource {
       }
       if (cut != null) {
         yield body.sublist(0, cut);
-        throw const FileTransferException(FileTransferFailure.connection);
+        throw FileTransferException(cutWith);
       }
       yield body;
     }
@@ -257,15 +275,37 @@ void main() {
       expect(shares.last, 1.0);
     });
 
-    test('a fingerprint kept to the millisecond still matches the source after a restart', () async {
-      // The platform reports microseconds and the record keeps milliseconds:
-      // compared exactly, every file would look changed after a restart.
-      final from = await fingerprintOf(file, 'f_77');
+    test('a fingerprint is the same instant to the millisecond, however it is written down', () async {
+      // The record keeps milliseconds since the epoch, in UTC. `DateTime ==`
+      // compares the time zone too, and anything below a millisecond a
+      // platform reports: compared that way, a file that never changed would
+      // look changed after a restart.
+      final stat = await file.stat();
+      final ms = stat.modified.millisecondsSinceEpoch;
       source.held['f_77'] = 2;
 
-      final result = await repository.upload(path: file.path, mime: 'application/octet-stream', from: from);
+      final inUtc = await repository.upload(
+        path: file.path,
+        mime: 'application/octet-stream',
+        from: UnfinishedUpload(
+          fileId: 'f_77',
+          sourceSize: stat.size,
+          sourceModifiedAt: DateTime.fromMillisecondsSinceEpoch(ms, isUtc: true),
+        ),
+      );
+      source.held['f_77'] = 2;
+      final finer = await repository.upload(
+        path: file.path,
+        mime: 'application/octet-stream',
+        from: UnfinishedUpload(
+          fileId: 'f_77',
+          sourceSize: stat.size,
+          sourceModifiedAt: DateTime.fromMicrosecondsSinceEpoch(ms * 1000 + 600),
+        ),
+      );
 
-      expect(result.data, 'f_77');
+      expect(inUtc.data, 'f_77');
+      expect(finer.data, 'f_77');
     });
 
     test('an upload the server no longer has starts over in the same attempt, without an error (FR-004)', () async {
@@ -408,6 +448,79 @@ void main() {
       expect(result.exception, RepositoryException.notFound);
       expect(source.begins, 0, reason: 'nothing to declare');
       expect(lines.where((line) => line.contains(file.path)), isEmpty, reason: 'the path carries the file name (FR-016)');
+    });
+
+    test('a file that is there but cannot be read fails before anything is declared, and its path is never logged', () async {
+      // A sandbox forgets a picked file when the app restarts and still lets
+      // its size be read: fingerprinted alone, it was declared, and its bytes
+      // then failed as a broken link would - for good, holding the queue.
+      final lines = <String>[];
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<LogRepository>(_CapturingLog(lines));
+      Process.runSync('chmod', ['000', file.path]);
+      addTearDown(() => Process.runSync('chmod', ['644', file.path]));
+      try {
+        await file.open().then((f) => f.close());
+        markTestSkipped('this user can read a file nobody may read');
+        return;
+      } on FileSystemException {
+        // As it should be.
+      }
+
+      final result = await repository.upload(path: file.path, mime: 'application/octet-stream');
+
+      expect(result.exception, RepositoryException.notFound, reason: 'terminal: no retry reads it');
+      expect(source.begins, 0);
+      expect(lines.where((line) => line.contains(file.path)), isEmpty, reason: 'FR-016');
+    });
+
+    test('a source that stops being readable once the upload is under way is notFound too', () async {
+      source.putFailures.add(FileTransferFailure.sourceUnreadable);
+
+      final result = await repository.upload(path: file.path, mime: 'application/octet-stream');
+
+      expect(result.exception, RepositoryException.notFound);
+    });
+
+    test('a server answering with what the contract does not name is internal, which the queue counts', () async {
+      source.putFailures.add(FileTransferFailure.serverError);
+
+      final result = await repository.upload(path: file.path, mime: 'application/octet-stream');
+
+      expect(result.exception, RepositoryException.internal);
+    });
+
+    test('a change of path under the bytes is no failure: the rest goes at once, in the same call (FR-008)', () async {
+      // Whatever arrived by the old path stays on the server; a pause before
+      // going on would wait out a reason that no longer exists.
+      source.duringPut = () async => source.held['f_1'] = 2;
+      source.putFailures.add(FileTransferFailure.pathChanged);
+
+      final result = await repository.upload(path: file.path, mime: 'application/octet-stream');
+
+      expect(result.data, 'f_1');
+      expect(source.continued, [null, 'f_1'], reason: 'the same upload, continued');
+      expect(source.offsets, [0, 2], reason: 'from what the server had');
+    });
+
+    test('a path that keeps changing is a broken link after all', () async {
+      source.putFailures.addAll(List<FileTransferFailure>.filled(10, FileTransferFailure.pathChanged));
+
+      final result = await repository.upload(path: file.path, mime: 'application/octet-stream');
+
+      expect(result.exception, RepositoryException.connection, reason: 'the caller pauses, and nothing is counted');
+      expect(source.puts, lessThan(10));
+    });
+
+    test('an upload thrown away before its bytes go sends none of them', () async {
+      final result = await repository.upload(
+        path: file.path,
+        mime: 'application/octet-stream',
+        cancellation: TransferCancellation()..cancel(),
+      );
+
+      expect(result.exception, RepositoryException.connection);
+      expect(source.puts, 0);
     });
 
     test('a file over the limit is refused before a byte moves (FR-013)', () async {
@@ -577,6 +690,67 @@ void main() {
       await repository.cancelTransfers();
 
       expect(source.cancels, 1);
+    });
+
+    test('a change of path in the middle of the body is no failure: the rest comes at once, in the same call (FR-008)', () async {
+      source
+        ..breakAfter = 2
+        ..breakWith = FileTransferFailure.pathChanged;
+
+      final result = await repository.download(fileId: 'f_1', suggestedName: 'x.bin', expectedSize: 4);
+
+      expect(File(result.data!).readAsBytesSync(), [1, 2, 3, 4]);
+      expect(source.gets, [(0, null), (2, 'v1')], reason: 'only the rest, by the new path');
+    });
+
+    test('a change of path before the body is asked again at once', () async {
+      source.getFailures.add(FileTransferFailure.pathChanged);
+
+      final result = await repository.download(fileId: 'f_1', suggestedName: 'x.bin');
+
+      expect(result.hasData, isTrue);
+      expect(source.downloadBegins, 2);
+    });
+
+    test('a server answering with what the contract does not name is internal, counted towards giving up', () async {
+      source.getFailures.add(FileTransferFailure.serverError);
+
+      final result = await repository.download(fileId: 'f_1', suggestedName: 'x.bin');
+
+      expect(result.exception, RepositoryException.internal);
+    });
+
+    test('a part the disk will not take lets the bytes go, and the attempt ends at once', () async {
+      // Unreleased, the connection stayed open behind an attempt that had
+      // already failed - and its transfer was never handed back.
+      final destination = await cached('f_1', 'bin');
+      Directory('${destination.path}.part').createSync(recursive: true);
+      addTearDown(() => Directory('${destination.path}.part').existsSync() ? Directory('${destination.path}.part').deleteSync() : null);
+
+      final result = await repository.download(fileId: 'f_1', suggestedName: 'x.bin').timeout(const Duration(seconds: 5));
+
+      expect(result.hasData, isFalse);
+      expect(source.abandoned, 1);
+    });
+
+    test('a download caught between two steps by a reset writes nothing after it', () async {
+      // Asking for a pass has no transfer to end: without the check it went on
+      // to write into a cache just emptied for somebody else.
+      source.holdBegin = Completer<void>();
+      final hold = source.holdBegin!;
+      final running = repository.download(fileId: 'f_1', suggestedName: 'x.bin');
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      await repository.cancelTransfers();
+      await repository.clean();
+      hold.complete();
+      final result = await running;
+
+      expect(result.exception, RepositoryException.connection);
+      final destination = await cached('f_1', 'bin');
+      expect(destination.existsSync(), isFalse);
+      expect(File('${destination.path}.part').existsSync(), isFalse);
+      expect(source.gets, isEmpty, reason: 'the bytes were not even asked for');
     });
 
     test('clean removes the cache, half-downloaded files and their versions too (FR-017)', () async {

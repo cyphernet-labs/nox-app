@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
+import 'package:flutter/foundation.dart';
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/remote/interceptor/auth_interceptor.dart';
 import 'package:nox_app/data/remote/pinned_http_client.dart';
@@ -43,6 +44,19 @@ class ApiClient {
 
   void endTransfer(CancelToken token) => _transfers.remove(token);
 
+  /// How many transfers have begun and not been handed back - for a test that
+  /// a path ending in a failure still hands its transfer back.
+  @visibleForTesting
+  int get transfersUnderWay => _transfers.length;
+
+  /// Raised every time [initBase] moves the bytes to another address (phase
+  /// 043). A transfer that ends with a different value than it began with
+  /// ended because its path did, and goes on at once by the new one: the
+  /// reason it broke is already gone, and a retry pause would only make it
+  /// wait for nothing.
+  int get pathGeneration => _pathGeneration;
+  int _pathGeneration = 0;
+
   /// Ends every byte transfer under way. A transfer started after this call is
   /// not touched by it.
   void cancelTransfers() {
@@ -71,7 +85,12 @@ class ApiClient {
     // other way, and the old way is gone or about to be - away from home its
     // packets go nowhere, and only the stall limit would ever notice. Ended
     // now, every transfer on it goes on from where it stopped, by the new path.
-    if (previous.isNotEmpty && previous != dio.options.baseUrl) cancelTransfers();
+    if (previous.isNotEmpty && previous != dio.options.baseUrl) {
+      // Raised BEFORE the transfers end, so each one that ends here can tell
+      // why it did.
+      _pathGeneration++;
+      cancelTransfers();
+    }
     _installAdapter();
     // Dio's adapter asks for a client ONCE and caches it, so it would keep the
     // one that was thrown away when the pin changed - and every attachment
@@ -82,9 +101,15 @@ class ApiClient {
     }
   }
 
-  /// Points Dio at the shared, checked client. A fresh adapter each time,
-  /// because that is the only way to clear the one it caches.
+  /// Points Dio at the checked client kept for the bytes. A fresh adapter each
+  /// time, because that is the only way to clear the one it caches.
+  ///
+  /// The transfers' own client, not the socket's: Dio writes its connect
+  /// timeout onto the client it is given, on every request, and the socket
+  /// dials through that same setting - after one transfer at home, the
+  /// socket's next dial through Tor was cut at Dio's 30 s instead of its own
+  /// 45.
   void _installAdapter() {
-    dio.httpClientAdapter = IOHttpClientAdapter(createHttpClient: () => _pinned.client);
+    dio.httpClientAdapter = IOHttpClientAdapter(createHttpClient: () => _pinned.transferClient);
   }
 }

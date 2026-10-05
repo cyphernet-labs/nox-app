@@ -21,7 +21,12 @@ abstract class AttachmentDownloadService {
   /// times in a row. The path is recorded against [messageId] when given.
   Future<RepositoryResult<String>> fetch({String? messageId, required MessageAttachment attachment, TransferFraction? onProgress});
 
+  /// Stops telling [onProgress] how far a download has got - its screen closed.
+  /// The download itself goes on.
+  void stopListening(TransferFraction onProgress);
+
   /// Stops every download and waits until each has (logout, change of server):
-  /// nothing may write into a cache that is about to be wiped.
+  /// nothing may write into a cache that is about to be wiped. A fetch asked
+  /// for while it runs is refused rather than started.
   Future<void> reset();
 }

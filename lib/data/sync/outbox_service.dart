@@ -12,9 +12,11 @@ import 'package:nox_app/domain/model/chat/outbox_status.dart';
 import 'package:nox_app/domain/model/chat/pending_chat_creation.dart';
 import 'package:nox_app/domain/model/file/attachment_transfer.dart';
 import 'package:nox_app/domain/model/file/mime_types.dart';
+import 'package:nox_app/domain/model/file/transfer_cancellation.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/service/attachment_transfer_service.dart';
@@ -88,6 +90,10 @@ class OutboxService {
   /// passes over the same records and post the head of the queue twice.
   Future<void> _queue = Future<void>.value();
 
+  /// The upload under way, and how to end it (phase 043). At most one: the
+  /// pass sends one message at a time.
+  ({String clientMessageId, TransferCancellation cancellation})? _uploading;
+
   /// Subscribes to the session phase. Idempotent — main() calls it once, but a
   /// second call must not open a second subscription.
   void start() {
@@ -118,6 +124,22 @@ class OutboxService {
       logRepository.error(target: this, error: error, stackTrace: stackTrace);
     });
     return _queue;
+  }
+
+  /// Throws a message away before it is sent: its record goes, and an upload
+  /// of its file still under way is ended (phase 043).
+  ///
+  /// Ended, not left to finish: the queue is one strictly ordered line, and an
+  /// upload nobody wants any more held every later message in every chat for
+  /// as long as its bytes kept going - through Tor, tens of minutes. In this
+  /// order, so the pass that sees its upload end finds the record already gone
+  /// and moves on at once instead of pausing on it. And a pass is asked for: a
+  /// head that was waiting out a pause no longer holds the rest back.
+  Future<void> discard({required String clientMessageId}) async {
+    await _outbox.remove(clientMessageId: clientMessageId);
+    final uploading = _uploading;
+    if (uploading != null && uploading.clientMessageId == clientMessageId) uploading.cancellation.cancel();
+    if (!_stopped) unawaited(flush());
   }
 
   /// Cancels the subscription and any pending retry. Called before the logout
@@ -363,16 +385,28 @@ class OutboxService {
       return '';
     }
 
-    final result = await _files.upload(
-      path: path,
-      mime: attachment.mime ?? MimeTypes.forFileName(attachment.name),
-      // Whatever the server already holds of this file is not sent again
-      // (phase 043) - after a break, a change of path or a restart alike.
-      from: entry.upload,
-      onUnfinished: (upload) => _outbox.noteUpload(clientMessageId: entry.clientMessageId, upload: upload),
-      onProgress: (fraction) => _transfers.report(entry.clientMessageId, fraction),
-    );
+    final cancellation = TransferCancellation();
+    _uploading = (clientMessageId: entry.clientMessageId, cancellation: cancellation);
+    final RepositoryResult<String> result;
+    try {
+      result = await _files.upload(
+        path: path,
+        mime: attachment.mime ?? MimeTypes.forFileName(attachment.name),
+        // Whatever the server already holds of this file is not sent again
+        // (phase 043) - after a break, a change of path or a restart alike.
+        from: entry.upload,
+        onUnfinished: (upload) => _outbox.noteUpload(clientMessageId: entry.clientMessageId, upload: upload),
+        onProgress: (fraction) => _transfers.report(entry.clientMessageId, fraction),
+        cancellation: cancellation,
+      );
+    } finally {
+      _uploading = null;
+    }
     if (result.hasData) return result.data;
+
+    // Thrown away while its bytes were going: nothing is left to fail or to
+    // wait for, and the rest of the queue goes on now.
+    if (cancellation.isCancelled || await _outbox.find(clientMessageId: entry.clientMessageId) == null) return '';
 
     final exception = result.exception;
     // A dead channel is not an answer, but `internal` and `rate_limited` from

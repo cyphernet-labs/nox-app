@@ -14,6 +14,7 @@ import 'package:nox_app/data/remote/socket/socket_channel_factory.dart';
 import 'package:nox_app/domain/model/app_config/app_config.dart';
 import 'package:nox_app/domain/model/app_config/app_flavor_type.dart';
 import 'package:nox_app/domain/model/app_config/server_limits.dart';
+import 'package:nox_app/domain/model/file/transfer_cancellation.dart';
 import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
 
 /// The byte half of the file chain against a real TLS server on the paired
@@ -123,6 +124,9 @@ class _GetServer {
   /// Answer this status instead, with no body.
   int? status;
 
+  /// Send the whole file with no length: chunked, a size nobody can tell.
+  bool chunked = false;
+
   final List<Map<String, String?>> asked = <Map<String, String?>>[];
 
   Future<void> start() async {
@@ -157,7 +161,7 @@ class _GetServer {
           ..headers.set('content-range', 'bytes $from-${file.length - 1}/${file.length}');
       }
       final body = file.sublist(from);
-      response.contentLength = body.length;
+      if (!chunked) response.contentLength = body.length;
       final cut = stallAfter;
       if (cut != null) {
         // Unbuffered, or dart:io keeps these bytes back until it has more.
@@ -265,7 +269,11 @@ void main() {
       (HttpStatus.badRequest, FileTransferFailure.sizeMismatch),
       (HttpStatus.requestTimeout, FileTransferFailure.connection),
       (HttpStatus.conflict, FileTransferFailure.connection),
-      (HttpStatus.internalServerError, FileTransferFailure.connection),
+      // The server answering, not the link breaking: counted towards giving
+      // up, or one that answers it every time held the whole queue for good.
+      (HttpStatus.internalServerError, FileTransferFailure.serverError),
+      (HttpStatus.serviceUnavailable, FileTransferFailure.serverError),
+      (HttpStatus.forbidden, FileTransferFailure.serverError),
     ]) {
       test('$status means ${failure.name}', () async {
         server.status = status;
@@ -274,8 +282,69 @@ void main() {
           source().putBytes(uploadPath: '/files/t', file: file, offset: 0),
           throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', failure)),
         );
+        expect(api.transfersUnderWay, 0, reason: 'the transfer is handed back whatever the answer');
       });
     }
+
+    test('a file that is there but cannot be read is the source failing, not the link - and none of it arrives', () async {
+      // A sandbox forgets a picked file when the app restarts, and still lets
+      // its size be read. Taken for a broken link, the queue retried it - and
+      // held everything behind it - for good.
+      Process.runSync('chmod', ['000', file.path]);
+      addTearDown(() => Process.runSync('chmod', ['644', file.path]));
+      try {
+        await file.open().then((f) => f.close());
+        markTestSkipped('this user can read a file nobody may read');
+        return;
+      } on FileSystemException {
+        // As it should be.
+      }
+
+      await expectLater(
+        source().putBytes(uploadPath: '/files/t', file: file, offset: 0),
+        throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.sourceUnreadable)),
+      );
+      expect(server.received, isEmpty);
+      expect(api.transfersUnderWay, 0);
+    });
+
+    test('a file gone by the time its bytes are sent is the source failing too, and its path stays here', () async {
+      file.deleteSync();
+
+      await expectLater(
+        source().putBytes(uploadPath: '/files/t', file: file, offset: 0),
+        throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.sourceUnreadable)),
+      );
+    });
+
+    test('a cancellation ends this one transfer at once, and it is handed back', () async {
+      // The message was thrown away: its upload must stop holding the queue
+      // now, not when its last byte has gone.
+      await writePayload(16 * 1024 * 1024);
+      server.stopReading = true;
+      final cancellation = TransferCancellation();
+      final put = source(
+        stallLimit: const Duration(minutes: 1),
+      ).putBytes(uploadPath: '/files/t', file: file, offset: 0, cancellation: cancellation);
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      final watch = Stopwatch()..start();
+
+      cancellation.cancel();
+
+      await expectLater(put, throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.connection)));
+      expect(watch.elapsed, lessThan(const Duration(seconds: 2)));
+      expect(api.transfersUnderWay, 0);
+    });
+
+    test('a cancellation that came first sends nothing', () async {
+      final cancellation = TransferCancellation()..cancel();
+
+      await expectLater(
+        source().putBytes(uploadPath: '/files/t', file: file, offset: 0, cancellation: cancellation),
+        throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.connection)),
+      );
+      expect(server.contentLength, isNull);
+    });
 
     test('bytes that stop moving end the transfer as a broken connection', () async {
       // A path that went dead under the transfer: nothing reads, and without
@@ -397,6 +466,42 @@ void main() {
         downloads().openBytes(downloadPath: '/files/t', offset: 0),
         throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.passRejected)),
       );
+      expect(getApi.transfersUnderWay, 0);
+    });
+
+    for (final status in <int>[HttpStatus.internalServerError, HttpStatus.forbidden]) {
+      test('$status is the server answering: serverError, counted towards giving up', () async {
+        getServer.status = status;
+
+        await expectLater(
+          downloads().openBytes(downloadPath: '/files/t', offset: 0),
+          throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.serverError)),
+        );
+        expect(getApi.transfersUnderWay, 0);
+      });
+    }
+
+    test('a whole file whose size nobody can tell is no use: serverError', () async {
+      // Complete only at the size the message names - and here there is no
+      // size to hold it to.
+      getServer.chunked = true;
+
+      await expectLater(
+        downloads().openBytes(downloadPath: '/files/t', offset: 0),
+        throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.serverError)),
+      );
+      expect(getApi.transfersUnderWay, 0);
+    });
+
+    test('a body read to its end, or let go unread, hands its transfer back', () async {
+      final read = await downloads().openBytes(downloadPath: '/files/t', offset: 0);
+      await drain(read);
+      expect(getApi.transfersUnderWay, 0);
+
+      final unread = await downloads().openBytes(downloadPath: '/files/t', offset: 0);
+      expect(getApi.transfersUnderWay, 1);
+      unread.abandon();
+      expect(getApi.transfersUnderWay, 0);
     });
 
     test('a body that goes quiet ends as a broken connection, keeping what came', () async {
@@ -475,7 +580,9 @@ void main() {
       final watch = Stopwatch()..start();
       api.initBase(address: 'https://127.0.0.1:${other.port}');
 
-      await expectLater(stuck, throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.connection)));
+      // Said as what it is: the caller goes on at once by the new path, where
+      // a broken link would first wait out a pause.
+      await expectLater(stuck, throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.pathChanged)));
       expect(watch.elapsed, lessThan(const Duration(seconds: 2)));
 
       await writePayload(1024);
@@ -501,8 +608,25 @@ void main() {
 
       getApi.initBase(address: 'https://127.0.0.1:${server.port}');
 
-      await expectLater(reading, throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.connection)));
+      await expectLater(
+        reading,
+        throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.pathChanged)),
+      );
       expect(watch.elapsed, lessThan(const Duration(seconds: 2)));
+    });
+
+    test('a break with the path unchanged is still a broken link, not a change of path', () async {
+      // Only a change of path skips the pause; calling every break one would
+      // retry a dead link with no pause at all.
+      await writePayload(16 * 1024 * 1024);
+      server.stopReading = true;
+      final stuck = source(stallLimit: const Duration(minutes: 1)).putBytes(uploadPath: '/files/t', file: file, offset: 0);
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+
+      api.initBase(address: 'https://127.0.0.1:${server.port}'); // the same path, asked for again
+      api.cancelTransfers();
+
+      await expectLater(stuck, throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.connection)));
     });
   });
 

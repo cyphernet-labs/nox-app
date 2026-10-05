@@ -215,13 +215,27 @@ void main() {
       await liveUntil('live through Tor again', const Duration(minutes: 6), () => liveOn(ConnectionPath.tor));
 
       var downShare = 0.0;
+      // The lowest share heard after the break: a download that started over
+      // would report one near zero as its next attempt began.
+      double? lowestAfterBreak;
       final downWatch = Stopwatch()..start();
-      final fetching = getIt<AttachmentDownloadService>().fetch(attachment: attachment, onProgress: (share) => downShare = share);
+      final fetching = getIt<AttachmentDownloadService>().fetch(
+        attachment: attachment,
+        onProgress: (share) {
+          downShare = share;
+          final lowest = lowestAfterBreak;
+          if (lowest != null && share < lowest) lowestAfterBreak = share;
+        },
+      );
       await liveUntil('a third down', const Duration(minutes: 60), () => downShare >= 0.33);
+      final downBrokenAt = downShare;
+      lowestAfterBreak = downBrokenAt;
       getIt<ApiClient>().cancelTransfers();
       final fetched = await fetching.timeout(const Duration(minutes: 90));
       measure('download of $mib MiB through Tor, broken once: ${downWatch.elapsed.inSeconds} s');
+      measure('download, broken at ${(downBrokenAt * 100).floor()}%, went on from ${(lowestAfterBreak! * 100).floor()}%');
       expect(fetched.hasData, isTrue, reason: 'download: ${fetched.exception}');
+      expect(lowestAfterBreak, greaterThan(0.3), reason: 'it went on from the bytes already here, not from the first byte');
 
       // The same bytes, compared a mebibyte at a time.
       final a = source.openSync();
