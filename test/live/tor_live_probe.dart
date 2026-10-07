@@ -2,7 +2,6 @@
 library;
 
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -14,6 +13,7 @@ import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/repository/connection/connection_storage.dart';
 import 'package:nox_app/data/sync/connection/connection_path_selector.dart';
 import 'package:nox_app/data/sync/connection/direct_prober.dart';
+import 'package:nox_app/data/sync/outbox_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/connection/connection_path.dart';
@@ -35,6 +35,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
+import 'live_harness.dart';
 import 'live_target.dart';
 
 /// Phase 040 end to end on this machine, through the real Tor network: the
@@ -79,7 +80,7 @@ void main() {
     }
 
     // --- The server, on this machine's LAN address, with tor. ---
-    final first = await _Noxd.start(noxd: noxd, tor: tor, work: work, addr: '$host:18443', log: 'noxd1.log');
+    final first = await LiveNoxd.start(noxd: noxd, tor: tor, work: work, addr: '$host:18443', log: 'noxd1.log');
     final claim = await first.claimLink();
     stdout.writeln('NOXD: pid=${first.pid}');
 
@@ -90,8 +91,8 @@ void main() {
     await configureDependencies(Environment.dev);
     await getIt.allReady();
     getIt.allowReassignment = true;
-    final away = _AwayProber(TlsDirectProber());
-    final network = _Network();
+    final away = AwayProber(TlsDirectProber());
+    final network = FakeNetwork();
     getIt.registerSingleton<DirectProber>(away);
     getIt.registerSingleton<NetworkChangeService>(network);
 
@@ -108,18 +109,23 @@ void main() {
     final signedIn = await auth.signIn(identifier: claim);
     expect(signedIn.hasData, isTrue, reason: 'sign-in by the claim link');
     expect((await auth.completeOnboarding(label: 'TorProbe')).hasData, isTrue);
-    await _until('direct and live', const Duration(seconds: 30), () => liveOn(ConnectionPath.direct));
+    await liveUntil('direct and live', const Duration(seconds: 30), () => liveOn(ConnectionPath.direct));
     measure('pairing at home, to live: ${watch.elapsedMilliseconds} ms');
     expect(torService.status.state, TorState.stopped, reason: 'Tor does not run on the direct path (FR-006)');
-    await _until('the key registered', const Duration(seconds: 30), () async {
+    await liveUntil('the key registered', const Duration(seconds: 30), () async {
       return (await getIt<AccessKeyRepository>().isRegistered()).data ?? false;
     });
-    await _until('the server offers its onion address', const Duration(minutes: 5), () async {
+    await liveUntil('the server offers its onion address', const Duration(minutes: 5), () async {
       return (await addresses.read()).data?.onion != null;
     });
     final chat = await getIt<ChatRepository>().createChat(name: 'Tor probe ${DateTime.now().millisecondsSinceEpoch}');
     expect(chat.hasData, isTrue, reason: 'a chat to talk in');
     final chatId = chat.data!.id;
+    // A chat is made on the device first since phase 041; the outbox takes it
+    // to the server, and only then can a message name it.
+    getIt<OutboxService>().start();
+    unawaited(getIt<OutboxService>().flush());
+    await liveUntil('the chat on the server', const Duration(seconds: 30), () => getIt<ChatRepository>().isOnServer(chatId: chatId));
     Future<bool> send(String text) async {
       final sent = await getIt<MessageRepository>().sendMessage(chatId: chatId, clientMessageId: const Uuid().v4(), text: text);
       return sent.hasData;
@@ -131,7 +137,7 @@ void main() {
     away.away = true;
     watch = Stopwatch()..start();
     network.change();
-    await _until('live through Tor', const Duration(minutes: 6), () => liveOn(ConnectionPath.tor));
+    await liveUntil('live through Tor', const Duration(minutes: 6), () => liveOn(ConnectionPath.tor));
     measure(
       'away, cold Tor, to live: ${watch.elapsedMilliseconds} ms (socket ${socket.currentUrl?.host.endsWith('.onion') ?? false ? 'onion' : 'direct'})',
     );
@@ -165,9 +171,9 @@ void main() {
     away.away = false;
     watch = Stopwatch()..start();
     network.change();
-    await _until('live direct again', const Duration(seconds: 30), () => liveOn(ConnectionPath.direct));
+    await liveUntil('live direct again', const Duration(seconds: 30), () => liveOn(ConnectionPath.direct));
     final toDirect = watch.elapsedMilliseconds;
-    await _until('Tor stopped', const Duration(seconds: 10), () => torService.status.state == TorState.stopped);
+    await liveUntil('Tor stopped', const Duration(seconds: 10), () => torService.status.state == TorState.stopped);
     measure('home, back to direct: $toDirect ms; Tor stopped after ${watch.elapsedMilliseconds} ms');
     expect(await send('direct 2'), isTrue);
 
@@ -175,22 +181,22 @@ void main() {
     away.away = true;
     watch = Stopwatch()..start();
     network.change();
-    await _until('live through Tor, warm', const Duration(minutes: 4), () => liveOn(ConnectionPath.tor));
+    await liveUntil('live through Tor, warm', const Duration(minutes: 4), () => liveOn(ConnectionPath.tor));
     measure('away, warm Tor, to live: ${watch.elapsedMilliseconds} ms');
     expect(await send('through Tor 2'), isTrue);
     away.away = false;
     network.change();
-    await _until('home again', const Duration(seconds: 30), () => liveOn(ConnectionPath.direct));
+    await liveUntil('home again', const Duration(seconds: 30), () => liveOn(ConnectionPath.direct));
 
     // --- 8. The server moves to another port: Tor brings the news, and the
     // app returns to the direct path on the new address. Nothing is wiped. ---
     final epoch = await getIt<SyncRepository>().getEpoch();
     final before = await _count(chatId);
     await first.stop();
-    final second = await _Noxd.start(noxd: noxd, tor: tor, work: work, addr: '$host:18444', log: 'noxd2.log');
+    final second = await LiveNoxd.start(noxd: noxd, tor: tor, work: work, addr: '$host:18444', log: 'noxd2.log');
     stdout.writeln('NOXD: pid=${second.pid}');
     watch = Stopwatch()..start();
-    await _until('live direct on the new address', const Duration(minutes: 8), () {
+    await liveUntil('live direct on the new address', const Duration(minutes: 8), () {
       return liveOn(ConnectionPath.direct) && socket.currentUrl?.port == 18444;
     });
     measure('new server address, back to direct on it: ${watch.elapsedMilliseconds} ms');
@@ -205,14 +211,14 @@ void main() {
     away.away = true;
     watch = Stopwatch()..start();
     network.change();
-    await _until('live through Tor, cold, server long up', const Duration(minutes: 4), () => liveOn(ConnectionPath.tor));
+    await liveUntil('live through Tor, cold, server long up', const Duration(minutes: 4), () => liveOn(ConnectionPath.tor));
     measure('away, cold Tor, server long up, to live: ${watch.elapsedMilliseconds} ms');
     watch = Stopwatch()..start();
     expect(await send('through Tor 3'), isTrue);
     measure('a message through Tor, round trip: ${watch.elapsedMilliseconds} ms');
     away.away = false;
     network.change();
-    await _until('home again', const Duration(seconds: 30), () => liveOn(ConnectionPath.direct));
+    await liveUntil('home again', const Duration(seconds: 30), () => liveOn(ConnectionPath.direct));
 
     // --- 4. Invites from here work from anywhere: version 2, onion. ---
     final invites = <String>[];
@@ -239,85 +245,4 @@ void main() {
   }, timeout: const Timeout(Duration(minutes: 30)));
 }
 
-Future<void> _until(String what, Duration budget, FutureOr<bool> Function() done) async {
-  final watch = Stopwatch()..start();
-  while (watch.elapsed < budget) {
-    if (await done()) return;
-    await Future<void>.delayed(const Duration(milliseconds: 100));
-  }
-  fail('not reached within ${budget.inSeconds} s: $what');
-}
-
 Future<int> _count(String chatId) async => (await getIt<MessageDao>().getByChatSorted(chatId)).length;
-
-class _AwayProber implements DirectProber {
-  _AwayProber(this._real);
-
-  final DirectProber _real;
-  bool away = false;
-
-  @override
-  Future<DirectProbeResult> probe(List<String> candidates, {required String fingerprint}) =>
-      away ? Future<DirectProbeResult>.value(const DirectProbeResult()) : _real.probe(candidates, fingerprint: fingerprint);
-}
-
-class _Network implements NetworkChangeService {
-  final StreamController<void> _changes = StreamController<void>.broadcast();
-
-  void change() => _changes.add(null);
-
-  @override
-  Stream<void> watchChanges() => _changes.stream;
-}
-
-/// A `noxd` run detached from the test, so it can outlive it.
-class _Noxd {
-  _Noxd._(this.pid, this._log);
-
-  final int pid;
-  final File _log;
-
-  static Future<_Noxd> start({
-    required String noxd,
-    required String tor,
-    required String work,
-    required String addr,
-    required String log,
-  }) async {
-    final file = File('$work/$log');
-    final shell = await Process.run('/bin/sh', [
-      '-c',
-      '"$noxd" -addr $addr -db "$work/probe.db" -tor -tor-bin "$tor" -status-addr "" > "${file.path}" 2>&1 & echo \$!',
-    ]);
-    final pid = int.parse((shell.stdout as String).trim());
-    final server = _Noxd._(pid, file);
-    await _until('noxd listening on $addr', const Duration(seconds: 30), () => server._lines().any((l) => l['msg'] == 'listening'));
-    return server;
-  }
-
-  Iterable<Map<String, dynamic>> _lines() sync* {
-    if (!_log.existsSync()) return;
-    for (final line in _log.readAsLinesSync()) {
-      try {
-        final json = jsonDecode(line);
-        if (json is Map<String, dynamic>) yield json;
-      } on FormatException {
-        continue;
-      }
-    }
-  }
-
-  Future<String> claimLink() async {
-    String? link;
-    await _until('the claim link', const Duration(seconds: 10), () {
-      link = _lines().map((l) => l['link']).whereType<String>().firstOrNull;
-      return link != null;
-    });
-    return link!;
-  }
-
-  Future<void> stop() async {
-    Process.killPid(pid);
-    await _until('noxd stopped', const Duration(seconds: 30), () => _lines().any((l) => l['msg'] == 'server stopped'));
-  }
-}

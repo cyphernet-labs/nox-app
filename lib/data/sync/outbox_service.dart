@@ -1,7 +1,7 @@
 import 'dart:async';
-import 'dart:math';
 
 import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/sync/retry_ladder.dart';
 import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/exception/base_repository_exception.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
@@ -12,9 +12,11 @@ import 'package:nox_app/domain/model/chat/outbox_status.dart';
 import 'package:nox_app/domain/model/chat/pending_chat_creation.dart';
 import 'package:nox_app/domain/model/file/attachment_transfer.dart';
 import 'package:nox_app/domain/model/file/mime_types.dart';
+import 'package:nox_app/domain/model/file/transfer_cancellation.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/service/attachment_transfer_service.dart';
@@ -55,22 +57,14 @@ class OutboxService {
   final Map<String, DateTime> _creationRetryAt = <String, DateTime>{};
   Timer? _creationTimer;
 
-  static const Duration _minBackoff = Duration(seconds: 1);
-  static const Duration _maxBackoff = Duration(seconds: 30);
-
-  /// How many times the SERVER may refuse an entry before it is set aside.
+  /// The pause before a retry and the cap on refusals (see [RetryLadder]).
   ///
-  /// Counted against refusals only, never against a broken connection. That
-  /// distinction is the whole point: a flapping link produces failure after
-  /// failure through no fault of the message, and counting those would set a
-  /// perfectly good message aside within seconds of a bad tunnel.
-  ///
-  /// Set aside is not discarded — the entry stays in the queue, visible, and a
-  /// tap replenishes the ladder and sends it again. What the cap buys is the
-  /// spec's edge case: a message the server keeps refusing with a retryable
-  /// code (a persistent `internal`) would otherwise block every later message
-  /// in every chat forever, because the queue is one strictly-ordered line.
-  static const int _autoRetryLimit = 10;
+  /// The cap matters more here than anywhere: the queue is one strictly
+  /// ordered line, so a message the server keeps refusing with a retryable code
+  /// (a persistent `internal`) would otherwise block every later message in
+  /// every chat forever. Set aside is not discarded — the entry stays in the
+  /// queue, visible, and a tap replenishes the ladder and sends it again.
+  final RetryLadder _ladder = RetryLadder();
 
   StreamSubscription<SessionPhase>? _phaseSubscription;
   Timer? _retryTimer;
@@ -96,7 +90,9 @@ class OutboxService {
   /// passes over the same records and post the head of the queue twice.
   Future<void> _queue = Future<void>.value();
 
-  final Random _random = Random();
+  /// The upload under way, and how to end it (phase 043). At most one: the
+  /// pass sends one message at a time.
+  ({String clientMessageId, TransferCancellation cancellation})? _uploading;
 
   /// Subscribes to the session phase. Idempotent — main() calls it once, but a
   /// second call must not open a second subscription.
@@ -128,6 +124,22 @@ class OutboxService {
       logRepository.error(target: this, error: error, stackTrace: stackTrace);
     });
     return _queue;
+  }
+
+  /// Throws a message away before it is sent: its record goes, and an upload
+  /// of its file still under way is ended (phase 043).
+  ///
+  /// Ended, not left to finish: the queue is one strictly ordered line, and an
+  /// upload nobody wants any more held every later message in every chat for
+  /// as long as its bytes kept going - through Tor, tens of minutes. In this
+  /// order, so the pass that sees its upload end finds the record already gone
+  /// and moves on at once instead of pausing on it. And a pass is asked for: a
+  /// head that was waiting out a pause no longer holds the rest back.
+  Future<void> discard({required String clientMessageId}) async {
+    await _outbox.remove(clientMessageId: clientMessageId);
+    final uploading = _uploading;
+    if (uploading != null && uploading.clientMessageId == clientMessageId) uploading.cancellation.cancel();
+    if (!_stopped) unawaited(flush());
   }
 
   /// Cancels the subscription and any pending retry. Called before the logout
@@ -251,7 +263,7 @@ class OutboxService {
     // A server that keeps refusing - not a dead channel - would otherwise hold
     // the one queue for every chat, for good; the same cap as for a message.
     final refused = exception != RepositoryException.connection;
-    if (_isTerminal(exception) || (refused && attempts >= _autoRetryLimit)) {
+    if (_isTerminal(exception) || (refused && attempts >= RetryLadder.refusalLimit)) {
       _creationRetryAt.remove(chatId);
       await _chats.markCreation(chatId: chatId, creation: ChatCreation.failed, attempts: attempts);
       return;
@@ -259,7 +271,7 @@ class OutboxService {
     await _chats.markCreation(chatId: chatId, creation: ChatCreation.pending, attempts: attempts);
     // The same ladder a message climbs; the count comes from the row, so it
     // survives a restart.
-    _creationRetryAt[chatId] = DateTime.now().add(_backoff(attempts));
+    _creationRetryAt[chatId] = DateTime.now().add(_ladder.pause(attempts));
   }
 
   /// Wakes the queue when the earliest creation pause ends.
@@ -318,13 +330,26 @@ class OutboxService {
       if (still == null || still.status != OutboxStatus.pending) return true;
     }
 
+    // The id the server knows this file by. Before the upload it held the
+    // composer's local draft id, which means nothing to anyone else.
+    var sending = entry.fileId == null ? attachment : attachment?.copyWith(id: entry.fileId!);
+    final fileId = entry.fileId;
+    if (sending != null && fileId != null) {
+      // The queue's own copy becomes this device's copy of the file (phase
+      // 043): kept where a download of it would land, so the message shows the
+      // bytes from this device - after a restart too, when the file the person
+      // picked may no longer be readable - and the copy is not left behind.
+      // Before the send, not after: the message the server accepts is stored
+      // naming the place the bytes are.
+      final at = await _files.cachePathFor(fileId: fileId, suggestedName: sending.name);
+      if (await _outbox.keepCopy(clientMessageId: entry.clientMessageId, at: at)) sending = sending.copyWith(localPath: at);
+    }
+
     final result = await _messages.sendMessage(
       chatId: entry.chatId,
       clientMessageId: entry.clientMessageId,
       text: entry.text,
-      // The id the server knows this file by. Before the upload it held the
-      // composer's local draft id, which means nothing to anyone else.
-      attachment: entry.fileId == null ? attachment : attachment?.copyWith(id: entry.fileId!),
+      attachment: sending,
     );
 
     if (result.hasData) {
@@ -345,7 +370,7 @@ class OutboxService {
     final serverAnswered = exception != RepositoryException.connection;
     // Exhausting the refusals turns a retryable one into a set-aside entry: the
     // message is kept, but it stops holding the line.
-    final exhausted = serverAnswered && entry.refusals + 1 >= _autoRetryLimit;
+    final exhausted = serverAnswered && entry.refusals + 1 >= RetryLadder.refusalLimit;
     final terminal = _isTerminal(exception) || exhausted;
     await _outbox.recordFailure(
       clientMessageId: entry.clientMessageId,
@@ -373,27 +398,53 @@ class OutboxService {
       return '';
     }
 
-    final result = await _files.upload(
-      path: path,
-      mime: attachment.mime ?? MimeTypes.forFileName(attachment.name),
-      onProgress: (fraction) => _transfers.report(entry.clientMessageId, fraction),
-    );
+    final cancellation = TransferCancellation();
+    _uploading = (clientMessageId: entry.clientMessageId, cancellation: cancellation);
+    final RepositoryResult<String> result;
+    try {
+      result = await _files.upload(
+        path: path,
+        mime: attachment.mime ?? MimeTypes.forFileName(attachment.name),
+        // Whatever the server already holds of this file is not sent again
+        // (phase 043) - after a break, a change of path or a restart alike.
+        from: entry.upload,
+        onUnfinished: (upload) => _outbox.noteUpload(clientMessageId: entry.clientMessageId, upload: upload),
+        onProgress: (fraction) => _transfers.report(entry.clientMessageId, fraction),
+        cancellation: cancellation,
+      );
+    } finally {
+      _uploading = null;
+    }
     if (result.hasData) return result.data;
 
+    // Thrown away while its bytes were going: nothing is left to fail or to
+    // wait for, and the rest of the queue goes on now.
+    if (cancellation.isCancelled || await _outbox.find(clientMessageId: entry.clientMessageId) == null) return '';
+
     final exception = result.exception;
+    // A dead channel is not an answer, but `internal` and `rate_limited` from
+    // `file.uploadBegin` ARE: the server looked at this file and said no.
+    final serverAnswered = exception != RepositoryException.connection;
+    // And they spend the ladder, as they do for the message itself (phase
+    // 043): without the cap an endpoint that refuses every upload held the one
+    // global queue - every chat, every later message - for good, which is the
+    // exact edge case the cap exists to prevent.
+    final exhausted = serverAnswered && entry.refusals + 1 >= RetryLadder.refusalLimit;
     final terminal = _isTerminal(exception);
+    // A source that vanished or changed cannot be continued, and neither can
+    // anything else a retry would only repeat. Forgetting the upload is what
+    // lets a manual retry send the file as it is now, as a new upload; the part
+    // on the server is swept there after a day. A server that merely kept
+    // refusing is another matter: what it holds stays, and a manual retry goes
+    // on from there (FR-011).
+    if (terminal) await _outbox.noteUpload(clientMessageId: entry.clientMessageId, upload: null);
     await _outbox.recordFailure(
       clientMessageId: entry.clientMessageId,
       code: exception is RepositoryException ? exception.name : 'unknown',
-      terminal: terminal,
-      // A dead channel is not an answer, but `internal` and `rate_limited` from
-      // `file.uploadBegin` ARE: the server looked at this file and said no. If
-      // none of them counted, an endpoint that refuses every upload would hold
-      // the one global queue — every chat, every later message — for good,
-      // which is the exact edge case the refusal cap exists to prevent.
-      serverAnswered: exception != RepositoryException.connection,
+      terminal: terminal || exhausted,
+      serverAnswered: serverAnswered,
     );
-    if (terminal) return '';
+    if (terminal || exhausted) return '';
     _scheduleRetry(entry.clientMessageId, entry.attempts + 1);
     return null;
   }
@@ -415,16 +466,6 @@ class OutboxService {
     };
   }
 
-  /// `min(30s, 1s * 2^(attempts - 1))` with ±20% jitter - for a message and
-  /// for a chat creation alike.
-  Duration _backoff(int attempts) {
-    final exponent = (attempts - 1).clamp(0, 16);
-    final raw = _minBackoff * pow(2, exponent).toDouble();
-    final capped = raw > _maxBackoff ? _maxBackoff : raw;
-    // Jitter keeps a herd of clients from hitting a recovering server in step.
-    return capped * (0.8 + _random.nextDouble() * 0.4);
-  }
-
   /// Pauses the queue on [clientMessageId]. The count comes from the RECORD,
   /// not from this pass: a process restart resets everything in memory, which
   /// is exactly the moment the pause has to be remembered.
@@ -432,7 +473,7 @@ class OutboxService {
     if (_stopped) return;
     _retryTimer?.cancel();
     _pausedFor = clientMessageId;
-    _retryTimer = Timer(_backoff(attempts), () {
+    _retryTimer = Timer(_ladder.pause(attempts), () {
       _retryTimer = null;
       _pausedFor = null;
       unawaited(flush());

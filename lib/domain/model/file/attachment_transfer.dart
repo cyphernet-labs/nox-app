@@ -14,8 +14,9 @@ enum TransferDirection {
 /// An attachment whose bytes are moving right now, as the thread draws it.
 ///
 /// In memory only. A transfer is a fact about this process: after a restart
-/// the queue sends the file again from its first byte, and a percentage kept
-/// from before would claim progress nobody has.
+/// the queue goes on from what the server holds (phase 043), and the share it
+/// learns from the server's answer is the true one - a percentage kept from
+/// before could only repeat it, or claim bytes the server never kept.
 @freezed
 abstract class AttachmentTransfer with _$AttachmentTransfer {
   const AttachmentTransfer._();

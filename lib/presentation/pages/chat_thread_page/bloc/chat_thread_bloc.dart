@@ -391,8 +391,9 @@ class ChatThreadBloc extends BaseBloc<ChatThreadEvent, ChatThreadState> {
 
   Future<void> _onSendDiscarded(SendDiscarded event, Emitter<ChatThreadState> emit) async {
     // The message is thrown away deliberately, so nothing is left behind: the
-    // record goes, and the projection tick removes the bubble.
-    await _outboxRepository.remove(clientMessageId: event.localId);
+    // record goes, an upload of its file stops (phase 043), and the projection
+    // tick removes the bubble.
+    await _outboxService.discard(clientMessageId: event.localId);
   }
 
   /// Re-projects the queue, and re-reads the cache only when it SHRANK.

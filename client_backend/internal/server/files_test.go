@@ -199,19 +199,27 @@ func TestStoryOneAttachmentChain(t *testing.T) {
 	anna.send(fmt.Sprintf(`{"id":24,"cmd":"message.send","data":{"chat_id":%q,"client_message_id":"n3","attachment":{"file_id":%q}}}`, chatID, fileID))
 	anna.expectErr(24, protocol.ErrInvalidRequest) // already bound
 
-	// Un-uploaded file: send rejected; oversized and short PUTs store nothing.
+	// Un-uploaded file: send rejected. An oversized PUT keeps nothing it
+	// carried; a short one keeps its bytes for a continuation (043). Neither
+	// finishes the file.
 	fileID3, token3 := uploadBegin(t, anna, 25, "half.bin", 1000, "application/octet-stream")
 	anna.send(fmt.Sprintf(`{"id":26,"cmd":"message.send","data":{"chat_id":%q,"client_message_id":"n4","attachment":{"file_id":%q}}}`, chatID, fileID3))
 	anna.expectErr(26, protocol.ErrInvalidRequest)
 	if code := putBytes(t, ts, token3, randomPayload(t, 2000)); code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("oversized PUT = %d, want 413", code)
 	}
+	if _, _, received := declare(t, anna, 28, "half.bin", 1000, "application/octet-stream", fileID3); received != 0 {
+		t.Fatalf("after an oversized PUT received = %d, want 0: none of its bytes are kept", received)
+	}
 	fileID4, token4 := uploadBegin(t, anna, 27, "short.bin", 1000, "application/octet-stream")
 	if code := putBytes(t, ts, token4, randomPayload(t, 500)); code != http.StatusBadRequest {
 		t.Fatalf("short PUT = %d, want 400", code)
 	}
+	if _, _, received := declare(t, anna, 29, "short.bin", 1000, "application/octet-stream", fileID4); received != 500 {
+		t.Fatalf("after a short PUT received = %d, want its 500 bytes kept", received)
+	}
 	if srv.blob.Exists(fileID3) || srv.blob.Exists(fileID4) {
-		t.Fatal("failed uploads left bytes behind")
+		t.Fatal("an unfinished upload became a finished file")
 	}
 
 	// New 024 validation negatives: JSON-null body, empty attachment object,
@@ -488,6 +496,29 @@ func TestOrphanSweepRemovesAbandonedUploads(t *testing.T) {
 		t.Fatalf("MarkUploaded: %v", err)
 	}
 
+	// Old UNFINISHED upload (043): a part and its record, never completed.
+	// The same rule as for a finished one: a day unbound and it goes, both
+	// files with it.
+	halfAtt, err := srv.store.CreateUpload(t.Context(), "half.bin", 10, "x/y", 100)
+	if err != nil {
+		t.Fatalf("CreateUpload half: %v", err)
+	}
+	half, err := srv.blob.Create(halfAtt.FileID)
+	if err != nil {
+		t.Fatalf("blob.Create half: %v", err)
+	}
+	if _, err := half.Write([]byte("half")); err != nil {
+		t.Fatalf("write half: %v", err)
+	}
+	if err := half.Suspend(); err != nil {
+		t.Fatalf("suspend half: %v", err)
+	}
+	for _, name := range []string{halfAtt.FileID + ".part", halfAtt.FileID + ".synced"} {
+		if _, err := os.Stat(filepath.Join(srv.cfg.FilesPath, name)); err != nil {
+			t.Fatalf("seeded %s missing: %v", name, err)
+		}
+	}
+
 	// Fresh orphan: declared over the wire just now - must survive.
 	freshID, _ := uploadBegin(t, c, 5, "fresh.bin", 5, "x/y")
 
@@ -497,6 +528,14 @@ func TestOrphanSweepRemovesAbandonedUploads(t *testing.T) {
 
 	if srv.blob.Exists(oldAtt.FileID) {
 		t.Fatal("old orphan bytes survived the sweep")
+	}
+	for _, name := range []string{halfAtt.FileID + ".part", halfAtt.FileID + ".synced"} {
+		if _, err := os.Stat(filepath.Join(srv.cfg.FilesPath, name)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s of the old unfinished upload survived the sweep (err=%v)", name, err)
+		}
+	}
+	if _, err := srv.store.FileByID(t.Context(), halfAtt.FileID); !errors.Is(err, store.ErrFileNotFound) {
+		t.Fatalf("old unfinished row = %v, want gone", err)
 	}
 	if _, err := srv.store.FileByID(t.Context(), oldAtt.FileID); !errors.Is(err, store.ErrFileNotFound) {
 		t.Fatalf("old orphan row = %v, want gone", err)

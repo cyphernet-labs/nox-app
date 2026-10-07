@@ -4,6 +4,7 @@ import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/remote/pinned_http_client.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
+import 'package:nox_app/domain/service/attachment_download_service.dart';
 import 'package:nox_app/data/sync/connection/access_key_registrar.dart';
 import 'package:nox_app/data/sync/connection/connection_path_selector.dart';
 import 'package:nox_app/data/sync/sync_service.dart';
@@ -361,6 +362,19 @@ class LiveSessionStarter {
     } on Object catch (e, s) {
       logRepository.error(target: this, error: e, stackTrace: s);
     }
+    // Prefetch memoises what it has already fetched; those ids belong to the
+    // world being discarded. Reached the way logout reaches it, and before the
+    // downloads stop, so its worker does not start the old world's next
+    // picture into the wipe (phase 043).
+    if (getIt.isRegistered<AttachmentPrefetchService>()) getIt<AttachmentPrefetchService>().reset();
+    // Downloads of the old world stop first (phase 043), or one would write
+    // its next chunk into the cache being emptied. On its own, so that a stop
+    // that fails still lets the cache go.
+    try {
+      if (getIt.isRegistered<AttachmentDownloadService>()) await getIt<AttachmentDownloadService>().reset();
+    } on Object catch (e, s) {
+      logRepository.error(target: this, error: e, stackTrace: s);
+    }
     // Downloaded bytes belong to the world they came from. Best-effort for the
     // same reason logout treats it that way: a cache directory that will not
     // clear is not worth keeping the app off the screen for.
@@ -369,9 +383,6 @@ class LiveSessionStarter {
     } on Object catch (e, s) {
       logRepository.error(target: this, error: e, stackTrace: s);
     }
-    // Prefetch memoises what it has already fetched; those ids belong to the
-    // world being discarded. Reached the way logout reaches it.
-    if (getIt.isRegistered<AttachmentPrefetchService>()) getIt<AttachmentPrefetchService>().reset();
     await _chats.clean();
     await _messages.clean();
   }

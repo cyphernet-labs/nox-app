@@ -35,6 +35,12 @@ abstract class OutboxEntity with _$OutboxEntity {
     /// The server's id for this send's attachment — written ONLY once the bytes
     /// are confirmed there. Empty while they are not.
     String? fileId,
+
+    /// The unfinished upload of the attachment (phase 043): the server's id for
+    /// it and the source's fingerprint. All three or none.
+    String? uploadFileId,
+    int? uploadSourceSize,
+    int? uploadSourceModifiedAt, // ms since the epoch, UTC
     // Flattened attachment — all null when there is no attachment.
     String? attachmentId,
     String? attachmentType, // FileType.name

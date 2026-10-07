@@ -414,7 +414,8 @@ window.NOX_SPECS = [
     ],
     "anatomy": "Heavier scrim + centered lightbox (520): header (type icon, name, download, close), large type glyph, name, size, Download.",
     "behavior": [
-      "No content preview (type glyph). Downloading → determinate progress bar + “Downloading… N%”. Loaded → size + Download."
+      "No content preview (type glyph). Downloading → determinate progress bar + “Downloading… N%”. Loaded → size + Download.",
+      "A broken link is not an error (phase 043): the bar stands still and the download goes on by itself from the byte it reached - and on after the screen is closed; reopened, it shows the same download where it stands. The error with Try again appears only once the server has refused again and again, and Try again goes on from the bytes already on the device."
     ],
     "navigation": [
       "Close / scrim → back to the thread.",

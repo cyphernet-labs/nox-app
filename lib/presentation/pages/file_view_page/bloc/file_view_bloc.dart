@@ -8,8 +8,8 @@ import 'package:nox_app/di/global_aliases.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
-import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
+import 'package:nox_app/domain/service/attachment_download_service.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/general/app_clock.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
@@ -32,13 +32,28 @@ class FileViewBloc extends BaseBloc<FileViewEvent, FileViewState> {
   }
 
   final FileRepository _files = getIt<FileRepository>();
-  final MessageRepository _messages = getIt<MessageRepository>();
+  final AttachmentDownloadService _downloads = getIt<AttachmentDownloadService>();
   final SessionPhaseService _phase = getIt<SessionPhaseService>();
 
-  /// The message this attachment belongs to, when it has one. Fetched bytes are
-  /// recorded against it so the thumbnail and Save find them next time without
-  /// downloading again.
+  /// The message this attachment belongs to, when it has one. The download
+  /// service records the fetched bytes against it, so the thumbnail and Save
+  /// find them next time - even when this screen was closed long before the
+  /// last byte arrived (phase 043).
   final String? messageId;
+
+  /// What this screen handed the download to hear its progress by. Taken back
+  /// when the screen closes: the download outlives it - through Tor, by tens
+  /// of minutes - and would otherwise keep the closed screen alive with it,
+  /// one more for every time the file is opened.
+  TransferFraction? _listening;
+
+  @override
+  Future<void> close() {
+    final listening = _listening;
+    _listening = null;
+    if (listening != null) _downloads.stopListening(listening);
+    return super.close();
+  }
 
   Future<void> _onStarted(FileViewEvent event, Emitter<FileViewState> emit) async {
     // Everything below can throw — a directory query on a locked volume, a
@@ -90,15 +105,19 @@ class FileViewBloc extends BaseBloc<FileViewEvent, FileViewState> {
     }
 
     emit(state.copyWith(status: FileViewStatus.downloading, progress: 0));
-    final result = await _files.download(
-      fileId: file.id,
-      suggestedName: file.name,
-      onProgress: (fraction) {
-        if (isClosed) return;
-        final live = state;
-        if (live.status == FileViewStatus.downloading) emit(live.copyWith(progress: fraction));
-      },
-    );
+    // The download belongs to the app, not to this screen: closing it does not
+    // stop the bytes, and opening it again joins the same download where it
+    // stands. A broken link only pauses it - this screen hears an error only
+    // when the automation gave up, which is when Try again means something.
+    void heard(double fraction) {
+      if (isClosed) return;
+      final live = state;
+      if (live.status == FileViewStatus.downloading) emit(live.copyWith(progress: fraction));
+    }
+
+    _listening = heard;
+    final result = await _downloads.fetch(messageId: messageId, attachment: file, onProgress: heard);
+    if (identical(_listening, heard)) _listening = null;
 
     result.match<void>(
       onData: (path) {
@@ -109,14 +128,13 @@ class FileViewBloc extends BaseBloc<FileViewEvent, FileViewState> {
             status: FileViewStatus.ready,
           ),
         );
-        final id = messageId;
-        if (id != null) unawaited(_messages.attachLocalFile(messageId: id, localPath: path));
       },
       onError: (exception) {
         // Contract §2.1 draws the line here, and draws it deliberately: bytes
         // that are gone are a TERMINAL state on this screen, without a retry
         // button — and expressly "not the fatal screen of the whole app". A
-        // connection failure is the other thing entirely and keeps its retry.
+        // server that kept refusing is the other thing entirely and keeps its
+        // retry, which starts the ladder over.
         final gone = exception == RepositoryException.attachmentGone || exception == RepositoryException.notFound;
         emit(state.copyWith(status: gone ? FileViewStatus.gone : FileViewStatus.failed));
       },

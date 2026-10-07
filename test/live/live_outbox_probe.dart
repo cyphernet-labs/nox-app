@@ -5,6 +5,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/data/local/app_database.dart';
+import 'package:nox_app/data/local/chat/outbox_copies.dart';
 import 'package:nox_app/data/local/chat/outbox_dao.dart';
 import 'package:nox_app/data/mapper/chat/outbox_mapper.dart';
 import 'package:nox_app/data/remote/datasource/real/real_chat_remote_data_source.dart';
@@ -160,7 +161,7 @@ void main() {
     final mapper = OutboxMapper();
 
     // RUN 1 — the channel is down, so the message is only written, never sent.
-    final firstRun = OutboxRepositoryImpl(dao, mapper) as OutboxRepository;
+    final firstRun = OutboxRepositoryImpl(dao, mapper, OutboxCopies()) as OutboxRepository;
     final offlinePhase = _Phase();
     final sender = _LiveSend(RealMessageRemoteDataSource(socket));
     final firstDrain = OutboxService(
@@ -178,7 +179,7 @@ void main() {
 
     // RUN 2 — a fresh repository and drain over the SAME store: the closest a
     // probe gets to relaunching the app. The channel is up this time.
-    final secondRun = OutboxRepositoryImpl(OutboxDao(db), OutboxMapper()) as OutboxRepository;
+    final secondRun = OutboxRepositoryImpl(OutboxDao(db), OutboxMapper(), OutboxCopies()) as OutboxRepository;
     final restored = await secondRun.pending();
     expect(restored, hasLength(1), reason: 'the queue survived the restart');
     expect(restored.single.clientMessageId, queued.clientMessageId, reason: 'and kept its idempotency key');

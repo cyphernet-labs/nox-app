@@ -164,6 +164,49 @@ handler := logRequests(logger, mux)                  // outermost middleware
 - Request log middleware: slog with method, path pattern (`r.Pattern`, 1.23+),
   status (wrap ResponseWriter), duration.
 
+### Long transfers: limit the silence, never the duration (043)
+
+A file over Tor takes tens of minutes. An absolute deadline on the body cuts
+exactly the slow path, so there is none; the only limit is a STALL — no byte
+for `stallTimeout`:
+
+```go
+rc := http.NewResponseController(w)
+// upload: renew before EVERY body read
+rc.SetReadDeadline(time.Now().Add(stall))
+// download: renew before EVERY write, through a wrapper that exposes only
+// Header/Write/WriteHeader - hiding ReadFrom keeps io.Copy inside
+// ServeContent writing through it
+rc.SetWriteDeadline(time.Now().Add(stall))
+```
+
+- **Clear the write deadline when the download handler ends** (flush first).
+  Belt and braces: net/http (Go 1.27) clears it itself once a handler
+  returns, before the connection carries another request - but a deadline
+  left behind would cut that request at an arbitrary moment, and a one-line
+  reset costs less than depending on that never changing. Hijack clears both.
+- **A resumable PUT appends from an offset bound to its token** (the
+  continuation that issued the token reported that offset): the part on disk
+  is cut back to it before writing, whatever a straggler appended since. The
+  body is kept on any break; durability is checkpointed every few MiB
+  (`blob.Upload.Checkpoint`: fsync the part, THEN record the length).
+- **One writer per part.** A request whose connection died silently waits for
+  bytes until its own stall deadline; the next request for the same file
+  interrupts it (`ResponseController.SetReadDeadline(time.Now())`, ordered
+  against the renewal by one mutex) and waits for it to let go. Never touch a
+  ResponseController after its handler returned — mark it finished first.
+- **Never return from a PUT without a definite status.** A handler that writes
+  nothing answers 200, and a client that does read it takes an unfinished
+  upload for a finished one.
+- **Commit the last byte on `context.WithoutCancel(r.Context())`.** The client
+  may hang up right after it, which cancels the request's context, and a file
+  whole on disk but unknown to its row would be sent again from byte one. A
+  part already renamed to the file of its declared size counts as complete
+  whatever the row says.
+- **A new upload token revokes the file's earlier upload tokens.** A PUT on
+  an older one that turns up late would cut the part back past bytes a newer
+  attempt wrote.
+
 ## 7. Testing recipes
 
 ```go
@@ -193,3 +236,6 @@ conn, _, err := websocket.Dial(ctx, srv.URL+"/ws", nil)  // http:// scheme accep
 | `Shutdown` without conn registry | Hijacked WS conns are never closed |
 | Business mutex "just this once" | Ownership model erodes; restructure instead |
 | Hand-rolled Range handling | `http.ServeContent` already does it correctly |
+| Absolute deadline on a file body | Cuts every transfer slower than size/deadline — the Tor path; renew a stall deadline per read/write instead |
+| Write deadline left set after a GET | The next request on the keep-alive connection dies mid-response |
+| Blocking wait inside a socket command handler | The same loop reads pongs: a few seconds there and the ping declares a live connection dead |

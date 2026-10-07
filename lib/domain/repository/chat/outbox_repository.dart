@@ -1,5 +1,6 @@
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/outbox_entry.dart';
+import 'package:nox_app/domain/model/file/unfinished_upload.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 
 /// The durable queue of outgoing sends (contract v0 §9.3/§9.8).
@@ -16,6 +17,11 @@ abstract class OutboxRepository {
   /// Minting `client_message_id` is deliberately the repository's job, not the
   /// caller's: a key minted on a screen dies with the screen, which is the very
   /// defect this feature removes.
+  ///
+  /// The attachment's file is copied into the app's own storage and the entry
+  /// names the copy (phase 043): the file the person picked may not be
+  /// readable, or the same, by the time its bytes go - after a restart above
+  /// all. When no copy can be made, the entry names the picked file.
   Future<RepositoryResult<OutboxEntry>> enqueue({required String chatId, String? text, MessageAttachment? attachment});
 
   /// The queue in send order — a snapshot on listen, then every change.
@@ -52,6 +58,14 @@ abstract class OutboxRepository {
   /// remembered id can outlive its file.
   Future<void> attachFile({required String clientMessageId, required String? fileId});
 
+  /// Remembers - or, with null, forgets - the upload of this send's attachment
+  /// that the server holds part of (phase 043).
+  ///
+  /// Written as soon as the server names the upload, before the first byte, so
+  /// a restart goes on from what the server has. [attachFile] forgets it: once
+  /// the bytes are confirmed there is nothing left to continue.
+  Future<void> noteUpload({required String clientMessageId, required UnfinishedUpload? upload});
+
   /// Puts a failed entry back in line (manual retry) and resets BOTH counters.
   ///
   /// A tap is the user saying "try again now", so the ladder starts over: the
@@ -60,7 +74,14 @@ abstract class OutboxRepository {
   /// straight back to `error`.
   Future<void> markPending({required String clientMessageId});
 
-  /// Drops one entry — the server accepted it, or the user discarded it.
+  /// Moves this send's own copy of its file to [at] - where the bytes of the
+  /// uploaded file live on this device - and names it there (phase 043). True
+  /// once the bytes are at [at]; false when the entry has no copy of its own,
+  /// and then it names what it named before.
+  Future<bool> keepCopy({required String clientMessageId, required String at});
+
+  /// Drops one entry — the server accepted it, or the user discarded it — and
+  /// its copy of the attachment's file with it.
   Future<void> remove({required String clientMessageId});
 
   /// Drops one chat's queue (the debug-scenario reset).
@@ -70,6 +91,7 @@ abstract class OutboxRepository {
   /// 041: a server older than the phase gave a new chat an id of its own).
   Future<void> moveChat({required String from, required String to});
 
-  /// Empties the queue (logout). The rows hold message texts.
+  /// Empties the queue (logout). The rows hold message texts, and the copies
+  /// the files being sent.
   Future<void> clean();
 }

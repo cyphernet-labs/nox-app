@@ -64,6 +64,18 @@ type Server struct {
 	tokens *tokenStore
 	logger *slog.Logger
 
+	// The file transfers (043). writers keeps one request writing each part.
+	// The rest are fields so tests can scale them: how long a body may go
+	// without a byte before the transfer counts as stalled, how often an
+	// upload makes what it received durable, how long a PUT waits for the
+	// previous writer of its file to let go, and how long a continuation
+	// does - a command handler runs on the loop that also reads pongs.
+	writers          *uploadWriters
+	stallTimeout     time.Duration
+	checkpointBytes  int64
+	preemptWait      time.Duration
+	continuationWait time.Duration
+
 	pingInterval time.Duration
 	writeTimeout time.Duration
 	// onionTimeout replaces writeTimeout for connections that came in over
@@ -92,6 +104,10 @@ type Server struct {
 	// on demand.
 	afterAddressRead func()
 	afterGreeted     func(*client)
+	// The same kind of seam in the file chain (043): right after an upload's
+	// part became its file and before the database hears of it - the window a
+	// client hanging up, a continuation or a crash lands in. Nil outside tests.
+	afterFinalize func(fileID string)
 	// What the service page shows about the process itself. Set once at
 	// startup: the schema version the migrator reported, the moment this
 	// process began. A person who closed that terminal has no other way to it.
@@ -117,23 +133,28 @@ type Server struct {
 // New builds a Server over an opened store, a running hub and a blob store.
 func New(cfg config.Config, st *store.Store, h *hub.Hub, bl *blob.Store, logger *slog.Logger) *Server {
 	return &Server{
-		cfg:          cfg,
-		store:        st,
-		hub:          h,
-		blob:         bl,
-		tokens:       newTokenStore(),
-		logger:       logger,
-		pingInterval: defaultPingInterval,
-		writeTimeout: defaultWriteTimeout,
-		onionTimeout: onionTimeout,
-		tor:          tor.Disabled(),
-		addrKick:     make(chan struct{}, 1),
-		addressPoll:  defaultAddressPoll,
-		listIPs:      usableIPs,
-		resolveHost:  resolveHost,
-		startedAt:    time.Now(),
-		kick:         make(chan struct{}, 1),
-		conns:        make(map[*client]struct{}),
+		cfg:              cfg,
+		store:            st,
+		hub:              h,
+		blob:             bl,
+		tokens:           newTokenStore(),
+		logger:           logger,
+		writers:          newUploadWriters(),
+		stallTimeout:     defaultStallTimeout,
+		checkpointBytes:  defaultCheckpointBytes,
+		preemptWait:      defaultPreemptWait,
+		continuationWait: defaultContinuationWait,
+		pingInterval:     defaultPingInterval,
+		writeTimeout:     defaultWriteTimeout,
+		onionTimeout:     onionTimeout,
+		tor:              tor.Disabled(),
+		addrKick:         make(chan struct{}, 1),
+		addressPoll:      defaultAddressPoll,
+		listIPs:          usableIPs,
+		resolveHost:      resolveHost,
+		startedAt:        time.Now(),
+		kick:             make(chan struct{}, 1),
+		conns:            make(map[*client]struct{}),
 	}
 }
 

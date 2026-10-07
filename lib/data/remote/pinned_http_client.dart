@@ -5,23 +5,30 @@ import 'package:injectable/injectable.dart';
 import 'package:nox_app/domain/service/tor_service.dart';
 import 'package:nox_app/general/pairing/server_pin.dart';
 
-/// The one HTTP client both transports go through, and the place the server's
+/// The HTTP clients both transports go through, and the place the server's
 /// fingerprint is checked.
 ///
 /// It lives here rather than in either transport because there IS only one
 /// decision: commands travel over `wss` and attachment bytes over `https`, to
-/// the same machine, judged by the same thirty-two bytes. Two clients would be
-/// two chances to get that wrong, and the file half - which carried the bytes
-/// in the clear until this feature - is exactly the half that would be
-/// forgotten.
+/// the same machine, judged by the same thirty-two bytes. Two places deciding
+/// would be two chances to get that wrong, and the file half - which carried
+/// the bytes in the clear until this feature - is exactly the half that would
+/// be forgotten. Both clients below are built by [_build], so both are checked
+/// by [_connect] against the same fingerprint, and both are hung up on
+/// together.
 ///
-/// ONE instance for the process, deliberately. `WebSocket.connect` does not
-/// close a client handed to it, so a client per connection leaks one on every
-/// single reconnect - and the reconnect ladder makes that a steady drip on a
-/// flaky link rather than a rare event.
+/// ONE client per transport for the process, deliberately. `WebSocket.connect`
+/// does not close a client handed to it, so a client per connection leaks one
+/// on every single reconnect - and the reconnect ladder makes that a steady
+/// drip on a flaky link rather than a rare event. And not one for both (phase
+/// 043): Dio writes its connect timeout onto the client it is given, on every
+/// request, and the socket dials through that same setting - so a transfer at
+/// home cut the socket's next dial through Tor at Dio's 30 s instead of its
+/// own 45.
 @lazySingleton
 class PinnedHttpClient {
   HttpClient? _client;
+  HttpClient? _transferClient;
   String? _fingerprint;
 
   /// How many certificates this process has refused.
@@ -77,6 +84,8 @@ class PinnedHttpClient {
   void _discard() {
     _client?.close(force: true);
     _client = null;
+    _transferClient?.close(force: true);
+    _transferClient = null;
     onDiscarded?.call();
   }
 
@@ -86,8 +95,12 @@ class PinnedHttpClient {
   /// Null, or a null answer, means there is no Tor path right now.
   TorBridgeEndpoint? Function()? onionBridge;
 
-  /// The client. Built once, on first use.
+  /// The socket's client. Built once, on first use.
   HttpClient get client => _client ??= _build();
+
+  /// The client for attachment bytes ([ApiClient]): checked exactly as the
+  /// socket's, and apart from it only so that what Dio sets on it stays on it.
+  HttpClient get transferClient => _transferClient ??= _build();
 
   /// The fingerprint in force. For tests that need to see WHICH server the
   /// connection layer was pointed at, which is otherwise only observable by

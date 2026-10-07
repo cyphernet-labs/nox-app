@@ -17,6 +17,7 @@ import 'package:nox_app/data/remote/datasource/chat_remote_data_source.dart';
 import 'package:nox_app/data/repository/chat/chat_repository_impl.dart';
 import 'package:nox_app/data/service/attachment_transfer_service_impl.dart';
 import 'package:nox_app/data/sync/outbox_service.dart';
+import 'package:nox_app/data/sync/retry_ladder.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
@@ -24,6 +25,8 @@ import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/chat/message_model.dart';
 import 'package:nox_app/domain/model/file/attachment_transfer.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
+import 'package:nox_app/domain/model/file/transfer_cancellation.dart';
+import 'package:nox_app/domain/model/file/unfinished_upload.dart';
 import 'package:nox_app/domain/model/chat/message_status.dart';
 import 'package:nox_app/domain/model/chat/outbox_status.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
@@ -74,9 +77,34 @@ class _FakeFiles implements FileRepository {
   RepositoryException? failure;
   Future<void> Function()? duringUpload;
 
+  /// Every `from` the queue handed over, in order.
+  final List<UnfinishedUpload?> continuedFrom = <UnfinishedUpload?>[];
+
+  /// The upload "the server" names before the first byte, when set.
+  UnfinishedUpload? names;
+
+  /// The share already on "the server", reported as soon as it answers.
+  double? alreadyThere;
+
+  /// How the queue could end the last upload it asked for.
+  TransferCancellation? lastCancellation;
+
   @override
-  Future<RepositoryResult<String>> upload({required String path, required String mime, TransferFraction? onProgress}) async {
+  Future<RepositoryResult<String>> upload({
+    required String path,
+    required String mime,
+    UnfinishedUpload? from,
+    Future<void> Function(UnfinishedUpload? upload)? onUnfinished,
+    TransferFraction? onProgress,
+    TransferCancellation? cancellation,
+  }) async {
     uploads++;
+    continuedFrom.add(from);
+    lastCancellation = cancellation;
+    final named = names;
+    if (named != null) await onUnfinished?.call(named);
+    final share = alreadyThere;
+    if (share != null) onProgress?.call(share);
     await duringUpload?.call();
     if (failure != null) return RepositoryResult<String>.error(exception: failure!);
     if (!File(path).existsSync()) return RepositoryResult<String>.error(exception: RepositoryException.notFound);
@@ -85,11 +113,25 @@ class _FakeFiles implements FileRepository {
   }
 
   @override
-  Future<RepositoryResult<String>> download({required String fileId, required String suggestedName, TransferFraction? onProgress}) async =>
-      RepositoryResult<String>.success(data: '/tmp/$fileId');
+  Future<RepositoryResult<String>> download({
+    required String fileId,
+    required String suggestedName,
+    int? expectedSize,
+    TransferFraction? onProgress,
+  }) async => RepositoryResult<String>.success(data: '/tmp/$fileId');
+
+  @override
+  Future<void> cancelTransfers() async {}
 
   @override
   Future<String?> localPathFor({required String fileId, required String suggestedName}) async => null;
+
+  /// Where "the cache" keeps a file: a folder of its own per test.
+  String cacheRoot = Directory.systemTemp.path;
+
+  @override
+  Future<String> cachePathFor({required String fileId, required String suggestedName}) async =>
+      '$cacheRoot/$fileId.${suggestedName.split('.').last}';
 
   @override
   Future<void> clean() async {}
@@ -167,6 +209,7 @@ void main() {
   late List<String> sentKeys;
   late List<String> sentChatIds;
   late List<String> sentAttachmentIds;
+  late List<String?> sentLocalPaths;
 
   /// Fails the SEND without touching the upload — the two are separate steps
   /// now, and a test that cannot tell them apart proves nothing about either.
@@ -194,6 +237,7 @@ void main() {
     sentKeys = <String>[];
     sentChatIds = <String>[];
     sentAttachmentIds = <String>[];
+    sentLocalPaths = <String?>[];
     failures = <String, RepositoryException>{};
     sendFailure = null;
     messages = MockMessageRepository();
@@ -210,7 +254,10 @@ void main() {
       final attached = invocation.namedArguments[#attachment] as MessageAttachment?;
       sentKeys.add(key);
       sentChatIds.add(invocation.namedArguments[#chatId] as String);
-      if (attached != null) sentAttachmentIds.add(attached.id);
+      if (attached != null) {
+        sentAttachmentIds.add(attached.id);
+        sentLocalPaths.add(attached.localPath);
+      }
       final failure = failures[text] ?? sendFailure;
       if (failure != null) return RepositoryResult<MessageModel>.error(exception: failure);
       return RepositoryResult<MessageModel>.success(data: echo(invocation.namedArguments[#chatId] as String, text ?? ''));
@@ -459,6 +506,7 @@ void main() {
       source = File('${Directory.systemTemp.path}/nox_outbox_${DateTime.now().microsecondsSinceEpoch}.png')
         ..writeAsBytesSync(List<int>.filled(64, 7));
       addTearDown(() => source.existsSync() ? source.deleteSync() : null);
+      files.cacheRoot = Directory.systemTemp.createTempSync('nox_cache').path;
     });
 
     MessageAttachment picked() => MessageAttachment(
@@ -505,16 +553,44 @@ void main() {
       expect(await outbox.pending(), isEmpty);
     });
 
-    test('a file that vanished from disk fails this message and lets the queue move on', () async {
+    test('the picked file may go once its message is sent: the bytes go up from the queue\'s own copy (phase 043)', () async {
+      // The macOS sandbox forgets a picked file when the app restarts, the iOS
+      // picker's copy can be emptied while the app is not running, and anyone
+      // can clear their photos: none of it may cost a message already sent.
+      final entry = (await outbox.enqueue(chatId: 'c1', text: null, attachment: picked())).data!;
+      source.deleteSync();
+
+      await service.flush();
+
+      expect(sentKeys, [entry.clientMessageId]);
+      expect(await outbox.watchQueue().first, isEmpty);
+    });
+
+    test('a file the queue could not keep fails this message and lets the queue move on', () async {
+      source.deleteSync(); // gone before the message was even sent: there is nothing to copy
       await outbox.enqueue(chatId: 'c1', text: null, attachment: picked());
       final behind = (await outbox.enqueue(chatId: 'c1', text: 'behind it')).data!;
-      source.deleteSync(); // the user cleared their photos between attach and drain
 
       await service.flush();
 
       final left = await outbox.watchQueue().first;
       expect(left.single.status, OutboxStatus.error);
       expect(sentKeys, contains(behind.clientMessageId), reason: 'one bad attachment must not hold the queue');
+    });
+
+    test('the message the server accepts names the bytes where the file\'s bytes live, and no copy is left behind (phase 043)', () async {
+      // A download of the same file would land there: the thumbnail and Save
+      // find the bytes on this device, after a restart too.
+      final entry = (await outbox.enqueue(chatId: 'c1', text: null, attachment: picked())).data!;
+      final copy = File(entry.attachment!.localPath!);
+
+      await service.flush();
+
+      final kept = sentLocalPaths.single!;
+      expect(kept, await files.cachePathFor(fileId: sentAttachmentIds.single, suggestedName: 'shot.png'));
+      expect(File(kept).readAsBytesSync(), List<int>.filled(64, 7));
+      expect(copy.existsSync(), isFalse);
+      expect(copy.parent.existsSync(), isFalse);
     });
 
     test('a file being sent is a transfer from before its first byte until the server has the message', () async {
@@ -568,6 +644,29 @@ void main() {
       expect(published.every((m) => m.isEmpty), isTrue);
     });
 
+    test('a message thrown away while its file goes up ends the upload, and the next message goes at once (phase 043)', () async {
+      // The queue is one strictly ordered line: an upload nobody wanted any
+      // more held every later message for as long as its bytes kept going -
+      // through Tor, tens of minutes.
+      final entry = (await outbox.enqueue(chatId: 'c1', text: null, attachment: picked())).data!;
+      final behind = (await outbox.enqueue(chatId: 'c1', text: 'behind it')).data!;
+      final uploading = Completer<void>();
+      files.failure = RepositoryException.connection; // what an ended transfer reports
+      files.duringUpload = () async {
+        uploading.complete();
+        await files.lastCancellation!.whenCancelled; // goes on until ended from outside
+      };
+
+      final pass = service.flush();
+      await uploading.future;
+      await service.discard(clientMessageId: entry.clientMessageId);
+      await pass.timeout(const Duration(seconds: 5));
+
+      expect(files.lastCancellation!.isCancelled, isTrue);
+      expect(sentKeys, [behind.clientMessageId], reason: 'in the same pass - no pause on a message that is gone');
+      expect(await outbox.pending(), isEmpty);
+    });
+
     test('a message discarded during the upload is not sent', () async {
       // Phase 027 re-reads right before sending so a discard is honoured; an
       // upload stretches that window from milliseconds to minutes.
@@ -578,6 +677,162 @@ void main() {
 
       expect(sentKeys, isEmpty, reason: 'the bytes may be up, but no message may name them');
       expect(await outbox.pending(), isEmpty);
+    });
+
+    group('when the automation gives up on an upload (phase 043, US4)', () {
+      Future<void> drainUntilSettled() async {
+        for (var i = 0; i < 25 && (await outbox.pending()).isNotEmpty; i++) {
+          phase.emit(SessionPhase.live); // a live edge lifts the pause and buys an attempt
+          await service.flush();
+        }
+      }
+
+      test('an upload the server keeps refusing is set aside after the ladder, and stops holding the queue', () async {
+        // Without the cap here a refusing endpoint held the one global queue -
+        // every chat, every later message - for good.
+        service.start();
+        files.failure = RepositoryException.internal;
+        await outbox.enqueue(chatId: 'c1', text: null, attachment: picked());
+        final behind = (await outbox.enqueue(chatId: 'c1', text: 'behind it')).data!;
+
+        await drainUntilSettled();
+
+        final stuck = (await outbox.watchQueue().first).single;
+        expect(stuck.status, OutboxStatus.error);
+        expect(stuck.refusals, RetryLadder.refusalLimit);
+        expect(files.uploads, RetryLadder.refusalLimit);
+        expect(sentKeys, contains(behind.clientMessageId));
+      });
+
+      test('a flapping link never sets an upload aside', () async {
+        service.start();
+        files.failure = RepositoryException.connection;
+        await outbox.enqueue(chatId: 'c1', text: null, attachment: picked());
+
+        for (var i = 0; i < 25; i++) {
+          phase.emit(SessionPhase.live);
+          await service.flush();
+        }
+
+        final entry = (await outbox.pending()).single;
+        expect(entry.status, OutboxStatus.pending, reason: 'a tunnel is not the server refusing (SC-005)');
+        expect(entry.refusals, 0);
+        expect(entry.attempts, greaterThan(RetryLadder.refusalLimit));
+      });
+
+      test('a manual retry goes on from the upload the server holds, with the whole ladder again (FR-011)', () async {
+        service.start();
+        final entry = (await outbox.enqueue(chatId: 'c1', text: null, attachment: picked())).data!;
+        final handle = UnfinishedUpload(fileId: 'f_77', sourceSize: 64, sourceModifiedAt: DateTime.utc(2026, 10, 5));
+        await outbox.noteUpload(clientMessageId: entry.clientMessageId, upload: handle);
+        files.failure = RepositoryException.internal;
+        await drainUntilSettled();
+        expect((await outbox.watchQueue().first).single.status, OutboxStatus.error);
+        expect((await outbox.watchQueue().first).single.upload?.fileId, 'f_77', reason: 'giving up does not forget what the server has');
+
+        files.failure = null;
+        final before = files.uploads;
+        await outbox.markPending(clientMessageId: entry.clientMessageId);
+        await drainUntilSettled();
+
+        expect(files.uploads - before, 1);
+        expect(files.continuedFrom.last?.fileId, 'f_77', reason: 'from the last byte the server got, not from the first');
+        expect(await outbox.pending(), isEmpty);
+      });
+    });
+
+    group('an upload the server holds part of (phase 043)', () {
+      final handle = UnfinishedUpload(fileId: 'f_77', sourceSize: 64, sourceModifiedAt: DateTime.utc(2026, 10, 5, 9, 30));
+
+      Matcher sameAs(UnfinishedUpload expected) => isA<UnfinishedUpload>()
+          .having((u) => u.fileId, 'fileId', expected.fileId)
+          .having((u) => u.sourceSize, 'sourceSize', expected.sourceSize)
+          .having((u) => u.sourceModifiedAt.isAtSameMomentAs(expected.sourceModifiedAt), 'same moment', isTrue);
+
+      test('the stored upload is handed to the repository to go on from', () async {
+        final entry = (await outbox.enqueue(chatId: 'c1', text: null, attachment: picked())).data!;
+        await outbox.noteUpload(clientMessageId: entry.clientMessageId, upload: handle);
+
+        await service.flush();
+
+        expect(files.continuedFrom.single, sameAs(handle));
+      });
+
+      test('the upload the server names is written down before the bytes go', () async {
+        final entry = (await outbox.enqueue(chatId: 'c1', text: null, attachment: picked())).data!;
+        files.names = handle;
+        UnfinishedUpload? onRecordWhileSending;
+        files.duringUpload = () async => onRecordWhileSending = (await outbox.find(clientMessageId: entry.clientMessageId))?.upload;
+        files.failure = RepositoryException.connection; // and then the link breaks
+
+        await service.flush();
+
+        expect(onRecordWhileSending, sameAs(handle), reason: 'a restart in the middle has to find it');
+        expect((await outbox.find(clientMessageId: entry.clientMessageId))!.upload, sameAs(handle));
+      });
+
+      test('a restart goes on from the stored upload instead of declaring the file again', () async {
+        await outbox.enqueue(chatId: 'c1', text: null, attachment: picked());
+        files.names = handle;
+        files.failure = RepositoryException.connection;
+        await service.flush();
+        await service.stop();
+
+        // A new process: a fresh queue over the same store.
+        files
+          ..names = null
+          ..failure = null;
+        service = OutboxService(outbox, messages, phase, files, transfers, getIt<ChatRepository>());
+        await service.flush();
+
+        expect(files.continuedFrom.last, sameAs(handle), reason: 'what the server has is not sent again (FR-003)');
+        expect(await outbox.pending(), isEmpty);
+      });
+
+      test('a source that vanished or changed fails the message and forgets the upload', () async {
+        final entry = (await outbox.enqueue(chatId: 'c1', text: null, attachment: picked())).data!;
+        await outbox.noteUpload(clientMessageId: entry.clientMessageId, upload: handle);
+        files.failure = RepositoryException.notFound;
+
+        await service.flush();
+
+        final left = (await outbox.watchQueue().first).single;
+        expect(left.status, OutboxStatus.error);
+        expect(left.upload, isNull, reason: 'a manual retry then sends the file as it is now, as a new upload');
+      });
+
+      test('a broken link keeps the upload for the next attempt', () async {
+        final entry = (await outbox.enqueue(chatId: 'c1', text: null, attachment: picked())).data!;
+        await outbox.noteUpload(clientMessageId: entry.clientMessageId, upload: handle);
+        files.failure = RepositoryException.connection;
+
+        await service.flush();
+
+        expect((await outbox.pending()).single.upload, sameAs(handle));
+      });
+
+      test('confirmed bytes forget the upload: only the message is left to send', () async {
+        final entry = (await outbox.enqueue(chatId: 'c1', text: null, attachment: picked())).data!;
+        await outbox.noteUpload(clientMessageId: entry.clientMessageId, upload: handle);
+        sendFailure = RepositoryException.connection; // the message itself waits
+
+        await service.flush();
+
+        final left = (await outbox.pending()).single;
+        expect(left.fileId, isNotNull);
+        expect(left.upload, isNull);
+      });
+
+      test('the bubble shows what the server already has as soon as it says so, not zero', () async {
+        final entry = (await outbox.enqueue(chatId: 'c1', text: null, attachment: picked())).data!;
+        files.alreadyThere = 0.45;
+        AttachmentTransfer? whileGoing;
+        files.duringUpload = () async => whileGoing = transfers.current[entry.clientMessageId];
+
+        await service.flush();
+
+        expect(whileGoing?.percent, 45, reason: 'FR-012: the share of the whole file');
+      });
     });
   });
 
@@ -766,6 +1021,23 @@ void main() {
 
     expect(sentKeys, contains(fresh.clientMessageId), reason: 'a pause must not outlive its reason');
     expect(await outbox.pending(), isEmpty);
+  });
+
+  test('throwing away the message a pause waits on lets the rest go at once', () async {
+    failures['head'] = RepositoryException.internal;
+    final keys = await enqueue(['head', 'next']);
+    await service.flush(); // refused: the queue waits out a pause on it
+    expect(sentKeys, [keys[0]]);
+
+    await service.discard(clientMessageId: keys[0]);
+    // Well inside the shortest pause (0.8 s): the rest went because of the
+    // discard, not because the pause ran out.
+    for (var i = 0; i < 40 && !sentKeys.contains(keys[1]); i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+
+    expect(sentKeys, contains(keys[1]));
+    expect(await outbox.watchQueue().first, isEmpty);
   });
 
   test('a discard landing mid-pass is honoured — the message is not sent', () async {
