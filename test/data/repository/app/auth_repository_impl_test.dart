@@ -286,6 +286,40 @@ void main() {
     verify(appState.fetchAppState(sessionExpired: true)).called(1);
   });
 
+  group('a session paired before phase 044 (T038, FR-025)', () {
+    test('is retired once, through the forced logout: the full wipe and the pairing screen', () async {
+      when(session.predatesServerKey()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
+
+      final result = await repository.retireLegacySession();
+
+      expect(result.data, isTrue);
+      verifyInOrder([session.clear(), outbox.clean(), files.clean(), sync.clear(), chats.clean(), messages.clean()]);
+      verify(appState.fetchAppState(sessionExpired: true)).called(1);
+    });
+
+    test('a session with its server key is left alone', () async {
+      when(session.predatesServerKey()).thenAnswer((_) async => const RepositoryResult<bool>.success(data: false));
+
+      final result = await repository.retireLegacySession();
+
+      expect(result.data, isFalse);
+      verifyNever(session.clear());
+      verifyNever(appState.fetchAppState(sessionExpired: anyNamed('sessionExpired')));
+    });
+
+    test('a keychain that cannot be read wipes nothing', () async {
+      // Still locked after a reboot, say: a valid session as likely as an old
+      // one, and a transient failure never logs anybody out.
+      when(session.predatesServerKey()).thenAnswer((_) async => const RepositoryResult<bool>.error(exception: RepositoryException.unknown));
+
+      final result = await repository.retireLegacySession();
+
+      expect(result.data, isFalse);
+      verifyNever(session.clear());
+      verifyNever(chats.clean());
+    });
+  });
+
   /// Sign-in with a live channel present: the branch the app actually takes on
   /// the stage flavor, and the one no test used to reach — every case above
   /// runs the no-handshake fallback, so the server-decided outcome and its

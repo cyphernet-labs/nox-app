@@ -412,6 +412,17 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
     );
   }
 
+  @override
+  Future<RepositoryResult<bool>> retireLegacySession() async {
+    final predates = await _sessionRepository.predatesServerKey();
+    // An error here is a keychain that cannot be read right now - a valid
+    // session as likely as an old one - and never a reason to wipe.
+    if (predates.data != true) return const RepositoryResult<bool>.success(data: false);
+    logRepository.debug(target: this, message: 'bootstrap: a session paired before the secure channel, pairing again');
+    final out = await logout(forced: true);
+    return out.hasData ? const RepositoryResult<bool>.success(data: true) : out;
+  }
+
   /// The single home of the "mutate the source of truth → re-derive app state"
   /// contract: run [mutate]; on success run [afterMutate] then re-derive via
   /// `fetchAppState`, on failure propagate the mutation error unchanged (no side

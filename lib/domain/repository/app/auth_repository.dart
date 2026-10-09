@@ -16,4 +16,15 @@ abstract class AuthRepository {
   /// revocation from another. Nothing about the channel - another server's key, a
   /// failed open, a 401 on a file transfer - ever reaches it.
   Future<RepositoryResult<bool>> logout({bool forced = false});
+
+  /// Retires a session paired before phase 044 - an identifier with no server
+  /// key (FR-025): one forced logout through [logout], the full wipe, and the
+  /// pairing screen. Nothing it holds could check a connection, and the
+  /// server it paired with is gone with its old database. Once: the wipe
+  /// leaves no identifier behind.
+  ///
+  /// A storage READ error retires nothing - a keychain still locked after a
+  /// reboot is not proof of anything. Called at bootstrap; `true` when it
+  /// retired a session.
+  Future<RepositoryResult<bool>> retireLegacySession();
 }

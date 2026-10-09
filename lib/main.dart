@@ -37,6 +37,11 @@ void main() {
       // decides whether a signed-in person lands on their chats or on Login.
       // The call reports rather than throws, so nothing is guarded around it.
       await sessionRepository.sweepLegacyKeys();
+      // A session paired before phase 044 holds no server key, so nothing it
+      // has could check a connection: it is wiped once, here, before anything
+      // reads it, and the person pairs again (FR-025). A keychain that cannot
+      // be read right now wipes nothing.
+      await authRepository.retireLegacySession();
       // Bring the live channel up before the first screen resolves: the world
       // check and the applier subscription both have to precede the greeting,
       // and only the dev environment binds a starter at all.
