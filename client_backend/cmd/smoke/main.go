@@ -35,19 +35,49 @@ import (
 )
 
 const usage = `usage: smoke <pairing link>
+       smoke -check <host:port> <server key, base64>
 
 Give it the claim link a freshly started noxd printed, or the one on its
-service page. The server must have no owner yet.`
+service page. The server must have no owner yet.
+
+With -check it only opens the channel - TLS and the channel check, with a
+throwaway device key - and says whether the machine at that address is the one
+whose key it was given. Nothing is paired and nothing is sent.`
 
 func main() {
-	if len(os.Args) != 2 {
+	switch {
+	case len(os.Args) == 4 && os.Args[1] == "-check":
+		if err := check(os.Args[2], os.Args[3]); err != nil {
+			fmt.Fprintf(os.Stderr, "not this server: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("ok")
+	case len(os.Args) == 2:
+		if err := run(os.Args[1]); err != nil {
+			fmt.Fprintf(os.Stderr, "\n  FAILED: %v\n\n", err)
+			os.Exit(1)
+		}
+	default:
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)
 	}
-	if err := run(os.Args[1]); err != nil {
-		fmt.Fprintf(os.Stderr, "\n  FAILED: %v\n\n", err)
-		os.Exit(1)
+}
+
+// check opens one channel to addr and closes it. The answer is whether the
+// machine there proved the given key: the stand script asks it to tell its own
+// server from somebody else's holding the same port.
+func check(addr, serverKey string) error {
+	key, err := base64.StdEncoding.DecodeString(serverKey)
+	if err != nil || len(key) != ed25519.PublicKeySize {
+		return errors.New("the server key is not 32 bytes of base64")
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	channel, err := openChannel(ctx, link{addr: addr, serverKey: key}, newDevice())
+	if err != nil {
+		return err
+	}
+	return channel.Close()
 }
 
 func run(rawLink string) error {
