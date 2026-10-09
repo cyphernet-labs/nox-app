@@ -7,7 +7,6 @@
 library;
 
 import 'dart:ffi';
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
@@ -56,9 +55,10 @@ class NoxTorException implements Exception {
 abstract final class NoxTor {
   static bool? _supported;
 
-  /// False on Linux (no library is built there) and wherever the library
-  /// failed to load.
-  static bool get isSupported => _supported ??= !Platform.isLinux && _probe();
+  /// Whether the native module loaded. It is built on all five platforms
+  /// (phase 044: the secure channel needs it everywhere); whether Tor itself
+  /// is offered on a platform is the app's decision, not this one.
+  static bool get isSupported => _supported ??= _probe();
 
   static bool _probe() {
     try {
