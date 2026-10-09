@@ -4,15 +4,15 @@
 //!
 //! Starts the client cold in <dir> (which it empties first), then warm from
 //! the same directories, and - with a target - times the first and a repeated
-//! keyed connection through the bridge. A connection counts as up when the
-//! server's first byte comes back: plain HTTP sent to a TLS port makes the Go
-//! server answer at once, so no TLS stack is needed here.
+//! keyed connection to the onion service: the hedged connect every onion
+//! channel makes (044), up to the open Tor stream. TLS and Eidolon come on top
+//! of that in a channel and need a paired device's seed, so they are not timed
+//! here.
 
-use std::io::{Read, Write};
-use std::net::TcpStream;
 use std::time::{Duration, Instant};
 
 use data_encoding::BASE64;
+use nox_tor::channel::target;
 use nox_tor::engine;
 use nox_tor::status::{state, NoxTorStatus};
 use zeroize::Zeroizing;
@@ -35,19 +35,15 @@ fn rss_kb() -> String {
     out.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned()).unwrap_or_default()
 }
 
-fn through_bridge() -> Result<Duration, String> {
-    let status = engine::status();
-    let secret = engine::bridge_secret().ok_or("no bridge")?;
+/// One onion connect, as a channel makes it, until the Tor stream is open.
+fn through_tor(onion: &str, port: u16) -> Result<Duration, String> {
+    let ctx = engine::onion_context().ok_or("the client is not ready")?;
+    let hsid = target::parse_onion(onion).map_err(|code| format!("channel code {code}"))?;
     let started = Instant::now();
-    let mut socket = TcpStream::connect(("127.0.0.1", status.port)).map_err(|e| e.to_string())?;
-    socket.set_read_timeout(Some(Duration::from_secs(60))).ok();
-    socket.write_all(&secret).map_err(|e| e.to_string())?;
-    socket.write_all(b"GET /health HTTP/1.0\r\n\r\n").map_err(|e| e.to_string())?;
-    let mut first = [0u8; 1];
-    match socket.read(&mut first) {
-        Ok(1) => Ok(started.elapsed()),
-        Ok(_) => Err(format!("closed without a byte; bridge error {}", engine::status().error)),
-        Err(e) => Err(format!("{e}; bridge error {}", engine::status().error)),
+    let stream = ctx.runtime.block_on(target::onion(&ctx, onion.to_owned(), hsid, port));
+    match stream {
+        Ok(_) => Ok(started.elapsed()),
+        Err(code) => Err(format!("channel code {code}; status error {}", engine::status().error)),
     }
 }
 
@@ -76,7 +72,7 @@ fn main() {
         let key: [u8; 32] = BASE64.decode(key.as_bytes()).expect("key is base64").try_into().expect("32 bytes");
         assert_eq!(engine::set_target(onion, port, Box::new(Zeroizing::new(key))), 0);
         for label in ["first keyed connect", "repeated keyed connect"] {
-            match through_bridge() {
+            match through_tor(onion, port) {
                 Ok(t) => println!("{label}: {:.2}s, rss {} KB", t.as_secs_f64(), rss_kb()),
                 Err(e) => println!("{label}: FAILED ({e})"),
             }
