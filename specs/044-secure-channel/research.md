@@ -67,7 +67,7 @@
 
 ## R12. Приветствие и спаривание на проводе
 
-- **Decision:** сервер шлёт `{"srv":{"schema_max":1}}` без `challenge`; `session.hello` — без `device_key` и `signature`; `pair` — без `device_key`. Сервер берёт ключ устройства из соединения. Незнакомый ключ: `session.hello` → `unauthenticated` (приложение — принудительный выход), `pair` — разрешён, любые другие команды — `unauthenticated`.
+- **Decision:** сервер шлёт `{"srv":{"schema_max":1}}` без `challenge`; `session.hello` — без `device_key` и `signature`; `pair` — без `device_key`. Сервер берёт ключ устройства из соединения. Незнакомый ключ: `session.hello` → `unauthenticated` (приложение — принудительный выход), `pair` — разрешён, любые другие команды до приветствия — `invalid_request`, как и сегодня.
 - **Rationale:** FR-006, FR-013, FR-015.
 
 ## R13. Прямой путь и проба адреса
