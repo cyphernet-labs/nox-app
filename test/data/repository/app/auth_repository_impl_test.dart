@@ -20,6 +20,7 @@ import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/repository/log_repository.dart';
 import 'package:nox_app/domain/service/attachment_download_service.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
+import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_app/data/service/tor/fake_tor_service.dart';
@@ -93,23 +94,54 @@ void main() {
 
   tearDown(() async => getIt.reset());
 
-  // A link the Go server actually produced, captured from a live noxd.
-  const link = 'https://nox.app/p/#AQF_AAABH5CjZmMytIk_2XvPJ-jonqlQtYsZD3SB33P1foxqnrVbFo-VEf6WohQoqA1_na5iVUo';
+  // The contract's `minimal` vector: one IPv4 address, shared with the Go
+  // server that issues it.
+  const link = 'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODwEGwKgBFCD7';
+  const serverKey = 'oJql9HpnWYAv+VX43C0qFKXJnSO+l/hkEn/5ODRVpPA=';
 
-  test('signing in remembers which server the link named', () async {
+  test('signing in remembers which server the link named - its address and its key', () async {
     // Without this the app pairs with the server a person presented and then
-    // sends their messages to the address baked into the build.
+    // sends their messages to the address baked into the build - or checks
+    // the connection against nothing at all.
     await repository.signIn(identifier: link);
-    verify(session.saveServer(address: '127.0.0.1:8080', serverFingerprint: anyNamed('serverFingerprint'))).called(1);
+    verify(session.saveServer(address: '192.168.1.20:8443', serverKey: serverKey)).called(1);
   });
 
   test('a link that will not parse is refused before anything is stored', () async {
-    final result = await repository.signIn(identifier: 'not a pairing link');
+    for (final broken in [
+      'not a pairing link',
+      'https://nox.app/p/#AQF_AAABH5CjZmMytIk_2XvPJ-jonqlQtYsZD3SB33P1foxqnrVbFo-VEf6WohQoqA1_na5iVUo',
+    ]) {
+      final result = await repository.signIn(identifier: broken);
+
+      expect(result.hasData, isFalse);
+      expect(result.exception, RepositoryException.invalidRequest, reason: broken);
+    }
+    verifyNever(session.saveServer(address: anyNamed('address'), serverKey: anyNamed('serverKey')));
+    verifyNever(session.saveIdentifier(identifier: anyNamed('identifier'), onboardingComplete: anyNamed('onboardingComplete')));
+  });
+
+  test('a link from a newer server asks for an update, before anything is stored', () async {
+    final result = await repository.signIn(identifier: 'nox://pair/BKCapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODw');
 
     expect(result.hasData, isFalse);
-    expect(result.exception, RepositoryException.invalidRequest);
-    verifyNever(session.saveServer(address: anyNamed('address'), serverFingerprint: anyNamed('serverFingerprint')));
-    verifyNever(session.saveIdentifier(identifier: anyNamed('identifier'), onboardingComplete: anyNamed('onboardingComplete')));
+    expect(result.exception, RepositoryException.unsupportedSchema, reason: 'apart from a broken link: the person updates the app');
+    verifyNever(session.saveServer(address: anyNamed('address'), serverKey: anyNamed('serverKey')));
+  });
+
+  test('a link with no direct address cannot pair until phase 045, and stores nothing', () async {
+    // Only an onion address: the onion service opens for a paired device's
+    // key, and this one is not paired yet (FR-019).
+    final onionOnly = PairingLink(
+      serverKey: PairingLink.parse(link).serverKey,
+      token: PairingLink.parse(link).token,
+      addresses: [OnionLinkAddress(PairingLink.parse(link).serverKey)],
+    ).encode();
+
+    final result = await repository.signIn(identifier: onionOnly);
+
+    expect(result.exception, RepositoryException.connection, reason: 'out of reach from here - which says pairing works at home');
+    verifyNever(session.saveServer(address: anyNamed('address'), serverKey: anyNamed('serverKey')));
   });
 
   test('FR-004: signing in never states a label, so a known name cannot be overwritten', () async {
@@ -271,13 +303,13 @@ void main() {
         session.deviceSecret(),
       ).thenAnswer((_) async => const RepositoryResult<String>.success(data: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8='));
       when(
-        session.saveServer(address: anyNamed('address'), serverFingerprint: anyNamed('serverFingerprint')),
+        session.saveServer(address: anyNamed('address'), serverKey: anyNamed('serverKey')),
       ).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
     });
 
     test('claiming a server brings the person into being, so naming is ahead', () async {
       when(
-        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
+        handshake.pair(link: anyNamed('link'), platform: anyNamed('platform')),
       ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_2', label: 'User1234', created: true));
 
       final result = await repository.signIn(identifier: link);
@@ -291,7 +323,7 @@ void main() {
 
     test('a device added to an existing person skips onboarding entirely', () async {
       when(
-        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
+        handshake.pair(link: anyNamed('link'), platform: anyNamed('platform')),
       ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
 
       final result = await repository.signIn(identifier: link);
@@ -301,38 +333,38 @@ void main() {
       verifyNever(session.noteOnboardingStartedHere());
     });
 
-    test('a version-2 link reaches the handshake whole, its onion part included (FR-020)', () async {
-      const v2 =
-          'https://nox.app/p/#AgHAqAEKH5AAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eH6ChoqOkpaanqKmqq6ytrq8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-PwG7QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8';
+    test('every address of the link is stored in order, the onion one kept for later (FR-019)', () async {
+      // The contract's `full` vector: an IPv4 address, a name and an onion
+      // service. Pairing starts at the first direct address; the onion one is
+      // for the connection through Tor once this device is paired.
+      const full =
+          'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODwEGwKgBFCD7AxFub3guZXhhbXBsZS5vcmcg-wQgF8t5-ytBIPKx7GXkGY1uCLKOgT_rAeSkAIObheGAgM4';
+      (getIt<TorService>() as FakeTorService).supported = true;
       when(
-        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
+        handshake.pair(link: anyNamed('link'), platform: anyNamed('platform')),
       ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
 
-      final result = await repository.signIn(identifier: v2);
+      final result = await repository.signIn(identifier: full);
 
       expect(result.data, isTrue);
-      final handed =
-          verify(
-                handshake.pair(link: captureAnyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
-              ).captured.single
-              as PairingLink;
-      expect(handed.carriesOnion, isTrue);
-      // The direct address is still the one stored and tried first.
-      verify(session.saveServer(address: '192.168.1.10:8080', serverFingerprint: anyNamed('serverFingerprint'))).called(1);
+      verify(session.saveServer(address: '192.168.1.20:8443', serverKey: serverKey)).called(1);
+      final stored = (await getIt<ServerAddressesRepository>().read()).data!;
+      expect(stored.direct, ['192.168.1.20:8443', 'nox.example.org:8443']);
+      expect(stored.onion, '${'a' * 56}.onion:443', reason: 'derived from the service key by the Tor module');
+      final handed = verify(handshake.pair(link: captureAnyNamed('link'), platform: anyNamed('platform'))).captured.single as PairingLink;
+      expect(handed.directAddresses, ['192.168.1.20:8443', 'nox.example.org:8443']);
     });
 
-    test('only the PUBLIC key is presented - the seed never leaves', () async {
-      when(
-        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
-      ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
+    test('the device key is read before anything is presented, and an unreadable one rolls back', () async {
+      // The channel opens with it; a keychain that cannot give it up is a
+      // failed attempt, never a pairing with a key nobody will find again.
+      when(session.deviceSecret()).thenAnswer((_) async => const RepositoryResult<String>.error(exception: RepositoryException.unknown));
 
-      await repository.signIn(identifier: link);
+      final result = await repository.signIn(identifier: link);
 
-      final presented = verify(
-        handshake.pair(link: anyNamed('link'), deviceKey: captureAnyNamed('deviceKey'), platform: anyNamed('platform')),
-      ).captured.single;
-      expect(presented, 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=', reason: 'the public half of the pinned vector');
-      expect(presented, isNot(contains('AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=')));
+      expect(result.hasData, isFalse);
+      verifyNever(handshake.pair(link: anyNamed('link'), platform: anyNamed('platform')));
+      verify(session.discardSignIn()).called(1);
     });
 
     test('the two refusals stay apart, because each says a different thing to do next', () async {
@@ -343,9 +375,7 @@ void main() {
         PairRefusal.notUsable: RepositoryException.authentication,
       };
       for (final entry in expectations.entries) {
-        when(
-          handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
-        ).thenThrow(PairingRefused(reason: entry.key));
+        when(handshake.pair(link: anyNamed('link'), platform: anyNamed('platform'))).thenThrow(PairingRefused(reason: entry.key));
 
         final refused = await repository.signIn(identifier: link);
         expect(refused.exception, entry.value, reason: '${entry.key.name} must stay distinguishable');
@@ -359,7 +389,7 @@ void main() {
       // greeted then, and a message sent on it comes back looking like a
       // stranger's on the sender's own screen.
       when(
-        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
+        handshake.pair(link: anyNamed('link'), platform: anyNamed('platform')),
       ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
       when(
         handshake.greet(within: anyNamed('within')),
@@ -374,7 +404,7 @@ void main() {
       // The pairing landed and the token is spent. Rolling back here would burn
       // it for nothing - an ordinary reconnect is enough.
       when(
-        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
+        handshake.pair(link: anyNamed('link'), platform: anyNamed('platform')),
       ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
       when(handshake.greet(within: anyNamed('within'))).thenThrow(const IdentityHandshakeTimeout());
 
@@ -385,9 +415,7 @@ void main() {
     });
 
     test('a pairing that never answers rolls back, keeping the device key', () async {
-      when(
-        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
-      ).thenThrow(const IdentityHandshakeTimeout());
+      when(handshake.pair(link: anyNamed('link'), platform: anyNamed('platform'))).thenThrow(const IdentityHandshakeTimeout());
 
       final result = await repository.signIn(identifier: link);
 
@@ -407,14 +435,15 @@ void main() {
       final logger = _CapturingLog(logs);
       getIt.registerSingleton<LogRepository>(logger);
       when(
-        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
+        handshake.pair(link: anyNamed('link'), platform: anyNamed('platform')),
       ).thenThrow(const FormatException('Invalid character', 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8='));
 
       await repository.signIn(identifier: link);
 
       final written = logs.join('\n');
       expect(written, isNot(contains('AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=')));
-      expect(written, isNot(contains(link.split('#').last)));
+      expect(written, isNot(contains(link.substring(PairingLink.prefix.length))));
+      expect(written, isNot(contains(PairingLink.parse(link).token)));
     });
 
     test('a sign-in that works says nothing at all in the log', () async {
@@ -431,7 +460,7 @@ void main() {
       final logs = <String>[];
       getIt.registerSingleton<LogRepository>(_CapturingLog(logs));
       when(
-        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
+        handshake.pair(link: anyNamed('link'), platform: anyNamed('platform')),
       ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_person_7', label: 'Anna', created: true));
 
       await repository.signIn(identifier: link);
@@ -444,7 +473,7 @@ void main() {
       // newcomer's naming step; guessing true overwrites a returning person's
       // name.
       when(
-        handshake.pair(link: anyNamed('link'), deviceKey: anyNamed('deviceKey'), platform: anyNamed('platform')),
+        handshake.pair(link: anyNamed('link'), platform: anyNamed('platform')),
       ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_3', label: 'Anna', created: null));
 
       final result = await repository.signIn(identifier: link);

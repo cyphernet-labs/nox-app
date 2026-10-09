@@ -20,25 +20,21 @@ enum NoxTorState { stopped, bootstrapping, ready, dormant, failed, obsolete }
 enum NoxTorError { none, missingClientAuth, wrongClientAuth, timeout, network, internal, softwareDeprecated }
 
 /// One status snapshot.
+///
+/// `NoxTorStatus.port` of the ABI is not read: it was the loopback bridge's,
+/// and there is no bridge any more (phase 044) - a connection through Tor is
+/// a channel of `package:nox_tor/channel.dart`.
 class NoxTorSnapshot {
-  const NoxTorSnapshot({required this.state, required this.bootstrapPercent, required this.error, required this.port});
+  const NoxTorSnapshot({required this.state, required this.bootstrapPercent, required this.error});
 
   final NoxTorState state;
   final int bootstrapPercent;
   final NoxTorError error;
 
-  /// The bridge's port on 127.0.0.1; null while no target is set.
-  final int? port;
-
-  static const NoxTorSnapshot stopped = NoxTorSnapshot(
-    state: NoxTorState.stopped,
-    bootstrapPercent: 0,
-    error: NoxTorError.none,
-    port: null,
-  );
+  static const NoxTorSnapshot stopped = NoxTorSnapshot(state: NoxTorState.stopped, bootstrapPercent: 0, error: NoxTorError.none);
 
   @override
-  String toString() => 'NoxTorSnapshot(${state.name}, $bootstrapPercent%, ${error.name}, port: $port)';
+  String toString() => 'NoxTorSnapshot(${state.name}, $bootstrapPercent%, ${error.name})';
 }
 
 /// A C ABI call that did not succeed. Carries the code only: a message could
@@ -77,9 +73,10 @@ abstract final class NoxTor {
 
   static void stop() => noxTorStop();
 
-  /// Points the bridge at one onion service with its client-authorization key.
-  /// [clientKey] is the 32-byte x25519 private key; it is copied and the
-  /// native copy is wiped with the arena.
+  /// Registers the client-authorization key of one onion service with the
+  /// client (until phase 045), for the channels opened to it. [clientKey] is
+  /// the 32-byte x25519 private key; it is copied and the native copy is
+  /// wiped with the arena.
   static void setTarget({required String onionHost, required int port, required Uint8List clientKey}) {
     if (clientKey.length != 32) throw ArgumentError.value(clientKey.length, 'clientKey', 'must be 32 bytes');
     _check(
@@ -107,17 +104,7 @@ abstract final class NoxTor {
       state: NoxTorState.values[s.state.clamp(0, NoxTorState.values.length - 1)],
       bootstrapPercent: s.bootstrapPercent,
       error: NoxTorError.values[s.error.clamp(0, NoxTorError.values.length - 1)],
-      port: s.port == 0 ? null : s.port,
     );
-  });
-
-  /// The 32 bytes a connection to the bridge must open with.
-  static Uint8List bridgeSecret() => using((arena) {
-    final out = arena<Uint8>(32);
-    _check(noxTorBridgeSecret(out));
-    final secret = Uint8List.fromList(out.asTypedList(32));
-    out.asTypedList(32).fillRange(0, 32, 0);
-    return secret;
   });
 
   /// The `<56>.onion` address of a v3 onion service's public key.

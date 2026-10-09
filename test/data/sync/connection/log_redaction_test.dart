@@ -10,7 +10,7 @@ import 'package:logger/logger.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/data/local/app_database.dart';
-import 'package:nox_app/data/remote/pinned_http_client.dart';
+import 'package:nox_app/data/remote/channel/channel_http_client.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/repository/log_repository_impl.dart';
 import 'package:nox_app/data/service/tor/fake_tor_service.dart';
@@ -28,20 +28,25 @@ import 'package:nox_app/domain/service/app_lifecycle_service.dart';
 import 'package:nox_app/domain/service/network_change_service.dart';
 import 'package:nox_app/domain/service/tor_service.dart';
 import 'package:nox_app/general/pairing/pairing_link.dart';
+import 'package:nox_tor/channel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../remote/channel/fake_channel.dart';
 import '../../remote/socket/fake_socket.dart';
 import '../live_identity_handshake_test.mocks.dart';
 import 'fake_direct_prober.dart';
 
-/// Nothing that names the server's onion service or opens it reaches a log
-/// line (phase 040, FR-013, SC-008, Constitution I): not from the path
-/// selector, not from a pairing by a version-2 link, not from a failing
-/// bridge - and not from an exception somebody else wrote.
+/// Nothing that names the server's onion service, opens it, or pairs with the
+/// server reaches a log line (phase 040, FR-013, SC-008; phase 044, FR-022;
+/// Constitution I): not from the path selector, not from a pairing, not from
+/// a channel that would not open - and not from an exception somebody else
+/// wrote.
 final String _onionHost = '${'a' * 56}.onion';
 
-const String _v2 =
-    'https://nox.app/p/#AgHAqAEKH5AAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eH6ChoqOkpaanqKmqq6ytrq8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-PwG7QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8';
+/// The contract's `full` vector: a direct address, a name and an onion
+/// service.
+const String _link =
+    'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODwEGwKgBFCD7AxFub3guZXhhbXBsZS5vcmcg-wQgF8t5-ytBIPKx7GXkGY1uCLKOgT_rAeSkAIObheGAgM4';
 
 class _Capture extends LogOutput {
   final List<String> lines = <String>[];
@@ -73,8 +78,11 @@ void main() {
   late NoxSocketClient socket;
   late FakeTorService tor;
   late ConnectionPathSelector selector;
+  final serverKey = Uint8List.fromList(List<int>.generate(32, (i) => 0xA0 + i));
+  final deviceSeed = Uint8List.fromList(List<int>.generate(32, (i) => i));
 
-  /// Every key the run handles, as the wire and the store spell them.
+  /// Every secret the run handles, as the wire, the store and the link spell
+  /// them.
   late List<String> secrets;
 
   setUp(() async {
@@ -99,14 +107,14 @@ void main() {
       socket,
     );
     final own = (await getIt<AccessKeyRepository>().deviceKey()).data!;
-    final link = PairingLink.parse(_v2);
+    final link = PairingLink.parse(_link);
     secrets = [
       own.publicBase64,
       base64Encode(own.privateKey),
-      base64Encode(link.oneTimePriv!),
-      base64Url.encode(link.oneTimePriv!).replaceAll('=', ''),
-      // The fake bridge's secret, as FakeTorService hands it out.
-      base64Encode(List<int>.filled(32, 7)),
+      base64Encode(deviceSeed),
+      base64Encode(serverKey),
+      link.token,
+      _link.substring(PairingLink.prefix.length),
     ];
   });
 
@@ -119,6 +127,7 @@ void main() {
   void expectNothingLeaked() {
     final all = capture.lines.join('\n');
     expect(all, isNot(contains('.onion')), reason: 'an onion address reached the log');
+    expect(all, isNot(contains('nox://pair/A')), reason: 'a pairing link reached the log');
     for (final secret in secrets) {
       expect(all, isNot(contains(secret)), reason: 'key material reached the log');
     }
@@ -128,7 +137,7 @@ void main() {
     await getIt<ServerAddressesRepository>().saveFromServer(direct: const ['10.0.0.5:9000'], onion: '$_onionHost:443');
     await getIt<AccessKeyRepository>().deviceKey();
     await getIt<AccessKeyRepository>().markRegistered(true);
-    selector.begin(linkAddress: '10.0.0.5:9000', fingerprint: 'pin');
+    selector.begin(linkAddress: '10.0.0.5:9000', serverKey: serverKey, deviceSeed: deviceSeed);
 
     await socket.start(targets: selector, credentialsProvider: () async => const GreetingCredentials());
     // The path is chosen after start() returns.
@@ -145,7 +154,7 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 5));
     }
     // The service turns the key away, and the selector says so.
-    tor.emit(const TorStatus(state: TorState.ready, bootstrapPercent: 100, error: TorError.wrongClientAuth, port: 9150));
+    tor.emit(const TorStatus(state: TorState.ready, bootstrapPercent: 100, error: TorError.wrongClientAuth));
     await Future<void>.delayed(const Duration(milliseconds: 20));
 
     expect(factory.urls.single.host, _onionHost, reason: 'the run did go through Tor');
@@ -153,28 +162,17 @@ void main() {
     expectNothingLeaked();
   });
 
-  test('a pairing by a version-2 link names neither the address nor the lent key', () async {
+  test('a pairing names neither the link, its token nor an address', () async {
     final starter = MockLiveSessionStarter();
     when(starter.restart()).thenAnswer((_) async {
       await socket.stop();
-      await socket.start(url: Uri.parse('wss://$_onionHost/ws'), credentialsProvider: () async => const GreetingCredentials.unpaired());
+      await socket.start(url: Uri.parse('wss://10.0.0.5:9000/ws'), credentialsProvider: () async => const GreetingCredentials.unpaired());
       factory.latest.pushGreeting();
     });
-    final handshake = LiveIdentityHandshake(
-      socket,
-      starter,
-      getIt<AccessKeyRepository>(),
-      tor,
-      getIt<ServerAddressesRepository>(),
-      selector,
-    );
+    final handshake = LiveIdentityHandshake(socket, starter, getIt<AccessKeyRepository>());
 
     Object? outcome;
-    unawaited(
-      handshake
-          .pair(link: PairingLink.parse(_v2), deviceKey: 'k', platform: 'ios')
-          .then((v) => outcome = v, onError: (Object e) => outcome = e),
-    );
+    unawaited(handshake.pair(link: PairingLink.parse(_link), platform: 'ios').then((v) => outcome = v, onError: (Object e) => outcome = e));
     for (var i = 0; i < 200 && (factory.created.isEmpty || factory.latest.commandNamed('pair') == null); i++) {
       await Future<void>.delayed(const Duration(milliseconds: 5));
     }
@@ -187,26 +185,24 @@ void main() {
     expectNothingLeaked();
   });
 
-  test('a bridge that is not there fails without naming where it was going', () async {
+  test('a channel that would not open through Tor fails without naming where it was going, or with what', () async {
     // The real HttpClient, not the test binding's stand-in that answers 400.
     final saved = HttpOverrides.current;
     HttpOverrides.global = null;
     addTearDown(() => HttpOverrides.global = saved);
-    final dead = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
-    final port = dead.port;
-    await dead.close();
-    final pinned = PinnedHttpClient()
-      ..pinTo('pin')
-      ..onionBridge = () => TorBridgeEndpoint(port: port, secret: Uint8List(32));
+    final api = ScriptedChannelApi()..answer = (_) => throw const ChannelOpenException(ChannelFailure.torOnionNotFound);
+    final channels = ChannelHttpClient(api)..bind(serverKey: serverKey, deviceSeed: deviceSeed);
+    addTearDown(channels.unbind);
     final repository = _Repository();
 
     final result = await repository.run(() async {
-      final request = await pinned.client.getUrl(Uri.parse('https://$_onionHost/files/abc'));
+      final request = await channels.client.getUrl(Uri.parse('https://$_onionHost/files/abc'));
       await request.close();
       return const RepositoryResult<bool>.success(data: true);
     });
 
     expect(result.hasData, isFalse);
+    expect(capture.lines.join('\n'), contains('channel: onion failed (torOnionNotFound)'));
     expectNothingLeaked();
   });
 

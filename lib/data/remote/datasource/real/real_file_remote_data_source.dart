@@ -50,7 +50,7 @@ class RealFileRemoteDataSource implements FileRemoteDataSource {
   ///
   /// Longer than the stall limit, and for a reason that only shows on a slow
   /// path: "handed to the socket" is not "arrived". Through Tor the socket,
-  /// the bridge and the circuit hold megabytes between them, draining at tens
+  /// the channel and the circuit hold megabytes between them, draining at tens
   /// of kilobytes a second, and nothing on this side can see them drain - the
   /// stall limit would cut a healthy upload in its last minute. A path that
   /// really died ends sooner anyway: the socket notices, the path changes, and

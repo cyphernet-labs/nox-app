@@ -28,10 +28,10 @@ class LoginBloc extends BaseBloc<LoginEvent, LoginState> {
     on<SignInRequested>(_onSignInRequested);
     on<NavigationHandled>(_onNavigationHandled);
     on<ServerRefused>(_onServerRefused);
-    // Watched from here rather than read from the sign-in result: the pin is
-    // checked during the TLS handshake, which happens before `pair` goes out -
-    // so the repository can only report that there was no channel, and the
-    // person would be told to check a connection that is working perfectly.
+    // Watched from here rather than read from the sign-in result: the server
+    // key is checked as the channel opens, before `pair` goes out - so the
+    // repository can only report that there was no channel, and the person
+    // would be told to check a connection that is working perfectly.
     _phaseSub = _phaseService.watchPhase().listen((phase) {
       if (phase.isServerMismatch) add(const LoginEvent.serverRefused());
     });
@@ -101,21 +101,18 @@ class LoginBloc extends BaseBloc<LoginEvent, LoginState> {
     );
   }
 
-  /// Whether the link in the field can reach its server only directly: a
-  /// version-1 link, which is every claim and every invite the server could not
-  /// put its onion address in.
+  /// Whether the link in the field can reach its server only directly: until
+  /// phase 045 that is every link - a device pairs only at home, because the
+  /// onion service opens for a key a paired device holds (FR-019).
   ///
   /// Read off the field rather than captured at submit: the field is locked
   /// while an attempt is in flight, and a refusal that lands outside one is
-  /// about the link the person is looking at. Something that is not a link at
-  /// all keeps the answers it always had - sign-in refuses it before it dials,
-  /// so nothing it reports can be about a server.
-  bool _homeOnlyLink() {
-    final link = PairingLink.tryParse(state.id);
-    return link != null && !link.carriesOnion;
-  }
+  /// about the link the person is looking at. Something that is not a usable
+  /// link keeps the answers it always had - sign-in refuses it before it
+  /// dials, so nothing it reports can be about a server.
+  bool _homeOnlyLink() => PairingLink.tryParse(state.id) != null;
 
-  /// True when THIS attempt was refused by the pin.
+  /// True when THIS attempt's channel was refused as the wrong server.
   ///
   /// Scoped to the attempt, and deliberately not read off the phase. The phase
   /// is terminal: it keeps saying `serverMismatch` until something restarts the
@@ -134,28 +131,27 @@ class LoginBloc extends BaseBloc<LoginEvent, LoginState> {
   /// took to it.
   ///
   /// Only an onion address makes a stranger's key an anomaly - nobody can hold
-  /// one without the server's keys (FR-030). At a direct address the same
-  /// answer is the expected one away from home, where a different machine sits
-  /// at that address, so a link with no onion part says where pairing works
-  /// instead (FR-005).
+  /// one without the onion service's keys. At a direct address the same answer
+  /// is the expected one away from home, where a different machine sits at
+  /// that address, and until phase 045 a link pairs over its direct addresses
+  /// alone - so a link says where pairing works instead (FR-011, FR-019).
   static LoginStatus _refusalStatus({required bool homeOnly}) =>
       homeOnly ? LoginStatus.errorHomeNetworkOnly : LoginStatus.errorServerMismatch;
 
   /// Each refusal keeps its own message: the repository already told them
   /// apart, and collapsing them here would undo that.
   ///
-  /// [refused] outranks everything. A pin refusal happens inside the TLS
-  /// handshake, BEFORE `pair` goes out, so the only thing sign-in can report is
-  /// that there was no channel — `connection`. Mapping that to "check your
-  /// connection" sends the person after a network that is working perfectly,
-  /// which is the precise confusion this feature exists to remove, and it made
-  /// the honest message unreachable outside the debug gallery.
+  /// [refused] outranks everything. A refused server key happens as the
+  /// channel opens, BEFORE `pair` goes out, so the only thing sign-in can
+  /// report is that there was no channel — `connection`. Mapping that to
+  /// "check your connection" sends the person after a network that is working
+  /// perfectly, which is the precise confusion the refusal's own message
+  /// exists to remove.
   ///
-  /// [homeOnly] turns "no channel" into where pairing works. A version-1 link
-  /// has no road to its server but the direct one, so outside the home network
-  /// not reaching it is the expected outcome rather than a fault (FR-022). A
-  /// version-2 link that reached nothing has had both roads tried, and keeps
-  /// the plain network error. `internal` stays apart: the server answered.
+  /// [homeOnly] turns "no channel" into where pairing works. Until phase 045 a
+  /// link has no road to its server for pairing but the direct one, so outside
+  /// the home network not reaching it is the expected outcome rather than a
+  /// fault. `internal` stays apart: the server answered.
   static LoginStatus _statusFor(Object? exception, {required bool refused, required bool homeOnly}) {
     if (refused) return _refusalStatus(homeOnly: homeOnly);
     return switch (exception) {

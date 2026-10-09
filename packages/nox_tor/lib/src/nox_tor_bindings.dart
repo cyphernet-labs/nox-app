@@ -50,9 +50,6 @@ external void noxTorSetDormant(bool dormant);
 @Native<Int32 Function(Pointer<NoxTorStatusStruct>)>(symbol: 'nox_tor_status', isLeaf: true)
 external int noxTorStatus(Pointer<NoxTorStatusStruct> out);
 
-@Native<Int32 Function(Pointer<Uint8>)>(symbol: 'nox_tor_bridge_secret', isLeaf: true)
-external int noxTorBridgeSecret(Pointer<Uint8> out32);
-
 @Native<Int32 Function(Pointer<Uint8>, Pointer<Utf8>, Size)>(symbol: 'nox_tor_onion_from_pubkey', isLeaf: true)
 external int noxTorOnionFromPubkey(Pointer<Uint8> pub32, Pointer<Utf8> out, int outLen);
 

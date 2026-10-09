@@ -57,15 +57,21 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   /// and dies with a logout through `deleteAll`.
   static const String _kDeviceSecret = 'session.device_secret';
 
-  /// Where this install's server lives, and the fingerprint of the key it is
-  /// pinned against. Both come out of the pairing link.
+  /// Where this install's connection to its server starts, and the server's
+  /// Ed25519 key (base64) every connection must prove (phase 044). Both come
+  /// out of the pairing link.
   ///
   /// They belong to the SESSION, not to the build: they say which server this
   /// installation belongs to, and they die with it. Keeping the address in a
   /// compile-time config instead would mean pairing with one server and
   /// sending messages to another.
   static const String _kServerAddress = 'session.server_address';
-  static const String _kServerFingerprint = 'session.server_fingerprint';
+  static const String _kServerKey = 'session.server_key';
+
+  /// The fingerprint of the certificate key the builds before phase 044
+  /// pinned against. Nothing reads it any more: the session it belonged to is
+  /// wiped at the first launch (FR-025).
+  static const String _kLegacyServerFingerprint = 'session.server_fingerprint';
 
   /// True while THIS process is the one that brought the person into being and
   /// has not finished naming them.
@@ -86,6 +92,7 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
     return execute<bool>(() async {
       if (_prefs.containsKey(_kLegacyIsOwner)) await _prefs.remove(_kLegacyIsOwner);
       await _secureStorage.deleteIfPresent(key: _kLegacyInviteOnion);
+      await _secureStorage.deleteIfPresent(key: _kLegacyServerFingerprint);
       await _secureStorage.deleteIfPresent(
         key: _kLegacyInviteAccessKey,
         iOptions: ConnectionStorage.keyIOSOptions,
@@ -194,7 +201,7 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   }
 
   @override
-  Future<RepositoryResult<bool>> saveServer({required String address, required String serverFingerprint}) {
+  Future<RepositoryResult<bool>> saveServer({required String address, required String serverKey}) {
     return execute<bool>(() async {
       // What any earlier server said about itself goes first (phase 040): its
       // addresses, and whether it holds this device's access key. A sign-in
@@ -202,7 +209,7 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       // send the next server's connection to the old one's onion address.
       await ConnectionStorage.delete(_secureStorage, includeDeviceAccessKey: false);
       await _secureStorage.write(key: _kServerAddress, value: address);
-      await _secureStorage.write(key: _kServerFingerprint, value: serverFingerprint);
+      await _secureStorage.write(key: _kServerKey, value: serverKey);
       return const RepositoryResult<bool>.success(data: true);
     });
   }
@@ -216,10 +223,22 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   }
 
   @override
-  Future<RepositoryResult<String?>> serverFingerprint() {
+  Future<RepositoryResult<String?>> serverKey() {
     return execute<String?>(() async {
-      final stored = await _secureStorage.read(key: _kServerFingerprint);
+      final stored = await _secureStorage.read(key: _kServerKey);
       return RepositoryResult<String?>.success(data: (stored?.isEmpty ?? true) ? null : stored);
+    });
+  }
+
+  @override
+  Future<RepositoryResult<bool>> predatesServerKey() {
+    // Inside `execute`: a read that throws comes back as an error, and the
+    // caller wipes nothing on an error.
+    return execute<bool>(() async {
+      final identifier = await _secureStorage.read(key: _kIdentifier);
+      if (identifier == null || identifier.isEmpty) return const RepositoryResult<bool>.success(data: false);
+      final key = await _secureStorage.read(key: _kServerKey);
+      return RepositoryResult<bool>.success(data: key == null || key.isEmpty);
     });
   }
 
@@ -271,7 +290,7 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       // aim the next connection at a machine this install never paired with,
       // and the world-epoch key would call that the same world.
       await _secureStorage.deleteIfPresent(key: _kServerAddress);
-      await _secureStorage.deleteIfPresent(key: _kServerFingerprint);
+      await _secureStorage.deleteIfPresent(key: _kServerKey);
       // And what that server said about where it lives, and whether it holds
       // this device's access key (phase 040). The key itself stays: like the
       // device key, it names this install.
@@ -311,7 +330,8 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       await _secureStorage.deleteIfPresent(key: _kIdentifier);
       await _secureStorage.deleteIfPresent(key: _kDeviceSecret);
       await _secureStorage.deleteIfPresent(key: _kServerAddress);
-      await _secureStorage.deleteIfPresent(key: _kServerFingerprint);
+      await _secureStorage.deleteIfPresent(key: _kServerKey);
+      await _secureStorage.deleteIfPresent(key: _kLegacyServerFingerprint);
       // Phase 040: the addresses and the access key - each with the options it
       // was written under, which `deleteAll` alone may not match.
       await ConnectionStorage.delete(_secureStorage, includeDeviceAccessKey: true);

@@ -1,20 +1,22 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 /// Why a pairing link could not be read.
 ///
 /// Kept apart from a rejected token on purpose: the two ask different things
-/// of the person. A link that will not parse means "scan it again"; a token
-/// the server refuses means "get a new one". One shared "it did not work"
-/// leaves them guessing which.
+/// of the person. A link that will not parse means "scan it again"; a link
+/// from a newer server means "update the app"; a token the server refuses
+/// means "get a new one". One shared "it did not work" leaves them guessing.
 enum PairingLinkError {
-  /// Not a link at all, or truncated - a half-scanned QR, a clipped paste.
+  /// Not a link at all, truncated, a length that does not add up, or a link
+  /// of the formats before version 3 - a half-scanned QR, a clipped paste.
   malformed,
 
-  /// A version this build does not know. Refused rather than guessed at: a
-  /// layout read under the wrong version would produce a plausible-looking
-  /// address pointing anywhere.
-  unsupportedVersion,
+  /// A version above this build's. Refused rather than guessed at: a layout
+  /// read under the wrong version would produce a plausible-looking address
+  /// pointing anywhere.
+  newerVersion,
 }
 
 /// Raised by [PairingLink.parse]. Carries [error] so the caller can pick the
@@ -28,176 +30,168 @@ class PairingLinkException implements Exception {
   String toString() => 'PairingLinkException(${error.name})';
 }
 
-/// What a person physically presents to sign in: where the server is, which
-/// key it will be pinned against, and the one-shot right to pair.
-///
-/// The key travels as its FINGERPRINT. A raw uncompressed P-256 point is 65
-/// bytes and does not fit the thirty-two the format has; the hash does, and it
-/// answers the only question asked of it - is this the same key.
-///
-/// Contract §8A. The token's TYPE is deliberately absent — the server issued
-/// it and knows what it is for, and telling the presenter would let a stolen
-/// link announce whether it grants ownership.
-///
-/// Version 2 (phase 039 on the server, 040 here) is an invite that also works
-/// from outside the home network: everything version 1 carries, then the
-/// onion service's public key, its port, and the PRIVATE half of a one-time
-/// access key that opens the service for this one pairing. The three come and
-/// go together; a version-1 link has none of them.
-class PairingLink {
-  const PairingLink({
-    required this.host,
-    required this.port,
-    required this.serverFingerprint,
-    required this.token,
-    this.onionPub,
-    this.onionPort,
-    this.oneTimePriv,
-  }) : assert(
-         (onionPub == null) == (onionPort == null) && (onionPort == null) == (oneTimePriv == null),
-         'the onion fields come together or not at all',
-       );
+/// One address a pairing link carries.
+sealed class LinkAddress {
+  const LinkAddress();
+}
 
-  /// The plain version: an address, a fingerprint and a token.
-  static const int version = 1;
+/// How a direct address is written in the link.
+enum DirectAddressKind { ipv4, ipv6, name }
 
-  /// The onion invite (contract §8A, link version 2).
-  static const int onionVersion = 2;
+/// An address reached directly: an IP literal or a name, and a port.
+final class DirectLinkAddress extends LinkAddress {
+  const DirectLinkAddress({required this.kind, required this.host, required this.port});
 
-  static const int _keyLength = 32;
-
-  static const String _prefix = 'https://nox.app/p/#';
-
-  static const int _hostTypeIPv4 = 1;
-  static const int _hostTypeIPv6 = 2;
-  static const int _hostTypeDns = 3;
-
+  final DirectAddressKind kind;
   final String host;
   final int port;
 
-  /// `sha256(SubjectPublicKeyInfo)` of the server's key, base64. This is what
-  /// every later connection is checked against, on both transports - the one
-  /// thing that decides whether the machine answering is the one the person
-  /// stood in front of.
-  final String serverFingerprint;
+  /// `host:port`, an IPv6 literal in brackets - the shape every stored
+  /// address has, and the one the socket layer dials.
+  String get authority => kind == DirectAddressKind.ipv6 ? '[$host]:$port' : '$host:$port';
 
-  /// The one-shot pairing right, base64url without padding.
+  @override
+  bool operator ==(Object other) => other is DirectLinkAddress && other.kind == kind && other.host == host && other.port == port;
+
+  @override
+  int get hashCode => Object.hash(kind, host, port);
+}
+
+/// The server's onion service: its v3 public key, from which the `.onion`
+/// address is derived (by the native module - see `TorService`). Always port
+/// 443.
+final class OnionLinkAddress extends LinkAddress {
+  OnionLinkAddress(Uint8List servicePublicKey) : servicePublicKey = Uint8List.fromList(servicePublicKey);
+
+  final Uint8List servicePublicKey;
+
+  int get port => 443;
+
+  @override
+  bool operator ==(Object other) {
+    if (other is! OnionLinkAddress || other.servicePublicKey.length != servicePublicKey.length) return false;
+    for (var i = 0; i < servicePublicKey.length; i++) {
+      if (other.servicePublicKey[i] != servicePublicKey[i]) return false;
+    }
+    return true;
+  }
+
+  @override
+  int get hashCode => Object.hashAll(servicePublicKey);
+}
+
+/// What a person physically presents to pair a device (link version 3,
+/// specs/044-secure-channel/contracts/pairing-link-v3.md): the server's
+/// Ed25519 key, a one-time token, and where the server can be reached.
+///
+/// `nox://pair/<base64url without '='>` over: version (1, `0x03`) ‖ server
+/// key (32) ‖ token (16) ‖ addresses, each `type (1) ‖ length (1) ‖ value`.
+///
+/// The server key is what every later connection is checked against: the
+/// channel opens only once the machine answering has proved it, and only
+/// then does the token go out. The token's TYPE is deliberately absent - the
+/// server issued it and knows what it is for, and telling the presenter would
+/// let a stolen link announce whether it grants ownership.
+///
+/// Reading is pure: no address is resolved and no onion address derived here.
+class PairingLink {
+  PairingLink({required Uint8List serverKey, required this.token, required List<LinkAddress> addresses})
+    : serverKey = Uint8List.fromList(serverKey),
+      addresses = List<LinkAddress>.unmodifiable(addresses);
+
+  /// The only version this build reads.
+  static const int version = 3;
+
+  static const String prefix = 'nox://pair/';
+
+  static const int _keyLength = 32;
+  static const int _tokenLength = 16;
+  static const int _headerLength = 1 + _keyLength + _tokenLength;
+
+  static const int _typeIPv4 = 1;
+  static const int _typeIPv6 = 2;
+  static const int _typeName = 3;
+  static const int _typeOnion = 4;
+
+  /// The longest name an address may carry (a DNS name's limit).
+  static const int _maxNameLength = 253;
+
+  /// The server's Ed25519 public key.
+  final Uint8List serverKey;
+
+  /// The one-shot pairing right, base64url without padding - the form `pair`
+  /// sends.
   final String token;
 
-  /// The onion service's v3 public key (32 bytes); its `.onion` address is
-  /// derived from it. Null in a version-1 link.
-  final Uint8List? onionPub;
+  /// Every address this build can read, in the link's order; types it cannot
+  /// read are skipped.
+  final List<LinkAddress> addresses;
 
-  /// The onion service's virtual port. Null in a version-1 link.
-  final int? onionPort;
+  /// The server key as stored (`session.server_key`): base64.
+  String get serverKeyBase64 => base64.encode(serverKey);
 
-  /// The PRIVATE half of the one-time x25519 access key that lets this device
-  /// through the onion service for one pairing (32 bytes). It exists only in
-  /// the link - the server keeps the public half - and must be dropped once
-  /// the pairing has answered. Null in a version-1 link.
-  final Uint8List? oneTimePriv;
+  /// The direct addresses in the link's order, as `host:port`. Pairing tries
+  /// only these until phase 045: the onion service opens only for a key a
+  /// paired device holds.
+  List<String> get directAddresses => [
+    for (final address in addresses)
+      if (address is DirectLinkAddress) address.authority,
+  ];
 
-  /// Whether this link can pair from outside the home network.
-  bool get carriesOnion => onionPub != null;
+  /// The onion service's public key, when the link carries one.
+  Uint8List? get onionServiceKey {
+    for (final address in addresses) {
+      if (address is OnionLinkAddress) return address.servicePublicKey;
+    }
+    return null;
+  }
 
   /// A readable link for debug surfaces, so the screens gallery can drive the
-  /// scanner without a server. Not reachable from the real flow.
-  static const String demo = 'https://nox.app/p/#AQF_AAABH5CjZmMytIk_2XvPJ-jonqlQtYsZD3SB33P1foxqnrVbFo-VEf6WohQoqA1_na5iVUo';
-
-  /// The address to connect to, as the socket layer wants it.
-  String get authority => host.contains(':') ? '[$host]:$port' : '$host:$port';
+  /// scanner without a server - the contract's `minimal` vector. Not
+  /// reachable from the real flow.
+  static const String demo = 'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODwEGwKgBFCD7';
 
   /// Reads a link, or throws [PairingLinkException].
-  ///
-  /// Accepts the bare fragment as well as the whole link: a person pasting by
-  /// hand may well copy only the part after the `#`, and refusing that would
-  /// be pedantry rather than safety.
   static PairingLink parse(String raw) {
-    var payload = raw.trim();
-    if (payload.startsWith(_prefix)) {
-      payload = payload.substring(_prefix.length);
-    } else if (payload.contains('#')) {
-      payload = payload.substring(payload.indexOf('#') + 1);
-    }
-    if (payload.isEmpty) throw const PairingLinkException(PairingLinkError.malformed);
-
+    final text = raw.trim();
+    // The formats before version 3 (`https://nox.app/p/#…`) land here too:
+    // no build reads them any more, and they read as broken, not as old.
+    if (!text.startsWith(prefix)) throw const PairingLinkException(PairingLinkError.malformed);
+    final payload = text.substring(prefix.length);
+    if (payload.isEmpty || !_base64UrlNoPad.hasMatch(payload)) throw const PairingLinkException(PairingLinkError.malformed);
     final Uint8List bytes;
     try {
       bytes = base64Url.decode(base64Url.normalize(payload));
     } on FormatException {
       throw const PairingLinkException(PairingLinkError.malformed);
     }
-
-    // Shortest possible: version + type + 4 host + 2 port + 32 fingerprint +
-    // 16 token.
-    if (bytes.length < 55) throw const PairingLinkException(PairingLinkError.malformed);
+    if (bytes.length < _headerLength) throw const PairingLinkException(PairingLinkError.malformed);
     final linkVersion = bytes[0];
-    if (linkVersion != version && linkVersion != onionVersion) {
-      throw const PairingLinkException(PairingLinkError.unsupportedVersion);
+    if (linkVersion > version) throw const PairingLinkException(PairingLinkError.newerVersion);
+    if (linkVersion != version) throw const PairingLinkException(PairingLinkError.malformed);
+
+    final serverKey = Uint8List.sublistView(bytes, 1, 1 + _keyLength);
+    final token = base64Url.encode(Uint8List.sublistView(bytes, 1 + _keyLength, _headerLength)).replaceAll('=', '');
+    final addresses = <LinkAddress>[];
+    var offset = _headerLength;
+    while (offset < bytes.length) {
+      if (bytes.length - offset < 2) throw const PairingLinkException(PairingLinkError.malformed);
+      final type = bytes[offset];
+      final length = bytes[offset + 1];
+      offset += 2;
+      if (offset + length > bytes.length) throw const PairingLinkException(PairingLinkError.malformed);
+      final value = Uint8List.sublistView(bytes, offset, offset + length);
+      offset += length;
+      final address = _address(type, value);
+      if (address != null) addresses.add(address);
     }
-
-    var offset = 2;
-    final String host;
-    switch (bytes[1]) {
-      case _hostTypeIPv4:
-        if (bytes.length < offset + 4) throw const PairingLinkException(PairingLinkError.malformed);
-        host = bytes.sublist(offset, offset + 4).join('.');
-        offset += 4;
-      case _hostTypeIPv6:
-        if (bytes.length < offset + 16) throw const PairingLinkException(PairingLinkError.malformed);
-        final groups = <String>[];
-        for (var i = 0; i < 16; i += 2) {
-          groups.add(((bytes[offset + i] << 8) | bytes[offset + i + 1]).toRadixString(16));
-        }
-        host = groups.join(':');
-        offset += 16;
-      case _hostTypeDns:
-        if (bytes.length < offset + 1) throw const PairingLinkException(PairingLinkError.malformed);
-        final length = bytes[offset];
-        offset += 1;
-        if (length == 0 || bytes.length < offset + length) throw const PairingLinkException(PairingLinkError.malformed);
-        host = utf8.decode(bytes.sublist(offset, offset + length), allowMalformed: true);
-        offset += length;
-      default:
-        // An address whose type this build cannot read is not a malformed
-        // link - it is a newer shape of a valid one.
-        throw const PairingLinkException(PairingLinkError.unsupportedVersion);
-    }
-
-    // The onion tail is exact too: a version-2 link a few bytes short is a
-    // truncated one, not a version-1 link with extra luck.
-    final onionTail = linkVersion == onionVersion ? _keyLength + 2 + _keyLength : 0;
-    if (bytes.length != offset + 2 + 32 + 16 + onionTail) throw const PairingLinkException(PairingLinkError.malformed);
-
-    final port = (bytes[offset] << 8) | bytes[offset + 1];
-    offset += 2;
-    final fingerprint = base64.encode(bytes.sublist(offset, offset + 32));
-    offset += 32;
-    final token = base64Url.encode(bytes.sublist(offset, offset + 16)).replaceAll('=', '');
-    offset += 16;
-
-    if (linkVersion == version) {
-      return PairingLink(host: host, port: port, serverFingerprint: fingerprint, token: token);
-    }
-    final onionPub = Uint8List.fromList(bytes.sublist(offset, offset + _keyLength));
-    offset += _keyLength;
-    final onionPort = (bytes[offset] << 8) | bytes[offset + 1];
-    offset += 2;
-    final oneTimePriv = Uint8List.fromList(bytes.sublist(offset, offset + _keyLength));
-    return PairingLink(
-      host: host,
-      port: port,
-      serverFingerprint: fingerprint,
-      token: token,
-      onionPub: onionPub,
-      onionPort: onionPort,
-      oneTimePriv: oneTimePriv,
-    );
+    if (addresses.isEmpty) throw const PairingLinkException(PairingLinkError.malformed);
+    return PairingLink(serverKey: serverKey, token: token, addresses: addresses);
   }
 
   /// Reads a link, or returns null. For places that only need to know whether
-  /// a string is a pairing link at all — a scanned QR, a picked image — where
-  /// the reason it failed changes nothing.
+  /// a string is a usable pairing link at all, where the reason it failed
+  /// changes nothing.
   static PairingLink? tryParse(String raw) {
     try {
       return parse(raw);
@@ -206,45 +200,90 @@ class PairingLink {
     }
   }
 
-  /// Renders the link, so a device can show an invite it just obtained.
-  String encode() {
-    final out = <int>[if (carriesOnion) onionVersion else version];
-    final ipv4 = _asIPv4(host);
-    if (ipv4 != null) {
-      out.addAll([_hostTypeIPv4, ...ipv4]);
-    } else if (host.contains(':')) {
-      out.add(_hostTypeIPv6);
-      for (final group in host.split(':')) {
-        final value = int.parse(group.isEmpty ? '0' : group, radix: 16);
-        out.addAll([(value >> 8) & 0xFF, value & 0xFF]);
-      }
-    } else {
-      final name = utf8.encode(host);
-      out.addAll([_hostTypeDns, name.length, ...name]);
+  /// Why [raw] is not a usable link, or null when it is one.
+  static PairingLinkError? refusalOf(String raw) {
+    try {
+      parse(raw);
+      return null;
+    } on PairingLinkException catch (e) {
+      return e.error;
     }
-    out.addAll([(port >> 8) & 0xFF, port & 0xFF]);
-    out.addAll(base64.decode(serverFingerprint));
-    out.addAll(base64Url.decode(base64Url.normalize(token)));
-    final pub = onionPub;
-    final onionPortValue = onionPort;
-    final priv = oneTimePriv;
-    if (pub != null && onionPortValue != null && priv != null) {
-      out.addAll(pub);
-      out.addAll([(onionPortValue >> 8) & 0xFF, onionPortValue & 0xFF]);
-      out.addAll(priv);
-    }
-    return _prefix + base64Url.encode(out).replaceAll('=', '');
   }
 
-  static List<int>? _asIPv4(String host) {
-    final parts = host.split('.');
-    if (parts.length != 4) return null;
-    final octets = <int>[];
-    for (final part in parts) {
-      final value = int.tryParse(part);
-      if (value == null || value < 0 || value > 255) return null;
-      octets.add(value);
+  /// Whether [raw] is a pairing link at all - a readable one, or one from a
+  /// server newer than this build. A scanner hands both on: the second is
+  /// still the person's link, and the screen that receives it says to update
+  /// the app instead of calling it a stranger's QR code.
+  static bool isPairingLink(String raw) => refusalOf(raw) != PairingLinkError.malformed;
+
+  /// Renders the link: version 3, every address in order.
+  String encode() {
+    final out = BytesBuilder(copy: false)
+      ..addByte(version)
+      ..add(serverKey)
+      ..add(base64Url.decode(base64Url.normalize(token)));
+    for (final address in addresses) {
+      switch (address) {
+        case DirectLinkAddress(:final kind, :final host, :final port):
+          final value = switch (kind) {
+            DirectAddressKind.ipv4 || DirectAddressKind.ipv6 => InternetAddress(host).rawAddress,
+            DirectAddressKind.name => utf8.encode(host),
+          };
+          out
+            ..addByte(switch (kind) {
+              DirectAddressKind.ipv4 => _typeIPv4,
+              DirectAddressKind.ipv6 => _typeIPv6,
+              DirectAddressKind.name => _typeName,
+            })
+            ..addByte(value.length + 2)
+            ..add(value)
+            ..addByte((port >> 8) & 0xFF)
+            ..addByte(port & 0xFF);
+        case OnionLinkAddress(:final servicePublicKey):
+          out
+            ..addByte(_typeOnion)
+            ..addByte(servicePublicKey.length)
+            ..add(servicePublicKey);
+      }
     }
-    return octets;
+    return prefix + base64Url.encode(out.takeBytes()).replaceAll('=', '');
   }
+
+  /// One address, or null for a type this build does not know - skipped by
+  /// its length, so a newer server can add kinds without breaking this build.
+  static LinkAddress? _address(int type, Uint8List value) {
+    switch (type) {
+      case _typeIPv4:
+        if (value.length != 4 + 2) throw const PairingLinkException(PairingLinkError.malformed);
+        return DirectLinkAddress(kind: DirectAddressKind.ipv4, host: value.sublist(0, 4).join('.'), port: _port(value));
+      case _typeIPv6:
+        if (value.length != 16 + 2) throw const PairingLinkException(PairingLinkError.malformed);
+        final host = InternetAddress.fromRawAddress(Uint8List.fromList(value.sublist(0, 16)), type: InternetAddressType.IPv6).address;
+        return DirectLinkAddress(kind: DirectAddressKind.ipv6, host: host, port: _port(value));
+      case _typeName:
+        final nameLength = value.length - 2;
+        if (nameLength < 1 || nameLength > _maxNameLength) throw const PairingLinkException(PairingLinkError.malformed);
+        final String name;
+        try {
+          name = utf8.decode(value.sublist(0, nameLength));
+        } on FormatException {
+          throw const PairingLinkException(PairingLinkError.malformed);
+        }
+        return DirectLinkAddress(kind: DirectAddressKind.name, host: name, port: _port(value));
+      case _typeOnion:
+        if (value.length != _keyLength) throw const PairingLinkException(PairingLinkError.malformed);
+        return OnionLinkAddress(value);
+      default:
+        return null;
+    }
+  }
+
+  /// The big-endian port at the end of [value]; port 0 is no address.
+  static int _port(Uint8List value) {
+    final port = (value[value.length - 2] << 8) | value[value.length - 1];
+    if (port == 0) throw const PairingLinkException(PairingLinkError.malformed);
+    return port;
+  }
+
+  static final RegExp _base64UrlNoPad = RegExp(r'^[A-Za-z0-9_-]+$');
 }

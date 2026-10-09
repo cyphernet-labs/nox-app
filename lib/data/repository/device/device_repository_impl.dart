@@ -88,11 +88,12 @@ class DeviceRepositoryImpl with BaseRepositoryHelper implements DeviceRepository
       final link = reply.data?['link'] as String? ?? '';
       if (link.isEmpty) throw RepositoryException.internal;
       // The card promises "works from anywhere" only when both halves say so:
-      // the reply's flag - absent on a pre-039 server, which reads as false -
-      // and the link itself, which is what the other device will actually hold.
-      // The contract names both. Erring the other way sends a person to the
-      // office with a link that works only at home and nothing to say why.
-      final onion = reply.data?['onion'] == true && (PairingLink.tryParse(link)?.carriesOnion ?? false);
+      // the reply's flag and the link itself, which is what the other device
+      // will actually hold. Until phase 045 the server always answers false -
+      // a new device pairs only at home, whatever the link carries - so the
+      // card says so. Erring the other way sends a person to the office with
+      // a link that works only at home and nothing to say why.
+      final onion = reply.data?['onion'] == true && PairingLink.tryParse(link)?.onionServiceKey != null;
       return RepositoryResult<DeviceInvite>.success(
         data: DeviceInvite(link: link, onion: onion),
       );

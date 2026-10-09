@@ -42,11 +42,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 ///   client_backend$ go build -o /tmp/noxd . && /tmp/noxd -addr 127.0.0.1:8080 -db /tmp/nox-live.db
 ///   fvm flutter test test/live/live_outbox_probe.dart `--dart-define=link=<pairing link>`
 ///
-/// ⚠️ These three probes greet ANONYMOUSLY, with a label and no device key.
-/// The server has refused such a greeting since feature 032 - it answers
-/// `unauthenticated` - so they have been stale since then and feature 036 does
-/// not repair that; it only moves them onto the transport that now exists.
-/// `pairing_live_probe.dart` is the one that pairs properly.
+/// These three probes pair a device key of their own first, with the link's
+/// token (phase 044): the server knows a device only by the key its channel
+/// proves, and a key it does not know may do nothing but pair. A claim link
+/// pairs once - each run needs a fresh one, or an invite.
+/// `pairing_live_probe.dart` drives the app's own sign-in instead.
 class _MemoryCursor implements SyncRepository {
   int _cursor = 0;
   String? _epoch;
@@ -142,6 +142,7 @@ void main() {
     if (target == null) return;
     final socket = NoxSocketClient(WebSocketChannelFactory(target.client()), _MemoryCursor());
     addTearDown(socket.stop);
+    await target.pair(socket);
     await socket.start(
       url: target.socketUrl,
       credentialsProvider: () async => const GreetingCredentials(label: 'OutboxProbe'),

@@ -2,10 +2,19 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:nox_app/data/remote/socket/socket_channel_factory.dart';
+import 'package:nox_tor/channel.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 
 /// An in-memory stand-in for the server side of the socket, so the transport's
 /// behaviour is testable without a server, a network, or timing luck.
 class FakeSocket implements SocketConnection {
+  FakeSocket({this.refusing = false});
+
+  /// A connection whose channel never opens. What it is given goes nowhere:
+  /// the real one holds frames until the channel is verified and drops them
+  /// with a refused one.
+  final bool refusing;
+
   final StreamController<dynamic> _incoming = StreamController<dynamic>.broadcast();
   final List<Map<String, dynamic>> sent = <Map<String, dynamic>>[];
   bool closed = false;
@@ -14,21 +23,19 @@ class FakeSocket implements SocketConnection {
   Stream<dynamic> get frames => _incoming.stream;
 
   @override
-  void add(String frame) => sent.add(jsonDecode(frame) as Map<String, dynamic>);
+  void add(String frame) {
+    if (refusing) return;
+    sent.add(jsonDecode(frame) as Map<String, dynamic>);
+  }
 
   @override
   Future<void> close() async => closed = true;
 
-  /// The one-time greeting that precedes any command (contract §2).
-  ///
-  /// The challenge is real base64 over 32 bytes, like a server's: a placeholder
-  /// string would make every signing test pass for the wrong reason and hide
-  /// the case where the client must actually sign something.
-  static const String challenge = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=';
-
+  /// The one-time greeting that precedes any command (contract §2) - nothing
+  /// to sign in it since phase 044.
   void pushGreeting() => _incoming.add(
     jsonEncode({
-      'srv': {'schema_max': 1, 'challenge': challenge},
+      'srv': {'schema_max': 1},
     }),
   );
 
@@ -72,12 +79,16 @@ class FakeSocket implements SocketConnection {
   /// to the client.
   Future<void> drop() => _incoming.close();
 
-  /// The machine that answered is not the one the pairing link named.
+  /// The channel would not open, for [failure].
   ///
-  /// An error on the frame stream, because that is exactly where it arrives in
-  /// life: the certificate is judged during the TLS handshake, so the socket
-  /// never opens and the failure surfaces as the stream's first and only event.
-  void refusePin() => _incoming.addError(const ServerPinRefusedException());
+  /// An error on the frame stream, wrapped the way the WebSocket wraps it,
+  /// because that is exactly where it arrives in life: the channel is judged
+  /// below HTTP, so the socket never opens and the failure surfaces as the
+  /// stream's first and only event.
+  void refuseChannel(ChannelFailure failure) => _incoming.addError(WebSocketChannelException.from(ChannelOpenException(failure)));
+
+  /// The machine that answered proved a key other than the link's.
+  void refuseServerKey() => refuseChannel(ChannelFailure.wrongServer);
 
   Map<String, dynamic>? commandNamed(String cmd) {
     for (final f in sent) {
@@ -99,11 +110,17 @@ class FakeSocketFactory implements SocketChannelFactory {
 
   FakeSocket get latest => created.last;
 
+  /// Every connection from now on fails to open for this reason - right after
+  /// the client has subscribed, as a real refusal arrives.
+  ChannelFailure? refuseEvery;
+
   @override
   SocketConnection connect(Uri url) {
-    final socket = FakeSocket();
+    final refusal = refuseEvery;
+    final socket = FakeSocket(refusing: refusal != null);
     created.add(socket);
     urls.add(url);
+    if (refusal != null) scheduleMicrotask(() => socket.refuseChannel(refusal));
     return socket;
   }
 }

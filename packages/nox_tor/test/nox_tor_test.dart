@@ -1,13 +1,11 @@
-@TestOn('mac-os || windows')
-library;
-
 import 'dart:typed_data';
 
 import 'package:nox_tor/nox_tor.dart';
 import 'package:test/test.dart';
 
-// These load the real library the hook built for the host. They touch no
-// network: the client is never started.
+// These load the real library the hook built for the host - on every
+// platform since phase 044. They touch no network: the client is never
+// started.
 void main() {
   test('the library is there and names its Arti', () {
     expect(NoxTor.isSupported, isTrue);
@@ -32,7 +30,6 @@ void main() {
       ),
       throwsA(isA<NoxTorException>().having((e) => e.code, 'code', -8)),
     );
-    expect(() => NoxTor.bridgeSecret(), throwsA(isA<NoxTorException>()));
   });
 
   test('wrong lengths are refused before they reach the library', () {

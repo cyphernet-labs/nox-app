@@ -209,11 +209,12 @@ class LoopbackChannel implements NoxChannel {
 
 /// Opens every channel as a loopback connection to [port], whatever the
 /// target names - the server under test stands in for the one at that
-/// address.
+/// address. Without a [port], each channel goes to the loopback port its
+/// direct target names - for tests that move between servers by address.
 class LoopbackChannelApi implements NoxChannelApi {
-  LoopbackChannelApi(this.port);
+  LoopbackChannelApi([this.port]);
 
-  final int port;
+  final int? port;
   final List<ChannelTarget> targets = <ChannelTarget>[];
   final List<LoopbackChannel> opened = <LoopbackChannel>[];
 
@@ -226,7 +227,14 @@ class LoopbackChannelApi implements NoxChannelApi {
     Future<void>? cancel,
   }) async {
     targets.add(target);
-    final channel = await LoopbackChannel.connect(port);
+    final to = port ?? (target is DirectTarget ? target.port : null);
+    if (to == null) throw const ChannelOpenException(ChannelFailure.torNotReady);
+    final LoopbackChannel channel;
+    try {
+      channel = await LoopbackChannel.connect(to);
+    } on SocketException {
+      throw const ChannelOpenException(ChannelFailure.network);
+    }
     opened.add(channel);
     return channel;
   }
