@@ -54,6 +54,18 @@ class ChannelDirectProber implements DirectProber {
   @override
   Future<DirectProbeResult> probe(List<String> candidates, {required Uint8List serverKey, required Uint8List deviceSeed}) async {
     if (candidates.isEmpty) return const DirectProbeResult();
+    // The round's own copies: the caller may wipe its seed while attempts
+    // started later in the round still need it. Wiped when the round is over.
+    final key = Uint8List.fromList(serverKey);
+    final seed = Uint8List.fromList(deviceSeed);
+    try {
+      return await _round(candidates, serverKey: key, deviceSeed: seed);
+    } finally {
+      seed.fillRange(0, seed.length, 0);
+    }
+  }
+
+  Future<DirectProbeResult> _round(List<String> candidates, {required Uint8List serverKey, required Uint8List deviceSeed}) async {
     final won = Completer<String?>();
     // Opens still under way when the round is settled are dropped in the
     // module, not left to run out their time.

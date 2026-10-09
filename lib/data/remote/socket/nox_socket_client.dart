@@ -489,8 +489,9 @@ class NoxSocketClient {
   /// can answer there without the onion service's keys, so the server was
   /// reinstalled or the machine replaced. Terminal, and terminal in a very
   /// particular way: no reconnect ladder, because nothing about the answer
-  /// will change on its own - until the person asks for Try again or pairs
-  /// anew; and NOT through [onUnauthenticated], which ends in a forced logout
+  /// will change on its own - until the channel is started again (Try again,
+  /// a relaunch) or the person pairs anew; and NOT through
+  /// [onUnauthenticated], which ends in a forced logout
   /// that wipes every message on the device (FR-012). Sending a stranger's
   /// key down that path would let anyone able to answer at the address erase
   /// this person's data on every device they own.
