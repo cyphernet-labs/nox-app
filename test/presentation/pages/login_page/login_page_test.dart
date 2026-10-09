@@ -62,6 +62,35 @@ void main() {
     expect(find.byType(QrScanPage), findsOneWidget);
   });
 
+  testWidgets('a link from a newer server says to update the app, apart from a broken one (FR-017)', (tester) async {
+    // The real sign-in of the test flavour: the link is refused before
+    // anything is stored or dialled.
+    await pumpApp(tester, const LoginPage());
+
+    await tester.enterText(find.byType(TextField), 'nox://pair/BKCapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODw');
+    await tester.pump();
+    await tester.tap(signInButton());
+    await tester.pumpAndSettle();
+
+    expect(find.text(l10nEn.loginLinkNewerVersion), findsOneWidget);
+    expect(find.text(l10nEn.loginInvalidId), findsNothing);
+  });
+
+  testWidgets('a link of the format before version 3 reads as broken, not as old', (tester) async {
+    await pumpApp(tester, const LoginPage());
+
+    await tester.enterText(
+      find.byType(TextField),
+      'https://nox.app/p/#AQF_AAABH5CjZmMytIk_2XvPJ-jonqlQtYsZD3SB33P1foxqnrVbFo-VEf6WohQoqA1_na5iVUo',
+    );
+    await tester.pump();
+    await tester.tap(signInButton());
+    await tester.pumpAndSettle();
+
+    expect(find.text(l10nEn.loginInvalidId), findsOneWidget);
+    expect(find.text(l10nEn.loginLinkNewerVersion), findsNothing);
+  });
+
   testWidgets('Scan QR is hidden on platforms without a scanner (Windows/Linux, FR-016)', (tester) async {
     addTearDown(() => QrScannerCapability.debugOverride = null);
     QrScannerCapability.debugOverride = false;

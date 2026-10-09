@@ -6,13 +6,19 @@ enum LoginOutcome { auto, newId, registered, errorFormat, errorNetwork, errorSer
 
 /// Login form status. The `nav*` values are terminal: the page navigates on them.
 /// The refusals stay apart because the person's next action differs: a link
-/// that will not parse means scan it again, an expired token means ask for a
-/// new invite, a rejected one means this link cannot be used at all. One
-/// shared "it did not work" leaves them guessing which.
+/// that will not parse means scan it again, a link from a newer server means
+/// update the app, an expired token means ask for a new invite, a rejected one
+/// means this link cannot be used at all. One shared "it did not work" leaves
+/// them guessing which.
 enum LoginStatus {
   idle,
   loading,
   errorFormat,
+
+  /// A pairing link of a version this build does not read (phase 044,
+  /// FR-017). Not [errorFormat]: the link is fine, the app is old - scanning
+  /// it again would meet the same answer, and only an update helps.
+  errorNewerVersion,
   errorExpired,
   errorRejected,
   errorNetwork,

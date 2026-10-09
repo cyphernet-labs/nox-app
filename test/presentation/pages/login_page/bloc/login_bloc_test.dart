@@ -393,6 +393,8 @@ void main() {
       (RepositoryException.invalidRequest, LoginStatus.errorFormat),
       (RepositoryException.notFound, LoginStatus.errorExpired),
       (RepositoryException.authentication, LoginStatus.errorRejected),
+      // A link of a version above this build's (044, FR-017): update the app.
+      (RepositoryException.unsupportedSchema, LoginStatus.errorNewerVersion),
     ]) {
       blocTest<LoginBloc, LoginState>(
         'a refusal of the link itself keeps its own message (${exception.name})',

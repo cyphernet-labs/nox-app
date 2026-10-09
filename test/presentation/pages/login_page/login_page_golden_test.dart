@@ -45,17 +45,23 @@ void main() {
   goldenTest('login_page_bad_link', () => _login(scannerAvailable: true, status: LoginStatus.errorFormat));
   goldenTestDesktop('login_page_bad_link', () => _login(scannerAvailable: true, status: LoginStatus.errorFormat));
 
-  // The link parsed, and the machine at the address it carries is not the one
-  // it names (036). Apart from the two above because the next action differs
-  // again: not "scan it again", not "check your connection" - the server behind
-  // this link is the wrong one.
+  // A link of a version newer than this build (044, FR-017). Apart from the bad
+  // link because the next action differs: not "scan it again" - the link is
+  // fine - but "update the app".
+  goldenTest('login_page_newer_version', () => _login(scannerAvailable: true, status: LoginStatus.errorNewerVersion));
+  goldenTestDesktop('login_page_newer_version', () => _login(scannerAvailable: true, status: LoginStatus.errorNewerVersion));
+
+  // The channel was refused as the wrong server (036, 044). Apart from the ones
+  // above because the next action differs again: not "scan it again", not
+  // "check your connection" - the server behind this link is the wrong one.
   goldenTest('login_page_pin_refused', () => _login(scannerAvailable: true, status: LoginStatus.errorServerMismatch));
   goldenTestDesktop('login_page_pin_refused', () => _login(scannerAvailable: true, status: LoginStatus.errorServerMismatch));
 
-  // A version-1 link whose server did not answer, or a different machine
-  // answered at its address (040). Apart from both of the above because the
-  // cause is where the device is: neither the link nor the network is wrong,
-  // and the sentence is two lines long where the others are one.
+  // A link whose server did not answer, or a different machine answered at its
+  // address (040; every link until 045 pairs at home). Apart from all of the
+  // above because the cause is where the device is: neither the link nor the
+  // network is wrong, and the sentence is two lines long where the others are
+  // one.
   goldenTest('login_page_home_only', () => _login(scannerAvailable: true, status: LoginStatus.errorHomeNetworkOnly));
   goldenTestDesktop('login_page_home_only', () => _login(scannerAvailable: true, status: LoginStatus.errorHomeNetworkOnly));
 }

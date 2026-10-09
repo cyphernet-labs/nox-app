@@ -156,6 +156,9 @@ class LoginBloc extends BaseBloc<LoginEvent, LoginState> {
     if (refused) return _refusalStatus(homeOnly: homeOnly);
     return switch (exception) {
       RepositoryException.invalidRequest => LoginStatus.errorFormat,
+      // The link's version is above this build's: sign-in refuses it before
+      // it dials, with the answer a server gives a client too old for it.
+      RepositoryException.unsupportedSchema => LoginStatus.errorNewerVersion,
       RepositoryException.notFound => LoginStatus.errorExpired,
       RepositoryException.authentication => LoginStatus.errorRejected,
       RepositoryException.connection when homeOnly => LoginStatus.errorHomeNetworkOnly,

@@ -127,15 +127,17 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
       final path = picked?.path;
       if (path == null || !mounted) return;
       final raw = await qrImageDecodeService.decodeQr(path);
-      final link = raw == null ? null : PairingLink.tryParse(raw);
       if (!mounted) return;
-      if (link == null) {
+      // A link from a newer server is still the person's link: it goes on to
+      // sign-in, which says to update the app, rather than being called a
+      // picture with no link in it.
+      if (raw == null || !PairingLink.isPairingLink(raw)) {
         showAppSnackBar(context, text: context.l10n.loginQrImageError, error: true);
         return;
       }
       // The whole link goes through, not something extracted from it: the
-      // address and the server key travel with the token.
-      _controller.text = raw!.trim();
+      // addresses and the server key travel with the token.
+      _controller.text = raw.trim();
       _bloc.add(LoginEvent.idChanged(raw.trim()));
       _submit();
     } finally {
@@ -157,6 +159,7 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
       case LoginStatus.idle:
       case LoginStatus.loading:
       case LoginStatus.errorFormat:
+      case LoginStatus.errorNewerVersion:
       case LoginStatus.errorExpired:
       case LoginStatus.errorRejected:
       case LoginStatus.errorNetwork:
@@ -198,6 +201,7 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
   /// widget (not the BLoC state) so it can read locale-aware strings via context.
   String? _errorText(BuildContext context, LoginStatus status) => switch (status) {
     LoginStatus.errorFormat => context.l10n.loginInvalidId,
+    LoginStatus.errorNewerVersion => context.l10n.loginLinkNewerVersion,
     LoginStatus.errorExpired => context.l10n.loginLinkExpired,
     LoginStatus.errorRejected => context.l10n.loginLinkRejected,
     LoginStatus.errorNetwork => context.l10n.loginNetworkError,
