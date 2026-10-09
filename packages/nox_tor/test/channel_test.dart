@@ -117,6 +117,9 @@ void main() {
       Timer(const Duration(milliseconds: 200), cancel.complete);
       await expectLater(opening, throwsA(isA<ChannelOpenException>()));
       expect(watch.elapsed, lessThan(const Duration(seconds: 5)));
+      // The abandoned handle's CLOSED is still to come from the module; the
+      // test isolate waits for it rather than exit under a pending callback.
+      await Future<void>.delayed(const Duration(milliseconds: 300));
     });
   });
 }
