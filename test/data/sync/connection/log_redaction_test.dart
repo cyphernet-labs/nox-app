@@ -218,4 +218,15 @@ void main() {
     expect(capture.lines.join('\n'), contains('[onion]'));
     expectNothingLeaked();
   });
+
+  test('an exception that quotes a pairing link is scrubbed on the way out', () async {
+    // A FormatException quotes its source, and the source of a sign-in is the
+    // link - a token that pairs a device with this person's server.
+    final repository = _Repository();
+
+    await repository.run(() async => throw FormatException('unreadable', _link));
+
+    expect(capture.lines.join('\n'), contains('[link]'));
+    expectNothingLeaked();
+  });
 }
