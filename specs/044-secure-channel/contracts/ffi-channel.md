@@ -22,17 +22,21 @@ int64_t nox_chan_write(int64_t handle, const uint8_t *data, uintptr_t len);
 // Подтверждает, что Dart доставил столько входящих байтов получателю: модуль снова читает.
 int32_t nox_chan_ack(int64_t handle, uintptr_t len);
 
+// Просит сообщить, когда всё, что поставлено в очередь до этого вызова, записано в TLS и транспорт:
+// событие DRAINED с code = ticket. Канал, закрытый раньше, отвечает событием CLOSED.
+int32_t nox_chan_flush(int64_t handle, int32_t ticket);
+
 // Закрывает отправку (TLS close_notify после очереди); чтение идёт до конца.
 int32_t nox_chan_shutdown_write(int64_t handle);
 
 // Рвёт канал сразу; после события CLOSED дескриптор недействителен.
 int32_t nox_chan_close(int64_t handle);
 
-// Освобождает буфер события DATA.
+// Освобождает буфер события OPEN или DATA.
 void nox_chan_buf_free(uint8_t *data, uintptr_t len);
 ```
 
-`nox_chan_event_fn` создаётся в Dart через `NativeCallable.listener` и вызывается из потоков модуля; исполняется в цикле событий изолята.
+`nox_chan_event_fn` создаётся в Dart через `NativeCallable.listener` и вызывается из потоков модуля; исполняется в цикле событий изолята — позже, чем модуль вернулся из вызова, поэтому каждый буфер события живёт, пока Dart его не освободит. Обратный вызов один на изолят и живёт, пока жив изолят (`keepIsolateAlive = false`): модуль может вызвать его в любой момент до события CLOSED последнего канала.
 
 **Onion (до 045).** Канал к onion идёт через клиента Arti, которого поднимает `nox_tor_start`. Ключ доступа к onion-сервису регистрирует, как и сегодня, `nox_tor_set_target(onion_host, port, client_key32)` — теперь только в хранилище ключей Arti, без моста; `nox_chan_open` ключа не принимает. Подключение к onion — с подстраховкой (второе подключение в новой группе изоляции через 15 с, общий срок 45 с), как у моста. Исход подключения к onion модуль пишет и в снимок состояния Tor (`nox_tor_status().error`), как писал мост: на нём держится правило «ключ не зарегистрирован после 5 минут отказов» (040).
 
@@ -42,10 +46,10 @@ void nox_chan_buf_free(uint8_t *data, uintptr_t len);
 
 | `kind` | Имя | `data` / `code` |
 |---|---|---|
-| 1 | `OPEN` | `data` — ключ сервера (32 байта, копировать сразу; модуль освобождает сам после вызова) |
+| 1 | `OPEN` | канал проверен; `data` — ключ сервера (32 байта); владеет Dart — копирует и вызывает `nox_chan_buf_free` |
 | 2 | `DATA` | входящие байты; владеет Dart — копирует и вызывает `nox_chan_buf_free` |
-| 3 | `WRITABLE` | очередь отправки опустилась ниже половины окна |
-| 4 | `DRAINED` | очередь отправки пуста |
+| 3 | `WRITABLE` | очередь отправки опустилась до половины окна после того, как `nox_chan_write` вернул размер больше окна |
+| 4 | `DRAINED` | ответ на `nox_chan_flush`: `code` — его `ticket` |
 | 5 | `EOF` | другая сторона закрыла отправку |
 | 6 | `CLOSED` | канал закрыт; последнее событие дескриптора; `code` — 0 или вид отказа |
 
@@ -71,7 +75,7 @@ void nox_chan_buf_free(uint8_t *data, uintptr_t len);
 ## Окна
 
 - **Входящие:** модуль держит не больше 1 МиБ неподтверждённых байтов; Dart подтверждает `nox_chan_ack`, когда передал байты получателю потока, и не подтверждает, пока поток на паузе.
-- **Исходящие:** окно 1 МиБ; когда `nox_chan_write` вернул больше окна, Dart ставит источник `addStream` на паузу до `WRITABLE`; `flush` ждёт `DRAINED`.
+- **Исходящие:** окно 1 МиБ; когда `nox_chan_write` вернул больше окна, Dart ставит источник `addStream` на паузу до `WRITABLE`; `flush` вызывает `nox_chan_flush` и ждёт `DRAINED` со своим `ticket`.
 
 ## Dart-обёртка (`package:nox_tor/channel.dart`)
 
@@ -85,8 +89,8 @@ abstract interface class NoxChannelApi {
 abstract interface class NoxChannel {
   Stream<Uint8List> get incoming;        // DATA; EOF closes the stream; ack on delivery
   int write(Uint8List bytes);            // queued size after the write
-  Future<void> get writable;             // next WRITABLE
-  Future<void> get drained;              // next DRAINED (immediately if the queue is empty)
+  Future<void> get writable;             // next WRITABLE (immediately if the queue is within the window)
+  Future<void> flush();                  // nox_chan_flush + its DRAINED; fails if the channel closes first
   void shutdownWrite();
   void close();
   Future<ChannelFailure?> get closed;    // null — closed normally
