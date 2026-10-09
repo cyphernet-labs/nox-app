@@ -12,7 +12,7 @@
 ## Phase 1: Setup
 
 - [ ] T001 Внести дельту в `docs/client-backend/protocol/contract-draft.md` по `contracts/wire-addresses.md`: §1 (onion — отдельная служба tor, один порт, сроки медленного пути для всех, без ключей доступа, PoW в настройках tor), §3 (`addresses.public`, `onion` из настроек сервера), `server.addresses`, §8A (без `access_key` и `device.setAccessKey`, claim через onion, порядок адресов ссылки, `onion`/`public` в ответе `device.invite`)
-- [ ] T002 [P] `packages/nox_tor/rust/Cargo.toml`: `arti-client` + `hs-pow-full`; убрать `keymgr`, `ephemeral-keystore`, `tor-keymgr`, `tor-hscrypto` (если больше не нужны); `Cargo.lock`; `cargo check` всех целей, как в 044 (iOS, Android, macOS — настоящие; Linux, Windows — с заглушками C-инструментов)
+- [X] T002 [P] `packages/nox_tor/rust/Cargo.toml`: `arti-client` + `hs-pow-full`; убрать `ephemeral-keystore`, `tor-keymgr`, `tor-hscrypto` (`keymgr` остаётся выключателем хранилища ключей); `Cargo.lock`; `cargo check` всех целей, как в 044 (iOS, Android, macOS — настоящие; Linux, Windows — с заглушками C-инструментов)
 
 ---
 
@@ -28,7 +28,7 @@
 
 ### Rust-модуль
 
-- [ ] T008 `packages/nox_tor/rust/src/{lib,engine}.rs`: без `nox_tor_set_target`/`nox_tor_clear_target` и хранилища ключей; группа подстраховки — на каждый onion-сервис (`channel/target.rs`); `status.rs` — без классификации ошибок ключа доступа; тесты (`cargo test`, `clippy`, `fmt`)
+- [X] T008 `packages/nox_tor/rust/src/{lib,engine}.rs`: без `nox_tor_set_target`/`nox_tor_clear_target` и хранилища ключей; группа подстраховки — на каждый onion-сервис (`channel/target.rs`); `status.rs` — без классификации ошибок ключа доступа; тесты (`cargo test`, `clippy`, `fmt`)
 
 ### Приложение
 

@@ -14,7 +14,7 @@
 
 **Language/Version**: Dart 3.12 (Flutter `3.44.1`, FVM); Rust 1.93.1 (`packages/nox_tor`); Go 1.27 (`client_backend/`).
 
-**Primary Dependencies**: Arti `=0.47.0` + `hs-pow-full` (без `keymgr`/`ephemeral-keystore`); канал 044 (`nox_chan_*`, `ChannelHttpClient`); Go stdlib (`crypto/sha3` для проверки onion-адреса) — новых зависимостей нет.
+**Primary Dependencies**: Arti `=0.47.0` + `hs-pow-full` (без `ephemeral-keystore`; `keymgr` — только чтобы выключить хранилище ключей); канал 044 (`nox_chan_*`, `ChannelHttpClient`); Go stdlib (`crypto/sha3` для проверки onion-адреса) — новых зависимостей нет.
 
 **Storage**: сервер — колонки адресов в `server_identity`, без `onion_seed` и `devices.access_key` (`001_init.sql` на месте); приложение — `ServerAddresses` в сейфе: `public`, `manualAddress`, `manualOnion`, `useTor`.
 
@@ -74,7 +74,7 @@ client_backend/
 └── cmd/smoke/main.go
 
 packages/nox_tor/
-├── rust/Cargo.toml                             # + hs-pow-full; − keymgr, ephemeral-keystore, tor-keymgr
+├── rust/Cargo.toml                             # + hs-pow-full; − ephemeral-keystore, tor-keymgr; keymgr — выключатель хранилища
 ├── rust/src/{lib,engine}.rs                    # − nox_tor_set_target/clear_target, хранилище ключей
 ├── rust/src/channel/target.rs                  # группа подстраховки на каждый onion-сервис
 └── lib/{nox_tor.dart,src/nox_tor_bindings.dart}

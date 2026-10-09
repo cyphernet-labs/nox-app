@@ -10,22 +10,27 @@ description = "The NOX app's channel to its server (TLS 1.3 and Eidolon) and its
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]
-# Pinned exactly: experimental-api carries no semver promise, and the keystore
-# calls this crate makes (insert/remove_service_discovery_key) live there.
+# Pinned exactly: experimental-api and hs-pow-full carry no semver promise, and
+# a new Arti is a decision of its own, checked against an onion service's
+# proof of work again (045).
 arti-client = { version = "=0.47.0", default-features = false, features = [
     "tokio",
     "rustls",
     "onion-service-client",
     "static-sqlite",
     "compression",
+    # Not for keys - since 045 the client holds none - but for the switch that
+    # turns the keystore off (engine::client_config). tor-chanmgr brings the
+    # key manager in regardless, and without this feature Arti keeps a keystore
+    # under the state directory with no way to say otherwise.
     "keymgr",
+    # HsId, the onion address parsed: what the hedge's group is kept by.
     "experimental-api",
-    "ephemeral-keystore",
+    # Solves the puzzle (Equi-X) an onion service with its defenses on sets:
+    # under load it takes the clients that solved one first. Without this
+    # tor-hsclient builds a stub that never offers a solution.
+    "hs-pow-full",
 ] }
-tor-hscrypto = "=0.47.0"
-tor-llcrypto = "=0.47.0"
-tor-keymgr = { version = "=0.47.0", features = ["ephemeral-keystore"] }
-tor-config = "=0.47.0"
 tor-rtcompat = "=0.47.0"
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }
 # The channel's TLS. ring only, like the rustls above: the default would bring
@@ -43,9 +48,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
 sha3 = "0.10"
 data-encoding = "2"
-subtle = "2"
-# Already in the graph through Arti; named here for the buffers of the client
-# key and the device seed.
+# Already in the graph through Arti; named here for the device seed and the
+# key made from it.
 zeroize = "1"
 
 [dev-dependencies]

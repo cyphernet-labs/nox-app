@@ -1,21 +1,19 @@
 //! Timing harness for the FR-034 measurement (phase 040).
 //!
-//!     cargo run --release --example bootstrap -- <dir> [<onion host> <client key, base64> [port]]
+//!     cargo run --release --example bootstrap -- <dir> [<onion host> [port]]
 //!
 //! Starts the client cold in <dir> (which it empties first), then warm from
-//! the same directories, and - with a target - times the first and a repeated
-//! keyed connection to the onion service: the hedged connect every onion
-//! channel makes (044), up to the open Tor stream. TLS and Eidolon come on top
-//! of that in a channel and need a paired device's seed, so they are not timed
-//! here.
+//! the same directories, and - with an onion host - times the first and a
+//! repeated connection to the service: the hedged connect every onion channel
+//! makes (044), by the address alone (045), up to the open Tor stream. TLS and
+//! Eidolon come on top of that in a channel and need a paired device's seed, so
+//! they are not timed here.
 
 use std::time::{Duration, Instant};
 
-use data_encoding::BASE64;
 use nox_tor::channel::target;
 use nox_tor::engine;
 use nox_tor::status::{state, NoxTorStatus};
-use zeroize::Zeroizing;
 
 fn wait_ready(budget: Duration) -> Result<Duration, NoxTorStatus> {
     let started = Instant::now();
@@ -49,7 +47,7 @@ fn through_tor(onion: &str, port: u16) -> Result<Duration, String> {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let dir = args.first().expect("usage: bootstrap <dir> [<onion> <key-b64> [port]]");
+    let dir = args.first().expect("usage: bootstrap <dir> [<onion> [port]]");
     let state_dir = format!("{dir}/state");
     let cache_dir = format!("{dir}/cache");
     let _ = std::fs::remove_dir_all(dir);
@@ -67,11 +65,9 @@ fn main() {
         Err(s) => panic!("warm bootstrap failed: {s:?}"),
     }
 
-    if let (Some(onion), Some(key)) = (args.get(1), args.get(2)) {
-        let port: u16 = args.get(3).and_then(|p| p.parse().ok()).unwrap_or(443);
-        let key: [u8; 32] = BASE64.decode(key.as_bytes()).expect("key is base64").try_into().expect("32 bytes");
-        assert_eq!(engine::set_target(onion, port, Box::new(Zeroizing::new(key))), 0);
-        for label in ["first keyed connect", "repeated keyed connect"] {
+    if let Some(onion) = args.get(1) {
+        let port: u16 = args.get(2).and_then(|p| p.parse().ok()).unwrap_or(443);
+        for label in ["first connect", "repeated connect"] {
             match through_tor(onion, port) {
                 Ok(t) => println!("{label}: {:.2}s, rss {} KB", t.as_secs_f64(), rss_kb()),
                 Err(e) => println!("{label}: FAILED ({e})"),

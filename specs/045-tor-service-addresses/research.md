@@ -97,7 +97,7 @@
 
 ## R17. Rust-модуль без ключей доступа
 
-- **Decision:** `nox_tor_set_target` и `nox_tor_clear_target` уходят вместе с хранилищем ключей Arti (`keymgr`, `ephemeral-keystore`, `tor-keymgr`, `HsClientDescEncSecretKey`); группа подстраховочных подключений запоминается для каждого onion-сервиса. Коды `tor_client_auth` и статусы `MISSING/WRONG_CLIENT_AUTH` остаются в нумерации, но не возникают.
+- **Decision:** `nox_tor_set_target` и `nox_tor_clear_target` уходят вместе с хранилищем ключей Arti (`ephemeral-keystore`, `tor-keymgr`, `HsClientDescEncSecretKey`; фича `keymgr` остаётся как выключатель хранилища — `storage.keystore.enabled = false`); группа подстраховочных подключений запоминается для каждого onion-сервиса. Коды `tor_client_auth` и статусы `MISSING/WRONG_CLIENT_AUTH` остаются в нумерации, но не возникают.
 - **Rationale:** FR-019; канал 044 уже ходит к onion по адресу, без цели.
 
 ## R18. Контракт

@@ -3,17 +3,18 @@
 //!
 //! The onion connect is the one the loopback bridge made until 044, moved
 //! here whole: hedged after HEDGE_AFTER in a fresh isolation group, bounded by
-//! CONNECT_BUDGET, and its outcome written into the Tor status snapshot. The
-//! app keys its "access key unknown after five minutes of refusals" rule (040)
-//! on that snapshot, so every connect still lands there - the channel's own
-//! failure goes to the channel's CLOSED event besides.
+//! CONNECT_BUDGET, and its outcome written into the Tor status snapshot as the
+//! bridge's was - the channel's own failure goes to its CLOSED event besides.
+//! Since 045 it goes by the address alone: the client holds no keys, and no
+//! service is set up in it ahead of a connect.
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use arti_client::{DataStream, HsId, IsolationToken, StreamPrefs};
+use arti_client::{DataStream, ErrorKind, HsId, IsolationToken, StreamPrefs};
 use futures::stream::{FuturesUnordered, StreamExt};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
@@ -21,12 +22,11 @@ use tokio::runtime::Handle;
 
 use super::code;
 use crate::engine::{lock, Client, Shared};
-use crate::status::{classify, error};
+use crate::status::{classify, classify_kind, error};
 
 /// One Tor connection to the onion service, both attempts of the hedge
-/// together. A keyed connect fetches the descriptor anew every time and
-/// sometimes hangs (Arti #2166, #2482): this is the bound, and the app's
-/// reconnect ladder is the retry.
+/// together. A connect sometimes hangs (Arti #2166, #2482): this is the bound,
+/// and the app's reconnect ladder is the retry.
 pub const CONNECT_BUDGET: Duration = Duration::from_secs(45);
 /// When a connect to the onion service that has not finished gets a second
 /// one beside it. One that hangs hangs for the whole CONNECT_BUDGET, while a
@@ -129,15 +129,10 @@ async fn connect_and_record(
     hsid: HsId,
     port: u16,
 ) -> Result<DataStream, i32> {
-    // The group a hedge was won in belongs to the target it won for; a channel
-    // to any other service starts from Arti's default, and keeps what it wins
-    // to itself.
-    let elsewhere = ConnectGroup::default();
-    let own = lock(&shared.target).as_ref().is_some_and(|t| t.hsid == hsid);
-    let group = if own { &shared.connect_group } else { &elsewhere };
     let target = (host, port);
     let connect = connect_in_groups(
-        group,
+        &shared.connect_groups,
+        hsid,
         move |group| async move {
             let prefs = prefs_in(group);
             client.connect_with_prefs(target, &prefs).await
@@ -166,16 +161,24 @@ async fn connect_and_record(
 /// name, the rest through the status snapshot's `classify`. Kinds only - the
 /// message may carry an onion address and must not travel.
 fn onion_failure(e: &arti_client::Error) -> i32 {
-    use arti_client::{ErrorKind, HasKind};
-    match e.kind() {
+    use arti_client::HasKind;
+    onion_failure_kind(e.kind())
+}
+
+/// `onion_failure`, by the kind.
+fn onion_failure_kind(kind: ErrorKind) -> i32 {
+    match kind {
         ErrorKind::OnionServiceAddressInvalid => code::TOR_ONION_INVALID,
         ErrorKind::OnionServiceNotFound => code::TOR_ONION_NOT_FOUND,
+        // A service that asks for a key is one this client cannot reach: since
+        // 045 it holds none, and TOR_CLIENT_AUTH is no longer produced.
         ErrorKind::OnionServiceNotRunning
         | ErrorKind::OnionServiceConnectionFailed
-        | ErrorKind::OnionServiceProtocolViolation => code::TOR_ONION_UNREACHABLE,
+        | ErrorKind::OnionServiceProtocolViolation
+        | ErrorKind::OnionServiceMissingClientAuth
+        | ErrorKind::OnionServiceWrongClientAuth => code::TOR_ONION_UNREACHABLE,
         ErrorKind::BootstrapRequired => code::TOR_NOT_READY,
-        _ => match classify(e) {
-            error::MISSING_CLIENT_AUTH | error::WRONG_CLIENT_AUTH => code::TOR_CLIENT_AUTH,
+        _ => match classify_kind(kind) {
             // The network no longer takes this client: Tor is not coming up.
             error::SOFTWARE_DEPRECATED => code::TOR_NOT_READY,
             error::INTERNAL => code::INTERNAL,
@@ -185,32 +188,30 @@ fn onion_failure(e: &arti_client::Error) -> i32 {
     }
 }
 
-/// The isolation group connects to the onion service go in: Arti's default
-/// until a hedge is won in a fresh group, and that group from then on.
+/// The isolation group connects to each onion service go in: Arti's default
+/// until a hedge to that service is won in a fresh group, and that group from
+/// then on. Kept for every service apart - a group won for one says nothing
+/// about another - and for as long as the client lives (see engine).
 ///
 /// Arti lets connects to an onion service share an attempt only when their
 /// isolation is compatible, and an attempt that hangs runs on in a task of its
 /// own after its connect gives up on it. A later connect in the same group would
 /// join it and wait for the hedge all over again. Isolation decides only which
 /// circuits to this one service are shared, so a new group costs nothing in
-/// privacy. Forgotten when the target changes (see engine).
+/// privacy.
 #[derive(Default)]
-pub struct ConnectGroup(Mutex<Option<IsolationToken>>);
+pub struct ConnectGroups(Mutex<HashMap<HsId, IsolationToken>>);
 
-impl ConnectGroup {
-    /// The group a first attempt goes in: the one the last hedge was won in.
-    pub(crate) fn current(&self) -> Option<IsolationToken> {
-        *lock(&self.0)
+impl ConnectGroups {
+    /// The group a first attempt to `service` goes in: the one its last hedge
+    /// was won in.
+    pub(crate) fn current(&self, service: HsId) -> Option<IsolationToken> {
+        lock(&self.0).get(&service).copied()
     }
 
-    /// A hedge won in `group`: later connects go there.
-    pub(crate) fn won(&self, group: IsolationToken) {
-        *lock(&self.0) = Some(group);
-    }
-
-    /// Back to Arti's default.
-    pub(crate) fn forget(&self) {
-        *lock(&self.0) = None;
+    /// A hedge to `service` won in `group`: later connects to it go there.
+    pub(crate) fn won(&self, service: HsId, group: IsolationToken) {
+        lock(&self.0).insert(service, group);
     }
 }
 
@@ -223,17 +224,22 @@ fn prefs_in(group: Option<IsolationToken>) -> StreamPrefs {
     prefs
 }
 
-/// One connect, hedged: the first attempt in the current group, the hedge in a
-/// fresh one - it starts afresh, descriptor, introduction and rendezvous,
-/// instead of waiting on the attempt that hangs - and once that one wins, its
-/// group is current.
-async fn connect_in_groups<T, E, C, F>(group: &ConnectGroup, connect: C, after: Duration) -> Result<T, E>
+/// One connect to `service`, hedged: the first attempt in its current group,
+/// the hedge in a fresh one - it starts afresh, descriptor, introduction and
+/// rendezvous, instead of waiting on the attempt that hangs - and once that one
+/// wins, its group is the service's current one.
+async fn connect_in_groups<T, E, C, F>(
+    groups: &ConnectGroups,
+    service: HsId,
+    connect: C,
+    after: Duration,
+) -> Result<T, E>
 where
     C: Fn(Option<IsolationToken>) -> F,
     F: Future<Output = Result<T, E>>,
 {
     let connect = &connect;
-    let current = group.current();
+    let current = groups.current(service);
     let first = async move { connect(current).await.map(|won| (won, None)) };
     let second = move || async move {
         let fresh = IsolationToken::new();
@@ -241,7 +247,7 @@ where
     };
     let (won, fresh) = hedged(first, second, after).await?;
     if let Some(fresh) = fresh {
-        group.won(fresh);
+        groups.won(service, fresh);
     }
     Ok(won)
 }
@@ -323,6 +329,27 @@ mod tests {
             "25njqamcweflpvkl73j4szahhihoc4xt3ktcgjnpaingr5yhkenl5sie.onion",
         ] {
             assert_eq!(parse_onion(broken).err(), Some(code::TOR_ONION_INVALID), "{broken}");
+        }
+    }
+
+    /// A service that asks for a key is out of reach: since 045 the client
+    /// holds none, and TOR_CLIENT_AUTH is never the answer.
+    #[test]
+    fn an_arti_failure_is_the_channels_by_its_kind() {
+        for (kind, expected) in [
+            (ErrorKind::OnionServiceMissingClientAuth, code::TOR_ONION_UNREACHABLE),
+            (ErrorKind::OnionServiceWrongClientAuth, code::TOR_ONION_UNREACHABLE),
+            (ErrorKind::OnionServiceNotRunning, code::TOR_ONION_UNREACHABLE),
+            (ErrorKind::OnionServiceConnectionFailed, code::TOR_ONION_UNREACHABLE),
+            (ErrorKind::OnionServiceProtocolViolation, code::TOR_ONION_UNREACHABLE),
+            (ErrorKind::OnionServiceNotFound, code::TOR_ONION_NOT_FOUND),
+            (ErrorKind::OnionServiceAddressInvalid, code::TOR_ONION_INVALID),
+            (ErrorKind::BootstrapRequired, code::TOR_NOT_READY),
+            (ErrorKind::SoftwareDeprecated, code::TOR_NOT_READY),
+            (ErrorKind::Internal, code::INTERNAL),
+            (ErrorKind::TorNetworkTimeout, code::NETWORK),
+        ] {
+            assert_eq!(onion_failure_kind(kind), expected, "{kind:?}");
         }
     }
 
@@ -408,13 +435,23 @@ mod tests {
     }
 
     mod hedge {
-        use super::super::{connect_in_groups, hedged, prefs_in, ConnectGroup, HEDGE_AFTER};
-        use arti_client::{IsolationToken, StreamPrefs};
+        use super::super::{connect_in_groups, hedged, parse_onion, prefs_in, ConnectGroups, HEDGE_AFTER};
+        use crate::onion::onion_from_pubkey;
+        use arti_client::{HsId, IsolationToken, StreamPrefs};
         use std::cell::{Cell, RefCell};
         use std::time::Duration;
         use tokio::time::Instant;
 
         type Outcome = Result<&'static str, &'static str>;
+
+        /// The onion service these connects go to, and another one.
+        fn service() -> HsId {
+            parse_onion("25njqamcweflpvkl73j4szahhihoc4xt3ktcgjnpaingr5yhkenl5sid.onion").unwrap()
+        }
+
+        fn another_service() -> HsId {
+            parse_onion(&onion_from_pubkey(&[7u8; 32])).unwrap()
+        }
 
         fn secs(n: u64) -> Duration {
             Duration::from_secs(n)
@@ -517,64 +554,88 @@ mod tests {
 
         #[tokio::test(start_paused = true)]
         async fn a_won_hedge_takes_the_next_connect_past_the_hung_attempt() {
-            let (group, made) = (ConnectGroup::default(), RefCell::new(Vec::new()));
+            let (groups, made) = (ConnectGroups::default(), RefCell::new(Vec::new()));
             let connect = |g| {
                 made.borrow_mut().push(g);
                 one_hangs(g, None)
             };
             let start = Instant::now();
-            assert_eq!(connect_in_groups(&group, connect, HEDGE_AFTER).await, Ok("connected"));
+            assert_eq!(connect_in_groups(&groups, service(), connect, HEDGE_AFTER).await, Ok("connected"));
             at(start, HEDGE_AFTER + secs(2));
-            let won = group.current().expect("the group the hedge won in is current");
+            let won = groups.current(service()).expect("the group the hedge won in is current");
             assert_eq!(*made.borrow(), [None, Some(won)]);
 
             // The next connect goes straight to the group that works.
             let start = Instant::now();
-            assert_eq!(connect_in_groups(&group, connect, HEDGE_AFTER).await, Ok("connected"));
+            assert_eq!(connect_in_groups(&groups, service(), connect, HEDGE_AFTER).await, Ok("connected"));
             at(start, secs(2));
             assert_eq!(*made.borrow(), [None, Some(won), Some(won)]);
-            assert_eq!(group.current(), Some(won));
+            assert_eq!(groups.current(service()), Some(won));
         }
 
         #[tokio::test(start_paused = true)]
         async fn a_current_group_that_hangs_gives_way_to_the_next_winner() {
-            let group = ConnectGroup::default();
+            let groups = ConnectGroups::default();
             let hung = IsolationToken::new();
-            group.won(hung);
-            let got = connect_in_groups(&group, |g| one_hangs(g, Some(hung)), HEDGE_AFTER).await;
+            groups.won(service(), hung);
+            let got = connect_in_groups(&groups, service(), |g| one_hangs(g, Some(hung)), HEDGE_AFTER).await;
             assert_eq!(got, Ok("connected"));
-            assert!(group.current().is_some_and(|now| now != hung), "still {:?}", group.current());
+            let now = groups.current(service());
+            assert!(now.is_some_and(|now| now != hung), "still {now:?}");
         }
 
         #[tokio::test(start_paused = true)]
         async fn a_first_attempt_that_wins_leaves_the_group_as_it_was() {
-            let (group, made) = (ConnectGroup::default(), RefCell::new(Vec::new()));
+            let (groups, made) = (ConnectGroups::default(), RefCell::new(Vec::new()));
             let quick = |g| {
                 made.borrow_mut().push(g);
                 settles(secs(1), Ok("connected"))
             };
-            assert_eq!(connect_in_groups(&group, quick, HEDGE_AFTER).await, Ok("connected"));
-            assert_eq!(group.current(), None);
+            assert_eq!(connect_in_groups(&groups, service(), quick, HEDGE_AFTER).await, Ok("connected"));
+            assert_eq!(groups.current(service()), None);
             let stored = IsolationToken::new();
-            group.won(stored);
-            assert_eq!(connect_in_groups(&group, quick, HEDGE_AFTER).await, Ok("connected"));
-            assert_eq!(group.current(), Some(stored));
+            groups.won(service(), stored);
+            assert_eq!(connect_in_groups(&groups, service(), quick, HEDGE_AFTER).await, Ok("connected"));
+            assert_eq!(groups.current(service()), Some(stored));
             assert_eq!(*made.borrow(), [None, Some(stored)], "no fresh group without a hedge");
 
             // Won by the first after the hedge was made: still the first's group.
             let slow_first = |g| settles(if g == Some(stored) { secs(20) } else { secs(30) }, Ok("connected"));
-            assert_eq!(connect_in_groups(&group, slow_first, HEDGE_AFTER).await, Ok("connected"));
-            assert_eq!(group.current(), Some(stored));
+            assert_eq!(connect_in_groups(&groups, service(), slow_first, HEDGE_AFTER).await, Ok("connected"));
+            assert_eq!(groups.current(service()), Some(stored));
         }
 
         #[tokio::test(start_paused = true)]
         async fn when_both_fail_the_group_stays() {
-            let group = ConnectGroup::default();
+            let groups = ConnectGroups::default();
             let stored = IsolationToken::new();
-            group.won(stored);
+            groups.won(service(), stored);
             let refused = |g| settles(if g == Some(stored) { secs(20) } else { secs(1) }, Err("refused"));
-            assert_eq!(connect_in_groups(&group, refused, HEDGE_AFTER).await, Err("refused"));
-            assert_eq!(group.current(), Some(stored));
+            assert_eq!(connect_in_groups(&groups, service(), refused, HEDGE_AFTER).await, Err("refused"));
+            assert_eq!(groups.current(service()), Some(stored));
+        }
+
+        /// A group won for one service is no place for another's first
+        /// attempt, and a hedge won for the other leaves the first's alone.
+        #[tokio::test(start_paused = true)]
+        async fn two_services_never_share_a_group() {
+            let (groups, made) = (ConnectGroups::default(), RefCell::new(Vec::new()));
+            let connect = |g| {
+                made.borrow_mut().push(g);
+                one_hangs(g, None)
+            };
+            assert_eq!(connect_in_groups(&groups, service(), connect, HEDGE_AFTER).await, Ok("connected"));
+            let first = groups.current(service()).expect("the hedge to the first service won");
+            assert_eq!(groups.current(another_service()), None, "nothing is won for the other yet");
+
+            made.borrow_mut().clear();
+            let start = Instant::now();
+            assert_eq!(connect_in_groups(&groups, another_service(), connect, HEDGE_AFTER).await, Ok("connected"));
+            at(start, HEDGE_AFTER + secs(2));
+            let other = groups.current(another_service()).expect("the hedge to the other service won");
+            assert_eq!(*made.borrow(), [None, Some(other)], "the other's first attempt is in Arti's default");
+            assert_ne!(other, first);
+            assert_eq!(groups.current(service()), Some(first));
         }
     }
 }

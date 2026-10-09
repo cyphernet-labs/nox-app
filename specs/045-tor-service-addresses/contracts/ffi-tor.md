@@ -14,4 +14,4 @@
 
 ## Сборка
 
-`arti-client =0.47.0` с фичей `hs-pow-full`; фичи `keymgr`, `ephemeral-keystore` и зависимость `tor-keymgr` уходят, если ничего другого им не нужно. Версии Arti — точные (`=`), смена версии — отдельное решение с проверкой PoW.
+`arti-client =0.47.0` с фичей `hs-pow-full`; `ephemeral-keystore`, `tor-keymgr`, `tor-hscrypto`, `tor-llcrypto` уходят. Фича `keymgr` остаётся как выключатель: без неё Arti заводит хранилище ключей на диске (`<state>/keystore`), а с ней клиент собирается с `storage.keystore.enabled = false` и не хранит ключей вовсе. Отказ ключа доступа (больше не возникает) закрывает канал как `tor_onion_unreachable`. Версии Arti — точные (`=`), смена версии — отдельное решение с проверкой PoW.
