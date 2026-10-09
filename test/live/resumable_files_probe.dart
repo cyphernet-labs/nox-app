@@ -29,6 +29,7 @@ import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/service/attachment_download_service.dart';
 import 'package:nox_app/domain/service/attachment_transfer_service.dart';
 import 'package:nox_app/domain/service/network_change_service.dart';
+import 'package:nox_tor/channel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'live_harness.dart';
@@ -98,7 +99,7 @@ void main() {
       await configureDependencies(Environment.dev);
       await getIt.allReady();
       getIt.allowReassignment = true;
-      final away = AwayProber(TlsDirectProber());
+      final away = AwayProber(ChannelDirectProber(const NativeNoxChannelApi()));
       final network = FakeNetwork();
       getIt.registerSingleton<DirectProber>(away);
       getIt.registerSingleton<NetworkChangeService>(network);

@@ -54,30 +54,50 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
   /// onboarding is due.
   ///
   /// The order is the whole point. Parse the link, remember which server it
-  /// names, mint this device's key, pair, take the outcome from the answer, and
-  /// only then move the navigation. Remembering the server FIRST is what makes
-  /// the connection go to the machine the person actually presented — a
-  /// compile-time address would pair with one server and send messages to
-  /// another.
+  /// names - its key and its addresses - mint this device's key, pair, take
+  /// the outcome from the answer, and only then move the navigation.
+  /// Remembering the server FIRST is what makes the connection go to the
+  /// machine the person actually presented, and what every connection's
+  /// check is made against: the channel opens only once the machine answering
+  /// has proved the link's key, and only then does the token go out.
   ///
   /// The refusals stay apart because the person's next action differs: a link
-  /// that will not parse means "scan it again", an expired token means "issue a
-  /// new invite", a rejected one means "this is not usable". A failed
-  /// attempt rolls the session back, because a stored identity with no settled
-  /// outcome would strand the next launch in onboarding.
+  /// that will not parse means "scan it again", a link from a newer server
+  /// means "update the app", an expired token means "issue a new invite", a
+  /// rejected one means "this is not usable". A failed attempt rolls the
+  /// session back, because a stored identity with no settled outcome would
+  /// strand the next launch in onboarding.
   @override
   Future<RepositoryResult<bool>> signIn({required String identifier}) {
     return execute<bool>(() async {
       final PairingLink link;
       try {
         link = PairingLink.parse(identifier);
-      } on PairingLinkException {
-        // A link that will not parse: the person scans or pastes it again.
-        return const RepositoryResult<bool>.error(exception: RepositoryException.invalidRequest);
+      } on PairingLinkException catch (e) {
+        return RepositoryResult<bool>.error(
+          exception: switch (e.error) {
+            // A link that will not parse: the person scans or pastes it again.
+            PairingLinkError.malformed => RepositoryException.invalidRequest,
+            // A link from a server newer than this build: the person updates
+            // the app. The same answer a server gives a client too old for it.
+            PairingLinkError.newerVersion => RepositoryException.unsupportedSchema,
+          },
+        );
       }
+      // Pairing goes over the direct addresses only until phase 045 (FR-019):
+      // a link with none has no way to its server from here - reported as the
+      // server being out of reach, which on the screen says pairing works at
+      // home.
+      final direct = link.directAddresses;
+      if (direct.isEmpty) return const RepositoryResult<bool>.error(exception: RepositoryException.connection);
 
-      final saved = await _sessionRepository.saveServer(address: link.authority, serverFingerprint: link.serverFingerprint);
+      // The connection starts at the link's first direct address; every
+      // address it carries is stored with the server's, so the path selector
+      // can try them all - and keep the onion address for the day this device
+      // is away from home.
+      final saved = await _sessionRepository.saveServer(address: direct.first, serverKey: link.serverKeyBase64);
       if (!saved.hasData) return saved;
+      await _storeLinkAddresses(link, direct);
 
       final handshake = liveIdentityHandshake;
       if (handshake == null) {
@@ -92,19 +112,15 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
       if (!seed.hasData) {
         // Rolled back like every other exit in this method. saveServer has
         // already run, so returning without it leaves the address and the
-        // pinned fingerprint of a machine this install has no session with - the next
-        // launch dials it, greets as unpaired for ever, and the world epoch is
-        // keyed on it.
+        // key of a machine this install has no session with - the next launch
+        // dials it, greets as unpaired for ever, and the world epoch is keyed
+        // on it.
         await _rollBackSignIn();
         return RepositoryResult<bool>.error(exception: seed.exception!);
       }
 
       try {
-        final greeting = await handshake.pair(
-          link: link,
-          deviceKey: await DeviceKeys.publicKey(seed.data!),
-          platform: PlatformUtils.family,
-        );
+        final greeting = await handshake.pair(link: link, platform: PlatformUtils.family);
         if (!greeting.outcomeStated) {
           await _rollBackSignIn();
           return const RepositoryResult<bool>.error(exception: RepositoryException.connection);
@@ -142,11 +158,10 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
           }
         }
         if (greeting.created!) _sessionRepository.noteOnboardingStartedHere();
-        // Re-greet, SIGNED. The connection `pair` ran on was greeted before
-        // this device existed to the server, so it still speaks as whoever
-        // greeted then; a message sent on it would carry that identity and come
-        // back looking like a stranger's on the sender's own screen. Storing
-        // the session first is what makes this greeting state a person.
+        // Re-greet. The connection `pair` ran on was never greeted - its key
+        // was nobody's when it opened - so it carries no session; the restart
+        // greets on a fresh one as the person just paired. Storing the session
+        // first is what makes this greeting state a person.
         try {
           await handshake.greet(within: _greetingAfterPairing);
         } on Object {
@@ -183,21 +198,32 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
   }
 
   /// Undoes a sign-in that did not land: the channel it brought up towards the
-  /// server it named stops first - the socket and, behind it, any Tor client a
-  /// version-2 link started (phase 040) - so nothing in flight writes back
-  /// what [SessionRepository.discardSignIn] then removes.
+  /// server it named stops first, so nothing in flight writes back what
+  /// [SessionRepository.discardSignIn] then removes - the server's key, its
+  /// address and the addresses the link carried among it.
   Future<void> _rollBackSignIn() async {
     if (getIt.isRegistered<LiveSessionStarter>()) await getIt<LiveSessionStarter>().stop();
     await _sessionRepository.discardSignIn();
   }
 
   /// How long sign-in waits for the greeting that follows a pairing. At home
-  /// it comes in milliseconds. Through Tor right after a pairing it can take
-  /// a minute - the server has to publish this device's new key before the
-  /// onion service lets it in - and nothing waits on it: the restart has
-  /// already happened, and the greeting arrives on its own. The default wait
-  /// spent up to 20 s of that on the sign-in spinner (phase 040, T053).
+  /// it comes in milliseconds, and nothing waits on it past this: the restart
+  /// has already happened, and the greeting arrives on its own (phase 040,
+  /// T053).
   static const Duration _greetingAfterPairing = Duration(seconds: 2);
+
+  /// Stores every address the link carries: the direct ones in its order, and
+  /// the onion address its service key derives - kept for the connection
+  /// through Tor after pairing; the greetings that follow replace them with
+  /// what the server says about itself. Best effort: without them the
+  /// session still starts at the link's first address.
+  Future<void> _storeLinkAddresses(PairingLink link, List<String> direct) async {
+    if (!getIt.isRegistered<ServerAddressesRepository>()) return;
+    final serviceKey = link.onionServiceKey;
+    final host = serviceKey == null || !getIt.isRegistered<TorService>() ? null : getIt<TorService>().onionFromPublicKey(serviceKey);
+    final stored = await getIt<ServerAddressesRepository>().saveFromServer(direct: direct, onion: host == null ? null : '$host:443');
+    if (!stored.hasData) logRepository.debug(target: this, message: 'sign-in: the link addresses were not stored, starting at its first');
+  }
 
   /// Revokes this device's own key before the local wipe, when there is a
   /// channel to say it on. Never blocks the logout: a person who chose to sign
@@ -384,6 +410,17 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         }
       },
     );
+  }
+
+  @override
+  Future<RepositoryResult<bool>> retireLegacySession() async {
+    final predates = await _sessionRepository.predatesServerKey();
+    // An error here is a keychain that cannot be read right now - a valid
+    // session as likely as an old one - and never a reason to wipe.
+    if (predates.data != true) return const RepositoryResult<bool>.success(data: false);
+    logRepository.debug(target: this, message: 'bootstrap: a session paired before the secure channel, pairing again');
+    final out = await logout(forced: true);
+    return out.hasData ? const RepositoryResult<bool>.success(data: true) : out;
   }
 
   /// The single home of the "mutate the source of truth → re-derive app state"

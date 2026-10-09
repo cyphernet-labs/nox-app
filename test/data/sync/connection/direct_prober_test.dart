@@ -1,127 +1,129 @@
-import 'dart:io';
+import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/data/sync/connection/direct_prober.dart';
+import 'package:nox_tor/channel.dart';
 
-/// The direct probe against real TLS on loopback: the honest server from the
-/// pairing fixtures, a stranger on another key, a port nobody listens on, and
-/// a listener that never answers (phase 040, FR-001, FR-002, FR-005).
-const String _fixtures = 'test/general/pairing/fixtures';
+import '../../remote/channel/fake_channel.dart';
 
-String get _fingerprint => File('$_fixtures/fingerprint.txt').readAsStringSync().trim();
+enum _Answer { home, otherKey, closed, silent }
 
-Future<HttpServer> _server({required bool honest, int status = HttpStatus.ok}) async {
-  final context = SecurityContext()
-    ..useCertificateChainBytes(File('$_fixtures/${honest ? 'valid' : 'stranger'}.pem').readAsBytesSync())
-    ..usePrivateKeyBytes(File('$_fixtures/${honest ? 'server_key' : 'stranger_key'}.pem').readAsBytesSync());
-  final server = await HttpServer.bindSecure(InternetAddress.loopbackIPv4, 0, context);
-  server.listen((request) {
-    request.response.statusCode = request.uri.path == '/health' ? status : HttpStatus.notFound;
-    request.response.close();
-  });
-  return server;
+/// Addresses on a scripted network: which one is this person's server, which
+/// proves another key, which refuses the connection, which never answers.
+class _Network implements NoxChannelApi {
+  _Network(this.answers);
+
+  final Map<String, _Answer> answers;
+  final List<ChannelTarget> opened = <ChannelTarget>[];
+  final List<Duration> timeouts = <Duration>[];
+  final List<Uint8List> serverKeys = <Uint8List>[];
+  final List<FakeNoxChannel> channels = <FakeNoxChannel>[];
+  int cancelled = 0;
+
+  @override
+  Future<NoxChannel> open(
+    ChannelTarget target, {
+    required Uint8List deviceSeed,
+    required Uint8List serverKey,
+    required Duration timeout,
+    Future<void>? cancel,
+  }) {
+    opened.add(target);
+    timeouts.add(timeout);
+    serverKeys.add(Uint8List.fromList(serverKey));
+    switch (answers['${target.host}:${target.port}'] ?? _Answer.closed) {
+      case _Answer.home:
+        final channel = FakeNoxChannel();
+        channels.add(channel);
+        return Future<NoxChannel>.value(channel);
+      case _Answer.otherKey:
+        return Future<NoxChannel>.error(const ChannelOpenException(ChannelFailure.wrongServer));
+      case _Answer.closed:
+        return Future<NoxChannel>.error(const ChannelOpenException(ChannelFailure.network));
+      case _Answer.silent:
+        final pending = Completer<NoxChannel>();
+        final deadline = Timer(timeout, () {
+          if (!pending.isCompleted) pending.completeError(const ChannelOpenException(ChannelFailure.timeout));
+        });
+        cancel?.then((_) {
+          cancelled++;
+          deadline.cancel();
+          if (!pending.isCompleted) pending.completeError(const ChannelOpenException(ChannelFailure.timeout));
+        });
+        return pending.future;
+    }
+  }
 }
 
-/// A port that accepts and then says nothing at all.
-Future<ServerSocket> _silent() async {
-  final listener = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
-  listener.listen((_) {});
-  return listener;
-}
-
-Future<int> _closedPort() async {
-  final probe = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
-  final port = probe.port;
-  await probe.close();
-  return port;
-}
-
+/// The direct probe opens a channel and closes it: whether this person's
+/// server proved its key at an address is the whole question (phase 044,
+/// FR-001, FR-002, FR-011).
 void main() {
-  late HttpOverrides? saved;
-  setUpAll(() {
-    saved = HttpOverrides.current;
-    HttpOverrides.global = null;
-  });
-  tearDownAll(() => HttpOverrides.global = saved);
+  final serverKey = Uint8List.fromList(List<int>.generate(32, (i) => 0xA0 + i));
+  final deviceSeed = Uint8List.fromList(List<int>.generate(32, (i) => i));
 
-  final prober = TlsDirectProber();
+  Future<DirectProbeResult> probe(_Network network, List<String> candidates) =>
+      ChannelDirectProber(network).probe(candidates, serverKey: serverKey, deviceSeed: deviceSeed);
 
-  test('the server on its own key answers, and wins', () async {
-    final server = await _server(honest: true);
-    addTearDown(() => server.close(force: true));
+  test('the server proving its key wins, and the probe channel is closed at once with nothing sent', () async {
+    final network = _Network({'192.168.1.20:8443': _Answer.home});
 
-    final result = await prober.probe(['127.0.0.1:${server.port}'], fingerprint: _fingerprint);
+    final result = await probe(network, ['192.168.1.20:8443']);
 
-    expect(result.address, '127.0.0.1:${server.port}');
+    expect(result.address, '192.168.1.20:8443');
     expect(result.notHome, isEmpty);
+    expect(network.opened.single, const DirectTarget('192.168.1.20', 8443));
+    expect(network.serverKeys.single, serverKey);
+    expect(network.timeouts.single, ChannelDirectProber.attemptTimeout);
+    expect(network.channels.single.closeCalls, 1);
+    expect(network.channels.single.written, isEmpty);
   });
 
-  test('another key is "not home", never a win (FR-005)', () async {
-    final stranger = await _server(honest: false);
-    addTearDown(() => stranger.close(force: true));
+  test('another key is "not home", never a win - and never anything more (FR-011)', () async {
+    final network = _Network({'192.168.1.20:8443': _Answer.otherKey});
 
-    final result = await prober.probe(['127.0.0.1:${stranger.port}'], fingerprint: _fingerprint);
+    final result = await probe(network, ['192.168.1.20:8443']);
 
     expect(result.address, isNull);
-    expect(result.notHome, ['127.0.0.1:${stranger.port}']);
-  });
-
-  test('the right key with an unhealthy /health is not a way home', () async {
-    final sick = await _server(honest: true, status: HttpStatus.serviceUnavailable);
-    addTearDown(() => sick.close(force: true));
-
-    final result = await prober.probe(['127.0.0.1:${sick.port}'], fingerprint: _fingerprint);
-
-    expect(result.address, isNull);
-    expect(result.notHome, isEmpty);
+    expect(result.notHome, ['192.168.1.20:8443']);
   });
 
   test('a dead first candidate hands over to the rest without waiting out its head start', () async {
-    final dead = await _closedPort();
-    final stranger = await _server(honest: false);
-    final home = await _server(honest: true);
-    addTearDown(() async {
-      await stranger.close(force: true);
-      await home.close(force: true);
-    });
+    final network = _Network({'10.0.0.2:8443': _Answer.otherKey, '10.0.0.3:8443': _Answer.home});
 
     final watch = Stopwatch()..start();
-    final result = await prober.probe([
-      '127.0.0.1:$dead',
-      '127.0.0.1:${stranger.port}',
-      '127.0.0.1:${home.port}',
-    ], fingerprint: _fingerprint);
+    final result = await probe(network, ['10.0.0.1:8443', '10.0.0.2:8443', '10.0.0.3:8443']);
 
-    expect(result.address, '127.0.0.1:${home.port}');
-    expect(watch.elapsed, lessThan(TlsDirectProber.budget));
+    expect(result.address, '10.0.0.3:8443');
+    expect(result.notHome, ['10.0.0.2:8443']);
+    expect(watch.elapsed, lessThan(ChannelDirectProber.stagger));
   });
 
-  test('a listener that never answers costs one attempt, not the round', () async {
-    final silent = await _silent();
-    final home = await _server(honest: true);
-    addTearDown(() async {
-      await silent.close();
-      await home.close(force: true);
-    });
+  test('a listener that never answers costs one attempt, not the round - and is dropped once it is won', () async {
+    final network = _Network({'10.0.0.1:8443': _Answer.silent, '10.0.0.2:8443': _Answer.home});
 
-    final result = await prober.probe(['127.0.0.1:${silent.port}', '127.0.0.1:${home.port}'], fingerprint: _fingerprint);
+    final result = await probe(network, ['10.0.0.1:8443', '10.0.0.2:8443']);
 
-    expect(result.address, '127.0.0.1:${home.port}');
+    expect(result.address, '10.0.0.2:8443');
+    await pumpEventQueue();
+    expect(network.cancelled, 1, reason: 'the open still running is cancelled in the module, not left to its timeout');
   });
 
   test('nothing answering ends within the budget, so Tor is not kept waiting (FR-002)', () async {
-    final silent = await _silent();
-    addTearDown(silent.close);
+    final network = _Network({'10.0.0.1:8443': _Answer.silent});
 
     final watch = Stopwatch()..start();
-    final result = await prober.probe(['127.0.0.1:${silent.port}'], fingerprint: _fingerprint);
+    final result = await probe(network, ['10.0.0.1:8443']);
 
     expect(result.address, isNull);
-    expect(watch.elapsed, lessThan(TlsDirectProber.budget + const Duration(milliseconds: 500)));
+    expect(watch.elapsed, lessThan(ChannelDirectProber.budget + const Duration(milliseconds: 500)));
   });
 
-  test('no candidates, or nothing to check against, is no address', () async {
-    expect((await prober.probe(const [], fingerprint: _fingerprint)).address, isNull);
-    expect((await prober.probe(const ['127.0.0.1:1'], fingerprint: '')).address, isNull);
+  test('no candidates is no address, and an onion address is never tried as a direct one', () async {
+    final network = _Network(const {});
+    expect((await probe(network, const [])).address, isNull);
+    expect((await probe(network, ['${'a' * 56}.onion:443'])).address, isNull);
+    expect(network.opened, isEmpty);
   });
 }
