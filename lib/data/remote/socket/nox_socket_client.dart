@@ -281,10 +281,9 @@ class NoxSocketClient {
   /// matters here: it must not wait for one.
   ///
   /// [accessKey] - the public half of this device's onion access key - goes
-  /// with every pairing (phase 040): a server that does not know the field
-  /// skips it, and one that does registers the key in the same transaction,
-  /// so a device that paired through Tor keeps its way in once the invite's
-  /// one-time key is gone (contract §2.1, §8A).
+  /// with every pairing (phase 040, until 045): the server registers it in the
+  /// same transaction, so a device that paired at home can come in through Tor
+  /// once it is away (contract §2.1, §8A).
   ///
   /// A connection lost under the pairing does not lose the pairing: the token
   /// is presented again on the next connection, within ONE budget for the

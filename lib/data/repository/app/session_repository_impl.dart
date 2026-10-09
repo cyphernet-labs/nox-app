@@ -48,7 +48,7 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
 
   /// A version-2 invite's onion address and one-time key, as earlier builds of
   /// phase 040 stored them; a pairing the process did not survive left them
-  /// behind. The key now lives in memory only (FR-021).
+  /// behind. Links carry no such key any more (phase 044).
   static const String _kLegacyInviteOnion = 'session.invite_onion';
   static const String _kLegacyInviteAccessKey = 'session.invite_access_key';
 
