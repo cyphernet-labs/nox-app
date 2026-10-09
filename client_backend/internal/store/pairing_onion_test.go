@@ -49,20 +49,22 @@ func TestAReplayedClaimOverOnionIsRefusedToo(t *testing.T) {
 	}
 }
 
+// The store does not refuse an invite over onion: only a claim is refused
+// there. (Reaching the onion service to present one takes an access key a new
+// device does not have until 045 - that is the network's refusal, not this.)
 func TestADeviceInviteWorksOverOnion(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 	claimOwner(t, s, "dev-a")
-	invite, err := s.IssueOnionInvite(ctx, "dev-a", accessKey(9), 200)
+	invite, err := s.IssueDeviceInvite(ctx, "dev-a", 200)
 	if err != nil {
-		t.Fatalf("IssueOnionInvite: %v", err)
+		t.Fatalf("IssueDeviceInvite: %v", err)
 	}
 	if _, err := s.Pair(ctx, invite, "dev-b", "test", PairOptions{ViaOnion: true, AccessKey: accessKey(2)}, 201); err != nil {
 		t.Fatalf("an invite over onion: %v", err)
 	}
-	keys, _ := activeKeys(t, s, 201)
-	if len(keys) != 1 || keys[0] != accessKey(2) {
-		t.Fatalf("active keys = %v, want only the new device's own key - the one-time key died with the token", keys)
+	if keys := activeKeys(t, s); len(keys) != 1 || keys[0] != accessKey(2) {
+		t.Fatalf("active keys = %v, want only the new device's own key", keys)
 	}
 }
 
@@ -87,7 +89,7 @@ func TestARePairWithoutAKeyKeepsTheOneTheDeviceHad(t *testing.T) {
 	if _, err := s.Pair(ctx, invite, "dev-a", "test", PairOptions{}, 201); err != nil {
 		t.Fatalf("re-pair: %v", err)
 	}
-	if keys, _ := activeKeys(t, s, 201); len(keys) != 1 || keys[0] != accessKey(1) {
+	if keys := activeKeys(t, s); len(keys) != 1 || keys[0] != accessKey(1) {
 		t.Fatalf("active keys = %v, want the device's key kept", keys)
 	}
 	invite2, err := s.IssueDeviceInvite(ctx, "dev-a", 300)
@@ -97,7 +99,7 @@ func TestARePairWithoutAKeyKeepsTheOneTheDeviceHad(t *testing.T) {
 	if _, err := s.Pair(ctx, invite2, "dev-a", "test", PairOptions{AccessKey: accessKey(3)}, 301); err != nil {
 		t.Fatalf("re-pair with a key: %v", err)
 	}
-	if keys, _ := activeKeys(t, s, 301); len(keys) != 1 || keys[0] != accessKey(3) {
+	if keys := activeKeys(t, s); len(keys) != 1 || keys[0] != accessKey(3) {
 		t.Fatalf("active keys = %v, want the replacement", keys)
 	}
 }

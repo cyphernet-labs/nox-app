@@ -7,27 +7,30 @@
 // claims the machine, adds a second device of the same person, and has the two
 // of them exchange a message.
 //
-// It talks to the wire directly rather than through the app: what is being
-// checked is the server, and a failure here is the server's.
+// It talks to the wire directly rather than through the app - the channel
+// included: TCP, TLS 1.3 that checks no certificate, then the channel check
+// with a device key against the server key the link names (contract §1). What
+// is being checked is the server, and a failure here is the server's.
 package main
 
 import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/base64"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
-	"strings"
+	"sync"
 	"time"
 
 	"github.com/coder/websocket"
 
+	"nox.app/client-backend/internal/eidolon"
 	"nox.app/client-backend/internal/server"
 )
 
@@ -55,7 +58,7 @@ func run(rawLink string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("\nserver %s, pinned to %s\n", target.addr, target.fingerprint)
+	fmt.Printf("\nserver %s, key %s\n", target.addr, base64.StdEncoding.EncodeToString(target.serverKey))
 
 	step(1, "The owner claims the server")
 	owner := newDevice()
@@ -100,15 +103,15 @@ func run(rawLink string) error {
 }
 
 func claim(ctx context.Context, target link, dev device) (string, error) {
-	c, err := dial(ctx, target)
+	c, err := dial(ctx, target, dev)
 	if err != nil {
 		return "", err
 	}
 	defer c.close()
-	if _, err := c.greeting(); err != nil {
+	if err := c.greeting(); err != nil {
 		return "", err
 	}
-	reply, err := c.call("pair", data{"token": target.token, "device_key": dev.pub, "platform": "macos"})
+	reply, err := c.call("pair", data{"token": target.token, "platform": "macos"})
 	if err != nil {
 		return "", err
 	}
@@ -128,18 +131,26 @@ func addDevice(ctx context.Context, target link, owner *conn, ownerID string) (d
 	if err != nil {
 		return device{}, err
 	}
-	ok("device invite issued (10 minutes)")
+	if _, err := server.ParsePairingLink(fmt.Sprint(invite["link"])); err != nil {
+		return device{}, fmt.Errorf("the invite link does not read back: %w", err)
+	}
+	// Pairing through the onion service waits for 045, so no invite may say
+	// it does.
+	if invite["onion"] != false {
+		return device{}, fmt.Errorf("the invite says onion=%v, want false", invite["onion"])
+	}
+	ok("device invite issued (10 minutes), a version-3 link")
 
 	dev := newDevice()
-	c, err := dial(ctx, target)
+	c, err := dial(ctx, target, dev)
 	if err != nil {
 		return device{}, err
 	}
 	defer c.close()
-	if _, err := c.greeting(); err != nil {
+	if err := c.greeting(); err != nil {
 		return device{}, err
 	}
-	reply, err := c.call("pair", data{"token": invite["token"], "device_key": dev.pub, "platform": "android"})
+	reply, err := c.call("pair", data{"token": invite["token"], "platform": "android"})
 	if err != nil {
 		return device{}, err
 	}
@@ -190,69 +201,26 @@ func talk(desktop, phone *conn, ownerID string) error {
 type data = map[string]any
 
 type link struct {
+	// addr is the first direct address of the link - where a device at home
+	// starts.
 	addr string
-	// fingerprint is sha256 over the server's SubjectPublicKeyInfo, base64 -
-	// the thirty-two bytes that decide which machine this smoke run is willing
-	// to talk to at all.
-	fingerprint string
-	token       string
+	// serverKey is the machine's Ed25519 key: the only answer to the channel
+	// check this smoke run accepts.
+	serverKey ed25519.PublicKey
+	token     string
 }
 
-// parseLink reads the pairing link's payload: version, host, port, server
-// fingerprint, token (contract §8A).
+// parseLink reads a version-3 link with the server's own parser - the one its
+// tests hold to the shared vectors.
 func parseLink(raw string) (link, error) {
-	if i := strings.Index(raw, "#"); i >= 0 {
-		raw = raw[i+1:]
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(raw))
+	parsed, err := server.ParsePairingLink(raw)
 	if err != nil {
-		return link{}, fmt.Errorf("the link is not a pairing link: %w", err)
+		return link{}, err
 	}
-	if len(payload) < 3 || payload[0] != 1 {
-		return link{}, errors.New("unknown pairing link version")
+	if len(parsed.Direct) == 0 {
+		return link{}, errors.New("the link names no direct address, and pairing works only at home")
 	}
-	at := 1
-	var host string
-	switch payload[at] {
-	case 1:
-		at++
-		if len(payload) < at+4 {
-			return link{}, errors.New("truncated link")
-		}
-		host = net.IP(payload[at : at+4]).String()
-		at += 4
-	case 2:
-		at++
-		if len(payload) < at+16 {
-			return link{}, errors.New("truncated link")
-		}
-		host = "[" + net.IP(payload[at:at+16]).String() + "]"
-		at += 16
-	case 3:
-		at++
-		size := int(payload[at])
-		at++
-		if len(payload) < at+size {
-			return link{}, errors.New("truncated link")
-		}
-		host = string(payload[at : at+size])
-		at += size
-	default:
-		return link{}, errors.New("unknown host type in the link")
-	}
-	if len(payload) < at+2+32+16 {
-		return link{}, errors.New("truncated link")
-	}
-	port := binary.BigEndian.Uint16(payload[at : at+2])
-	at += 2
-	fingerprint := base64.StdEncoding.EncodeToString(payload[at : at+32])
-	at += 32
-	token := base64.RawURLEncoding.EncodeToString(payload[at : at+16])
-	return link{
-		addr:        net.JoinHostPort(host, fmt.Sprint(port)),
-		fingerprint: fingerprint,
-		token:       token,
-	}, nil
+	return link{addr: parsed.Direct[0], serverKey: parsed.ServerKey, token: parsed.Token}, nil
 }
 
 type conn struct {
@@ -261,17 +229,78 @@ type conn struct {
 	id  int
 }
 
-// dial opens one pinned connection. Every dial in this file goes through it,
-// so there is no unpinned path to forget about - and the smoke run fails the
-// same way a real device would if the machine answering is the wrong one.
-func dial(ctx context.Context, target link) (*conn, error) {
-	client := &http.Client{Transport: &http.Transport{TLSClientConfig: server.PinnedTLSConfig(target.fingerprint)}}
-	ws, _, err := websocket.Dial(ctx, "wss://"+target.addr+"/ws", &websocket.DialOptions{HTTPClient: client})
+// dial opens one connection as dev the way the app does: the channel first,
+// then the WebSocket over it. Every dial in this file goes through it, so there
+// is no unchecked path to forget about - and the smoke run fails the same way
+// a real device would if the machine answering is the wrong one.
+func dial(ctx context.Context, target link, dev device) (*conn, error) {
+	channel, err := openChannel(ctx, target, dev)
 	if err != nil {
+		return nil, err
+	}
+	// The HTTP client gets exactly the one connection the check passed on, and
+	// no way to open another behind it.
+	var once sync.Once
+	transport := &http.Transport{
+		DialTLSContext: func(context.Context, string, string) (net.Conn, error) {
+			var handed net.Conn
+			once.Do(func() { handed = channel })
+			if handed == nil {
+				return nil, errors.New("this client has one verified connection and it is in use")
+			}
+			return handed, nil
+		},
+	}
+	ws, _, err := websocket.Dial(ctx, "wss://"+target.addr+"/ws", &websocket.DialOptions{HTTPClient: &http.Client{Transport: transport}})
+	if err != nil {
+		_ = channel.Close()
 		return nil, fmt.Errorf("dial %s: %w", target.addr, err)
 	}
 	ws.SetReadLimit(1 << 20)
 	return &conn{ws: ws, ctx: ctx}, nil
+}
+
+// openChannel is the channel of contract §1, client side: TCP, TLS 1.3 that
+// checks no certificate - the certificate is technical and names nothing -
+// then the channel check over the session's exporter, with this device's key,
+// accepting only the server key the link named. Nothing else is written until
+// that check passed.
+func openChannel(ctx context.Context, target link, dev device) (*tls.Conn, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	raw, err := (&net.Dialer{}).DialContext(ctx, "tcp", target.addr)
+	if err != nil {
+		return nil, fmt.Errorf("dial %s: %w", target.addr, err)
+	}
+	tc := tls.Client(raw, &tls.Config{
+		//nolint:gosec // the certificate is technical by design; the channel check below is what decides
+		InsecureSkipVerify:     true,
+		MinVersion:             tls.VersionTLS13,
+		NextProtos:             []string{"http/1.1"},
+		SessionTicketsDisabled: true,
+	})
+	if err := tc.HandshakeContext(ctx); err != nil {
+		_ = raw.Close()
+		return nil, fmt.Errorf("tls with %s: %w", target.addr, err)
+	}
+	state := tc.ConnectionState()
+	binding, err := state.ExportKeyingMaterial(eidolon.ExporterLabel, nil, eidolon.BindingSize)
+	if err != nil {
+		_ = raw.Close()
+		return nil, fmt.Errorf("channel binding: %w", err)
+	}
+	if err := eidolon.Initiate(ctx, tc, binding, dev.priv, target.serverKey); err != nil {
+		_ = raw.Close()
+		if errors.Is(err, eidolon.ErrUnauthorized) {
+			return nil, fmt.Errorf("the machine at %s is not the one the link names: %w", target.addr, err)
+		}
+		return nil, fmt.Errorf("channel check with %s: %w", target.addr, err)
+	}
+	if err := tc.SetDeadline(time.Time{}); err != nil {
+		_ = raw.Close()
+		return nil, fmt.Errorf("clear the channel deadline: %w", err)
+	}
+	return tc, nil
 }
 
 func (c *conn) close() { _ = c.ws.Close(websocket.StatusNormalClosure, "") }
@@ -288,17 +317,17 @@ func (c *conn) read() (data, error) {
 	return frame, nil
 }
 
-// greeting takes the server's opening frame and returns its challenge.
-func (c *conn) greeting() (string, error) {
+// greeting takes the server's opening frame, which is the schema and nothing
+// else: the channel already proved who is on each end.
+func (c *conn) greeting() error {
 	frame, err := c.read()
 	if err != nil {
-		return "", err
+		return err
 	}
-	srv, ok := frame["srv"].(data)
-	if !ok {
-		return "", fmt.Errorf("expected a server greeting, got %v", frame)
+	if _, ok := frame["srv"].(data); !ok {
+		return fmt.Errorf("expected a server greeting, got %v", frame)
 	}
-	return srv["challenge"].(string), nil
+	return nil
 }
 
 // call sends a command and waits for ITS reply, letting events past.
@@ -347,37 +376,31 @@ func (c *conn) event(name string) (data, error) {
 	return nil, fmt.Errorf("no %s event arrived", name)
 }
 
+// device is one installation's key pair; the channel check proves it.
 type device struct {
-	pub  string
 	priv ed25519.PrivateKey
 }
 
 func newDevice() device {
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		panic(err)
 	}
-	return device{pub: base64.StdEncoding.EncodeToString(pub), priv: priv}
+	return device{priv: priv}
 }
 
-// greet opens a connection and completes a SIGNED greeting for a paired device.
+// greet opens a connection as a paired device and greets. The greeting names
+// no key: the server knows the device by the channel it came through.
 func greet(ctx context.Context, target link, dev device) (*conn, error) {
-	c, err := dial(ctx, target)
+	c, err := dial(ctx, target, dev)
 	if err != nil {
 		return nil, err
 	}
-	challenge, err := c.greeting()
-	if err != nil {
+	if err := c.greeting(); err != nil {
 		c.close()
 		return nil, err
 	}
-	raw, err := base64.StdEncoding.DecodeString(challenge)
-	if err != nil {
-		c.close()
-		return nil, fmt.Errorf("undecodable challenge: %w", err)
-	}
-	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(dev.priv, append([]byte("nox/challenge/v1:"), raw...)))
-	if _, err := c.call("session.hello", data{"schema": 1, "device_key": dev.pub, "signature": signature}); err != nil {
+	if _, err := c.call("session.hello", data{"schema": 1}); err != nil {
 		c.close()
 		return nil, err
 	}

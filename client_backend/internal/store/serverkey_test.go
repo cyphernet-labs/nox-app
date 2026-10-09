@@ -3,12 +3,8 @@ package store
 import (
 	"bytes"
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/sha256"
-	"crypto/x509"
+	"crypto/ed25519"
 	"encoding/base64"
-	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -34,10 +30,11 @@ func openStoreAt(t *testing.T, path string) *Store {
 	return New(d.Read, d.Write)
 }
 
-// The stored halves have to be readable by the standard parsers and have to
-// belong to each other. A key stored in a shape only this file understands is
-// a key nobody else can build a certificate from.
-func TestTheServerKeyIsStoredInShapesTheStandardParsersRead(t *testing.T) {
+// The machine's key is a plain Ed25519 pair: a 32-byte public key - what the
+// pairing link carries whole - and the 32-byte seed it follows from. Stored in
+// any other shape, the link and the channel check would be built from
+// different things.
+func TestTheServerKeyIsAnEd25519SeedAndItsPublicKey(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 
@@ -45,45 +42,37 @@ func TestTheServerKeyIsStoredInShapesTheStandardParsersRead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
-
-	spki, err := base64.StdEncoding.DecodeString(id.PublicKey)
-	if err != nil {
-		t.Fatalf("public half is not base64: %v", err)
-	}
-	pub, err := x509.ParsePKIXPublicKey(spki)
-	if err != nil {
-		t.Fatalf("public half is not a SubjectPublicKeyInfo: %v", err)
-	}
-	ec, ok := pub.(*ecdsa.PublicKey)
-	if !ok {
-		t.Fatalf("public half is %T, want *ecdsa.PublicKey", pub)
-	}
-	// P-256 by name, not by "whatever was generated": the client digs the SPKI
-	// out of the certificate by a fixed header for THIS curve, so another curve
-	// would be another wire format.
-	if ec.Curve != elliptic.P256() {
-		t.Fatalf("curve = %v, want P-256", ec.Curve)
+	if len(id.PublicKey) != ed25519.PublicKeySize {
+		t.Fatalf("public key is %d bytes, want %d", len(id.PublicKey), ed25519.PublicKeySize)
 	}
 
-	signer, err := s.ServerSigner(ctx)
+	var pubB64, seedB64 string
+	if err := s.read.QueryRowContext(ctx,
+		"SELECT public_key, private_key FROM server_identity WHERE id = 1").Scan(&pubB64, &seedB64); err != nil {
+		t.Fatalf("read the row: %v", err)
+	}
+	seed, err := base64.StdEncoding.DecodeString(seedB64)
+	if err != nil || len(seed) != ed25519.SeedSize {
+		t.Fatalf("private_key is not a base64 %d-byte seed: %d bytes, err %v", ed25519.SeedSize, len(seed), err)
+	}
+	if want := base64.StdEncoding.EncodeToString(ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)); pubB64 != want {
+		t.Fatalf("public_key = %s, want the seed's public key %s", pubB64, want)
+	}
+
+	priv, err := s.ServerKey(ctx)
 	if err != nil {
-		t.Fatalf("ServerSigner: %v", err)
+		t.Fatalf("ServerKey: %v", err)
 	}
-	priv, ok := signer.(*ecdsa.PrivateKey)
-	if !ok {
-		t.Fatalf("private half is %T, want *ecdsa.PrivateKey", signer)
-	}
-	// The two halves must be one pair. They are written by separate marshallers
-	// into separate columns, and this is the only place that is checked at all.
-	if !priv.PublicKey.Equal(ec) {
-		t.Fatal("the stored halves are not the same key pair")
+	// The two halves must be one pair: the link is built from one, the channel
+	// check is signed with the other.
+	if !id.PublicKey.Equal(priv.Public()) {
+		t.Fatal("ServerKey is not the private half of the identity's public key")
 	}
 }
 
-// The fingerprint is what the pairing link carries, so a restart that changed
-// it would refuse every paired device. It is derived, never stored, and this
-// is what holds the derivation still.
-func TestTheFingerprintIsTheHashOfThePublicHalfAndSurvivesARestart(t *testing.T) {
+// The key is what the pairing link carries, so a restart that changed it
+// would lock out every paired device.
+func TestTheServerKeySurvivesARestart(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "identity.db")
 
@@ -91,52 +80,50 @@ func TestTheFingerprintIsTheHashOfThePublicHalfAndSurvivesARestart(t *testing.T)
 	if err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
-	spki, err := base64.StdEncoding.DecodeString(minted.PublicKey)
-	if err != nil {
-		t.Fatalf("decode public half: %v", err)
-	}
-	sum := sha256.Sum256(spki)
-	if want := base64.StdEncoding.EncodeToString(sum[:]); minted.Fingerprint != want {
-		t.Fatalf("fingerprint = %q, want sha256 of the SPKI (%q)", minted.Fingerprint, want)
-	}
-
 	// A whole second process's worth of reading: new pools, new Store, same file.
-	again, err := openStoreAt(t, path).ServerIdentity(ctx)
+	again := openStoreAt(t, path)
+	read, err := again.ServerIdentity(ctx)
 	if err != nil {
 		t.Fatalf("ServerIdentity after restart: %v", err)
 	}
-	if again.Fingerprint != minted.Fingerprint {
-		t.Fatalf("fingerprint changed across a restart: %q then %q", minted.Fingerprint, again.Fingerprint)
+	if !read.PublicKey.Equal(minted.PublicKey) {
+		t.Fatalf("the key changed across a restart: %x then %x", minted.PublicKey, read.PublicKey)
 	}
-	if again.PublicKey != minted.PublicKey {
-		t.Fatal("the public half changed across a restart")
+	priv, err := again.ServerKey(ctx)
+	if err != nil {
+		t.Fatalf("ServerKey after restart: %v", err)
+	}
+	if !minted.PublicKey.Equal(priv.Public()) {
+		t.Fatal("after a restart the private half proves another key")
 	}
 }
 
-// A database from before feature 036 holds a raw Ed25519 key. There is no
-// migration by decision, so the only acceptable behaviour is to say what to do
-// - from the place that knows, rather than as a parse failure three layers up.
-func TestAPre036KeyIsRefusedWithAnAnswerRatherThanAParseFailure(t *testing.T) {
-	s := newStore(t)
+// A row whose two halves disagree - a hand edit, half a restore - would hand
+// every device a key the server cannot prove. ServerKey runs at startup, and
+// refusing there says so where it can be fixed.
+func TestAServerKeyThatIsNotOnePairIsRefused(t *testing.T) {
 	ctx := context.Background()
-
-	// Thirty-two raw bytes in both columns: exactly what the old code wrote.
-	legacy := base64.StdEncoding.EncodeToString(make([]byte, 32))
-	if _, err := s.write.ExecContext(ctx,
-		"INSERT INTO server_identity (id, public_key, private_key, onion_seed, claimed_at) VALUES (1, ?, ?, ?, NULL)",
-		legacy, legacy, legacy); err != nil {
-		t.Fatalf("seed a legacy row: %v", err)
-	}
-
-	if _, err := s.ServerIdentity(ctx); !errors.Is(err, ErrLegacyServerKey) {
-		t.Fatalf("reading a legacy identity gave %v, want ErrLegacyServerKey", err)
-	}
-	if _, err := s.ServerSigner(ctx); !errors.Is(err, ErrLegacyServerKey) {
-		t.Fatalf("reading a legacy private half gave %v, want ErrLegacyServerKey", err)
-	}
-	// The message has to name the cure, because there is no migration to run.
-	if !strings.Contains(ErrLegacyServerKey.Error(), "delete the development database") {
-		t.Fatalf("the refusal does not say what to do: %q", ErrLegacyServerKey)
+	other := base64.StdEncoding.EncodeToString(ed25519.NewKeyFromSeed(bytes.Repeat([]byte{7}, 32)).Public().(ed25519.PublicKey))
+	for _, tc := range []struct {
+		name, column, value string
+	}{
+		{"another key's public half", "public_key", other},
+		{"a seed of the wrong size", "private_key", base64.StdEncoding.EncodeToString(make([]byte, 31))},
+		{"a public key of the wrong size", "public_key", base64.StdEncoding.EncodeToString(make([]byte, 33))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newStore(t)
+			if _, err := s.EnsureServerIdentity(ctx); err != nil {
+				t.Fatalf("EnsureServerIdentity: %v", err)
+			}
+			// The column name is one of two literals above, never input.
+			if _, err := s.write.ExecContext(ctx, "UPDATE server_identity SET "+tc.column+" = ? WHERE id = 1", tc.value); err != nil {
+				t.Fatalf("break the row: %v", err)
+			}
+			if _, err := s.ServerKey(ctx); err == nil {
+				t.Fatal("ServerKey handed out a key the row does not hold together")
+			}
+		})
 	}
 }
 

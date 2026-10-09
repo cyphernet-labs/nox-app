@@ -44,9 +44,9 @@ func TestIdentityOwnKeyReachesTheAuthorOnAllThreePaths(t *testing.T) {
 	ts, srv := newTestServer(t)
 	dev, _ := claimDevice(t, ts, srv)
 
-	anna := dialWS(t, ts, srv)
+	anna := dialAs(t, ts, srv, dev)
 	anna.expectGreeting()
-	anna.greet(t, 1, dev, `,"label":"Anna"`)
+	anna.hello(1, `,"label":"Anna"`)
 	chatID := seedChat(t, anna, "three-paths")
 
 	// Path 1 - the echo of her own send.
@@ -65,9 +65,9 @@ func TestIdentityOwnKeyReachesTheAuthorOnAllThreePaths(t *testing.T) {
 		t.Fatalf("IssueDeviceInvite: %v", err)
 	}
 	second, _ := pairDevice(t, ts, invite)
-	live := dialWS(t, ts, srv)
+	live := dialAs(t, ts, srv, second)
 	live.expectGreeting()
-	live.greet(t, 1, second, "")
+	live.hello(1, "")
 	sendText(t, anna, 4, chatID, "own-2", "second")
 	_, name, data := live.expectEvent()
 	if name != protocol.EventMessageNew {
@@ -94,9 +94,9 @@ func TestIdentityOwnKeyReachesTheAuthorOnAllThreePaths(t *testing.T) {
 	}
 
 	// Path 4 - replay after a reconnect.
-	back := dialWS(t, ts, srv)
+	back := dialAs(t, ts, srv, dev)
 	back.expectGreeting()
-	helloCursor(t, back, 1, fmt.Sprintf(`,"device_key":%q,"signature":%q`, dev.pub, dev.sign(t, back.challenge)))
+	helloCursor(t, back, 1, "")
 	for range 2 {
 		_, name, data := back.expectEvent()
 		if name != protocol.EventMessageNew {
@@ -115,17 +115,17 @@ func TestIdentityRenameLeavesPastMessagesAlone(t *testing.T) {
 	ts, srv := newTestServer(t)
 	dev, _ := claimDevice(t, ts, srv)
 
-	anna := dialWS(t, ts, srv)
+	anna := dialAs(t, ts, srv, dev)
 	anna.expectGreeting()
 	var before identity
-	mustUnmarshal(t, anna.greet(t, 1, dev, `,"label":"Anna"`)["identity"], &before)
+	mustUnmarshal(t, anna.hello(1, `,"label":"Anna"`)["identity"], &before)
 	chatID := seedChat(t, anna, "rename")
 	sendText(t, anna, 3, chatID, "old-1", "written as Anna")
 
-	renamed := dialWS(t, ts, srv)
+	renamed := dialAs(t, ts, srv, dev)
 	renamed.expectGreeting()
 	var after identity
-	mustUnmarshal(t, renamed.greet(t, 1, dev, `,"label":"Anna2"`)["identity"], &after)
+	mustUnmarshal(t, renamed.hello(1, `,"label":"Anna2"`)["identity"], &after)
 	if after.ID != before.ID {
 		t.Fatalf("identity changed from %q to %q on a rename", before.ID, after.ID)
 	}
@@ -232,10 +232,10 @@ func TestGreetingNeverReportsCreated(t *testing.T) {
 	ts, srv := newTestServer(t)
 	dev, _ := claimDevice(t, ts, srv)
 
-	c := dialWS(t, ts, srv)
+	c := dialAs(t, ts, srv, dev)
 	c.expectGreeting()
 	var ident identity
-	mustUnmarshal(t, c.greet(t, 1, dev, "")["identity"], &ident)
+	mustUnmarshal(t, c.hello(1, "")["identity"], &ident)
 	if ident.Created {
 		t.Fatal("a greeting is a device that was already paired")
 	}
@@ -251,15 +251,14 @@ func ownerOf(t *testing.T, srv *Server, d *device) string {
 	return owner
 }
 
-// A greeting that presents no key at all is refused, exactly like one
-// presenting an unknown key.
+// A greeting from a connection whose key nobody paired is refused - and writes
+// nothing on its way to the refusal.
 //
-// This replaces two tests that pinned the opposite. They rested on reading
-// "the server may not refuse a greeting" as covering keys, but that rule
-// (contract §3) is about the LABEL - and taking it for a key rule handed any
-// connection that simply omitted the field a full session: the whole journal
-// replayed, live events streamed, and the ability to post.
-func TestGreetingWithNoDeviceKeyIsRefused(t *testing.T) {
+// The rule "the server may not refuse a greeting" (contract §3) is about the
+// LABEL; taken for a key rule it once handed any connection that simply
+// omitted the field a full session: the whole journal replayed, live events
+// streamed, and the ability to post.
+func TestGreetingFromAnUnpairedKeyIsRefused(t *testing.T) {
 	ts, srv := newTestServer(t)
 	pairedDevice(t, ts, srv) // somebody owns the server, and has history
 

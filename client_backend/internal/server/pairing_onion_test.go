@@ -3,12 +3,9 @@ package server
 import (
 	"bytes"
 	"context"
-	"crypto/ecdh"
-	"crypto/ed25519"
 	"encoding/base64"
-	"encoding/binary"
 	"fmt"
-	"strings"
+	"slices"
 	"testing"
 	"time"
 
@@ -33,10 +30,9 @@ func storedAccessKey(t *testing.T, srv *Server, deviceKey string) string {
 func pairWithKey(t *testing.T, st *onionStack, token, accessKey string) (*device, bool, string) {
 	t.Helper()
 	d := newDevice(t)
-	c := dialWS(t, st.ts, st.srv)
+	c := dialAs(t, st.ts, st.srv, d)
 	c.expectGreeting()
-	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"device_key":%q,"platform":"test","access_key":%q}}`,
-		token, d.pub, accessKey))
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"test","access_key":%q}}`, token, accessKey))
 	reply := c.expectReply(1)
 	var ok bool
 	mustUnmarshal(t, reply["ok"], &ok)
@@ -167,150 +163,82 @@ func inviteOver(t *testing.T, c *wsClient, id int, data string) (string, bool) {
 	return link, onion
 }
 
-func TestAnInviteCarriesTheOnionAddressOnlyWhenAskedAndReady(t *testing.T) {
+// Every invite is the same version-3 link, and every reply says "onion":
+// false - whatever the request asked and whatever tor is doing. Pairing through
+// the onion service waits for 045; until then an invite that claimed it would
+// be a promise the service cannot keep.
+//
+// The link names the onion service whenever the server offers it - for the
+// device to use AFTER pairing - and never otherwise.
+func TestEveryInviteIsVersionThreeAndSaysOnionFalse(t *testing.T) {
 	st := newOnionStack(t, func(s *Server) { s.cfg.Addr = "192.168.1.10:8080" })
 	c := dialWS(t, st.ts, st.srv)
 	c.expectGreeting()
 	c.hello(1, "")
+	key := serverKeyOf(t, st.srv)
 
-	for i, data := range []string{`{}`, `{"onion":false}`, `{"onion":"yes"}`, `{"onion":null}`, `{"onion":true}`} {
+	requests := []string{`{}`, `{"onion":false}`, `{"onion":"yes"}`, `{"onion":null}`, `{"onion":true}`, `[]`}
+	for i, data := range requests {
 		link, onion := inviteOver(t, c, 10+i, data)
-		if v, _, _ := decodeLink(t, link); v != pairingLinkVersion || onion {
-			t.Fatalf("%s while tor is not ready: version %d onion=%v, want 1 and false", data, v, onion)
+		got := readLink(t, link)
+		if onion || got.Onion != nil || !got.ServerKey.Equal(key) || !slices.Equal(got.Direct, []string{"192.168.1.10:8080"}) {
+			t.Fatalf("%s with tor not offered: onion=%v link=%+v", data, onion, got)
 		}
 	}
 
 	st.tor.set(true, true)
 	before := st.tor.kickCount()
-	link, onion := inviteOver(t, c, 20, `{"onion":true}`)
-	if !onion {
-		t.Fatal("onion = false for an onion invite")
+	for i, data := range requests {
+		link, onion := inviteOver(t, c, 20+i, data)
+		if onion {
+			t.Fatalf("%s: the reply says onion=true; pairing over onion waits for 045", data)
+		}
+		got := readLink(t, link)
+		if !bytes.Equal(got.Onion, st.tor.pub) {
+			t.Fatalf("%s: the link names onion key %x, want the service's %x", data, got.Onion, st.tor.pub)
+		}
+		if !slices.Equal(got.Direct, []string{"192.168.1.10:8080"}) {
+			t.Fatalf("%s: direct %v, want the address the server listens on, first", data, got.Direct)
+		}
 	}
-	version, raw, host := decodeLink(t, link)
-	if version != pairingLinkVersionOnion || host != "192.168.1.10" {
-		t.Fatalf("version %d host %q", version, host)
+	// No invite touches the set of keys tor publishes: there is no one-time
+	// key to add any more.
+	time.Sleep(50 * time.Millisecond)
+	if st.tor.kickCount() != before {
+		t.Fatal("an invite woke the supervisor; invites carry no access key since 044")
 	}
-	if len(raw) != 122 {
-		t.Fatalf("an IPv4 onion invite is %d bytes, want 122", len(raw))
-	}
-	tail := raw[len(raw)-66:]
-	if !bytes.Equal(tail[:32], st.tor.pub) {
-		t.Fatal("onion_pub is not the service's public key")
-	}
-	if port := binary.BigEndian.Uint16(tail[32:34]); port != 443 {
-		t.Fatalf("onion_port = %d, want 443", port)
-	}
-	priv, err := ecdh.X25519().NewPrivateKey(tail[34:])
-	if err != nil {
-		t.Fatalf("one_time_priv is not an x25519 key: %v", err)
-	}
-	pubB64 := base64.StdEncoding.EncodeToString(priv.PublicKey().Bytes())
-	privB64 := base64.StdEncoding.EncodeToString(tail[34:])
-
-	// The store keeps the PUBLIC half - and nowhere the private one.
-	var stored string
+	// And nothing is left in the store for one: the column went with them.
+	var columns int
 	if err := readDB(t, st.srv).QueryRowContext(context.Background(),
-		"SELECT access_key FROM pair_tokens WHERE access_key IS NOT NULL").Scan(&stored); err != nil {
-		t.Fatalf("read one-time key: %v", err)
+		"SELECT COUNT(1) FROM pragma_table_info('pair_tokens') WHERE name = 'access_key'").Scan(&columns); err != nil {
+		t.Fatalf("inspect pair_tokens: %v", err)
 	}
-	if stored != pubB64 {
-		t.Fatalf("stored one-time key = %q, want the public half %q", stored, pubB64)
-	}
-	rows, err := readDB(t, st.srv).QueryContext(context.Background(), "SELECT * FROM pair_tokens")
-	if err != nil {
-		t.Fatalf("scan tokens: %v", err)
-	}
-	defer func() { _ = rows.Close() }()
-	cols, _ := rows.Columns()
-	for rows.Next() {
-		vals := make([]any, len(cols))
-		ptrs := make([]any, len(cols))
-		for i := range vals {
-			ptrs[i] = &vals[i]
-		}
-		if err := rows.Scan(ptrs...); err != nil {
-			t.Fatalf("scan: %v", err)
-		}
-		if strings.Contains(fmt.Sprint(vals...), privB64) {
-			t.Fatal("the private half of the one-time key is in the database")
-		}
-	}
-	eventually(t, "the one-time key reached tor", func() bool { return st.tor.kickCount() > before })
-}
-
-func TestTheLinkLayoutPerHostType(t *testing.T) {
-	fp := base64.StdEncoding.EncodeToString(make([]byte, 32))
-	tok := base64.RawURLEncoding.EncodeToString(make([]byte, 16))
-	pub := ed25519.PublicKey(make([]byte, 32))
-	priv := make([]byte, 32)
-	for addr, want := range map[string]int{
-		"192.168.1.10:8080":  122,
-		"[fd00::1]:8080":     134,
-		"home.example:8080":  119 + len("home.example"),
-		"nox.example.com:80": 119 + len("nox.example.com"),
-	} {
-		link, err := BuildPairingLinkV2(addr, fp, tok, pub, 443, priv)
-		if err != nil {
-			t.Fatalf("%s: %v", addr, err)
-		}
-		raw, _ := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(link, pairingLinkPrefix))
-		if len(raw) != want {
-			t.Errorf("%s: %d bytes, want %d", addr, len(raw), want)
-		}
-	}
-	if _, err := BuildPairingLinkV2("1.2.3.4:1", fp, tok, pub[:31], 443, priv); err == nil {
-		t.Error("a 31-byte onion key was accepted")
-	}
-	if _, err := BuildPairingLinkV2("1.2.3.4:1", fp, tok, pub, 443, priv[:16]); err == nil {
-		t.Error("a 16-byte one-time key was accepted")
-	}
-	if _, err := BuildPairingLinkV2("1.2.3.4:1", fp, tok, pub, 0, priv); err == nil {
-		t.Error("port 0 was accepted")
+	if columns != 0 {
+		t.Fatal("pair_tokens still has an access_key column")
 	}
 }
 
-// The same three links are pinned byte for byte in the app's parser test
-// (test/general/pairing/pairing_link_test.dart). Lengths alone do not catch two
-// fields swapped, and a link the two sides read differently would pair nothing.
-// Every field is a different run of bytes for the same reason.
-func TestTheOnionLinkVectorsTheAppPins(t *testing.T) {
-	run := func(from byte, n int) []byte {
-		out := make([]byte, n)
-		for i := range out {
-			out[i] = from + byte(i)
-		}
-		return out
-	}
-	fp := base64.StdEncoding.EncodeToString(run(0x00, 32))
-	tok := base64.RawURLEncoding.EncodeToString(run(0xa0, 16))
-	pub := ed25519.PublicKey(run(0x20, 32))
-	priv := run(0x40, 32)
-	for _, tc := range []struct{ addr, want string }{
-		{"192.168.1.10:8080", "https://nox.app/p/#AgHAqAEKH5AAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eH6ChoqOkpaanqKmqq6ytrq8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-PwG7QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8"},
-		{"[fd00::1]:8080", "https://nox.app/p/#AgL9AAAAAAAAAAAAAAAAAAABH5AAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eH6ChoqOkpaanqKmqq6ytrq8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-PwG7QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8"},
-		{"home.example:8080", "https://nox.app/p/#AgMMaG9tZS5leGFtcGxlH5AAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eH6ChoqOkpaanqKmqq6ytrq8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-PwG7QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8"},
-	} {
-		link, err := BuildPairingLinkV2(tc.addr, fp, tok, pub, 443, priv)
-		if err != nil {
-			t.Fatalf("%s: %v", tc.addr, err)
-		}
-		if link != tc.want {
-			t.Errorf("%s:\n got %s\nwant %s", tc.addr, link, tc.want)
-		}
-	}
-}
-
-// The claim link stays version 1 whatever Tor is doing: a claim never goes
-// over onion.
-func TestTheClaimLinkStaysVersionOneWithTorReady(t *testing.T) {
+// The claim link is version 3 too, and follows the same rule for the onion
+// address: named while the service is offered. A claim still never goes over
+// onion - the store refuses it there - but the address is for after pairing.
+func TestTheClaimLinkIsVersionThreeAndFollowsTheOnionOffer(t *testing.T) {
 	st := newOnionStack(t, func(s *Server) { s.cfg.Addr = "192.168.1.10:8080" })
-	st.tor.set(true, true)
 	link, _, err := st.srv.claimLink(context.Background())
 	if err != nil {
 		t.Fatalf("claimLink: %v", err)
 	}
-	if v, _, _ := decodeLink(t, link); v != pairingLinkVersion {
-		t.Fatalf("claim link version = %d, want 1", v)
+	if got := readLink(t, link); got.Onion != nil || !slices.Equal(got.Direct, []string{"192.168.1.10:8080"}) {
+		t.Fatalf("claim link with tor not offered = %+v", got)
+	}
+
+	st.tor.set(true, true)
+	link, _, err = st.srv.claimLink(context.Background())
+	if err != nil {
+		t.Fatalf("claimLink: %v", err)
+	}
+	got := readLink(t, link)
+	if !bytes.Equal(got.Onion, st.tor.pub) || !got.ServerKey.Equal(serverKeyOf(t, st.srv)) {
+		t.Fatalf("claim link with tor offered = %+v", got)
 	}
 }
 
@@ -328,9 +256,8 @@ func TestAnAccessKeyOfSmallOrderIsRefused(t *testing.T) {
 	if !ok {
 		t.Fatalf("the refusal spent the claim: %s", code)
 	}
-	c := dialWS(t, st.ts, st.srv)
+	c := dialAs(t, st.ts, st.srv, d)
 	c.expectGreeting()
-	c.dev = d
 	c.hello(1, "")
 	c.send(fmt.Sprintf(`{"id":2,"cmd":"device.setAccessKey","data":{"access_key":%q}}`, zero))
 	c.expectErr(2, protocol.ErrInvalidRequest)
@@ -360,9 +287,8 @@ func TestAnAccessKeyAnotherDeviceHoldsIsRefused(t *testing.T) {
 		t.Fatalf("the refusal spent the invite: %s", code)
 	}
 
-	c := dialWS(t, st.ts, st.srv)
+	c := dialAs(t, st.ts, st.srv, second)
 	c.expectGreeting()
-	c.dev = second
 	c.hello(1, "")
 	c.send(fmt.Sprintf(`{"id":2,"cmd":"device.setAccessKey","data":{"access_key":%q}}`, access(1)))
 	c.expectErr(2, protocol.ErrInvalidRequest)
@@ -372,8 +298,8 @@ func TestAnAccessKeyAnotherDeviceHoldsIsRefused(t *testing.T) {
 }
 
 // A device revoked while its connection is still open cannot mint an invite:
-// the command gets the answer its next greeting would get, and no token - and
-// so no one-time onion key - comes into being.
+// the command gets the answer its next greeting would get, and no token comes
+// into being.
 func TestADeviceRevokedMidSessionCannotIssueAnInvite(t *testing.T) {
 	st := newOnionStack(t)
 	st.tor.set(true, true)
