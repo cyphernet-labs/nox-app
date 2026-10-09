@@ -1,5 +1,6 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:injectable/injectable.dart';
+import 'package:nox_tor/channel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// DI module for third-party singletons used by the session/app-state spine.
@@ -30,6 +31,11 @@ abstract class RegisterModule {
 
   @preResolve
   Future<SharedPreferences> get sharedPreferences => SharedPreferences.getInstance();
+
+  /// The secure channel of the native module (phase 044). Only the flavour
+  /// that talks to a server opens one; constructing it loads nothing.
+  @LazySingleton(env: [Environment.dev])
+  NoxChannelApi get noxChannelApi => const NativeNoxChannelApi();
 
   // Env-keyed test-environment flag (feature S5) — true only under Environment.test.
   // Injected into AppConfigRepositoryImpl.isTestEnvironment (the future hook for
