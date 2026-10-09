@@ -55,8 +55,11 @@ lib/data/
     retry_ladder.dart            # одна лестница пауз и предел отказов для всего, что повторяется само (043)
     attachment_download_service_impl.dart  # скачивание вложений с продолжением и повторами (043)
   remote/
-    api_client.dart              # тонкий @lazySingleton Dio-обёртка + initBase() (см. §7а)
-    interceptor/auth_interceptor.dart   # Bearer-заголовок + 401 -> forced logout (019/S5)
+    api_client.dart              # тонкая Dio-обёртка байтов вложений, env: [dev], + initBase(address:) (см. §7а)
+    interceptor/auth_interceptor.dart   # Bearer-заголовок из шва auth_id_token; ошибки, 401 включительно, только пробрасывает (019/S5)
+    channel/channel_http_client.dart    # два HttpClient (сокет / передачи); connectionFactory открывает канал модуля, env: [dev] (044)
+    channel/channel_socket.dart         # dart:io Socket поверх NoxChannel — его получает HttpClient (044)
+    channel/channel_failure.dart        # channelFailureOf: вид отказа канала из-под конвертов WebSocket и Dio (044)
     datasource/item_remote_data_source.dart      # сетевая граница фичи (016)
     datasource/mock/mock_item_remote_data_source.dart
     datasource/real/real_chat_remote_data_source.dart     # команды поверх WS-конверта, env: [dev] (026)
@@ -409,7 +412,7 @@ mixin BaseRepositoryHelper {
 }
 ```
 
-> `DioException` — транспортная ветка для REST-поверхности. Живой канал команд **построен**: контракт v0 идёт WebSocket-конвертом, и сам конверт вместе с сокет-клиентом пришёл фазой 026 (`remote/socket/`, `remote/datasource/real/`), а REST остаётся только для blob upload/download (`file.uploadBegin` → `PUT`, `file.downloadBegin` → `GET` с `Range`). Отдельно от этого: **пиннинг построен фазой 036**. `WebSocketChannelFactory` передаёт в `IOWebSocketChannel.connect(customClient:)` единственный на процесс `HttpClient` из `PinnedHttpClient` — с `SecurityContext(withTrustedRoots: false)` и проверкой отпечатка **листа** предъявленной цепочки (`SecureSocket.peerCertificate`) внутри `HttpClient.connectionFactory`, которая сверяет `sha256(SubjectPublicKeyInfo)` с отпечатком из ссылки (`ServerPin.matches`, идущая по структуре сертификата, а не ищущая в нём). Тот же клиент получает Dio через `IOHttpClientAdapter`, так что байты вложений едут по тому же проверенному каналу. `LiveSessionStarter._socketUrl` всегда даёт `wss`, отката на открытый канал нет. Ветка `on BaseRepositoryException` — это путь доменных кодов, поднятых из конверта `unwrapEnvelope`; load-bearing здесь — «четыре ветки: уже-доменная ошибка сквозь, мёртвый сокет → `connection`, транспорт по типу/статусу, всё остальное → `unknown`». Сокет-ветка стала load-bearing именно в мире 026+: она и есть то, что делает кэш-фоллбэк достижимым.
+> `DioException` — транспортная ветка для REST-поверхности. Живой канал команд **построен**: контракт v0 идёт WebSocket-конвертом, и сам конверт вместе с сокет-клиентом пришёл фазой 026 (`remote/socket/`, `remote/datasource/real/`), а REST остаётся только для blob upload/download (`file.uploadBegin` → `PUT`, `file.downloadBegin` → `GET` с `Range`). Отдельно от этого: **каждое соединение — канал нативного модуля** (`packages/nox_tor`, [14-networking-and-auth.md](14-networking-and-auth.md) §6.0). `WebSocketChannelFactory` передаёт в `IOWebSocketChannel.connect(customClient:)` клиент сокета из `ChannelHttpClient`, Dio через `IOHttpClientAdapter` получает его клиент передач; у обоих `HttpClient.connectionFactory` открывает канал — TCP или поток Tor → TLS 1.3 → проверка Eidolon, в которой сервер доказывает ключ из ссылки спаривания, — и отдаёт `HttpClient` готовый `ChannelSocket`. Сертификат сервера ничего не решает. Схема всегда `wss`/`https`, отката на открытый канал нет. Отказ канала (`ChannelFailure`) доходит до data-слоя завёрнутым в исключение транспорта — у сокета в `WebSocketChannelException`, у Dio в `DioException`; вид достаёт `channelFailureOf` (`remote/channel/channel_failure.dart`), и ни один вид не ведёт к выходу. Ветка `on BaseRepositoryException` — это путь доменных кодов, поднятых из конверта `unwrapEnvelope`; load-bearing здесь — «четыре ветки: уже-доменная ошибка сквозь, мёртвый сокет → `connection`, транспорт по типу/статусу, всё остальное → `unknown`». Сокет-ветка стала load-bearing именно в мире 026+: она и есть то, что делает кэш-фоллбэк достижимым.
 
 Ключевое:
 
@@ -425,7 +428,7 @@ mixin BaseRepositoryHelper {
 
 ## 6. Sembast DAO (реактивный)
 
-> **Локальная БД — Sembast (OQ-1 закрыт 2026-06-08).** Документная NoSQL, **schema-less** (хранит JSON-maps → миграций как класса нет: новые/отсутствующие поля гасятся дефолтами в маппере), чистый Dart без codegen, реактивные стримы (`onSnapshots`). Набор: `sembast` + `shared_preferences` (флаги/`themeMode`) + `flutter_secure_storage` (секреты: технический идентификатор `session.identifier`; ключ `auth_id_token` заведён под `Authorization`-токен, но **писателя ещё нет** — он приходит со stage-2 аутентификацией, стадия 1 контракта работает без auth). **Единый подход на все платформы, включая web:** mobile/desktop — `sembast_io` (`databaseFactoryIo`), Test — `databaseFactoryMemory`, **web (будущий клиент)** — `sembast_web` (`databaseFactoryWeb`, IndexedDB/WASM); код DAO/репозиториев не меняется — за абстракцией `AppDatabase` подменяется только фабрика. Отвергнуты: ObjectBox/Realm (нет web), Drift/PowerSync (реляционные), Isar (web только через community-форк + типизированная схема требует миграций). Контракты репозиториев (`03-domain-layer.md`) и потребители от БД не зависят.
+> **Локальная БД — Sembast (OQ-1 закрыт 2026-06-08).** Документная NoSQL, **schema-less** (хранит JSON-maps → миграций как класса нет: новые/отсутствующие поля гасятся дефолтами в маппере), чистый Dart без codegen, реактивные стримы (`onSnapshots`). Набор: `sembast` + `shared_preferences` (флаги/`themeMode`) + `flutter_secure_storage` (секреты сессии: технический идентификатор `session.identifier`, семя ключа устройства `session.device_secret`, ключ сервера из ссылки спаривания `session.server_key`; ключ `auth_id_token` заведён под `Authorization`-токен, но **писателя нет** — соединение аутентифицирует канал, токенов контракт v0 не несёт). **Единый подход на все платформы, включая web:** mobile/desktop — `sembast_io` (`databaseFactoryIo`), Test — `databaseFactoryMemory`, **web (будущий клиент)** — `sembast_web` (`databaseFactoryWeb`, IndexedDB/WASM); код DAO/репозиториев не меняется — за абстракцией `AppDatabase` подменяется только фабрика. Отвергнуты: ObjectBox/Realm (нет web), Drift/PowerSync (реляционные), Isar (web только через community-форк + типизированная схема требует миграций). Контракты репозиториев (`03-domain-layer.md`) и потребители от БД не зависят.
 
 DAO используют `StoreRef<String, Map<String, dynamic>>`, отдают реактивные потоки через `onSnapshots()` / `onSnapshot()` и поддерживают атомарные записи через `db.transaction()`. **Типизированного `DaoException` нет** — при сбое хранилища исключения самого Sembast **пробрасываются наружу** (DAO их не оборачивает в свой тип), а ловит их catch-all ветка `execute()` репозитория → `RepositoryException.unknown`. Cache-miss / not-found — это **не** забота DAO: DAO просто отдаёт `null` / пустой список, а проверку отсутствия и `RepositoryException.notFound` решает callback репозитория (полная форма, §8). Битые записи **пропускаются** при декодировании (`_tryDecode` → `null`), а не убивают поток.
 
@@ -619,48 +622,71 @@ Future<void> mutate({
 
 ### 7а. Dio `ApiClient`
 
-**Реальный код.** Один host, один экземпляр Dio. `ApiClient` — `@lazySingleton`, инжектирующий `AppConfigRepository` и `PinnedHttpClient`; `initBase({required String address})` ставит base URL (`https` по умолчанию, не `http`), вешает `IOHttpClientAdapter` на проверенный клиент передач (`PinnedHttpClient.transferClient`: свой у Dio с фазы 043, потому что Dio пишет таймаут подключения в отданный ему клиент, а сокет набирает через тот же параметр) и **один раз** — `AuthInterceptor`. Адрес **обязателен с фазы 036**, и `AppConfig.apiUrl` перестал быть его источником: у адреса из сборки нет отпечатка по построению, значит соединение с ним нечем проверить. Зовёт `initBase` только `LiveSessionStarter`: при старте — со спаренным адресом, затем на каждом приветствии — с адресом соединения, через которое оно пришло, потому что байты вложений идут тем же путём, что команды (прямой адрес или onion, [14-networking-and-auth.md](14-networking-and-auth.md) §6). `main.dart` не зовёт его вовсе. Data source, инжектирующий `ApiClient`, приехал с файловой цепочкой (фаза 028).
+**Реальный код.** Один host, один экземпляр Dio. `ApiClient` — `@LazySingleton(env: [Environment.dev])`: он есть только там, где есть живой канал; конструктор инжектирует `AppConfigRepository` и `ChannelHttpClient`. `initBase({required String address})` ставит base URL (`https` по умолчанию, не `http`), вешает `IOHttpClientAdapter` на клиент передач `ChannelHttpClient.transferClient` (свой у Dio, потому что Dio пишет таймаут подключения в отданный ему клиент, а сокет набирает через тот же параметр) и **один раз** — `AuthInterceptor`. Каждое соединение этого клиента открывает канал нативного модуля и проходит проверку Eidolon само по себе, как соединение сокета. `ChannelHttpClient` сбрасывает оба клиента, когда меняются ключи (`bind`) или канал останавливается (`unbind`), а адаптер Dio запоминает клиент один раз — поэтому `ApiClient` ставит адаптер заново через `ChannelHttpClient.onDiscarded`. Адрес **обязателен**, и `AppConfig.apiUrl` его источником не является: у адреса из сборки нет ключа сервера по построению, значит канал не может проверить соединение с ним. Зовёт `initBase` только `LiveSessionStarter`: при старте — со спаренным адресом, затем на каждом приветствии — с адресом соединения, через которое оно пришло, потому что байты вложений идут тем же путём, что команды (прямой адрес или onion, [14-networking-and-auth.md](14-networking-and-auth.md) §6). `main.dart` не зовёт его вовсе. Data source, инжектирующий `ApiClient`, — `RealFileRemoteDataSource` (файловая цепочка, фаза 028).
 
-**Хост `.onion`** `PinnedHttpClient` набирает через локальный мост Tor-клиента: `127.0.0.1:<порт моста>`, затем 32-байтный секрет моста, затем TLS к onion-имени и та же проверка листа против отпечатка. Порт и секрет читаются в момент рукопожатия из `onionBridge` (его ставит `LiveSessionStarter`: `() => TorService.bridge`). Моста нет — набор падает сразу (`SocketException`), а не уходит в обычный DNS.
+**Хост `.onion`** открывает модуль сам: `ChannelHttpClient.targetFor` превращает его в `OnionTarget`, и канал идёт потоком Arti до onion-сервиса (порт 443), поверх — тот же TLS 1.3 и та же проверка Eidolon, что на прямом пути. Ни локального порта, ни обычного DNS для onion-имени нет.
 
-`lib/data/remote/api_client.dart`:
+`lib/data/remote/api_client.dart` (сокращённо):
 
 ```dart
 import 'package:dio/dio.dart';
+import 'package:dio/io.dart';
 import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/remote/channel/channel_http_client.dart';
 import 'package:nox_app/data/remote/interceptor/auth_interceptor.dart';
 import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
 
-/// Thin Dio wrapper. [initBase] configures the base URL from [AppConfig.apiUrl] and
-/// installs the [AuthInterceptor] (feature S5).
+/// Thin Dio wrapper carrying the REST half of the transport: the BYTES of
+/// attachments, which is all contract v0 ever sends over HTTP. Commands travel
+/// the WebSocket envelope (feature 026) and always will.
 ///
-/// Inert for COMMANDS, and permanently so: contract v0 carries them over the
-/// WebSocket envelope (feature 026), never over HTTP. REST exists only for blob
-/// upload/download, so nothing calls [initBase] from app code and no data source
-/// injects this client — that binding arrives with the file chain (phase 028).
-@lazySingleton
+/// Both halves go to one machine, each over a channel of the native module
+/// (phase 044): every connection for file bytes passes the same Eidolon check
+/// the socket's does, on its own. Registered only where the socket is - the
+/// flavour that talks to a server.
+@LazySingleton(env: [Environment.dev])
 class ApiClient {
-  ApiClient(this._config)
+  ApiClient(this._config, this._channels)
     : dio = Dio(BaseOptions(connectTimeout: const Duration(seconds: 30), receiveTimeout: const Duration(seconds: 30)));
 
   final AppConfigRepository _config;
+  final ChannelHttpClient _channels;
   final Dio dio;
 
-  /// Idempotent: sets the base URL (when `apiUrl` is non-empty) and installs the auth
-  /// interceptor exactly once (a second call is a no-op).
-  void initBase() {
-    final apiUrl = _config.config.apiUrl;
-    if (apiUrl != null && apiUrl.isNotEmpty) {
-      dio.options.baseUrl = apiUrl;
+  // beginTransfer / endTransfer / cancelTransfers / pathGeneration - the
+  // registry of byte transfers (phase 043), see 16-file-upload.md.
+
+  /// Points the client at the paired server and installs the interceptor.
+  /// Idempotent for the interceptor; the base URL is re-pointed on every call.
+  void initBase({required String address}) {
+    final previous = dio.options.baseUrl;
+    if (address.isNotEmpty) {
+      dio.options.baseUrl = address.contains('://') ? address : 'https://$address';
     }
+    // A new address is a new path: every transfer on the old one ends now and
+    // goes on by the new one.
+    if (previous.isNotEmpty && previous != dio.options.baseUrl) {
+      _pathGeneration++;
+      cancelTransfers();
+    }
+    _installAdapter();
+    // Dio's adapter asks for a client ONCE and caches it; the channel client
+    // throws its clients away when the binding changes.
+    _channels.onDiscarded = _installAdapter;
     if (dio.interceptors.whereType<AuthInterceptor>().isEmpty) {
       dio.interceptors.add(AuthInterceptor(_config));
     }
   }
+
+  /// The transfers' own client, not the socket's: Dio writes its connect
+  /// timeout onto the client it is given, on every request.
+  void _installAdapter() {
+    dio.httpClientAdapter = IOHttpClientAdapter(createHttpClient: () => _channels.transferClient);
+  }
 }
 ```
 
-Auth-заголовок — отдельный `AuthInterceptor` (`remote/interceptor/auth_interceptor.dart`), а не заголовки по-API: `onRequest` читает токен **асинхронно** на каждом запросе через `AppConfigRepository.getUserAuthIdToken()` (оба члена — `config.apiUrl` и `getUserAuthIdToken()` — в контракте репозитория **есть** с фичи 019) и ставит `Authorization: Bearer <token>` только для непустого значения; `onError` на 401 делает forced logout через **ленивый** алиас `authRepository` (это и разрывает DI-цикл `ApiClient → AuthInterceptor → AuthRepository → repositories`) и **всегда** пробрасывает ошибку дальше. Что здесь ещё открыто — не наличие seam'а, а **stage-2 аутентификация**: писателя `auth_id_token` нет, схема `Bearer` — плейсхолдер до утверждения модели pairing/авторизации.
+Auth-заголовок — отдельный `AuthInterceptor` (`remote/interceptor/auth_interceptor.dart`), а не заголовки по-API: `onRequest` читает токен **асинхронно** на каждом запросе через `AppConfigRepository.getUserAuthIdToken()` (оба члена — `config.apiUrl` и `getUserAuthIdToken()` — в контракте репозитория **есть** с фичи 019) и ставит `Authorization: Bearer <token>` только для непустого значения; `onError` ничего не решает и **всегда** пробрасывает ошибку дальше, `401` включительно. `401` от `/files` — неудавшаяся передача (ключа соединения нет среди спаренных устройств, контракт §1), а не выход: соединение доказывает ключ устройства ниже HTTP, и у принудительного выхода один хозяин — сессия: `unauthenticated` в ответ на `session.hello` и событие `device.revoked`. Выход по ответу файла позволил бы любому ответу `/files` стереть устройство. Писателя `auth_id_token` нет: соединение аутентифицирует канал, токенов контракт v0 не несёт, и схема `Bearer` — шов без модели.
 
 ```dart
 // Real AuthInterceptor (feature 019/S5), abridged.
@@ -679,12 +705,8 @@ class AuthInterceptor extends Interceptor {
   }
 
   @override
-  Future<void> onError(DioException err, ErrorInterceptorHandler handler) async {
-    // Lazy AuthRepository resolution breaks the DI cycle; the error always propagates.
-    if (err.response?.statusCode == 401) {
-      await authRepository.logout(forced: true);
-    }
-    handler.next(err);
+  void onError(DioException err, ErrorInterceptorHandler handler) {
+    handler.next(err); // always propagate — the interceptor never swallows the error
   }
 }
 ```
@@ -693,7 +715,7 @@ class AuthInterceptor extends Interceptor {
 
 > **Хук наблюдаемости.** Подключай HTTP-трекинг наблюдаемости в эти interceptor'ы (`onRequest`/`onResponse`/`onError`).
 >
-> **HMAC/подпись запросов — контрактом v0 НЕ требуется.** Транспортная защита — TLS 1.3 с пиннингом по отпечатку ключа сервера (фаза 036; порт приезжает ссылкой, а не фиксирован на 443), а REST-поверхность (blob upload/download) авторизуется одноразовыми 10-минутными токенами из `file.uploadBegin` / `file.downloadBegin`, а не подписью. Описанная дальше схема остаётся **гипотетическим примером** на случай, если такое требование появится: подписанные запросы (*пример*: `x-request-timestamp` + HMAC-SHA256 + security-заголовки) — тоже зона interceptor'а, отдельным `InterceptorsWrapper`, считающим подпись по каноническому формату (*в этом примере* серверный канонический verb — это `ApiRequestMethod.<lowercase>`, не `GET`/`POST`). Формула строки подписи (включая хеш тела запроса) — в [14-networking-and-auth.md](14-networking-and-auth.md) §4 (тоже размеченный пример). Не вводи подпись молча — это изменение контракта.
+> **HMAC/подпись запросов — контрактом v0 НЕ требуется.** Защиту и аутентификацию соединения даёт канал: TLS 1.3 и проверка Eidolon в нативном модуле, где устройство и сервер доказывают свои ключи на каждом соединении (порт приезжает ссылкой, а не фиксирован на 443). REST-поверхность (blob upload/download) требует ключа спаренного устройства на соединении и одноразового 10-минутного токена из `file.uploadBegin` / `file.downloadBegin`, а не подписи. Описанная дальше схема остаётся **гипотетическим примером** на случай, если такое требование появится: подписанные запросы (*пример*: `x-request-timestamp` + HMAC-SHA256 + security-заголовки) — тоже зона interceptor'а, отдельным `InterceptorsWrapper`, считающим подпись по каноническому формату (*в этом примере* серверный канонический verb — это `ApiRequestMethod.<lowercase>`, не `GET`/`POST`). Формула строки подписи (включая хеш тела запроса) — в [14-networking-and-auth.md](14-networking-and-auth.md) §4 (тоже размеченный пример). Не вводи подпись молча — это изменение контракта.
 
 ### 7б. `BaseApiRepository` (TARGET)
 
@@ -710,7 +732,7 @@ abstract class BaseApiRepository {
 }
 ```
 
-> **Свежий `Dio` на каждый доступ к `baseClient` — намеренное правило этого блюпринта, не дефект.** В TARGET-наброске геттер вызывает `ApiClient.initBase()` при каждом обращении, поэтому новый экземпляр создаётся на запрос. Токен всё равно читается асинхронно в `AuthInterceptor` **на каждый** запрос (§7а), так что свежесть авторизации обеспечена interceptor'ом, а не переиспользованием клиента. _(Реальный `ApiClient` пошёл другим путём — один `@lazySingleton`-`Dio` с идемпотентным `initBase()`; если request-builder-обвязку будут строить, выбор между «свежий Dio на запрос» и singleton нужно принять явно, а не унаследовать молча.)_
+> **Свежий `Dio` на каждый доступ к `baseClient` — намеренное правило этого блюпринта, не дефект.** В TARGET-наброске геттер вызывает `ApiClient.initBase()` при каждом обращении, поэтому новый экземпляр создаётся на запрос. Токен всё равно читается асинхронно в `AuthInterceptor` **на каждый** запрос (§7а), так что свежесть авторизации обеспечена interceptor'ом, а не переиспользованием клиента. _(Реальный `ApiClient` пошёл другим путём — один `Dio` в синглтоне (`[Environment.dev]`) с идемпотентным `initBase(address:)`; если request-builder-обвязку будут строить, выбор между «свежий Dio на запрос» и singleton нужно принять явно, а не унаследовать молча.)_
 
 ### 7в. `RequestBuilder` + `RequestBuilderHelper` (TARGET)
 
@@ -1172,7 +1194,9 @@ Future<RepositoryResult<(List<ItemModel>, PageMetadata)>> getItems({required Get
 | `BaseRepositoryHelper` | `exception/base_repository_helper.dart` | mixin |
 | `AppDatabaseDev/Prod/Test` | `local/app_database.dart` | `@LazySingleton(as: AppDatabase, env: [...])` (см. `02-dependency-injection.md`) |
 | `ItemDao` | `local/item/item_dao.dart` | `@lazySingleton` |
-| `ApiClient` | `remote/api_client.dart` | `@lazySingleton` (Dio + `initBase()`, инжектирует `AppConfigRepository`) |
+| `ApiClient` | `remote/api_client.dart` | `@LazySingleton(env: [Environment.dev])` (Dio + `initBase(address:)`, инжектирует `AppConfigRepository` и `ChannelHttpClient`) |
+| `ChannelHttpClient` | `remote/channel/channel_http_client.dart` | `@LazySingleton(env: [Environment.dev])` (инжектирует `NoxChannelApi` — провайдер `RegisterModule`, см. `02-dependency-injection.md`) |
+| `ChannelSocket` | `remote/channel/channel_socket.dart` | без DI — создаётся в `connectionFactory` `ChannelHttpClient` на каждое соединение |
 | `AuthInterceptor` | `remote/interceptor/auth_interceptor.dart` | без DI — создаётся в `ApiClient.initBase()` |
 | `ItemRemoteDataSource` / `MockItemRemoteDataSource` | `remote/datasource/item_remote_data_source.dart`, `datasource/mock/...` | `@LazySingleton(as: ItemRemoteDataSource, env: [dev, prod, test])` |
 | `GetItemsApi` (mock-генератор, заморожен) | `remote/api/item/get_items_api.dart` | `@lazySingleton` |
@@ -1200,7 +1224,7 @@ fvm dart run build_runner build --delete-conflicting-outputs
 - [ ] `AppDatabase` env-scoped (интерфейс `db` + `clearEntireDatabase()`; `Dev`/`Prod` = `databaseFactoryIo`, `Test` = `databaseFactoryMemory`); `path_provider` — зависимость пакета; env-список в репозитории полный.
 - [ ] `ItemDao` (PRIMARY) — **per-ID records store** `stringMapStoreFactory.store('items')`, ключ = `item.id`: `watch()` как `Stream<List<ItemEntity>> async*`, `getById(String)`, позиционные `saveData(List)`/`upsert(ItemEntity)`/`removeById(String)`/`cleanData()`, `_decode`/`_tryDecode` пропускают битую запись (`null`). DAO **не** оборачивает сбои в `StateError` — исключения Sembast летят в catch-all `execute()`. Cache-miss/not-found решает callback репозитория. Single-record collection store — альтернативный вариант.
 - [ ] **`ItemRepositoryImpl` (замороженный верификационный срез)** реализует **узкий** контракт `ItemRepository` (`getItems({GetItemsConfig config}) -> (List, PageMetadata)` + `clean() -> Future<void>`): инжектирует только маппер + `ItemRemoteDataSource` (интерфейс, seam 016), без DAO/subject/dispose; пустой payload → `RepositoryException.unknown` в callback'е; `PageMetadata` сворачивается из offset-обёртки среза (`hasMore = (page * pageSize) < total`, `nextPage = hasMore ? page + 1 : null`) — **в самой `PageMetadata` полей `total`/`pageSize` нет**, только `{hasMore, nextPage?}`; `clean()` — no-op. **Полный** env-список `@LazySingleton`. Полная (TARGET) форма добавляет `watchItem`/`fetchItem`/CRUD + `ItemDao` + ОДИН `BehaviorSubject` (подписка раз в конструкторе) + `@disposeMethod`, читает через `hasData`/`match` (не `result.data!`).
-- [ ] REST **построенное**: `@lazySingleton ApiClient` (`remote/api_client.dart`) с `initBase({required String address})` — base URL из **спаренного** адреса (`https`, не `http`), `IOHttpClientAdapter` на клиент передач `PinnedHttpClient` (`transferClient`, отдельный от клиента сокета) и однократная установка `AuthInterceptor`, который асинхронно читает `AppConfigRepository.getUserAuthIdToken()` и на 401 делает forced logout через ленивый алиас. Зовёт его только `LiveSessionStarter`; `AppConfig.apiUrl` источником живого адреса не является с фазы 036. Транспорт контракта v0 — WS-конверт (фаза 026); REST остаётся за blob upload/download. **TARGET (не построено)**: `BaseApiRepository` + `RequestBuilder`/`RequestBuilderHelper`; API-класс оборачивает `response.data` в `ResponseEntity<T>.fromJson`; на non-2xx Dio бросает `DioException`, не перехватываемый на уровне API → `execute()` → `_mapDioException` (никакого `ApiException`). В замороженном `Item`-срезе wire-параметр поиска — `search` (не `q`); `page` 1-based (`defaultPage = 1`).
+- [ ] REST **построенное**: `ApiClient` (`remote/api_client.dart`, `@LazySingleton(env: [Environment.dev])`) с `initBase({required String address})` — base URL из **спаренного** адреса (`https`, не `http`), `IOHttpClientAdapter` на клиент передач `ChannelHttpClient.transferClient` (отдельный от клиента сокета; каждое его соединение — канал нативного модуля с проверкой Eidolon) и однократная установка `AuthInterceptor`, который асинхронно читает `AppConfigRepository.getUserAuthIdToken()` и любую ошибку, `401` включительно, только пробрасывает — выхода по ответу `/files` нет. Зовёт его только `LiveSessionStarter`; `AppConfig.apiUrl` источником живого адреса не является. Транспорт контракта v0 — WS-конверт (фаза 026); REST остаётся за blob upload/download. **TARGET (не построено)**: `BaseApiRepository` + `RequestBuilder`/`RequestBuilderHelper`; API-класс оборачивает `response.data` в `ResponseEntity<T>.fromJson`; на non-2xx Dio бросает `DioException`, не перехватываемый на уровне API → `execute()` → `_mapDioException` (никакого `ApiException`). В замороженном `Item`-срезе wire-параметр поиска — `search` (не `q`); `page` 1-based (`defaultPage = 1`).
 - [ ] **Кэш-first — форма по умолчанию; carve-out «пагинированный список = network-only» ретайрен.** Список чатов и история сообщений — кэш-first (013): один seed в Sembast, дальше срезы/поиск/`PageMetadata` из DAO. Network-only (без DAO, без subject) допустим только там, где кэшировать нечего: замороженный `Item`-срез и one-shot команды без локальной проекции — и это обосновывается, а не предполагается. Форма возврата на обеих ветках одна — `RepositoryResult<(List<Model>, PageMetadata)>`, без отдельного `getItemsPage`/`watchItems` (см. `07-pagination.md`). Контракт пагинации зафиксирован v0: `{chats, has_more}` по `page`/`page_size`, `{messages, has_more}` по `before_seq`/`limit`.
 - [ ] **Очередь исходящих построена (027)**: store `outbox` (`local/chat/outbox_dao.dart`), где **ключ записи = `client_message_id`** контракта — повторная постановка физически не даёт дубля; `ordinal` назначается `max + 1` **внутри одной транзакции** с записью (сортировка по времени не годится); фильтрация и сортировка — в Dart по декодированным сущностям, не `Finder`'ом по camelCase-ключу (`field_rename: snake`); в `OutboxStatus` ровно `{pending, error}` — состояния `sending` на диске **нет**. `data/sync/outbox_service.dart` — **единственный отправитель**: проходы сериализованы цепочкой `Future _queue`, идут по `ordinal` по одной записи, запись удаляется **только после** персиста сообщения репозиторием; отказ классифицируется — `connection`/`rateLimited`/`internal`/`unknown`/нераспознанный повторяемы (пауза `min(30s, 1s × 2^(attempts − 1))` ±20%, где `attempts` берётся у записи), прочие окончательны (`error`, проход идёт дальше). Экран очередь **проецирует**, а не хранит (`ChatThreadBloc.outgoing` из `watchQueue(chatId:)`).
 - [ ] **Чат создаётся на устройстве (041)**: `createChat` не ходит на сервер — id `c_` + 32 hex из `Random.secure()`, строка с `creation: pending`; очередь создаёт ждущие чаты раньше сообщений и **удерживает** сообщения чата, которого нет на сервере (без попытки и без ошибки); у каждого ждущего чата своя пауза, проход не останавливается; исходы `name_taken` → `nameTaken` (переименование на устройстве), окончательный отказ → `failed` (`retryCreation`), другой id → `moveChat` + `adoptServerChat`; окно и файлы ждущего чата у сервера не запрашиваются.
