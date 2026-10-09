@@ -126,11 +126,12 @@ client_backend/
 
 docs/
 ├── client-backend/protocol/contract-draft.md      # §1, §2, §3, §8A, ошибки
-├── blueprints/mobile/{01,02,04,09,14}-*.md
+├── client-backend/architecture/{transport,authentication}.md, client-backend/README.md, README.md
+├── blueprints/mobile/{01,02,04,09,10,14,16}-*.md
 ├── blueprints/client-backend/README.md
-├── design/spec/screens/{login,qr-scan}.md, design/spec/overview.md
-├── design/system/nox-mobile-screens/screens/{2-1-login,2-2-qr-scan}.md
-├── design/system/nox-desktop-screens/screens/{04-login,06-qr}.md
+├── design/spec/screens/{login,qr-scan,devices,file-view}.md, design/spec/overview.md
+├── design/system/nox-mobile-screens/screens/{2-1-login,2-2-qr-scan,7-8-devices}.md
+├── design/system/nox-desktop-screens/screens/{04-login,06-qr,09-devices}.md
 ├── client-backend/demo-runbook.md, scripts/demo-stand.sh
 CLAUDE.md, client_backend/CLAUDE.md                # разделы TLS/пиннинг/мост
 ```
@@ -141,5 +142,6 @@ CLAUDE.md, client_backend/CLAUDE.md                # разделы TLS/пинн
 
 | Отступление | Почему нужно | Почему проще не годится |
 |---|---|---|
-| Между 044 и 045 спаривание нового устройства через onion недоступно: в ссылке v3 нет одноразового ключа доступа Tor | Ключи доступа Tor целиком убирает 045; переносить одноразовый ключ в новый формат ради одной фичи — работа на выброс | Обе фичи в одной ветке и уходят вместе; прямое спаривание и связь через Tor спаренных устройств работают |
+| Между 044 и 045 спаривание нового устройства через onion недоступно: в ссылке v3 нет одноразового ключа доступа Tor, поэтому одноразовые ключи onion-приглашений уходят уже в 044, а приглашение подписано «только дома» | Ключи доступа Tor целиком убирает 045; переносить одноразовый ключ в новый формат ради одной фичи — работа на выброс | Обе фичи в одной ветке и уходят вместе; прямое спаривание и связь через Tor спаренных устройств работают |
+| Tor на Linux в 044 выключен, хотя модуль с Arti там уже собирается | Включение Tor на Linux — в объёме 045 по трекеру, вместе с `Use Tor` | Модуль канала нужен на Linux уже сейчас (прямой путь); путь через Tor на Linux проверяется вместе с переделкой Tor |
 | Пакет называется `nox_tor`, хотя в нём весь канал | Переименование пакета, ассета и фреймворков — механика без пользы для фичи | Риск сломать сборку пяти платформ ради имени |

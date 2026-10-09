@@ -7,15 +7,13 @@
 ```c
 typedef void (*nox_chan_event_fn)(int64_t handle, int32_t kind, const uint8_t *data, uintptr_t len, int32_t code);
 
-// Открывает канал. Возвращает дескриптор > 0 сразу; итог — событием.
+// Открывает канал. Возвращает дескриптор > 0 сразу или отрицательный код; итог — событием.
 // target_kind: 0 — прямой (host — IP или имя, port), 1 — onion (host — "<56>.onion", port — 443).
 // device_seed32 — семя Ed25519 устройства; server_key32 — ожидаемый ключ сервера.
-// onion_client_key32 — ключ доступа Tor (до 045; NULL для прямого пути).
 // connect_timeout_ms — срок на транспорт + TLS + Eidolon.
 int64_t nox_chan_open(int32_t target_kind, const char *host, uint16_t port,
                       const uint8_t *device_seed32, const uint8_t *server_key32,
-                      const uint8_t *onion_client_key32, uint32_t connect_timeout_ms,
-                      nox_chan_event_fn on_event);
+                      uint32_t connect_timeout_ms, nox_chan_event_fn on_event);
 
 // Ставит байты в очередь отправки (модуль копирует их). Возвращает размер очереди после записи
 // или отрицательный код (канал закрыт, неверные аргументы).
@@ -35,6 +33,10 @@ void nox_chan_buf_free(uint8_t *data, uintptr_t len);
 ```
 
 `nox_chan_event_fn` создаётся в Dart через `NativeCallable.listener` и вызывается из потоков модуля; исполняется в цикле событий изолята.
+
+**Onion (до 045).** Канал к onion идёт через клиента Arti, которого поднимает `nox_tor_start`. Ключ доступа к onion-сервису регистрирует, как и сегодня, `nox_tor_set_target(onion_host, port, client_key32)` — теперь только в хранилище ключей Arti, без моста; `nox_chan_open` ключа не принимает. Подключение к onion — с подстраховкой (второе подключение в новой группе изоляции через 15 с, общий срок 45 с), как у моста. Исход подключения к onion модуль пишет и в снимок состояния Tor (`nox_tor_status().error`), как писал мост: на нём держится правило «ключ не зарегистрирован после 5 минут отказов» (040).
+
+**TLS.** Только TLS 1.3, ALPN `http/1.1`, без SNI, без возобновления сессий и без раннего отправления данных: каждое соединение — полное рукопожатие с подписью сервера, которую модуль проверяет.
 
 ## События
 
@@ -77,7 +79,7 @@ void nox_chan_buf_free(uint8_t *data, uintptr_t len);
 abstract interface class NoxChannelApi {
   /// Opens a channel; completes when it is verified (OPEN) or failed (CLOSED with a kind).
   Future<NoxChannel> open(ChannelTarget target, {required Uint8List deviceSeed, required Uint8List serverKey,
-      Uint8List? onionClientKey, required Duration timeout});
+      required Duration timeout});
 }
 
 abstract interface class NoxChannel {
