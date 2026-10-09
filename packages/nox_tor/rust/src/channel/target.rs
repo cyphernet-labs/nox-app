@@ -1,235 +1,188 @@
-//! The loopback bridge the app dials instead of the onion service.
+//! Where a channel goes: TCP to an address, or a Tor stream to the onion
+//! service through the client `engine` runs.
 //!
-//! The app does TLS and checks the server's fingerprint itself, exactly as on
-//! the direct path; this bridge only moves bytes between a loopback socket and
-//! a Tor stream to the one target the app set. Every connection must open with
-//! the 32-byte secret of this bridge: any app on the device can dial
-//! 127.0.0.1, and without the secret it could ride this client - and its
-//! access key - to the person's server.
+//! The onion connect is the one the loopback bridge made until 044, moved
+//! here whole: hedged after HEDGE_AFTER in a fresh isolation group, bounded by
+//! CONNECT_BUDGET, and its outcome written into the Tor status snapshot. The
+//! app keys its "access key unknown after five minutes of refusals" rule (040)
+//! on that snapshot, so every connect still lands there - the channel's own
+//! failure goes to the channel's CLOSED event besides.
 
-use std::collections::VecDeque;
 use std::future::Future;
-use std::io;
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use arti_client::{IsolationToken, StreamPrefs};
-use subtle::ConstantTimeEq;
-use tokio::io::AsyncReadExt;
-use tokio::net::{TcpListener, TcpStream};
-use tokio::runtime::Runtime;
-use tokio::sync::oneshot;
-use tokio::task::JoinHandle;
+use arti_client::{DataStream, HsId, IsolationToken, StreamPrefs};
+use futures::stream::{FuturesUnordered, StreamExt};
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::net::TcpStream;
+use tokio::runtime::Handle;
 
-use crate::engine::{lock, Shared};
+use super::code;
+use crate::engine::{lock, Client, Shared};
 use crate::status::{classify, error};
 
-/// How long a fresh loopback connection may take to present the secret.
-const SECRET_WAIT: Duration = Duration::from_secs(5);
-/// How many connections may be waiting to present the secret at once. Anyone
-/// on the device can dial, and each of these holds a socket for SECRET_WAIT:
-/// unbounded, a stranger could fill the process's descriptor table and starve
-/// Arti, the app's own sockets and its files.
-const PENDING_CAP: usize = 16;
-/// The pause after an accept that failed for more than the connection it was
-/// taking. A full descriptor table fails again at once, and an immediate retry
-/// would spin a worker until it cleared.
-const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
-/// How many accepts in a row may fail over the connection each was taking
-/// before the loop pauses anyway: a failure that keeps coming is about the
-/// listener, not about one connection.
-const GONE_IN_A_ROW: u32 = 8;
 /// One Tor connection to the onion service, both attempts of the hedge
 /// together. A keyed connect fetches the descriptor anew every time and
 /// sometimes hangs (Arti #2166, #2482): this is the bound, and the app's
 /// reconnect ladder is the retry.
-const CONNECT_BUDGET: Duration = Duration::from_secs(45);
+pub const CONNECT_BUDGET: Duration = Duration::from_secs(45);
 /// When a connect to the onion service that has not finished gets a second
 /// one beside it. One that hangs hangs for the whole CONNECT_BUDGET, while a
 /// fresh attempt usually gets through in a few seconds.
-const HEDGE_AFTER: Duration = Duration::from_secs(15);
+pub const HEDGE_AFTER: Duration = Duration::from_secs(15);
 
-pub struct BridgeHandle {
-    task: JoinHandle<()>,
-    /// The socket itself. The accept loop works on a handle of its own, so the
-    /// port stays bound when the loop's runtime goes away (see `move_to`).
-    listener: std::net::TcpListener,
-    pub port: u16,
-    pub secret: Arc<Mutex<[u8; 32]>>,
+/// How long an address has before the next one is tried beside it: dart:io's
+/// own delay, from the days its sockets made this connect (RFC 8305 calls it
+/// the connection attempt delay). One address that swallows its SYNs must not
+/// hold the whole budget while the next would answer at once.
+pub const ATTEMPT_DELAY: Duration = Duration::from_millis(250);
+
+/// A byte stream TLS can run over: a TCP connection or a Tor stream.
+pub trait Transport: AsyncRead + AsyncWrite + Send + Unpin {}
+
+impl<T: AsyncRead + AsyncWrite + Send + Unpin> Transport for T {}
+
+/// What an onion channel needs of the running Tor client: its runtime, which
+/// the channel's task runs on, the client, and the state its status lives in.
+pub struct OnionContext {
+    pub runtime: Handle,
+    pub client: Arc<Client>,
+    pub shared: Arc<Shared>,
 }
 
-impl BridgeHandle {
-    /// Serves this bridge from another runtime: same socket, port and secret,
-    /// which the app already holds. How a failed client is rebuilt on a new
-    /// runtime without the app's endpoint going stale.
-    pub(crate) fn move_to(&mut self, runtime: &Runtime, shared: &Arc<Shared>) -> Result<(), ()> {
-        let task = spawn_serve(&self.listener, runtime, shared, &self.secret)?;
-        std::mem::replace(&mut self.task, task).abort();
-        Ok(())
-    }
+/// TCP to `host` - an address or a name - and `port`. Any failure, the name's
+/// included, is the network's.
+pub async fn direct(host: &str, port: u16) -> Result<TcpStream, i32> {
+    // An IPv6 address may come bracketed, as in a URL.
+    let host = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')).unwrap_or(host);
+    let mut addresses: Vec<SocketAddr> =
+        tokio::net::lookup_host((host, port)).await.map_err(|_| code::NETWORK)?.collect();
+    // IPv4 first, the resolver's order kept within each family: dart:io's
+    // order too, because in practice IPv4 is routed more reliably
+    // (dartbug.com/50868).
+    addresses.sort_by_key(SocketAddr::is_ipv6);
+    let stream = staggered(addresses, TcpStream::connect, ATTEMPT_DELAY).await.ok_or(code::NETWORK)?;
+    // The channel carries small frames both ways - commands, acks, the
+    // Eidolon messages - and each would otherwise wait on the one before.
+    let _ = stream.set_nodelay(true);
+    Ok(stream)
 }
 
-impl Drop for BridgeHandle {
-    fn drop(&mut self) {
-        self.task.abort();
-    }
-}
-
-pub fn random_secret() -> Result<[u8; 32], ()> {
-    let mut secret = [0u8; 32];
-    getrandom::fill(&mut secret).map_err(|_| ())?;
-    Ok(secret)
-}
-
-/// Opens the bridge, or gives the open one a new secret. Returns the port.
-pub fn open_or_rotate(runtime: &Runtime, shared: &Arc<Shared>) -> Result<u16, ()> {
-    let secret = random_secret()?;
-    let mut bridge = lock(&shared.bridge);
-    if let Some(open) = bridge.as_ref() {
-        *lock(&open.secret) = secret;
-        return Ok(open.port);
-    }
-    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).map_err(|_| ())?;
-    let port = listener.local_addr().map_err(|_| ())?.port();
-    let secret = Arc::new(Mutex::new(secret));
-    let task = spawn_serve(&listener, runtime, shared, &secret)?;
-    *bridge = Some(BridgeHandle { task, listener, port, secret });
-    Ok(port)
-}
-
-/// Starts the accept loop on `runtime`, on a handle of its own to `listener`.
-fn spawn_serve(
-    listener: &std::net::TcpListener,
-    runtime: &Runtime,
-    shared: &Arc<Shared>,
-    secret: &Arc<Mutex<[u8; 32]>>,
-) -> Result<JoinHandle<()>, ()> {
-    let handle = listener.try_clone().map_err(|_| ())?;
-    // tokio needs it; set on the handle it gets rather than trusted to carry
-    // over from the original on every platform.
-    handle.set_nonblocking(true).map_err(|_| ())?;
-    Ok(runtime.spawn(serve(handle, Arc::clone(shared), Arc::clone(secret))))
-}
-
-async fn serve(listener: std::net::TcpListener, shared: Arc<Shared>, secret: Arc<Mutex<[u8; 32]>>) {
-    let listener = match TcpListener::from_std(listener) {
-        Ok(l) => l,
-        Err(_) => {
-            shared.status.update(|s| s.error = error::INTERNAL);
-            return;
-        }
-    };
-    // The connections still waiting to present the secret, oldest first.
-    // Dropping a sender lets that connection go (see relay).
-    let mut waiting: VecDeque<oneshot::Sender<()>> = VecDeque::new();
-    let mut gone_in_a_row = 0;
+/// Connects to the first of `addresses` that answers. Each attempt gets
+/// `delay` before the next starts beside it, a failure starts the next at once,
+/// and the first connection wins: the attempts still running are dropped.
+/// None when every one failed.
+async fn staggered<A, T, E, C, F>(addresses: Vec<A>, connect: C, delay: Duration) -> Option<T>
+where
+    C: Fn(A) -> F,
+    F: Future<Output = Result<T, E>>,
+{
+    let mut waiting = addresses.into_iter();
+    let mut running = FuturesUnordered::new();
     loop {
-        let socket = match listener.accept().await {
-            Ok((socket, _)) => {
-                gone_in_a_row = 0;
-                socket
-            }
-            Err(e) => {
-                if pause_after(&e, &mut gone_in_a_row) {
-                    tokio::time::sleep(ACCEPT_BACKOFF).await;
-                }
-                continue;
-            }
-        };
-        waiting.retain(|w| !w.is_closed());
-        if waiting.len() >= PENDING_CAP {
-            // The oldest goes, not the newcomer: the app writes the secret the
-            // moment it connects, so places merely held do not keep it out. A
-            // sustained flood of fresh connections still can - see the bridge
-            // in contracts/ffi.md.
-            waiting.pop_front();
+        if running.is_empty() {
+            running.push(connect(waiting.next()?));
         }
-        let (evict, evicted) = oneshot::channel();
-        waiting.push_back(evict);
-        let expected = *lock(&secret);
-        let shared = Arc::clone(&shared);
-        tokio::spawn(async move {
-            let _ = relay(socket, shared, expected, evicted).await;
-        });
+        tokio::select! {
+            settled = running.next() => match settled {
+                Some(Ok(connected)) => return Some(connected),
+                Some(Err(_)) | None => {
+                    if let Some(next) = waiting.next() {
+                        running.push(connect(next));
+                    }
+                }
+            },
+            () = tokio::time::sleep(delay), if waiting.len() > 0 => {
+                if let Some(next) = waiting.next() {
+                    running.push(connect(next));
+                }
+            }
+        }
     }
 }
 
-/// An accept that failed over the one connection it was taking - gone before
-/// it was taken - says nothing about the next one.
-fn gone_before_taken(e: &io::Error) -> bool {
-    matches!(
-        e.kind(),
-        io::ErrorKind::ConnectionAborted | io::ErrorKind::ConnectionReset | io::ErrorKind::ConnectionRefused
-    )
+pub fn parse_onion(host: &str) -> Result<HsId, i32> {
+    host.parse().map_err(|_| code::TOR_ONION_INVALID)
 }
 
-/// Whether the accept loop pauses after this failure. Any failure beyond one
-/// connection does at once; one over a single connection only when it keeps
-/// coming, GONE_IN_A_ROW times in a row, and then the count starts again.
-fn pause_after(e: &io::Error, gone_in_a_row: &mut u32) -> bool {
-    if !gone_before_taken(e) {
-        return true;
-    }
-    *gone_in_a_row += 1;
-    if *gone_in_a_row < GONE_IN_A_ROW {
-        return false;
-    }
-    *gone_in_a_row = 0;
-    true
-}
-
-/// Reads and checks the secret. Constant-time, so a stranger learns nothing
-/// from how fast a wrong guess is turned away.
-pub async fn read_secret(socket: &mut TcpStream, expected: &[u8; 32]) -> Result<(), ()> {
-    let mut presented = [0u8; 32];
-    match tokio::time::timeout(SECRET_WAIT, socket.read_exact(&mut presented)).await {
-        Ok(Ok(_)) if bool::from(presented.ct_eq(expected)) => Ok(()),
-        _ => Err(()),
+/// A Tor stream to `host:port`, the onion service `hsid` names.
+pub async fn onion(ctx: &OnionContext, host: String, hsid: HsId, port: u16) -> Result<DataStream, i32> {
+    let (client, shared) = (Arc::clone(&ctx.client), Arc::clone(&ctx.shared));
+    // A task of its own, so the outcome lands in the status snapshot even when
+    // the channel gives up first - as the bridge's did: its connect ran on
+    // whatever the app did with the socket.
+    let connect = ctx.runtime.spawn(async move { connect_and_record(&client, &shared, &host, hsid, port).await });
+    match connect.await {
+        Ok(outcome) => outcome,
+        Err(e) if e.is_panic() => Err(code::INTERNAL),
+        // The runtime went away under it: the Tor client stopped.
+        Err(_) => Err(code::NETWORK),
     }
 }
 
-async fn relay(
-    mut socket: TcpStream,
-    shared: Arc<Shared>,
-    expected: [u8; 32],
-    evicted: oneshot::Receiver<()>,
-) -> Result<(), ()> {
-    tokio::select! {
-        presented = read_secret(&mut socket, &expected) => presented?,
-        // Pushed out by newer connections while still waiting.
-        _ = evicted => return Err(()),
-    }
-    // Where to go, and nothing more: the key stays with the client.
-    let (host, port) = {
-        let slot = lock(&shared.target);
-        let target = slot.as_ref().ok_or(())?;
-        (target.host.clone(), target.port)
-    };
-    let tor = lock(&shared.client).clone().ok_or(())?;
-    let (client, target) = (&*tor, (host.as_str(), port));
+async fn connect_and_record(
+    client: &Client,
+    shared: &Shared,
+    host: &str,
+    hsid: HsId,
+    port: u16,
+) -> Result<DataStream, i32> {
+    // The group a hedge was won in belongs to the target it won for; a channel
+    // to any other service starts from Arti's default, and keeps what it wins
+    // to itself.
+    let elsewhere = ConnectGroup::default();
+    let own = lock(&shared.target).as_ref().is_some_and(|t| t.hsid == hsid);
+    let group = if own { &shared.connect_group } else { &elsewhere };
+    let target = (host, port);
     let connect = connect_in_groups(
-        &shared.connect_group,
+        group,
         move |group| async move {
             let prefs = prefs_in(group);
             client.connect_with_prefs(target, &prefs).await
         },
         HEDGE_AFTER,
     );
-    let mut stream = match tokio::time::timeout(CONNECT_BUDGET, connect).await {
-        Ok(Ok(stream)) => stream,
+    match tokio::time::timeout(CONNECT_BUDGET, connect).await {
+        Ok(Ok(stream)) => {
+            // Through: whatever failed before is not broken any more.
+            shared.status.update(|s| s.error = error::NONE);
+            Ok(stream)
+        }
         Ok(Err(e)) => {
-            let code = classify(&e);
-            shared.status.update(|s| s.error = code);
-            return Err(());
+            let status = classify(&e);
+            shared.status.update(|s| s.error = status);
+            Err(onion_failure(&e))
         }
         Err(_) => {
             shared.status.update(|s| s.error = error::TIMEOUT);
-            return Err(());
+            Err(code::TIMEOUT)
         }
-    };
-    shared.status.update(|s| s.error = error::NONE);
-    let _ = tokio::io::copy_bidirectional(&mut socket, &mut stream).await;
-    Ok(())
+    }
+}
+
+/// The channel's failure kind for an Arti error: the onion-service kinds by
+/// name, the rest through the status snapshot's `classify`. Kinds only - the
+/// message may carry an onion address and must not travel.
+fn onion_failure(e: &arti_client::Error) -> i32 {
+    use arti_client::{ErrorKind, HasKind};
+    match e.kind() {
+        ErrorKind::OnionServiceAddressInvalid => code::TOR_ONION_INVALID,
+        ErrorKind::OnionServiceNotFound => code::TOR_ONION_NOT_FOUND,
+        ErrorKind::OnionServiceNotRunning
+        | ErrorKind::OnionServiceConnectionFailed
+        | ErrorKind::OnionServiceProtocolViolation => code::TOR_ONION_UNREACHABLE,
+        ErrorKind::BootstrapRequired => code::TOR_NOT_READY,
+        _ => match classify(e) {
+            error::MISSING_CLIENT_AUTH | error::WRONG_CLIENT_AUTH => code::TOR_CLIENT_AUTH,
+            // The network no longer takes this client: Tor is not coming up.
+            error::SOFTWARE_DEPRECATED => code::TOR_NOT_READY,
+            error::INTERNAL => code::INTERNAL,
+            // The Tor network itself: circuits, directories, its timeouts.
+            _ => code::NETWORK,
+        },
+    }
 }
 
 /// The isolation group connects to the onion service go in: Arti's default
@@ -325,67 +278,133 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::io::AsyncWriteExt;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
 
-    async fn pair() -> (TcpStream, TcpStream) {
+    #[tokio::test]
+    async fn a_direct_connect_reaches_a_listener_by_address_and_by_name() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let client = TcpStream::connect(addr).await.unwrap();
-        let (server, _) = listener.accept().await.unwrap();
-        (client, server)
+        let port = listener.local_addr().unwrap().port();
+        for host in ["127.0.0.1", "localhost"] {
+            let mut client = direct(host, port).await.unwrap_or_else(|code| panic!("{host}: {code}"));
+            assert!(client.nodelay().unwrap());
+            let (mut server, _) = listener.accept().await.unwrap();
+            client.write_all(b"x").await.unwrap();
+            assert_eq!(server.read_u8().await.unwrap(), b'x');
+        }
     }
 
     #[tokio::test]
-    async fn the_right_secret_passes() {
-        let secret = [7u8; 32];
-        let (mut client, mut server) = pair().await;
-        client.write_all(&secret).await.unwrap();
-        assert!(read_secret(&mut server, &secret).await.is_ok());
+    async fn a_bracketed_ipv6_address_is_an_address() {
+        let Ok(listener) = TcpListener::bind("[::1]:0").await else {
+            return; // No IPv6 loopback on this machine.
+        };
+        let port = listener.local_addr().unwrap().port();
+        assert!(direct("[::1]", port).await.is_ok());
+        assert!(direct("::1", port).await.is_ok());
     }
 
     #[tokio::test]
-    async fn a_wrong_secret_is_refused() {
-        let secret = [7u8; 32];
-        let (mut client, mut server) = pair().await;
-        let mut wrong = secret;
-        wrong[31] ^= 1;
-        client.write_all(&wrong).await.unwrap();
-        assert!(read_secret(&mut server, &secret).await.is_err());
-    }
-
-    #[tokio::test]
-    async fn a_short_secret_is_refused() {
-        let secret = [7u8; 32];
-        let (mut client, mut server) = pair().await;
-        client.write_all(&secret[..16]).await.unwrap();
-        drop(client);
-        assert!(read_secret(&mut server, &secret).await.is_err());
+    async fn a_refused_connect_is_the_networks_failure() {
+        let port = {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            listener.local_addr().unwrap().port()
+        };
+        assert_eq!(direct("127.0.0.1", port).await.err(), Some(code::NETWORK));
     }
 
     #[test]
-    fn secrets_are_random() {
-        assert_ne!(random_secret().unwrap(), random_secret().unwrap());
+    fn an_onion_address_parses_only_when_it_is_one() {
+        assert!(parse_onion("25njqamcweflpvkl73j4szahhihoc4xt3ktcgjnpaingr5yhkenl5sid.onion").is_ok());
+        for broken in [
+            "example.com",
+            "nope.onion",
+            // One character off: the checksum catches it.
+            "25njqamcweflpvkl73j4szahhihoc4xt3ktcgjnpaingr5yhkenl5sie.onion",
+        ] {
+            assert_eq!(parse_onion(broken).err(), Some(code::TOR_ONION_INVALID), "{broken}");
+        }
     }
 
-    #[tokio::test]
-    async fn over_the_cap_the_oldest_waiting_connection_goes() {
-        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        listener.set_nonblocking(true).unwrap();
-        let addr = listener.local_addr().unwrap();
-        let serving = tokio::spawn(serve(listener, Arc::new(Shared::default()), Arc::new(Mutex::new([7u8; 32]))));
-        // One more than the cap, and none of them presents the secret.
-        let mut waiting = Vec::new();
-        for _ in 0..=PENDING_CAP {
-            waiting.push(TcpStream::connect(addr).await.unwrap());
+    mod stagger {
+        use super::super::{staggered, ATTEMPT_DELAY};
+        use std::cell::RefCell;
+        use std::time::Duration;
+        use tokio::time::Instant;
+
+        /// What an address does when dialled: connect or fail after a while,
+        /// or swallow the SYN and never answer.
+        #[derive(Clone, Copy, Debug)]
+        enum Peer {
+            Answers(u64),
+            Refuses(u64),
+            BlackHole,
         }
-        let mut byte = [0u8; 1];
-        let oldest = tokio::time::timeout(Duration::from_secs(2), waiting[0].read(&mut byte)).await;
-        assert!(matches!(oldest, Ok(Ok(0)) | Ok(Err(_))), "the oldest is still waiting: {oldest:?}");
-        for kept in [1, PENDING_CAP] {
-            let read = tokio::time::timeout(Duration::from_millis(200), waiting[kept].read(&mut byte)).await;
-            assert!(read.is_err(), "connection {kept} was let go: {read:?}");
+
+        async fn dial(peer: (&'static str, Peer)) -> Result<&'static str, &'static str> {
+            match peer.1 {
+                Peer::Answers(ms) => {
+                    tokio::time::sleep(Duration::from_millis(ms)).await;
+                    Ok(peer.0)
+                }
+                Peer::Refuses(ms) => {
+                    tokio::time::sleep(Duration::from_millis(ms)).await;
+                    Err(peer.0)
+                }
+                Peer::BlackHole => std::future::pending().await,
+            }
         }
-        serving.abort();
+
+        fn at(start: Instant, ms: u64) {
+            let elapsed = start.elapsed();
+            let expected = Duration::from_millis(ms);
+            assert!(elapsed >= expected && elapsed < expected + Duration::from_millis(5), "settled at {elapsed:?}");
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn a_black_hole_costs_one_delay_not_the_budget() {
+            let start = Instant::now();
+            let peers = vec![("v4", Peer::BlackHole), ("v6", Peer::Answers(10))];
+            assert_eq!(staggered(peers, dial, ATTEMPT_DELAY).await, Some("v6"));
+            at(start, 250 + 10);
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn a_refusal_starts_the_next_at_once() {
+            let start = Instant::now();
+            let peers = vec![("a", Peer::Refuses(50)), ("b", Peer::Answers(10))];
+            assert_eq!(staggered(peers, dial, ATTEMPT_DELAY).await, Some("b"));
+            at(start, 50 + 10);
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn a_slow_first_still_wins_when_it_answers_first() {
+            let start = Instant::now();
+            let peers = vec![("slow", Peer::Answers(300)), ("hole", Peer::BlackHole)];
+            assert_eq!(staggered(peers, dial, ATTEMPT_DELAY).await, Some("slow"));
+            at(start, 300);
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn none_when_every_address_fails() {
+            let start = Instant::now();
+            let dialled = RefCell::new(Vec::new());
+            let peers = vec![("a", Peer::Refuses(400)), ("b", Peer::Refuses(10)), ("c", Peer::Refuses(10))];
+            let got = staggered(
+                peers,
+                |peer| {
+                    dialled.borrow_mut().push(peer.0);
+                    dial(peer)
+                },
+                ATTEMPT_DELAY,
+            )
+            .await;
+            assert_eq!(got, None);
+            // b at 250, refused at 260, c at once; a is the last to give up.
+            assert_eq!(*dialled.borrow(), ["a", "b", "c"]);
+            at(start, 400);
+            assert_eq!(staggered(Vec::<(&str, Peer)>::new(), dial, ATTEMPT_DELAY).await, None, "no address at all");
+        }
     }
 
     mod hedge {
@@ -557,18 +576,5 @@ mod tests {
             assert_eq!(connect_in_groups(&group, refused, HEDGE_AFTER).await, Err("refused"));
             assert_eq!(group.current(), Some(stored));
         }
-    }
-
-    #[test]
-    fn an_accept_failure_that_keeps_coming_pauses_the_loop() {
-        let gone = io::Error::from(io::ErrorKind::ConnectionAborted);
-        let mut in_a_row = 0;
-        for _ in 1..GONE_IN_A_ROW {
-            assert!(!pause_after(&gone, &mut in_a_row), "one connection gone says nothing about the next");
-        }
-        assert!(pause_after(&gone, &mut in_a_row), "this many in a row is about the listener");
-        assert!(!pause_after(&gone, &mut in_a_row), "and the count starts again after the pause");
-        let other = io::Error::other("too many open files");
-        assert!(pause_after(&other, &mut 0), "a failure beyond one connection pauses at once");
     }
 }

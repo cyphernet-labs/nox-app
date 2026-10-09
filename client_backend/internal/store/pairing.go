@@ -55,7 +55,7 @@ func (s *Store) IssueClaimToken(ctx context.Context, now int64) (string, error) 
 		return "", err
 	}
 	if _, err := s.write.ExecContext(ctx,
-		"INSERT INTO pair_tokens (token, kind, user_id, created_at, expires_at, used_at, access_key) VALUES (?, ?, NULL, ?, NULL, NULL, NULL)",
+		"INSERT INTO pair_tokens (token, kind, user_id, created_at, expires_at, used_at) VALUES (?, ?, NULL, ?, NULL, NULL)",
 		token, TokenClaim, now); err != nil {
 		return "", fmt.Errorf("insert claim token: %w", err)
 	}
@@ -74,20 +74,25 @@ func (s *Store) IssueClaimToken(ctx context.Context, now int64) (string, error) 
 // the one minted after it - a door opened by a device that had just been told
 // to leave.
 func (s *Store) IssueDeviceInvite(ctx context.Context, issuer string, now int64) (string, error) {
-	return s.issueInvite(ctx, issuer, now, "")
-}
-
-// IssueOnionInvite mints a device invite that also carries a one-time onion
-// access key (039): accessKey is the PUBLIC half, and the private half lives
-// only in the link the caller builds - never here. The issuer is checked as
-// for IssueDeviceInvite.
-//
-// The key works exactly as long as the invite does. Spending, expiring and
-// burning the token - a revocation burns every live invite of the person -
-// switch it off with no write of their own, because ActiveAccessKeys reads it
-// through the token's own state.
-func (s *Store) IssueOnionInvite(ctx context.Context, issuer, accessKey string, now int64) (string, error) {
-	return s.issueInvite(ctx, issuer, now, accessKey)
+	token, err := newTokenValue()
+	if err != nil {
+		return "", err
+	}
+	res, err := s.write.ExecContext(ctx,
+		`INSERT INTO pair_tokens (token, kind, user_id, created_at, expires_at, used_at)
+		 SELECT ?, ?, user_id, ?, ?, NULL FROM devices WHERE device_key = ?`,
+		token, TokenInviteDevice, now, now+InviteTTLSeconds, issuer)
+	if err != nil {
+		return "", fmt.Errorf("insert invite: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return "", fmt.Errorf("insert invite: %w", err)
+	}
+	if n == 0 {
+		return "", ErrDeviceUnknown
+	}
+	return token, nil
 }
 
 // ClaimTokenUsable reports whether a claim token can still be presented.
@@ -120,32 +125,6 @@ func newTokenValue() (string, error) {
 		return "", fmt.Errorf("generate pairing token: %w", err)
 	}
 	return base64.RawURLEncoding.EncodeToString(raw[:]), nil
-}
-
-func (s *Store) issueInvite(ctx context.Context, issuer string, now int64, accessKey string) (string, error) {
-	token, err := newTokenValue()
-	if err != nil {
-		return "", err
-	}
-	var access any
-	if accessKey != "" {
-		access = accessKey
-	}
-	res, err := s.write.ExecContext(ctx,
-		`INSERT INTO pair_tokens (token, kind, user_id, created_at, expires_at, used_at, access_key)
-		 SELECT ?, ?, user_id, ?, ?, NULL, ? FROM devices WHERE device_key = ?`,
-		token, TokenInviteDevice, now, now+InviteTTLSeconds, access, issuer)
-	if err != nil {
-		return "", fmt.Errorf("insert invite: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return "", fmt.Errorf("insert invite: %w", err)
-	}
-	if n == 0 {
-		return "", ErrDeviceUnknown
-	}
-	return token, nil
 }
 
 // burnToken spends a token inside the caller's transaction and reports what it
@@ -211,9 +190,8 @@ func burnToken(ctx context.Context, tx *sql.Tx, token, deviceKey string, now int
 type PairOptions struct {
 	// AccessKey is the device's onion access key - an x25519 PUBLIC key,
 	// base64, already validated - written in the same transaction as the
-	// device row, or empty for none. A device that came in over onion by an
-	// invite's one-time key keeps its way in only because its own key is
-	// written here: the one-time key dies with the token this call spends.
+	// device row, or empty for none. It is what lets the device reach the
+	// onion service once it is away from home (until 045 retires access keys).
 	AccessKey string
 	// ViaOnion says the connection arrived through the onion entry. A claim is
 	// refused there - including the replay of one already spent - and the
@@ -394,20 +372,21 @@ func (s *Store) Pair(ctx context.Context, token, deviceKey, platform string, opt
 		return Identity{}, ErrTokenInvalid
 	}
 
-	// A key already belonging to somebody else is refused outright. It is a
-	// PUBLIC value - it rides every greeting and device.list prints it - so
-	// without this anyone who can issue an invite for themselves could name a
-	// stranger's key and take that device: it would keep working, resolve as
-	// the attacker on its next greeting, author every message as them, and
-	// vanish from its real owner's device list.
+	// A key already belonging to somebody else is refused outright. Since 044
+	// the key is the one the connection PROVED in the channel check, so a
+	// caller cannot name a stranger's - but a device key is a public value
+	// (device.list prints it), and were one ever to arrive unproved, this is
+	// what stops the takeover: the device would keep working, resolve as the
+	// attacker on its next greeting, author every message as them, and vanish
+	// from its real owner's device list.
 	//
 	// Refusing is the other way to satisfy "the row and the reply must agree",
 	// and it is the one that does not hand a device away.
 	//
 	// Unreachable while the schema admits one person - `bound` is then either
 	// empty or that person - and kept anyway: it is two lines on the one command
-	// that runs without a signature, and it should hold the invariant rather
-	// than assume it. The reachable half, re-pairing your OWN device, is
+	// a key the server does not know may send, and it should hold the invariant
+	// rather than assume it. The reachable half, re-pairing your OWN device, is
 	// exercised by TestPairingYourOwnDeviceKeyAgainIsAccepted.
 	bound, err := deviceOwnerOf(ctx, tx, deviceKey)
 	if err != nil {
@@ -462,10 +441,10 @@ func pairedBy(ctx context.Context, tx *sql.Tx, token, deviceKey string) (Identit
 	// the outcome from the token kind reports "created" for a re-claim that
 	// created nobody, walking a named person back through the naming screen.
 	//
-	// used_by is what keeps a spent token from answering a stranger: the key is
-	// public - it rides every greeting and device.list prints it - the token
-	// sits in the server log across restarts, and `pair` is the one command
-	// that carries no signature.
+	// used_by is what keeps a spent token from answering a stranger: the token
+	// sits in the server log across restarts, and `pair` is the one command a
+	// key the server does not know may send. The channel proves that key is
+	// the caller's own (044) - not that it is the key that spent the token.
 	// The device must STILL belong to the person the token produced. Without
 	// that join the replay path answers before Pair's takeover refusal is ever
 	// reached: a key that has since been revoked and re-paired would be handed

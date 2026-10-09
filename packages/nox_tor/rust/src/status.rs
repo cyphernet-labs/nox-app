@@ -14,6 +14,8 @@ pub struct NoxTorStatus {
     pub bootstrap_percent: u8,
     pub error: u8,
     pub reserved: u8,
+    /// Always 0 since 044: it was the loopback bridge's port, and there is no
+    /// bridge. Kept so the layout the app binds stays where it is.
     pub port: u16,
     pub reserved2: u16,
 }

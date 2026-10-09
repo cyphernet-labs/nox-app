@@ -1,12 +1,9 @@
 package server
 
 import (
-	"context"
-	"encoding/base64"
 	"fmt"
-	"net"
 	"net/http"
-	"strings"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -88,40 +85,30 @@ func TestASlowPeerIsKeptOnOnionAndDroppedOnTheDirectPath(t *testing.T) {
 	}
 }
 
+// Neither the service page nor /health is on the onion entry: the page has its
+// own loopback listener, and /health moved there with 044.
 func TestTheStatusPageIsNotOnTheOnionEntry(t *testing.T) {
 	st := newOnionStack(t)
-	resp, err := pinnedClient(st.onion).Get(st.onion.URL + "/")
-	if err != nil {
-		t.Fatalf("GET /: %v", err)
-	}
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("GET / on the onion entry = %d, want 404 - the status page lives on its own loopback listener", resp.StatusCode)
-	}
-	health, err := pinnedClient(st.onion).Get(st.onion.URL + "/health")
-	if err != nil {
-		t.Fatalf("GET /health: %v", err)
-	}
-	_ = health.Body.Close()
-	if health.StatusCode != http.StatusOK {
-		t.Fatalf("GET /health on the onion entry = %d, want 200 - everything but claim works there", health.StatusCode)
+	for _, path := range []string{"/", "/health"} {
+		resp, err := st.onion.Client().Get(st.onion.URL + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("GET %s on the onion entry = %d, want 404 - it lives on the service page's loopback listener", path, resp.StatusCode)
+		}
 	}
 }
 
-func presentToken(t *testing.T, ts interface {
-	Client() *http.Client
-}, url string, token string, d *device) (bool, string) {
+// presentToken presents a token as d through the entry ts serves, and reports
+// the answer.
+func presentToken(t *testing.T, ts *httptest.Server, token string, d *device) (bool, string) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	conn, _, err := websocket.Dial(ctx, url+"/ws", &websocket.DialOptions{HTTPClient: ts.Client()})
-	if err != nil {
-		t.Fatalf("dial: %v", err)
-	}
-	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
-	c := &wsClient{t: t, conn: conn, ctx: ctx}
+	c := dialAs(t, ts, nil, d)
+	defer func() { _ = c.conn.Close(websocket.StatusNormalClosure, "") }()
 	c.expectGreeting()
-	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"device_key":%q,"platform":"test"}}`, token, d.pub))
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"test"}}`, token))
 	reply := c.expectReply(1)
 	var ok bool
 	mustUnmarshal(t, reply["ok"], &ok)
@@ -138,11 +125,11 @@ func TestAClaimOverOnionIsRefusedAndTheTokenSurvives(t *testing.T) {
 	token := mustClaimToken(t, st.srv)
 	d := newDevice(t)
 
-	if ok, code := presentToken(t, st.onion, st.onion.URL, token, d); ok || code != protocol.ErrInvalidToken {
+	if ok, code := presentToken(t, st.onion, token, d); ok || code != protocol.ErrInvalidToken {
 		t.Fatalf("claim over onion: ok=%v code=%q, want invalid_token", ok, code)
 	}
 	// The refusal rolled back: the same token still claims at home.
-	if ok, code := presentToken(t, st.ts, st.ts.URL, token, d); !ok {
+	if ok, code := presentToken(t, st.ts, token, d); !ok {
 		t.Fatalf("the token did not survive the refusal: %q", code)
 	}
 }
@@ -151,30 +138,23 @@ func TestAReplayedClaimOverOnionIsRefused(t *testing.T) {
 	st := newOnionStack(t)
 	token := mustClaimToken(t, st.srv)
 	d := newDevice(t)
-	if ok, code := presentToken(t, st.ts, st.ts.URL, token, d); !ok {
+	if ok, code := presentToken(t, st.ts, token, d); !ok {
 		t.Fatalf("claim at home: %q", code)
 	}
-	if ok, code := presentToken(t, st.onion, st.onion.URL, token, d); ok || code != protocol.ErrInvalidToken {
+	if ok, code := presentToken(t, st.onion, token, d); ok || code != protocol.ErrInvalidToken {
 		t.Fatalf("replay over onion: ok=%v code=%q, want invalid_token", ok, code)
 	}
 }
 
-// decodeLink splits a pairing link into its version and the host it names.
-func decodeLink(t *testing.T, link string) (version byte, payload []byte, host string) {
+// readLink parses a link the server issued, failing the test if it does not
+// read back.
+func readLink(t *testing.T, link string) PairingLink {
 	t.Helper()
-	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(link, pairingLinkPrefix))
+	parsed, err := ParsePairingLink(link)
 	if err != nil {
-		t.Fatalf("link payload: %v", err)
+		t.Fatalf("the link does not read back: %v (%s)", err, link)
 	}
-	switch raw[1] {
-	case hostTypeIPv4:
-		host = net.IP(raw[2:6]).String()
-	case hostTypeIPv6:
-		host = net.IP(raw[2:18]).String()
-	case hostTypeDNS:
-		host = string(raw[3 : 3+int(raw[2])])
-	}
-	return raw[0], raw, host
+	return parsed
 }
 
 func TestAnInviteAskedOverOnionCarriesADirectAddressNotTheOnionName(t *testing.T) {
@@ -184,19 +164,16 @@ func TestAnInviteAskedOverOnionCarriesADirectAddressNotTheOnionName(t *testing.T
 	})
 	// Paired at home - a claim never goes over onion - then greeting over it.
 	d := pairedDevice(t, st.ts, st.srv)
-	owner := dialWS(t, st.onion, st.srv)
+	owner := dialAs(t, st.onion, st.srv, d)
 	owner.expectGreeting()
-	owner.greet(t, 1, d, "")
+	owner.hello(1, "")
 	owner.send(`{"id":2,"cmd":"device.invite","data":{}}`)
 	data := owner.expectOK(2)
 	var link string
 	mustUnmarshal(t, data["link"], &link)
-	version, _, host := decodeLink(t, link)
-	if version != pairingLinkVersion {
-		t.Fatalf("version = %d, want 1 without onion", version)
-	}
-	if host != "192.168.1.20" {
-		t.Fatalf("host = %q, want the head of the list - the home address - rather than the Host the onion request carried", host)
+	direct := readLink(t, link).Direct
+	if len(direct) != 1 || direct[0] != "192.168.1.20:8080" {
+		t.Fatalf("direct = %v, want the head of the list - the home address - rather than the Host the onion request carried", direct)
 	}
 }
 

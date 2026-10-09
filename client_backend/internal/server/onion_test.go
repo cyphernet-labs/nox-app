@@ -4,15 +4,15 @@ import (
 	"bytes"
 	"context"
 	"crypto/ecdh"
+	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/binary"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,7 +34,10 @@ import (
 // What they cannot reach is said where it applies: claim over onion is
 // impossible by construction on a real network (an unclaimed server has no
 // key, so no service), and is covered on the onion entry in
-// onion_entry_test.go - the same code path without the minutes.
+// onion_entry_test.go - the same code path without the minutes. Pairing a new
+// device through the onion service waits for 045: the one-time key an onion
+// invite used to lend is gone, so the service opens only to devices already
+// paired at home - which is what TestOnionAccess holds.
 
 func torTestBin(t *testing.T) string {
 	t.Helper()
@@ -51,7 +54,8 @@ type liveStack struct {
 	srv  *Server
 	sup  *tor.Supervisor
 	logs *syncLog
-	fp   string
+	// key is the machine's key, which every channel - onion ones too - proves.
+	key  ed25519.PublicKey
 	stop func()
 }
 
@@ -84,17 +88,15 @@ func startLive(t *testing.T, dbPath string) *liveStack {
 		}
 		s.tor = sup
 	})
-	tlsCfg, err := srv.serverTLSConfig(context.Background())
+	tlsCfg, err := channelTLSConfig(time.Now())
 	if err != nil {
-		t.Fatalf("serverTLSConfig: %v", err)
+		t.Fatalf("channelTLSConfig: %v", err)
 	}
-	onion := httptest.NewUnstartedServer(srv.Handler())
-	_ = onion.Listener.Close()
-	onion.Listener = ln
-	onion.TLS = tlsCfg
-	onion.Config.ConnContext = markOnionConn
-	onion.Config.ErrorLog = log.New(io.Discard, "", 0)
-	onion.StartTLS()
+	key, err := srv.store.ServerKey(context.Background())
+	if err != nil {
+		t.Fatalf("ServerKey: %v", err)
+	}
+	onion := serveChannel(t, srv, ln, tlsCfg, key, srv.onionTimeout, "onion", onionConnContext, channelOf(t, ts).devices)
 
 	torCtx, stopTor := context.WithCancel(context.Background())
 	torDone := make(chan struct{})
@@ -102,10 +104,6 @@ func startLive(t *testing.T, dbPath string) *liveStack {
 		defer close(torDone)
 		sup.Run(torCtx)
 	}()
-	identity, err := srv.store.ServerIdentity(context.Background())
-	if err != nil {
-		t.Fatalf("ServerIdentity: %v", err)
-	}
 	stopped := false
 	stop := func() {
 		if stopped {
@@ -118,7 +116,7 @@ func startLive(t *testing.T, dbPath string) *liveStack {
 		<-torDone
 	}
 	t.Cleanup(stop)
-	return &liveStack{ts: ts, srv: srv, sup: sup, logs: logs, fp: identity.Fingerprint, stop: stop}
+	return &liveStack{ts: ts, srv: srv, sup: sup, logs: logs, key: serverKeyOf(t, srv), stop: stop}
 }
 
 func (l *liveStack) waitPublished(t *testing.T) {
@@ -215,18 +213,83 @@ func (c *clientTor) authorize(addr, privB64 string) {
 	}
 }
 
-func (c *clientTor) forget(addr string) {
-	c.t.Helper()
-	_, _ = c.ctl.Command(context.Background(), "ONION_CLIENT_AUTH_REMOVE "+addr)
+// dialOnionChannel opens the channel through the client tor: a SOCKS5 stream
+// to the onion service, then the same TLS and check as at home, as d.
+func (c *clientTor) dialOnionChannel(ctx context.Context, l *liveStack, d *device) (net.Conn, error) {
+	stream, err := socksConnect(ctx, c.socks, l.sup.Address()+".onion", tor.OnionPort)
+	if err != nil {
+		return nil, err
+	}
+	return channelOver(ctx, stream, l.key, d.priv)
 }
 
-// httpClient goes through the client tor with the server's pin.
-func (c *clientTor) httpClient(fingerprint string) *http.Client {
-	proxy, _ := url.Parse("socks5://" + c.socks)
+// httpClientAs is an HTTP client whose every connection is a channel through
+// the client tor, as d.
+func (c *clientTor) httpClientAs(l *liveStack, d *device) *http.Client {
 	return &http.Client{Timeout: 2 * time.Minute, Transport: &http.Transport{
-		Proxy:           http.ProxyURL(proxy),
-		TLSClientConfig: PinnedTLSConfig(fingerprint),
+		DialTLSContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return c.dialOnionChannel(ctx, l, d)
+		},
 	}}
+}
+
+// socksConnect asks a SOCKS5 proxy - tor - for a stream to host:port, with
+// no authentication and the name resolved by the proxy (RFC 1928). The
+// channel goes on top of it exactly as it goes on top of TCP.
+func socksConnect(ctx context.Context, proxy, host string, port int) (net.Conn, error) {
+	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", proxy)
+	if err != nil {
+		return nil, err
+	}
+	fail := func(err error) (net.Conn, error) {
+		_ = conn.Close()
+		return nil, err
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
+	}
+	if _, err := conn.Write([]byte{5, 1, 0}); err != nil {
+		return fail(err)
+	}
+	var choice [2]byte
+	if _, err := io.ReadFull(conn, choice[:]); err != nil {
+		return fail(err)
+	}
+	if choice != [2]byte{5, 0} {
+		return fail(fmt.Errorf("socks: the proxy chose method %x", choice))
+	}
+	req := append([]byte{5, 1, 0, 3, byte(len(host))}, host...)
+	req = binary.BigEndian.AppendUint16(req, uint16(port))
+	if _, err := conn.Write(req); err != nil {
+		return fail(err)
+	}
+	var head [4]byte
+	if _, err := io.ReadFull(conn, head[:]); err != nil {
+		return fail(err)
+	}
+	if head[1] != 0 {
+		return fail(fmt.Errorf("socks: connect refused with code %d", head[1]))
+	}
+	var skip int
+	switch head[3] {
+	case 1:
+		skip = 4 + 2
+	case 4:
+		skip = 16 + 2
+	case 3:
+		var n [1]byte
+		if _, err := io.ReadFull(conn, n[:]); err != nil {
+			return fail(err)
+		}
+		skip = int(n[0]) + 2
+	default:
+		return fail(fmt.Errorf("socks: unknown address type %d", head[3]))
+	}
+	if _, err := io.ReadFull(conn, make([]byte, skip)); err != nil {
+		return fail(err)
+	}
+	_ = conn.SetDeadline(time.Time{})
+	return conn, nil
 }
 
 func newAccessKey(t *testing.T) (*ecdh.PrivateKey, string, string) {
@@ -238,21 +301,21 @@ func newAccessKey(t *testing.T) (*ecdh.PrivateKey, string, string) {
 	return k, base64.StdEncoding.EncodeToString(k.PublicKey().Bytes()), base64.StdEncoding.EncodeToString(k.Bytes())
 }
 
-// dialOnion opens the WebSocket through the client tor, retrying while the
-// descriptor propagates.
-func dialOnion(t *testing.T, c *clientTor, l *liveStack, within time.Duration) *wsClient {
+// dialOnionAs opens the WebSocket through the client tor as d, retrying while
+// the descriptor propagates.
+func dialOnionAs(t *testing.T, c *clientTor, l *liveStack, d *device, within time.Duration) *wsClient {
 	t.Helper()
 	target := "https://" + l.sup.Address() + ".onion:443/ws"
 	deadline := time.Now().Add(within)
 	var lastErr error
 	for time.Now().Before(deadline) {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-		conn, _, err := websocket.Dial(ctx, target, &websocket.DialOptions{HTTPClient: c.httpClient(l.fp)})
+		conn, _, err := websocket.Dial(ctx, target, &websocket.DialOptions{HTTPClient: c.httpClientAs(l, d)})
 		if err == nil {
 			conn.SetReadLimit(1 << 20)
 			t.Cleanup(cancel)
 			t.Cleanup(func() { _ = conn.Close(websocket.StatusNormalClosure, "") })
-			return &wsClient{t: t, conn: conn, ctx: ctx, srv: l.srv}
+			return &wsClient{t: t, conn: conn, ctx: ctx, dev: d, srv: l.srv}
 		}
 		cancel()
 		lastErr = err
@@ -262,15 +325,16 @@ func dialOnion(t *testing.T, c *clientTor, l *liveStack, within time.Duration) *
 	return nil
 }
 
-// onionRefused reports whether a fresh connection through the client tor is
-// refused - every attempt up to n, each from a new circuit.
+// onionRefused reports whether a fresh channel through the client tor is
+// refused - every attempt up to n, each from a new circuit. Any key opens the
+// channel itself, so a failure here is the onion service's: no stream at all.
 func onionRefused(c *clientTor, l *liveStack, n int) bool {
-	client := c.httpClient(l.fp)
-	client.Timeout = 90 * time.Second
 	for range n {
-		resp, err := client.Get("https://" + l.sup.Address() + ".onion:443/health")
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		conn, err := c.dialOnionChannel(ctx, l, &device{priv: ed25519.NewKeyFromSeed(make([]byte, 32))})
+		cancel()
 		if err == nil {
-			_ = resp.Body.Close()
+			_ = conn.Close()
 			return false
 		}
 	}
@@ -280,10 +344,10 @@ func onionRefused(c *clientTor, l *liveStack, n int) bool {
 func claimWithKey(t *testing.T, l *liveStack, accessPub string) *device {
 	t.Helper()
 	d := newDevice(t)
-	c := dialWS(t, l.ts, l.srv)
+	c := dialAs(t, l.ts, l.srv, d)
 	c.expectGreeting()
-	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"device_key":%q,"platform":"test","access_key":%q}}`,
-		mustClaimToken(t, l.srv), d.pub, accessPub))
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"test","access_key":%q}}`,
+		mustClaimToken(t, l.srv), accessPub))
 	c.expectOK(1)
 	return d
 }
@@ -296,9 +360,9 @@ func TestOnionReach(t *testing.T) {
 
 	client := startClientTor(t)
 	client.authorize(l.sup.Address(), k1Priv)
-	c := dialOnion(t, client, l, 3*time.Minute)
+	c := dialOnionAs(t, client, l, d, 3*time.Minute)
 	c.expectGreeting()
-	hello := c.greet(t, 1, d, "")
+	hello := c.hello(1, "")
 	var addrs addressSet
 	mustUnmarshal(t, hello["addresses"], &addrs)
 	if addrs.Onion != l.sup.Address()+".onion:443" {
@@ -322,7 +386,7 @@ func TestOnionReach(t *testing.T) {
 	var upURL, fileID string
 	mustUnmarshal(t, up["upload_url"], &upURL)
 	mustUnmarshal(t, up["file_id"], &fileID)
-	httpc := client.httpClient(l.fp)
+	httpc := client.httpClientAs(l, d)
 	base := "https://" + l.sup.Address() + ".onion:443"
 	req, _ := http.NewRequest(http.MethodPut, base+upURL, bytes.NewReader(payload))
 	resp, err := httpc.Do(req)
@@ -379,93 +443,37 @@ func TestOnionAccess(t *testing.T) {
 
 	// A second device with its own key gets in, and loses its way the moment
 	// it is revoked (SC-004).
-	ownerConn := dialWS(t, l.ts, l.srv)
+	ownerConn := dialAs(t, l.ts, l.srv, owner)
 	ownerConn.expectGreeting()
-	ownerConn.greet(t, 1, owner, "")
+	ownerConn.hello(1, "")
 	_, k2Pub, k2Priv := newAccessKey(t)
 	ownerConn.send(`{"id":2,"cmd":"device.invite","data":{}}`)
 	inv := ownerConn.expectOK(2)
 	var token string
 	mustUnmarshal(t, inv["token"], &token)
 	second := newDevice(t)
-	pc := dialWS(t, l.ts, l.srv)
+	pc := dialAs(t, l.ts, l.srv, second)
 	pc.expectGreeting()
-	pc.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"device_key":%q,"platform":"test","access_key":%q}}`, token, second.pub, k2Pub))
+	pc.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"test","access_key":%q}}`, token, k2Pub))
 	pc.expectOK(1)
 
 	device := startClientTor(t)
 	device.authorize(l.sup.Address(), k2Priv)
-	oc := dialOnion(t, device, l, 3*time.Minute)
+	oc := dialOnionAs(t, device, l, second, 3*time.Minute)
 	oc.expectGreeting()
-	oc.greet(t, 1, second, "")
+	oc.hello(1, "")
 
 	// A connection of its own for the revocation: the onion dial above can
 	// take minutes on a slow network, longer than a test connection lives.
-	revoker := dialWS(t, l.ts, l.srv)
+	revoker := dialAs(t, l.ts, l.srv, owner)
 	revoker.expectGreeting()
-	revoker.greet(t, 1, owner, "")
+	revoker.hello(1, "")
 	revoker.send(fmt.Sprintf(`{"id":2,"cmd":"device.revoke","data":{"device_key":%q}}`, second.pub))
 	revoker.expectOK(2)
 	deadline := time.Now().Add(time.Minute)
 	for !onionRefused(device, l, 1) {
 		if time.Now().After(deadline) {
 			t.Fatal("the revoked device still opens onion connections a minute after its revocation")
-		}
-		time.Sleep(2 * time.Second)
-	}
-}
-
-func TestOnionInvite(t *testing.T) {
-	l := startLive(t, filepath.Join(t.TempDir(), "invite.db"))
-	_, k1Pub, _ := newAccessKey(t)
-	owner := claimWithKey(t, l, k1Pub)
-	l.waitPublished(t)
-
-	ownerConn := dialWS(t, l.ts, l.srv)
-	ownerConn.expectGreeting()
-	ownerConn.greet(t, 1, owner, "")
-	ownerConn.send(`{"id":2,"cmd":"device.invite","data":{"onion":true}}`)
-	inv := ownerConn.expectOK(2)
-	var link, token string
-	var onion bool
-	mustUnmarshal(t, inv["link"], &link)
-	mustUnmarshal(t, inv["token"], &token)
-	mustUnmarshal(t, inv["onion"], &onion)
-	if !onion {
-		t.Fatal("an onion invite was refused while tor is ready")
-	}
-	_, raw, _ := decodeLink(t, link)
-	tail := raw[len(raw)-66:]
-	addr, err := tor.Address(tail[:32])
-	if err != nil || addr != l.sup.Address() {
-		t.Fatalf("the link names %q, the service is %q (%v)", addr, l.sup.Address(), err)
-	}
-	oneTimePriv := base64.StdEncoding.EncodeToString(tail[34:])
-
-	// The new device, somewhere else: in by the one-time key, pairs with its own.
-	newcomer := startClientTor(t)
-	newcomer.authorize(addr, oneTimePriv)
-	pc := dialOnion(t, newcomer, l, 3*time.Minute)
-	pc.expectGreeting()
-	_, k3Pub, k3Priv := newAccessKey(t)
-	d := newDevice(t)
-	pc.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"device_key":%q,"platform":"test","access_key":%q}}`, token, d.pub, k3Pub))
-	pc.expectOK(1)
-
-	// Back in with its own key (SC-010)...
-	newcomer.forget(addr)
-	newcomer.authorize(addr, k3Priv)
-	c := dialOnion(t, newcomer, l, 3*time.Minute)
-	c.expectGreeting()
-	c.greet(t, 1, d, "")
-
-	// ...and the one-time key opens nothing any more.
-	late := startClientTor(t)
-	late.authorize(addr, oneTimePriv)
-	deadline := time.Now().Add(time.Minute)
-	for !onionRefused(late, l, 1) {
-		if time.Now().After(deadline) {
-			t.Fatal("the spent one-time key still opens the onion service")
 		}
 		time.Sleep(2 * time.Second)
 	}

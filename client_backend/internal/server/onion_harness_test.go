@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"io"
-	"log"
 	"log/slog"
-	"net/http"
+	"net"
 	"net/http/httptest"
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"nox.app/client-backend/internal/tor"
 )
@@ -47,12 +47,6 @@ func (f *fakeTor) KeysChanged() {
 	f.kicks++
 }
 
-func (f *fakeTor) ReadyForInvite() bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.ready
-}
-
 func (f *fakeTor) Offered() bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -80,8 +74,9 @@ func (f *fakeTor) kickCount() int {
 	return f.kicks
 }
 
-// onionStack is the full server with a fake tor and a second TLS entry marked
-// as the onion one - the same ConnContext Run gives the real onion listener.
+// onionStack is the full server with a fake tor and a second entry behind the
+// channel, marked as the onion one - the same ConnContext and budget Run gives
+// the real onion listener.
 type onionStack struct {
 	ts    *httptest.Server // the direct entry
 	onion *httptest.Server // the onion entry
@@ -96,41 +91,27 @@ func newOnionStack(t *testing.T, tweak ...func(*Server)) *onionStack {
 	ts, srv, closeAll := openStack(t, filepath.Join(t.TempDir(), "onion.db"), nil, all...)
 	t.Cleanup(closeAll)
 
-	tlsCfg, err := srv.serverTLSConfig(t.Context())
+	raw, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Fatalf("serverTLSConfig: %v", err)
+		t.Fatalf("listen: %v", err)
 	}
-	onion := httptest.NewUnstartedServer(srv.Handler())
-	onion.TLS = tlsCfg
-	onion.Config.ConnContext = markOnionConn
-	onion.Config.ErrorLog = log.New(io.Discard, "", 0)
-	onion.StartTLS()
-	onion.Client().Transport = ts.Client().Transport
+	tlsCfg, err := channelTLSConfig(time.Now())
+	if err != nil {
+		t.Fatalf("channelTLSConfig: %v", err)
+	}
+	key, err := srv.store.ServerKey(t.Context())
+	if err != nil {
+		t.Fatalf("ServerKey: %v", err)
+	}
+	// The devices the plain client presents are the direct entry's: a device
+	// that greeted at home moves bytes over onion as itself.
+	onion := serveChannel(t, srv, raw, tlsCfg, key, srv.onionTimeout, "onion", onionConnContext, channelOf(t, ts).devices)
 	t.Cleanup(onion.Close)
 	return &onionStack{ts: ts, onion: onion, srv: srv, tor: ft}
 }
 
 // discardLogger is a logger nobody reads.
 func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
-
-// pinnedClient is the transport the app uses: the pin and nothing else.
-func pinnedClient(ts *httptest.Server) *http.Client { return ts.Client() }
-
-// devKey gives this client a paired device if it has none and returns its
-// public key - for tests that write the greeting by hand.
-func (c *wsClient) devKey(t *testing.T) string {
-	t.Helper()
-	if c.dev == nil {
-		c.dev = pairedDevice(t, c.ts, c.srv)
-	}
-	return c.dev.pub
-}
-
-// devSig signs this connection's challenge with the client's device.
-func (c *wsClient) devSig(t *testing.T) string {
-	t.Helper()
-	return c.dev.sign(t, c.challenge)
-}
 
 // newTextLogger writes a readable log to w.
 func newTextLogger(w io.Writer) *slog.Logger { return slog.New(slog.NewTextHandler(w, nil)) }

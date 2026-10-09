@@ -23,11 +23,12 @@ type Greeting struct {
 	Srv GreetingBody `json:"srv"`
 }
 
-// GreetingBody carries the maximum supported schema and the challenge that
-// stage 2 will require clients to sign. Stage 1 sends it but never verifies.
+// GreetingBody carries the maximum supported schema and nothing else. The
+// challenge it once carried for the device to sign is gone (feature 044): the
+// device proved its key in the channel check before this frame was written, on
+// a binding no other connection shares, so there is nothing left to sign here.
 type GreetingBody struct {
-	SchemaMax int    `json:"schema_max"`
-	Challenge string `json:"challenge"`
+	SchemaMax int `json:"schema_max"`
 }
 
 // Command is an incoming client frame. Data stays raw for two-phase decoding;
@@ -83,7 +84,8 @@ const (
 	CmdFileDownloadBegin = "file.downloadBegin"
 
 	// Pairing (§8A). CmdPair is the ONLY command accepted before the greeting:
-	// an unpaired device has nothing to sign the challenge with.
+	// an unpaired device's key is one the server does not know, and a greeting
+	// from it is refused.
 	CmdPair             = "pair"
 	CmdDeviceList       = "device.list"
 	CmdDeviceRevoke     = "device.revoke"

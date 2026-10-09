@@ -238,11 +238,11 @@ func TestAGreetingNeverSeesTheEventBeforeItsReply(t *testing.T) {
 	for i := range 20 {
 		c := dialWS(t, st.ts, st.srv)
 		c.expectGreeting()
+		c.ensurePaired()
 		// Move the list while the greeting is on its way.
 		st.tor.set(i%2 == 0, false)
 		st.srv.pokeAddresses()
-		c.send(fmt.Sprintf(`{"id":1,"cmd":"session.hello","data":{"schema":1,"device_key":%q,"signature":%q}}`,
-			c.devKey(t), c.devSig(t)))
+		c.send(`{"id":1,"cmd":"session.hello","data":{"schema":1}}`)
 		frame := c.read()
 		if _, isEvent := frame["event"]; isEvent {
 			t.Fatalf("round %d: an event arrived before the greeting reply: %v", i, frame)
@@ -300,10 +300,9 @@ func TestAListThatMovesMidGreetingFollowsTheReply(t *testing.T) {
 				}
 			})
 			d := pairedDevice(t, st.ts, st.srv)
-			c := dialWS(t, st.ts, st.srv)
+			c := dialAs(t, st.ts, st.srv, d)
 			c.expectGreeting()
-			c.send(fmt.Sprintf(`{"id":1,"cmd":"session.hello","data":{"schema":1,"device_key":%q,"signature":%q}}`,
-				d.pub, d.sign(t, c.challenge)))
+			c.send(`{"id":1,"cmd":"session.hello","data":{"schema":1}}`)
 
 			// Read raw: the helpers skip events, and an event here is the bug.
 			reply := c.read()

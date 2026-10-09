@@ -52,22 +52,25 @@ func declare(t *testing.T, c *wsClient, id int, name string, size int, mime, fil
 	return gotID, token, received
 }
 
-// rawPut is a PUT driven by hand over its own TLS connection. The standard
-// client cannot stop half-way, hold a connection open without sending, or
-// break one on purpose - and those are exactly the cases at stake here.
+// rawPut is a PUT driven by hand over its own channel. The standard client
+// cannot stop half-way, hold a connection open without sending, or break one
+// on purpose - and those are exactly the cases at stake here.
 type rawPut struct {
 	t    *testing.T
 	conn *tls.Conn
 	br   *bufio.Reader
 }
 
+// openRawPut sends the head of a PUT as the device that last greeted - a
+// transfer needs a paired key on the connection as well as the token.
 func openRawPut(t *testing.T, ts *httptest.Server, token string, contentLength int) *rawPut {
 	t.Helper()
-	transport, ok := ts.Client().Transport.(*http.Transport)
-	if !ok {
-		t.Fatal("the test client's transport is not the pinned one")
+	ch := channelOf(t, ts)
+	dev, err := ch.devices.current()
+	if err != nil {
+		t.Fatalf("pick a device: %v", err)
 	}
-	conn, err := tls.Dial("tcp", ts.Listener.Addr().String(), transport.TLSClientConfig)
+	conn, err := dialChannel(t.Context(), ch.addr, ch.serverKey, dev.priv)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}

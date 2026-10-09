@@ -283,6 +283,38 @@ func (c *client) handleChatFiles(cmd protocol.Command) {
 
 // --- HTTP surface (contract §1/§7) ---
 
+// admitTransfer answers whether the request's connection belongs to a paired
+// device, and refuses it itself when not (044, FR-006a). A transfer needs
+// BOTH: a paired key on the connection and a live transfer token - a token
+// alone was a bearer credential that worked for whoever held it.
+//
+// Asked BEFORE the token is looked at, so a stranger who somehow holds one can
+// neither spend it nor learn whether it is live. The key is looked up on every
+// request, not once per connection: a device revoked while its connection is
+// still open loses its transfers with the row, exactly as it loses its socket.
+//
+// 401 for a stranger, and still 404 for a bad token from a paired device: the
+// 404 is how a client of 043 knows to ask for a new pass, and that must not
+// change. A store that cannot answer is a 500 - the device did nothing wrong.
+func (s *Server) admitTransfer(w http.ResponseWriter, r *http.Request) bool {
+	peer, ok := channelPeerFrom(r.Context())
+	if !ok {
+		http.Error(w, "the connection proved no device key", http.StatusUnauthorized)
+		return false
+	}
+	_, paired, err := s.store.DeviceOwner(r.Context(), peer.deviceKey())
+	if err != nil {
+		s.logger.Error("transfer device lookup failed", "err", err)
+		http.Error(w, "storage failure", http.StatusInternalServerError)
+		return false
+	}
+	if !paired {
+		http.Error(w, "the connection's device is not paired", http.StatusUnauthorized)
+		return false
+	}
+	return true
+}
+
 // handlePutFile receives attachment bytes for a one-shot upload token
 // (contract §7, 043). The token names the file and the offset its bytes
 // begin at; the body carries the file from there to its end, and whatever
@@ -290,6 +322,9 @@ func (c *client) handleChatFiles(cmd protocol.Command) {
 // to continue from. All token failures are 404 alike: existence is not
 // disclosed to guessers.
 func (s *Server) handlePutFile(w http.ResponseWriter, r *http.Request) {
+	if !s.admitTransfer(w, r) {
+		return
+	}
 	fileID, offset, ok := s.tokens.consume(r.PathValue("token"), opUpload)
 	if !ok {
 		http.NotFound(w, r)
@@ -665,6 +700,9 @@ func (s *stallWriter) finish() {
 // the client continues with Range from what it has and If-Range with the
 // Last-Modified of its first response (contract §7).
 func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
+	if !s.admitTransfer(w, r) {
+		return
+	}
 	// The mux routes HEAD through GET patterns; a HEAD would burn the
 	// one-shot token without delivering a byte (an accidental curl -I
 	// would kill the link). Reject it before consuming.

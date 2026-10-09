@@ -15,8 +15,8 @@ const (
 	// because telling them apart would say whether a guessed token exists.
 	// token_expired is separated from it because the person's next action
 	// differs, and unauthenticated means the connection itself is not
-	// recognised: the key is not in the allowed list, or the signature did not
-	// verify. A device treats it exactly as a revocation.
+	// recognised: the key it proved in the channel check is not in the allowed
+	// list. A device treats it exactly as a revocation.
 	ErrInvalidToken    = "invalid_token"
 	ErrTokenExpired    = "token_expired"
 	ErrUnauthenticated = "unauthenticated"

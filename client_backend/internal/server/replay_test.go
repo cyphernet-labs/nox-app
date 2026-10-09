@@ -186,11 +186,10 @@ func TestStoryTwoLiveDuringReplayLosesNothing(t *testing.T) {
 	// traffic keeps flowing: duplicates at the boundary are tolerated, loss
 	// is not (invariant 6). Bob deliberately does not read until the end -
 	// frames queue up on his connection.
-	bob := dialWS(t, ts, srv)
-	bob.expectGreeting()
 	bobDev := pairedDevice(t, ts, srv)
-	bob.send(fmt.Sprintf(`{"id":1,"cmd":"session.hello","data":{"schema":1,"since":1,"device_key":%q,"signature":%q}}`,
-		bobDev.pub, bobDev.sign(t, bob.challenge)))
+	bob := dialAs(t, ts, srv, bobDev)
+	bob.expectGreeting()
+	bob.send(`{"id":1,"cmd":"session.hello","data":{"schema":1,"since":1}}`)
 	for i := range 8 {
 		sendText(t, anna, 10+i, chatID, fmt.Sprintf("live%d", i), "during")
 	}

@@ -1,10 +1,6 @@
 package server
 
 import (
-	"crypto/ecdh"
-	"crypto/ed25519"
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -15,40 +11,13 @@ import (
 	"nox.app/client-backend/internal/tor"
 )
 
-// challengePrefix separates domains: without it a signature taken over a
-// challenge would be a valid signature over the same bytes anywhere else the
-// protocol later decides to sign something. Sixteen bytes now is cheaper than
-// proving the absence of an overlap later.
-const challengePrefix = "nox/challenge/v1:"
-
-// verifyChallenge reports whether sig is deviceKey's signature over the
-// prefixed challenge. Every input arrives as base64 from an untrusted peer, so
-// every decode failure is simply "does not verify" - there is nothing useful
-// to tell the caller apart.
-//
-// The RAW challenge bytes are signed, not their base64 spelling: two
-// implementations disagreeing about padding would disagree about the
-// signature, and one of them would be locked out for reasons neither could see.
-func verifyChallenge(deviceKey, challenge, sig string) bool {
-	pub, err := base64.StdEncoding.DecodeString(deviceKey)
-	if err != nil || len(pub) != ed25519.PublicKeySize {
-		return false
-	}
-	raw, err := base64.StdEncoding.DecodeString(challenge)
-	if err != nil {
-		return false
-	}
-	signature, err := base64.StdEncoding.DecodeString(sig)
-	if err != nil || len(signature) != ed25519.SignatureSize {
-		return false
-	}
-	return ed25519.Verify(ed25519.PublicKey(pub), append([]byte(challengePrefix), raw...), signature)
-}
-
+// pairRequest mirrors contract §8A. There is no device_key since 044: the key
+// being paired is the one this connection proved in the channel check, so a
+// device can only ever pair itself - and an older client that still sends the
+// field has it ignored, never believed.
 type pairRequest struct {
-	Token     string `json:"token"`
-	DeviceKey string `json:"device_key"`
-	Platform  string `json:"platform"`
+	Token    string `json:"token"`
+	Platform string `json:"platform"`
 	// AccessKey is the device's onion access key (039): an x25519 PUBLIC
 	// key, base64, optional. An older server ignores it; this one writes it in
 	// the same transaction as the device row.
@@ -63,8 +32,9 @@ type pairReply struct {
 }
 
 // handlePair is the only command accepted before the greeting: an unpaired
-// device has nothing to sign the challenge with, so requiring hello first
-// would make pairing impossible rather than merely awkward.
+// device's key is one the server does not know, and its greeting would be
+// refused - so requiring hello first would make pairing impossible rather than
+// merely awkward.
 func (c *client) handlePair(cmd protocol.Command) {
 	if c.helloDone {
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "already greeted"))
@@ -78,14 +48,9 @@ func (c *client) handlePair(cmd protocol.Command) {
 	}
 
 	token := strings.TrimSpace(req.Token)
-	deviceKey := strings.TrimSpace(req.DeviceKey)
 	platform := strings.TrimSpace(req.Platform)
-	if token == "" || deviceKey == "" || platform == "" {
-		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "token, device_key and platform are required"))
-		return
-	}
-	if raw, err := base64.StdEncoding.DecodeString(deviceKey); err != nil || len(raw) != ed25519.PublicKeySize {
-		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "device_key is not an Ed25519 public key"))
+	if token == "" || platform == "" {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "token and platform are required"))
 		return
 	}
 	// A malformed key refuses the pairing rather than pairing without one: a
@@ -99,7 +64,7 @@ func (c *client) handlePair(cmd protocol.Command) {
 		}
 	}
 
-	res, err := c.srv.store.Pair(c.ctx, token, deviceKey, platform,
+	res, err := c.srv.store.Pair(c.ctx, token, c.deviceKey, platform,
 		store.PairOptions{AccessKey: accessKey, ViaOnion: c.viaOnion}, time.Now().Unix())
 	switch {
 	case errors.Is(err, store.ErrTokenInvalid):
@@ -153,10 +118,10 @@ func (c *client) handlePair(cmd protocol.Command) {
 	// report a replay, spreads a pairing detail through a type the greeting
 	// shares. Written down in contract §8A rather than papered over.
 	c.announcePaired(res.UserID)
-	// The key set may have moved: a new device key, or an onion invite's
-	// one-time key spent by this very pairing. After the reply, like every
-	// fan-out - a republish ahead of it could cut the connection the reply is
-	// travelling on. An unchanged set is a no-op in the supervisor.
+	// The key set may have moved: the new device's access key. After the
+	// reply, like every fan-out - a republish ahead of it could cut the
+	// connection the reply is travelling on. An unchanged set is a no-op in
+	// the supervisor.
 	c.srv.tor.KeysChanged()
 }
 
@@ -221,8 +186,8 @@ func (c *client) handleDeviceRevoke(cmd protocol.Command) {
 	// not look like a failure.
 	c.sendFrame(protocol.OKReply(cmd.ID, struct{}{}))
 	c.srv.dropDevice(key)
-	// Its access key went with the row, and its live invites were burned:
-	// the onion service has to lose them, and its circuits cut, now.
+	// Its access key went with the row: the onion service has to lose it, and
+	// its circuits cut, now.
 	c.srv.tor.KeysChanged()
 }
 
@@ -247,7 +212,7 @@ func (c *client) handleDeviceSetAccessKey(cmd protocol.Command) {
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "access_key is not a usable x25519 public key"))
 		return
 	}
-	changed, err := c.srv.store.SetAccessKey(c.ctx, c.srv.currentDeviceKey(c), accessKey)
+	changed, err := c.srv.store.SetAccessKey(c.ctx, c.deviceKey, accessKey)
 	if errors.Is(err, store.ErrDeviceUnknown) {
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrUnauthenticated, "device is not paired"))
 		return
@@ -270,20 +235,22 @@ func (c *client) handleDeviceSetAccessKey(cmd protocol.Command) {
 type inviteReply struct {
 	Token string `json:"token"`
 	Link  string `json:"link"`
-	// Onion says the link is version 2 and carries the onion address with a
-	// one-time access key (039). An older client ignores it.
+	// Onion says whether the link pairs through the onion service. Always
+	// false since 044: a version-3 link names the onion address for AFTER
+	// pairing, and the service opens only to the access key of a device that
+	// is already paired - the one-time key an onion invite used to lend has no
+	// field in the link. Pairing from away waits for 045. Written out, never
+	// omitted: an older client reads a missing field as "unknown".
 	Onion bool `json:"onion"`
-}
-
-// inviteRequest is read leniently: `onion` absent, null or anything but a
-// boolean is false. The field is a wish, not an obligation, and a client that
-// sends something odd still gets the invite it would have got before 039.
-type inviteRequest struct {
-	Onion any `json:"onion"`
 }
 
 // handleDeviceInvite mints a token that binds another device to this person,
 // and renders the link to show.
+//
+// The request's `onion` is accepted and ignored (contract §8A): true, false,
+// junk or nothing, the answer is the same version-3 link with "onion": false,
+// so there is nothing left to read it for - and nothing in it can refuse the
+// command.
 //
 // The link is built here rather than on the device because only the server
 // knows its own public key and the address it is reachable at. A device
@@ -291,10 +258,6 @@ type inviteRequest struct {
 // device.setAccessKey tells it: the store issues nothing for a device that is
 // gone.
 func (c *client) handleDeviceInvite(cmd protocol.Command) {
-	var req inviteRequest
-	_ = json.Unmarshal(cmd.Data, &req) // lenient by contract: anything odd is "no onion"
-	wantOnion, _ := req.Onion.(bool)
-
 	id, err := c.srv.store.ServerIdentity(c.ctx)
 	if err != nil {
 		c.logger.Error("server identity", "err", err)
@@ -308,14 +271,7 @@ func (c *client) handleDeviceInvite(cmd protocol.Command) {
 		addr = c.srv.inviteDirectAddress()
 	}
 
-	// An onion invite only when it would work: Tor on and tor connected. One
-	// that cannot be used outside is worse than an honest "home only".
-	if wantOnion && c.srv.tor.ReadyForInvite() {
-		c.issueOnionInvite(cmd, addr, id.Fingerprint)
-		return
-	}
-
-	token, err := c.srv.store.IssueDeviceInvite(c.ctx, c.srv.currentDeviceKey(c), time.Now().Unix())
+	token, err := c.srv.store.IssueDeviceInvite(c.ctx, c.deviceKey, time.Now().Unix())
 	if errors.Is(err, store.ErrDeviceUnknown) {
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrUnauthenticated, "device is not paired"))
 		return
@@ -325,50 +281,13 @@ func (c *client) handleDeviceInvite(cmd protocol.Command) {
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to issue an invite"))
 		return
 	}
-	link, err := BuildPairingLink(addr, id.Fingerprint, token)
+	link, err := c.srv.pairingLink(id, addr, token)
 	if err != nil {
 		c.logger.Error("build invite link", "err", err)
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to build the link"))
 		return
 	}
-	c.sendFrame(protocol.OKReply(cmd.ID, inviteReply{Token: token, Link: link}))
-}
-
-// issueOnionInvite mints an invite carrying the onion address and a one-time
-// access key (039).
-//
-// The key pair is made here and the halves part at once: the PUBLIC half goes
-// to the store, where it opens the onion service for as long as the invite
-// lives; the PRIVATE half goes into the link and nowhere else - not the
-// store, not the log (FR-020).
-func (c *client) issueOnionInvite(cmd protocol.Command, addr, fingerprint string) {
-	oneTime, err := ecdh.X25519().GenerateKey(rand.Reader)
-	if err != nil {
-		c.logger.Error("generate one-time access key", "err", err)
-		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to issue an invite"))
-		return
-	}
-	accessPub := base64.StdEncoding.EncodeToString(oneTime.PublicKey().Bytes())
-	token, err := c.srv.store.IssueOnionInvite(c.ctx, c.srv.currentDeviceKey(c), accessPub, time.Now().Unix())
-	if errors.Is(err, store.ErrDeviceUnknown) {
-		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrUnauthenticated, "device is not paired"))
-		return
-	}
-	if err != nil {
-		c.logger.Error("device.invite onion", "err", err)
-		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to issue an invite"))
-		return
-	}
-	link, err := BuildPairingLinkV2(addr, fingerprint, token, c.srv.tor.OnionPublicKey(), tor.OnionPort, oneTime.Bytes())
-	if err != nil {
-		c.logger.Error("build onion invite link", "err", err)
-		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to build the link"))
-		return
-	}
-	c.sendFrame(protocol.OKReply(cmd.ID, inviteReply{Token: token, Link: link, Onion: true}))
-	// The one-time key has to be in the service before the new device dials
-	// it. After the reply, like every other change of the set.
-	c.srv.tor.KeysChanged()
+	c.sendFrame(protocol.OKReply(cmd.ID, inviteReply{Token: token, Link: link, Onion: false}))
 }
 
 type setLabelRequest struct {

@@ -17,9 +17,9 @@ import (
 // script - see copyScript for what it is allowed to be and why.
 //
 // The page is NOT an interface. Its markup is fixed by nothing, has no version
-// and changes freely; the machine-readable answer is GET /health and stays
-// exactly what it was. This is said out loud in contract §1 for one reason: to
-// stop anybody starting to parse it.
+// and changes freely; the machine-readable answer is GET /health beside it and
+// stays exactly what it was. This is said out loud in contract §1 for one
+// reason: to stop anybody starting to parse it.
 var statusPage = template.Must(template.New("status").Parse(`<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -163,10 +163,10 @@ const copyScript = `(function () {
 // contentSecurityPolicy is the page's policy, and it is built rather than
 // written down so the script and the hash that admits it cannot drift apart.
 //
-// Derived on every response from the one copy of the script, for the same
-// reason the server's fingerprint is derived on every read: a stored
-// derivative is a second copy of one fact, and two copies eventually disagree.
-// Hashing six hundred bytes costs nothing on a page a person opens by hand.
+// Derived on every response from the one copy of the script: a hash written
+// down beside it would be a second copy of one fact, and two copies eventually
+// disagree. Hashing six hundred bytes costs nothing on a page a person opens
+// by hand.
 //
 // A page with no link carries no script, and then says so - `script-src` is
 // absent entirely and `default-src 'none'` forbids the lot.
@@ -386,9 +386,16 @@ func localHost(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// StatusHandler is the service page's own mux, served on its own listener.
+// StatusHandler is the service page's own mux, served on its own listener,
+// and the home of /health since 044.
+//
+// /health moved here because the main port answers nothing before the channel
+// check, and a service manager or a tunnel probing liveness proves no device
+// key. The answer is the one it always was; no Host check, because it says
+// nothing a rebound page could use.
 func (s *Server) StatusHandler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("GET /", s.handleStatusPage)
 	return mux
 }

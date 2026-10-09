@@ -2,7 +2,8 @@
 //!
 //! Every C ABI call takes the engine lock for a moment and never waits on the
 //! network: the work runs on a tokio runtime this module owns, and its results
-//! land in the status snapshot the app polls.
+//! land in the status snapshot the app polls. Onion channels (`channel`) run on
+//! that runtime too, through `onion_context`.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
@@ -20,7 +21,7 @@ use tor_llcrypto::pk::curve25519;
 use tor_rtcompat::PreferredRuntime;
 use zeroize::Zeroizing;
 
-use crate::bridge::{self, BridgeHandle, ConnectGroup};
+use crate::channel::target::{ConnectGroup, OnionContext};
 use crate::status::{classify, error, state, NoxTorStatus, StatusCell};
 
 /// First start of the client, from nothing, until it is ready for traffic.
@@ -32,8 +33,8 @@ pub type Client = TorClient<PreferredRuntime>;
 /// `Target` moves a pointer rather than leaving copies of the key behind.
 pub type ClientKey = Box<Zeroizing<[u8; 32]>>;
 
-/// What the bridge connects to: one onion service and the client key that
-/// opens it. Nothing else is reachable through this module. Not `Clone`: the
+/// The onion service the client holds a key for, and that key: Arti keeps it in
+/// its keystore, and a channel to the service opens with it. Not `Clone`: the
 /// key has one home, the target slot.
 pub struct Target {
     pub host: String,
@@ -56,7 +57,6 @@ pub struct Shared {
     pub status: StatusCell,
     pub client: Mutex<Option<Arc<Client>>>,
     pub target: Mutex<Option<Target>>,
-    pub bridge: Mutex<Option<BridgeHandle>>,
     pub connect_group: ConnectGroup,
 }
 
@@ -105,7 +105,6 @@ fn on_obsolete() {
                 rt.shutdown_background();
             }
             lock(&e.shared.client).take();
-            lock(&e.shared.bridge).take();
         }
     });
 }
@@ -129,8 +128,10 @@ pub fn start(state_dir: &str, cache_dir: &str) -> i32 {
             Err(_) => return -(error::INTERNAL as i32),
         };
     let shared = Arc::new(Shared::default());
-    let port = guard.take().map_or(0, |failed| carry_over(failed, &runtime, &shared));
-    shared.status.update(|s| *s = NoxTorStatus { state: state::BOOTSTRAPPING, port, ..NoxTorStatus::default() });
+    if let Some(failed) = guard.take() {
+        carry_over(failed, &shared);
+    }
+    shared.status.update(|s| *s = NoxTorStatus { state: state::BOOTSTRAPPING, ..NoxTorStatus::default() });
     let task_shared = Arc::clone(&shared);
     let (state_dir, cache_dir) = (state_dir.to_owned(), cache_dir.to_owned());
     runtime.spawn(async move { run_client(task_shared, state_dir, cache_dir).await });
@@ -139,24 +140,15 @@ pub fn start(state_dir: &str, cache_dir: &str) -> i32 {
 }
 
 /// Takes a failed engine down the way `stop` does, except for what the app
-/// still holds: the target, and the bridge's port and secret. Those move to
-/// `shared` and are served from `runtime`, so the app's endpoint stays good
-/// across the retry. Returns the bridge's port, 0 without one.
-fn carry_over(mut failed: Engine, runtime: &Runtime, shared: &Arc<Shared>) -> u16 {
+/// still holds: the target, which moves to `shared` and goes into the new
+/// client as soon as it is built (see run_client).
+fn carry_over(mut failed: Engine, shared: &Shared) {
     let target = lock(&failed.shared.target).take();
     *lock(&shared.target) = target;
-    let bridge = lock(&failed.shared.bridge).take();
     lock(&failed.shared.client).take();
     if let Some(rt) = failed.runtime.take() {
         rt.shutdown_background();
     }
-    let Some(mut bridge) = bridge else { return 0 };
-    if bridge.move_to(runtime, shared).is_err() {
-        return 0;
-    }
-    let port = bridge.port;
-    *lock(&shared.bridge) = Some(bridge);
-    port
 }
 
 fn build_client(state_dir: &str, cache_dir: &str) -> Result<Arc<Client>, u8> {
@@ -245,10 +237,7 @@ pub fn set_target(host: &str, port: u16, key: ClientKey) -> i32 {
         return error::RET_INVALID_ARGUMENT;
     }
     let guard = engine();
-    let Some(engine) = guard.as_ref() else {
-        return error::RET_NOT_STARTED;
-    };
-    let Some(runtime) = engine.runtime.as_ref() else {
+    let Some(engine) = guard.as_ref().filter(|e| e.runtime.is_some()) else {
         return error::RET_NOT_STARTED;
     };
     let shared = &engine.shared;
@@ -271,17 +260,9 @@ pub fn set_target(host: &str, port: u16, key: ClientKey) -> i32 {
             }
         }
     }
-    match bridge::open_or_rotate(runtime, shared) {
-        Ok(port) => {
-            shared.status.update(|s| {
-                s.port = port;
-                // A refusal of the key so far was about the previous key.
-                s.forget_key_refusal();
-            });
-            0
-        }
-        Err(()) => -(error::INTERNAL as i32),
-    }
+    // A refusal of the key so far was about the previous key.
+    shared.status.update(|s| s.forget_key_refusal());
+    0
 }
 
 pub fn clear_target() -> i32 {
@@ -298,8 +279,6 @@ pub fn clear_target() -> i32 {
         }
         shared.connect_group.forget();
     }
-    lock(&shared.bridge).take();
-    shared.status.update(|s| s.port = 0);
     0
 }
 
@@ -319,7 +298,6 @@ pub fn set_dormant(dormant: bool) {
 pub fn stop() {
     let mut guard = engine();
     if let Some(mut engine) = guard.take() {
-        lock(&engine.shared.bridge).take();
         lock(&engine.shared.client).take();
         lock(&engine.shared.target).take();
         if let Some(rt) = engine.runtime.take() {
@@ -344,16 +322,30 @@ pub fn status() -> NoxTorStatus {
     }
 }
 
-pub fn bridge_secret() -> Option<[u8; 32]> {
+/// What an onion channel runs on: the client's runtime and the client itself,
+/// once it is ready for traffic. Dormant counts: a soft-dormant client still
+/// takes the streams asked of it, and the app is in the background then.
+pub fn onion_context() -> Option<OnionContext> {
     let guard = engine();
     let engine = guard.as_ref()?;
-    let bridge = lock(&engine.shared.bridge);
-    bridge.as_ref().map(|b| *lock(&b.secret))
+    let runtime = engine.runtime.as_ref()?.handle().clone();
+    if !matches!(engine.shared.status.get().state, state::READY | state::DORMANT) {
+        return None;
+    }
+    let client = lock(&engine.shared.client).clone()?;
+    Some(OnionContext { runtime, client, shared: Arc::clone(&engine.shared) })
 }
 
 #[cfg(test)]
 pub(crate) fn simulate_obsolete_for_test() {
     on_obsolete();
+}
+
+#[cfg(test)]
+pub(crate) fn set_state_for_test(to: u8) {
+    if let Some(e) = engine().as_ref() {
+        e.shared.status.update(|s| s.state = to);
+    }
 }
 
 #[cfg(test)]
