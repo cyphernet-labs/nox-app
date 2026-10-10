@@ -196,8 +196,16 @@ $id
 	return 1
 }
 
+# forget_record PATH deletes a directory record - an account or a group -
+# this run created. A record that was never created is nothing to take back.
+forget_record() {
+	dscl . -read "$1" >/dev/null 2>&1 || return 0
+	dscl . -delete "$1"
+}
+
 # ensure_account NAME DESCRIPTION creates a hidden role account with its own
-# group, unless it exists: no home, no shell, no password.
+# group, unless it exists: no home, no shell, no password. Each record is
+# recorded for deletion before it is made, like every change.
 ensure_account() {
 	local name=$1 desc=$2 id gid
 	if dscl . -read "/Users/$name" UniqueID >/dev/null 2>&1; then
@@ -205,15 +213,15 @@ ensure_account() {
 	fi
 	id=$(free_system_id) || die "no free account id below 500 for $name"
 	if ! dscl . -read "/Groups/$name" PrimaryGroupID >/dev/null 2>&1; then
+		undo_push "forget_record $(q "/Groups/$name")"
 		dscl . -create "/Groups/$name" || die "cannot create the group $name"
-		undo_push "dscl . -delete $(q "/Groups/$name")"
 		dscl . -create "/Groups/$name" PrimaryGroupID "$id"
 		dscl . -create "/Groups/$name" RealName "$desc"
 		dscl . -create "/Groups/$name" Password '*'
 	fi
 	gid=$(dscl . -read "/Groups/$name" PrimaryGroupID | awk '{ print $2 }')
+	undo_push "forget_record $(q "/Users/$name")"
 	dscl . -create "/Users/$name" || die "cannot create the account $name"
-	undo_push "dscl . -delete $(q "/Users/$name")"
 	dscl . -create "/Users/$name" UniqueID "$id"
 	dscl . -create "/Users/$name" PrimaryGroupID "$gid"
 	dscl . -create "/Users/$name" UserShell /usr/bin/false
@@ -226,8 +234,8 @@ ensure_account() {
 # ensure_log FILE OWNER GROUP creates a log file the job's account can write.
 ensure_log() {
 	if [ ! -e "$1" ]; then
-		: >"$1" || die "cannot create $1"
 		undo_push "rm -f $(q "$1")"
+		: >"$1" || die "cannot create $1"
 	fi
 	if [ -z "$OPT_PREFIX" ]; then
 		chown "$2:$3" "$1"

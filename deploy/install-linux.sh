@@ -196,9 +196,16 @@ ensure_account() {
 	fi
 	shell=$(command -v nologin 2>/dev/null || true)
 	[ -n "$shell" ] || shell=/usr/sbin/nologin
+	# Recorded before it is made, like every change; an account that was
+	# never made is nothing to take back. A group of that name that was here
+	# already is not this run's to delete: useradd refuses it anyway.
+	if getent group "$SERVER_ACCOUNT" >/dev/null 2>&1; then
+		undo_push "userdel $SERVER_ACCOUNT >/dev/null 2>&1 || true"
+	else
+		undo_push "userdel $SERVER_ACCOUNT >/dev/null 2>&1; groupdel $SERVER_ACCOUNT >/dev/null 2>&1 || true"
+	fi
 	useradd --system --user-group --home-dir "$DATA_DIR" --no-create-home --shell "$shell" \
 		--comment "NOX server" "$SERVER_ACCOUNT" || die "cannot create the account $SERVER_ACCOUNT"
-	undo_push "userdel $SERVER_ACCOUNT 2>/dev/null; groupdel $SERVER_ACCOUNT 2>/dev/null || true"
 	note "account $SERVER_ACCOUNT created"
 }
 
@@ -211,8 +218,8 @@ install_layout() {
 		make_own_dir "$DATA_DIR" "" "" 700
 		make_own_dir "$BACKUP_DIR" "" "" 700
 		if [ ! -e "$SERVER_LOG" ]; then
-			: >"$SERVER_LOG"
 			undo_push "rm -f $(q "$SERVER_LOG")"
+			: >"$SERVER_LOG"
 		fi
 	else
 		step "Account and folders"
@@ -300,39 +307,46 @@ rpm_keys() {
 	rpm -qa --qf '%{NAME}-%{VERSION}-%{RELEASE}\n' 'gpg-pubkey*' 2>/dev/null || true
 }
 
-# rpm_import_key FILE gives rpm the key in FILE and records how to take it out
-# again - unless rpm had it already.
+# rpm_import_key FILE gives rpm the key in FILE. What takes it out again is
+# recorded first, with the keys rpm holds now: it removes whatever key is
+# there then and was not before, so an import cut short is taken back too.
 rpm_import_key() {
-	local before k
-	before=$(rpm_keys)
-	rpm --import "$1" || return 1
+	undo_push "rpm_forget_keys_since $(q "$(rpm_keys)")"
+	rpm --import "$1"
+}
+
+# rpm_forget_keys_since KEYS removes from rpm every key it holds that is not
+# among KEYS, one package name per line.
+rpm_forget_keys_since() {
+	local k status=0
 	for k in $(rpm_keys); do
 		case "
-$before
+$1
 " in
 		*"
 $k
 "*) ;;
-		*) undo_push "rpm -e $(q "$k") >/dev/null 2>&1 || true" ;;
+		*) rpm -e "$k" >/dev/null 2>&1 || status=1 ;;
 		esac
 	done
+	return "$status"
 }
 
 # The record keeps what this run installed: a package that was not here is
 # removed again if tor cannot be set up.
 apt_install() {
-	local pkg had=()
+	local pkg
+	# Recorded before the install, for each package that is not installed:
+	# apt carries its dpkg run through a hangup or a Ctrl+C, and the script
+	# then stops before the line after the install. Removing a package the
+	# install never got to is nothing.
 	for pkg in "$@"; do
-		if dpkg -s "$pkg" >/dev/null 2>&1; then had[${#had[@]}]=$pkg; fi
+		if [ "$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null)" != "install ok installed" ]; then
+			undo_push "DEBIAN_FRONTEND=noninteractive apt-get remove -y -q $pkg >/dev/null 2>&1 || true"
+		fi
 	done
 	DEBIAN_FRONTEND=noninteractive apt-get install -y -q -o Dpkg::Options::=--force-confold "$@" ||
 		tor_fail "apt-get could not install $*" || return 1
-	for pkg in "$@"; do
-		case " ${had[*]+${had[*]}} " in
-		*" $pkg "*) ;;
-		*) undo_push "DEBIAN_FRONTEND=noninteractive apt-get remove -y -q $pkg >/dev/null 2>&1 || true" ;;
-		esac
-	done
 }
 
 # apt_tor_project adds the Tor Project's repository: its key, by fingerprint,
@@ -379,8 +393,8 @@ dnf_tor() {
 	candidate=$(dnf -q info tor 2>/dev/null | awk -F: '/^Version/ { gsub(/[ \t]/, "", $2); print $2 }' | sort -t. -k1,1n -k2,2n -k3,3n -k4,4n | tail -n 1) || true
 	if [ -n "$candidate" ] && version_at_least "$candidate" "$NOX_TOR_MIN_VERSION"; then
 		if ! rpm -q tor >/dev/null 2>&1; then
-			dnf install -y -q tor || tor_fail "dnf could not install tor" || return 1
 			undo_push "dnf remove -y -q tor >/dev/null 2>&1 || true"
+			dnf install -y -q tor || tor_fail "dnf could not install tor" || return 1
 		else
 			dnf upgrade -y -q tor || tor_fail "dnf could not upgrade tor" || return 1
 		fi
@@ -419,8 +433,8 @@ EOF
 	if rpm -q tor >/dev/null 2>&1; then
 		dnf upgrade -y -q tor || tor_fail "dnf could not upgrade tor from the Tor Project's repository" || return 1
 	else
-		dnf install -y -q tor || tor_fail "dnf could not install tor from the Tor Project's repository" || return 1
 		undo_push "dnf remove -y -q tor >/dev/null 2>&1 || true"
+		dnf install -y -q tor || tor_fail "dnf could not install tor from the Tor Project's repository" || return 1
 	fi
 }
 
@@ -430,8 +444,8 @@ pacman_tor() {
 	[ -n "$candidate" ] && version_at_least "$(upstream_version "$candidate")" "$NOX_TOR_MIN_VERSION" ||
 		tor_fail "the distribution's tor is older than $NOX_TOR_MIN_VERSION; install a newer one yourself and run the script again" || return 1
 	if ! pacman -Q tor >/dev/null 2>&1; then
-		pacman -S --needed --noconfirm tor || tor_fail "pacman could not install tor" || return 1
 		undo_push "pacman -R --noconfirm tor >/dev/null 2>&1 || true"
+		pacman -S --needed --noconfirm tor || tor_fail "pacman could not install tor" || return 1
 	fi
 }
 
@@ -554,8 +568,8 @@ setup_tor_check() {
 	make_dir "$TOR_ETC" "" "" 755
 	make_own_dir "$TOR_DATA" "" "" 700
 	if [ ! -e "$TOR_LOG" ]; then
-		: >"$TOR_LOG"
 		undo_push "rm -f $(q "$TOR_LOG")"
+		: >"$TOR_LOG"
 	fi
 	if [ ! -e "$TORRC" ]; then
 		render "$DEPLOY_DIR/torrc.tmpl" "$WORK/torrc" DATA_DIR="$(torq "$TOR_DATA")" LOG_TARGET=stdout NOX_CONF="$(torq "$NOX_TOR_CONF")"

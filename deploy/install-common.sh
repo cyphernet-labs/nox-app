@@ -358,8 +358,11 @@ make_dir() {
 		[ -d "$path" ] || die "$path is not a directory"
 		return 0
 	fi
-	mkdir -p "$path" || die "cannot create $path"
+	# Recorded before the step, as every change is: an interrupt that lands
+	# between a change and its record would leave the change behind, and
+	# removing what was never made is nothing.
 	undo_push "rm -rf $(q "$top")"
+	mkdir -p "$path" || die "cannot create $path"
 	if [ -n "$owner" ]; then
 		chown "$owner:$group" "$path" || die "cannot give $path to $owner"
 	fi
