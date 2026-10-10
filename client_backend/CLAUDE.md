@@ -30,9 +30,12 @@ rights by the store: a paired device gets everything, an unknown key only
 `pair` - within two minutes, on one of at most 32 such connections
 (`unpaired.go`); `session.hello` with an unknown key is `unauthenticated`
 (the device reads it as a revocation), and `/files` refuses an unpaired key
-with `401` before it looks at the token. The greeting has no challenge, `session.hello`
-and `pair` carry no device key, and the pairing link is `nox://pair/`
-version 3 (contract §8A). People come into being only through `pair`; the
+with `401` before it looks at the token. Off `/ws` an unknown key gets one
+request per connection: the door in front of the mux (`limitStrangers`)
+ends the connection with every answer but a WebSocket upgrade. The greeting
+has no challenge, `session.hello` and `pair` carry no device key, and the
+pairing link is `nox://pair/` version 3 (contract §8A). People come into
+being only through `pair`; the
 machine belongs to ONE person (037) and `owner_user_id` survives only as the
 "this machine has been claimed" marker. Still out of scope and blocked:
 `recover` and the recovery phrase (Q16), the protocol to the relay (Q13), and
@@ -261,15 +264,32 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   send its first byte; and past 256 in all the oldest handshake is cut for
   the newcomer. The cuts are logged as counts, once a minute at most -
   `evicted_local` is this machine's share
-- `internal/server/unpaired.go` — what a /ws connection of a key nobody paired
-  may hold (045): the key is looked up AFTER the connection joins the
-  registry (a revocation from then on drops it, as for a transfer); such a
-  connection is closed with 1008 if it has not paired within 2 minutes, and
-  at most 32 are open at once - the OLDEST is closed with 1013 for a
-  newcomer, never the newcomer. `pair` or `session.hello` succeeding on it
-  settles it; a paired device's connection is never held to either limit.
-  The main `http.Server` closes a connection idle for 2 minutes between
-  requests (`configureMain`, shared by `Run` and the test stack)
+- `internal/server/unpaired.go` — what a key nobody paired may hold (045).
+  The door (`limitStrangers`, in front of the mux) looks the key up on every
+  request and holds a stranger to one request per connection: whatever the
+  answer, it says `Connection: close` (`strangerWriter` sets it again over
+  the `Connection: Upgrade` the WebSocket library writes onto its own
+  refusals), and a request that declared a body gets a read deadline already
+  past (`endWithAnswer`), so net/http waits for that body neither before the
+  answer nor after it. A 101 goes on as a session. The door decides only
+  whether the connection outlives the request; rights are still decided by
+  `admitTransfer` and `handleWS`, whose 401 ends the connection too. On /ws
+  the key is looked up AFTER the connection joins the registry (a revocation
+  from then on drops it, as for a transfer); a stranger's session is closed
+  with 1008 if it has not paired within 2 minutes, and at most 32 are open
+  at once - the OLDEST is closed with 1013 for a newcomer, never the
+  newcomer. `pair` or `session.hello` succeeding on it settles it; a paired
+  device's connection is never held to either limit. The main `http.Server`
+  (`configureMain`, shared by `Run` and the test stack) closes a connection
+  idle for 2 minutes between requests (only a paired device's is ever
+  kept), hands `OPTIONS *` to the handler instead of answering it itself
+  past the door, and gives a body nothing of ours reads 30 s past the
+  headers (`boundRequestBody`, a ConnState hook): net/http answers an
+  unsupported `Expect` before any handler runs and then reads what is left
+  of a declared body, with no deadline of its own. A body a handler reads is
+  held to the handler's own deadlines, and net/http lifts the deadline itself
+  when it reads behind a request with no body left, so no transfer is
+  bounded by it
 - `internal/server/tls.go` — the technical certificate: a fresh ECDSA P-256 key
   in memory at every start, TLS 1.3 only, ALPN `http/1.1`, no session tickets
 - `internal/server/pairing_link.go` — the version 3 link: build and parse, typed
@@ -316,7 +336,10 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   limits, this machine's share among them (a flood from it cuts only its own,
   loopback and the address a connection reached count as one) and a pipe
   listener whose connections report both of their ends; `unpaired_test.go`
-  holds a stranger's deadline and cap; the addresses are
+  holds a stranger's deadline and cap, and that a stranger's connection ends
+  with every answer but an upgrade - a body declared and never sent and
+  net/http's own answers included - while a paired device's stays for the
+  next request; the addresses are
   `address_settings_test.go`, `status_addresses_test.go` and
   `internal/store/addresses_test.go`; the log
   is `logscrub_test.go` and `log_audit_test.go`, which drives a whole run -
@@ -515,10 +538,16 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - **A failed check is answered with silence.** The server writes nothing - not
   even its own message - and closes the connection; a peer that did not prove a
   key learns nothing, including which machine it reached.
-- **A key nobody paired gets two minutes on `/ws`, and 32 such connections at
-  once** (045: the onion service is open to anybody who knows its
-  address, and a key made for the occasion passes the channel check). Past
-  the cap the OLDEST is closed for the newcomer, never the newcomer: a refusal
+- **A key nobody paired gets one request per connection, and on `/ws` two
+  minutes and 32 such sessions at once** (045: the onion service is open to
+  anybody who knows its address, and a key made for the occasion passes the
+  channel check). Off `/ws` every answer ends the connection, and a body it
+  declared is not awaited past an answer of ours (an answer net/http gives
+  itself, to an unsupported Expect, waits for it 30 s at most): kept open, a
+  connection would stay a stranger's for as long as it asked again within
+  each idle timeout - or, with a body declared and never sent, for good
+  without another byte. On `/ws`, past the cap the OLDEST is closed for the
+  newcomer, never the newcomer: a refusal
   would let 32 connections renewed every two minutes keep every new device
   from pairing, where closing the oldest makes a stranger open 32 within each
   of a device's round trips. **046 must extend or exempt the deadline** for a
@@ -526,7 +555,11 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   minutes), and keep such a connection from being the oldest a flood closes,
   or every slow approval fails. What stays open: within its two minutes a
   stranger may send `pair` as often as it likes, each failed attempt one
-  short write transaction on the single writer.
+  short write transaction on the single writer; and the connections past the
+  check are not capped as a whole - a stranger may open them one after
+  another, each held for one request's budgets (30 s for its headers) at the
+  price of a full handshake, so what bounds how many it holds is how fast it
+  can complete handshakes.
 - **This machine is one source on the channel's entry, and its share is
   bounded** (64 of 256). tor is not told apart from any other process here:
   the app running on the server's own machine shares the share and the
