@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/binary"
@@ -57,7 +58,10 @@ type PairingLink struct {
 	ServerKey ed25519.PublicKey
 	// Token is the token as `pair` carries it: base64url without padding.
 	Token string
-	// Direct are the direct addresses as host:port, in the link's order.
+	// Direct are the direct addresses as host:port, in the link's order: the
+	// public address first when the link carries one (045). The format does
+	// not tell the two apart and does not need to - a device tries them in
+	// order, and shows the first in its "server address" field.
 	Direct []string
 	// Onion is the onion service's public key, nil when the link names none.
 	// A link that names several keeps the first.
@@ -220,23 +224,54 @@ func parseDirectAddress(kind byte, value []byte) (string, error) {
 	return net.JoinHostPort(host, strconv.Itoa(int(port))), nil
 }
 
-// pairingLink builds the link every issuer hands out (044): the claim on the
-// service page and the device invite alike - one direct address, the one
-// given, and the onion service whenever this server offers it.
+// linkCarries says which of the stored addresses a link names: what the
+// device.invite reply reports, and what decides whether a code is worth
+// drawing for a phone.
+type linkCarries struct {
+	Public bool
+	Onion  bool
+}
+
+// buildLink is the link every issuer hands out (044, 045) - the claim in the
+// terminal and on the service page, and the device invite alike: the public
+// address first when one is set, then the one direct address, then the onion
+// service when one is set.
 //
-// The onion address rides along for AFTER pairing: a device away from home
-// reaches its server through it once it has an access key of its own. It
-// cannot pair through it - the service opens only to the access key of a
-// device that is already paired - which is why the invite reply says
-// "onion": false whatever the link carries. "Offered" is the same predicate
-// the greeting's address list uses, so a link never names an onion address the
-// greeting would not.
-func (s *Server) pairingLink(id store.ServerIdentity, direct, token string) (string, error) {
-	var onion ed25519.PublicKey
-	if s.tor.Offered() {
-		onion = s.tor.OnionPublicKey()
+// The public address leads because it is what the app shows in its "server
+// address" field - the first direct address of the link - and the one that
+// works from anywhere the onion path is not wanted. The direct address is left
+// out when it IS the public one: a second copy would only be tried twice. The
+// rest of the machine's addresses reach a device after pairing, in the
+// greeting (§3).
+//
+// Pairing through the onion address works - the first device's claim
+// included (FR-008): the connection from tor arrives on the same port as any
+// other and proves itself the same way.
+func buildLink(serverKey ed25519.PublicKey, token, direct string, conf configuredAddresses) (string, linkCarries, error) {
+	addrs := make([]string, 0, 2)
+	if conf.Public != "" {
+		addrs = append(addrs, conf.Public)
 	}
-	return BuildPairingLink(id.PublicKey, token, []string{direct}, onion)
+	if direct != "" && direct != conf.Public {
+		addrs = append(addrs, direct)
+	}
+	link, err := BuildPairingLink(serverKey, token, addrs, conf.OnionKey)
+	if err != nil {
+		return "", linkCarries{}, err
+	}
+	return link, linkCarries{Public: conf.Public != "", Onion: conf.OnionKey != nil}, nil
+}
+
+// pairingLink is buildLink over the addresses stored right now - read per
+// link rather than from the address snapshot, so an address set on the service
+// page is in the very next code drawn (SC-003) even before the watcher has
+// taken its next look.
+func (s *Server) pairingLink(ctx context.Context, id store.ServerIdentity, direct, token string) (string, linkCarries, error) {
+	conf, err := s.configuredAddresses(ctx)
+	if err != nil {
+		return "", linkCarries{}, fmt.Errorf("read addresses: %w", err)
+	}
+	return buildLink(id.PublicKey, token, direct, conf)
 }
 
 // listenAddress turns a bind address into one a device can actually reach.

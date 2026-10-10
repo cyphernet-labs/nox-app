@@ -44,7 +44,7 @@ const (
 	defaultPreemptWait = 5 * time.Second
 	// defaultContinuationWait bounds the same wait for a continuation. It
 	// runs on the connection's read loop, which is also where pongs are
-	// read, and the direct path's ping gives up after 5 s - so a second, and
+	// read, and a ping gives up when its pong is late - so a second, and
 	// never a reason to refuse.
 	defaultContinuationWait = time.Second
 )

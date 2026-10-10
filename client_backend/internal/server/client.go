@@ -43,17 +43,9 @@ type client struct {
 	// requestHost is the address this device dialled to get here, from the
 	// request's Host header. It is the only address the server knows to be
 	// reachable from somewhere other than the machine itself, which is what an
-	// invite link needs.
+	// invite link needs - and, when it is an onion name, the only sign that the
+	// connection came through tor (045).
 	requestHost string
-	// viaOnion says the connection came in through the onion entry (039). Set
-	// once, before the read loop starts, and never changed: a claim is refused
-	// on it, its timeouts are the onion ones, and an invite asked for over it
-	// takes its direct host from the address list rather than from Host.
-	viaOnion bool
-	// writeTimeout bounds one frame write and one ping's wait for its pong:
-	// the server's for a direct connection, onionTimeout for an onion one.
-	// Set once before writePump starts.
-	writeTimeout time.Duration
 	// greeted and addrVersion belong to the registry (Server.mu): greeted is
 	// set once the greeting reply - carrying the address snapshot of
 	// addrVersion - is queued, and only then does the watcher send this
@@ -144,12 +136,11 @@ func (c *client) enqueueLive(frame []byte) bool {
 }
 
 // writePump is the sole writer of frames to the connection: it drains out,
-// and starts keepAlive beside itself.
+// and starts keepAlive beside itself. One frame write and one ping's wait for
+// its pong get the server's writeTimeout - the slow path's, for every
+// connection (045), since one from tor looks like any other.
 func (c *client) writePump() {
-	timeout := c.writeTimeout
-	if timeout == 0 {
-		timeout = c.srv.writeTimeout
-	}
+	timeout := c.srv.writeTimeout
 	go c.keepAlive(timeout)
 	for {
 		select {

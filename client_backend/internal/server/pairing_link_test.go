@@ -2,17 +2,22 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
+
+	"nox.app/client-backend/internal/protocol"
+	"nox.app/client-backend/internal/store"
 )
 
 // linkVectors is testdata/link-vectors.json - a copy of the contract's shared
@@ -298,7 +303,7 @@ func TestThePairingLinkCarriesTheStoredServerKey(t *testing.T) {
 	c := dialWS(t, ts, srv)
 	c.expectGreeting()
 	c.hello(1, "")
-	link, _ := inviteOver(t, c, 2, `{}`)
+	link, _, _ := inviteOver(t, c, 2, `{}`)
 	if got := readLink(t, link).ServerKey; !got.Equal(serverKeyOf(t, srv)) {
 		t.Fatalf("the link carries %x, want the stored key %x", got, serverKeyOf(t, srv))
 	}
@@ -306,5 +311,194 @@ func TestThePairingLinkCarriesTheStoredServerKey(t *testing.T) {
 	// it as the only acceptable answer gets in.
 	if _, err := dialChannel(t.Context(), ts.Listener.Addr().String(), readLink(t, link).ServerKey, newDevice(t).priv); err != nil {
 		t.Fatalf("a channel expecting the link's key was refused: %v", err)
+	}
+}
+
+// readLink parses a link the server issued, failing the test if it does not
+// read back.
+func readLink(t *testing.T, link string) PairingLink {
+	t.Helper()
+	parsed, err := ParsePairingLink(link)
+	if err != nil {
+		t.Fatalf("the link does not read back: %v (%s)", err, link)
+	}
+	return parsed
+}
+
+// inviteOver asks for a device invite on a greeted connection and returns the
+// link and the reply's two flags.
+func inviteOver(t *testing.T, c *wsClient, id int, data string) (link string, onion, public bool) {
+	t.Helper()
+	c.send(fmt.Sprintf(`{"id":%d,"cmd":"device.invite","data":%s}`, id, data))
+	reply := c.expectOK(id)
+	mustUnmarshal(t, reply["link"], &link)
+	mustUnmarshal(t, reply["onion"], &onion)
+	mustUnmarshal(t, reply["public"], &public)
+	return link, onion, public
+}
+
+// onionKeyOf is the service key a valid onion address names - what a link
+// carries for it.
+func onionKeyOf(t *testing.T, addr string) ed25519.PublicKey {
+	t.Helper()
+	_, key, err := parseOnionAddress(addr)
+	if err != nil {
+		t.Fatalf("parseOnionAddress(%q): %v", addr, err)
+	}
+	return key
+}
+
+// The order every link follows (045, contract §8A): the public address first,
+// because the app shows the link's first direct address as "server address";
+// then the one direct address, left out when it IS the public one; then the
+// onion service. Nothing set, nothing added.
+func TestLinksNameThePublicAddressThenTheDirectOneThenTheOnion(t *testing.T) {
+	key := ed25519.PublicKey(bytes.Repeat([]byte{1}, ed25519.PublicKeySize))
+	token := base64.RawURLEncoding.EncodeToString(make([]byte, 16))
+	onionKey := onionKeyOf(t, testOnionAddr)
+	both := configuredAddresses{Public: "nox.example.org:8443", Onion: testOnionAddr, OnionKey: onionKey}
+	for _, tc := range []struct {
+		name       string
+		direct     string
+		conf       configuredAddresses
+		wantDirect []string
+		wantOnion  bool
+	}{
+		{"nothing stored", "192.168.1.20:8443", configuredAddresses{}, []string{"192.168.1.20:8443"}, false},
+		{"public and onion", "192.168.1.20:8443", both, []string{"nox.example.org:8443", "192.168.1.20:8443"}, true},
+		{"onion only", "192.168.1.20:8443", configuredAddresses{Onion: testOnionAddr, OnionKey: onionKey}, []string{"192.168.1.20:8443"}, true},
+		{"public only", "192.168.1.20:8443", configuredAddresses{Public: "203.0.113.7:8443"}, []string{"203.0.113.7:8443", "192.168.1.20:8443"}, false},
+		{"the direct address is the public one", "nox.example.org:8443", both, []string{"nox.example.org:8443"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			link, carries, err := buildLink(key, token, tc.direct, tc.conf)
+			if err != nil {
+				t.Fatalf("buildLink: %v", err)
+			}
+			got := readLink(t, link)
+			if !slices.Equal(got.Direct, tc.wantDirect) {
+				t.Fatalf("direct = %v, want %v", got.Direct, tc.wantDirect)
+			}
+			if tc.wantOnion != (got.Onion != nil) || (tc.wantOnion && !got.Onion.Equal(onionKey)) {
+				t.Fatalf("onion key = %x, want present=%v", got.Onion, tc.wantOnion)
+			}
+			if carries.Onion != tc.wantOnion || carries.Public != (tc.conf.Public != "") {
+				t.Fatalf("carries = %+v for %+v", carries, tc.conf)
+			}
+		})
+	}
+}
+
+// The invite names every address the machine stores, and the reply says which
+// of the two it carries: with both false the app labels the invite "home
+// only". Whatever the request's own `onion` says, nothing changes - it is read
+// softly and ignored (contract §8A).
+func TestAnInviteNamesTheStoredAddressesAndSaysWhichItCarries(t *testing.T) {
+	ts, srv := newTestServerWith(t, func(s *Server) { s.cfg.Addr = "192.168.1.10:8080" })
+	c := dialWS(t, ts, srv)
+	c.expectGreeting()
+	c.hello(1, "")
+	key := serverKeyOf(t, srv)
+
+	requests := []string{`{}`, `{"onion":false}`, `{"onion":"yes"}`, `{"onion":null}`, `{"onion":true}`, `[]`}
+	for i, data := range requests {
+		link, onion, public := inviteOver(t, c, 10+i, data)
+		got := readLink(t, link)
+		if onion || public || got.Onion != nil || !got.ServerKey.Equal(key) || !slices.Equal(got.Direct, []string{"192.168.1.10:8080"}) {
+			t.Fatalf("%s with nothing stored: onion=%v public=%v link=%+v", data, onion, public, got)
+		}
+	}
+
+	setStored(t, srv, store.AddressOnion, testOnionAddr)
+	link, onion, public := inviteOver(t, c, 20, `{}`)
+	if got := readLink(t, link); !onion || public || !got.Onion.Equal(onionKeyOf(t, testOnionAddr)) ||
+		!slices.Equal(got.Direct, []string{"192.168.1.10:8080"}) {
+		t.Fatalf("onion stored: onion=%v public=%v link=%+v", onion, public, got)
+	}
+
+	setStored(t, srv, store.AddressPublic, "nox.example.org:8443")
+	for i, data := range requests {
+		link, onion, public := inviteOver(t, c, 30+i, data)
+		got := readLink(t, link)
+		if !onion || !public {
+			t.Fatalf("%s: onion=%v public=%v, want both", data, onion, public)
+		}
+		if !slices.Equal(got.Direct, []string{"nox.example.org:8443", "192.168.1.10:8080"}) {
+			t.Fatalf("%s: direct %v, want the public address first, then the bind", data, got.Direct)
+		}
+		if !got.Onion.Equal(onionKeyOf(t, testOnionAddr)) {
+			t.Fatalf("%s: onion key %x, want the stored address's", data, got.Onion)
+		}
+	}
+}
+
+// The claim link follows the same rule, and the page builds it from the
+// database on every load: an address set a moment ago is already in it.
+func TestTheClaimLinkCarriesTheStoredAddresses(t *testing.T) {
+	_, srv := newTestServerWith(t, func(s *Server) { s.cfg.Addr = "192.168.1.10:8080" })
+	link, scannable, err := srv.claimLink(context.Background())
+	if err != nil {
+		t.Fatalf("claimLink: %v", err)
+	}
+	if got := readLink(t, link); got.Onion != nil || !slices.Equal(got.Direct, []string{"192.168.1.10:8080"}) || !scannable {
+		t.Fatalf("claim link with nothing stored = %+v (scannable %v)", got, scannable)
+	}
+
+	setStored(t, srv, store.AddressPublic, "nox.example.org:8443")
+	setStored(t, srv, store.AddressOnion, testOnionAddr)
+	link, _, err = srv.claimLink(context.Background())
+	if err != nil {
+		t.Fatalf("claimLink: %v", err)
+	}
+	got := readLink(t, link)
+	if !got.Onion.Equal(onionKeyOf(t, testOnionAddr)) || !got.ServerKey.Equal(serverKeyOf(t, srv)) ||
+		!slices.Equal(got.Direct, []string{"nox.example.org:8443", "192.168.1.10:8080"}) {
+		t.Fatalf("claim link with both stored = %+v", got)
+	}
+}
+
+// A machine on loopback behind tor has nothing a phone can dial directly - and
+// a phone can still claim it through Tor (045, FR-008). The code is drawn
+// whenever the link names an address another device can reach.
+func TestALoopbackServerWithAnOnionAddressDrawsTheCode(t *testing.T) {
+	_, srv := newTestServer(t) // bound to 127.0.0.1
+	if _, scannable, err := srv.claimLink(context.Background()); err != nil || scannable {
+		t.Fatalf("loopback with nothing stored: scannable=%v err=%v, want no code", scannable, err)
+	}
+	setStored(t, srv, store.AddressOnion, testOnionAddr)
+	if _, scannable, err := srv.claimLink(context.Background()); err != nil || !scannable {
+		t.Fatalf("loopback with an onion address: scannable=%v err=%v, want a code", scannable, err)
+	}
+	if !strings.Contains(statusBody(t, srv), "<svg") {
+		t.Fatal("the page drew no code for a link a phone can follow through Tor")
+	}
+}
+
+// A device revoked while its connection is still open cannot mint an invite:
+// the command gets the answer its next greeting would get, and no token comes
+// into being.
+func TestADeviceRevokedMidSessionCannotIssueAnInvite(t *testing.T) {
+	ts, srv := newTestServer(t)
+	setStored(t, srv, store.AddressOnion, testOnionAddr)
+	c := dialWS(t, ts, srv)
+	c.expectGreeting()
+	c.hello(1, "")
+	// Revoked from elsewhere: straight in the store, so this socket stays open
+	// the way it does between a revocation's commit and the server's close.
+	if err := srv.store.RevokeDevice(context.Background(), c.dev.pub); err != nil {
+		t.Fatalf("RevokeDevice: %v", err)
+	}
+	c.send(`{"id":2,"cmd":"device.invite","data":{}}`)
+	c.expectErr(2, protocol.ErrUnauthenticated)
+	c.send(`{"id":3,"cmd":"device.invite","data":{"onion":true}}`)
+	c.expectErr(3, protocol.ErrUnauthenticated)
+
+	var live int
+	if err := readDB(t, srv).QueryRowContext(context.Background(),
+		"SELECT COUNT(1) FROM pair_tokens WHERE kind = 'invite_device'").Scan(&live); err != nil {
+		t.Fatalf("count invites: %v", err)
+	}
+	if live != 0 {
+		t.Fatalf("%d invites written for a revoked device, want none", live)
 	}
 }

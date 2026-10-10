@@ -6,12 +6,14 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -21,9 +23,9 @@ import (
 	"nox.app/client-backend/internal/db"
 )
 
-// These tests drive Run itself rather than the harness: what 039 changed is
-// the wiring - which goroutines start, on which contexts, in which order they
-// stop - and the harness copies Run's steps by hand.
+// These tests drive Run itself rather than the harness: what they hold is the
+// wiring - which goroutines start, what lands before the listeners open, in
+// which order everything stops - and the harness copies Run's steps by hand.
 
 func freeAddr(t *testing.T) string {
 	t.Helper()
@@ -126,7 +128,6 @@ func testRunConfig(t *testing.T) config.Config {
 		FilesPath:  path + "-files",
 		StatusAddr: freeAddr(t),
 		Limits:     config.DefaultLimits(),
-		TorDir:     path + "-tor",
 	}
 }
 
@@ -135,7 +136,6 @@ func testRunConfig(t *testing.T) config.Config {
 // the one the store holds, the one every channel proves.
 func TestTheStartupLineNamesTheServerKeyAndNothingSecret(t *testing.T) {
 	cfg := testRunConfig(t)
-	cfg.Tor = false
 	logs, stop := runServer(t, cfg)
 	if err := stop(); err != nil {
 		t.Fatalf("Run returned %v", err)
@@ -162,20 +162,6 @@ func TestTheStartupLineNamesTheServerKeyAndNothingSecret(t *testing.T) {
 	}
 }
 
-func TestRunWithTorOffServesTheDirectPathAndStopsCleanly(t *testing.T) {
-	cfg := testRunConfig(t)
-	cfg.Tor = false
-	_, stop := runServer(t, cfg)
-	if err := stop(); err != nil {
-		t.Fatalf("Run returned %v", err)
-	}
-	if _, err := os.Stat(cfg.TorDir); !os.IsNotExist(err) {
-		t.Fatalf("Tor off, yet its directory exists (err=%v)", err)
-	}
-}
-
-// FR-007 end to end: Tor on, tor nowhere to be found - the messenger still
-// serves, says why in the log, and stops cleanly.
 // A stop that lands before the dispatcher's first read of the cursor is a
 // stop. The read fails because of the cancel, and that failure used to come
 // back out of Run as an error - an intermittent one, whenever shutdown beat
@@ -190,16 +176,108 @@ func TestDispatcherStoppedBeforeItsFirstReadStopsCleanly(t *testing.T) {
 	}
 }
 
-func TestRunWithTorMissingStillServesTheDirectPath(t *testing.T) {
+// SC-005: the server never starts tor (045). Not "with tor turned off" - there
+// is no switch any more: a tor waiting on the PATH, where the server of 039
+// went looking for one, is never run, and no state directory appears beside
+// the database.
+func TestRunStartsNoTorEvenWithOneOnThePath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-in tor is a shell script")
+	}
+	bin := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "tor-ran")
+	script := "#!/bin/sh\necho ran > '" + marker + "'\nexec sleep 60\n"
+	if err := os.WriteFile(filepath.Join(bin, "tor"), []byte(script), 0o755); err != nil { //nolint:gosec // an executable on purpose
+		t.Fatalf("write the stand-in tor: %v", err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
 	cfg := testRunConfig(t)
-	cfg.Tor = true
-	cfg.TorBin = filepath.Join(t.TempDir(), "no-tor-here")
-	logs, stop := runServer(t, cfg)
-	eventually(t, "the reason logged", func() bool { return strings.Contains(logs.String(), "tor not found") })
+	cfg.OnionAddr = testOnionAddr
+	_, stop := runServer(t, cfg)
+	// Long enough for a supervisor to have looked for its binary and started
+	// it; the server of 039 did both before the main port opened.
+	time.Sleep(200 * time.Millisecond)
 	if err := stop(); err != nil {
 		t.Fatalf("Run returned %v", err)
 	}
-	if strings.Contains(logs.String(), ".onion") {
-		t.Fatal("an onion address reached the log")
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("the server ran the tor on its PATH (marker err=%v)", err)
+	}
+	if _, err := os.Stat(cfg.DBPath + "-tor"); !os.IsNotExist(err) {
+		t.Fatalf("a tor state directory appeared beside the database (err=%v)", err)
+	}
+}
+
+// A unit file written for the server of 039 still says -tor=false. The start
+// fails before Run is ever called, and says where tor went - main hands Run
+// only what config.Load accepted.
+func TestTheOldTorFlagStopsTheStartWithAHint(t *testing.T) {
+	_, err := config.Load([]string{"-tor=false", "-addr", "0.0.0.0:8443"}, func(string) string { return "" })
+	if err == nil || !strings.Contains(err.Error(), "separate service") {
+		t.Fatalf("config.Load(-tor=false) = %v, want the separate-service hint", err)
+	}
+}
+
+// The address parameters end to end (045): a good one lands in the database
+// before anything listens - the claim link printed at startup already names it
+// - and a bad one leaves the server running with a warning on the page. The
+// onion address reaches neither the log nor any other line (FR-022).
+func TestStartParametersLandBeforeTheLinkAndNeverInTheLog(t *testing.T) {
+	cfg := testRunConfig(t)
+	cfg.OnionAddr = testOnionAddr + ":443"
+	cfg.PublicAddr = "nox.example.org" // no port: refused
+	logs, stop := runServer(t, cfg)
+
+	resp, err := (&http.Client{Timeout: 2 * time.Second}).Get("http://" + cfg.StatusAddr + "/")
+	if err != nil {
+		t.Fatalf("GET the service page: %v", err)
+	}
+	page, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		t.Fatalf("read the service page: %v", err)
+	}
+	if err := stop(); err != nil {
+		t.Fatalf("Run returned %v", err)
+	}
+
+	if !strings.Contains(string(page), "-public-addr is not a valid address. The server keeps no public address.") {
+		t.Fatalf("the page does not warn about the refused parameter: %s", page)
+	}
+	out := logs.String()
+	name := strings.TrimSuffix(testOnionAddr, ".onion")
+	if strings.Contains(strings.ToLower(out), name) {
+		t.Fatalf("the onion address reached the log:\n%s", out)
+	}
+	if !strings.Contains(out, "-public-addr") || !strings.Contains(out, "start parameter not applied") {
+		t.Fatalf("the refused parameter is not named in the log:\n%s", out)
+	}
+	// The claim link printed at startup names the onion service already.
+	m := regexp.MustCompile(`link=(nox://pair/[A-Za-z0-9_-]+)`).FindStringSubmatch(out)
+	if m == nil {
+		t.Fatalf("no claim link in the startup log:\n%s", out)
+	}
+	if got := readLink(t, m[1]); got.Onion == nil {
+		t.Fatalf("the claim link printed at startup names no onion service: %+v", got)
+	}
+
+	dbs, err := db.Open(cfg.DBPath)
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	defer func() { _ = dbs.Close() }()
+	var onion, onionParam string
+	var public, publicParam *string
+	if err := dbs.Read.QueryRow(
+		"SELECT onion_address, onion_address_param, public_address, public_address_param FROM server_identity WHERE id = 1").
+		Scan(&onion, &onionParam, &public, &publicParam); err != nil {
+		t.Fatalf("read the addresses: %v", err)
+	}
+	if onion != testOnionAddr || onionParam != testOnionAddr+":443" {
+		t.Fatalf("onion = %q (param %q), want the address without its port and the parameter as given", onion, onionParam)
+	}
+	if public != nil || publicParam != nil {
+		t.Fatalf("the refused parameter left public=%v param=%v, want nothing", public, publicParam)
 	}
 }

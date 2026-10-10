@@ -12,23 +12,20 @@ import (
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	peer, ok := channelPeerFrom(r.Context())
 	if !ok {
-		// Unreachable through Run: both entries hand over only connections that
-		// passed the channel check. A handler mounted without it - a wiring
-		// mistake, a test mux - must not open a session nobody proved a key
-		// for, so it refuses before the upgrade rather than greet a stranger.
+		// Unreachable through Run: the listener hands over only connections
+		// that passed the channel check. A handler mounted without it - a
+		// wiring mistake, a test mux - must not open a session nobody proved a
+		// key for, so it refuses before the upgrade rather than greet a
+		// stranger.
 		http.Error(w, "the connection proved no device key", http.StatusUnauthorized)
 		return
 	}
-	onion := viaOnion(r.Context())
 	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {
-		if onion {
-			// The library's message quotes Host, and on this entry Host is the
-			// onion name (FR-031). The fact of the failure is all that is said.
-			s.logger.Warn("websocket accept failed on the onion entry")
-			return
-		}
-		s.logger.Warn("websocket accept failed", "err", err)
+		// The library's message can quote Host, and a connection through the
+		// onion service carries the onion name there (FR-022). Nothing tells
+		// such a connection apart any more, so every one is masked.
+		s.logger.Warn("websocket accept failed", "err", maskOnion(err.Error()))
 		return
 	}
 	// Track the hijacked connection so shutdown can wait for it (invariant 9).
@@ -40,11 +37,6 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	c := newClient(s, conn, r.Context(), logger)
 	c.deviceKey = peer.deviceKey()
 	c.requestHost = r.Host
-	c.viaOnion = onion
-	c.writeTimeout = s.writeTimeout
-	if onion {
-		c.writeTimeout = s.onionTimeout
-	}
 	s.track(c)
 	defer s.untrack(c)
 	defer c.close(websocket.StatusNormalClosure, "")
@@ -113,8 +105,6 @@ func (c *client) dispatch(cmd protocol.Command) {
 		c.handleDeviceInvite(cmd)
 	case protocol.CmdIdentitySetLabel:
 		c.handleIdentitySetLabel(cmd)
-	case protocol.CmdDeviceSetAccessKey:
-		c.handleDeviceSetAccessKey(cmd)
 	case protocol.CmdChatsList:
 		c.handleChatsList(cmd)
 	case protocol.CmdChatGet:

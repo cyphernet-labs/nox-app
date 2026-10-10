@@ -15,7 +15,7 @@ import (
 // helper so the many call sites read the same way; Pair returns the identity
 // directly now that pairing always finishes.
 func pairID(ctx context.Context, s *Store, token, deviceKey, platform string, now int64) (Identity, error) {
-	return s.Pair(ctx, token, deviceKey, platform, PairOptions{}, now)
+	return s.Pair(ctx, token, deviceKey, platform, now)
 }
 
 // claimOwner claims a fresh server and returns the identity of the person it

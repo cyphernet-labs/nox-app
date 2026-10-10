@@ -15,15 +15,15 @@ import (
 )
 
 const (
-	// defaultChannelTimeout bounds TLS and the channel check together on the
-	// main entry, counted from the moment a connection is accepted (contract
-	// §1). TLS alone had 5 s there, through ReadHeaderTimeout; the check adds
-	// one round trip, and 10 s covers it on the slowest home network. The onion
-	// entry gets onionTimeout instead.
-	defaultChannelTimeout = 10 * time.Second
+	// defaultChannelTimeout bounds TLS and the channel check together,
+	// counted from the moment a connection is accepted (contract §1): the slow
+	// path's budget, for every connection. A connection from tor arrives on
+	// this same port and looks like any other (045), and TLS plus one more
+	// round trip through Tor can take seconds each.
+	defaultChannelTimeout = slowPathTimeout
 	// maxPendingChannels bounds the connections that are still proving who
-	// they are, per entry. A legitimate burst - every device of one person
-	// reconnecting after a restart - is a small fraction of it.
+	// they are. A legitimate burst - every device of one person reconnecting
+	// after a restart - is a small fraction of it.
 	maxPendingChannels = 64
 )
 
@@ -42,10 +42,10 @@ func (p channelPeer) deviceKey() string {
 // channelPeerKey marks a request with its connection's channelPeer.
 type channelPeerKey struct{}
 
-// withChannelPeer is the ConnContext of both entries: every request on a
-// connection carries the key that connection proved. The mark is on the
-// SOCKET, never derived from anything a request says - the same reasoning that
-// put the onion mark there.
+// withChannelPeer is the server's ConnContext: every request on a connection
+// carries the key that connection proved. The mark is on the SOCKET, never
+// derived from anything a request says - a check on a header is one somebody
+// eventually routes around with a header.
 func withChannelPeer(ctx context.Context, c net.Conn) context.Context {
 	if cc, ok := c.(*channelConn); ok {
 		return context.WithValue(ctx, channelPeerKey{}, cc.peer)
@@ -90,8 +90,6 @@ type channelListener struct {
 	key    ed25519.PrivateKey
 	budget time.Duration
 	logger *slog.Logger
-	// entry names the door in the log: "direct" or "onion".
-	entry string
 
 	ready chan *channelConn
 	slots chan struct{}
@@ -106,7 +104,7 @@ type channelListener struct {
 
 // newChannelListener starts taking connections off raw at once; Accept hands
 // out the ones that pass.
-func (s *Server) newChannelListener(raw net.Listener, cfg *tls.Config, key ed25519.PrivateKey, budget time.Duration, entry string) *channelListener {
+func (s *Server) newChannelListener(raw net.Listener, cfg *tls.Config, key ed25519.PrivateKey, budget time.Duration) *channelListener {
 	ctx, cancel := context.WithCancel(context.Background())
 	l := &channelListener{
 		raw:    raw,
@@ -114,7 +112,6 @@ func (s *Server) newChannelListener(raw net.Listener, cfg *tls.Config, key ed255
 		key:    key,
 		budget: budget,
 		logger: s.logger.With("component", "channel"),
-		entry:  entry,
 		ready:  make(chan *channelConn),
 		slots:  make(chan struct{}, maxPendingChannels),
 		cancel: cancel,
@@ -184,7 +181,7 @@ func (l *channelListener) acceptLoop(ctx context.Context) {
 				return
 			}
 			pause = min(max(2*pause, 5*time.Millisecond), time.Second)
-			l.logger.Warn("accept failed, retrying", "entry", l.entry, "err", err, "in", pause)
+			l.logger.Warn("accept failed, retrying", "err", err, "in", pause)
 			select {
 			case <-time.After(pause):
 			case <-ctx.Done():
@@ -260,10 +257,10 @@ func (l *channelListener) refused(err error) {
 	var stage *tlsStageError
 	switch {
 	case errors.Is(err, eidolon.ErrInvalidLen), errors.Is(err, eidolon.ErrInvalidCert), errors.Is(err, eidolon.ErrSigMismatch):
-		l.logger.Info("channel check refused", "entry", l.entry, "reason", err.Error())
+		l.logger.Info("channel check refused", "reason", err.Error())
 	case errors.As(err, &stage):
-		l.logger.Debug("channel not established", "entry", l.entry, "stage", "tls", "err", err)
+		l.logger.Debug("channel not established", "stage", "tls", "err", err)
 	default:
-		l.logger.Debug("channel not established", "entry", l.entry, "stage", "check", "err", err)
+		l.logger.Debug("channel not established", "stage", "check", "err", err)
 	}
 }

@@ -44,27 +44,18 @@ CREATE UNIQUE INDEX idx_users_singleton ON users ((1));
 -- platform is the OS family and nothing more - enough to recognise one's own
 -- tablet among three, while the exact hardware model would be a fingerprint.
 --
--- access_key (039) is the device's onion access key: an x25519 PUBLIC key,
--- base64, that tor puts in the onion service's list of authorised clients.
--- NULL means the device cannot reach the onion address at all - it never
--- registered a key, or it predates 039. One per device, replaced on
--- re-registration, and gone with the row on revocation, which is exactly the
--- moment it has to stop working. The private half lives on the device only.
+-- There is no onion access key here any more (045): the onion address is open
+-- to whoever knows it, and what lets a connection in is the channel check and
+-- this row - the same on every path.
 CREATE TABLE devices (
     device_key TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users (user_id),
     platform TEXT NOT NULL CHECK (platform <> ''),
     created_at INTEGER NOT NULL,
-    last_seen_at INTEGER NOT NULL,
-    access_key TEXT CHECK (access_key IS NULL OR access_key <> '')
+    last_seen_at INTEGER NOT NULL
 ) STRICT;
 
 CREATE INDEX idx_devices_user ON devices (user_id);
-
--- No access key belongs to two devices (039): a shared key would outlive the
--- revocation of either. The store refuses one before writing it; the index
--- makes it unrepresentable rather than merely unlikely.
-CREATE UNIQUE INDEX idx_devices_access_key ON devices (access_key) WHERE access_key IS NOT NULL;
 
 -- The identity of this store, minted in Go once the schema exists. A client
 -- that sees a different value knows the world it cached is gone and resets;
@@ -98,21 +89,32 @@ CREATE TABLE journal (
 -- shape that eventually disagrees with itself. The timestamp survives because
 -- the moment is unrecoverable and the service page will want it.
 --
--- onion_seed (039) is the Ed25519 SEED of the machine's onion service, base64
--- - a private key, and kept HERE for the same reason as the machine's key: a
--- backup is one file, and restoring it brings back the same onion address, so
--- no device has to learn a new one. It is an ADDRESS, not an identity: trust
--- in the server rests on the machine's key alone, which the channel check
--- proves on every connection, onion or not. Minted with the row and never
--- changed for the life of the store. tor is handed the expanded key on every
--- start and never writes it anywhere.
+-- public_address and onion_address (045) are where this machine can be
+-- reached besides the addresses it finds on its own networks: a public
+-- host:port, and the <56 characters>.onion address of the onion service a
+-- SEPARATE tor publishes for it. NULL means not set. They are addresses, not
+-- identities - trust rests on the machine's key, which the channel check
+-- proves on every connection whatever address it came in on - so they live
+-- here and nowhere else: no settings file to lose in a backup, and the service
+-- page changes them without a restart. The onion service's key is not here:
+-- it is tor's, in tor's own directory.
+--
+-- public_address_param and onion_address_param are the start parameter each
+-- address was last written from (-public-addr, -onion-addr), NULL while none
+-- ever was. A parameter overwrites the address only when it differs from this,
+-- so an address set on the service page survives a restart with the same
+-- parameter still in the unit file. A parameter that was refused is not
+-- recorded, which is what makes its warning repeat until it is fixed.
 CREATE TABLE server_identity (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     public_key TEXT NOT NULL CHECK (public_key <> ''),
     private_key TEXT NOT NULL CHECK (private_key <> ''),
-    onion_seed TEXT NOT NULL CHECK (onion_seed <> ''),
     claimed_at INTEGER,
-    owner_user_id TEXT REFERENCES users(user_id)
+    owner_user_id TEXT REFERENCES users(user_id),
+    public_address TEXT CHECK (public_address IS NULL OR public_address <> ''),
+    onion_address TEXT CHECK (onion_address IS NULL OR onion_address <> ''),
+    public_address_param TEXT CHECK (public_address_param IS NULL OR public_address_param <> ''),
+    onion_address_param TEXT CHECK (onion_address_param IS NULL OR onion_address_param <> '')
 ) STRICT;
 
 -- One-shot pairing tokens. kind is known to the server and NEVER travels in

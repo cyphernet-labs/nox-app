@@ -134,9 +134,10 @@ func TestAClaimedServerShowsTheMachineAndNoLink(t *testing.T) {
 	if strings.Contains(body, "People") {
 		t.Fatalf("the page still counts people: %s", body)
 	}
-	// This one refreshes: uptime and counters shown without one read as now.
-	if !strings.Contains(body, `http-equiv="refresh"`) {
-		t.Fatal("the status page does not refresh, so it shows stale numbers as current")
+	// It no longer refreshes itself (045): it carries the address forms, and a
+	// reload every few seconds wipes an address halfway through being pasted.
+	if strings.Contains(body, `http-equiv="refresh"`) {
+		t.Fatal("the claimed page refreshes itself under the address forms")
 	}
 }
 
@@ -572,7 +573,7 @@ func TestTheServicePageIsStillPlainHTTPOnLoopback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	page := &http.Server{Handler: srv.StatusHandler(), ReadHeaderTimeout: readHeaderTimeout}
+	page := &http.Server{Handler: srv.StatusHandler(), ReadHeaderTimeout: pageReadHeaderTimeout}
 	go func() { _ = page.Serve(listener) }()
 	t.Cleanup(func() { _ = page.Close() })
 

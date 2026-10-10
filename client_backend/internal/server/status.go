@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"nox.app/client-backend/internal/store"
-	"nox.app/client-backend/internal/tor"
 )
 
 // machineState is which of the two pages to show: "somebody still has to claim
@@ -39,11 +38,11 @@ const (
 type machineStatus struct {
 	State machineState
 	Link  string
-	// Scannable is whether the link's address can be reached from ANOTHER
-	// device. False does not mean there is no link: a server bound to loopback
-	// is perfectly claimable from the app on this same machine, and the link is
-	// what that app needs. It only means there is no point drawing a code for a
-	// camera.
+	// Scannable is whether the link names an address ANOTHER device can reach:
+	// a dialable bind, or a public or onion address the owner set. False does
+	// not mean there is no link: a server bound to loopback is perfectly
+	// claimable from the app on this same machine, and the link is what that
+	// app needs. It only means there is no point drawing a code for a camera.
 	Scannable bool
 	// Owned and HasPerson pick the copy on the needs-claim page, on the SAME
 	// three-way split the startup announcement uses: an owner who ran out of
@@ -58,10 +57,12 @@ type machineStatus struct {
 	DBBytes   int64
 	Version   string
 	Uptime    time.Duration
-	// Tor is the supervisor's snapshot (039) and AccessDevices how many devices
-	// hold an onion access key. Neither carries an address or a key.
-	Tor           tor.Status
-	AccessDevices int
+	// Found are the addresses the machine finds on its own networks - the
+	// direct half of the snapshot devices are given. Read-only on the page.
+	Found []string
+	// Stored is what the database holds for the public and onion address,
+	// exactly as stored: the Set forms show it to be changed.
+	Stored store.Addresses
 }
 
 // collectStatus reads the machine's own state.
@@ -85,14 +86,18 @@ func (s *Server) collectStatus(ctx context.Context) (machineStatus, error) {
 		return machineStatus{}, fmt.Errorf("read journal id: %w", err)
 	}
 
-	access, err := s.store.CountDevicesWithAccess(ctx)
+	stored, err := s.store.Addresses(ctx)
 	if err != nil {
-		return machineStatus{}, err
+		return machineStatus{}, fmt.Errorf("read addresses: %w", err)
+	}
+	found := []string{}
+	if cur := s.addrs.Load(); cur != nil {
+		found = cur.Direct
 	}
 
 	status := machineStatus{
-		Tor:           s.tor.Status(),
-		AccessDevices: access,
+		Found:  found,
+		Stored: stored,
 		// Set before the switch, not inside a branch. Both states read them -
 		// the claimed page to say whether an owner is recorded, the needs-claim
 		// page to pick which of three stories it is telling - and filling them
@@ -318,7 +323,7 @@ func (s *Server) claimLink(ctx context.Context) (string, bool, error) {
 	// from the app on this same machine by pasting, and refusing to issue a link
 	// there left an owner who had logged out with no way back in at all.
 	host := dialableHost(s.cfg.Addr)
-	scannable := host != ""
+	dialable := host != ""
 	if host == "" {
 		host = listenAddress(s.cfg.Addr)
 	}
@@ -342,11 +347,14 @@ func (s *Server) claimLink(ctx context.Context) (string, bool, error) {
 	if err != nil {
 		return "", false, fmt.Errorf("read server identity: %w", err)
 	}
-	link, err := s.pairingLink(id, host, token)
+	link, carries, err := s.pairingLink(ctx, id, host, token)
 	if err != nil {
 		return "", false, fmt.Errorf("build claim link: %w", err)
 	}
-	return link, scannable, nil
+	// A public or onion address is reachable from a phone wherever the bind
+	// is: a machine on loopback behind tor is claimed through Tor (045,
+	// FR-008), and a code is exactly what that phone needs.
+	return link, dialable || carries.Public || carries.Onion, nil
 }
 
 // seedClaimToken records the token the startup announcement already minted, so

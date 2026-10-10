@@ -207,7 +207,7 @@ func TestASilentClientDoesNotHoldUpTheNextOne(t *testing.T) {
 		t.Fatalf("a device behind three silent clients was refused: %v", err)
 	}
 	_ = conn.Close()
-	// The silent ones hold the 10 s budget; anything near it means the device
+	// The silent ones hold the 30 s budget; anything near it means the device
 	// waited for them.
 	if took := time.Since(start); took > 5*time.Second {
 		t.Fatalf("the device waited %v behind silent clients", took)
@@ -308,7 +308,7 @@ func TestClosingTheListenerEndsHandshakesUnderWay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ServerKey: %v", err)
 	}
-	l := srv.newChannelListener(raw, cfg, key, time.Hour, "direct")
+	l := srv.newChannelListener(raw, cfg, key, time.Hour)
 	conn, err := net.Dial("tcp", raw.Addr().String())
 	if err != nil {
 		t.Fatalf("dial: %v", err)

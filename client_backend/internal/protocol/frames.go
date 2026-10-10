@@ -91,12 +91,9 @@ const (
 	CmdDeviceRevoke     = "device.revoke"
 	CmdDeviceInvite     = "device.invite"
 	CmdIdentitySetLabel = "identity.setLabel"
-	// CmdDeviceSetAccessKey registers the onion access key - an x25519 PUBLIC
-	// key - of the device this connection greeted as (039, contract §8A). A
-	// client sends it only after seeing `addresses` in the greeting reply: an
-	// older server answers an unknown command with invalid_request, which a
-	// client treats as fatal.
-	CmdDeviceSetAccessKey = "device.setAccessKey"
+	// device.setAccessKey is gone with the onion access keys (045): the onion
+	// address is open to whoever knows it, and the server answers the command
+	// invalid_request like any other it does not know.
 )
 
 // EventDeviceRevoked is delivered to the device being cut off, immediately
@@ -122,10 +119,11 @@ const EventIdentityUpdated = "identity.updated"
 const EventDevicePaired = "device.paired"
 
 // EventServerAddresses tells greeted connections where this machine can be
-// reached now - its direct addresses and, while it offers one, its onion
-// address (039, contract §8A). Off-journal like the three above. It has ONE
-// sender, the address watcher, and never overtakes the greeting reply that
-// carries the same object: that reply is its reliable half.
+// reached now - the addresses it finds on its networks and, when they are
+// set, its public and onion address (039, 045, contract §3, §8A).
+// Off-journal like the three above. It has ONE sender, the address watcher,
+// and never overtakes the greeting reply that carries the same object: that
+// reply is its reliable half.
 const EventServerAddresses = "server.addresses"
 
 // Chat is the wire model of contract §4 (022: preview served but unused by

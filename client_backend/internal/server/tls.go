@@ -65,8 +65,8 @@ func buildCertificate(signer crypto.Signer, now time.Time) (tls.Certificate, err
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: signer, Leaf: leaf}, nil
 }
 
-// channelTLSConfig builds the TLS configuration both entries serve the channel
-// with.
+// channelTLSConfig builds the TLS configuration the main port serves the
+// channel with - for every path, the one through tor included.
 //
 // Called once per start. The certificate's key is ECDSA P-256 because every
 // TLS implementation speaks it, and it is minted here and kept in memory only:
