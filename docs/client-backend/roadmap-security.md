@@ -39,7 +39,7 @@
 
 **Порядок:** 0 → 044 → 045 → 046 → 047 → 048 → 049.
 
-**Сделано 2026-10-09:** шаг 0 (конституция 1.4.0) и спецификации всех фич — `specs/044-secure-channel`, `specs/045-tor-service-addresses`, `specs/046-pairing-devices`, `specs/047-server-data-at-rest`, `specs/048-device-data-at-rest`, `specs/049-server-install`; уточнения владельца внесены в 044, 045 и 047. 044 реализована (ветка `044-secure-channel`, PR в `security-rework`); 045 реализована 2026-10-10 (ветка `045-tor-service-addresses`, PR в `security-rework`); 046 реализована 2026-10-10 (ветка `046-pairing-devices`, PR в `security-rework`); 048 реализована 2026-10-10 (ветка `048-device-data-at-rest`, PR в `security-rework`); 047 и 049 — спецификации уточнены, планы, задачи и analyze готовы в своих ветках.
+**Сделано 2026-10-09:** шаг 0 (конституция 1.4.0) и спецификации всех фич — `specs/044-secure-channel`, `specs/045-tor-service-addresses`, `specs/046-pairing-devices`, `specs/047-server-data-at-rest`, `specs/048-device-data-at-rest`, `specs/049-server-install`; уточнения владельца внесены в 044, 045 и 047. 044 реализована (ветка `044-secure-channel`, PR в `security-rework`); 045 реализована 2026-10-10 (ветка `045-tor-service-addresses`, PR в `security-rework`); 046 реализована 2026-10-10 (ветка `046-pairing-devices`, PR в `security-rework`); 047 реализована 2026-10-10 (ветка `047-server-data-at-rest`, PR в `security-rework`); 048 реализована 2026-10-10 (ветка `048-device-data-at-rest`, PR в `security-rework`); 049 реализована 2026-10-10 (ветка `049-server-install`, PR в `security-rework`).
 
 | Шаг | Что | Темы | Зависит от |
 |---|---|---|---|
