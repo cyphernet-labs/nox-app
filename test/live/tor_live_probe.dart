@@ -31,6 +31,7 @@ import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_app/domain/service/network_change_service.dart';
 import 'package:nox_app/domain/service/tor_service.dart';
 import 'package:nox_app/general/pairing/pairing_link.dart';
+import 'package:nox_tor/channel.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
@@ -39,8 +40,9 @@ import 'live_harness.dart';
 import 'live_target.dart';
 
 /// Phase 040 end to end on this machine, through the real Tor network: the
-/// app's own code - path selector, Arti behind `package:nox_tor`, the pinned
-/// client over the bridge - against a `noxd` that publishes its onion service.
+/// app's own code - path selector, Arti behind `package:nox_tor`, every
+/// connection a channel of the module (phase 044) - against a `noxd` that
+/// publishes its onion service.
 ///
 /// "Away from home" is the one thing simulated: a prober that finds no direct
 /// address while [_AwayProber.away] is set. Everything past it is real.
@@ -54,8 +56,9 @@ import 'live_target.dart';
 ///
 /// The LAN address matters: a server bound to loopback lists no direct address
 /// at all (contract §3), and scenario 8 is about learning a new one. `noxd` is
-/// left running at the end, with two version-2 invites in `<work>/invites.txt`,
-/// for the simulator and emulator runs of `integration_test/tor_pairing_test.dart`.
+/// left running at the end, with two invites in `<work>/invites.txt`, for the
+/// simulator and emulator runs of `integration_test/tor_pairing_test.dart` -
+/// which pair at home and then go through Tor (pairing through Tor is 045's).
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -91,7 +94,7 @@ void main() {
     await configureDependencies(Environment.dev);
     await getIt.allReady();
     getIt.allowReassignment = true;
-    final away = AwayProber(TlsDirectProber());
+    final away = AwayProber(ChannelDirectProber(const NativeNoxChannelApi()));
     final network = FakeNetwork();
     getIt.registerSingleton<DirectProber>(away);
     getIt.registerSingleton<NetworkChangeService>(network);
@@ -147,8 +150,8 @@ void main() {
     measure('a message through Tor, round trip: ${watch.elapsedMilliseconds} ms');
 
     // A file through Tor as well (US1/AC2, FR-009): the bytes travel over HTTPS
-    // through the same bridge, under the same pin, as the commands - and come
-    // back the same.
+    // on a channel of their own, through Tor and checked as the commands' -
+    // and come back the same.
     expect(getIt<ApiClient>().dio.options.baseUrl, contains('.onion'), reason: 'the bytes go the way the socket went');
     watch = Stopwatch()..start();
     final payload = List<int>.generate(64 * 1024, (i) => (i * 31 + 7) & 0xff);
@@ -220,13 +223,16 @@ void main() {
     network.change();
     await liveUntil('home again', const Duration(seconds: 30), () => liveOn(ConnectionPath.direct));
 
-    // --- 4. Invites from here work from anywhere: version 2, onion. ---
+    // --- 4. Invites are version 3, and pair at home only until phase 045:
+    // the onion service opens for a paired device's key alone. ---
     final invites = <String>[];
     for (var i = 0; i < 2; i++) {
       final invite = await getIt<DeviceRepository>().inviteDevice();
       expect(invite.hasData, isTrue);
-      expect(invite.data!.onion, isTrue, reason: 'the server could put its onion address in (FR-019)');
-      expect(PairingLink.parse(invite.data!.link).carriesOnion, isTrue);
+      expect(invite.data!.onion, isFalse, reason: 'the card says: only on your home network (FR-018)');
+      final parsed = PairingLink.parse(invite.data!.link);
+      expect(parsed.directAddresses, isNotEmpty);
+      expect(parsed.onionServiceKey, isNotNull, reason: 'the onion address rides along, for the device once it is paired');
       invites.add(invite.data!.link);
     }
     File('$work/invites.txt').writeAsStringSync('${invites.join('\n')}\n');

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -52,22 +53,31 @@ func declare(t *testing.T, c *wsClient, id int, name string, size int, mime, fil
 	return gotID, token, received
 }
 
-// rawPut is a PUT driven by hand over its own TLS connection. The standard
-// client cannot stop half-way, hold a connection open without sending, or
-// break one on purpose - and those are exactly the cases at stake here.
+// rawPut is a PUT driven by hand over its own channel. The standard client
+// cannot stop half-way, hold a connection open without sending, or break one
+// on purpose - and those are exactly the cases at stake here.
 type rawPut struct {
 	t    *testing.T
 	conn *tls.Conn
 	br   *bufio.Reader
 }
 
+// openRawPut sends the head of a PUT as the device that last greeted - a
+// transfer needs a paired key on the connection as well as the token.
 func openRawPut(t *testing.T, ts *httptest.Server, token string, contentLength int) *rawPut {
 	t.Helper()
-	transport, ok := ts.Client().Transport.(*http.Transport)
-	if !ok {
-		t.Fatal("the test client's transport is not the pinned one")
+	dev, err := channelOf(t, ts).devices.current()
+	if err != nil {
+		t.Fatalf("pick a device: %v", err)
 	}
-	conn, err := tls.Dial("tcp", ts.Listener.Addr().String(), transport.TLSClientConfig)
+	return openRawPutAs(t, ts, dev, token, contentLength)
+}
+
+// openRawPutAs is openRawPut as dev, whichever device greeted last.
+func openRawPutAs(t *testing.T, ts *httptest.Server, dev *device, token string, contentLength int) *rawPut {
+	t.Helper()
+	ch := channelOf(t, ts)
+	conn, err := dialChannel(t.Context(), ch.addr, ch.serverKey, dev.priv)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -105,6 +115,25 @@ func (p *rawPut) status(d time.Duration) int {
 // does.
 func (p *rawPut) breakOff() {
 	_ = p.conn.Close()
+}
+
+// expectCut fails the test unless the server ends the connection within d
+// having said nothing more: no response, not even an error status.
+func (p *rawPut) expectCut(d time.Duration) {
+	p.t.Helper()
+	if err := p.conn.SetReadDeadline(time.Now().Add(d)); err != nil {
+		p.t.Fatalf("set deadline: %v", err)
+	}
+	n, err := p.br.Read(make([]byte, 1))
+	var ne net.Error
+	switch {
+	case n > 0:
+		p.t.Fatal("the server answered on a connection it was to cut")
+	case errors.As(err, &ne) && ne.Timeout():
+		p.t.Fatalf("the connection was still open %v later", d)
+	case err == nil:
+		p.t.Fatal("a read returned neither bytes nor an error")
+	}
 }
 
 func partPath(srv *Server, fileID string) string {

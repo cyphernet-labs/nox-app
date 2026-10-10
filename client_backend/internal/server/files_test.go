@@ -9,10 +9,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/coder/websocket"
 
@@ -545,5 +547,235 @@ func TestOrphanSweepRemovesAbandonedUploads(t *testing.T) {
 	}
 	if _, err := srv.store.FileByID(t.Context(), freshID); err != nil {
 		t.Fatalf("fresh upload swept: %v", err)
+	}
+}
+
+// A transfer needs a paired key on the connection AND a live token (044,
+// FR-006a). A token alone was a bearer credential: whoever held one moved the
+// bytes. A stranger is told 401 before the token is even looked at, so it can
+// neither spend one nor learn whether it is live.
+func TestATransferNeedsAPairedKeyAsWellAsAToken(t *testing.T) {
+	ts, srv := newTestServer(t)
+	anna := dialWS(t, ts, srv)
+	anna.expectGreeting()
+	anna.hello(1, "")
+	stranger := channelOf(t, ts).clientAs(newDevice(t))
+	payload := randomPayload(t, 4096)
+	fileID, token := uploadBegin(t, anna, 2, "a.bin", len(payload), "application/octet-stream")
+
+	status := func(client *http.Client, method, token string, body []byte) int {
+		t.Helper()
+		req, err := http.NewRequest(method, ts.URL+"/files/"+token, bytes.NewReader(body))
+		if err != nil {
+			t.Fatalf("build %s: %v", method, err)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("%s: %v", method, err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	if got := status(stranger, http.MethodPut, token, payload); got != http.StatusUnauthorized {
+		t.Fatalf("PUT from an unpaired key with a live token = %d, want 401", got)
+	}
+	// The refusal spent nothing: the paired device's PUT with the same token
+	// lands.
+	if got := putBytes(t, ts, token, payload); got != http.StatusNoContent {
+		t.Fatalf("PUT from the paired device after the refusal = %d, want 204", got)
+	}
+	// A spent token from a paired device is still the 404 a client of 043
+	// reads as "ask for a new pass"; from a stranger it is 401 all the same.
+	if got := putBytes(t, ts, token, payload); got != http.StatusNotFound {
+		t.Fatalf("spent token from the paired device = %d, want 404", got)
+	}
+	if got := status(stranger, http.MethodPut, token, payload); got != http.StatusUnauthorized {
+		t.Fatalf("spent token from an unpaired key = %d, want 401", got)
+	}
+
+	download := downloadBegin(t, anna, 3, fileID)
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		if got := status(stranger, method, download, nil); got != http.StatusUnauthorized {
+			t.Fatalf("%s from an unpaired key with a live token = %d, want 401", method, got)
+		}
+	}
+	code, body, _ := doGet(t, ts, download, "")
+	if code != http.StatusOK || !bytes.Equal(body, payload) {
+		t.Fatalf("GET from the paired device after the refusals = %d, %d bytes", code, len(body))
+	}
+}
+
+// The key is looked up on every request, not once per connection. A
+// connection kept open between two transfers carries none under way, so a
+// revocation has nothing on it to cut (see the test below) - and the next
+// request on it is refused instead.
+func TestARevokedDeviceLosesItsTransfersOnAnOpenConnection(t *testing.T) {
+	ts, srv := newTestServer(t)
+	anna := dialWS(t, ts, srv)
+	anna.expectGreeting()
+	anna.hello(1, "")
+	client := channelOf(t, ts).clientAs(anna.dev)
+	payload := randomPayload(t, 2048)
+	_, first := uploadBegin(t, anna, 2, "a.bin", len(payload), "application/octet-stream")
+
+	// One request first, so the connection exists and is kept for the next.
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/files/not-a-token", nil)
+	if err != nil {
+		t.Fatalf("build GET: %v", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("a paired device with a bad token = %d, want 404", resp.StatusCode)
+	}
+
+	if err := srv.store.RevokeDevice(t.Context(), anna.dev.pub); err != nil {
+		t.Fatalf("RevokeDevice: %v", err)
+	}
+	var reused bool
+	trace := httptrace.WithClientTrace(t.Context(), &httptrace.ClientTrace{
+		GotConn: func(info httptrace.GotConnInfo) { reused = info.Reused },
+	})
+	put, err := http.NewRequestWithContext(trace, http.MethodPut, ts.URL+"/files/"+first, bytes.NewReader(payload))
+	if err != nil {
+		t.Fatalf("build PUT: %v", err)
+	}
+	resp, err = client.Do(put)
+	if err != nil {
+		t.Fatalf("PUT: %v", err)
+	}
+	_ = resp.Body.Close()
+	if !reused {
+		t.Fatal("the PUT opened a new connection, so this test proves nothing about an open one")
+	}
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("PUT from a device revoked mid-connection = %d, want 401", resp.StatusCode)
+	}
+}
+
+// Revoking a device cuts its transfers under way, not only its socket. Each
+// transfer runs on a connection of its own, which closing the socket does not
+// touch, and nothing but silence ends one - so a lost phone halfway through a
+// download would otherwise go on reading the person's files for as long as it
+// kept reading. Its upload stops taking bytes and keeps the ones it had, its
+// download breaks off far short of the file, and the person's other devices
+// go on as they were.
+func TestRevokingADeviceCutsItsTransfersUnderWay(t *testing.T) {
+	ts, srv, closeAll := openStack(t, filepath.Join(t.TempDir(), "revoke.db"), nil, func(s *Server) {
+		// Nothing but the revocation may end them here: silence would take a
+		// minute.
+		s.stallTimeout = time.Minute
+	})
+	t.Cleanup(closeAll)
+	owner := greeted(t, ts, srv)
+	lost := pairedDevice(t, ts, srv)
+	phone := dialAs(t, ts, srv, lost)
+	phone.expectGreeting()
+	phone.hello(1, "")
+	const mime = "application/octet-stream"
+
+	// The phone has an upload half sent...
+	upload := randomPayload(t, 200000)
+	upID, upToken, _ := declare(t, phone, 2, "up.bin", len(upload), mime, "")
+	put := openRawPutAs(t, ts, lost, upToken, len(upload))
+	put.send(upload[:50000])
+	waitPart(t, srv, upID, 50000)
+	// ...and a download it is reading, larger than the socket buffers on both
+	// ends can hold, so the server is still writing when the revocation comes.
+	movie := randomPayload(t, 32<<20)
+	movieID := storeFile(t, srv, movie)
+	resp, err := channelOf(t, ts).clientAs(lost).Get(ts.URL + "/files/" + downloadBegin(t, phone, 3, movieID))
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	head := make([]byte, 64<<10)
+	if _, err := io.ReadFull(resp.Body, head); err != nil {
+		t.Fatalf("read the first bytes: %v", err)
+	}
+	// The owner is uploading at the same moment.
+	mine := randomPayload(t, 100000)
+	mineID, mineToken, _ := declare(t, owner, 2, "mine.bin", len(mine), mime, "")
+	kept := openRawPutAs(t, ts, owner.dev, mineToken, len(mine))
+	kept.send(mine[:30000])
+	waitPart(t, srv, mineID, 30000)
+	if n := transfersOf(srv, lost.pub); n != 2 {
+		t.Fatalf("%d of the phone's transfers are under way, want its upload and its download", n)
+	}
+
+	revoked := time.Now()
+	owner.expectOKAfter(3, fmt.Sprintf(`{"id":3,"cmd":"device.revoke","data":{"device_key":%q}}`, lost.pub))
+
+	// The upload: the server stops reading at once, says nothing - the
+	// connection just ends - and keeps exactly the bytes from before.
+	waitIdle(t, srv, upID)
+	put.expectCut(5 * time.Second)
+	if info, err := os.Stat(partPath(srv, upID)); err != nil || info.Size() != 50000 {
+		t.Fatalf("the part after the cut: %v, %v; want the 50000 bytes from before it", info, err)
+	}
+	if srv.blob.Exists(upID) {
+		t.Fatal("the revoked device's upload became a file")
+	}
+
+	// The download: what was already on its way still arrives, and then the
+	// body breaks off - far short of the file, and long before a stall could
+	// have cut it.
+	rest, err := io.ReadAll(resp.Body)
+	if err == nil || len(head)+len(rest) >= len(movie) {
+		t.Fatalf("the download went on past the revocation: %d of %d bytes, err=%v", len(head)+len(rest), len(movie), err)
+	}
+	if took := time.Since(revoked); took > srv.stallTimeout/6 {
+		t.Fatalf("the transfers ended %v after the revocation", took)
+	}
+	eventually(t, "the phone has no transfer left", func() bool { return transfersOf(srv, lost.pub) == 0 })
+
+	// The owner's upload was never touched.
+	kept.send(mine[30000:])
+	if code := kept.status(5 * time.Second); code != http.StatusNoContent {
+		t.Fatalf("the owner's upload after the revocation = %d, want 204", code)
+	}
+	if !bytes.Equal(diskBytes(t, srv, mineID), mine) {
+		t.Fatal("the owner's file is not the bytes that were sent")
+	}
+}
+
+// transfersOf counts the transfers under way on connections that proved key.
+func transfersOf(srv *Server, key string) int {
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	n := 0
+	for tr := range srv.transfers {
+		if tr.deviceKey == key {
+			n++
+		}
+	}
+	return n
+}
+
+// A handler served without the channel in front of it - a wiring mistake, a
+// test mux - hands nothing out: no session, no bytes. Run never builds one,
+// and this keeps a slip from becoming a hole.
+func TestAHandlerWithoutTheChannelRefusesEverything(t *testing.T) {
+	_, srv := newTestServer(t)
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodGet, "/ws"},
+		{http.MethodPut, "/files/anything"},
+		{http.MethodGet, "/files/anything"},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		req.Header.Set("Connection", "Upgrade")
+		req.Header.Set("Upgrade", "websocket")
+		req.Header.Set("Sec-WebSocket-Version", "13")
+		req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s without a channel peer = %d, want 401", tc.method, tc.path, rec.Code)
+		}
 	}
 }

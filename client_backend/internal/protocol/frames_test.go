@@ -113,3 +113,16 @@ func TestTheOffJournalEventNamesAreTheOnesInTheContract(t *testing.T) {
 		}
 	}
 }
+
+// The greeting is the schema and nothing else (feature 044). A challenge left
+// in it would be a field nobody signs any more - and a client that still reads
+// one would go on signing it for a server that never checks.
+func TestTheGreetingCarriesOnlyTheSchema(t *testing.T) {
+	raw, err := MarshalFrame(Greeting{Srv: GreetingBody{SchemaMax: SchemaVersion}})
+	if err != nil {
+		t.Fatalf("MarshalFrame: %v", err)
+	}
+	if want := `{"srv":{"schema_max":1}}`; string(raw) != want {
+		t.Fatalf("greeting = %s, want %s", raw, want)
+	}
+}

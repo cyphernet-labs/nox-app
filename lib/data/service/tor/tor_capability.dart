@@ -4,9 +4,11 @@ import 'package:nox_tor/nox_tor.dart';
 
 /// Whether this platform has the Tor client built in (phase 040).
 ///
-/// iOS, Android, macOS and Windows do; Linux does not yet (`tor-linux-app`),
-/// and there the build hook makes no library at all - the app reaches its
-/// server only directly. A library that failed to load counts as absent.
+/// iOS, Android, macOS and Windows do; Linux does not yet (`tor-linux-app`):
+/// the build hook makes the library there too, because every channel goes
+/// through it (phase 044), but the app does not start its Tor client and
+/// reaches its server only directly. A library that failed to load counts as
+/// absent.
 ///
 /// Like `VideoPlaybackCapability`, [debugOverride] is the only way to run the
 /// other branch in a test, because `dart:io Platform` cannot be overridden.

@@ -158,11 +158,12 @@ func insertDevice(ctx context.Context, tx *sql.Tx, deviceKey, userID, platform, 
 	_, err := tx.ExecContext(ctx,
 		// The row is refreshed but NEVER re-bound to another person. Rebinding
 		// looks like the fix for "the reply and the row must say the same
-		// thing", and it is a device takeover: device_key is public - it rides
-		// every greeting and device.list lists it - so anyone able to issue an
-		// invite for themselves could name somebody else's key and walk off
-		// with their paired device. The other way to make the two agree is to
-		// refuse the pair, and that is what Pair does (see deviceOwnerOf below).
+		// thing", and it is a device takeover: device_key is public -
+		// device.list lists it - and a pairing that ever got a key other than
+		// the one its channel proved would let anyone able to issue an invite
+		// for themselves walk off with somebody else's paired device. The other
+		// way to make the two agree is to refuse the pair, and that is what
+		// Pair does (see deviceOwnerOf below).
 		`INSERT INTO devices (device_key, user_id, platform, created_at, last_seen_at, access_key) VALUES (?, ?, ?, ?, ?, ?)
 		 ON CONFLICT (device_key) DO UPDATE SET
 		     platform = excluded.platform,

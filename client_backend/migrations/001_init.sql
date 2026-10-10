@@ -32,7 +32,8 @@ CREATE UNIQUE INDEX idx_users_singleton ON users ((1));
 -- One app installation, and the key that authorises it. device_key is the
 -- device's Ed25519 PUBLIC key in base64: the private half is generated on the
 -- device and never leaves it, so a row here authorises nothing on its own -
--- the connection has to sign the challenge with the matching private key.
+-- every connection proves the matching private key in the channel check,
+-- signing that TLS session's binding, before its first byte of HTTP.
 --
 -- Revocation DELETES the row rather than marking it. A third state would have
 -- to be remembered at every lookup, while deletion buys the property the
@@ -75,12 +76,15 @@ CREATE TABLE journal (
 ) STRICT;
 
 -- The server's own long-lived identity, and the state machine of ownership.
+-- public_key and private_key are the machine's Ed25519 key, base64: the
+-- 32-byte public key the pairing link carries, and the 32-byte SEED it follows
+-- from. The server proves this key in every channel check; TLS never sees it.
 -- The private key lives HERE, inside the database file, rather than beside it:
--- the authentication model warns that a backup holding only the DB breaks
--- pinning for every paired device at once, and one artifact makes that
--- outcome impossible by construction. Whoever can read this file has already
--- read every message in every chat, so the key adds no new class of exposure,
--- while a key forgotten during a backup adds a new class of loss.
+-- the authentication model warns that a backup holding only the DB locks out
+-- every paired device at once, and one artifact makes that outcome impossible
+-- by construction. Whoever can read this file has already read every message
+-- in every chat, so the key adds no new class of exposure, while a key
+-- forgotten during a backup adds a new class of loss.
 --
 -- owner_user_id IS the state machine: NULL means nobody owns this server yet
 -- and only claim tokens are accepted. Ownership lives HERE rather than as a
@@ -95,13 +99,13 @@ CREATE TABLE journal (
 -- the moment is unrecoverable and the service page will want it.
 --
 -- onion_seed (039) is the Ed25519 SEED of the machine's onion service, base64
--- - a private key, and kept HERE for the same reason as the TLS key: a backup
--- is one file, and restoring it brings back the same onion address, so no
--- device has to learn a new one. It is an ADDRESS, not an identity: trust in
--- the server still rests on the TLS key's fingerprint alone, and the onion
--- address reaches devices over a channel that fingerprint already checked.
--- Minted with the row and never changed for the life of the store. tor is
--- handed the expanded key on every start and never writes it anywhere.
+-- - a private key, and kept HERE for the same reason as the machine's key: a
+-- backup is one file, and restoring it brings back the same onion address, so
+-- no device has to learn a new one. It is an ADDRESS, not an identity: trust
+-- in the server rests on the machine's key alone, which the channel check
+-- proves on every connection, onion or not. Minted with the row and never
+-- changed for the life of the store. tor is handed the expanded key on every
+-- start and never writes it anywhere.
 CREATE TABLE server_identity (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     public_key TEXT NOT NULL CHECK (public_key <> ''),
@@ -139,13 +143,6 @@ CREATE TABLE server_identity (
 --     current binding, so a key that has since been re-paired to somebody else
 --     is answered about whoever holds it now rather than whoever the token
 --     produced - and paired with the token's own recorded outcome.
---
--- access_key (039) is the PUBLIC half of the one-time onion access key an
--- invite carries when it was issued with onion: true. Its private half exists
--- only in the link handed to the inviting device - never here. It works while
--- the invite is alive (used_at IS NULL, expires_at in the future), so using,
--- expiring and burning the token switch it off with no separate step. Only a
--- device invite can carry one: a claim never goes over onion.
 CREATE TABLE pair_tokens (
     token TEXT PRIMARY KEY,
     kind TEXT NOT NULL CHECK (kind IN ('claim', 'invite_device')),
@@ -155,8 +152,7 @@ CREATE TABLE pair_tokens (
     used_at INTEGER,
     used_by TEXT,
     paired_user_id TEXT REFERENCES users (user_id),
-    created_person INTEGER NOT NULL DEFAULT 0,
-    access_key TEXT CHECK (access_key IS NULL OR (kind = 'invite_device' AND access_key <> ''))
+    created_person INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 
 -- name_ci is the Unicode case-folded name computed in Go: SQLite's own

@@ -5,14 +5,12 @@ package server
 
 import (
 	"context"
-	"crypto/tls"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
-	"log"
 	"log/slog"
 	"net"
 	"net/http"
@@ -39,8 +37,9 @@ const (
 	shutdownTimeout     = 5 * time.Second
 	readHeaderTimeout   = 5 * time.Second
 	// onionTimeout is the write and pong timeout of a connection that came in
-	// over onion, and the onion entry's header timeout (039, FR-012). A round
-	// trip through Tor can take seconds; the 5 s of the direct path would cut
+	// over onion, the onion entry's header timeout (039, FR-012), and its
+	// budget for TLS and the channel check together (044). A round trip
+	// through Tor can take seconds; the 5 s of the direct path would cut
 	// healthy connections. 30 s covers a 10 s round trip three times over.
 	onionTimeout = 30 * time.Second
 	// drainTimeout bounds the wait for connection handlers at shutdown. Longer
@@ -79,8 +78,12 @@ type Server struct {
 	pingInterval time.Duration
 	writeTimeout time.Duration
 	// onionTimeout replaces writeTimeout for connections that came in over
-	// onion. A field so tests can scale it.
+	// onion, and channelTimeout as their budget for proving themselves. A field
+	// so tests can scale it.
 	onionTimeout time.Duration
+	// channelTimeout is the main entry's budget for TLS and the channel check
+	// together (044). A field so tests can scale it.
+	channelTimeout time.Duration
 
 	// tor is the onion side (039): the supervisor, tor.Disabled() without
 	// Tor, a fake in tests. Never nil.
@@ -122,12 +125,24 @@ type Server struct {
 	// coalesces bursts (the dispatcher drains the log until it is current).
 	kick chan struct{}
 
-	// mu guards conns; wg tracks connection handlers so shutdown can wait
-	// for hijacked connections. Infrastructure-only synchronization
-	// (ws-rest-patterns §5); business state stays goroutine-owned.
+	// mu guards conns and transfers; wg tracks connection handlers so
+	// shutdown can wait for hijacked connections. Infrastructure-only
+	// synchronization (ws-rest-patterns §5); business state stays
+	// goroutine-owned.
 	mu    sync.Mutex
 	conns map[*client]struct{}
-	wg    sync.WaitGroup
+	// transfers holds the file transfers under way. Each runs on a connection
+	// of its own since 044, which closing a device's socket does not touch, so
+	// a revocation walks this set beside conns (dropDevice).
+	transfers map[*transfer]struct{}
+	wg        sync.WaitGroup
+}
+
+// transfer is one /files request under way: the device key its connection
+// proved, and that connection.
+type transfer struct {
+	deviceKey string
+	conn      *channelConn
 }
 
 // New builds a Server over an opened store, a running hub and a blob store.
@@ -147,6 +162,7 @@ func New(cfg config.Config, st *store.Store, h *hub.Hub, bl *blob.Store, logger 
 		pingInterval:     defaultPingInterval,
 		writeTimeout:     defaultWriteTimeout,
 		onionTimeout:     onionTimeout,
+		channelTimeout:   defaultChannelTimeout,
 		tor:              tor.Disabled(),
 		addrKick:         make(chan struct{}, 1),
 		addressPoll:      defaultAddressPoll,
@@ -155,6 +171,7 @@ func New(cfg config.Config, st *store.Store, h *hub.Hub, bl *blob.Store, logger 
 		startedAt:        time.Now(),
 		kick:             make(chan struct{}, 1),
 		conns:            make(map[*client]struct{}),
+		transfers:        make(map[*transfer]struct{}),
 	}
 }
 
@@ -213,10 +230,12 @@ func (s *Server) runDispatcher(ctx context.Context) error {
 	}
 }
 
-// Handler returns the full HTTP surface of stage 1.
+// Handler returns the HTTP surface both entries serve behind the channel:
+// the WebSocket and the file bytes, and nothing else. /health lives on the
+// service page's loopback listener (044): the main port answers nobody who has
+// not proved a key, and a probe that has not cannot ask it anything.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("GET /ws", s.handleWS)
 	mux.HandleFunc("PUT /files/{token}", s.handlePutFile)
 	mux.HandleFunc("GET /files/{token}", s.handleGetFile)
@@ -261,12 +280,19 @@ func (s *Server) WaitConnections(ctx context.Context) error {
 	}
 }
 
-// dropDevice cuts off every live connection authenticated with a revoked key,
-// and tells each one why before the socket closes.
+// dropDevice cuts off every live connection authenticated with a revoked key:
+// its sockets, each told why before it closes, and its file transfers under
+// way, cut without a word - a transfer has no frame to carry a reason on, and
+// the socket carries it.
 //
 // Immediately, not on the device's next attempt: a sold tablet would otherwise
 // keep reading the conversation for as long as it stays online, which is the
-// whole thing revocation exists to stop.
+// whole thing revocation exists to stop. For a transfer that is no figure of
+// speech: nothing but silence ends one (043), so a download already under way
+// would go on for as long as the tablet kept reading it.
+//
+// The transfers go first. Cutting one only closes a socket and never waits,
+// while telling a socket why can wait on that connection's full queue.
 func (s *Server) dropDevice(deviceKey string) {
 	s.mu.Lock()
 	doomed := make([]*client, 0, 1)
@@ -275,7 +301,16 @@ func (s *Server) dropDevice(deviceKey string) {
 			doomed = append(doomed, c)
 		}
 	}
+	var cut []*channelConn
+	for tr := range s.transfers {
+		if tr.deviceKey == deviceKey {
+			cut = append(cut, tr.conn)
+		}
+	}
 	s.mu.Unlock()
+	for _, conn := range cut {
+		conn.cut()
+	}
 	payload, err := json.Marshal(map[string]string{"device_key": deviceKey})
 	if err != nil {
 		// Cannot fail for a map of strings, but the connections still have to
@@ -395,22 +430,6 @@ func (origin *client) announcePaired(userID string) {
 	}
 }
 
-// setDeviceKey records which key a connection authenticated with, under the
-// same lock dropDevice reads it through.
-func (s *Server) setDeviceKey(c *client, key string) {
-	s.mu.Lock()
-	c.deviceKey = key
-	s.mu.Unlock()
-}
-
-// currentDeviceKey reads back the key a connection authenticated with, under
-// the lock setDeviceKey writes it through.
-func (s *Server) currentDeviceKey(c *client) string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return c.deviceKey
-}
-
 // setIdentity records who a connection speaks as, under the same lock the
 // other goroutines touch it through.
 //
@@ -447,6 +466,20 @@ func (s *Server) untrack(c *client) {
 	s.mu.Lock()
 	delete(s.conns, c)
 	s.mu.Unlock()
+}
+
+// trackTransfer registers a transfer under the device key its connection
+// proved, until the returned func takes it out again.
+func (s *Server) trackTransfer(deviceKey string, conn *channelConn) (untrack func()) {
+	tr := &transfer{deviceKey: deviceKey, conn: conn}
+	s.mu.Lock()
+	s.transfers[tr] = struct{}{}
+	s.mu.Unlock()
+	return func() {
+		s.mu.Lock()
+		delete(s.transfers, tr)
+		s.mu.Unlock()
+	}
 }
 
 func (s *Server) logRequests(next http.Handler) http.Handler {
@@ -525,6 +558,12 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 	if err := st.EnsureJournal(ctx); err != nil {
 		return fmt.Errorf("ensure journal: %w", err)
 	}
+	// The machine's private key, read once: the channel listeners prove it on
+	// every connection, and nothing else ever asks for it.
+	serverKey, err := st.ServerKey(ctx)
+	if err != nil {
+		return fmt.Errorf("read the server key: %w", err)
+	}
 	claimToken, err := announceClaim(ctx, st, cfg.Addr, ownership, machine, logger)
 	if err != nil {
 		return err
@@ -542,36 +581,35 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 		return fmt.Errorf("sweep orphans: %w", err)
 	}
 
-	// The certificate is built here, once, from the key settled above. There is
-	// no flag to serve without it: a channel that can be asked to downgrade is
-	// a channel somebody downgrades, and the phase exists to remove that.
-	tlsConfig, err := srv.serverTLSConfig(ctx)
+	// The TLS side of the channel, built here, once, around a throwaway key.
+	// There is no flag to serve without it, and none to serve without the check
+	// after it: a channel that can be asked to downgrade is a channel somebody
+	// downgrades.
+	tlsConfig, err := channelTLSConfig(time.Now())
 	if err != nil {
 		return err
 	}
+	// The HTTP server does no TLS of its own: its listener hands it connections
+	// that already passed both layers (channel.go), each carrying the device
+	// key it proved. HTTP/2 cannot happen - the only TLS here offers
+	// http/1.1, and nothing serves h2 in the clear.
 	httpServer := &http.Server{
-		Addr:              cfg.Addr,
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: readHeaderTimeout,
-		TLSConfig:         tlsConfig,
-		// A non-nil empty map means "I am managing the protocols myself", which
-		// is how HTTP/2 is kept off. ServeTLS otherwise appends h2 to NextProtos
-		// regardless of what was set there, and the WebSocket upgrade this whole
-		// server is built around does not exist over h2.
-		TLSNextProto: map[string]func(*http.Server, *tls.Conn, http.Handler){},
+		ConnContext:       withChannelPeer,
 	}
 	httpServer.RegisterOnShutdown(srv.CloseConnections)
 
-	// The onion side (039): a loopback entry of its own with the same
-	// certificate, and the supervisor that runs tor. With or without Tor the
-	// first address snapshot is taken here, before any listener opens, so the
-	// very first greeting already carries a list (contract §3: `direct` is
-	// always there).
+	// The onion side (039): a loopback entry of its own behind the same
+	// channel, and the supervisor that runs tor. With or without Tor the first
+	// address snapshot is taken here, before any listener opens, so the very
+	// first greeting already carries a list (contract §3: `direct` is always
+	// there).
 	var onionServer *http.Server
 	var onionListener net.Listener
 	var supervisor *tor.Supervisor
 	if cfg.Tor {
-		supervisor, onionServer, onionListener = srv.setupOnion(ctx, tlsConfig, logger)
+		supervisor, onionServer, onionListener = srv.setupOnion(ctx, logger)
 	}
 	srv.refreshAddresses()
 
@@ -647,7 +685,11 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 		g.Go(func() error {
 			// No address in this line: the onion address never reaches a log.
 			logger.Info("onion entry listening on loopback for tor", "tls", "1.3")
-			if err := onionServer.ServeTLS(onionListener, "", ""); !errors.Is(err, http.ErrServerClosed) {
+			// The same channel as the main entry, with Tor's longer budget: a
+			// connection that came through Tor proves itself exactly like one
+			// that did not, and the onion address earns it no trust (FR-013).
+			channel := srv.newChannelListener(onionListener, tlsConfig, serverKey, srv.onionTimeout, "onion")
+			if err := onionServer.Serve(channel); !errors.Is(err, http.ErrServerClosed) {
 				// Logged, not returned: the direct path is the product, and
 				// losing the onion entry must not take it down (FR-007).
 				logger.Error("onion entry stopped, serving the direct path only", "err", err)
@@ -656,10 +698,16 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 		})
 	}
 	g.Go(func() error {
-		logger.Info("listening", "addr", cfg.Addr, "tls", "1.3", "fingerprint", machine.Fingerprint)
-		// Empty file names: the certificate and key are already in TLSConfig,
-		// and there are no files for them to be read from by design.
-		if err := httpServer.ListenAndServeTLS("", ""); !errors.Is(err, http.ErrServerClosed) {
+		raw, err := net.Listen("tcp", cfg.Addr)
+		if err != nil {
+			return fmt.Errorf("listen on %s: %w", cfg.Addr, err)
+		}
+		// The machine's PUBLIC key, which is what an operator compares with the
+		// one in a link; the private half and every token stay out of this line.
+		logger.Info("listening", "addr", cfg.Addr, "tls", "1.3",
+			"server_key", base64.StdEncoding.EncodeToString(machine.PublicKey))
+		channel := srv.newChannelListener(raw, tlsConfig, serverKey, srv.channelTimeout, "direct")
+		if err := httpServer.Serve(channel); !errors.Is(err, http.ErrServerClosed) {
 			return fmt.Errorf("listen on %s: %w", cfg.Addr, err)
 		}
 		return nil
@@ -751,7 +799,10 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 // direct path alone - Tor is an addition to it, never a condition for it
 // (FR-007) - with a supervisor that says Tor is on and why it is not working,
 // rather than one that says it was turned off.
-func (s *Server) setupOnion(ctx context.Context, tlsConfig *tls.Config, logger *slog.Logger) (*tor.Supervisor, *http.Server, net.Listener) {
+//
+// The listener comes back raw; Run puts the channel in front of it when it
+// starts serving, exactly as it does for the main entry.
+func (s *Server) setupOnion(ctx context.Context, logger *slog.Logger) (*tor.Supervisor, *http.Server, net.Listener) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		logger.Error("onion entry unavailable, serving the direct path only", "err", err)
@@ -782,18 +833,9 @@ func (s *Server) setupOnion(ctx context.Context, tlsConfig *tls.Config, logger *
 	}
 	s.tor = sup
 	onionServer := &http.Server{
-		Handler: s.Handler(),
-		// The same certificate as the main entry: the pin is one fingerprint
-		// whichever way a device came (FR-013).
-		TLSConfig:         tlsConfig,
+		Handler:           s.Handler(),
 		ReadHeaderTimeout: onionTimeout,
-		// As on the main server: a non-nil empty map keeps HTTP/2 off, and the
-		// WebSocket upgrade does not exist over h2.
-		TLSNextProto: map[string]func(*http.Server, *tls.Conn, http.Handler){},
-		ConnContext:  markOnionConn,
-		// Handshake noise from tor's side of the loopback says nothing a person
-		// can act on.
-		ErrorLog: log.New(io.Discard, "", 0),
+		ConnContext:       onionConnContext,
 	}
 	return sup, onionServer, ln
 }
@@ -887,7 +929,9 @@ func announceClaim(
 	if err != nil {
 		return "", fmt.Errorf("issue claim token: %w", err)
 	}
-	link, err := BuildPairingLink(listenAddress(addr), machine.Fingerprint, token)
+	// No onion address in it: tor has not started yet, and a machine nobody
+	// can reach has no device access key to publish a service with anyway.
+	link, err := BuildPairingLink(machine.PublicKey, token, []string{listenAddress(addr)}, nil)
 	if err != nil {
 		return "", fmt.Errorf("build pairing link: %w", err)
 	}

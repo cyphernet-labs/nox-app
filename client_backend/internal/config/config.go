@@ -22,8 +22,8 @@ type Config struct {
 	Addr      string
 	DBPath    string
 	FilesPath string
-	// StatusAddr is where the service page listens, or empty for no page at
-	// all. Always a loopback address: the page shows the claim link, and a
+	// StatusAddr is where the service page and /health listen, or empty for
+	// neither. Always a loopback address: the page shows the claim link, and a
 	// claim link reachable over the network hands ownership to everyone on
 	// that network. The restriction lives on the SOCKET rather than in a
 	// handler, because a check inside the process is a check somebody
@@ -93,7 +93,7 @@ func Load(args []string, getenv func(string) string) (Config, error) {
 	addr := fs.String("addr", defAddr, "listen address (host:port)")
 	dbPath := fs.String("db", defDB, "path to the SQLite database file")
 	filesPath := fs.String("files", defFiles, "attachment bytes directory (default <db>-files)")
-	statusAddr := fs.String("status-addr", defStatus, "loopback address for the service page, empty to disable it")
+	statusAddr := fs.String("status-addr", defStatus, "loopback address for the service page and /health, empty to disable both")
 	torOn := fs.Bool("tor", defTor, "publish an onion service through tor (false: no tor at all)")
 	torBin := fs.String("tor-bin", getenv("NOX_TOR_BIN"), "path to the tor binary; when set it is final (default: next to noxd, then PATH)")
 	torDir := fs.String("tor-dir", getenv("NOX_TOR_DIR"), "tor state directory (default <db>-tor)")

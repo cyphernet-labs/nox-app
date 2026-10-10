@@ -3,18 +3,22 @@ package server
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"nox.app/client-backend/internal/config"
+	"nox.app/client-backend/internal/db"
 )
 
 // These tests drive Run itself rather than the harness: what 039 changed is
@@ -50,6 +54,10 @@ func (l *syncLog) String() string {
 }
 
 // runServer starts Run and returns a function that stops it and reports how.
+//
+// Ready means both doors answer: /health on the service page's listener, and
+// on the main port a channel that proves the key the startup line printed - a
+// device dialling with that key as the only acceptable answer gets in.
 func runServer(t *testing.T, cfg config.Config) (*syncLog, func() error) {
 	t.Helper()
 	logs := &syncLog{}
@@ -58,18 +66,34 @@ func runServer(t *testing.T, cfg config.Config) (*syncLog, func() error) {
 	go func() {
 		done <- Run(ctx, cfg, os.DirFS("../../migrations"), slog.New(slog.NewTextHandler(logs, nil)))
 	}()
-	// Run's wiring is the subject here, not the pin - that has its own tests -
-	// so this client does not check the certificate.
-	client := &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}, //nolint:gosec // see above
-	}}
-	eventually(t, "/health answers", func() bool {
-		resp, err := client.Get("https://" + cfg.Addr + "/health")
+	client := &http.Client{Timeout: 2 * time.Second}
+	eventually(t, "/health answers on the service page's listener", func() bool {
+		resp, err := client.Get("http://" + cfg.StatusAddr + "/health")
 		if err != nil {
 			return false
 		}
 		_ = resp.Body.Close()
 		return resp.StatusCode == http.StatusOK
+	})
+	var key ed25519.PublicKey
+	eventually(t, "the startup line names the server key", func() bool {
+		raw, err := base64.StdEncoding.DecodeString(loggedServerKey(logs.String()))
+		key = raw
+		return err == nil && len(raw) == ed25519.PublicKeySize
+	})
+	_, device, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate a device key: %v", err)
+	}
+	eventually(t, "the main port opens a channel proving that key", func() bool {
+		dctx, dcancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer dcancel()
+		conn, err := dialChannel(dctx, cfg.Addr, key, device)
+		if err != nil {
+			return false
+		}
+		_ = conn.Close()
+		return true
 	})
 	return logs, func() error {
 		cancel()
@@ -83,16 +107,58 @@ func runServer(t *testing.T, cfg config.Config) (*syncLog, func() error) {
 	}
 }
 
+// loggedServerKey digs the server key out of the startup line. The text
+// handler quotes a value holding '=', which base64 padding does.
+func loggedServerKey(logs string) string {
+	m := regexp.MustCompile(`server_key="?([A-Za-z0-9+/=]+)`).FindStringSubmatch(logs)
+	if m == nil {
+		return ""
+	}
+	return m[1]
+}
+
 func testRunConfig(t *testing.T) config.Config {
 	t.Helper()
-	dir := t.TempDir()
-	db := filepath.Join(dir, "run.db")
+	path := filepath.Join(t.TempDir(), "run.db")
 	return config.Config{
-		Addr:      freeAddr(t),
-		DBPath:    db,
-		FilesPath: db + "-files",
-		Limits:    config.DefaultLimits(),
-		TorDir:    db + "-tor",
+		Addr:       freeAddr(t),
+		DBPath:     path,
+		FilesPath:  path + "-files",
+		StatusAddr: freeAddr(t),
+		Limits:     config.DefaultLimits(),
+		TorDir:     path + "-tor",
+	}
+}
+
+// The startup line names the machine's PUBLIC key - what an operator compares
+// with the key in a link - and never the private one. The key in the log is
+// the one the store holds, the one every channel proves.
+func TestTheStartupLineNamesTheServerKeyAndNothingSecret(t *testing.T) {
+	cfg := testRunConfig(t)
+	cfg.Tor = false
+	logs, stop := runServer(t, cfg)
+	if err := stop(); err != nil {
+		t.Fatalf("Run returned %v", err)
+	}
+
+	dbs, err := db.Open(cfg.DBPath)
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	defer func() { _ = dbs.Close() }()
+	var pub, seed string
+	if err := dbs.Read.QueryRow("SELECT public_key, private_key FROM server_identity WHERE id = 1").Scan(&pub, &seed); err != nil {
+		t.Fatalf("read the key: %v", err)
+	}
+	out := logs.String()
+	if got := loggedServerKey(out); got != pub {
+		t.Fatalf("the startup line names %q, want the stored key %s:\n%s", got, pub, out)
+	}
+	if strings.Contains(out, seed) {
+		t.Fatal("the private key reached the log")
+	}
+	if strings.Contains(out, "fingerprint") {
+		t.Fatal("the startup line still speaks of a fingerprint")
 	}
 }
 

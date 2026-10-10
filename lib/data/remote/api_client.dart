@@ -2,25 +2,25 @@ import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 import 'package:flutter/foundation.dart';
 import 'package:injectable/injectable.dart';
+import 'package:nox_app/data/remote/channel/channel_http_client.dart';
 import 'package:nox_app/data/remote/interceptor/auth_interceptor.dart';
-import 'package:nox_app/data/remote/pinned_http_client.dart';
 import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
 
 /// Thin Dio wrapper carrying the REST half of the transport: the BYTES of
 /// attachments, which is all contract v0 ever sends over HTTP. Commands travel
 /// the WebSocket envelope (feature 026) and always will.
 ///
-/// Both halves go to one machine over one pinned client, so the file transfer
-/// is checked against the server's fingerprint exactly as the socket is. Until
-/// this feature it was plain `http` - half of "the channel is protected" was
-/// simply not true.
-@lazySingleton
+/// Both halves go to one machine, each over a channel of the native module
+/// (phase 044): every connection for file bytes passes the same Eidolon check
+/// the socket's does, on its own. Registered only where the socket is - the
+/// flavour that talks to a server.
+@LazySingleton(env: [Environment.dev])
 class ApiClient {
-  ApiClient(this._config, this._pinned)
+  ApiClient(this._config, this._channels)
     : dio = Dio(BaseOptions(connectTimeout: const Duration(seconds: 30), receiveTimeout: const Duration(seconds: 30)));
 
   final AppConfigRepository _config;
-  final PinnedHttpClient _pinned;
+  final ChannelHttpClient _channels;
   final Dio dio;
 
   /// The byte transfers under way, each holding its own token.
@@ -70,12 +70,11 @@ class ApiClient {
   /// Points the client at the paired server and installs the interceptor.
   /// Idempotent for the interceptor; the base URL is re-pointed on every call.
   ///
-  /// [address] is REQUIRED, and there is no build-time fallback any more. An
-  /// address that came from the build has no fingerprint by construction, so a
-  /// connection to it could not be checked - which is the one thing this phase
-  /// forbids. It is also the wrong machine: an attachment uploaded there would
-  /// be referenced from a message on the paired server, where its id means
-  /// nothing.
+  /// [address] is REQUIRED, and there is no build-time fallback. An address
+  /// that came from the build belongs to no pairing, so there is no key a
+  /// connection to it could be checked against. It is also the wrong machine:
+  /// an attachment uploaded there would be referenced from a message on the
+  /// paired server, where its id means nothing.
   void initBase({required String address}) {
     final previous = dio.options.baseUrl;
     if (address.isNotEmpty) {
@@ -93,15 +92,15 @@ class ApiClient {
     }
     _installAdapter();
     // Dio's adapter asks for a client ONCE and caches it, so it would keep the
-    // one that was thrown away when the pin changed - and every attachment
+    // one that was thrown away when the binding changed - and every attachment
     // transfer after a re-pairing would fail for no reason anybody could see.
-    _pinned.onDiscarded = _installAdapter;
+    _channels.onDiscarded = _installAdapter;
     if (dio.interceptors.whereType<AuthInterceptor>().isEmpty) {
       dio.interceptors.add(AuthInterceptor(_config));
     }
   }
 
-  /// Points Dio at the checked client kept for the bytes. A fresh adapter each
+  /// Points Dio at the channel client kept for the bytes. A fresh adapter each
   /// time, because that is the only way to clear the one it caches.
   ///
   /// The transfers' own client, not the socket's: Dio writes its connect
@@ -110,6 +109,6 @@ class ApiClient {
   /// socket's next dial through Tor was cut at Dio's 30 s instead of its own
   /// 45.
   void _installAdapter() {
-    dio.httpClientAdapter = IOHttpClientAdapter(createHttpClient: () => _pinned.transferClient);
+    dio.httpClientAdapter = IOHttpClientAdapter(createHttpClient: () => _channels.transferClient);
   }
 }

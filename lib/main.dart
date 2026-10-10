@@ -28,16 +28,20 @@ void main() {
       await getIt.allReady();
       await getIt<AppConfigRepository>().initialize(flavorType: flavor);
       // The blob half of the file chain (contract §7) is pointed at the paired
-      // server by LiveSessionStarter, below, and nowhere else. It used to be
-      // pointed here at the build-time address, which has no fingerprint by
-      // construction - so bytes went to a machine nothing could check, in the
-      // clear, while the socket talked to the person's own server.
+      // server by LiveSessionStarter, below, and nowhere else: a build-time
+      // address belongs to no pairing, so there is no server key a connection
+      // to it could be checked against.
       // One-time upgrade housekeeping, HERE and not inside a read: it is
       // settled forever on the first launch after an update, and a repository
       // read that also migrates puts that work inside the envelope which
       // decides whether a signed-in person lands on their chats or on Login.
       // The call reports rather than throws, so nothing is guarded around it.
       await sessionRepository.sweepLegacyKeys();
+      // A session paired before phase 044 holds no server key, so nothing it
+      // has could check a connection: it is wiped once, here, before anything
+      // reads it, and the person pairs again (FR-025). A keychain that cannot
+      // be read right now wipes nothing.
+      await authRepository.retireLegacySession();
       // Bring the live channel up before the first screen resolves: the world
       // check and the applier subscription both have to precede the greeting,
       // and only the dev environment binds a starter at all.

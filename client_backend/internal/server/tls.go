@@ -1,46 +1,43 @@
 package server
 
 import (
-	"context"
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"errors"
 	"fmt"
 	"math/big"
 	"time"
-
-	"nox.app/client-backend/internal/store"
 )
 
-// This file holds BOTH halves of the same decision: the certificate the server
-// presents, and the check a client runs against it. They are one rule read from
-// two ends, and keeping them apart is how the two ends drift.
+// The TLS layer of the channel (contract §1, feature 044) and nothing more.
 //
-// The rule: trust is the KEY, carried as a fingerprint in the pairing link a
-// person moved by hand. Nothing else about the certificate decides anything -
-// not its name, not its dates, not who signed it. A home server has no domain
-// name to be issued a certificate for, so every one of those would be a refusal
-// the owner can neither explain nor repair.
+// TLS here buys an encrypted session and the binding the channel check signs;
+// it does NOT decide who is on the other end. That is the check's job
+// (channel.go): the device proves its key and the server proves the machine's,
+// both over this session's exporter. So the certificate is technical - a
+// throwaway key minted in memory on every start, which no client compares with
+// anything - and the machine's own key never meets a TLS stack at all.
 
 // certificateLifetime is how long the certificate claims to be valid.
 //
-// A hundred years, which is another way of saying the dates decide nothing. An
-// expiry would eventually become an unfixable refusal on a server somebody
-// installed and forgot about, and nothing on the client side reads it anyway.
+// A hundred years, which is another way of saying the dates decide nothing:
+// nothing on the client side reads them, and an expiry would only be one more
+// way for a forgotten home server to fail a library that does.
 const certificateLifetime = 100 * 365 * 24 * time.Hour
 
 // certificateBackdate covers a client whose clock runs behind the server's.
 // Home machines have no reason to agree on the time.
 const certificateBackdate = 24 * time.Hour
 
-// buildCertificate mints the certificate from the machine's own key.
+// buildCertificate wraps signer in a self-signed certificate.
 //
-// No SAN and no name that looks like one: the verifying side ignores names by
-// construction, and writing a hostname in here would invite somebody to start
-// depending on it. The key is the identity; this is its wrapper.
+// No SAN and no name that looks like one: the client sends no SNI and checks
+// no name, and writing a hostname in here would invite somebody to start
+// depending on it.
 func buildCertificate(signer crypto.Signer, now time.Time) (tls.Certificate, error) {
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
@@ -60,8 +57,7 @@ func buildCertificate(signer crypto.Signer, now time.Time) (tls.Certificate, err
 		return tls.Certificate{}, fmt.Errorf("create the server certificate: %w", err)
 	}
 	// Leaf is filled here rather than left for the handshake to parse: it is
-	// the only way a caller can read back what was just issued, and the tests
-	// that compare its fingerprint to the link's depend on it.
+	// the only way a caller - a test - can read back what was just issued.
 	leaf, err := x509.ParseCertificate(der)
 	if err != nil {
 		return tls.Certificate{}, fmt.Errorf("parse the certificate just created: %w", err)
@@ -69,63 +65,34 @@ func buildCertificate(signer crypto.Signer, now time.Time) (tls.Certificate, err
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: signer, Leaf: leaf}, nil
 }
 
-// serverTLSConfig builds the configuration the main listener serves with.
+// channelTLSConfig builds the TLS configuration both entries serve the channel
+// with.
 //
-// Called once per start, and the certificate lives in memory only: there is
-// nothing in it worth keeping, since it is rebuilt from the stored key every
-// time and a client pins that key rather than this wrapper. Writing it to disk
-// would only add a file that can go stale.
-func (s *Server) serverTLSConfig(ctx context.Context) (*tls.Config, error) {
-	signer, err := s.store.ServerSigner(ctx)
+// Called once per start. The certificate's key is ECDSA P-256 because every
+// TLS implementation speaks it, and it is minted here and kept in memory only:
+// nothing in it is worth keeping, and a key that is never written cannot leak
+// from a backup.
+func channelTLSConfig(now time.Time) (*tls.Config, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return nil, fmt.Errorf("read the server key: %w", err)
+		return nil, fmt.Errorf("generate the certificate key: %w", err)
 	}
-	cert, err := buildCertificate(signer, time.Now())
+	cert, err := buildCertificate(key, now)
 	if err != nil {
 		return nil, err
 	}
 	return &tls.Config{
 		Certificates: []tls.Certificate{cert},
-		// Both ends are written today and owe nothing to anything older.
+		// Both ends are written today and owe nothing to anything older; the
+		// exporter the check signs is TLS 1.3's (RFC 9266).
 		MinVersion: tls.VersionTLS13,
-		// http/1.1 explicitly, because ServeTLS otherwise offers h2 - and the
-		// WebSocket upgrade this server is built around does not exist there.
-		// A client that negotiated h2 would reach /ws and be refused.
+		// http/1.1 and nothing else: the WebSocket upgrade this server is built
+		// around does not exist over h2.
 		NextProtos: []string{"http/1.1"},
+		// Every connection is a full handshake. A resumed TLS 1.3 session is not
+		// signed by the server again, and the contract wants a verified
+		// handshake signature on each one; Go's server has no early data to turn
+		// off besides.
+		SessionTicketsDisabled: true,
 	}, nil
-}
-
-// ErrPinMismatch is what a pinned dial fails with when the machine answering
-// is not the one the link named.
-var ErrPinMismatch = errors.New("the server presented a different key than the pairing link named")
-
-// PinnedTLSConfig is the CLIENT half: dial anything, trust only this key.
-//
-// Used by cmd/smoke and by the test helpers, and it is deliberately the same
-// shape the Dart client implements - find the certificate's SubjectPublicKeyInfo,
-// hash it, compare. InsecureSkipVerify turns off the chain check and the name
-// check, neither of which a self-signed certificate on a nameless machine can
-// pass; VerifyPeerCertificate then puts back a stricter test than either, since
-// it admits exactly one key instead of every key a certificate authority is
-// willing to vouch for.
-func PinnedTLSConfig(fingerprint string) *tls.Config {
-	return &tls.Config{
-		MinVersion: tls.VersionTLS13,
-		//nolint:gosec // the pin below replaces the chain check; see the doc comment
-		InsecureSkipVerify: true,
-		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
-			if len(rawCerts) == 0 {
-				return fmt.Errorf("%w: it presented no certificate at all", ErrPinMismatch)
-			}
-			leaf, err := x509.ParseCertificate(rawCerts[0])
-			if err != nil {
-				return fmt.Errorf("%w: its certificate does not parse: %v", ErrPinMismatch, err)
-			}
-			got := store.FingerprintOfSPKI(leaf.RawSubjectPublicKeyInfo)
-			if got != fingerprint {
-				return fmt.Errorf("%w: presented %s, pinned %s", ErrPinMismatch, got, fingerprint)
-			}
-			return nil
-		},
-	}
 }

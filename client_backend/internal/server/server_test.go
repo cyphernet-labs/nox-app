@@ -2,7 +2,11 @@ package server
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/tls"
 	"database/sql"
+	"encoding/base64"
 	"io"
 	"log"
 	"log/slog"
@@ -12,12 +16,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"nox.app/client-backend/internal/blob"
 	"nox.app/client-backend/internal/config"
 	"nox.app/client-backend/internal/db"
+	"nox.app/client-backend/internal/eidolon"
 	"nox.app/client-backend/internal/hub"
 	"nox.app/client-backend/internal/store"
 )
@@ -63,6 +69,15 @@ func openStack(t *testing.T, path string, logger *slog.Logger, tweak ...func(*Se
 		t.Fatalf("blob.Open: %v", err)
 	}
 
+	// The main entry's socket first, so the configured address is the real
+	// one: links carry it, and a link with port 0 is one no parser reads.
+	raw, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		_ = bl.Close()
+		_ = dbs.Close()
+		t.Fatalf("listen: %v", err)
+	}
+
 	h := hub.New()
 	hubCtx, stopHub := context.WithCancel(context.Background())
 	hubDone := make(chan struct{})
@@ -74,7 +89,7 @@ func openStack(t *testing.T, path string, logger *slog.Logger, tweak ...func(*Se
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	cfg := config.Config{Addr: "127.0.0.1:0", DBPath: path, FilesPath: path + "-files", Limits: config.DefaultLimits()}
+	cfg := config.Config{Addr: raw.Addr().String(), DBPath: path, FilesPath: path + "-files", Limits: config.DefaultLimits()}
 	st := store.New(dbs.Read, dbs.Write)
 	// Mirror Run: the store identity is minted in Go once the schema exists,
 	// and the greeting hands it to clients.
@@ -82,10 +97,13 @@ func openStack(t *testing.T, path string, logger *slog.Logger, tweak ...func(*Se
 		t.Fatalf("EnsureJournal: %v", err)
 	}
 	// Mirror Run again: the machine's key is settled before anything serves,
-	// because the certificate is built from it.
-	machine, err := st.EnsureServerIdentity(t.Context())
-	if err != nil {
+	// because the channel proves it on every connection.
+	if _, err := st.EnsureServerIdentity(t.Context()); err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
+	}
+	serverKey, err := st.ServerKey(t.Context())
+	if err != nil {
+		t.Fatalf("ServerKey: %v", err)
 	}
 	srv := New(cfg, st, h, bl, logger)
 	// The machine "has" no interfaces unless a test says otherwise: the
@@ -118,28 +136,16 @@ func openStack(t *testing.T, path string, logger *slog.Logger, tweak ...func(*Se
 		_ = srv.runDispatcher(hubCtx)
 	}()
 
-	// TLS through the server's OWN config, not httptest.NewTLSServer.
-	//
-	// NewTLSServer installs a stock certificate of its own and hands back a
-	// client that trusts it, which would make every test here pass over a
-	// transport the product never uses - and would leave this feature's one
-	// real question, whether the presented key is the pinned one, untested.
-	tlsCfg, err := srv.serverTLSConfig(t.Context())
+	// The channel exactly as Run builds it: TLS on a throwaway certificate,
+	// then the check, and only then the handler. NOT httptest.NewTLSServer: its
+	// stock TLS would put the handler behind something the product never uses,
+	// and leave this feature's one real question - who proved which key -
+	// untested.
+	tlsCfg, err := channelTLSConfig(time.Now())
 	if err != nil {
-		t.Fatalf("serverTLSConfig: %v", err)
+		t.Fatalf("channelTLSConfig: %v", err)
 	}
-	ts := httptest.NewUnstartedServer(srv.Handler())
-	ts.TLS = tlsCfg
-	// Transport-level complaints go nowhere: several tests refuse a handshake
-	// on purpose, and http.Server would print each one to stderr.
-	ts.Config.ErrorLog = log.New(io.Discard, "", 0)
-	ts.Config.RegisterOnShutdown(srv.CloseConnections)
-	ts.StartTLS()
-	// StartTLS hands back a client trusting its own certificate as a root, and
-	// ours is a leaf that is nobody's authority. Replace the transport with the
-	// pin - the same check the app runs, so the tests dial the way the product
-	// does.
-	ts.Client().Transport = &http.Transport{TLSClientConfig: PinnedTLSConfig(machine.Fingerprint)}
+	ts := serveChannel(t, srv, raw, tlsCfg, serverKey, srv.channelTimeout, "direct", withChannelPeer, &testDevices{})
 	closeAll := func() {
 		ts.Close()
 		stopWatch()
@@ -153,24 +159,192 @@ func openStack(t *testing.T, path string, logger *slog.Logger, tweak ...func(*Se
 	return ts, srv, closeAll
 }
 
-func TestHealthServes200(t *testing.T) {
-	ts, _ := newTestServer(t)
+// serveChannel serves srv's handler behind the channel on raw, the way Run
+// serves each entry, and returns an httptest.Server whose client dials the way
+// the app does. ts.URL is https: it names the TLS the channel carries, and the
+// client's transport is the one that knows how to open it.
+func serveChannel(t *testing.T, srv *Server, raw net.Listener, cfg *tls.Config, key ed25519.PrivateKey,
+	budget time.Duration, entry string, connCtx func(context.Context, net.Conn) context.Context, devices *testDevices,
+) *httptest.Server {
+	t.Helper()
+	ts := httptest.NewUnstartedServer(srv.Handler())
+	_ = ts.Listener.Close()
+	ts.Listener = srv.newChannelListener(raw, cfg, key, budget, entry)
+	ts.Config.ConnContext = connCtx
+	ts.Config.ReadHeaderTimeout = readHeaderTimeout
+	// Transport-level complaints go nowhere: several tests break connections
+	// on purpose, and http.Server would print each one to stderr.
+	ts.Config.ErrorLog = log.New(io.Discard, "", 0)
+	ts.Config.RegisterOnShutdown(srv.CloseConnections)
+	ts.Start()
+	ts.URL = "https://" + raw.Addr().String()
+	ts.Client().Transport = newTestChannel(raw.Addr().String(), key.Public().(ed25519.PublicKey), devices)
+	return ts
+}
 
+// testChannel is every test server's client transport: TCP, TLS 1.3 that
+// checks no certificate, then the channel check as a device against the
+// server's key - and only then HTTP. It is what the app's Rust module does,
+// and it is why ts.Client() and ts.URL go on working unchanged.
+type testChannel struct {
+	*http.Transport
+	addr      string
+	serverKey ed25519.PublicKey
+	devices   *testDevices
+}
+
+// testDevices remembers which device the plain client presents: the last one
+// a helper paired or greeted. /files wants a PAIRED key on the connection, and
+// the tests that move bytes do it right after greeting - so the device that
+// just greeted is the one to send them as. Before any, it is a stranger.
+type testDevices struct {
+	mu       sync.Mutex
+	last     *device
+	stranger *device
+}
+
+func (d *testDevices) use(dev *device) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.last = dev
+}
+
+func (d *testDevices) current() (*device, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.last != nil {
+		return d.last, nil
+	}
+	if d.stranger == nil {
+		_, priv, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			return nil, err
+		}
+		d.stranger = &device{pub: base64.StdEncoding.EncodeToString(priv.Public().(ed25519.PublicKey)), priv: priv}
+	}
+	return d.stranger, nil
+}
+
+func newTestChannel(addr string, serverKey ed25519.PublicKey, devices *testDevices) *testChannel {
+	ch := &testChannel{addr: addr, serverKey: serverKey, devices: devices}
+	ch.Transport = ch.transportAs(nil)
+	return ch
+}
+
+// transportAs dials every connection as d; nil means whichever device
+// testDevices names at the moment of the dial.
+func (ch *testChannel) transportAs(d *device) *http.Transport {
+	return &http.Transport{
+		DialTLSContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			dev := d
+			if dev == nil {
+				var err error
+				if dev, err = ch.devices.current(); err != nil {
+					return nil, err
+				}
+			}
+			return dialChannel(ctx, ch.addr, ch.serverKey, dev.priv)
+		},
+	}
+}
+
+// clientAs is an HTTP client whose every connection proves d's key.
+func (ch *testChannel) clientAs(d *device) *http.Client {
+	return &http.Client{Transport: ch.transportAs(d)}
+}
+
+// channelOf is the channel transport of a test server.
+func channelOf(t *testing.T, ts *httptest.Server) *testChannel {
+	t.Helper()
+	ch, ok := ts.Client().Transport.(*testChannel)
+	if !ok {
+		t.Fatal("this test server's client does not dial the channel")
+	}
+	return ch
+}
+
+// dialChannel opens one channel as the device priv belongs to: everything a
+// device does before its first byte of HTTP, and nothing else. The returned
+// connection is the verified TLS session with no deadline left on it.
+func dialChannel(ctx context.Context, addr string, serverKey ed25519.PublicKey, priv ed25519.PrivateKey) (*tls.Conn, error) {
+	raw, err := (&net.Dialer{}).DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	return channelOver(ctx, raw, serverKey, priv)
+}
+
+// channelOver runs the channel on a transport that is already open - a TCP
+// connection, or a stream through Tor - and closes it on any failure.
+func channelOver(ctx context.Context, raw net.Conn, serverKey ed25519.PublicKey, priv ed25519.PrivateKey) (*tls.Conn, error) {
+	tc := tls.Client(raw, testClientTLS())
+	if err := tc.HandshakeContext(ctx); err != nil {
+		_ = raw.Close()
+		return nil, err
+	}
+	state := tc.ConnectionState()
+	binding, err := state.ExportKeyingMaterial(eidolon.ExporterLabel, nil, eidolon.BindingSize)
+	if err != nil {
+		_ = raw.Close()
+		return nil, err
+	}
+	if err := eidolon.Initiate(ctx, tc, binding, priv, serverKey); err != nil {
+		_ = raw.Close()
+		return nil, err
+	}
+	if err := tc.SetDeadline(time.Time{}); err != nil {
+		_ = raw.Close()
+		return nil, err
+	}
+	return tc, nil
+}
+
+// testClientTLS is the device's TLS: 1.3 only, no certificate check - the
+// certificate is technical, the channel check decides - no SNI, since no name
+// is set, and no resumption.
+func testClientTLS() *tls.Config {
+	return &tls.Config{
+		InsecureSkipVerify:     true, //nolint:gosec // the channel check is the check; see the doc comment
+		MinVersion:             tls.VersionTLS13,
+		NextProtos:             []string{"http/1.1"},
+		SessionTicketsDisabled: true,
+	}
+}
+
+// serverKeyOf reads the machine's public key, as a link names it.
+func serverKeyOf(t *testing.T, srv *Server) ed25519.PublicKey {
+	t.Helper()
+	id, err := srv.store.ServerIdentity(context.Background())
+	if err != nil {
+		t.Fatalf("ServerIdentity: %v", err)
+	}
+	return id.PublicKey
+}
+
+// /health answers on the service page's listener and nowhere else (044): the
+// main port says nothing to anybody before the channel check, and a liveness
+// probe proves no key.
+func TestHealthServes200OnTheServicePageMux(t *testing.T) {
+	_, srv := newTestServer(t)
+	rec := httptest.NewRecorder()
+	srv.StatusHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if body := rec.Body.String(); body != `{"status":"ok"}` {
+		t.Fatalf("body = %s", body)
+	}
+}
+
+func TestHealthIsNotOnTheMainPort(t *testing.T) {
+	ts, _ := newTestServer(t)
 	resp, err := ts.Client().Get(ts.URL + "/health")
 	if err != nil {
 		t.Fatalf("GET /health: %v", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read body: %v", err)
-	}
-	if string(body) != `{"status":"ok"}` {
-		t.Fatalf("body = %s", body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("GET /health on the main port = %d, want 404", resp.StatusCode)
 	}
 }
 

@@ -4,8 +4,9 @@ class DeviceInvite {
 
   final String link;
 
-  /// The link is version 2: it carries the onion address and a one-time access
-  /// key, so it works from any network. False - the server could not offer
-  /// that right now, or predates phase 039 - means it works at home only.
+  /// The server vouches that the link works from any network, and the link
+  /// carries the onion address to back it. Until phase 045 the server always
+  /// answers false - a new device pairs at home, because the onion service
+  /// opens only for a paired device's key - so the card says so.
   final bool onion;
 }
