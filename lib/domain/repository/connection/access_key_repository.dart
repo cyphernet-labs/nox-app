@@ -14,12 +14,10 @@ class AccessKeyPair {
   String get publicBase64 => base64Encode(publicKey);
 }
 
-/// This device's onion access key (phase 040). The private half never leaves
-/// the device: no sync, no backup, wiped with the session.
-///
-/// The one-time key a version-2 link lends is NOT kept here: it lives in
-/// memory for the one pairing it is for (FR-021), so nothing on disk can
-/// outlive that pairing - not even one the process did not survive.
+/// This device's onion access key (phase 040, until phase 045 retires access
+/// keys). The private half never leaves the device: no sync, no backup, wiped
+/// with the session. It is the only one: pairing links carry no one-time key
+/// any more (phase 044).
 abstract class AccessKeyRepository {
   /// The device's key, created on first use.
   Future<RepositoryResult<AccessKeyPair>> deviceKey();

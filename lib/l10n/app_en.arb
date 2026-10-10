@@ -93,6 +93,10 @@
   "loginInvalidId": "This isn't a pairing link",
   "loginLinkExpired": "This link has expired. Ask for a new one.",
   "loginLinkRejected": "This link can't be used. Ask for a new one.",
+  "loginLinkNewerVersion": "This link needs a newer version of NOX. Update the app and try again.",
+  "@loginLinkNewerVersion": {
+    "description": "A pairing link of a version newer than this build reads (phase 044, FR-017): the person updates the app, not the link."
+  },
   "loginNetworkError": "Could not sign in. Check your connection and try again.",
   "sessionExpiredMessage": "Your session expired",
   "tooltipFlashlight": "Flashlight",

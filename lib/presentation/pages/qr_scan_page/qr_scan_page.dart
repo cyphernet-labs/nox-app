@@ -21,8 +21,8 @@ import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 import 'package:nox_app/presentation/widgets/qr/app_qr_overlay_widget.dart';
 import 'package:nox_app/presentation/widgets/shell/app_window_titlebar_widget.dart';
 
-/// 2.2 QR scan — the camera alternative to manual ID entry (2.1). On a valid
-/// `nox://id/<id>` scan the screen pops the decoded id, which Login submits down
+/// 2.2 QR scan — the camera alternative to manual ID entry (2.1). On a
+/// `nox://pair/` link the screen pops the decoded link, which Login submits down
 /// the same path as a typed id (single-shot, no confirm/sound). Owns a pure
 /// [QrScanBloc] (state machine) plus a widget-local [MobileScannerController]; the
 /// widget orchestrates the camera permission (permission_handler on iOS/Android,

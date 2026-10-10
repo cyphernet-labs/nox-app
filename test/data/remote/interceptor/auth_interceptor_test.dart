@@ -45,7 +45,7 @@ void main() {
     });
   });
 
-  group('onError 401 → forced logout (US3)', () {
+  group('onError: a 401 is a failed transfer, never a logout (phase 044, FR-013)', () {
     late MockAuthRepository auth;
 
     setUp(() async {
@@ -70,17 +70,21 @@ void main() {
             ),
     );
 
-    test('a 401 response force-logs-out exactly once and propagates the error', () async {
+    test('a 401 response propagates the error and logs nobody out', () async {
+      // The one owner of a forced logout is the session: `unauthenticated` on
+      // the greeting, or a revocation. A file answer that could wipe the device
+      // would be a second, and the weaker, door to the same wipe.
       final handler = _CapturingErrorHandler();
-      await AuthInterceptor(config).onError(dioError(401), handler);
+      AuthInterceptor(config).onError(dioError(401), handler);
+      await pumpEventQueue();
 
-      verify(auth.logout(forced: true)).called(1);
+      verifyNever(auth.logout(forced: anyNamed('forced')));
       expect(handler.propagated, isTrue);
     });
 
     test('a 500 response does not log out', () async {
       final handler = _CapturingErrorHandler();
-      await AuthInterceptor(config).onError(dioError(500), handler);
+      AuthInterceptor(config).onError(dioError(500), handler);
 
       verifyNever(auth.logout(forced: anyNamed('forced')));
       expect(handler.propagated, isTrue);
@@ -88,7 +92,7 @@ void main() {
 
     test('an error with no response does not log out', () async {
       final handler = _CapturingErrorHandler();
-      await AuthInterceptor(config).onError(dioError(null), handler);
+      AuthInterceptor(config).onError(dioError(null), handler);
 
       verifyNever(auth.logout(forced: anyNamed('forced')));
       expect(handler.propagated, isTrue);

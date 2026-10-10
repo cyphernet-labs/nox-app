@@ -19,9 +19,10 @@ import 'live_target.dart';
 /// first live run left: it spoke the wire directly and so never exercised the
 /// client's own greeting, which turned out to be the defect that mattered.
 ///
-/// Run manually, not in the gate: it needs a server.
-///   1. cd client_backend && go build -o /tmp/noxd . && /tmp/noxd -db /tmp/t.db
-///   2. flutter test test/live/pairing_live_probe.dart --dart-define=link=<link>
+/// Run manually, not in the gate: it needs a server, and the native module
+/// built from this tree (every connection is a channel of it, phase 044).
+///   1. cd client_backend && go build -o /tmp/noxd . && /tmp/noxd -db /tmp/t.db -tor=false
+///   2. flutter test test/live/pairing_live_probe.dart --dart-define=link=LINK   # the nox://pair/ link noxd prints
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -76,10 +77,14 @@ void main() {
 
     // The link a person carries to their other device has to be dialable from
     // there. A server bound to a wildcard used to put loopback in it, which is
-    // reachable from this machine and nowhere else.
+    // reachable from this machine and nowhere else. And it names the same
+    // server key the first link did: there is one server.
     final parsed = PairingLink.parse(invite.data!.link);
-    stdout.writeln('INVITE LINK: ${parsed.authority}');
-    expect(parsed.authority, (await session.serverAddress()).data);
+    stdout.writeln('INVITE LINK: ${parsed.directAddresses.first}');
+    expect(parsed.directAddresses.first, (await session.serverAddress()).data);
+    expect(parsed.serverKeyBase64, (await session.serverKey()).data);
+    // Until phase 045 an invite pairs only at home, and the card says so.
+    expect(invite.data!.onion, isFalse);
 
     // A rename travels as its own command now. The reply carries the name back,
     // which is what proves it landed rather than being accepted locally.

@@ -8,11 +8,11 @@ import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/remote/socket/socket_target_provider.dart';
-import 'package:nox_app/general/pairing/device_keys.dart';
 import 'package:nox_app/data/remote/socket/socket_channel_factory.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
+import 'package:nox_tor/channel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'fake_socket.dart';
@@ -64,11 +64,11 @@ void main() {
   /// Connects a device that ALREADY belongs to this world: a stored cursor
   /// without a stored journal is the upgrade case, which tears the session down
   /// on purpose, so tests about replay have to say which world they are in.
-  Future<FakeSocket> connect({int cursor = 0, String? label, String? deviceSeed}) async {
+  Future<FakeSocket> connect({int cursor = 0, String? label}) async {
     if (await sync.getCursor() > 0) await sync.setJournal('j_test');
     await client.start(
       url: url,
-      credentialsProvider: () async => GreetingCredentials(deviceSeed: deviceSeed, label: label),
+      credentialsProvider: () async => GreetingCredentials(label: label),
     );
     final socket = factory.latest;
     socket.pushGreeting();
@@ -101,11 +101,7 @@ void main() {
       // Read as "first" again, the second greeting adopted the head as its
       // starting point and skipped what had arrived in between - a message
       // from another device, lost until something happened to list the chat.
-      const seed = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=';
-      await client.start(
-        url: url,
-        credentialsProvider: () async => const GreetingCredentials(deviceSeed: seed),
-      );
+      await client.start(url: url, credentialsProvider: () async => const GreetingCredentials());
       final first = factory.latest;
       first.pushGreeting();
       await waitUntil(() => first.commandNamed('session.hello') != null, reason: 'the client greets');
@@ -114,10 +110,7 @@ void main() {
 
       // The connection drops before anything was applied.
       await client.stop();
-      await client.start(
-        url: url,
-        credentialsProvider: () async => const GreetingCredentials(deviceSeed: seed),
-      );
+      await client.start(url: url, credentialsProvider: () async => const GreetingCredentials());
       final second = factory.latest;
       second.pushGreeting();
       await waitUntil(() => second.commandNamed('session.hello') != null, reason: 'the client greets again');
@@ -135,9 +128,10 @@ void main() {
     });
 
     test('an unpaired install holds the connection open instead of greeting', () async {
-      // The window `pair` runs in. Greeting here sends an unsigned hello, the
-      // server refuses it, and the refusal used to be read as a revocation -
-      // which wiped the key and address mid-pairing and bricked the install.
+      // The window `pair` runs in. Greeting here would be refused - the
+      // server does not know this device's key yet - and the refusal used to
+      // be read as a revocation, which wiped the key and address mid-pairing
+      // and bricked the install.
       await client.start(url: url, credentialsProvider: () async => const GreetingCredentials.unpaired());
       final socket = factory.latest;
       socket.pushGreeting();
@@ -148,13 +142,9 @@ void main() {
     });
 
     test('a refused greeting tells the app, instead of retrying forever', () async {
-      const seed = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=';
       var rejected = false;
       client.onUnauthenticated = () => rejected = true;
-      await client.start(
-        url: url,
-        credentialsProvider: () async => const GreetingCredentials(deviceSeed: seed),
-      );
+      await client.start(url: url, credentialsProvider: () async => const GreetingCredentials());
       final socket = factory.latest;
       socket.pushGreeting();
       await waitUntil(() => socket.commandNamed('session.hello') != null);
@@ -166,36 +156,32 @@ void main() {
       expect(client.currentPhase, SessionPhase.unsupported);
     });
 
-    test('the greeting carries the public key and a signature, and never the seed', () async {
-      const seed = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=';
-      final socket = await connect(cursor: 3, deviceSeed: seed);
-
-      final frame = socket.commandNamed('session.hello')!;
-      final data = frame['data'] as Map<String, dynamic>;
-      expect(data['device_key'], await DeviceKeys.publicKey(seed));
-      expect((data['signature'] as String).isNotEmpty, isTrue);
-      // The seed is the one thing that must never travel: possession is
-      // demonstrated by the signature, not handed over.
-      expect(jsonEncode(frame), isNot(contains(seed)));
-      expect(jsonEncode(frame), isNot(contains('login_ref')));
-    });
-
-    test('a greeting with nothing to claim omits both fields rather than sending empties', () async {
+    test('the greeting names nobody: the connection already proved the device (phase 044)', () async {
       final socket = await connect(cursor: 3);
 
       final data = socket.commandNamed('session.hello')!['data'] as Map<String, dynamic>;
-      expect(data.containsKey('login_ref'), isFalse);
+      expect(data.keys, <String>['schema'], reason: 'a first greeting: no since either');
       expect(data.containsKey('device_key'), isFalse);
-      expect(data.containsKey('label'), isFalse);
+      expect(data.containsKey('signature'), isFalse);
+      expect(data.containsKey('login_ref'), isFalse);
+      expect(data.containsKey('label'), isFalse, reason: 'stated only after a rename');
+    });
+
+    test('a greeting that still carries a challenge is answered all the same, and the challenge ignored', () async {
+      await client.start(url: url, credentialsProvider: () async => const GreetingCredentials());
+      final socket = factory.latest;
+      socket.pushRaw(
+        jsonEncode({
+          'srv': {'schema_max': 1, 'challenge': 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8='},
+        }),
+      );
+      await waitUntil(() => socket.commandNamed('session.hello') != null, reason: 'the client greets back');
+      expect((socket.commandNamed('session.hello')!['data'] as Map<String, dynamic>).containsKey('signature'), isFalse);
     });
 
     test('a changed journal id tears the session down instead of applying a stranger world', () async {
       var reported = 0;
-      await client.start(
-        url: url,
-        credentialsProvider: () async => const GreetingCredentials(deviceSeed: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8='),
-        onJournalChanged: () => reported++,
-      );
+      await client.start(url: url, credentialsProvider: () async => const GreetingCredentials(), onJournalChanged: () => reported++);
       final first = factory.latest;
       first.pushGreeting();
       await waitUntil(() => first.commandNamed('session.hello') != null, reason: 'the client greets');
@@ -204,11 +190,7 @@ void main() {
 
       // The server was rebuilt: same address, different world.
       await client.stop();
-      await client.start(
-        url: url,
-        credentialsProvider: () async => const GreetingCredentials(deviceSeed: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8='),
-        onJournalChanged: () => reported++,
-      );
+      await client.start(url: url, credentialsProvider: () async => const GreetingCredentials(), onJournalChanged: () => reported++);
       final second = factory.latest;
       second.pushGreeting();
       await waitUntil(() => second.commandNamed('session.hello') != null, reason: 'the client greets again');
@@ -222,10 +204,7 @@ void main() {
       // Stage 1 always states who connected. Treating a reply without it as a
       // greeting would leave the PREVIOUS connection's person in place, and a
       // sign-in that timed out could then adopt a stranger.
-      await client.start(
-        url: url,
-        credentialsProvider: () async => const GreetingCredentials(deviceSeed: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8='),
-      );
+      await client.start(url: url, credentialsProvider: () async => const GreetingCredentials());
       final socket = factory.latest;
       socket.pushGreeting();
       await waitUntil(() => socket.commandNamed('session.hello') != null, reason: 'the client greets');
@@ -262,11 +241,7 @@ void main() {
       expect(await sync.getJournal(), isNull);
 
       var reported = 0;
-      await client.start(
-        url: url,
-        credentialsProvider: () async => const GreetingCredentials(deviceSeed: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8='),
-        onJournalChanged: () => reported++,
-      );
+      await client.start(url: url, credentialsProvider: () async => const GreetingCredentials(), onJournalChanged: () => reported++);
       final socket = factory.latest;
       socket.pushGreeting();
       await waitUntil(() => socket.commandNamed('session.hello') != null, reason: 'the client greets');
@@ -280,11 +255,7 @@ void main() {
       // Nothing cached, nothing to discard: the empty world must not be
       // reported as stale or the app would wipe on every fresh install.
       var reported = 0;
-      await client.start(
-        url: url,
-        credentialsProvider: () async => const GreetingCredentials(deviceSeed: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8='),
-        onJournalChanged: () => reported++,
-      );
+      await client.start(url: url, credentialsProvider: () async => const GreetingCredentials(), onJournalChanged: () => reported++);
       final socket = factory.latest;
       socket.pushGreeting();
       await waitUntil(() => socket.commandNamed('session.hello') != null, reason: 'the client greets');
@@ -314,11 +285,7 @@ void main() {
       await sync.advanceCursor(42);
 
       var reported = 0;
-      await client.start(
-        url: url,
-        credentialsProvider: () async => const GreetingCredentials(deviceSeed: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8='),
-        onJournalChanged: () => reported++,
-      );
+      await client.start(url: url, credentialsProvider: () async => const GreetingCredentials(), onJournalChanged: () => reported++);
       final socket = factory.latest;
       socket.pushGreeting();
       await waitUntil(() => socket.commandNamed('session.hello') != null, reason: 'the client greets');
@@ -333,7 +300,7 @@ void main() {
     test('a journal-change handler that throws does not strand the socket', () async {
       await client.start(
         url: url,
-        credentialsProvider: () async => const GreetingCredentials(deviceSeed: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8='),
+        credentialsProvider: () async => const GreetingCredentials(),
         onJournalChanged: () => throw StateError('the owner of the local world failed'),
       );
       final first = factory.latest;
@@ -345,7 +312,7 @@ void main() {
       await client.stop();
       await client.start(
         url: url,
-        credentialsProvider: () async => const GreetingCredentials(deviceSeed: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8='),
+        credentialsProvider: () async => const GreetingCredentials(),
         onJournalChanged: () => throw StateError('the owner of the local world failed'),
       );
       final second = factory.latest;
@@ -676,22 +643,22 @@ void main() {
       expect(client.currentUrl, Uri.parse('wss://10.0.0.1:9000/ws'));
     });
 
-    test('another key at a direct address is reported and the next path is tried (FR-005)', () async {
+    test('another key at a direct address is reported and the next path is tried, with nothing shown (FR-011)', () async {
       final targets = ScriptedTargets([Uri.parse('wss://192.168.1.20:8080/ws'), Uri.parse('wss://${'a' * 56}.onion/ws')]);
       await client.start(targets: targets);
 
-      factory.latest.refusePin();
+      factory.latest.refuseServerKey();
       await waitUntil(() => factory.created.length == 2, reason: 'the ladder goes on');
 
       expect(targets.refused, [Uri.parse('wss://192.168.1.20:8080/ws')]);
       expect(client.currentPhase, isNot(SessionPhase.serverMismatch));
     });
 
-    test('another key behind the onion address is the wrong server, terminal (FR-030)', () async {
+    test('another key behind the onion address is the wrong server, terminal (FR-011)', () async {
       final targets = ScriptedTargets([Uri.parse('wss://${'a' * 56}.onion/ws'), Uri.parse('wss://10.0.0.1:9000/ws')]);
       await client.start(targets: targets);
 
-      factory.latest.refusePin();
+      factory.latest.refuseServerKey();
       await settle();
 
       expect(client.currentPhase, SessionPhase.serverMismatch);
@@ -699,6 +666,57 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 1500));
       expect(factory.created, hasLength(1), reason: 'nothing retries a refusal on its own');
     });
+
+    for (final failure in [
+      ChannelFailure.network,
+      ChannelFailure.timeout,
+      ChannelFailure.tls,
+      ChannelFailure.protocol,
+      ChannelFailure.torOnionUnreachable,
+    ]) {
+      test('a ${failure.name} failure of the channel is a failed attempt on the ladder - at any address, and never a logout', () async {
+        var rejected = false;
+        client.onUnauthenticated = () => rejected = true;
+        final targets = ScriptedTargets([Uri.parse('wss://${'a' * 56}.onion/ws'), Uri.parse('wss://10.0.0.1:9000/ws')]);
+        await client.start(targets: targets);
+
+        factory.latest.refuseChannel(failure);
+        await waitUntil(() => factory.created.length == 2, reason: 'the ladder goes on');
+
+        expect(client.currentPhase, isNot(SessionPhase.serverMismatch));
+        expect(client.currentPhase, isNot(SessionPhase.unsupported));
+        expect(targets.refused, isEmpty, reason: 'only another key means "not home"');
+        expect(rejected, isFalse);
+      });
+    }
+
+    test('a wrong server at the onion address never logs anybody out (FR-012)', () async {
+      var rejected = false;
+      client.onUnauthenticated = () => rejected = true;
+      await client.start(targets: ScriptedTargets([Uri.parse('wss://${'a' * 56}.onion/ws')]));
+
+      factory.latest.refuseServerKey();
+      await waitUntil(() => client.currentPhase == SessionPhase.serverMismatch, reason: 'the banner, not a wipe');
+      expect(rejected, isFalse);
+    });
+
+    test('a pairing never completes over connections whose server key was refused (SC-003)', () async {
+      // Every machine dialled proves another key. The connection holds what it
+      // is given until the channel is verified, and a refused one never is -
+      // see socket_channel_factory_test for the hold itself.
+      factory.refuseEvery = ChannelFailure.wrongServer;
+      await client.start(
+        targets: ScriptedTargets([Uri.parse('wss://192.168.1.20:8080/ws')]),
+        credentialsProvider: () async => const GreetingCredentials.unpaired(),
+      );
+      await waitUntil(() => factory.created.isNotEmpty, reason: 'dialled');
+      final stranger = factory.latest;
+      stranger.refuseServerKey();
+      await expectLater(client.pair(token: 't', platform: 'macos'), throwsA(isA<SocketUnavailableException>()));
+      for (final socket in factory.created) {
+        expect(socket.commandNamed('pair'), isNull, reason: 'every connection dialled refused the key');
+      }
+    }, timeout: const Timeout(Duration(seconds: 30)));
 
     test('a stop while the path is being chosen dials nothing afterwards', () async {
       final gate = Completer<Uri?>();
@@ -783,7 +801,7 @@ void main() {
       unawaited(client.start(targets: ScriptedTargets.gated(gate), credentialsProvider: () async => const GreetingCredentials.unpaired()));
       await settle();
 
-      final pairing = client.pair(token: 't', deviceKey: 'k', platform: 'macos');
+      final pairing = client.pair(token: 't', platform: 'macos');
       var failed = false;
       unawaited(pairing.then((_) {}, onError: (Object _) => failed = true));
       await settle();
@@ -803,7 +821,7 @@ void main() {
     test('pairing with no channel coming gives up after the short wait', () async {
       await client.start(targets: ScriptedTargets(const [null]), credentialsProvider: () async => const GreetingCredentials.unpaired());
 
-      await expectLater(client.pair(token: 't', deviceKey: 'k', platform: 'macos'), throwsA(isA<SocketUnavailableException>()));
+      await expectLater(client.pair(token: 't', platform: 'macos'), throwsA(isA<SocketUnavailableException>()));
     }, timeout: const Timeout(Duration(seconds: 30)));
 
     test('a pairing whose connection went away is presented again on the next', () async {
@@ -817,7 +835,7 @@ void main() {
       );
       await waitUntil(() => factory.created.isNotEmpty, reason: 'dialled');
       final first = factory.latest;
-      final pairing = client.pair(token: 't', deviceKey: 'k', platform: 'macos');
+      final pairing = client.pair(token: 't', platform: 'macos');
       await waitUntil(() => first.commandNamed('pair') != null, reason: 'handed to the first');
 
       await first.drop();
@@ -845,7 +863,7 @@ void main() {
       await waitUntil(() => factory.created.isNotEmpty, reason: 'dialled');
       final first = factory.latest;
       final waited = Stopwatch()..start();
-      final pairing = client.pair(token: 't', deviceKey: 'k', platform: 'macos');
+      final pairing = client.pair(token: 't', platform: 'macos');
       await Future<void>.delayed(NoxSocketClient.sendTimeout - const Duration(milliseconds: 500));
 
       // Gone just before the budget runs out; the next connection never answers.
@@ -855,13 +873,17 @@ void main() {
       expect(waited.elapsed, lessThan(NoxSocketClient.sendTimeout + const Duration(seconds: 2)));
     }, timeout: const Timeout(Duration(seconds: 30)));
 
-    test('pairing carries the public half of the access key (FR-015)', () async {
+    test('pairing carries the token, the platform and the public half of the access key - and no device key', () async {
       await client.start(url: url, credentialsProvider: () async => const GreetingCredentials.unpaired());
       final socket = factory.latest;
-      unawaited(client.pair(token: 't', deviceKey: 'k', platform: 'macos', accessKey: 'QUJD').then((_) {}, onError: (Object _) {}));
+      unawaited(client.pair(token: 't', platform: 'macos', accessKey: 'QUJD').then((_) {}, onError: (Object _) {}));
       await waitUntil(() => socket.commandNamed('pair') != null, reason: 'pair is sent');
 
-      expect((socket.commandNamed('pair')!['data'] as Map<String, dynamic>)['access_key'], 'QUJD');
+      final data = socket.commandNamed('pair')!['data'] as Map<String, dynamic>;
+      expect(data['access_key'], 'QUJD');
+      expect(data['token'], 't');
+      expect(data['platform'], 'macos');
+      expect(data.containsKey('device_key'), isFalse, reason: 'the server takes it from the connection (phase 044)');
     });
   });
 
@@ -950,5 +972,5 @@ class ScriptedTargets implements SocketTargetProvider {
   void reportGreeted(Uri url) => greeted.add(url);
 
   @override
-  void reportPinRefused(Uri url) => refused.add(url);
+  void reportWrongServer(Uri url) => refused.add(url);
 }

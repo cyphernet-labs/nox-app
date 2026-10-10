@@ -6,9 +6,9 @@
 # binds every interface, which is how a household server actually runs, and the
 # link then carries an address a phone can reach.
 #
-# TWO stands can run at once, which is what proves pinning: a second server on a
-# second key, at a second port, is the only way to show that a device refuses
-# the machine it did not pair with.
+# TWO stands can run at once, which is what proves the channel check: a second
+# server on a second key, at a second port, is the only way to show that a
+# device refuses the machine it did not pair with.
 set -euo pipefail
 
 PORT="${PORT:-8080}"
@@ -49,8 +49,8 @@ done
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-echo "==> building noxd"
-(cd client_backend && go build -o "$STAND-noxd" .)
+echo "==> building noxd and the smoke tool"
+(cd client_backend && go build -o "$STAND-noxd" . && go build -o "$STAND-smoke" ./cmd/smoke)
 
 echo "==> stopping any stand left from last time"
 pkill -f "$STAND-noxd" 2>/dev/null || true
@@ -84,7 +84,7 @@ echo "==> starting the server"
 # Two traps, both hit in practice. noxd writes "listening" one statement BEFORE
 # it binds, so a server whose port is taken prints that line and then dies -
 # this script used to believe it and announce a stand that was not running,
-# with a fingerprint and a claim link for a dead process. And probing the port
+# with a key and a claim link for a dead process. And probing the port
 # is no better on its own: a clash means somebody ELSE answers there, healthily.
 # So: wait for our process to settle, refuse on any ERROR it logged, and then
 # confirm the machine on that port is the one whose key we just minted.
@@ -119,20 +119,18 @@ if grep -q '"level":"ERROR"' "$STAND/server.log" 2>/dev/null; then
   exit 1
 fi
 
-fingerprint="$(grep -oE '"fingerprint":"[^"]+"' "$STAND/server.log" | head -1 | cut -d'"' -f4 || true)"
-if [ -z "$fingerprint" ]; then
-  echo "the server never announced a fingerprint:" >&2
+server_key="$(grep -oE '"server_key":"[^"]+"' "$STAND/server.log" | head -1 | cut -d'"' -f4 || true)"
+if [ -z "$server_key" ]; then
+  echo "the server never announced its key:" >&2
   tail -20 "$STAND/server.log" >&2
   exit 1
 fi
-served="$(echo | openssl s_client -connect "127.0.0.1:$PORT" 2>/dev/null \
-  | openssl x509 -noout -pubkey 2>/dev/null \
-  | openssl pkey -pubin -outform DER 2>/dev/null \
-  | openssl dgst -sha256 -binary 2>/dev/null | base64 || true)"
-if [ "$served" != "$fingerprint" ]; then
-  echo "port $PORT is answering, but not with THIS stand's key." >&2
-  echo "  this stand minted: $fingerprint" >&2
-  echo "  the port serves:   ${served:-nothing}" >&2
+# The certificate is a throwaway one and names nothing, so the only way to
+# know WHICH machine holds the port is the channel check itself, against the
+# key this stand just announced.
+if ! "$STAND-smoke" -check "127.0.0.1:$PORT" "$server_key" >/dev/null 2>"$STAND/check.err"; then
+  echo "port $PORT is answering, but not as THIS stand:" >&2
+  cat "$STAND/check.err" >&2
   echo "Another noxd is almost certainly holding the port - stop it, or pass --port." >&2
   tail -5 "$STAND/server.log" >&2
   exit 1
@@ -141,13 +139,12 @@ fi
 # Two links, one token. The startup line addresses the machine itself, because
 # that is who reads a terminal; the page addresses the network, because that is
 # who reads a QR off a screen. Same right, different reader.
-local_link="$(grep -oE 'https://nox.app/p/#[A-Za-z0-9_-]+' "$STAND/server.log" | head -1 || true)"
+local_link="$(grep -oE 'nox://pair/[A-Za-z0-9_-]+' "$STAND/server.log" | head -1 || true)"
 page_link="$(curl -fsS "http://127.0.0.1:$STATUS_PORT/" 2>/dev/null \
-  | grep -oE 'https://nox.app/p/#[A-Za-z0-9_-]+' | head -1 || true)"
-fingerprint="$(grep -oE '"fingerprint":"[^"]+"' "$STAND/server.log" | head -1 | cut -d'"' -f4 || true)"
+  | grep -oE 'nox://pair/[A-Za-z0-9_-]+' | head -1 || true)"
 
-if [ -z "$local_link" ] && [ -z "$fingerprint" ]; then
-  echo "the server printed neither a claim link nor a fingerprint:" >&2
+if [ -z "$local_link" ] && [ -z "$server_key" ]; then
+  echo "the server printed neither a claim link nor its key:" >&2
   cat "$STAND/server.log" >&2
   exit 1
 fi
@@ -157,8 +154,8 @@ cat <<INFO
   stand up
 
   service page   http://127.0.0.1:$STATUS_PORT      (this machine only, plain HTTP by design)
-  server         https://0.0.0.0:$PORT        (TLS 1.3, self-signed, pinned by fingerprint)
-  fingerprint    ${fingerprint:-unknown}
+  server         https://0.0.0.0:$PORT        (TLS 1.3 + the channel check against the server key)
+  server key     ${server_key:-unknown}
   database       $STAND/nox.db
   log            $STAND/server.log
 

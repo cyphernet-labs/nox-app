@@ -14,20 +14,10 @@ pub struct NoxTorStatus {
     pub bootstrap_percent: u8,
     pub error: u8,
     pub reserved: u8,
+    /// Always 0 since 044: it was the loopback bridge's port, and there is no
+    /// bridge. Kept so the layout the app binds stays where it is.
     pub port: u16,
     pub reserved2: u16,
-}
-
-impl NoxTorStatus {
-    /// Drops a refusal of the client key, and only that: it was about the key
-    /// last offered, and a new target brings another one. Left in place, it
-    /// would keep the app from ever seeing the next refusal begin. Every other
-    /// code stays until something replaces it.
-    pub fn forget_key_refusal(&mut self) {
-        if matches!(self.error, error::MISSING_CLIENT_AUTH | error::WRONG_CLIENT_AUTH) {
-            self.error = error::NONE;
-        }
-    }
 }
 
 /// `NoxTorStatus::state`.
@@ -45,6 +35,9 @@ pub mod state {
 /// `NoxTorStatus::error`, and the negative return codes of the C ABI.
 pub mod error {
     pub const NONE: u8 = 0;
+    /// Not produced since 045, nor is WRONG_CLIENT_AUTH: the client holds no
+    /// keys, and a service that asks for one is NETWORK (see `classify`).
+    /// Both keep their numbers, so the codes the app binds stay where they are.
     pub const MISSING_CLIENT_AUTH: u8 = 1;
     pub const WRONG_CLIENT_AUTH: u8 = 2;
     pub const TIMEOUT: u8 = 3;
@@ -88,13 +81,18 @@ impl StatusCell {
     }
 }
 
-/// Maps an Arti error to the code the app understands. The kinds are the only
+/// Maps an Arti error to the code the app understands. The kind is the only
 /// thing read: the message may carry an onion address and must not travel.
 pub fn classify(e: &arti_client::Error) -> u8 {
-    use arti_client::{ErrorKind, HasKind};
-    match e.kind() {
-        ErrorKind::OnionServiceMissingClientAuth => error::MISSING_CLIENT_AUTH,
-        ErrorKind::OnionServiceWrongClientAuth => error::WRONG_CLIENT_AUTH,
+    use arti_client::HasKind;
+    classify_kind(e.kind())
+}
+
+/// `classify`, by the kind. A service that asks for a key is out of reach like
+/// any other the network keeps from this client: since 045 it holds none.
+pub(crate) fn classify_kind(kind: arti_client::ErrorKind) -> u8 {
+    use arti_client::ErrorKind;
+    match kind {
         ErrorKind::SoftwareDeprecated => error::SOFTWARE_DEPRECATED,
         // On this device rather than out on the network: a bug, or the state,
         // cache or key store out of reach.
@@ -125,19 +123,43 @@ mod tests {
     }
 
     #[test]
-    fn only_a_key_refusal_is_forgotten() {
-        for (before, after) in [
-            (error::WRONG_CLIENT_AUTH, error::NONE),
-            (error::MISSING_CLIENT_AUTH, error::NONE),
-            (error::NONE, error::NONE),
-            (error::TIMEOUT, error::TIMEOUT),
-            (error::NETWORK, error::NETWORK),
-            (error::INTERNAL, error::INTERNAL),
+    fn a_service_that_asks_for_a_key_is_the_networks_failure() {
+        use arti_client::ErrorKind;
+        for kind in [
+            ErrorKind::OnionServiceMissingClientAuth,
+            ErrorKind::OnionServiceWrongClientAuth,
+            ErrorKind::OnionServiceNotFound,
+            ErrorKind::OnionServiceConnectionFailed,
+            ErrorKind::TorNetworkTimeout,
         ] {
-            let mut s = NoxTorStatus { state: state::READY, error: before, port: 4242, ..NoxTorStatus::default() };
-            s.forget_key_refusal();
-            assert_eq!(s, NoxTorStatus { state: state::READY, error: after, port: 4242, ..NoxTorStatus::default() });
+            assert_eq!(classify_kind(kind), error::NETWORK, "{kind:?}");
         }
+        assert_eq!(classify_kind(ErrorKind::SoftwareDeprecated), error::SOFTWARE_DEPRECATED);
+        for kind in [ErrorKind::Internal, ErrorKind::FsPermissions, ErrorKind::PersistentStateAccessFailed] {
+            assert_eq!(classify_kind(kind), error::INTERNAL, "{kind:?}");
+        }
+    }
+
+    /// The app binds these numbers; the two no longer produced keep theirs.
+    #[test]
+    fn the_codes_keep_their_numbers() {
+        assert_eq!(
+            [state::STOPPED, state::BOOTSTRAPPING, state::READY, state::DORMANT, state::FAILED, state::OBSOLETE],
+            [0, 1, 2, 3, 4, 5]
+        );
+        assert_eq!(
+            [
+                error::NONE,
+                error::MISSING_CLIENT_AUTH,
+                error::WRONG_CLIENT_AUTH,
+                error::TIMEOUT,
+                error::NETWORK,
+                error::INTERNAL,
+                error::SOFTWARE_DEPRECATED,
+            ],
+            [0, 1, 2, 3, 4, 5, 6]
+        );
+        assert_eq!([error::RET_INVALID_ARGUMENT, error::RET_NOT_STARTED], [-7, -8]);
     }
 
     #[test]

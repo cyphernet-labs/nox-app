@@ -15,7 +15,7 @@ import (
 // helper so the many call sites read the same way; Pair returns the identity
 // directly now that pairing always finishes.
 func pairID(ctx context.Context, s *Store, token, deviceKey, platform string, now int64) (Identity, error) {
-	return s.Pair(ctx, token, deviceKey, platform, PairOptions{}, now)
+	return s.Pair(ctx, token, deviceKey, platform, now)
 }
 
 // claimOwner claims a fresh server and returns the identity of the person it
@@ -62,12 +62,12 @@ func TestServerKeyIsMintedOnceAndSurvivesRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnsureServerIdentity again: %v", err)
 	}
-	if again.PublicKey != first.PublicKey {
-		t.Fatalf("key changed within one process: %q then %q", first.PublicKey, again.PublicKey)
+	if !again.PublicKey.Equal(first.PublicKey) {
+		t.Fatalf("key changed within one process: %x then %x", first.PublicKey, again.PublicKey)
 	}
 	closeFirst()
 
-	// A restart must not hand out a different key: every paired device pins
+	// A restart must not hand out a different key: every paired device expects
 	// the old one, and rotating it silently would lock all of them out.
 	s2, closeSecond := open()
 	defer closeSecond()
@@ -75,8 +75,8 @@ func TestServerKeyIsMintedOnceAndSurvivesRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnsureServerIdentity after restart: %v", err)
 	}
-	if restarted.PublicKey != first.PublicKey {
-		t.Fatalf("key changed across restart: %q then %q", first.PublicKey, restarted.PublicKey)
+	if !restarted.PublicKey.Equal(first.PublicKey) {
+		t.Fatalf("key changed across restart: %x then %x", first.PublicKey, restarted.PublicKey)
 	}
 }
 
@@ -550,10 +550,9 @@ func TestPairingYourOwnDeviceKeyAgainIsAccepted(t *testing.T) {
 }
 
 // A spent token answers only the device that spent it. Before used_by existed,
-// a claim token named nobody, so any KNOWN device key - and the key is public,
-// it rides every greeting and device.list prints it - could present a spent
-// claim from the server log and be told that person's id, label and ownership.
-// `pair` is the one command that carries no signature.
+// a claim token named nobody, so any device that presented a spent claim from
+// the server log would be told that person's id, label and ownership. `pair`
+// is the one command a key the server does not know may send.
 func TestASpentTokenAnswersOnlyTheDeviceThatSpentIt(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
@@ -630,8 +629,8 @@ func TestAReplayedReClaimDoesNotClaimToHaveCreatedAnybody(t *testing.T) {
 }
 
 // A restore that brings back people without the machine's own row must not be
-// handed a fresh keypair: that breaks pinning for every device paired against
-// the old one, silently, and the right answer is to finish the restore.
+// handed a fresh keypair: that locks out every device paired against the old
+// one, silently, and the right answer is to finish the restore.
 func TestAStoreWithPeopleAndNoServerIdentityRefusesToMintANewKey(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()

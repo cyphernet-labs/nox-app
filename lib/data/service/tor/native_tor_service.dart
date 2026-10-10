@@ -17,7 +17,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 ///
 /// The native side never blocks and never calls back; this service polls its
 /// status snapshot - often while Tor comes up, rarely once it is there - and
-/// publishes the changes.
+/// publishes the changes. The snapshot's error is also where the channel's
+/// onion connects report a refused access key (phase 044), as the bridge
+/// reported it before.
 @LazySingleton(as: TorService, env: [Environment.dev, Environment.prod])
 class NativeTorService implements TorService {
   NativeTorService(this._prefs)
@@ -58,7 +60,6 @@ class NativeTorService implements TorService {
   final BehaviorSubject<TorStatus> _status = BehaviorSubject<TorStatus>.seeded(TorStatus.stopped);
   Timer? _poll;
   Duration? _pollEvery;
-  TorBridgeEndpoint? _bridge;
 
   /// Counts stops, so a start still awaiting its preparations sees that the
   /// session it was for has ended meanwhile.
@@ -88,9 +89,6 @@ class NativeTorService implements TorService {
   }
 
   @override
-  TorBridgeEndpoint? get bridge => _bridge;
-
-  @override
   Future<void> start() async {
     if (!isSupported) return;
     final stops = _stops;
@@ -117,7 +115,6 @@ class NativeTorService implements TorService {
     _poll?.cancel();
     _poll = null;
     _pollEvery = null;
-    _bridge = null;
     if (!isSupported) return;
     _api.stop();
     _tick(schedule: false);
@@ -152,23 +149,21 @@ class NativeTorService implements TorService {
   }
 
   @override
-  void setTarget({required String onionHost, required int port, required Uint8List clientKey}) {
-    if (!isSupported) return;
+  bool setTarget({required String onionHost, required int port, required Uint8List clientKey}) {
+    if (!isSupported) return false;
+    var taken = true;
     try {
       _api.setTarget(onionHost: onionHost, port: port, clientKey: clientKey);
-      // The secret rotates with every target; read it now, not per connection.
-      final snapshot = _api.status();
-      _bridge = snapshot.port == null ? null : TorBridgeEndpoint(port: snapshot.port!, secret: _api.bridgeSecret());
     } on NoxTorException catch (e) {
-      _bridge = null;
+      taken = false;
       logRepository.debug(target: this, message: 'tor: target refused (${e.code})');
     }
     _tick();
+    return taken;
   }
 
   @override
   void clearTarget() {
-    _bridge = null;
     if (!isSupported) return;
     try {
       _api.clearTarget();
@@ -185,9 +180,12 @@ class NativeTorService implements TorService {
     _tick();
   }
 
+  /// Not gated on [isSupported]: the address is the module's arithmetic, and
+  /// the module is there on every platform (phase 044) - including the one
+  /// where Tor itself is not offered yet. Where the library is absent the
+  /// lookup fails, and the answer is null.
   @override
   String? onionFromPublicKey(Uint8List publicKey) {
-    if (!isSupported) return null;
     try {
       return _api.onionFromPublicKey(publicKey);
     } on Object {
@@ -201,12 +199,7 @@ class NativeTorService implements TorService {
       state: TorState.values[snapshot.state.index],
       bootstrapPercent: snapshot.bootstrapPercent,
       error: TorError.values[snapshot.error.index],
-      port: snapshot.port,
     );
-    // No port, no bridge: a client that went away on its own - refused as
-    // obsolete, say - took its listener with it, and the port it had may
-    // belong to somebody else by the next dial.
-    if (next.port == null) _bridge = null;
     _publish(next);
     if (next.isObsolete) unawaited(_recordObsolete());
     if (!schedule) return;

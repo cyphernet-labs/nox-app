@@ -58,12 +58,14 @@ class PathSelection {
 /// (phase 040, research decision 8).
 ///
 /// Direct first - the address that answered last, the server's list, the
-/// link's address - each checked by TLS, the leaf's key and `/health` within
-/// five seconds (FR-001, FR-002). Only when none answers, and only where Tor
-/// can work at all, the Tor client built into the app is brought up towards
-/// the server's onion address (FR-007). While on Tor the direct path is looked
-/// at again on every network change and every two minutes, and the socket
-/// moves back to it the moment it answers; Tor then stops (FR-003, FR-006).
+/// link's address - each probed by opening a channel to it, which proves the
+/// server's key or does not, within five seconds (FR-001, FR-002; phase 044).
+/// Only when none answers, and only where Tor can work at all, the Tor client
+/// built into the app is brought up towards the server's onion address
+/// (FR-007); the connection through it is a channel of the same module. While
+/// on Tor the direct path is looked at again on every network change and
+/// every two minutes, and the socket moves back to it the moment it answers;
+/// Tor then stops (FR-003, FR-006).
 ///
 /// Lossless by the protocol rather than by holding two sockets: the new path
 /// is verified before the old connection is closed, the replay resumes from the
@@ -127,7 +129,12 @@ class ConnectionPathSelector implements SocketTargetProvider {
   final BehaviorSubject<PathSelection> _selection = BehaviorSubject<PathSelection>.seeded(PathSelection.idle);
 
   String? _linkAddress;
-  String? _fingerprint;
+
+  /// The two keys a probe opens its channels with: the server's, which the
+  /// probe checks, and the device's, which the server checks. Copies, wiped
+  /// when the session ends.
+  Uint8List? _serverKey;
+  Uint8List? _deviceSeed;
   bool _active = false;
 
   StreamSubscription<void>? _networkSub;
@@ -171,12 +178,6 @@ class ConnectionPathSelector implements SocketTargetProvider {
   /// waiting on.
   AppVisibility _visibility = AppVisibility.foreground;
   _TorTarget? _torTarget;
-
-  /// The onion address and one-time key a version-2 link lent its pairing
-  /// (FR-020). In memory only, from [lendInvite] to [forgetLentKey]: nothing
-  /// on disk can outlive the pairing, not even one the process did not survive
-  /// (FR-021).
-  _TorTarget? _lent;
   TorError _lastTorError = TorError.none;
 
   /// When the onion service started turning this device's key away, in the
@@ -206,10 +207,13 @@ class ConnectionPathSelector implements SocketTargetProvider {
   bool get bringingUpSlowPath => _torRound != null && _torRound == _round;
 
   /// Starts serving a session: [linkAddress] is the address the pairing link
-  /// carried, [fingerprint] the key every path is checked against.
-  void begin({required String linkAddress, required String fingerprint}) {
+  /// carried, [serverKey] the key every path must prove and [deviceSeed] the
+  /// key this device proves itself with. Both are copied.
+  void begin({required String linkAddress, required Uint8List serverKey, required Uint8List deviceSeed}) {
     _linkAddress = linkAddress;
-    _fingerprint = fingerprint;
+    _wipeKeys();
+    _serverKey = Uint8List.fromList(serverKey);
+    _deviceSeed = Uint8List.fromList(deviceSeed);
     if (_active) return;
     _active = true;
     _publish(_selection.value.copyWith(active: true, roundFailed: false, clearPath: true));
@@ -261,6 +265,7 @@ class ConnectionPathSelector implements SocketTargetProvider {
     // the next begin() would read as "no connection" and flash the banner on
     // every rename.
     _publish(keepTor ? const PathSelection(active: true) : PathSelection.idle);
+    _wipeKeys();
     if (keepTor) {
       if (_torWorthKeeping()) return;
       // Failed, or coming up for longer than any start takes: kept, it would
@@ -270,8 +275,16 @@ class ConnectionPathSelector implements SocketTargetProvider {
       await _stopTor();
       return;
     }
-    _dropLent();
     await _stopTor();
+  }
+
+  /// The device seed is this device's private key; it does not outlive the
+  /// session it was handed over for.
+  void _wipeKeys() {
+    final seed = _deviceSeed;
+    if (seed != null) seed.fillRange(0, seed.length, 0);
+    _deviceSeed = null;
+    _serverKey = null;
   }
 
   /// Whether a restart of the channel may keep the Tor client (phase 042):
@@ -294,8 +307,9 @@ class ConnectionPathSelector implements SocketTargetProvider {
     // short.
     if (_handedOut != null && !_handedOutGreeted && !_handedOutWasSwitch && !_handedOutInterrupted) _markFailed();
     _forgetHandedOut();
-    final fingerprint = _fingerprint;
-    if (fingerprint == null || fingerprint.isEmpty) return _noPath();
+    final serverKey = _serverKey;
+    final deviceSeed = _deviceSeed;
+    if (serverKey == null || deviceSeed == null) return _noPath();
 
     final verified = _verified;
     _verified = null;
@@ -308,7 +322,7 @@ class ConnectionPathSelector implements SocketTargetProvider {
     if (!_forceTor && addresses.viaTorLast) unawaited(_warmTor(addresses, round));
     if (!_forceTor) {
       _publish(_selection.value.copyWith(clearPath: true));
-      final result = await _prober.probe(addresses.candidates(_linkAddress), fingerprint: fingerprint);
+      final result = await _prober.probe(addresses.candidates(_linkAddress), serverKey: serverKey, deviceSeed: deviceSeed);
       if (!_current(round)) return null;
       if (result.notHome.isNotEmpty) {
         logRepository.debug(target: this, message: 'path: ${result.notHome.length} direct address(es) answered with another key');
@@ -349,44 +363,8 @@ class ConnectionPathSelector implements SocketTargetProvider {
     }
   }
 
-  /// Lends the pairing about to run the onion address [onion] and the one-time
-  /// key a version-2 link carries (FR-020): a round whose direct addresses do
-  /// not answer goes through Tor with them. A copy, so wiping it later leaves
-  /// the link the caller holds as it was.
-  void lendInvite({required String onion, required Uint8List oneTimeKey}) {
-    _dropLent();
-    final lent = ServerAddresses(onion: onion);
-    final host = lent.onionHost;
-    if (host == null) return;
-    _lent = _TorTarget(host: host, port: lent.onionPort, key: Uint8List.fromList(oneTimeKey), invite: true);
-  }
-
-  /// Drops the lent key once its pairing has been answered (FR-021), whatever
-  /// the answer: out of the Tor client, and wiped here. A round bringing Tor
-  /// up with it right now checks before it sets it, so it stays dropped.
-  void forgetLentKey() {
-    final target = _torTarget;
-    if (target != null && target.invite) {
-      _tor.clearTarget();
-      _torTarget = null;
-    }
-    _dropLent();
-  }
-
-  /// What a version-2 link has lent right now; for tests.
-  @visibleForTesting
-  ({String onion, Uint8List key})? get lent {
-    final lent = _lent;
-    return lent == null ? null : (onion: '${lent.host}:${lent.port}', key: lent.key);
-  }
-
-  void _dropLent() {
-    _lent?.key.fillRange(0, _lent!.key.length, 0);
-    _lent = null;
-  }
-
   @override
-  void reportPinRefused(Uri url) {
+  void reportWrongServer(Uri url) {
     // Nothing to remember beyond the log: the next round probes again, and the
     // probe passes over an address that answers with another key.
     logRepository.debug(target: this, message: 'path: a direct address answered with another key at the dial');
@@ -448,7 +426,7 @@ class ConnectionPathSelector implements SocketTargetProvider {
     _torRound = round;
     _publish(_selection.value.copyWith(path: ConnectionPath.tor));
     final watch = Stopwatch()..start();
-    logRepository.debug(target: this, message: 'path: bringing Tor up (${target.invite ? 'invite key' : 'device key'})');
+    logRepository.debug(target: this, message: 'path: bringing Tor up');
     try {
       // A client whose bootstrap failed is started afresh rather than reused:
       // it has stopped trying, and waiting on it would spend the whole budget
@@ -461,23 +439,19 @@ class ConnectionPathSelector implements SocketTargetProvider {
       // A start that did not take - refused by the library, or overtaken by a
       // stop - leaves nothing to wait for; waiting would spend the whole budget.
       if (_tor.status.state == TorState.stopped) return _noTor('it did not start');
-      // A lent key its pairing has finished with while Tor was starting is
-      // not set again (FR-021).
-      if (target.invite && !identical(target, _lent)) return null;
-      // Set again when the bridge is gone with the target unchanged: a client
-      // rebuilt after a failure can come back without its listener.
-      if (_torTarget != target || _tor.bridge == null) {
-        // A new key starts a new run: the old one's refusals say nothing
-        // about it.
-        if (_torTarget != target) _keyRefused = null;
-        _tor.setTarget(onionHost: target.host, port: target.port, clientKey: target.key);
-        if (_tor.bridge == null) {
-          // Refused, or the bridge would not open: no way through this round.
-          _torTarget = null;
-          return _noTor('the bridge did not open');
-        }
-        _torTarget = target;
+      // The access key goes to the client before the channel dials: the onion
+      // service opens only for it (until phase 045). Given on every bring-up,
+      // not only when it changed: nothing says whether a client rebuilt after
+      // a failure still holds it, and giving the same key again costs nothing.
+      // A new key starts a new run: the old one's refusals say nothing about
+      // it.
+      if (_torTarget != target) _keyRefused = null;
+      if (!_tor.setTarget(onionHost: target.host, port: target.port, clientKey: target.key)) {
+        // Refused: no way through this round.
+        _torTarget = null;
+        return _noTor('the client did not take the key');
       }
+      _torTarget = target;
       final ready = await _waitForTor(_torReadyBudget, round: round);
       logRepository.debug(
         target: this,
@@ -513,9 +487,10 @@ class ConnectionPathSelector implements SocketTargetProvider {
     return null;
   }
 
-  /// The onion address and the key that opens it: this device's own key once
-  /// the server has it (FR-016), else the one-time key a version-2 link lent
-  /// for its pairing (FR-020).
+  /// The onion address and the key that opens it: this device's own key, once
+  /// the server has it (FR-016). Until then there is no way through Tor - a
+  /// device pairs at home until phase 045, and a link carries no key for the
+  /// onion service any more.
   ///
   /// The own key is READ, never created: one minted here would be registered
   /// nowhere, and minted while a logout wipes the store it would survive the
@@ -538,18 +513,18 @@ class ConnectionPathSelector implements SocketTargetProvider {
     if (host != null && registered) {
       final own = (await _keys.storedDeviceKey()).data;
       if (!_current(round)) return null;
-      if (own != null) return _TorTarget(host: host, port: addresses.onionPort, key: own.privateKey, invite: false);
+      if (own != null) return _TorTarget(host: host, port: addresses.onionPort, key: own.privateKey);
     }
-    return _lent;
+    return null;
   }
 
-  /// Whether Tor is bootstrapped with the bridge open, within [budget].
+  /// Whether Tor is bootstrapped, within [budget].
   ///
   /// Ends early when there is nothing left to wait for: the client failed or
   /// was refused as obsolete, the session ended, or - given its [round] - a
   /// newer round took over.
   Future<bool> _waitForTor(Duration budget, {int? round}) async {
-    bool ready(TorStatus status) => status.isReady && _tor.bridge != null;
+    bool ready(TorStatus status) => status.isReady;
     bool settled() {
       final status = _tor.status;
       return ready(status) ||
@@ -586,16 +561,11 @@ class ConnectionPathSelector implements SocketTargetProvider {
     _lastTorError = error;
     final target = _torTarget;
     if (!entered || error != TorError.wrongClientAuth || target == null) return;
-    // The onion service turned the offered key away (T039). A lent key is
-    // left alone: the pairing it is for ends on its own deadline, and the
-    // handshake erases it then. This device's own key starts the clock: a key
-    // the server took a moment ago is missing from the published description
-    // until the new one has spread, so only a refusal that outlasts the grace
-    // marks it unknown (see _torTargetFor).
-    if (target.invite) {
-      logRepository.debug(target: this, message: 'path: the onion service did not take the invite key (yet)');
-      return;
-    }
+    // The onion service turned the offered key away (T039) - the channel's
+    // onion connect reports it in the status, as the bridge did. The clock
+    // starts: a key the server took a moment ago is missing from the
+    // published description until the new one has spread, so only a refusal
+    // that outlasts the grace marks it unknown (see _torTargetFor).
     if (_keyRefused == null) {
       logRepository.debug(target: this, message: 'path: the onion service did not take this device key (yet)');
       _keyRefused = Stopwatch()..start();
@@ -626,11 +596,12 @@ class ConnectionPathSelector implements SocketTargetProvider {
   /// On the direct path: does the address still lead home on this network?
   Future<void> _checkCurrentDirect() async {
     final address = _handedOutAddress;
-    final fingerprint = _fingerprint;
-    if (address == null || fingerprint == null || _probing) return;
+    final serverKey = _serverKey;
+    final deviceSeed = _deviceSeed;
+    if (address == null || serverKey == null || deviceSeed == null || _probing) return;
     _probing = true;
     try {
-      final result = await _prober.probe([address], fingerprint: fingerprint);
+      final result = await _prober.probe([address], serverKey: serverKey, deviceSeed: deviceSeed);
       if (!_active || _handedOutAddress != address || result.address != null) return;
       logRepository.debug(target: this, message: 'path: the direct address stopped answering, choosing again');
       await _socket.reconnect();
@@ -642,12 +613,13 @@ class ConnectionPathSelector implements SocketTargetProvider {
   /// While on Tor: does a direct address answer again? Then move to it.
   Future<void> _recheckDirect({required String reason}) async {
     if (!_active || _probing || _forceTor || currentPath != ConnectionPath.tor) return;
-    final fingerprint = _fingerprint;
-    if (fingerprint == null) return;
+    final serverKey = _serverKey;
+    final deviceSeed = _deviceSeed;
+    if (serverKey == null || deviceSeed == null) return;
     _probing = true;
     try {
       final addresses = await _readAddresses();
-      final result = await _prober.probe(addresses.candidates(_linkAddress), fingerprint: fingerprint);
+      final result = await _prober.probe(addresses.candidates(_linkAddress), serverKey: serverKey, deviceSeed: deviceSeed);
       final address = result.address;
       if (address == null || !_active || currentPath != ConnectionPath.tor) return;
       logRepository.debug(target: this, message: 'path: the direct path answers again ($reason), switching');
@@ -669,7 +641,6 @@ class ConnectionPathSelector implements SocketTargetProvider {
     }
     if (usingTor) {
       _tor.setDormant(false);
-      _renewBridge();
       unawaited(_reviveTor());
     }
     // Back in front with the socket waiting out a rung of the ladder: the path
@@ -677,19 +648,6 @@ class ConnectionPathSelector implements SocketTargetProvider {
     // already under way is left alone - restarting it would only lose its
     // progress.
     if (_socket.currentPhase == SessionPhase.disconnected) unawaited(_socket.reconnect());
-  }
-
-  /// A fresh bridge listener on every return to the foreground. iOS reclaims
-  /// a suspended app's sockets - the bridge's listening one among them - and
-  /// nothing reports it: the port stays in the status while every dial to it
-  /// is refused (TN2277), and setting the same target again keeps the dead
-  /// listener. Clearing the target closes it, setting it binds a new one;
-  /// connections already through the bridge are not touched.
-  void _renewBridge() {
-    final target = _torTarget;
-    if (target == null || (target.invite && !identical(target, _lent))) return;
-    _tor.clearTarget();
-    _tor.setTarget(onionHost: target.host, port: target.port, clientKey: target.key);
   }
 
   /// A Tor client that is not ready soon after the return is started again
@@ -705,32 +663,26 @@ class ConnectionPathSelector implements SocketTargetProvider {
     _torBoot = Stopwatch()..start();
     await _tor.start();
     // Checked again after the awaits: a round may have moved Tor elsewhere
-    // meanwhile, and a lent key may have been dropped (FR-021).
+    // meanwhile. The restarted client is given the key again.
     if (!_active || _tor.status.isObsolete || _torTarget != target) return;
-    if (target.invite && !identical(target, _lent)) return;
-    _tor.setTarget(onionHost: target.host, port: target.port, clientKey: target.key);
-    _torTarget = target;
+    if (!_tor.setTarget(onionHost: target.host, port: target.port, clientKey: target.key)) _torTarget = null;
   }
 
   static bool _greeted(SessionPhase phase) => phase == SessionPhase.live || phase == SessionPhase.catchingUp;
 }
 
-/// Where the bridge points and with which key.
+/// The onion service the client holds a key for, and the key.
 @immutable
 class _TorTarget {
-  const _TorTarget({required this.host, required this.port, required this.key, required this.invite});
+  const _TorTarget({required this.host, required this.port, required this.key});
 
   final String host;
   final int port;
   final Uint8List key;
 
-  /// The key is a version-2 link's one-time key, not this device's own.
-  final bool invite;
+  @override
+  bool operator ==(Object other) => other is _TorTarget && other.host == host && other.port == port && listEquals(other.key, key);
 
   @override
-  bool operator ==(Object other) =>
-      other is _TorTarget && other.host == host && other.port == port && other.invite == invite && listEquals(other.key, key);
-
-  @override
-  int get hashCode => Object.hash(host, port, invite, Object.hashAll(key));
+  int get hashCode => Object.hash(host, port, Object.hashAll(key));
 }

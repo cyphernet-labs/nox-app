@@ -3,7 +3,6 @@ package server
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -35,72 +34,76 @@ func TestPairClaimCreatesThePersonAndRefusesASecondClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueClaimToken: %v", err)
 	}
-	second := dialWS(t, ts, srv)
-	second.expectGreeting()
 	other := newDevice(t)
-	second.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"device_key":%q,"platform":"test"}}`, token, other.pub))
+	second := dialAs(t, ts, srv, other)
+	second.expectGreeting()
+	second.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"test"}}`, token))
 	if code := expectErrCode(t, second, 1); code != protocol.ErrInvalidToken {
 		t.Fatalf("second claim code = %q, want %q", code, protocol.ErrInvalidToken)
 	}
 	_ = dev
 }
 
-// The whole point of the phase, at its narrowest: a connection that cannot
-// prove possession of a paired key does not get in.
-func TestGreetingWithoutAValidSignatureIsRefused(t *testing.T) {
+// The whole point of the phase, at its narrowest: a connection whose key
+// nobody paired does not get in, whatever its greeting says.
+func TestAGreetingFromAKeyNobodyPairedIsRefused(t *testing.T) {
 	ts, srv := newTestServer(t)
 	dev, _ := claimDevice(t, ts, srv)
-
-	t.Run("no signature at all", func(t *testing.T) {
-		c := dialWS(t, ts, srv)
-		c.expectGreeting()
-		c.send(fmt.Sprintf(`{"id":1,"cmd":"session.hello","data":{"schema":1,"device_key":%q}}`, dev.pub))
-		if code := expectErrCode(t, c, 1); code != protocol.ErrUnauthenticated {
-			t.Fatalf("code = %q, want %q", code, protocol.ErrUnauthenticated)
-		}
-	})
-
-	t.Run("a signature from another key", func(t *testing.T) {
-		impostor := newDevice(t)
-		c := dialWS(t, ts, srv)
-		c.expectGreeting()
-		// The real device's public key with somebody else's signature: this is
-		// what an intercepted key without the private half looks like.
-		c.send(fmt.Sprintf(`{"id":1,"cmd":"session.hello","data":{"schema":1,"device_key":%q,"signature":%q}}`,
-			dev.pub, impostor.sign(t, c.challenge)))
-		if code := expectErrCode(t, c, 1); code != protocol.ErrUnauthenticated {
-			t.Fatalf("code = %q, want %q", code, protocol.ErrUnauthenticated)
-		}
-	})
-
-	t.Run("a signature over ANOTHER connection's challenge", func(t *testing.T) {
-		// The reason the challenge is per connection. Without this, one captured
-		// greeting would be a permanent key: replaying it on a fresh socket
-		// would authenticate as its author forever.
-		other := dialWS(t, ts, srv)
-		other.expectGreeting()
-		stolen := dev.sign(t, other.challenge)
-
-		c := dialWS(t, ts, srv)
-		c.expectGreeting()
-		c.send(fmt.Sprintf(`{"id":1,"cmd":"session.hello","data":{"schema":1,"device_key":%q,"signature":%q}}`, dev.pub, stolen))
-		if code := expectErrCode(t, c, 1); code != protocol.ErrUnauthenticated {
-			t.Fatalf("code = %q, want %q", code, protocol.ErrUnauthenticated)
-		}
-	})
 
 	t.Run("a key the server does not know", func(t *testing.T) {
 		// Revoked, or a rebuilt store. The device cannot tell them apart and
 		// must not: both mean "this is not my server any more".
-		stranger := newDevice(t)
 		c := dialWS(t, ts, srv)
 		c.expectGreeting()
-		c.send(fmt.Sprintf(`{"id":1,"cmd":"session.hello","data":{"schema":1,"device_key":%q,"signature":%q}}`,
-			stranger.pub, stranger.sign(t, c.challenge)))
+		c.send(`{"id":1,"cmd":"session.hello","data":{"schema":1}}`)
 		if code := expectErrCode(t, c, 1); code != protocol.ErrUnauthenticated {
 			t.Fatalf("code = %q, want %q", code, protocol.ErrUnauthenticated)
 		}
 	})
+
+	t.Run("naming a paired key in the greeting borrows nothing", func(t *testing.T) {
+		// What a pre-044 client sent, and what an impostor would send: the
+		// key a connection speaks as is the one its channel proved, and a
+		// field cannot lend it another.
+		c := dialWS(t, ts, srv)
+		c.expectGreeting()
+		c.send(fmt.Sprintf(`{"id":1,"cmd":"session.hello","data":{"schema":1,"device_key":%q,"signature":"AAAA"}}`, dev.pub))
+		if code := expectErrCode(t, c, 1); code != protocol.ErrUnauthenticated {
+			t.Fatalf("code = %q, want %q", code, protocol.ErrUnauthenticated)
+		}
+	})
+
+	t.Run("anything but pair before the greeting is still invalid_request", func(t *testing.T) {
+		// Contract §3, unchanged by 044: the order of commands is checked
+		// before who is asking. An unknown key learns nothing more from
+		// trying a command than a known one does.
+		c := dialWS(t, ts, srv)
+		c.expectGreeting()
+		for i, cmd := range []string{"device.list", "chat.create", "file.uploadBegin"} {
+			c.send(fmt.Sprintf(`{"id":%d,"cmd":%q,"data":{}}`, i+1, cmd))
+			if code := expectErrCode(t, c, i+1); code != protocol.ErrInvalidRequest {
+				t.Fatalf("%s before the greeting = %q, want %q", cmd, code, protocol.ErrInvalidRequest)
+			}
+		}
+	})
+}
+
+// A paired device greets with the schema and nothing else: no key, no
+// signature. The channel already said who it is.
+func TestAPairedDeviceGreetsWithoutAKeyOrASignature(t *testing.T) {
+	ts, srv := newTestServer(t)
+	dev, claimed := claimDevice(t, ts, srv)
+	var owner identity
+	mustUnmarshal(t, claimed["identity"], &owner)
+
+	c := dialAs(t, ts, srv, dev)
+	c.expectGreeting()
+	c.send(`{"id":1,"cmd":"session.hello","data":{"schema":1}}`)
+	var greeted identity
+	mustUnmarshal(t, c.expectOK(1)["identity"], &greeted)
+	if greeted.ID != owner.ID {
+		t.Fatalf("greeted as %q, want the person the claim made, %q", greeted.ID, owner.ID)
+	}
 }
 
 func TestInviteAddsADeviceToTheSamePerson(t *testing.T) {
@@ -109,9 +112,9 @@ func TestInviteAddsADeviceToTheSamePerson(t *testing.T) {
 	var owner identity
 	mustUnmarshal(t, claimed["identity"], &owner)
 
-	c := dialWS(t, ts, srv)
+	c := dialAs(t, ts, srv, dev)
 	c.expectGreeting()
-	c.greet(t, 1, dev, "")
+	c.hello(1, "")
 	invite := c.expectOKAfter(2, `{"id":2,"cmd":"device.invite","data":{}}`)
 	var reply struct {
 		Token string `json:"token"`
@@ -122,18 +125,18 @@ func TestInviteAddsADeviceToTheSamePerson(t *testing.T) {
 		t.Fatalf("invite reply = %+v, want a token and a link to show", reply)
 	}
 	// The invite is the link a person carries to their second device, and the
-	// second device pins what it finds in it. A link built from anything but
-	// this machine's fingerprint refuses the very server that issued it.
-	id, err := srv.store.ServerIdentity(context.Background())
+	// second device accepts only the channel that proves the key it finds in
+	// it. A link built from anything but this machine's key refuses the very
+	// server that issued it.
+	link, err := ParsePairingLink(reply.Link)
 	if err != nil {
-		t.Fatalf("ServerIdentity: %v", err)
+		t.Fatalf("the invite does not read back: %v", err)
 	}
-	want, err := base64.StdEncoding.DecodeString(id.Fingerprint)
-	if err != nil {
-		t.Fatalf("decode the fingerprint: %v", err)
+	if !link.ServerKey.Equal(serverKeyOf(t, srv)) {
+		t.Fatalf("the invite carries %x, want this machine's key %x", link.ServerKey, serverKeyOf(t, srv))
 	}
-	if got := fingerprintInLink(t, reply.Link); !bytes.Equal(got, want) {
-		t.Fatalf("the invite carries %x, want this machine's fingerprint %x", got, want)
+	if link.Token != reply.Token {
+		t.Fatalf("the link carries token %q, the reply %q", link.Token, reply.Token)
 	}
 
 	_, added := pairDevice(t, ts, reply.Token)
@@ -151,9 +154,9 @@ func TestRevokeDropsTheLiveConnectionRatherThanWaiting(t *testing.T) {
 	ts, srv := newTestServer(t)
 	dev, _ := claimDevice(t, ts, srv)
 
-	owner := dialWS(t, ts, srv)
+	owner := dialAs(t, ts, srv, dev)
 	owner.expectGreeting()
-	owner.greet(t, 1, dev, "")
+	owner.hello(1, "")
 	invite := owner.expectOKAfter(2, `{"id":2,"cmd":"device.invite","data":{}}`)
 	var reply struct {
 		Token string `json:"token"`
@@ -163,9 +166,9 @@ func TestRevokeDropsTheLiveConnectionRatherThanWaiting(t *testing.T) {
 
 	// The device being revoked is live and idle, exactly like a sold tablet
 	// left switched on.
-	victim := dialWS(t, ts, srv)
+	victim := dialAs(t, ts, srv, second)
 	victim.expectGreeting()
-	victim.greet(t, 1, second, "")
+	victim.hello(1, "")
 
 	owner.expectOKAfter(3, fmt.Sprintf(`{"id":3,"cmd":"device.revoke","data":{"device_key":%q}}`, second.pub))
 
@@ -175,10 +178,11 @@ func TestRevokeDropsTheLiveConnectionRatherThanWaiting(t *testing.T) {
 		t.Fatalf("event = %s, want %s", name, protocol.EventDeviceRevoked)
 	}
 
-	back := dialWS(t, ts, srv)
+	// The revoked key still passes the channel - it proves a key, and the
+	// check knows no list - and is refused by the greeting, which does.
+	back := dialAs(t, ts, srv, second)
 	back.expectGreeting()
-	back.send(fmt.Sprintf(`{"id":1,"cmd":"session.hello","data":{"schema":1,"device_key":%q,"signature":%q}}`,
-		second.pub, second.sign(t, back.challenge)))
+	back.send(`{"id":1,"cmd":"session.hello","data":{"schema":1}}`)
 	if code := expectErrCode(t, back, 1); code != protocol.ErrUnauthenticated {
 		t.Fatalf("revoked device reconnected with code %q", code)
 	}
@@ -188,9 +192,9 @@ func TestRevokingSomebodyElsesDeviceIsRefused(t *testing.T) {
 	ts, srv := newTestServer(t)
 	dev, _ := claimDevice(t, ts, srv)
 
-	c := dialWS(t, ts, srv)
+	c := dialAs(t, ts, srv, dev)
 	c.expectGreeting()
-	c.greet(t, 1, dev, "")
+	c.hello(1, "")
 
 	// A key that exists but belongs to nobody here. Without the ownership check
 	// anyone could cut off anyone.
@@ -210,9 +214,9 @@ func TestDeviceListShowsWhatDistinguishesADevice(t *testing.T) {
 	ts, srv := newTestServer(t)
 	dev, _ := claimDevice(t, ts, srv)
 
-	c := dialWS(t, ts, srv)
+	c := dialAs(t, ts, srv, dev)
 	c.expectGreeting()
-	c.greet(t, 1, dev, "")
+	c.hello(1, "")
 	data := c.expectOKAfter(2, `{"id":2,"cmd":"device.list","data":{}}`)
 	var reply struct {
 		Devices []struct {
@@ -236,9 +240,9 @@ func TestSetLabelRenamesWithoutReconnecting(t *testing.T) {
 	ts, srv := newTestServer(t)
 	dev, _ := claimDevice(t, ts, srv)
 
-	c := dialWS(t, ts, srv)
+	c := dialAs(t, ts, srv, dev)
 	c.expectGreeting()
-	c.greet(t, 1, dev, "")
+	c.hello(1, "")
 	data := c.expectOKAfter(2, `{"id":2,"cmd":"identity.setLabel","data":{"label":"Anna"}}`)
 	var reply struct {
 		Label string `json:"label"`
@@ -250,10 +254,10 @@ func TestSetLabelRenamesWithoutReconnecting(t *testing.T) {
 
 	// The name survives on the next connection, so it really landed rather than
 	// living in this session only.
-	back := dialWS(t, ts, srv)
+	back := dialAs(t, ts, srv, dev)
 	back.expectGreeting()
 	var id identity
-	mustUnmarshal(t, back.greet(t, 1, dev, "")["identity"], &id)
+	mustUnmarshal(t, back.hello(1, "")["identity"], &id)
 	if id.Label != "Anna" {
 		t.Fatalf("label after reconnect = %q, want Anna", id.Label)
 	}
@@ -267,9 +271,9 @@ func TestARenameReachesTheOtherDeviceOfTheSamePerson(t *testing.T) {
 	ts, srv := newTestServer(t)
 	dev, _ := claimDevice(t, ts, srv)
 
-	first := dialWS(t, ts, srv)
+	first := dialAs(t, ts, srv, dev)
 	first.expectGreeting()
-	first.greet(t, 1, dev, "")
+	first.hello(1, "")
 	invite := first.expectOKAfter(2, `{"id":2,"cmd":"device.invite","data":{}}`)
 	var reply struct {
 		Token string `json:"token"`
@@ -277,9 +281,9 @@ func TestARenameReachesTheOtherDeviceOfTheSamePerson(t *testing.T) {
 	mustUnmarshal(t, mustRaw(t, invite), &reply)
 	secondKey, _ := pairDevice(t, ts, reply.Token)
 
-	second := dialWS(t, ts, srv)
+	second := dialAs(t, ts, srv, secondKey)
 	second.expectGreeting()
-	second.greet(t, 1, secondKey, "")
+	second.hello(1, "")
 
 	first.expectOKAfter(3, `{"id":3,"cmd":"identity.setLabel","data":{"label":"Anna"}}`)
 
@@ -330,9 +334,9 @@ func TestTheOwnersIdentifierNeverReachesTheWire(t *testing.T) {
 	ts, srv := newTestServer(t)
 	dev, claimed := claimDevice(t, ts, srv)
 
-	c := dialWS(t, ts, srv)
+	c := dialAs(t, ts, srv, dev)
 	c.expectGreeting()
-	greeting := c.greet(t, 1, dev, "")
+	greeting := c.hello(1, "")
 
 	for name, frame := range map[string]map[string]json.RawMessage{"pair": claimed, "greeting": greeting} {
 		for _, forbidden := range []string{"owner_id", "owner_user_id", "owner_label"} {
@@ -356,9 +360,9 @@ func TestReClaimAfterLosingEveryDeviceReturnsTheSamePerson(t *testing.T) {
 	mustUnmarshal(t, claimed["identity"], &before)
 
 	// Revoking the last device is what logout does.
-	c := dialWS(t, ts, srv)
+	c := dialAs(t, ts, srv, dev)
 	c.expectGreeting()
-	c.greet(t, 1, dev, "")
+	c.hello(1, "")
 	c.expectOKAfter(2, fmt.Sprintf(`{"id":2,"cmd":"device.revoke","data":{"device_key":%q}}`, dev.pub))
 
 	token, err := srv.store.IssueClaimToken(context.Background(), time.Now().Unix())
@@ -392,9 +396,9 @@ func TestOwnershipIsNeverLoggedBesideTheIdentifier(t *testing.T) {
 	var id identity
 	mustUnmarshal(t, claimed["identity"], &id)
 
-	c := dialWS(t, ts, srv)
+	c := dialAs(t, ts, srv, dev)
 	c.expectGreeting()
-	c.greet(t, 1, dev, "")
+	c.hello(1, "")
 
 	// Per RECORD, not per buffer. Two whole-buffer substring checks ANDed
 	// together are satisfied by an empty log and by two unrelated lines alike -
@@ -469,17 +473,17 @@ func TestPairingTellsTheOtherDevicesAndNotTheOneThatJustJoined(t *testing.T) {
 	ts, srv := newTestServer(t)
 	dev, _ := claimDevice(t, ts, srv)
 
-	owner := dialWS(t, ts, srv)
+	owner := dialAs(t, ts, srv, dev)
 	owner.expectGreeting()
-	owner.greet(t, 1, dev, "")
+	owner.hello(1, "")
 	token := inviteFrom(t, owner, 2)
 
 	// Kept open, unlike pairDevice's connection: what this one does NOT receive
 	// is half the assertion.
 	joiner := newDevice(t)
-	c := dialWS(t, ts, srv)
+	c := dialAs(t, ts, srv, joiner)
 	c.expectGreeting()
-	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"device_key":%q,"platform":"test"}}`, token, joiner.pub))
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"test"}}`, token))
 
 	// Raw frames, not expectReply: that helper SKIPS events, which is exactly
 	// the mistake being looked for here. The reply comes first (the fan-out
@@ -513,9 +517,9 @@ func TestThePairedEventGoesOnlyToConnectionsOfThisPerson(t *testing.T) {
 	ts, srv := newTestServer(t)
 	dev, _ := claimDevice(t, ts, srv)
 
-	owner := dialWS(t, ts, srv)
+	owner := dialAs(t, ts, srv, dev)
 	owner.expectGreeting()
-	owner.greet(t, 1, dev, "")
+	owner.hello(1, "")
 	token := inviteFrom(t, owner, 2)
 
 	// Dialled, greeted BY the server, and silent ever since: identity.UserID is
@@ -524,9 +528,9 @@ func TestThePairedEventGoesOnlyToConnectionsOfThisPerson(t *testing.T) {
 	bystander.expectGreeting()
 
 	joiner := newDevice(t)
-	c := dialWS(t, ts, srv)
+	c := dialAs(t, ts, srv, joiner)
 	c.expectGreeting()
-	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"device_key":%q,"platform":"test"}}`, token, joiner.pub))
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"test"}}`, token))
 	c.expectOK(1)
 
 	// The owner first: it proves the fan-out ran at all, so the silence below
@@ -550,18 +554,18 @@ func TestTheJoiningDeviceIsAnsweredEvenWhileAnotherConnectionIsWedged(t *testing
 	ts, srv := newTestServer(t)
 	dev, _ := claimDevice(t, ts, srv)
 
-	owner := dialWS(t, ts, srv)
+	owner := dialAs(t, ts, srv, dev)
 	owner.expectGreeting()
-	owner.greet(t, 1, dev, "")
+	owner.hello(1, "")
 	token := inviteFrom(t, owner, 2)
 
 	wedged := stubClient(t, srv, personOn(t, srv), 1)
 	wedged.out <- []byte("{}") // full from here on
 
 	joiner := newDevice(t)
-	c := dialWS(t, ts, srv)
+	c := dialAs(t, ts, srv, joiner)
 	c.expectGreeting()
-	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"device_key":%q,"platform":"test"}}`, token, joiner.pub))
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"test"}}`, token))
 	// Fails by timing out rather than by comparing anything: with the fan-out
 	// first, this reply is behind a queue nobody is draining.
 	c.expectOK(1)
@@ -574,9 +578,9 @@ func TestTheRenamingDeviceIsAnsweredEvenWhileAnotherConnectionIsWedged(t *testin
 	ts, srv := newTestServer(t)
 	dev, _ := claimDevice(t, ts, srv)
 
-	owner := dialWS(t, ts, srv)
+	owner := dialAs(t, ts, srv, dev)
 	owner.expectGreeting()
-	owner.greet(t, 1, dev, "")
+	owner.hello(1, "")
 
 	wedged := stubClient(t, srv, personOn(t, srv), 1)
 	wedged.out <- []byte("{}")
@@ -596,15 +600,15 @@ func TestTheRevokingDeviceIsAnsweredEvenWhileTheRevokedOneIsWedged(t *testing.T)
 	ts, srv := newTestServer(t)
 	dev, _ := claimDevice(t, ts, srv)
 
-	owner := dialWS(t, ts, srv)
+	owner := dialAs(t, ts, srv, dev)
 	owner.expectGreeting()
-	owner.greet(t, 1, dev, "")
+	owner.hello(1, "")
 	token := inviteFrom(t, owner, 2)
 
 	joiner := newDevice(t)
-	pairing := dialWS(t, ts, srv)
+	pairing := dialAs(t, ts, srv, joiner)
 	pairing.expectGreeting()
-	pairing.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"device_key":%q,"platform":"test"}}`, token, joiner.pub))
+	pairing.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"test"}}`, token))
 	pairing.expectOK(1)
 	// The owner is told about the pairing; read it so the assertion below is
 	// about the revoke and nothing else.
@@ -705,15 +709,15 @@ func TestThePairedEventCarriesNoCredentialAndNoKey(t *testing.T) {
 	ts, srv := newTestServer(t)
 	dev, _ := claimDevice(t, ts, srv)
 
-	owner := dialWS(t, ts, srv)
+	owner := dialAs(t, ts, srv, dev)
 	owner.expectGreeting()
-	owner.greet(t, 1, dev, "")
+	owner.hello(1, "")
 	token := inviteFrom(t, owner, 2)
 
 	joiner := newDevice(t)
-	c := dialWS(t, ts, srv)
+	c := dialAs(t, ts, srv, joiner)
 	c.expectGreeting()
-	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"device_key":%q,"platform":"test"}}`, token, joiner.pub))
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"test"}}`, token))
 	c.expectOK(1)
 
 	seq, name, data := owner.expectEvent()
@@ -754,9 +758,9 @@ func TestClaimingAnEmptyServerAnnouncesToNobody(t *testing.T) {
 	bystander.expectGreeting()
 
 	first := newDevice(t)
-	c := dialWS(t, ts, srv)
+	c := dialAs(t, ts, srv, first)
 	c.expectGreeting()
-	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"device_key":%q,"platform":"test"}}`, token, first.pub))
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"test"}}`, token))
 
 	frame := c.read()
 	if _, isEvent := frame["event"]; isEvent {

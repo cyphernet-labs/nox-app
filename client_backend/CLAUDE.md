@@ -2,8 +2,8 @@
 
 Self-hosted messenger backend for ONE person and the devices they own:
 one WebSocket command channel (JSON envelope, global `seq` event log,
-cursor replay) plus a small REST surface (file upload/download, /health),
-embedded SQLite, single static CGO-free binary - and, since 039, a tor
+cursor replay) plus a small REST surface (file upload/download), both behind
+the channel check of feature 044, embedded SQLite, single static CGO-free binary - and, since 039, a tor
 process beside it that the server starts, supervises and stops, and that
 never opens the database. Different people never
 share a machine and their machines never talk to each other — everything
@@ -14,26 +14,26 @@ between people goes through a relay whose protocol does not exist yet
 (v0). Every command, event, field name, error code and rule comes from
 there; a change needed on the wire is first a contract edit, then code.
 
-**Stage 2 is under way (features 032, 033, 037, 038).** The server now CHECKS who connects:
-`device_key` is an Ed25519 public key, `signature` over
-`"nox/challenge/v1:" ‖ challenge` is verified on every greeting, and the
-person is found by that key. `login_ref` is gone from the wire, the lookup
-and the schema — presenting a secret was replaced by proving possession of
-a key that never leaves the device. A greeting can no longer create anyone:
-an unknown key is refused (`unauthenticated`), and people come into being
-only through `pair` (§8A). Feature 033 named the OWNER on the machine's own
-row; feature 037 collapsed the machine to that one person (owner, 2026-09-10)
-and the mark stopped being reportable — with nobody to tell apart, `identity.owner`
-said the same thing to everybody and left the wire. Gone with it: the person
-invite (§8B), the waiting branch of `pair`, and a second person as a
-possibility at all — a unique index on `users` makes one unrepresentable.
-`owner_user_id` survives as the "this machine has been claimed" marker and
-nothing else. **Feature 036 closed the transport**: the main listener speaks
-TLS 1.3 and nothing else, on a self-signed certificate built from the machine's
-own key, and the pairing link carries that key's FINGERPRINT for the device to
-pin against. Still out of scope and blocked: `recover` and the recovery phrase
-(Q16), the protocol to the relay (Q13), and ATS / App Review for a self-signed
-personal server (Q14, due before release).
+**Who connects is decided by the channel (feature 044).** Every connection -
+the WebSocket and every file transfer alike - is TCP (or a stream from tor),
+then TLS 1.3 on a THROWAWAY certificate the server mints in memory at every
+start and nobody checks, then the Eidolon exchange over the TLS 1.3 exporter
+(RFC 9266, `internal/eidolon`): the device sends its Ed25519 key with a
+signature over the key and one over the binding, the server checks both and
+answers with the machine's own Ed25519 key the same way. Only then does
+`http.Server` see the connection, carrying the device key it proved
+(`channelPeer`). The server accepts ANY key that proves itself and grants
+rights by the store: a paired device gets everything, an unknown key only
+`pair`; `session.hello` with an unknown key is `unauthenticated` (the device
+reads it as a revocation), and `/files` refuses an unpaired key with `401`
+before it looks at the token. The greeting has no challenge, `session.hello`
+and `pair` carry no device key, and the pairing link is `nox://pair/`
+version 3 (contract §8A). People come into being only through `pair`; the
+machine belongs to ONE person (037) and `owner_user_id` survives only as the
+"this machine has been claimed" marker. Still out of scope and blocked:
+`recover` and the recovery phrase (Q16), the protocol to the relay (Q13), and
+ATS / App Review for a personal server reached through the app's own Rust
+module (Q14, due before release).
 
 Architecture rationale lives in `docs/blueprints/client-backend/README.md`;
 Go style rules live in the `go-style` skill; WebSocket/REST runtime
@@ -108,8 +108,10 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
    mutex, and a change that seems to need one there means restructuring
    so one goroutine owns the state. The connection REGISTRY is the
    deliberate exception: `Server.mu` guards `conns` and the per-connection
-   fields other connections read (identity, device key), because the
-   fan-out helpers walk one person's connections from another's goroutine.
+   fields other connections read (identity), because the fan-out helpers
+   walk one person's connections from another's goroutine. The device key
+   needs no lock: the channel fixes it before the connection is registered,
+   and it never changes.
    `Server.claim`, the transfer-token store (`internal/server/tokens.go`)
    and - since 043 - the upload-writer registry (`internal/server/writers.go`:
    which request is writing which part, so a new PUT can interrupt one whose
@@ -197,7 +199,8 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - `internal/store/devices.go` — device list, revocation (DELETE, so a revoked
   device is indistinguishable from an unknown one), rename
 - `internal/store/accesskeys.go` — onion access keys (039): one per device,
-  one-time keys on onion invites, the active set read in one transaction
+  the active set read in one transaction (the one-time invite keys left with
+  044; the rest leaves with 045)
 - `internal/tor/`        — everything that knows about tor (039): finding and
   versioning the binary, the control-protocol client, the onion key and
   address, the supervisor that owns the process and publishes the service,
@@ -209,10 +212,17 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - `internal/hub/`        — fan-out goroutine owning the subscriber set
 - `internal/protocol/`   — envelope v0 types, error codes, frame (un)marshal
 - `internal/server/`     — ServeMux wiring: `/ws`, REST (§1 of contract), middleware
-- `internal/server/tls.go` — both halves of one rule: the self-signed certificate
-  the server presents, and `PinnedTLSConfig`, the check a client runs against it.
-  Together on purpose - they are one decision read from two ends, and apart they
-  drift
+- `internal/eidolon/`   — the channel check (044): the 160-byte message, the
+  responder the server runs and the initiator `cmd/smoke` and the tests run;
+  shared vectors with the app's Rust module in `testdata/vectors.json`
+- `internal/server/channel.go` — the front door: a listener wrapper that takes
+  every connection through TLS and the check on a goroutine of its own, under
+  one deadline from accept (10 s direct, 30 s onion), and hands `http.Server`
+  only the ones that passed, with the proved key in the request context
+- `internal/server/tls.go` — the technical certificate: a fresh ECDSA P-256 key
+  in memory at every start, TLS 1.3 only, ALPN `http/1.1`, no session tickets
+- `internal/server/pairing_link.go` — the version 3 link: build and parse, typed
+  addresses, shared vectors with the app in `testdata/link-vectors.json`
 - `internal/server/files.go` — the file chain (contract §7): `file.uploadBegin`
   with its continuation (`file_id` in, `received` out), the PUT that keeps
   whatever arrives and carries the rest of the file from the offset its token
@@ -236,10 +246,12 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - Table tests; each test opens its own DB file in `t.TempDir()` and
   migrates from zero. **Never `:memory:` with `database/sql`** — each
   pooled connection gets a private database.
-- HTTP and WS go through `httptest.NewUnstartedServer` + the server's OWN
-  `tls.Config` + `StartTLS`, with the test client's transport replaced by
-  `PinnedTLSConfig`. NOT `httptest.NewTLSServer`: it installs a stock
-  certificate and leaves this feature's one real question untested.
+- HTTP and WS go through the REAL front door: the test server listens through
+  the channel listener, and the test client dials TCP → TLS 1.3 without
+  certificate checks → `eidolon.Initiate` with a device key, then speaks HTTP
+  or WebSocket over that connection (`dialAs` in `server_test.go`). NOT
+  `httptest.NewTLSServer`: a stock TLS server skips the check this server is
+  built around.
 - Concurrency/replay tests may use `testing/synctest` (GA since 1.25).
 - Tests through the REAL Tor network are named `TestOnion*` and run only
   when `NOX_TOR_TEST_BIN` points at a tor binary (0.4.9+); without it they
@@ -250,10 +262,11 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 
 ## Operational constraints
 
-- Bind loopback in dev. The listener is TLS 1.3 either way: there is no flag
-  to serve plaintext, and adding one would be adding the downgrade the whole
-  phase removed. The SERVICE PAGE is the deliberate exception and stays plain
-  HTTP on its own loopback listener.
+- Bind loopback in dev. The listener is TLS 1.3 and the channel check either
+  way: there is no flag to serve plaintext or skip the check, and adding one
+  would be adding the downgrade the whole design removed. The SERVICE PAGE is
+  the deliberate exception and stays plain HTTP on its own loopback listener,
+  together with `GET /health`: the main port answers nothing before the check.
 - Backups: `VACUUM INTO` a temp file + rename; never copy a live DB;
   local filesystem only (WAL breaks on network mounts).
 - Build: `CGO_ENABLED=0 go build -trimpath -ldflags="-s"`.
@@ -310,8 +323,8 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   policy names `script-src 'sha256-...'` and never `'unsafe-inline'`, so exactly
   those bytes may run; and `default-src 'none'` still forbids `connect-src`, so
   the script can read the link and has nowhere to send it. The hash is DERIVED
-  from the script constant on every response rather than written down - the same
-  rule as the server's fingerprint, for the same reason. A page with no link
+  from the script constant on every response rather than written down: a stored
+  derivative is a second copy of one fact. A page with no link
   carries no script and its policy admits none.
 - **Clipboard access needs a secure context, and this page has one without TLS.**
   `http://127.0.0.1` and `http://localhost` are potentially trustworthy origins;
@@ -394,35 +407,29 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   the shape that eventually disagrees with itself. The timestamp is still
   written, in the same statement as the owner, because the moment is
   unrecoverable and the service page will want it.
-- The server's private key lives INSIDE the database file. The model's case 6
-  warns that a backup holding only the DB breaks pinning for every device at
-  once; one artifact makes that impossible, and anyone who can read the file
-  already has every message.
-- **The machine's key is ECDSA P-256, not Ed25519** — measured, not preferred.
-  Dart's BoringSSL does not offer `ed25519` in `signature_algorithms`, so a
-  certificate on such a key kills the handshake BEFORE the client's certificate
-  callback runs, and pinning cannot intervene at all. DEVICE keys stay Ed25519:
-  they sign a challenge, they do not present a certificate. Confusing the two is
-  the most expensive mistake available here - one pair names the MACHINE, the
-  other names a DEVICE.
-- **The link carries `sha256(SubjectPublicKeyInfo)`, not the key.** A raw
-  uncompressed P-256 point is 65 bytes and does not fit the thirty-two the
-  format has. The fingerprint is DERIVED on every read and never stored: a
-  stored derivative is a second copy of one fact.
-- **The certificate is rebuilt from the stored key on every start and lives in
-  memory only.** No SAN, no hostname in the subject, dates a century wide -
-  because the verifying side ignores all of it, and a name or an expiry would
-  become a refusal a home server's owner can neither explain nor repair. A
-  restart therefore hands out a NEW certificate on the same key, and every
-  paired device must go on accepting it.
-- **There is no migration for a pre-036 key and there will not be one.** A
-  32-byte row is refused by `ErrLegacyServerKey`, which says the cure out loud:
-  delete the development database. Nothing has shipped, so there is nothing to
-  migrate.
-- **HTTP/2 is kept off** (`TLSNextProto` set to an empty non-nil map).
-  `ServeTLS` otherwise appends `h2` to `NextProtos` regardless of what was set,
-  and the WebSocket upgrade this whole server is built around does not exist
-  there.
+- The server's private key lives INSIDE the database file - an Ed25519 seed in
+  `server_identity`. The model's case 6 warns that a backup holding only the DB
+  would leave the devices facing a stranger; one artifact makes that impossible,
+  and anyone who can read the file already has every message.
+- **Two keys, two jobs.** The machine's Ed25519 key is what devices check in the
+  channel exchange and what the pairing link carries (32 bytes, no fingerprint);
+  the TLS certificate's key is a throwaway P-256 minted in memory at every start
+  and checked by nobody. Mixing them up - pinning the certificate, or putting the
+  machine key into TLS - brings back exactly what 044 removed.
+- **The server accepts every key that proves itself.** Refusing unknown keys at
+  the channel would make pairing impossible (a new device is unknown by
+  definition) and would tell a stranger which keys are paired. Rights come from
+  the store, per command: `pair` for anyone, everything else for paired keys.
+- **A failed check is answered with silence.** The server writes nothing - not
+  even its own message - and closes the connection; a peer that did not prove a
+  key learns nothing, including which machine it reached.
+- **An unpaired key may hold a `/ws` connection open without greeting.** There
+  is no greeting deadline (pre-existing); the cost is a goroutine per idle
+  stranger, bounded by `maxPendingChannels` only while the check runs. Recorded,
+  not fixed.
+- **No migration for a database from before 044** and there will not be one:
+  `001_init.sql` was edited in place, the schema check refuses an old file, and
+  the cure is a new database and every device paired again.
 - The claim link goes to the log AND to the service page (035), which is why
   that page listens on loopback only and refuses to start anywhere else. The
   pre-035 rule was "the log and nowhere else", on the reasoning that a page

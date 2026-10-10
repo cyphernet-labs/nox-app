@@ -6,7 +6,8 @@ part 'server_addresses.freezed.dart';
 /// `addresses`, and the `server.addresses` event).
 ///
 /// An address names a place, never the server: who answered is decided by the
-/// fingerprint check on every connection, whichever path it took.
+/// channel's check of the server key on every connection, whichever path it
+/// took (phase 044).
 @freezed
 abstract class ServerAddresses with _$ServerAddresses {
   const ServerAddresses._();

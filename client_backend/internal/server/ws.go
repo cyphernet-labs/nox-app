@@ -10,16 +10,22 @@ import (
 )
 
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
-	onion := viaOnion(r.Context())
+	peer, ok := channelPeerFrom(r.Context())
+	if !ok {
+		// Unreachable through Run: the listener hands over only connections
+		// that passed the channel check. A handler mounted without it - a
+		// wiring mistake, a test mux - must not open a session nobody proved a
+		// key for, so it refuses before the upgrade rather than greet a
+		// stranger.
+		http.Error(w, "the connection proved no device key", http.StatusUnauthorized)
+		return
+	}
 	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {
-		if onion {
-			// The library's message quotes Host, and on this entry Host is the
-			// onion name (FR-031). The fact of the failure is all that is said.
-			s.logger.Warn("websocket accept failed on the onion entry")
-			return
-		}
-		s.logger.Warn("websocket accept failed", "err", err)
+		// The library's message can quote Host, and a connection through the
+		// onion service carries the onion name there (FR-022). Nothing tells
+		// such a connection apart any more, so every one is masked.
+		s.logger.Warn("websocket accept failed", "err", maskOnion(err.Error()))
 		return
 	}
 	// Track the hijacked connection so shutdown can wait for it (invariant 9).
@@ -29,12 +35,8 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 
 	logger := s.logger.With("conn", randomConnID())
 	c := newClient(s, conn, r.Context(), logger)
+	c.deviceKey = peer.deviceKey()
 	c.requestHost = r.Host
-	c.viaOnion = onion
-	c.writeTimeout = s.writeTimeout
-	if onion {
-		c.writeTimeout = s.onionTimeout
-	}
 	s.track(c)
 	defer s.untrack(c)
 	defer c.close(websocket.StatusNormalClosure, "")
@@ -42,17 +44,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 
 	go c.writePump()
 
-	challenge, err := newChallenge()
-	if err != nil {
-		logger.Error("challenge generation failed", "err", err)
-		c.close(websocket.StatusInternalError, "internal error")
-		return
-	}
-	c.challenge = challenge
-	c.sendFrame(protocol.Greeting{Srv: protocol.GreetingBody{
-		SchemaMax: protocol.SchemaVersion,
-		Challenge: challenge,
-	}})
+	c.sendFrame(protocol.Greeting{Srv: protocol.GreetingBody{SchemaMax: protocol.SchemaVersion}})
 
 	c.readLoop()
 }
@@ -92,8 +84,9 @@ func (c *client) readLoop() {
 
 func (c *client) dispatch(cmd protocol.Command) {
 	// pair is the ONE exception to "hello first", and not for convenience: an
-	// unpaired device has nothing to sign the challenge with, so requiring a
-	// greeting first would make pairing impossible rather than awkward.
+	// unpaired device proved a key the server does not know, and its greeting
+	// would be refused, so requiring one first would make pairing impossible
+	// rather than awkward.
 	if !c.helloDone && cmd.Cmd != protocol.CmdSessionHello && cmd.Cmd != protocol.CmdPair {
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "session.hello must be the first command"))
 		return
@@ -112,8 +105,6 @@ func (c *client) dispatch(cmd protocol.Command) {
 		c.handleDeviceInvite(cmd)
 	case protocol.CmdIdentitySetLabel:
 		c.handleIdentitySetLabel(cmd)
-	case protocol.CmdDeviceSetAccessKey:
-		c.handleDeviceSetAccessKey(cmd)
 	case protocol.CmdChatsList:
 		c.handleChatsList(cmd)
 	case protocol.CmdChatGet:
