@@ -135,11 +135,12 @@ detect_install() {
 		PORT=${prev##*:}
 		valid_port "$PORT" || PORT=$NOX_DEFAULT_PORT
 	fi
+	prev=$(previous_arg -status-addr)
+	PREV_STATUS_PORT=${prev##*:}
+	valid_port "$PREV_STATUS_PORT" || PREV_STATUS_PORT=$NOX_DEFAULT_STATUS_PORT
 	STATUS_PORT=$OPT_STATUS_PORT
 	if [ -z "$STATUS_PORT" ]; then
-		prev=$(previous_arg -status-addr)
-		STATUS_PORT=${prev##*:}
-		valid_port "$STATUS_PORT" || STATUS_PORT=$NOX_DEFAULT_STATUS_PORT
+		STATUS_PORT=$PREV_STATUS_PORT
 	fi
 	PUBLIC_ADDR=$OPT_PUBLIC_ADDR
 	if [ -z "$PUBLIC_ADDR" ]; then
@@ -329,7 +330,12 @@ job_restore() {
 		warn "launchd still holds $label after $NOX_JOB_STOP_WAIT seconds; once it is gone: sudo launchctl bootstrap system $(q "$plist")"
 		return 1
 	fi
-	job_bootstrap "$plist"
+	job_bootstrap "$plist" || return 1
+	# The server starts locked, as every start does: the end of the taking
+	# back says so.
+	if [ "$label" = "$SERVER_LABEL" ]; then
+		SERVER_LOCKED_AGAIN=1
+	fi
 }
 
 # job_install LABEL RENDERED_PLIST DEST starts a launchd daemon from a fresh

@@ -135,11 +135,12 @@ detect_install() {
 		PORT=${prev##*:}
 		valid_port "$PORT" || PORT=$NOX_DEFAULT_PORT
 	fi
+	prev=$(previous_arg -status-addr)
+	PREV_STATUS_PORT=${prev##*:}
+	valid_port "$PREV_STATUS_PORT" || PREV_STATUS_PORT=$NOX_DEFAULT_STATUS_PORT
 	STATUS_PORT=$OPT_STATUS_PORT
 	if [ -z "$STATUS_PORT" ]; then
-		prev=$(previous_arg -status-addr)
-		STATUS_PORT=${prev##*:}
-		valid_port "$STATUS_PORT" || STATUS_PORT=$NOX_DEFAULT_STATUS_PORT
+		STATUS_PORT=$PREV_STATUS_PORT
 	fi
 	PUBLIC_ADDR=$OPT_PUBLIC_ADDR
 	if [ -z "$PUBLIC_ADDR" ]; then
@@ -654,10 +655,18 @@ start_server() {
 		systemctl enable "$SERVICE" >/dev/null 2>&1 || die "systemctl could not enable $SERVICE"
 	fi
 	if [ "$was_active" = 1 ]; then
-		undo_push_last "systemctl restart $SERVICE >/dev/null 2>&1 || true"
+		undo_push_last restart_old_server
 	fi
 	undo_push "systemctl stop $SERVICE >/dev/null 2>&1 || true"
 	systemctl restart "$SERVICE" || die "systemctl could not start $SERVICE"
+}
+
+# restart_old_server starts the server that ran before this run again, from
+# its own unit and binary, which are back by then. It starts locked, as every
+# start does, and the end of the taking back says so.
+restart_old_server() {
+	systemctl restart "$SERVICE" >/dev/null 2>&1 || return 1
+	SERVER_LOCKED_AGAIN=1
 }
 
 server_log_tail() {

@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # The variables set here are read by the scripts that source this file, and
-# PORT, STATUS_PORT, UPDATE, REPO_DIR, NOXD, RUN_DIR, SERVER_LOG and
-# BACKUP_DIR are set by them.
+# PORT, STATUS_PORT, PREV_STATUS_PORT, UPDATE, REPO_DIR, NOXD, NOXD_CMD,
+# RUN_DIR, SERVER_LOG and BACKUP_DIR are set by them.
 # shellcheck disable=SC2034,SC2153
 #
 # Shared by install-macos.sh and install-linux.sh: sourced by them, never run
@@ -206,6 +206,12 @@ UNDO_INTO=MAIN
 COMMITTED=0
 # UNDO_FAILED is set when a step could not be taken back.
 UNDO_FAILED=0
+# SERVER_LOCKED_AGAIN is set when taking back started the server that ran
+# before the run: it starts locked, as every start does.
+SERVER_LOCKED_AGAIN=0
+# The service page's port of the server that ran before the run, for what
+# to say when taking back started it again.
+PREV_STATUS_PORT=$NOX_DEFAULT_STATUS_PORT
 # NOX_EXITING is set once the run is on its way out: a signal then only
 # stops further signals, and the taking back goes on.
 NOX_EXITING=""
@@ -298,10 +304,17 @@ on_exit() {
 		warn "the installation did not finish; taking back what this run changed"
 		undo_run TOR
 		undo_run MAIN
-		if [ "$UNDO_FAILED" = 0 ]; then
-			say "This machine is as it was before the run."
-		else
+		if [ "$UNDO_FAILED" != 0 ]; then
 			warn "not everything could be taken back: see the lines above"
+		elif [ "$SERVER_LOCKED_AGAIN" = 1 ]; then
+			say "Everything this run changed was taken back."
+		else
+			say "This machine is as it was before the run."
+		fi
+		if [ "$SERVER_LOCKED_AGAIN" = 1 ]; then
+			say "The server that ran before was started again and, as after every start, it is locked until its"
+			say "password is entered - on the service page, http://127.0.0.1:$PREV_STATUS_PORT on this machine, or with:"
+			say "    $NOXD_CMD unlock$(status_flag_for "$PREV_STATUS_PORT")"
 		fi
 	fi
 	if [ -n "$WORK" ] && [ -d "$WORK" ]; then
@@ -863,8 +876,13 @@ wait_open() {
 # status_flag is what the noxd commands need to find a service page that is
 # not on the default port.
 status_flag() {
-	if [ "$STATUS_PORT" != "$NOX_DEFAULT_STATUS_PORT" ]; then
-		printf ' -status-addr 127.0.0.1:%s' "$STATUS_PORT"
+	status_flag_for "$STATUS_PORT"
+}
+
+# status_flag_for PORT is status_flag for the service page on PORT.
+status_flag_for() {
+	if [ "$1" != "$NOX_DEFAULT_STATUS_PORT" ]; then
+		printf ' -status-addr 127.0.0.1:%s' "$1"
 	fi
 }
 

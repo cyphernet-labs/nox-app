@@ -122,6 +122,9 @@ $script:UndoInto = 'Main'
 $script:Committed = $false
 # UndoFailed is set when a step could not be taken back.
 $script:UndoFailed = $false
+# ServerLockedAgain is set when taking back started the server that ran before
+# the run: it starts locked, as every start does.
+$script:ServerLockedAgain = $false
 
 function Add-Undo([string]$Action, [string]$A = '', [string]$B = '') {
     $entry = [pscustomobject]@{ Action = $Action; A = $A; B = $B }
@@ -393,6 +396,7 @@ function Start-ServiceAgain([string]$Name) {
     if ($s.Status -eq 'StopPending') { $s.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(60)) }
     $s.Refresh()
     if ($s.Status -ne 'Running' -and $s.Status -ne 'StartPending') { Start-Service -Name $Name }
+    if ($Name -eq $ServerService) { $script:ServerLockedAgain = $true }
 }
 
 # --- the server binary -------------------------------------------------------
@@ -798,8 +802,11 @@ function Start-Server {
 # owner.
 function ConvertTo-PsLiteral([string]$S) { return "'" + $S.Replace("'", "''") + "'" }
 
-function Get-StatusFlag {
-    if ($script:StatusPort -ne $DefaultStatusPort) { return " -status-addr 127.0.0.1:$($script:StatusPort)" }
+function Get-StatusFlag { return (Get-StatusFlagFor $script:StatusPort) }
+
+# Get-StatusFlagFor is Get-StatusFlag for the service page on another port.
+function Get-StatusFlagFor([int]$P) {
+    if ($P -ne $DefaultStatusPort) { return " -status-addr 127.0.0.1:$P" }
     return ''
 }
 
@@ -917,8 +924,10 @@ function Invoke-Install {
     $script:Update = (-not $script:FreshData) -or [bool](Get-PreviousArg '-addr')
     $script:Port = $Port
     if (-not $script:Port) { $prev = Get-PreviousArg '-addr'; if ($prev -match ':(\d+)$') { $script:Port = [int]$Matches[1] } else { $script:Port = $DefaultPort } }
+    $prev = Get-PreviousArg '-status-addr'
+    if ($prev -match ':(\d+)$') { $script:PreviousStatusPort = [int]$Matches[1] } else { $script:PreviousStatusPort = $DefaultStatusPort }
     $script:StatusPort = $StatusPort
-    if (-not $script:StatusPort) { $prev = Get-PreviousArg '-status-addr'; if ($prev -match ':(\d+)$') { $script:StatusPort = [int]$Matches[1] } else { $script:StatusPort = $DefaultStatusPort } }
+    if (-not $script:StatusPort) { $script:StatusPort = $script:PreviousStatusPort }
     $script:PublicAddress = $PublicAddr
     if (-not $script:PublicAddress) { $script:PublicAddress = Get-PreviousArg '-public-addr' }
     $script:Onion = ''
@@ -1012,7 +1021,14 @@ try {
             Invoke-Undo $script:UndoTor
             Invoke-Undo $script:UndoMain
             if ($script:UndoFailed) { Warn 'not everything could be taken back: see the lines above' }
+            elseif ($script:ServerLockedAgain) { Say 'Everything this run changed was taken back.' }
             else { Say 'This machine is as it was before the run.' }
+            if ($script:ServerLockedAgain) {
+                $cmd = '& ' + (ConvertTo-Argument $script:Noxd).Replace('"', "'")
+                Say 'The server that ran before was started again and, as after every start, it is locked until its'
+                Say "password is entered - on the service page, http://127.0.0.1:$($script:PreviousStatusPort) on this machine, or with:"
+                Say "    $cmd unlock$(Get-StatusFlagFor $script:PreviousStatusPort)"
+            }
         } finally {
             if ($null -ne $ctrlC) { try { [Console]::TreatControlCAsInput = $ctrlC } catch { } }
         }
