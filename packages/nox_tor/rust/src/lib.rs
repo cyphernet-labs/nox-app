@@ -216,8 +216,9 @@ pub unsafe extern "C" fn nox_chan_buf_free(data: *mut u8, len: usize) {
     });
 }
 
-/// Sets the local-database key the vault seals with (phase 048), over any key
-/// set before. 0, or -7: no key, or one of all zeros.
+/// Sets the local-database key (phase 048), over any key set before; the
+/// vault draws the keys it seals with from it. 0, or -7: no key, or one of all
+/// zeros.
 ///
 /// # Safety
 /// `key32` is null or points at 32 bytes.
@@ -262,9 +263,10 @@ pub unsafe extern "C" fn nox_vault_open(data: *const u8, len: usize, out: *mut *
     vault_guarded(|| vault::call(data, len, out, out_len, vault::open))
 }
 
-/// Seals chunk `index` of the file `name` (UTF-8, not empty), as the file's
-/// last chunk when `last` is 1 and not when it is 0: `*out` is `ciphertext ‖
-/// tag (16)`, freed with `nox_chan_buf_free`. -9 without a key.
+/// Seals chunk `index` of the file `name` (UTF-8, not empty, the file's for
+/// the life of its bytes: see `vault`), as the file's last chunk when `last` is
+/// 1 and not when it is 0: `*out` is `ciphertext ‖ tag (16)`, freed with
+/// `nox_chan_buf_free`. -9 without a key.
 ///
 /// # Safety
 /// `name` is null or NUL-terminated; the rest as for `nox_vault_seal`.

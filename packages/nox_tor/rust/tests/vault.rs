@@ -18,7 +18,9 @@ use nox_tor::{
 
 const KEY: [u8; 32] = [0x11; 32];
 const OTHER_KEY: [u8; 32] = [0x22; 32];
-const NAME: &str = "nox_attachments/f_0123456789abcdef.jpg";
+/// A file's name as the app gives it: the hex of a random 16-byte id kept in
+/// the file's header.
+const NAME: &str = "8f14e45fceea167a5a36dedd4bea2543";
 
 /// One test at a time, each starting with `key` set (or none).
 fn turn(key: Option<&[u8; 32]>) -> MutexGuard<'static, ()> {
@@ -179,7 +181,8 @@ fn a_chunk_opens_only_at_its_own_index() {
 fn a_chunk_opens_only_in_its_own_file() {
     let _turn = turn(Some(&KEY));
     let sealed = seal_chunk(NAME, 0, true, b"one file").unwrap();
-    for other in ["nox_attachments/f_0123456789abcdef.png", "f_0123456789abcdef.jpg", "nox_attachments"] {
+    // Byte for byte: a digit off, the same id in capitals, half of it.
+    for other in ["8f14e45fceea167a5a36dedd4bea2544", "8F14E45FCEEA167A5A36DEDD4BEA2543", "8f14e45fceea167a"] {
         assert_eq!(open_chunk(other, 0, true, &sealed), Err(code::RET_FORGED), "{other}");
     }
 }
@@ -301,20 +304,28 @@ fn arguments_the_vault_does_not_take() {
 
 /// Sealed by Node's crypto (OpenSSL) and Go's golang.org/x/crypto, which
 /// agree byte for byte: the format as documented, not as ring happens to do it.
+/// The record is under the key of records, drawn on `nox_vault_set_key`.
 #[test]
 fn what_another_implementation_sealed_opens_here() {
     let key: [u8; 32] = std::array::from_fn(|i| i as u8 + 1);
     let _turn = turn(Some(&key));
     let hex = |s: &str| data_encoding::HEXLOWER.decode(s.as_bytes()).unwrap();
-    let record = hex("a0a1a2a3a4a5a6a7a8a9aaabd86d01d5873a7f086e9b06ffda2663d9c47d632d5fe5a75c81a4df4ab49d704d");
+    let record = hex("a0a1a2a3a4a5a6a7a8a9aaab935b28fd288e079160bddccd87da69e00fceeb6b49dab2630af368d29490ba7c");
     assert_eq!(open(&record).unwrap(), b"NOX vault record");
-    let name = "nox_outbox/фото ✓.jpg";
-    for (index, last, plain, sealed) in [
-        (0, false, "chunk zero", "f92a51a169d07232dfacd3ac1010f9a5bfc46c3d809039817ce6"),
-        (1, true, "the last chunk", "0c500b891281ca1cbc2ceb45a011fc69cd63769e838540c0146d1dda5fd1"),
-        (0x0102_0304_0506_0708, true, "", "b3b44fc01da87fa76aaaf3256346918e"),
+    let id = "00112233445566778899aabbccddeeff";
+    for (name, index, last, plain, sealed) in [
+        (id, 0, false, "chunk zero", "cc5026cb42ab1da95c166806af9de201c00f05c68e815b4bd74b"),
+        (id, 1, true, "the last chunk", "7267288bd65d22501de660d1df4db9a0db9bcb379d8bb02b91ebaf5d00eb"),
+        (id, 0x0102_0304_0506_0708, true, "", "fc2c95c8a28b0da6f24403ce154b6db7"),
+        (
+            "фото ✓",
+            0,
+            true,
+            "a name that is not ASCII",
+            "5f575531af2402112665172acab965a63306269e9165758877ce0febaa89ba0035df9eba58abcd43",
+        ),
     ] {
-        assert_eq!(open_chunk(name, index, last, &hex(sealed)).unwrap(), plain.as_bytes(), "{index}");
-        assert_eq!(seal_chunk(name, index, last, plain.as_bytes()).unwrap(), hex(sealed), "{index}");
+        assert_eq!(open_chunk(name, index, last, &hex(sealed)).unwrap(), plain.as_bytes(), "{name} {index}");
+        assert_eq!(seal_chunk(name, index, last, plain.as_bytes()).unwrap(), hex(sealed), "{name} {index}");
     }
 }

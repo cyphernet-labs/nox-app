@@ -112,10 +112,12 @@ abstract final class NoxVault {
   /// Chunk [index] of the file [name], sealed: ciphertext, tag (16). [last]
   /// says whether it ends the file.
   ///
-  /// The chunk's nonce is its index, so [name] is the name of ONE content: a
-  /// chunk is sealed once it is whole, and different bytes never go under a
-  /// name and index used before. [name] must not be empty or hold a NUL; an
-  /// [index] must not be negative.
+  /// [name] goes into the file's key, so it stays the file's for the life of
+  /// the file's bytes: the hex of the random 16-byte id in the file's header,
+  /// not a path, which changes when the file moves. The chunk's nonce is its
+  /// index, so [name] is the name of ONE content: a chunk is sealed once it is
+  /// whole, and different bytes never go under a name and index used before.
+  /// [name] must not be empty or hold a NUL; an [index] must not be negative.
   static Uint8List sealChunk(String name, int index, {required bool last, required Uint8List data}) {
     _checkChunk(name, index);
     return using((arena) {

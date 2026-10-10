@@ -12,7 +12,9 @@ void main() {
   final key = Uint8List.fromList(List<int>.generate(32, (i) => 0x40 + i));
   final otherKey = Uint8List.fromList(List<int>.generate(32, (i) => 0x80 + i));
   final text = bytes('a message of the local database');
-  const name = 'nox_attachments/f_0123456789abcdef.jpg';
+  // A file's name as the app gives it: the hex of a random 16-byte id kept in
+  // the file's header.
+  const name = '8f14e45fceea167a5a36dedd4bea2543';
 
   setUp(() => NoxVault.setKey(key));
   tearDown(NoxVault.clear);
@@ -77,7 +79,8 @@ void main() {
       for (final index in [0, 6, 8, 7 + (1 << 32)]) {
         expect(() => NoxVault.openChunk(name, index, last: false, data: sealed), failsWith(VaultCode.forged), reason: '$index');
       }
-      for (final other in ['nox_attachments/f_0123456789abcdef.png', 'f_0123456789abcdef.jpg']) {
+      // Byte for byte: a digit off, the same id in capitals, half of it.
+      for (final other in ['8f14e45fceea167a5a36dedd4bea2544', '8F14E45FCEEA167A5A36DEDD4BEA2543', '8f14e45fceea167a']) {
         expect(() => NoxVault.openChunk(other, 7, last: false, data: sealed), failsWith(VaultCode.forged), reason: other);
       }
     });
@@ -148,28 +151,30 @@ void main() {
 
   // Sealed by Node's crypto (OpenSSL) and Go's golang.org/x/crypto, which
   // agree byte for byte: the format as the contract writes it, reached through
-  // this binding - a name that is not ASCII included.
+  // this binding - the record under the key of records drawn on setKey, and a
+  // name that is not ASCII included.
   test('what another implementation sealed opens here, and is what this one seals', () {
     NoxVault.setKey(Uint8List.fromList(List<int>.generate(32, (i) => i + 1)));
     expect(
-      NoxVault.open(hex('a0a1a2a3a4a5a6a7a8a9aaabd86d01d5873a7f086e9b06ffda2663d9c47d632d5fe5a75c81a4df4ab49d704d')),
+      NoxVault.open(hex('a0a1a2a3a4a5a6a7a8a9aaab935b28fd288e079160bddccd87da69e00fceeb6b49dab2630af368d29490ba7c')),
       bytes('NOX vault record'),
     );
-    const vectorName = 'nox_outbox/фото ✓.jpg';
-    for (final (index, last, plain, sealed) in [
-      (0, false, 'chunk zero', 'f92a51a169d07232dfacd3ac1010f9a5bfc46c3d809039817ce6'),
-      (1, true, 'the last chunk', '0c500b891281ca1cbc2ceb45a011fc69cd63769e838540c0146d1dda5fd1'),
-      (0x0102030405060708, true, '', 'b3b44fc01da87fa76aaaf3256346918e'),
+    const id = '00112233445566778899aabbccddeeff';
+    for (final (vectorName, index, last, plain, sealed) in [
+      (id, 0, false, 'chunk zero', 'cc5026cb42ab1da95c166806af9de201c00f05c68e815b4bd74b'),
+      (id, 1, true, 'the last chunk', '7267288bd65d22501de660d1df4db9a0db9bcb379d8bb02b91ebaf5d00eb'),
+      (id, 0x0102030405060708, true, '', 'fc2c95c8a28b0da6f24403ce154b6db7'),
+      ('фото ✓', 0, true, 'a name that is not ASCII', '5f575531af2402112665172acab965a63306269e9165758877ce0febaa89ba0035df9eba58abcd43'),
     ]) {
       expect(
         NoxVault.openChunk(vectorName, index, last: last, data: hex(sealed)),
         bytes(plain),
-        reason: 'chunk $index',
+        reason: '$vectorName $index',
       );
       expect(
         NoxVault.sealChunk(vectorName, index, last: last, data: bytes(plain)),
         hex(sealed),
-        reason: 'chunk $index',
+        reason: '$vectorName $index',
       );
     }
   });
