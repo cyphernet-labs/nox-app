@@ -357,8 +357,9 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   database (`VACUUM INTO` beside it, under the same key) and writes one tar with
   the sealed key and the finished attachments, never over an existing file and
   never as anything but `<file>.partial` until it is whole. `noxd restore <file>
-  -db <path>` puts it onto an empty place with the same password. Never copy a
-  live DB; local filesystem only (WAL breaks on network mounts).
+  -db <path>` puts it onto an empty place with the same password and names the
+  devices the restored server lets in, with the moment the backup was made.
+  Never copy a live DB; local filesystem only (WAL breaks on network mounts).
 - Build: `CGO_ENABLED=0 go build -trimpath -ldflags="-s"`.
 - Tor (039) is ON by default: `-tor=false` turns it off. The binary comes
   from `-tor-bin` (final - an explicit path that holds no tor is "not
@@ -463,6 +464,14 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   bytes under the same index could come only from a faulty device of the
   person's own, and both ciphertexts would show only to forensics on the
   machine's disk. Recorded in specs/047 research R11.
+- **A restore lets in a device revoked after the backup (047).** Revocation
+  deletes the device's row, the backup was made with it, and the restored
+  server stays the same machine to every device it knew - pairing nobody again
+  is the point of the restore. So nothing refuses such a device: `noxd restore`
+  prints the backup's moment and every device it lets in, and says to revoke
+  one revoked since again. A confirmation before unpacking, revocations kept
+  outside the database and devices held back until approved were weighed and
+  rejected (specs/047 research R11).
 - **No limit on password attempts.** The page and the commands are loopback
   only, and whoever reaches them has the machine (out of scope). Each attempt
   costs Argon2id - about a second on a small board - and they are served one at
