@@ -98,6 +98,15 @@ func runServer(t *testing.T, cfg config.Config) (*syncLog, func() error) {
 		return true
 	})
 	return logs, func() error {
+		// The tests reach the service page through http.DefaultTransport, and
+		// that transport dials ahead: a request that finds no idle connection
+		// starts a dial, and when one comes back idle first, the dialled one
+		// joins the pool having sent nothing. To the page it is a connection
+		// still waiting for its first request, which http.Server.Shutdown
+		// waits on until it is five seconds old - as long as the shutdown's
+		// whole budget - so a stop under load often failed with a deadline.
+		// Closed here, it is gone before the shutdown begins.
+		http.DefaultTransport.(*http.Transport).CloseIdleConnections()
 		cancel()
 		select {
 		case err := <-done:
