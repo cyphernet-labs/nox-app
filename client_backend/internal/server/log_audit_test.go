@@ -23,8 +23,9 @@ import (
 // page's Set as a browser sends it - and refused as a forgery - a first device
 // paired by the machine link, an invite and a second device asking with it and
 // allowed, an upgrade through the onion service refused, and a second start
-// with a broken parameter. Run itself, on real sockets, with the logger a test
-// hands it: the scrubbing is Run's, not the test's.
+// with a broken parameter - each start through the lock (047): a first
+// password, then the password again. Run itself, on real sockets, with the
+// logger a test hands it: the scrubbing is Run's, not the test's.
 
 // pageTokenAndLink is what a browser takes off the service page before a Set:
 // the form token and the machine link the page shows while no device is
@@ -205,6 +206,7 @@ func TestTheLogNeverCarriesAnOnionAddressALinkATokenOrAKey(t *testing.T) {
 
 	out := logs.String() + again.String()
 	for _, step := range []string{
+		"no password is set yet", "this server is locked", "server unlocked",
 		"address set on the service page", "start parameter not applied", "websocket accept failed", "command handled",
 		"pairing request closed",
 	} {

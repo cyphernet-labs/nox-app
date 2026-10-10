@@ -139,12 +139,15 @@ type gate struct {
 	openPage atomic.Pointer[http.Handler]
 }
 
+// newGate builds the lock over what the disk says. Its log goes through the
+// scrubbing handler whatever logger it is handed, as New's does (logscrub.go):
+// Run hands it one already, a test need not.
 func newGate(cfg config.Config, state lockState, kdf vault.Params, logger *slog.Logger) *gate {
 	g := &gate{
 		dbPath:    cfg.DBPath,
 		keyPath:   cfg.KeyPath(),
 		kdf:       kdf,
-		logger:    logger,
+		logger:    scrubbedLogger(logger),
 		formToken: newFormToken(),
 		requests:  make(chan gateRequest),
 	}
