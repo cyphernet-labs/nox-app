@@ -12,6 +12,11 @@ import '../../../utils/pump_app.dart';
 
 final l10nEn = AppLocalizationsEn();
 
+/// A version-3 link as the server issues one: the address it listens on, then
+/// its onion address.
+const String _link =
+    'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODwEGwKgBFCD7BCAXy3n7K0Eg8rHsZeQZjW4Iso6BP-sB5KQAg5uF4YCAzg';
+
 /// Seeded through the page's test seam: the list comes from a server, and the
 /// two failures below are answers a mock world cannot give.
 DevicesState _state() => DevicesState(
@@ -53,14 +58,14 @@ void main() {
     expect(find.text(l10nEn.devicesRevokeError), findsNothing);
   });
 
-  // FR-019: an invite the server could not put its onion address in works only
-  // on the home network, and the card is where the person decides where to
-  // carry it.
+  // FR-019 (040): an invite the server does not vouch for from every network -
+  // every invite until phase 045 - works only on the home network, and the
+  // card is where the person decides where to carry it.
   testWidgets('a home-only invite says where it works', (tester) async {
     await pumpApp(
       tester,
       DevicesPage(
-        initialState: _state().copyWith(invite: const DeviceInvite(link: 'https://nox.app/p/#home', onion: false)),
+        initialState: _state().copyWith(invite: const DeviceInvite(link: _link, onion: false)),
       ),
     );
 
@@ -72,7 +77,7 @@ void main() {
     await pumpApp(
       tester,
       DevicesPage(
-        initialState: _state().copyWith(invite: const DeviceInvite(link: 'https://nox.app/p/#anywhere', onion: true)),
+        initialState: _state().copyWith(invite: const DeviceInvite(link: _link, onion: true)),
       ),
     );
 

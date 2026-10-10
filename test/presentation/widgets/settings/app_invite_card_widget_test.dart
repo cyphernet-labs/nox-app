@@ -9,7 +9,10 @@ import '../../../utils/pump_app.dart';
 
 final l10nEn = AppLocalizationsEn();
 
-const String _link = 'https://nox.app/p/#k=abc123&t=def456';
+/// A version-3 link as the server issues one: the address it listens on, then
+/// its onion address.
+const String _link =
+    'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODwEGwKgBFCD7BCAXy3n7K0Eg8rHsZeQZjW4Iso6BP-sB5KQAg5uF4YCAzg';
 
 void main() {
   group('AppInviteCardWidget', () {
