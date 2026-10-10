@@ -45,6 +45,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Started by the Windows service control manager (049): no console to log
+	// to and no Ctrl+C - the log goes to a file and the manager says when to
+	// stop.
+	if underServiceManager() {
+		os.Exit(runService(cfg, migrations))
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

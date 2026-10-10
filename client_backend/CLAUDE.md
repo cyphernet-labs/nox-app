@@ -57,10 +57,10 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 
 ## Toolchain & dependencies
 
-- Go **1.27**. Direct dependencies: exactly six — `github.com/coder/websocket`,
+- Go **1.27**. Direct dependencies: exactly seven — `github.com/coder/websocket`,
   `github.com/ncruces/go-sqlite3`, `golang.org/x/crypto`, `golang.org/x/sync`
-  (errgroup), `golang.org/x/term` and `rsc.io/qr`. Adding any other requires
-  written justification; "convenient" is not one.
+  (errgroup), `golang.org/x/sys`, `golang.org/x/term` and `rsc.io/qr`. Adding any
+  other requires written justification; "convenient" is not one.
 - **Why `ncruces/go-sqlite3` (047):** it is the one SQLite for Go that encrypts
   page by page without CGO - SQLite compiled to WebAssembly and run in-process by
   wazero, with the `adiantum` VFS that encrypts every page of the database and of
@@ -74,6 +74,11 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   ChaCha20-Poly1305 seals each attachment chunk. Writing any of them here would be
   writing our own cryptography. HKDF comes from the standard library
   (`crypto/hkdf`).
+- **Why `golang.org/x/sys` (049):** `windows/svc` speaks the Windows service
+  control manager's protocol, so `noxd` runs as a Windows service of its own
+  (`service_windows.go`): a console program the manager starts is killed when it
+  never reports in. It was already in the module graph under `x/term` and
+  `ncruces/go-sqlite3`; only its import is new, and only the Windows build has it.
 - **Why `golang.org/x/term` (047):** `noxd unlock`, `noxd password` and `noxd
   restore` read the password from a terminal without echo, on every platform the
   server runs on; the standard library has no way to turn echo off.
@@ -233,6 +238,10 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   puts anything in place, and rotates the journal id
 - `internal/prompt/`     — passwords for the commands: a terminal without echo,
   or a line at a time from standard input
+- `service_windows.go`, `service_other.go`, `servicelog.go` — `noxd` as a
+  Windows service (049): started by the service control manager it logs to
+  `noxd.log` beside the database (set aside as `noxd.log.1` at 16 MiB) and
+  stops on the manager's Stop or Shutdown; everywhere else main runs as before
 - `commands.go`          — the `noxd` subcommands by name, and unlock, password,
   backup and restore (047); `link` stays in `main.go`
 - `internal/store/`      — types + all reads/writes; the ONLY writer code
