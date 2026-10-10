@@ -127,7 +127,7 @@ void main() {
     channels.unbind();
   });
 
-  test('a new binding drops the pooled clients, the same one keeps them, and unbinding ends every open', () async {
+  test('a new binding drops the pooled clients, the same one keeps them, and after unbinding nothing opens', () async {
     final api = ScriptedChannelApi();
     final channels = ChannelHttpClient(api);
     var discarded = 0;
@@ -143,6 +143,34 @@ void main() {
     channels.unbind();
     expect(channels.boundServerKey, isNull);
     await expectLater(channels.client.getUrl(Uri.parse('https://10.0.0.5:8443/')), throwsA(isA<SocketException>()));
+  });
+
+  test('unbinding ends the opens under way on both clients, and a channel that opens anyway is closed on arrival', () async {
+    // A logout: the person's server is nobody this install may reach now, an
+    // open still running included.
+    final api = ScriptedChannelApi();
+    final channels = ChannelHttpClient(api)..bind(serverKey: serverKey, deviceSeed: deviceSeed);
+    // Each outcome taken as it comes, so a request failing early is no
+    // unhandled error.
+    final requests = [
+      channels.client.getUrl(Uri.parse('https://10.0.0.5:8443/ws')),
+      channels.transferClient.getUrl(Uri.parse('https://10.0.0.5:8443/files/x')),
+    ].map((request) => request.then<Object?>((_) => null, onError: (Object error) => error)).toList();
+    await Future<void>.delayed(Duration.zero);
+    expect(api.calls, hasLength(2), reason: 'both opens are under way in the module');
+
+    channels.unbind();
+    await Future<void>.delayed(Duration.zero);
+
+    for (final call in api.calls) {
+      expect(call.cancelled, isTrue, reason: 'the cancel reaches every open');
+    }
+    final late = [FakeNoxChannel(), FakeNoxChannel()];
+    for (var i = 0; i < late.length; i++) {
+      api.calls[i].result.complete(late[i]);
+    }
+    expect(await Future.wait(requests), everyElement(isA<SocketException>()));
+    expect([for (final channel in late) channel.closeCalls], [1, 1], reason: 'a channel opened after the cancel is closed on arrival');
   });
 
   test('the log names the path and the outcome - never an onion host or a key', () async {
