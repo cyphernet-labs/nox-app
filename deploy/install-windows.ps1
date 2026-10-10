@@ -97,10 +97,12 @@ $RepoDir = Split-Path -Parent $PSScriptRoot
 
 # --- output ------------------------------------------------------------------
 
-function Say([string]$Text) { Write-Host $Text }
-function Step([string]$Text) { Write-Host ''; Write-Host "==> $Text" }
-function Note([string]$Text) { Write-Host "    $Text" }
-function Warn([string]$Text) { Write-Host "warning: $Text" -ForegroundColor Yellow }
+# Best effort: with the output going through a pipe whose reader is gone, a
+# write throws, and a message lost must not cut a rollback short.
+function Say([string]$Text) { try { Write-Host $Text } catch { } }
+function Step([string]$Text) { try { Write-Host ''; Write-Host "==> $Text" } catch { } }
+function Note([string]$Text) { try { Write-Host "    $Text" } catch { } }
+function Warn([string]$Text) { try { Write-Host "warning: $Text" -ForegroundColor Yellow } catch { } }
 
 # A failure the script means is an ApplicationException - nothing else here
 # throws one - and its message is shown as it is.
@@ -133,7 +135,7 @@ function Invoke-UndoAction($U) {
         'stop-background' { Stop-Background $U.A $U.B }
         'service-command' { [void](Invoke-Native "$env:SystemRoot\System32\sc.exe" @('config', $U.A, 'binPath=', $U.B)) }
         'service-delete' { [void](Invoke-Native "$env:SystemRoot\System32\sc.exe" @('delete', $U.A)) }
-        'service-start' { Start-Service -Name $U.A -ErrorAction SilentlyContinue }
+        'service-start' { Start-ServiceAgain $U.A }
         'service-stop' { Stop-Service -Name $U.A -Force -ErrorAction SilentlyContinue }
         'firewall-port' { Get-NetFirewallRule -Name $U.A | Get-NetFirewallPortFilter | Set-NetFirewallPortFilter -LocalPort $U.B }
         'firewall-remove' { Remove-NetFirewallRule -Name $U.A -ErrorAction SilentlyContinue }
@@ -357,8 +359,9 @@ function Install-Service([string]$Name, [string]$Display, [string]$Description, 
         Add-Undo 'service-command' $Name $oldPath
         Invoke-Sc @('config', $Name, 'binPath=', $CommandLine, 'start=', 'auto')
     } else {
-        New-Service -Name $Name -BinaryPathName $CommandLine -DisplayName $Display -Description $Description -StartupType Automatic | Out-Null
+        # Deleting a service that was never created is harmless.
         Add-Undo 'service-delete' $Name
+        New-Service -Name $Name -BinaryPathName $CommandLine -DisplayName $Display -Description $Description -StartupType Automatic | Out-Null
     }
     Invoke-Sc @('sidtype', $Name, 'unrestricted')
     Invoke-Sc @('config', $Name, 'obj=', "NT SERVICE\$Name")
@@ -366,17 +369,30 @@ function Install-Service([string]$Name, [string]$Display, [string]$Description, 
     Invoke-Sc @('failureflag', $Name, '1')
 }
 
+# Each undo below is recorded before its step, so a step interrupted half way
+# - Ctrl+C while Stop-Service waits for noxd, which closes its connections
+# first - is taken back too.
 function Stop-ServiceForUpdate([string]$Name) {
     $s = Get-Service -Name $Name -ErrorAction SilentlyContinue
     if ($s -and $s.Status -ne 'Stopped') {
-        Stop-Service -Name $Name -Force
         Add-Undo 'service-start' $Name
+        Stop-Service -Name $Name -Force
     }
 }
 
 function Start-InstalledService([string]$Name) {
-    Start-Service -Name $Name
     Add-Undo 'service-stop' $Name
+    Start-Service -Name $Name
+}
+
+# Start-ServiceAgain starts a service this run stopped, once a stop still under
+# way - an interrupted Stop-Service leaves it so - has ended. A service that
+# does not start is an error the rollback reports.
+function Start-ServiceAgain([string]$Name) {
+    $s = Get-Service -Name $Name
+    if ($s.Status -eq 'StopPending') { $s.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(60)) }
+    $s.Refresh()
+    if ($s.Status -ne 'Running' -and $s.Status -ne 'StartPending') { Start-Service -Name $Name }
 }
 
 # --- the server binary -------------------------------------------------------
@@ -981,7 +997,7 @@ try {
 } catch {
     $message = $_.Exception.Message
     if (-not ($_.Exception -is [System.ApplicationException])) { $message = "$message ($($_.InvocationInfo.PositionMessage))" }
-    Write-Host "error: $message" -ForegroundColor Red
+    try { Write-Host "error: $message" -ForegroundColor Red } catch { }
 } finally {
     # The taking back is here and not in the catch: Ctrl+C stops the script
     # past every catch, and only finally blocks run. It comes before the
