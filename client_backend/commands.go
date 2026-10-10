@@ -201,7 +201,8 @@ func restoredDevices(r backup.Restored, loc *time.Location) string {
 		fmt.Fprintf(&b, "  %-8s paired %s, last seen %s\n", d.Platform, at(time.Unix(d.CreatedAt, 0)), at(time.Unix(d.LastSeenAt, 0)))
 	}
 	b.WriteString("A device revoked after the backup was made is on this list and can connect again: revoke it again " +
-		"in Settings > Devices as soon as the server is unlocked.\n")
+		"in Settings > Devices as soon as the server is unlocked. A device paired after the backup is not on it, " +
+		"and has to pair again.\n")
 	return b.String()
 }
 

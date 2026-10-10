@@ -26,6 +26,7 @@ func TestARestoreNamesTheDevicesItLetsIn(t *testing.T) {
 		"macos    paired 2026-09-15 18:40 UTC, last seen 2026-10-08 14:03 UTC",
 		"revoked after the backup was made is on this list and can connect again",
 		"Settings > Devices",
+		"A device paired after the backup is not on it, and has to pair again.",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("the report lacks %q:\n%s", want, out)
