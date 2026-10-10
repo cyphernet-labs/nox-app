@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/app/session_model.dart';
+import 'package:nox_app/domain/model/session/pending_pairing.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 
@@ -98,6 +99,17 @@ class FakeSessionRepository implements SessionRepository {
 
   @override
   void noteOnboardingStartedHere() {}
+
+  /// Nothing waits for approval here: a paired session is what this fake
+  /// stands for.
+  @override
+  Future<RepositoryResult<PendingPairing?>> readPendingPairing() async => const RepositoryResult<PendingPairing?>.success(data: null);
+
+  @override
+  Future<RepositoryResult<bool>> savePendingPairing(PendingPairing pairing) => throw UnimplementedError();
+
+  @override
+  Future<RepositoryResult<bool>> clearPendingPairing() async => const RepositoryResult<bool>.success(data: true);
 
   @override
   Future<RepositoryResult<bool>> discardSignIn() => throw UnimplementedError();

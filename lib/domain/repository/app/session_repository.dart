@@ -1,4 +1,5 @@
 import 'package:nox_app/domain/model/app/session_model.dart';
+import 'package:nox_app/domain/model/session/pending_pairing.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 
 /// Cache-only session store. `identifier` lives in secure storage; the
@@ -84,6 +85,18 @@ abstract class SessionRepository {
   /// greeting after the first says `created == false`, so a mere reconnect
   /// would otherwise swap the root route out from under someone mid-name.
   void noteOnboardingStartedHere();
+
+  /// Remembers a pairing that waits for approval on the device that issued
+  /// the invite (phase 046), so a restart within its time goes on waiting for
+  /// the same request rather than opening a new one (FR-011). The link
+  /// carries the token - a credential - so this lives in secure storage.
+  Future<RepositoryResult<bool>> savePendingPairing(PendingPairing pairing);
+
+  /// The pairing [savePendingPairing] remembered, or null.
+  Future<RepositoryResult<PendingPairing?>> readPendingPairing();
+
+  /// Forgets it: the wait ended, whichever way.
+  Future<RepositoryResult<bool>> clearPendingPairing();
 
   /// Undoes what a failed sign-in wrote, and nothing else. Narrower than
   /// [clear] on purpose: the device id survives, because a sign-in that never

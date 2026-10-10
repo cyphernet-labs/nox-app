@@ -1,5 +1,6 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:injectable/injectable.dart';
+import 'package:rxdart/rxdart.dart';
 import 'package:nox_app/data/repository/connection/connection_storage.dart';
 import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
 import 'package:nox_app/domain/service/attachment_download_service.dart';
@@ -12,10 +13,13 @@ import 'package:nox_app/data/sync/outbox_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/di/global_aliases.dart';
+import 'package:nox_app/domain/exception/base_repository_exception.dart';
+import 'package:nox_app/domain/exception/pairing_exception.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/app/app_state_type.dart';
 import 'package:nox_app/domain/model/connection/connection_settings.dart';
 import 'package:nox_app/domain/model/session/pair_refusal.dart';
+import 'package:nox_app/domain/model/session/pending_pairing.dart';
 import 'package:nox_app/domain/repository/app/app_state_repository.dart';
 import 'package:nox_app/domain/repository/app/auth_repository.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
@@ -50,6 +54,36 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
   final SyncRepository _syncRepository;
   final OutboxRepository _outboxRepository;
   final FileRepository _fileRepository;
+
+  /// Whether a sign-in waits for approval on another device (phase 046).
+  final BehaviorSubject<bool> _awaitingApproval = BehaviorSubject<bool>.seeded(false);
+
+  @override
+  Stream<bool> watchAwaitingApproval() => _awaitingApproval.stream;
+
+  @override
+  Future<void> cancelPairing() async => liveIdentityHandshake?.cancelPairing();
+
+  @override
+  Future<RepositoryResult<PendingPairing?>> pendingPairing() {
+    return execute<PendingPairing?>(() async {
+      final stored = await _sessionRepository.readPendingPairing();
+      // A keychain that cannot be read right now resumes nothing - and undoes
+      // nothing either.
+      if (!stored.hasData) return RepositoryResult<PendingPairing?>.error(exception: stored.exception!);
+      final pending = stored.data;
+      if (pending == null) return const RepositoryResult<PendingPairing?>.success(data: null);
+      if (!DateTime.now().isBefore(pending.waitUntil)) {
+        // Its time ran out while the app was closed. Undone like any sign-in
+        // that did not land: the channel it brought up at launch towards the
+        // server it named stops, and the server's key and addresses go.
+        logRepository.debug(target: this, message: 'sign-in: the wait for approval ran out while the app was closed');
+        await _rollBackSignIn();
+        return const RepositoryResult<PendingPairing?>.success(data: null);
+      }
+      return RepositoryResult<PendingPairing?>.success(data: pending);
+    });
+  }
 
   /// Signs in by presenting a pairing link, and lets the SERVER decide whether
   /// onboarding is due.
@@ -121,7 +155,7 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
       }
 
       try {
-        final greeting = await handshake.pair(link: link, platform: PlatformUtils.family);
+        final greeting = await _pair(handshake, link: link, identifier: identifier, connection: connection);
         if (!greeting.outcomeStated) {
           await _rollBackSignIn();
           return const RepositoryResult<bool>.error(exception: RepositoryException.connection);
@@ -175,17 +209,23 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         // sent looking for an invite they already have.
         await _rollBackSignIn();
         return const RepositoryResult<bool>.error(exception: RepositoryException.internal);
+      } on PairingCancelled {
+        // The person withdrew the request (phase 046). Rolled back like any
+        // attempt that did not land; the screen has nothing to explain.
+        await _rollBackSignIn();
+        return const RepositoryResult<bool>.error(exception: PairingException.cancelled);
       } on PairingRefused catch (e) {
         await _rollBackSignIn();
-        // Two refusals, two answers. Both are about the LINK, because a link
-        // is all there is to refuse now: nobody waits on a human being for
-        // permission to pair a device with their own machine.
-        return RepositoryResult<bool>.error(
-          exception: switch (e.reason) {
-            PairRefusal.expired => RepositoryException.notFound,
-            PairRefusal.notUsable => RepositoryException.authentication,
-          },
-        );
+        // Three refusals, three answers. Each ends in "ask for a new link",
+        // and each says why: the link - or the request an invite opened,
+        // which lives exactly as long - expired; the link is spent; or the
+        // device that issued the invite said no (phase 046).
+        final BaseRepositoryException exception = switch (e.reason) {
+          PairRefusal.expired => RepositoryException.notFound,
+          PairRefusal.notUsable => RepositoryException.authentication,
+          PairRefusal.declined => PairingException.declined,
+        };
+        return RepositoryResult<bool>.error(exception: exception);
       } on Object catch (e, st) {
         // The TYPE only. A FormatException from a base64 decode carries the
         // offending source in its message, which here would be the link or the
@@ -196,6 +236,43 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
         return const RepositoryResult<bool>.error(exception: RepositoryException.connection);
       }
     });
+  }
+
+  /// Presents the link, and waits with it when it is an invite whose request
+  /// waits for approval (phase 046).
+  ///
+  /// The wait is remembered while it lasts - the link, what was set on the
+  /// connection screen and this device's deadline - so a restart within its
+  /// time goes on waiting for the same request (FR-011); the same link
+  /// remembered from before keeps its first deadline. Forgotten when the wait
+  /// ends, whichever way: a link left in storage is a credential nobody needs.
+  Future<IdentityHandshake> _pair(
+    LiveIdentityHandshake handshake, {
+    required PairingLink link,
+    required String identifier,
+    ConnectionSettings? connection,
+  }) async {
+    final remembered = (await _sessionRepository.readPendingPairing()).data;
+    final resumeUntil = remembered != null && PairingLink.tryParse(remembered.link)?.token == link.token ? remembered.waitUntil : null;
+    Future<void>? remembering;
+    try {
+      return await handshake.pair(
+        link: link,
+        platform: PlatformUtils.family,
+        waitUntil: resumeUntil,
+        onPending: (pending) {
+          _awaitingApproval.add(true);
+          remembering = _sessionRepository.savePendingPairing(
+            PendingPairing(link: identifier, waitUntil: pending.waitUntil, connection: connection),
+          );
+        },
+      );
+    } finally {
+      _awaitingApproval.add(false);
+      // After the write that remembered it, or the record would outlive this.
+      await remembering;
+      await _sessionRepository.clearPendingPairing();
+    }
   }
 
   /// Undoes a sign-in that did not land: the channel it brought up towards the

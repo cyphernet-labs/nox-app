@@ -104,4 +104,21 @@ class ServerEvent extends ServerFrame {
   /// describes the machine, not the shared world. The payload is the same
   /// object as `addresses` in the greeting reply.
   static const String serverAddresses = 'server.addresses';
+
+  /// How a request to join through an invite ended, sent to the NEW device on
+  /// the connections it waits on before any greeting (contract §8A, phase
+  /// 046): `allowed` with the identity it now speaks as, `denied`, `expired`
+  /// or `cancelled`. Seq 0, and it does not survive a disconnect - its
+  /// reliable half is presenting the same token again.
+  static const String pairResolved = 'pair.resolved';
+
+  /// A new device asks to join through an invite THIS device issued, sent to
+  /// its greeted connections and again after each of its greetings for every
+  /// request still waiting (contract §8A, phase 046). Seq 0. The payload names
+  /// the request, the new device's OS family and the deadline - no key.
+  static const String devicePairRequested = 'device.pairRequested';
+
+  /// A request this device was asked about has closed, whichever way (contract
+  /// §8A, phase 046): its question is over. Seq 0.
+  static const String devicePairResolved = 'device.pairResolved';
 }
