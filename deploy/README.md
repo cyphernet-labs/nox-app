@@ -84,30 +84,51 @@ noxd backup "/Library/Application Support/NOX/backups/nox-2026-10-10.tar"   # ma
 
 ## Восстановление
 
-Бэкап восстанавливают на машине, где скрипт уже поставил сервер, — на той же или на новой. `noxd restore` кладёт базу только на пустое место, а файлы, которые создаёт, отдаёт тому, кто его запустил, — поэтому его запускают от имени учётной записи сервера:
+Бэкап восстанавливают на машине, где скрипт уже поставил сервер: на той же — вернуть данные на момент бэкапа — или на новой, при переезде. Всё, что сервер получил после бэкапа, при этом пропадает. `noxd restore` кладёт базу только на пустое место и пароль проверяет уже после этого, а файлы, которые создаёт, отдаёт тому, кто его запустил, — поэтому нынешнюю базу откладывают (не удаляют), а восстанавливают от имени учётной записи сервера:
 
 1. Остановить сервер: `sudo systemctl stop noxd` (Linux), `sudo launchctl bootout system/com.cyphernetlabs.noxd` (macOS), `Stop-Service noxd` (Windows).
-2. Убрать из папки данных базу, которую создала установка: `nox.db`, `nox.db-wal`, `nox.db-shm`, `nox.db.key` и папку `nox.db-files` — пока они там, `noxd restore` отказывает.
-3. Положить бэкап в папку `backups`, отдать его учётной записи сервера и восстановить от её имени:
+2. Отложить нынешнюю базу в папку `before-restore` рядом с ней — на той же машине это ваши текущие данные:
 
-```bash
-# Linux
-sudo install -o nox -g nox -m 600 ~/nox-2026-10-10.tar /var/lib/nox/backups/
-sudo -u nox /usr/local/bin/noxd restore /var/lib/nox/backups/nox-2026-10-10.tar -db /var/lib/nox/nox.db
-# macOS
-sudo install -o _nox -g _nox -m 600 ~/nox-2026-10-10.tar "/Library/Application Support/NOX/backups/"
-sudo -u _nox /usr/local/bin/noxd restore "/Library/Application Support/NOX/backups/nox-2026-10-10.tar" -db "/Library/Application Support/NOX/nox.db"
-```
+   ```bash
+   sudo sh -c 'cd /var/lib/nox && mkdir -m 700 before-restore && for f in nox.db nox.db-wal nox.db-shm nox.db.key nox.db-files; do [ ! -e "$f" ] || mv "$f" before-restore/; done'
+   # macOS — то же с cd "/Library/Application Support/NOX"
+   ```
 
-```powershell
-# Windows, PowerShell от имени администратора: права на новые файлы даёт папка данных
-Copy-Item $HOME\Documents\nox-2026-10-10.tar C:\ProgramData\NOX\backups\
-& 'C:\Program Files\NOX\noxd.exe' restore C:\ProgramData\NOX\backups\nox-2026-10-10.tar -db C:\ProgramData\NOX\nox.db
-```
+   ```powershell
+   New-Item -ItemType Directory C:\ProgramData\NOX\before-restore | Out-Null; Move-Item C:\ProgramData\NOX\nox.db* C:\ProgramData\NOX\before-restore\
+   ```
 
-4. Запустить сервер — `sudo systemctl start noxd`, `sudo launchctl bootstrap system /Library/LaunchDaemons/com.cyphernetlabs.noxd.plist`, `Start-Service noxd` — и открыть его паролем, который был у сервера, когда делали бэкап. `noxd restore` перечисляет устройства, которые восстановленный сервер примет: устройство, отозванное после бэкапа, отзывают снова (Settings > Devices).
+3. Положить бэкап в папку `backups`, отдать его учётной записи сервера и восстановить от её имени — `noxd restore` спросит пароль, который был у сервера, когда делали бэкап:
 
-Ключ onion-адреса в бэкап не входит. Чтобы сохранить адрес, папку ключа со старой машины кладут на место папки, которую создала установка (таблица «Где что лежит»), с теми же владельцем и правами, и запускают скрипт ещё раз: он перезапустит tor и передаст серверу этот адрес. Иначе у сервера новый onion-адрес, и устройства узнают его при первом подключении напрямую.
+   ```bash
+   # Linux
+   sudo install -o nox -g nox -m 600 ~/nox-2026-10-10.tar /var/lib/nox/backups/
+   sudo -u nox /usr/local/bin/noxd restore /var/lib/nox/backups/nox-2026-10-10.tar -db /var/lib/nox/nox.db
+   # macOS
+   sudo install -o _nox -g _nox -m 600 ~/nox-2026-10-10.tar "/Library/Application Support/NOX/backups/"
+   sudo -u _nox /usr/local/bin/noxd restore "/Library/Application Support/NOX/backups/nox-2026-10-10.tar" -db "/Library/Application Support/NOX/nox.db"
+   ```
+
+   ```powershell
+   # PowerShell от имени администратора: права на новые файлы даёт папка данных
+   Copy-Item $HOME\Documents\nox-2026-10-10.tar C:\ProgramData\NOX\backups\
+   & 'C:\Program Files\NOX\noxd.exe' restore C:\ProgramData\NOX\backups\nox-2026-10-10.tar -db C:\ProgramData\NOX\nox.db
+   ```
+
+4. Запустить сервер — `sudo systemctl start noxd`, `sudo launchctl bootstrap system /Library/LaunchDaemons/com.cyphernetlabs.noxd.plist`, `Start-Service noxd` — и открыть его тем же паролем бэкапа. Когда сервер открылся, `before-restore` можно удалить. Не вышло — пароль не тот или бэкап повреждён — `noxd restore` ничего не кладёт: файлы возвращают из `before-restore` на место и запускают сервер, как был.
+5. `noxd restore` перечисляет устройства, которые восстановленный сервер примет: устройство, отозванное после бэкапа, отзывают снова (Settings > Devices).
+
+### Переезд на новую машину
+
+Восстановленный сервер — та же машина для устройств: тот же ключ, спаривать заново не нужно. Но устройства знают только адреса старой машины, и пока старый сервер работает, они остаются на нём. Поэтому:
+
+1. На старой машине сделать бэкап и сразу остановить сервер, чтобы он больше не запускался: `sudo systemctl disable --now noxd` (Linux), `sudo launchctl bootout system/com.cyphernetlabs.noxd && sudo launchctl disable system/com.cyphernetlabs.noxd` (macOS), `Stop-Service noxd; Set-Service noxd -StartupType Disabled` (Windows). Так же — её onion-сервис, если ключ onion-адреса переезжает (п. 3): `sudo systemctl disable --now tor` или строка `%include` NOX из `/etc/tor/torrc` (Linux), метка `com.cyphernetlabs.nox-tor` (macOS), служба `nox-tor` (Windows). Что придёт между бэкапом и остановкой, в бэкап не попадёт.
+2. На новой машине поставить сервер скриптом и восстановить бэкап по шагам выше. Пароль, который спросит установка, потом не нужен: восстановленный сервер открывается паролем бэкапа.
+3. Устройства должны найти новую машину по адресу, который знают. Один из путей:
+   - **перенести ключ onion-адреса** — тогда устройства с включённым `Use Tor` находят сервер через Tor и в приветствии получают его новые адреса для дома. Файлы `hs_ed25519_secret_key` и `hs_ed25519_public_key` из папки ключа старой машины (таблица «Где что лежит») кладут поверх тех, что создала установка, отдают владельцу этой папки — пользователю tor (`debian-tor` в Debian и Ubuntu, `toranon` в Fedora и RHEL, `tor` в Arch, `_noxtor` на macOS; на Windows права даёт папка), права 600, где включён SELinux — `sudo restorecon -R /var/lib/tor/nox`; затем запускают скрипт ещё раз: он перезапустит tor и передаст серверу прежний адрес;
+   - **оставить машине прежний адрес** в домашней сети (тот же IP — резервирование в роутере — и тот же порт) или перевести на неё публичный адрес;
+   - **ввести новый адрес** на каждом устройстве в Settings > Connection.
+4. Восстановленный сервер помнит адреса из бэкапа. Новый onion-адрес установка передаёт серверу сама. Если же сервер на новой машине стоит без tor (`--no-tor`), он продолжит называть устройствам onion-адрес бэкапа: удалите его на служебной странице (пустое поле и `Set`) или запустите скрипт без `--no-tor`. Так же с публичным адресом, если он больше не ведёт на эту машину.
 
 ## Повторный запуск
 
@@ -169,7 +190,7 @@ Onion-адрес tor пишет в файл `hostname` в папке ключа.
 
 ### Linux
 
-1. tor: `apt install tor` или `dnf install tor`; если в дистрибутиве tor старее 0.4.9 — репозиторий Tor Project по инструкции support.torproject.org. Ключ репозитория сверяют по отпечатку, и в файле не должно быть других ключей: apt и rpm доверяют каждому ключу файла. Для dnf ключ кладут локальным файлом (`/etc/pki/rpm-gpg/RPM-GPG-KEY-torproject`) и пишут `gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-torproject` — по адресу `https://` `dnf -y` примет любой ключ, который там окажется. Строки выше — в `/etc/tor/torrc`, затем `systemctl restart tor`.
+1. tor: `apt install tor` или `dnf install tor`; если в дистрибутиве tor старее 0.4.9 или собран без PoW (`tor --list-modules` → `pow: no`) — репозиторий Tor Project по инструкции support.torproject.org. Ключ репозитория сверяют по отпечатку, и в файле не должно быть других ключей: apt и rpm доверяют каждому ключу файла. Для dnf ключ кладут локальным файлом (`/etc/pki/rpm-gpg/RPM-GPG-KEY-torproject`) и пишут `gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-torproject` — по адресу `https://` `dnf -y` примет любой ключ, который там окажется. Строки выше — в `/etc/tor/torrc`, затем `systemctl restart tor`.
 2. Сервер: `CGO_ENABLED=0 go build -trimpath -ldflags=-s -o /usr/local/bin/noxd .` в `client_backend/`; учётная запись `useradd --system --user-group --no-create-home nox`; папка `/var/lib/nox` (владелец `nox`, права 700); служба — `deploy/noxd.service.tmpl` с подставленными значениями в `/etc/systemd/system/noxd.service`, затем `systemctl enable --now noxd`.
 3. Пароль и первое устройство: `noxd unlock`, затем `noxd link -qr`.
 

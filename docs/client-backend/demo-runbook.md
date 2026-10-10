@@ -104,7 +104,7 @@ fvm flutter run -d macos --dart-define-from-file=config/stage.json
 | Порт 8080 занят: `noxd unlock` пишет, что пароль принят, но основной порт не открыть, и сервер останавливается | Погасить прошлый `noxd` (скрипт гасит свой, но не чужой) или поднять стенд с `--port` |
 | Сервер не стартует, в логе `tor runs as a separate service now…` | В команде запуска остался флаг `-tor`, `-tor-bin` или `-tor-dir`. tor — отдельная служба; её onion-адрес сервер получает параметром `-onion-addr` или кнопкой `Set` |
 | В выводе скрипта `tor: none` | tor не найден или запуск выключен `--no-tor`: стенд работает только напрямую. Поставить tor 0.4.9+ с защитой PoW (`tor --list-modules` → `pow: yes`; tor из Homebrew собран без неё) или передать путь `--tor-bin` |
-| Скрипт пишет, что tor не записал onion-адрес | tor не поднялся — причина в конце `tor.log` в папке стенда: чаще всего папку `tor` держит другой процесс tor или у папок не те права |
+| Скрипт пишет, что tor не записал onion-адрес | tor не поднялся — причина в конце `tor.log` в папке стенда: чаще всего папку `tor` держит другой процесс tor, у папок не те права или tor собран без PoW (`tor --list-modules` → `pow: no`, в журнале — отказ от `HiddenServicePoWDefensesEnabled`; так собран tor из Homebrew) — нужен tor с `pow: yes` (`--tor-bin`) |
 | Плашка `No server answers at this onion address. Check the address and that Tor is running on the server.` | tor стенда не запущен, а onion-адрес остался в базе с прошлого запуска. Поднять стенд с tor или удалить адрес на служебной странице (пустое поле и `Set`) |
 
 ## Что в демо МОЖНО говорить про защиту канала
