@@ -41,23 +41,16 @@ func validChatName(raw string) (string, bool) {
 var deviceChatIDPattern = regexp.MustCompile(`^c_[0-9a-f]{32}$`)
 
 // helloRequest mirrors contract §3.
+//
+// There is no device_key and no signature since 044: the key is the one this
+// connection proved in the channel check, over a binding no other connection
+// shares, so the greeting has nothing left to prove - and nothing in it can
+// name another key. Fields an older client still sends are ignored, never
+// believed.
 type helloRequest struct {
 	Schema int    `json:"schema"`
 	Since  *int64 `json:"since"`
 	Label  string `json:"label"`
-	// DeviceKey is the device's Ed25519 PUBLIC key, base64; Signature is its
-	// signature over "nox/challenge/v1:" ‖ challenge. Together they are the
-	// whole of authentication: the person is found by the key, and the key is
-	// only believed because the signature verifies.
-	//
-	// A greeting that presents neither is REFUSED with `unauthenticated`. The
-	// stage-1 rule this comment used to state - that a device without a key
-	// speaks as an ephemeral identity - is gone with 032, and it was a
-	// misreading of §3 besides: the contract's "a greeting may not be refused"
-	// is about the LABEL, and reading it as covering keys handed a full session
-	// to anyone who omitted the field.
-	DeviceKey string `json:"device_key"`
-	Signature string `json:"signature"`
 }
 
 type helloReply struct {
@@ -66,10 +59,11 @@ type helloReply struct {
 	JournalID string           `json:"journal_id"`
 	Limits    config.Limits    `json:"limits"`
 	Identity  greetingIdentity `json:"identity"`
-	// Addresses is where this machine can be reached now (039, contract §3).
-	// Always present - `direct` possibly empty - and its presence is the
-	// capability signal: a client sends device.setAccessKey only to a server
-	// that sent this.
+	// Addresses is where this machine can be reached now (039, 045, contract
+	// §3): the addresses it finds on its networks, and its public and onion
+	// address when they are set. Always present - `direct` possibly empty -
+	// and its presence is the capability signal for what 039 put on the wire,
+	// server.addresses first of all.
 	Addresses *addressSet `json:"addresses"`
 }
 
@@ -115,30 +109,15 @@ func (c *client) handleSessionHello(cmd protocol.Command) {
 		return
 	}
 
-	deviceKey := strings.TrimSpace(req.DeviceKey)
-	// A greeting without a key is refused, not served. It used to be accepted
-	// on the grounds that "the contract forbids refusing a greeting" - but that
-	// rule (§3) is about the LABEL, and reading it as covering keys handed any
-	// connection that simply omitted the field a full session: the whole
-	// journal replayed, live events streamed, and the ability to post. Every
-	// connection proves possession now, or it gets nothing.
+	// The person is found by the key the channel proved - the only key a
+	// connection has. A key nobody paired gets nothing: the label rule of §3,
+	// "a greeting may not be refused", is about the NAME and never covered
+	// keys, and reading it that way once handed a full session to anybody.
 	//
-	// The signature is checked BEFORE the lookup, so an unverified key never
-	// reaches the database as a search term.
-	if deviceKey == "" || !verifyChallenge(deviceKey, c.challenge, req.Signature) {
-		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrUnauthenticated, "a signed device key is required"))
-		return
-	}
-
-	// Recorded BEFORE the resolve: the key is already proved by the signature,
-	// and a revoke arriving while this greeting is still in the database would
-	// otherwise find an empty key and leave the connection running.
-	c.srv.setDeviceKey(c, deviceKey)
-
 	// Resolve BEFORE registering with the hub: this writes, and invariant 4
 	// forbids a write transaction straddling hub registration. Failing here
 	// also avoids the unregister dance below.
-	id, err := c.srv.store.ResolveIdentity(c.ctx, deviceKey, strings.TrimSpace(req.Label), time.Now().Unix())
+	id, err := c.srv.store.ResolveIdentity(c.ctx, c.deviceKey, strings.TrimSpace(req.Label), time.Now().Unix())
 	if errors.Is(err, store.ErrDeviceUnknown) {
 		// Revoked, or a store rebuilt from nothing. The device cannot tell them
 		// apart and must not: both mean "this is not my server any more".
@@ -206,6 +185,11 @@ func (c *client) handleSessionHello(cmd protocol.Command) {
 	// watcher send at once if the list moved between the read above and here.
 	c.srv.markGreeted(c, addrs.Version)
 	c.srv.pokeAddresses()
+	// Every request still waiting for this device's answer, again (046): the
+	// event that first asked does not survive a disconnect, and a device whose
+	// app was closed is asked the moment it is back. After markGreeted, so a
+	// request opened meanwhile reaches this connection one way or the other.
+	c.resendPairRequests()
 
 	if req.Since != nil {
 		since := *req.Since

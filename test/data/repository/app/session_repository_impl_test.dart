@@ -4,6 +4,9 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/data/repository/app/session_repository_impl.dart';
 import 'package:nox_app/data/repository/connection/connection_storage.dart';
+import 'package:nox_app/data/repository/log_repository_impl.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/repository/log_repository.dart';
 import 'package:nox_app/general/pairing/device_keys.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -140,37 +143,83 @@ void main() {
     });
   });
 
-  group('the paired server (feature 032)', () {
-    const fingerprint = 'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=';
+  group('the paired server (feature 032, phase 044)', () {
+    const serverKey = 'oJql9HpnWYAv+VX43C0qFKXJnSO+l/hkEn/5ODRVpPA=';
 
-    test('address and fingerprint survive, so the app talks to the server it paired with', () async {
-      await repository.saveServer(address: '10.0.0.5:9000', serverFingerprint: fingerprint);
+    test('address and server key survive, so the app talks to the server it paired with', () async {
+      await repository.saveServer(address: '10.0.0.5:9000', serverKey: serverKey);
 
       expect((await repository.serverAddress()).data, '10.0.0.5:9000');
-      // Read back as well as written: before this feature nothing ever read it,
-      // and a value nobody reads is a value that can quietly stop being written.
-      expect((await repository.serverFingerprint()).data, fingerprint);
+      expect((await repository.serverKey()).data, serverKey);
+      expect(await const FlutterSecureStorage().read(key: 'session.server_key'), serverKey);
     });
 
-    test('an install that never paired has neither an address nor a fingerprint', () async {
+    test('an install that never paired has neither an address nor a server key', () async {
       expect((await repository.serverAddress()).data, isNull);
-      expect((await repository.serverFingerprint()).data, isNull);
+      expect((await repository.serverKey()).data, isNull);
     });
 
     test('logout forgets the server, because the next link brings its own', () async {
-      await repository.saveServer(address: '10.0.0.5:9000', serverFingerprint: fingerprint);
+      await repository.saveServer(address: '10.0.0.5:9000', serverKey: serverKey);
       await repository.clear();
 
       expect((await repository.serverAddress()).data, isNull);
-      expect((await repository.serverFingerprint()).data, isNull);
+      expect((await repository.serverKey()).data, isNull);
+    });
+
+    test('a failed sign-in forgets the server it named', () async {
+      await repository.saveServer(address: '10.0.0.5:9000', serverKey: serverKey);
+      await repository.discardSignIn();
+
+      expect((await repository.serverAddress()).data, isNull);
+      expect((await repository.serverKey()).data, isNull);
     });
 
     test('the device seed is a real 32-byte key, not a random string', () async {
       final seed = (await repository.deviceSecret()).data!;
-      // If this ever stops being a key, signing silently starts throwing and
-      // every connection fails with an error nobody can trace to here.
+      // The module opens every channel with it: if this ever stops being a
+      // key, every connection fails with an error nobody can trace to here.
       expect(base64.decode(seed).length, 32);
       expect((await DeviceKeys.publicKey(seed)).isNotEmpty, isTrue);
+    });
+  });
+
+  group('a session paired before phase 044 (FR-025)', () {
+    test('an identifier with no server key predates it', () async {
+      await repository.saveIdentifier(identifier: 'abc', onboardingComplete: true);
+      await const FlutterSecureStorage().write(key: 'session.server_fingerprint', value: 'fp');
+      expect((await repository.predatesServerKey()).data, isTrue);
+    });
+
+    test('a session with its server key does not', () async {
+      await repository.saveServer(address: '10.0.0.5:9000', serverKey: 'oJql9HpnWYAv+VX43C0qFKXJnSO+l/hkEn/5ODRVpPA=');
+      await repository.saveIdentifier(identifier: 'abc', onboardingComplete: true);
+      expect((await repository.predatesServerKey()).data, isFalse);
+    });
+
+    test('no session at all predates nothing - and after the wipe there is none, so it happens once', () async {
+      expect((await repository.predatesServerKey()).data, isFalse);
+      await repository.saveIdentifier(identifier: 'abc', onboardingComplete: true);
+      expect((await repository.predatesServerKey()).data, isTrue);
+      await repository.clear();
+      expect((await repository.predatesServerKey()).data, isFalse);
+    });
+
+    test('a keychain that cannot be read says so, and never claims the session is old', () async {
+      // The failure is logged on its way out.
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<LogRepository>(LoggerLogRepository());
+      addTearDown(getIt.reset);
+      final prefs = await SharedPreferences.getInstance();
+      final locked = SessionRepositoryImpl(const _LockedStorage(), prefs);
+      final result = await locked.predatesServerKey();
+      expect(result.hasData, isFalse, reason: 'an error, which wipes nothing');
+    });
+
+    test('the bootstrap sweep drops the certificate fingerprint the old builds pinned', () async {
+      await const FlutterSecureStorage().write(key: 'session.server_fingerprint', value: 'fp');
+      expect((await repository.sweepLegacyKeys()).hasData, isTrue);
+      expect(await const FlutterSecureStorage().read(key: 'session.server_fingerprint'), isNull);
     });
   });
 
@@ -374,7 +423,7 @@ void main() {
       // A sign-in the process did not survive leaves the old server's records
       // behind; kept, they would send the next connection to its onion.
       await writeAll();
-      await repository.saveServer(address: '10.0.0.9:8443', serverFingerprint: 'fp');
+      await repository.saveServer(address: '10.0.0.9:8443', serverKey: 'oJql9HpnWYAv+VX43C0qFKXJnSO+l/hkEn/5ODRVpPA=');
       expect(await storage.read(key: ConnectionStorage.serverAddresses), isNull);
       expect(await storage.read(key: ConnectionStorage.accessKeyRegistered), isNull);
       expect(await storage.read(key: ConnectionStorage.accessKey), 'BBBB', reason: 'the key names this install');
@@ -397,6 +446,22 @@ class _NoSweepStorage extends FlutterSecureStorage {
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
   }) async {}
+}
+
+/// A keychain that is still locked after a reboot: every read throws.
+class _LockedStorage extends FlutterSecureStorage {
+  const _LockedStorage();
+
+  @override
+  Future<String?> read({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async => throw StateError('the keychain is locked');
 }
 
 /// The worse store: neither the sweep nor a delete of the identifier lands, so

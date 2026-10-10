@@ -3,9 +3,11 @@
 package config
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"net"
+	"strings"
 )
 
 // Limits are the server-declared bounds announced in the session.hello reply
@@ -22,32 +24,27 @@ type Config struct {
 	Addr      string
 	DBPath    string
 	FilesPath string
-	// StatusAddr is where the service page listens, or empty for no page at
-	// all. Always a loopback address: the page shows the claim link, and a
-	// claim link reachable over the network hands ownership to everyone on
-	// that network. The restriction lives on the SOCKET rather than in a
-	// handler, because a check inside the process is a check somebody
-	// eventually routes around with a header.
+	// StatusAddr is where the service page and /health listen, or empty for
+	// neither. Always a loopback address: the page hands out the machine link,
+	// and a machine link reachable over the network would let anybody on that
+	// network pair a device. The restriction lives on the SOCKET rather than in
+	// a handler, because a check inside the process is a check somebody
+	// eventually routes around with a header. `noxd link` asks the running
+	// server through the same listener, so without it there is no link at all.
 	StatusAddr string
 	Limits     Limits
 
-	// Tor turns the onion service on (039). On by default: the server keeps
-	// Tor up for as long as it runs, because a stationary machine has no
-	// battery to save and, without a published address, a phone away from
-	// home cannot reach it at all. false removes tor entirely - no process, no
-	// onion address, nothing announced - while the onion key and the devices'
-	// access keys stay in the database, so turning it back on brings back the
-	// same address.
-	Tor bool
-	// TorBin is an explicit path to the tor binary, or empty. When set it is
-	// FINAL: a path that holds no tor means "not found", never a reason to look
-	// somewhere else - an explicit choice silently replaced by another tor is
-	// worse than a refusal, and "tor not found" would be impossible to test on
-	// a machine that has one in PATH.
-	TorBin string
-	// TorDir is tor's own state directory: its cache of the network and the
-	// control-port cookie. A cache, outside backups; never the database.
-	TorDir string
+	// PublicAddr and OnionAddr are the start parameters of the two addresses
+	// this machine stores (045): the public host:port and the onion address
+	// the separate tor service publishes for it. Raw and unchecked on purpose.
+	// A malformed one must not stop the server - a machine that rebooted with
+	// nobody at it would otherwise stop every conversation over a typo - so
+	// the server validates it when it applies it, keeps the stored address on
+	// a refusal and says so in the log and on the service page. Empty means
+	// "not given", which changes nothing: an address is deleted only on the
+	// service page.
+	PublicAddr string
+	OnionAddr  string
 }
 
 // DefaultLimits mirrors the contract v0 §3 example values.
@@ -58,6 +55,18 @@ func DefaultLimits() Limits {
 		MaxFrameBytes:      131072,
 	}
 }
+
+// errTorIsAService answers every flag the server's own tor once had (039).
+//
+// They fail rather than being ignored: a unit file still saying -tor=false was
+// written by somebody who expects this server to run tor, and silently
+// accepting it would leave them believing it does. tor is a separate service
+// since 045, and the only thing the server takes from it is the address.
+var errTorIsAService = errors.New("tor runs as a separate service now: point its onion service at this server's port " +
+	"and give the address with -onion-addr (or set it on the service page)")
+
+// removedTorFlags are the flags 039 added and 045 removed.
+var removedTorFlags = []string{"tor", "tor-bin", "tor-dir"}
 
 // Load parses args (without the program name) into a Config. Flag values win
 // over NOX_ADDR / NOX_DB / NOX_FILES environment variables, which win over
@@ -77,36 +86,32 @@ func Load(args []string, getenv func(string) string) (Config, error) {
 	if defStatus == "" {
 		defStatus = "127.0.0.1:8081"
 	}
-	// Anything but an explicit "false" or "0" leaves Tor on: the variable can
-	// turn it off, and a typo in it must not do so silently in the other
-	// direction either - it is parsed below with the flag's own rules.
-	defTor := true
-	if v := getenv("NOX_TOR"); v != "" {
-		parsed, err := parseBool(v)
-		if err != nil {
-			return Config{}, fmt.Errorf("invalid NOX_TOR %q: %w", v, err)
-		}
-		defTor = parsed
-	}
 
 	fs := flag.NewFlagSet("noxd", flag.ContinueOnError)
-	addr := fs.String("addr", defAddr, "listen address (host:port)")
+	addr := fs.String("addr", defAddr, "listen address (host:port); tor's onion service points here too")
 	dbPath := fs.String("db", defDB, "path to the SQLite database file")
 	filesPath := fs.String("files", defFiles, "attachment bytes directory (default <db>-files)")
-	statusAddr := fs.String("status-addr", defStatus, "loopback address for the service page, empty to disable it")
-	torOn := fs.Bool("tor", defTor, "publish an onion service through tor (false: no tor at all)")
-	torBin := fs.String("tor-bin", getenv("NOX_TOR_BIN"), "path to the tor binary; when set it is final (default: next to noxd, then PATH)")
-	torDir := fs.String("tor-dir", getenv("NOX_TOR_DIR"), "tor state directory (default <db>-tor)")
+	statusAddr := fs.String("status-addr", defStatus, "loopback address for the service page and /health, empty to disable both")
+	publicAddr := fs.String("public-addr", getenv("NOX_PUBLIC_ADDR"),
+		"public address (host:port) written to the database when it first appears or changes")
+	onionAddr := fs.String("onion-addr", getenv("NOX_ONION_ADDR"),
+		"onion address (<56 characters>.onion) written to the database when it first appears or changes")
+	// Boolean-shaped, so a removed flag fails at its own name whatever follows
+	// it: "-tor false", "-tor=false" and "-tor-bin /usr/bin/tor" all stop here
+	// with the hint, instead of a value-taking flag swallowing the next word.
+	for _, name := range removedTorFlags {
+		fs.BoolFunc(name, "removed: tor runs as a separate service (see -onion-addr)", func(string) error {
+			return errTorIsAService
+		})
+	}
 	if err := fs.Parse(args); err != nil {
 		return Config{}, fmt.Errorf("parse flags: %w", err)
 	}
 	// Nothing here takes a positional argument, so one is always a mistake -
-	// and the likeliest is "-tor false": a boolean flag does not consume the
-	// word after it, so tor would stay ON and parsing would stop there,
-	// dropping every flag after it and opening a fresh database in the
-	// working directory.
+	// and an expensive one: parsing stops at it, every flag after it is dropped,
+	// and a fresh database opens in the working directory.
 	if fs.NArg() > 0 {
-		return Config{}, fmt.Errorf("unexpected argument %q (a boolean flag is written -tor=false)", fs.Arg(0))
+		return Config{}, fmt.Errorf("unexpected argument %q (every flag takes its value as -name value or -name=value)", fs.Arg(0))
 	}
 
 	if _, _, err := net.SplitHostPort(*addr); err != nil {
@@ -122,10 +127,6 @@ func Load(args []string, getenv func(string) string) (Config, error) {
 	if files == "" {
 		files = *dbPath + "-files"
 	}
-	dir := *torDir
-	if dir == "" {
-		dir = *dbPath + "-tor"
-	}
 
 	return Config{
 		Addr:       *addr,
@@ -133,22 +134,45 @@ func Load(args []string, getenv func(string) string) (Config, error) {
 		FilesPath:  files,
 		StatusAddr: *statusAddr,
 		Limits:     DefaultLimits(),
-		Tor:        *torOn,
-		TorBin:     *torBin,
-		TorDir:     dir,
+		PublicAddr: strings.TrimSpace(*publicAddr),
+		OnionAddr:  strings.TrimSpace(*onionAddr),
 	}, nil
 }
 
-// parseBool reads NOX_TOR with the same words the -tor flag accepts, so the
-// two spellings of one setting cannot disagree about what "off" looks like.
-func parseBool(v string) (bool, error) {
-	switch v {
-	case "1", "t", "T", "TRUE", "true", "True":
-		return true, nil
-	case "0", "f", "F", "FALSE", "false", "False":
-		return false, nil
+// LinkConfig is what `noxd link` needs: where the running server's service
+// page listens, and whether to draw the link as a QR code too.
+type LinkConfig struct {
+	StatusAddr string
+	QR         bool
+}
+
+// LoadLink parses the arguments of `noxd link` (046). The address follows the
+// server's own rule and default - flag, then NOX_STATUS_ADDR, then
+// 127.0.0.1:8081 - so the command finds a server started with the same
+// environment without being told, and it is held to loopback the same way: the
+// command asks for a link, and the answer must not come from anywhere else.
+func LoadLink(args []string, getenv func(string) string) (LinkConfig, error) {
+	defStatus := getenv("NOX_STATUS_ADDR")
+	if defStatus == "" {
+		defStatus = "127.0.0.1:8081"
 	}
-	return false, fmt.Errorf("want true or false")
+	fs := flag.NewFlagSet("noxd link", flag.ContinueOnError)
+	statusAddr := fs.String("status-addr", defStatus, "the running server's service page address (loopback)")
+	qr := fs.Bool("qr", false, "draw the link as a QR code in the terminal as well")
+	if err := fs.Parse(args); err != nil {
+		return LinkConfig{}, fmt.Errorf("parse flags: %w", err)
+	}
+	if fs.NArg() > 0 {
+		return LinkConfig{}, fmt.Errorf("unexpected argument %q (noxd link takes only -status-addr and -qr)", fs.Arg(0))
+	}
+	if *statusAddr == "" {
+		return LinkConfig{}, errors.New("-status-addr must name the running server's service page: " +
+			"a server started with it empty has no page, and no way to hand out a link")
+	}
+	if err := checkStatusAddr(*statusAddr); err != nil {
+		return LinkConfig{}, err
+	}
+	return LinkConfig{StatusAddr: *statusAddr, QR: *qr}, nil
 }
 
 // checkStatusAddr refuses anything the service page must not listen on.
@@ -156,7 +180,7 @@ func parseBool(v string) (bool, error) {
 // Empty is allowed and means no page. Everything else has to resolve to a
 // loopback address: the flag exists to move the port, not to put the page on a
 // network, and somebody who writes 0.0.0.0 there has to learn it now rather
-// than when a stranger claims their server. A name is resolved rather than
+// than when a stranger pairs with their server. A name is resolved rather than
 // pattern-matched, so "localhost" passes and a name that quietly points
 // somewhere else does not.
 func checkStatusAddr(addr string) error {

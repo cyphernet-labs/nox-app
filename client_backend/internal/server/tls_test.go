@@ -2,53 +2,45 @@ package server
 
 import (
 	"bytes"
-	"context"
 	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/tls"
-	"encoding/base64"
 	"io"
 	"net"
-	"net/http"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
-	"nox.app/client-backend/internal/store"
+	"nox.app/client-backend/internal/eidolon"
 )
 
-// A plain request never reaches a handler. There is no flag to turn this off
-// and no fallback: a channel that can be downgraded is a channel an attacker
-// downgrades.
-//
-// The refusal comes from the TLS layer, which answers such a request with a
-// plaintext 400 saying so, rather than from a closed socket - so the test is
-// written against what a handler would have returned, not against the dial.
-func TestAPlainRequestNeverReachesAHandler(t *testing.T) {
+// The TLS layer of the channel, on its own. Who is on each end is the channel
+// check's question (channel_test.go); what is asked here is that the layer
+// under it is TLS 1.3, a full handshake every time, and a certificate that
+// claims nothing.
+
+// A plain request is answered with nothing at all - not a 400, not a word.
+// There is no flag to turn this off and no fallback: a channel that can be
+// downgraded is a channel an attacker downgrades.
+func TestAPlainRequestIsAnsweredWithNothing(t *testing.T) {
 	ts, _ := newTestServer(t)
 
-	plain := "http://" + ts.Listener.Addr().String() + "/health"
-	resp, err := http.Get(plain) //nolint:noctx // the point is what comes back
+	conn, err := net.Dial("tcp", ts.Listener.Addr().String())
 	if err != nil {
-		return // a closed socket is an even clearer refusal
+		t.Fatalf("dial: %v", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode == http.StatusOK {
-		t.Fatalf("GET %s was served over plain HTTP", plain)
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.Write([]byte("GET /ws HTTP/1.1\r\nHost: nox\r\n\r\n")); err != nil {
+		t.Fatalf("write: %v", err)
 	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read the refusal: %v", err)
-	}
-	if strings.Contains(string(body), `"status"`) {
-		t.Fatalf("the health handler answered a plain request: %s", body)
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	got, _ := io.ReadAll(conn)
+	if len(got) != 0 {
+		t.Fatalf("a plain request was answered with %q", got)
 	}
 }
 
-// TLS 1.2 is refused. Without this the minimum version rests on one line of
-// configuration that nothing would notice the loss of.
+// TLS 1.2 is refused. The exporter the check signs is TLS 1.3's, and without
+// this the minimum version rests on one line nothing would notice the loss of.
 func TestATLS12ClientIsRefused(t *testing.T) {
 	ts, _ := newTestServer(t)
 
@@ -64,222 +56,128 @@ func TestATLS12ClientIsRefused(t *testing.T) {
 	}
 }
 
-// The certificate has to carry the key the link fingerprints, or every device
-// that followed the link refuses the very server that issued it.
-func TestTheCertificateCarriesTheKeyTheLinkFingerprints(t *testing.T) {
+// presentedCertificate completes a bare TLS handshake and returns what the
+// server presented - a handshake only: the check after it is not this test's.
+func presentedCertificate(t *testing.T, addr string, cfg *tls.Config) tls.ConnectionState {
+	t.Helper()
+	conn, err := tls.Dial("tcp", addr, cfg)
+	if err != nil {
+		t.Fatalf("tls.Dial: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	return conn.ConnectionState()
+}
+
+// The certificate is technical: a throwaway P-256 key, self-issued, naming no
+// host - and above all not the machine's key, which only the channel check
+// ever proves. The negotiated protocol is http/1.1, the one the WebSocket
+// upgrade exists in.
+func TestTheCertificateIsTechnicalAndNotTheMachineKey(t *testing.T) {
 	ts, srv := newTestServer(t)
-	id, err := srv.store.ServerIdentity(context.Background())
-	if err != nil {
-		t.Fatalf("ServerIdentity: %v", err)
-	}
+	state := presentedCertificate(t, ts.Listener.Addr().String(), testClientTLS())
 
-	leaf := ts.TLS.Certificates[0].Leaf
-	if leaf == nil {
-		t.Fatal("the certificate has no parsed Leaf, so nothing can read what was issued")
+	if state.Version != tls.VersionTLS13 {
+		t.Fatalf("negotiated %x, want TLS 1.3", state.Version)
 	}
-	if got := store.FingerprintOfSPKI(leaf.RawSubjectPublicKeyInfo); got != id.Fingerprint {
-		t.Fatalf("certificate fingerprint %s, identity fingerprint %s", got, id.Fingerprint)
+	if state.NegotiatedProtocol != "http/1.1" {
+		t.Fatalf("negotiated %q, want http/1.1", state.NegotiatedProtocol)
 	}
-
-	// And the same bytes all the way into the link a person carries.
-	link, err := BuildPairingLink("127.0.0.1:8080", id.Fingerprint, base64.RawURLEncoding.EncodeToString(make([]byte, 16)))
-	if err != nil {
-		t.Fatalf("BuildPairingLink: %v", err)
+	leaf := state.PeerCertificates[0]
+	if _, ok := leaf.PublicKey.(*ecdsa.PublicKey); !ok {
+		t.Fatalf("the certificate key is %T, want a throwaway ECDSA key", leaf.PublicKey)
 	}
-	want, err := base64.StdEncoding.DecodeString(id.Fingerprint)
-	if err != nil {
-		t.Fatalf("decode the fingerprint: %v", err)
-	}
-	if got := fingerprintInLink(t, link); !bytes.Equal(got, want) {
-		t.Fatalf("the link carries %x, the certificate %x", got, want)
-	}
-}
-
-// The dates and the name decide nothing, so a restart may hand out a brand-new
-// certificate and a device pinned days ago must not notice.
-func TestARestartIssuesANewCertificateThePinStillAccepts(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "restart.db")
-
-	first, srv, closeFirst := openStack(t, path, nil)
-	id, err := srv.store.ServerIdentity(context.Background())
-	if err != nil {
-		closeFirst()
-		t.Fatalf("ServerIdentity: %v", err)
-	}
-	firstSerial := first.TLS.Certificates[0].Leaf.SerialNumber
-	closeFirst()
-
-	second, _, closeSecond := openStack(t, path, nil)
-	defer closeSecond()
-
-	leaf := second.TLS.Certificates[0].Leaf
-	if leaf.SerialNumber.Cmp(firstSerial) == 0 {
-		t.Fatal("the restart reused the certificate, so nothing proves it is rebuilt from the key")
-	}
-	if got := store.FingerprintOfSPKI(leaf.RawSubjectPublicKeyInfo); got != id.Fingerprint {
-		t.Fatalf("the restart changed the key: %s, was %s", got, id.Fingerprint)
-	}
-	// The proof that matters: a client holding only the old fingerprint still
-	// gets in.
-	client := &http.Client{Transport: &http.Transport{TLSClientConfig: PinnedTLSConfig(id.Fingerprint)}}
-	resp, err := client.Get(second.URL + "/health") //nolint:noctx // a health probe
-	if err != nil {
-		t.Fatalf("a device pinned before the restart was refused: %v", err)
-	}
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("health after restart = %d", resp.StatusCode)
-	}
-}
-
-// A chain whose LEAF is a stranger's is refused, however right the certificate
-// on top of it is.
-//
-// The Go twin of the Dart check, and it earns its place: the Dart side had
-// exactly this hole - it judged the TOP of the presented chain, so appending
-// this server's public certificate above a stranger's leaf was a complete
-// MITM. `rawCerts[0]` is the leaf and always has been here, but nothing held
-// it: the mutation to `rawCerts[len-1]` passed every Go test.
-func TestAChainWithAStrangerLeafIsRefusedHoweverRightTheTop(t *testing.T) {
-	ts, srv := newTestServer(t)
-	ours := ts.TLS.Certificates[0]
-	id, err := srv.store.ServerIdentity(context.Background())
-	if err != nil {
-		t.Fatalf("ServerIdentity: %v", err)
-	}
-
-	stranger, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("generate a stranger key: %v", err)
-	}
-	strangerCert, err := buildCertificate(stranger, time.Now())
-	if err != nil {
-		t.Fatalf("buildCertificate: %v", err)
-	}
-
-	// The attacker holds only their own key, and borrows our certificate - it
-	// is public, handed to everyone who ever dialled us.
-	hostile := tls.Certificate{
-		Certificate: [][]byte{strangerCert.Certificate[0], ours.Certificate[0]},
-		PrivateKey:  stranger,
-		Leaf:        strangerCert.Leaf,
-	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	cfg := &tls.Config{Certificates: []tls.Certificate{hostile}, MinVersion: tls.VersionTLS13, NextProtos: []string{"http/1.1"}}
-	stand := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: readHeaderTimeout}
-	go func() { _ = stand.Serve(tls.NewListener(listener, cfg)) }()
-	t.Cleanup(func() { _ = stand.Close() })
-
-	client := &http.Client{Transport: &http.Transport{TLSClientConfig: PinnedTLSConfig(id.Fingerprint)}}
-	resp, err := client.Get("https://" + listener.Addr().String() + "/health") //nolint:noctx // expected to fail
-	if err == nil {
-		_ = resp.Body.Close()
-		t.Fatal("a chain with a stranger's leaf and our certificate on top was accepted")
-	}
-	if !strings.Contains(err.Error(), ErrPinMismatch.Error()) {
-		t.Fatalf("refused, but not by the pin: %v", err)
-	}
-}
-
-// Somebody else's key is refused, which is the entire point of the phase.
-func TestAnotherKeyIsRefusedNoMatterHowValidItsCertificateLooks(t *testing.T) {
-	ts, _ := newTestServer(t)
-
-	stranger, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("generate a stranger key: %v", err)
-	}
-	cert, err := buildCertificate(stranger, time.Now())
-	if err != nil {
-		t.Fatalf("buildCertificate: %v", err)
-	}
-	strangerFingerprint := store.FingerprintOfSPKI(cert.Leaf.RawSubjectPublicKeyInfo)
-
-	client := &http.Client{Transport: &http.Transport{TLSClientConfig: PinnedTLSConfig(strangerFingerprint)}}
-	resp, err := client.Get(ts.URL + "/health") //nolint:noctx // expected to fail
-	if err == nil {
-		_ = resp.Body.Close()
-		t.Fatal("a client pinned to another key connected anyway")
-	}
-}
-
-// An expired certificate, a name belonging to somebody else and an unknown
-// issuer must all be ACCEPTED when the key is right.
-//
-// The negative cases above would pass against an implementation that refuses on
-// dates or names - and that implementation breaks on the first home server
-// whose owner forgot about it. Tolerance has to be asserted positively.
-func TestTheWrongDatesNameAndIssuerAreAllToleratedOnTheRightKey(t *testing.T) {
-	ts, srv := newTestServer(t)
-	id, err := srv.store.ServerIdentity(context.Background())
-	if err != nil {
-		t.Fatalf("ServerIdentity: %v", err)
-	}
-	signer, err := srv.store.ServerSigner(context.Background())
-	if err != nil {
-		t.Fatalf("ServerSigner: %v", err)
-	}
-
-	// Long expired, on the machine's real key.
-	expired, err := buildCertificate(signer, time.Now().AddDate(-200, 0, 0))
-	if err != nil {
-		t.Fatalf("buildCertificate: %v", err)
-	}
-	if !expired.Leaf.NotAfter.Before(time.Now()) {
-		t.Fatalf("the fixture is not actually expired: NotAfter %s", expired.Leaf.NotAfter)
-	}
-
-	replacement := &tls.Config{
-		Certificates: []tls.Certificate{expired},
-		MinVersion:   tls.VersionTLS13,
-		NextProtos:   []string{"http/1.1"},
-	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	// Serve, not ServeTLS: the listener below is ALREADY wrapped, and ServeTLS
-	// wraps what it is given a second time. That put a tls.Conn inside a
-	// tls.Conn - the handshake the pin cares about still happened on the inner
-	// one, so the dial succeeded, but the outer layer then read decrypted HTTP
-	// as if it were a handshake and answered 400 without a handler ever
-	// running. The test passed because it never looked at the status.
-	stand := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: readHeaderTimeout}
-	go func() { _ = stand.Serve(tls.NewListener(listener, replacement)) }()
-	t.Cleanup(func() { _ = stand.Close() })
-
-	client := &http.Client{Transport: &http.Transport{TLSClientConfig: PinnedTLSConfig(id.Fingerprint)}}
-	resp, err := client.Get("https://" + listener.Addr().String() + "/health") //nolint:noctx // a health probe
-	if err != nil {
-		t.Fatalf("an expired certificate on the right key was refused: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	// The status IS the assertion. Without it this test proves only that a
-	// connection was made, which is true of a server answering nothing but
-	// errors.
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("the expired-certificate stand answered %d, want 200", resp.StatusCode)
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read the health answer: %v", err)
-	}
-	if string(body) != `{"status":"ok"}` {
-		t.Fatalf("health over the expired certificate returned %s", body)
-	}
-
-	// The name is not asserted at all - there is no SAN and the subject is not
-	// a host name - and the issuer is the key itself, which no store knows.
-	leaf := ts.TLS.Certificates[0].Leaf
 	if len(leaf.DNSNames) != 0 || len(leaf.IPAddresses) != 0 {
-		t.Fatalf("the certificate names hosts (%v %v); a device would then have to reach it by that name",
+		t.Fatalf("the certificate names hosts (%v %v); a device would then be tempted to check them",
 			leaf.DNSNames, leaf.IPAddresses)
 	}
 	if leaf.Issuer.String() != leaf.Subject.String() {
-		t.Fatalf("issuer %q is not the subject %q, so something signed this but the machine itself",
-			leaf.Issuer, leaf.Subject)
+		t.Fatalf("issuer %q is not the subject %q", leaf.Issuer, leaf.Subject)
+	}
+	// The machine's key is Ed25519 and lives in the store: an ECDSA key above
+	// is already not it, and the store still holds the one the links carry.
+	if len(serverKeyOf(t, srv)) == 0 {
+		t.Fatal("the machine has no key of its own")
+	}
+}
+
+// A restart hands out a NEW certificate on a NEW key - nothing in it is kept -
+// and a device paired before the restart gets in all the same, because what
+// it checks is the machine's key in the channel, which the store keeps.
+func TestARestartMintsANewCertificateAndPairedDevicesStillGetIn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "restart.db")
+
+	first, srv, closeFirst := openStack(t, path, nil)
+	dev := pairedDevice(t, first, srv)
+	before := presentedCertificate(t, first.Listener.Addr().String(), testClientTLS()).PeerCertificates[0]
+	closeFirst()
+
+	second, srv2, closeSecond := openStack(t, path, nil)
+	defer closeSecond()
+	after := presentedCertificate(t, second.Listener.Addr().String(), testClientTLS()).PeerCertificates[0]
+	if before.SerialNumber.Cmp(after.SerialNumber) == 0 {
+		t.Fatal("the restart served the same certificate")
+	}
+	if before.PublicKey.(*ecdsa.PublicKey).Equal(after.PublicKey) {
+		t.Fatal("the restart reused the certificate key, so something is keeping it")
+	}
+
+	c := dialAs(t, second, srv2, dev)
+	c.expectGreeting()
+	c.hello(1, "")
+}
+
+// Every connection is a full handshake: the server issues no session tickets,
+// so a client that keeps a session cache still cannot resume. A resumed TLS 1.3
+// session is not signed by the server again, and the contract wants a verified
+// handshake signature on every connection.
+func TestEveryConnectionIsAFullHandshake(t *testing.T) {
+	ts, _ := newTestServer(t)
+	cfg := &tls.Config{
+		//nolint:gosec // the certificate is not the question here
+		InsecureSkipVerify: true,
+		MinVersion:         tls.VersionTLS13,
+		NextProtos:         []string{"http/1.1"},
+		ClientSessionCache: tls.NewLRUClientSessionCache(4),
+		ServerName:         "nox",
+	}
+	for i := range 3 {
+		conn, err := tls.Dial("tcp", ts.Listener.Addr().String(), cfg)
+		if err != nil {
+			t.Fatalf("dial %d: %v", i, err)
+		}
+		// A ticket arrives after the handshake, if at all: read for a moment
+		// so one would have been taken in before the next dial.
+		_ = conn.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
+		_, _ = conn.Read(make([]byte, 1))
+		resumed := conn.ConnectionState().DidResume
+		_ = conn.Close()
+		if resumed {
+			t.Fatalf("connection %d resumed a session", i)
+		}
+	}
+}
+
+// The binding is the RFC 9266 exporter with an EMPTY context. The app's
+// module asks for exactly that (Some(b"") in rustls) while this side passes
+// nil; in TLS 1.3 the two are the same value, and if they ever were not, every
+// device would fail the check with a signature mismatch nobody could explain.
+func TestTheBindingIsTheSameWithANilOrAnEmptyContext(t *testing.T) {
+	ts, _ := newTestServer(t)
+	conn, err := tls.Dial("tcp", ts.Listener.Addr().String(), testClientTLS())
+	if err != nil {
+		t.Fatalf("tls.Dial: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	state := conn.ConnectionState()
+	withNil, err := state.ExportKeyingMaterial(eidolon.ExporterLabel, nil, eidolon.BindingSize)
+	if err != nil {
+		t.Fatalf("exporter with nil: %v", err)
+	}
+	withEmpty, err := state.ExportKeyingMaterial(eidolon.ExporterLabel, []byte{}, eidolon.BindingSize)
+	if err != nil {
+		t.Fatalf("exporter with an empty context: %v", err)
+	}
+	if !bytes.Equal(withNil, withEmpty) {
+		t.Fatalf("nil context %x, empty context %x", withNil, withEmpty)
 	}
 }

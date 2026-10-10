@@ -9,10 +9,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/coder/websocket"
 
@@ -545,5 +547,135 @@ func TestOrphanSweepRemovesAbandonedUploads(t *testing.T) {
 	}
 	if _, err := srv.store.FileByID(t.Context(), freshID); err != nil {
 		t.Fatalf("fresh upload swept: %v", err)
+	}
+}
+
+// A transfer needs a paired key on the connection AND a live token (044,
+// FR-006a). A token alone was a bearer credential: whoever held one moved the
+// bytes. A stranger is told 401 before the token is even looked at, so it can
+// neither spend one nor learn whether it is live.
+func TestATransferNeedsAPairedKeyAsWellAsAToken(t *testing.T) {
+	ts, srv := newTestServer(t)
+	anna := dialWS(t, ts, srv)
+	anna.expectGreeting()
+	anna.hello(1, "")
+	stranger := channelOf(t, ts).clientAs(newDevice(t))
+	payload := randomPayload(t, 4096)
+	fileID, token := uploadBegin(t, anna, 2, "a.bin", len(payload), "application/octet-stream")
+
+	status := func(client *http.Client, method, token string, body []byte) int {
+		t.Helper()
+		req, err := http.NewRequest(method, ts.URL+"/files/"+token, bytes.NewReader(body))
+		if err != nil {
+			t.Fatalf("build %s: %v", method, err)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("%s: %v", method, err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	if got := status(stranger, http.MethodPut, token, payload); got != http.StatusUnauthorized {
+		t.Fatalf("PUT from an unpaired key with a live token = %d, want 401", got)
+	}
+	// The refusal spent nothing: the paired device's PUT with the same token
+	// lands.
+	if got := putBytes(t, ts, token, payload); got != http.StatusNoContent {
+		t.Fatalf("PUT from the paired device after the refusal = %d, want 204", got)
+	}
+	// A spent token from a paired device is still the 404 a client of 043
+	// reads as "ask for a new pass"; from a stranger it is 401 all the same.
+	if got := putBytes(t, ts, token, payload); got != http.StatusNotFound {
+		t.Fatalf("spent token from the paired device = %d, want 404", got)
+	}
+	if got := status(stranger, http.MethodPut, token, payload); got != http.StatusUnauthorized {
+		t.Fatalf("spent token from an unpaired key = %d, want 401", got)
+	}
+
+	download := downloadBegin(t, anna, 3, fileID)
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		if got := status(stranger, method, download, nil); got != http.StatusUnauthorized {
+			t.Fatalf("%s from an unpaired key with a live token = %d, want 401", method, got)
+		}
+	}
+	code, body, _ := doGet(t, ts, download, "")
+	if code != http.StatusOK || !bytes.Equal(body, payload) {
+		t.Fatalf("GET from the paired device after the refusals = %d, %d bytes", code, len(body))
+	}
+}
+
+// The key is looked up on every request, not once per connection: a device
+// revoked while its connection is still open loses its transfers with its row,
+// the way it loses its socket.
+func TestARevokedDeviceLosesItsTransfersOnAnOpenConnection(t *testing.T) {
+	ts, srv := newTestServer(t)
+	anna := dialWS(t, ts, srv)
+	anna.expectGreeting()
+	anna.hello(1, "")
+	client := channelOf(t, ts).clientAs(anna.dev)
+	payload := randomPayload(t, 2048)
+	_, first := uploadBegin(t, anna, 2, "a.bin", len(payload), "application/octet-stream")
+
+	// One request first, so the connection exists and is kept for the next.
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/files/not-a-token", nil)
+	if err != nil {
+		t.Fatalf("build GET: %v", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("a paired device with a bad token = %d, want 404", resp.StatusCode)
+	}
+
+	if _, err := srv.store.RevokeDevice(t.Context(), anna.dev.pub, time.Now().Unix()); err != nil {
+		t.Fatalf("RevokeDevice: %v", err)
+	}
+	var reused bool
+	trace := httptrace.WithClientTrace(t.Context(), &httptrace.ClientTrace{
+		GotConn: func(info httptrace.GotConnInfo) { reused = info.Reused },
+	})
+	put, err := http.NewRequestWithContext(trace, http.MethodPut, ts.URL+"/files/"+first, bytes.NewReader(payload))
+	if err != nil {
+		t.Fatalf("build PUT: %v", err)
+	}
+	resp, err = client.Do(put)
+	if err != nil {
+		t.Fatalf("PUT: %v", err)
+	}
+	_ = resp.Body.Close()
+	if !reused {
+		t.Fatal("the PUT opened a new connection, so this test proves nothing about an open one")
+	}
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("PUT from a device revoked mid-connection = %d, want 401", resp.StatusCode)
+	}
+}
+
+// A handler served without the channel in front of it - a wiring mistake, a
+// test mux - hands nothing out: no session, no bytes. Run never builds one,
+// and this keeps a slip from becoming a hole.
+func TestAHandlerWithoutTheChannelRefusesEverything(t *testing.T) {
+	_, srv := newTestServer(t)
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodGet, "/ws"},
+		{http.MethodPut, "/files/anything"},
+		{http.MethodGet, "/files/anything"},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		req.Header.Set("Connection", "Upgrade")
+		req.Header.Set("Upgrade", "websocket")
+		req.Header.Set("Sec-WebSocket-Version", "13")
+		req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s without a channel peer = %d, want 401", tc.method, tc.path, rec.Code)
+		}
 	}
 }

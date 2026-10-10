@@ -23,11 +23,12 @@ type Greeting struct {
 	Srv GreetingBody `json:"srv"`
 }
 
-// GreetingBody carries the maximum supported schema and the challenge that
-// stage 2 will require clients to sign. Stage 1 sends it but never verifies.
+// GreetingBody carries the maximum supported schema and nothing else. The
+// challenge it once carried for the device to sign is gone (feature 044): the
+// device proved its key in the channel check before this frame was written, on
+// a binding no other connection shares, so there is nothing left to sign here.
 type GreetingBody struct {
-	SchemaMax int    `json:"schema_max"`
-	Challenge string `json:"challenge"`
+	SchemaMax int `json:"schema_max"`
 }
 
 // Command is an incoming client frame. Data stays raw for two-phase decoding;
@@ -82,19 +83,20 @@ const (
 	CmdFileUploadBegin   = "file.uploadBegin"
 	CmdFileDownloadBegin = "file.downloadBegin"
 
-	// Pairing (§8A). CmdPair is the ONLY command accepted before the greeting:
-	// an unpaired device has nothing to sign the challenge with.
+	// Pairing (§8A). CmdPair and CmdPairCancel are the ONLY commands accepted
+	// before the greeting: an unpaired device's key is one the server does not
+	// know, and a greeting from it is refused - so a device waiting for Allow
+	// has to be able to withdraw its request without greeting too.
 	CmdPair             = "pair"
+	CmdPairCancel       = "pair.cancel"
 	CmdDeviceList       = "device.list"
 	CmdDeviceRevoke     = "device.revoke"
 	CmdDeviceInvite     = "device.invite"
+	CmdDeviceApprove    = "device.approve"
 	CmdIdentitySetLabel = "identity.setLabel"
-	// CmdDeviceSetAccessKey registers the onion access key - an x25519 PUBLIC
-	// key - of the device this connection greeted as (039, contract §8A). A
-	// client sends it only after seeing `addresses` in the greeting reply: an
-	// older server answers an unknown command with invalid_request, which a
-	// client treats as fatal.
-	CmdDeviceSetAccessKey = "device.setAccessKey"
+	// device.setAccessKey is gone with the onion access keys (045): the onion
+	// address is open to whoever knows it, and the server answers the command
+	// invalid_request like any other it does not know.
 )
 
 // EventDeviceRevoked is delivered to the device being cut off, immediately
@@ -119,11 +121,30 @@ const EventIdentityUpdated = "identity.updated"
 // having missed it.
 const EventDevicePaired = "device.paired"
 
+// The three events of pairing with approval (046). Off-journal like the ones
+// above - seq 0, no cursor, never replayed - because who may join the machine
+// is not the shared world the journal records. Each has a reliable half that
+// survives a disconnect: a repeat of `pair` answers with the recorded outcome,
+// and a greeting re-sends every request still waiting for an answer.
+const (
+	// EventPairResolved tells the NEW device, waiting on its connection, how
+	// its request ended: allowed (with the identity it now speaks as),
+	// denied, expired or cancelled.
+	EventPairResolved = "pair.resolved"
+	// EventDevicePairRequested asks the device that issued an invite to answer
+	// a request: the new device's OS family and the deadline, nothing else.
+	EventDevicePairRequested = "device.pairRequested"
+	// EventDevicePairResolved tells the issuing device a request no longer
+	// waits for its answer, whichever way it closed.
+	EventDevicePairResolved = "device.pairResolved"
+)
+
 // EventServerAddresses tells greeted connections where this machine can be
-// reached now - its direct addresses and, while it offers one, its onion
-// address (039, contract §8A). Off-journal like the three above. It has ONE
-// sender, the address watcher, and never overtakes the greeting reply that
-// carries the same object: that reply is its reliable half.
+// reached now - the addresses it finds on its networks and, when they are
+// set, its public and onion address (039, 045, contract §3, §8A).
+// Off-journal like the three above. It has ONE sender, the address watcher,
+// and never overtakes the greeting reply that carries the same object: that
+// reply is its reliable half.
 const EventServerAddresses = "server.addresses"
 
 // Chat is the wire model of contract §4 (022: preview served but unused by

@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -12,28 +11,18 @@ import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/sync/live_identity_handshake.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
-import 'package:nox_app/data/service/tor/fake_tor_service.dart';
-import 'package:nox_app/data/sync/connection/connection_path_selector.dart';
 import 'package:nox_app/domain/repository/connection/access_key_repository.dart';
-import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
-import 'package:nox_app/domain/service/app_lifecycle_service.dart';
-import 'package:nox_app/domain/service/network_change_service.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_app/general/pairing/pairing_link.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../remote/socket/fake_socket.dart';
-import 'connection/fake_direct_prober.dart';
 import 'live_identity_handshake_test.mocks.dart';
 
-/// A real link the parser accepts: the pending path runs after parsing, and a
-/// placeholder would fail before reaching what these tests are about.
-const kTestLink = 'https://nox.app/p/#AQF_AAABH5CjZmMytIk_2XvPJ-jonqlQtYsZD3SB33P1foxqnrVbFo-VEf6WohQoqA1_na5iVUo';
-
-/// A version-2 link (IPv4) from the vectors both sides pin: it lends an onion
-/// address on port 443 and a one-time key.
-const kTestLinkV2 =
-    'https://nox.app/p/#AgHAqAEKH5AAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eH6ChoqOkpaanqKmqq6ytrq8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-PwG7QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8';
+/// A real link the parser accepts (the contract's `minimal` vector): the
+/// pending path runs after parsing, and a placeholder would fail before
+/// reaching what these tests are about.
+const kTestLink = 'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODwEGwKgBFCD7';
 
 @GenerateMocks([LiveSessionStarter])
 void main() {
@@ -97,8 +86,6 @@ void main() {
     late NoxSocketClient client;
     late MockLiveSessionStarter starter;
     late LiveIdentityHandshake handshake;
-    late FakeTorService tor;
-    late ConnectionPathSelector selector;
 
     final url = Uri.parse('ws://127.0.0.1:8080/ws');
 
@@ -119,17 +106,7 @@ void main() {
       factory = FakeSocketFactory();
       client = NoxSocketClient(factory, sync);
       starter = MockLiveSessionStarter();
-      tor = FakeTorService();
-      selector = ConnectionPathSelector.forTest(
-        FakeDirectProber(),
-        tor,
-        getIt<ServerAddressesRepository>(),
-        getIt<AccessKeyRepository>(),
-        getIt<NetworkChangeService>(),
-        getIt<AppLifecycleService>(),
-        client,
-      );
-      handshake = LiveIdentityHandshake(client, starter, getIt<AccessKeyRepository>(), tor, getIt<ServerAddressesRepository>(), selector);
+      handshake = LiveIdentityHandshake(client, starter, getIt<AccessKeyRepository>());
     });
 
     tearDown(() async {
@@ -235,7 +212,7 @@ void main() {
 
       Object? failed;
       unawaited(
-        handshake.pair(link: PairingLink.parse(kTestLink), deviceKey: 'k', platform: 'ios').catchError((Object e) {
+        handshake.pair(link: PairingLink.parse(kTestLink), platform: 'ios').catchError((Object e) {
           failed = e;
           return const IdentityHandshake(authorId: '', label: '', created: null);
         }),
@@ -258,7 +235,7 @@ void main() {
       });
 
       IdentityHandshake? settled;
-      unawaited(handshake.pair(link: PairingLink.parse(kTestLink), deviceKey: 'k', platform: 'ios').then((v) => settled = v));
+      unawaited(handshake.pair(link: PairingLink.parse(kTestLink), platform: 'ios').then((v) => settled = v));
 
       await waitUntil(() => factory.created.isNotEmpty && factory.latest.commandNamed('pair') != null, reason: 'presented');
       final socket = factory.latest;
@@ -274,100 +251,22 @@ void main() {
       expect(settled!.created, isTrue);
     });
 
-    test('pairing carries this device\'s onion access key (FR-015)', () async {
+    test('pairing carries the link token and this device\'s onion access key, and no device key (phase 044)', () async {
       when(starter.restart()).thenAnswer((_) async {
         await client.stop();
         await client.start(url: url, credentialsProvider: () async => const GreetingCredentials.unpaired());
         factory.latest.pushGreeting();
       });
 
-      unawaited(handshake.pair(link: PairingLink.parse(kTestLink), deviceKey: 'k', platform: 'ios').then((_) {}, onError: (Object _) {}));
+      unawaited(handshake.pair(link: PairingLink.parse(kTestLink), platform: 'ios').then((_) {}, onError: (Object _) {}));
       await waitUntil(() => factory.created.isNotEmpty && factory.latest.commandNamed('pair') != null, reason: 'presented');
 
       final sent = factory.latest.commandNamed('pair')!['data'] as Map<String, dynamic>;
       final own = (await getIt<AccessKeyRepository>().deviceKey()).data!;
+      expect(sent['token'], PairingLink.parse(kTestLink).token);
       expect(sent['access_key'], own.publicBase64);
       expect(sent['access_key'], isNot(contains(base64Encode(own.privateKey))), reason: 'only the public half travels');
-    });
-
-    group('a version-2 link (FR-020, FR-021)', () {
-      AccessKeyRepository keys() => getIt<AccessKeyRepository>();
-      final onion = '${'a' * 56}.onion:443';
-      ({String onion, Uint8List key})? lentDuringPairing;
-
-      void serveTheChannel() {
-        when(starter.restart()).thenAnswer((_) async {
-          final lent = selector.lent;
-          // A copy: the selector wipes its own once the pairing is answered.
-          lentDuringPairing = lent == null ? null : (onion: lent.onion, key: Uint8List.fromList(lent.key));
-          await client.stop();
-          await client.start(url: url, credentialsProvider: () async => const GreetingCredentials.unpaired());
-          factory.latest.pushGreeting();
-        });
-      }
-
-      Future<Object?> pairAndAnswer({required bool ok}) async {
-        Object? outcome;
-        unawaited(
-          handshake
-              .pair(link: PairingLink.parse(kTestLinkV2), deviceKey: 'k', platform: 'ios')
-              .then((v) => outcome = v, onError: (Object e) => outcome = e),
-        );
-        await waitUntil(() => factory.created.isNotEmpty && factory.latest.commandNamed('pair') != null, reason: 'presented');
-        final socket = factory.latest;
-        final index = socket.sent.indexWhere((f) => f['cmd'] == 'pair');
-        if (ok) {
-          socket.reply(
-            index,
-            data: {
-              'identity': {'id': 'u_me', 'label': 'Anna', 'created': false},
-            },
-          );
-        } else {
-          socket.reply(index, ok: false, code: 'invalid_token');
-        }
-        await waitUntil(() => outcome != null, reason: 'the pairing answered');
-        return outcome;
-      }
-
-      setUp(() {
-        lentDuringPairing = null;
-        tor.supported = true;
-        serveTheChannel();
-      });
-
-      test('it lends its onion address and one-time key for the pairing, and no longer', () async {
-        await pairAndAnswer(ok: true);
-
-        expect(lentDuringPairing?.onion, onion, reason: 'there when the channel came up');
-        expect(lentDuringPairing?.key, PairingLink.parse(kTestLinkV2).oneTimePriv);
-        expect(selector.lent, isNull, reason: 'gone once the reply is in');
-      });
-
-      test('a paired device keeps the onion address, and its own key counts as registered', () async {
-        await pairAndAnswer(ok: true);
-
-        expect((await getIt<ServerAddressesRepository>().read()).data?.onion, onion);
-        expect((await keys().isRegistered()).data, isTrue);
-      });
-
-      test('a refused pairing erases the lent key just the same', () async {
-        final outcome = await pairAndAnswer(ok: false);
-
-        expect(outcome, isA<PairingRefused>());
-        expect(selector.lent, isNull);
-        expect((await keys().isRegistered()).data, isFalse);
-        expect((await getIt<ServerAddressesRepository>().read()).data?.onion, isNull);
-      });
-
-      test('where Tor cannot run the lent fields are read and left unused', () async {
-        tor.supported = false;
-
-        await pairAndAnswer(ok: true);
-
-        expect(lentDuringPairing, isNull);
-        expect((await getIt<ServerAddressesRepository>().read()).data?.onion, isNull);
-      });
+      expect(sent.containsKey('device_key'), isFalse, reason: 'the server takes it from the connection');
     });
   });
 }

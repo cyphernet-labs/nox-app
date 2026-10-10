@@ -13,8 +13,8 @@ Fills the Settings detail pane (7.1); no push, selection swaps the pane. One gro
 - `alone` — nothing but this device
 - `error` — Couldn't load your devices.
 - `action error` — Couldn't revoke that device. Try again. (its own line above the list, never the list's)
-- `invite` — QR card, link valid for 10 minutes. Always asked for with the server's onion address (phase 040): such a link (version 2) works from any network
-- `invite-home-only` — the server gave an ordinary link (its Tor is off or not connected): a note under the card's message, above the link itself: “This link works only on your home network.” (`onSurfaceVariant`)
+- `invite` — QR card with a `nox://pair/…` link (version 3), valid for 10 minutes. Until 045 a new device pairs over the server's direct address only (the onion service opens only for a paired device's access key), so the server answers `"onion": false` and the card always carries the note under its message, above the link itself: “This link works only on your home network.” (`onSurfaceVariant`)
+- `invite-home-only` — the same card and note; kept as its own state because the note follows the server's answer, not a guess of the app
 - `Revoke` is destructive (`error`), not the brand accent: it cannot be undone without a new pairing link, and on the current device it is a logout
 
 ## Behavior

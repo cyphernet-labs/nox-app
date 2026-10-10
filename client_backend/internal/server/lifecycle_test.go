@@ -132,11 +132,11 @@ func TestStoryThreeRestartIntegrity(t *testing.T) {
 			// message's own author, so a restart that lost the key would look
 			// like a different person.
 			if dev == nil {
-				dev, _ = claimDevice(t, ts, srv)
+				dev, _ = firstDevice(t, ts, srv)
 			}
-			c := dialWS(t, ts, srv)
+			c := dialAs(t, ts, srv, dev)
 			c.expectGreeting()
-			c.greet(t, 1, dev, "")
+			c.hello(1, "")
 			if i == 0 {
 				chatID = seedChat(t, c, "restart")
 			}
@@ -153,9 +153,9 @@ func TestStoryThreeRestartIntegrity(t *testing.T) {
 			closeAll()
 		}
 	}()
-	c := dialWS(t, ts, srv)
+	c := dialAs(t, ts, srv, dev)
 	c.expectGreeting()
-	cursor := helloCursor(t, c, 0, fmt.Sprintf(`,"device_key":%q,"signature":%q`, dev.pub, dev.sign(t, c.challenge)))
+	cursor := helloCursor(t, c, 0, "")
 	if want := int64(cycles + 1); cursor != want {
 		t.Fatalf("cursor after %d cycles = %d, want %d", cycles, cursor, want)
 	}

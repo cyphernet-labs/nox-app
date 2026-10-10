@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -7,7 +8,10 @@ import 'package:nox_app/data/exception/file_transfer_exception.dart';
 import 'package:nox_app/data/remote/api_client.dart';
 import 'package:nox_app/data/remote/datasource/file_remote_data_source.dart';
 import 'package:nox_app/data/remote/datasource/real/real_file_remote_data_source.dart';
-import 'package:nox_app/data/remote/pinned_http_client.dart';
+import 'package:nox_app/data/remote/channel/channel_http_client.dart';
+import 'package:nox_app/data/repository/log_repository_impl.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/repository/log_repository.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/remote/socket/server_frame.dart';
 import 'package:nox_app/data/remote/socket/socket_channel_factory.dart';
@@ -17,13 +21,16 @@ import 'package:nox_app/domain/model/app_config/server_limits.dart';
 import 'package:nox_app/domain/model/file/transfer_cancellation.dart';
 import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
 
-/// The byte half of the file chain against a real TLS server on the paired
-/// machine's certificate (phase 043): what goes on the wire when a transfer
-/// is continued, what each answer means, and that only silence - never time
-/// alone - ends a transfer.
-const String _fixtures = 'test/general/pairing/fixtures';
+import '../../channel/fake_channel.dart';
 
-String get _fingerprint => File('$_fixtures/fingerprint.txt').readAsStringSync().trim();
+/// The byte half of the file chain against a real HTTP server, over the
+/// channel client (phase 043, phase 044): what goes on the wire when a
+/// transfer is continued, what each answer means, and that only silence -
+/// never time alone - ends a transfer. The channels are loopback TCP to the
+/// address each request names; the module's TLS and check are its own tests'.
+ChannelHttpClient _channels() =>
+    ChannelHttpClient(LoopbackChannelApi())
+      ..bind(serverKey: Uint8List.fromList(List<int>.generate(32, (i) => 0xA0 + i)), deviceSeed: Uint8List(32));
 
 class _Config implements AppConfigRepository {
   @override
@@ -55,7 +62,7 @@ class _FakeSocket implements NoxSocketClient {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-/// The server's side of a PUT, played on the paired machine's certificate.
+/// The server's side of a PUT.
 class _PutServer {
   late HttpServer _server;
   int get port => _server.port;
@@ -66,8 +73,9 @@ class _PutServer {
   /// Never read the body: a path that went dead under the transfer.
   bool stopReading = false;
 
-  /// Read the body slowly: a pause after every chunk.
-  Duration? pausePerChunk;
+  /// Read the body slowly, at this many bytes a second - paced by the bytes
+  /// rather than by the chunks, whose size the transport decides.
+  int? bytesPerSecond;
 
   /// Go quiet for [quietFor] once this many bytes are in - the tail still in
   /// the buffers, the way a slow path holds it.
@@ -78,10 +86,7 @@ class _PutServer {
   int? contentLength;
 
   Future<void> start() async {
-    final context = SecurityContext()
-      ..useCertificateChainBytes(File('$_fixtures/valid.pem').readAsBytesSync())
-      ..usePrivateKeyBytes(File('$_fixtures/server_key.pem').readAsBytesSync());
-    _server = await HttpServer.bindSecure(InternetAddress.loopbackIPv4, 0, context);
+    _server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     _server.listen((request) async {
       contentLength = request.contentLength;
       if (stopReading) return; // holds the request open, reads nothing
@@ -89,8 +94,8 @@ class _PutServer {
         var quieted = false;
         await for (final chunk in request) {
           received.addAll(chunk);
-          final pause = pausePerChunk;
-          if (pause != null) await Future<void>.delayed(pause);
+          final rate = bytesPerSecond;
+          if (rate != null) await Future<void>.delayed(Duration(microseconds: chunk.length * 1000000 ~/ rate));
           final after = quietAfter;
           if (!quieted && after != null && received.length >= after) {
             quieted = true;
@@ -130,10 +135,7 @@ class _GetServer {
   final List<Map<String, String?>> asked = <Map<String, String?>>[];
 
   Future<void> start() async {
-    final context = SecurityContext()
-      ..useCertificateChainBytes(File('$_fixtures/valid.pem').readAsBytesSync())
-      ..usePrivateKeyBytes(File('$_fixtures/server_key.pem').readAsBytesSync());
-    _server = await HttpServer.bindSecure(InternetAddress.loopbackIPv4, 0, context);
+    _server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     _server.listen((request) async {
       final range = request.headers.value('range');
       final ifRange = request.headers.value('if-range');
@@ -185,6 +187,11 @@ void main() {
     HttpOverrides.global = null;
   });
   tearDownAll(() => HttpOverrides.global = saved);
+  setUp(() {
+    getIt.allowReassignment = true;
+    getIt.registerSingleton<LogRepository>(LoggerLogRepository());
+  });
+  tearDown(getIt.reset);
 
   late _PutServer server;
   late _FakeSocket socket;
@@ -205,7 +212,7 @@ void main() {
     server = _PutServer();
     await server.start();
     socket = _FakeSocket();
-    api = ApiClient(_Config(), PinnedHttpClient()..pinTo(_fingerprint))..initBase(address: 'https://127.0.0.1:${server.port}');
+    api = ApiClient(_Config(), _channels())..initBase(address: 'https://127.0.0.1:${server.port}');
     file = File('${Directory.systemTemp.path}/nox_put_${DateTime.now().microsecondsSinceEpoch}.bin');
     await writePayload(64 * 1024);
   });
@@ -361,8 +368,9 @@ void main() {
     });
 
     test('a slow transfer that keeps moving is never cut, however long it takes (FR-009)', () async {
+      // Two seconds in all at 4 MiB/s, and never a quiet second at a time.
       await writePayload(8 * 1024 * 1024);
-      server.pausePerChunk = const Duration(milliseconds: 5);
+      server.bytesPerSecond = 4 * 1024 * 1024;
       final watch = Stopwatch()..start();
 
       await source(stallLimit: const Duration(seconds: 1)).putBytes(uploadPath: '/files/t', file: file, offset: 0);
@@ -414,7 +422,7 @@ void main() {
     setUp(() async {
       getServer = _GetServer()..file = List<int>.generate(1000, (i) => i % 251);
       await getServer.start();
-      getApi = ApiClient(_Config(), PinnedHttpClient()..pinTo(_fingerprint))..initBase(address: 'https://127.0.0.1:${getServer.port}');
+      getApi = ApiClient(_Config(), _channels())..initBase(address: 'https://127.0.0.1:${getServer.port}');
     });
 
     tearDown(() => getServer.close());
@@ -519,12 +527,9 @@ void main() {
     test('a body that never sends a byte after its headers ends too - Dio\'s clock would never start', () async {
       // dart:io sends headers only with the first byte of a body, so this one
       // is written by hand: the headers of a 1000-byte file, then nothing.
-      final context = SecurityContext()
-        ..useCertificateChainBytes(File('$_fixtures/valid.pem').readAsBytesSync())
-        ..usePrivateKeyBytes(File('$_fixtures/server_key.pem').readAsBytesSync());
-      final raw = await SecureServerSocket.bind(InternetAddress.loopbackIPv4, 0, context);
+      final raw = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
       addTearDown(raw.close);
-      final held = <SecureSocket>[];
+      final held = <Socket>[];
       addTearDown(() async {
         for (final socket in held) {
           socket.destroy();
@@ -536,7 +541,7 @@ void main() {
           socket.write('HTTP/1.1 200 OK\r\ncontent-length: 1000\r\nlast-modified: ${getServer.version}\r\n\r\n');
         });
       });
-      final api = ApiClient(_Config(), PinnedHttpClient()..pinTo(_fingerprint))..initBase(address: 'https://127.0.0.1:${raw.port}');
+      final api = ApiClient(_Config(), _channels())..initBase(address: 'https://127.0.0.1:${raw.port}');
 
       final fetched = await RealFileRemoteDataSource.forTest(
         socket,
@@ -596,7 +601,7 @@ void main() {
         ..stallAfter = 100;
       await quiet.start();
       addTearDown(quiet.close);
-      final getApi = ApiClient(_Config(), PinnedHttpClient()..pinTo(_fingerprint))..initBase(address: 'https://127.0.0.1:${quiet.port}');
+      final getApi = ApiClient(_Config(), _channels())..initBase(address: 'https://127.0.0.1:${quiet.port}');
       final fetched = await RealFileRemoteDataSource.forTest(
         socket,
         getApi,
@@ -649,7 +654,7 @@ void main() {
       // A new stream to the onion service sometimes fetches its descriptor
       // anew; the socket waits 45 s for that, and a transfer cut at 30 s failed
       // exactly where the socket got through.
-      final onion = ApiClient(_Config(), PinnedHttpClient())
+      final onion = ApiClient(_Config(), ChannelHttpClient(ScriptedChannelApi()))
         ..initBase(address: 'https://abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwx.onion:443');
       final seen = watchConnects(onion);
       final transfers = RealFileRemoteDataSource.forTest(socket, onion);

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"nox.app/client-backend/internal/store"
 )
 
 func ips(list ...string) func() []net.IP {
@@ -95,7 +98,7 @@ func TestAHostNameThatFailsToResolveKeepsTheListItHad(t *testing.T) {
 	var mu sync.Mutex
 	answer := []net.IP{net.ParseIP("192.168.1.20")}
 	var fail error
-	st := newOnionStack(t, func(s *Server) {
+	_, srv := newTestServerWith(t, func(s *Server) {
 		s.cfg.Addr = "nox.example:8080"
 		s.addressPoll = time.Hour // only the test refreshes
 		s.resolveHost = func(string) ([]net.IP, error) {
@@ -109,22 +112,22 @@ func TestAHostNameThatFailsToResolveKeepsTheListItHad(t *testing.T) {
 		answer, fail = ips, err
 		mu.Unlock()
 	}
-	first := st.srv.addrs.Load()
+	first := srv.addrs.Load()
 	if !slices.Equal(first.Direct, []string{"nox.example:8080"}) {
 		t.Fatalf("direct = %v, want the name", first.Direct)
 	}
 
 	set(nil, errors.New("resolver unreachable"))
-	if st.srv.refreshAddresses() {
+	if srv.refreshAddresses(t.Context()) {
 		t.Fatal("a failed lookup changed the list")
 	}
-	if cur := st.srv.addrs.Load(); cur.Version != first.Version || !slices.Equal(cur.Direct, first.Direct) {
+	if cur := srv.addrs.Load(); cur.Version != first.Version || !slices.Equal(cur.Direct, first.Direct) {
 		t.Fatalf("after a failed lookup: %v (version %d), want the list it had", cur.Direct, cur.Version)
 	}
 
 	set([]net.IP{net.ParseIP("127.0.0.1")}, nil)
-	if !st.srv.refreshAddresses() || len(st.srv.addrs.Load().Direct) != 0 {
-		t.Fatalf("a name that now resolves to loopback is still listed: %v", st.srv.addrs.Load().Direct)
+	if !srv.refreshAddresses(t.Context()) || len(srv.addrs.Load().Direct) != 0 {
+		t.Fatalf("a name that now resolves to loopback is still listed: %v", srv.addrs.Load().Direct)
 	}
 }
 
@@ -136,41 +139,65 @@ func TestTheGreetingCarriesTheAddressesAlways(t *testing.T) {
 
 	var addrs struct {
 		Direct []string `json:"direct"`
+		Public *string  `json:"public"`
 		Onion  *string  `json:"onion"`
 	}
 	mustUnmarshal(t, data["addresses"], &addrs)
 	if addrs.Direct == nil {
 		t.Fatal("addresses.direct is missing; the contract promises it, possibly empty")
 	}
-	if addrs.Onion != nil {
-		t.Fatalf("an onion address without Tor: %q", *addrs.Onion)
+	// Absent, not empty, while nothing is set (contract §3).
+	if addrs.Public != nil || addrs.Onion != nil {
+		t.Fatalf("addresses nobody set: public=%v onion=%v", addrs.Public, addrs.Onion)
 	}
 }
 
-func TestTheOnionAddressIsListedWhileOffered(t *testing.T) {
-	st := newOnionStack(t, func(s *Server) {
+// The public and the onion address come from the database (045), the onion one
+// with the service's fixed port - and whether any tor is running does not
+// enter into it: there is no tor in this process to ask.
+func TestTheGreetingCarriesTheStoredPublicAndOnionAddresses(t *testing.T) {
+	ts, srv := newTestServerWith(t, func(s *Server) {
 		s.cfg.Addr = "0.0.0.0:8080"
 		s.listIPs = ips("192.168.1.20")
 	})
-	st.tor.set(true, true)
-	// The snapshot was taken at startup, before the fake said yes; the watcher
-	// learns on its next look.
-	st.srv.pokeAddresses()
-	eventually(t, "the snapshot names the onion address", func() bool {
-		cur := st.srv.addrs.Load()
-		return cur != nil && cur.Onion != ""
+	setStored(t, srv, store.AddressPublic, "nox.example.org:8443")
+	setStored(t, srv, store.AddressOnion, testOnionAddr)
+	// The snapshot was taken at startup, before the addresses were stored; the
+	// watcher learns on its next look.
+	srv.pokeAddresses()
+	eventually(t, "the snapshot names both stored addresses", func() bool {
+		cur := srv.addrs.Load()
+		return cur != nil && cur.Onion != "" && cur.Public != ""
 	})
 
-	c := dialWS(t, st.ts, st.srv)
+	c := dialWS(t, ts, srv)
 	c.expectGreeting()
 	data := c.hello(1, "")
 	var addrs addressSet
 	mustUnmarshal(t, data["addresses"], &addrs)
-	if want := st.tor.addr + ".onion:443"; addrs.Onion != want {
+	if addrs.Public != "nox.example.org:8443" {
+		t.Fatalf("public = %q, want the stored one", addrs.Public)
+	}
+	if want := testOnionAddr + ":443"; addrs.Onion != want {
 		t.Fatalf("onion = %q, want %q", addrs.Onion, want)
 	}
 	if !slices.Equal(addrs.Direct, []string{"192.168.1.20:8080"}) {
 		t.Fatalf("direct = %v", addrs.Direct)
+	}
+}
+
+// A stored value that does not check out can only come from a hand edit, and
+// it is left out of the list rather than handed to every device - which would
+// try it, fail, and tell the person something about it that is not true.
+func TestAStoredAddressThatDoesNotCheckOutIsLeftOut(t *testing.T) {
+	_, srv := newTestServer(t)
+	if _, err := readWriteDB(t, srv).ExecContext(t.Context(),
+		"UPDATE server_identity SET public_address = 'not an address', onion_address = 'nope.onion' WHERE id = 1"); err != nil {
+		t.Fatalf("hand-edit the addresses: %v", err)
+	}
+	srv.refreshAddresses(t.Context())
+	if cur := srv.addrs.Load(); cur.Public != "" || cur.Onion != "" {
+		t.Fatalf("the snapshot carries public=%q onion=%q, want neither", cur.Public, cur.Onion)
 	}
 }
 
@@ -179,7 +206,7 @@ func TestTheOnionAddressIsListedWhileOffered(t *testing.T) {
 func TestAddressChangesReachGreetedConnectionsOnly(t *testing.T) {
 	var mu sync.Mutex
 	current := []string{"192.168.1.20"}
-	st := newOnionStack(t, func(s *Server) {
+	ts, srv := newTestServerWith(t, func(s *Server) {
 		s.cfg.Addr = "0.0.0.0:8080"
 		s.listIPs = func() []net.IP {
 			mu.Lock()
@@ -193,19 +220,19 @@ func TestAddressChangesReachGreetedConnectionsOnly(t *testing.T) {
 		mu.Unlock()
 	}
 
-	greeted := dialWS(t, st.ts, st.srv)
+	greeted := dialWS(t, ts, srv)
 	greeted.expectGreeting()
 	greeted.hello(1, "")
 
 	// Connected but not greeted: it must hear nothing.
-	silent := dialWS(t, st.ts, st.srv)
+	silent := dialWS(t, ts, srv)
 	silent.expectGreeting()
 
 	// The router hands the machine a new address, twice in a row.
 	setIPs("192.168.1.21")
-	st.srv.pokeAddresses()
+	srv.pokeAddresses()
 	setIPs("192.168.1.22")
-	st.srv.pokeAddresses()
+	srv.pokeAddresses()
 
 	var last []string
 	deadline := time.Now().Add(5 * time.Second)
@@ -231,18 +258,23 @@ func TestAddressChangesReachGreetedConnectionsOnly(t *testing.T) {
 }
 
 func TestAGreetingNeverSeesTheEventBeforeItsReply(t *testing.T) {
-	st := newOnionStack(t, func(s *Server) {
+	ts, srv := newTestServerWith(t, func(s *Server) {
 		s.cfg.Addr = "0.0.0.0:8080"
 		s.listIPs = ips("192.168.1.20")
 	})
 	for i := range 20 {
-		c := dialWS(t, st.ts, st.srv)
+		c := dialWS(t, ts, srv)
 		c.expectGreeting()
-		// Move the list while the greeting is on its way.
-		st.tor.set(i%2 == 0, false)
-		st.srv.pokeAddresses()
-		c.send(fmt.Sprintf(`{"id":1,"cmd":"session.hello","data":{"schema":1,"device_key":%q,"signature":%q}}`,
-			c.devKey(t), c.devSig(t)))
+		c.ensurePaired()
+		// Move the list while the greeting is on its way: the onion address
+		// set and cleared in turn, the way the page's Set does it.
+		onion := ""
+		if i%2 == 0 {
+			onion = testOnionAddr
+		}
+		setStored(t, srv, store.AddressOnion, onion)
+		srv.pokeAddresses()
+		c.send(`{"id":1,"cmd":"session.hello","data":{"schema":1}}`)
 		frame := c.read()
 		if _, isEvent := frame["event"]; isEvent {
 			t.Fatalf("round %d: an event arrived before the greeting reply: %v", i, frame)
@@ -279,13 +311,13 @@ func TestAListThatMovesMidGreetingFollowsTheReply(t *testing.T) {
 					mu.Lock()
 					current = []string{"192.168.1.21"}
 					mu.Unlock()
-					s.refreshAddresses()
+					s.refreshAddresses(context.Background())
 					if send {
 						s.sendAddresses()
 					}
 				})
 			}
-			st := newOnionStack(t, func(s *Server) {
+			ts, srv := newTestServerWith(t, func(s *Server) {
 				s.cfg.Addr = "0.0.0.0:8080"
 				s.addressPoll = time.Hour
 				s.listIPs = func() []net.IP {
@@ -299,11 +331,10 @@ func TestAListThatMovesMidGreetingFollowsTheReply(t *testing.T) {
 					s.afterGreeted = func(*client) { move(s, true) }
 				}
 			})
-			d := pairedDevice(t, st.ts, st.srv)
-			c := dialWS(t, st.ts, st.srv)
+			d := pairedDevice(t, ts, srv)
+			c := dialAs(t, ts, srv, d)
 			c.expectGreeting()
-			c.send(fmt.Sprintf(`{"id":1,"cmd":"session.hello","data":{"schema":1,"device_key":%q,"signature":%q}}`,
-				d.pub, d.sign(t, c.challenge)))
+			c.send(`{"id":1,"cmd":"session.hello","data":{"schema":1}}`)
 
 			// Read raw: the helpers skip events, and an event here is the bug.
 			reply := c.read()
@@ -326,5 +357,18 @@ func TestAListThatMovesMidGreetingFollowsTheReply(t *testing.T) {
 				t.Fatalf("after the reply: %s %v, want server.addresses with the moved list", event, moved.Direct)
 			}
 		})
+	}
+}
+
+// testOnionAddr is a valid v3 onion address: RFC 8032 test 1's public key,
+// the address computed independently of this package.
+const testOnionAddr = "25njqamcweflpvkl73j4szahhihoc4xt3ktcgjnpaingr5yhkenl5sid.onion"
+
+// setStored writes a stored address the way the page's Set does, straight
+// through the store.
+func setStored(t *testing.T, srv *Server, kind store.AddressKind, value string) {
+	t.Helper()
+	if err := srv.store.SetAddress(context.Background(), kind, value); err != nil {
+		t.Fatalf("SetAddress(%s): %v", kind, err)
 	}
 }
