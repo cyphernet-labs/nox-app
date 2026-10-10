@@ -669,6 +669,10 @@ main() {
 	make_work
 
 	step "Checking this Mac"
+	# The page listens on loopback, and a Mac lets an account other than root
+	# listen below 1024 on every address (0.0.0.0, the server's port) but not
+	# on one address.
+	refuse_low_port "$STATUS_PORT" 1024 --status-port
 	check_ports
 	if [ "$UPDATE" = 1 ]; then
 		note "a NOX server is installed here: this run updates it, and leaves its data, password and onion address alone"

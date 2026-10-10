@@ -397,6 +397,19 @@ check_ports() {
 	done
 }
 
+# refuse_low_port PORT LOWEST OPTION refuses a port below LOWEST, where the
+# server's own account may not listen on this system. Such a server would
+# answer on its service page and fail only when the password opens its data
+# and the main port is bound - or, for the page's port, never start at all.
+refuse_low_port() {
+	local port=$1 lowest=$2 option=$3
+	[ "$port" -lt "$lowest" ] || return 0
+	if [ "$option" = --port ]; then
+		die "port $port is below $lowest, and the server's own account may not listen there on this system: use $lowest or above with --port (the default is $NOX_DEFAULT_PORT); to reach the server from the internet on $port, forward that port on your router to it"
+	fi
+	die "port $port, for the service page, is below $lowest, and the server's own account may not listen there on this system: use $lowest or above with --status-port (the default is $NOX_DEFAULT_STATUS_PORT)"
+}
+
 # listening_here says whether something accepts connections on a loopback
 # port - the check that needs no privileges, beside the system's own.
 listening_here() {

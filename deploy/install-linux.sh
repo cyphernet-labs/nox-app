@@ -170,6 +170,20 @@ own_server_running() {
 	fi
 }
 
+# unprivileged_port_start prints the lowest port an account other than root
+# may listen on - 1024 unless the system says otherwise. The service is not
+# given CAP_NET_BIND_SERVICE: a port below it is refused before anything
+# changes, and the server keeps no right it does not need - a router forwards
+# 443 to 8443 just as well.
+unprivileged_port_start() {
+	local start
+	start=$(cat /proc/sys/net/ipv4/ip_unprivileged_port_start 2>/dev/null) || true
+	case $start in
+	'' | *[!0-9]*) start=1024 ;;
+	esac
+	printf '%s' "$start"
+}
+
 # --- account and folders -----------------------------------------------------
 
 ensure_account() {
@@ -669,6 +683,7 @@ summary() {
 }
 
 main() {
+	local lowest
 	parse_options "$@"
 	if [ -z "$OPT_PREFIX" ]; then
 		[ "$(uname -s)" = Linux ] || die "this script is for Linux; on macOS use install-macos.sh, on Windows install-windows.ps1"
@@ -683,6 +698,9 @@ main() {
 	make_work
 
 	step "Checking this machine"
+	lowest=$(unprivileged_port_start)
+	refuse_low_port "$PORT" "$lowest" --port
+	refuse_low_port "$STATUS_PORT" "$lowest" --status-port
 	check_ports
 	if [ "$UPDATE" = 1 ]; then
 		note "a NOX server is installed here: this run updates it, and leaves its data, password and onion address alone"
