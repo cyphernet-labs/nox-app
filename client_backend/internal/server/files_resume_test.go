@@ -20,11 +20,20 @@ import (
 
 	"github.com/coder/websocket"
 
+	"nox.app/client-backend/internal/blob"
 	"nox.app/client-backend/internal/protocol"
 )
 
 // Feature 043: an upload continues where it broke off, and no transfer is cut
 // for taking long - only for standing still.
+//
+// Since 047 the bytes go to disk in sealed chunks of 64 KiB (blob.ChunkSize):
+// an upload continues from the start of the chunk it broke off in, because a
+// chunk is sealed only once all of it arrived and the rest of one goes with
+// the request that carried it.
+
+// chunk is one sealed chunk's worth of plaintext.
+const chunk = blob.ChunkSize
 
 // declare sends file.uploadBegin - continuing fileID when it is not empty -
 // and returns the file, the token and how much the server says it holds.
@@ -114,17 +123,19 @@ func partPath(srv *Server, fileID string) string {
 	return filepath.Join(srv.cfg.FilesPath, fileID+".part")
 }
 
-// waitPart waits until the server has written n bytes of fileID's part - all
-// a raw PUT sent has been taken off the connection.
+// waitPart waits until fileID's part holds the first n bytes of the file
+// sealed - every whole chunk of them. The rest of a chunk is in the memory of
+// the request, and nothing on disk says it arrived.
 func waitPart(t *testing.T, srv *Server, fileID string, n int64) {
 	t.Helper()
+	want := blob.CipherLen(n / chunk * chunk)
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		if info, err := os.Stat(partPath(srv, fileID)); err == nil && info.Size() >= n {
+		if info, err := os.Stat(partPath(srv, fileID)); err == nil && info.Size() >= want {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("the server never wrote %d bytes of %s", n, fileID)
+			t.Fatalf("the server never sealed the chunks of the first %d bytes of %s", n, fileID)
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -151,7 +162,9 @@ func waitIdle(t *testing.T, srv *Server, fileID string) {
 }
 
 // cutAfter starts a PUT for token, delivers the first n bytes of payload and
-// breaks off, returning once the server has let go of the file.
+// breaks off once the whole chunks among them are sealed, returning once the
+// server has let go of the file. What is left of the chunk the break fell in
+// is lost with the request: the next one starts at that chunk.
 func cutAfter(t *testing.T, ts *httptest.Server, srv *Server, fileID, token string, payload []byte, n int) {
 	t.Helper()
 	put := openRawPut(t, ts, token, len(payload))
@@ -161,9 +174,20 @@ func cutAfter(t *testing.T, ts *httptest.Server, srv *Server, fileID, token stri
 	waitIdle(t, srv, fileID)
 }
 
+// diskBytes reads fileID's finished file back through the store - the
+// plaintext its sealed chunks open to.
 func diskBytes(t *testing.T, srv *Server, fileID string) []byte {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(srv.cfg.FilesPath, fileID))
+	info, err := srv.store.FileByID(t.Context(), fileID)
+	if err != nil {
+		t.Fatalf("FileByID: %v", err)
+	}
+	r, err := srv.blob.Open(fileID, info.Attachment.Size)
+	if err != nil {
+		t.Fatalf("open finished bytes: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+	data, err := io.ReadAll(r)
 	if err != nil {
 		t.Fatalf("read finished bytes: %v", err)
 	}
@@ -202,20 +226,21 @@ func TestAnUploadContinuesFromTheByteTheServerLacks(t *testing.T) {
 	c := greeted(t, ts, srv)
 	chatID := seedChat(t, c, "resume")
 
-	payload := randomPayload(t, 300000)
+	payload := randomPayload(t, 5*chunk+777)
 	fileID, token, received := declare(t, c, 3, "trip.mp4", len(payload), "video/mp4", "")
 	if received != 0 {
 		t.Fatalf("a new upload answers received=%d, want 0", received)
 	}
 
-	cutAfter(t, ts, srv, fileID, token, payload, 100000)
+	// The break falls in the middle of the third chunk.
+	cutAfter(t, ts, srv, fileID, token, payload, 2*chunk+1234)
 
 	again, token2, received := declare(t, c, 4, "trip.mp4", len(payload), "video/mp4", fileID)
 	if again != fileID {
 		t.Fatalf("the continuation answers %q, want the same file %q", again, fileID)
 	}
-	if received != 100000 {
-		t.Fatalf("received = %d, want the 100000 bytes that arrived before the break", received)
+	if received != 2*chunk {
+		t.Fatalf("received = %d, want the %d bytes of the two chunks sealed before the break", received, 2*chunk)
 	}
 	// Only the rest goes up (SC-002), and the file comes out whole.
 	if code := putBytes(t, ts, token2, payload[received:]); code != http.StatusNoContent {
@@ -254,11 +279,12 @@ func TestAnEmptyPutFinishesAPartThatAlreadyHoldsEveryByte(t *testing.T) {
 	ts, srv := newTestServer(t)
 	c := greeted(t, ts, srv)
 
-	payload := randomPayload(t, 1000)
+	payload := randomPayload(t, chunk+1000)
 	fileID, _, _ := declare(t, c, 3, "whole.bin", len(payload), "application/octet-stream", "")
-	// Every byte arrived and was made durable, and then the process died
-	// before the part became the file.
-	up, err := srv.blob.Create(fileID)
+	// Every byte arrived and was made durable - the shorter last chunk sealed
+	// with the file's last byte - and then the process died before the part
+	// became the file.
+	up, err := srv.blob.Create(fileID, int64(len(payload)))
 	if err != nil {
 		t.Fatalf("blob.Create: %v", err)
 	}
@@ -335,10 +361,10 @@ func TestAStalledUploadIsCutAndKeepsWhatArrived(t *testing.T) {
 	t.Cleanup(closeAll)
 	c := greeted(t, ts, srv)
 
-	payload := randomPayload(t, 100000)
+	payload := randomPayload(t, 3*chunk)
 	fileID, token, _ := declare(t, c, 3, "stall.bin", len(payload), "application/octet-stream", "")
 	put := openRawPut(t, ts, token, len(payload))
-	put.send(payload[:50000])
+	put.send(payload[:chunk+5000])
 	// And then nothing: the server gives up on its own and says so.
 	if code := put.status(5 * time.Second); code != http.StatusRequestTimeout {
 		t.Fatalf("stalled PUT = %d, want 408", code)
@@ -346,8 +372,8 @@ func TestAStalledUploadIsCutAndKeepsWhatArrived(t *testing.T) {
 	waitIdle(t, srv, fileID)
 
 	_, token2, received := declare(t, c, 4, "stall.bin", len(payload), "application/octet-stream", fileID)
-	if received != 50000 {
-		t.Fatalf("received = %d, want the 50000 that arrived before the stall", received)
+	if received != chunk {
+		t.Fatalf("received = %d, want the one chunk sealed before the stall", received)
 	}
 	if code := putBytes(t, ts, token2, payload[received:]); code != http.StatusNoContent {
 		t.Fatalf("PUT of the rest = %d", code)
@@ -396,19 +422,19 @@ func TestAHangingUploadGivesWayToItsContinuation(t *testing.T) {
 	t.Cleanup(closeAll)
 	c := greeted(t, ts, srv)
 
-	payload := randomPayload(t, 200000)
+	payload := randomPayload(t, 4*chunk)
 	fileID, token, _ := declare(t, c, 3, "hang.bin", len(payload), "application/octet-stream", "")
 	put := openRawPut(t, ts, token, len(payload))
-	put.send(payload[:70000])
-	waitPart(t, srv, fileID, 70000)
+	put.send(payload[:2*chunk+500])
+	waitPart(t, srv, fileID, 2*chunk)
 
 	start := time.Now()
 	_, token2, received := declare(t, c, 4, "hang.bin", len(payload), "application/octet-stream", fileID)
 	if waited := time.Since(start); waited > srv.continuationWait+2*time.Second {
 		t.Fatalf("the continuation took %v", waited)
 	}
-	if received != 70000 {
-		t.Fatalf("received = %d, want all 70000 the hanging request took in", received)
+	if received != 2*chunk {
+		t.Fatalf("received = %d, want both chunks the hanging request sealed", received)
 	}
 	if code := put.status(5 * time.Second); code != http.StatusConflict {
 		t.Fatalf("the superseded PUT = %d, want 409", code)
@@ -429,9 +455,9 @@ func TestAWriterThatWillNotLetGoNeitherDelaysNorFailsTheContinuation(t *testing.
 	t.Cleanup(closeAll)
 	c := greeted(t, ts, srv)
 
-	payload := randomPayload(t, 100000)
+	payload := randomPayload(t, 3*chunk)
 	fileID, token, _ := declare(t, c, 3, "stuck.bin", len(payload), "application/octet-stream", "")
-	cutAfter(t, ts, srv, fileID, token, payload, 30000)
+	cutAfter(t, ts, srv, fileID, token, payload, chunk+3000)
 
 	// A writer that ignores its interrupt - stuck in a disk write, say.
 	stuck, ok := srv.writers.take(fileID, func() {}, time.Second)
@@ -444,8 +470,8 @@ func TestAWriterThatWillNotLetGoNeitherDelaysNorFailsTheContinuation(t *testing.
 	if waited := time.Since(start); waited < srv.continuationWait || waited > srv.continuationWait+2*time.Second {
 		t.Fatalf("the continuation answered after %v, want its %v wait", waited, srv.continuationWait)
 	}
-	if received != 30000 {
-		t.Fatalf("received = %d, want the 30000 durable bytes", received)
+	if received != chunk {
+		t.Fatalf("received = %d, want the durable chunk", received)
 	}
 	// The PUT cannot write beside it, and says so.
 	if code := putBytes(t, ts, token2, payload[received:]); code != http.StatusConflict {
@@ -474,7 +500,7 @@ func TestAnUploadMakesWhatItReceivedDurableAsItGoes(t *testing.T) {
 	fileID, token, _ := declare(t, c, 3, "durable.bin", len(payload), "application/octet-stream", "")
 	put := openRawPut(t, ts, token, len(payload))
 	put.send(payload[:200<<10])
-	waitPart(t, srv, fileID, 200<<10)
+	waitPart(t, srv, fileID, 3*chunk)
 
 	// Still mid-request - and already durable well past the first steps.
 	deadline := time.Now().Add(5 * time.Second)
@@ -503,33 +529,34 @@ func TestTooManyBytesRollBackAndTooFewAreKept(t *testing.T) {
 	c := greeted(t, ts, srv)
 	const mime = "application/octet-stream"
 
-	payload := randomPayload(t, 1000)
+	payload := randomPayload(t, 4*chunk+1000)
 	fileID, token, _ := declare(t, c, 3, "edge.bin", len(payload), mime, "")
-	cutAfter(t, ts, srv, fileID, token, payload, 400)
+	cutAfter(t, ts, srv, fileID, token, payload, 2*chunk+400)
 
-	// 700 bytes where 600 remain: nothing this request carried is kept, and
-	// the 400 before it stay.
+	// 100 bytes more than remain: nothing this request carried is kept, and
+	// the two chunks before it stay.
 	_, token, received := declare(t, c, 4, "edge.bin", len(payload), mime, fileID)
-	if received != 400 {
-		t.Fatalf("received = %d, want 400", received)
+	if received != 2*chunk {
+		t.Fatalf("received = %d, want %d", received, 2*chunk)
 	}
-	if code := putBytes(t, ts, token, randomPayload(t, 700)); code != http.StatusRequestEntityTooLarge {
+	if code := putBytes(t, ts, token, randomPayload(t, len(payload)-2*chunk+100)); code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("oversized PUT = %d, want 413", code)
 	}
 	_, token, received = declare(t, c, 5, "edge.bin", len(payload), mime, fileID)
-	if received != 400 {
-		t.Fatalf("received after 413 = %d, want the 400 from before it", received)
+	if received != 2*chunk {
+		t.Fatalf("received after 413 = %d, want the %d from before it", received, 2*chunk)
 	}
 
-	// 100 bytes where 600 remain, and the body ends cleanly: they are kept.
-	if code := putBytes(t, ts, token, payload[400:500]); code != http.StatusBadRequest {
+	// A chunk and 100 bytes where more remain, and the body ends cleanly: the
+	// whole chunk is kept, the 100 bytes of the next one go with the request.
+	if code := putBytes(t, ts, token, payload[2*chunk:3*chunk+100]); code != http.StatusBadRequest {
 		t.Fatalf("short PUT = %d, want 400", code)
 	}
 	_, token, received = declare(t, c, 6, "edge.bin", len(payload), mime, fileID)
-	if received != 500 {
-		t.Fatalf("received after the short PUT = %d, want 500", received)
+	if received != 3*chunk {
+		t.Fatalf("received after the short PUT = %d, want %d", received, 3*chunk)
 	}
-	if code := putBytes(t, ts, token, payload[500:]); code != http.StatusNoContent {
+	if code := putBytes(t, ts, token, payload[received:]); code != http.StatusNoContent {
 		t.Fatalf("PUT of the rest = %d", code)
 	}
 	if !bytes.Equal(diskBytes(t, srv, fileID), payload) {
@@ -541,18 +568,19 @@ func TestAPutPastWhatIsStillOnDiskIsRefused(t *testing.T) {
 	ts, srv := newTestServer(t)
 	c := greeted(t, ts, srv)
 
-	payload := randomPayload(t, 1000)
+	payload := randomPayload(t, 4*chunk)
 	fileID, token, _ := declare(t, c, 3, "gone.bin", len(payload), "application/octet-stream", "")
-	cutAfter(t, ts, srv, fileID, token, payload, 400)
+	cutAfter(t, ts, srv, fileID, token, payload, 2*chunk+400)
 	_, token, received := declare(t, c, 4, "gone.bin", len(payload), "application/octet-stream", fileID)
-	if received != 400 {
-		t.Fatalf("received = %d, want 400", received)
+	if received != 2*chunk {
+		t.Fatalf("received = %d, want %d", received, 2*chunk)
 	}
-	// Between the answer and the PUT, the part lost bytes the token counts on.
-	if err := os.Truncate(partPath(srv, fileID), 100); err != nil {
+	// Between the answer and the PUT, the part lost a chunk the token counts
+	// on.
+	if err := os.Truncate(partPath(srv, fileID), blob.CipherLen(chunk)+100); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
-	if code := putBytes(t, ts, token, payload[400:]); code != http.StatusNotFound {
+	if code := putBytes(t, ts, token, payload[received:]); code != http.StatusNotFound {
 		t.Fatalf("PUT past the bytes on disk = %d, want 404", code)
 	}
 }
@@ -567,9 +595,9 @@ func TestAnUnfinishedUploadSurvivesARestart(t *testing.T) {
 		}
 	})
 	c := greeted(t, ts, srv)
-	payload := randomPayload(t, 300000)
+	payload := randomPayload(t, 5*chunk)
 	fileID, token, _ := declare(t, c, 3, "keep.bin", len(payload), "application/octet-stream", "")
-	cutAfter(t, ts, srv, fileID, token, payload, 120000)
+	cutAfter(t, ts, srv, fileID, token, payload, 2*chunk+1000)
 	_ = c.conn.Close(websocket.StatusNormalClosure, "restarting")
 	closeAll()
 	firstClosed = true
@@ -580,8 +608,8 @@ func TestAnUnfinishedUploadSurvivesARestart(t *testing.T) {
 	t.Cleanup(closeAll2)
 	c2 := greeted(t, ts2, srv2)
 	_, token2, received := declare(t, c2, 3, "keep.bin", len(payload), "application/octet-stream", fileID)
-	if received != 120000 {
-		t.Fatalf("received after the restart = %d, want 120000", received)
+	if received != 2*chunk {
+		t.Fatalf("received after the restart = %d, want %d", received, 2*chunk)
 	}
 	if code := putBytes(t, ts2, token2, payload[received:]); code != http.StatusNoContent {
 		t.Fatalf("PUT of the rest = %d", code)
@@ -600,9 +628,9 @@ func TestTheFileNameNeverReachesTheLog(t *testing.T) {
 	c := greeted(t, ts, srv)
 
 	const name = "secret-holiday-video.mp4"
-	payload := randomPayload(t, 50000)
+	payload := randomPayload(t, 3*chunk)
 	fileID, token, _ := declare(t, c, 3, name, len(payload), "video/mp4", "")
-	cutAfter(t, ts, srv, fileID, token, payload, 10000)
+	cutAfter(t, ts, srv, fileID, token, payload, chunk+100)
 	_, token, received := declare(t, c, 4, name, len(payload), "video/mp4", fileID)
 	stalled := openRawPut(t, ts, token, len(payload)-int(received))
 	stalled.send(payload[received : received+5000])
@@ -632,7 +660,7 @@ func storeFile(t *testing.T, srv *Server, payload []byte) string {
 	if err != nil {
 		t.Fatalf("CreateUpload: %v", err)
 	}
-	up, err := srv.blob.Create(att.FileID)
+	up, err := srv.blob.Create(att.FileID, int64(len(payload)))
 	if err != nil {
 		t.Fatalf("blob.Create: %v", err)
 	}
@@ -892,7 +920,7 @@ func TestAWholeFileTheCommitNeverReachedIsFinishedByAnEmptyPut(t *testing.T) {
 	fileID, _, _ := declare(t, c, 3, "crash.bin", len(payload), mime, "")
 	// Every byte arrived and the part became the file - and the process died
 	// before the commit that says so.
-	up, err := srv.blob.Create(fileID)
+	up, err := srv.blob.Create(fileID, int64(len(payload)))
 	if err != nil {
 		t.Fatalf("blob.Create: %v", err)
 	}
@@ -958,21 +986,23 @@ func TestTooManyBytesInABodyOfNoDeclaredLengthRollBackPastItsCheckpoints(t *test
 	c := greeted(t, ts, srv)
 	const mime = "application/octet-stream"
 
-	payload := randomPayload(t, 16<<10)
+	payload := randomPayload(t, 4*chunk)
 	fileID, token, _ := declare(t, c, 3, "chunked.bin", len(payload), mime, "")
-	cutAfter(t, ts, srv, fileID, token, payload, 4<<10)
+	cutAfter(t, ts, srv, fileID, token, payload, chunk+100)
 	_, token, received := declare(t, c, 4, "chunked.bin", len(payload), mime, fileID)
-	if received != 4<<10 {
-		t.Fatalf("received = %d, want 4 KiB", received)
+	if received != chunk {
+		t.Fatalf("received = %d, want one chunk", received)
 	}
 
-	// 12 KiB remain; this body carries 14 and says so nowhere.
-	if code := putChunked(t, ts, token, randomPayload(t, 14<<10)); code != http.StatusRequestEntityTooLarge {
+	// Three chunks remain; this body carries two KiB more and says so
+	// nowhere. Its chunks are sealed and made durable as they come - every
+	// one of them, the file's last included - before it turns out too long.
+	if code := putChunked(t, ts, token, randomPayload(t, 3*chunk+2<<10)); code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("oversized chunked PUT = %d, want 413", code)
 	}
 	_, token, received = declare(t, c, 5, "chunked.bin", len(payload), mime, fileID)
-	if received != 4<<10 {
-		t.Fatalf("received after 413 = %d, want the 4 KiB from before it: "+
+	if received != chunk {
+		t.Fatalf("received after 413 = %d, want the chunk from before it: "+
 			"the record still vouches for bytes of a request too long to be the file", received)
 	}
 	if code := putBytes(t, ts, token, payload[received:]); code != http.StatusNoContent {
@@ -988,26 +1018,26 @@ func TestALatePutWithAnEarlierTokenCannotCutThePartBack(t *testing.T) {
 	c := greeted(t, ts, srv)
 	const mime = "application/octet-stream"
 
-	payload := randomPayload(t, 64<<10)
+	payload := randomPayload(t, 6*chunk)
 	fileID, token, _ := declare(t, c, 3, "late.bin", len(payload), mime, "")
-	cutAfter(t, ts, srv, fileID, token, payload, 16<<10)
+	cutAfter(t, ts, srv, fileID, token, payload, 2*chunk+100)
 
 	// Two continuations: the PUT on the first is held up on its way, so the
 	// client asks again and goes on with the second.
 	_, earlier, _ := declare(t, c, 4, "late.bin", len(payload), mime, fileID)
 	_, later, received := declare(t, c, 5, "late.bin", len(payload), mime, fileID)
 	put := openRawPut(t, ts, later, len(payload)-int(received))
-	put.send(payload[received : 40<<10])
-	waitPart(t, srv, fileID, 40<<10)
+	put.send(payload[received : 4*chunk+100])
+	waitPart(t, srv, fileID, 4*chunk)
 	put.breakOff()
 	waitIdle(t, srv, fileID)
 
 	// The first one arrives at last.
-	if code := putBytes(t, ts, earlier, payload[16<<10:]); code != http.StatusNotFound {
+	if code := putBytes(t, ts, earlier, payload[2*chunk:]); code != http.StatusNotFound {
 		t.Fatalf("PUT on a token the client asked past = %d, want 404", code)
 	}
-	if durable, err := srv.blob.Received(fileID); err != nil || durable != 40<<10 {
-		t.Fatalf("the part holds %d durable bytes after the late PUT (err %v), want the 40 KiB the later one left", durable, err)
+	if durable, err := srv.blob.Received(fileID); err != nil || durable != 4*chunk {
+		t.Fatalf("the part holds %d durable bytes after the late PUT (err %v), want the four chunks the later one left", durable, err)
 	}
 }
 
@@ -1034,7 +1064,7 @@ func TestAPutThatWaitedForAFinishingWriterDoesNotWriteOverTheFile(t *testing.T) 
 	go func() {
 		defer release()
 		<-interrupted
-		up, err := srv.blob.Create(fileID)
+		up, err := srv.blob.Create(fileID, int64(len(payload)))
 		if err == nil {
 			_, err = up.Write(payload)
 		}
@@ -1070,9 +1100,9 @@ func TestADiskThatFailsMidUploadKeepsWhatWasAlreadyDurable(t *testing.T) {
 	c := greeted(t, ts, srv)
 	const mime = "application/octet-stream"
 
-	payload := randomPayload(t, 64<<10)
+	payload := randomPayload(t, 4*chunk)
 	fileID, token, _ := declare(t, c, 3, "disk.bin", len(payload), mime, "")
-	cutAfter(t, ts, srv, fileID, token, payload, 16<<10)
+	cutAfter(t, ts, srv, fileID, token, payload, chunk+100)
 
 	// The disk refuses the next record: where its temporary file goes, there
 	// is a directory.
@@ -1089,8 +1119,8 @@ func TestADiskThatFailsMidUploadKeepsWhatWasAlreadyDurable(t *testing.T) {
 	}
 
 	_, token, received = declare(t, c, 5, "disk.bin", len(payload), mime, fileID)
-	if received != 16<<10 {
-		t.Fatalf("received after a storage failure = %d, want the 16 KiB durable before it", received)
+	if received != chunk {
+		t.Fatalf("received after a storage failure = %d, want the chunk durable before it", received)
 	}
 	if code := putBytes(t, ts, token, payload[received:]); code != http.StatusNoContent {
 		t.Fatalf("PUT of the rest = %d", code)
@@ -1176,5 +1206,64 @@ func TestAnInterruptAfterTheLastByteLeavesTheConnectionAlone(t *testing.T) {
 	}
 	if _, err := body.Read(make([]byte, 4)); !errors.Is(err, errSuperseded) {
 		t.Fatalf("a read after the interrupt = %v, want errSuperseded", err)
+	}
+}
+
+// SC-004 (047): a 100 MiB upload broken off in the middle of a chunk goes on
+// from that chunk's first byte and arrives whole - and the file it makes
+// opens to exactly the bytes that were sent.
+func TestAHundredMegabytesBrokenMidChunkArriveWhole(t *testing.T) {
+	ts, srv := newTestServer(t)
+	c := greeted(t, ts, srv)
+
+	payload := randomPayload(t, 100<<20)
+	fileID, token, _ := declare(t, c, 3, "film.mp4", len(payload), "video/mp4", "")
+	// The break falls 12345 bytes into chunk 700.
+	cutAfter(t, ts, srv, fileID, token, payload, 700*chunk+12345)
+
+	_, token2, received := declare(t, c, 4, "film.mp4", len(payload), "video/mp4", fileID)
+	if received != 700*chunk {
+		t.Fatalf("received = %d, want the %d bytes of the 700 chunks before the break", received, 700*chunk)
+	}
+	if code := putBytes(t, ts, token2, payload[received:]); code != http.StatusNoContent {
+		t.Fatalf("PUT of the rest = %d", code)
+	}
+	if !bytes.Equal(diskBytes(t, srv, fileID), payload) {
+		t.Fatal("the finished file is not the bytes that were sent")
+	}
+}
+
+// FR-010, SC-004: any range of an encrypted file - inside one chunk, across
+// chunks, from the end, several at once - is exactly those bytes of the file.
+func TestEveryRangeOfAnEncryptedFileIsExactlyItsBytes(t *testing.T) {
+	ts, srv := newTestServer(t)
+	c := greeted(t, ts, srv)
+	payload := randomPayload(t, 5*chunk+777)
+	fileID := storeFile(t, srv, payload)
+	size := len(payload)
+	id := 3
+	for _, rg := range []struct {
+		header     string
+		start, end int
+	}{
+		{"bytes=100-200", 100, 200},
+		{fmt.Sprintf("bytes=%d-%d", chunk-6, chunk+9), chunk - 6, chunk + 9},
+		{fmt.Sprintf("bytes=%d-", 3*chunk+1), 3*chunk + 1, size - 1},
+		{"bytes=-10", size - 10, size - 1},
+		{fmt.Sprintf("bytes=0-%d", size-1), 0, size - 1},
+	} {
+		code, got, _ := doGet(t, ts, downloadBegin(t, c, id, fileID), rg.header)
+		id++
+		if code != http.StatusPartialContent || !bytes.Equal(got, payload[rg.start:rg.end+1]) {
+			t.Fatalf("%s = %d, %d bytes; want 206 and bytes %d..%d", rg.header, code, len(got), rg.start, rg.end)
+		}
+	}
+	// Two ranges at once, the later one first: the reader seeks back.
+	code, got, hdr := doGet(t, ts, downloadBegin(t, c, id, fileID), fmt.Sprintf("bytes=%d-%d,10-19", 4*chunk, 4*chunk+9))
+	if code != http.StatusPartialContent || !strings.HasPrefix(hdr.Get("Content-Type"), "multipart/byteranges") {
+		t.Fatalf("two ranges = %d %q", code, hdr.Get("Content-Type"))
+	}
+	if !bytes.Contains(got, payload[4*chunk:4*chunk+10]) || !bytes.Contains(got, payload[10:20]) {
+		t.Fatal("the two ranges are not the file's bytes")
 	}
 }

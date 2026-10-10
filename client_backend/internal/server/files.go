@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -368,7 +369,7 @@ func (s *Server) handlePutFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	up, err := s.blob.Resume(fileID, offset)
+	up, err := s.blob.Resume(fileID, offset, size)
 	if errors.Is(err, blob.ErrShortPart) {
 		// The bytes this token was issued after are no longer all on disk.
 		http.NotFound(w, r)
@@ -720,24 +721,44 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	f, err := s.blob.Open(fileID)
+	// The plaintext of the file, opened chunk by chunk as the range asks for
+	// them (047): ServeContent seeks and reads it as it would a plain file.
+	f, err := s.blob.Open(fileID, info.Attachment.Size)
+	if errors.Is(err, blob.ErrCorrupt) {
+		s.logger.Error("attachment bytes do not open", "file", fileID)
+		http.NotFound(w, r)
+		return
+	}
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
 	defer func() { _ = f.Close() }()
-	stat, err := f.Stat()
-	if err != nil {
-		s.logger.Error("blob stat failed", "err", err, "file", fileID)
-		http.Error(w, "storage failure", http.StatusInternalServerError)
-		return
-	}
 	// A reader that stops must not pin the goroutine and the fd forever, and
 	// one that reads slowly must not be cut: the deadline measures silence.
 	sw := newStallWriter(w, s.stallTimeout)
 	defer sw.finish()
 	sw.Header().Set("Content-Type", info.Attachment.Mime)
-	http.ServeContent(sw, r, "", stat.ModTime(), f)
+	http.ServeContent(sw, r, "", f.ModTime(), &servedFile{Reader: f, logger: s.logger, fileID: fileID})
+}
+
+// servedFile is a file being served, and says so in the log when a chunk of it
+// does not open part-way through: by then the status line has gone out, and
+// the client sees only a body that ends early.
+type servedFile struct {
+	*blob.Reader
+	logger *slog.Logger
+	fileID string
+	logged bool
+}
+
+func (f *servedFile) Read(p []byte) (int, error) {
+	n, err := f.Reader.Read(p)
+	if errors.Is(err, blob.ErrCorrupt) && !f.logged {
+		f.logged = true
+		f.logger.Error("attachment bytes do not open", "file", f.fileID)
+	}
+	return n, err
 }
 
 // sweepOrphans removes uploads never bound to a message within a day

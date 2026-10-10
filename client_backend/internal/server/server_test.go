@@ -87,7 +87,7 @@ func openStack(t *testing.T, path string, logger *slog.Logger, tweak ...func(*Se
 		t.Fatalf("db.Migrate: %v", err)
 	}
 
-	bl, err := blob.Open(path + "-files")
+	bl, err := blob.Open(path+"-files", testDataKey)
 	if err != nil {
 		_ = dbs.Close()
 		t.Fatalf("blob.Open: %v", err)

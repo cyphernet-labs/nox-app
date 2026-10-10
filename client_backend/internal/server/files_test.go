@@ -18,6 +18,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"nox.app/client-backend/internal/blob"
 	"nox.app/client-backend/internal/protocol"
 	"nox.app/client-backend/internal/store"
 )
@@ -122,10 +123,14 @@ func TestStoryOneAttachmentChain(t *testing.T) {
 	if code := putBytes(t, ts, token, payload); code != http.StatusNotFound {
 		t.Fatalf("reused upload token = %d, want 404", code)
 	}
-	// Bytes are on disk under the server id, byte-identical.
+	// Bytes are on disk under the server id, encrypted (047), and open to the
+	// very bytes that were sent.
 	disk, err := os.ReadFile(filepath.Join(srv.cfg.FilesPath, fileID))
-	if err != nil || !bytes.Equal(disk, payload) {
-		t.Fatalf("disk bytes: %d err=%v", len(disk), err)
+	if err != nil || int64(len(disk)) != blob.CipherLen(int64(len(payload))) || bytes.Contains(disk, payload[:4096]) {
+		t.Fatalf("disk bytes: %d err=%v, want the sealed chunks of the file and none of its plaintext", len(disk), err)
+	}
+	if got := diskBytes(t, srv, fileID); !bytes.Equal(got, payload) {
+		t.Fatalf("the file opens to %d bytes that are not the ones sent", len(got))
 	}
 
 	// Attachment-only send: full attachment in the echo...
@@ -202,8 +207,8 @@ func TestStoryOneAttachmentChain(t *testing.T) {
 	anna.expectErr(24, protocol.ErrInvalidRequest) // already bound
 
 	// Un-uploaded file: send rejected. An oversized PUT keeps nothing it
-	// carried; a short one keeps its bytes for a continuation (043). Neither
-	// finishes the file.
+	// carried; a short one keeps its whole chunks for a continuation (043,
+	// 047). Neither finishes the file.
 	fileID3, token3 := uploadBegin(t, anna, 25, "half.bin", 1000, "application/octet-stream")
 	anna.send(fmt.Sprintf(`{"id":26,"cmd":"message.send","data":{"chat_id":%q,"client_message_id":"n4","attachment":{"file_id":%q}}}`, chatID, fileID3))
 	anna.expectErr(26, protocol.ErrInvalidRequest)
@@ -213,12 +218,12 @@ func TestStoryOneAttachmentChain(t *testing.T) {
 	if _, _, received := declare(t, anna, 28, "half.bin", 1000, "application/octet-stream", fileID3); received != 0 {
 		t.Fatalf("after an oversized PUT received = %d, want 0: none of its bytes are kept", received)
 	}
-	fileID4, token4 := uploadBegin(t, anna, 27, "short.bin", 1000, "application/octet-stream")
-	if code := putBytes(t, ts, token4, randomPayload(t, 500)); code != http.StatusBadRequest {
+	fileID4, token4 := uploadBegin(t, anna, 27, "short.bin", 3*blob.ChunkSize, "application/octet-stream")
+	if code := putBytes(t, ts, token4, randomPayload(t, blob.ChunkSize+500)); code != http.StatusBadRequest {
 		t.Fatalf("short PUT = %d, want 400", code)
 	}
-	if _, _, received := declare(t, anna, 29, "short.bin", 1000, "application/octet-stream", fileID4); received != 500 {
-		t.Fatalf("after a short PUT received = %d, want its 500 bytes kept", received)
+	if _, _, received := declare(t, anna, 29, "short.bin", 3*blob.ChunkSize, "application/octet-stream", fileID4); received != blob.ChunkSize {
+		t.Fatalf("after a short PUT received = %d, want its whole chunk kept", received)
 	}
 	if srv.blob.Exists(fileID3) || srv.blob.Exists(fileID4) {
 		t.Fatal("an unfinished upload became a finished file")
@@ -461,7 +466,7 @@ func TestOrphanSweepRemovesAbandonedUploads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateUpload bound: %v", err)
 	}
-	boundUp, err := srv.blob.Create(boundAtt.FileID)
+	boundUp, err := srv.blob.Create(boundAtt.FileID, 5)
 	if err != nil {
 		t.Fatalf("blob.Create bound: %v", err)
 	}
@@ -484,7 +489,7 @@ func TestOrphanSweepRemovesAbandonedUploads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateUpload: %v", err)
 	}
-	up, err := srv.blob.Create(oldAtt.FileID)
+	up, err := srv.blob.Create(oldAtt.FileID, 3)
 	if err != nil {
 		t.Fatalf("blob.Create: %v", err)
 	}
@@ -501,15 +506,17 @@ func TestOrphanSweepRemovesAbandonedUploads(t *testing.T) {
 	// Old UNFINISHED upload (043): a part and its record, never completed.
 	// The same rule as for a finished one: a day unbound and it goes, both
 	// files with it.
-	halfAtt, err := srv.store.CreateUpload(t.Context(), "half.bin", 10, "x/y", 100)
+	halfAtt, err := srv.store.CreateUpload(t.Context(), "half.bin", 2*blob.ChunkSize, "x/y", 100)
 	if err != nil {
 		t.Fatalf("CreateUpload half: %v", err)
 	}
-	half, err := srv.blob.Create(halfAtt.FileID)
+	half, err := srv.blob.Create(halfAtt.FileID, 2*blob.ChunkSize)
 	if err != nil {
 		t.Fatalf("blob.Create half: %v", err)
 	}
-	if _, err := half.Write([]byte("half")); err != nil {
+	// A whole chunk and a little more: the chunk is sealed into the part and
+	// recorded, the rest goes with the request.
+	if _, err := half.Write(randomPayload(t, blob.ChunkSize+10)); err != nil {
 		t.Fatalf("write half: %v", err)
 	}
 	if err := half.Suspend(); err != nil {

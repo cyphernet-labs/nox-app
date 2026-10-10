@@ -587,7 +587,7 @@ func serve(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slo
 	}
 	logger.Info("database ready", "path", cfg.DBPath, "schema_version", version)
 
-	bl, err := blob.Open(cfg.FilesPath)
+	bl, err := blob.Open(cfg.FilesPath, key)
 	if err != nil {
 		return fmt.Errorf("open files dir: %w", err)
 	}
