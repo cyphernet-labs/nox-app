@@ -18,7 +18,7 @@
 
 **Primary Dependencies**:
 - Rust: `rustls` 0.23.45 (`ring`), `tokio-rustls` 0.26.6, `eidolon-auth` 0.3.1, `cyphergraphy` 0.3.1 (`ed25519`), `ec25519` 0.1.0, `arti-client` 0.47.0 (как сегодня), `zeroize`.
-- Dart: `dart:ffi` (`NativeCallable.listener`), `dart:io` (`Socket`, `HttpClient.connectionFactory`), `web_socket_channel`, Dio — как сегодня; `cryptography` — только для семени и открытого ключа устройства.
+- Dart: `dart:ffi` (`NativeApi.postCObject` и родной порт изолята), `dart:io` (`Socket`, `HttpClient.connectionFactory`), `web_socket_channel`, Dio — как сегодня; `cryptography` — только для семени и открытого ключа устройства.
 - Go: stdlib (`crypto/tls`, `crypto/ed25519`, `crypto/ecdsa`, `crypto/x509`, `net`, `net/http`), `coder/websocket`, `modernc.org/sqlite` — новых зависимостей нет.
 
 **Storage**: сервер — `server_identity` хранит семя и открытый ключ Ed25519 (`001_init.sql` на месте); приложение — `session.server_key` вместо `session.server_fingerprint`, эпоха `key:`. Миграций нет.

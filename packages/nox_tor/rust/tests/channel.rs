@@ -4,21 +4,24 @@
 //! and to the servers that must not get a channel: another key, a man in the
 //! middle, an older server that answers HTTP, one that answers nothing.
 //!
-//! Events are taken the way Dart takes them: copied, the buffer freed, queued
-//! for the test to read on its own thread.
+//! Events are taken the way Dart's port takes them - decoded from the posted
+//! message, queued for the test to read on its own thread - and each channel
+//! posts to a port of its own, which a test can close the way an isolate's
+//! ports close when it dies.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::CString;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
 use cypher::{Cert, EcPk, EcSign};
 use eidolon::EidolonState;
+use nox_tor::channel::dart::{decode, DartCObject};
 use nox_tor::channel::{code, event, CHUNK, WINDOW};
 use nox_tor::{
-    nox_chan_ack, nox_chan_buf_free, nox_chan_close, nox_chan_flush, nox_chan_open, nox_chan_shutdown_write,
-    nox_chan_write,
+    nox_chan_ack, nox_chan_close, nox_chan_flush, nox_chan_open, nox_chan_reap, nox_chan_shutdown_write, nox_chan_write,
 };
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
@@ -65,6 +68,8 @@ struct Event {
 struct Inbox {
     events: Mutex<HashMap<i64, VecDeque<Event>>>,
     arrived: Condvar,
+    /// Ports of isolates that are gone: posts to them are refused.
+    closed_ports: Mutex<HashSet<i64>>,
 }
 
 fn inbox() -> &'static Inbox {
@@ -72,26 +77,54 @@ fn inbox() -> &'static Inbox {
     INBOX.get_or_init(Inbox::default)
 }
 
-extern "C" fn on_event(handle: i64, kind: i32, data: *const u8, len: usize, code: i32) {
-    let bytes = if data.is_null() { Vec::new() } else { unsafe { std::slice::from_raw_parts(data, len) }.to_vec() };
-    unsafe { nox_chan_buf_free(data as *mut u8, len) };
+/// `Dart_PostCObject`, as far as the module can tell.
+unsafe extern "C" fn on_post(port: i64, message: *mut DartCObject) -> i8 {
     let inbox = inbox();
-    lock(&inbox.events).entry(handle).or_default().push_back(Event { kind, data: bytes, code });
-    inbox.arrived.notify_all();
+    if lock(&inbox.closed_ports).contains(&port) {
+        return 0;
+    }
+    let (handle, kind, code, data) = decode(message).expect("an event message");
+    if kind != event::PROBE {
+        lock(&inbox.events).entry(handle).or_default().push_back(Event { kind, data, code });
+        inbox.arrived.notify_all();
+    }
+    1
 }
 
-/// One channel as the app holds it.
-struct Chan(i64);
+/// A port of its own for every channel, as if each came from an isolate of
+/// its own.
+fn new_port() -> i64 {
+    static NEXT: AtomicI64 = AtomicI64::new(1000);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
+/// One channel as the app holds it: its handle, and the port its events go to.
+struct Chan(i64, i64);
 
 impl Chan {
     fn open(kind: i32, host: &str, port: u16, server_key: [u8; 32], budget_ms: u32) -> Chan {
         let host = CString::new(host).unwrap();
         let seed = key("device_seed");
+        let events = new_port();
         let handle = unsafe {
-            nox_chan_open(kind, host.as_ptr(), port, seed.as_ptr(), server_key.as_ptr(), budget_ms, Some(on_event))
+            nox_chan_open(
+                kind,
+                host.as_ptr(),
+                port,
+                seed.as_ptr(),
+                server_key.as_ptr(),
+                budget_ms,
+                Some(on_post),
+                events,
+            )
         };
         assert!(handle > 0, "open returned {handle}");
-        Chan(handle)
+        Chan(handle, events)
+    }
+
+    /// The isolate that opened the channel dies: its port refuses everything.
+    fn lose_isolate(&self) {
+        lock(&inbox().closed_ports).insert(self.1);
     }
 
     fn direct(addr: SocketAddr, budget_ms: u32) -> Chan {
@@ -457,7 +490,7 @@ fn a_write_past_the_window_gets_writable_and_flush_tickets_drain_in_order() {
     assert_eq!(queued, TOTAL as i64, "the whole write is queued");
     assert!(queued > WINDOW as i64);
     assert_eq!(nox_chan_flush(chan.0, 77), code::NONE);
-    // WRITABLE once the queue is down to half the window; DRAINED once all of
+    // WRITABLE once the queue is back within the window; DRAINED once all of
     // it is out - so in that order.
     assert_eq!(chan.next(), Event { kind: event::WRITABLE, data: Vec::new(), code: 0 });
     assert_eq!(chan.next(), Event { kind: event::DRAINED, data: Vec::new(), code: 77 });
@@ -717,4 +750,87 @@ fn an_onion_channel_without_tor_is_not_ready() {
     assert_eq!(chan.closed(), code::TOR_NOT_READY);
     let chan = Chan::open(1, "not-an-onion.example", 443, key("server_public_key"), 5_000);
     assert_eq!(chan.closed(), code::TOR_ONION_INVALID);
+}
+
+// --- An isolate that went away --------------------------------------------
+
+/// The isolate died under an open channel: the next event is refused, and the
+/// module ends the channel itself - nothing else would, with nobody left to
+/// ack or to close.
+#[test]
+fn a_channel_whose_isolate_is_gone_ends_itself() {
+    let rt = runtime();
+    let (listener, addr) = rt.block_on(listen());
+    let server = rt.spawn(async move {
+        let mut tls = verified(&listener, noxd_tls()).await;
+        let mut ping = [0u8; 1];
+        tls.read_exact(&mut ping).await.unwrap();
+        // Talks until the connection is gone; the app never acks a byte.
+        let started = Instant::now();
+        while tls.write_all(&[7u8; 1024]).await.is_ok() && tls.flush().await.is_ok() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            if started.elapsed() > PATIENCE {
+                return false;
+            }
+        }
+        true
+    });
+    let chan = Chan::direct(addr, 5_000);
+    chan.expect(event::OPEN);
+    chan.lose_isolate();
+    assert_eq!(chan.write(b"!"), 1);
+    assert!(rt.block_on(server).unwrap(), "the server was let go of");
+    let gone = Instant::now();
+    while nox_chan_close(chan.0) != code::RET_CLOSED {
+        assert!(gone.elapsed() < PATIENCE, "the handle outlived its connection");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// A new isolate reaps what an old one left behind: a channel still opening -
+/// no event of its own would ever be refused before its budget ran out - ends
+/// at once, and one whose isolate is there is left alone.
+#[test]
+fn a_reap_ends_the_channels_of_gone_isolates_and_only_those() {
+    let rt = runtime();
+    let (listener, addr) = rt.block_on(listen());
+    let (accepted, mut connections) = tokio::sync::mpsc::unbounded_channel();
+    // Takes connections and says nothing; reports when each one ends.
+    rt.spawn(async move {
+        loop {
+            let (mut tcp, _) = listener.accept().await.unwrap();
+            let (ended, rx) = tokio::sync::oneshot::channel();
+            accepted.send(rx).unwrap();
+            tokio::spawn(async move {
+                read_to_gone(&mut tcp).await;
+                let _ = ended.send(());
+            });
+        }
+    });
+    let left = Chan::direct(addr, 60_000);
+    let mut left_ended = rt.block_on(connections.recv()).unwrap();
+    let kept = Chan::direct(addr, 60_000);
+    let mut kept_ended = rt.block_on(connections.recv()).unwrap();
+
+    left.lose_isolate();
+    assert!(nox_chan_reap() >= 1, "the channel of the gone isolate was found");
+    rt.block_on(async {
+        tokio::time::timeout(PATIENCE, &mut left_ended).await.expect("its connection ends").unwrap();
+    });
+    let reaped = Instant::now();
+    while nox_chan_close(left.0) != code::RET_CLOSED {
+        assert!(reaped.elapsed() < PATIENCE, "the reaped handle is still there");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    // The live one is untouched, and still the app's to close.
+    rt.block_on(async {
+        assert!(
+            tokio::time::timeout(Duration::from_millis(300), &mut kept_ended).await.is_err(),
+            "the live one was cut"
+        );
+    });
+    assert_eq!(nox_chan_close(kept.0), code::NONE);
+    assert_eq!(kept.closed(), code::NONE);
+    left.assert_quiet(Duration::from_millis(100));
 }
