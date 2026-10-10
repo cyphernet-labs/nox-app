@@ -466,6 +466,7 @@ func (g *gate) handler() http.Handler {
 	mux.HandleFunc("POST "+controlUnlockPath, g.handleControlUnlock)
 	mux.HandleFunc("POST "+controlPasswordPath, g.handleControlPassword)
 	mux.HandleFunc("POST "+controlBackupPath, g.handleControlBackup)
+	mux.HandleFunc("POST "+controlLinkPath, g.handleControlLink)
 	mux.HandleFunc("POST /password/setup", g.handlePasswordForm(reqSetup))
 	mux.HandleFunc("POST /password/unlock", g.handlePasswordForm(reqUnlock))
 	mux.HandleFunc("POST /password/change", g.handlePasswordForm(reqChange))
@@ -483,6 +484,22 @@ func (g *gate) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(status))
+}
+
+// handleControlLink is `noxd link` (046) in every state: the open server's
+// own once there is one, and before that a refusal that names the state. The
+// refusal comes after the same three checks every command is held to
+// (controlAllowed), so whatever a browser can send is a 403 here too, locked
+// or open, and the lock is told only to the command.
+func (g *gate) handleControlLink(w http.ResponseWriter, r *http.Request) {
+	if h := g.openPage.Load(); h != nil && g.current() == stateOpen {
+		(*h).ServeHTTP(w, r)
+		return
+	}
+	if !controlAllowed(w, r) {
+		return
+	}
+	writeControlJSON(w, http.StatusConflict, ControlError{Error: codeState})
 }
 
 // handleRest is the open server's page once there is one. Before that, the

@@ -442,7 +442,7 @@ func TestTheLockRefusesWhatABrowserCanSend(t *testing.T) {
 		return rec.Code
 	}
 	body := `{"password":"` + testPassword + `","repeat":"` + testPassword + `","path":"/tmp/x.tar","current":"x"}`
-	for _, p := range []string{controlStatePath, controlUnlockPath, controlPasswordPath, controlBackupPath} {
+	for _, p := range []string{controlStatePath, controlUnlockPath, controlPasswordPath, controlBackupPath, controlLinkPath} {
 		method := http.MethodPost
 		if p == controlStatePath {
 			method = http.MethodGet
