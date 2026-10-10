@@ -12,6 +12,7 @@ import 'package:nox_app/data/remote/socket/server_frame.dart';
 import 'package:nox_app/data/remote/socket/socket_channel_factory.dart';
 import 'package:nox_app/data/sync/connection/connection_path_selector.dart';
 import 'package:nox_app/data/sync/connection/direct_prober.dart';
+import 'package:nox_app/data/sync/outbox_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/app_config/app_flavor_type.dart';
 import 'package:nox_app/domain/model/connection/connection_path.dart';
@@ -124,6 +125,11 @@ void main() {
         name: 'From ${Platform.operatingSystem} ${DateTime.now().millisecondsSinceEpoch}',
       );
       expect(chat.hasData, isTrue);
+      // A chat is made on the device first (phase 041): the outbox takes it to
+      // the server, and only then can a message name it.
+      getIt<OutboxService>().start();
+      unawaited(getIt<OutboxService>().flush());
+      await _until('the chat on the server', const Duration(minutes: 2), () => getIt<ChatRepository>().isOnServer(chatId: chat.data!.id));
       final sendWatch = Stopwatch()..start();
       final sent = await getIt<MessageRepository>().sendMessage(
         chatId: chat.data!.id,
