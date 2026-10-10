@@ -17,6 +17,9 @@ import 'package:nox_app/data/sync/outbox_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/connection/connection_path.dart';
+import 'package:nox_app/domain/service/connection_status_service.dart';
+import 'package:nox_app/domain/model/connection/connection_settings.dart';
+import 'package:nox_app/domain/model/connection/connection_problem.dart';
 import 'package:nox_app/domain/model/connection/tor_status.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
@@ -38,13 +41,17 @@ import 'package:uuid/uuid.dart';
 import 'live_harness.dart';
 import 'live_target.dart';
 
-/// Phase 040 end to end on this machine, through the real Tor network: the
-/// app's own code - path selector, Arti behind `package:nox_tor`, every
-/// connection a channel of the module (phase 044) - against a `noxd` that
-/// publishes its onion service.
+/// Phases 040 and 045 end to end on this machine, through the real Tor
+/// network: the app's own code - path selector, Arti behind `package:nox_tor`,
+/// every connection a channel of the module (phase 044) - against a `noxd`
+/// whose onion service a SEPARATE tor publishes (phase 045): the probe starts
+/// tor itself with an onion service on port 443 pointed at the server's port,
+/// proof of work on, and hands the server the address with `-onion-addr`. No
+/// access key opens the service; the app goes through Tor only once the
+/// person has turned `Use Tor` on.
 ///
 /// "Away from home" is the one thing simulated: a prober that finds no direct
-/// address while [_AwayProber.away] is set. Everything past it is real.
+/// address while [AwayProber.away] is set. Everything past it is real.
 ///
 /// Run manually, not in the gate - it needs a tor binary and the Tor network,
 /// and takes minutes:
@@ -54,10 +61,10 @@ import 'live_target.dart';
 ///     --dart-define=host=192.168.1.20 --dart-define=work=/tmp/nox_e2e   # host: this machine's LAN address
 ///
 /// The LAN address matters: a server bound to loopback lists no direct address
-/// at all (contract §3), and scenario 8 is about learning a new one. `noxd` is
-/// left running at the end, with two invites in `<work>/invites.txt`, for the
-/// simulator and emulator runs of `integration_test/tor_pairing_test.dart` -
-/// which pair at home and then go through Tor (pairing through Tor is 045's).
+/// at all (contract §3), and scenario 8 is about learning a new one. `noxd` and
+/// tor are left running at the end, with two invites in `<work>/invites.txt`,
+/// for the simulator and emulator runs of `integration_test/tor_pairing_test.dart`
+/// - which pair through Tor from "away" (phase 045).
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -81,10 +88,13 @@ void main() {
       stdout.writeln('MEASURE: $line');
     }
 
-    // --- The server, on this machine's LAN address, with tor. ---
-    final first = await LiveNoxd.start(noxd: noxd, tor: tor, work: work, addr: '$host:18443', log: 'noxd1.log');
+    // --- tor as its own service, then the server on this machine's LAN
+    // address, told where its onion service is. ---
+    final firstTor = await LiveTor.start(tor: tor, work: work, target: '$host:18443');
+    final first = await LiveNoxd.start(noxd: noxd, work: work, addr: '$host:18443', log: 'noxd1.log', onionAddr: firstTor.onion);
     final claim = await first.claimLink();
-    stdout.writeln('NOXD: pid=${first.pid}');
+    stdout.writeln('NOXD: pid=${first.pid}; TOR: pid=${firstTor.pid}');
+    expect(PairingLink.parse(claim).onionServiceKey, isNotNull, reason: 'the link carries the onion address the server was given');
 
     // --- The app, with two seams: where "away" comes from, and when the
     // network changes. Registered before anything resolves the selector.
@@ -106,19 +116,37 @@ void main() {
 
     bool liveOn(ConnectionPath path) => socket.currentPhase == SessionPhase.live && selector.currentPath == path;
 
-    // --- 1. Pair at home by the claim link: direct, Tor never started. ---
+    // --- 1. Pair at home by the claim link, as the connection screen hands
+    // it over: the link's addresses, Use Tor off. Direct; Tor never started.
     var watch = Stopwatch()..start();
-    final signedIn = await auth.signIn(identifier: claim);
+    final link = PairingLink.parse(claim);
+    final linkOnion = '${torService.onionFromPublicKey(link.onionServiceKey!)}:443';
+    final signedIn = await auth.signIn(
+      identifier: claim,
+      connection: ConnectionSettings(serverAddress: link.directAddresses.first, onionAddress: linkOnion),
+    );
     expect(signedIn.hasData, isTrue, reason: 'sign-in by the claim link');
     expect((await auth.completeOnboarding(label: 'TorProbe')).hasData, isTrue);
     await liveUntil('direct and live', const Duration(seconds: 30), () => liveOn(ConnectionPath.direct));
     measure('pairing at home, to live: ${watch.elapsedMilliseconds} ms');
     expect(torService.status.state, TorState.stopped, reason: 'Tor does not run on the direct path (FR-006)');
+    await liveUntil('the server states its onion address', const Duration(seconds: 30), () async {
+      return (await addresses.read()).data?.onion == '${firstTor.onion}:443';
+    });
+
+    // --- 1a. Away with Use Tor off: no way through Tor at all (SC-006). ---
+    away.away = true;
+    network.change();
+    await liveUntil('no connection, and the cause', const Duration(seconds: 60), () {
+      return getIt<ConnectionStatusService>().status.problem == ConnectionProblem.turnOnTor;
+    });
+    expect(torService.status.state, TorState.stopped, reason: 'with Use Tor off nothing is opened through Tor');
+    away.away = false;
+    network.change();
+    await liveUntil('home again', const Duration(seconds: 30), () => liveOn(ConnectionPath.direct));
+
     // Tor only by the person's leave (phase 045).
     expect((await addresses.setUseTor(true)).hasData, isTrue);
-    await liveUntil('the server offers its onion address', const Duration(minutes: 5), () async {
-      return (await addresses.read()).data?.onion != null;
-    });
     final chat = await getIt<ChatRepository>().createChat(name: 'Tor probe ${DateTime.now().millisecondsSinceEpoch}');
     expect(chat.hasData, isTrue, reason: 'a chat to talk in');
     final chatId = chat.data!.id;
@@ -190,12 +218,17 @@ void main() {
     await liveUntil('home again', const Duration(seconds: 30), () => liveOn(ConnectionPath.direct));
 
     // --- 8. The server moves to another port: Tor brings the news, and the
-    // app returns to the direct path on the new address. Nothing is wiped. ---
+    // app returns to the direct path on the new address. Nothing is wiped.
+    // tor is pointed at the new port over the same keys, so the onion address
+    // stays what the server already has in its database. ---
     final epoch = await getIt<SyncRepository>().getEpoch();
     final before = await _count(chatId);
     await first.stop();
-    final second = await LiveNoxd.start(noxd: noxd, tor: tor, work: work, addr: '$host:18444', log: 'noxd2.log');
-    stdout.writeln('NOXD: pid=${second.pid}');
+    await firstTor.stop();
+    final secondTor = await LiveTor.start(tor: tor, work: work, target: '$host:18444', log: 'tor2.log');
+    expect(secondTor.onion, firstTor.onion, reason: 'the same keys, the same address');
+    final second = await LiveNoxd.start(noxd: noxd, work: work, addr: '$host:18444', log: 'noxd2.log');
+    stdout.writeln('NOXD: pid=${second.pid}; TOR: pid=${secondTor.pid}');
     watch = Stopwatch()..start();
     await liveUntil('live direct on the new address', const Duration(minutes: 8), () {
       return liveOn(ConnectionPath.direct) && socket.currentUrl?.port == 18444;
@@ -221,21 +254,22 @@ void main() {
     network.change();
     await liveUntil('home again', const Duration(seconds: 30), () => liveOn(ConnectionPath.direct));
 
-    // --- 4. Invites are version 3, and pair at home only until phase 045:
-    // the onion service opens for a paired device's key alone. ---
+    // --- 4. Invites are version 3 and carry the onion address, so a new
+    // device can pair through Tor from anywhere (phase 045). ---
     final invites = <String>[];
     for (var i = 0; i < 2; i++) {
       final invite = await getIt<DeviceRepository>().inviteDevice();
       expect(invite.hasData, isTrue);
-      expect(invite.data!.onion, isFalse, reason: 'the card says: only on your home network (FR-018)');
+      expect(invite.data!.onion, isTrue, reason: 'the card does not say home only');
+      expect(invite.data!.homeOnly, isFalse);
       final parsed = PairingLink.parse(invite.data!.link);
       expect(parsed.directAddresses, isNotEmpty);
-      expect(parsed.onionServiceKey, isNotNull, reason: 'the onion address rides along, for the device once it is paired');
+      expect(parsed.onionServiceKey, isNotNull);
       invites.add(invite.data!.link);
     }
     File('$work/invites.txt').writeAsStringSync('${invites.join('\n')}\n');
 
-    // --- 7. Logout leaves no key, no addresses, no Tor state (SC-007). A forced
+    // --- 7. Logout leaves no addresses and no Tor state (SC-007). A forced
     // one, which keeps the device on the server: the invites above are its. ---
     final support = await getApplicationSupportDirectory();
     expect((await auth.logout(forced: true)).hasData, isTrue);
@@ -244,7 +278,9 @@ void main() {
     expect(Directory('${support.path}${Platform.pathSeparator}nox_tor_state').existsSync(), isFalse);
 
     File('$work/measure.txt').writeAsStringSync('${measures.join('\n')}\n');
-    stdout.writeln('INVITES: ${invites.length} written to $work/invites.txt; noxd left running, pid ${second.pid}');
+    stdout.writeln(
+      'INVITES: ${invites.length} written to $work/invites.txt; noxd left running, pid ${second.pid}; tor, pid ${secondTor.pid}',
+    );
   }, timeout: const Timeout(Duration(minutes: 30)));
 }
 

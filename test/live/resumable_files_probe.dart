@@ -38,7 +38,7 @@ import 'live_target.dart';
 /// file up and down the onion service, with the link broken under it, the
 /// queue "restarted" in the middle, and the path changed from Tor to direct
 /// while the bytes are going - the app's own code throughout, against a `noxd`
-/// that publishes its onion service.
+/// whose onion service a separate tor publishes (phase 045).
 ///
 /// What it proves: the file arrives whole both ways (SC-001), nothing that
 /// already arrived is sent again (SC-002), neither a restart nor a change of
@@ -87,8 +87,11 @@ void main() {
       }
       out.closeSync();
 
-      // --- The server, with tor, on this machine's LAN address. ---
-      final server = await LiveNoxd.start(noxd: noxd, tor: tor, work: work, addr: '$host:18543', log: 'noxd.log');
+      // --- tor as its own service, and the server on this machine's LAN
+      // address, told where its onion service is (phase 045). ---
+      final onionService = await LiveTor.start(tor: tor, work: work, target: '$host:18543');
+      addTearDown(() => Process.killPid(onionService.pid));
+      final server = await LiveNoxd.start(noxd: noxd, work: work, addr: '$host:18543', log: 'noxd.log', onionAddr: onionService.onion);
       addTearDown(() => Process.killPid(server.pid));
       final claim = await server.claimLink();
 

@@ -17,6 +17,7 @@ import 'package:nox_app/data/service/tor/fake_tor_service.dart';
 import 'package:nox_app/data/sync/connection/connection_path_selector.dart';
 import 'package:nox_app/data/sync/live_identity_handshake.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/model/connection/connection_problem.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
@@ -149,6 +150,27 @@ void main() {
 
     expect(factory.urls.first.host, _onionHost, reason: 'the run did go through Tor');
     expect(capture.lines, isNotEmpty);
+    expectNothingLeaked();
+  });
+
+  test('an onion address typed by hand, refused at the dial, is named nowhere either (phase 045)', () async {
+    final typed = '${'b' * 56}.onion';
+    final addresses = getIt<ServerAddressesRepository>();
+    await addresses.saveFromServer(direct: const ['10.0.0.5:9000'], onion: '$_onionHost:443');
+    await addresses.saveManual(manualAddress: null, manualOnion: '$typed:443');
+    await addresses.setUseTor(true);
+    factory.refuseEvery = ChannelFailure.torOnionNotFound;
+    selector.begin(linkAddress: '10.0.0.5:9000', serverKey: serverKey, deviceSeed: deviceSeed);
+
+    await socket.start(targets: selector, credentialsProvider: () async => const GreetingCredentials());
+    // The second round is what turns the refused dial into a cause.
+    for (var i = 0; i < 600 && selector.selection.problem == null; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+
+    expect(factory.urls.first.host, typed, reason: 'the typed address was the one dialled');
+    expect(selector.selection.problem, ConnectionProblem.onionNotFound);
+    expect(capture.lines.join('\n'), contains('torOnionNotFound'), reason: 'the kind is logged, the address is not');
     expectNothingLeaked();
   });
 

@@ -83,7 +83,8 @@ enum ChannelFailure {
   /// The onion service exists but does not answer.
   torOnionUnreachable,
 
-  /// The onion service refused the Tor access key (until phase 045).
+  /// The onion service refused a Tor access key. Kept in the numbering and
+  /// never produced since phase 045: the client holds no access keys.
   torClientAuth,
 
   /// Something failed inside the module.
