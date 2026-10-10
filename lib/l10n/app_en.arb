@@ -385,5 +385,51 @@
   "connectDeclined": "Your other device declined this request.",
   "@connectDeclined": {
     "description": "Connection screen, under Connect: the device that issued the invite answered Deny (phase 046)."
+  },
+  "pairRequestMessage": "New device: {platform}. Allow it to join?",
+  "@pairRequestMessage": {
+    "description": "Dialog shown over any screen on the device that issued an invite, when a new device asks to join through it (phase 046). {platform} is one of the devicePlatform* words, never text from the server.",
+    "placeholders": {
+      "platform": {
+        "type": "String",
+        "example": "Windows"
+      }
+    }
+  },
+  "pairRequestAllow": "Allow",
+  "@pairRequestAllow": {
+    "description": "Dialog action: let the new device join (phase 046)."
+  },
+  "pairRequestDeny": "Deny",
+  "@pairRequestDeny": {
+    "description": "Dialog action: refuse the new device (phase 046)."
+  },
+  "pairRequestAnswerError": "Couldn't send your answer. Try again.",
+  "@pairRequestAnswerError": {
+    "description": "Dialog line when Allow or Deny did not reach the server; both buttons stay (phase 046)."
+  },
+  "devicePlatformIos": "iPhone or iPad",
+  "@devicePlatformIos": {
+    "description": "OS family of a device in the Allow dialog (phase 046): iOS."
+  },
+  "devicePlatformAndroid": "Android",
+  "@devicePlatformAndroid": {
+    "description": "OS family of a device in the Allow dialog (phase 046)."
+  },
+  "devicePlatformMacos": "Mac",
+  "@devicePlatformMacos": {
+    "description": "OS family of a device in the Allow dialog (phase 046): macOS."
+  },
+  "devicePlatformWindows": "Windows",
+  "@devicePlatformWindows": {
+    "description": "OS family of a device in the Allow dialog (phase 046)."
+  },
+  "devicePlatformLinux": "Linux",
+  "@devicePlatformLinux": {
+    "description": "OS family of a device in the Allow dialog (phase 046)."
+  },
+  "devicePlatformUnknown": "Unknown system",
+  "@devicePlatformUnknown": {
+    "description": "The Allow dialog's word for an OS family this build does not know (phase 046): text from the server is never shown."
   }
 }
