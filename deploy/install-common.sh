@@ -206,6 +206,10 @@ UNDO_INTO=MAIN
 COMMITTED=0
 # UNDO_FAILED is set when a step could not be taken back.
 UNDO_FAILED=0
+# NOX_EXITING is set once the run is on its way out: a signal then only
+# stops further signals, and the taking back goes on.
+NOX_EXITING=""
+nox_status=0
 
 undo_push() {
 	if [ "$UNDO_INTO" = TOR ]; then
@@ -277,7 +281,7 @@ undo_keep_tor() {
 WORK=""
 
 on_exit() {
-	local status=$?
+	local status=$1
 	# Nothing may cut the taking back short - a second Ctrl+C, a hangup, a
 	# closed pipe, a write that fails: half of it would leave the machine in a
 	# state nobody chose. So the signals are ignored from here on, by the
@@ -311,13 +315,20 @@ on_exit() {
 # seeing the last command's status - 0 - as if the run had finished: a closed
 # terminal or a dropped SSH connection (HUP), Ctrl+\ (QUIT), and the tee the
 # output goes through dying (PIPE).
+#
+# Each trap ignores every one of these signals before it exits: a closing
+# terminal sends its hangup twice, a fraction of a millisecond apart, and a
+# second exit run inside the EXIT trap ended the script before it took
+# anything back. For the same reason the EXIT trap marks the way out before
+# it does anything else - a signal arriving after an error then only stops
+# further signals - and takes the status first, as the mark resets it.
 arm_traps() {
-	trap on_exit EXIT
-	trap 'exit 130' INT
-	trap 'exit 143' TERM
-	trap 'exit 129' HUP
-	trap 'exit 131' QUIT
-	trap 'exit 141' PIPE
+	trap 'nox_status=$?; NOX_EXITING=1; on_exit "$nox_status"' EXIT
+	trap 'trap "" INT TERM HUP QUIT PIPE; [ -n "$NOX_EXITING" ] || exit 130' INT
+	trap 'trap "" INT TERM HUP QUIT PIPE; [ -n "$NOX_EXITING" ] || exit 143' TERM
+	trap 'trap "" INT TERM HUP QUIT PIPE; [ -n "$NOX_EXITING" ] || exit 129' HUP
+	trap 'trap "" INT TERM HUP QUIT PIPE; [ -n "$NOX_EXITING" ] || exit 131' QUIT
+	trap 'trap "" INT TERM HUP QUIT PIPE; [ -n "$NOX_EXITING" ] || exit 141' PIPE
 }
 
 # make_work creates the run's scratch directory: under the prefix when
