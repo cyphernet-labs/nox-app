@@ -189,9 +189,17 @@ valid_onion() {
 # fails before the server answers runs them, newest first, and the machine is
 # as it was. The tor steps keep a record of their own: tor failing takes back
 # only tor, and the server is installed without it.
+#
+# Starting again a job or service this run stopped is pushed on the record's
+# own last list, run after the rest of the record: only once every file the
+# program reads - its binary, its settings - is back. In the record itself it
+# would run before the files changed earlier in the run are restored, and the
+# old job would start this run's binary.
 
 UNDO_MAIN=()
 UNDO_TOR=()
+UNDO_MAIN_LAST=()
+UNDO_TOR_LAST=()
 UNDO_INTO=MAIN
 # COMMITTED is set once the server answers on its service page: from there on
 # the installation stands, and what fails after it is reported, not undone.
@@ -207,11 +215,28 @@ undo_push() {
 	fi
 }
 
-# undo_run MAIN|TOR runs that record newest first and empties it. Each step
-# leaves the record once it ran, so a run interrupted while taking back goes
-# on from that step, not from the start.
+# undo_push_last pushes a start of what this run stopped: run once the rest of
+# the record is taken back.
+undo_push_last() {
+	if [ "$UNDO_INTO" = TOR ]; then
+		UNDO_TOR_LAST[${#UNDO_TOR_LAST[@]}]=$1
+	else
+		UNDO_MAIN_LAST[${#UNDO_MAIN_LAST[@]}]=$1
+	fi
+}
+
+# undo_run MAIN|TOR runs that record newest first, then its last list newest
+# first, and empties both.
 undo_run() {
-	local name="UNDO_$1" count i cmd
+	undo_steps "UNDO_$1"
+	undo_steps "UNDO_$1_LAST"
+}
+
+# undo_steps NAME runs one list of steps newest first. Each step leaves the
+# list once it ran, so a run interrupted while taking back goes on from that
+# step, not from the start.
+undo_steps() {
+	local name=$1 count i cmd
 	eval "count=\${#${name}[@]}"
 	i=$((count - 1))
 	while [ "$i" -ge 0 ]; do
@@ -225,15 +250,27 @@ undo_run() {
 	done
 }
 
-# undo_keep_tor moves the tor record into the main one: tor is in place, and
-# from here on only a failure of the whole run takes it back.
+# undo_pending says whether anything is recorded to take back.
+undo_pending() {
+	[ ${#UNDO_TOR[@]} -gt 0 ] || [ ${#UNDO_MAIN[@]} -gt 0 ] || [ ${#UNDO_TOR_LAST[@]} -gt 0 ] || [ ${#UNDO_MAIN_LAST[@]} -gt 0 ]
+}
+
+# undo_keep_tor moves the tor record into the main one, and its last list into
+# the main last list: tor is in place, and from here on only a failure of the
+# whole run takes it back.
 undo_keep_tor() {
 	local i=0
 	while [ "$i" -lt ${#UNDO_TOR[@]} ]; do
 		UNDO_MAIN[${#UNDO_MAIN[@]}]=${UNDO_TOR[$i]}
 		i=$((i + 1))
 	done
+	i=0
+	while [ "$i" -lt ${#UNDO_TOR_LAST[@]} ]; do
+		UNDO_MAIN_LAST[${#UNDO_MAIN_LAST[@]}]=${UNDO_TOR_LAST[$i]}
+		i=$((i + 1))
+	done
 	UNDO_TOR=()
+	UNDO_TOR_LAST=()
 	UNDO_INTO=MAIN
 }
 
@@ -252,7 +289,7 @@ on_exit() {
 	if [ -t 0 ]; then
 		stty echo 2>/dev/null
 	fi
-	if [ "$status" -ne 0 ] && [ "$COMMITTED" = 0 ] && { [ ${#UNDO_TOR[@]} -gt 0 ] || [ ${#UNDO_MAIN[@]} -gt 0 ]; }; then
+	if [ "$status" -ne 0 ] && [ "$COMMITTED" = 0 ] && undo_pending; then
 		printf '\n' >&2 || output_lost
 		warn "the installation did not finish; taking back what this run changed"
 		undo_run TOR

@@ -616,21 +616,22 @@ start_server() {
 		return 0
 	fi
 	if systemctl is-active --quiet "$SERVICE" 2>/dev/null; then was_active=1; fi
-	# Undone in reverse: stop the new server, put the old unit back, reload,
-	# and start the old server again if it was running.
-	if [ "$was_active" = 1 ]; then
-		undo_push "systemctl daemon-reload; systemctl restart $SERVICE >/dev/null 2>&1 || true"
-	else
-		undo_push "systemctl daemon-reload"
-	fi
+	# Undone in reverse: stop the new server, put the old unit back, reload -
+	# and, once every file of the record is back, the old binary among them,
+	# start the old server again if it was running. Each is recorded before
+	# its step: an interrupted step is taken back too.
+	undo_push "systemctl daemon-reload"
 	put_file "$WORK/noxd.service" "$UNIT" 644 root root
 	systemctl daemon-reload || die "systemctl daemon-reload failed"
 	if ! systemctl is-enabled --quiet "$SERVICE" 2>/dev/null; then
-		systemctl enable "$SERVICE" >/dev/null 2>&1 || die "systemctl could not enable $SERVICE"
 		undo_push "systemctl disable $SERVICE >/dev/null 2>&1 || true"
+		systemctl enable "$SERVICE" >/dev/null 2>&1 || die "systemctl could not enable $SERVICE"
 	fi
-	systemctl restart "$SERVICE" || die "systemctl could not start $SERVICE"
+	if [ "$was_active" = 1 ]; then
+		undo_push_last "systemctl restart $SERVICE >/dev/null 2>&1 || true"
+	fi
 	undo_push "systemctl stop $SERVICE >/dev/null 2>&1 || true"
+	systemctl restart "$SERVICE" || die "systemctl could not start $SERVICE"
 }
 
 server_log_tail() {

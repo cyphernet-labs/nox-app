@@ -312,7 +312,9 @@ job_bootstrap() {
 }
 
 # job_restore LABEL PLIST brings back the job that ran before this run, from
-# its plist - put back by then - once launchd has let go of this run's.
+# its plist, once launchd has let go of this run's. It is on the record's last
+# list: by then every file the job runs - the plist, the binary, tor's
+# settings - is back.
 job_restore() {
 	local label=$1 plist=$2
 	if ! job_stop "$label"; then
@@ -329,9 +331,9 @@ job_install() {
 	local label=$1 rendered=$2 dest=$3
 	if job_loaded "$label"; then
 		# Recorded before the stop, so whatever the stop does, a failure from
-		# here on brings the old job back. It runs last when undoing: this
-		# run's job is gone and the old plist back by then.
-		undo_push "job_restore $label $(q "$dest")"
+		# here on brings the old job back - after everything else is taken
+		# back, this run's job and the old files among it.
+		undo_push_last "job_restore $label $(q "$dest")"
 		note "stopping $label"
 		job_stop "$label" || die "launchd did not stop $label within $NOX_JOB_STOP_WAIT seconds"
 	fi
