@@ -312,6 +312,28 @@ void main() {
     );
 
     blocTest<ConnectBloc, ConnectState>(
+      'a wait the channel ends for good says why, as any failed attempt does',
+      build: () {
+        final answer = Completer<RepositoryResult<bool>>();
+        waitsFor(answer);
+        Future<void>.delayed(const Duration(milliseconds: 20), () {
+          status.emit(const ConnectionStatus(state: LinkState.serverMismatch, problem: ConnectionProblem.otherServer));
+        });
+        Future<void>.delayed(
+          const Duration(milliseconds: 40),
+          () => answer.complete(const RepositoryResult.error(exception: RepositoryException.connection)),
+        );
+        return ConnectBloc(link: _onionLink);
+      },
+      act: (bloc) => bloc.add(const ConnectEvent.connectRequested()),
+      wait: const Duration(milliseconds: 80),
+      verify: (bloc) {
+        expect(bloc.state.status, ConnectStatus.failed);
+        expect(bloc.state.problem, ConnectionProblem.otherServer);
+      },
+    );
+
+    blocTest<ConnectBloc, ConnectState>(
       'Cancel does nothing while nothing waits',
       build: () => ConnectBloc(link: _homeLink),
       act: (bloc) => bloc.add(const ConnectEvent.cancelRequested()),

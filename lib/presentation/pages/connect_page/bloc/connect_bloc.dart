@@ -198,8 +198,12 @@ class ConnectBloc extends BaseBloc<ConnectEvent, ConnectState> {
   /// under the button at once rather than when the whole budget has run out,
   /// and kept when the attempt ends - the rollback that follows a failure
   /// takes the selector's answer away.
+  ///
+  /// Kept while a request waits for approval too (phase 046), though the
+  /// wait does not show it: a wait that ends because the channel is refused
+  /// for good says why under Connect, like any other failed attempt.
   void _onConnectionStatusChanged(ConnectionStatusChanged event, Emitter<ConnectState> emit) {
-    if (!state.isConnecting) return;
+    if (!state.isBusy) return;
     final problem = event.status.problem;
     if (problem == null || problem == state.problem) return;
     emit(state.copyWith(problem: problem));
