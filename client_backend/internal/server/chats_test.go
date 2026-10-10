@@ -495,11 +495,11 @@ func person(t *testing.T, s *store.Store, name string) store.Identity {
 	if _, err := s.EnsureServerIdentity(ctx); err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
-	token, err := s.IssueClaimToken(ctx, 1)
+	link, err := s.IssueMachineLink(ctx, 1)
 	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
+		t.Fatalf("IssueMachineLink: %v", err)
 	}
-	if _, err := s.Pair(ctx, token, deviceKey, "test", 1); err != nil {
+	if _, err := s.Pair(ctx, link.Token, deviceKey, "test", 1); err != nil {
 		t.Fatalf("Pair(%s): %v", name, err)
 	}
 	// State the chosen name the way onboarding does.

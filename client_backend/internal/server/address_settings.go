@@ -112,7 +112,7 @@ func onionChecksum(key []byte) [32]byte {
 //
 // Everything accepted here goes into pairing links, so it is held to what the
 // link builder can encode: a name of at most 253 bytes and no zone on an IPv6
-// address. A link that cannot be built would leave the machine with no claim
+// address. A link that cannot be built would leave the machine with no machine
 // link and no invites at all.
 func parsePublicAddress(raw string) (string, error) {
 	host, portStr, err := net.SplitHostPort(raw)

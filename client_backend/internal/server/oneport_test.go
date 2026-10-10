@@ -72,7 +72,7 @@ func TestEveryConnectionGetsTheSlowPathTimeouts(t *testing.T) {
 // the same way.
 func TestAClaimThroughTheOnionServiceIsAClaimLikeAnyOther(t *testing.T) {
 	ts, srv := newTestServer(t)
-	token := mustClaimToken(t, srv)
+	token := mustMachineLink(t, srv)
 	d := newDevice(t)
 
 	c, err := dialThroughOnion(t, ts, srv, d)
@@ -102,7 +102,7 @@ func TestAClaimThroughTheOnionServiceIsAClaimLikeAnyOther(t *testing.T) {
 // unknown command like any other.
 func TestAccessKeysAreGoneFromTheWire(t *testing.T) {
 	ts, srv := newTestServer(t)
-	token := mustClaimToken(t, srv)
+	token := mustMachineLink(t, srv)
 	d := newDevice(t)
 	c := dialAs(t, ts, srv, d)
 	c.expectGreeting()

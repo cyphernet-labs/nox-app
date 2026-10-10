@@ -338,7 +338,7 @@ func TestClosingTheListenerEndsHandshakesUnderWay(t *testing.T) {
 // either way the row that comes into being is the connection's own key.
 func TestPairPairsTheKeyTheChannelProved(t *testing.T) {
 	ts, srv := newTestServer(t)
-	token := mustClaimToken(t, srv)
+	token := mustMachineLink(t, srv)
 	proved := newDevice(t)
 	named := newDevice(t)
 

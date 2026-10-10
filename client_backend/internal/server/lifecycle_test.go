@@ -132,7 +132,7 @@ func TestStoryThreeRestartIntegrity(t *testing.T) {
 			// message's own author, so a restart that lost the key would look
 			// like a different person.
 			if dev == nil {
-				dev, _ = claimDevice(t, ts, srv)
+				dev, _ = firstDevice(t, ts, srv)
 			}
 			c := dialAs(t, ts, srv, dev)
 			c.expectGreeting()

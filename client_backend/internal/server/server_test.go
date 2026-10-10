@@ -15,7 +15,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -120,6 +119,9 @@ func openStack(t *testing.T, path string, logger *slog.Logger, tweak ...func(*Se
 	// address list must not depend on the network of whoever runs the suite.
 	srv.listIPs = func() []net.IP { return nil }
 	srv.pingInterval = 50 * time.Millisecond
+	// The request sweep at test speed: a request whose time ran out closes
+	// within a few tens of milliseconds rather than seconds.
+	srv.requestSweep = 20 * time.Millisecond
 	// The write timeout stays the slow path's 30 s: slow-consumer tests rely
 	// on it, because the overflow drop (policy violation) must win over a
 	// ping or write timeout.
@@ -139,6 +141,13 @@ func openStack(t *testing.T, path string, logger *slog.Logger, tweak ...func(*Se
 	go func() {
 		defer close(watchDone)
 		srv.runAddressWatcher(watchCtx)
+	}()
+	// And the request sweeper, which Run starts beside the watcher (046).
+	sweepCtx, stopSweep := context.WithCancel(context.Background())
+	sweepDone := make(chan struct{})
+	go func() {
+		defer close(sweepDone)
+		srv.runRequestSweeper(sweepCtx)
 	}()
 
 	dispDone := make(chan struct{})
@@ -161,6 +170,8 @@ func openStack(t *testing.T, path string, logger *slog.Logger, tweak ...func(*Se
 		ts.Close()
 		stopWatch()
 		<-watchDone
+		stopSweep()
+		<-sweepDone
 		stopHub()
 		<-hubDone
 		<-dispDone
@@ -380,103 +391,6 @@ func readWriteDB(t *testing.T, srv *Server) *sql.DB {
 	}
 	t.Cleanup(func() { _ = d.Close() })
 	return d.Write
-}
-
-// The startup line has to tell the two situations apart, because they ask
-// different things of the person reading it: a machine nobody has claimed is
-// about to get an owner, while one whose owner lost every device is about to
-// let that same owner back in. Before ownership was explicit the two were
-// indistinguishable and the message said "no owner yet" for both.
-func TestTheStartupLineDistinguishesAnUnclaimedServerFromAnEmptyOne(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "announce.db")
-	dbs, err := db.Open(path)
-	if err != nil {
-		t.Fatalf("db.Open: %v", err)
-	}
-	t.Cleanup(func() { _ = dbs.Close() })
-	if _, err := db.Migrate(context.Background(), dbs.Write, os.DirFS("../../migrations")); err != nil {
-		t.Fatalf("db.Migrate: %v", err)
-	}
-	st := store.New(dbs.Read, dbs.Write)
-	ctx := context.Background()
-
-	fresh := &syncBuffer{}
-	if _, err := announceClaim(ctx, st, "127.0.0.1:8080", mustOwnership(t, st), mustIdentity(t, st), configuredAddresses{}, slog.New(slog.NewTextHandler(fresh, nil))); err != nil {
-		t.Fatalf("announceClaim on a fresh store: %v", err)
-	}
-	if !strings.Contains(fresh.String(), "no owner yet") {
-		t.Fatalf("fresh store announced %q", fresh.String())
-	}
-
-	// Claim it, then take the device away - which is what logging out does.
-	token, err := st.IssueClaimToken(ctx, 100)
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
-	}
-	if _, err := st.Pair(ctx, token, "dev-a", "test", 100); err != nil {
-		t.Fatalf("Pair: %v", err)
-	}
-	if err := st.RevokeDevice(ctx, "dev-a"); err != nil {
-		t.Fatalf("RevokeDevice: %v", err)
-	}
-
-	owned := &syncBuffer{}
-	if _, err := announceClaim(ctx, st, "127.0.0.1:8080", mustOwnership(t, st), mustIdentity(t, st), configuredAddresses{}, slog.New(slog.NewTextHandler(owned, nil))); err != nil {
-		t.Fatalf("announceClaim on an owned store: %v", err)
-	}
-	if strings.Contains(owned.String(), "no owner yet") {
-		t.Fatalf("a server that still has an owner claims to have none: %q", owned.String())
-	}
-	if !strings.Contains(owned.String(), "get back in") {
-		t.Fatalf("owned-but-empty store announced %q", owned.String())
-	}
-
-	// And the third: a store that holds the person but lost the marker. This is
-	// the state feature 037 traded the old refusal for, so it is the one line an
-	// operator reads while recovering. Ordering matters here - Owned implies
-	// HasPerson, so a switch that tested HasPerson first would swallow the case
-	// above and pass every other assertion in this test.
-	handle, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatalf("open the database again: %v", err)
-	}
-	if _, err := handle.Exec("UPDATE server_identity SET owner_user_id = NULL WHERE id = 1"); err != nil {
-		t.Fatalf("forget the owner: %v", err)
-	}
-	_ = handle.Close()
-
-	stranded := &syncBuffer{}
-	if _, err := announceClaim(ctx, st, "127.0.0.1:8080", mustOwnership(t, st), mustIdentity(t, st), configuredAddresses{}, slog.New(slog.NewTextHandler(stranded, nil))); err != nil {
-		t.Fatalf("announceClaim on a store with no marker: %v", err)
-	}
-	if !strings.Contains(stranded.String(), "sign in as the person it belongs to") {
-		t.Fatalf("a store that holds somebody announced %q", stranded.String())
-	}
-	for _, wrong := range []string{"no owner yet", "get back in"} {
-		if strings.Contains(stranded.String(), wrong) {
-			t.Fatalf("announced %q, which is the copy for another state: %q", wrong, stranded.String())
-		}
-	}
-}
-
-// mustIdentity mints or reads the machine identity startup settles first.
-func mustIdentity(t *testing.T, st *store.Store) store.ServerIdentity {
-	t.Helper()
-	id, err := st.EnsureServerIdentity(context.Background())
-	if err != nil {
-		t.Fatalf("EnsureServerIdentity: %v", err)
-	}
-	return id
-}
-
-// mustOwnership reads the snapshot startup would hand to announceClaim.
-func mustOwnership(t *testing.T, st *store.Store) store.OwnershipState {
-	t.Helper()
-	state, err := st.ReadOwnershipState(context.Background())
-	if err != nil {
-		t.Fatalf("ReadOwnershipState: %v", err)
-	}
-	return state
 }
 
 // A startup that is going to abort must not rotate the journal on its way out.

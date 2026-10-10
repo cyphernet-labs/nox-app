@@ -220,9 +220,10 @@ func TestTheOldTorFlagStopsTheStartWithAHint(t *testing.T) {
 }
 
 // The address parameters end to end (045): a good one lands in the database
-// before anything listens - the claim link printed at startup already names it
-// - and a bad one leaves the server running with a warning on the page. The
-// onion address reaches neither the log nor any other line (FR-022).
+// before anything listens - the first link the page shows already names it -
+// and a bad one leaves the server running with a warning on the page. The
+// onion address reaches neither the log nor any other line (FR-022), and the
+// startup log carries no link at all (046, FR-005).
 func TestStartParametersLandBeforeTheLinkAndNeverInTheLog(t *testing.T) {
 	cfg := testRunConfig(t)
 	cfg.OnionAddr = testOnionAddr + ":443"
@@ -253,13 +254,16 @@ func TestStartParametersLandBeforeTheLinkAndNeverInTheLog(t *testing.T) {
 	if !strings.Contains(out, "-public-addr") || !strings.Contains(out, "start parameter not applied") {
 		t.Fatalf("the refused parameter is not named in the log:\n%s", out)
 	}
-	// The claim link printed at startup names the onion service already.
-	m := regexp.MustCompile(`link=(nox://pair/[A-Za-z0-9_-]+)`).FindStringSubmatch(out)
-	if m == nil {
-		t.Fatalf("no claim link in the startup log:\n%s", out)
+	// The link is on the page, not in the log - and the page's first link
+	// names the onion service already.
+	if strings.Contains(out, "nox://pair/") {
+		t.Fatalf("a link reached the startup log:\n%s", out)
 	}
-	if got := readLink(t, m[1]); got.Onion == nil {
-		t.Fatalf("the claim link printed at startup names no onion service: %+v", got)
+	if !strings.Contains(out, "no device can reach this server yet") {
+		t.Fatalf("the startup log does not say where the link for a first device is:\n%s", out)
+	}
+	if got := readLink(t, linkOf(t, string(page))); got.Onion == nil {
+		t.Fatalf("the page's first link names no onion service: %+v", got)
 	}
 
 	dbs, err := db.Open(cfg.DBPath)

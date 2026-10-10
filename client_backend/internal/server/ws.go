@@ -83,11 +83,12 @@ func (c *client) readLoop() {
 }
 
 func (c *client) dispatch(cmd protocol.Command) {
-	// pair is the ONE exception to "hello first", and not for convenience: an
-	// unpaired device proved a key the server does not know, and its greeting
-	// would be refused, so requiring one first would make pairing impossible
-	// rather than awkward.
-	if !c.helloDone && cmd.Cmd != protocol.CmdSessionHello && cmd.Cmd != protocol.CmdPair {
+	// pair and pair.cancel are the exceptions to "hello first", and not for
+	// convenience: an unpaired device proved a key the server does not know,
+	// and its greeting would be refused, so requiring one first would make
+	// pairing impossible rather than awkward - and a device waiting for Allow
+	// could not withdraw its request.
+	if !c.helloDone && cmd.Cmd != protocol.CmdSessionHello && cmd.Cmd != protocol.CmdPair && cmd.Cmd != protocol.CmdPairCancel {
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "session.hello must be the first command"))
 		return
 	}
@@ -97,6 +98,10 @@ func (c *client) dispatch(cmd protocol.Command) {
 		c.handleSessionHello(cmd)
 	case protocol.CmdPair:
 		c.handlePair(cmd)
+	case protocol.CmdPairCancel:
+		c.handlePairCancel(cmd)
+	case protocol.CmdDeviceApprove:
+		c.handleDeviceApprove(cmd)
 	case protocol.CmdDeviceList:
 		c.handleDeviceList(cmd)
 	case protocol.CmdDeviceRevoke:

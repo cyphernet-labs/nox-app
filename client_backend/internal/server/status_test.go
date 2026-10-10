@@ -3,13 +3,14 @@ package server
 import (
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -28,7 +29,76 @@ func statusBody(t *testing.T, srv *Server) string {
 	return rec.Body.String()
 }
 
-func TestAnUnclaimedServerOffersTheLinkAndACodeToScan(t *testing.T) {
+// linkOf pulls the machine link out of the rendered page.
+func linkOf(t *testing.T, body string) string {
+	t.Helper()
+	const open = `<code class="link">`
+	i := strings.Index(body, open)
+	if i < 0 {
+		t.Fatal("no link on the page")
+	}
+	rest := body[i+len(open):]
+	j := strings.Index(rest, "</code>")
+	if j < 0 {
+		t.Fatal("unterminated link on the page")
+	}
+	return rest[:j]
+}
+
+// linkTokenOnPage opens the page and returns the token of the link it shows.
+func linkTokenOnPage(t *testing.T, srv *Server) string {
+	t.Helper()
+	return readLink(t, linkOf(t, statusBody(t, srv))).Token
+}
+
+// countLiveMachineLinks counts the machine links that could still be shown or
+// presented - SC-004's "at most one".
+func countLiveMachineLinks(t *testing.T, srv *Server) int {
+	t.Helper()
+	var n int
+	if err := readDB(t, srv).QueryRowContext(context.Background(),
+		"SELECT COUNT(1) FROM pair_tokens WHERE kind = 'machine' AND used_at IS NULL").Scan(&n); err != nil {
+		t.Fatalf("count machine links: %v", err)
+	}
+	return n
+}
+
+// postLink posts the page's link button as a browser on this machine would.
+func postLink(t *testing.T, srv *Server, host, origin string, form url.Values) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/link", strings.NewReader(form.Encode()))
+	req.Host = host
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if origin != "" {
+		req.Header.Set("Origin", origin)
+	}
+	rec := httptest.NewRecorder()
+	srv.StatusHandler().ServeHTTP(rec, req)
+	return rec
+}
+
+// expireLinks puts every unspent machine link's deadline in the past, the way
+// ten minutes would.
+func expireLinks(t *testing.T, srv *Server) {
+	t.Helper()
+	if _, err := readWriteDB(t, srv).ExecContext(context.Background(),
+		"UPDATE pair_tokens SET expires_at = ? WHERE kind = 'machine' AND used_at IS NULL", time.Now().Unix()-1); err != nil {
+		t.Fatalf("expire the machine links: %v", err)
+	}
+}
+
+// dialable gives the test server an address a phone could reach.
+//
+// The harness binds 127.0.0.1:0, which the page correctly treats as "no phone
+// can get here" - right in production, and it would leave every code-related
+// test asserting about a page that deliberately draws none.
+func dialable(srv *Server) {
+	srv.cfg.Addr = "192.168.1.10:8080"
+}
+
+// FR-003, US2 scenario 1: a machine nobody can reach shows a link at once - the
+// QR code, the link and its ten minutes - with no button to press first.
+func TestAMachineWithNoDeviceShowsALinkAtOnce(t *testing.T) {
 	_, srv := newTestServer(t)
 	dialable(srv)
 	if _, err := srv.store.EnsureServerIdentity(context.Background()); err != nil {
@@ -36,11 +106,8 @@ func TestAnUnclaimedServerOffersTheLinkAndACodeToScan(t *testing.T) {
 	}
 
 	body := statusBody(t, srv)
-	if !strings.Contains(body, "nox://pair/") {
-		t.Fatalf("no claim link on an unclaimed server's page: %s", body)
-	}
-	// The page and the QR beside it are how the first device learns which key
-	// to expect in the channel. A link carrying anything else hands out a
+	// The page and the code beside it are how the first device learns which
+	// key to expect in the channel. A link carrying anything else hands out a
 	// server nobody can reach.
 	got := readLink(t, linkOf(t, body))
 	if !got.ServerKey.Equal(serverKeyOf(t, srv)) {
@@ -49,45 +116,185 @@ func TestAnUnclaimedServerOffersTheLinkAndACodeToScan(t *testing.T) {
 	if len(got.Direct) != 1 || got.Direct[0] != "192.168.1.10:8080" {
 		t.Fatalf("the page's link names %v, want the address a phone can dial", got.Direct)
 	}
-	if !strings.Contains(body, "<svg") {
-		t.Fatalf("no QR on an unclaimed server's page: %s", body)
+	for _, want := range []string{"<svg", "Expires in 10 minutes", "Pair your first device"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("the page does not show %q: %s", want, body)
+		}
+	}
+	if strings.Contains(body, "Add a device") {
+		t.Fatal("a machine nobody can reach asks for a button press before showing a link")
 	}
 	// The one screen that must NOT redraw itself: a camera is reading it.
-	if strings.Contains(body, "http-equiv=\"refresh\"") {
+	if strings.Contains(body, `http-equiv="refresh"`) {
 		t.Fatal("the QR page refreshes itself, which breaks the scan it exists for")
 	}
 }
 
-// The page hands out the SAME right the terminal printed. A second token would
-// be a second unrevocable door - a claim token has no expiry to close it.
-func TestThePageAndTheStartupLineShareOneClaimToken(t *testing.T) {
+// A reload shows the link the page already showed: the page mints once for a
+// machine nobody can reach, never once per view (SC-004).
+func TestAReloadShowsTheSameLink(t *testing.T) {
 	_, srv := newTestServer(t)
 	dialable(srv)
-	ctx := context.Background()
-	if _, err := srv.store.EnsureServerIdentity(ctx); err != nil {
-		t.Fatalf("EnsureServerIdentity: %v", err)
-	}
-	token, err := srv.store.IssueClaimToken(ctx, time.Now().Unix())
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
-	}
-	srv.seedClaimToken(token)
-
-	first := statusBody(t, srv)
-	second := statusBody(t, srv)
-	if linkOf(t, first) != linkOf(t, second) {
+	first := linkOf(t, statusBody(t, srv))
+	second := linkOf(t, statusBody(t, srv))
+	if first != second {
 		t.Fatal("two page loads handed out two different links")
 	}
-	// The token is packed into the link's binary payload rather than spelled
-	// out, so the property is asserted where it lives: exactly one unspent
-	// claim token exists, the one the startup announcement minted.
-	if got := countLiveClaimTokens(t, srv); got != 1 {
-		t.Fatalf("unspent claim tokens = %d, want 1: the page minted its own", got)
+	if got := countLiveMachineLinks(t, srv); got != 1 {
+		t.Fatalf("unspent machine links = %d, want 1: the page minted another", got)
 	}
 }
 
-// listenAddress falls back to loopback under a wildcard bind - right for the
-// terminal line, useless for the phone this page exists to serve.
+// The service page's states, every one, from contracts/service-page-link.md:
+// what each shows and - the load-bearing column - whether it hands out a live
+// link at all.
+func TestTheServicePageShowsEveryStateOfTheMachineLink(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name    string
+		arrange func(t *testing.T, ts *httptest.Server, srv *Server)
+		want    []string
+		notWant []string
+		live    bool
+	}{
+		{
+			name:    "no devices, the link is live",
+			arrange: func(*testing.T, *httptest.Server, *Server) {},
+			want:    []string{"Pair your first device", `class="link"`, "<svg", "Expires in 10 minutes", `class="copy"`},
+			notWant: []string{"Add a device", "Running."},
+			live:    true,
+		},
+		{
+			name: "no devices, the link ran out",
+			arrange: func(t *testing.T, _ *httptest.Server, srv *Server) {
+				statusBody(t, srv) // the page mints the link on its first view
+				expireLinks(t, srv)
+			},
+			want:    []string{"Pair your first device", "Link expired", "New link"},
+			notWant: []string{`class="link"`, "<svg", "Expires in", "Add a device"},
+			live:    false,
+		},
+		{
+			name: "devices, no link asked for",
+			arrange: func(t *testing.T, ts *httptest.Server, srv *Server) {
+				firstDevice(t, ts, srv)
+			},
+			want:    []string{"NOX server", "Add a device", "Devices"},
+			notWant: []string{`class="link"`, "<svg", "Link expired", "Expires in"},
+			live:    false,
+		},
+		{
+			name: "devices, the link is live",
+			arrange: func(t *testing.T, ts *httptest.Server, srv *Server) {
+				firstDevice(t, ts, srv)
+				if _, err := srv.store.IssueMachineLink(ctx, time.Now().Unix()); err != nil {
+					t.Fatalf("IssueMachineLink: %v", err)
+				}
+			},
+			want:    []string{"NOX server", `class="link"`, "<svg", "Expires in 10 minutes"},
+			notWant: []string{"Add a device"},
+			live:    true,
+		},
+		{
+			name: "devices, the link ran out",
+			arrange: func(t *testing.T, ts *httptest.Server, srv *Server) {
+				firstDevice(t, ts, srv)
+				if _, err := srv.store.IssueMachineLink(ctx, time.Now().Unix()); err != nil {
+					t.Fatalf("IssueMachineLink: %v", err)
+				}
+				expireLinks(t, srv)
+			},
+			want:    []string{"NOX server", "Link expired", "New link"},
+			notWant: []string{`class="link"`, "<svg", "Add a device", "Expires in"},
+			live:    false,
+		},
+		{
+			name: "the person signed out of their last device",
+			arrange: func(t *testing.T, ts *httptest.Server, srv *Server) {
+				d, _ := firstDevice(t, ts, srv)
+				if _, err := srv.store.RevokeDevice(ctx, d.pub, time.Now().Unix()); err != nil {
+					t.Fatalf("RevokeDevice: %v", err)
+				}
+			},
+			want:    []string{"No device can reach this server", "chats and messages", `class="link"`, "<svg", "Expires in 10 minutes"},
+			notWant: []string{"Pair your first device", "Add a device"},
+			live:    true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ts, srv := newTestServer(t)
+			dialable(srv)
+			// Startup mints the machine key before it ever draws a page.
+			if _, err := srv.store.EnsureServerIdentity(ctx); err != nil {
+				t.Fatalf("EnsureServerIdentity: %v", err)
+			}
+			tc.arrange(t, ts, srv)
+
+			rec := statusResponse(t, srv)
+			body := rec.Body.String()
+			for _, want := range tc.want {
+				if !strings.Contains(body, want) {
+					t.Fatalf("the page does not show %q: %s", want, body)
+				}
+			}
+			for _, wrong := range tc.notWant {
+				if strings.Contains(body, wrong) {
+					t.Fatalf("the page also shows %q, which belongs to another state: %s", wrong, body)
+				}
+			}
+			// The script counts the live link down and is there for nothing
+			// else, so it comes - and is admitted - with a live link only.
+			if got := strings.Contains(body, "<script>"); got != tc.live {
+				t.Fatalf("script on the page = %v, want %v", got, tc.live)
+			}
+			if got := strings.Contains(rec.Header().Get("Content-Security-Policy"), "script-src"); got != tc.live {
+				t.Fatalf("the policy admits a script = %v, want %v", got, tc.live)
+			}
+		})
+	}
+}
+
+// A live link carries its deadline for the countdown, and the expired state
+// ships hidden beside it, so a page left open turns into `Link expired` with
+// `New link` when the minutes run out - without minting anything (FR-002).
+func TestALiveLinkCarriesItsDeadlineAndTheExpiredStateBesideIt(t *testing.T) {
+	_, srv := newTestServer(t)
+	page, err := srv.store.PageMachineLink(context.Background(), time.Now().Unix())
+	if err != nil || !page.Found {
+		t.Fatalf("PageMachineLink = %+v (%v)", page, err)
+	}
+	body := statusBody(t, srv)
+	if !strings.Contains(body, fmt.Sprintf(`data-expires="%d"`, page.Link.ExpiresAt)) {
+		t.Fatalf("the countdown does not carry the link's deadline %d: %s", page.Link.ExpiresAt, body)
+	}
+	if !strings.Contains(body, `<div class="expired" hidden>`) || !strings.Contains(body, `<div class="live">`) {
+		t.Fatalf("the live link is not paired with a hidden expired state: %s", body)
+	}
+}
+
+// ExpiresIn rounds up to the minute, the way the page and the terminal say it.
+func TestExpiresInWordsTheMinutesLeft(t *testing.T) {
+	for _, tc := range []struct {
+		left int64
+		want string
+	}{
+		{600, "Expires in 10 minutes"},
+		{599, "Expires in 10 minutes"},
+		{540, "Expires in 9 minutes"},
+		{61, "Expires in 2 minutes"},
+		{60, "Expires in 1 minute"},
+		{1, "Expires in 1 minute"},
+		{0, "Link expired"},
+		{-5, "Link expired"},
+	} {
+		if got := ExpiresIn(1000+tc.left, 1000); got != tc.want {
+			t.Errorf("ExpiresIn with %d s left = %q, want %q", tc.left, got, tc.want)
+		}
+	}
+}
+
+// listenAddress falls back to loopback under a wildcard bind - right for a link
+// pasted on this machine, useless for the phone the code exists for.
 func TestTheCodeCarriesAnAddressAPhoneCanDial(t *testing.T) {
 	t.Run("a concrete bind is used as it stands", func(t *testing.T) {
 		if got := dialableHost("192.168.1.10:8080"); got != "192.168.1.10:8080" {
@@ -112,51 +319,61 @@ func TestTheCodeCarriesAnAddressAPhoneCanDial(t *testing.T) {
 	})
 }
 
-func TestAClaimedServerShowsTheMachineAndNoLink(t *testing.T) {
+// With devices the page shows the machine, and a link only once somebody asks
+// for one: an open page does not hold a live link nobody wanted (decision 3).
+func TestAMachineWithDevicesShowsAddADeviceAndNoLink(t *testing.T) {
 	ts, srv := newTestServer(t)
 	dialable(srv)
-	claimDevice(t, ts, srv)
+	firstDevice(t, ts, srv)
 
 	body := statusBody(t, srv)
-	if strings.Contains(body, "nox://pair/") {
-		t.Fatalf("a claimed server still offers a claim link: %s", body)
+	if strings.Contains(body, "nox://pair/") || strings.Contains(body, "<svg") {
+		t.Fatalf("a machine with devices offers a link nobody asked for: %s", body)
 	}
-	if strings.Contains(body, "<svg") {
-		t.Fatalf("a claimed server still draws a QR: %s", body)
+	if !strings.Contains(body, `action="/link"`) || !strings.Contains(body, "Add a device") {
+		t.Fatalf("no Add a device on a machine with devices: %s", body)
 	}
 	for _, want := range []string{"Version", "Uptime", "Schema", "Storage id", "Database", "Devices", "Chats", "Messages"} {
 		if !strings.Contains(body, want) {
-			t.Fatalf("the claimed page does not show %q: %s", want, body)
+			t.Fatalf("the page does not show %q: %s", want, body)
 		}
 	}
-	// Nothing counts people any more: this machine holds exactly one, so the
-	// number would say the same thing on every server that ever runs.
+	// Nothing counts people: this machine holds exactly one, so the number
+	// would say the same thing on every server that ever runs.
 	if strings.Contains(body, "People") {
-		t.Fatalf("the page still counts people: %s", body)
+		t.Fatalf("the page counts people: %s", body)
 	}
-	// It no longer refreshes itself (045): it carries the address forms, and a
-	// reload every few seconds wipes an address halfway through being pasted.
-	if strings.Contains(body, `http-equiv="refresh"`) {
-		t.Fatal("the claimed page refreshes itself under the address forms")
+	if got := countLiveMachineLinks(t, srv); got != 0 {
+		t.Fatalf("the page minted %d links over a machine with devices", got)
 	}
 }
 
-// "Claimed" means the owner can still get in - the SAME predicate the startup
-// announcement uses. A second definition here would show a status page to
-// somebody locked out of their own machine.
-func TestAnOwnerWithNoDevicesLeftIsOfferedTheLinkAgain(t *testing.T) {
+// FR-015 through the wire: signing out of the last device puts the machine back
+// to "no devices", and the page shows a link at once - even when the link the
+// person asked for earlier ran out unused in the meantime.
+func TestTheLastDeviceGoneShowsALinkAgain(t *testing.T) {
 	ts, srv := newTestServer(t)
 	dialable(srv)
-	dev, _ := claimDevice(t, ts, srv)
-	if strings.Contains(statusBody(t, srv), "nox://pair/") {
-		t.Fatal("a claimed server offered a link before the device was revoked")
+	dev, _ := firstDevice(t, ts, srv)
+	if rec := postLink(t, srv, pageHost, pageOrigin, url.Values{"token": {srv.formToken}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("Add a device = %d", rec.Code)
+	}
+	expireLinks(t, srv) // asked for, never used
+	if body := statusBody(t, srv); !strings.Contains(body, "Link expired") {
+		t.Fatalf("precondition: the page shows the link that ran out: %s", body)
 	}
 
-	if err := srv.store.RevokeDevice(context.Background(), dev.pub); err != nil {
-		t.Fatalf("RevokeDevice: %v", err)
+	c := dialAs(t, ts, srv, dev)
+	c.expectGreeting()
+	c.hello(1, "")
+	c.expectOKAfter(2, fmt.Sprintf(`{"id":2,"cmd":"device.revoke","data":{"device_key":%q}}`, dev.pub))
+
+	body := statusBody(t, srv)
+	if !strings.Contains(body, "No device can reach this server") || !strings.Contains(body, "Expires in 10 minutes") {
+		t.Fatalf("after the last device left the page does not show a live link at once: %s", body)
 	}
-	if !strings.Contains(statusBody(t, srv), "nox://pair/") {
-		t.Fatal("an owner who lost every device is not offered a way back in")
+	if strings.Contains(body, `<div class="expired">`) {
+		t.Fatalf("the run-out link stands between the person and a fresh one: %s", body)
 	}
 }
 
@@ -164,7 +381,7 @@ func TestAnOwnerWithNoDevicesLeftIsOfferedTheLinkAgain(t *testing.T) {
 // went to read it, a page is seen by whoever is standing near the monitor.
 func TestThePageNamesNobodyAndShowsNoKeys(t *testing.T) {
 	ts, srv := newTestServer(t)
-	dev, data := claimDevice(t, ts, srv)
+	dev, data := firstDevice(t, ts, srv)
 	var id identity
 	mustUnmarshal(t, data["identity"], &id)
 
@@ -197,17 +414,45 @@ func TestThePageNamesNobodyAndShowsNoKeys(t *testing.T) {
 	}
 }
 
+// FR-016: a lost device is revoked from a device the person holds, never from
+// the page - so the page offers no way to, in any state.
+func TestThePageHasNoRevocation(t *testing.T) {
+	ts, srv := newTestServer(t)
+	firstDevice(t, ts, srv)
+	for _, body := range []string{statusBody(t, srv), pageAt(t, srv, "/?saved=onion")} {
+		if strings.Contains(strings.ToLower(body), "revoke") {
+			t.Fatalf("the page offers revocation: %s", body)
+		}
+	}
+	for _, path := range []string{"/revoke", "/devices"} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, path, nil)
+		req.Host = pageHost
+		srv.StatusHandler().ServeHTTP(rec, req)
+		if rec.Code == http.StatusOK || rec.Code == http.StatusSeeOther {
+			t.Fatalf("POST %s = %d, want no such route", path, rec.Code)
+		}
+	}
+}
+
 // The main listener is bound to every interface in an ordinary install. The
 // page must live nowhere on it.
 func TestTheMainListenerNeverServesTheServicePage(t *testing.T) {
 	ts, srv := newTestServer(t)
-	claimDevice(t, ts, srv)
+	firstDevice(t, ts, srv)
 
 	for _, path := range []string{"/", "/status", "/index.html"} {
 		rec := httptest.NewRecorder()
 		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 		if rec.Code == http.StatusOK && strings.Contains(rec.Body.String(), "<html") {
 			t.Fatalf("the main listener serves the service page at %q", path)
+		}
+	}
+	for _, path := range []string{"/link", controlLinkPath} {
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, nil))
+		if rec.Code == http.StatusOK || rec.Code == http.StatusSeeOther {
+			t.Fatalf("the main listener answers POST %s with %d", path, rec.Code)
 		}
 	}
 }
@@ -236,67 +481,27 @@ func TestHealthAnswersExactlyWhatItAnswered(t *testing.T) {
 	}
 }
 
-// linkOf pulls the claim link out of the rendered page.
-func linkOf(t *testing.T, body string) string {
-	t.Helper()
-	const open = `<code class="link">`
-	i := strings.Index(body, open)
-	if i < 0 {
-		t.Fatal("no link on the page")
-	}
-	rest := body[i+len(open):]
-	j := strings.Index(rest, "</code>")
-	if j < 0 {
-		t.Fatal("unterminated link on the page")
-	}
-	return rest[:j]
-}
-
-// countLiveClaimTokens counts the doors into this server that are still open.
-func countLiveClaimTokens(t *testing.T, srv *Server) int {
-	t.Helper()
-	handle, err := sql.Open("sqlite", srv.cfg.DBPath)
-	if err != nil {
-		t.Fatalf("open the database again: %v", err)
-	}
-	defer func() { _ = handle.Close() }()
-	var n int
-	if err := handle.QueryRow("SELECT COUNT(1) FROM pair_tokens WHERE kind = 'claim' AND used_at IS NULL").Scan(&n); err != nil {
-		t.Fatalf("count claim tokens: %v", err)
-	}
-	return n
-}
-
-// A token spent between two page loads must not come back. The owner claims,
-// then logs out; the page is the only recovery tool there is, and offering the
-// burnt link would point it at a door that no longer opens.
-func TestThePageStopsOfferingATokenThatHasBeenSpent(t *testing.T) {
+// A link spent between two page loads must not come back: the device it paired
+// is there, so the page offers Add a device - and after that device signs out,
+// a fresh link rather than the burnt one.
+func TestThePageStopsOfferingALinkThatHasBeenSpent(t *testing.T) {
 	ts, srv := newTestServer(t)
 	dialable(srv)
-	ctx := context.Background()
-	if _, err := srv.store.EnsureServerIdentity(ctx); err != nil {
-		t.Fatalf("EnsureServerIdentity: %v", err)
-	}
-	token, err := srv.store.IssueClaimToken(ctx, time.Now().Unix())
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
-	}
-	// The production path: the startup announcement's token is what the page
-	// holds. Without seeding it, the page mints its own and the bug is unreachable.
-	srv.seedClaimToken(token)
 	first := linkOf(t, statusBody(t, srv))
 
-	dev, _ := pairDevice(t, ts, token)
-	if err := srv.store.RevokeDevice(ctx, dev.pub); err != nil {
+	dev, _ := pairDevice(t, ts, readLink(t, first).Token)
+	if body := statusBody(t, srv); strings.Contains(body, "nox://pair/") {
+		t.Fatalf("the page still offers the link the pairing spent: %s", body)
+	}
+	if _, err := srv.store.RevokeDevice(context.Background(), dev.pub, time.Now().Unix()); err != nil {
 		t.Fatalf("RevokeDevice: %v", err)
 	}
-
 	second := linkOf(t, statusBody(t, srv))
 	if second == first {
-		t.Fatal("the page still offers the token the claim already burned")
+		t.Fatal("the page offers the link the pairing already spent")
 	}
-	if got := countLiveClaimTokens(t, srv); got != 1 {
-		t.Fatalf("unspent claim tokens = %d, want exactly the replacement", got)
+	if got := countLiveMachineLinks(t, srv); got != 1 {
+		t.Fatalf("unspent machine links = %d, want exactly the replacement", got)
 	}
 }
 
@@ -325,49 +530,19 @@ func TestALoopbackBindDrawsNoCodeAndSaysWhy(t *testing.T) {
 	if !strings.Contains(body, "reachable from this machine only") {
 		t.Fatalf("the page does not explain why there is no code: %s", body)
 	}
-	// And the LINK is still there. Conflating "no phone can dial this" with
-	// "there is no link" left an owner on the default bind - which is loopback
-	// - unable to claim their own server from the app running right there.
+	// And the LINK is still there: the app running on this machine pairs by
+	// pasting it, and a loopback bind is the default.
 	if !strings.Contains(body, "nox://pair/") {
 		t.Fatalf("a loopback-bound server offers no link at all: %s", body)
 	}
-	if got := countLiveClaimTokens(t, srv); got != 1 {
-		t.Fatalf("unspent claim tokens = %d, want 1: a loopback bind must still issue one", got)
-	}
-}
-
-// The recovery path on the DEFAULT configuration: claim, log out, and the page
-// must offer a fresh usable link - not nothing, and not the burnt one.
-func TestALoopbackServerCanBeReclaimedAfterALogout(t *testing.T) {
-	ts, srv := newTestServer(t)
-	ctx := context.Background()
-	if _, err := srv.store.EnsureServerIdentity(ctx); err != nil {
-		t.Fatalf("EnsureServerIdentity: %v", err)
-	}
-	token, err := srv.store.IssueClaimToken(ctx, time.Now().Unix())
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
-	}
-	srv.seedClaimToken(token)
-	first := linkOf(t, statusBody(t, srv))
-
-	dev, _ := pairDevice(t, ts, token)
-	if err := srv.store.RevokeDevice(ctx, dev.pub); err != nil {
-		t.Fatalf("RevokeDevice: %v", err)
-	}
-
-	second := linkOf(t, statusBody(t, srv))
-	if second == first {
-		t.Fatal("the page offers the token the claim already burned")
-	}
-	if got := countLiveClaimTokens(t, srv); got != 1 {
-		t.Fatalf("unspent claim tokens = %d, want exactly the replacement", got)
+	if got := countLiveMachineLinks(t, srv); got != 1 {
+		t.Fatalf("unspent machine links = %d, want 1: a loopback bind must still issue one", got)
 	}
 }
 
 // A separate socket keeps the network out; it does not keep the operator's own
 // browser out. Any site can be rebound to 127.0.0.1 by DNS and read this page
-// as same-origin - and the claim link with it.
+// as same-origin - and the machine link with it.
 func TestThePageRefusesAHostThatIsNotThisMachine(t *testing.T) {
 	_, srv := newTestServer(t)
 	for _, host := range []string{"evil.example:8081", "nox.local:8081", "192.168.1.10:8081"} {
@@ -378,6 +553,9 @@ func TestThePageRefusesAHostThatIsNotThisMachine(t *testing.T) {
 		if rec.Code != http.StatusForbidden {
 			t.Fatalf("Host %q = %d, want 403: a rebound name must not read this page", host, rec.Code)
 		}
+	}
+	if got := countLiveMachineLinks(t, srv); got != 0 {
+		t.Fatal("a refused request still minted a link")
 	}
 	for _, host := range []string{"127.0.0.1:8081", "localhost:8081", "[::1]:8081"} {
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -390,16 +568,7 @@ func TestThePageRefusesAHostThatIsNotThisMachine(t *testing.T) {
 	}
 }
 
-// dialable gives the test server an address a phone could reach.
-//
-// The harness binds 127.0.0.1:0, which the page now correctly treats as "no
-// phone can get here" - right in production, and it would leave every
-// link-related test asserting about a page that deliberately shows none.
-func dialable(srv *Server) {
-	srv.cfg.Addr = "192.168.1.10:8080"
-}
-
-// The link follows the address; only the token is held.
+// The link follows the address; only the token is kept.
 //
 // Caching the built link froze an address for the life of the process while
 // "can a phone reach us" went on being recomputed — so a laptop whose network
@@ -407,8 +576,7 @@ func dialable(srv *Server) {
 // 127.0.0.1, which is precisely the code this page refuses to draw.
 func TestTheLinkFollowsTheAddressWhileTheTokenStaysPut(t *testing.T) {
 	_, srv := newTestServer(t)
-	ctx := context.Background()
-	if _, err := srv.store.EnsureServerIdentity(ctx); err != nil {
+	if _, err := srv.store.EnsureServerIdentity(context.Background()); err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
 
@@ -429,127 +597,66 @@ func TestTheLinkFollowsTheAddressWhileTheTokenStaysPut(t *testing.T) {
 	if lanLink == loopbackLink {
 		t.Fatal("the link kept the address it was built with, so the code points at loopback")
 	}
-	// And it is the same right, not a second one.
-	if got := countLiveClaimTokens(t, srv); got != 1 {
-		t.Fatalf("unspent claim tokens = %d, want 1: the address changed, the token must not", got)
+	// And it is the same link, not a second one.
+	if readLink(t, lanLink).Token != readLink(t, loopbackLink).Token {
+		t.Fatal("the address changed, and so did the token")
+	}
+	if got := countLiveMachineLinks(t, srv); got != 1 {
+		t.Fatalf("unspent machine links = %d, want 1: the address changed, the token must not", got)
 	}
 }
 
-// forgetOwnerOnDisk drops the ownership marker through a second handle on the
-// same file - what a partial restore or a hand edit leaves behind.
-func forgetOwnerOnDisk(t *testing.T, srv *Server) {
-	t.Helper()
-	handle, err := sql.Open("sqlite", srv.cfg.DBPath)
-	if err != nil {
-		t.Fatalf("open the database again: %v", err)
+// Add a device and New link (FR-003, SC-004): a new link, the one before it
+// dead, back to the page - which shows the new one.
+func TestTheLinkButtonIssuesANewLinkAndVoidsThePrevious(t *testing.T) {
+	ts, srv := newTestServer(t)
+	dialable(srv)
+	previous := linkTokenOnPage(t, srv)
+
+	rec := postLink(t, srv, pageHost, pageOrigin, url.Values{"token": {srv.formToken}})
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
+		t.Fatalf("POST /link = %d to %q, want 303 to /", rec.Code, rec.Header().Get("Location"))
 	}
-	defer func() { _ = handle.Close() }()
-	if _, err := handle.Exec("UPDATE server_identity SET owner_user_id = NULL WHERE id = 1"); err != nil {
-		t.Fatalf("forget the owner: %v", err)
+	current := linkTokenOnPage(t, srv)
+	if current == previous {
+		t.Fatal("the button left the same link on the page")
 	}
+	if got := countLiveMachineLinks(t, srv); got != 1 {
+		t.Fatalf("unspent machine links = %d, want 1", got)
+	}
+	c := dialWS(t, ts, srv)
+	c.expectGreeting()
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"test"}}`, previous))
+	if code := expectErrCode(t, c, 1); code != "invalid_token" {
+		t.Fatalf("the link the button replaced = %q, want invalid_token", code)
+	}
+	pairDevice(t, ts, current)
 }
 
-// Every state of the page, enumerated, because the last three defects here were
-// all "the branch I did not think about". Each row is a store shape, the copy it
-// must show, the copy it must NOT, and whether the page hands out a claim
-// credential at all.
-//
-// offersClaim is the load-bearing column. Copy alone cannot pin this: two of the
-// five states share a sentence, so a row asserting only what is written passes
-// whichever page was rendered - including a claimed, reachable machine printing a
-// live claim link and QR, which is the one outcome here that costs somebody their
-// identity.
-func TestTheServicePageSaysTheRightThingInEveryState(t *testing.T) {
+// The button is a write through the page, held to the three checks Set is: a
+// rebound name, another site's form, or a request that never saw the page gets
+// 403, and nothing is minted - a link minted by another site's form would void
+// the one somebody is scanning.
+func TestTheLinkButtonRefusesAFormThatIsNotThePagesOwn(t *testing.T) {
+	_, srv := newTestServer(t)
+	good := url.Values{"token": {srv.formToken}}
 	for _, tc := range []struct {
-		name        string
-		arrange     func(t *testing.T, ts *httptest.Server, srv *Server)
-		want        string
-		notWant     []string
-		offersClaim bool
+		name, host, origin string
+		form               url.Values
 	}{
-		{
-			name:        "fresh, nobody has claimed it",
-			arrange:     func(*testing.T, *httptest.Server, *Server) {},
-			want:        "Nobody has claimed this server yet",
-			notWant:     []string{"records no owner", "Your server is waiting", "Running and claimed"},
-			offersClaim: true,
-		},
-		{
-			name: "claimed and reachable",
-			arrange: func(t *testing.T, ts *httptest.Server, srv *Server) {
-				claimDevice(t, ts, srv)
-			},
-			want:        "Running and claimed",
-			notWant:     []string{"records no owner", "Nobody has claimed", "Your server is waiting"},
-			offersClaim: false,
-		},
-		{
-			name: "owner is there, their last device is not",
-			arrange: func(t *testing.T, ts *httptest.Server, srv *Server) {
-				d, _ := claimDevice(t, ts, srv)
-				if err := srv.store.RevokeDevice(context.Background(), d.pub); err != nil {
-					t.Fatalf("RevokeDevice: %v", err)
-				}
-			},
-			want:        "Your server is waiting for you",
-			notWant:     []string{"records no owner", "Nobody has claimed", "Running and claimed"},
-			offersClaim: true,
-		},
-		{
-			name: "reachable, but the marker is gone",
-			arrange: func(t *testing.T, ts *httptest.Server, srv *Server) {
-				claimDevice(t, ts, srv)
-				forgetOwnerOnDisk(t, srv)
-			},
-			// "records no owner" alone does NOT identify this page: the
-			// needs-claim branch says it too. The state is pinned by the
-			// sentence that belongs only to the other one, and by the absence
-			// of a claim credential.
-			want:        "records no owner",
-			notWant:     []string{"Running and claimed", "Nobody has claimed", "This server holds a conversation"},
-			offersClaim: false,
-		},
-		{
-			name: "the marker is gone and so is the last device",
-			arrange: func(t *testing.T, ts *httptest.Server, srv *Server) {
-				d, _ := claimDevice(t, ts, srv)
-				if err := srv.store.RevokeDevice(context.Background(), d.pub); err != nil {
-					t.Fatalf("RevokeDevice: %v", err)
-				}
-				forgetOwnerOnDisk(t, srv)
-			},
-			want:        "This server holds a conversation",
-			notWant:     []string{"Nobody has claimed", "Running and claimed", "Your server is waiting"},
-			offersClaim: true,
-		},
+		{"a host that is not this machine", "evil.example:8081", "http://evil.example:8081", good},
+		{"no origin", pageHost, "", good},
+		{"another site's origin", pageHost, "http://evil.example", good},
+		{"a null origin", pageHost, "null", good},
+		{"no token", pageHost, pageOrigin, url.Values{}},
+		{"a wrong token", pageHost, pageOrigin, url.Values{"token": {strings.Repeat("0", 64)}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ts, srv := newTestServer(t)
-			dialable(srv)
-			// Startup mints the machine key before it ever draws a page.
-			if _, err := srv.store.EnsureServerIdentity(context.Background()); err != nil {
-				t.Fatalf("EnsureServerIdentity: %v", err)
+			if rec := postLink(t, srv, tc.host, tc.origin, tc.form); rec.Code != http.StatusForbidden {
+				t.Fatalf("POST /link = %d, want 403", rec.Code)
 			}
-			tc.arrange(t, ts, srv)
-
-			body := statusBody(t, srv)
-			if !strings.Contains(body, tc.want) {
-				t.Fatalf("the page does not say %q: %s", tc.want, body)
-			}
-			for _, wrong := range tc.notWant {
-				if strings.Contains(body, wrong) {
-					t.Fatalf("the page also says %q, which belongs to another state: %s", wrong, body)
-				}
-			}
-			// The credential itself, not the words around it. A page that offers
-			// a claim carries the link (and the QR, when the server is dialable
-			// from anywhere but this machine); presenting it signs a device in as
-			// the person this store belongs to.
-			if got := strings.Contains(body, `class="link"`); got != tc.offersClaim {
-				t.Fatalf("page offers a claim link = %v, want %v: %s", got, tc.offersClaim, body)
-			}
-			if got := strings.Contains(body, "<svg"); got != tc.offersClaim {
-				t.Fatalf("page offers a claim QR = %v, want %v: %s", got, tc.offersClaim, body)
+			if got := countLiveMachineLinks(t, srv); got != 0 {
+				t.Fatalf("a refused form minted %d links", got)
 			}
 		})
 	}
@@ -560,7 +667,7 @@ func TestTheServicePageSaysTheRightThingInEveryState(t *testing.T) {
 // Not an oversight: its socket carries no network traffic by construction, so
 // there is nothing in transit to protect - and a self-signed certificate there
 // would teach an operator's browser to expect a warning on the one page whose
-// job is to hand out the right to own this machine.
+// job is to hand out a way in.
 func TestTheServicePageIsStillPlainHTTPOnLoopback(t *testing.T) {
 	_, srv := newTestServer(t)
 	dialable(srv)
@@ -590,7 +697,7 @@ func TestTheServicePageIsStillPlainHTTPOnLoopback(t *testing.T) {
 		t.Fatalf("read the page: %v", err)
 	}
 	if !strings.Contains(string(body), "nox://pair/") {
-		t.Fatalf("the page came back without its claim link: %s", body)
+		t.Fatalf("the page came back without its link: %s", body)
 	}
 }
 
@@ -608,8 +715,8 @@ func statusResponse(t *testing.T, srv *Server) *httptest.ResponseRecorder {
 	return rec
 }
 
-// The claim link is two lines of base64 nobody should have to select by hand.
-func TestTheClaimLinkCanBeCopied(t *testing.T) {
+// The machine link is two lines of base64 nobody should have to select by hand.
+func TestTheMachineLinkCanBeCopied(t *testing.T) {
 	_, srv := newTestServer(t)
 	dialable(srv)
 	if _, err := srv.store.EnsureServerIdentity(context.Background()); err != nil {
@@ -618,7 +725,7 @@ func TestTheClaimLinkCanBeCopied(t *testing.T) {
 
 	body := statusResponse(t, srv).Body.String()
 	if !strings.Contains(body, `<button type="button" class="copy" hidden>`) {
-		t.Fatalf("no copy button beside the claim link: %s", body)
+		t.Fatalf("no copy button beside the link: %s", body)
 	}
 	// HIDDEN in the markup, revealed by the script. A control that does nothing
 	// when pressed is worse than no control, and that is exactly what a page
@@ -649,7 +756,7 @@ func TestThePolicyAdmitsExactlyTheScriptThePageServed(t *testing.T) {
 	open := strings.Index(body, "<script>")
 	closing := strings.Index(body, "</script>")
 	if open < 0 || closing < open {
-		t.Fatalf("no script on a page that carries a link: %s", body)
+		t.Fatalf("no script on a page that carries a live link: %s", body)
 	}
 	served := body[open+len("<script>") : closing]
 
@@ -661,7 +768,7 @@ func TestThePolicyAdmitsExactlyTheScriptThePageServed(t *testing.T) {
 		t.Fatalf("the policy does not admit the script the page served.\n  served hash: %s\n  policy:      %s", want, policy)
 	}
 	// And nothing weaker. 'unsafe-inline' would admit an injected script too,
-	// on the one page that hands out ownership of this machine.
+	// on the one page that hands out a way into this machine.
 	if strings.Contains(policy, "unsafe-inline'; script") || strings.Contains(policy, "script-src 'unsafe-inline'") {
 		t.Fatalf("the policy admits inline scripts wholesale: %s", policy)
 	}
@@ -671,14 +778,14 @@ func TestThePolicyAdmitsExactlyTheScriptThePageServed(t *testing.T) {
 	}
 }
 
-// A page with no link carries no script, and the policy says so rather than
-// leaving a permission standing for something that is not there.
+// A page with no live link carries no script, and the policy says so rather
+// than leaving a permission standing for something that is not there.
 func TestAPageWithNoLinkCarriesNoScriptAndAdmitsNone(t *testing.T) {
 	ts, srv := newTestServer(t)
 	dialable(srv)
-	// A claimed server with a device still on it shows the status page, not the
-	// claim page - so there is no link and nothing to copy.
-	claimDevice(t, ts, srv)
+	// A machine with a device and no link asked for: nothing to copy, nothing
+	// to count down.
+	firstDevice(t, ts, srv)
 
 	rec := statusResponse(t, srv)
 	if strings.Contains(rec.Body.String(), "<script>") {
@@ -686,5 +793,24 @@ func TestAPageWithNoLinkCarriesNoScriptAndAdmitsNone(t *testing.T) {
 	}
 	if policy := rec.Header().Get("Content-Security-Policy"); strings.Contains(policy, "script-src") {
 		t.Fatalf("no script on the page, but the policy still admits one: %s", policy)
+	}
+}
+
+// The token travels in the page as the link and nowhere else: the page never
+// writes it into a URL a browser keeps, and the forms name the process's form
+// token, not the link's.
+func TestTheLinkTokenAppearsOnlyInsideTheLink(t *testing.T) {
+	_, srv := newTestServer(t)
+	page, err := srv.store.PageMachineLink(context.Background(), time.Now().Unix())
+	if err != nil || !page.Found {
+		t.Fatalf("PageMachineLink = %+v (%v)", page, err)
+	}
+	body := statusBody(t, srv)
+	// The link itself is taken out first: the token sits at a byte offset that
+	// is a multiple of three inside it, so its base64 can show through the
+	// link's own.
+	rest := strings.Replace(body, linkOf(t, body), "", 1)
+	if strings.Contains(rest, page.Link.Token) {
+		t.Fatalf("the raw token is on the page outside the link: %s", rest)
 	}
 }

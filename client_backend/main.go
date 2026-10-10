@@ -7,11 +7,13 @@ package main
 import (
 	"context"
 	"embed"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"nox.app/client-backend/internal/config"
 	"nox.app/client-backend/internal/server"
@@ -21,6 +23,10 @@ import (
 var migrationsFS embed.FS
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "link" {
+		os.Exit(link(os.Args[2:]))
+	}
+
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 
 	cfg, err := config.Load(os.Args[1:], os.Getenv)
@@ -43,4 +49,44 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("server stopped")
+}
+
+// link is `noxd link` (046): it asks the server running on this machine for a
+// new machine link and prints it with its deadline - and, with -qr, as a code
+// to scan - for a machine with no screen to open the service page on. The link
+// it replaces stops working.
+//
+// It never opens the database: only the running server does (invariant 1), so
+// the link comes from it, over the service page's loopback listener. And it is
+// printed here and nowhere else - the server's log never carries a link.
+func link(args []string) int {
+	cfg, err := config.LoadLink(args, os.Getenv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "noxd link:", err)
+		return 2
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	got, err := server.RequestMachineLink(ctx, cfg.StatusAddr)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "noxd link:", err)
+		return 1
+	}
+	if cfg.QR {
+		if server.LinkReachesOnlyThisMachine(got.Link) {
+			fmt.Fprintln(os.Stderr, "This server is reachable from this machine only, so there is no code for a phone to scan - "+
+				"the link below works in the NOX app running here. To pair a phone, start the server with -addr set to an "+
+				"address on your network, or give it a public or onion address.")
+		} else {
+			code, err := server.QRText(got.Link)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "noxd link:", err)
+				return 1
+			}
+			fmt.Print(code)
+		}
+	}
+	fmt.Println(got.Link)
+	fmt.Println(server.ExpiresIn(got.ExpiresAt, time.Now().Unix()))
+	return 0
 }

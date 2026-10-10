@@ -228,3 +228,48 @@ func TestAStrayArgumentIsRefusedRatherThanEndingTheFlags(t *testing.T) {
 		t.Fatal("a positional argument was accepted")
 	}
 }
+
+// `noxd link` (046) finds the running server the way the server was told where
+// to listen - flag, then NOX_STATUS_ADDR, then the default - and is held to
+// loopback by the same rule: it asks for a link, and the answer must come from
+// this machine.
+func TestLoadLink(t *testing.T) {
+	noEnv := func(string) string { return "" }
+	env := func(k string) string {
+		if k == "NOX_STATUS_ADDR" {
+			return "127.0.0.1:9100"
+		}
+		return ""
+	}
+	for _, tc := range []struct {
+		name    string
+		args    []string
+		getenv  func(string) string
+		want    LinkConfig
+		wantErr string
+	}{
+		{name: "the server's default page address", getenv: noEnv, want: LinkConfig{StatusAddr: "127.0.0.1:8081"}},
+		{name: "the address the server was started with", getenv: env, want: LinkConfig{StatusAddr: "127.0.0.1:9100"}},
+		{name: "the flag wins", args: []string{"-status-addr", "127.0.0.1:9200"}, getenv: env, want: LinkConfig{StatusAddr: "127.0.0.1:9200"}},
+		{name: "localhost is loopback", args: []string{"-status-addr", "localhost:8081"}, getenv: noEnv, want: LinkConfig{StatusAddr: "localhost:8081"}},
+		{name: "the code as well", args: []string{"-qr"}, getenv: noEnv, want: LinkConfig{StatusAddr: "127.0.0.1:8081", QR: true}},
+		{name: "an address on a network", args: []string{"-status-addr", "192.168.1.10:8081"}, getenv: noEnv, wantErr: "loopback"},
+		{name: "every interface", args: []string{"-status-addr", "0.0.0.0:8081"}, getenv: noEnv, wantErr: "loopback"},
+		{name: "no page at all", args: []string{"-status-addr", ""}, getenv: noEnv, wantErr: "no way to hand out a link"},
+		{name: "a stray word", args: []string{"now"}, getenv: noEnv, wantErr: `"now"`},
+		{name: "a server flag", args: []string{"-db", "x.db"}, getenv: noEnv, wantErr: "flag provided but not defined"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := LoadLink(tc.args, tc.getenv)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("LoadLink = %+v, %v; want an error saying %q", got, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Fatalf("LoadLink = %+v, %v; want %+v", got, err, tc.want)
+			}
+		})
+	}
+}

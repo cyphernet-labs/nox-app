@@ -4,10 +4,8 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"database/sql"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http/httptest"
 	"regexp"
@@ -131,19 +129,12 @@ func newDevice(t *testing.T) *device {
 	return &device{pub: base64.StdEncoding.EncodeToString(pub), priv: priv}
 }
 
-// claimDevice pairs a fresh device by claiming the server. Returns the device
-// and the identity the pairing produced.
-func claimDevice(t *testing.T, ts *httptest.Server, srv *Server) (*device, map[string]json.RawMessage) {
+// firstDevice pairs a fresh device through a machine link - the way the first
+// device of a fresh install is paired. Returns the device and the identity the
+// pairing produced.
+func firstDevice(t *testing.T, ts *httptest.Server, srv *Server) (*device, map[string]json.RawMessage) {
 	t.Helper()
-	ctx := context.Background()
-	if _, err := srv.store.EnsureServerIdentity(ctx); err != nil {
-		t.Fatalf("EnsureServerIdentity: %v", err)
-	}
-	token, err := srv.store.IssueClaimToken(ctx, time.Now().Unix())
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
-	}
-	return pairDevice(t, ts, token)
+	return pairDevice(t, ts, mustMachineLink(t, srv))
 }
 
 // pairDevice presents a token as a fresh device, on a connection of its own -
@@ -209,32 +200,12 @@ func pairedDevice(t *testing.T, ts *httptest.Server, srv *Server) *device {
 	return d
 }
 
-// pairAs pairs d: by claiming the server while no device can reach it,
-// otherwise by an invite one of the person's devices issues.
+// pairAs pairs d through a machine link. The link creates the person while
+// nobody is there and joins them after, with no Allow to wait for - which is
+// what a test that is not about invites wants from "a second device".
 func pairAs(t *testing.T, ts *httptest.Server, srv *Server, d *device) {
 	t.Helper()
-	ctx := context.Background()
-	if _, err := srv.store.EnsureServerIdentity(ctx); err != nil {
-		t.Fatalf("EnsureServerIdentity: %v", err)
-	}
-	var issuer string
-	err := readDB(t, srv).QueryRowContext(ctx, "SELECT device_key FROM devices LIMIT 1").Scan(&issuer)
-	if errors.Is(err, sql.ErrNoRows) {
-		token, err := srv.store.IssueClaimToken(ctx, time.Now().Unix())
-		if err != nil {
-			t.Fatalf("IssueClaimToken: %v", err)
-		}
-		pairDeviceAs(t, ts, token, d)
-		return
-	}
-	if err != nil {
-		t.Fatalf("read a paired device: %v", err)
-	}
-	token, err := srv.store.IssueDeviceInvite(ctx, issuer, time.Now().Unix())
-	if err != nil {
-		t.Fatalf("IssueDeviceInvite: %v", err)
-	}
-	pairDeviceAs(t, ts, token, d)
+	pairDeviceAs(t, ts, mustMachineLink(t, srv), d)
 }
 
 // expectOK reads frames until the reply for id arrives (skipping events) and
@@ -527,10 +498,10 @@ func TestStoryOneProtocolNegatives(t *testing.T) {
 	// assertion is on the raw JSON keys rather than on a decoded struct, because
 	// a decoded struct is exactly what cannot see a field nobody asked for.
 	t.Run("the identity object carries only what the contract lists", func(t *testing.T) {
-		// Its own server: the shared one above is already claimed and has a
-		// device, and a claim there is now refused - correctly.
+		// Its own server, so the pairing below creates the person and the reply
+		// carries every field it can.
 		ts, srv := newTestServer(t)
-		d, paired := pairDevice(t, ts, mustClaimToken(t, srv))
+		d, paired := pairDevice(t, ts, mustMachineLink(t, srv))
 		assertIdentityKeys(t, paired, "id", "label", "created")
 
 		c := dialAs(t, ts, srv, d)
@@ -667,18 +638,19 @@ func assertHealthy(t *testing.T, ts *httptest.Server) {
 	c.expectGreeting()
 }
 
-// mustClaimToken mints the claim for a server that has none yet.
-func mustClaimToken(t *testing.T, srv *Server) string {
+// mustMachineLink mints a machine link and returns its token. The previous
+// one, if any, stops working - as it does for the page's button.
+func mustMachineLink(t *testing.T, srv *Server) string {
 	t.Helper()
 	ctx := context.Background()
 	if _, err := srv.store.EnsureServerIdentity(ctx); err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
-	token, err := srv.store.IssueClaimToken(ctx, time.Now().Unix())
+	link, err := srv.store.IssueMachineLink(ctx, time.Now().Unix())
 	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
+		t.Fatalf("IssueMachineLink: %v", err)
 	}
-	return token
+	return link.Token
 }
 
 // assertIdentityKeys checks the identity object's key SET, not its values: the

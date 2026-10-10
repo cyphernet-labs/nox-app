@@ -25,11 +25,12 @@ type Config struct {
 	DBPath    string
 	FilesPath string
 	// StatusAddr is where the service page and /health listen, or empty for
-	// neither. Always a loopback address: the page shows the claim link, and a
-	// claim link reachable over the network hands ownership to everyone on
-	// that network. The restriction lives on the SOCKET rather than in a
-	// handler, because a check inside the process is a check somebody
-	// eventually routes around with a header.
+	// neither. Always a loopback address: the page hands out the machine link,
+	// and a machine link reachable over the network would let anybody on that
+	// network pair a device. The restriction lives on the SOCKET rather than in
+	// a handler, because a check inside the process is a check somebody
+	// eventually routes around with a header. `noxd link` asks the running
+	// server through the same listener, so without it there is no link at all.
 	StatusAddr string
 	Limits     Limits
 
@@ -138,12 +139,48 @@ func Load(args []string, getenv func(string) string) (Config, error) {
 	}, nil
 }
 
+// LinkConfig is what `noxd link` needs: where the running server's service
+// page listens, and whether to draw the link as a QR code too.
+type LinkConfig struct {
+	StatusAddr string
+	QR         bool
+}
+
+// LoadLink parses the arguments of `noxd link` (046). The address follows the
+// server's own rule and default - flag, then NOX_STATUS_ADDR, then
+// 127.0.0.1:8081 - so the command finds a server started with the same
+// environment without being told, and it is held to loopback the same way: the
+// command asks for a link, and the answer must not come from anywhere else.
+func LoadLink(args []string, getenv func(string) string) (LinkConfig, error) {
+	defStatus := getenv("NOX_STATUS_ADDR")
+	if defStatus == "" {
+		defStatus = "127.0.0.1:8081"
+	}
+	fs := flag.NewFlagSet("noxd link", flag.ContinueOnError)
+	statusAddr := fs.String("status-addr", defStatus, "the running server's service page address (loopback)")
+	qr := fs.Bool("qr", false, "draw the link as a QR code in the terminal as well")
+	if err := fs.Parse(args); err != nil {
+		return LinkConfig{}, fmt.Errorf("parse flags: %w", err)
+	}
+	if fs.NArg() > 0 {
+		return LinkConfig{}, fmt.Errorf("unexpected argument %q (noxd link takes only -status-addr and -qr)", fs.Arg(0))
+	}
+	if *statusAddr == "" {
+		return LinkConfig{}, errors.New("-status-addr must name the running server's service page: " +
+			"a server started with it empty has no page, and no way to hand out a link")
+	}
+	if err := checkStatusAddr(*statusAddr); err != nil {
+		return LinkConfig{}, err
+	}
+	return LinkConfig{StatusAddr: *statusAddr, QR: *qr}, nil
+}
+
 // checkStatusAddr refuses anything the service page must not listen on.
 //
 // Empty is allowed and means no page. Everything else has to resolve to a
 // loopback address: the flag exists to move the port, not to put the page on a
 // network, and somebody who writes 0.0.0.0 there has to learn it now rather
-// than when a stranger claims their server. A name is resolved rather than
+// than when a stranger pairs with their server. A name is resolved rather than
 // pattern-matched, so "localhost" passes and a name that quietly points
 // somewhere else does not.
 func checkStatusAddr(addr string) error {

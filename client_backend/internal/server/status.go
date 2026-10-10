@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/ed25519"
 	"fmt"
 	"net"
 	"os"
@@ -12,45 +13,30 @@ import (
 	"nox.app/client-backend/internal/store"
 )
 
-// machineState is which of the two pages to show: "somebody still has to claim
-// this" and "it is claimed".
-//
-// There used to be a third, for a store holding people with no owner. Feature
-// 037 traded the refusal that state carried for recoverability: a claim there
-// ATTACHES to the one person on the machine rather than leaving their whole
-// conversation locked away with no way in.
-//
-// The trade rests on the claim path counting DEVICES rather than reading the
-// ownership marker - the marker is missing in exactly this case. Restoring the
-// refusal without that in mind takes the recovery away again; removing the
-// device count offers a live machine to whoever reads the startup log.
-type machineState int
-
-const (
-	stateNeedsClaim machineState = iota
-	stateClaimed
-)
-
 // machineStatus is everything the service page shows, gathered per request.
 //
 // Per request rather than cached: the state changes while a page is open, and
 // a tab left on screen must not go on offering a link that has just been spent.
 type machineStatus struct {
-	State machineState
-	Link  string
-	// Scannable is whether the link names an address ANOTHER device can reach:
-	// a dialable bind, or a public or onion address the owner set. False does
-	// not mean there is no link: a server bound to loopback is perfectly
-	// claimable from the app on this same machine, and the link is what that
-	// app needs. It only means there is no point drawing a code for a camera.
-	Scannable bool
-	// Owned and HasPerson pick the copy on the needs-claim page, on the SAME
-	// three-way split the startup announcement uses: an owner who ran out of
-	// devices is getting back in, a store that holds somebody without a marker
-	// is being recovered, and an empty machine is being claimed. Two of those
-	// were once told they had been hand-edited.
-	Owned     bool
+	// HasDevices says some device can reach this machine. Without one the page
+	// leads with a machine link (FR-003); with them, it offers `Add a device`.
+	HasDevices bool
+	// HasPerson picks the words for a machine nobody can reach: a fresh one, or
+	// one whose person signed out of their last device and has chats and
+	// messages waiting for whichever device comes next.
 	HasPerson bool
+	// Link is the machine link to show, empty when there is none to show.
+	Link string
+	// LinkLive says Link can still be presented. A link that ran out is shown
+	// as `Link expired` with `New link` - never replaced on its own (FR-002).
+	LinkLive  bool
+	ExpiresAt int64
+	// Scannable is whether the link names an address ANOTHER device can reach:
+	// a dialable bind, or a public or onion address the person set. False does
+	// not mean there is no link: a server bound to loopback is paired from the
+	// app on this same machine, and the link is what that app needs. It only
+	// means there is no point drawing a code for a camera.
+	Scannable bool
 	JournalID string
 	Schema    int
 	Counts    store.Counts
@@ -67,15 +53,15 @@ type machineStatus struct {
 
 // collectStatus reads the machine's own state.
 //
-// Reachability comes from the same ReadOwnershipState the startup announcement
-// reads, and the SAME predicate decides: "claimed" means the owner can still
-// get in. A second definition here is how phase 033's one fact would go back to
-// living in two records - and this one would show a status page to somebody
-// locked out of their own machine.
+// The link and the device count come from ONE read (store.PageMachineLink):
+// whether the page leads with a link and which link it shows are one fact, and
+// reading them apart could show the "no devices" page over a machine somebody
+// paired a moment ago.
 func (s *Server) collectStatus(ctx context.Context) (machineStatus, error) {
-	ownership, err := s.store.ReadOwnershipState(ctx)
+	now := time.Now().Unix()
+	page, err := s.store.PageMachineLink(ctx, now)
 	if err != nil {
-		return machineStatus{}, fmt.Errorf("read ownership: %w", err)
+		return machineStatus{}, fmt.Errorf("read the machine link: %w", err)
 	}
 	counts, err := s.store.CountEverything(ctx)
 	if err != nil {
@@ -96,32 +82,28 @@ func (s *Server) collectStatus(ctx context.Context) (machineStatus, error) {
 	}
 
 	status := machineStatus{
-		Found:  found,
-		Stored: stored,
-		// Set before the switch, not inside a branch. Both states read them -
-		// the claimed page to say whether an owner is recorded, the needs-claim
-		// page to pick which of three stories it is telling - and filling them
-		// on one path only told every healthy server it had been hand edited.
-		Owned:     ownership.Owned,
-		HasPerson: ownership.HasPerson,
-		JournalID: journalID,
-		Schema:    s.schemaVersion,
-		Counts:    counts,
-		DBBytes:   fileSize(s.cfg.DBPath),
-		Version:   buildVersion(),
-		Uptime:    time.Since(s.startedAt),
+		HasDevices: page.Devices > 0,
+		HasPerson:  counts.People > 0,
+		Found:      found,
+		Stored:     stored,
+		JournalID:  journalID,
+		Schema:     s.schemaVersion,
+		Counts:     counts,
+		DBBytes:    fileSize(s.cfg.DBPath),
+		Version:    buildVersion(),
+		Uptime:     time.Since(s.startedAt),
 	}
-
-	switch {
-	case ownership.OwnerCanGetIn:
-		status.State = stateClaimed
-	default:
-		status.State = stateNeedsClaim
-		link, scannable, err := s.claimLink(ctx)
+	if page.Found {
+		b, err := s.machineLinkBuilder(ctx)
 		if err != nil {
 			return machineStatus{}, err
 		}
-		status.Link, status.Scannable = link, scannable
+		status.Link, status.Scannable, err = b.build(page.Link.Token)
+		if err != nil {
+			return machineStatus{}, err
+		}
+		status.LinkLive = page.Link.Live(now)
+		status.ExpiresAt = page.Link.ExpiresAt
 	}
 	return status, nil
 }
@@ -182,9 +164,8 @@ func fileSize(path string) int64 {
 // dialableHost is the address to put in the QR code.
 //
 // NOT listenAddress: that falls back to loopback under a wildcard bind, which
-// is right for the line printed in the terminal - read by a person sitting at
-// this machine - and useless for the reader this page exists for, a phone
-// reading the code off the screen. 127.0.0.1 is not something a phone can dial,
+// is right for a link pasted into the app on this machine and useless for the
+// reader the code exists for, a phone reading it off the screen. 127.0.0.1 is not something a phone can dial,
 // and 0.0.0.0 is how a household server is ordinarily run, so the old rule
 // would have produced a code that never worked.
 //
@@ -291,76 +272,90 @@ func humanDuration(d time.Duration) string {
 	return strings.Join(parts, " ")
 }
 
-// claimLink hands out THE claim link of this process, minting the token once.
+// linkBuilder is what a machine link is built from, read BEFORE a token is
+// minted wherever one is: a failure after minting would leave a fresh link
+// nobody was handed, and the one it voided gone.
 //
-// Once, not per request. A claim token has no expiry - it dies by being used
-// (phase 032) - so minting one per page load would leave an unrevocable door
-// behind every browser refresh, and a database full of live tokens nobody
-// remembers. The startup announcement seeds this with the token it already
-// minted, so the page and the terminal hand out the same right; only the
-// ADDRESS differs, because the two have different readers.
-func (s *Server) claimLink(ctx context.Context) (string, bool, error) {
-	s.claim.Lock()
-	defer s.claim.Unlock()
-
-	// The held token can have been spent since it was minted: somebody claims
-	// the server, the owner later revokes their last device, and this page is
-	// asked for a link again. Showing the burnt one would offer the only way
-	// back in as a door that no longer opens - and a claim token has no expiry
-	// to make that obvious.
-	if s.claimToken != "" {
-		usable, err := s.store.ClaimTokenUsable(ctx, s.claimToken)
-		if err != nil {
-			return "", false, err
-		}
-		if !usable {
-			s.claimToken = ""
-		}
-	}
-	// Two questions, and conflating them cost the whole page once already.
-	// "Can a phone dial this address" decides the QR - and nothing decides
-	// whether there is a LINK. A server on the default loopback bind is claimed
-	// from the app on this same machine by pasting, and refusing to issue a link
-	// there left an owner who had logged out with no way back in at all.
-	host := dialableHost(s.cfg.Addr)
-	dialable := host != ""
-	if host == "" {
-		host = listenAddress(s.cfg.Addr)
-	}
-
-	// The TOKEN is what may be minted only once; the link is rebuilt every time.
-	//
-	// Caching the built link froze an address for the life of the process while
-	// the answer to "can a phone reach us" went on being recomputed - so a
-	// laptop whose Wi-Fi came up after the server did would draw a QR over a
-	// link that still said 127.0.0.1, which is exactly the code this page
-	// refuses to draw. One fact, one cache.
-	token := s.claimToken
-	if token == "" {
-		minted, err := s.store.IssueClaimToken(ctx, time.Now().Unix())
-		if err != nil {
-			return "", false, fmt.Errorf("issue claim token: %w", err)
-		}
-		s.claimToken, token = minted, minted
-	}
-	id, err := s.store.ServerIdentity(ctx)
-	if err != nil {
-		return "", false, fmt.Errorf("read server identity: %w", err)
-	}
-	link, carries, err := s.pairingLink(ctx, id, host, token)
-	if err != nil {
-		return "", false, fmt.Errorf("build claim link: %w", err)
-	}
-	// A public or onion address is reachable from a phone wherever the bind
-	// is: a machine on loopback behind tor is claimed through Tor (045,
-	// FR-008), and a code is exactly what that phone needs.
-	return link, dialable || carries.Public || carries.Onion, nil
+// Only the TOKEN lives anywhere; the link is rebuilt from it every time.
+// Caching a built link froze an address for the life of the process while the
+// answer to "can a phone reach us" went on being recomputed - so a laptop whose
+// Wi-Fi came up after the server did drew a code over a link that still said
+// 127.0.0.1. One fact, one record.
+type linkBuilder struct {
+	key      ed25519.PublicKey
+	conf     configuredAddresses
+	host     string
+	dialable bool
 }
 
-// seedClaimToken records the token the startup announcement already minted, so
-// the page hands out the same right rather than a second one.
-func (s *Server) seedClaimToken(token string) {
-	s.claim.Lock()
-	defer s.claim.Unlock()
-	s.claimToken = token
+// machineLinkBuilder reads the machine's key and addresses.
+//
+// Two questions, and conflating them cost the page once already. "Can a phone
+// dial this address" decides the code - and nothing decides whether there is a
+// LINK. A server on the default loopback bind is paired from the app on this
+// same machine by pasting, so the link falls back to the address that app can
+// dial.
+func (s *Server) machineLinkBuilder(ctx context.Context) (linkBuilder, error) {
+	id, err := s.store.ServerIdentity(ctx)
+	if err != nil {
+		return linkBuilder{}, fmt.Errorf("read server identity: %w", err)
+	}
+	conf, err := s.configuredAddresses(ctx)
+	if err != nil {
+		return linkBuilder{}, fmt.Errorf("read addresses: %w", err)
+	}
+	host := dialableHost(s.cfg.Addr)
+	b := linkBuilder{key: id.PublicKey, conf: conf, host: host, dialable: host != ""}
+	if host == "" {
+		b.host = listenAddress(s.cfg.Addr)
+	}
+	return b, nil
+}
+
+// build renders the link for token, and says whether a phone could follow it.
+// A public or onion address is reachable from a phone wherever the bind is: a
+// machine on loopback behind tor is paired through Tor (045, FR-008), and a
+// code is exactly what that phone needs.
+func (b linkBuilder) build(token string) (string, bool, error) {
+	link, carries, err := buildLink(b.key, token, b.host, b.conf)
+	if err != nil {
+		// The error can quote the host it could not encode.
+		return "", false, fmt.Errorf("build machine link: %s", maskOnion(err.Error()))
+	}
+	return link, b.dialable || carries.Public || carries.Onion, nil
+}
+
+// issueMachineLink mints a new machine link - the previous one stops working
+// (SC-004) - and builds it. by says who asked, for the log line, which names
+// the asker and never the link (FR-005).
+func (s *Server) issueMachineLink(ctx context.Context, by string) (string, store.MachineLink, error) {
+	b, err := s.machineLinkBuilder(ctx)
+	if err != nil {
+		return "", store.MachineLink{}, err
+	}
+	ml, err := s.store.IssueMachineLink(ctx, time.Now().Unix())
+	if err != nil {
+		return "", store.MachineLink{}, fmt.Errorf("issue machine link: %w", err)
+	}
+	link, _, err := b.build(ml.Token)
+	if err != nil {
+		return "", store.MachineLink{}, err
+	}
+	s.logger.Info("machine link issued", "by", by)
+	return link, ml, nil
+}
+
+// ExpiresIn words how long a link has left, in whole minutes rounded up - the
+// way the service page and `noxd link` both say it. A link issued a moment ago
+// says ten.
+func ExpiresIn(expiresAt, now int64) string {
+	left := expiresAt - now
+	if left <= 0 {
+		return "Link expired"
+	}
+	minutes := (left + 59) / 60
+	if minutes == 1 {
+		return "Expires in 1 minute"
+	}
+	return fmt.Sprintf("Expires in %d minutes", minutes)
 }
