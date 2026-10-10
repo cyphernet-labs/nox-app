@@ -52,12 +52,13 @@ tor -f "$STAND/torrc"
 fvm flutter test test/live/tor_live_probe.dart --dart-define=noxd=$STAND/noxd --dart-define=tor=<путь к tor> \
   --dart-define=host=<LAN-адрес машины> --dart-define=work=/tmp/nox_e2e \
   [--dart-define=port=18443] [--dart-define=other_onion=<56>.onion]   # onion-адрес другого сервера - для otherServer
-fvm flutter test test/live/tor_pairing_probe.dart --dart-define=link=<приглашение из /tmp/nox_e2e/invites.txt или ссылка со страницы>
+fvm flutter test test/live/tor_pairing_probe.dart \
+  --dart-define=link="$("$STAND/noxd" link -status-addr "$(cat /tmp/nox_e2e/page.txt)" | head -1)"
 fvm flutter test test/live/resumable_files_probe.dart --dart-define=noxd=... --dart-define=tor=... \
   --dart-define=host=... --dart-define=work=/tmp/nox_files_e2e [--dart-define=mib=100] [--dart-define=port=18543]
 ```
 
-Пароль своих серверов пробы вводят сами (047). Приглашение живёт 10 минут: `tor_pairing_probe` с приглашением запускается сразу после `tor_live_probe`.
+Пароль своих серверов пробы вводят сами (047). `tor_live_probe` оставляет сервер и его tor работать, а адрес служебной страницы — в `/tmp/nox_e2e/page.txt`. Приглашение спаривает только после `Allow` на выдавшем устройстве (046), поэтому `tor_pairing_probe` и `integration_test/tor_pairing_test.dart` приносят выдавшее устройство с собой: оно спаривается дома по свежей ссылке с машины (ссылка живёт 10 минут), выдаёт приглашение и разрешает запрос, пока приложение спаривается по приглашению через Tor.
 
 ## 3. Проверки владельца
 

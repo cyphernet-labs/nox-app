@@ -72,9 +72,12 @@ import 'live_target.dart';
 ///
 /// The LAN address matters: a server bound to loopback lists no direct address
 /// at all (contract §3), and scenario 8 is about learning a new one. `noxd` and
-/// tor are left running at the end, with two invites in `<work>/invites.txt`,
-/// for the simulator and emulator runs of `integration_test/tor_pairing_test.dart`
-/// - which pair through Tor from "away" (phase 045).
+/// tor are left running at the end, unlocked, with the service page's address
+/// in `<work>/page.txt`, for `tor_pairing_probe.dart` and the simulator and
+/// emulator runs of `integration_test/tor_pairing_test.dart` - which pair
+/// through Tor from "away" by an invite their own issuing device allows
+/// (phases 045 and 046). Each takes a fresh machine link:
+///   /tmp/noxd link -status-addr "$(cat /tmp/nox_e2e/page.txt)"
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -101,7 +104,7 @@ void main() {
     }
 
     // What did not go as the spec says, kept to the end so the run still
-    // leaves its measures and invites behind.
+    // leaves its measures and the stand behind.
     final findings = <String>[];
     void finding(String line) {
       findings.add(line);
@@ -410,22 +413,21 @@ void main() {
     expect(await send('direct after the causes'), isTrue);
 
     // --- 4. Invites are version 3 and carry the onion address, so a new
-    // device can pair through Tor from anywhere (phase 045). ---
-    final invites = <String>[];
-    for (var i = 0; i < 2; i++) {
-      final invite = await getIt<DeviceRepository>().inviteDevice();
-      expect(invite.hasData, isTrue);
-      expect(invite.data!.onion, isTrue, reason: 'the card does not say home only');
-      expect(invite.data!.homeOnly, isFalse);
-      final parsed = PairingLink.parse(invite.data!.link);
-      expect(parsed.directAddresses, isNotEmpty);
-      expect(parsed.onionServiceKey, isNotNull);
-      invites.add(invite.data!.link);
-    }
-    File('$work/invites.txt').writeAsStringSync('${invites.join('\n')}\n');
+    // device can pair through Tor from anywhere (phase 045). An invite pairs
+    // nothing until the device that issued it says Allow (phase 046), and this
+    // one is gone once the probe ends: the runs that pair through Tor next
+    // bring an issuing device of their own, by a machine link. ---
+    final invite = await getIt<DeviceRepository>().inviteDevice();
+    expect(invite.hasData, isTrue);
+    expect(invite.data!.onion, isTrue, reason: 'the card does not say home only');
+    expect(invite.data!.homeOnly, isFalse);
+    final parsed = PairingLink.parse(invite.data!.link);
+    expect(parsed.directAddresses, isNotEmpty);
+    expect(parsed.onionServiceKey, isNotNull);
+    File('$work/page.txt').writeAsStringSync('${third.pageAddress}\n');
 
     // --- 7. Logout leaves no addresses and no Tor state (SC-007). A forced
-    // one, which keeps the device on the server: the invites above are its. ---
+    // one, the wipe a revocation brings: nothing is asked of the server. ---
     final support = await getApplicationSupportDirectory();
     expect((await auth.logout(forced: true)).hasData, isTrue);
     const storage = FlutterSecureStorage();
@@ -434,7 +436,7 @@ void main() {
 
     File('$work/measure.txt').writeAsStringSync('${[...measures, ...findings.map((f) => 'FINDING: $f')].join('\n')}\n');
     stdout.writeln(
-      'INVITES: ${invites.length} written to $work/invites.txt; noxd left running, pid ${third.pid}; tor, pid ${thirdTor.pid}',
+      'STAND: noxd left running, unlocked, pid ${third.pid}, its page at ${third.pageAddress} ($work/page.txt); tor, pid ${thirdTor.pid}',
     );
     expect(findings, isEmpty, reason: 'what did not go as the spec says');
   }, timeout: const Timeout(Duration(minutes: 50)));

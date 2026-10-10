@@ -7,14 +7,22 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/data/local/device_vault.dart';
 import 'package:nox_app/data/local/sealed_file.dart';
+import 'package:nox_app/data/remote/channel/channel_http_client.dart';
+import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
+import 'package:nox_app/data/remote/socket/server_frame.dart';
+import 'package:nox_app/data/remote/socket/socket_channel_factory.dart';
 import 'package:nox_app/data/sync/connection/direct_prober.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_app/domain/service/network_change_service.dart';
+import 'package:nox_app/general/pairing/pairing_link.dart';
+import 'package:nox_tor/channel.dart';
 
 /// What the live probes share: a `noxd` of their own, "away from home" on
-/// demand, a network that changes when told to, and the files the app keeps
-/// read the way it reads them. Not a test - imported by the probes under
-/// `test/live/`, none of which the suite ever collects.
+/// demand, a network that changes when told to, another device spoken for
+/// over the wire, and the files the app keeps read the way it reads them. Not
+/// a test - imported by the probes under `test/live/`, none of which the
+/// suite ever collects.
 
 /// Waits for [done], failing the probe when [budget] runs out first.
 Future<void> liveUntil(String what, Duration budget, FutureOr<bool> Function() done) async {
@@ -303,4 +311,103 @@ Future<void> expectSamePlainBytes(String path, File source) async {
     await original.close();
   }
   expect(at, size, reason: 'every byte compared');
+}
+
+/// Another device of the same person, spoken for over the wire: a key of its
+/// own, its own channel and socket - the classes the app uses, without the
+/// app around them. It dials the link's first direct address: it is at home.
+class WireDevice {
+  WireDevice(this.link) : _seed = Uint8List.fromList(List<int>.generate(32, (_) => Random.secure().nextInt(256))) {
+    _channel = ChannelHttpClient(const NativeNoxChannelApi())..bind(serverKey: link.serverKey, deviceSeed: _seed);
+    socket = NoxSocketClient(WebSocketChannelFactory(_channel), _NoCursor());
+    _events = socket.events.listen(_seen.add);
+  }
+
+  /// Pairs a new device by a machine link and greets as it.
+  static Future<WireDevice> paired(String machineLink, {required String platform}) async {
+    final wire = WireDevice(PairingLink.parse(machineLink));
+    final reply = await wire.present(platform: platform);
+    expect(reply.ok && reply.data?['identity'] != null, isTrue, reason: 'pair: ${reply.errorCode}');
+    await wire.greet();
+    return wire;
+  }
+
+  final PairingLink link;
+  final Uint8List _seed;
+  late final ChannelHttpClient _channel;
+  late final NoxSocketClient socket;
+  late final StreamSubscription<ServerEvent> _events;
+  final StreamController<ServerEvent> _seen = StreamController<ServerEvent>.broadcast();
+
+  Uri get _url => Uri.parse('wss://${link.directAddresses.first}/ws');
+
+  /// Presents this link's token as a device that is not paired yet.
+  Future<CommandReply> present({required String platform}) async {
+    await socket.start(url: _url, credentialsProvider: () async => const GreetingCredentials.unpaired());
+    return socket.pair(token: link.token, platform: platform);
+  }
+
+  /// Opens the socket again as the paired device it now is, and greets.
+  Future<void> greet() async {
+    await socket.stop();
+    await socket.start(url: _url, credentialsProvider: () async => const GreetingCredentials());
+    final watch = Stopwatch()..start();
+    while (socket.identity == null) {
+      if (watch.elapsed > const Duration(seconds: 15)) fail('the wire device never greeted');
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+  }
+
+  /// The next [name] event - about [requestId], when given.
+  Future<ServerEvent> next(String name, {String? requestId, Duration within = const Duration(seconds: 15)}) =>
+      _seen.stream.firstWhere((e) => e.event == name && (requestId == null || e.data['request_id'] == requestId)).timeout(within);
+
+  /// Issues an invite and returns its link.
+  Future<String> invite() async {
+    final reply = await socket.send('device.invite', <String, dynamic>{});
+    expect(reply.ok, isTrue, reason: 'device.invite: ${reply.errorCode}');
+    return reply.data!['link'] as String;
+  }
+
+  /// Answers a request; false when the server had nothing left to answer.
+  Future<bool> approve(String requestId, {required bool allow}) async {
+    final reply = await socket.send('device.approve', <String, dynamic>{'request_id': requestId, 'allow': allow});
+    if (!reply.ok && reply.errorCode == 'not_found') return false;
+    expect(reply.ok, isTrue, reason: 'device.approve: ${reply.errorCode}');
+    return true;
+  }
+
+  /// The person's devices, as the server lists them.
+  Future<List<dynamic>> devices() async {
+    final reply = await socket.send('device.list', <String, dynamic>{});
+    expect(reply.ok, isTrue, reason: 'device.list: ${reply.errorCode}');
+    return reply.data!['devices'] as List<dynamic>;
+  }
+
+  Future<void> close() async {
+    await _events.cancel();
+    await socket.stop();
+    _channel.unbind();
+    await _seen.close();
+  }
+}
+
+/// The wire devices keep no cursor: they read nothing from the journal.
+class _NoCursor implements SyncRepository {
+  @override
+  Future<int> getCursor() async => 0;
+  @override
+  Future<bool> hasCursor() async => false;
+  @override
+  Future<void> advanceCursor(int seq) async {}
+  @override
+  Future<void> clear() async {}
+  @override
+  Future<String?> getEpoch() async => null;
+  @override
+  Future<void> setEpoch(String epoch) async {}
+  @override
+  Future<String?> getJournal() async => null;
+  @override
+  Future<void> setJournal(String journalId) async {}
 }
