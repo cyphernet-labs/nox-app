@@ -7,6 +7,7 @@ import 'dart:math';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
+import 'package:nox_app/data/local/device_vault.dart';
 import 'package:nox_app/data/remote/api_client.dart';
 import 'package:nox_app/data/remote/datasource/real/real_chat_remote_data_source.dart';
 import 'package:nox_app/data/remote/datasource/real/real_file_remote_data_source.dart';
@@ -113,7 +114,7 @@ void main() {
     // at all pass this probe: every transfer would have failed in the real app
     // and the probe would have been green.
     final api = ApiClient(config, channels)..initBase(address: target.restUrl);
-    final files = FileRepositoryImpl(RealFileRemoteDataSource(socket, api), config);
+    final files = FileRepositoryImpl(RealFileRemoteDataSource(socket, api), config, getIt<DeviceVault>());
 
     // Bytes that could not be mistaken for anything else.
     final random = Random(20280902);

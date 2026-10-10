@@ -7,6 +7,9 @@ import 'package:nox_app/data/entity/base/error_wire_entity.dart';
 import 'package:nox_app/data/entity/base/response_entity.dart';
 import 'package:nox_app/data/entity/file/upload_ticket_wire_entity.dart';
 import 'package:nox_app/data/exception/file_transfer_exception.dart';
+import 'package:nox_app/data/local/app_data_root.dart';
+import 'package:nox_app/data/local/device_vault.dart';
+import 'package:nox_app/data/local/sealed_file.dart';
 import 'package:nox_app/data/remote/datasource/file_remote_data_source.dart';
 import 'package:nox_app/data/repository/file/file_repository_impl.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
@@ -17,8 +20,9 @@ import 'package:nox_app/domain/model/file/transfer_cancellation.dart';
 import 'package:nox_app/domain/model/file/unfinished_upload.dart';
 import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
 import 'package:nox_app/domain/repository/log_repository.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import '../../../utils/sealed_files.dart';
 
 /// A data source the test drives: it records what it was asked, and can refuse
 /// the way the real server refuses.
@@ -103,11 +107,17 @@ class _FakeSource implements FileRemoteDataSource {
     return _ticket(id, oldServer ? null : 0);
   }
 
+  /// What every PUT carried, and the size it declared - the plain bytes and
+  /// the plain length, whatever the source is on the disk (phase 048).
+  final List<List<int>> bodies = <List<int>>[];
+  final List<int> sizes = <int>[];
+
   @override
   Future<void> putBytes({
     required String uploadPath,
-    required File file,
+    required int size,
     required int offset,
+    required Stream<List<int>> body,
     TransferProgress? onProgress,
     TransferCancellation? cancellation,
   }) async {
@@ -116,9 +126,15 @@ class _FakeSource implements FileRemoteDataSource {
     log.add('put:$offset');
     await duringPut?.call();
     if (putFailures.isNotEmpty) throw FileTransferException(putFailures.removeAt(0));
-    final total = await file.length();
-    onProgress?.call(total, total);
-    held[uploadPath.substring('/files/pass_'.length)] = total;
+    // As the real source does: a body that breaks is the source failing.
+    try {
+      bodies.add([await for (final chunk in body) ...chunk]);
+    } on Object {
+      throw const FileTransferException(FileTransferFailure.sourceUnreadable);
+    }
+    sizes.add(size);
+    onProgress?.call(size, size);
+    held[uploadPath.substring('/files/pass_'.length)] = size;
   }
 
   ResponseEntity<UploadTicketWireEntity> _ticket(String id, int? received) => ResponseEntity<UploadTicketWireEntity>(
@@ -210,7 +226,7 @@ void main() {
     final config = getIt<AppConfigRepository>();
     await config.initialize(flavorType: AppFlavorType.stage);
     source = _FakeSource();
-    repository = FileRepositoryImpl(source, config);
+    repository = FileRepositoryImpl(source, config, getIt<DeviceVault>());
     file = File('${Directory.systemTemp.path}/nox_repo_${DateTime.now().microsecondsSinceEpoch}.bin')..writeAsBytesSync([1, 2, 3, 4]);
     await repository.clean();
   });
@@ -523,6 +539,60 @@ void main() {
       expect(source.puts, 0);
     });
 
+    group("the queue's sealed copy (phase 048)", () {
+      final plain = List<int>.generate(100000, (i) => (i * 3 + i ~/ 777) & 0xFF);
+      late File sealed;
+
+      setUp(() async {
+        sealed = await writeSealed('${Directory.systemTemp.path}/nox_sealed_up_${DateTime.now().microsecondsSinceEpoch}', plain);
+      });
+
+      tearDown(() => sealed.existsSync() ? sealed.deleteSync() : null);
+
+      test('goes up as its plain bytes, its plain length declared', () async {
+        final result = await repository.upload(path: sealed.path, mime: 'application/octet-stream');
+
+        expect(result.data, 'f_1');
+        expect(source.sizes.single, plain.length, reason: 'the server is told the file, not what the device keeps');
+        expect(source.bodies.single, plain);
+      });
+
+      test('is continued from the middle of a chunk, and only the rest goes (phase 043)', () async {
+        final stat = await sealed.stat();
+        final from = UnfinishedUpload(
+          fileId: 'f_77',
+          sourceSize: plain.length,
+          sourceModifiedAt: DateTime.fromMillisecondsSinceEpoch(stat.modified.millisecondsSinceEpoch),
+        );
+        source.held['f_77'] = 70000;
+
+        final result = await repository.upload(path: sealed.path, mime: 'application/octet-stream', from: from);
+
+        expect(result.data, 'f_77');
+        expect(source.offsets, [70000]);
+        expect(source.bodies.single, plain.sublist(70000));
+      });
+
+      test('cut short, it is gone for good: nothing is declared', () async {
+        final bytes = sealed.readAsBytesSync();
+        sealed.writeAsBytesSync(bytes.sublist(0, SealedFile.headerLength + SealedFile.sealedChunkLength + 5));
+
+        final result = await repository.upload(path: sealed.path, mime: 'application/octet-stream');
+
+        expect(result.exception, RepositoryException.notFound);
+        expect(source.begins, 0);
+      });
+
+      test('a chunk changed on the disk ends the upload as an unreadable source, which no retry sends', () async {
+        final bytes = sealed.readAsBytesSync()..[SealedFile.headerLength + SealedFile.sealedChunkLength + 9] ^= 0x01;
+        sealed.writeAsBytesSync(bytes);
+
+        final result = await repository.upload(path: sealed.path, mime: 'application/octet-stream');
+
+        expect(result.exception, RepositoryException.notFound);
+      });
+    });
+
     test('a file over the limit is refused before a byte moves (FR-013)', () async {
       final big = File('${Directory.systemTemp.path}/nox_big_${DateTime.now().microsecondsSinceEpoch}.bin')
         ..writeAsBytesSync(List<int>.filled(64, 1));
@@ -530,7 +600,11 @@ void main() {
       final config = getIt<AppConfigRepository>()
         ..updateLimits(const ServerLimits(maxMessageBytes: 65536, maxAttachmentBytes: 8, maxFrameBytes: 131072));
 
-      final result = await FileRepositoryImpl(source, config).upload(path: big.path, mime: 'application/octet-stream');
+      final result = await FileRepositoryImpl(
+        source,
+        config,
+        getIt<DeviceVault>(),
+      ).upload(path: big.path, mime: 'application/octet-stream');
 
       expect(result.exception, RepositoryException.payloadTooLarge);
       expect(source.begins, 0);
@@ -538,65 +612,117 @@ void main() {
   });
 
   group('download', () {
-    Future<File> cached(String fileId, String ext) async =>
-        File('${(await getApplicationCacheDirectory()).path}/nox_attachments/$fileId.$ext');
+    Future<File> cached(String fileId, String ext) async => File('${await AppDataRoot.pathOf(AppDataRoot.attachmentsFolder)}/$fileId.$ext');
 
-    test('the bytes land in the cache and the path comes back', () async {
+    /// The plain bytes of what is on the disk: every file there is sealed.
+    Future<List<int>> plainOf(String path) async => (await SealedReader.open(File(path)))!.readAll();
+
+    /// Two and a half chunks: a break can leave whole chunks behind.
+    final big = List<int>.generate(2 * SealedFile.chunkSize + 32768, (i) => (i * 7 + i ~/ 1000) & 0xFF);
+
+    test('the bytes land in the cache, sealed, and the path comes back', () async {
+      source.bytesToReturn = [...'NOX-MARKER'.codeUnits, ...big];
       final result = await repository.download(fileId: 'f_1', suggestedName: 'x.bin');
 
       expect(result.hasData, isTrue);
-      expect(File(result.data!).readAsBytesSync(), [1, 2, 3, 4]);
+      expect(await plainOf(result.data!), source.bytesToReturn);
+      expect(String.fromCharCodes(File(result.data!).readAsBytesSync()), isNot(contains('NOX-MARKER')), reason: 'FR-005');
     });
 
-    test('a broken download keeps what arrived, and the version it belongs to', () async {
-      source.breakAfter = 2;
+    test('a broken download keeps the whole chunks that arrived, sealed, and the version they belong to', () async {
+      source
+        ..bytesToReturn = big
+        ..breakAfter = 100000;
 
-      final failed = await repository.download(fileId: 'f_1', suggestedName: 'x.bin', expectedSize: 4);
+      final failed = await repository.download(fileId: 'f_1', suggestedName: 'x.bin', expectedSize: big.length);
 
       expect(failed.exception, RepositoryException.connection);
       final destination = await cached('f_1', 'bin');
       expect(destination.existsSync(), isFalse, reason: 'nothing that looks like a cache hit');
-      expect(File('${destination.path}.part').readAsBytesSync(), [1, 2]);
+      final part = File('${destination.path}.part');
+      // One whole chunk: the 34464 bytes after it were held in memory, never
+      // sealed - a chunk is sealed only once it is whole.
+      expect(part.lengthSync(), SealedFile.headerLength + SealedFile.sealedChunkLength);
+      expect(await SealedFile.isSealed(part), isTrue);
       expect(File('${destination.path}.part.tag').readAsStringSync(), 'v1');
     });
 
-    test('the next attempt asks only for the rest - after a restart too - and appends it (FR-006, FR-007)', () async {
-      source.breakAfter = 2;
-      await repository.download(fileId: 'f_1', suggestedName: 'x.bin', expectedSize: 4);
-      final shares = <double>[];
+    test(
+      'the next attempt asks only for the rest from the last whole chunk - after a restart too - and appends it (FR-006, FR-007)',
+      () async {
+        source
+          ..bytesToReturn = big
+          ..breakAfter = 100000;
+        await repository.download(fileId: 'f_1', suggestedName: 'x.bin', expectedSize: big.length);
+        final shares = <double>[];
 
-      // A new repository over the same cache: the process was restarted.
-      final restarted = FileRepositoryImpl(source, getIt<AppConfigRepository>());
-      final result = await restarted.download(fileId: 'f_1', suggestedName: 'x.bin', expectedSize: 4, onProgress: shares.add);
+        // A new repository over the same cache: the process was restarted.
+        final restarted = FileRepositoryImpl(source, getIt<AppConfigRepository>(), getIt<DeviceVault>());
+        final result = await restarted.download(fileId: 'f_1', suggestedName: 'x.bin', expectedSize: big.length, onProgress: shares.add);
 
-      expect(source.gets.last, (2, 'v1'), reason: 'only the missing bytes, for the version already here');
-      expect(File(result.data!).readAsBytesSync(), [1, 2, 3, 4]);
-      expect(shares.first, 0.5, reason: 'the share of the whole file (FR-012)');
-      expect(File('${result.data!}.part.tag').existsSync(), isFalse);
+        expect(source.gets.last, (SealedFile.chunkSize, 'v1'), reason: 'only the missing bytes, for the version already here');
+        expect(await plainOf(result.data!), big);
+        expect(shares.first, SealedFile.chunkSize / big.length, reason: 'the share of the whole file (FR-012)');
+        expect(File('${result.data!}.part.tag').existsSync(), isFalse);
+      },
+    );
+
+    test('a chunk a crash wrote half-way is cut off, and asked for again', () async {
+      source
+        ..bytesToReturn = big
+        ..breakAfter = 2 * SealedFile.chunkSize + 10;
+      await repository.download(fileId: 'f_1', suggestedName: 'x.bin');
+      final part = File('${(await cached('f_1', 'bin')).path}.part');
+      part.writeAsBytesSync(List<int>.filled(500, 0xEE), mode: FileMode.append);
+
+      final result = await repository.download(fileId: 'f_1', suggestedName: 'x.bin');
+
+      expect(source.gets.last, (2 * SealedFile.chunkSize, 'v1'));
+      expect(await plainOf(result.data!), big);
     });
 
-    test('another version on the server starts the file over, its version written before its first byte', () async {
-      source.breakAfter = 2;
+    test('another version on the server starts the file over under a new id, its version written before its first byte', () async {
+      source
+        ..bytesToReturn = big
+        ..breakAfter = 100000;
       await repository.download(fileId: 'f_1', suggestedName: 'x.bin');
+      final destination = await cached('f_1', 'bin');
+      final idBefore = File('${destination.path}.part').readAsBytesSync().sublist(12, 28);
       source
         ..serverVersion = 'v2'
-        ..bytesToReturn = const [9, 8, 7, 6];
-      final destination = await cached('f_1', 'bin');
+        ..bytesToReturn = List<int>.generate(1000, (i) => 255 - (i & 0xFF));
       String? tagAtFirstByte;
-      int? partAtFirstByte;
+      List<int>? partAtFirstByte;
       source.onFirstBytes = () {
         tagAtFirstByte = File('${destination.path}.part.tag').readAsStringSync();
-        partAtFirstByte = File('${destination.path}.part').lengthSync();
+        partAtFirstByte = File('${destination.path}.part').readAsBytesSync();
       };
 
       final result = await repository.download(fileId: 'f_1', suggestedName: 'x.bin');
 
       expect(tagAtFirstByte, 'v2', reason: 'a crash now leaves only bytes of the version beside them');
-      expect(partAtFirstByte, 0, reason: 'none of the old version left in the part');
-      expect(File(result.data!).readAsBytesSync(), [9, 8, 7, 6]);
+      expect(partAtFirstByte, hasLength(SealedFile.headerLength), reason: 'none of the old version left in the part');
+      expect(partAtFirstByte!.sublist(12, 28), isNot(idBefore), reason: 'other bytes never go under an id used before');
+      expect(await plainOf(result.data!), source.bytesToReturn);
     });
 
     test('a part no shorter than the file there is thrown away, and the file comes again from the start', () async {
+      source.bytesToReturn = big.sublist(0, SealedFile.chunkSize);
+      final destination = await cached('f_1', 'bin');
+      // Three whole chunks of some earlier, longer version.
+      final writer = await SealedWriter.create(File('${destination.path}.part'), total: 4 * SealedFile.chunkSize);
+      await writer.add(big.sublist(0, 2 * SealedFile.chunkSize));
+      await writer.add(big.sublist(0, SealedFile.chunkSize));
+      await writer.close();
+      File('${destination.path}.part.tag').writeAsStringSync('v1');
+
+      final result = await repository.download(fileId: 'f_1', suggestedName: 'x.bin');
+
+      expect(source.gets, [(3 * SealedFile.chunkSize, 'v1'), (0, null)]);
+      expect(await plainOf(result.data!), source.bytesToReturn);
+    });
+
+    test('a part that is no sealed part is not continued: a plain one left by a build before phase 048', () async {
       final destination = await cached('f_1', 'bin');
       await destination.parent.create(recursive: true);
       File('${destination.path}.part').writeAsBytesSync([1, 2, 3, 4, 5]);
@@ -604,8 +730,8 @@ void main() {
 
       final result = await repository.download(fileId: 'f_1', suggestedName: 'x.bin');
 
-      expect(source.gets, [(5, 'v1'), (0, null)]);
-      expect(File(result.data!).readAsBytesSync(), [1, 2, 3, 4]);
+      expect(source.gets, [(0, null)]);
+      expect(await plainOf(result.data!), [1, 2, 3, 4]);
     });
 
     test('a part whose version nobody wrote down is not continued', () async {
@@ -616,7 +742,7 @@ void main() {
       final result = await repository.download(fileId: 'f_1', suggestedName: 'x.bin');
 
       expect(source.gets, [(0, null)]);
-      expect(File(result.data!).readAsBytesSync(), [1, 2, 3, 4]);
+      expect(await plainOf(result.data!), [1, 2, 3, 4]);
     });
 
     test('a file of another size than the message says is not this file', () async {
@@ -656,7 +782,7 @@ void main() {
 
       expect(source.downloadBegins, 1);
       expect(results.map((r) => r.data).toSet(), hasLength(1));
-      expect(File(results.first.data!).readAsBytesSync(), [1, 2, 3, 4], reason: 'the whole file, not a torn one');
+      expect(await plainOf(results.first.data!), [1, 2, 3, 4], reason: 'the whole file, not a torn one');
       expect(heardByPrefetch.last, 1.0);
       expect(heardByFileView.last, 1.0);
     });
@@ -694,13 +820,14 @@ void main() {
 
     test('a change of path in the middle of the body is no failure: the rest comes at once, in the same call (FR-008)', () async {
       source
-        ..breakAfter = 2
+        ..bytesToReturn = big
+        ..breakAfter = 100000
         ..breakWith = FileTransferFailure.pathChanged;
 
-      final result = await repository.download(fileId: 'f_1', suggestedName: 'x.bin', expectedSize: 4);
+      final result = await repository.download(fileId: 'f_1', suggestedName: 'x.bin', expectedSize: big.length);
 
-      expect(File(result.data!).readAsBytesSync(), [1, 2, 3, 4]);
-      expect(source.gets, [(0, null), (2, 'v1')], reason: 'only the rest, by the new path');
+      expect(await plainOf(result.data!), big);
+      expect(source.gets, [(0, null), (SealedFile.chunkSize, 'v1')], reason: 'only the rest from the last whole chunk, by the new path');
     });
 
     test('a change of path before the body is asked again at once', () async {

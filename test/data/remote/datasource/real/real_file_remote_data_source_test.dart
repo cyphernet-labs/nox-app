@@ -255,7 +255,13 @@ void main() {
     test('sends exactly the bytes from the offset to the end, and says how many', () async {
       final shares = <(int, int)>[];
 
-      await source().putBytes(uploadPath: '/files/t', file: file, offset: 40000, onProgress: (done, total) => shares.add((done, total)));
+      await source().putBytes(
+        uploadPath: '/files/t',
+        size: payload.length,
+        offset: 40000,
+        body: file.openRead(40000),
+        onProgress: (done, total) => shares.add((done, total)),
+      );
 
       expect(server.contentLength, payload.length - 40000);
       expect(server.received, payload.sublist(40000), reason: 'what the server already holds is not sent again (FR-001)');
@@ -264,7 +270,7 @@ void main() {
     });
 
     test('nothing left to send is an empty PUT that completes the upload', () async {
-      await source().putBytes(uploadPath: '/files/t', file: file, offset: payload.length);
+      await source().putBytes(uploadPath: '/files/t', size: payload.length, offset: payload.length, body: file.openRead(payload.length));
 
       expect(server.contentLength, 0);
       expect(server.received, isEmpty);
@@ -286,7 +292,7 @@ void main() {
         server.status = status;
 
         await expectLater(
-          source().putBytes(uploadPath: '/files/t', file: file, offset: 0),
+          source().putBytes(uploadPath: '/files/t', size: payload.length, offset: 0, body: file.openRead(0)),
           throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', failure)),
         );
         expect(api.transfersUnderWay, 0, reason: 'the transfer is handed back whatever the answer');
@@ -308,7 +314,7 @@ void main() {
       }
 
       await expectLater(
-        source().putBytes(uploadPath: '/files/t', file: file, offset: 0),
+        source().putBytes(uploadPath: '/files/t', size: payload.length, offset: 0, body: file.openRead(0)),
         throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.sourceUnreadable)),
       );
       expect(server.received, isEmpty);
@@ -319,7 +325,7 @@ void main() {
       file.deleteSync();
 
       await expectLater(
-        source().putBytes(uploadPath: '/files/t', file: file, offset: 0),
+        source().putBytes(uploadPath: '/files/t', size: payload.length, offset: 0, body: file.openRead(0)),
         throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.sourceUnreadable)),
       );
     });
@@ -332,7 +338,7 @@ void main() {
       final cancellation = TransferCancellation();
       final put = source(
         stallLimit: const Duration(minutes: 1),
-      ).putBytes(uploadPath: '/files/t', file: file, offset: 0, cancellation: cancellation);
+      ).putBytes(uploadPath: '/files/t', size: payload.length, offset: 0, body: file.openRead(0), cancellation: cancellation);
       await Future<void>.delayed(const Duration(milliseconds: 300));
       final watch = Stopwatch()..start();
 
@@ -347,7 +353,7 @@ void main() {
       final cancellation = TransferCancellation()..cancel();
 
       await expectLater(
-        source().putBytes(uploadPath: '/files/t', file: file, offset: 0, cancellation: cancellation),
+        source().putBytes(uploadPath: '/files/t', size: payload.length, offset: 0, body: file.openRead(0), cancellation: cancellation),
         throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.connection)),
       );
       expect(server.contentLength, isNull);
@@ -361,7 +367,9 @@ void main() {
       final watch = Stopwatch()..start();
 
       await expectLater(
-        source(stallLimit: const Duration(milliseconds: 500)).putBytes(uploadPath: '/files/t', file: file, offset: 0),
+        source(
+          stallLimit: const Duration(milliseconds: 500),
+        ).putBytes(uploadPath: '/files/t', size: payload.length, offset: 0, body: file.openRead(0)),
         throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.connection)),
       );
       expect(watch.elapsed, lessThan(const Duration(seconds: 20)));
@@ -373,7 +381,9 @@ void main() {
       server.bytesPerSecond = 4 * 1024 * 1024;
       final watch = Stopwatch()..start();
 
-      await source(stallLimit: const Duration(seconds: 1)).putBytes(uploadPath: '/files/t', file: file, offset: 0);
+      await source(
+        stallLimit: const Duration(seconds: 1),
+      ).putBytes(uploadPath: '/files/t', size: payload.length, offset: 0, body: file.openRead(0));
 
       expect(watch.elapsed, greaterThan(const Duration(seconds: 1)), reason: 'it outlasted the stall limit');
       expect(server.received.length, payload.length);
@@ -393,7 +403,7 @@ void main() {
       await source(
         stallLimit: const Duration(seconds: 1),
         answerWait: const Duration(seconds: 20),
-      ).putBytes(uploadPath: '/files/t', file: file, offset: 0);
+      ).putBytes(uploadPath: '/files/t', size: payload.length, offset: 0, body: file.openRead(0));
 
       expect(server.received.length, payload.length);
     });
@@ -401,7 +411,9 @@ void main() {
     test('cancelTransfers ends a transfer under way as a broken connection', () async {
       await writePayload(16 * 1024 * 1024);
       server.stopReading = true;
-      final put = source(stallLimit: const Duration(minutes: 1)).putBytes(uploadPath: '/files/t', file: file, offset: 0);
+      final put = source(
+        stallLimit: const Duration(minutes: 1),
+      ).putBytes(uploadPath: '/files/t', size: payload.length, offset: 0, body: file.openRead(0));
       await Future<void>.delayed(const Duration(milliseconds: 300));
 
       source().cancelTransfers();
@@ -580,7 +592,7 @@ void main() {
       addTearDown(other.close);
       final transfers = source(stallLimit: const Duration(minutes: 1));
 
-      final stuck = transfers.putBytes(uploadPath: '/files/t', file: file, offset: 0);
+      final stuck = transfers.putBytes(uploadPath: '/files/t', size: payload.length, offset: 0, body: file.openRead(0));
       await Future<void>.delayed(const Duration(milliseconds: 300));
       final watch = Stopwatch()..start();
       api.initBase(address: 'https://127.0.0.1:${other.port}');
@@ -591,7 +603,7 @@ void main() {
       expect(watch.elapsed, lessThan(const Duration(seconds: 2)));
 
       await writePayload(1024);
-      await transfers.putBytes(uploadPath: '/files/t', file: file, offset: 0);
+      await transfers.putBytes(uploadPath: '/files/t', size: payload.length, offset: 0, body: file.openRead(0));
       expect(other.received, payload, reason: 'the retry went by the new path');
     });
 
@@ -625,7 +637,9 @@ void main() {
       // retry a dead link with no pause at all.
       await writePayload(16 * 1024 * 1024);
       server.stopReading = true;
-      final stuck = source(stallLimit: const Duration(minutes: 1)).putBytes(uploadPath: '/files/t', file: file, offset: 0);
+      final stuck = source(
+        stallLimit: const Duration(minutes: 1),
+      ).putBytes(uploadPath: '/files/t', size: payload.length, offset: 0, body: file.openRead(0));
       await Future<void>.delayed(const Duration(milliseconds: 300));
 
       api.initBase(address: 'https://127.0.0.1:${server.port}'); // the same path, asked for again
@@ -659,7 +673,10 @@ void main() {
       final seen = watchConnects(onion);
       final transfers = RealFileRemoteDataSource.forTest(socket, onion);
 
-      await expectLater(transfers.putBytes(uploadPath: '/files/t', file: file, offset: 0), throwsA(isA<FileTransferException>()));
+      await expectLater(
+        transfers.putBytes(uploadPath: '/files/t', size: payload.length, offset: 0, body: file.openRead(0)),
+        throwsA(isA<FileTransferException>()),
+      );
       await expectLater(transfers.openBytes(downloadPath: '/files/t', offset: 0), throwsA(isA<FileTransferException>()));
 
       expect(seen, [WebSocketChannelFactory.onionConnectTimeout, WebSocketChannelFactory.onionConnectTimeout]);
@@ -669,7 +686,10 @@ void main() {
       final seen = watchConnects(api);
       final transfers = RealFileRemoteDataSource.forTest(socket, api);
 
-      await expectLater(transfers.putBytes(uploadPath: '/files/t', file: file, offset: 0), throwsA(isA<FileTransferException>()));
+      await expectLater(
+        transfers.putBytes(uploadPath: '/files/t', size: payload.length, offset: 0, body: file.openRead(0)),
+        throwsA(isA<FileTransferException>()),
+      );
 
       expect(seen.single, api.dio.options.connectTimeout);
     });

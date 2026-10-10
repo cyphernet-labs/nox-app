@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:nox_app/data/entity/base/response_entity.dart';
 import 'package:nox_app/data/entity/file/upload_ticket_wire_entity.dart';
 import 'package:nox_app/domain/model/file/transfer_cancellation.dart';
@@ -34,11 +32,17 @@ abstract class FileRemoteDataSource {
   /// continued, not repeated. Ends with a connection failure once no byte has
   /// moved for the stall limit, or once [cancellation] is cancelled; with a
   /// path change when the path changed under it; and with an unreadable source
-  /// before anything goes out when the file cannot be read.
+  /// when [body] fails.
+  ///
+  /// [body] is the file's plain bytes from [offset] to the end and [size] the
+  /// whole file's plain length (phase 048): the queue's copy is sealed on the
+  /// disk, so the bytes come from whoever opens it, never from a path. Nothing
+  /// listens to [body] before the transfer starts.
   Future<void> putBytes({
     required String uploadPath,
-    required File file,
+    required int size,
     required int offset,
+    required Stream<List<int>> body,
     TransferProgress? onProgress,
     TransferCancellation? cancellation,
   });

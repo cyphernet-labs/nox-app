@@ -8,6 +8,7 @@ import 'dart:typed_data';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
+import 'package:nox_app/data/local/device_vault.dart';
 import 'package:nox_app/data/remote/api_client.dart';
 import 'package:nox_app/data/remote/datasource/real/real_chat_remote_data_source.dart';
 import 'package:nox_app/data/remote/datasource/real/real_file_remote_data_source.dart';
@@ -115,7 +116,7 @@ void main() {
     final config = getIt<AppConfigRepository>();
     await config.initialize(flavorType: AppFlavorType.stage);
     final apiClient = ApiClient(config, channels)..initBase(address: target.restUrl);
-    final files = FileRepositoryImpl(RealFileRemoteDataSource(socket, apiClient), config);
+    final files = FileRepositoryImpl(RealFileRemoteDataSource(socket, apiClient), config, getIt<DeviceVault>());
     final random = Random(20441009);
     final payload = List<int>.generate(3 * channelWindowBytes + 17, (_) => random.nextInt(256));
     final source = File('${Directory.systemTemp.path}/nox_channel_probe_${DateTime.now().microsecondsSinceEpoch}.bin')

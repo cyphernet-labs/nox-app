@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
@@ -99,19 +98,14 @@ class RealFileRemoteDataSource implements FileRemoteDataSource {
   @override
   Future<void> putBytes({
     required String uploadPath,
-    required File file,
+    required int size,
     required int offset,
+    required Stream<List<int>> body,
     TransferProgress? onProgress,
     TransferCancellation? cancellation,
   }) async {
     if (cancellation?.isCancelled ?? false) throw const FileTransferException(FileTransferFailure.connection);
-    // The source's own errors carry its path, so they go no further than here.
-    final int total;
-    try {
-      total = await file.length();
-    } on FileSystemException {
-      throw const FileTransferException(FileTransferFailure.sourceUnreadable);
-    }
+    final total = size;
 
     final path = _apiClient.pathGeneration;
     final cancel = _apiClient.beginTransfer();
@@ -124,26 +118,26 @@ class RealFileRemoteDataSource implements FileRemoteDataSource {
     final watch = _StallWatch(_stallLimit, () => cancel.cancel('stalled'));
     // A file can be there and still not be readable - locked, or no longer
     // permitted: a sandbox forgets a picked file when the app restarts, while
-    // its size can still be looked up. The body is where that shows, and Dio
-    // reports it exactly as it reports a broken link; taken for one, the
-    // queue retried it - and held everything behind it - for good. The
-    // repository opens the file before declaring anything, so this is the
-    // narrower case: a file that stopped being readable since.
+    // its size can still be looked up; a sealed copy can hold a chunk that no
+    // longer opens. The body is where that shows, and Dio reports it exactly
+    // as it reports a broken link; taken for one, the queue retried it - and
+    // held everything behind it - for good. The repository opens the file
+    // before declaring anything, so this is the narrower case: a file that
+    // stopped being readable since. Its errors carry its path, so they go no
+    // further than here.
     var unreadable = false;
-    final body = file
-        .openRead(offset)
-        .transform(
-          StreamTransformer<List<int>, List<int>>.fromHandlers(
-            handleError: (error, stackTrace, sink) {
-              unreadable = true;
-              sink.addError(error, stackTrace);
-            },
-          ),
-        );
+    final guarded = body.transform(
+      StreamTransformer<List<int>, List<int>>.fromHandlers(
+        handleError: (error, stackTrace, sink) {
+          unreadable = true;
+          sink.addError(error, stackTrace);
+        },
+      ),
+    );
     try {
       final response = await _apiClient.dio.put<void>(
         uploadPath,
-        data: body, // streamed from where the server stopped; never in RAM
+        data: guarded, // streamed from where the server stopped; never in RAM
         cancelToken: cancel,
         options: Options(
           connectTimeout: _connectTimeout,
