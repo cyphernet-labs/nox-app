@@ -6,13 +6,18 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:injectable/injectable.dart' show Environment;
+import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/file/attachment_transfer.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/presentation/widgets/chat/app_image_attachment_widget.dart';
+import 'package:nox_app/presentation/widgets/media/local_file_image.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../utils/fonts.dart';
 import '../../../utils/pump_app.dart';
+import '../../../utils/sealed_files.dart';
 
 /// A deterministic 2×2 RGBA PNG (four opaque quadrants: teal / white / dark / grey).
 /// BoxFit.cover stretches it across the thumbnail box, so the golden locks the picture
@@ -52,11 +57,20 @@ Widget _content(String path) => Padding(
 void main() {
   setUpAll(loadNoxFonts);
 
+  // Sealed, as every picture this device keeps since phase 048: the thumbnail
+  // is opened into memory on its way to the decoder, and draws as it did.
   late File tmp;
-  setUp(() => tmp = File('${Directory.systemTemp.path}/nox_p9_thumb.png')..writeAsBytesSync(_quadPng));
-  tearDown(() => tmp.existsSync() ? tmp.deleteSync() : null);
+  setUp(() async {
+    SharedPreferences.setMockInitialValues({});
+    await configureDependencies(Environment.test);
+    tmp = await writeSealed('${Directory.systemTemp.path}/nox_p9_thumb.png', _quadPng);
+  });
+  tearDown(() async {
+    if (tmp.existsSync()) tmp.deleteSync();
+    await getIt.reset();
+  });
 
-  // A bespoke harness (not the shared goldenTest): Image.file decodes on a real IO thread,
+  // A bespoke harness (not the shared goldenTest): the picture is read and decoded on real IO,
   // which only runs under tester.runAsync — pumpAndSettle alone would snapshot a blank box.
   for (final entry in const <(ThemeMode, String)>[(ThemeMode.light, 'light'), (ThemeMode.dark, 'dark')]) {
     final mode = entry.$1;
@@ -71,7 +85,7 @@ void main() {
       await tester.runAsync(() async {
         await pumpApp(tester, _content(tmp.path), themeMode: mode, settle: false);
         // Force the file image to decode before the snapshot.
-        await precacheImage(FileImage(tmp), tester.element(find.byType(MaterialApp)));
+        await precacheImage(LocalFileImage(tmp.path), tester.element(find.byType(MaterialApp)));
         await tester.pumpAndSettle();
       });
       await tester.pump();
@@ -106,7 +120,7 @@ void main() {
           themeMode: mode,
           settle: false,
         );
-        await precacheImage(FileImage(tmp), tester.element(find.byType(MaterialApp)));
+        await precacheImage(LocalFileImage(tmp.path), tester.element(find.byType(MaterialApp)));
         await tester.pump();
       });
       await tester.pump();

@@ -33,6 +33,19 @@ abstract class SessionRepository {
   /// is what the server knows as `device_key`; this half never leaves.
   Future<RepositoryResult<String>> deviceSecret();
 
+  /// The local-data key (phase 048): base64 of 32 bytes, kept for this device
+  /// only, that the database and the files on the disk are sealed under. Null
+  /// when the secure store has none; an error when the store did not answer,
+  /// which is never the same thing - a key that is not there costs the data,
+  /// a store that is not ready yet costs a wait.
+  Future<RepositoryResult<String?>> storageKey();
+
+  /// Stores a new local-data key.
+  Future<RepositoryResult<bool>> saveStorageKey({required String key});
+
+  /// Deletes the local-data key (a logout, or a key that opens nothing).
+  Future<RepositoryResult<bool>> forgetStorageKey();
+
   /// Records which server this installation was paired with, from the link:
   /// where the connection starts, and the server's Ed25519 key (base64) every
   /// connection's Eidolon check must prove (phase 044). Without it the app
@@ -115,6 +128,9 @@ abstract class SessionRepository {
   /// free to ignore it. A key that outlives one more launch costs nothing.
   Future<RepositoryResult<bool>> sweepLegacyKeys();
 
-  /// Full wipe: secure storage deleteAll + remove prefs keys (logout).
+  /// Full wipe: secure storage deleteAll + remove prefs keys (logout). The
+  /// sweep may take the local-data key with it; the module keeps its copy, so
+  /// what is open stays readable until the end of the wipe, which deletes the
+  /// key by name ([forgetStorageKey]).
   Future<RepositoryResult<bool>> clear();
 }

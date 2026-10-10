@@ -3,8 +3,12 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:injectable/injectable.dart' show Environment;
+import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/pages/image_viewer_page/image_viewer_page.dart';
+
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../utils/pump_app.dart';
 
@@ -80,6 +84,14 @@ final Uint8List _png = Uint8List.fromList(<int>[
 
 void main() {
   final l10nEn = AppLocalizationsEn();
+
+  // The picture is read through the files service (phase 048).
+  setUp(() async {
+    SharedPreferences.setMockInitialValues({});
+    await configureDependencies(Environment.test);
+  });
+
+  tearDown(() async => getIt.reset());
 
   testWidgets('shows a zoomable InteractiveViewer around the image (F4)', (tester) async {
     final tmp = File('${Directory.systemTemp.path}/nox_viewer_test.png')..writeAsBytesSync(_png);

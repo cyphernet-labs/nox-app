@@ -20,10 +20,17 @@ import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 ///
 /// Deliberately named without the `_test` suffix so the suite never collects it:
 /// it needs a server, and the gate must stay runnable without one. Run it by
-/// hand after starting the server:
+/// hand from the repository root: the server built first, then started, and
+/// unlocked once its service page - up before anything else - answers. The
+/// probe runs only once `noxd link` answered: on a failure it prints only why,
+/// on stderr.
 ///
-///   client_backend$ go build -o /tmp/noxd . && /tmp/noxd -addr 127.0.0.1:8080 -db /tmp/nox-live.db
-///   fvm flutter test test/live/live_exchange_probe.dart `--dart-define=link=<pairing link>`
+///   (cd client_backend && go build -o /tmp/noxd .)
+///   /tmp/noxd -addr 127.0.0.1:8080 -db /tmp/nox-live.db &
+///   curl -s -o /dev/null --retry 30 --retry-delay 1 --retry-connrefused http://127.0.0.1:8081/health
+///   /tmp/noxd unlock          # it starts locked (phase 047); a fresh one takes the password twice
+///   LINK=$(/tmp/noxd link) &&
+///     fvm flutter test test/live/live_exchange_probe.dart --dart-define=link="$(printf '%s\n' "$LINK" | head -1)"
 ///
 /// These three probes pair a device key of their own first, with the link's
 /// token (phase 044): the server knows a device only by the key its channel

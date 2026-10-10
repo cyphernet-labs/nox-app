@@ -2,6 +2,9 @@ import 'dart:io';
 
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/exception/base_repository_helper.dart';
+import 'package:nox_app/data/local/app_data_root.dart';
+import 'package:nox_app/data/local/device_vault.dart';
+import 'package:nox_app/data/local/sealed_file.dart';
 import 'package:nox_app/data/entity/file/upload_ticket_wire_entity.dart';
 import 'package:nox_app/data/exception/file_transfer_exception.dart';
 import 'package:nox_app/data/remote/datasource/file_remote_data_source.dart';
@@ -12,23 +15,31 @@ import 'package:nox_app/domain/model/file/unfinished_upload.dart';
 import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
-import 'package:path_provider/path_provider.dart';
 
 /// The file chain over the data source (contract v0 §7).
 ///
-/// Downloaded bytes live in a CACHE directory named by file id. Not the
-/// database — Sembast is a document store and blobs do not belong in it. Not
-/// the documents directory — this is cache: losing it costs one re-download,
-/// while documents are backed up and synced, which is the wrong promise for
-/// somebody else's picture.
+/// Downloaded bytes live in a folder of the app's data folder named by file
+/// id (phase 048: `AppDataRoot`). Not the database — Sembast is a document
+/// store and blobs do not belong in it. Not the documents directory, which is
+/// backed up and synced — the wrong promise for somebody else's picture; and
+/// not the cache folder either, which the system may empty under a file the
+/// thread still shows. Losing the folder costs one re-download.
+///
+/// Every file there is sealed (phase 048, [SealedFile]): a download is sealed
+/// chunk by chunk as its bytes arrive - a part too - and an upload reads the
+/// queue's sealed copy through the vault. Going on from where a transfer
+/// stopped (phase 043) works on the plain bytes either way: a part is gone on
+/// from its last whole chunk.
 @LazySingleton(as: FileRepository, env: [Environment.dev, Environment.prod, Environment.test])
 class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
-  FileRepositoryImpl(this._remote, this._config);
+  FileRepositoryImpl(this._remote, this._config, this._vault);
 
   final FileRemoteDataSource _remote;
   final AppConfigRepository _config;
 
-  static const String _cacheFolder = 'nox_attachments';
+  /// The local-data key (phase 048): what comes down is sealed under it as it
+  /// arrives, and the queue's copies are opened with it on their way up.
+  final DeviceVault _vault;
 
   /// How many changes of path one attempt goes on through by itself. A path
   /// that keeps changing under a transfer is a broken link after all, and the
@@ -52,6 +63,7 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
     TransferCancellation? cancellation,
   }) {
     return execute<String>(() async {
+      await _vault.ensureOpen();
       final file = File(path);
       // The file was picked minutes or hours ago and the queue only reaches it
       // now; it may be gone or changed since.
@@ -97,8 +109,12 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
         try {
           await _remote.putBytes(
             uploadPath: ticket.uploadUrl,
-            file: file,
+            size: source.size,
             offset: offset,
+            // The plain bytes from where the server stopped: opened chunk by
+            // chunk from the queue's sealed copy, as they are from a file of
+            // the person's own.
+            body: source.read(offset),
             onProgress: onProgress == null ? null : (done, total) => onProgress(total == 0 ? 1 : done / total),
             cancellation: cancellation,
           );
@@ -178,15 +194,27 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
   ///
   /// Opened, not only looked up: a sandbox forgets a picked file when the app
   /// restarts and still lets its size be read, so a fingerprint alone would
-  /// declare an upload whose bytes can never be sent.
+  /// declare an upload whose bytes can never be sent. And read as what it is
+  /// (phase 048): the queue's own copy is sealed, and its PLAIN length is what
+  /// the server is told; a file of the person's own - an entry queued before
+  /// the queue kept copies, or one it could not copy - is read as it is.
   Future<_Source> _sourceOf(File file) async {
     try {
       final stat = await file.stat();
       if (stat.type == FileSystemEntityType.notFound) throw RepositoryException.notFound;
-      final probe = await file.open();
-      await probe.close();
-      return _Source(size: stat.size, modified: stat.modified);
+      final sealed = await SealedReader.open(file);
+      if (sealed != null) {
+        return _Source(
+          size: sealed.length,
+          modified: stat.modified,
+          read: (from) => sealed.read(from: from),
+        );
+      }
+      return _Source(size: stat.size, modified: stat.modified, read: (from) => file.openRead(from));
     } on FileSystemException {
+      throw RepositoryException.notFound;
+    } on SealedFileException {
+      // A copy no whole file of its format could be: no retry would send it.
       throw RepositoryException.notFound;
     }
   }
@@ -235,6 +263,9 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
         if (_epoch != epoch) throw RepositoryException.connection;
       }
 
+      // Sealed as they arrive (phase 048): the key is needed before the first
+      // byte, and to check the part an earlier attempt left.
+      await _vault.ensureOpen();
       final destination = File(await _cachePathFor(fileId, suggestedName));
       if (destination.existsSync()) return RepositoryResult<String>.success(data: destination.path);
       stillWanted();
@@ -243,7 +274,8 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
       // The bytes come into a SIDE file, renamed into place only once whole:
       // every reader, this method included, takes existence at the final path
       // as proof of completeness. Beside it, the version of the file those
-      // bytes belong to - without it they could not be continued safely.
+      // bytes belong to - without it they could not be continued safely. Both
+      // the part and the file are sealed; the version names nothing private.
       final part = File('${destination.path}.part');
       final tag = File('${destination.path}.part.tag');
       var (offset, validator) = await _partOf(part, tag);
@@ -304,26 +336,36 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
         final total = fetched.total;
         var received = offset;
         var pathMoved = false;
-        RandomAccessFile? out;
+        var overflow = false;
+        SealedWriter? out;
         try {
           if (fetched.whole) {
-            // In THIS order: an empty part first, then the version, then the
-            // bytes. A crash between any two leaves an empty part, or a part
-            // holding only bytes of the version written beside it.
-            await part.writeAsBytes(const <int>[], flush: true);
+            // In THIS order: a new part first - its header, under a fresh id -
+            // then the version, then the bytes. A crash between any two leaves
+            // a part with no chunk in it, or one holding only bytes of the
+            // version written beside it; and bytes of another version never go
+            // under the id an earlier one was sealed under.
+            out = await SealedWriter.create(part, total: total);
             received = 0;
             await _writeTag(tag, fetched.validator);
+          } else {
+            out = await SealedWriter.append(part, from: offset, total: total);
           }
           logRepository.debug(target: this, message: 'file: download $fileId from $received of $total');
           onProgress(total == 0 ? 1 : received / total);
-          // Written chunk by chunk and awaited, not handed to a buffered sink:
-          // a disk that refuses a write says so at that write, rather than
-          // after the rest of the body has been read for nothing - and the
-          // body waits for the disk instead of piling up in memory.
-          out = await part.open(mode: FileMode.append);
+          // Sealed chunk by chunk and each write awaited, not handed to a
+          // buffered sink: a disk that refuses a write says so at that write,
+          // rather than after the rest of the body has been read for nothing -
+          // and the body waits for the disk instead of piling up in memory.
           await for (final chunk in fetched.bytes) {
+            if (received + chunk.length > total) {
+              // More than the file the server announced: not this file.
+              overflow = true;
+              fetched.abandon();
+              break;
+            }
             try {
-              await out.writeFrom(chunk);
+              await out.add(chunk);
             } on Object {
               fetched.abandon();
               rethrow;
@@ -332,8 +374,9 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
             onProgress(total == 0 ? 1 : received / total);
           }
         } on FileTransferException catch (e) {
-          // What arrived stays: the next attempt asks only for the rest - and
-          // when only the path changed, this one asks for it now.
+          // What arrived in whole chunks stays: the next attempt asks only for
+          // the rest - and when only the path changed, this one asks for it
+          // now.
           if (e.failure != FileTransferFailure.pathChanged || ++pathChanges > _pathChangeLimit) {
             throw RepositoryException.connection;
           }
@@ -345,7 +388,14 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
           fetched.abandon();
           rethrow;
         } finally {
+          // Every byte in, this seals the last chunk and the file is whole;
+          // short of that, the tail in memory goes, and the whole chunks on the
+          // disk are what the next attempt goes on from.
           await out?.close();
+        }
+        if (overflow) {
+          await _discard(part, tag);
+          throw RepositoryException.internal;
         }
         if (pathMoved) {
           stillWanted();
@@ -355,10 +405,6 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
         }
         // The server ended the body early; what came is kept for the next one.
         if (received < total) throw RepositoryException.connection;
-        if (received > total) {
-          await _discard(part, tag);
-          throw RepositoryException.internal;
-        }
         // The rename is the moment the file becomes real. Before it, nothing
         // that looks like a cache hit exists.
         stillWanted();
@@ -371,7 +417,10 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
 
   /// How much of the file is already here, and which version it belongs to. A
   /// part with no version written beside it cannot be checked against the
-  /// server, so it is not continued.
+  /// server, so it is not continued; nor is one that is no sealed part at
+  /// all. A sealed part is gone on from its last whole chunk (phase 048): a
+  /// chunk is sealed only once it is whole, so the tail an attempt held in
+  /// memory is asked for again.
   Future<(int, String?)> _partOf(File part, File tag) async {
     if (!part.existsSync()) {
       if (tag.existsSync()) await tag.delete();
@@ -382,7 +431,12 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
       await _discard(part, tag);
       return (0, null);
     }
-    return (await part.length(), validator);
+    final whole = await SealedFile.resumable(part);
+    if (whole == null) {
+      await _discard(part, tag);
+      return (0, null);
+    }
+    return (whole, validator);
   }
 
   /// The version beside the part, written whole or not at all.
@@ -420,16 +474,16 @@ class FileRepositoryImpl with BaseRepositoryHelper implements FileRepository {
   @override
   Future<void> clean() async {
     _epoch++;
-    final dir = Directory('${(await getApplicationCacheDirectory()).path}/$_cacheFolder');
+    final dir = Directory(await AppDataRoot.pathOf(AppDataRoot.attachmentsFolder));
     if (dir.existsSync()) await dir.delete(recursive: true);
   }
 
   /// Keyed by file id, so two files that share a display name cannot collide;
   /// the name is kept only for the extension, which is what decoders sniff.
   Future<String> _cachePathFor(String fileId, String suggestedName) async {
-    final root = await getApplicationCacheDirectory();
+    final folder = await AppDataRoot.pathOf(AppDataRoot.attachmentsFolder);
     final ext = suggestedName.contains('.') ? suggestedName.split('.').last : '';
-    return '${root.path}/$_cacheFolder/$fileId${ext.isEmpty ? '' : '.$ext'}';
+    return '$folder${Platform.pathSeparator}$fileId${ext.isEmpty ? '' : '.$ext'}';
   }
 
   String _nameOf(String path) => path.split(Platform.pathSeparator).last;
@@ -459,12 +513,16 @@ class _SharedDownload {
 }
 
 /// What the upload knows about its source: enough to tell whether it is still
-/// the file the bytes came from.
+/// the file the bytes came from, and how to read its plain bytes.
 class _Source {
-  const _Source({required this.size, required this.modified});
+  const _Source({required this.size, required this.modified, required this.read});
 
+  /// The plain length: what the server is told, and what it holds when done.
   final int size;
   final DateTime modified;
+
+  /// The plain bytes from an offset to the end, read only once listened to.
+  final Stream<List<int>> Function(int from) read;
 
   bool isSameAs(_Source other) => size == other.size && _sameMillisecond(modified, other.modified);
 

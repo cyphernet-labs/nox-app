@@ -1,11 +1,10 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:nox_app/presentation/helpers/adaptive_lightbox.dart';
 import 'package:nox_app/design/app_dimension_tokens.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
 import 'package:nox_app/general/l10n_extension.dart';
+import 'package:nox_app/presentation/widgets/media/local_file_image.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 
 /// Open the full-screen image viewer (feature F4) adaptively: mobile pushes a full
@@ -72,7 +71,12 @@ class ImageViewerPage extends StatelessWidget {
   }
 
   Widget _viewer(BuildContext context, {double? maxHeightFactor}) {
-    Widget image = Image.file(File(localPath), fit: BoxFit.contain, errorBuilder: (context, error, stackTrace) => _missing(context));
+    // From memory (phase 048, FR-006): the file on the disk is sealed.
+    Widget image = Image(
+      image: LocalFileImage(localPath),
+      fit: BoxFit.contain,
+      errorBuilder: (context, error, stackTrace) => _missing(context),
+    );
     if (maxHeightFactor != null) {
       image = ConstrainedBox(
         constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * maxHeightFactor),

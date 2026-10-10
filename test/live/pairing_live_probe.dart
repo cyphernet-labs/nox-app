@@ -1,19 +1,13 @@
 @Tags(['live'])
 library;
 
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
-import 'dart:typed_data';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
-import 'package:nox_app/data/remote/channel/channel_http_client.dart';
-import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/remote/socket/server_frame.dart';
-import 'package:nox_app/data/remote/socket/socket_channel_factory.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/exception/pairing_exception.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
@@ -24,13 +18,12 @@ import 'package:nox_app/domain/repository/app/auth_repository.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/device/device_repository.dart';
-import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_app/domain/service/pair_request_service.dart';
 import 'package:nox_app/general/pairing/pairing_link.dart';
 import 'package:nox_app/general/platform_utils.dart';
-import 'package:nox_tor/channel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'live_harness.dart';
 import 'live_target.dart';
 
 /// Drives the REAL client code against a running `noxd`, which is the gap the
@@ -40,24 +33,35 @@ import 'live_target.dart';
 /// Since phase 046 it drives pairing with approval from both sides: the app as
 /// the NEW device waiting for Allow on the device that issued the invite, and
 /// the app as the ISSUING device asked about a new one. The other side is a
-/// device of its own key spoken for over the wire ([_Wire]), with the same
-/// socket and channel classes the app uses.
+/// device of its own key spoken for over the wire ([WireDevice]), with the
+/// same socket and channel classes the app uses.
 ///
 /// Run manually, not in the gate: it needs a server, and the native module
-/// built from this tree (every connection is a channel of it, phase 044).
-///   1. cd client_backend && go build -o /tmp/noxd . && /tmp/noxd -db /tmp/t.db -addr 0.0.0.0:8443 -status-addr 127.0.0.1:8081
-///   2. flutter test test/live/pairing_live_probe.dart --dart-define=status=127.0.0.1:8081
+/// built from this tree (every connection is a channel of it, phase 044). From
+/// the repository root: the server is built first, then started. It starts
+/// locked (phase 047), and its page - up before anything else - hands out no
+/// link until the password is in; a fresh one takes it twice, at the terminal
+/// or piped:
+///   1. (cd client_backend && go build -o /tmp/noxd .)
+///   2. /tmp/noxd -db /tmp/t.db -addr 0.0.0.0:8443 -status-addr 127.0.0.1:8081 &
+///   3. curl -s -o /dev/null --retry 30 --retry-delay 1 --retry-connrefused http://127.0.0.1:8081/health
+///   4. /tmp/noxd unlock -status-addr 127.0.0.1:8081
+///   5. fvm flutter test test/live/pairing_live_probe.dart --dart-define=status=127.0.0.1:8081
 ///
 /// With `status` every test asks the running server for a machine link of its
 /// own, the way `noxd link` does (`POST /control/link`), so the three run in
 /// one go - each new link voids the one before it. Without it, the first test
-/// alone runs on `--dart-define=link=<machine link>` from the service page.
+/// alone runs on `--dart-define=link=<machine link>` from the service page; a
+/// link passed empty fails it rather than skipping it.
 /// `--dart-define=expiry=true` adds a fourth that waits out an invite's ten
 /// minutes, so it is off unless asked for.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   const link = String.fromEnvironment('link');
+  // Passed empty is not "not passed": it is a `noxd link` that failed - a
+  // locked server, or none - and a skip there would read as a pass.
+  const linkGiven = bool.hasEnvironment('link');
   const status = String.fromEnvironment('status');
   const expiry = bool.fromEnvironment('expiry');
 
@@ -70,6 +74,7 @@ void main() {
   });
 
   test('a machine link pairs, names the person, lists the device and revokes it', () async {
+    if (linkGiven && link.isEmpty) fail('link= was passed empty - did `noxd link` fail?');
     final machine = link.isNotEmpty ? link : (status.isEmpty ? null : await _machineLink(status));
     if (machine == null) {
       stdout.writeln('SKIP: pass --dart-define=status=<service page address>, or --dart-define=link=<machine link>');
@@ -169,7 +174,7 @@ void main() {
 
       // The issuing device: paired by a machine link of its own, greeted. The
       // person may hold devices from earlier runs: counts are taken from here.
-      final issuer = await _Wire.paired(await _machineLink(status), platform: 'linux');
+      final issuer = await WireDevice.paired(await _machineLink(status), platform: 'linux');
       addTearDown(issuer.close);
       final before = (await issuer.devices()).length;
 
@@ -237,7 +242,7 @@ void main() {
       // --- Allow, from this device. ---
       final invite = await devices.inviteDevice();
       expect(invite.hasData, isTrue, reason: 'device.invite: ${invite.exception}');
-      final newcomer = _Wire(PairingLink.parse(invite.data!.link));
+      final newcomer = WireDevice(PairingLink.parse(invite.data!.link));
       addTearDown(newcomer.close);
       final closed = requests.watchClosed().first;
       expect((await newcomer.present(platform: 'windows')).data?['status'], 'pending');
@@ -253,7 +258,7 @@ void main() {
       // --- Deny, from this device. ---
       final invite2 = await devices.inviteDevice();
       expect(invite2.hasData, isTrue);
-      final refused = _Wire(PairingLink.parse(invite2.data!.link));
+      final refused = WireDevice(PairingLink.parse(invite2.data!.link));
       addTearDown(refused.close);
       expect((await refused.present(platform: 'ios')).data?['status'], 'pending');
       final asked2 = await requests.watchRequests().firstWhere((r) => r.isNotEmpty).timeout(const Duration(seconds: 15));
@@ -284,7 +289,7 @@ void main() {
       return;
     }
     final auth = getIt<AuthRepository>();
-    final issuer = await _Wire.paired(await _machineLink(status), platform: 'linux');
+    final issuer = await WireDevice.paired(await _machineLink(status), platform: 'linux');
     addTearDown(issuer.close);
 
     // The issuing device is asked and never answers - an app closed, or off
@@ -314,7 +319,7 @@ class _Waiting {
 
 /// Has [issuer] invite, starts this app's sign-in with the invite, and returns
 /// once the app says it waits and the issuer has been asked.
-Future<_Waiting> _presentAndWait(AuthRepository auth, _Wire issuer) async {
+Future<_Waiting> _presentAndWait(AuthRepository auth, WireDevice issuer) async {
   final invite = await issuer.invite();
   final asked = issuer.next(ServerEvent.devicePairRequested);
   final waiting = auth.watchAwaitingApproval().firstWhere((w) => w);
@@ -350,103 +355,4 @@ Future<String> _get(String url) async {
   } finally {
     client.close(force: true);
   }
-}
-
-/// Another device of the same person, spoken for over the wire: a key of its
-/// own, its own channel and socket - the classes the app uses, without the
-/// app around them.
-class _Wire {
-  _Wire(this.link) : _seed = Uint8List.fromList(List<int>.generate(32, (_) => Random.secure().nextInt(256))) {
-    _channel = ChannelHttpClient(const NativeNoxChannelApi())..bind(serverKey: link.serverKey, deviceSeed: _seed);
-    socket = NoxSocketClient(WebSocketChannelFactory(_channel), _NoCursor());
-    _events = socket.events.listen(_seen.add);
-  }
-
-  /// Pairs a new device by a machine link and greets as it.
-  static Future<_Wire> paired(String machineLink, {required String platform}) async {
-    final wire = _Wire(PairingLink.parse(machineLink));
-    final reply = await wire.present(platform: platform);
-    expect(reply.ok && reply.data?['identity'] != null, isTrue, reason: 'pair: ${reply.errorCode}');
-    await wire.greet();
-    return wire;
-  }
-
-  final PairingLink link;
-  final Uint8List _seed;
-  late final ChannelHttpClient _channel;
-  late final NoxSocketClient socket;
-  late final StreamSubscription<ServerEvent> _events;
-  final StreamController<ServerEvent> _seen = StreamController<ServerEvent>.broadcast();
-
-  Uri get _url => Uri.parse('wss://${link.directAddresses.first}/ws');
-
-  /// Presents this link's token as a device that is not paired yet.
-  Future<CommandReply> present({required String platform}) async {
-    await socket.start(url: _url, credentialsProvider: () async => const GreetingCredentials.unpaired());
-    return socket.pair(token: link.token, platform: platform);
-  }
-
-  /// Opens the socket again as the paired device it now is, and greets.
-  Future<void> greet() async {
-    await socket.stop();
-    await socket.start(url: _url, credentialsProvider: () async => const GreetingCredentials());
-    final watch = Stopwatch()..start();
-    while (socket.identity == null) {
-      if (watch.elapsed > const Duration(seconds: 15)) fail('the wire device never greeted');
-      await Future<void>.delayed(const Duration(milliseconds: 100));
-    }
-  }
-
-  /// The next [name] event - about [requestId], when given.
-  Future<ServerEvent> next(String name, {String? requestId, Duration within = const Duration(seconds: 15)}) =>
-      _seen.stream.firstWhere((e) => e.event == name && (requestId == null || e.data['request_id'] == requestId)).timeout(within);
-
-  /// Issues an invite and returns its link.
-  Future<String> invite() async {
-    final reply = await socket.send('device.invite', <String, dynamic>{});
-    expect(reply.ok, isTrue, reason: 'device.invite: ${reply.errorCode}');
-    return reply.data!['link'] as String;
-  }
-
-  /// Answers a request; false when the server had nothing left to answer.
-  Future<bool> approve(String requestId, {required bool allow}) async {
-    final reply = await socket.send('device.approve', <String, dynamic>{'request_id': requestId, 'allow': allow});
-    if (!reply.ok && reply.errorCode == 'not_found') return false;
-    expect(reply.ok, isTrue, reason: 'device.approve: ${reply.errorCode}');
-    return true;
-  }
-
-  /// The person's devices, as the server lists them.
-  Future<List<dynamic>> devices() async {
-    final reply = await socket.send('device.list', <String, dynamic>{});
-    expect(reply.ok, isTrue, reason: 'device.list: ${reply.errorCode}');
-    return reply.data!['devices'] as List<dynamic>;
-  }
-
-  Future<void> close() async {
-    await _events.cancel();
-    await socket.stop();
-    _channel.unbind();
-    await _seen.close();
-  }
-}
-
-/// The wire devices keep no cursor: they read nothing from the journal.
-class _NoCursor implements SyncRepository {
-  @override
-  Future<int> getCursor() async => 0;
-  @override
-  Future<bool> hasCursor() async => false;
-  @override
-  Future<void> advanceCursor(int seq) async {}
-  @override
-  Future<void> clear() async {}
-  @override
-  Future<String?> getEpoch() async => null;
-  @override
-  Future<void> setEpoch(String epoch) async {}
-  @override
-  Future<String?> getJournal() async => null;
-  @override
-  Future<void> setJournal(String journalId) async {}
 }

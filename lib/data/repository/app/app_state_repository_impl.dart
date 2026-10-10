@@ -21,8 +21,21 @@ class AppStateRepositoryImpl implements AppStateRepository {
   @override
   AppStateType? get currentState => _subject.valueOrNull?.match(onData: (model) => model.state, onError: (_) => null);
 
+  /// The start-up the first resolution waits for (phase 048); none by default.
+  Future<void> _startUp = Future<void>.value();
+
+  @override
+  void holdUntil(Future<void> ready) {
+    // However it ends: a start-up that failed must still let the app open.
+    _startUp = ready.then<void>((_) {}, onError: (Object _) {});
+  }
+
   @override
   Stream<RepositoryResult<AppStateModel>> watchAppState() async* {
+    // No state before the start-up is over: a state resolved now would be
+    // the session as it was before the local data opened. While it waits the
+    // subject stays empty, and the splash waits with it.
+    await _startUp;
     // Lazy first resolution; BehaviorSubject then replays the latest to this
     // subscription and forwards every subsequent push.
     if (!_subject.hasValue) {

@@ -17,6 +17,10 @@ tor — сборка Tor Project (`tor` 0.4.9+), отдельно от серв�
 cd client_backend && go build -o "$STAND/noxd" . && \
   "$STAND/noxd" -db "$STAND/nox.db" -addr 0.0.0.0:8443 -status-addr 127.0.0.1:8081
 
+# Сервер стартует запертым (047): до пароля слушает только служебная страница.
+# Пароль — на странице или из другого терминала; новый сервер принимает его дважды
+"$STAND/noxd" unlock -status-addr 127.0.0.1:8081
+
 # tor со своим onion-сервисом на порт сервера на loopback (torrc):
 #   SocksPort 0
 #   DataDirectory $STAND/tor-data
@@ -31,7 +35,7 @@ tor -f "$STAND/torrc"
 # onion-адрес — в $STAND/hs/hostname
 ```
 
-Ссылка спаривания — только на служебной странице: журнал сервера говорит, где страница, и не печатает ни ссылку, ни onion-адрес.
+Ссылка спаривания — на служебной странице, когда пароль введён, или у `noxd link`: журнал сервера говорит, где страница, и не печатает ни ссылку, ни onion-адрес.
 
 1. На служебной странице `http://127.0.0.1:8081` задать onion-адрес кнопкой `Set` → он в новом QR-коде; задать испорченный → `That isn't a valid onion address. Nothing was changed.`, ничего не изменилось.
 2. Перезапустить сервер с `-onion-addr <тот же адрес>` → адрес на месте; задать на странице другой и перезапустить с тем же параметром → правка со страницы на месте; с испорченным `-onion-addr` → сервер работает, на странице предупреждение.
@@ -48,12 +52,13 @@ tor -f "$STAND/torrc"
 fvm flutter test test/live/tor_live_probe.dart --dart-define=noxd=$STAND/noxd --dart-define=tor=<путь к tor> \
   --dart-define=host=<LAN-адрес машины> --dart-define=work=/tmp/nox_e2e \
   [--dart-define=port=18443] [--dart-define=other_onion=<56>.onion]   # onion-адрес другого сервера - для otherServer
-fvm flutter test test/live/tor_pairing_probe.dart --dart-define=link=<приглашение из /tmp/nox_e2e/invites.txt или ссылка со страницы>
+LINK=$("$STAND/noxd" link -status-addr "$(cat /tmp/nox_e2e/page.txt)") &&
+  fvm flutter test test/live/tor_pairing_probe.dart --dart-define=link="$(printf '%s\n' "$LINK" | head -1)"
 fvm flutter test test/live/resumable_files_probe.dart --dart-define=noxd=... --dart-define=tor=... \
   --dart-define=host=... --dart-define=work=/tmp/nox_files_e2e [--dart-define=mib=100] [--dart-define=port=18543]
 ```
 
-Приглашение живёт 10 минут: `tor_pairing_probe` с приглашением запускается сразу после `tor_live_probe`.
+Пароль своих серверов пробы вводят сами (047). `tor_live_probe` оставляет сервер и его tor работать, а адрес служебной страницы — в `/tmp/nox_e2e/page.txt`. `tor_pairing_probe` запускается, только если `noxd link` ответил: у запертого или незапущенного сервера команда печатает лишь причину, в stderr, а пустая `link=` — провал пробы, не пропуск. Приглашение спаривает только после `Allow` на выдавшем устройстве (046), поэтому `tor_pairing_probe` и `integration_test/tor_pairing_test.dart` приносят выдавшее устройство с собой: оно спаривается дома по свежей ссылке с машины (ссылка живёт 10 минут), выдаёт приглашение и разрешает запрос, пока приложение спаривается по приглашению через Tor.
 
 ## 3. Проверки владельца
 

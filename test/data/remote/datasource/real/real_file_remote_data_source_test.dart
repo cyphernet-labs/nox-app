@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
@@ -5,12 +6,19 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/data/exception/file_transfer_exception.dart';
+import 'package:nox_app/data/local/app_data_root.dart';
+import 'package:nox_app/data/local/chat/outbox_copies.dart';
+import 'package:nox_app/data/local/device_vault.dart';
+import 'package:nox_app/data/local/sealed_file.dart';
 import 'package:nox_app/data/remote/api_client.dart';
 import 'package:nox_app/data/remote/datasource/file_remote_data_source.dart';
 import 'package:nox_app/data/remote/datasource/real/real_file_remote_data_source.dart';
 import 'package:nox_app/data/remote/channel/channel_http_client.dart';
+import 'package:nox_app/data/repository/file/file_repository_impl.dart';
 import 'package:nox_app/data/repository/log_repository_impl.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/model/file/unfinished_upload.dart';
+import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/log_repository.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/remote/socket/server_frame.dart';
@@ -21,7 +29,9 @@ import 'package:nox_tor/channel.dart' show channelWindowBytes;
 import 'package:nox_app/domain/model/app_config/server_limits.dart';
 import 'package:nox_app/domain/model/file/transfer_cancellation.dart';
 import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
+import 'package:nox_tor/vault.dart';
 
+import '../../../../utils/fake_session_repository.dart';
 import '../../channel/fake_channel.dart';
 
 /// The byte half of the file chain against a real HTTP server, over the
@@ -181,6 +191,26 @@ class _GetServer {
   Future<void> close() => _server.close(force: true);
 }
 
+/// The secure store as the vault reads it: one key, always there.
+class _KeyStore extends FakeSessionRepository {
+  _KeyStore(this.key);
+
+  final String key;
+
+  @override
+  Future<RepositoryResult<String?>> storageKey() async => RepositoryResult<String?>.success(data: key);
+}
+
+/// [bytes] from [from] on, the way the decrypting reader of a sealed copy hands
+/// them over: `Uint8List` chunks out of an `async*` generator. Its runtime type
+/// is a `Stream<Uint8List>` - a stream of a SUBTYPE of `List<int>` - which a
+/// file's own `openRead()` never is, so no test that read a file saw it.
+Stream<Uint8List> _uint8Chunks(List<int> bytes, {int from = 0}) async* {
+  for (var at = from; at < bytes.length; at += SealedFile.chunkSize) {
+    yield Uint8List.fromList(bytes.sublist(at, min(at + SealedFile.chunkSize, bytes.length)));
+  }
+}
+
 void main() {
   late HttpOverrides? saved;
   setUpAll(() {
@@ -256,7 +286,13 @@ void main() {
     test('sends exactly the bytes from the offset to the end, and says how many', () async {
       final shares = <(int, int)>[];
 
-      await source().putBytes(uploadPath: '/files/t', file: file, offset: 40000, onProgress: (done, total) => shares.add((done, total)));
+      await source().putBytes(
+        uploadPath: '/files/t',
+        size: payload.length,
+        offset: 40000,
+        body: file.openRead(40000),
+        onProgress: (done, total) => shares.add((done, total)),
+      );
 
       expect(server.contentLength, payload.length - 40000);
       expect(server.received, payload.sublist(40000), reason: 'what the server already holds is not sent again (FR-001)');
@@ -265,7 +301,7 @@ void main() {
     });
 
     test('nothing left to send is an empty PUT that completes the upload', () async {
-      await source().putBytes(uploadPath: '/files/t', file: file, offset: payload.length);
+      await source().putBytes(uploadPath: '/files/t', size: payload.length, offset: payload.length, body: file.openRead(payload.length));
 
       expect(server.contentLength, 0);
       expect(server.received, isEmpty);
@@ -287,7 +323,7 @@ void main() {
         server.status = status;
 
         await expectLater(
-          source().putBytes(uploadPath: '/files/t', file: file, offset: 0),
+          source().putBytes(uploadPath: '/files/t', size: payload.length, offset: 0, body: file.openRead(0)),
           throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', failure)),
         );
         expect(api.transfersUnderWay, 0, reason: 'the transfer is handed back whatever the answer');
@@ -309,7 +345,7 @@ void main() {
       }
 
       await expectLater(
-        source().putBytes(uploadPath: '/files/t', file: file, offset: 0),
+        source().putBytes(uploadPath: '/files/t', size: payload.length, offset: 0, body: file.openRead(0)),
         throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.sourceUnreadable)),
       );
       expect(server.received, isEmpty);
@@ -320,9 +356,42 @@ void main() {
       file.deleteSync();
 
       await expectLater(
-        source().putBytes(uploadPath: '/files/t', file: file, offset: 0),
+        source().putBytes(uploadPath: '/files/t', size: payload.length, offset: 0, body: file.openRead(0)),
         throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.sourceUnreadable)),
       );
+    });
+
+    test('a body of Uint8List chunks - what an opened sealed copy is - goes as any other (phase 048)', () async {
+      // The type the parameter names is Stream<List<int>>; the stream that
+      // arrives can be of a subtype, and wrapping it the wrong way threw a
+      // TypeError before a byte went - every file message failed to send.
+      final shares = <(int, int)>[];
+
+      await source().putBytes(
+        uploadPath: '/files/t',
+        size: payload.length,
+        offset: 40000,
+        body: _uint8Chunks(payload, from: 40000),
+        onProgress: (done, total) => shares.add((done, total)),
+      );
+
+      expect(server.contentLength, payload.length - 40000);
+      expect(server.received, payload.sublist(40000));
+      expect(shares.last, (payload.length, payload.length));
+      expect(api.transfersUnderWay, 0, reason: 'the transfer is handed back');
+    });
+
+    test('a Uint8List body that breaks half-way is the source failing, and the transfer is handed back', () async {
+      Stream<Uint8List> breaking() async* {
+        yield Uint8List.fromList(payload.sublist(0, 1000));
+        throw const SealedFileException(SealedFileError.truncated);
+      }
+
+      await expectLater(
+        source().putBytes(uploadPath: '/files/t', size: payload.length, offset: 0, body: breaking()),
+        throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.sourceUnreadable)),
+      );
+      expect(api.transfersUnderWay, 0);
     });
 
     test('a cancellation ends this one transfer at once, and it is handed back', () async {
@@ -333,7 +402,7 @@ void main() {
       final cancellation = TransferCancellation();
       final put = source(
         stallLimit: const Duration(minutes: 1),
-      ).putBytes(uploadPath: '/files/t', file: file, offset: 0, cancellation: cancellation);
+      ).putBytes(uploadPath: '/files/t', size: payload.length, offset: 0, body: file.openRead(0), cancellation: cancellation);
       await Future<void>.delayed(const Duration(milliseconds: 300));
       final watch = Stopwatch()..start();
 
@@ -348,7 +417,7 @@ void main() {
       final cancellation = TransferCancellation()..cancel();
 
       await expectLater(
-        source().putBytes(uploadPath: '/files/t', file: file, offset: 0, cancellation: cancellation),
+        source().putBytes(uploadPath: '/files/t', size: payload.length, offset: 0, body: file.openRead(0), cancellation: cancellation),
         throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.connection)),
       );
       expect(server.contentLength, isNull);
@@ -362,7 +431,9 @@ void main() {
       final watch = Stopwatch()..start();
 
       await expectLater(
-        source(stallLimit: const Duration(milliseconds: 500)).putBytes(uploadPath: '/files/t', file: file, offset: 0),
+        source(
+          stallLimit: const Duration(milliseconds: 500),
+        ).putBytes(uploadPath: '/files/t', size: payload.length, offset: 0, body: file.openRead(0)),
         throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.connection)),
       );
       // Ended by the stall limit while the body was going out - once the
@@ -376,7 +447,9 @@ void main() {
       server.bytesPerSecond = 4 * 1024 * 1024;
       final watch = Stopwatch()..start();
 
-      await source(stallLimit: const Duration(seconds: 1)).putBytes(uploadPath: '/files/t', file: file, offset: 0);
+      await source(
+        stallLimit: const Duration(seconds: 1),
+      ).putBytes(uploadPath: '/files/t', size: payload.length, offset: 0, body: file.openRead(0));
 
       expect(watch.elapsed, greaterThan(const Duration(seconds: 1)), reason: 'it outlasted the stall limit');
       expect(server.received.length, payload.length);
@@ -396,7 +469,7 @@ void main() {
         socket,
         paced,
         stallLimit: const Duration(milliseconds: 300),
-      ).putBytes(uploadPath: '/files/t', file: file, offset: 0);
+      ).putBytes(uploadPath: '/files/t', size: payload.length, offset: 0, body: file.openRead(0));
 
       expect(watch.elapsed, greaterThan(const Duration(seconds: 1)), reason: 'it outlasted the stall limit many times over');
       expect(channels.opened.map((c) => c.peakQueued), contains(greaterThan(channelWindowBytes)), reason: 'the window held it back');
@@ -417,7 +490,7 @@ void main() {
       await source(
         stallLimit: const Duration(seconds: 1),
         answerWait: const Duration(seconds: 20),
-      ).putBytes(uploadPath: '/files/t', file: file, offset: 0);
+      ).putBytes(uploadPath: '/files/t', size: payload.length, offset: 0, body: file.openRead(0));
 
       expect(server.received.length, payload.length);
     });
@@ -425,12 +498,107 @@ void main() {
     test('cancelTransfers ends a transfer under way as a broken connection', () async {
       await writePayload(16 * 1024 * 1024);
       server.stopReading = true;
-      final put = source(stallLimit: const Duration(minutes: 1)).putBytes(uploadPath: '/files/t', file: file, offset: 0);
+      final put = source(
+        stallLimit: const Duration(minutes: 1),
+      ).putBytes(uploadPath: '/files/t', size: payload.length, offset: 0, body: file.openRead(0));
       await Future<void>.delayed(const Duration(milliseconds: 300));
 
       source().cancelTransfers();
 
       await expectLater(put, throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.connection)));
+    });
+  });
+
+  /// The queue sends from its own copy of a file, sealed on the disk (phase
+  /// 043, phase 048), and reads it through the vault: the upload the person
+  /// actually makes, with nothing between the copy and this server but the
+  /// real code.
+  group("the queue's sealed copy (phase 048)", () {
+    final key = base64.encode(List<int>.generate(32, (i) => 0x30 + i));
+    // Four chunks: three whole ones and a short last one.
+    final plain = List<int>.generate(3 * SealedFile.chunkSize + 3392, (i) => (i * 31 + i ~/ 977) & 0xFF);
+    late DeviceVault vault;
+    late File picked;
+    late File copy;
+
+    setUp(() async {
+      vault = DeviceVault(_KeyStore(key));
+      picked = File('${Directory.systemTemp.path}/nox_put_picked_${DateTime.now().microsecondsSinceEpoch}.bin')..writeAsBytesSync(plain);
+      copy = File((await OutboxCopies(vault).keep(key: 'cmid-1', source: picked.path))!);
+    });
+
+    tearDown(() async {
+      NoxVault.clear();
+      if (picked.existsSync()) picked.deleteSync();
+      final copies = Directory(await AppDataRoot.pathOf(AppDataRoot.outboxFolder));
+      if (copies.existsSync()) copies.deleteSync(recursive: true);
+    });
+
+    FileRepositoryImpl repository() => FileRepositoryImpl(source(), _Config(), vault);
+
+    Map<String, dynamic> ticket({required int received}) => <String, dynamic>{
+      'file_id': 'f_9',
+      'upload_url': '/files/t',
+      'upload_token': 't',
+      'max_attachment_bytes': 104857600,
+      'received': received,
+    };
+
+    test('the copy is sealed, so nothing but the plain bytes opened from it may reach the server', () async {
+      expect(await SealedFile.isSealed(copy), isTrue);
+      expect(copy.lengthSync(), SealedFile.sealedLength(plain.length));
+    });
+
+    test('its plain bytes go from where the server stopped, opened chunk by chunk', () async {
+      final reader = (await SealedReader.open(copy))!;
+
+      await source().putBytes(uploadPath: '/files/t', size: reader.length, offset: 70000, body: reader.read(from: 70000));
+
+      expect(server.contentLength, plain.length - 70000);
+      expect(server.received, plain.sublist(70000), reason: 'from the middle of a chunk, exactly the rest');
+      expect(api.transfersUnderWay, 0);
+    });
+
+    test('a chunk that no longer opens ends the upload as the source failing, before anything past it is sent', () async {
+      final bytes = copy.readAsBytesSync()..[SealedFile.headerLength + SealedFile.sealedChunkLength + 9] ^= 0x01;
+      copy.writeAsBytesSync(bytes);
+      final reader = (await SealedReader.open(copy))!;
+
+      await expectLater(
+        source().putBytes(uploadPath: '/files/t', size: reader.length, offset: 0, body: reader.read()),
+        throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.sourceUnreadable)),
+      );
+      expect(server.received.length, lessThanOrEqualTo(SealedFile.chunkSize));
+      expect(server.received, plain.sublist(0, server.received.length));
+      expect(api.transfersUnderWay, 0);
+    });
+
+    test('through the repository, the copy reaches the server as the plain file, under its plain length', () async {
+      socket.reply = ticket(received: 0);
+
+      final result = await repository().upload(path: copy.path, mime: 'application/octet-stream');
+
+      expect(result.data, 'f_9');
+      expect(socket.sent.single['size'], plain.length, reason: 'the server is told the plain length, not the sealed one');
+      expect(server.received, plain);
+      expect(api.transfersUnderWay, 0);
+    });
+
+    test('through the repository, a continued upload sends the plain rest from the middle of a chunk', () async {
+      socket.reply = ticket(received: 70000);
+      final stat = copy.statSync();
+      final from = UnfinishedUpload(
+        fileId: 'f_9',
+        sourceSize: plain.length,
+        sourceModifiedAt: DateTime.fromMillisecondsSinceEpoch(stat.modified.millisecondsSinceEpoch),
+      );
+
+      final result = await repository().upload(path: copy.path, mime: 'application/octet-stream', from: from);
+
+      expect(result.data, 'f_9');
+      expect(socket.sent.single['file_id'], 'f_9');
+      expect(server.received, plain.sublist(70000));
+      expect(api.transfersUnderWay, 0);
     });
   });
 
@@ -604,7 +772,7 @@ void main() {
       addTearDown(other.close);
       final transfers = source(stallLimit: const Duration(minutes: 1));
 
-      final stuck = transfers.putBytes(uploadPath: '/files/t', file: file, offset: 0);
+      final stuck = transfers.putBytes(uploadPath: '/files/t', size: payload.length, offset: 0, body: file.openRead(0));
       await Future<void>.delayed(const Duration(milliseconds: 300));
       final watch = Stopwatch()..start();
       api.initBase(address: 'https://127.0.0.1:${other.port}');
@@ -615,7 +783,7 @@ void main() {
       expect(watch.elapsed, lessThan(const Duration(seconds: 2)));
 
       await writePayload(1024);
-      await transfers.putBytes(uploadPath: '/files/t', file: file, offset: 0);
+      await transfers.putBytes(uploadPath: '/files/t', size: payload.length, offset: 0, body: file.openRead(0));
       expect(other.received, payload, reason: 'the retry went by the new path');
     });
 
@@ -649,7 +817,9 @@ void main() {
       // retry a dead link with no pause at all.
       await writePayload(16 * 1024 * 1024);
       server.stopReading = true;
-      final stuck = source(stallLimit: const Duration(minutes: 1)).putBytes(uploadPath: '/files/t', file: file, offset: 0);
+      final stuck = source(
+        stallLimit: const Duration(minutes: 1),
+      ).putBytes(uploadPath: '/files/t', size: payload.length, offset: 0, body: file.openRead(0));
       await Future<void>.delayed(const Duration(milliseconds: 300));
 
       api.initBase(address: 'https://127.0.0.1:${server.port}'); // the same path, asked for again
@@ -683,7 +853,10 @@ void main() {
       final seen = watchConnects(onion);
       final transfers = RealFileRemoteDataSource.forTest(socket, onion);
 
-      await expectLater(transfers.putBytes(uploadPath: '/files/t', file: file, offset: 0), throwsA(isA<FileTransferException>()));
+      await expectLater(
+        transfers.putBytes(uploadPath: '/files/t', size: payload.length, offset: 0, body: file.openRead(0)),
+        throwsA(isA<FileTransferException>()),
+      );
       await expectLater(transfers.openBytes(downloadPath: '/files/t', offset: 0), throwsA(isA<FileTransferException>()));
 
       expect(seen, [WebSocketChannelFactory.onionConnectTimeout, WebSocketChannelFactory.onionConnectTimeout]);
@@ -693,7 +866,10 @@ void main() {
       final seen = watchConnects(api);
       final transfers = RealFileRemoteDataSource.forTest(socket, api);
 
-      await expectLater(transfers.putBytes(uploadPath: '/files/t', file: file, offset: 0), throwsA(isA<FileTransferException>()));
+      await expectLater(
+        transfers.putBytes(uploadPath: '/files/t', size: payload.length, offset: 0, body: file.openRead(0)),
+        throwsA(isA<FileTransferException>()),
+      );
 
       expect(seen.single, api.dio.options.connectTimeout);
     });

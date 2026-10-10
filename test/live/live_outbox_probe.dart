@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/data/local/chat/outbox_copies.dart';
+import 'package:nox_app/data/local/device_vault.dart';
 import 'package:nox_app/data/local/chat/outbox_dao.dart';
 import 'package:nox_app/data/mapper/chat/outbox_mapper.dart';
 import 'package:nox_app/data/remote/datasource/real/real_chat_remote_data_source.dart';
@@ -37,10 +38,17 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// produce ONE message.
 ///
 /// Deliberately named without the `_test` suffix so the suite never collects
-/// it. Run by hand, with the server up:
+/// it. Run by hand from the repository root, with the server up: built first,
+/// then started, and unlocked once its service page - up before anything else -
+/// answers. The probe runs only once `noxd link` answered: on a failure it
+/// prints only why, on stderr.
 ///
-///   client_backend$ go build -o /tmp/noxd . && /tmp/noxd -addr 127.0.0.1:8080 -db /tmp/nox-live.db
-///   fvm flutter test test/live/live_outbox_probe.dart `--dart-define=link=<pairing link>`
+///   (cd client_backend && go build -o /tmp/noxd .)
+///   /tmp/noxd -addr 127.0.0.1:8080 -db /tmp/nox-live.db &
+///   curl -s -o /dev/null --retry 30 --retry-delay 1 --retry-connrefused http://127.0.0.1:8081/health
+///   /tmp/noxd unlock          # it starts locked (phase 047); a fresh one takes the password twice
+///   LINK=$(/tmp/noxd link) &&
+///     fvm flutter test test/live/live_outbox_probe.dart --dart-define=link="$(printf '%s\n' "$LINK" | head -1)"
 ///
 /// These three probes pair a device key of their own first, with the link's
 /// token (phase 044): the server knows a device only by the key its channel
@@ -163,7 +171,7 @@ void main() {
     final mapper = OutboxMapper();
 
     // RUN 1 — the channel is down, so the message is only written, never sent.
-    final firstRun = OutboxRepositoryImpl(dao, mapper, OutboxCopies()) as OutboxRepository;
+    final firstRun = OutboxRepositoryImpl(dao, mapper, OutboxCopies(getIt<DeviceVault>())) as OutboxRepository;
     final offlinePhase = _Phase();
     final sender = _LiveSend(RealMessageRemoteDataSource(socket));
     final firstDrain = OutboxService(
@@ -181,7 +189,7 @@ void main() {
 
     // RUN 2 — a fresh repository and drain over the SAME store: the closest a
     // probe gets to relaunching the app. The channel is up this time.
-    final secondRun = OutboxRepositoryImpl(OutboxDao(db), OutboxMapper(), OutboxCopies()) as OutboxRepository;
+    final secondRun = OutboxRepositoryImpl(OutboxDao(db), OutboxMapper(), OutboxCopies(getIt<DeviceVault>())) as OutboxRepository;
     final restored = await secondRun.pending();
     expect(restored, hasLength(1), reason: 'the queue survived the restart');
     expect(restored.single.clientMessageId, queued.clientMessageId, reason: 'and kept its idempotency key');

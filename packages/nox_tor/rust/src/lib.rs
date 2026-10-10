@@ -15,6 +15,7 @@ pub mod engine;
 pub mod obsolete;
 pub mod onion;
 pub mod status;
+pub mod vault;
 
 use std::ffi::{c_char, CStr};
 use std::panic::{catch_unwind, UnwindSafe};
@@ -33,6 +34,11 @@ fn guarded(f: impl FnOnce() -> i32 + UnwindSafe) -> i32 {
 /// `guarded` for the channel's functions, whose INTERNAL is its own.
 fn chan_guarded<T: From<i32>>(f: impl FnOnce() -> T + UnwindSafe) -> T {
     catch_unwind(f).unwrap_or_else(|_| T::from(-code::INTERNAL))
+}
+
+/// `guarded` for the vault's functions, whose INTERNAL is its own.
+fn vault_guarded(f: impl FnOnce() -> i32 + UnwindSafe) -> i32 {
+    catch_unwind(f).unwrap_or(vault::code::RET_INTERNAL)
 }
 
 /// # Safety
@@ -228,6 +234,102 @@ pub unsafe extern "C" fn nox_chan_buf_free(data: *mut u8, len: usize) {
         channel::free_buffer(data, len);
         0
     });
+}
+
+/// Sets the local-database key (phase 048), over any key set before; the
+/// vault draws the keys it seals with from it. 0, or -7: no key, or one of all
+/// zeros.
+///
+/// # Safety
+/// `key32` is null or points at 32 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn nox_vault_set_key(key32: *const u8) -> i32 {
+    vault_guarded(|| {
+        if key32.is_null() {
+            return vault::code::RET_INVALID_ARGUMENT;
+        }
+        vault::set_key(&*key32.cast::<[u8; vault::KEY_LEN]>())
+    })
+}
+
+/// Wipes the key: every seal and open is -9 until the next
+/// `nox_vault_set_key`.
+#[no_mangle]
+pub extern "C" fn nox_vault_clear() {
+    let _ = vault_guarded(|| {
+        vault::clear();
+        0
+    });
+}
+
+/// Seals a record: `*out` is `nonce (12) ‖ ciphertext ‖ tag (16)`, freed with
+/// `nox_chan_buf_free`. -9 without a key.
+///
+/// # Safety
+/// `data` points at `len` bytes, or `len` is 0; `out` and `out_len` point at
+/// writable slots. They hold a buffer only after a 0 return.
+#[no_mangle]
+pub unsafe extern "C" fn nox_vault_seal(data: *const u8, len: usize, out: *mut *mut u8, out_len: *mut usize) -> i32 {
+    vault_guarded(|| vault::call(data, len, out, out_len, vault::seal))
+}
+
+/// Opens a record `nox_vault_seal` made; an empty one is null. -4 when it was
+/// forged or sealed under another key, -9 without a key.
+///
+/// # Safety
+/// As for `nox_vault_seal`.
+#[no_mangle]
+pub unsafe extern "C" fn nox_vault_open(data: *const u8, len: usize, out: *mut *mut u8, out_len: *mut usize) -> i32 {
+    vault_guarded(|| vault::call(data, len, out, out_len, vault::open))
+}
+
+/// Seals chunk `index` of the file `name` (UTF-8, not empty, the file's for
+/// the life of its bytes: see `vault`), as the file's last chunk when `last` is
+/// 1 and not when it is 0: `*out` is `ciphertext ‖ tag (16)`, freed with
+/// `nox_chan_buf_free`. -9 without a key.
+///
+/// # Safety
+/// `name` is null or NUL-terminated; the rest as for `nox_vault_seal`.
+#[no_mangle]
+pub unsafe extern "C" fn nox_vault_seal_chunk(
+    name: *const c_char,
+    index: u64,
+    last: i32,
+    data: *const u8,
+    len: usize,
+    out: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    vault_guarded(|| {
+        let (Some(name), Some(last)) = (read_str(name), vault::flag(last)) else {
+            return vault::code::RET_INVALID_ARGUMENT;
+        };
+        vault::call(data, len, out, out_len, |data| vault::seal_chunk(name, index, last, data))
+    })
+}
+
+/// Opens chunk `index` of the file `name`; an empty one is null. -4 when it
+/// was forged, sealed under another key, or sealed for another file, another
+/// index or the other `last`; -9 without a key.
+///
+/// # Safety
+/// As for `nox_vault_seal_chunk`.
+#[no_mangle]
+pub unsafe extern "C" fn nox_vault_open_chunk(
+    name: *const c_char,
+    index: u64,
+    last: i32,
+    data: *const u8,
+    len: usize,
+    out: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    vault_guarded(|| {
+        let (Some(name), Some(last)) = (read_str(name), vault::flag(last)) else {
+            return vault::code::RET_INVALID_ARGUMENT;
+        };
+        vault::call(data, len, out, out_len, |data| vault::open_chunk(name, index, last, data))
+    })
 }
 
 #[cfg(test)]

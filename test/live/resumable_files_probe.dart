@@ -53,7 +53,8 @@ import 'live_target.dart';
 ///     --dart-define=host=192.168.1.20 --dart-define=work=/tmp/nox_files_e2e [--dart-define=mib=100] [--dart-define=port=18543]
 ///
 /// The work directory is emptied at the start; keep anything worth keeping
-/// elsewhere.
+/// elsewhere. The server starts locked, and the harness unlocks it with its
+/// probe password (phase 047).
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -215,7 +216,10 @@ void main() {
       // as another device would, with that copy out of the way.
       final kept = await getIt<FileRepository>().localPathFor(fileId: sent.attachmentId!, suggestedName: 'big.bin');
       expect(kept, isNotNull, reason: 'the bytes this device sent stay on it');
-      expect(File(kept!).lengthSync(), size);
+      // Sealed, like everything the app keeps (phase 048): every chunk opens
+      // under this device's key, and the bytes are the ones that went up -
+      // compared before the copy goes, a mebibyte at a time.
+      await expectSamePlainBytes(kept!, source);
       File(kept).deleteSync();
       final attachment = MessageAttachment(
         id: sent.attachmentId!,
@@ -251,15 +255,9 @@ void main() {
       expect(fetched.hasData, isTrue, reason: 'download: ${fetched.exception}');
       expect(lowestAfterBreak, greaterThan(0.3), reason: 'it went on from the bytes already here, not from the first byte');
 
-      // The same bytes, compared a mebibyte at a time.
-      final a = source.openSync();
-      final b = File(fetched.data!).openSync();
-      expect(b.lengthSync(), size);
-      for (var at = 0; at < size; at += 1024 * 1024) {
-        expect(b.readSync(1024 * 1024), a.readSync(1024 * 1024), reason: 'the bytes at $at');
-      }
-      a.closeSync();
-      b.closeSync();
+      // The same bytes, opened the way the app opens them and compared a
+      // mebibyte at a time.
+      await expectSamePlainBytes(fetched.data!, source);
 
       File('$work/measure.txt').writeAsStringSync('${measures.join('\n')}\n');
     },

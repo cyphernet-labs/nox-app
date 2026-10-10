@@ -67,13 +67,17 @@ import 'live_target.dart';
 ///     [--dart-define=other_onion=<56>.onion]   # another server's onion service, for «a different server»
 ///
 /// The work directory is emptied at the start; keep anything worth keeping
-/// elsewhere.
+/// elsewhere. Every start of the server - the first and the two over the same
+/// database - is unlocked by the harness with its probe password (phase 047).
 ///
 /// The LAN address matters: a server bound to loopback lists no direct address
 /// at all (contract §3), and scenario 8 is about learning a new one. `noxd` and
-/// tor are left running at the end, with two invites in `<work>/invites.txt`,
-/// for the simulator and emulator runs of `integration_test/tor_pairing_test.dart`
-/// - which pair through Tor from "away" (phase 045).
+/// tor are left running at the end, unlocked, with the service page's address
+/// in `<work>/page.txt`, for `tor_pairing_probe.dart` and the simulator and
+/// emulator runs of `integration_test/tor_pairing_test.dart` - which pair
+/// through Tor from "away" by an invite their own issuing device allows
+/// (phases 045 and 046). Each takes a fresh machine link:
+///   /tmp/noxd link -status-addr "$(cat /tmp/nox_e2e/page.txt)"
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -100,7 +104,7 @@ void main() {
     }
 
     // What did not go as the spec says, kept to the end so the run still
-    // leaves its measures and invites behind.
+    // leaves its measures and the stand behind.
     final findings = <String>[];
     void finding(String line) {
       findings.add(line);
@@ -269,7 +273,9 @@ void main() {
     expect(withFile.hasData, isTrue, reason: 'a message naming the file');
     final fetched = await getIt<FileRepository>().download(fileId: fileId, suggestedName: 'through_tor.bin');
     expect(fetched.hasData, isTrue, reason: 'download through Tor: ${fetched.exception}');
-    expect(File(fetched.data!).readAsBytesSync(), payload, reason: 'the same bytes back');
+    // The bytes land sealed (phase 048): the plain ones come out of the file
+    // the way the app reads it, never off the disk.
+    expect(await (await openSealed(fetched.data!)).readAll(), payload, reason: 'the same bytes back');
     measure('a 64 KiB file through Tor, up, sent and down: ${watch.elapsedMilliseconds} ms');
 
     // --- 3. Home: back to direct, Tor stopped within ten seconds (SC-002),
@@ -310,7 +316,8 @@ void main() {
     await firstTor.stop();
     final secondTor = await LiveTor.start(tor: tor, work: work, target: '$host:${port + 1}', log: 'tor2.log');
     expect(secondTor.onion, firstTor.onion, reason: 'the same keys, the same address');
-    final second = await LiveNoxd.start(noxd: noxd, work: work, addr: '$host:${port + 1}', log: 'noxd2.log');
+    // The same database, so the same password opens it (phase 047).
+    final second = await LiveNoxd.start(noxd: noxd, work: work, addr: '$host:${port + 1}', log: 'noxd2.log', password: first.password);
     stdout.writeln('NOXD: pid=${second.pid}; TOR: pid=${secondTor.pid}');
     watch = Stopwatch()..start();
     await liveUntil('live direct on the new address', const Duration(minutes: 8), () {
@@ -391,7 +398,7 @@ void main() {
       ConnectionProblem.onionUnreachable,
     });
     measure('the server stopped behind a running tor: ${serverGone?.name ?? problem()?.name} after ${watch.elapsedMilliseconds} ms');
-    final third = await LiveNoxd.start(noxd: noxd, work: work, addr: '$host:${port + 1}', log: 'noxd3.log');
+    final third = await LiveNoxd.start(noxd: noxd, work: work, addr: '$host:${port + 1}', log: 'noxd3.log', password: first.password);
     stdout.writeln('NOXD: pid=${third.pid}; TOR: pid=${thirdTor.pid}');
     watch = Stopwatch()..start();
     await liveUntil('live through Tor, the server back', const Duration(minutes: 6), () => liveOn(ConnectionPath.tor));
@@ -406,22 +413,21 @@ void main() {
     expect(await send('direct after the causes'), isTrue);
 
     // --- 4. Invites are version 3 and carry the onion address, so a new
-    // device can pair through Tor from anywhere (phase 045). ---
-    final invites = <String>[];
-    for (var i = 0; i < 2; i++) {
-      final invite = await getIt<DeviceRepository>().inviteDevice();
-      expect(invite.hasData, isTrue);
-      expect(invite.data!.onion, isTrue, reason: 'the card does not say home only');
-      expect(invite.data!.homeOnly, isFalse);
-      final parsed = PairingLink.parse(invite.data!.link);
-      expect(parsed.directAddresses, isNotEmpty);
-      expect(parsed.onionServiceKey, isNotNull);
-      invites.add(invite.data!.link);
-    }
-    File('$work/invites.txt').writeAsStringSync('${invites.join('\n')}\n');
+    // device can pair through Tor from anywhere (phase 045). An invite pairs
+    // nothing until the device that issued it says Allow (phase 046), and this
+    // one is gone once the probe ends: the runs that pair through Tor next
+    // bring an issuing device of their own, by a machine link. ---
+    final invite = await getIt<DeviceRepository>().inviteDevice();
+    expect(invite.hasData, isTrue);
+    expect(invite.data!.onion, isTrue, reason: 'the card does not say home only');
+    expect(invite.data!.homeOnly, isFalse);
+    final parsed = PairingLink.parse(invite.data!.link);
+    expect(parsed.directAddresses, isNotEmpty);
+    expect(parsed.onionServiceKey, isNotNull);
+    File('$work/page.txt').writeAsStringSync('${third.pageAddress}\n');
 
     // --- 7. Logout leaves no addresses and no Tor state (SC-007). A forced
-    // one, which keeps the device on the server: the invites above are its. ---
+    // one, the wipe a revocation brings: nothing is asked of the server. ---
     final support = await getApplicationSupportDirectory();
     expect((await auth.logout(forced: true)).hasData, isTrue);
     const storage = FlutterSecureStorage();
@@ -430,7 +436,7 @@ void main() {
 
     File('$work/measure.txt').writeAsStringSync('${[...measures, ...findings.map((f) => 'FINDING: $f')].join('\n')}\n');
     stdout.writeln(
-      'INVITES: ${invites.length} written to $work/invites.txt; noxd left running, pid ${third.pid}; tor, pid ${thirdTor.pid}',
+      'STAND: noxd left running, unlocked, pid ${third.pid}, its page at ${third.pageAddress} ($work/page.txt); tor, pid ${thirdTor.pid}',
     );
     expect(findings, isEmpty, reason: 'what did not go as the spec says');
   }, timeout: const Timeout(Duration(minutes: 50)));

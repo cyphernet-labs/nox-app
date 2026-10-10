@@ -246,6 +246,10 @@
   "@videoPlaybackError": {
     "description": "Video attachment playback (5.3)."
   },
+  "fileOpenError": "Couldn't open this file. Free up some space and try again.",
+  "@fileOpenError": {
+    "description": "File view (5.3): the plain copy a video plays from could not be made, most likely for lack of disk space (phase 048)."
+  },
   "connectionTorBadge": "Tor",
   "@connectionTorBadge": {
     "description": "The badge in the corner while the connection goes through Tor (phase 040). A proper name; not translated."

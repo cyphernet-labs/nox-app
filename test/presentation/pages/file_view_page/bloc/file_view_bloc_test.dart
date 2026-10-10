@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -14,7 +15,9 @@ import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/service/attachment_download_service.dart';
+import 'package:nox_app/domain/service/local_files_service.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
+import 'package:nox_app/general/video_playback_capability.dart';
 import 'package:nox_app/presentation/pages/file_view_page/bloc/file_view_bloc.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -206,6 +209,108 @@ void main() {
       );
     },
   );
+
+  group('a video plays from a plain copy (phase 048, FR-007)', () {
+    late _RecordingFiles local;
+    const video = MessageAttachment(id: 'v1', type: FileType.video, name: 'clip.mp4', sizeBytes: 3);
+
+    setUp(() {
+      VideoPlaybackCapability.debugOverride = true;
+      local = _RecordingFiles();
+      getIt.registerSingleton<LocalFilesService>(local);
+      answerDownload(const RepositoryResult<String>.success(data: '/sealed/clip.mp4'));
+    });
+
+    tearDown(() => VideoPlaybackCapability.debugOverride = null);
+
+    blocTest<FileViewBloc, FileViewState>(
+      'once the bytes are here the player gets a plain copy of them, and closing the screen takes it away',
+      build: () => FileViewBloc(file: video),
+      act: (bloc) => bloc.add(const FileViewEvent.started()),
+      wait: const Duration(milliseconds: 200),
+      verify: (bloc) async {
+        expect(bloc.state.status, FileViewStatus.ready);
+        expect(bloc.state.playbackPath, '/copies/clip.mp4');
+        expect(local.opened, ['/sealed/clip.mp4']);
+        await bloc.close();
+        expect(local.released, ['/copies/clip.mp4']);
+      },
+    );
+
+    blocTest<FileViewBloc, FileViewState>(
+      'a copy that cannot be made is said, and the file stays whole and ready to save',
+      setUp: () => local.noRoom = true,
+      build: () => FileViewBloc(file: video),
+      act: (bloc) => bloc.add(const FileViewEvent.started()),
+      wait: const Duration(milliseconds: 200),
+      verify: (bloc) {
+        expect(bloc.state.status, FileViewStatus.ready);
+        expect(bloc.state.openFailed, isTrue);
+        expect(bloc.state.playbackPath, isNull);
+        expect(bloc.state.canSave, isTrue);
+      },
+    );
+
+    blocTest<FileViewBloc, FileViewState>(
+      'trying again makes no second copy of the same file',
+      build: () => FileViewBloc(file: video),
+      act: (bloc) async {
+        bloc.add(const FileViewEvent.started());
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        bloc.add(const FileViewEvent.retried());
+      },
+      wait: const Duration(milliseconds: 200),
+      verify: (bloc) => expect(local.opened, hasLength(1)),
+    );
+
+    blocTest<FileViewBloc, FileViewState>(
+      'where no player exists there is no copy either',
+      setUp: () => VideoPlaybackCapability.debugOverride = false,
+      build: () => FileViewBloc(file: video),
+      act: (bloc) => bloc.add(const FileViewEvent.started()),
+      wait: const Duration(milliseconds: 200),
+      verify: (bloc) {
+        expect(bloc.state.status, FileViewStatus.ready);
+        expect(local.opened, isEmpty);
+      },
+    );
+
+    blocTest<FileViewBloc, FileViewState>(
+      'anything but a video needs no copy: a picture is drawn from memory',
+      build: () => FileViewBloc(
+        file: const MessageAttachment(id: 'i1', type: FileType.image, name: 'p.png', sizeBytes: 3),
+      ),
+      act: (bloc) => bloc.add(const FileViewEvent.started()),
+      wait: const Duration(milliseconds: 200),
+      verify: (bloc) => expect(local.opened, isEmpty),
+    );
+  });
+}
+
+/// The files service, recording what it was asked for.
+class _RecordingFiles implements LocalFilesService {
+  final List<String> opened = <String>[];
+  final List<String> released = <String>[];
+  bool noRoom = false;
+
+  @override
+  Future<String> openCopy({required String path, required String name}) async {
+    opened.add(path);
+    if (noRoom) throw const FileSystemException('No space left on device');
+    return '/copies/$name';
+  }
+
+  @override
+  Future<void> releaseCopy(String copy) async => released.add(copy);
+
+  @override
+  Future<void> clearCopies() async {}
+
+  @override
+  Future<Uint8List> read(String path) async => Uint8List(0);
+
+  @override
+  Future<void> saveTo({required String path, required String destination}) async {}
 }
 
 /// Stands in for the live phase service at the one value this screen has to

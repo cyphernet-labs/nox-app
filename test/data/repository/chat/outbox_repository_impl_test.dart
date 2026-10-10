@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nox_app/data/local/sealed_file.dart';
 import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/data/local/chat/outbox_dao.dart';
@@ -255,15 +256,28 @@ void main() {
       return entry;
     }
 
+    /// The plain bytes of a copy: the queue keeps it sealed (phase 048).
+    Future<List<int>> plainOf(String path) async => (await SealedReader.open(File(path)))!.readAll();
+
     test('the file is copied when its message is sent, and the entry names the copy, under the file\'s own name', () async {
       final entry = (await repository.enqueue(chatId: 'c1', attachment: video())).data!;
       final copy = entry.attachment!.localPath!;
 
       expect(copy, contains('${sep}nox_outbox$sep${entry.clientMessageId}$sep'));
       expect(copy.split(sep).last, 'trip.mp4', reason: 'the upload declares the name of the file it reads');
-      expect(File(copy).readAsBytesSync(), original.readAsBytesSync());
+      expect(await plainOf(copy), original.readAsBytesSync());
       expect((await repository.pending()).single.attachment!.localPath, copy);
       expect(original.existsSync(), isTrue, reason: 'the person\'s file is not touched');
+    });
+
+    test('the copy is sealed: none of what the person is sending lies on the disk in the clear (phase 048, FR-005)', () async {
+      original.writeAsBytesSync([...'NOX-MARKER'.codeUnits, ...List<int>.generate(70000, (i) => i % 251)]);
+      final entry = (await repository.enqueue(chatId: 'c1', attachment: video())).data!;
+      final copy = File(entry.attachment!.localPath!);
+
+      expect(await SealedFile.isSealed(copy), isTrue);
+      expect(String.fromCharCodes(copy.readAsBytesSync()), isNot(contains('NOX-MARKER')));
+      expect(await plainOf(copy.path), original.readAsBytesSync());
     });
 
     test(
@@ -274,7 +288,7 @@ void main() {
         original.deleteSync();
 
         final read = (await repository.find(clientMessageId: entry.clientMessageId))!;
-        expect(File(read.attachment!.localPath!).readAsBytesSync(), hasLength(4096));
+        expect(await plainOf(read.attachment!.localPath!), hasLength(4096));
       },
     );
 
@@ -296,7 +310,7 @@ void main() {
 
       expect(await repository.keepCopy(clientMessageId: entry.clientMessageId, at: at), isTrue);
 
-      expect(File(at).readAsBytesSync(), original.readAsBytesSync());
+      expect(await plainOf(at), original.readAsBytesSync(), reason: 'moved sealed, and it still opens: the id is in its header');
       expect(File(copy).existsSync(), isFalse, reason: 'moved, not copied');
       expect(File(copy).parent.existsSync(), isFalse, reason: 'its folder goes with it');
       expect((await repository.find(clientMessageId: entry.clientMessageId))!.attachment!.localPath, at);

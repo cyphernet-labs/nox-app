@@ -3,6 +3,8 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:injectable/injectable.dart' show Environment;
+import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/chat/message_attachment.dart';
 import 'package:nox_app/domain/model/file/attachment_transfer.dart';
 import 'package:nox_app/domain/model/file/file_type.dart';
@@ -10,8 +12,12 @@ import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/widgets/chat/app_file_chip_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_image_attachment_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_transfer_progress_widget.dart';
+import 'package:nox_app/presentation/widgets/media/local_file_image.dart';
+
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../utils/pump_app.dart';
+import '../../../utils/sealed_files.dart';
 
 /// A minimal valid 1x1 PNG so Image.file has real, decodable bytes.
 final Uint8List _png = Uint8List.fromList(<int>[
@@ -87,6 +93,15 @@ final Uint8List _png = Uint8List.fromList(<int>[
 final l10nEn = AppLocalizationsEn();
 
 void main() {
+  // The picture is read through the files service (phase 048): sealed or not,
+  // it is opened into memory on its way to the decoder.
+  setUp(() async {
+    SharedPreferences.setMockInitialValues({});
+    await configureDependencies(Environment.test);
+  });
+
+  tearDown(() async => getIt.reset());
+
   testWidgets('a picture being sent carries a ring over it that fills with its bytes', (tester) async {
     final tmp = File('${Directory.systemTemp.path}/nox_sending_test.png')..writeAsBytesSync(_png);
     addTearDown(() => tmp.existsSync() ? tmp.deleteSync() : null);
@@ -233,13 +248,33 @@ void main() {
     expect(removed, 1);
   });
 
+  testWidgets('a sealed picture is drawn from memory (phase 048, FR-006)', (tester) async {
+    final path = '${Directory.systemTemp.path}/nox_sealed_thumb_test.png';
+    addTearDown(() => File(path).existsSync() ? File(path).deleteSync() : null);
+
+    await tester.runAsync(() async {
+      await writeSealed(path, _png);
+      await pumpApp(
+        tester,
+        AppImageAttachmentWidget(localPath: path, type: FileType.image, name: 'thumb.png', size: '1 KB'),
+        settle: false,
+      );
+      await precacheImage(LocalFileImage(path), tester.element(find.byType(AppImageAttachmentWidget)));
+      await tester.pump();
+    });
+
+    final image = tester.widget<Image>(find.byType(Image));
+    expect(image.image, LocalFileImage(path));
+    expect(find.byType(AppFileChipWidget), findsNothing, reason: 'decoded, not fallen back to the chip');
+  });
+
   testWidgets('falls back to the file chip when the image cannot be decoded (F4/FR-007)', (tester) async {
     await tester.runAsync(() async {
       await pumpApp(
         tester,
         const AppImageAttachmentWidget(localPath: '/no/such/nox_missing.png', type: FileType.image, name: 'x.png', size: '1 KB'),
       );
-      // Let the FileImage load fail so the errorBuilder swaps in the chip.
+      // Let the load fail so the errorBuilder swaps in the chip.
       await Future<void>.delayed(const Duration(milliseconds: 100));
       await tester.pump();
     });
