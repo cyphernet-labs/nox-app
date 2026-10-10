@@ -754,11 +754,18 @@ fn an_onion_channel_without_tor_is_not_ready() {
 
 // --- An isolate that went away --------------------------------------------
 
+/// Taken by the two tests that lose an isolate, so they never run side by
+/// side: a reap probes every channel of the process, and would end the other
+/// test's channel - its isolate is gone too - before that test saw its own
+/// event refused, or before it could write to it at all.
+static LOST_ISOLATES: Mutex<()> = Mutex::new(());
+
 /// The isolate died under an open channel: the next event is refused, and the
 /// module ends the channel itself - nothing else would, with nobody left to
 /// ack or to close.
 #[test]
 fn a_channel_whose_isolate_is_gone_ends_itself() {
+    let _alone = lock(&LOST_ISOLATES);
     let rt = runtime();
     let (listener, addr) = rt.block_on(listen());
     let server = rt.spawn(async move {
@@ -779,7 +786,10 @@ fn a_channel_whose_isolate_is_gone_ends_itself() {
     chan.expect(event::OPEN);
     chan.lose_isolate();
     assert_eq!(chan.write(b"!"), 1);
-    assert!(rt.block_on(server).unwrap(), "the server was let go of");
+    // Bounded: a channel that never ends stops reading, and the server's
+    // writes then wait on a full window for good, its own deadline unchecked.
+    let let_go = rt.block_on(async { tokio::time::timeout(2 * PATIENCE, server).await });
+    assert!(let_go.expect("the server is still held").unwrap(), "the server was let go of");
     let gone = Instant::now();
     while nox_chan_close(chan.0) != code::RET_CLOSED {
         assert!(gone.elapsed() < PATIENCE, "the handle outlived its connection");
@@ -792,6 +802,7 @@ fn a_channel_whose_isolate_is_gone_ends_itself() {
 /// at once, and one whose isolate is there is left alone.
 #[test]
 fn a_reap_ends_the_channels_of_gone_isolates_and_only_those() {
+    let _alone = lock(&LOST_ISOLATES);
     let rt = runtime();
     let (listener, addr) = rt.block_on(listen());
     let (accepted, mut connections) = tokio::sync::mpsc::unbounded_channel();

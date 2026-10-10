@@ -198,6 +198,8 @@ impl Drop for Closer {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use std::sync::atomic::{AtomicBool, AtomicUsize};
+
     use super::super::dart::{decode, DartCObject};
     use super::*;
 
@@ -307,12 +309,16 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn a_refused_event_loses_the_line_and_wakes_the_driver() {
         let channel = register(gone());
-        let lost = tokio::spawn({
-            let channel = Arc::clone(&channel);
-            async move { channel.events.lost().await }
-        });
-        channel.events.data(b"nobody");
-        tokio::time::timeout(std::time::Duration::from_secs(5), lost).await.expect("the driver is told").unwrap();
+        {
+            // The driver is already waiting when the refusal comes: polled
+            // once, the wait is past its look at the line and parked, so only
+            // the notification can end it. A waiter that ran only after the
+            // refusal would find the line lost and never wait at all.
+            let mut lost = std::pin::pin!(channel.events.lost());
+            assert!(futures::poll!(lost.as_mut()).is_pending(), "the driver waits while the isolate is there");
+            channel.events.data(b"nobody");
+            tokio::time::timeout(std::time::Duration::from_secs(5), lost).await.expect("the driver is told");
+        }
         // Lost for good: nothing is posted again, and a probe says so.
         assert!(!channel.events.probe());
         channel.events.lost().await;
@@ -326,15 +332,33 @@ pub(crate) mod tests {
         assert!(here.events.probe());
         assert!(!away.events.probe());
         assert!(seen(here.handle).is_empty(), "a probe is no event of the channel");
-
-        // Its CLOSED went out: there is nobody left to ask about.
-        let ended = register(gone());
-        Closer::new(Arc::clone(&ended), code::NONE).finish(code::NONE);
-        let after = register(live());
-        Closer::new(Arc::clone(&after), code::NONE).finish(code::NONE);
-        assert!(after.events.probe());
         for channel in [here, away] {
             Closer::new(channel, code::NONE).finish(code::NONE);
         }
+
+        // An isolate that took the channel's CLOSED and went away after it:
+        // its port refuses whatever comes next, and counts what is posted.
+        const LEAVING: i64 = 3;
+        static LEFT: AtomicBool = AtomicBool::new(false);
+        static POSTS: AtomicUsize = AtomicUsize::new(0);
+        unsafe extern "C" fn until_left(port: i64, message: *mut DartCObject) -> i8 {
+            POSTS.fetch_add(1, Ordering::SeqCst);
+            if LEFT.load(Ordering::SeqCst) {
+                0
+            } else {
+                record(port, message)
+            }
+        }
+
+        // Its CLOSED went out: there is nobody left to ask about, so the probe
+        // answers without asking - a post would be refused here, and would
+        // call a channel that ended normally lost.
+        let ended = register(Port::new(until_left, LEAVING));
+        Closer::new(Arc::clone(&ended), code::NONE).finish(code::NONE);
+        assert_eq!(seen(ended.handle), [(event::CLOSED, Vec::new(), code::NONE)]);
+        LEFT.store(true, Ordering::SeqCst);
+        let posts = POSTS.load(Ordering::SeqCst);
+        assert!(ended.events.probe());
+        assert_eq!(POSTS.load(Ordering::SeqCst), posts, "a probe was posted after CLOSED");
     }
 }
