@@ -3,9 +3,9 @@
 //
 // It exists because the flow crosses two devices and a real socket, which no
 // unit test reaches end to end and no person wants to click through twice
-// before a demo. Point it at the claim link a fresh server printed and it
-// claims the machine, adds a second device of the same person, and has the two
-// of them exchange a message.
+// before a demo. Point it at the claim link on a fresh server's service page
+// and it claims the machine, adds a second device of the same person, and has
+// the two of them exchange a message.
 //
 // It talks to the wire directly rather than through the app - the channel
 // included: TCP, TLS 1.3 that checks no certificate, then the channel check
@@ -38,8 +38,9 @@ import (
 const usage = `usage: smoke <pairing link>
        smoke -check <host:port> <server key, base64>
 
-Give it the claim link a freshly started noxd printed, or the one on its
-service page. The server must have no owner yet. The link's direct addresses
+Give it the claim link on the service page of a freshly started noxd (the
+server's log says where the page is, never what the link is). The server must
+have no owner yet. The link's direct addresses
 are tried in its order - the public one first, when it has one - and the run
 goes on with the first that proves the key; an onion address in the link is
 reported and not tried, because this program has no Tor.

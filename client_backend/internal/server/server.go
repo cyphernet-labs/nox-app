@@ -145,6 +145,8 @@ type Server struct {
 }
 
 // New builds a Server over an opened store, a running hub and a blob store.
+// Its log goes through the scrubbing handler whatever logger it is handed
+// (logscrub.go).
 func New(cfg config.Config, st *store.Store, h *hub.Hub, bl *blob.Store, logger *slog.Logger) *Server {
 	return &Server{
 		cfg:              cfg,
@@ -152,7 +154,7 @@ func New(cfg config.Config, st *store.Store, h *hub.Hub, bl *blob.Store, logger 
 		hub:              h,
 		blob:             bl,
 		tokens:           newTokenStore(),
-		logger:           logger,
+		logger:           scrubbedLogger(logger),
 		writers:          newUploadWriters(),
 		stallTimeout:     defaultStallTimeout,
 		checkpointBytes:  defaultCheckpointBytes,
@@ -485,6 +487,10 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 // and the HTTP server, and shuts everything down in order on ctx
 // cancellation. It returns when the process is fully stopped.
 func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.Logger) error {
+	// Every line of the process goes through the scrubbing handler, from the
+	// first one on: the address parameters are applied below, before anything
+	// listens (FR-022).
+	logger = scrubbedLogger(logger)
 	dbs, err := db.Open(cfg.DBPath)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
@@ -544,9 +550,9 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 		return fmt.Errorf("read the server key: %w", err)
 	}
 	// The address parameters land before anything is announced, so the claim
-	// link printed next already names them, and before any listener opens, so
-	// the first greeting does too (045, FR-003). A malformed one is a warning,
-	// never a reason to stay down.
+	// link the page shows already names them, and before any listener opens,
+	// so the first greeting does too (045, FR-003). A malformed one is a
+	// warning, never a reason to stay down.
 	addrWarnings, err := applyAddressParams(ctx, st, cfg, logger)
 	if err != nil {
 		return err
@@ -555,16 +561,16 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 	if err != nil {
 		return fmt.Errorf("read addresses: %w", err)
 	}
-	claimToken, err := announceClaim(ctx, st, cfg.Addr, ownership, machine, configured(stored), logger)
+	claimToken, err := announceClaim(ctx, st, cfg, ownership, machine, configured(stored), logger)
 	if err != nil {
 		return err
 	}
 	srv := New(cfg, st, h, bl, logger)
 	srv.schemaVersion = version
 	srv.addrWarnings = addrWarnings
-	// The page hands out the SAME right the terminal just printed. A second
-	// token would be a second unrevocable door, and the claim token has no
-	// expiry to close it.
+	// The page hands out the token startup just minted. A second token would
+	// be a second unrevocable door, and the claim token has no expiry to close
+	// it.
 	srv.seedClaimToken(claimToken)
 
 	// Startup sweep before endpoints open (research R10): abandoned uploads
@@ -594,6 +600,10 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: readHeaderTimeout,
 		ConnContext:       withChannelPeer,
+		// net/http's own complaints - a handler's panic value above all - go
+		// through the same handler as every other line, scrubbed, instead of
+		// straight to stderr.
+		ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}
 	httpServer.RegisterOnShutdown(srv.CloseConnections)
 
@@ -635,7 +645,11 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 			return err
 		}
 		if statusListener != nil {
-			statusServer = &http.Server{Handler: srv.StatusHandler(), ReadHeaderTimeout: pageReadHeaderTimeout}
+			statusServer = &http.Server{
+				Handler:           srv.StatusHandler(),
+				ReadHeaderTimeout: pageReadHeaderTimeout,
+				ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelError),
+			}
 		}
 	}
 
@@ -789,35 +803,33 @@ func staleSchemaError(dbPath string) error {
 		dbPath, dbPath)
 }
 
-// announceClaim mints the server's own key on first start and, while nobody
-// owns this server yet, prints the pairing link.
+// announceClaim mints the claim token while nobody can get in, and says where
+// the link that carries it is: on the service page of this machine.
 //
-// The link goes to the log, and since 035 to the service page as well - which
-// is why that page binds to loopback and refuses to start anywhere else. What
-// the pre-035 rule guarded against (a page serving the QR to everyone on the
-// network while the transport is not TLS) is answered by the bind, checked on
-// the socket rather than on the address somebody typed. It is reprinted on
-// every start until somebody claims the server, because a terminal scrolls and
-// an unclaimed server has to stay claimable.
+// Where, and never the link itself (045, FR-022). The link carries the token -
+// the right to own this machine, from anywhere now that a claim through Tor is
+// a claim like any other - and, packed, the onion service's key; a log is
+// copied to places neither may go. The page shows the link, which is why it
+// binds to loopback and refuses to start anywhere else. The line is repeated
+// on every start until somebody claims the server, because a terminal scrolls
+// and an unclaimed server has to stay claimable.
 //
-// This is a place a token is deliberately written to output. It is the claim
-// mechanism itself, and it is only visible to whoever can already read
-// the machine's logs - which is whoever could take the database anyway. The
-// link is base64, so an onion address it names stays packed inside it and
-// never reaches the log as text.
+// The link is still BUILT here, once: a bind address no link can carry stops
+// the start, rather than surfacing later as a page with no link on it.
 func announceClaim(
 	ctx context.Context,
 	st *store.Store,
-	addr string,
+	cfg config.Config,
 	ownership store.OwnershipState,
 	machine store.ServerIdentity,
 	conf configuredAddresses,
 	logger *slog.Logger,
 ) (string, error) {
-	// Silent while a device can still reach this server. Not "while an owner is
-	// recorded": a store that lost its ownership marker still has a person who
-	// can get in, and printing a claim link there offers their machine to
-	// whoever reads the log.
+	// Silent while a device can still reach this server, and no token is
+	// minted: the page decides on the same predicate and shows no link. Not
+	// "while an owner is recorded": a store that lost its ownership marker
+	// still has a person who can get in, and a claim offered there offers
+	// their machine to whoever opens the page.
 	//
 	// The answer comes from the snapshot startup already took: re-deriving it
 	// here would evaluate the same rule twice against a store another
@@ -832,24 +844,28 @@ func announceClaim(
 	// The same addresses every link carries (045): the public one first when
 	// it is set, the bind address, then the onion service when it is set - a
 	// claim through Tor is a claim like any other.
-	link, _, err := buildLink(machine.PublicKey, token, listenAddress(addr), conf)
-	if err != nil {
+	if _, _, err := buildLink(machine.PublicKey, token, listenAddress(cfg.Addr), conf); err != nil {
 		return "", fmt.Errorf("build pairing link: %w", err)
 	}
 	// Three situations, and saying the wrong one tells the operator the wrong
 	// story about what is about to happen. The machine may never have been
 	// claimed; its owner may have run out of devices; or the ownership marker
 	// may be missing from a store that still holds a person and their whole
-	// conversation - in which case presenting this link signs the device in AS
+	// conversation - in which case presenting the link signs the device in AS
 	// that person rather than making it the owner of an empty machine.
+	msg := "this server has no owner yet - present the link from the service page in the app to claim it"
 	switch {
 	case ownership.Owned:
-		logger.Info("this server has an owner but no devices left - present this link in the app to get back in", "link", link)
+		msg = "this server has an owner but no devices left - present the link from the service page in the app to get back in"
 	case ownership.HasPerson:
-		logger.Info("this server holds a conversation but records no owner - present this link to sign in as the person it belongs to", "link", link)
-	default:
-		logger.Info("this server has no owner yet - present this link in the app to claim it", "link", link)
+		msg = "this server holds a conversation but records no owner - present the link from the service page to sign in as the person it belongs to"
 	}
+	if cfg.StatusAddr == "" {
+		// Nothing shows the link, and the log will not: say what would.
+		logger.Warn(msg, "service_page", "off - start the server with -status-addr to see the link")
+		return token, nil
+	}
+	logger.Info(msg, "service_page", "http://"+cfg.StatusAddr)
 	return token, nil
 }
 

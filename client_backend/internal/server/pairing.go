@@ -228,8 +228,9 @@ func (c *client) handleDeviceInvite(cmd protocol.Command) {
 	link, carries, err := buildLink(id.PublicKey, token, addr, conf)
 	if err != nil {
 		// The error can quote the host it could not encode, and that host came
-		// from the Host header.
-		c.logger.Error("build invite link", "err", maskOnion(err.Error()))
+		// from the Host header - the onion name, through the onion service. The
+		// log's handler masks it (logscrub.go).
+		c.logger.Error("build invite link", "err", err)
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to build the link"))
 		return
 	}
