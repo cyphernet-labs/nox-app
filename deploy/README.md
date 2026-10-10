@@ -82,6 +82,33 @@ noxd backup "/Library/Application Support/NOX/backups/nox-2026-10-10.tar"   # ma
 
 Папку читают только администраторы, поэтому бэкап уносят с машины с их правами: `sudo cp <файл> ~/ && sudo chown "$USER" ~/<имя файла>` на Linux и macOS, `Copy-Item <файл> $HOME\Documents` в PowerShell от имени администратора на Windows. Домашняя папка владельца для `noxd backup` не годится: учётная запись сервера туда не пишет. Ключ onion-адреса в бэкап не входит — его папку копируют отдельно.
 
+## Восстановление
+
+Бэкап восстанавливают на машине, где скрипт уже поставил сервер, — на той же или на новой. `noxd restore` кладёт базу только на пустое место, а файлы, которые создаёт, отдаёт тому, кто его запустил, — поэтому его запускают от имени учётной записи сервера:
+
+1. Остановить сервер: `sudo systemctl stop noxd` (Linux), `sudo launchctl bootout system/com.cyphernetlabs.noxd` (macOS), `Stop-Service noxd` (Windows).
+2. Убрать из папки данных базу, которую создала установка: `nox.db`, `nox.db-wal`, `nox.db-shm`, `nox.db.key` и папку `nox.db-files` — пока они там, `noxd restore` отказывает.
+3. Положить бэкап в папку `backups`, отдать его учётной записи сервера и восстановить от её имени:
+
+```bash
+# Linux
+sudo install -o nox -g nox -m 600 ~/nox-2026-10-10.tar /var/lib/nox/backups/
+sudo -u nox /usr/local/bin/noxd restore /var/lib/nox/backups/nox-2026-10-10.tar -db /var/lib/nox/nox.db
+# macOS
+sudo install -o _nox -g _nox -m 600 ~/nox-2026-10-10.tar "/Library/Application Support/NOX/backups/"
+sudo -u _nox /usr/local/bin/noxd restore "/Library/Application Support/NOX/backups/nox-2026-10-10.tar" -db "/Library/Application Support/NOX/nox.db"
+```
+
+```powershell
+# Windows, PowerShell от имени администратора: права на новые файлы даёт папка данных
+Copy-Item $HOME\Documents\nox-2026-10-10.tar C:\ProgramData\NOX\backups\
+& 'C:\Program Files\NOX\noxd.exe' restore C:\ProgramData\NOX\backups\nox-2026-10-10.tar -db C:\ProgramData\NOX\nox.db
+```
+
+4. Запустить сервер — `sudo systemctl start noxd`, `sudo launchctl bootstrap system /Library/LaunchDaemons/com.cyphernetlabs.noxd.plist`, `Start-Service noxd` — и открыть его паролем, который был у сервера, когда делали бэкап. `noxd restore` перечисляет устройства, которые восстановленный сервер примет: устройство, отозванное после бэкапа, отзывают снова (Settings > Devices).
+
+Ключ onion-адреса в бэкап не входит. Чтобы сохранить адрес, папку ключа со старой машины кладут на место папки, которую создала установка (таблица «Где что лежит»), с теми же владельцем и правами, и запускают скрипт ещё раз: он перезапустит tor и передаст серверу этот адрес. Иначе у сервера новый onion-адрес, и устройства узнают его при первом подключении напрямую.
+
 ## Повторный запуск
 
 Скрипт на машине, где сервер уже стоит, обновляет его: заменяет бинарник, переписывает службу и настройки onion-сервиса NOX и перезапускает. База, файл ключа данных (`nox.db.key`), пароль и ключ onion-адреса остаются как были; новая база поверх существующей не создаётся. Порт, порт служебной страницы и публичный адрес берутся из установленной службы, если их не передали заново. Пароль не спрашивается: после обновления сервер заперт, его открывают как после перезагрузки.
