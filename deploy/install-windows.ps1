@@ -186,7 +186,9 @@ function Write-Journal {
     $file = Join-Path $script:JournalDir 'journal'
     $tmp = "$file.new"
     [System.IO.File]::WriteAllLines($tmp, $lines, (New-Object System.Text.UTF8Encoding($false)))
-    if (Test-Path -LiteralPath $file) { [System.IO.File]::Replace($tmp, $file, $null) } else { [System.IO.File]::Move($tmp, $file) }
+    # [NullString]::Value, not $null: PowerShell hands $null to a string
+    # parameter as '', and Replace refuses an empty backup path.
+    if (Test-Path -LiteralPath $file) { [System.IO.File]::Replace($tmp, $file, [NullString]::Value) } else { [System.IO.File]::Move($tmp, $file) }
 }
 
 # Close-Journal removes the record and the copies from disk: the run is taken
@@ -196,6 +198,14 @@ function Close-Journal {
         Remove-Item -LiteralPath $script:JournalDir -Recurse -Force -ErrorAction SilentlyContinue
     }
     $script:JournalOpen = $false
+    # A check leaves its prefix as it found it: the folder made for the record
+    # goes too, when it is empty. The system's own ProgramData is always there.
+    if ($Prefix) {
+        $parent = Split-Path -Parent $script:JournalDir
+        if ((Test-Path -LiteralPath $parent) -and -not (Get-ChildItem -LiteralPath $parent -Force)) {
+            Remove-Item -LiteralPath $parent -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 # Save-FailedJournal sets aside, readably, what could not be taken back, with
