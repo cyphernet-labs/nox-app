@@ -80,7 +80,7 @@ func TestAClaimThroughTheOnionServiceIsAClaimLikeAnyOther(t *testing.T) {
 		t.Fatalf("dial through the onion service: %v", err)
 	}
 	c.expectGreeting()
-	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"test"}}`, token))
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"linux"}}`, token))
 	data := c.expectOK(1)
 	var id identity
 	mustUnmarshal(t, data["identity"], &id)
@@ -106,7 +106,7 @@ func TestAccessKeysAreGoneFromTheWire(t *testing.T) {
 	d := newDevice(t)
 	c := dialAs(t, ts, srv, d)
 	c.expectGreeting()
-	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"test","access_key":"not even base64!"}}`, token))
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"linux","access_key":"not even base64!"}}`, token))
 	c.expectOK(1)
 
 	g := dialAs(t, ts, srv, d)

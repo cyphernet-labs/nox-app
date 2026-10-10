@@ -151,7 +151,7 @@ func pairDeviceAs(t *testing.T, ts *httptest.Server, token string, d *device) ma
 	t.Helper()
 	c := dialAs(t, ts, nil, d)
 	c.expectGreeting()
-	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"test"}}`, token))
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"linux"}}`, token))
 	data := c.expectOK(1)
 	_ = c.conn.Close(websocket.StatusNormalClosure, "")
 	channelOf(t, ts).devices.use(d)

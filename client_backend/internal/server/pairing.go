@@ -64,6 +64,10 @@ func (c *client) handlePair(cmd protocol.Command) {
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "token and platform are required"))
 		return
 	}
+	if !knownPlatform(platform) {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "platform must be ios, android, macos, windows or linux"))
+		return
+	}
 	// Whatever path this connection came by (FR-008): a connection from tor
 	// arrives on the main port like any other, proved its key the same way,
 	// and nothing here could tell it apart if it tried.
@@ -420,4 +424,17 @@ func (c *client) handleIdentitySetLabel(cmd protocol.Command) {
 	// Nothing in the reply depends on this - the label it echoes is the one
 	// already written to the store.
 	c.srv.refreshLabel(c.identity.UserID, label, c)
+}
+
+// knownPlatform reports whether p is one of the OS families a device may name
+// itself by (contract §8A). Anything else is refused before a token is looked
+// at: the name is shown in the Allow dialog of the device that issued the
+// invite, and free text there would let whoever holds a leaked invite pass
+// itself off as whatever it liked.
+func knownPlatform(p string) bool {
+	switch p {
+	case "ios", "android", "macos", "windows", "linux":
+		return true
+	}
+	return false
 }

@@ -72,7 +72,7 @@ func TestTheControlEndpointHandsTheTerminalANewLink(t *testing.T) {
 	}
 	c := dialWS(t, ts, srv)
 	c.expectGreeting()
-	c.send(`{"id":1,"cmd":"pair","data":{"token":"` + previous + `","platform":"test"}}`)
+	c.send(`{"id":1,"cmd":"pair","data":{"token":"` + previous + `","platform":"linux"}}`)
 	if code := expectErrCode(t, c, 1); code != "invalid_token" {
 		t.Fatalf("the replaced link = %q, want invalid_token", code)
 	}
