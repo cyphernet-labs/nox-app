@@ -51,6 +51,10 @@ data-encoding = "2"
 # Already in the graph through Arti; named here for the device seed and the
 # key made from it.
 zeroize = "1"
+# The vault (048): ChaCha20-Poly1305 and HKDF-SHA256 over what the app keeps on
+# the device's disk. Already in the graph under rustls, with the same features;
+# named here because the vault calls it itself.
+ring = "0.17"
 
 [dev-dependencies]
 # Paused time for the tests of the hedged connect. Tests only: a release build
