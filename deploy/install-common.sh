@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # The variables set here are read by the scripts that source this file, and
 # PORT, STATUS_PORT, PREV_STATUS_PORT, UPDATE, REPO_DIR, NOXD, NOXD_CMD,
-# RUN_DIR, SERVER_LOG and BACKUP_DIR are set by them.
+# RUN_DIR, SERVER_LOG, BACKUP_DIR and JOURNAL_DIR are set by them.
 # shellcheck disable=SC2034,SC2153
 #
 # Shared by install-macos.sh and install-linux.sh: sourced by them, never run
@@ -195,6 +195,13 @@ valid_onion() {
 # program reads - its binary, its settings - is back. In the record itself it
 # would run before the files changed earlier in the run are restored, and the
 # old job would start this run's binary.
+#
+# The record is also kept on disk, in JOURNAL_DIR, written whole before each
+# step, with the copies of the files the run replaced. A run that ends with no
+# chance to take back - killed, or the machine losing power - leaves it there,
+# and the next run takes it back before it does anything else. It holds
+# commands, paths and package names, never the password, and only this
+# account may read or write it: what it holds is run.
 
 UNDO_MAIN=()
 UNDO_TOR=()
@@ -216,6 +223,156 @@ PREV_STATUS_PORT=$NOX_DEFAULT_STATUS_PORT
 # stops further signals, and the taking back goes on.
 NOX_EXITING=""
 nox_status=0
+# JOURNAL_OPEN is set once the record has its folder on disk.
+JOURNAL_OPEN=0
+# UNDO_FAILED_STEPS keeps the steps that could not be taken back: they stay
+# in the record on disk, for the owner.
+UNDO_FAILED_STEPS=()
+
+# journal_open makes the folder of the record on disk, this account's alone,
+# the first time the run records a step.
+journal_open() {
+	[ "$JOURNAL_OPEN" = 0 ] || return 0
+	case $JOURNAL_DIR in
+	/*/nox-install) ;;
+	*) die "no folder for the record of changes: $JOURNAL_DIR" ;;
+	esac
+	mkdir -p "$JOURNAL_DIR" || die "cannot create $JOURNAL_DIR"
+	chmod 700 "$JOURNAL_DIR" || die "cannot set the mode of $JOURNAL_DIR"
+	JOURNAL_OPEN=1
+}
+
+# journal_write writes the record as it stands to disk - whole, through a
+# rename, so the file is always one complete record. Its first line names the
+# run's process: a run that finds the record knows whether the one that wrote
+# it still goes.
+journal_write() {
+	local name n i entry
+	journal_open
+	{
+		printf 'nox-install-journal 1 %s\n' "$$"
+		for name in TOR MAIN TOR_LAST MAIN_LAST FAILED_STEPS; do
+			eval "n=\${#UNDO_${name}[@]}"
+			i=0
+			while [ "$i" -lt "$n" ]; do
+				eval "entry=\${UNDO_${name}[$i]}"
+				printf '%s\t%s\n' "${name%_STEPS}" "$entry"
+				i=$((i + 1))
+			done
+		done
+	} >"$JOURNAL_DIR/journal.new" && mv -f "$JOURNAL_DIR/journal.new" "$JOURNAL_DIR/journal"
+}
+
+# journal_close removes the record and the copies from disk: the run is
+# taken back, or it stands.
+journal_close() {
+	local p
+	case $JOURNAL_DIR in
+	/*/nox-install) rm -rf "$JOURNAL_DIR" ;;
+	esac
+	JOURNAL_OPEN=0
+	# A check leaves its prefix as it found it: the folders made for the
+	# record go too, as far as they are empty. The system's own are always
+	# there.
+	if [ -n "$OPT_PREFIX" ]; then
+		p=$(dirname "$JOURNAL_DIR")
+		while [ "$p" != "$OPT_PREFIX" ] && [ "$p" != / ] && rmdir "$p" 2>/dev/null; do
+			p=$(dirname "$p")
+		done
+	fi
+}
+
+# journal_keep_failed sets a record aside whose taking back did not finish,
+# with the copies of the replaced files beside it, for the owner to look at.
+journal_keep_failed() {
+	if [ -f "$JOURNAL_DIR/journal" ]; then
+		mv -f "$JOURNAL_DIR/journal" "$JOURNAL_DIR/journal.failed"
+	fi
+	warn "what was not taken back is listed in $JOURNAL_DIR/journal.failed, the copies of the files the run replaced beside it; put it right, remove $JOURNAL_DIR, and run the script again"
+}
+
+# commit_run marks the installation as standing: the record on disk goes
+# first, so a run that ends after this point is never taken back by the next
+# one, then the copies with it.
+commit_run() {
+	rm -f "$JOURNAL_DIR/journal"
+	COMMITTED=1
+	journal_close
+}
+
+# journal_trusted says whether the record on disk can only have been written
+# by this account: its folder and its file are this account's, and nobody
+# else may write to them.
+journal_trusted() {
+	local n
+	n=$(find "$JOURNAL_DIR" "$JOURNAL_DIR/journal" -prune -user "$(id -u)" ! -perm -0020 ! -perm -0002 2>/dev/null | wc -l | tr -d ' ')
+	[ "$n" = 2 ]
+}
+
+# journal_owner_alive PID says whether the run that wrote the record still
+# goes: that process lives and is this script.
+journal_owner_alive() {
+	local args
+	[ -n "$1" ] && [ "$1" != "$$" ] || return 1
+	args=$(ps -p "$1" -o args= 2>/dev/null) || return 1
+	case $args in
+	*install-linux.sh* | *install-macos.sh*) return 0 ;;
+	esac
+	return 1
+}
+
+# resume_interrupted takes back what a run before this one changed and left
+# recorded on disk - it ended with no chance to take it back: killed, or the
+# machine went down - before this run looks at the machine. Nothing cuts it
+# short. When all of it is back this run goes on; when not, it stops, with
+# the record set aside.
+resume_interrupted() {
+	local header pid line name entry first=1
+	if [ -e "$JOURNAL_DIR/journal.failed" ]; then
+		die "a run before this one could not take back everything it changed: what is left is listed in $JOURNAL_DIR/journal.failed, the copies of the files it replaced beside it; put it right, remove $JOURNAL_DIR, and run the script again"
+	fi
+	[ -f "$JOURNAL_DIR/journal" ] || return 0
+	journal_trusted || die "$JOURNAL_DIR holds a record of changes that others could have written; look at it, remove it, and run the script again"
+	IFS= read -r header <"$JOURNAL_DIR/journal" || header=""
+	case $header in
+	"nox-install-journal 1 "*) pid=${header##* } ;;
+	*) die "$JOURNAL_DIR/journal is not a record this script wrote; look at it, remove $JOURNAL_DIR, and run the script again" ;;
+	esac
+	if journal_owner_alive "$pid"; then
+		die "another run of this script is under way (process $pid): let it finish, and run the script again"
+	fi
+	trap '' INT TERM HUP QUIT PIPE
+	step "Taking back an interrupted run"
+	say "A run before this one ended before it finished - it was killed, or the machine went down - and"
+	say "what it changed is still in place. That is taken back first."
+	UNDO_TOR=() UNDO_MAIN=() UNDO_TOR_LAST=() UNDO_MAIN_LAST=()
+	while IFS= read -r line; do
+		if [ "$first" = 1 ]; then
+			first=0
+			continue
+		fi
+		name=${line%%$'\t'*}
+		entry=${line#*$'\t'}
+		case $name in
+		TOR | MAIN | TOR_LAST | MAIN_LAST) eval "UNDO_${name}[\${#UNDO_${name}[@]}]=\$entry" ;;
+		# A step that failed before is reported, not tried again unseen.
+		FAILED)
+			UNDO_FAILED_STEPS[${#UNDO_FAILED_STEPS[@]}]=$entry
+			UNDO_FAILED=1
+			;;
+		esac
+	done <"$JOURNAL_DIR/journal"
+	JOURNAL_OPEN=1
+	undo_run TOR
+	undo_run MAIN
+	if [ "$UNDO_FAILED" != 0 ]; then
+		journal_keep_failed
+		die "not everything the interrupted run changed could be taken back: see the lines above"
+	fi
+	journal_close
+	say "What the interrupted run changed is taken back."
+	trap - INT TERM HUP QUIT PIPE
+}
 
 undo_push() {
 	if [ "$UNDO_INTO" = TOR ]; then
@@ -223,6 +380,7 @@ undo_push() {
 	else
 		UNDO_MAIN[${#UNDO_MAIN[@]}]=$1
 	fi
+	journal_write || die "cannot write the record of changes in $JOURNAL_DIR"
 }
 
 # undo_push_last pushes a start of what this run stopped: run once the rest of
@@ -233,6 +391,7 @@ undo_push_last() {
 	else
 		UNDO_MAIN_LAST[${#UNDO_MAIN_LAST[@]}]=$1
 	fi
+	journal_write || die "cannot write the record of changes in $JOURNAL_DIR"
 }
 
 # undo_run MAIN|TOR runs that record newest first, then its last list newest
@@ -243,8 +402,8 @@ undo_run() {
 }
 
 # undo_steps NAME runs one list of steps newest first. Each step leaves the
-# list once it ran, so a run interrupted while taking back goes on from that
-# step, not from the start.
+# list - and the record on disk - once it ran, so taking back that is
+# interrupted goes on from that step, not from the start.
 undo_steps() {
 	local name=$1 count i cmd
 	eval "count=\${#${name}[@]}"
@@ -254,8 +413,10 @@ undo_steps() {
 		if ! eval "$cmd"; then
 			warn "could not undo: $cmd"
 			UNDO_FAILED=1
+			UNDO_FAILED_STEPS[${#UNDO_FAILED_STEPS[@]}]=$cmd
 		fi
 		eval "unset '${name}[$i]'"
+		journal_write 2>/dev/null || true
 		i=$((i - 1))
 	done
 }
@@ -282,6 +443,7 @@ undo_keep_tor() {
 	UNDO_TOR=()
 	UNDO_TOR_LAST=()
 	UNDO_INTO=MAIN
+	journal_write || die "cannot write the record of changes in $JOURNAL_DIR"
 }
 
 WORK=""
@@ -306,21 +468,30 @@ on_exit() {
 		undo_run MAIN
 		if [ "$UNDO_FAILED" != 0 ]; then
 			warn "not everything could be taken back: see the lines above"
+			journal_keep_failed
 		elif [ "$SERVER_LOCKED_AGAIN" = 1 ]; then
 			say "Everything this run changed was taken back."
 		else
 			say "This machine is as it was before the run."
 		fi
-		if [ "$SERVER_LOCKED_AGAIN" = 1 ]; then
-			say "The server that ran before was started again and, as after every start, it is locked until its"
-			say "password is entered - on the service page, http://127.0.0.1:$PREV_STATUS_PORT on this machine, or with:"
-			say "    $NOXD_CMD unlock$(status_flag_for "$PREV_STATUS_PORT")"
-		fi
+		say_server_locked_again
+	fi
+	if [ "$COMMITTED" = 0 ] && [ "$UNDO_FAILED" = 0 ] && [ "$JOURNAL_OPEN" = 1 ]; then
+		journal_close
 	fi
 	if [ -n "$WORK" ] && [ -d "$WORK" ]; then
 		rm -rf "$WORK"
 	fi
 	exit "$status"
+}
+
+# say_server_locked_again is what to say when taking back started the server
+# that ran before: it starts locked, as every start does, and how it opens.
+say_server_locked_again() {
+	[ "$SERVER_LOCKED_AGAIN" = 1 ] || return 0
+	say "The server that ran before was started again and, as after every start, it is locked until its"
+	say "password is entered - on the service page, http://127.0.0.1:$PREV_STATUS_PORT on this machine, or with:"
+	say "    $NOXD_CMD unlock$(status_flag_for "$PREV_STATUS_PORT")"
 }
 
 # arm_traps makes every way a run can be stopped one that takes it back. A
@@ -402,11 +573,14 @@ make_own_dir() {
 
 # put_file SRC DEST MODE [OWNER GROUP] installs one file through a rename, so
 # a running program never sees half of it, and records how to take it back:
-# the previous file is kept in the scratch directory until the run ends.
+# the previous file is kept beside the record on disk until the run ends.
 put_file() {
 	local src=$1 dest=$2 mode=$3 owner=${4:-} group=${5:-} keep
 	if [ -e "$dest" ]; then
-		keep=$(mktemp "$WORK/previous.XXXXXX") || die "cannot keep a copy of $dest"
+		# Beside the record on disk: a run taken back by the next one finds
+		# the copy there.
+		journal_open
+		keep=$(mktemp "$JOURNAL_DIR/previous.XXXXXX") || die "cannot keep a copy of $dest"
 		cp -p "$dest" "$keep" || die "cannot keep a copy of $dest"
 		undo_push "cp -p $(q "$keep") $(q "$dest.nox-undo") && mv -f $(q "$dest.nox-undo") $(q "$dest")"
 	else

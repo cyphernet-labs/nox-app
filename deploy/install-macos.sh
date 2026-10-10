@@ -76,6 +76,9 @@ set_paths() {
 	DATA_DIR="$ROOT/Library/Application Support/NOX"
 	DB="$DATA_DIR/nox.db"
 	BACKUP_DIR="$DATA_DIR/backups"
+	# The record of changes on disk: root's alone, beside nothing the server
+	# account may write.
+	JOURNAL_DIR="$ROOT/var/db/nox-install"
 	LOG_DIR="$ROOT/Library/Logs/NOX"
 	SERVER_LOG="$LOG_DIR/noxd.log"
 	TOR_LOG="$LOG_DIR/tor.log"
@@ -686,7 +689,10 @@ main() {
 		die "installing needs administrator rights: run it with sudo, as sudo $0"
 	fi
 	set_paths
+	resume_interrupted
 	detect_install
+	say_server_locked_again
+	SERVER_LOCKED_AGAIN=0
 	arm_traps
 	make_work
 
@@ -730,7 +736,7 @@ main() {
 		tail -n 12 "$SERVER_LOG" >&2 2>/dev/null || true
 		die "the server did not start, or did not answer on its service page within $NOX_HEALTH_WAIT seconds"
 	fi
-	COMMITTED=1
+	commit_run
 	note "the server answers: $state"
 
 	if [ "$FRESH_DATA" = 1 ]; then

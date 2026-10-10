@@ -78,6 +78,9 @@ set_paths() {
 	DATA_DIR="$ROOT/var/lib/nox"
 	DB="$DATA_DIR/nox.db"
 	BACKUP_DIR="$DATA_DIR/backups"
+	# The record of changes on disk: root's alone, beside nothing the server
+	# account may write.
+	JOURNAL_DIR="$ROOT/var/lib/nox-install"
 	UNIT="$ROOT/etc/systemd/system/$SERVICE.service"
 	if [ -n "$OPT_PREFIX" ]; then
 		LOG_DIR="$ROOT/var/log/nox"
@@ -736,7 +739,10 @@ main() {
 	fi
 	command -v curl >/dev/null 2>&1 || die "curl is needed (to talk to the server's service page): install it and run the script again"
 	set_paths
+	resume_interrupted
 	detect_install
+	say_server_locked_again
+	SERVER_LOCKED_AGAIN=0
 	arm_traps
 	make_work
 
@@ -778,7 +784,7 @@ main() {
 		server_log_tail >&2
 		die "the server did not start, or did not answer on its service page within $NOX_HEALTH_WAIT seconds"
 	fi
-	COMMITTED=1
+	commit_run
 	note "the server answers: $state"
 
 	if [ "$FRESH_DATA" = 1 ]; then
