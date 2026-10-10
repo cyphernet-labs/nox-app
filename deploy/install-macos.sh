@@ -75,6 +75,7 @@ set_paths() {
 	NOXD="$BIN_DIR/noxd"
 	DATA_DIR="$ROOT/Library/Application Support/NOX"
 	DB="$DATA_DIR/nox.db"
+	BACKUP_DIR="$DATA_DIR/backups"
 	LOG_DIR="$ROOT/Library/Logs/NOX"
 	SERVER_LOG="$LOG_DIR/noxd.log"
 	TOR_LOG="$LOG_DIR/tor.log"
@@ -248,9 +249,13 @@ install_layout() {
 	make_dir "$LOG_DIR" "$owner" "$group" 755
 	if [ -n "$OPT_PREFIX" ]; then
 		make_own_dir "$DATA_DIR" "" "" 700
+		make_own_dir "$BACKUP_DIR" "" "" 700
 		make_dir "$RUN_DIR" "" "" 755
 	else
 		make_own_dir "$DATA_DIR" "$SERVER_ACCOUNT" "$SERVER_ACCOUNT" 700
+		# noxd backup has the server write the file, and its account can
+		# write in its own folder only.
+		make_own_dir "$BACKUP_DIR" "$SERVER_ACCOUNT" "$SERVER_ACCOUNT" 700
 	fi
 	ensure_log "$SERVER_LOG" "$SERVER_USER" "$SERVER_GROUP"
 }
@@ -654,6 +659,7 @@ summary() {
 	fi
 	note "logs:          $SERVER_LOG$([ -n "$ONION" ] && printf ', %s' "$TOR_LOG")"
 	say_after_restart "$NOXD_CMD"
+	say_backups "$NOXD_CMD"
 	firewall_hint
 }
 

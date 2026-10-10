@@ -588,3 +588,6 @@ any of them is a change to the scripts too:
   service is registered with failure actions that count a failure exit as a
   crash (`sc failureflag 1`), so only a server that stopped by itself exits as
   a failure and is restarted.
+- `noxd backup` has the RUNNING server write the file, as the service's
+  account, which can write in its data folder only: the scripts make
+  `<data>/backups` for it and name it in their summary.

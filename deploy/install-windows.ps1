@@ -755,8 +755,11 @@ function Start-Server {
     }
     Install-Service $ServerService 'NOX server' "The NOX server. It starts locked: enter its password on its service page, http://127.0.0.1:$($script:StatusPort), or with noxd unlock." $commandLine
     Set-PrivateAcl $script:DataDir "NT SERVICE\$ServerService"
-    # The tor folder inside keeps its own permissions, which the line above
-    # does not reach: its inheritance is cut.
+    # The backups folder was made before the data folder's permissions were
+    # set: it gets them explicitly rather than through inheritance.
+    Set-PrivateAcl $script:BackupDir "NT SERVICE\$ServerService"
+    # The tor folder inside keeps its own permissions, which the data
+    # folder's do not reach: its inheritance is cut.
     if ((Test-Path -LiteralPath $script:TorDir) -and (Get-Service -Name $TorService -ErrorAction SilentlyContinue)) {
         Set-PrivateAcl $script:TorDir "NT SERVICE\$TorService"
     }
@@ -774,6 +777,10 @@ function Start-Server {
 }
 
 # --- the end -----------------------------------------------------------------
+
+# ConvertTo-PsLiteral quotes a value for a PowerShell command shown to the
+# owner.
+function ConvertTo-PsLiteral([string]$S) { return "'" + $S.Replace("'", "''") + "'" }
 
 function Get-StatusFlag {
     if ($script:StatusPort -ne $DefaultStatusPort) { return " -status-addr 127.0.0.1:$($script:StatusPort)" }
@@ -841,6 +848,13 @@ function Write-Summary {
     Say "    $cmd unlock$(Get-StatusFlag)"
     Say 'A link lasts 10 minutes. For a new one: Add a device or New link on the service page, or'
     Say "    $cmd link -qr$(Get-StatusFlag)"
+    $backup = Join-Path $script:BackupDir ('nox-' + (Get-Date -Format 'yyyy-MM-dd') + '.tar')
+    Say ''
+    Say 'A backup is written by the running server, as its own account, which can write only in its own'
+    Say "folder - $($script:BackupDir) is there for backups:"
+    Say "    $cmd backup$(Get-StatusFlag) $(ConvertTo-PsLiteral $backup)"
+    Say 'Then copy it off this machine from PowerShell run as administrator; there, only administrators can read it:'
+    Say ('    Copy-Item ' + (ConvertTo-PsLiteral $backup) + ' $HOME\Documents')
 }
 
 # --- main --------------------------------------------------------------------
@@ -858,6 +872,7 @@ function Initialize-Paths {
     $script:Noxd = Join-Path $script:ProgramDir 'noxd.exe'
     $script:Db = Join-Path $script:DataDir 'nox.db'
     $script:ServerLog = Join-Path $script:DataDir 'noxd.log'
+    $script:BackupDir = Join-Path $script:DataDir 'backups'
     $script:TorExeInstalled = Join-Path $script:ProgramDir 'tor\tor.exe'
     $script:TorDir = Join-Path $script:DataDir 'tor'
     $script:Torrc = Join-Path $script:TorDir 'torrc'
@@ -911,6 +926,9 @@ function Invoke-Install {
     if ($Prefix) { Stop-Background 'noxd' $script:ServerPidFile } else { Stop-ServiceForUpdate $ServerService }
     New-Directory $script:ProgramDir
     New-Directory $script:DataDir
+    # noxd backup has the server write the file, and its account can write in
+    # its own folder only.
+    New-Directory $script:BackupDir
     if ($Prefix) { New-Directory $script:RunDir }
     Install-File $newBinary $script:Noxd
 

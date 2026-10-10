@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # The variables set here are read by the scripts that source this file, and
-# PORT, STATUS_PORT, UPDATE, REPO_DIR, NOXD, RUN_DIR and SERVER_LOG are set by
-# them.
+# PORT, STATUS_PORT, UPDATE, REPO_DIR, NOXD, RUN_DIR, SERVER_LOG and
+# BACKUP_DIR are set by them.
 # shellcheck disable=SC2034,SC2153
 #
 # Shared by install-macos.sh and install-linux.sh: sourced by them, never run
@@ -812,6 +812,25 @@ finish_new() {
 		warn "the server did not give a link; get one on the service page or with: $noxd_cmd link -qr$(status_flag)"
 	fi
 	return 0
+}
+
+# say_backups says where a backup can go. `noxd backup` has the running
+# server write the file, as its own account, which can write in its own
+# folder only - so the installation has a folder for backups there.
+say_backups() {
+	local noxd_cmd=$1 file
+	file="$BACKUP_DIR/nox-$(date +%Y-%m-%d).tar"
+	say ""
+	say "A backup is written by the running server, as its own account, which can write only in its own"
+	say "folder - $BACKUP_DIR is there for backups:"
+	say "    $noxd_cmd backup$(status_flag) \"$file\""
+	if [ -n "$OPT_PREFIX" ]; then
+		say "Then copy it off this machine:"
+		say "    cp \"$file\" ~/"
+	else
+		say "Then copy it off this machine; there, only administrators can read it:"
+		say "    sudo cp \"$file\" ~/ && sudo chown \"\$USER\" ~/$(basename "$file")"
+	fi
 }
 
 # say_after_restart is what the owner needs after every restart of the

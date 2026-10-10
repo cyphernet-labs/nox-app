@@ -77,6 +77,7 @@ set_paths() {
 	NOXD="$ROOT/usr/local/bin/noxd"
 	DATA_DIR="$ROOT/var/lib/nox"
 	DB="$DATA_DIR/nox.db"
+	BACKUP_DIR="$DATA_DIR/backups"
 	UNIT="$ROOT/etc/systemd/system/$SERVICE.service"
 	if [ -n "$OPT_PREFIX" ]; then
 		LOG_DIR="$ROOT/var/log/nox"
@@ -208,6 +209,7 @@ install_layout() {
 		make_dir "$LOG_DIR" "" "" 755
 		make_dir "$RUN_DIR" "" "" 755
 		make_own_dir "$DATA_DIR" "" "" 700
+		make_own_dir "$BACKUP_DIR" "" "" 700
 		if [ ! -e "$SERVER_LOG" ]; then
 			: >"$SERVER_LOG"
 			undo_push "rm -f $(q "$SERVER_LOG")"
@@ -217,6 +219,9 @@ install_layout() {
 		ensure_account
 		make_dir "$(dirname "$NOXD")" root root 755
 		make_own_dir "$DATA_DIR" "$SERVER_ACCOUNT" "$SERVER_ACCOUNT" 700
+		# noxd backup has the server write the file, and its account can
+		# write in its own folder only.
+		make_own_dir "$BACKUP_DIR" "$SERVER_ACCOUNT" "$SERVER_ACCOUNT" 700
 	fi
 }
 
@@ -679,6 +684,7 @@ summary() {
 	fi
 	note "server log:    $SERVER_LOG"
 	say_after_restart "$NOXD_CMD"
+	say_backups "$NOXD_CMD"
 	firewall_hint
 }
 

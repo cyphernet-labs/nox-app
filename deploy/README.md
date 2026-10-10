@@ -65,6 +65,21 @@ powershell -ExecutionPolicy Bypass -File deploy\install-windows.ps1
 
 Если порт служебной страницы не 8081, командам нужен `-status-addr 127.0.0.1:<порт>`.
 
+## Бэкап
+
+`noxd backup <файл>` пишет файл сам работающий сервер — под своей учётной записью, а ей можно писать только в свою папку данных. Поэтому скрипт заводит там папку `backups`, и бэкап пишется в неё:
+
+```bash
+noxd backup /var/lib/nox/backups/nox-2026-10-10.tar                         # Linux
+noxd backup "/Library/Application Support/NOX/backups/nox-2026-10-10.tar"   # macOS
+```
+
+```powershell
+& 'C:\Program Files\NOX\noxd.exe' backup C:\ProgramData\NOX\backups\nox-2026-10-10.tar
+```
+
+Папку читают только администраторы, поэтому бэкап уносят с машины с их правами: `sudo cp <файл> ~/ && sudo chown "$USER" ~/<имя файла>` на Linux и macOS, `Copy-Item <файл> $HOME\Documents` в PowerShell от имени администратора на Windows. Домашняя папка владельца для `noxd backup` не годится: учётная запись сервера туда не пишет. Ключ onion-адреса в бэкап не входит — его папку копируют отдельно.
+
 ## Повторный запуск
 
 Скрипт на машине, где сервер уже стоит, обновляет его: заменяет бинарник, переписывает службу и настройки onion-сервиса NOX и перезапускает. База, файл ключа данных (`nox.db.key`), пароль и ключ onion-адреса остаются как были; новая база поверх существующей не создаётся. Порт, порт служебной страницы и публичный адрес берутся из установленной службы, если их не передали заново. Пароль не спрашивается: после обновления сервер заперт, его открывают как после перезагрузки.
@@ -87,6 +102,7 @@ deploy/install-linux.sh --prefix /path/to/check --no-service --tor-bin /path/to/
 | Сервер | `/usr/local/bin/noxd` | `/usr/local/bin/noxd` | `C:\Program Files\NOX\noxd.exe` |
 | Данные | `/var/lib/nox` | `/Library/Application Support/NOX` | `C:\ProgramData\NOX` |
 | Журнал сервера | `journalctl -u noxd` | `/Library/Logs/NOX/noxd.log` | `C:\ProgramData\NOX\noxd.log` |
+| Бэкапы | `/var/lib/nox/backups` | `/Library/Application Support/NOX/backups` | `C:\ProgramData\NOX\backups` |
 | Служба сервера | `/etc/systemd/system/noxd.service` | `/Library/LaunchDaemons/com.cyphernetlabs.noxd.plist` | служба `noxd` |
 | tor | пакет `tor`, служба `tor` | `/usr/local/libexec/nox-tor/tor`, `/Library/LaunchDaemons/com.cyphernetlabs.nox-tor.plist` | `C:\Program Files\NOX\tor\tor.exe`, служба `nox-tor` |
 | Настройки tor | `/etc/tor/torrc` + `/etc/tor/nox-tor.conf` | `/usr/local/etc/nox-tor/` | `C:\ProgramData\NOX\tor\` |
