@@ -95,14 +95,19 @@ class LiveTor {
 
 /// A `noxd` run detached from the probe, so it can outlive it.
 class LiveNoxd {
-  LiveNoxd._(this.pid, this._log);
+  LiveNoxd._(this.pid, this._log, this.pagePort);
 
   final int pid;
   final File _log;
 
-  /// Starts `noxd` on [addr]. [onionAddr] is the address of the onion
-  /// service a separate tor publishes for it ([LiveTor]); the server only
-  /// stores it and hands it out (phase 045).
+  /// The loopback port of the server's service page - where its claim link
+  /// is: the server never writes one to its log (phase 045, FR-022).
+  final int pagePort;
+
+  /// Starts `noxd` on [addr], with its service page on a free loopback port.
+  /// [onionAddr] is the address of the onion service a separate tor publishes
+  /// for it ([LiveTor]); the server only stores it and hands it out (phase
+  /// 045).
   static Future<LiveNoxd> start({
     required String noxd,
     required String work,
@@ -112,14 +117,22 @@ class LiveNoxd {
   }) async {
     final file = File('$work/$log');
     final onion = onionAddr == null ? '' : '-onion-addr $onionAddr';
+    final page = await _freeLoopbackPort();
     final shell = await Process.run('/bin/sh', [
       '-c',
-      '"$noxd" -addr $addr -db "$work/probe.db" $onion -status-addr "" > "${file.path}" 2>&1 & echo \$!',
+      '"$noxd" -addr $addr -db "$work/probe.db" $onion -status-addr 127.0.0.1:$page > "${file.path}" 2>&1 & echo \$!',
     ]);
     final pid = int.parse((shell.stdout as String).trim());
-    final server = LiveNoxd._(pid, file);
+    final server = LiveNoxd._(pid, file, page);
     await liveUntil('noxd listening on $addr', const Duration(seconds: 30), () => server.lines().any((l) => l['msg'] == 'listening'));
     return server;
+  }
+
+  static Future<int> _freeLoopbackPort() async {
+    final socket = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    final port = socket.port;
+    await socket.close();
+    return port;
   }
 
   /// The server's log, one JSON object per line.
@@ -135,13 +148,28 @@ class LiveNoxd {
     }
   }
 
+  /// The claim link, as the service page shows it. Needs the network let
+  /// through (`LiveTarget.letTheNetworkThrough`): the page is plain HTTP.
   Future<String> claimLink() async {
     String? link;
-    await liveUntil('the claim link', const Duration(seconds: 10), () {
-      link = lines().map((l) => l['link']).whereType<String>().firstOrNull;
+    await liveUntil('the claim link on the service page', const Duration(seconds: 10), () async {
+      link = await _linkOnPage();
       return link != null;
     });
     return link!;
+  }
+
+  Future<String?> _linkOnPage() async {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 2);
+    try {
+      final response = await (await client.getUrl(Uri.parse('http://127.0.0.1:$pagePort/'))).close();
+      final page = await response.transform(utf8.decoder).join();
+      return RegExp(r'nox://pair/[A-Za-z0-9_-]+').firstMatch(page)?.group(0);
+    } on Object {
+      return null;
+    } finally {
+      client.close(force: true);
+    }
   }
 
   Future<void> stop() async {
