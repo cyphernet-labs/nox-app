@@ -276,12 +276,27 @@ class ChannelSocket extends Stream<Uint8List> implements Socket {
   @override
   void setRawOption(RawSocketOption option) {}
 
+  /// How long a [close] waits for its queue before the channel is let go of
+  /// anyway: a server that stopped reading must not hold the channel, and the
+  /// connection under it, for good.
+  static const Duration _drainBudget = Duration(seconds: 5);
+
   /// Lets the module drop the channel once both directions are finished: the
   /// server ended its side and this side ended its own, or nobody reads.
+  ///
+  /// After a [close], only once what it queued has gone out: a channel's close
+  /// drops its queue, and the module sends that queue - then `close_notify` -
+  /// only while the channel lives. Without the wait, bytes written after the
+  /// server ended its side never left. A [destroy] lets go at once, and a
+  /// channel already gone has nothing to let go of.
   void _release() {
     if (!_writeDone || !_readDone || _gone || _released) return;
     _released = true;
-    _channel.close();
+    if (!_closed || _destroyed) {
+      _channel.close();
+      return;
+    }
+    unawaited(_channel.flush().timeout(_drainBudget).then((_) {}, onError: (Object _) {}).whenComplete(_channel.close));
   }
 
   void _onChannelClosed(ChannelFailure? failure) {

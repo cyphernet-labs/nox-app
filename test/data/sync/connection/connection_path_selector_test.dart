@@ -10,8 +10,10 @@ import 'package:nox_app/data/service/tor/fake_tor_service.dart';
 import 'package:nox_app/data/sync/connection/connection_path_selector.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/connection/connection_path.dart';
+import 'package:nox_app/domain/model/connection/server_addresses.dart';
 import 'package:nox_app/domain/model/connection/tor_status.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
+import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/connection/access_key_repository.dart';
 import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
@@ -48,6 +50,41 @@ class _StuckNetwork implements NetworkChangeService {
   }
 }
 
+/// The real store, with reads that can be held - how a test lands a begin() or
+/// an end() while the selector waits on the addresses.
+class _HeldAddresses implements ServerAddressesRepository {
+  _HeldAddresses(this._store);
+
+  final ServerAddressesRepository _store;
+
+  /// While set, every read waits for it.
+  Future<void>? hold;
+  int reads = 0;
+
+  @override
+  Future<RepositoryResult<ServerAddresses>> read() async {
+    reads++;
+    await hold;
+    return _store.read();
+  }
+
+  @override
+  Future<RepositoryResult<bool>> saveFromServer({required List<String> direct, required String? onion}) =>
+      _store.saveFromServer(direct: direct, onion: onion);
+
+  @override
+  Future<RepositoryResult<bool>> recordLastGood(String address) => _store.recordLastGood(address);
+
+  @override
+  Future<RepositoryResult<bool>> recordGreetedViaTor() => _store.recordGreetedViaTor();
+
+  @override
+  Stream<ServerAddresses> watch() => _store.watch();
+
+  @override
+  Future<RepositoryResult<bool>> clear() => _store.clear();
+}
+
 class _Lifecycle implements AppLifecycleService {
   final StreamController<AppVisibility> changes = StreamController<AppVisibility>.broadcast();
 
@@ -79,10 +116,11 @@ void main() {
     bool mobile = true,
     Duration recheckEvery = const Duration(hours: 1),
     Duration torReadyBudget = const Duration(milliseconds: 400),
+    ServerAddressesRepository? store,
   }) => ConnectionPathSelector.forTest(
     prober,
     tor,
-    addresses,
+    store ?? addresses,
     keys,
     network,
     lifecycle,
@@ -254,13 +292,61 @@ void main() {
       selector = build()..begin(linkAddress: _link, serverKey: _serverKey, deviceSeed: seed);
       prober.home = <String>{};
       await selector.nextTarget();
-      final handed = prober.keys.single.deviceSeed;
-      expect(handed, _deviceSeed);
+      // The array the probe was handed is the selector's own copy: the one
+      // that has to go with the session.
+      final own = prober.seedsHanded.single;
+      expect(own, _deviceSeed);
+      expect(identical(own, seed), isFalse, reason: 'the selector keeps a copy of its own');
 
       await selector.end();
 
+      expect(own, everyElement(0), reason: 'the device key outlived its session');
       expect(seed, _deviceSeed, reason: 'the caller keeps what it handed over');
       expect(await selector.nextTarget(), isNull);
+    });
+
+    test('a round whose read of the addresses outlives a new begin() probes with the new key, never the wiped one', () async {
+      final store = _HeldAddresses(addresses);
+      await selector.end();
+      selector = build(store: store)..begin(linkAddress: _link, serverKey: _serverKey, deviceSeed: _deviceSeed);
+      final held = Completer<void>();
+      store.hold = held.future;
+      prober.home = <String>{};
+
+      final round = selector.nextTarget();
+      await waitUntil(() => store.reads == 1, reason: 'the round reads the addresses');
+      // A start over a running session: the seed it replaces is wiped in place.
+      final next = Uint8List.fromList(List<int>.generate(32, (i) => 0x40 + i));
+      selector.begin(linkAddress: _link, serverKey: _serverKey, deviceSeed: next);
+      held.complete();
+      await round;
+
+      expect(prober.keys.single.deviceSeed, next, reason: 'the probe opened its channels with a key wiped under it');
+    });
+
+    test('a check of the direct path whose read of the addresses outlives end() opens nothing with the wiped key', () async {
+      final store = _HeldAddresses(addresses);
+      await selector.end();
+      selector = build(store: store)..begin(linkAddress: _link, serverKey: _serverKey, deviceSeed: _deviceSeed);
+      await torWorks();
+      prober.home = <String>{};
+      await connectAndGreet();
+      expect(selector.currentPath, ConnectionPath.tor);
+      final held = Completer<void>();
+      store.hold = held.future;
+      final reads = store.reads;
+      final probes = prober.rounds.length;
+
+      // A network change on Tor checks the direct path, which answers again.
+      prober.home = null;
+      network.changes.add(null);
+      await waitUntil(() => store.reads > reads, reason: 'the check reads the addresses');
+      await selector.end();
+      held.complete();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(prober.rounds, hasLength(probes), reason: 'a probe for a session that had ended');
+      expect(prober.keys.where((k) => k.deviceSeed.every((b) => b == 0)), isEmpty, reason: 'a probe opened with the wiped key');
     });
 
     test('a link lends no key any more: an unregistered device has no way through Tor (FR-019)', () async {
