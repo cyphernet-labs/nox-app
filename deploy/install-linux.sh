@@ -37,14 +37,16 @@ SERVER_ACCOUNT=nox
 SERVICE=noxd
 
 # The Tor Project's package repositories and the keys they are signed with,
-# by fingerprint (support.torproject.org: apt and rpm). A key is downloaded
-# and used only when its fingerprint is this one.
+# by fingerprint (support.torproject.org: apt and rpm). A downloaded key file
+# is used only when every key in it is this one, and what is installed is
+# that key alone, as gpg reads it.
 TOR_APT_KEY=A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89
 TOR_APT_KEY_URL=https://deb.torproject.org/torproject.org/$TOR_APT_KEY.asc
 TOR_APT_REPO=https://deb.torproject.org/torproject.org
 TOR_APT_KEYRING=/usr/share/keyrings/deb.torproject.org-keyring.gpg
 TOR_APT_LIST=/etc/apt/sources.list.d/tor.list
 TOR_RPM_KEY=999EC8E314BC8D46022D6C7DE217C30C3621CD35
+TOR_RPM_KEY_FILE=/etc/pki/rpm-gpg/RPM-GPG-KEY-torproject
 TOR_RPM_REPO_FILE=/etc/yum.repos.d/tor.repo
 
 usage() {
@@ -230,13 +232,36 @@ fetch() {
 	curl -fsSL --proto '=https' --retry 2 --connect-timeout 30 --max-time 300 -o "$2" "$1"
 }
 
-# key_fingerprint FILE prints the primary fingerprint of the one key in FILE.
-key_fingerprint() {
-	local home out
+# key_file_is FILE FPR succeeds when every key in FILE is the one whose
+# primary fingerprint is FPR: at least one, and no other beside it. apt trusts
+# every key in a signed-by keyring and rpm imports every key in a file, so a
+# key put after the genuine one would be trusted as much as the genuine one.
+key_file_is() {
+	local home listing
 	home=$(mktemp -d "$WORK/gnupg.XXXXXX")
 	chmod 700 "$home"
-	out=$(gpg --homedir "$home" --batch --no-autostart --with-colons --import-options show-only --import "$1" 2>/dev/null) || true
-	printf '%s\n' "$out" | awk -F: '$1 == "fpr" { print $10; exit }' || true
+	listing=$(gpg --homedir "$home" --batch --no-autostart --with-colons --import-options show-only --import "$1" 2>/dev/null) || true
+	printf '%s\n' "$listing" | awk -F: -v fpr="$2" '
+		$1 == "pub" { keys++; primary = 1; next }
+		$1 == "fpr" && primary { if ($10 == fpr) pinned++; primary = 0; next }
+		{ primary = 0 }
+		END { exit !(keys > 0 && pinned == keys) }'
+}
+
+# pinned_key FILE FPR OUT [--armor] writes to OUT the key FPR from FILE, and
+# nothing else: FILE must hold that key alone, and OUT is gpg's own reading of
+# it, without what gpg finds invalid - a subkey with no valid binding to the
+# key, for one - checked again. No keyring is written: gpg imports into its
+# output.
+pinned_key() {
+	local file=$1 fpr=$2 out=$3 home
+	shift 3
+	key_file_is "$file" "$fpr" || return 1
+	home=$(mktemp -d "$WORK/gnupg.XXXXXX")
+	chmod 700 "$home"
+	gpg --homedir "$home" --batch --no-autostart "$@" --import-options import-export --import "$file" >"$out" 2>/dev/null ||
+		return 1
+	key_file_is "$out" "$fpr"
 }
 
 os_release() {
@@ -249,6 +274,29 @@ os_release() {
 upstream_version() {
 	local v=${1#*:}
 	printf '%s' "${v%%[-~+]*}"
+}
+
+# rpm_keys lists the keys rpm holds, one package name per line.
+rpm_keys() {
+	rpm -qa --qf '%{NAME}-%{VERSION}-%{RELEASE}\n' 'gpg-pubkey*' 2>/dev/null || true
+}
+
+# rpm_import_key FILE gives rpm the key in FILE and records how to take it out
+# again - unless rpm had it already.
+rpm_import_key() {
+	local before k
+	before=$(rpm_keys)
+	rpm --import "$1" || return 1
+	for k in $(rpm_keys); do
+		case "
+$before
+" in
+		*"
+$k
+"*) ;;
+		*) undo_push "rpm -e $(q "$k") >/dev/null 2>&1 || true" ;;
+		esac
+	done
 }
 
 # The record keeps what this run installed: a package that was not here is
@@ -272,7 +320,7 @@ apt_install() {
 # and the source list signed by it. apt then refuses any package of it that
 # the key did not sign.
 apt_tor_project() {
-	local codename fpr
+	local codename
 	codename=$(os_release UBUNTU_CODENAME)
 	[ -n "$codename" ] || codename=$(os_release VERSION_CODENAME)
 	[ -n "$codename" ] || tor_fail "cannot tell this distribution's release name for the Tor Project's repository" || return 1
@@ -281,10 +329,8 @@ apt_tor_project() {
 	fi
 	note "adding the Tor Project's repository ($codename)"
 	fetch "$TOR_APT_KEY_URL" "$WORK/tor-apt.asc" || tor_fail "could not download the Tor Project's repository key (no network?)" || return 1
-	fpr=$(key_fingerprint "$WORK/tor-apt.asc")
-	[ "$fpr" = "$TOR_APT_KEY" ] || tor_fail "the downloaded repository key is not the Tor Project's ($TOR_APT_KEY)" || return 1
-	gpg --homedir "$(mktemp -d "$WORK/gnupg.XXXXXX")" --batch --no-autostart --dearmor <"$WORK/tor-apt.asc" >"$WORK/tor-apt.gpg" 2>/dev/null ||
-		tor_fail "could not unpack the repository key" || return 1
+	pinned_key "$WORK/tor-apt.asc" "$TOR_APT_KEY" "$WORK/tor-apt.gpg" ||
+		tor_fail "the downloaded repository key file is not the Tor Project's key ($TOR_APT_KEY) and nothing else; tor was not installed" || return 1
 	make_dir "$(dirname "$TOR_APT_KEYRING")" root root 755
 	put_file "$WORK/tor-apt.gpg" "$TOR_APT_KEYRING" 644 root root
 	printf 'deb [signed-by=%s] %s %s main\n' "$TOR_APT_KEYRING" "$TOR_APT_REPO" "$codename" >"$WORK/tor.list"
@@ -309,7 +355,7 @@ apt_tor() {
 }
 
 dnf_tor() {
-	local candidate base key fpr
+	local candidate base key
 	note "looking for tor in the package lists"
 	candidate=$(dnf -q info tor 2>/dev/null | awk -F: '/^Version/ { gsub(/[ \t]/, "", $2); print $2 }' | sort -t. -k1,1n -k2,2n -k3,3n -k4,4n | tail -n 1) || true
 	if [ -n "$candidate" ] && version_at_least "$candidate" "$NOX_TOR_MIN_VERSION"; then
@@ -331,16 +377,23 @@ dnf_tor() {
 	note "adding the Tor Project's repository ($base)"
 	fetch "$key" "$WORK/tor-rpm.key" || tor_fail "could not download the Tor Project's repository key (no network?)" || return 1
 	command -v gpg >/dev/null 2>&1 || tor_fail "there is no gpg to check the repository key with" || return 1
-	fpr=$(key_fingerprint "$WORK/tor-rpm.key")
-	[ "$fpr" = "$TOR_RPM_KEY" ] || tor_fail "the downloaded repository key is not the Tor Project's ($TOR_RPM_KEY)" || return 1
-	rpm --import "$WORK/tor-rpm.key" || tor_fail "rpm did not take the repository key" || return 1
+	pinned_key "$WORK/tor-rpm.key" "$TOR_RPM_KEY" "$WORK/tor-rpm.asc" --armor ||
+		tor_fail "the downloaded repository key file is not the Tor Project's key ($TOR_RPM_KEY) and nothing else; tor was not installed" || return 1
+	# dnf gets this checked copy and never the address: told to fetch a key
+	# itself, dnf -y imports whatever key the address serves, unchecked.
+	make_dir "$(dirname "$TOR_RPM_KEY_FILE")" root root 755
+	put_file "$WORK/tor-rpm.asc" "$TOR_RPM_KEY_FILE" 644 root root
+	if command -v restorecon >/dev/null 2>&1; then
+		restorecon "$TOR_RPM_KEY_FILE" 2>/dev/null || true
+	fi
+	rpm_import_key "$TOR_RPM_KEY_FILE" || tor_fail "rpm did not take the repository key" || return 1
 	cat >"$WORK/tor.repo" <<EOF
 [tor]
 name=Tor Project packages
 baseurl=https://rpm.torproject.org/$base/\$releasever/\$basearch
 enabled=1
 gpgcheck=1
-gpgkey=$key
+gpgkey=file://$TOR_RPM_KEY_FILE
 cost=100
 EOF
 	put_file "$WORK/tor.repo" "$TOR_RPM_REPO_FILE" 644 root root

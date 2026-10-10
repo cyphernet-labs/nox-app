@@ -119,7 +119,7 @@ Onion-адрес tor пишет в файл `hostname` в папке ключа.
 
 ### Linux
 
-1. tor: `apt install tor` или `dnf install tor`; если в дистрибутиве tor старее 0.4.9 — репозиторий Tor Project по инструкции support.torproject.org. Строки выше — в `/etc/tor/torrc`, затем `systemctl restart tor`.
+1. tor: `apt install tor` или `dnf install tor`; если в дистрибутиве tor старее 0.4.9 — репозиторий Tor Project по инструкции support.torproject.org. Ключ репозитория сверяют по отпечатку, и в файле не должно быть других ключей: apt и rpm доверяют каждому ключу файла. Для dnf ключ кладут локальным файлом (`/etc/pki/rpm-gpg/RPM-GPG-KEY-torproject`) и пишут `gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-torproject` — по адресу `https://` `dnf -y` примет любой ключ, который там окажется. Строки выше — в `/etc/tor/torrc`, затем `systemctl restart tor`.
 2. Сервер: `CGO_ENABLED=0 go build -trimpath -ldflags=-s -o /usr/local/bin/noxd .` в `client_backend/`; учётная запись `useradd --system --user-group --no-create-home nox`; папка `/var/lib/nox` (владелец `nox`, права 700); служба — `deploy/noxd.service.tmpl` с подставленными значениями в `/etc/systemd/system/noxd.service`, затем `systemctl enable --now noxd`.
 3. Пароль и первое устройство: `noxd unlock`, затем `noxd link -qr`.
 
@@ -148,6 +148,7 @@ macOS показывает уведомление о новом фоновом �
 | Симптом | Что делать |
 |---|---|
 | `port 8443 is in use by …` | Порт занят другой программой: `--port` с другим портом |
+| `… repository key file is not the Tor Project's key … and nothing else` | Файл ключа репозитория Tor Project пришёл с чужим или лишним ключом — подмена по дороге или на сервере. tor не ставится, сервер ставится без него. Повторить позже; повторится — поставить tor вручную, сверив отпечаток |
 | `tor: there is no gpg …` | Поставить gpg (macOS — `brew install gnupg`, Windows — Gpg4win) и запустить скрипт ещё раз: сервер обновится, tor добавится |
 | `tor: … is version 0.4.8…` | tor старее 0.4.9 — сеть Tor его не принимает. На Linux скрипт ставит tor из репозитория Tor Project; если не вышло — поставить вручную и запустить скрипт ещё раз |
 | `tor did not write its onion address …` | Скрипт показывает конец журнала tor. Чаще всего — права на папку данных tor или чужой tor, занявший её |
