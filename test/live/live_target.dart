@@ -51,7 +51,8 @@ class LiveTarget {
   /// by both transports of the probe exactly as the app shares one.
   ChannelHttpClient client() => ChannelHttpClient(const NativeNoxChannelApi())..bind(serverKey: link.serverKey, deviceSeed: deviceSeed);
 
-  /// The link's first direct address: pairing goes there until phase 045.
+  /// The link's first direct address - what the connection screen shows in
+  /// its address field (phase 045). These probes dial it directly.
   String get address => link.directAddresses.first;
 
   /// The command channel.

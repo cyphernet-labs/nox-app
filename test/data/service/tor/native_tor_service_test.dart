@@ -15,11 +15,7 @@ class _FakeApi extends NoxTorApi {
   NoxTorSnapshot snapshot = NoxTorSnapshot.stopped;
   int starts = 0;
   int stops = 0;
-  ({String host, int port})? target;
   String clientVersion = 'arti-client 0.47.0';
-
-  /// Set to make setTarget refuse, as the library does for a stopped client.
-  int? refuseTargetWith;
 
   @override
   void start({required String stateDir, required String cacheDir}) {
@@ -32,16 +28,6 @@ class _FakeApi extends NoxTorApi {
     stops++;
     snapshot = NoxTorSnapshot.stopped;
   }
-
-  @override
-  void setTarget({required String onionHost, required int port, required Uint8List clientKey}) {
-    final code = refuseTargetWith;
-    if (code != null) throw NoxTorException(code);
-    target = (host: onionHost, port: port);
-  }
-
-  @override
-  void clearTarget() => target = null;
 
   @override
   void setDormant(bool dormant) {}
@@ -83,27 +69,24 @@ void main() {
     expect(service.status.bootstrapPercent, 10);
   });
 
-  test('a target gives the client the access key, and says whether it took it', () async {
-    await service.start();
-    expect(service.setTarget(onionHost: 'x.onion', port: 443, clientKey: Uint8List(32)), isTrue);
-    expect(api.target, (host: 'x.onion', port: 443));
-    service.clearTarget();
-    expect(api.target, isNull);
-
-    api.refuseTargetWith = -8;
-    expect(
-      service.setTarget(onionHost: 'x.onion', port: 443, clientKey: Uint8List(32)),
-      isFalse,
-      reason: 'refused, not thrown',
-    );
-  });
-
-  test('a refused key the channel reports shows in the status', () async {
+  test('the access-key codes the ABI keeps in its numbering read as nothing gone wrong (phase 045)', () async {
+    // The client holds no access keys, so the module never reports them; a
+    // status carrying one says nothing the app has a kind for.
     await service.start();
     api.snapshot = const NoxTorSnapshot(state: NoxTorState.ready, bootstrapPercent: 100, error: NoxTorError.wrongClientAuth);
     service.setDormant(false); // any call polls the snapshot
     await pumpEventQueue();
-    expect(service.status.error, TorError.wrongClientAuth);
+    expect(service.status.error, TorError.none);
+    expect(service.status.isReady, isTrue);
+  });
+
+  test('every other error kind of the module keeps its meaning', () {
+    expect(NativeTorService.errorOf(NoxTorError.none), TorError.none);
+    expect(NativeTorService.errorOf(NoxTorError.timeout), TorError.timeout);
+    expect(NativeTorService.errorOf(NoxTorError.network), TorError.network);
+    expect(NativeTorService.errorOf(NoxTorError.internal), TorError.internal);
+    expect(NativeTorService.errorOf(NoxTorError.softwareDeprecated), TorError.softwareDeprecated);
+    expect(NativeTorService.errorOf(NoxTorError.missingClientAuth), TorError.none);
   });
 
   test('obsolete is remembered for this Tor client, and the same client is not started again', () async {
@@ -138,15 +121,12 @@ void main() {
     expect(api.starts, 0);
   });
 
-  test('an unsupported platform runs no Tor, but still reads an onion address', () async {
-    // The address is the module's arithmetic, and the module is there on
-    // every platform since phase 044 - Linux among them, where Tor is not
-    // offered yet.
-    final linux = NativeTorService.forTest(prefs, api: api, directories: () async => ('/s', '/c'), supported: false);
-    await linux.start();
-    expect(linux.setTarget(onionHost: 'x.onion', port: 443, clientKey: Uint8List(32)), isFalse);
+  test('where Tor is not supported none runs, but an onion address still reads', () async {
+    // The address is the module's arithmetic, and asking it costs nothing
+    // even where Tor itself does not run.
+    final unsupported = NativeTorService.forTest(prefs, api: api, directories: () async => ('/s', '/c'), supported: false);
+    await unsupported.start();
     expect(api.starts, 0);
-    expect(api.target, isNull);
-    expect(linux.onionFromPublicKey(Uint8List(32)), 'x.onion');
+    expect(unsupported.onionFromPublicKey(Uint8List(32)), 'x.onion');
   });
 }

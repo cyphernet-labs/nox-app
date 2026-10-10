@@ -130,9 +130,9 @@ class PairingLink {
   /// The server key as stored (`session.server_key`): base64.
   String get serverKeyBase64 => base64.encode(serverKey);
 
-  /// The direct addresses in the link's order, as `host:port`. Pairing tries
-  /// only these until phase 045: the onion service opens only for a key a
-  /// paired device holds.
+  /// The direct addresses in the link's order, as `host:port`: the server's
+  /// public address first when it set one, then a direct one (contract §8A).
+  /// The first is what the connection screen shows (phase 045).
   List<String> get directAddresses => [
     for (final address in addresses)
       if (address is DirectLinkAddress) address.authority,

@@ -370,35 +370,53 @@ void main() {
     });
   });
 
-  group('phase 040 records', () {
+  group('connection records (phases 040, 045)', () {
     const storage = FlutterSecureStorage();
 
-    Future<void> writeAll() async {
-      await storage.write(key: ConnectionStorage.serverAddresses, value: '{"direct":["10.0.0.5:8443"]}');
-      await storage.write(key: ConnectionStorage.accessKeyRegistered, value: '1');
+    Future<void> writeSettings() =>
+        storage.write(key: ConnectionStorage.serverAddresses, value: '{"direct":["10.0.0.5:8443"],"use_tor":true}');
+
+    /// What builds of phases 040-044 kept: the device's onion access key and
+    /// its registration mark.
+    Future<void> writeLegacyAccessKey() async {
+      await storage.write(key: ConnectionStorage.legacyAccessKeyRegistered, value: '1');
       await storage.write(
-        key: ConnectionStorage.accessKey,
+        key: ConnectionStorage.legacyAccessKey,
         value: 'BBBB',
-        iOptions: ConnectionStorage.keyIOSOptions,
-        mOptions: ConnectionStorage.keyMacOsOptions,
+        iOptions: ConnectionStorage.legacyKeyIOSOptions,
+        mOptions: ConnectionStorage.legacyKeyMacOsOptions,
       );
     }
 
-    test('logout removes the addresses and the access key', () async {
+    test('logout removes the connection settings', () async {
       await repository.saveIdentifier(identifier: 'abc', onboardingComplete: true);
-      await writeAll();
+      await writeSettings();
       await repository.clear();
-      for (final key in [ConnectionStorage.serverAddresses, ConnectionStorage.accessKeyRegistered, ConnectionStorage.accessKey]) {
-        expect(await storage.read(key: key), isNull, reason: key);
-      }
+      expect(await storage.read(key: ConnectionStorage.serverAddresses), isNull);
     });
 
-    test('a failed sign-in keeps the device access key and drops the rest', () async {
-      await writeAll();
+    test('a failed sign-in drops the connection settings it wrote', () async {
+      await writeSettings();
       await repository.discardSignIn();
       expect(await storage.read(key: ConnectionStorage.serverAddresses), isNull);
-      expect(await storage.read(key: ConnectionStorage.accessKeyRegistered), isNull);
-      expect(await storage.read(key: ConnectionStorage.accessKey), 'BBBB');
+    });
+
+    test('the bootstrap sweep drops the access key of earlier builds and its mark (phase 045)', () async {
+      // The onion address opens for no key since phase 045, and nothing reads
+      // either record any more.
+      await writeLegacyAccessKey();
+
+      expect((await repository.sweepLegacyKeys()).hasData, isTrue);
+
+      expect(await storage.read(key: ConnectionStorage.legacyAccessKeyRegistered), isNull);
+      expect(
+        await storage.read(
+          key: ConnectionStorage.legacyAccessKey,
+          iOptions: ConnectionStorage.legacyKeyIOSOptions,
+          mOptions: ConnectionStorage.legacyKeyMacOsOptions,
+        ),
+        isNull,
+      );
     });
 
     test('the bootstrap sweep drops a one-time invite key left by earlier builds', () async {
@@ -409,8 +427,8 @@ void main() {
       await storage.write(
         key: 'session.invite_access_key',
         value: 'AAAA',
-        iOptions: ConnectionStorage.keyIOSOptions,
-        mOptions: ConnectionStorage.keyMacOsOptions,
+        iOptions: ConnectionStorage.legacyKeyIOSOptions,
+        mOptions: ConnectionStorage.legacyKeyMacOsOptions,
       );
 
       expect((await repository.sweepLegacyKeys()).hasData, isTrue);
@@ -421,12 +439,10 @@ void main() {
 
     test('a new server starts with nothing an earlier one said about itself', () async {
       // A sign-in the process did not survive leaves the old server's records
-      // behind; kept, they would send the next connection to its onion.
-      await writeAll();
+      // behind; kept, they would send the next connection to its addresses.
+      await writeSettings();
       await repository.saveServer(address: '10.0.0.9:8443', serverKey: 'oJql9HpnWYAv+VX43C0qFKXJnSO+l/hkEn/5ODRVpPA=');
       expect(await storage.read(key: ConnectionStorage.serverAddresses), isNull);
-      expect(await storage.read(key: ConnectionStorage.accessKeyRegistered), isNull);
-      expect(await storage.read(key: ConnectionStorage.accessKey), 'BBBB', reason: 'the key names this install');
       expect((await repository.serverAddress()).data, '10.0.0.9:8443');
     });
   });

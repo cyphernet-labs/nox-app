@@ -7,7 +7,6 @@ import 'package:nox_app/data/remote/channel/channel_http_client.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
 import 'package:nox_app/domain/service/attachment_download_service.dart';
-import 'package:nox_app/data/sync/connection/access_key_registrar.dart';
 import 'package:nox_app/data/sync/connection/connection_path_selector.dart';
 import 'package:nox_app/data/sync/sync_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
@@ -48,7 +47,6 @@ class LiveSessionStarter {
     this._files,
     this._channels,
     this._selector,
-    this._registrar,
     this._addresses,
   );
 
@@ -63,7 +61,6 @@ class LiveSessionStarter {
   final FileRepository _files;
   final ChannelHttpClient _channels;
   final ConnectionPathSelector _selector;
-  final AccessKeyRegistrar _registrar;
   final ServerAddressesRepository _addresses;
 
   StreamSubscription<SessionPhase>? _phaseSub;
@@ -141,7 +138,6 @@ class LiveSessionStarter {
     // every greeting then points it at the path in use (FR-009).
     if (getIt.isRegistered<ApiClient>()) getIt<ApiClient>().initBase(address: _restUrl(apiUrl));
     _syncService.start();
-    _registrar.start();
     // The greeting is where the server states the payload limits and who we
     // are; both are authoritative and arrive again on every reconnect.
     _phaseSub ??= _socket.phase.listen((phase) {
@@ -188,7 +184,6 @@ class LiveSessionStarter {
     _phaseSub = null;
     await _socket.stop();
     await _syncService.stop();
-    await _registrar.stop();
     // After the socket, so no new round starts; Tor stops here on a logout.
     await _selector.end(keepTor: keepTor);
     // Forget the server. A logout leaves nothing this install is entitled to
@@ -296,7 +291,7 @@ class LiveSessionStarter {
     // anything that can return early below: an install that has not finished
     // signing in needs the onion address as much as one that has.
     final stated = _socket.addresses;
-    if (stated != null) await _addresses.saveFromServer(direct: stated.direct, onion: stated.onion);
+    if (stated != null) await _addresses.saveFromServer(direct: stated.direct, public: stated.public, onion: stated.onion);
     final identity = _socket.identity;
     if (identity == null || identity.id.isEmpty) return;
     // A connection made before anyone signed in was served a one-off identity.

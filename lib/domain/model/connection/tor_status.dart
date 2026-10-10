@@ -3,16 +3,11 @@ enum TorState { stopped, bootstrapping, ready, dormant, failed, obsolete }
 
 /// The last thing that went wrong, as a kind. Never text: a message from Tor
 /// can name the onion service, and that must not reach a log or a screen.
+///
+/// No access-key kinds since phase 045: the client holds no onion access keys,
+/// and the module no longer reports a refusal of one.
 enum TorError {
   none,
-
-  /// No key for the onion service was given.
-  missingClientAuth,
-
-  /// The service does not list this key: not registered yet, or the device
-  /// was revoked. Reported by the channel's onion connects (phase 044), as
-  /// the bridge reported it before.
-  wrongClientAuth,
   timeout,
   network,
   internal,

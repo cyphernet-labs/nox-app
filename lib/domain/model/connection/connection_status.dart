@@ -1,5 +1,6 @@
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:nox_app/domain/model/connection/connection_path.dart';
+import 'package:nox_app/domain/model/connection/connection_problem.dart';
 
 part 'connection_status.freezed.dart';
 
@@ -23,6 +24,7 @@ enum LinkState {
 
   /// The server reached through its onion address presented a key the pairing
   /// link did not name (FR-030). Never caused by a direct address (FR-005).
+  /// Its [ConnectionStatus.problem] is [ConnectionProblem.otherServer].
   serverMismatch,
 
   /// The server will never accept this build (contract §2.1).
@@ -41,6 +43,11 @@ abstract class ConnectionStatus with _$ConnectionStatus {
 
     /// The Tor network no longer accepts the client built into this version.
     @Default(false) bool torObsolete,
+
+    /// Why there is no connection, when that is known (phase 045): shown in
+    /// place of «No connection». Null while connected or coming up, and when
+    /// the cause cannot be told.
+    ConnectionProblem? problem,
   }) = _ConnectionStatus;
 
   static const ConnectionStatus initial = ConnectionStatus(state: LinkState.connecting);

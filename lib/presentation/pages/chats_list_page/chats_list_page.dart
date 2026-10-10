@@ -13,7 +13,9 @@ import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/general/constants.dart';
 import 'package:nox_app/general/feature_flags.dart';
 import 'package:nox_app/general/formatters/date_formatter.dart';
+import 'package:nox_app/domain/model/connection/connection_problem.dart';
 import 'package:nox_app/general/l10n_extension.dart';
+import 'package:nox_app/presentation/helpers/connection_problem_text.dart';
 import 'package:nox_app/domain/model/chat/chat_model.dart';
 import 'package:nox_app/presentation/pages/base/base_state_page.dart';
 import 'package:nox_app/presentation/pages/chat_card_page/chat_card_page.dart';
@@ -362,7 +364,7 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
     // way back - nothing about this changes on its own.
     if (state.isServerMismatch) {
       return AppNoticeStripWidget(
-        message: context.l10n.serverNotRecognised,
+        message: (state.problem ?? ConnectionProblem.otherServer).text(context.l10n),
         icon: NoxIcons.error,
         actionLabel: context.l10n.actionTryAgain,
         onAction: () => _bloc.add(const ChatsListEvent.retryConnection()),
@@ -371,9 +373,10 @@ class _ChatsListPageState extends BaseStatePage<ChatsListPage> {
     if (state.isOffline) {
       // Try again restarts the channel - the one thing relaunching the app used
       // to be needed for (phase 042). Not for a server that refuses this
-      // build: trying again cannot change its answer.
+      // build: trying again cannot change its answer. The cause, when it is
+      // known, says more than «No connection» (phase 045).
       return AppNoticeStripWidget(
-        message: context.l10n.noConnection,
+        message: state.problem?.text(context.l10n) ?? context.l10n.noConnection,
         icon: NoxIcons.wifiOff,
         actionLabel: state.isUnsupported ? null : context.l10n.actionTryAgain,
         onAction: state.isUnsupported ? null : () => _bloc.add(const ChatsListEvent.retryConnection()),

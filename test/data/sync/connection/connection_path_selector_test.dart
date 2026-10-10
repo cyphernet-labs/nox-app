@@ -6,25 +6,29 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
 import 'package:nox_app/data/local/app_database.dart';
 import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
+import 'package:nox_app/data/remote/socket/socket_target_provider.dart';
 import 'package:nox_app/data/service/tor/fake_tor_service.dart';
 import 'package:nox_app/data/sync/connection/connection_path_selector.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/connection/connection_path.dart';
 import 'package:nox_app/domain/model/connection/tor_status.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
-import 'package:nox_app/domain/repository/connection/access_key_repository.dart';
 import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_app/domain/service/app_lifecycle_service.dart';
 import 'package:nox_app/domain/service/network_change_service.dart';
+import 'package:nox_app/domain/model/connection/connection_problem.dart';
+import 'package:nox_app/domain/model/connection/connection_status.dart';
+import 'package:nox_app/data/sync/connection/connection_status_service_impl.dart';
+import 'package:nox_tor/channel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../remote/socket/fake_socket.dart';
 import 'fake_direct_prober.dart';
 
-/// How the app chooses its way to the server (phase 040, US1-US3): direct
-/// first, Tor only when no direct address answers and only where it can work,
-/// and back to direct as soon as it answers again.
+/// How the app chooses its way to the server (phases 040, 045): direct first,
+/// Tor only when no direct address answers, `Use Tor` is on and an onion
+/// address is known, and back to direct as soon as it answers again.
 final Uint8List _serverKey = Uint8List.fromList(List<int>.generate(32, (i) => 0xA0 + i));
 final Uint8List _deviceSeed = Uint8List.fromList(List<int>.generate(32, (i) => i));
 const String _link = '10.0.0.5:9000';
@@ -69,7 +73,6 @@ void main() {
   late FakeDirectProber prober;
   late FakeTorService tor;
   late ServerAddressesRepository addresses;
-  late AccessKeyRepository keys;
   late _Network network;
   late _Lifecycle lifecycle;
   late ConnectionPathSelector selector;
@@ -83,7 +86,6 @@ void main() {
     prober,
     tor,
     addresses,
-    keys,
     network,
     lifecycle,
     socket,
@@ -104,7 +106,6 @@ void main() {
     prober = FakeDirectProber();
     tor = FakeTorService();
     addresses = getIt<ServerAddressesRepository>();
-    keys = getIt<AccessKeyRepository>();
     network = _Network();
     lifecycle = _Lifecycle();
     selector = build()..begin(linkAddress: _link, serverKey: _serverKey, deviceSeed: _deviceSeed);
@@ -124,12 +125,12 @@ void main() {
     fail('condition never became true${reason.isEmpty ? '' : ': $reason'}');
   }
 
-  /// The server is reachable through its onion address with this device's key.
+  /// The server is reachable through its onion address, and the person allows
+  /// Tor. No key opens the service (phase 045).
   Future<void> torWorks() async {
     tor.supported = true;
     await addresses.saveFromServer(direct: const <String>[], onion: _onion);
-    await keys.deviceKey();
-    await keys.markRegistered(true);
+    await addresses.setUseTor(true);
   }
 
   Future<FakeSocket> greetLatest() async {
@@ -171,7 +172,18 @@ void main() {
       expect(prober.rounds.single, ['192.168.1.21:8080', '192.168.1.20:8080', _link]);
     });
 
-    test('no direct answer, and Tor brings up the onion address with the device key', () async {
+    test('the person\'s own address and the public one go before the server list, each once (phase 045)', () async {
+      await addresses.saveFromServer(direct: const ['192.168.1.20:8080', '203.0.113.7:8443'], public: '203.0.113.7:8443');
+      await addresses.saveManual(manualAddress: '10.8.0.2:8443', manualOnion: null);
+      await addresses.recordLastGood('192.168.1.20:8080');
+      prober.home = <String>{};
+
+      await selector.nextTarget();
+
+      expect(prober.rounds.single, ['192.168.1.20:8080', '10.8.0.2:8443', '203.0.113.7:8443', _link]);
+    });
+
+    test('no direct answer, and Tor brings up the onion address - no key opens it (phase 045)', () async {
       await torWorks();
       prober.home = <String>{};
 
@@ -179,15 +191,30 @@ void main() {
 
       expect(target, Uri.parse('wss://$_onionHost/ws'));
       expect(tor.starts, 1);
-      expect(tor.target?.host, _onionHost);
-      expect(tor.target?.port, 443);
-      expect(tor.target?.key, (await keys.deviceKey()).data!.privateKey);
       expect(selector.selection.path, ConnectionPath.tor);
+    });
+
+    test('the onion address the person typed is the one dialled', () async {
+      await torWorks();
+      final typed = '${'b' * 56}.onion';
+      await addresses.saveManual(manualAddress: null, manualOnion: '$typed:443');
+      prober.home = <String>{};
+
+      expect(await selector.nextTarget(), Uri.parse('wss://$typed/ws'));
+    });
+
+    test('an onion address the person cleared is no onion address at all', () async {
+      await torWorks();
+      await addresses.saveManual(manualAddress: null, manualOnion: '');
+      prober.home = <String>{};
+
+      expect(await selector.nextTarget(), isNull);
+      expect(tor.starts, 0);
     });
 
     test('no onion address means no Tor, and no path', () async {
       tor.supported = true;
-      await keys.markRegistered(true);
+      await addresses.setUseTor(true);
       prober.home = <String>{};
 
       expect(await selector.nextTarget(), isNull);
@@ -195,16 +222,17 @@ void main() {
       expect(selector.selection.roundFailed, isTrue);
     });
 
-    test('a key the server does not have yet means no Tor (FR-007)', () async {
+    test('Use Tor off - the default - means no Tor even with an onion address (FR-011, SC-006)', () async {
       tor.supported = true;
       await addresses.saveFromServer(direct: const <String>[], onion: _onion);
       prober.home = <String>{};
 
       expect(await selector.nextTarget(), isNull);
       expect(tor.starts, 0);
+      expect((await addresses.read()).data!.useTor, isFalse, reason: 'off unless the person turned it on');
     });
 
-    test('where Tor cannot run - Linux - the app goes direct only (FR-031)', () async {
+    test('where the library is missing the app goes direct only (FR-031)', () async {
       await torWorks();
       tor.supported = false;
       prober.home = <String>{};
@@ -263,51 +291,6 @@ void main() {
       expect(await selector.nextTarget(), isNull);
     });
 
-    test('a link lends no key any more: an unregistered device has no way through Tor (FR-019)', () async {
-      // Version-3 links carry no one-time access key, so a device pairs at
-      // home until phase 045, and only its own registered key opens the
-      // onion service.
-      tor.supported = true;
-      await addresses.saveFromServer(direct: const <String>[], onion: _onion);
-      prober.home = <String>{};
-
-      expect(await selector.nextTarget(), isNull);
-      expect(tor.target, isNull);
-    });
-
-    test('a client that will not take the key is no path this round', () async {
-      await torWorks();
-      tor.takesTargets = false;
-      prober.home = <String>{};
-
-      expect(await selector.nextTarget(), isNull);
-      expect(tor.starts, 1);
-    });
-
-    test('the key is given to the client on every bring-up, not only when it changed', () async {
-      // Nothing says whether a client rebuilt after a failure still holds it.
-      await torWorks();
-      prober.home = <String>{};
-      await selector.nextTarget();
-      final sets = tor.targetSets;
-
-      await selector.nextTarget();
-
-      expect(tor.targetSets, sets + 1);
-    });
-
-    test('a registered key that is gone is not minted anew on the way to Tor (FR-018)', () async {
-      // A round racing a logout reads "registered" and then finds the key
-      // wiped; a key minted there would survive the logout.
-      tor.supported = true;
-      await addresses.saveFromServer(direct: const <String>[], onion: _onion);
-      await keys.markRegistered(true);
-      prober.home = <String>{};
-
-      expect(await selector.nextTarget(), isNull);
-      expect((await keys.storedDeviceKey()).data, isNull, reason: 'nothing was minted');
-    });
-
     test('a start that did not take is no path this round, at once', () async {
       // Refused by the library, or overtaken by a stop: waiting on a client
       // that is not running spent the whole budget of the round.
@@ -344,10 +327,252 @@ void main() {
       expect(prober.rounds, isEmpty);
     });
 
+    test('the debug switch does not override Use Tor', () async {
+      await selector.end();
+      selector = build(forceTor: true)..begin(linkAddress: _link, serverKey: _serverKey, deviceSeed: _deviceSeed);
+      await torWorks();
+      await addresses.setUseTor(false);
+
+      expect(await selector.nextTarget(), isNull);
+      expect(tor.starts, 0);
+    });
+
     test('a release build ignores the debug switch', () {
       expect(ConnectionPathSelector.resolveForceTor(debug: false, requested: true), isFalse);
       expect(ConnectionPathSelector.resolveForceTor(debug: true, requested: false), isFalse);
       expect(ConnectionPathSelector.resolveForceTor(debug: true, requested: true), isTrue);
+    });
+  });
+
+  group('Use Tor (phase 045)', () {
+    test('with Use Tor off nothing is ever opened through Tor, round after round (SC-006)', () async {
+      tor.supported = true;
+      await addresses.saveFromServer(direct: const <String>[], onion: _onion);
+      await addresses.recordGreetedViaTor();
+      prober.home = <String>{};
+
+      final targets = <Uri?>[];
+      for (var i = 0; i < 3; i++) {
+        targets.add(await selector.nextTarget());
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+
+      expect(prober.rounds, hasLength(3), reason: 'every round tried the direct path');
+      expect(tor.starts, 0, reason: 'the client was never even started, not even warmed up');
+      expect(targets.whereType<Uri>().where(isOnionUrl), isEmpty, reason: 'no onion address was handed to the socket');
+    });
+
+    test('turned off while the connection goes through Tor, Tor stops at once and the next round goes direct', () async {
+      await torWorks();
+      prober.home = <String>{};
+      await connectAndGreet();
+      expect(selector.currentPath, ConnectionPath.tor);
+      final dialled = factory.created.length;
+
+      prober.home = null;
+      await addresses.setUseTor(false);
+
+      await waitUntil(() => tor.status.state == TorState.stopped, reason: 'Tor stopped on the change, not at the next round');
+      await waitUntil(() => factory.created.length > dialled, reason: 'the connection through Tor is left');
+      expect(factory.urls.last, Uri.parse('wss://$_link/ws'));
+      await greetLatest();
+      expect(selector.currentPath, ConnectionPath.direct);
+    });
+
+    test('turned off while Tor is coming up, the bring-up ends and nothing is dialled through it', () async {
+      await torWorks();
+      tor.afterStart = const TorStatus(state: TorState.bootstrapping, bootstrapPercent: 40);
+      prober.home = <String>{};
+      final round = selector.nextTarget();
+      await waitUntil(() => tor.starts == 1, reason: 'Tor is coming up');
+
+      await addresses.setUseTor(false);
+
+      expect(await round, isNull, reason: 'no onion address is handed over');
+      expect(tor.status.state, TorState.stopped);
+    });
+
+    test('turned on, the next round goes through Tor when no direct address answers', () async {
+      tor.supported = true;
+      await addresses.saveFromServer(direct: const <String>[], onion: _onion);
+      prober.home = <String>{};
+      expect(await selector.nextTarget(), isNull);
+
+      await addresses.setUseTor(true);
+
+      expect(await selector.nextTarget(), Uri.parse('wss://$_onionHost/ws'));
+    });
+
+    test('a direct address that answers still wins with Use Tor on: Tor is for when it does not (FR-012)', () async {
+      await torWorks();
+
+      expect(await selector.nextTarget(), Uri.parse('wss://$_link/ws'));
+      expect(tor.starts, 0);
+    });
+  });
+
+  group('why the round failed (phase 045, research decision 12)', () {
+    test('no direct answer, Use Tor off and an onion address known: turn Use Tor on', () async {
+      tor.supported = true;
+      await addresses.saveFromServer(direct: const <String>[], onion: _onion);
+      prober.home = <String>{};
+
+      expect(await selector.nextTarget(), isNull);
+
+      expect(selector.selection.roundFailed, isTrue);
+      expect(selector.selection.problem, ConnectionProblem.turnOnTor);
+    });
+
+    test('no onion address means no hint: there is nothing to turn on', () async {
+      tor.supported = true;
+      prober.home = <String>{};
+
+      expect(await selector.nextTarget(), isNull);
+
+      expect(selector.selection.problem, isNull);
+    });
+
+    test('no hint where Tor cannot run, or the network refused this client', () async {
+      await addresses.saveFromServer(direct: const <String>[], onion: _onion);
+      prober.home = <String>{};
+      expect(await selector.nextTarget(), isNull);
+      expect(selector.selection.problem, isNull, reason: 'no library');
+
+      tor.supported = true;
+      tor.emit(const TorStatus(state: TorState.obsolete, error: TorError.softwareDeprecated));
+      expect(await selector.nextTarget(), isNull);
+      expect(selector.selection.problem, isNull, reason: 'the client was refused: an update is asked for instead');
+    });
+
+    test('Tor that does not come up is the Tor network', () async {
+      await torWorks();
+      tor.afterStart = const TorStatus(state: TorState.bootstrapping, bootstrapPercent: 40);
+      prober.home = <String>{};
+
+      expect(await selector.nextTarget(), isNull);
+
+      expect(selector.selection.problem, ConnectionProblem.torNetwork);
+    });
+
+    test('Tor whose start did not take is the Tor network too', () async {
+      await torWorks();
+      tor.afterStart = TorStatus.stopped;
+      prober.home = <String>{};
+
+      expect(await selector.nextTarget(), isNull);
+
+      expect(selector.selection.problem, ConnectionProblem.torNetwork);
+    });
+
+    for (final (failure, problem) in <(ChannelFailure?, ConnectionProblem?)>[
+      (ChannelFailure.torOnionInvalid, ConnectionProblem.invalidOnion),
+      (ChannelFailure.torOnionNotFound, ConnectionProblem.onionNotFound),
+      (ChannelFailure.torOnionUnreachable, ConnectionProblem.onionUnreachable),
+      (ChannelFailure.timeout, ConnectionProblem.onionUnreachable),
+      (ChannelFailure.torClientAuth, ConnectionProblem.onionUnreachable),
+      (ChannelFailure.protocol, ConnectionProblem.onionUnreachable),
+      (ChannelFailure.torNotReady, ConnectionProblem.torNetwork),
+      (ChannelFailure.network, ConnectionProblem.torNetwork),
+      (ChannelFailure.internal, null),
+      (null, null),
+    ]) {
+      test(
+        'a dial through Tor that failed with ${failure?.name ?? 'nothing said'} reads as ${problem?.name ?? 'no known cause'}',
+        () async {
+          await torWorks();
+          prober.home = <String>{};
+          final onion = await selector.nextTarget();
+          expect(onion, Uri.parse('wss://$_onionHost/ws'));
+
+          selector.reportFailed(onion!, failure);
+          await selector.nextTarget();
+
+          expect(selector.selection.roundFailed, isTrue);
+          expect(selector.selection.problem, problem);
+        },
+      );
+    }
+
+    test('a report about another target, or a greeted one, changes nothing', () async {
+      await torWorks();
+      prober.home = <String>{};
+      final onion = await selector.nextTarget();
+      selector.reportFailed(Uri.parse('wss://10.9.9.9:1/ws'), ChannelFailure.torOnionNotFound);
+      selector.reportGreeted(onion!);
+      selector.reportFailed(onion, ChannelFailure.torOnionNotFound);
+
+      expect(selector.selection.problem, isNull);
+    });
+
+    test('the last failed round says why: a later cause replaces an earlier one', () async {
+      await torWorks();
+      prober.home = <String>{};
+      final onion = await selector.nextTarget();
+      selector.reportFailed(onion!, ChannelFailure.torOnionNotFound);
+      final again = await selector.nextTarget();
+      expect(selector.selection.problem, ConnectionProblem.onionNotFound);
+
+      selector.reportFailed(again!, ChannelFailure.torOnionUnreachable);
+      await selector.nextTarget();
+
+      expect(selector.selection.problem, ConnectionProblem.onionUnreachable);
+    });
+
+    test('a greeting clears the problem', () async {
+      tor.supported = true;
+      await addresses.saveFromServer(direct: const <String>[], onion: _onion);
+      prober.home = <String>{};
+      expect(await selector.nextTarget(), isNull);
+      expect(selector.selection.problem, ConnectionProblem.turnOnTor);
+
+      prober.home = null;
+      final target = await selector.nextTarget();
+      selector.reportGreeted(target!);
+
+      expect(selector.selection.problem, isNull);
+      expect(selector.selection.roundFailed, isFalse);
+    });
+
+    test('a restart starts without the old problem, and the new round says its own', () async {
+      tor.supported = true;
+      await addresses.saveFromServer(direct: const <String>[], onion: _onion);
+      prober.home = <String>{};
+      expect(await selector.nextTarget(), isNull);
+      expect(selector.selection.problem, ConnectionProblem.turnOnTor);
+
+      await selector.end(keepTor: true);
+      selector.begin(linkAddress: _link, serverKey: _serverKey, deviceSeed: _deviceSeed);
+      expect(selector.selection.problem, isNull);
+
+      await addresses.setUseTor(true);
+      tor.afterStart = const TorStatus(state: TorState.bootstrapping, bootstrapPercent: 40);
+      expect(await selector.nextTarget(), isNull);
+      expect(selector.selection.problem, ConnectionProblem.torNetwork);
+    });
+
+    test('end to end: an onion address nobody answers at reaches the status as its own problem', () async {
+      await torWorks();
+      prober.home = <String>{};
+      factory.refuseEvery = ChannelFailure.torOnionNotFound;
+      final status = LiveConnectionStatusService(socket, selector, tor);
+
+      await socket.start(targets: selector, credentialsProvider: () async => const GreetingCredentials());
+      await waitUntil(() => status.status.problem != null, reason: 'the failed round is folded in');
+
+      expect(status.status.state, LinkState.offline);
+      expect(status.status.problem, ConnectionProblem.onionNotFound);
+    });
+
+    test('end to end: another key behind the onion address is "another server"', () async {
+      await torWorks();
+      prober.home = <String>{};
+      factory.refuseEvery = ChannelFailure.wrongServer;
+      final status = LiveConnectionStatusService(socket, selector, tor);
+
+      await socket.start(targets: selector, credentialsProvider: () async => const GreetingCredentials());
+      await waitUntil(() => status.status.isServerMismatch, reason: 'the refusal');
+
+      expect(status.status.problem, ConnectionProblem.otherServer);
     });
   });
 
@@ -385,6 +610,17 @@ void main() {
       expect(selector.currentPath, ConnectionPath.direct);
       await waitUntil(() => tor.status.state == TorState.stopped, reason: 'Tor stopped on the direct greeting (FR-006)');
       expect((await addresses.read()).data!.viaTorLast, isFalse, reason: 'home again');
+    });
+
+    test('with Use Tor off the mark starts nothing (SC-006)', () async {
+      await torWorks();
+      await addresses.recordGreetedViaTor();
+      await addresses.setUseTor(false);
+      prober.home = <String>{};
+
+      expect(await selector.nextTarget(), isNull);
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(tor.starts, 0, reason: 'not even warmed up');
     });
 
     test('without the mark, Tor waits for the direct addresses as before', () async {
@@ -446,7 +682,7 @@ void main() {
 
       expect(selector.currentPath, ConnectionPath.direct);
       await waitUntil(() => tor.stops > 0, reason: 'Tor stops once the direct connection is greeted');
-      expect(tor.target, isNull);
+      expect(tor.status.state, TorState.stopped);
     });
 
     test('a network change checks the direct path at once', () async {
@@ -525,19 +761,7 @@ void main() {
       lifecycle.go(AppVisibility.foreground);
       await waitUntil(() => tor.starts > starts, reason: 'restarted after the wake-up budget');
 
-      expect(tor.target?.host, _onionHost, reason: 'the target is set again');
-    });
-
-    test('back in front on Tor, the key stays with the client: there is no listener to renew (phase 044)', () async {
-      await onTor();
-      final clears = tor.targetClears;
-
-      lifecycle.go(AppVisibility.background);
-      lifecycle.go(AppVisibility.foreground);
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-
-      expect(tor.targetClears, clears, reason: 'the bridge and its listening socket are gone');
-      expect(tor.target?.host, _onionHost);
+      expect(tor.status.isReady, isTrue, reason: 'up again, with nothing to hand it: the channel dials the address itself');
     });
 
     test('back in front with the socket on the ladder, the path is chosen at once', () async {
@@ -608,116 +832,6 @@ void main() {
     });
   });
 
-  group('a key the onion service does not know (T039)', () {
-    // What the channel's onion connect reports in the status, as the bridge
-    // did before it.
-    const refused = TorStatus(state: TorState.ready, bootstrapPercent: 100, error: TorError.wrongClientAuth);
-
-    test('turned away for longer than the grace, this device key counts as unknown, and Tor waits', () async {
-      await selector.end();
-      selector = ConnectionPathSelector.forTest(
-        prober,
-        tor,
-        addresses,
-        keys,
-        network,
-        lifecycle,
-        socket,
-        keyRefusalGrace: const Duration(milliseconds: 100),
-        torReadyBudget: const Duration(milliseconds: 400),
-      )..begin(linkAddress: _link, serverKey: _serverKey, deviceSeed: _deviceSeed);
-      await torWorks();
-      prober.home = <String>{};
-      expect(await selector.nextTarget(), isNotNull);
-
-      tor.emit(refused);
-      await Future<void>.delayed(const Duration(milliseconds: 150));
-
-      expect(await selector.nextTarget(), isNull, reason: 'no Tor until the key is registered again');
-      expect((await keys.isRegistered()).data, isFalse, reason: 'the next greeting registers it again');
-    });
-
-    test('a refusal right after the key went in is the description still spreading, not an unknown key', () async {
-      // A pairing a moment ago, or a registration: the service's published
-      // description lags behind. Switching Tor off here would strand a device
-      // that is away from home and has no other way in.
-      await torWorks();
-      prober.home = <String>{};
-      expect(await selector.nextTarget(), isNotNull);
-
-      tor.emit(refused);
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-
-      expect(await selector.nextTarget(), Uri.parse('wss://$_onionHost/ws'), reason: 'Tor is tried again');
-      expect((await keys.isRegistered()).data, isTrue);
-    });
-
-    test('a restart in the middle of a run of refusals starts a new run', () async {
-      // The status stream reports changes only, and a client that keeps being
-      // refused keeps one error: without forgetting the last one seen, the
-      // next session never noticed a refusal at all, and Tor went on dialling
-      // with a key the service does not know.
-      await selector.end();
-      ConnectionPathSelector build100() => ConnectionPathSelector.forTest(
-        prober,
-        tor,
-        addresses,
-        keys,
-        network,
-        lifecycle,
-        socket,
-        keyRefusalGrace: const Duration(milliseconds: 100),
-        torReadyBudget: const Duration(milliseconds: 400),
-      );
-      selector = build100()..begin(linkAddress: _link, serverKey: _serverKey, deviceSeed: _deviceSeed);
-      await torWorks();
-      prober.home = <String>{};
-      expect(await selector.nextTarget(), isNotNull);
-      tor.emit(refused);
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-
-      await selector.end(keepTor: true);
-      selector.begin(linkAddress: _link, serverKey: _serverKey, deviceSeed: _deviceSeed);
-      tor.afterStart = refused;
-      for (var i = 0; i < 3; i++) {
-        await selector.nextTarget();
-        await Future<void>.delayed(const Duration(milliseconds: 60));
-      }
-
-      expect(await selector.nextTarget(), isNull, reason: 'the key counts as unknown after the grace');
-      expect((await keys.isRegistered()).data, isFalse);
-    });
-
-    test('a greeting at home ends the run of refusals: an old one is no evidence later', () async {
-      await selector.end();
-      selector = ConnectionPathSelector.forTest(
-        prober,
-        tor,
-        addresses,
-        keys,
-        network,
-        lifecycle,
-        socket,
-        keyRefusalGrace: const Duration(milliseconds: 100),
-        torReadyBudget: const Duration(milliseconds: 400),
-      )..begin(linkAddress: _link, serverKey: _serverKey, deviceSeed: _deviceSeed);
-      await torWorks();
-      prober.home = <String>{};
-      expect(await selector.nextTarget(), isNotNull);
-      tor.emit(refused);
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-
-      prober.home = <String>{_link};
-      final direct = await selector.nextTarget();
-      selector.reportGreeted(direct!);
-      await Future<void>.delayed(const Duration(milliseconds: 150));
-
-      prober.home = <String>{};
-      expect(await selector.nextTarget(), Uri.parse('wss://$_onionHost/ws'), reason: 'the key is not called unknown');
-      expect((await keys.isRegistered()).data, isTrue);
-    });
-  });
-
   test('a stale bring-up finishing does not clear the mark of the round that replaced it', () async {
     // The mark is what lets a command wait out a Tor bring-up instead of
     // failing on the short timeout; a newer round must keep it.
@@ -779,7 +893,7 @@ void main() {
     // `async*` stream suspended on it cannot finish cancelling. Awaiting that
     // cancel wedged the channel restart a sign-in waits on.
     await selector.end();
-    selector = ConnectionPathSelector.forTest(prober, tor, addresses, keys, _StuckNetwork(), lifecycle, socket)
+    selector = ConnectionPathSelector.forTest(prober, tor, addresses, _StuckNetwork(), lifecycle, socket)
       ..begin(linkAddress: _link, serverKey: _serverKey, deviceSeed: _deviceSeed);
     await Future<void>.delayed(const Duration(milliseconds: 20));
 
@@ -790,7 +904,7 @@ void main() {
     await torWorks();
     prober.home = <String>{};
     await selector.nextTarget();
-    expect(tor.target, isNotNull);
+    expect(tor.status.isReady, isTrue);
 
     await selector.end();
 
@@ -814,6 +928,16 @@ void main() {
       await selector.end(keepTor: true);
 
       expect(tor.stops, stops, reason: 'a healthy client is worth keeping');
+    });
+
+    test('keeps no Tor client once Use Tor is off, however healthy (SC-006)', () async {
+      await onTorHere();
+      await addresses.setUseTor(false);
+      await waitUntil(() => tor.status.state == TorState.stopped, reason: 'stopped on the change itself');
+
+      await selector.end(keepTor: true);
+
+      expect(tor.status.state, TorState.stopped);
     });
 
     test('keeps a Tor client still coming up within its budget, so a second press loses nothing', () async {
