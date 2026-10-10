@@ -1,0 +1,31 @@
+# The NOX server. Written by deploy/install-linux.sh and written again on every
+# run of it: change the port or the addresses with the script, not here.
+#
+# The server starts locked after every start and waits for its password: on
+# the service page (http://127.0.0.1:@STATUS_PORT@ on this machine) or with
+# `noxd unlock`. tor is a service of its own; the server does not wait for it.
+[Unit]
+Description=NOX server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+Group=@GROUP@
+ExecStart="@NOXD@" -addr 0.0.0.0:@PORT@ -db "@DB@" -status-addr 127.0.0.1:@STATUS_PORT@@ADDRESS_ARGS@
+# A crash restarts the server - locked, like every start.
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=full
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

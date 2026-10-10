@@ -1,0 +1,9 @@
+# tor for NOX. Written by the NOX install script once, and then left alone:
+# settings of your own belong here. The NOX onion service is in the included
+# file, which the script writes again on every run.
+#
+# No SOCKS port: this tor publishes the onion service and does nothing else.
+SocksPort 0
+DataDirectory "@DATA_DIR@"
+Log notice @LOG_TARGET@
+%include "@NOX_CONF@"
