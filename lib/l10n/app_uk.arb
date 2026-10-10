@@ -210,5 +210,7 @@
   "connectUseTorCaption": "NOX використовує Tor, лише коли не може зв'язатися з сервером напряму.",
   "connectAction": "Під'єднатися",
   "connectInvalidServerAddress": "Це неправильна адреса сервера.",
-  "settingsConnectionTitle": "Зв'язок"
+  "settingsConnectionTitle": "Зв'язок",
+  "connectWaitingApproval": "Очікуємо підтвердження на вашому іншому пристрої",
+  "connectDeclined": "Ваш інший пристрій відхилив цей запит."
 }

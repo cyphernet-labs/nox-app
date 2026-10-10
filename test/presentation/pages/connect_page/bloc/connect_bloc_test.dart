@@ -8,6 +8,7 @@ import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nox_app/data/service/tor/fake_tor_service.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/exception/pairing_exception.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/connection/connection_problem.dart';
 import 'package:nox_app/domain/model/connection/connection_settings.dart';
@@ -48,11 +49,16 @@ void main() {
   late MockAuthRepository auth;
   late FixedConnectionStatusService status;
   late FakeTorService tor;
+  late StreamController<bool> approval;
 
   setUp(() async {
     await configureDependencies(Environment.test);
     getIt.allowReassignment = true;
     auth = MockAuthRepository();
+    approval = StreamController<bool>.broadcast();
+    addTearDown(approval.close);
+    when(auth.watchAwaitingApproval()).thenAnswer((_) => approval.stream);
+    when(auth.cancelPairing()).thenAnswer((_) async {});
     getIt.registerSingleton<AuthRepository>(auth);
     status = FixedConnectionStatusService(const ConnectionStatus(state: LinkState.connecting));
     getIt.registerSingleton<ConnectionStatusService>(status);
@@ -183,6 +189,153 @@ void main() {
       verify: (bloc) {
         verify(auth.signIn(identifier: anyNamed('identifier'), connection: anyNamed('connection'))).called(1);
         expect(bloc.state.serverAddress, '192.168.1.20:8443', reason: 'the fields are locked while it runs');
+      },
+    );
+  });
+
+  group('an invite that waits for approval (phase 046)', () {
+    /// A sign-in that waits: the repository says so, then holds until [answer].
+    void waitsFor(Completer<RepositoryResult<bool>> answer) {
+      when(auth.signIn(identifier: anyNamed('identifier'), connection: anyNamed('connection'))).thenAnswer((_) async {
+        approval.add(true);
+        return answer.future;
+      });
+    }
+
+    blocTest<ConnectBloc, ConnectState>(
+      'the screen waits once the request does, and keeps the fields from changing under it',
+      build: () {
+        waitsFor(Completer<RepositoryResult<bool>>());
+        return ConnectBloc(link: _homeLink);
+      },
+      act: (bloc) async {
+        bloc.add(const ConnectEvent.connectRequested());
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        bloc
+          ..add(const ConnectEvent.serverAddressChanged('10.0.0.1:1'))
+          ..add(const ConnectEvent.useTorChanged(true))
+          ..add(const ConnectEvent.connectRequested());
+      },
+      wait: const Duration(milliseconds: 50),
+      verify: (bloc) {
+        expect(bloc.state.status, ConnectStatus.waiting);
+        expect(bloc.state.isBusy, isTrue);
+        expect(bloc.state.serverAddress, '192.168.1.20:8443');
+        expect(bloc.state.useTor, isFalse);
+        verify(auth.signIn(identifier: anyNamed('identifier'), connection: anyNamed('connection'))).called(1);
+      },
+    );
+
+    blocTest<ConnectBloc, ConnectState>(
+      'a wait reported while nothing was pressed is not this screen\'s',
+      build: () => ConnectBloc(link: _homeLink),
+      act: (bloc) => approval.add(true),
+      wait: const Duration(milliseconds: 20),
+      verify: (bloc) => expect(bloc.state.status, ConnectStatus.idle),
+    );
+
+    blocTest<ConnectBloc, ConnectState>(
+      'Allow on the other device: the spine moves on, and the screen stops waiting',
+      build: () {
+        final answer = Completer<RepositoryResult<bool>>();
+        waitsFor(answer);
+        Future<void>.delayed(const Duration(milliseconds: 30), () => answer.complete(const RepositoryResult.success(data: true)));
+        return ConnectBloc(link: _homeLink);
+      },
+      act: (bloc) => bloc.add(const ConnectEvent.connectRequested()),
+      wait: const Duration(milliseconds: 60),
+      expect: () => [
+        predicate<ConnectState>((s) => s.isConnecting),
+        predicate<ConnectState>((s) => s.isWaiting),
+        predicate<ConnectState>((s) => s.status == ConnectStatus.idle),
+      ],
+    );
+
+    blocTest<ConnectBloc, ConnectState>(
+      'Deny on the other device is said as such',
+      build: () {
+        final answer = Completer<RepositoryResult<bool>>();
+        waitsFor(answer);
+        Future<void>.delayed(
+          const Duration(milliseconds: 30),
+          () => answer.complete(const RepositoryResult.error(exception: PairingException.declined)),
+        );
+        return ConnectBloc(link: _homeLink);
+      },
+      act: (bloc) => bloc.add(const ConnectEvent.connectRequested()),
+      wait: const Duration(milliseconds: 60),
+      verify: (bloc) {
+        expect(bloc.state.status, ConnectStatus.declined);
+        expect(bloc.state.isBusy, isFalse, reason: 'the way back is open again');
+      },
+    );
+
+    blocTest<ConnectBloc, ConnectState>(
+      'no answer in time reads as an expired link',
+      build: () {
+        final answer = Completer<RepositoryResult<bool>>();
+        waitsFor(answer);
+        Future<void>.delayed(
+          const Duration(milliseconds: 30),
+          () => answer.complete(const RepositoryResult.error(exception: RepositoryException.notFound)),
+        );
+        return ConnectBloc(link: _homeLink);
+      },
+      act: (bloc) => bloc.add(const ConnectEvent.connectRequested()),
+      wait: const Duration(milliseconds: 60),
+      verify: (bloc) => expect(bloc.state.status, ConnectStatus.linkExpired),
+    );
+
+    blocTest<ConnectBloc, ConnectState>(
+      'Cancel withdraws the request, once, and the screen closes when the sign-in ends so',
+      build: () {
+        final answer = Completer<RepositoryResult<bool>>();
+        waitsFor(answer);
+        when(auth.cancelPairing()).thenAnswer((_) async {
+          answer.complete(const RepositoryResult.error(exception: PairingException.cancelled));
+        });
+        return ConnectBloc(link: _homeLink);
+      },
+      act: (bloc) async {
+        bloc.add(const ConnectEvent.connectRequested());
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        bloc
+          ..add(const ConnectEvent.cancelRequested())
+          ..add(const ConnectEvent.cancelRequested());
+      },
+      wait: const Duration(milliseconds: 50),
+      verify: (bloc) {
+        verify(auth.cancelPairing()).called(1);
+        expect(bloc.state.status, ConnectStatus.cancelled);
+        expect(bloc.state.cancelling, isFalse);
+      },
+    );
+
+    blocTest<ConnectBloc, ConnectState>(
+      'Cancel does nothing while nothing waits',
+      build: () => ConnectBloc(link: _homeLink),
+      act: (bloc) => bloc.add(const ConnectEvent.cancelRequested()),
+      verify: (_) => verifyNever(auth.cancelPairing()),
+    );
+
+    blocTest<ConnectBloc, ConnectState>(
+      'a wait the app was closed in comes back with what was set for it, and presents the link at once (FR-011)',
+      build: () {
+        when(
+          auth.signIn(identifier: anyNamed('identifier'), connection: anyNamed('connection')),
+        ).thenAnswer((_) => Completer<RepositoryResult<bool>>().future);
+        return ConnectBloc(
+          link: _homeLink,
+          resume: true,
+          settings: const ConnectionSettings(serverAddress: '10.8.0.2:8443', onionAddress: '$_validOnion:443', useTor: true),
+        );
+      },
+      wait: const Duration(milliseconds: 50),
+      verify: (bloc) {
+        expect(bloc.state.serverAddress, '10.8.0.2:8443');
+        expect(bloc.state.onionAddress, _validOnion);
+        expect(bloc.state.useTor, isTrue);
+        expect(sentSettings(), const ConnectionSettings(serverAddress: '10.8.0.2:8443', onionAddress: '$_validOnion:443', useTor: true));
       },
     );
   });

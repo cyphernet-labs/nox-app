@@ -377,5 +377,13 @@
   "settingsConnectionTitle": "Connection",
   "@settingsConnectionTitle": {
     "description": "Settings section (7.1 row, menu item and title) with the server address, the onion address and Use Tor (phase 045)."
+  },
+  "connectWaitingApproval": "Waiting for approval on your other device",
+  "@connectWaitingApproval": {
+    "description": "Connection screen while the request an invite opened waits for the device that issued the invite to answer (phase 046). Shown with a spinner and Cancel."
+  },
+  "connectDeclined": "Your other device declined this request.",
+  "@connectDeclined": {
+    "description": "Connection screen, under Connect: the device that issued the invite answered Deny (phase 046)."
   }
 }
