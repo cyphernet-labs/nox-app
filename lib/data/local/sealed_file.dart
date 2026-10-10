@@ -100,6 +100,32 @@ abstract final class SealedFile {
     }
   }
 
+  /// Writes the plain bytes of [from] to [to] - opened chunk by chunk when it
+  /// is sealed, copied as it is when it is not (the person's own file). Each
+  /// chunk is written before the next is read, so a large file never sits in
+  /// memory whole. A copy that cannot be made in full - no room on the disk, a
+  /// chunk that does not open - is deleted before the error goes on: half a
+  /// plain file is no file to hand anyone.
+  static Future<void> writePlain({required File from, required File to}) async {
+    final reader = await SealedReader.open(from);
+    if (reader == null) {
+      await from.copy(to.path);
+      return;
+    }
+    final raf = await to.open(mode: FileMode.write);
+    var written = false;
+    try {
+      await for (final part in reader.read()) {
+        await raf.writeFrom(part);
+      }
+      await raf.flush();
+      written = true;
+    } finally {
+      await raf.close();
+      if (!written && to.existsSync()) await to.delete();
+    }
+  }
+
   static Future<SealedHeader?> _headerOf(File file) async {
     final raf = await file.open();
     try {

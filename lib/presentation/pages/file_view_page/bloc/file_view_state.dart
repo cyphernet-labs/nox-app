@@ -12,6 +12,16 @@ abstract class FileViewState with _$FileViewState {
     required MessageAttachment file,
     @Default(FileViewStatus.downloading) FileViewStatus status,
     @Default(0.0) double progress,
+
+    /// The plain copy a video plays from (phase 048): the file on the disk is
+    /// sealed, and a player reads only a plain file. Deleted when the screen -
+    /// and its player - closes.
+    String? playbackPath,
+
+    /// The plain copy could not be made - most likely no room on the disk.
+    /// The file itself is whole; the screen says so, and closing and opening
+    /// it again tries again.
+    @Default(false) bool openFailed,
   }) = _FileViewState;
 
   int get percent => (progress * 100).round();

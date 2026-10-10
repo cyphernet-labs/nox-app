@@ -12,6 +12,7 @@ import 'package:nox_app/domain/model/app_config/app_flavor.dart';
 import 'package:nox_app/domain/model/app_config/app_flavor_type.dart';
 import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
 import 'package:nox_app/domain/repository/log_repository.dart';
+import 'package:nox_app/domain/service/local_files_service.dart';
 import 'package:nox_app/presentation/app/app_root.dart';
 
 void main() {
@@ -66,6 +67,9 @@ Future<void> _start() async {
   // phase 048 left unsealed, gone. Both best effort.
   await AppDataRoot.excludeFromBackup();
   await AppDataRoot.sweepLegacy();
+  // Plain copies a video or another app was reading when the app last closed
+  // (FR-007): every launch takes whatever is left.
+  await getIt<LocalFilesService>().clearCopies();
   // The local data under its key, before anything reads it. A key that is
   // gone with its data still here costs the data and a pairing; a store that
   // does not answer costs a wait, never a wipe.

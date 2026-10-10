@@ -178,6 +178,7 @@
   "videoPlay": "Відтворити",
   "videoPause": "Пауза",
   "videoPlaybackError": "Не вдалося відтворити це відео. Збережіть його, щоб відкрити в іншій програмі.",
+  "fileOpenError": "Не вдалося відкрити цей файл. Звільніть місце і спробуйте ще раз.",
   "connectionTorBadge": "Tor",
   "connectionConnecting": "Підключення…",
   "connectionSemanticsTor": "Підключено через Tor",

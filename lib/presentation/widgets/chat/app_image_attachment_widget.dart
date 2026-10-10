@@ -12,10 +12,12 @@ import 'package:nox_app/domain/model/file/file_type.dart';
 import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/widgets/chat/app_file_chip_widget.dart';
 import 'package:nox_app/presentation/widgets/chat/app_transfer_progress_widget.dart';
+import 'package:nox_app/presentation/widgets/media/local_file_image.dart';
 import 'package:nox_app/presentation/widgets/primitives/app_icon_widget.dart';
 
 /// Inline image attachment (feature F4): renders the picture itself (from the device-
-/// local [localPath]) as a rounded thumbnail; tapping it opens the full-screen viewer.
+/// local [localPath], opened into memory when it is sealed - phase 048) as a rounded
+/// thumbnail; tapping it opens the full-screen viewer.
 /// A compact size + [onRemove] × turns it into the composer draft preview (P2). If the
 /// file cannot be decoded/read (stale path after restart, deleted file), it falls back
 /// GRACEFULLY to the [AppFileChipWidget] — never a broken image. Only used for
@@ -103,8 +105,10 @@ class AppImageAttachmentWidget extends StatelessWidget {
         onTap: onTap,
         child: ClipRRect(
           borderRadius: BorderRadius.circular(NoxRadius.xs),
-          child: Image.file(
-            File(localPath),
+          // From memory (phase 048, FR-006): the file on the disk is sealed, and
+          // its plain bytes never touch the disk again.
+          child: Image(
+            image: LocalFileImage(localPath),
             // A stable thumbnail box (no layout jump while decoding, and a definite tap
             // target); the picture is cropped to fill it.
             width: width ?? AppDimensionTokens.layout.imageThumbMaxW,

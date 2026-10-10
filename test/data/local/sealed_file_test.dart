@@ -254,6 +254,38 @@ void main() {
     });
   });
 
+  group('written out plain', () {
+    test('a sealed file comes out as its plain bytes, wherever it is asked to', () async {
+      final data = plain(2 * _chunk + 77);
+      final sealed = await seal(data);
+      final out = File('${dir.path}/out.mp4');
+
+      await SealedFile.writePlain(from: sealed, to: out);
+
+      expect(out.readAsBytesSync(), data);
+    });
+
+    test('a plain file is copied as it is', () async {
+      final data = plain(300);
+      final source = File('${dir.path}/photo.png')..writeAsBytesSync(data);
+      final out = File('${dir.path}/out.png');
+
+      await SealedFile.writePlain(from: source, to: out);
+
+      expect(out.readAsBytesSync(), data);
+    });
+
+    test('a copy that cannot be made in full leaves nothing behind', () async {
+      final sealed = await seal(plain(3 * _chunk));
+      final bytes = sealed.readAsBytesSync()..[32 + 2 * SealedFile.sealedChunkLength + 9] ^= 0x10;
+      sealed.writeAsBytesSync(bytes);
+      final out = File('${dir.path}/out.bin');
+
+      await expectLater(SealedFile.writePlain(from: sealed, to: out), throwsA(isA<VaultException>()));
+      expect(out.existsSync(), isFalse, reason: 'two chunks of a plain file were on the disk');
+    });
+  });
+
   group('the writer', () {
     test('refuses more bytes than the file was started for, and takes none of them', () async {
       final writer = await SealedWriter.create(File('${dir.path}/f'), total: 10);

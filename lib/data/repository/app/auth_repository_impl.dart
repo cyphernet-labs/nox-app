@@ -33,6 +33,7 @@ import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
+import 'package:nox_app/domain/service/local_files_service.dart';
 import 'package:nox_app/domain/service/tor_service.dart';
 import 'package:nox_tor/vault.dart';
 import 'package:sembast/sembast.dart';
@@ -464,6 +465,8 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
     } catch (error, stackTrace) {
       logRepository.error(target: this, error: error.runtimeType, stackTrace: stackTrace);
     }
+    // And the plain copies a player or another app had (FR-007, FR-012).
+    await getIt<LocalFilesService>().clearCopies();
   }
 
   /// How long a start-up waits before it asks the secure store for the key
