@@ -4,7 +4,7 @@ import 'package:nox_app/domain/model/connection/server_addresses.dart';
 /// `server.addresses` event, which are the same shape (contract §3, §8A).
 ///
 /// Lenient the way the rest of the greeting is: a malformed entry is dropped,
-/// never a reason to refuse the reply. The object arrives over the pinned
+/// never a reason to refuse the reply. The object arrives over the verified
 /// channel, so nobody but the server can have written it; the checks below
 /// keep a bug on either side from becoming an address the app dials.
 abstract final class ServerAddressesParser {

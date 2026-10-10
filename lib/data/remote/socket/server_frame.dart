@@ -11,7 +11,7 @@ sealed class ServerFrame {
   static ServerFrame? parse(Map<String, dynamic> json) {
     final srv = json['srv'];
     if (srv is Map<String, dynamic>) {
-      return SrvGreeting(schemaMax: srv['schema_max'] as int? ?? 0, challenge: srv['challenge'] as String? ?? '');
+      return SrvGreeting(schemaMax: srv['schema_max'] is int ? srv['schema_max'] as int : 0);
     }
     final event = json['event'];
     if (event is String) {
@@ -36,14 +36,16 @@ sealed class ServerFrame {
   }
 }
 
-/// The server's one-time greeting, sent before any command is accepted.
+/// The server's one-time greeting, sent before any command is accepted
+/// (contract §2): `{"srv": {"schema_max": 1}}`.
+///
+/// It carries nothing to sign any more (phase 044). Who connected was settled
+/// below HTTP, by the Eidolon check of this very connection, before the
+/// greeting could even be sent.
 class SrvGreeting extends ServerFrame {
-  const SrvGreeting({required this.schemaMax, required this.challenge});
+  const SrvGreeting({required this.schemaMax});
 
   final int schemaMax;
-
-  /// Signed by the device key from stage 2 on; present but unverified today.
-  final String challenge;
 }
 
 /// A reply to one command, correlated by the [id] the client issued.

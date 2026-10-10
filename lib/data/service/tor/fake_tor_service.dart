@@ -45,10 +45,6 @@ class FakeTorService implements TorService {
   void emit(TorStatus status) => _status.add(status);
 
   @override
-  TorBridgeEndpoint? get bridge =>
-      target == null ? null : TorBridgeEndpoint(port: 9150, secret: Uint8List.fromList(List<int>.filled(32, 7)));
-
-  @override
   Future<void> start() async {
     if (!supported) return;
     starts++;
@@ -69,10 +65,15 @@ class FakeTorService implements TorService {
     await stop();
   }
 
+  /// What setTarget answers; a test sets false to have the client refuse.
+  bool takesTargets = true;
+
   @override
-  void setTarget({required String onionHost, required int port, required Uint8List clientKey}) {
+  bool setTarget({required String onionHost, required int port, required Uint8List clientKey}) {
     targetSets++;
+    if (!takesTargets) return false;
     target = (host: onionHost, port: port, key: clientKey);
+    return true;
   }
 
   @override

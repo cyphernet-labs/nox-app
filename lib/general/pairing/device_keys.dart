@@ -2,13 +2,15 @@ import 'dart:convert';
 
 import 'package:cryptography/cryptography.dart';
 
-/// The device's own key pair, and the one thing it proves.
+/// The device's own Ed25519 key pair.
 ///
-/// The private half is generated here and never leaves: it is not sent when
-/// pairing, not sent when greeting, and not written to any log. What travels
-/// is the public key and a signature — possession is demonstrated, never
-/// handed over. That is the whole difference from the identifier sign-in this
-/// replaces, where the secret itself travelled through clipboards and QR codes.
+/// The private half is generated here and never leaves: not when pairing, not
+/// when connecting, and not into any log. The seed is handed to the native
+/// channel for each connection, which proves possession inside the Eidolon
+/// check (phase 044) - the signatures are made in the module, over the
+/// connection's own TLS exporter, and only the public key ever travels. That
+/// is the whole difference from the identifier sign-in this replaced, where
+/// the secret itself travelled through clipboards and QR codes.
 ///
 /// ⚠️ The key is stored in the OS secure store and is therefore extractable by
 /// something that already owns the device. A hardware enclave would need
@@ -16,11 +18,6 @@ import 'package:cryptography/cryptography.dart';
 /// model's "private keys do not travel" reads as "not over the wire" rather
 /// than "protected by hardware".
 abstract final class DeviceKeys {
-  /// Domain separation, contract §2. Without it a signature taken over a
-  /// challenge would be a valid signature over the same bytes anywhere else
-  /// the protocol later decides to sign something.
-  static const String challengePrefix = 'nox/challenge/v1:';
-
   static final Ed25519 _algorithm = Ed25519();
 
   /// Mints a new pair and returns its 32-byte seed, base64.
@@ -33,25 +30,11 @@ abstract final class DeviceKeys {
     return base64.encode(seed);
   }
 
-  /// The public key for a seed, base64 — what the server stores as `device_key`.
+  /// The public key for a seed, base64 — what the server knows the device by,
+  /// and what `device.revoke` names.
   static Future<String> publicKey(String seed) async {
-    final pair = await _keyPair(seed);
+    final pair = await _algorithm.newKeyPairFromSeed(base64.decode(seed));
     final public = await pair.extractPublicKey();
     return base64.encode(public.bytes);
   }
-
-  /// Signs the server's challenge.
-  ///
-  /// The RAW challenge bytes are signed, not their base64 spelling: two
-  /// implementations disagreeing about padding would disagree about the
-  /// signature, and one of them would be locked out for reasons neither side
-  /// could see.
-  static Future<String> signChallenge({required String seed, required String challenge}) async {
-    final pair = await _keyPair(seed);
-    final message = <int>[...utf8.encode(challengePrefix), ...base64.decode(challenge)];
-    final signature = await _algorithm.sign(message, keyPair: pair);
-    return base64.encode(signature.bytes);
-  }
-
-  static Future<SimpleKeyPair> _keyPair(String seed) => _algorithm.newKeyPairFromSeed(base64.decode(seed));
 }

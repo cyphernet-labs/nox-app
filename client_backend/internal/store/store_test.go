@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,9 @@ import (
 	"nox.app/client-backend/internal/protocol"
 )
 
+// testKey is the data key every test database here is encrypted with.
+var testKey = bytes.Repeat([]byte{0x3c}, db.KeySize)
+
 // migrationsFS is the on-disk migrations directory, shared by tests that open
 // a database themselves rather than through newStore.
 func migrationsFS(t *testing.T) fs.FS {
@@ -25,7 +29,7 @@ func migrationsFS(t *testing.T) fs.FS {
 func newStore(t *testing.T) *Store {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "store.db")
-	d, err := db.Open(path)
+	d, err := db.Open(path, testKey)
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}
@@ -909,11 +913,7 @@ func person(t *testing.T, s *Store, name string) Identity {
 	if _, err := s.EnsureServerIdentity(ctx); err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
-	token, err := s.IssueClaimToken(ctx, 1)
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
-	}
-	if _, err := pairID(ctx, s, token, deviceKey, "test", 1); err != nil {
+	if _, err := pairID(ctx, s, issueLink(t, s, 1), deviceKey, "test", 1); err != nil {
 		t.Fatalf("Pair(%s): %v", name, err)
 	}
 	// State the chosen name the way onboarding does.

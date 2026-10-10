@@ -6,13 +6,13 @@ import 'package:native_toolchain_rust/native_toolchain_rust.dart';
 
 /// Builds `rust/` into the code asset of `package:nox_tor/src/nox_tor_bindings.dart`.
 ///
-/// Linux gets no asset: the embedded Tor client is a later stage there
-/// (`tor-linux-app`), and a Linux build must not need a Rust toolchain.
+/// Every target gets the asset, Linux included: the channel to the server
+/// (044) lives in it, and the app has no other way to its server. The embedded
+/// Tor client is in the same library and stays off on Linux until 045.
 void main(List<String> args) async {
   await build(args, (input, output) async {
     if (!input.config.buildCodeAssets) return;
     final code = input.config.code;
-    if (code.targetOS == OS.linux) return;
     await RustBuilder(
       assetName: 'src/nox_tor_bindings.dart',
       extraCargoEnvironmentVariables: {..._androidMinApiToolchain(code), ..._appleDeploymentTargets(code)},

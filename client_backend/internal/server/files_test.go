@@ -9,13 +9,16 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/coder/websocket"
 
+	"nox.app/client-backend/internal/blob"
 	"nox.app/client-backend/internal/protocol"
 	"nox.app/client-backend/internal/store"
 )
@@ -120,10 +123,14 @@ func TestStoryOneAttachmentChain(t *testing.T) {
 	if code := putBytes(t, ts, token, payload); code != http.StatusNotFound {
 		t.Fatalf("reused upload token = %d, want 404", code)
 	}
-	// Bytes are on disk under the server id, byte-identical.
+	// Bytes are on disk under the server id, encrypted (047), and open to the
+	// very bytes that were sent.
 	disk, err := os.ReadFile(filepath.Join(srv.cfg.FilesPath, fileID))
-	if err != nil || !bytes.Equal(disk, payload) {
-		t.Fatalf("disk bytes: %d err=%v", len(disk), err)
+	if err != nil || int64(len(disk)) != blob.CipherLen(int64(len(payload))) || bytes.Contains(disk, payload[:4096]) {
+		t.Fatalf("disk bytes: %d err=%v, want the sealed chunks of the file and none of its plaintext", len(disk), err)
+	}
+	if got := diskBytes(t, srv, fileID); !bytes.Equal(got, payload) {
+		t.Fatalf("the file opens to %d bytes that are not the ones sent", len(got))
 	}
 
 	// Attachment-only send: full attachment in the echo...
@@ -200,8 +207,8 @@ func TestStoryOneAttachmentChain(t *testing.T) {
 	anna.expectErr(24, protocol.ErrInvalidRequest) // already bound
 
 	// Un-uploaded file: send rejected. An oversized PUT keeps nothing it
-	// carried; a short one keeps its bytes for a continuation (043). Neither
-	// finishes the file.
+	// carried; a short one keeps its whole chunks for a continuation (043,
+	// 047). Neither finishes the file.
 	fileID3, token3 := uploadBegin(t, anna, 25, "half.bin", 1000, "application/octet-stream")
 	anna.send(fmt.Sprintf(`{"id":26,"cmd":"message.send","data":{"chat_id":%q,"client_message_id":"n4","attachment":{"file_id":%q}}}`, chatID, fileID3))
 	anna.expectErr(26, protocol.ErrInvalidRequest)
@@ -211,12 +218,12 @@ func TestStoryOneAttachmentChain(t *testing.T) {
 	if _, _, received := declare(t, anna, 28, "half.bin", 1000, "application/octet-stream", fileID3); received != 0 {
 		t.Fatalf("after an oversized PUT received = %d, want 0: none of its bytes are kept", received)
 	}
-	fileID4, token4 := uploadBegin(t, anna, 27, "short.bin", 1000, "application/octet-stream")
-	if code := putBytes(t, ts, token4, randomPayload(t, 500)); code != http.StatusBadRequest {
+	fileID4, token4 := uploadBegin(t, anna, 27, "short.bin", 3*blob.ChunkSize, "application/octet-stream")
+	if code := putBytes(t, ts, token4, randomPayload(t, blob.ChunkSize+500)); code != http.StatusBadRequest {
 		t.Fatalf("short PUT = %d, want 400", code)
 	}
-	if _, _, received := declare(t, anna, 29, "short.bin", 1000, "application/octet-stream", fileID4); received != 500 {
-		t.Fatalf("after a short PUT received = %d, want its 500 bytes kept", received)
+	if _, _, received := declare(t, anna, 29, "short.bin", 3*blob.ChunkSize, "application/octet-stream", fileID4); received != blob.ChunkSize {
+		t.Fatalf("after a short PUT received = %d, want its whole chunk kept", received)
 	}
 	if srv.blob.Exists(fileID3) || srv.blob.Exists(fileID4) {
 		t.Fatal("an unfinished upload became a finished file")
@@ -459,7 +466,7 @@ func TestOrphanSweepRemovesAbandonedUploads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateUpload bound: %v", err)
 	}
-	boundUp, err := srv.blob.Create(boundAtt.FileID)
+	boundUp, err := srv.blob.Create(boundAtt.FileID, 5)
 	if err != nil {
 		t.Fatalf("blob.Create bound: %v", err)
 	}
@@ -482,7 +489,7 @@ func TestOrphanSweepRemovesAbandonedUploads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateUpload: %v", err)
 	}
-	up, err := srv.blob.Create(oldAtt.FileID)
+	up, err := srv.blob.Create(oldAtt.FileID, 3)
 	if err != nil {
 		t.Fatalf("blob.Create: %v", err)
 	}
@@ -499,15 +506,17 @@ func TestOrphanSweepRemovesAbandonedUploads(t *testing.T) {
 	// Old UNFINISHED upload (043): a part and its record, never completed.
 	// The same rule as for a finished one: a day unbound and it goes, both
 	// files with it.
-	halfAtt, err := srv.store.CreateUpload(t.Context(), "half.bin", 10, "x/y", 100)
+	halfAtt, err := srv.store.CreateUpload(t.Context(), "half.bin", 2*blob.ChunkSize, "x/y", 100)
 	if err != nil {
 		t.Fatalf("CreateUpload half: %v", err)
 	}
-	half, err := srv.blob.Create(halfAtt.FileID)
+	half, err := srv.blob.Create(halfAtt.FileID, 2*blob.ChunkSize)
 	if err != nil {
 		t.Fatalf("blob.Create half: %v", err)
 	}
-	if _, err := half.Write([]byte("half")); err != nil {
+	// A whole chunk and a little more: the chunk is sealed into the part and
+	// recorded, the rest goes with the request.
+	if _, err := half.Write(randomPayload(t, blob.ChunkSize+10)); err != nil {
 		t.Fatalf("write half: %v", err)
 	}
 	if err := half.Suspend(); err != nil {
@@ -545,5 +554,135 @@ func TestOrphanSweepRemovesAbandonedUploads(t *testing.T) {
 	}
 	if _, err := srv.store.FileByID(t.Context(), freshID); err != nil {
 		t.Fatalf("fresh upload swept: %v", err)
+	}
+}
+
+// A transfer needs a paired key on the connection AND a live token (044,
+// FR-006a). A token alone was a bearer credential: whoever held one moved the
+// bytes. A stranger is told 401 before the token is even looked at, so it can
+// neither spend one nor learn whether it is live.
+func TestATransferNeedsAPairedKeyAsWellAsAToken(t *testing.T) {
+	ts, srv := newTestServer(t)
+	anna := dialWS(t, ts, srv)
+	anna.expectGreeting()
+	anna.hello(1, "")
+	stranger := channelOf(t, ts).clientAs(newDevice(t))
+	payload := randomPayload(t, 4096)
+	fileID, token := uploadBegin(t, anna, 2, "a.bin", len(payload), "application/octet-stream")
+
+	status := func(client *http.Client, method, token string, body []byte) int {
+		t.Helper()
+		req, err := http.NewRequest(method, ts.URL+"/files/"+token, bytes.NewReader(body))
+		if err != nil {
+			t.Fatalf("build %s: %v", method, err)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("%s: %v", method, err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	if got := status(stranger, http.MethodPut, token, payload); got != http.StatusUnauthorized {
+		t.Fatalf("PUT from an unpaired key with a live token = %d, want 401", got)
+	}
+	// The refusal spent nothing: the paired device's PUT with the same token
+	// lands.
+	if got := putBytes(t, ts, token, payload); got != http.StatusNoContent {
+		t.Fatalf("PUT from the paired device after the refusal = %d, want 204", got)
+	}
+	// A spent token from a paired device is still the 404 a client of 043
+	// reads as "ask for a new pass"; from a stranger it is 401 all the same.
+	if got := putBytes(t, ts, token, payload); got != http.StatusNotFound {
+		t.Fatalf("spent token from the paired device = %d, want 404", got)
+	}
+	if got := status(stranger, http.MethodPut, token, payload); got != http.StatusUnauthorized {
+		t.Fatalf("spent token from an unpaired key = %d, want 401", got)
+	}
+
+	download := downloadBegin(t, anna, 3, fileID)
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		if got := status(stranger, method, download, nil); got != http.StatusUnauthorized {
+			t.Fatalf("%s from an unpaired key with a live token = %d, want 401", method, got)
+		}
+	}
+	code, body, _ := doGet(t, ts, download, "")
+	if code != http.StatusOK || !bytes.Equal(body, payload) {
+		t.Fatalf("GET from the paired device after the refusals = %d, %d bytes", code, len(body))
+	}
+}
+
+// The key is looked up on every request, not once per connection: a device
+// revoked while its connection is still open loses its transfers with its row,
+// the way it loses its socket.
+func TestARevokedDeviceLosesItsTransfersOnAnOpenConnection(t *testing.T) {
+	ts, srv := newTestServer(t)
+	anna := dialWS(t, ts, srv)
+	anna.expectGreeting()
+	anna.hello(1, "")
+	client := channelOf(t, ts).clientAs(anna.dev)
+	payload := randomPayload(t, 2048)
+	_, first := uploadBegin(t, anna, 2, "a.bin", len(payload), "application/octet-stream")
+
+	// One request first, so the connection exists and is kept for the next.
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/files/not-a-token", nil)
+	if err != nil {
+		t.Fatalf("build GET: %v", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("a paired device with a bad token = %d, want 404", resp.StatusCode)
+	}
+
+	if _, err := srv.store.RevokeDevice(t.Context(), anna.dev.pub, time.Now().Unix()); err != nil {
+		t.Fatalf("RevokeDevice: %v", err)
+	}
+	var reused bool
+	trace := httptrace.WithClientTrace(t.Context(), &httptrace.ClientTrace{
+		GotConn: func(info httptrace.GotConnInfo) { reused = info.Reused },
+	})
+	put, err := http.NewRequestWithContext(trace, http.MethodPut, ts.URL+"/files/"+first, bytes.NewReader(payload))
+	if err != nil {
+		t.Fatalf("build PUT: %v", err)
+	}
+	resp, err = client.Do(put)
+	if err != nil {
+		t.Fatalf("PUT: %v", err)
+	}
+	_ = resp.Body.Close()
+	if !reused {
+		t.Fatal("the PUT opened a new connection, so this test proves nothing about an open one")
+	}
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("PUT from a device revoked mid-connection = %d, want 401", resp.StatusCode)
+	}
+}
+
+// A handler served without the channel in front of it - a wiring mistake, a
+// test mux - hands nothing out: no session, no bytes. Run never builds one,
+// and this keeps a slip from becoming a hole.
+func TestAHandlerWithoutTheChannelRefusesEverything(t *testing.T) {
+	_, srv := newTestServer(t)
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodGet, "/ws"},
+		{http.MethodPut, "/files/anything"},
+		{http.MethodGet, "/files/anything"},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		req.Header.Set("Connection", "Upgrade")
+		req.Header.Set("Upgrade", "websocket")
+		req.Header.Set("Sec-WebSocket-Version", "13")
+		req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s without a channel peer = %d, want 401", tc.method, tc.path, rec.Code)
+		}
 	}
 }

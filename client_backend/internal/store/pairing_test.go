@@ -6,35 +6,58 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"testing/synctest"
 
 	"nox.app/client-backend/internal/db"
 )
 
-// pairID presents a token and returns the identity it produced. Kept as a
-// helper so the many call sites read the same way; Pair returns the identity
-// directly now that pairing always finishes.
-func pairID(ctx context.Context, s *Store, token, deviceKey, platform string, now int64) (Identity, error) {
-	return s.Pair(ctx, token, deviceKey, platform, PairOptions{}, now)
+// issueLink mints a machine link at now and returns its token.
+func issueLink(t *testing.T, s *Store, now int64) string {
+	t.Helper()
+	link, err := s.IssueMachineLink(context.Background(), now)
+	if err != nil {
+		t.Fatalf("IssueMachineLink: %v", err)
+	}
+	return link.Token
 }
 
-// claimOwner claims a fresh server and returns the identity of the person it
-// now belongs to.
-func claimOwner(t *testing.T, s *Store, deviceKey string) Identity {
+// pairID presents a token and returns the identity it paired the device as,
+// failing the test when the presentation paired nothing.
+func pairID(ctx context.Context, s *Store, token, deviceKey, platform string, now int64) (Identity, error) {
+	res, err := s.Pair(ctx, token, deviceKey, platform, now)
+	if err != nil {
+		return Identity{}, err
+	}
+	if !res.Paired {
+		return Identity{}, errors.New("the token opened a request instead of pairing")
+	}
+	return res.Identity, nil
+}
+
+// pairFirst pairs a device through the machine link the way the first device
+// of a fresh install does, and returns who it now speaks as.
+func pairFirst(t *testing.T, s *Store, deviceKey string) Identity {
 	t.Helper()
 	ctx := context.Background()
 	if _, err := s.EnsureServerIdentity(ctx); err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
-	token, err := s.IssueClaimToken(ctx, 100)
+	id, err := pairID(ctx, s, issueLink(t, s, 100), deviceKey, "test", 100)
 	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
-	}
-	id, err := pairID(ctx, s, token, deviceKey, "test", 100)
-	if err != nil {
-		t.Fatalf("claim: %v", err)
+		t.Fatalf("pair through the machine link: %v", err)
 	}
 	return id
+}
+
+// unspentMachineLinks counts the machine links that could still be presented
+// or shown - the property SC-004 is about.
+func unspentMachineLinks(t *testing.T, s *Store) int {
+	t.Helper()
+	var n int
+	if err := s.read.QueryRowContext(context.Background(),
+		"SELECT COUNT(1) FROM pair_tokens WHERE kind = 'machine' AND used_at IS NULL").Scan(&n); err != nil {
+		t.Fatalf("count machine links: %v", err)
+	}
+	return n
 }
 
 func TestServerKeyIsMintedOnceAndSurvivesRestart(t *testing.T) {
@@ -42,7 +65,7 @@ func TestServerKeyIsMintedOnceAndSurvivesRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "key.db")
 
 	open := func() (*Store, func()) {
-		d, err := db.Open(path)
+		d, err := db.Open(path, testKey)
 		if err != nil {
 			t.Fatalf("db.Open: %v", err)
 		}
@@ -62,12 +85,12 @@ func TestServerKeyIsMintedOnceAndSurvivesRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnsureServerIdentity again: %v", err)
 	}
-	if again.PublicKey != first.PublicKey {
-		t.Fatalf("key changed within one process: %q then %q", first.PublicKey, again.PublicKey)
+	if !again.PublicKey.Equal(first.PublicKey) {
+		t.Fatalf("key changed within one process: %x then %x", first.PublicKey, again.PublicKey)
 	}
 	closeFirst()
 
-	// A restart must not hand out a different key: every paired device pins
+	// A restart must not hand out a different key: every paired device expects
 	// the old one, and rotating it silently would lock all of them out.
 	s2, closeSecond := open()
 	defer closeSecond()
@@ -75,81 +98,96 @@ func TestServerKeyIsMintedOnceAndSurvivesRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnsureServerIdentity after restart: %v", err)
 	}
-	if restarted.PublicKey != first.PublicKey {
-		t.Fatalf("key changed across restart: %q then %q", first.PublicKey, restarted.PublicKey)
+	if !restarted.PublicKey.Equal(first.PublicKey) {
+		t.Fatalf("key changed across restart: %x then %x", first.PublicKey, restarted.PublicKey)
 	}
 }
 
-func TestClaimIsAcceptedOnceAndThenDeadForever(t *testing.T) {
-	s := newStore(t)
+// FR-002: ten minutes, and not a second more. A link presented at its expiry
+// second is already late - the same boundary MachineLink.Live draws for the
+// page.
+func TestAMachineLinkLivesTenMinutes(t *testing.T) {
 	ctx := context.Background()
-	if _, err := s.EnsureServerIdentity(ctx); err != nil {
-		t.Fatalf("EnsureServerIdentity: %v", err)
-	}
-
-	first, err := s.IssueClaimToken(ctx, 100)
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
-	}
-	if _, err := pairID(ctx, s, first, "dev-a", "test", 100); err != nil {
-		t.Fatalf("first claim: %v", err)
-	}
-
-	// A brand-new claim token on an owned server is refused just the same:
-	// ownership is not something a later token may hand over again.
-	second, err := s.IssueClaimToken(ctx, 200)
-	if err != nil {
-		t.Fatalf("IssueClaimToken again: %v", err)
-	}
-	if _, err := pairID(ctx, s, second, "dev-b", "test", 200); !errors.Is(err, ErrTokenInvalid) {
-		t.Fatalf("second claim err = %v, want ErrTokenInvalid", err)
+	for _, tc := range []struct {
+		name string
+		at   int64
+		want error
+	}{
+		{"a second before the deadline", 100 + TokenTTLSeconds - 1, nil},
+		{"at the deadline", 100 + TokenTTLSeconds, ErrTokenExpired},
+		{"a day later", 100 + 24*3600, ErrTokenExpired},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newStore(t)
+			link, err := s.IssueMachineLink(ctx, 100)
+			if err != nil {
+				t.Fatalf("IssueMachineLink: %v", err)
+			}
+			if link.ExpiresAt != 100+TokenTTLSeconds {
+				t.Fatalf("expires_at = %d, want ten minutes after issue", link.ExpiresAt)
+			}
+			if got := link.Live(tc.at); got != (tc.want == nil) {
+				t.Fatalf("Live(%d) = %v", tc.at, got)
+			}
+			_, err = pairID(ctx, s, link.Token, "dev-a", "test", tc.at)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("pair at %d = %v, want %v", tc.at, err, tc.want)
+			}
+		})
 	}
 }
 
-func TestClaimTokenNeverExpires(t *testing.T) {
+// SC-004: at most one live machine link. A new one voids the one before it -
+// whatever the page showed a moment ago, or the terminal printed, stops
+// working - and the count of links that could still be presented stays one.
+func TestIssuingAMachineLinkVoidsTheEarlierOne(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	if _, err := s.EnsureServerIdentity(ctx); err != nil {
-		t.Fatalf("EnsureServerIdentity: %v", err)
-	}
 
-	token, err := s.IssueClaimToken(ctx, 100)
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
+	first := issueLink(t, s, 100)
+	second := issueLink(t, s, 160)
+	if got := unspentMachineLinks(t, s); got != 1 {
+		t.Fatalf("unspent machine links = %d, want 1", got)
 	}
-	// A year later. An expiring claim would leave a server that was installed
-	// and forgotten unclaimable, with no way to mint another.
-	if _, err := pairID(ctx, s, token, "dev-a", "test", 100+365*24*3600); err != nil {
-		t.Fatalf("claim after a year: %v", err)
+	if _, err := pairID(ctx, s, first, "dev-a", "test", 170); !errors.Is(err, ErrTokenInvalid) {
+		t.Fatalf("the voided link answered %v, want ErrTokenInvalid", err)
+	}
+	if _, err := pairID(ctx, s, second, "dev-a", "test", 170); err != nil {
+		t.Fatalf("the live link: %v", err)
+	}
+	if got := unspentMachineLinks(t, s); got != 0 {
+		t.Fatalf("unspent machine links after the pairing = %d, want 0", got)
 	}
 }
 
-func TestDeviceInviteExpiresAndIsDistinguishableFromASpentOne(t *testing.T) {
+// FR-004: the machine link creates the person when there is nobody, and joins
+// them - with no naming step - when there is. It works while devices exist: it
+// is how a person adds a device with none in hand, and the refusal the claim
+// once carried is gone with the claim.
+func TestTheMachineLinkCreatesThePersonOnceAndJoinsAfter(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	claimPerson(t, s, "dev-phone")
 
-	expired, err := s.IssueDeviceInvite(ctx, "dev-phone", 100)
+	first, err := pairID(ctx, s, issueLink(t, s, 100), "dev-a", "ios", 100)
 	if err != nil {
-		t.Fatalf("IssueDeviceInvite: %v", err)
+		t.Fatalf("first device: %v", err)
 	}
-	_, err = pairID(ctx, s, expired, "dev-late", "test", 100+InviteTTLSeconds+1)
-	if !errors.Is(err, ErrTokenExpired) {
-		t.Fatalf("expired invite err = %v, want ErrTokenExpired", err)
+	if !first.Created {
+		t.Fatal("the first device on an empty machine must bring the person into being")
 	}
-
-	spent, err := s.IssueDeviceInvite(ctx, "dev-phone", 200)
+	second, err := pairID(ctx, s, issueLink(t, s, 200), "dev-b", "macos", 200)
 	if err != nil {
-		t.Fatalf("IssueDeviceInvite: %v", err)
+		t.Fatalf("second device while the first is still paired: %v", err)
 	}
-	if _, err := pairID(ctx, s, spent, "dev-desktop", "test", 200); err != nil {
-		t.Fatalf("first use: %v", err)
+	if second.UserID != first.UserID || second.Created {
+		t.Fatalf("second device = %+v, want the same person %q and created=false", second, first.UserID)
 	}
-	// The two refusals are separate because the person's next action differs:
-	// an expired invite means "issue a new one", a spent one means "you already
-	// used this".
-	if _, err := pairID(ctx, s, spent, "dev-tablet", "test", 300); !errors.Is(err, ErrTokenInvalid) {
-		t.Fatalf("spent invite err = %v, want ErrTokenInvalid", err)
+	if people, err := countPeople(ctx, s.read); err != nil || people != 1 {
+		t.Fatalf("people = %d (%v), want 1", people, err)
+	}
+	devices, err := s.ListDevices(ctx, first.UserID)
+	if err != nil || len(devices) != 2 {
+		t.Fatalf("devices = %d (%v), want 2", len(devices), err)
 	}
 }
 
@@ -158,7 +196,7 @@ func TestTokenSurvivesRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "tokens.db")
 
 	open := func() (*Store, func()) {
-		d, err := db.Open(path)
+		d, err := db.Open(path, testKey)
 		if err != nil {
 			t.Fatalf("db.Open: %v", err)
 		}
@@ -172,66 +210,16 @@ func TestTokenSurvivesRestart(t *testing.T) {
 	if _, err := s.EnsureServerIdentity(ctx); err != nil {
 		t.Fatalf("EnsureServerIdentity: %v", err)
 	}
-	token, err := s.IssueClaimToken(ctx, 100)
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
-	}
+	token := issueLink(t, s, 100)
 	closeFirst()
 
-	// An invite has to outlive a restart, or it could not be shown to somebody
-	// standing in the next room.
+	// A link has to outlive a restart inside its ten minutes, or it could not
+	// be carried to a phone in the next room while the service restarts.
 	s2, closeSecond := open()
 	defer closeSecond()
 	if _, err := pairID(ctx, s2, token, "dev-a", "test", 200); err != nil {
 		t.Fatalf("pair after restart: %v", err)
 	}
-}
-
-// The race this guards is the reason burning is a conditional UPDATE rather
-// than a read followed by a write: two devices presenting one invite at the
-// same moment must not both end up paired.
-func TestOneInviteProducesExactlyOneDevice(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		s := newStore(t)
-		ctx := context.Background()
-		owner := claimPerson(t, s, "dev-phone")
-
-		token, err := s.IssueDeviceInvite(ctx, "dev-phone", 200)
-		if err != nil {
-			t.Fatalf("IssueDeviceInvite: %v", err)
-		}
-
-		results := make(chan error, 2)
-		for i, key := range []string{"dev-x", "dev-y"} {
-			go func() {
-				_, err := pairID(ctx, s, token, key, "test", 200+int64(i))
-				results <- err
-			}()
-		}
-		first, second := <-results, <-results
-
-		wins := 0
-		for _, err := range []error{first, second} {
-			switch {
-			case err == nil:
-				wins++
-			case errors.Is(err, ErrTokenInvalid):
-			default:
-				t.Fatalf("unexpected error: %v", err)
-			}
-		}
-		if wins != 1 {
-			t.Fatalf("%d of 2 simultaneous presentations succeeded, want exactly 1", wins)
-		}
-
-		devices, err := s.ListDevices(ctx, owner.UserID)
-		if err != nil {
-			t.Fatalf("ListDevices: %v", err)
-		}
-		if len(devices) != 2 {
-			t.Fatalf("devices = %d, want 2 (the claimed one plus exactly one invited)", len(devices))
-		}
-	})
 }
 
 func TestRevokingAnAbsentKeyIsSuccess(t *testing.T) {
@@ -240,7 +228,7 @@ func TestRevokingAnAbsentKeyIsSuccess(t *testing.T) {
 
 	// The caller asked for a state, and that state already holds. Reporting an
 	// error would make a retry after a dropped connection look like a failure.
-	if err := s.RevokeDevice(ctx, "dev-never-existed"); err != nil {
+	if _, err := s.RevokeDevice(ctx, "dev-never-existed", 100); err != nil {
 		t.Fatalf("RevokeDevice: %v", err)
 	}
 }
@@ -248,13 +236,13 @@ func TestRevokingAnAbsentKeyIsSuccess(t *testing.T) {
 func TestIdentitySurvivesTheRevocationOfItsLastDevice(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	owner := claimPerson(t, s, "dev-phone")
+	person := pairFirst(t, s, "dev-phone")
 
-	if err := s.RevokeDevice(ctx, "dev-phone"); err != nil {
+	if _, err := s.RevokeDevice(ctx, "dev-phone", 200); err != nil {
 		t.Fatalf("RevokeDevice: %v", err)
 	}
 
-	devices, err := s.ListDevices(ctx, owner.UserID)
+	devices, err := s.ListDevices(ctx, person.UserID)
 	if err != nil {
 		t.Fatalf("ListDevices: %v", err)
 	}
@@ -262,8 +250,8 @@ func TestIdentitySurvivesTheRevocationOfItsLastDevice(t *testing.T) {
 		t.Fatalf("devices = %d, want 0", len(devices))
 	}
 
-	// The person has to outlive their devices, or recovery would have nothing
-	// to reattach a new one to.
+	// The person has to outlive their devices, or the machine link would have
+	// nobody to join the next device to.
 	var people int
 	if err := s.read.QueryRowContext(ctx, "SELECT COUNT(1) FROM users").Scan(&people); err != nil {
 		t.Fatalf("count users: %v", err)
@@ -276,9 +264,9 @@ func TestIdentitySurvivesTheRevocationOfItsLastDevice(t *testing.T) {
 func TestDeviceListCarriesWhatDistinguishesADevice(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	owner := claimPerson(t, s, "dev-phone")
+	person := pairFirst(t, s, "dev-phone")
 
-	devices, err := s.ListDevices(ctx, owner.UserID)
+	devices, err := s.ListDevices(ctx, person.UserID)
 	if err != nil {
 		t.Fatalf("ListDevices: %v", err)
 	}
@@ -292,25 +280,20 @@ func TestDeviceListCarriesWhatDistinguishesADevice(t *testing.T) {
 }
 
 // `pair` commits and then replies, so a connection that drops in that window
-// leaves the device paired and the client believing nothing happened. With a
-// one-shot claim and a single device, refusing the retry locks the machine.
+// leaves the device paired and the client believing nothing happened. Refusing
+// the retry would leave it without the identity it was just given.
 func TestARetryFromTheSameDeviceGetsTheSameAnswer(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	if _, err := s.EnsureServerIdentity(ctx); err != nil {
-		t.Fatalf("EnsureServerIdentity: %v", err)
-	}
-	token, err := s.IssueClaimToken(ctx, 100)
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
-	}
+	token := issueLink(t, s, 100)
 
 	first, err := pairID(ctx, s, token, "dev-phone", "ios", 100)
 	if err != nil {
 		t.Fatalf("first pair: %v", err)
 	}
-
-	again, err := pairID(ctx, s, token, "dev-phone", "ios", 200)
+	// After the deadline too: the deadline was met by the spending, and the
+	// retry is about an answer that got lost, not about the link.
+	again, err := pairID(ctx, s, token, "dev-phone", "ios", 100+TokenTTLSeconds+5)
 	if err != nil {
 		t.Fatalf("retry from the same device: %v", err)
 	}
@@ -318,7 +301,7 @@ func TestARetryFromTheSameDeviceGetsTheSameAnswer(t *testing.T) {
 		t.Fatalf("retry resolved to %q, want %q", again.UserID, first.UserID)
 	}
 	// The SAME answer the lost reply carried, `created` included. Saying false
-	// here would walk the owner of a brand-new server past the naming step and
+	// here would walk the person of a brand-new server past the naming step and
 	// into the chats list under an auto-assigned User<random>.
 	if again.Created != first.Created {
 		t.Fatalf("retry reported created=%v, want %v - a replay must repeat the answer, not invent one", again.Created, first.Created)
@@ -330,202 +313,67 @@ func TestARetryFromTheSameDeviceGetsTheSameAnswer(t *testing.T) {
 	}
 }
 
-// Revoking the last device used to lock the machine forever: the claim was
-// spent, no device remained to issue an invite from, and recovery is Q16.
-func TestAServerWithNoDevicesBecomesClaimableAgain(t *testing.T) {
+// SC-003 at the store: every device gone, the person and the conversation stay,
+// and the machine link joins the next device to the SAME person - not a second
+// one, whose messages would carry an author_id nobody can sign in as.
+func TestTheMachineLinkJoinsThePersonWhoLostEveryDevice(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	owner := claimPerson(t, s, "dev-phone")
-
-	if err := s.RevokeDevice(ctx, "dev-phone"); err != nil {
+	person := pairFirst(t, s, "dev-phone")
+	chat, _, _, err := s.CreateChat(ctx, "", "Kitchen", person.Label, 150)
+	if err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	if _, _, _, err := s.SendMessage(ctx, chat.ChatID, "m1", person, textBody("the boiler"), "", 160); err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	if _, err := s.RevokeDevice(ctx, "dev-phone", 200); err != nil {
 		t.Fatalf("RevokeDevice: %v", err)
 	}
-	devices, err := countAllDevices(ctx, s.read)
-	if err != nil {
-		t.Fatalf("count devices: %v", err)
-	}
-	if devices != 0 {
-		t.Fatalf("devices = %d, want 0", devices)
-	}
 
-	// The machine is the root of trust: whoever can read its output takes it
-	// back. The person survives - a new device attaches to the same server.
-	token, err := s.IssueClaimToken(ctx, 400)
+	back, err := pairID(ctx, s, issueLink(t, s, 300), "dev-new", "macos", 300)
 	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
+		t.Fatalf("pair after losing every device: %v", err)
 	}
-	back, err := pairID(ctx, s, token, "dev-new", "macos", 400)
-	if err != nil {
-		t.Fatalf("re-claim: %v", err)
+	if back.UserID != person.UserID || back.Created {
+		t.Fatalf("came back as %+v, want %q with no naming step", back, person.UserID)
 	}
-	// The SAME person, not a second one. A new identity would orphan the old:
-	// their messages keep an author_id nobody can sign in as, and "the identity
-	// survives its devices" would be true on paper and worthless in practice.
-	if back.UserID != owner.UserID {
-		t.Fatalf("re-claim minted %q, want the existing person %q", back.UserID, owner.UserID)
-	}
-	if back.Created {
-		t.Fatal("reattaching to an existing person must not report created - they already have a name")
-	}
-	people, err := countPeople(ctx, s.read)
-	if err != nil {
-		t.Fatalf("count people: %v", err)
-	}
-	if people != 1 {
-		t.Fatalf("users = %d, want 1: a re-claim must not leave an orphan behind", people)
-	}
-
-	// And with a device present again, a further claim is refused as before.
-	second, err := s.IssueClaimToken(ctx, 500)
-	if err != nil {
-		t.Fatalf("IssueClaimToken again: %v", err)
-	}
-	if _, err := pairID(ctx, s, second, "dev-other", "linux", 500); !errors.Is(err, ErrTokenInvalid) {
-		t.Fatalf("claim on a reachable server err = %v, want ErrTokenInvalid", err)
-	}
-}
-
-// A claim link is printed to the server log, and a log is not a secret store.
-// Every unused one has to die with the claim that succeeded, or the oldest
-// scrap of terminal scrollback becomes a way in the next time the device count
-// reaches zero.
-func TestASuccessfulClaimRetiresEveryOtherClaimToken(t *testing.T) {
-	s := newStore(t)
-	ctx := context.Background()
-	if _, err := s.EnsureServerIdentity(ctx); err != nil {
-		t.Fatalf("EnsureServerIdentity: %v", err)
-	}
-	stale, err := s.IssueClaimToken(ctx, 100)
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
-	}
-	used, err := s.IssueClaimToken(ctx, 100)
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
-	}
-	if _, err := pairID(ctx, s, used, "dev-phone", "ios", 100); err != nil {
-		t.Fatalf("claim: %v", err)
-	}
-
-	// Every device revoked: the server is claimable again.
-	if err := s.RevokeDevice(ctx, "dev-phone"); err != nil {
-		t.Fatalf("RevokeDevice: %v", err)
-	}
-	if _, err := pairID(ctx, s, stale, "dev-attacker", "linux", 200); !errors.Is(err, ErrTokenInvalid) {
-		t.Fatalf("an old printed claim token still works: %v", err)
+	messages, _, err := s.ListMessages(ctx, chat.ChatID, 0, 10)
+	if err != nil || len(messages) != 1 || messages[0].AuthorID != back.UserID {
+		t.Fatalf("history after coming back = %+v (%v), want the message, authored by the person who came back", messages, err)
 	}
 }
 
 // A revoked device may have issued an invite minutes ago. Leaving it usable
-// removes the key and leaves the door it opened.
-func TestRevokingADeviceRetiresTheInvitesItCouldHaveIssued(t *testing.T) {
+// would let whoever holds that link ask the person's other devices to let them
+// in on the authority of a device that was just told to leave. The invites of
+// the person's OTHER devices are theirs and survive.
+func TestRevokingADeviceVoidsTheInvitesItIssuedAndOnlyThose(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	claimPerson(t, s, "dev-phone")
+	pairFirst(t, s, "dev-phone")
+	if _, err := pairID(ctx, s, issueLink(t, s, 150), "dev-laptop", "macos", 150); err != nil {
+		t.Fatalf("second device: %v", err)
+	}
 
-	invite, err := s.IssueDeviceInvite(ctx, "dev-phone", 200)
+	fromPhone, err := s.IssueDeviceInvite(ctx, "dev-phone", 200)
 	if err != nil {
 		t.Fatalf("IssueDeviceInvite: %v", err)
 	}
-	if err := s.RevokeDevice(ctx, "dev-phone"); err != nil {
+	fromLaptop, err := s.IssueDeviceInvite(ctx, "dev-laptop", 200)
+	if err != nil {
+		t.Fatalf("IssueDeviceInvite: %v", err)
+	}
+	if _, err := s.RevokeDevice(ctx, "dev-phone", 250); err != nil {
 		t.Fatalf("RevokeDevice: %v", err)
 	}
 
-	if _, err := pairID(ctx, s, invite, "dev-new", "linux", 300); !errors.Is(err, ErrTokenInvalid) {
-		t.Fatalf("an invite from a revoked device still works: %v", err)
+	if _, err := s.Pair(ctx, fromPhone, "dev-new", "linux", 300); !errors.Is(err, ErrTokenInvalid) {
+		t.Fatalf("an invite from a revoked device still opened a request: %v", err)
 	}
-}
-
-// Ownership arrives with the claim, in the transaction that creates the person.
-// The whole point of the phase: before it, "who owns this machine" could only be
-// guessed from row order - a record of a fact rather than the fact, and one that
-// says nothing at all on a store that has been restored or hand edited.
-func TestClaimMakesThePersonTheOwner(t *testing.T) {
-	s := newStore(t)
-	ctx := context.Background()
-	if _, err := s.EnsureServerIdentity(ctx); err != nil {
-		t.Fatalf("EnsureServerIdentity: %v", err)
-	}
-	token, err := s.IssueClaimToken(ctx, 100)
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
-	}
-
-	id, err := pairID(ctx, s, token, "dev-phone", "test", 100)
-	if err != nil {
-		t.Fatalf("Pair: %v", err)
-	}
-
-	machine, err := s.ServerIdentity(ctx)
-	if err != nil {
-		t.Fatalf("ServerIdentity: %v", err)
-	}
-	if machine.OwnerUserID != id.UserID {
-		t.Fatalf("owner = %q, want %q", machine.OwnerUserID, id.UserID)
-	}
-	// The moment survives too. Nothing decides by it, but it is unrecoverable,
-	// and it is written by the very statement this feature rewrote.
-	if machine.ClaimedAt != 100 {
-		t.Fatalf("claimed_at = %d, want 100: the timestamp must survive the switch to owner-based decisions", machine.ClaimedAt)
-	}
-}
-
-// Re-claiming a server that lost every device gives the SAME person their
-// machine back. A second owner here would strand the first one's history under
-// an author_id nobody can sign in as.
-func TestReClaimKeepsOwnershipWithTheExistingPerson(t *testing.T) {
-	s := newStore(t)
-	ctx := context.Background()
-	owner := claimPerson(t, s, "dev-phone")
-
-	if err := s.RevokeDevice(ctx, "dev-phone"); err != nil {
-		t.Fatalf("RevokeDevice: %v", err)
-	}
-
-	token, err := s.IssueClaimToken(ctx, 300)
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
-	}
-	back, err := pairID(ctx, s, token, "dev-new", "test", 300)
-	if err != nil {
-		t.Fatalf("re-claim: %v", err)
-	}
-	if back.UserID != owner.UserID {
-		t.Fatalf("re-claim landed on %q, want the existing person %q", back.UserID, owner.UserID)
-	}
-	if back.Created {
-		t.Fatal("re-claim reported creating a person who already existed")
-	}
-
-	var people int
-	if err := s.read.QueryRowContext(ctx, "SELECT COUNT(1) FROM users").Scan(&people); err != nil {
-		t.Fatalf("count users: %v", err)
-	}
-	if people != 1 {
-		t.Fatalf("users = %d, want 1: a re-claim must not mint a second person", people)
-	}
-}
-
-// "Claimed" is read from the owner and nothing else. A store carrying the old
-// timestamp but no owner is NOT claimed - which is what makes the two records
-// impossible to disagree about.
-func TestClaimedIsReadFromTheOwnerAndNotFromTheTimestamp(t *testing.T) {
-	s := newStore(t)
-	ctx := context.Background()
-	claimPerson(t, s, "dev-phone")
-
-	if _, err := s.write.ExecContext(ctx, "UPDATE server_identity SET owner_user_id = NULL WHERE id = 1"); err != nil {
-		t.Fatalf("clear owner: %v", err)
-	}
-	machine, err := s.ServerIdentity(ctx)
-	if err != nil {
-		t.Fatalf("ServerIdentity: %v", err)
-	}
-	if machine.ClaimedAt == 0 {
-		t.Fatal("precondition: the timestamp should still be there")
-	}
-	if machine.OwnerUserID != "" {
-		t.Fatal("a store with a timestamp but no owner reports itself claimed")
+	res, err := s.Pair(ctx, fromLaptop, "dev-new", "linux", 300)
+	if err != nil || res.Request == nil || res.Request.Outcome != "" {
+		t.Fatalf("the laptop's invite = %+v (%v), want a waiting request", res, err)
 	}
 }
 
@@ -534,95 +382,77 @@ func TestClaimedIsReadFromTheOwnerAndNotFromTheTimestamp(t *testing.T) {
 func TestPairingYourOwnDeviceKeyAgainIsAccepted(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	owner := claimPerson(t, s, "dev-mine")
+	person := pairFirst(t, s, "dev-mine")
 
-	token, err := s.IssueDeviceInvite(ctx, "dev-mine", 200)
-	if err != nil {
-		t.Fatalf("IssueDeviceInvite: %v", err)
-	}
-	again, err := pairID(ctx, s, token, "dev-mine", "test", 200)
+	again, err := pairID(ctx, s, issueLink(t, s, 200), "dev-mine", "test", 200)
 	if err != nil {
 		t.Fatalf("re-pairing my own device: %v", err)
 	}
-	if again.UserID != owner.UserID {
-		t.Fatalf("answered %+v, want the same person", again)
+	if again.UserID != person.UserID || again.Created {
+		t.Fatalf("answered %+v, want the same person and no naming step", again)
+	}
+	devices, err := s.ListDevices(ctx, person.UserID)
+	if err != nil || len(devices) != 1 {
+		t.Fatalf("devices = %d (%v), want the one row refreshed, not a second", len(devices), err)
 	}
 }
 
-// A spent token answers only the device that spent it. Before used_by existed,
-// a claim token named nobody, so any KNOWN device key - and the key is public,
-// it rides every greeting and device.list prints it - could present a spent
-// claim from the server log and be told that person's id, label and ownership.
-// `pair` is the one command that carries no signature.
+// A spent token answers only the device that spent it. `pair` is the one
+// command a key the server does not know may send, and the person's id and
+// label are what it would learn.
 func TestASpentTokenAnswersOnlyTheDeviceThatSpentIt(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	if _, err := s.EnsureServerIdentity(ctx); err != nil {
-		t.Fatalf("EnsureServerIdentity: %v", err)
-	}
-	claim, err := s.IssueClaimToken(ctx, 100)
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
-	}
-	owner, err := pairID(ctx, s, claim, "dev-a", "test", 100)
+	first := issueLink(t, s, 100)
+	person, err := pairID(ctx, s, first, "dev-a", "test", 100)
 	if err != nil {
 		t.Fatalf("Pair: %v", err)
 	}
-
-	// A second device of the same person, joined the ordinary way.
-	invite, err := s.IssueDeviceInvite(ctx, "dev-a", 200)
-	if err != nil {
-		t.Fatalf("IssueDeviceInvite: %v", err)
-	}
-	if _, err := pairID(ctx, s, invite, "dev-b", "test", 200); err != nil {
+	if _, err := pairID(ctx, s, issueLink(t, s, 200), "dev-b", "test", 200); err != nil {
 		t.Fatalf("Pair second device: %v", err)
 	}
 
-	// dev-b presenting the spent claim must learn nothing.
-	if _, err := pairID(ctx, s, claim, "dev-b", "test", 300); !errors.Is(err, ErrTokenInvalid) {
+	// dev-b presenting the spent first link must learn nothing.
+	if _, err := pairID(ctx, s, first, "dev-b", "test", 300); !errors.Is(err, ErrTokenInvalid) {
 		t.Fatalf("err = %v, want ErrTokenInvalid: a spent token must not answer a device that never used it", err)
 	}
 	// A key nobody knows either.
-	if _, err := pairID(ctx, s, claim, "dev-stranger", "test", 300); !errors.Is(err, ErrTokenInvalid) {
+	if _, err := pairID(ctx, s, first, "dev-stranger", "test", 300); !errors.Is(err, ErrTokenInvalid) {
 		t.Fatalf("err = %v, want ErrTokenInvalid", err)
 	}
 	// And the device that DID spend it still gets its answer.
-	replay, err := pairID(ctx, s, claim, "dev-a", "test", 300)
+	replay, err := pairID(ctx, s, first, "dev-a", "test", 300)
 	if err != nil {
 		t.Fatalf("replay by the spender: %v", err)
 	}
-	if replay.UserID != owner.UserID || !replay.Created {
+	if replay.UserID != person.UserID || !replay.Created {
 		t.Fatalf("replay = %+v, want the original answer back", replay)
 	}
 }
 
 // A replay answers with what HAPPENED, not with what the token kind implies. A
-// re-claim that attached to an existing owner created nobody, and re-deriving
-// "this was a claim, so created" walks that owner back through the naming
+// machine link that joined an existing person created nobody, and re-deriving
+// "a machine link, so created" walks that person back through the naming
 // screen and lets them overwrite their own name.
-func TestAReplayedReClaimDoesNotClaimToHaveCreatedAnybody(t *testing.T) {
+func TestAReplayOfAJoiningMachineLinkDoesNotSayCreated(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	claimPerson(t, s, "dev-phone")
-	if err := s.RevokeDevice(ctx, "dev-phone"); err != nil {
+	pairFirst(t, s, "dev-phone")
+	if _, err := s.RevokeDevice(ctx, "dev-phone", 150); err != nil {
 		t.Fatalf("RevokeDevice: %v", err)
 	}
 
-	token, err := s.IssueClaimToken(ctx, 300)
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
-	}
+	token := issueLink(t, s, 300)
 	first, err := pairID(ctx, s, token, "dev-new", "test", 300)
 	if err != nil {
-		t.Fatalf("re-claim: %v", err)
+		t.Fatalf("pair: %v", err)
 	}
 	if first.Created {
-		t.Fatal("a re-claim reported creating a person who already existed")
+		t.Fatal("joining an existing person reported creating them")
 	}
-
 	replay, err := pairID(ctx, s, token, "dev-new", "test", 350)
 	if err != nil {
-		t.Fatalf("replayed re-claim: %v", err)
+		t.Fatalf("replay: %v", err)
 	}
 	if replay.Created != first.Created {
 		t.Fatalf("replay says created=%v, the original said %v", replay.Created, first.Created)
@@ -630,12 +460,12 @@ func TestAReplayedReClaimDoesNotClaimToHaveCreatedAnybody(t *testing.T) {
 }
 
 // A restore that brings back people without the machine's own row must not be
-// handed a fresh keypair: that breaks pinning for every device paired against
-// the old one, silently, and the right answer is to finish the restore.
+// handed a fresh keypair: that locks out every device paired against the old
+// one, silently, and the right answer is to finish the restore.
 func TestAStoreWithPeopleAndNoServerIdentityRefusesToMintANewKey(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	claimPerson(t, s, "dev-phone")
+	pairFirst(t, s, "dev-phone")
 
 	if _, err := s.write.ExecContext(ctx, "DELETE FROM server_identity"); err != nil {
 		t.Fatalf("simulate a partial restore: %v", err)
@@ -649,68 +479,35 @@ func TestAStoreWithPeopleAndNoServerIdentityRefusesToMintANewKey(t *testing.T) {
 	}
 }
 
-// And a claim is still refused while the owner HAS a device: that is the rule
-// the count exists for.
-func TestAClaimIsStillRefusedWhileTheOwnerHasADevice(t *testing.T) {
-	s := newStore(t)
-	ctx := context.Background()
-	claimPerson(t, s, "dev-owner")
-
-	token, err := s.IssueClaimToken(ctx, 300)
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
-	}
-	if _, err := pairID(ctx, s, token, "dev-other", "test", 300); !errors.Is(err, ErrTokenInvalid) {
-		t.Fatalf("err = %v, want ErrTokenInvalid", err)
-	}
-}
-
 // A replay reproduces the recorded answer, not the device's current binding.
-// After a logout and a re-pair the same key belongs to a different moment in this
-// person's life, and the token has to keep answering with the one it settled.
+// After a logout and a re-pair the same key belongs to a different moment in
+// this person's life, and the token has to keep answering with the one it
+// settled.
 func TestAReplayAnswersWithWhatTheTokenProducedNotWhoHoldsTheKeyNow(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	if _, err := s.EnsureServerIdentity(ctx); err != nil {
-		t.Fatalf("EnsureServerIdentity: %v", err)
-	}
-	claim, err := s.IssueClaimToken(ctx, 100)
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
-	}
-	first, err := pairID(ctx, s, claim, "dev-x", "test", 100)
+	original := issueLink(t, s, 100)
+	first, err := pairID(ctx, s, original, "dev-x", "test", 100)
 	if err != nil {
 		t.Fatalf("Pair: %v", err)
 	}
 	if !first.Created {
-		t.Fatal("the first claim should have created the person")
+		t.Fatal("the first link should have created the person")
 	}
 
-	// Log out, come back with a new device, then bring dev-x back by invite.
-	if err := s.RevokeDevice(ctx, "dev-x"); err != nil {
+	// Sign out, come back with a new device, then bring dev-x back too.
+	if _, err := s.RevokeDevice(ctx, "dev-x", 150); err != nil {
 		t.Fatalf("RevokeDevice: %v", err)
 	}
-	again, err := s.IssueClaimToken(ctx, 200)
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
+	if back, err := pairID(ctx, s, issueLink(t, s, 200), "dev-new", "test", 200); err != nil || back.Created {
+		t.Fatalf("coming back = %+v (%v), want the existing person", back, err)
 	}
-	back, err := pairID(ctx, s, again, "dev-new", "test", 200)
-	if err != nil {
-		t.Fatalf("re-claim: %v", err)
-	}
-	if back.Created {
-		t.Fatal("the re-claim created a person who already existed")
-	}
-	invite, err := s.IssueDeviceInvite(ctx, "dev-new", 300)
-	if err != nil {
-		t.Fatalf("IssueDeviceInvite: %v", err)
-	}
-	if _, err := pairID(ctx, s, invite, "dev-x", "test", 300); err != nil {
+	if _, err := pairID(ctx, s, issueLink(t, s, 300), "dev-x", "test", 300); err != nil {
 		t.Fatalf("re-adding dev-x: %v", err)
 	}
 
-	// The ORIGINAL claim token replayed by dev-x answers what it produced then.
-	replay, err := pairID(ctx, s, claim, "dev-x", "test", 400)
+	// The ORIGINAL link replayed by dev-x answers what it produced then.
+	replay, err := pairID(ctx, s, original, "dev-x", "test", 400)
 	if err != nil {
 		t.Fatalf("replay: %v", err)
 	}
@@ -719,26 +516,16 @@ func TestAReplayAnswersWithWhatTheTokenProducedNotWhoHoldsTheKeyNow(t *testing.T
 	}
 }
 
-// countAllDevices is the total this feature deliberately stopped deciding by;
-// tests still assert on it, so it lives here rather than on the Store.
-func countAllDevices(ctx context.Context, q rowQuerier) (int, error) {
-	var n int
-	if err := q.QueryRowContext(ctx, "SELECT COUNT(1) FROM devices").Scan(&n); err != nil {
-		return 0, err
-	}
-	return n, nil
-}
-
 // The three tests this replaced each began by inserting a second person by
 // hand, to check that one person's device could not be taken over by another.
-// That situation is now unrepresentable rather than merely refused, so the
-// schema is what gets tested. The takeover guard in Pair stays where it is:
-// it is two lines on an authentication path, and it should hold the invariant
+// That situation is unrepresentable rather than merely refused, so the schema
+// is what gets tested. The takeover guard in bindDevice stays where it is: it
+// is two lines on an authentication path, and it should hold the invariant
 // rather than assume it.
 func TestASecondPersonCannotBeCreatedByAnyMeans(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	claimOwner(t, s, "dev-owner")
+	pairFirst(t, s, "dev-first")
 
 	_, err := s.write.ExecContext(ctx,
 		"INSERT INTO users (user_id, label, created_at) VALUES (?, ?, ?)", "u_second", "Second", 500)
@@ -757,277 +544,203 @@ func TestASecondPersonCannotBeCreatedByAnyMeans(t *testing.T) {
 	if people != 1 {
 		t.Fatalf("people = %d, want 1", people)
 	}
-	if _, err := s.ResolveIdentity(ctx, "dev-owner", "", 600); err != nil {
-		t.Fatalf("the owner stopped resolving: %v", err)
-	}
-}
-
-// forgetOwner drops the ownership marker while leaving everything else intact -
-// what a partial restore or a hand edit produces.
-func forgetOwner(t *testing.T, s *Store) {
-	t.Helper()
-	if _, err := s.write.ExecContext(context.Background(),
-		"UPDATE server_identity SET owner_user_id = NULL WHERE id = 1"); err != nil {
-		t.Fatalf("forget owner: %v", err)
-	}
-}
-
-// The repair this phase introduced. A store that lost its ownership marker used
-// to be permanently unclaimable: the claim was refused, no link was printed, and
-// the whole conversation sat there with no way in. There is one person to attach
-// to now, so refusing buys nothing.
-func TestAClaimOnAStoreThatLostItsOwnerAttachesToTheOnePersonThere(t *testing.T) {
-	s := newStore(t)
-	ctx := context.Background()
-	owner := claimOwner(t, s, "dev-owner")
-	if err := s.RevokeDevice(ctx, "dev-owner"); err != nil {
-		t.Fatalf("RevokeDevice: %v", err)
-	}
-	forgetOwner(t, s)
-
-	token, err := s.IssueClaimToken(ctx, 500)
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
-	}
-	back, err := pairID(ctx, s, token, "dev-new", "test", 500)
-	if err != nil {
-		t.Fatalf("claim on a store with no owner marker: %v", err)
-	}
-	if back.UserID != owner.UserID {
-		t.Fatalf("attached to %q, want the person who was already here (%q)", back.UserID, owner.UserID)
-	}
-	if back.Created {
-		t.Fatal("reported as created; this person existed before the claim and has a name already")
-	}
-	machine, err := s.ReadOwnershipState(ctx)
-	if err != nil {
-		t.Fatalf("ReadOwnershipState: %v", err)
-	}
-	if !machine.Owned {
-		t.Fatal("the marker was not written back, so the next start prints a claim link again")
-	}
-}
-
-// The other half, and the one that matters. A missing ownership marker is not
-// permission to take the machine: while a device is still paired, the person is
-// reachable and the claim has to be refused - otherwise the reprinted link hands
-// their identity and their whole history to whoever presents it.
-func TestAClaimIsRefusedWhileADeviceIsPairedEvenWithNoOwnerMarker(t *testing.T) {
-	s := newStore(t)
-	ctx := context.Background()
-	owner := claimOwner(t, s, "dev-owner")
-	forgetOwner(t, s)
-
-	token, err := s.IssueClaimToken(ctx, 500)
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
-	}
-	if _, err := pairID(ctx, s, token, "dev-attacker", "test", 500); !errors.Is(err, ErrTokenInvalid) {
-		t.Fatalf("claim answered %v, want it refused while the person still has a device", err)
-	}
-
-	// And the person is untouched: same identity, same devices.
-	still, err := s.ResolveIdentity(ctx, "dev-owner", "", 600)
-	if err != nil {
-		t.Fatalf("the owner stopped resolving: %v", err)
-	}
-	if still.UserID != owner.UserID {
-		t.Fatalf("resolved %q, want %q", still.UserID, owner.UserID)
-	}
-	devices, err := s.ListDevices(ctx, owner.UserID)
-	if err != nil {
-		t.Fatalf("ListDevices: %v", err)
-	}
-	if len(devices) != 1 {
-		t.Fatalf("devices = %d, want the one that was already there", len(devices))
-	}
-}
-
-// Startup reads the same fact, and it has to read it WITHOUT the owner id: a
-// store missing the marker still has somebody who can get in, and answering "no"
-// there is what makes startup print a claim link over a machine in use.
-func TestAMissingOwnerMarkerDoesNotMakeTheMachineLookEmpty(t *testing.T) {
-	s := newStore(t)
-	ctx := context.Background()
-	claimOwner(t, s, "dev-owner")
-	forgetOwner(t, s)
-
-	machine, err := s.ReadOwnershipState(ctx)
-	if err != nil {
-		t.Fatalf("ReadOwnershipState: %v", err)
-	}
-	if machine.Owned {
-		t.Fatal("the marker is gone, so Owned must say so")
-	}
-	if !machine.OwnerCanGetIn {
-		t.Fatal("a paired device is still a way in; saying otherwise prints a claim link over a live machine")
+	if _, err := s.ResolveIdentity(ctx, "dev-first", "", 600); err != nil {
+		t.Fatalf("the person stopped resolving: %v", err)
 	}
 }
 
 // The replay path answers only while the device that spent the token still
-// belongs to the person it produced. Without that join a revoked-and-re-paired
-// key would be handed the original person's id and label - and the client would
-// write both into a device the token never produced.
+// belongs to the person it produced. Without that join a revoked key would be
+// handed the original person's id and label - and the client would write both
+// into a device the server no longer knows.
 func TestAReplayIsRefusedOnceTheDeviceIsNoLongerTheOneThatSpentIt(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	claimOwner(t, s, "dev-owner")
+	pairFirst(t, s, "dev-first")
 
-	invite, err := s.IssueDeviceInvite(ctx, "dev-owner", 200)
-	if err != nil {
-		t.Fatalf("IssueDeviceInvite: %v", err)
-	}
-	if _, err := pairID(ctx, s, invite, "dev-second", "test", 200); err != nil {
+	token := issueLink(t, s, 200)
+	if _, err := pairID(ctx, s, token, "dev-second", "test", 200); err != nil {
 		t.Fatalf("pair the second device: %v", err)
 	}
 	// The replay works while the device is still there.
-	if _, err := pairID(ctx, s, invite, "dev-second", "test", 210); err != nil {
+	if _, err := pairID(ctx, s, token, "dev-second", "test", 210); err != nil {
 		t.Fatalf("replay before revocation: %v", err)
 	}
 
-	if err := s.RevokeDevice(ctx, "dev-second"); err != nil {
+	if _, err := s.RevokeDevice(ctx, "dev-second", 215); err != nil {
 		t.Fatalf("RevokeDevice: %v", err)
 	}
 
 	// And stops the moment it is not. Refused as a spent token rather than
 	// answered: the row says who the token produced, but the device that
 	// presented it is no longer that person's.
-	if _, err := pairID(ctx, s, invite, "dev-second", "test", 220); !errors.Is(err, ErrTokenInvalid) {
+	if _, err := pairID(ctx, s, token, "dev-second", "test", 220); !errors.Is(err, ErrTokenInvalid) {
 		t.Fatalf("replay answered %v, want it refused once the device was revoked", err)
 	}
 }
 
-// The mirror of the ownerless store: the marker names somebody who is not
-// there. Reachable by the same hand edit, because the sqlite3 CLI leaves
-// foreign keys off. Refusing would reprint a claim link on every restart that
-// no presentation could ever satisfy.
-func TestAClaimRecoversAMachineWhoseOwnerRowIsGone(t *testing.T) {
+// The page mints a link for a machine nobody can reach, and only once for each
+// such stretch: reloading it never mints again, and with devices present the
+// page offers "Add a device" rather than a link nobody asked for.
+func TestThePageMintsALinkOnlyForAMachineNobodyCanReach(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	owner := claimOwner(t, s, "dev-owner")
-	if err := s.RevokeDevice(ctx, "dev-owner"); err != nil {
-		t.Fatalf("RevokeDevice: %v", err)
+
+	page, err := s.PageMachineLink(ctx, 100)
+	if err != nil || !page.Found || page.Devices != 0 {
+		t.Fatalf("a fresh machine's page = %+v (%v), want a link at once", page, err)
 	}
-	if _, err := s.write.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {
-		t.Fatalf("relax foreign keys: %v", err)
+	minted := page.Link
+	if !minted.Live(100) || minted.ExpiresAt != 100+TokenTTLSeconds {
+		t.Fatalf("minted %+v, want a live ten-minute link", minted)
 	}
-	if _, err := s.write.ExecContext(ctx, "DELETE FROM users WHERE user_id = ?", owner.UserID); err != nil {
-		t.Fatalf("delete the person: %v", err)
+	again, err := s.PageMachineLink(ctx, 130)
+	if err != nil || !again.Found || again.Link != minted {
+		t.Fatalf("a reload = %+v (%v), want the same link %+v", again, err, minted)
+	}
+	if got := unspentMachineLinks(t, s); got != 1 {
+		t.Fatalf("unspent machine links = %d, want 1: a reload minted another", got)
 	}
 
-	token, err := s.IssueClaimToken(ctx, 500)
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
+	// The link is used: a device exists, and the page has nothing to show.
+	if _, err := pairID(ctx, s, minted.Token, "dev-a", "test", 140); err != nil {
+		t.Fatalf("pair: %v", err)
 	}
-	back, err := pairID(ctx, s, token, "dev-new", "test", 500)
-	if err != nil {
-		t.Fatalf("claim on a machine whose owner row is gone: %v", err)
+	if page, err := s.PageMachineLink(ctx, 150); err != nil || page.Found || page.Devices != 1 {
+		t.Fatalf("with a device paired the page = %+v (%v), want nothing until Add a device", page, err)
 	}
-	if !back.Created {
-		t.Fatal("a person had to be minted here; the marker was promising one that did not exist")
+	if got := unspentMachineLinks(t, s); got != 0 {
+		t.Fatalf("the page minted a link while a device can reach the machine")
 	}
-	machine, err := s.ReadOwnershipState(ctx)
-	if err != nil {
-		t.Fatalf("ReadOwnershipState: %v", err)
+
+	// A link asked for is shown, live and then run out, with devices present.
+	asked := issueLink(t, s, 200)
+	if page, err := s.PageMachineLink(ctx, 210); err != nil || !page.Found || page.Link.Token != asked {
+		t.Fatalf("the page = %+v (%v), want the link just asked for", page, err)
 	}
-	if !machine.Owned || !machine.OwnerCanGetIn {
-		t.Fatalf("machine = %+v, want owned and reachable so no link is printed again", machine)
-	}
-	// And the marker points at the person who is actually there.
-	id, err := s.ResolveIdentity(ctx, "dev-new", "", 600)
-	if err != nil {
-		t.Fatalf("the new person does not resolve: %v", err)
-	}
-	if id.UserID != back.UserID {
-		t.Fatalf("resolved %q, want %q", id.UserID, back.UserID)
+	late := 200 + TokenTTLSeconds
+	if page, err := s.PageMachineLink(ctx, late); err != nil || !page.Found || page.Link.Token != asked || page.Link.Live(late) {
+		t.Fatalf("after the deadline the page = %+v (%v), want the same link, run out", page, err)
 	}
 }
 
-// The shape the first attempt at this recovery got wrong: the marker names a
-// ghost AND a real person is still there. Minting unconditionally collides with
-// the singleton index and turns the recovery into an internal error - the same
-// permanent lockout one layer down.
-func TestAGhostOwnerMarkerAttachesToThePersonWhoIsActuallyThere(t *testing.T) {
+// FR-002: a link that ran out is not replaced behind anybody's back. The page
+// keeps showing it as expired until a new one is asked for - a reload must not
+// mint, or an open page would hold a live link for ever.
+func TestALinkThatRanOutStaysUntilANewOneIsAskedFor(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	owner := claimOwner(t, s, "dev-owner")
-	if err := s.RevokeDevice(ctx, "dev-owner"); err != nil {
-		t.Fatalf("RevokeDevice: %v", err)
-	}
-	// A marker naming somebody who never existed, over a store that still holds
-	// its real person. Foreign keys off, because that is the only way to reach
-	// this state - and the way a hand edit through the sqlite3 CLI reaches it.
-	if _, err := s.write.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {
-		t.Fatalf("relax foreign keys: %v", err)
-	}
-	if _, err := s.write.ExecContext(ctx,
-		"UPDATE server_identity SET owner_user_id = 'u_ghost0000000000' WHERE id = 1"); err != nil {
-		t.Fatalf("point the marker at a ghost: %v", err)
-	}
-
-	token, err := s.IssueClaimToken(ctx, 500)
+	first, err := s.PageMachineLink(ctx, 100)
 	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
+		t.Fatalf("PageMachineLink: %v", err)
 	}
-	back, err := pairID(ctx, s, token, "dev-new", "test", 500)
-	if err != nil {
-		t.Fatalf("claim over a ghost marker: %v", err)
+	late := first.Link.ExpiresAt + 3600
+	for range 3 {
+		page, err := s.PageMachineLink(ctx, late)
+		if err != nil || !page.Found || page.Link != first.Link || page.Link.Live(late) {
+			t.Fatalf("a reload after the deadline = %+v (%v), want the same link, run out", page, err)
+		}
 	}
-	if back.UserID != owner.UserID {
-		t.Fatalf("attached to %q, want the person who was already here (%q)", back.UserID, owner.UserID)
+	if _, err := pairID(ctx, s, first.Link.Token, "dev-a", "test", late); !errors.Is(err, ErrTokenExpired) {
+		t.Fatalf("the run-out link answered %v, want ErrTokenExpired", err)
 	}
-	if back.Created {
-		t.Fatal("nobody was created here; the person predates the claim")
-	}
-	machine, err := s.ServerIdentity(ctx)
-	if err != nil {
-		t.Fatalf("ServerIdentity: %v", err)
-	}
-	if machine.OwnerUserID != owner.UserID {
-		t.Fatalf("marker = %q, want it re-pointed at %q", machine.OwnerUserID, owner.UserID)
+	fresh := issueLink(t, s, late)
+	if page, err := s.PageMachineLink(ctx, late+1); err != nil || !page.Found || page.Link.Token != fresh || !page.Link.Live(late+1) {
+		t.Fatalf("after New link the page = %+v (%v), want the new live link", page, err)
 	}
 }
 
-// The marker names a ghost and nobody else is there. Startup must not promise
-// "you are back in with your chats and messages" - there are none, and the claim
-// mints a brand-new person whose author id no surviving message carries.
-func TestAGhostMarkerOverAnEmptyStoreIsNotAnnouncedAsARecovery(t *testing.T) {
+// FR-015: the last device going away puts the machine back to "no devices",
+// where the page shows a link at once. A link that ran out unused would stand
+// in the way - the page shows an unspent one as expired - so it is voided; a
+// LIVE one is the link somebody may be scanning right now, and stays.
+func TestTheLastDeviceGoingAwayClearsTheWayForALink(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("a link that ran out unused is voided", func(t *testing.T) {
+		s := newStore(t)
+		pairFirst(t, s, "dev-a")
+		stale := issueLink(t, s, 200) // Add a device, never used
+		gone := 200 + TokenTTLSeconds + 60
+		if _, err := s.RevokeDevice(ctx, "dev-a", gone); err != nil {
+			t.Fatalf("RevokeDevice: %v", err)
+		}
+		page, err := s.PageMachineLink(ctx, gone+1)
+		if err != nil || !page.Found || page.Link.Token == stale || !page.Link.Live(gone+1) {
+			t.Fatalf("the page after the last device left = %+v (%v), want a fresh live link", page, err)
+		}
+	})
+
+	t.Run("a live link is kept", func(t *testing.T) {
+		s := newStore(t)
+		pairFirst(t, s, "dev-a")
+		live := issueLink(t, s, 200)
+		if _, err := s.RevokeDevice(ctx, "dev-a", 260); err != nil {
+			t.Fatalf("RevokeDevice: %v", err)
+		}
+		page, err := s.PageMachineLink(ctx, 261)
+		if err != nil || !page.Found || page.Link.Token != live {
+			t.Fatalf("the page = %+v (%v), want the live link that was already there", page, err)
+		}
+	})
+
+	t.Run("a device that is not the last changes nothing", func(t *testing.T) {
+		s := newStore(t)
+		pairFirst(t, s, "dev-a")
+		if _, err := pairID(ctx, s, issueLink(t, s, 150), "dev-b", "test", 150); err != nil {
+			t.Fatalf("second device: %v", err)
+		}
+		stale := issueLink(t, s, 200)
+		gone := 200 + TokenTTLSeconds + 60
+		if _, err := s.RevokeDevice(ctx, "dev-a", gone); err != nil {
+			t.Fatalf("RevokeDevice: %v", err)
+		}
+		page, err := s.PageMachineLink(ctx, gone+1)
+		if err != nil || !page.Found || page.Link.Token != stale {
+			t.Fatalf("the page = %+v (%v), want the run-out link still showing as expired", page, err)
+		}
+	})
+}
+
+// The schema keeps the two kinds apart: a machine link has no issuer and no
+// person, an invite has both, and neither may lack a deadline.
+func TestTheSchemaKeepsTheTwoKindsOfTokenApart(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
-	owner := claimOwner(t, s, "dev-owner")
-	if err := s.RevokeDevice(ctx, "dev-owner"); err != nil {
-		t.Fatalf("RevokeDevice: %v", err)
+	pairFirst(t, s, "dev-a")
+	var userID string
+	if err := s.read.QueryRowContext(ctx, "SELECT user_id FROM users").Scan(&userID); err != nil {
+		t.Fatalf("read the person: %v", err)
 	}
-	if _, err := s.write.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {
-		t.Fatalf("relax foreign keys: %v", err)
+	for _, tc := range []struct {
+		name string
+		sql  string
+		args []any
+	}{
+		{"a machine link with an issuer", "INSERT INTO pair_tokens (token, kind, issuer_key, created_at, expires_at) VALUES ('t1', 'machine', 'dev-a', 1, 2)", nil},
+		{"a machine link for a person", "INSERT INTO pair_tokens (token, kind, user_id, created_at, expires_at) VALUES ('t2', 'machine', ?, 1, 2)", []any{userID}},
+		{"an invite without an issuer", "INSERT INTO pair_tokens (token, kind, user_id, created_at, expires_at) VALUES ('t3', 'invite_device', ?, 1, 2)", []any{userID}},
+		{"a token without a deadline", "INSERT INTO pair_tokens (token, kind, created_at) VALUES ('t4', 'machine', 1)", nil},
+		{"the claim of old", "INSERT INTO pair_tokens (token, kind, created_at, expires_at) VALUES ('t5', 'claim', 1, 2)", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := s.write.ExecContext(ctx, tc.sql, tc.args...); err == nil {
+				t.Fatal("the schema accepted it")
+			}
+		})
 	}
-	if _, err := s.write.ExecContext(ctx, "DELETE FROM users WHERE user_id = ?", owner.UserID); err != nil {
-		t.Fatalf("delete the person: %v", err)
-	}
+}
 
-	machine, err := s.ReadOwnershipState(ctx)
-	if err != nil {
-		t.Fatalf("ReadOwnershipState: %v", err)
+// No owner survives anywhere in the schema (FR-017): the machine holds one
+// person, and the marker that once named them is gone with its state machine.
+func TestTheSchemaNamesNoOwner(t *testing.T) {
+	s := newStore(t)
+	var columns int
+	if err := s.read.QueryRowContext(context.Background(),
+		"SELECT COUNT(1) FROM pragma_table_info('server_identity') WHERE name IN ('owner_user_id', 'claimed_at')").Scan(&columns); err != nil {
+		t.Fatalf("inspect server_identity: %v", err)
 	}
-	// The marker is set, but it names nobody - so this is not an owner getting
-	// back in, and nothing may say it is.
-	if machine.Owned {
-		t.Fatal("a marker naming a person who is gone reported as ownership")
-	}
-	if machine.HasPerson {
-		t.Fatal("the store holds nobody")
-	}
-
-	// And the claim that follows is honest about it: a person is CREATED here.
-	token, err := s.IssueClaimToken(ctx, 500)
-	if err != nil {
-		t.Fatalf("IssueClaimToken: %v", err)
-	}
-	back, err := pairID(ctx, s, token, "dev-new", "test", 500)
-	if err != nil {
-		t.Fatalf("claim: %v", err)
-	}
-	if !back.Created {
-		t.Fatal("the person was minted here, and the app has to offer the naming step")
+	if columns != 0 {
+		t.Fatal("server_identity still carries the ownership marker")
 	}
 }

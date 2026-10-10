@@ -2,8 +2,10 @@
 
 Self-hosted messenger backend for ONE person and the devices they own:
 one WebSocket command channel (JSON envelope, global `seq` event log,
-cursor replay) plus a small REST surface (file upload/download, /health),
-embedded SQLite, single static CGO-free binary - and, since 039, a tor
+cursor replay) plus a small REST surface (file upload/download), both behind
+the channel check of feature 044, embedded SQLite encrypted at rest and locked
+after every start until the owner's password comes (047), single static
+CGO-free binary - and, since 039, a tor
 process beside it that the server starts, supervises and stops, and that
 never opens the database. Different people never
 share a machine and their machines never talk to each other — everything
@@ -14,26 +16,26 @@ between people goes through a relay whose protocol does not exist yet
 (v0). Every command, event, field name, error code and rule comes from
 there; a change needed on the wire is first a contract edit, then code.
 
-**Stage 2 is under way (features 032, 033, 037, 038).** The server now CHECKS who connects:
-`device_key` is an Ed25519 public key, `signature` over
-`"nox/challenge/v1:" ‖ challenge` is verified on every greeting, and the
-person is found by that key. `login_ref` is gone from the wire, the lookup
-and the schema — presenting a secret was replaced by proving possession of
-a key that never leaves the device. A greeting can no longer create anyone:
-an unknown key is refused (`unauthenticated`), and people come into being
-only through `pair` (§8A). Feature 033 named the OWNER on the machine's own
-row; feature 037 collapsed the machine to that one person (owner, 2026-09-10)
-and the mark stopped being reportable — with nobody to tell apart, `identity.owner`
-said the same thing to everybody and left the wire. Gone with it: the person
-invite (§8B), the waiting branch of `pair`, and a second person as a
-possibility at all — a unique index on `users` makes one unrepresentable.
-`owner_user_id` survives as the "this machine has been claimed" marker and
-nothing else. **Feature 036 closed the transport**: the main listener speaks
-TLS 1.3 and nothing else, on a self-signed certificate built from the machine's
-own key, and the pairing link carries that key's FINGERPRINT for the device to
-pin against. Still out of scope and blocked: `recover` and the recovery phrase
-(Q16), the protocol to the relay (Q13), and ATS / App Review for a self-signed
-personal server (Q14, due before release).
+**Who connects is decided by the channel (feature 044).** Every connection -
+the WebSocket and every file transfer alike - is TCP (or a stream from tor),
+then TLS 1.3 on a THROWAWAY certificate the server mints in memory at every
+start and nobody checks, then the Eidolon exchange over the TLS 1.3 exporter
+(RFC 9266, `internal/eidolon`): the device sends its Ed25519 key with a
+signature over the key and one over the binding, the server checks both and
+answers with the machine's own Ed25519 key the same way. Only then does
+`http.Server` see the connection, carrying the device key it proved
+(`channelPeer`). The server accepts ANY key that proves itself and grants
+rights by the store: a paired device gets everything, an unknown key only
+`pair`; `session.hello` with an unknown key is `unauthenticated` (the device
+reads it as a revocation), and `/files` refuses an unpaired key with `401`
+before it looks at the token. The greeting has no challenge, `session.hello`
+and `pair` carry no device key, and the pairing link is `nox://pair/`
+version 3 (contract §8A). People come into being only through `pair`; the
+machine belongs to ONE person (037) and `owner_user_id` survives only as the
+"this machine has been claimed" marker. Still out of scope and blocked:
+`recover` and the recovery phrase (Q16), the protocol to the relay (Q13), and
+ATS / App Review for a personal server reached through the app's own Rust
+module (Q14, due before release).
 
 Architecture rationale lives in `docs/blueprints/client-backend/README.md`;
 Go style rules live in the `go-style` skill; WebSocket/REST runtime
@@ -48,19 +50,38 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
     go vet ./...
     go test -race ./...       # -race is mandatory, not optional
     go build -o noxd . && ./noxd -addr 127.0.0.1:8080 -db nox.db
+    ./noxd unlock             # the password: set the first time, entered after every start
+    ./noxd password           # a new password - the data key is re-sealed, nothing re-encrypted
+    ./noxd backup /abs/nox.tar                    # one encrypted file, written by the running server
+    ./noxd restore nox.tar -db /new/place/nox.db  # onto an empty place, no server running there
 
 ## Toolchain & dependencies
 
-- Go **1.27**. Direct dependencies: exactly four — `github.com/coder/websocket`,
-  `modernc.org/sqlite`, `golang.org/x/sync` (errgroup) and `rsc.io/qr`. Adding
-  any other requires written justification; "convenient" is not one.
+- Go **1.27**. Direct dependencies: exactly six — `github.com/coder/websocket`,
+  `github.com/ncruces/go-sqlite3`, `golang.org/x/crypto`, `golang.org/x/sync`
+  (errgroup), `golang.org/x/term` and `rsc.io/qr`. Adding any other requires
+  written justification; "convenient" is not one.
+- **Why `ncruces/go-sqlite3` (047):** it is the one SQLite for Go that encrypts
+  page by page without CGO - SQLite compiled to WebAssembly and run in-process by
+  wazero, with the `adiantum` VFS that encrypts every page of the database and of
+  its WAL with the data key. `modernc.org/sqlite` has no encrypting VFS, and
+  writing one over it means rewriting SQLite's VFS layer; SQLCipher is CGO.
+  Its own dependencies come with it: the Wasm build of SQLite
+  (`go-sqlite3-wasm`), `lukechampine.com/adiantum` and `x/sys`. Bump it only
+  with the full suite run: the Wasm build carries SQLite's own version.
+- **Why `golang.org/x/crypto` (047):** Argon2id derives the key that seals the
+  data key from the owner's password, XChaCha20-Poly1305 seals it and
+  ChaCha20-Poly1305 seals each attachment chunk. Writing any of them here would be
+  writing our own cryptography. HKDF comes from the standard library
+  (`crypto/hkdf`).
+- **Why `golang.org/x/term` (047):** `noxd unlock`, `noxd password` and `noxd
+  restore` read the password from a terminal without echo, on every platform the
+  server runs on; the standard library has no way to turn echo off.
 - **Why `rsc.io/qr` (035):** encoding a QR is a whole capability — Reed-Solomon
   over GF(256), version selection, eight masks scored by penalty — not a
   convenience, and writing it here buys nothing but our own bugs in the thing
   people scan to take ownership of a server. Pure Go, no dependencies of its
   own, no CGO, so `CGO_ENABLED=0` static builds are untouched.
-- `modernc.org/libc` does not follow semver — its version stays pinned;
-  bump only together with `modernc.org/sqlite` and run the full test suite.
 - Dev tools go through `tool` directives in go.mod (Go 1.24+), never a
   `tools.go` with blank imports.
 
@@ -72,7 +93,10 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
    state directory `<db>-tor`, commands it over the control port, owns it
    (`__OwningControllerProcess` + `TAKEOWNERSHIP`, so it dies with the
    server) and hands it the onion key on every start - tor never opens the
-   database and never persists the key.
+   database and never persists the key. The `noxd` commands never open it
+   either (047): `unlock`, `password` and `backup` go to the running server
+   over its service page's listener, and `restore` opens only the copy it is
+   putting into an empty place, where no server runs.
 2. **Two pools, one writer.** All writes go through `internal/store`
    using the write handle (`SetMaxOpenConns(1)` + `_txlock=immediate`);
    reads use the read pool. Never `Exec` a mutation on the read handle;
@@ -108,8 +132,10 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
    mutex, and a change that seems to need one there means restructuring
    so one goroutine owns the state. The connection REGISTRY is the
    deliberate exception: `Server.mu` guards `conns` and the per-connection
-   fields other connections read (identity, device key), because the
-   fan-out helpers walk one person's connections from another's goroutine.
+   fields other connections read (identity), because the fan-out helpers
+   walk one person's connections from another's goroutine. The device key
+   needs no lock: the channel fixes it before the connection is registered,
+   and it never changes.
    `Server.claim`, the transfer-token store (`internal/server/tokens.go`)
    and - since 043 - the upload-writer registry (`internal/server/writers.go`:
    which request is writing which part, so a new PUT can interrupt one whose
@@ -122,7 +148,11 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
    and `addrVersion` per connection, set under `Server.mu` AFTER the greeting
    reply is queued - which is what keeps `server.addresses` behind it. Tor
    state reaches readers as an immutable snapshot behind `atomic.Pointer`,
-   not under a lock.
+   not under a lock. The lock of 047 holds no mutex either: every request
+   that touches the key file - the first password, the password, a change, a
+   backup - is served by ONE goroutine at a time (`gate.go`: Run's while the
+   server is locked, the keeper's after), in the order they came, and the lock
+   state is an atomic readers only load.
 8. **One reader goroutine per connection** (library invariant); writes
    to a client go through its buffered channel (`outBuffer` = 64 frames); overflow →
    `Close(StatusPolicyViolation)` — replay heals the client on
@@ -140,7 +170,11 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
    wait for the handlers, up to 15 s → the address watcher and the tor
    supervisor stop (the supervisor on its OWN context, so tor outlives the
    drain the onion clients are still saying goodbye through) → hub stops →
-   DB closes. Preserve it.
+   DB closes. Preserve it. Since 047 the service page comes up FIRST, before
+   the database opens - the password is entered there - and the main port only
+   once the data is open; on the way down the page cancels its requests'
+   contexts before it drains, so a backup being written stops before the
+   database it reads closes, and the gate's keeper stops with the watcher.
 10. **Idempotency:** `message.send` is keyed by `(author_id,
     client_message_id)`; a replayed command returns the original echo,
     never a duplicate row. The key keeps `author_id` because that is the
@@ -163,9 +197,11 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
     `001_init.sql` and schema changes edit it in place — no deployed
     databases exist yet. Append-only numbering starts with the first
     release.
-13. **Pragmas are fixed** in `internal/db` (busy_timeout(5000) first,
-    then WAL, synchronous(NORMAL), foreign_keys(1)) for every
-    connection. Do not vary per-call.
+13. **Pragmas are fixed** in `internal/db` for every connection, in this
+    order: the data key (`PRAGMA hexkey`, run by the connection hook and
+    never put in the URI - 047), then busy_timeout(5000), WAL,
+    synchronous(NORMAL), foreign_keys(1) and temp_store(memory). Do not vary
+    per-call.
 
 ## Code style (details in the go-style skill)
 
@@ -184,7 +220,21 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 
 - `main.go`              — flags, wiring, ordered startup/shutdown (~3 lines of logic)
 - `internal/config/`     — flags + `NOX_*` env, validated at start
-- `internal/db/`         — pools, pragmas, `user_version` migration runner
+- `internal/db/`         — pools, pragmas, `user_version` migration runner; the
+  `adiantum` VFS keyed with the data key (047), `Snapshot` (VACUUM INTO under the
+  same key, the key cut out of any error) and `QuickCheck`
+- `internal/vault/`      — the data key (047): 32 random bytes, sealed in
+  `<db>.key` with XChaCha20-Poly1305 under Argon2id of the password; create,
+  open, change (a new seal written beside, flushed, renamed over), the password
+  rule. The only place a password turns into a key
+- `internal/backup/`     — `noxd backup` and `noxd restore` (047): one tar of the
+  sealed key, the snapshot and the finished attachments, closed by a manifest
+  with a MAC only the data key makes; the restore checks everything before it
+  puts anything in place, and rotates the journal id
+- `internal/prompt/`     — passwords for the commands: a terminal without echo,
+  or a line at a time from standard input
+- `commands.go`          — the `noxd` subcommands by name, and unlock, password,
+  backup and restore (047); `link` stays in `main.go`
 - `internal/store/`      — types + all reads/writes; the ONLY writer code
 - `internal/store/identity.go` — identity resolution: the person is found by
   the device's public key, and an unknown key is refused rather than enrolled;
@@ -197,7 +247,8 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - `internal/store/devices.go` — device list, revocation (DELETE, so a revoked
   device is indistinguishable from an unknown one), rename
 - `internal/store/accesskeys.go` — onion access keys (039): one per device,
-  one-time keys on onion invites, the active set read in one transaction
+  the active set read in one transaction (the one-time invite keys left with
+  044; the rest leaves with 045)
 - `internal/tor/`        — everything that knows about tor (039): finding and
   versioning the binary, the control-protocol client, the onion key and
   address, the supervisor that owns the process and publishes the service,
@@ -209,10 +260,17 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - `internal/hub/`        — fan-out goroutine owning the subscriber set
 - `internal/protocol/`   — envelope v0 types, error codes, frame (un)marshal
 - `internal/server/`     — ServeMux wiring: `/ws`, REST (§1 of contract), middleware
-- `internal/server/tls.go` — both halves of one rule: the self-signed certificate
-  the server presents, and `PinnedTLSConfig`, the check a client runs against it.
-  Together on purpose - they are one decision read from two ends, and apart they
-  drift
+- `internal/eidolon/`   — the channel check (044): the 160-byte message, the
+  responder the server runs and the initiator `cmd/smoke` and the tests run;
+  shared vectors with the app's Rust module in `testdata/vectors.json`
+- `internal/server/channel.go` — the front door: a listener wrapper that takes
+  every connection through TLS and the check on a goroutine of its own, under
+  one deadline from accept (10 s direct, 30 s onion), and hands `http.Server`
+  only the ones that passed, with the proved key in the request context
+- `internal/server/tls.go` — the technical certificate: a fresh ECDSA P-256 key
+  in memory at every start, TLS 1.3 only, ALPN `http/1.1`, no session tickets
+- `internal/server/pairing_link.go` — the version 3 link: build and parse, typed
+  addresses, shared vectors with the app in `testdata/link-vectors.json`
 - `internal/server/files.go` — the file chain (contract §7): `file.uploadBegin`
   with its continuation (`file_id` in, `received` out), the PUT that keeps
   whatever arrives and carries the rest of the file from the offset its token
@@ -223,12 +281,26 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   file was finished cannot write over it
 - `internal/server/writers.go` — one request writes a part at a time; a newer
   request for the same file interrupts the old one
+- `internal/server/gate.go` — the lock (047): the state on disk (no database
+  and no key - a first password; both - locked; one without the other - no
+  start), the service page's listener for the life of the process, `/health`,
+  the password forms and `/control/state|unlock|password|backup`, and the ONE
+  goroutine that serves the key file
+- `internal/server/lock_page.go` — the page while the server is not open: the
+  password field and nothing else
+- `internal/server/backup.go` — a backup of the running server
 - `internal/blob/`       — attachment bytes on disk, confined by `os.Root`:
   `<id>` a finished file, `<id>.part` an upload still coming, `<id>.synced`
   how many leading bytes of the part are on stable storage (043). The record
   is written only after the part is flushed and lowered before a part is cut
   back, so it never vouches for a byte that is not on disk; the schema knows
-  nothing of it
+  nothing of it. Every byte is encrypted (047): a 32-byte header, then chunks
+  of 64 KiB sealed one by one with ChaCha20-Poly1305 under a key of the file's
+  own (HKDF of the data key and the id), nonce = the chunk's index, the index
+  and "last" in the AAD. A chunk is sealed once all of it arrived - until then
+  it waits in the request's memory - so a part holds whole chunks only, an
+  upload continues from the start of the chunk it broke in, and a range opens
+  only the chunks it touches (`Reader`, an `io.ReadSeeker` for ServeContent)
 - `migrations/`          — append-only numbered `.sql` (embedded)
 
 ## Testing
@@ -236,11 +308,19 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - Table tests; each test opens its own DB file in `t.TempDir()` and
   migrates from zero. **Never `:memory:` with `database/sql`** — each
   pooled connection gets a private database.
-- HTTP and WS go through `httptest.NewUnstartedServer` + the server's OWN
-  `tls.Config` + `StartTLS`, with the test client's transport replaced by
-  `PinnedTLSConfig`. NOT `httptest.NewTLSServer`: it installs a stock
-  certificate and leaves this feature's one real question untested.
+- HTTP and WS go through the REAL front door: the test server listens through
+  the channel listener, and the test client dials TCP → TLS 1.3 without
+  certificate checks → `eidolon.Initiate` with a device key, then speaks HTTP
+  or WebSocket over that connection (`dialAs` in `server_test.go`). NOT
+  `httptest.NewTLSServer`: a stock TLS server skips the check this server is
+  built around.
 - Concurrency/replay tests may use `testing/synctest` (GA since 1.25).
+- Every test database and files directory is encrypted with a fixed test key
+  (`testDataKey`), so a stack stopped and started again over the same files
+  opens them. Keys are sealed with cheap Argon2id costs (`testKDF`, through
+  `run(..., kdf)`): what is under test around the lock is the lock. The
+  production costs - and the time they take - are tested once, in
+  `internal/vault`.
 - Tests through the REAL Tor network are named `TestOnion*` and run only
   when `NOX_TOR_TEST_BIN` points at a tor binary (0.4.9+); without it they
   skip, because the network is minutes away and not always reachable.
@@ -250,12 +330,24 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 
 ## Operational constraints
 
-- Bind loopback in dev. The listener is TLS 1.3 either way: there is no flag
-  to serve plaintext, and adding one would be adding the downgrade the whole
-  phase removed. The SERVICE PAGE is the deliberate exception and stays plain
-  HTTP on its own loopback listener.
-- Backups: `VACUUM INTO` a temp file + rename; never copy a live DB;
-  local filesystem only (WAL breaks on network mounts).
+- Bind loopback in dev. The listener is TLS 1.3 and the channel check either
+  way: there is no flag to serve plaintext or skip the check, and adding one
+  would be adding the downgrade the whole design removed. The SERVICE PAGE is
+  the deliberate exception and stays plain HTTP on its own loopback listener,
+  together with `GET /health`: the main port answers nothing before the check.
+- **The server starts LOCKED (047).** Its data is encrypted with a data key only
+  the owner's password unseals, and the password is stored nowhere: after every
+  start only the service page listens, showing a password field, and the main
+  port is not even bound - a device sees what it sees when the server is off.
+  The password goes in on the page or with `noxd unlock`. A forgotten password
+  is lost data, by decision. `-status-addr` cannot be empty, and a busy page
+  port stops the start: the password has nowhere else to go.
+- Backups: `noxd backup <absolute file>` - the RUNNING server snapshots the
+  database (`VACUUM INTO` beside it, under the same key) and writes one tar with
+  the sealed key and the finished attachments, never over an existing file and
+  never as anything but `<file>.partial` until it is whole. `noxd restore <file>
+  -db <path>` puts it onto an empty place with the same password. Never copy a
+  live DB; local filesystem only (WAL breaks on network mounts).
 - Build: `CGO_ENABLED=0 go build -trimpath -ldflags="-s"`.
 - Tor (039) is ON by default: `-tor=false` turns it off. The binary comes
   from `-tor-bin` (final - an explicit path that holds no tor is "not
@@ -300,8 +392,8 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - **The service page lives on its OWN loopback listener** (`-status-addr`), and
   the main mux serves it nowhere. That separation IS the protection: a check on
   RemoteAddr inside a handler is one somebody eventually routes around with a
-  header, and the main server is ordinarily bound to every interface. An empty
-  address removes the listener rather than the handler, so the port is not held.
+  header, and the main server is ordinarily bound to every interface. The
+  address cannot be empty since 047: the password is entered there.
 - **The service page has exactly ONE script, admitted by its HASH.** It reveals a
   Copy button and puts the claim link on the clipboard - two lines of base64 are
   not something to select by hand. Three things keep it from being a hole, and
@@ -310,8 +402,8 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   policy names `script-src 'sha256-...'` and never `'unsafe-inline'`, so exactly
   those bytes may run; and `default-src 'none'` still forbids `connect-src`, so
   the script can read the link and has nowhere to send it. The hash is DERIVED
-  from the script constant on every response rather than written down - the same
-  rule as the server's fingerprint, for the same reason. A page with no link
+  from the script constant on every response rather than written down: a stored
+  derivative is a second copy of one fact. A page with no link
   carries no script and its policy admits none.
 - **Clipboard access needs a secure context, and this page has one without TLS.**
   `http://127.0.0.1` and `http://localhost` are potentially trustworthy origins;
@@ -334,9 +426,34 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
 - **The listener's OWN address is verified after binding.** The config check
   catches a mistyped flag; a hostname can resolve to loopback at parse time and
   elsewhere at bind time, and only the socket knows which happened.
-- **A busy status port does not stop the server.** It is logged and the page is
-  skipped: 8081 is not a rare port, and people talking to each other must not
-  depend on a page nobody has opened.
+- **A busy status port STOPS the server (047).** It used to be logged and
+  skipped, while the page held nothing a server needed; now the password that
+  opens the data is entered there, and a server without its page could never
+  open. 8081 is not a rare port - the error names it, and `-status-addr` moves
+  it.
+- **The database's pages carry no MAC (047).** Adiantum is length-preserving
+  and deterministic: a page changed on disk is not detected, and two snapshots
+  show which pages changed between them. Changing the disk needs the machine,
+  which is out of scope; a backup - which does leave the machine - is closed by
+  a MAC only the data key makes, and a restore checks it before anything moves.
+  The `-shm` file is not encrypted: it is the WAL's index, page numbers and
+  checksums, no data.
+- **A chunk cut back is sealed again under the same nonce.** Safe while the
+  bytes are the same, which is what a client continuing an upload sends; other
+  bytes under the same index could come only from a faulty device of the
+  person's own, and both ciphertexts would show only to forensics on the
+  machine's disk. Recorded in specs/047 research R11.
+- **No limit on password attempts.** The page and the commands are loopback
+  only, and whoever reaches them has the machine (out of scope). Each attempt
+  costs Argon2id - about a second on a small board - and they are served one at
+  a time.
+- **A password is exactly what was typed:** at least twelve characters, not
+  whitespace alone, never trimmed and never normalised. A password outside
+  ASCII typed on a machine that composes Unicode differently is a different
+  password.
+- **A database without its key file, or a key file without its database, does
+  not start** - the server never guesses which of the two is the mistake, and
+  never creates a database beside a lost one. The error says what to do.
 - **The TOKEN is cached, never the built link.** Caching the link froze an
   address for the life of the process while "can a phone reach us" went on being
   recomputed, so a laptop whose network came up after the server did drew a QR
@@ -394,35 +511,29 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   the shape that eventually disagrees with itself. The timestamp is still
   written, in the same statement as the owner, because the moment is
   unrecoverable and the service page will want it.
-- The server's private key lives INSIDE the database file. The model's case 6
-  warns that a backup holding only the DB breaks pinning for every device at
-  once; one artifact makes that impossible, and anyone who can read the file
-  already has every message.
-- **The machine's key is ECDSA P-256, not Ed25519** — measured, not preferred.
-  Dart's BoringSSL does not offer `ed25519` in `signature_algorithms`, so a
-  certificate on such a key kills the handshake BEFORE the client's certificate
-  callback runs, and pinning cannot intervene at all. DEVICE keys stay Ed25519:
-  they sign a challenge, they do not present a certificate. Confusing the two is
-  the most expensive mistake available here - one pair names the MACHINE, the
-  other names a DEVICE.
-- **The link carries `sha256(SubjectPublicKeyInfo)`, not the key.** A raw
-  uncompressed P-256 point is 65 bytes and does not fit the thirty-two the
-  format has. The fingerprint is DERIVED on every read and never stored: a
-  stored derivative is a second copy of one fact.
-- **The certificate is rebuilt from the stored key on every start and lives in
-  memory only.** No SAN, no hostname in the subject, dates a century wide -
-  because the verifying side ignores all of it, and a name or an expiry would
-  become a refusal a home server's owner can neither explain nor repair. A
-  restart therefore hands out a NEW certificate on the same key, and every
-  paired device must go on accepting it.
-- **There is no migration for a pre-036 key and there will not be one.** A
-  32-byte row is refused by `ErrLegacyServerKey`, which says the cure out loud:
-  delete the development database. Nothing has shipped, so there is nothing to
-  migrate.
-- **HTTP/2 is kept off** (`TLSNextProto` set to an empty non-nil map).
-  `ServeTLS` otherwise appends `h2` to `NextProtos` regardless of what was set,
-  and the WebSocket upgrade this whole server is built around does not exist
-  there.
+- The server's private key lives INSIDE the database file - an Ed25519 seed in
+  `server_identity`. The model's case 6 warns that a backup holding only the DB
+  would leave the devices facing a stranger; one artifact makes that impossible,
+  and anyone who can read the file already has every message.
+- **Two keys, two jobs.** The machine's Ed25519 key is what devices check in the
+  channel exchange and what the pairing link carries (32 bytes, no fingerprint);
+  the TLS certificate's key is a throwaway P-256 minted in memory at every start
+  and checked by nobody. Mixing them up - pinning the certificate, or putting the
+  machine key into TLS - brings back exactly what 044 removed.
+- **The server accepts every key that proves itself.** Refusing unknown keys at
+  the channel would make pairing impossible (a new device is unknown by
+  definition) and would tell a stranger which keys are paired. Rights come from
+  the store, per command: `pair` for anyone, everything else for paired keys.
+- **A failed check is answered with silence.** The server writes nothing - not
+  even its own message - and closes the connection; a peer that did not prove a
+  key learns nothing, including which machine it reached.
+- **An unpaired key may hold a `/ws` connection open without greeting.** There
+  is no greeting deadline (pre-existing); the cost is a goroutine per idle
+  stranger, bounded by `maxPendingChannels` only while the check runs. Recorded,
+  not fixed.
+- **No migration for a database from before 044** and there will not be one:
+  `001_init.sql` was edited in place, the schema check refuses an old file, and
+  the cure is a new database and every device paired again.
 - The claim link goes to the log AND to the service page (035), which is why
   that page listens on loopback only and refuses to start anywhere else. The
   pre-035 rule was "the log and nowhere else", on the reasoning that a page

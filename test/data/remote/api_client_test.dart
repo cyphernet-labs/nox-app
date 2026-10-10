@@ -1,16 +1,22 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nox_app/data/remote/api_client.dart';
-import 'package:nox_app/data/remote/pinned_http_client.dart';
+import 'package:nox_app/data/remote/channel/channel_http_client.dart';
 import 'package:nox_app/data/remote/interceptor/auth_interceptor.dart';
+import 'package:nox_app/data/repository/log_repository_impl.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/app_config/app_config.dart';
 import 'package:nox_app/domain/model/app_config/app_flavor_type.dart';
 import 'package:nox_app/domain/model/app_config/server_limits.dart';
 import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
+import 'package:nox_app/domain/repository/log_repository.dart';
+
+import 'channel/fake_channel.dart';
 
 /// Minimal fake exposing a configurable apiUrl (the only thing initBase reads).
 class _FakeConfig implements AppConfigRepository {
@@ -31,17 +37,20 @@ class _FakeConfig implements AppConfigRepository {
   void updateLimits(ServerLimits limits) {}
 }
 
-const String _fixtures = 'test/general/pairing/fixtures';
+final Uint8List _serverKey = Uint8List.fromList(List<int>.generate(32, (i) => 0xA0 + i));
+final Uint8List _deviceSeed = Uint8List.fromList(List<int>.generate(32, (i) => i));
 
-String get _fingerprint => File('$_fixtures/fingerprint.txt').readAsStringSync().trim();
+/// A channel client bound to the server, with its channels opened to [port]
+/// on loopback - the server under test stands in for the one at any address.
+ChannelHttpClient _channels({int port = 1}) =>
+    ChannelHttpClient(LoopbackChannelApi(port))..bind(serverKey: _serverKey, deviceSeed: _deviceSeed);
 
 /// The machine the pairing link named. [hold] keeps a request open until it
-/// completes; everything else is answered at once.
+/// completes; everything else is answered at once. Plain HTTP: the channel
+/// below `HttpClient` is the module's, and the loopback one carries bytes as
+/// they are.
 Future<HttpServer> _honest({Completer<void>? hold}) async {
-  final context = SecurityContext()
-    ..useCertificateChainBytes(File('$_fixtures/valid.pem').readAsBytesSync())
-    ..usePrivateKeyBytes(File('$_fixtures/server_key.pem').readAsBytesSync());
-  final server = await HttpServer.bindSecure(InternetAddress.loopbackIPv4, 0, context);
+  final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
   server.listen((request) async {
     if (request.uri.path == '/held' && hold != null) await hold.future;
     request.response
@@ -53,17 +62,23 @@ Future<HttpServer> _honest({Completer<void>? hold}) async {
 }
 
 void main() {
+  setUp(() {
+    getIt.allowReassignment = true;
+    getIt.registerSingleton<LogRepository>(LoggerLogRepository());
+  });
+  tearDown(getIt.reset);
+
   test('an address with no scheme becomes https, never http', () {
     // The paired address is a bare host:port - that is what a pairing link
     // carries. Defaulting it to http is how the file half of the transport
     // stayed in the clear while the socket was already protected.
-    final client = ApiClient(_FakeConfig(null), PinnedHttpClient())..initBase(address: '10.0.0.5:9000');
+    final client = ApiClient(_FakeConfig(null), _channels())..initBase(address: '10.0.0.5:9000');
     expect(client.dio.options.baseUrl, 'https://10.0.0.5:9000');
     expect(client.dio.interceptors.whereType<AuthInterceptor>().length, 1);
   });
 
   test('a full URL is taken as given', () {
-    final client = ApiClient(_FakeConfig(null), PinnedHttpClient())..initBase(address: 'https://api.example.test');
+    final client = ApiClient(_FakeConfig(null), _channels())..initBase(address: 'https://api.example.test');
     expect(client.dio.options.baseUrl, 'https://api.example.test');
   });
 
@@ -71,36 +86,46 @@ void main() {
     // It names a machine nobody ever presented, so nothing can check the
     // connection to it. initBase used to fall back to it when called with
     // nothing; there is no such call now, and the parameter is required.
-    final client = ApiClient(_FakeConfig('https://baked-into-the-build.test'), PinnedHttpClient())..initBase(address: '10.0.0.5:9000');
+    final client = ApiClient(_FakeConfig('https://baked-into-the-build.test'), _channels())..initBase(address: '10.0.0.5:9000');
     expect(client.dio.options.baseUrl, 'https://10.0.0.5:9000');
   });
 
-  test('bytes go through the pinned client, not through a client of Dio own making', () {
-    // Without this adapter the file half opens its own connections, and the
-    // certificate of the machine they reach is checked by nothing.
-    final client = ApiClient(_FakeConfig(null), PinnedHttpClient())..initBase(address: '10.0.0.5:9000');
+  test('bytes go through the channel client, not through a client of Dio own making', () {
+    // Without this adapter the file half opens its own connections, past the
+    // channel - and nothing checks which machine they reach.
+    final client = ApiClient(_FakeConfig(null), _channels())..initBase(address: '10.0.0.5:9000');
     expect(client.dio.httpClientAdapter, isA<IOHttpClientAdapter>());
   });
 
   test('initBase is idempotent - a second call does not double-install the interceptor', () {
-    final client = ApiClient(_FakeConfig(null), PinnedHttpClient())
+    final client = ApiClient(_FakeConfig(null), _channels())
       ..initBase(address: '10.0.0.5:9000')
       ..initBase(address: '10.0.0.5:9000');
     expect(client.dio.interceptors.whereType<AuthInterceptor>().length, 1);
   });
 
-  test('each transport keeps one client of its own for the process, and a new pin replaces both', () {
-    final pinned = PinnedHttpClient();
-    final socket = pinned.client;
-    final bytes = pinned.transferClient;
-    expect(identical(pinned.client, socket), isTrue, reason: 'a client per use would leak one on every reconnect');
-    expect(identical(pinned.transferClient, bytes), isTrue);
+  test('each transport keeps one client of its own for the process, and a new binding replaces both', () {
+    final channels = _channels();
+    final socket = channels.client;
+    final bytes = channels.transferClient;
+    expect(identical(channels.client, socket), isTrue, reason: 'a client per use would leak one on every reconnect');
+    expect(identical(channels.transferClient, bytes), isTrue);
     expect(identical(socket, bytes), isFalse, reason: 'what Dio sets on its client must not reach the socket');
 
-    pinned.pinTo('another machine');
+    channels.bind(serverKey: Uint8List(32), deviceSeed: _deviceSeed);
 
-    expect(identical(pinned.client, socket), isFalse, reason: 'a connection to the old machine is never re-checked');
-    expect(identical(pinned.transferClient, bytes), isFalse);
+    expect(identical(channels.client, socket), isFalse, reason: 'a connection to the old machine is never checked again');
+    expect(identical(channels.transferClient, bytes), isFalse);
+  });
+
+  test('a new binding re-installs the adapter, so Dio does not keep the client that was thrown away', () {
+    final channels = _channels();
+    final api = ApiClient(_FakeConfig(null), channels)..initBase(address: '10.0.0.5:9000');
+    final before = api.dio.httpClientAdapter;
+
+    channels.bind(serverKey: Uint8List(32), deviceSeed: _deviceSeed);
+
+    expect(identical(api.dio.httpClientAdapter, before), isFalse);
   });
 
   group('the transfer generation (phase 043)', () {
@@ -120,8 +145,7 @@ void main() {
         if (!hold.isCompleted) hold.complete();
         await server.close(force: true);
       });
-      final api = ApiClient(_FakeConfig(null), PinnedHttpClient()..pinTo(_fingerprint))
-        ..initBase(address: 'https://127.0.0.1:${server.port}');
+      final api = ApiClient(_FakeConfig(null), _channels(port: server.port))..initBase(address: 'https://192.168.1.20:8443');
 
       final token = api.beginTransfer();
       final held = api.dio.get<String>('/held', cancelToken: token);
@@ -138,7 +162,7 @@ void main() {
     });
 
     test('a finished transfer is forgotten: a later cancel does not reach it', () {
-      final api = ApiClient(_FakeConfig(null), PinnedHttpClient());
+      final api = ApiClient(_FakeConfig(null), _channels());
       final done = api.beginTransfer();
       api.endTransfer(done);
 
@@ -163,20 +187,20 @@ void main() {
       // of its own 45.
       final server = await _honest();
       addTearDown(() => server.close(force: true));
-      final pinned = PinnedHttpClient()..pinTo(_fingerprint);
-      final api = ApiClient(_FakeConfig(null), pinned)..initBase(address: 'https://127.0.0.1:${server.port}');
+      final channels = _channels(port: server.port);
+      final api = ApiClient(_FakeConfig(null), channels)..initBase(address: 'https://192.168.1.20:8443');
 
       final response = await api.dio.get<String>('/anything');
 
       expect(response.statusCode, HttpStatus.ok);
-      expect(pinned.client.connectionTimeout, isNull, reason: 'the socket bounds its own dial');
-      expect(pinned.transferClient.connectionTimeout, api.dio.options.connectTimeout, reason: 'it went by the transfers\' client');
+      expect(channels.client.connectionTimeout, isNull, reason: 'the socket bounds its own dial');
+      expect(channels.transferClient.connectionTimeout, api.dio.options.connectTimeout, reason: 'it went by the transfers\' client');
     });
   });
 
   group('a change of path (phase 043, FR-008)', () {
     test('a new address ends the transfers on the old one', () {
-      final api = ApiClient(_FakeConfig(null), PinnedHttpClient())..initBase(address: '10.0.0.5:9000');
+      final api = ApiClient(_FakeConfig(null), _channels())..initBase(address: '10.0.0.5:9000');
       final under = api.beginTransfer();
 
       final before = api.pathGeneration;
@@ -188,7 +212,7 @@ void main() {
     });
 
     test('the same address ends nothing - a transfer on a path still in use goes on', () {
-      final api = ApiClient(_FakeConfig(null), PinnedHttpClient())..initBase(address: '10.0.0.5:9000');
+      final api = ApiClient(_FakeConfig(null), _channels())..initBase(address: '10.0.0.5:9000');
       final under = api.beginTransfer();
 
       final before = api.pathGeneration;
@@ -201,7 +225,7 @@ void main() {
     });
 
     test('the first address ends nothing', () {
-      final api = ApiClient(_FakeConfig(null), PinnedHttpClient());
+      final api = ApiClient(_FakeConfig(null), _channels());
       final under = api.beginTransfer();
 
       api.initBase(address: '10.0.0.5:9000');

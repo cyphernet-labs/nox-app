@@ -78,6 +78,21 @@ void main() {
     expect(find.byType(SetUsernamePage), findsNothing);
   });
 
+  testWidgets('an image holding a link from a newer server goes on to sign-in, which says to update the app', (tester) async {
+    // Still the person's link: called "no NOX QR in that image", they would
+    // look for another picture instead of updating.
+    when(filePicker.pickFile()).thenAnswer((_) async => (name: 'id.png', sizeBytes: 1, extension: 'png', path: '/tmp/id.png'));
+    when(decoder.decodeQr(any)).thenAnswer((_) async => 'nox://pair/BKCapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODw');
+
+    await pumpApp(tester, const LoginPage());
+    await tester.tap(imageButton());
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pumpAndSettle();
+
+    expect(find.text(l10nEn.loginQrImageError), findsNothing);
+    expect(find.text(l10nEn.loginLinkNewerVersion), findsOneWidget);
+  });
+
   testWidgets('a second tap while the first pick is still running is ignored (review fix)', (tester) async {
     final gate = Completer<PickedFile?>();
     when(filePicker.pickFile()).thenAnswer((_) => gate.future); // first pick hangs open
