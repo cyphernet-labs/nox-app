@@ -114,18 +114,25 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
    so one goroutine owns the state. The connection REGISTRY is the
    deliberate exception: `Server.mu` guards `conns` and the per-connection
    fields other connections read (identity), because the fan-out helpers
-   walk one person's connections from another's goroutine. The device key
-   needs no lock: the channel fixes it before the connection is registered,
-   and it never changes.
-   `Server.claim`, the transfer-token store (`internal/server/tokens.go`)
-   and - since 043 - the upload-writer registry (`internal/server/writers.go`:
-   which request is writing which part, so a new PUT can interrupt one whose
-   connection died silently instead of writing beside it) hold the only
-   other three. The mutex inside each PUT's `stallReader` (`files.go`) is
-   NOT a fourth: it lives and dies with one request, guards nothing another
-   request or connection reads, and only orders that request's read-deadline
-   renewal against an interrupt, so the interrupt is never pushed back by a
-   whole stall timeout. Since 039 the registry also carries `greeted`
+   walk one person's connections from another's goroutine. It guards
+   `transfers` too - the `/files` requests under way, each registered under
+   the key its connection proved - because a revocation on one connection
+   cuts another device's transfers, which since 044 run on connections of
+   their own. The device key needs no lock: the channel fixes it before the
+   connection is registered, and it never changes.
+   `Server.claim`, the transfer-token store (`internal/server/tokens.go`),
+   the upload-writer registry (043, `internal/server/writers.go`: which
+   request is writing which part, so a new PUT can interrupt one whose
+   connection died silently instead of writing beside it) and each channel
+   listener's registry of handshakes under way (`internal/server/channel.go`:
+   which connections are still proving a key, oldest first and counted per
+   source, so the accept loop can cut the oldest - of one source, or of all -
+   without ever waiting) hold the only other four. The mutex inside each PUT's
+   `stallReader` (`files.go`) is NOT a fifth: it lives and dies with one
+   request, guards nothing another request or connection reads, and only
+   orders that request's read-deadline renewal against an interrupt, so the
+   interrupt is never pushed back by a whole stall timeout. Since 039 the
+   connection registry also carries `greeted`
    and `addrVersion` per connection, set under `Server.mu` AFTER the greeting
    reply is queued - which is what keeps `server.addresses` behind it. The
    address snapshot (`addressSet`: the found addresses plus the stored public
@@ -236,7 +243,12 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   ONE deadline from accept - 30 s, the slow-path budget, for every connection,
   since one from the tor service arrives on this same port and looks like any
   other (045) - and hands `http.Server` only the ones that passed, with the
-  proved key in the request context
+  proved connection - and its key - in the request context. Its accept loop
+  never waits and never turns a newcomer away: a source (an IPv4 address, an
+  IPv6 /64) has at most 8 handshakes under way and its oldest is cut for the
+  next from it, a peer off loopback gets 5 s to send its first byte, and past
+  256 in all the oldest handshake is cut for the newcomer; loopback - the tor
+  service - is held to neither of the first two
 - `internal/server/tls.go` — the technical certificate: a fresh ECDSA P-256 key
   in memory at every start, TLS 1.3 only, ALPN `http/1.1`, no session tickets
 - `internal/server/pairing_link.go` — the version 3 link: build and parse, typed
@@ -249,7 +261,9 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   A new upload token revokes the file's earlier ones, so a PUT that turns up
   late cannot cut the part back past what a newer attempt wrote; and the PUT
   reads the row again once it holds the file, so a token issued before the
-  file was finished cannot write over it
+  file was finished cannot write over it. Every transfer is registered under
+  its device key before that key is looked up, and revoking the device cuts
+  its connection mid-body (`dropDevice`)
 - `internal/server/writers.go` — one request writes a part at a time; a newer
   request for the same file interrupts the old one
 - `internal/blob/`       — attachment bytes on disk, confined by `os.Root`:
@@ -330,7 +344,9 @@ protocol): `docs/client-backend/client_backend_pattern/go-backend/`.
   through Tor 100 MiB take tens of minutes, and any limit on the whole cuts
   exactly the path away from home. The price is known: a connection trickling
   a byte a minute holds a goroutine for as long as it likes. Its holder is one
-  of the person's own devices - a token goes only to a greeted connection.
+  of the person's own devices - a token goes only to a greeted connection, and
+  the transfer only to a connection that proved a paired key - and revoking
+  that device cuts the transfer at once rather than leaving it to run.
 - **The durable length of a part is a file beside it (`<id>.synced`), not a
   column.** A column means editing `001`, and every development database -
   the owner's stand included - would have to be recreated and its devices

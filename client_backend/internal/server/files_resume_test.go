@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -65,11 +66,17 @@ type rawPut struct {
 // transfer needs a paired key on the connection as well as the token.
 func openRawPut(t *testing.T, ts *httptest.Server, token string, contentLength int) *rawPut {
 	t.Helper()
-	ch := channelOf(t, ts)
-	dev, err := ch.devices.current()
+	dev, err := channelOf(t, ts).devices.current()
 	if err != nil {
 		t.Fatalf("pick a device: %v", err)
 	}
+	return openRawPutAs(t, ts, dev, token, contentLength)
+}
+
+// openRawPutAs is openRawPut as dev, whichever device greeted last.
+func openRawPutAs(t *testing.T, ts *httptest.Server, dev *device, token string, contentLength int) *rawPut {
+	t.Helper()
+	ch := channelOf(t, ts)
 	conn, err := dialChannel(t.Context(), ch.addr, ch.serverKey, dev.priv)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
@@ -108,6 +115,25 @@ func (p *rawPut) status(d time.Duration) int {
 // does.
 func (p *rawPut) breakOff() {
 	_ = p.conn.Close()
+}
+
+// expectCut fails the test unless the server ends the connection within d
+// having said nothing more: no response, not even an error status.
+func (p *rawPut) expectCut(d time.Duration) {
+	p.t.Helper()
+	if err := p.conn.SetReadDeadline(time.Now().Add(d)); err != nil {
+		p.t.Fatalf("set deadline: %v", err)
+	}
+	n, err := p.br.Read(make([]byte, 1))
+	var ne net.Error
+	switch {
+	case n > 0:
+		p.t.Fatal("the server answered on a connection it was to cut")
+	case errors.As(err, &ne) && ne.Timeout():
+		p.t.Fatalf("the connection was still open %v later", d)
+	case err == nil:
+		p.t.Fatal("a read returned neither bytes nor an error")
+	}
 }
 
 func partPath(srv *Server, fileID string) string {

@@ -159,6 +159,11 @@ class ConnectionPathSelector implements SocketTargetProvider {
   /// The two keys a probe opens its channels with: the server's, which the
   /// probe checks, and the device's, which the server checks. Copies, wiped
   /// when the session ends.
+  ///
+  /// Read at the moment a probe is handed them, never before an await on the
+  /// way there: [begin] and [end] wipe the seed IN PLACE, so a reference held
+  /// across one hands the prober zeros. The prober copies what it is handed
+  /// before it awaits anything, so the selector stays the one owner of these.
   Uint8List? _serverKey;
   Uint8List? _deviceSeed;
   bool _active = false;
@@ -344,9 +349,7 @@ class ConnectionPathSelector implements SocketTargetProvider {
     }
     _forgetHandedOut();
     _torMiss = null;
-    final serverKey = _serverKey;
-    final deviceSeed = _deviceSeed;
-    if (serverKey == null || deviceSeed == null) return _noPath();
+    if (_serverKey == null || _deviceSeed == null) return _noPath();
 
     final verified = _verified;
     _verified = null;
@@ -358,6 +361,11 @@ class ConnectionPathSelector implements SocketTargetProvider {
     // are tried, not after them (T053) - only if the person still wants Tor.
     if (!_forceTor && addresses.viaTorLast && addresses.useTor) unawaited(_warmTor(addresses, round));
     if (!_forceTor) {
+      // Read after the await, not before it: a begin() meanwhile - a start
+      // over a running session - wiped the seed it replaced.
+      final serverKey = _serverKey;
+      final deviceSeed = _deviceSeed;
+      if (serverKey == null || deviceSeed == null) return _noPath();
       _publish(_selection.value.copyWith(clearPath: true));
       final result = await _prober.probe(addresses.candidates(_linkAddress), serverKey: serverKey, deviceSeed: deviceSeed);
       if (!_current(round)) return null;
@@ -683,12 +691,16 @@ class ConnectionPathSelector implements SocketTargetProvider {
   /// While on Tor: does a direct address answer again? Then move to it.
   Future<void> _recheckDirect({required String reason}) async {
     if (!_active || _probing || _forceTor || currentPath != ConnectionPath.tor) return;
-    final serverKey = _serverKey;
-    final deviceSeed = _deviceSeed;
-    if (serverKey == null || deviceSeed == null) return;
+    if (_serverKey == null || _deviceSeed == null) return;
     _probing = true;
     try {
       final addresses = await _readAddresses();
+      // Asked again after the await: an end() meanwhile wiped the seed, and a
+      // restart left the Tor path this check was for.
+      if (!_active || currentPath != ConnectionPath.tor) return;
+      final serverKey = _serverKey;
+      final deviceSeed = _deviceSeed;
+      if (serverKey == null || deviceSeed == null) return;
       final result = await _prober.probe(addresses.candidates(_linkAddress), serverKey: serverKey, deviceSeed: deviceSeed);
       final address = result.address;
       if (address == null || !_active || currentPath != ConnectionPath.tor) return;

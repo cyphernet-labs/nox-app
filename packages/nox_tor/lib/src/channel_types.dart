@@ -157,8 +157,9 @@ abstract interface class NoxChannel {
   /// Throws [StateError] once the channel is closed or its sending is shut.
   int write(Uint8List bytes);
 
-  /// Completes at once while the queue is within the window, else when it has
-  /// drained to half of it.
+  /// Completes at once while the queue is within the window, else as soon as
+  /// it has drained back within it - after about one chunk, so a slow upload
+  /// keeps moving in small steps rather than half a window at a time.
   Future<void> get writable;
 
   /// Completes once everything queued before the call is written out; fails

@@ -15,10 +15,12 @@
 //!    that is the key the pairing link named. A man in the middle holds two TLS
 //!    sessions, so two bindings, and can sign for neither side over the other.
 //!
-//! Then the bytes go to Dart as events (`registry`) and are pumped both ways
-//! under a window each (`pump`). The contract is
+//! Then the bytes go to Dart as events, posted to a port of the isolate that
+//! opened the channel (`dart`, `registry`), and are pumped both ways under a
+//! window each (`pump`). The contract is
 //! `specs/044-secure-channel/contracts/ffi-channel.md`.
 
+pub mod dart;
 pub mod eidolon;
 pub mod pump;
 pub mod registry;
@@ -38,11 +40,6 @@ use eidolon::DeviceSeed;
 use pump::{Flush, Pump};
 use registry::{Closer, Events};
 use target::{OnionContext, Transport};
-
-/// What the app hands `nox_chan_open`: one function for every event of every
-/// channel. Dart makes it with `NativeCallable.listener`, so a call only posts
-/// the event to the isolate and returns.
-pub type EventFn = extern "C" fn(handle: i64, kind: i32, data: *const u8, len: usize, code: i32);
 
 /// Bytes either way may hold for the other side: inbound, what Dart has not
 /// acknowledged yet; outbound, what Dart queued and TLS has not taken.
@@ -75,6 +72,9 @@ pub mod code {
 
 /// The `kind` of an event.
 pub mod event {
+    /// Not an event: what `nox_chan_reap` posts to learn whether an isolate is
+    /// still there. Handle 0; Dart drops it.
+    pub const PROBE: i32 = 0;
     pub const OPEN: i32 = 1;
     pub const DATA: i32 = 2;
     pub const WRITABLE: i32 = 3;
@@ -102,10 +102,10 @@ pub struct Channel {
 }
 
 impl Channel {
-    fn new(handle: i64, on_event: EventFn) -> Self {
+    fn new(handle: i64, port: dart::Port) -> Self {
         Channel {
             handle,
-            events: Events::new(handle, on_event),
+            events: Events::new(handle, port),
             pump: Pump::default(),
             closing: AtomicBool::new(false),
             close_signal: Notify::new(),
@@ -129,9 +129,9 @@ impl Channel {
     }
 }
 
-/// Opens a channel: returns its handle at once, and the rest comes as events.
-/// Negative only when there is nowhere to run it.
-pub fn open(target: Target, seed: DeviceSeed, server_key: [u8; 32], budget: Duration, on_event: EventFn) -> i64 {
+/// Opens a channel: returns its handle at once, and the rest comes as events
+/// posted to `port`. Negative only when there is nowhere to run it.
+pub fn open(target: Target, seed: DeviceSeed, server_key: [u8; 32], budget: Duration, port: dart::Port) -> i64 {
     // An onion channel runs on the Tor client's own runtime, as the client's
     // streams do; one the client cannot take yet still needs a runtime to say so.
     let onion = match &target {
@@ -145,7 +145,7 @@ pub fn open(target: Target, seed: DeviceSeed, server_key: [u8; 32], budget: Dura
             None => return -i64::from(code::INTERNAL),
         },
     };
-    let channel = registry::register(on_event);
+    let channel = registry::register(port);
     let handle = channel.handle;
     // A task dropped before it ever ran means its runtime is gone: for an onion
     // channel, the Tor client stopped in between.
@@ -169,6 +169,8 @@ async fn drive(
     let code = tokio::select! {
         biased;
         () = channel.close_requested() => code::NONE,
+        // Nobody is left to hear of it, or to ask for anything more.
+        () = channel.events.lost() => code::NONE,
         code = run(&channel, target, onion, seed, &server_key, budget) => code,
     };
     closer.finish(code);
@@ -264,11 +266,21 @@ pub fn close(handle: i64) -> i32 {
     }
 }
 
-/// `nox_chan_buf_free`.
+/// `nox_chan_reap`: ends every channel whose isolate is gone, and says how
+/// many there were. An isolate that died - a hot restart, an engine Android
+/// tore down - leaves its channels running in the process, connected to the
+/// server, until an event to one of them is refused; a new isolate calls this
+/// before it opens any, so they end at once instead.
+pub fn reap() -> i32 {
+    let gone = registry::all().iter().filter(|channel| !channel.events.probe()).count();
+    i32::try_from(gone).unwrap_or(i32::MAX)
+}
+
+/// `nox_chan_buf_free`: frees a buffer the module handed out as a result.
 ///
 /// # Safety
-/// `data` and `len` are what one OPEN or DATA event carried, freed once; or
-/// `data` is null.
+/// `data` and `len` are what one call handed out, freed once; or `data` is
+/// null.
 pub unsafe fn free_buffer(data: *mut u8, len: usize) {
     if !data.is_null() {
         drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(data, len)));
