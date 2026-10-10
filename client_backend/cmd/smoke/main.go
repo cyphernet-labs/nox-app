@@ -5,8 +5,9 @@
 // no unit test reaches end to end and no person wants to click through twice
 // before a demo. Point it at a machine link - the one on the service page, or
 // the one `noxd link` prints - and it pairs a first device through it, adds a
-// second by invite and allows it from the first, has a third declined, and has
-// the two paired devices exchange a message.
+// second by invite and allows it from the first, has a third declined and a
+// fourth withdraw its own request, and has the two paired devices exchange a
+// message.
 //
 // It talks to the wire directly rather than through the app - the channel
 // included: TCP, TLS 1.3 that checks no certificate, then the channel check
@@ -41,12 +42,13 @@ const usage = `usage: smoke <machine link>
        smoke -check <host:port> <server key, base64>
 
 Give it a machine link: the one on the service page of a running noxd, or the
-one "noxd link" prints. It works on a fresh server - the first device creates
-the person - and on one that has a person already, whom the first device then
-joins. The link's direct addresses are tried in its order - the public one
-first, when it has one - and the run goes on with the first that proves the
-key; an onion address in the link is reported and not tried, because this
-program has no Tor.
+one "noxd link" prints (the server's log says where the page is, never what a
+link is). It works on a fresh server - the first device creates the person -
+and on one that has a person already, whom the first device then joins. The
+link's direct addresses are tried in its order - the public one first, when it
+has one - and the run goes on with the first that proves the key; an onion
+address in the link is reported and not tried, because this program has no
+Tor.
 
 With -check it only opens the channel - TLS and the channel check, with a
 throwaway device key - and says whether the machine at that address is the one
@@ -159,7 +161,12 @@ func run(rawLink string) error {
 		return err
 	}
 
-	step(4, "The two devices exchange a message")
+	step(4, "A fourth device withdraws its request, and nothing is paired")
+	if err := inviteAndCancel(ctx, target, firstConn); err != nil {
+		return err
+	}
+
+	step(5, "The two devices exchange a message")
 	if err := talk(firstConn, phoneConn, personID); err != nil {
 		return err
 	}
@@ -348,6 +355,55 @@ func inviteAndDeny(ctx context.Context, target link, issuer *conn) error {
 		return errors.New("a declined device was let in")
 	}
 	ok("a repeat says declined, and its greeting is refused - nothing was paired")
+	return nil
+}
+
+// inviteAndCancel has a device ask and then withdraw its own request with
+// pair.cancel, the second command allowed before a greeting: it is told the
+// request was cancelled, the issuing device stops being asked, an Allow
+// pressed after it changes nothing, and nothing is paired.
+func inviteAndCancel(ctx context.Context, target link, issuer *conn) error {
+	token, err := invite(issuer)
+	if err != nil {
+		return err
+	}
+	laptop, requestID, err := request(ctx, target, newDevice(), token, "linux")
+	if err != nil {
+		return err
+	}
+	defer laptop.close()
+	if err := asked(issuer, requestID, "linux"); err != nil {
+		return err
+	}
+	if _, err := laptop.call("pair.cancel", data{"token": token}); err != nil {
+		return err
+	}
+	resolved, err := laptop.event("pair.resolved")
+	if err != nil {
+		return err
+	}
+	if resolved["outcome"] != "cancelled" {
+		return fmt.Errorf("Cancel ended as %v, want cancelled", resolved)
+	}
+	if ev, err := issuer.event("device.pairResolved"); err != nil || ev["request_id"] != requestID {
+		return fmt.Errorf("the issuing device was not told the request is over: %v %v", ev, err)
+	}
+	ok("withdrawn: the new device is told cancelled, and the first device stops being asked")
+	if _, err := issuer.call("device.approve", data{"request_id": requestID, "allow": true}); err == nil {
+		return errors.New("an Allow after Cancel was taken")
+	}
+	ok("an Allow pressed after it is refused: the request is closed")
+	again, err := laptop.call("pair", data{"token": token, "platform": "linux"})
+	if err != nil {
+		return err
+	}
+	if again["status"] != "cancelled" {
+		return fmt.Errorf("a repeat after Cancel = %v, want cancelled", again)
+	}
+	if _, err := laptop.call("session.hello", data{"schema": 1}); err == nil {
+		return errors.New("a withdrawn device was let in")
+	}
+	ok("a repeat says cancelled, and its greeting is refused - nothing was paired")
 	return nil
 }
 

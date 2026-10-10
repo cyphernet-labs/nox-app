@@ -1,12 +1,17 @@
 /// An invite for another device of this person (contract §8A, `device.invite`).
 class DeviceInvite {
-  const DeviceInvite({required this.link, required this.onion});
+  const DeviceInvite({required this.link, required this.onion, this.public = false});
 
   final String link;
 
-  /// The server vouches that the link works from any network, and the link
-  /// carries the onion address to back it. Until phase 045 the server always
-  /// answers false - a new device pairs at home, because the onion service
-  /// opens only for a paired device's key - so the card says so.
+  /// The link carries the server's onion address: a device can pair with it
+  /// through Tor, from any network (phase 045).
   final bool onion;
+
+  /// The link carries the server's public address: a device can pair with it
+  /// from outside the home network too (phase 045).
+  final bool public;
+
+  /// Neither: the link works only on the home network, and the card says so.
+  bool get homeOnly => !onion && !public;
 }

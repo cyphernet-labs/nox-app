@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:nox_app/data/local/secure/secure_storage_delete.dart';
@@ -7,6 +8,8 @@ import 'package:nox_app/data/exception/base_repository_helper.dart';
 import 'package:nox_app/data/repository/connection/connection_storage.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/app/session_model.dart';
+import 'package:nox_app/domain/model/connection/connection_settings.dart';
+import 'package:nox_app/domain/model/session/pending_pairing.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/general/pairing/device_keys.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
@@ -73,6 +76,11 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   /// wiped at the first launch (FR-025).
   static const String _kLegacyServerFingerprint = 'session.server_fingerprint';
 
+  /// A pairing waiting for approval on another device (phase 046): the link,
+  /// what was set on the connection screen and this device's deadline, as one
+  /// JSON value. Secure storage, because the link carries the token.
+  static const String _kPendingPairing = 'session.pending_pairing';
+
   /// True while THIS process is the one that brought the person into being and
   /// has not finished naming them.
   ///
@@ -95,9 +103,12 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       await _secureStorage.deleteIfPresent(key: _kLegacyServerFingerprint);
       await _secureStorage.deleteIfPresent(
         key: _kLegacyInviteAccessKey,
-        iOptions: ConnectionStorage.keyIOSOptions,
-        mOptions: ConnectionStorage.keyMacOsOptions,
+        iOptions: ConnectionStorage.legacyKeyIOSOptions,
+        mOptions: ConnectionStorage.legacyKeyMacOsOptions,
       );
+      // The device's onion access key and its registration mark (phases
+      // 040-044): the onion service opens for no key since phase 045.
+      await ConnectionStorage.sweepLegacy(_secureStorage);
       return const RepositoryResult<bool>.success(data: true);
     });
   }
@@ -204,10 +215,10 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   Future<RepositoryResult<bool>> saveServer({required String address, required String serverKey}) {
     return execute<bool>(() async {
       // What any earlier server said about itself goes first (phase 040): its
-      // addresses, and whether it holds this device's access key. A sign-in
-      // the process did not survive leaves them behind, and kept they would
-      // send the next server's connection to the old one's onion address.
-      await ConnectionStorage.delete(_secureStorage, includeDeviceAccessKey: false);
+      // addresses, and what the person set for it. A sign-in the process did
+      // not survive leaves them behind, and kept they would send the next
+      // server's connection to the old one's addresses.
+      await ConnectionStorage.delete(_secureStorage);
       await _secureStorage.write(key: _kServerAddress, value: address);
       await _secureStorage.write(key: _kServerKey, value: serverKey);
       return const RepositoryResult<bool>.success(data: true);
@@ -277,6 +288,66 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
   void noteOnboardingStartedHere() => _onboardingStartedHere = true;
 
   @override
+  Future<RepositoryResult<bool>> savePendingPairing(PendingPairing pairing) {
+    return execute<bool>(() async {
+      final connection = pairing.connection;
+      await _secureStorage.write(
+        key: _kPendingPairing,
+        value: jsonEncode(<String, dynamic>{
+          'link': pairing.link,
+          'wait_until': pairing.waitUntil.toUtc().millisecondsSinceEpoch,
+          if (connection != null)
+            'connection': <String, dynamic>{
+              'server_address': connection.serverAddress,
+              'onion_address': ?connection.onionAddress,
+              'use_tor': connection.useTor,
+            },
+        }),
+      );
+      return const RepositoryResult<bool>.success(data: true);
+    });
+  }
+
+  @override
+  Future<RepositoryResult<PendingPairing?>> readPendingPairing() {
+    return execute<PendingPairing?>(() async {
+      final stored = await _secureStorage.read(key: _kPendingPairing);
+      return RepositoryResult<PendingPairing?>.success(data: stored == null ? null : _pendingFrom(stored));
+    });
+  }
+
+  @override
+  Future<RepositoryResult<bool>> clearPendingPairing() {
+    return execute<bool>(() async {
+      await _secureStorage.deleteIfPresent(key: _kPendingPairing);
+      return const RepositoryResult<bool>.success(data: true);
+    });
+  }
+
+  /// A remembered pairing, or null for anything that does not read as one -
+  /// a value nothing can resume is the same as no value.
+  static PendingPairing? _pendingFrom(String stored) {
+    try {
+      final json = jsonDecode(stored);
+      if (json is! Map<String, dynamic>) return null;
+      final link = json['link'];
+      final until = json['wait_until'];
+      if (link is! String || link.isEmpty || until is! int) return null;
+      final raw = json['connection'];
+      final connection = raw is Map<String, dynamic> && raw['server_address'] is String
+          ? ConnectionSettings(
+              serverAddress: raw['server_address'] as String,
+              onionAddress: raw['onion_address'] is String ? raw['onion_address'] as String : null,
+              useTor: raw['use_tor'] == true,
+            )
+          : null;
+      return PendingPairing(link: link, waitUntil: DateTime.fromMillisecondsSinceEpoch(until, isUtc: true), connection: connection);
+    } on FormatException {
+      return null;
+    }
+  }
+
+  @override
   Future<RepositoryResult<bool>> discardSignIn() {
     return execute<bool>(() async {
       // Deliberately narrower than [clear]: it removes exactly what a sign-in
@@ -291,10 +362,13 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       // and the world-epoch key would call that the same world.
       await _secureStorage.deleteIfPresent(key: _kServerAddress);
       await _secureStorage.deleteIfPresent(key: _kServerKey);
-      // And what that server said about where it lives, and whether it holds
-      // this device's access key (phase 040). The key itself stays: like the
-      // device key, it names this install.
-      await ConnectionStorage.delete(_secureStorage, includeDeviceAccessKey: false);
+      // And what that server said about where it lives, with what the person
+      // set for it on the connection screen (phases 040, 045).
+      await ConnectionStorage.delete(_secureStorage);
+      // And the wait for approval that attempt left (phase 046): it names the
+      // link, a credential, and a restart must not resume a sign-in that was
+      // undone.
+      await _secureStorage.deleteIfPresent(key: _kPendingPairing);
       await _prefs.remove(_kOnboardingComplete);
       // And the author id written by the SAME call. Left behind it would point
       // at the previous server's person, and the next sign-in would inherit it
@@ -332,9 +406,9 @@ class SessionRepositoryImpl with BaseRepositoryHelper implements SessionReposito
       await _secureStorage.deleteIfPresent(key: _kServerAddress);
       await _secureStorage.deleteIfPresent(key: _kServerKey);
       await _secureStorage.deleteIfPresent(key: _kLegacyServerFingerprint);
-      // Phase 040: the addresses and the access key - each with the options it
-      // was written under, which `deleteAll` alone may not match.
-      await ConnectionStorage.delete(_secureStorage, includeDeviceAccessKey: true);
+      await _secureStorage.deleteIfPresent(key: _kPendingPairing);
+      // The connection settings (phases 040, 045), by name like the rest.
+      await ConnectionStorage.delete(_secureStorage);
       // Kept for anything a later version writes and forgets to name above, and
       // not allowed to fail a wipe that has already happened.
       // Swallowed on purpose, and it is not a silent failure: the read-back

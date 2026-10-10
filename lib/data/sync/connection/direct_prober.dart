@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:injectable/injectable.dart';
+import 'package:nox_app/general/connection/address_format.dart';
 import 'package:nox_tor/channel.dart';
 
 /// What one round of direct attempts found (phase 040).
@@ -23,6 +24,9 @@ class DirectProbeResult {
 abstract class DirectProber {
   /// Tries [candidates] in order of preference and returns the first where the
   /// server proves [serverKey] to a device proving the key of [deviceSeed].
+  ///
+  /// Both are copied before this returns: the caller's arrays stay the
+  /// caller's, and it may wipe them while the round is still running.
   Future<DirectProbeResult> probe(List<String> candidates, {required Uint8List serverKey, required Uint8List deviceSeed});
 }
 
@@ -129,12 +133,15 @@ class ChannelDirectProber implements DirectProber {
     required Uint8List deviceSeed,
     required Future<void> cancel,
   }) async {
-    final uri = Uri.tryParse('https://$candidate');
-    // An onion address is never a direct one: it goes through Tor or nowhere.
-    if (uri == null || uri.host.isEmpty || !uri.hasPort || uri.host.toLowerCase().endsWith('.onion')) return _Outcome.unreachable;
+    // Host and port off the text, the one reading every address gets: through
+    // a `Uri` an address on 443 - the scheme's default, which `Uri` drops -
+    // read as portless and was never dialled. An onion address is never a
+    // direct one: it goes through Tor or nowhere, and the reading refuses it.
+    final address = AddressFormat.parseServerAddress(candidate);
+    if (address == null) return _Outcome.unreachable;
     try {
       final channel = await _api.open(
-        DirectTarget(uri.host, uri.port),
+        DirectTarget(address.host, address.port),
         deviceSeed: deviceSeed,
         serverKey: serverKey,
         timeout: attemptTimeout,

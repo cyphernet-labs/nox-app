@@ -345,6 +345,24 @@ func (s *Store) CancelPairRequest(ctx context.Context, token, deviceKey string, 
 	return r, true, nil
 }
 
+// PairRequestOutcome reads how the request with requestID stands: its outcome,
+// or "" while it still waits. ErrRequestNotFound when there is no such request.
+//
+// The server asks it after a connection's wait on the request took hold (046),
+// to catch a close that landed in between with nobody waiting on it yet - so
+// it reads the latest committed state, on the read pool, and nothing else.
+func (s *Store) PairRequestOutcome(ctx context.Context, requestID string) (string, error) {
+	var outcome sql.NullString
+	err := s.read.QueryRowContext(ctx, "SELECT outcome FROM pair_requests WHERE request_id = ?", requestID).Scan(&outcome)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrRequestNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("read pairing request outcome: %w", err)
+	}
+	return outcome.String, nil
+}
+
 // WaitingPairRequests lists the requests waiting for issuerKey's answer whose
 // time has not run out, soonest deadline first. A greeting re-sends them all:
 // the event that first announced each does not survive a disconnect.

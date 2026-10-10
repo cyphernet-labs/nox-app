@@ -8,6 +8,7 @@ import 'package:nox_app/domain/model/chat/message_model.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/model/connection/connection_problem.dart';
 import 'package:nox_app/domain/model/connection/connection_status.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/service/connection_status_service.dart';
@@ -63,7 +64,16 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
   bool _isServerMismatch() => _status.isServerMismatch || _scenario == ChatCardScenario.pinRefused;
 
   /// «No connection» only once a whole round of path finding found nothing.
-  bool _isOffline() => !_isServerMismatch() && (_status.showsNoConnection || _scenario == ChatCardScenario.offline);
+  bool _isOffline() =>
+      !_isServerMismatch() &&
+      (_status.showsNoConnection || _scenario == ChatCardScenario.offline || _scenario == ChatCardScenario.turnOnTor);
+
+  /// Why, when that is known (phase 045) - or the debug scenarios' stand-ins.
+  ConnectionProblem? _problem() {
+    if (_scenario == ChatCardScenario.pinRefused) return ConnectionProblem.otherServer;
+    if (_scenario == ChatCardScenario.turnOnTor) return ConnectionProblem.turnOnTor;
+    return _isOffline() || _isServerMismatch() ? _status.problem : null;
+  }
 
   /// The server refuses this build (phase 042): the strip stays, its action
   /// does not - trying again cannot change the answer.
@@ -142,6 +152,7 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
             isOffline: _isOffline(),
             isServerMismatch: _isServerMismatch(),
             isUnsupported: _isUnsupported(),
+            problem: _problem(),
             personLabel: _person,
           ),
         ),
@@ -199,7 +210,14 @@ class ChatCardBloc extends BaseBloc<ChatCardEvent, ChatCardState> {
     final current = state;
     // Update the banner in place (no reload) — like the reactive files re-derive.
     if (current is Initialized) {
-      emit(current.copyWith(isOffline: _isOffline(), isServerMismatch: _isServerMismatch(), isUnsupported: _isUnsupported()));
+      emit(
+        current.copyWith(
+          isOffline: _isOffline(),
+          isServerMismatch: _isServerMismatch(),
+          isUnsupported: _isUnsupported(),
+          problem: _problem(),
+        ),
+      );
     }
   }
 

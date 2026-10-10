@@ -10,6 +10,7 @@ import 'package:nox_app/domain/model/device/device_model.dart';
 import 'package:nox_app/domain/repository/base/repository_result_handling.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/device/device_repository.dart';
+import 'package:nox_app/domain/service/pair_request_service.dart';
 import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
 
@@ -46,12 +47,14 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
       if (isClosed) return;
       add(const DevicesEvent.initialize(cause: DevicesReadCause.noticed));
     });
+    on<DevicesInviteSpent>(_onInviteSpent);
   }
 
   DeviceRepository? get _repository => getIt.isRegistered<DeviceRepository>() ? getIt<DeviceRepository>() : null;
 
   StreamSubscription<void>? _pairedSub;
   StreamSubscription<SessionPhase>? _phaseSub;
+  StreamSubscription<String>? _spentSub;
 
   /// Whether the channel was live at the previous tick, or null before the
   /// first one.
@@ -67,6 +70,7 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
   Future<void> close() {
     _pairedSub?.cancel();
     _phaseSub?.cancel();
+    _spentSub?.cancel();
     return super.close();
   }
 
@@ -101,6 +105,15 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
       if (isClosed) return;
       add(const DevicesEvent.deviceListChanged());
     });
+    // A request through an invite this device issued closed (phase 046): the
+    // QR on the card is spent whatever the answer was, and a Deny or a
+    // request that ran out changes no list, so nothing above would say so.
+    if (getIt.isRegistered<PairRequestService>()) {
+      _spentSub ??= getIt<PairRequestService>().watchClosed().listen((_) {
+        if (isClosed) return;
+        add(const DevicesEvent.inviteSpent());
+      });
+    }
     _phaseSub ??= _phaseService.watchPhase().listen((phase) {
       final current = phase.isCurrent;
       final restored = _wasCurrent == false && current;
@@ -206,6 +219,15 @@ class DevicesBloc extends BaseBloc<DevicesEvent, DevicesState> {
     // while the bloc drains, and the add() below then lands on a closed one.
     if (isClosed) return;
     add(const DevicesEvent.initialize(cause: DevicesReadCause.noticed));
+  }
+
+  /// The card goes, and with it an invite error under it: the invite surface
+  /// is reset, as on `device.paired`. Which invite was spent is not said - the
+  /// event names a request, not a token - so a card showing a newer invite
+  /// than the one spent goes too, at the cost of one tap on `Add a device`.
+  void _onInviteSpent(DevicesInviteSpent event, Emitter<DevicesState> emit) {
+    if (state.invite == null && !state.inviteFailed) return;
+    emit(state.copyWith(invite: null, inviteFailed: false));
   }
 
   SessionPhaseService get _phaseService => getIt<SessionPhaseService>();

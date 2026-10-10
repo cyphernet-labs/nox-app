@@ -9,7 +9,7 @@
 **Purpose.** Account identity + grouped settings entries.
 
 ## Anatomy
-App bar (Settings). Identity card as an account header: ringed initials avatar, name, the full public ID, and two tonal actions (Edit name / Copy ID). One rounded tile per destination (`surfaceContainerLow`, radius lg, 8 apart), each with a bare leading glyph (22, `onSurfaceVariant`) and a chevron behind: Devices, Notifications, Appearance, Language, Terms, About. Destructive Log out in a tile of its own below a wider gap - `error` throughout, glyph filled, no chevron. The corpus draws these glyphs inside a 40dp tinted circle; the owner dropped the circle. Bottom bar. Two earlier shapes were wrong and are recorded in the screen spec: bare rows on the scaffold background, and all of them merged into one card with hairlines.
+App bar (Settings). Identity card as an account header: ringed initials avatar, name, the full public ID, and two tonal actions (Edit name / Copy ID). One rounded tile per destination (`surfaceContainerLow`, radius lg, 8 apart), each with a bare leading glyph (22, `onSurfaceVariant`) and a chevron behind: Devices, Connection, Notifications, Appearance, Language, Terms, About. Destructive Log out in a tile of its own below a wider gap - `error` throughout, glyph filled, no chevron. The corpus draws these glyphs inside a 40dp tinted circle; the owner dropped the circle. Bottom bar. Two earlier shapes were wrong and are recorded in the screen spec: bare rows on the scaffold background, and all of them merged into one card with hairlines.
 
 ## States
 - `loaded` — Loaded
@@ -23,15 +23,17 @@ App bar (Settings). Identity card as an account header: ringed initials avatar, 
 - ⚠️ The owner badge (phase 033) was removed by phase 037: with one person on the machine the mark has one possible answer, and a field with one answer only looks like information.
 - ⚠️ Phase 032 removed the mask and the reveal: the ID stopped being a secret — the person is recognised by the device's paired key — so there is nothing to hide and no `id-shown` state. The ID renders in full, at the card's ordinary text style.
 - There is no QR action in the card. Adding a device happens on **7.8 Devices**, reached by its own row, where an invite is minted with a real one-shot token.
+- **Connection** (feature 045), directly under Devices with the `lan` glyph, opens **7.10 Connection**: the server address, the onion address and Use Tor.
 - Editing: name becomes an inline TextField with counter. No availability spinner: names are not unique and, on a one-person server, there is nobody to collide with.
 - Log out → confirm AlertDialog (destructive action tinted error); confirming wipes ID + local data; shows a loading state.
 
 ## Navigation
-- Rows → 7.2 / 7.3 / 7.4 / Terms / About.
+- Rows → Devices (7.8) / Connection (7.10) / 7.2 / 7.3 / 7.4 / Terms / About.
 - Log out (confirmed) → Login (2.1).
 
 ## Copy (EN)
 - Title: Settings
+- Rows: Devices · Connection · Notifications · Appearance · Language · Terms · About
 - Logout title: Log out?
 - Logout body: Your ID and local data will be removed from this device.
 - Actions: Cancel · Log out

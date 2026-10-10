@@ -15,13 +15,14 @@ Scrim + right drawer (380): Details header, chat avatar/name, **“People”** (
 - `list` — Files · list
 - `grid` — Files · grid
 - `empty` — Empty
+- `offline-cause` — Offline, cause known
 - `server-mismatch` — Wrong server
 
 ## Behavior
 - The People section renders only once the card has loaded. While files are still coming, and on the embedded error screen, it is absent: a person and a disabled button stacked over a spinner or over an error say nothing true about either.
 - Mobile’s pushed Chat card (5.4) becomes a right drawer over the thread. Segmented switches List ⇄ Grid; empty → folder_open state.
-- No connection: the strip at the top of the drawer. It carries Try again (phase 042), which restarts the channel: a new attempt starts at once, the strip gives way to Connecting… and comes back if that attempt fails too. For a server that refuses this build the strip has no action - trying again cannot change its answer.
-- Wrong server (036, narrowed by 040): the server reached through its ONION address presented a key the pairing link did not name. Another key at a direct address is “not home”, never this state. A persistent banner “This isn't the server you paired with” with a “Try again” action, at the TOP of the drawer — under its own header, above the chat identity — because pushed below the People block it falls off the first fold. INSTEAD of the offline banner, never alongside it: something answered. The files stay listed under it; nothing local is thrown away.
+- No connection: the strip at the top of the drawer. As in both chat panes, it says the cause in place of “No connection” whenever the app can tell (feature 045; the five sentences of 01 · Chats, the same `wifi_off` glyph). It carries Try again (phase 042), which restarts the channel: a new attempt starts at once, the strip gives way to Connecting… and comes back if that attempt fails too. For a server that refuses this build the strip has no action - trying again cannot change its answer.
+- Wrong server (036, narrowed by 040): the server reached through its ONION address presented a key the pairing link did not name. Another key at a direct address is “not home”, never this state. A persistent banner “This onion address belongs to a different server.” with a “Try again” action, at the TOP of the drawer — under its own header, above the chat identity — because pushed below the People block it falls off the first fold. INSTEAD of the offline banner, never alongside it: something answered. The files stay listed under it; nothing local is thrown away.
 
 ## Navigation
 - Opened from the thread header info action (folder-open icon).
@@ -34,7 +35,8 @@ Scrim + right drawer (380): Details header, chat avatar/name, **“People”** (
 - Person row: the label of whoever owns this machine
 - Button (disabled): Invite a person
 - Caption: Available in a future version
-- Wrong-server banner: This isn't the server you paired with / Try again
+- Offline strip: No connection, or its cause when known / Try again
+- Wrong-server banner: This onion address belongs to a different server. / Try again
 - Section: Files
 - Empty: No files yet / Files sent in this chat will appear here.
 

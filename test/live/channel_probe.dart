@@ -38,8 +38,8 @@ import 'live_target.dart';
 ///
 /// Manual, outside the gates - it needs the server and the new module:
 ///   (cd client_backend && go build -o /tmp/nox044/noxd . && \
-///     /tmp/nox044/noxd -db /tmp/nox044/nox.db -addr 127.0.0.1:8443 -status-addr 127.0.0.1:8081 -tor=false)
-///   fvm flutter test test/live/channel_probe.dart --dart-define=link=LINK   # the nox://pair/ link noxd prints
+///     /tmp/nox044/noxd -db /tmp/nox044/nox.db -addr 127.0.0.1:8443 -status-addr 127.0.0.1:8081)
+///   fvm flutter test test/live/channel_probe.dart --dart-define=link=LINK   # the machine link on http://127.0.0.1:8081, or from `noxd link`
 void main() {
   setUpAll(() async {
     SharedPreferences.setMockInitialValues({});

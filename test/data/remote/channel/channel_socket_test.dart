@@ -153,7 +153,46 @@ void main() {
       expect(channel.closeCalls, 0, reason: 'the server has not finished sending');
       channel.eof();
       await ended.future;
+      channel.drain();
+      await turn();
       expect(channel.closeCalls, 1);
+    });
+
+    test('after the server ended its side, what close() queued goes out before the channel is let go', () async {
+      // A channel's close drops its queue: let go at once, the request written
+      // after the server's end of sending never left.
+      final ended = Completer<void>();
+      socket.listen((_) {}, onDone: ended.complete);
+      channel.eof();
+      await ended.future;
+      socket.add([1, 2, 3]);
+
+      await socket.close();
+      await turn();
+
+      expect(channel.writtenBytes, [1, 2, 3]);
+      expect(channel.shutDown, isTrue);
+      expect(channel.pendingFlushes, 1, reason: 'the queue is waited for');
+      expect(channel.closeCalls, 0, reason: 'cut before the queue went out');
+      channel.drain();
+      await turn();
+      expect(channel.closeCalls, 1, reason: 'let go once the queue is out');
+    });
+
+    // A widget test for its fake clock alone: the bound is seconds long.
+    testWidgets('a queue that never drains holds the channel no longer than its bound', (tester) async {
+      final stuck = FakeNoxChannel();
+      final closing = ChannelSocket(stuck);
+      closing.listen((_) {});
+      stuck.eof();
+      await tester.pump();
+      closing.add([1]);
+      await closing.close();
+
+      await tester.pump(const Duration(seconds: 4));
+      expect(stuck.closeCalls, 0, reason: 'still waiting for the queue');
+      await tester.pump(const Duration(seconds: 2));
+      expect(stuck.closeCalls, 1, reason: 'a server that stopped reading held the channel for good');
     });
 
     test('destroy closes the channel and ends a stream still being written', () async {

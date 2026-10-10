@@ -17,6 +17,7 @@ import 'package:nox_app/data/remote/socket/server_frame.dart';
 import 'package:nox_app/data/remote/socket/socket_channel_factory.dart';
 import 'package:nox_app/domain/model/app_config/app_config.dart';
 import 'package:nox_app/domain/model/app_config/app_flavor_type.dart';
+import 'package:nox_tor/channel.dart' show channelWindowBytes;
 import 'package:nox_app/domain/model/app_config/server_limits.dart';
 import 'package:nox_app/domain/model/file/transfer_cancellation.dart';
 import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
@@ -28,8 +29,8 @@ import '../../channel/fake_channel.dart';
 /// transfer is continued, what each answer means, and that only silence -
 /// never time alone - ends a transfer. The channels are loopback TCP to the
 /// address each request names; the module's TLS and check are its own tests'.
-ChannelHttpClient _channels() =>
-    ChannelHttpClient(LoopbackChannelApi())
+ChannelHttpClient _channels([LoopbackChannelApi? api]) =>
+    ChannelHttpClient(api ?? LoopbackChannelApi())
       ..bind(serverKey: Uint8List.fromList(List<int>.generate(32, (i) => 0xA0 + i)), deviceSeed: Uint8List(32));
 
 class _Config implements AppConfigRepository {
@@ -364,7 +365,9 @@ void main() {
         source(stallLimit: const Duration(milliseconds: 500)).putBytes(uploadPath: '/files/t', file: file, offset: 0),
         throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.connection)),
       );
-      expect(watch.elapsed, lessThan(const Duration(seconds: 20)));
+      // Ended by the stall limit while the body was going out - once the
+      // buffers and the window are full - not by the 10 s wait for an answer.
+      expect(watch.elapsed, lessThan(const Duration(seconds: 3)));
     });
 
     test('a slow transfer that keeps moving is never cut, however long it takes (FR-009)', () async {
@@ -377,6 +380,27 @@ void main() {
 
       expect(watch.elapsed, greaterThan(const Duration(seconds: 1)), reason: 'it outlasted the stall limit');
       expect(server.received.length, payload.length);
+    });
+
+    test('a slow path keeps an upload moving a chunk at a time, though half a window outlasts the stall limit', () async {
+      // The path drains 1 MiB/s: a chunk every 62 ms, half a window every
+      // 500 ms - longer than the 300 ms stall limit. Progress comes with each
+      // chunk the path takes; were the writer let go only at half a window, a
+      // healthy slow upload - Tor on a bad day - would be cut as dead.
+      await writePayload(3 * 1024 * 1024);
+      final channels = LoopbackChannelApi(null, 1024 * 1024);
+      final paced = ApiClient(_Config(), _channels(channels))..initBase(address: 'https://127.0.0.1:${server.port}');
+      final watch = Stopwatch()..start();
+
+      await RealFileRemoteDataSource.forTest(
+        socket,
+        paced,
+        stallLimit: const Duration(milliseconds: 300),
+      ).putBytes(uploadPath: '/files/t', file: file, offset: 0);
+
+      expect(watch.elapsed, greaterThan(const Duration(seconds: 1)), reason: 'it outlasted the stall limit many times over');
+      expect(channels.opened.map((c) => c.peakQueued), contains(greaterThan(channelWindowBytes)), reason: 'the window held it back');
+      expect(server.received, payload);
     });
 
     test('the bytes still draining after the last one is handed over are waited for, not taken for a stall', () async {

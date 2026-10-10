@@ -9,6 +9,7 @@ import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/device/device_invite.dart';
 import 'package:nox_app/domain/model/device/device_model.dart';
+import 'package:nox_app/domain/model/device/pair_request.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/app/auth_repository.dart';
 import 'package:nox_app/domain/repository/device/device_repository.dart';
@@ -16,7 +17,20 @@ import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/presentation/pages/devices_page/bloc/devices_bloc.dart';
 
+import '../../../../utils/fake_pair_request_service.dart';
 import 'devices_bloc_test.mocks.dart';
+
+/// An invite as the server issues it since phase 044: a version-3 link.
+const String _inviteLink = 'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODwEGwKgBFCD7';
+
+/// More invites, each with a token of its own, where a test needs several.
+const String _inviteAbc = 'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwQUJDAwQFBgcICQoLDA0ODwEGwKgBFCD7';
+const String _inviteFresh = 'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwSE9NAwQFBgcICQoLDA0ODwEGwKgBFCD7';
+const String _inviteHome = 'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwUFVCAwQFBgcICQoLDA0ODwEGwKgBFCD7';
+const String _inviteLive = 'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwVE9LAwQFBgcICQoLDA0ODwEGwKgBFCD7';
+const String _invitePublic = 'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwRlJFAwQFBgcICQoLDA0ODwEGwKgBFCD7';
+const String _inviteSecond = 'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwU0VDAwQFBgcICQoLDA0ODwEGwKgBFCD7';
+const String _inviteTok = 'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwTElWAwQFBgcICQoLDA0ODwEGwKgBFCD7';
 
 @GenerateMocks([DeviceRepository, AuthRepository])
 void main() {
@@ -122,35 +136,48 @@ void main() {
   blocTest<DevicesBloc, DevicesState>(
     'an invite is held in state, because every request burns a new token',
     build: () {
-      when(devices.inviteDevice()).thenAnswer(
-        (_) async => const RepositoryResult<DeviceInvite>.success(data: DeviceInvite(link: 'https://nox.app/p/#abc', onion: true)),
-      );
+      when(
+        devices.inviteDevice(),
+      ).thenAnswer((_) async => const RepositoryResult<DeviceInvite>.success(data: DeviceInvite(link: _inviteAbc, onion: true)));
       return DevicesBloc();
     },
     act: (bloc) => bloc.add(const DevicesEvent.inviteRequested()),
     wait: const Duration(milliseconds: 100),
-    expect: () => [predicate<DevicesState>((s) => s.inviteLink == 'https://nox.app/p/#abc' && !s.inviteHomeOnly)],
+    expect: () => [predicate<DevicesState>((s) => s.inviteLink == _inviteAbc && !s.inviteHomeOnly)],
   );
 
   blocTest<DevicesBloc, DevicesState>(
-    'an invite the server could not give onion to is held as home-only (FR-019)',
+    'an invite whose link carries neither the onion nor the public address is held as home-only (phase 045)',
     // The card says so, and it can only say what the state carries: without the
     // note a link carried to an office fails with nothing to explain why.
     build: () {
+      when(
+        devices.inviteDevice(),
+      ).thenAnswer((_) async => const RepositoryResult<DeviceInvite>.success(data: DeviceInvite(link: _inviteHome, onion: false)));
+      return DevicesBloc();
+    },
+    act: (bloc) => bloc.add(const DevicesEvent.inviteRequested()),
+    wait: const Duration(milliseconds: 100),
+    expect: () => [predicate<DevicesState>((s) => s.inviteLink == _inviteHome && s.inviteHomeOnly)],
+  );
+
+  blocTest<DevicesBloc, DevicesState>(
+    'an invite whose link carries the public address is not home-only (phase 045, T017)',
+    build: () {
       when(devices.inviteDevice()).thenAnswer(
-        (_) async => const RepositoryResult<DeviceInvite>.success(data: DeviceInvite(link: 'https://nox.app/p/#home', onion: false)),
+        (_) async => const RepositoryResult<DeviceInvite>.success(data: DeviceInvite(link: _invitePublic, onion: false, public: true)),
       );
       return DevicesBloc();
     },
     act: (bloc) => bloc.add(const DevicesEvent.inviteRequested()),
     wait: const Duration(milliseconds: 100),
-    expect: () => [predicate<DevicesState>((s) => s.inviteLink == 'https://nox.app/p/#home' && s.inviteHomeOnly)],
+    expect: () => [predicate<DevicesState>((s) => s.inviteLink == _invitePublic && !s.inviteHomeOnly)],
   );
 
   blocTest<DevicesBloc, DevicesState>(
     'hiding a home-only invite takes the note with it',
     build: () => DevicesBloc(),
-    seed: () => const DevicesState(loading: false, invite: DeviceInvite(link: 'https://nox.app/p/#home', onion: false)),
+    seed: () => const DevicesState(loading: false, invite: DeviceInvite(link: _inviteHome, onion: false)),
     act: (bloc) => bloc.add(const DevicesEvent.inviteDismissed()),
     expect: () => [predicate<DevicesState>((s) => s.inviteLink == null && !s.inviteHomeOnly)],
   );
@@ -243,9 +270,9 @@ void main() {
       'the spent invite card goes with it',
       build: () {
         when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
-        when(devices.inviteDevice()).thenAnswer(
-          (_) async => const RepositoryResult<DeviceInvite>.success(data: DeviceInvite(link: 'https://nox.app/p/#tok', onion: true)),
-        );
+        when(
+          devices.inviteDevice(),
+        ).thenAnswer((_) async => const RepositoryResult<DeviceInvite>.success(data: DeviceInvite(link: _inviteTok, onion: true)));
         return DevicesBloc();
       },
       act: (bloc) async {
@@ -268,9 +295,9 @@ void main() {
       // waiting on, and it would vanish with no explanation.
       build: () {
         when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
-        when(devices.inviteDevice()).thenAnswer(
-          (_) async => const RepositoryResult<DeviceInvite>.success(data: DeviceInvite(link: 'https://nox.app/p/#fresh', onion: true)),
-        );
+        when(
+          devices.inviteDevice(),
+        ).thenAnswer((_) async => const RepositoryResult<DeviceInvite>.success(data: DeviceInvite(link: _inviteFresh, onion: true)));
         return DevicesBloc();
       },
       act: (bloc) async {
@@ -289,7 +316,7 @@ void main() {
       },
       verify: (bloc) {
         expect(bloc.state.devices, hasLength(2), reason: 'the catch-up never landed, so this proves nothing');
-        expect(bloc.state.inviteLink, 'https://nox.app/p/#fresh', reason: 'a read that started first threw away a later invite');
+        expect(bloc.state.inviteLink, _inviteFresh, reason: 'a read that started first threw away a later invite');
       },
     );
 
@@ -301,9 +328,9 @@ void main() {
       // the server will refuse, and if the read fails, showing it for good.
       build: () {
         when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
-        when(devices.inviteDevice()).thenAnswer(
-          (_) async => const RepositoryResult<DeviceInvite>.success(data: DeviceInvite(link: 'https://nox.app/p/#tok', onion: true)),
-        );
+        when(
+          devices.inviteDevice(),
+        ).thenAnswer((_) async => const RepositoryResult<DeviceInvite>.success(data: DeviceInvite(link: _inviteTok, onion: true)));
         return DevicesBloc();
       },
       act: (bloc) async {
@@ -360,9 +387,9 @@ void main() {
       'and a new invite can still be minted afterwards',
       build: () {
         when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
-        when(devices.inviteDevice()).thenAnswer(
-          (_) async => const RepositoryResult<DeviceInvite>.success(data: DeviceInvite(link: 'https://nox.app/p/#second', onion: true)),
-        );
+        when(
+          devices.inviteDevice(),
+        ).thenAnswer((_) async => const RepositoryResult<DeviceInvite>.success(data: DeviceInvite(link: _inviteSecond, onion: true)));
         return DevicesBloc();
       },
       act: (bloc) async {
@@ -373,7 +400,7 @@ void main() {
         bloc.add(const DevicesEvent.inviteRequested());
         await Future<void>.delayed(const Duration(milliseconds: 50));
       },
-      verify: (bloc) => expect(bloc.state.inviteLink, 'https://nox.app/p/#second'),
+      verify: (bloc) => expect(bloc.state.inviteLink, _inviteSecond),
     );
     blocTest<DevicesBloc, DevicesState>(
       'the screen never blanks while it catches up',
@@ -481,6 +508,58 @@ void main() {
     );
   });
 
+  // A request through an invite this device issued closes - Allow, Deny, its
+  // time, or the new device's Cancel - and the invite behind it is spent
+  // whatever the answer (phase 046). A Deny changes no list, so device.paired
+  // is not there to take the card down.
+  group('a request through the invite on screen closes (046)', () {
+    late FakePairRequestService requests;
+
+    setUp(() => requests = registerFakePairRequests());
+    tearDown(() => requests.close());
+
+    blocTest<DevicesBloc, DevicesState>(
+      'the spent invite card goes, and the list is not read again for it',
+      build: () {
+        when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
+        when(
+          devices.inviteDevice(),
+        ).thenAnswer((_) async => const RepositoryResult<DeviceInvite>.success(data: DeviceInvite(link: _inviteLink, onion: true)));
+        return DevicesBloc();
+      },
+      act: (bloc) async {
+        bloc.add(const DevicesEvent.initialize());
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        bloc.add(const DevicesEvent.inviteRequested());
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        requests
+          ..ask(const PairRequest(requestId: 'r_1', platform: DevicePlatform.windows))
+          ..resolve('r_1');
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      },
+      verify: (bloc) {
+        expect(bloc.state.inviteLink, isNull, reason: 'its QR is spent whatever the answer was');
+        verify(devices.getDevices()).called(1);
+      },
+    );
+
+    blocTest<DevicesBloc, DevicesState>(
+      'an invite error goes with the card, as on a pairing',
+      build: () {
+        when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
+        return DevicesBloc();
+      },
+      seed: () => DevicesState(loading: false, devices: [phone], inviteFailed: true),
+      act: (bloc) async {
+        bloc.add(const DevicesEvent.initialize(cause: DevicesReadCause.noticed));
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        requests.resolve('r_1');
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      },
+      verify: (bloc) => expect(bloc.state.inviteFailed, isFalse),
+    );
+  });
+
   group('the channel coming back (038)', () {
     late _FakePhase phase;
 
@@ -565,9 +644,9 @@ void main() {
       // half the fix, in the one case the fix exists for.
       build: () {
         when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
-        when(devices.inviteDevice()).thenAnswer(
-          (_) async => const RepositoryResult<DeviceInvite>.success(data: DeviceInvite(link: 'https://nox.app/p/#tok', onion: true)),
-        );
+        when(
+          devices.inviteDevice(),
+        ).thenAnswer((_) async => const RepositoryResult<DeviceInvite>.success(data: DeviceInvite(link: _inviteTok, onion: true)));
         return DevicesBloc();
       },
       act: (bloc) async {
@@ -648,9 +727,9 @@ void main() {
       // pairing takes longest.
       build: () {
         when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone]));
-        when(devices.inviteDevice()).thenAnswer(
-          (_) async => const RepositoryResult<DeviceInvite>.success(data: DeviceInvite(link: 'https://nox.app/p/#live', onion: true)),
-        );
+        when(
+          devices.inviteDevice(),
+        ).thenAnswer((_) async => const RepositoryResult<DeviceInvite>.success(data: DeviceInvite(link: _inviteLive, onion: true)));
         return DevicesBloc();
       },
       act: (bloc) async {
@@ -667,7 +746,7 @@ void main() {
         // whole reconnect subscription deleted, because a screen that never
         // re-reads also never touches the invite.
         verify(devices.getDevices()).called(2);
-        expect(bloc.state.inviteLink, 'https://nox.app/p/#live');
+        expect(bloc.state.inviteLink, _inviteLive);
       },
     );
 
@@ -711,9 +790,9 @@ void main() {
       // the card is dismissed for. The keys are what say a device is new.
       build: () {
         when(devices.getDevices()).thenAnswer((_) async => RepositoryResult<List<DeviceModel>>.success(data: [phone, tablet]));
-        when(devices.inviteDevice()).thenAnswer(
-          (_) async => const RepositoryResult<DeviceInvite>.success(data: DeviceInvite(link: 'https://nox.app/p/#tok', onion: true)),
-        );
+        when(
+          devices.inviteDevice(),
+        ).thenAnswer((_) async => const RepositoryResult<DeviceInvite>.success(data: DeviceInvite(link: _inviteTok, onion: true)));
         return DevicesBloc();
       },
       act: (bloc) async {

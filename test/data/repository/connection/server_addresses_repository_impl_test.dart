@@ -88,4 +88,106 @@ void main() {
 
     expect(seen.map((a) => a.direct.single), ['192.168.1.20:8443', '192.168.1.30:8443']);
   });
+
+  group('the server and the person (phase 045, FR-015)', () {
+    final serverOnion = '${'a' * 56}.onion:443';
+    final typedOnion = '${'b' * 56}.onion:443';
+
+    test('a public address the server states replaces the person\'s edit of the address field', () async {
+      await repository.saveManual(manualAddress: '10.8.0.2:8443', manualOnion: null);
+
+      await repository.saveFromServer(direct: const ['192.168.1.20:8443'], public: 'nox.example.org:8443');
+
+      final stored = (await repository.read()).data!;
+      expect(stored.public, 'nox.example.org:8443');
+      expect(stored.manualAddress, isNull);
+      expect(stored.fieldAddress('192.168.1.20:8443'), 'nox.example.org:8443');
+    });
+
+    test('a field the server leaves out keeps the person\'s edit, and forgets the server\'s old value', () async {
+      await repository.saveFromServer(direct: const [], public: 'nox.example.org:8443', onion: serverOnion);
+      await repository.saveManual(manualAddress: '10.8.0.2:8443', manualOnion: typedOnion);
+
+      await repository.saveFromServer(direct: const []);
+
+      final stored = (await repository.read()).data!;
+      expect(stored.manualAddress, '10.8.0.2:8443');
+      expect(stored.manualOnion, typedOnion);
+      expect(stored.public, isNull);
+      expect(stored.onion, isNull);
+      expect(stored.effectiveOnion, typedOnion);
+    });
+
+    test('an onion address the server states replaces the person\'s, even a cleared one', () async {
+      await repository.saveManual(manualAddress: null, manualOnion: '');
+      expect((await repository.read()).data!.effectiveOnion, isNull);
+
+      await repository.saveFromServer(direct: const [], onion: serverOnion);
+
+      final stored = (await repository.read()).data!;
+      expect(stored.manualOnion, isNull);
+      expect(stored.effectiveOnion, serverOnion);
+    });
+
+    test('Use Tor survives what the server says, and is kept across launches', () async {
+      await repository.setUseTor(true);
+      await repository.saveFromServer(direct: const ['192.168.1.20:8443'], onion: serverOnion);
+
+      expect((await repository.read()).data!.useTor, isTrue);
+      expect((await ServerAddressesRepositoryImpl(const FlutterSecureStorage()).read()).data!.useTor, isTrue);
+    });
+
+    test('a pairing link replaces everything: its addresses, the edits made on the connection screen, and Use Tor', () async {
+      await repository.saveFromServer(direct: const ['10.0.0.1:1'], public: 'old.example.org:1', onion: typedOnion);
+      await repository.recordLastGood('10.0.0.1:1');
+      await repository.recordGreetedViaTor();
+
+      await repository.saveFromLink(
+        direct: const ['192.168.1.20:8443', 'nox.example.org:8443'],
+        onion: serverOnion,
+        manualAddress: '10.8.0.2:8443',
+        manualOnion: '',
+        useTor: true,
+      );
+
+      final stored = (await repository.read()).data!;
+      expect(stored.direct, ['192.168.1.20:8443', 'nox.example.org:8443']);
+      expect(stored.onion, serverOnion);
+      expect(stored.public, isNull);
+      expect(stored.manualAddress, '10.8.0.2:8443');
+      expect(stored.manualOnion, '');
+      expect(stored.effectiveOnion, isNull, reason: 'the person cleared it');
+      expect(stored.useTor, isTrue);
+      expect(stored.lastGood, isNull);
+      expect(stored.viaTorLast, isFalse);
+    });
+
+    test('every field survives the round trip through storage', () async {
+      await repository.saveFromServer(direct: const ['192.168.1.20:8443'], public: 'nox.example.org:8443', onion: serverOnion);
+      await repository.saveManual(manualAddress: '10.8.0.2:8443', manualOnion: typedOnion);
+      await repository.setUseTor(true);
+      await repository.recordLastGood('192.168.1.20:8443');
+      await repository.recordGreetedViaTor();
+
+      final fresh = (await ServerAddressesRepositoryImpl(const FlutterSecureStorage()).read()).data!;
+
+      expect(fresh, (await repository.read()).data);
+      expect(fresh.manualOnion, typedOnion, reason: 'the edit came after the server spoke');
+      expect(fresh.useTor, isTrue);
+      expect(fresh.public, 'nox.example.org:8443');
+    });
+
+    test('watch reports Use Tor turned off', () async {
+      await repository.setUseTor(true);
+      final seen = <bool>[];
+      final sub = repository.watch().listen((a) => seen.add(a.useTor));
+      await Future<void>.delayed(Duration.zero);
+
+      await repository.setUseTor(false);
+      await Future<void>.delayed(Duration.zero);
+      await sub.cancel();
+
+      expect(seen, [true, false]);
+    });
+  });
 }

@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -205,8 +206,7 @@ func serveChannel(t *testing.T, srv *Server, raw net.Listener, cfg *tls.Config, 
 	ts := httptest.NewUnstartedServer(srv.Handler())
 	_ = ts.Listener.Close()
 	ts.Listener = srv.newChannelListener(raw, cfg, key, srv.channelTimeout)
-	ts.Config.ConnContext = withChannelPeer
-	ts.Config.ReadHeaderTimeout = readHeaderTimeout
+	srv.configureMain(ts.Config)
 	// Transport-level complaints go nowhere: several tests break connections
 	// on purpose, and http.Server would print each one to stderr.
 	ts.Config.ErrorLog = log.New(io.Discard, "", 0)
@@ -407,6 +407,54 @@ func readWriteDB(t *testing.T, srv *Server) *sql.DB {
 	}
 	t.Cleanup(func() { _ = d.Close() })
 	return d.Write
+}
+
+// The startup line says where a link for a first device is and never what it
+// is (046, FR-005; 045, FR-022): the link is a way in, from anywhere since a
+// device can pair through the onion service, and a log is copied to places it
+// may not go. There is always a page to name: since 047 a server without one
+// does not start (TestAServerWithoutItsPageIsRefused), its password being
+// entered there. Once a device can reach the machine there is nothing to say.
+func TestTheStartupLineSaysWhereTheLinkIsAndNeverCarriesOne(t *testing.T) {
+	st := startStore(t)
+	ctx := context.Background()
+	if err := st.ApplyAddressParam(ctx, store.AddressOnion, testOnionAddr, testOnionAddr); err != nil {
+		t.Fatalf("ApplyAddressParam: %v", err)
+	}
+	page := config.Config{Addr: "127.0.0.1:8080", StatusAddr: "127.0.0.1:8081"}
+	say := func(cfg config.Config) string {
+		t.Helper()
+		logs := &syncBuffer{}
+		if err := sayHowToPair(ctx, st, cfg, slog.New(ScrubLogs(slog.NewTextHandler(logs, nil)))); err != nil {
+			t.Fatalf("sayHowToPair: %v", err)
+		}
+		return logs.String()
+	}
+
+	out := say(page)
+	for _, want := range []string{"no device can reach this server yet", "http://127.0.0.1:8081", "noxd link"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("the line does not say %q:\n%s", want, out)
+		}
+	}
+	// Not even masked: no line is ever handed a link or the onion address.
+	for _, leak := range []string{"nox://pair/", "[link]", "[onion]"} {
+		if strings.Contains(out, leak) {
+			t.Fatalf("the line carries %q:\n%s", leak, out)
+		}
+	}
+
+	now := time.Now().Unix()
+	link, err := st.IssueMachineLink(ctx, now)
+	if err != nil {
+		t.Fatalf("IssueMachineLink: %v", err)
+	}
+	if _, err := st.Pair(ctx, link.Token, "dev-a", "linux", now); err != nil {
+		t.Fatalf("Pair: %v", err)
+	}
+	if out := say(page); out != "" {
+		t.Fatalf("a machine a device can reach still points at a link:\n%s", out)
+	}
 }
 
 // A startup that is going to abort must not rotate the journal on its way out.

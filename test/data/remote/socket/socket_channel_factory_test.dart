@@ -74,6 +74,76 @@ void main() {
     channels.unbind();
   });
 
+  test('closing a dial still under way returns at once, and the dial failing later raises nothing', () async {
+    // The channel's own close follows the dial, and one that then fails never
+    // completes it: awaited, that wedged a reconnect, a logout half-way
+    // through its wipe and a failed sign-in's rollback.
+    final api = ScriptedChannelApi();
+    final channels = ChannelHttpClient(api)..bind(serverKey: serverKey, deviceSeed: deviceSeed);
+    final errors = <Object>[];
+    final finished = Completer<void>();
+    // Not awaited itself: an error inside the zone never completes the
+    // zone's own future, so the end is signalled from within.
+    runZonedGuarded(() async {
+      try {
+        final connection = WebSocketChannelFactory(channels).connect(Uri.parse('wss://192.168.1.20:8443/ws'));
+        connection.frames.listen((_) {}, onError: (Object _) {});
+        while (api.calls.isEmpty) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        connection.add('{"cmd":"pair"}');
+
+        await connection.close().timeout(const Duration(seconds: 1));
+
+        // The module gives up on the open after the app did.
+        api.calls.single.result.completeError(const ChannelOpenException(ChannelFailure.network));
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+      } finally {
+        finished.complete();
+      }
+    }, (error, _) => errors.add(error));
+    await finished.future;
+
+    expect(errors, isEmpty);
+    channels.unbind();
+  });
+
+  test('a dial abandoned before it opened sends nothing once it does', () async {
+    // The WebSocket flushes what it was handed as soon as the upgrade
+    // completes, close or no close: a pairing token given to a dial the app
+    // had already given up on reached the server behind its back.
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    final asked = Completer<void>();
+    final upgrade = Completer<void>();
+    final received = <Object?>[];
+    var upgraded = false;
+    server.listen((request) async {
+      if (!asked.isCompleted) asked.complete();
+      await upgrade.future;
+      final socket = await WebSocketTransformer.upgrade(request);
+      upgraded = true;
+      socket.listen(received.add, onError: (Object _) {});
+    });
+    final channels = ChannelHttpClient(LoopbackChannelApi(server.port))..bind(serverKey: serverKey, deviceSeed: deviceSeed);
+    final connection = WebSocketChannelFactory(channels).connect(Uri.parse('wss://192.168.1.20:8443/ws'));
+    connection.frames.listen((_) {}, onError: (Object _) {});
+    connection.add('{"cmd":"pair"}');
+    // The channel is open and the upgrade asked for: the WebSocket is not.
+    await asked.future.timeout(const Duration(seconds: 5));
+
+    await connection.close().timeout(const Duration(seconds: 1));
+    upgrade.complete();
+    for (var i = 0; i < 100 && !upgraded; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+
+    expect(upgraded, isTrue, reason: 'the dial did complete');
+    expect(received, isEmpty, reason: 'nothing it was handed went out');
+    channels.unbind();
+  });
+
   test('a dial bounds the connect of the socket client itself, so a give-up reaches the module', () {
     final channels = ChannelHttpClient(ScriptedChannelApi())..bind(serverKey: serverKey, deviceSeed: deviceSeed);
     final factory = WebSocketChannelFactory(channels);

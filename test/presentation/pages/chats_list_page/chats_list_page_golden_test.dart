@@ -44,6 +44,10 @@ void main() {
   // action the offline one does not have, and a shared baseline would let any
   // of the three quietly become the other.
   goldenTest('chats_list_page_pin_refused', () => const ChatsListPage(inShell: true, initialScenario: ChatsListScenario.pinRefused));
+
+  // A failed round with a known cause (phase 045): the strip says why in place
+  // of «No connection», and keeps its Try again. Two lines on a phone.
+  goldenTest('chats_list_page_turn_on_tor', () => const ChatsListPage(inShell: true, initialScenario: ChatsListScenario.turnOnTor));
   goldenTest('chats_list_page_error', () => const ChatsListPage(inShell: true, initialScenario: ChatsListScenario.fatal));
 
   // The ONLY page-level baseline that contains a chat row with a badge, and the
@@ -77,6 +81,12 @@ void main() {
     setUp(() async => getIt<AppDatabase>().clearEntireDatabase());
 
     goldenTestDesktop('chats_list_page_offline', () => const ChatsListPage(inShell: false, initialScenario: ChatsListScenario.offline));
+
+    // The cause in place of «No connection» (phase 045), in both panes.
+    goldenTestDesktop(
+      'chats_list_page_turn_on_tor',
+      () => const ChatsListPage(inShell: false, initialScenario: ChatsListScenario.turnOnTor),
+    );
   });
 
   // Chats not on the server yet, one in each state (phase 041), on both

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"io"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -33,7 +34,8 @@ func TestLoad(t *testing.T) {
 		{
 			// The flag moves the port; it does not put the page on a network.
 			// Somebody who tries has to learn it now rather than when a
-			// stranger claims their server.
+			// stranger pairs a device with their server through the link the
+			// page hands out.
 			name:    "a service page bound off loopback is refused",
 			args:    []string{"-status-addr", "0.0.0.0:8081"},
 			getenv:  noEnv,
@@ -139,6 +141,44 @@ func TestTheAddressParametersArriveRawFromAFlagOrTheEnvironment(t *testing.T) {
 	}
 	if cfg.PublicAddr != "203.0.113.7:8443" || cfg.OnionAddr != "not an onion address" {
 		t.Fatalf("flags over env: public=%q onion=%q", cfg.PublicAddr, cfg.OnionAddr)
+	}
+}
+
+// The usage text a mistyped flag brings up goes to stderr - the service's
+// journal - and lists every flag's default. The address parameters have none,
+// so the onion address the environment holds stays out of it (FR-022); it still
+// arrives, and a flag still wins over it, even an empty one.
+func TestTheUsageTextNeverCarriesTheAddressesOfTheEnvironment(t *testing.T) {
+	const onion = "6bauzvyr6myctqykmykeuo3p3yc3iy7tilx5g3sxxpuifdwab54o56id.onion"
+	env := func(k string) string {
+		switch k {
+		case "NOX_ONION_ADDR":
+			return onion
+		case "NOX_PUBLIC_ADDR":
+			return "nox.example.org:8443"
+		}
+		return ""
+	}
+	for _, args := range [][]string{{"-h"}, {"-no-such-flag"}, {"-onion-addr"}} {
+		var usage strings.Builder
+		if _, err := load(args, env, &usage); err == nil {
+			t.Fatalf("load(%q) succeeded", args)
+		}
+		if !strings.Contains(usage.String(), "-onion-addr") {
+			t.Fatalf("load(%q) printed no usage, so this test proves nothing:\n%s", args, usage.String())
+		}
+		if strings.Contains(usage.String(), onion[:56]) || strings.Contains(usage.String(), "nox.example.org") {
+			t.Fatalf("load(%q) printed an address of the environment:\n%s", args, usage.String())
+		}
+	}
+
+	cfg, err := load(nil, env, io.Discard)
+	if err != nil || cfg.OnionAddr != onion || cfg.PublicAddr != "nox.example.org:8443" {
+		t.Fatalf("from the environment: onion=%q public=%q err=%v", cfg.OnionAddr, cfg.PublicAddr, err)
+	}
+	cfg, err = load([]string{"-onion-addr", "", "-public-addr="}, env, io.Discard)
+	if err != nil || cfg.OnionAddr != "" || cfg.PublicAddr != "" {
+		t.Fatalf("empty flags over the environment: onion=%q public=%q err=%v", cfg.OnionAddr, cfg.PublicAddr, err)
 	}
 }
 

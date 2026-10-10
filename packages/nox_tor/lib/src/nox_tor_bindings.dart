@@ -5,8 +5,9 @@
 // The asset id is this library's URI, which is what the build hook names the
 // Rust library (`assetName: 'src/nox_tor_bindings.dart'`). The Tor functions
 // are short and never call back into Dart, hence isLeaf. The channel functions
-// may raise an event while they run - closing a channel answers with CLOSED -
-// so only the one that only frees memory is a leaf.
+// may post an event while they run - a flush on a shut channel answers with
+// DRAINED, a reap posts its probes - so only the one that only frees memory is
+// a leaf.
 import 'dart:ffi';
 
 import 'package:ffi/ffi.dart';
@@ -38,12 +39,6 @@ external int noxTorStart(Pointer<Utf8> stateDir, Pointer<Utf8> cacheDir);
 @Native<Void Function()>(symbol: 'nox_tor_stop', isLeaf: true)
 external void noxTorStop();
 
-@Native<Int32 Function(Pointer<Utf8>, Uint16, Pointer<Uint8>)>(symbol: 'nox_tor_set_target', isLeaf: true)
-external int noxTorSetTarget(Pointer<Utf8> onionHost, int port, Pointer<Uint8> clientKey32);
-
-@Native<Int32 Function()>(symbol: 'nox_tor_clear_target', isLeaf: true)
-external int noxTorClearTarget();
-
 @Native<Void Function(Bool)>(symbol: 'nox_tor_set_dormant', isLeaf: true)
 external void noxTorSetDormant(bool dormant);
 
@@ -56,13 +51,14 @@ external int noxTorOnionFromPubkey(Pointer<Uint8> pub32, Pointer<Utf8> out, int 
 @Native<Pointer<Utf8> Function()>(symbol: 'nox_tor_version', isLeaf: true)
 external Pointer<Utf8> noxTorVersion();
 
-/// `nox_chan_event_fn`: (handle, kind, data, len, code). Called from the
-/// module's threads; Dart receives it through a `NativeCallable.listener`.
-typedef NoxChanEventNative = Void Function(Int64 handle, Int32 kind, Pointer<Uint8> data, UintPtr len, Int32 code);
+/// `Dart_PostCObject`, as `NativeApi.postCObject` hands it over: the module
+/// posts every event of a channel with it, from its own threads, to the
+/// native port `nox_chan_open` names.
+typedef NoxChanPostNative = Int8 Function(Int64 port, Pointer<Dart_CObject> message);
 
-@Native<Int64 Function(Int32, Pointer<Utf8>, Uint16, Pointer<Uint8>, Pointer<Uint8>, Uint32, Pointer<NativeFunction<NoxChanEventNative>>)>(
-  symbol: 'nox_chan_open',
-)
+@Native<
+  Int64 Function(Int32, Pointer<Utf8>, Uint16, Pointer<Uint8>, Pointer<Uint8>, Uint32, Pointer<NativeFunction<NoxChanPostNative>>, Int64)
+>(symbol: 'nox_chan_open')
 external int noxChanOpen(
   int targetKind,
   Pointer<Utf8> host,
@@ -70,7 +66,8 @@ external int noxChanOpen(
   Pointer<Uint8> deviceSeed32,
   Pointer<Uint8> serverKey32,
   int connectTimeoutMs,
-  Pointer<NativeFunction<NoxChanEventNative>> onEvent,
+  Pointer<NativeFunction<NoxChanPostNative>> post,
+  int eventsPort,
 );
 
 @Native<Int64 Function(Int64, Pointer<Uint8>, UintPtr)>(symbol: 'nox_chan_write')
@@ -87,6 +84,10 @@ external int noxChanShutdownWrite(int handle);
 
 @Native<Int32 Function(Int64)>(symbol: 'nox_chan_close')
 external int noxChanClose(int handle);
+
+/// Ends every channel whose isolate is gone; how many there were.
+@Native<Int32 Function()>(symbol: 'nox_chan_reap')
+external int noxChanReap();
 
 @Native<Void Function(Pointer<Uint8>, UintPtr)>(symbol: 'nox_chan_buf_free', isLeaf: true)
 external void noxChanBufFree(Pointer<Uint8> data, int len);

@@ -12,6 +12,13 @@ import '../../../utils/pump_app.dart';
 
 final l10nEn = AppLocalizationsEn();
 
+/// Invites as the server issues them since phase 044: version-3 links. The
+/// contract's `minimal` vector carries one direct address, the `full` one an
+/// onion address too.
+const String _homeLink = 'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODwEGwKgBFCD7';
+const String _anywhereLink =
+    'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODwEGwKgBFCD7AxFub3guZXhhbXBsZS5vcmcg-wQgF8t5-ytBIPKx7GXkGY1uCLKOgT_rAeSkAIObheGAgM4';
+
 /// Seeded through the page's test seam: the list comes from a server, and the
 /// two failures below are answers a mock world cannot give.
 DevicesState _state() => DevicesState(
@@ -53,14 +60,14 @@ void main() {
     expect(find.text(l10nEn.devicesRevokeError), findsNothing);
   });
 
-  // FR-019: an invite the server could not put its onion address in works only
-  // on the home network, and the card is where the person decides where to
-  // carry it.
+  // An invite whose link carries neither an onion nor a public address works
+  // only on the home network (phase 045), and the card is where the person
+  // decides where to carry it.
   testWidgets('a home-only invite says where it works', (tester) async {
     await pumpApp(
       tester,
       DevicesPage(
-        initialState: _state().copyWith(invite: const DeviceInvite(link: 'https://nox.app/p/#home', onion: false)),
+        initialState: _state().copyWith(invite: const DeviceInvite(link: _homeLink, onion: false)),
       ),
     );
 
@@ -68,11 +75,11 @@ void main() {
     expect(find.text(l10nEn.devicesInviteHomeOnly), findsOneWidget);
   });
 
-  testWidgets('an onion invite carries no such note', (tester) async {
+  testWidgets('an invite that also carries the onion address has no such note', (tester) async {
     await pumpApp(
       tester,
       DevicesPage(
-        initialState: _state().copyWith(invite: const DeviceInvite(link: 'https://nox.app/p/#anywhere', onion: true)),
+        initialState: _state().copyWith(invite: const DeviceInvite(link: _anywhereLink, onion: true)),
       ),
     );
 

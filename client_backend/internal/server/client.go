@@ -1,6 +1,7 @@
 package server
 
 import (
+	"container/list"
 	"context"
 	"log/slog"
 	"sync"
@@ -53,6 +54,20 @@ type client struct {
 	// goroutine's own, and it is set BEFORE the reply.
 	greeted     bool
 	addrVersion uint64
+	// What a connection of a key nobody paired is held to (unpaired.go), also
+	// under Server.mu. unpaired is its place among such connections
+	// (Server.unpaired): set when its key was unknown as it connected, and
+	// nil for a paired device's - or once this one paired or greeted, ran out
+	// of time, was taken out to make room, moved to a wait, or left. waitsOn
+	// is the pairing request it waits on instead (Server.waits, 046) - its
+	// `pair` answered "pending" - and empty when it waits on none. deadline
+	// closes it when its time as a stranger runs out, and holdGen numbers
+	// the hold the deadline was armed for, so a timer armed for an earlier
+	// one closes nothing.
+	unpaired *list.Element
+	waitsOn  string
+	deadline *time.Timer
+	holdGen  uint64
 	// identity is the person this connection speaks as, resolved once during
 	// the greeting. Written and read through Server.setIdentity /
 	// Server.currentIdentity: other connections' goroutines touch it -

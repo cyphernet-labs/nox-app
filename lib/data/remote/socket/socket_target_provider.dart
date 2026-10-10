@@ -1,3 +1,5 @@
+import 'package:nox_app/data/remote/channel/channel_failure.dart';
+
 /// Where the socket dials, asked before EVERY attempt (phase 040).
 ///
 /// One address handed over at start was enough while the server had one; now
@@ -23,6 +25,12 @@ abstract class SocketTargetProvider {
   /// lead home right now", never "this is not your server": addresses are
   /// reused, and the next network's 192.168.1.20 is somebody else's machine.
   void reportWrongServer(Uri url);
+
+  /// The connection to [url] ended before it was greeted: the channel would
+  /// not open, for [failure], or it went away with nothing said (null). What
+  /// the next attempt makes of it - the reason a round failed (phase 045) -
+  /// is the provider's business; the socket only reports.
+  void reportFailed(Uri url, ChannelFailure? failure);
 }
 
 /// One address, always: the shape every connection had before phase 040, and
@@ -43,6 +51,9 @@ class FixedSocketTarget implements SocketTargetProvider {
 
   @override
   void reportWrongServer(Uri url) {}
+
+  @override
+  void reportFailed(Uri url, ChannelFailure? failure) {}
 }
 
 /// Whether [url] names an onion service. Only there does another server key

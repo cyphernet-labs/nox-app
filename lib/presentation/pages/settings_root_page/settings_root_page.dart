@@ -18,6 +18,8 @@ import 'package:nox_app/presentation/pages/about_page/about_page.dart';
 import 'package:nox_app/presentation/pages/appearance_page/appearance_body.dart';
 import 'package:nox_app/presentation/pages/appearance_page/appearance_page.dart';
 import 'package:nox_app/presentation/pages/base/base_state_page.dart';
+import 'package:nox_app/presentation/pages/connection_page/connection_body.dart';
+import 'package:nox_app/presentation/pages/connection_page/connection_page.dart';
 // import 'package:nox_app/presentation/pages/error_page/error_page.dart';
 // import 'package:nox_app/presentation/pages/error_page/error_page_params.dart';
 import 'package:nox_app/presentation/pages/language_page/language_body.dart';
@@ -40,13 +42,14 @@ import 'package:nox_app/presentation/widgets/settings/app_settings_nav_row_widge
 import 'package:nox_app/presentation/widgets/shell/app_list_detail_widget.dart';
 
 /// Desktop settings sections (the list-detail menu items).
-enum _Section { account, devices, notifications, appearance, language, terms, about }
+enum _Section { account, devices, connection, notifications, appearance, language, terms, about }
 
 /// 7.1 Settings root — the Settings tab body. Mobile: a flat list (identity card +
 /// nav rows + Log out). Desktop: a list-detail (menu pane 340 + detail pane ≤680,
 /// selection swaps the pane without push). The id is public since feature 032, so
 /// the card shows it whole - there is no mask, no reveal, and no account QR: adding
-/// a device is its own screen, 7.8. Settings rows open the real 7.2–7.7 subscreens;
+/// a device is its own screen, 7.8, and where the server is reached is Connection
+/// (phase 045). Settings rows open the real 7.2–7.7 subscreens;
 /// Log out → real 1.1 Splash. Owns [SettingsRootBloc]. `[inShell]` suppresses the
 /// back affordance when hosted as a shell tab.
 class SettingsRootPage extends StatefulWidget {
@@ -201,6 +204,12 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
             icon: NoxIcons.devices,
             onTap: () => _openSection(DevicesPage.route()),
           ),
+          // Where the server is reached, and whether Tor may be used (phase 045).
+          AppSettingsNavRowWidget(
+            title: context.l10n.settingsConnectionTitle,
+            icon: NoxIcons.lan,
+            onTap: () => _openSection(ConnectionPage.route()),
+          ),
           AppSettingsNavRowWidget(
             title: context.l10n.settingsNotificationsTitle,
             icon: NoxIcons.notifications,
@@ -311,6 +320,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
                       _navGroup(context, [
                         item(_Section.account, context.l10n.settingsAccountTitle, NoxIcons.person, NoxIcons.personFill),
                         item(_Section.devices, context.l10n.settingsDevicesTitle, NoxIcons.devices, NoxIcons.devicesFill),
+                        item(_Section.connection, context.l10n.settingsConnectionTitle, NoxIcons.lan, NoxIcons.lanFill),
                       ]),
                       _navGroup(context, [
                         item(
@@ -350,6 +360,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
   String _sectionTitle(_Section section) => switch (section) {
     _Section.account => context.l10n.settingsAccountTitle,
     _Section.devices => context.l10n.settingsDevicesTitle,
+    _Section.connection => context.l10n.settingsConnectionTitle,
     _Section.notifications => context.l10n.settingsNotificationsTitle,
     _Section.appearance => context.l10n.settingsAppearanceTitle,
     _Section.language => context.l10n.settingsLanguageTitle,
@@ -368,6 +379,7 @@ class _SettingsRootPageState extends BaseStatePage<SettingsRootPage> {
         ],
       ),
       _Section.devices => const DevicesBody(),
+      _Section.connection => const ConnectionBody(),
       _Section.notifications => const NotificationsBody(),
       _Section.appearance => const AppearanceBody(),
       _Section.language => const LanguageBody(),

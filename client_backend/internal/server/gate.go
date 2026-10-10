@@ -423,6 +423,9 @@ func startPage(ln net.Listener, h http.Handler, logger *slog.Logger) *servicePag
 			Handler:           h,
 			ReadHeaderTimeout: pageReadHeaderTimeout,
 			BaseContext:       func(net.Listener) context.Context { return ctx },
+			// net/http's own complaints go through the same scrubbing handler
+			// as every other line (logscrub.go), instead of straight to stderr.
+			ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelError),
 		},
 		addr:   ln.Addr().String(),
 		cancel: cancel,

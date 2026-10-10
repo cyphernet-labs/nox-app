@@ -13,6 +13,7 @@ import 'package:nox_app/general/qr_image_pairing_capability.dart';
 import 'package:nox_app/general/qr_scanner_capability.dart';
 import 'package:nox_app/presentation/helpers/app_feedback_helper.dart';
 import 'package:nox_app/presentation/pages/base/base_state_page.dart';
+import 'package:nox_app/presentation/pages/connect_page/connect_page.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page.dart';
 import 'package:nox_app/presentation/pages/error_page/error_page_params.dart';
 import 'package:nox_app/presentation/pages/login_page/bloc/login_bloc.dart';
@@ -24,10 +25,13 @@ import 'package:nox_app/presentation/widgets/onboarding/app_onboarding_scaffold_
 import 'package:nox_app/presentation/widgets/onboarding/app_primary_button_widget.dart';
 
 /// 2.1 Login / ID entry — the onboarding entry screen. Mono multi-line ID field
-/// + `Paste` + `Sign in` (outcome via the mock dataset / debug selector) +
-/// `Scan QR` (stubbed). Mobile: full-screen `AppBar` (wordmark + hairline).
-/// Desktop: centered `AppOnboardCardWidget` under a window `TitleBar`. `demo: true`
-/// (gallery) shows a dev outcome selector. Owns [LoginBloc].
+/// + `Paste` + `Sign in` + `Scan QR` (camera) or `Use a QR image`. A readable
+/// pairing link - typed, pasted, scanned or read from an image - goes on to the
+/// connection screen, which pairs (phase 045); this screen only refuses a link
+/// that will not parse or that is newer than the app. Mobile: full-screen
+/// `AppBar` (wordmark + hairline). Desktop: centered `AppOnboardCardWidget` under
+/// a window `TitleBar`. `demo: true` (gallery) shows a dev outcome selector.
+/// Owns [LoginBloc].
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key, this.demo = false, this.initialStatus});
 
@@ -67,6 +71,8 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
   void initState() {
     super.initState();
     _bloc = LoginBloc(demo: widget.demo, initialStatus: widget.initialStatus);
+    // A wait for approval the app was closed in goes on (phase 046, FR-011).
+    if (!widget.demo) _bloc.add(const LoginEvent.resumeChecked());
     WidgetsBinding.instance.addObserver(this);
     _refreshClipboard();
   }
@@ -107,8 +113,9 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
       await Navigator.of(context).push(QrScanPage.routeDemo());
       return;
     }
-    // Real flow: a successful scan returns the decoded id, which flows down the
-    // exact same path as manual entry (idChanged → submit → spine navigates).
+    // Real flow: a successful scan returns the decoded link, which flows down
+    // the exact same path as manual entry (idChanged → submit → the connection
+    // screen).
     final id = await Navigator.of(context).push(QrScanPage.route());
     if (id == null || !mounted) return; // back / Enter manually → no submit, field kept (FR-013)
     _controller.text = id;
@@ -147,6 +154,16 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
 
   void _onStatus(BuildContext context, LoginState state) {
     switch (state.status) {
+      case LoginStatus.navConnect:
+        // Every way a link arrives ends here: the connection screen shows
+        // where it leads, and pairs (FR-013).
+        Navigator.of(context).push(ConnectPage.route(link: state.id.trim()));
+        _bloc.add(const LoginEvent.navigationHandled());
+      case LoginStatus.navResume:
+        // Back to the wait, over the same path it was set up for.
+        final resume = state.resume;
+        if (resume != null) Navigator.of(context).push(ConnectPage.route(link: resume.link, resume: true, settings: resume.connection));
+        _bloc.add(const LoginEvent.navigationHandled());
       case LoginStatus.navNewId:
         Navigator.of(context).push(SetUsernamePage.route());
         _bloc.add(const LoginEvent.navigationHandled());
@@ -160,11 +177,7 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
       case LoginStatus.loading:
       case LoginStatus.errorFormat:
       case LoginStatus.errorNewerVersion:
-      case LoginStatus.errorExpired:
-      case LoginStatus.errorRejected:
       case LoginStatus.errorNetwork:
-      case LoginStatus.errorServerMismatch:
-      case LoginStatus.errorHomeNetworkOnly:
         break;
     }
   }
@@ -202,11 +215,7 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
   String? _errorText(BuildContext context, LoginStatus status) => switch (status) {
     LoginStatus.errorFormat => context.l10n.loginInvalidId,
     LoginStatus.errorNewerVersion => context.l10n.loginLinkNewerVersion,
-    LoginStatus.errorExpired => context.l10n.loginLinkExpired,
-    LoginStatus.errorRejected => context.l10n.loginLinkRejected,
     LoginStatus.errorNetwork => context.l10n.loginNetworkError,
-    LoginStatus.errorServerMismatch => context.l10n.loginServerNotRecognised,
-    LoginStatus.errorHomeNetworkOnly => context.l10n.loginHomeNetworkOnly,
     _ => null,
   };
 
@@ -260,7 +269,6 @@ class _OutcomeControl extends StatelessWidget {
           LoginOutcome.newId: 'new id',
           LoginOutcome.registered: 'registered',
           LoginOutcome.errorFormat: 'format error',
-          LoginOutcome.errorServerMismatch: 'wrong server',
           LoginOutcome.errorNetwork: 'network error',
           LoginOutcome.fatal: 'fatal',
         },

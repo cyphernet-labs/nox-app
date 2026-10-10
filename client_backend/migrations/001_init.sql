@@ -23,10 +23,11 @@ CREATE TABLE users (
 -- matter what its user_id is.
 --
 -- This machine belongs to ONE human being (feature 037). Talking to other
--- people goes through a relay, and their servers never become rows here. The
--- rule used to live only in the fact that nothing but a claim inserts, which
--- holds until the next command is written - and an invariant that depends on
--- nobody adding code is not an invariant.
+-- people goes through a relay, and their servers never become rows here.
+-- Without the index the rule would live only in the fact that nothing but the
+-- first pairing through a machine link inserts a person, which holds until the
+-- next command is written - and an invariant that depends on nobody adding
+-- code is not an invariant.
 CREATE UNIQUE INDEX idx_users_singleton ON users ((1));
 
 -- One app installation, and the key that authorises it. device_key is the

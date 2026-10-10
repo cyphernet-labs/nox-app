@@ -13,7 +13,9 @@ import 'package:nox_app/domain/model/chat/message_model.dart';
 import 'package:nox_app/domain/model/file/attachment_transfer.dart';
 import 'package:nox_app/general/formatters/date_formatter.dart';
 import 'package:nox_app/general/formatters/file_size_formatter.dart';
+import 'package:nox_app/domain/model/connection/connection_problem.dart';
 import 'package:nox_app/general/l10n_extension.dart';
+import 'package:nox_app/presentation/helpers/connection_problem_text.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/repository/app_config/app_config_repository.dart';
 import 'package:nox_app/presentation/helpers/app_feedback_helper.dart';
@@ -179,7 +181,7 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
     if (state is! Initialized) return const SizedBox.shrink();
     if (state.isServerMismatch) {
       return AppNoticeStripWidget(
-        message: context.l10n.serverNotRecognised,
+        message: (state.problem ?? ConnectionProblem.otherServer).text(context.l10n),
         icon: NoxIcons.error,
         actionLabel: context.l10n.actionTryAgain,
         onAction: () => _bloc.add(const ChatThreadEvent.retryConnection()),
@@ -212,7 +214,7 @@ class _AppThreadViewWidgetState extends State<AppThreadViewWidget> {
       // Try again restarts the channel; nothing to try for a server that
       // refuses this build (phase 042).
       return AppNoticeStripWidget(
-        message: context.l10n.noConnection,
+        message: state.problem?.text(context.l10n) ?? context.l10n.noConnection,
         icon: NoxIcons.wifiOff,
         actionLabel: state.isUnsupported ? null : context.l10n.actionTryAgain,
         onAction: state.isUnsupported ? null : () => _bloc.add(const ChatThreadEvent.retryConnection()),

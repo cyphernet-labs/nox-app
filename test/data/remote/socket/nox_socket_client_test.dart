@@ -14,6 +14,7 @@ import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_tor/channel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'fake_socket.dart';
 
@@ -495,31 +496,31 @@ void main() {
       return socket;
     }
 
-    test('the greeting says where the server is, and that it reads access keys', () async {
+    test('the greeting says where the server is: its networks, its public address, its onion address', () async {
       await greetedWith({
         'direct': ['192.168.1.20:8080', '[fd12:3456::20]:8080'],
+        'public': 'nox.example.org:8443',
         'onion': '${'a' * 56}.onion:443',
       });
 
       expect(client.identity?.label, 'Anna');
       expect(client.addresses?.direct, ['192.168.1.20:8080', '[fd12:3456::20]:8080']);
+      expect(client.addresses?.public, 'nox.example.org:8443');
       expect(client.addresses?.onion, '${'a' * 56}.onion:443');
-      expect(client.supportsAccessKeys, isTrue);
     });
 
-    test('a server older than 039 states nothing, and is not asked to register a key', () async {
+    test('a server older than 039 states nothing', () async {
       await greetedWith(null);
 
       expect(client.addresses, isNull);
-      expect(client.supportsAccessKeys, isFalse);
     });
 
-    test('an empty list is still the support flag: the server says it has no direct address', () async {
+    test('an empty list is still a statement: the server says it has no direct address', () async {
       await greetedWith({'direct': <String>[]});
 
       expect(client.addresses?.direct, isEmpty);
+      expect(client.addresses?.public, isNull);
       expect(client.addresses?.onion, isNull);
-      expect(client.supportsAccessKeys, isTrue);
     });
 
     test('what the greeting said about addresses dies with its connection', () async {
@@ -528,7 +529,6 @@ void main() {
       });
       await socket.drop();
       await waitUntil(() => client.addresses == null, reason: 'the teardown forgets it');
-      expect(client.supportsAccessKeys, isFalse);
     });
 
     test('the server.addresses event leaves the session as it was', () async {
@@ -690,6 +690,49 @@ void main() {
       });
     }
 
+    test('a dial that fails before a greeting is reported with the channel\'s kind (phase 045)', () async {
+      final onion = Uri.parse('wss://${'a' * 56}.onion/ws');
+      final targets = ScriptedTargets([onion, Uri.parse('wss://10.0.0.1:9000/ws')]);
+      await client.start(targets: targets);
+
+      factory.latest.refuseChannel(ChannelFailure.torOnionNotFound);
+      await waitUntil(() => targets.failed.isNotEmpty, reason: 'the failure is reported');
+
+      expect(targets.failed.first, (onion, ChannelFailure.torOnionNotFound));
+    });
+
+    test('a dial that ran out the WebSocket\'s own time is reported as a timeout', () async {
+      final onion = Uri.parse('wss://${'a' * 56}.onion/ws');
+      final targets = ScriptedTargets([onion, Uri.parse('wss://10.0.0.1:9000/ws')]);
+      await client.start(targets: targets);
+
+      factory.latest.failWith(WebSocketChannelException.from(TimeoutException('connect')));
+      await waitUntil(() => targets.failed.isNotEmpty, reason: 'the failure is reported');
+
+      expect(targets.failed.first, (onion, ChannelFailure.timeout));
+    });
+
+    test('a peer that goes away before the greeting is reported with no kind', () async {
+      final first = Uri.parse('wss://10.0.0.1:9000/ws');
+      final targets = ScriptedTargets([first, Uri.parse('wss://10.0.0.2:9000/ws')]);
+      await client.start(targets: targets);
+
+      await factory.latest.drop();
+      await waitUntil(() => targets.failed.isNotEmpty, reason: 'the failure is reported');
+
+      expect(targets.failed.first, (first, null));
+    });
+
+    test('another key is reported as such and not as a failed dial', () async {
+      final targets = ScriptedTargets([Uri.parse('wss://192.168.1.20:8080/ws'), Uri.parse('wss://10.0.0.1:9000/ws')]);
+      await client.start(targets: targets);
+
+      factory.latest.refuseServerKey();
+      await waitUntil(() => factory.created.length == 2, reason: 'the ladder goes on');
+
+      expect(targets.failed, isEmpty);
+    });
+
     test('a wrong server at the onion address never logs anybody out (FR-012)', () async {
       var rejected = false;
       client.onUnauthenticated = () => rejected = true;
@@ -701,9 +744,8 @@ void main() {
     });
 
     test('a pairing never completes over connections whose server key was refused (SC-003)', () async {
-      // Every machine dialled proves another key. The connection holds what it
-      // is given until the channel is verified, and a refused one never is -
-      // see socket_channel_factory_test for the hold itself.
+      // Every machine dialled proves another key: there is no connection for
+      // the pairing to complete on.
       factory.refuseEvery = ChannelFailure.wrongServer;
       await client.start(
         targets: ScriptedTargets([Uri.parse('wss://192.168.1.20:8080/ws')]),
@@ -713,9 +755,6 @@ void main() {
       final stranger = factory.latest;
       stranger.refuseServerKey();
       await expectLater(client.pair(token: 't', platform: 'macos'), throwsA(isA<SocketUnavailableException>()));
-      for (final socket in factory.created) {
-        expect(socket.commandNamed('pair'), isNull, reason: 'every connection dialled refused the key');
-      }
     }, timeout: const Timeout(Duration(seconds: 30)));
 
     test('a stop while the path is being chosen dials nothing afterwards', () async {
@@ -873,17 +912,91 @@ void main() {
       expect(waited.elapsed, lessThan(NoxSocketClient.sendTimeout + const Duration(seconds: 2)));
     }, timeout: const Timeout(Duration(seconds: 30)));
 
-    test('pairing carries the token, the platform and the public half of the access key - and no device key', () async {
+    test('a pairing through an onion address that proves another key ends at once, and the token never goes out (phase 045)', () async {
+      // Pairing may go through Tor now. Behind an onion address another key is
+      // another server - terminal - and nothing comes after it to wait for:
+      // the pairing used to sit out the rest of its slow budget, minutes.
+      // A connection whose channel never opens: what it is given goes nowhere,
+      // as the real one holds frames until the server key is proved.
+      factory.refuseEvery = ChannelFailure.wrongServer;
+      final targets = ScriptedTargets([Uri.parse('wss://${'a' * 56}.onion/ws')]);
+      await client.start(targets: targets, credentialsProvider: () async => const GreetingCredentials.unpaired());
+      final waited = Stopwatch()..start();
+
+      await expectLater(client.pair(token: 't', platform: 'macos'), throwsA(isA<SocketUnavailableException>()));
+
+      expect(waited.elapsed, lessThan(const Duration(seconds: 2)));
+      expect(client.currentPhase, SessionPhase.serverMismatch);
+      expect(factory.created.every((c) => c.commandNamed('pair') == null), isTrue, reason: 'the token never reached a channel');
+    });
+
+    test('a pairing begun while the channel is already refused for good fails at once', () async {
+      await client.start(targets: ScriptedTargets([Uri.parse('wss://${'a' * 56}.onion/ws')]));
+      factory.latest.refuseServerKey();
+      await waitUntil(() => client.currentPhase == SessionPhase.serverMismatch, reason: 'refused');
+      final waited = Stopwatch()..start();
+
+      await expectLater(client.pair(token: 't', platform: 'macos'), throwsA(isA<SocketUnavailableException>()));
+      expect(waited.elapsed, lessThan(const Duration(seconds: 1)));
+    });
+
+    test('pairing carries the token and the platform - no device key and no access key', () async {
       await client.start(url: url, credentialsProvider: () async => const GreetingCredentials.unpaired());
       final socket = factory.latest;
-      unawaited(client.pair(token: 't', platform: 'macos', accessKey: 'QUJD').then((_) {}, onError: (Object _) {}));
+      unawaited(client.pair(token: 't', platform: 'macos').then((_) {}, onError: (Object _) {}));
       await waitUntil(() => socket.commandNamed('pair') != null, reason: 'pair is sent');
 
       final data = socket.commandNamed('pair')!['data'] as Map<String, dynamic>;
-      expect(data['access_key'], 'QUJD');
       expect(data['token'], 't');
       expect(data['platform'], 'macos');
       expect(data.containsKey('device_key'), isFalse, reason: 'the server takes it from the connection (phase 044)');
+      expect(data.containsKey('access_key'), isFalse, reason: 'no onion access keys since phase 045');
+    });
+  });
+
+  group('a pairing that waits for approval (phase 046)', () {
+    test('the request is withdrawn before any greeting, with nothing but the token', () async {
+      // The device asking is not paired - that is what it waits for - so the
+      // command cannot wait for a greeting that will never come.
+      await client.start(url: url, credentialsProvider: () async => const GreetingCredentials.unpaired());
+      final socket = factory.latest;
+      socket.pushGreeting();
+      final withdrawn = client.cancelPairing(token: 't');
+      await waitUntil(() => socket.commandNamed('pair.cancel') != null, reason: 'pair.cancel is sent');
+
+      expect(socket.commandNamed('session.hello'), isNull, reason: 'an unpaired install never greets');
+      expect(socket.commandNamed('pair.cancel')!['data'], {'token': 't'});
+      socket.reply(socket.sent.indexWhere((f) => f['cmd'] == 'pair.cancel'), data: const {});
+      expect((await withdrawn).ok, isTrue);
+    });
+
+    test('every connection the client opens is announced, so a wait can present its token again', () async {
+      // The outcome event reaches only the connections open when the request
+      // closed; the repeat on the next one is how a device that was away for
+      // that moment still learns it.
+      final opened = <int>[];
+      final sub = client.connectionOpened.listen((_) => opened.add(factory.created.length));
+      addTearDown(sub.cancel);
+
+      await client.start(url: url, credentialsProvider: () async => const GreetingCredentials.unpaired());
+      await waitUntil(() => opened.length == 1, reason: 'the first connection');
+      await client.reconnect();
+      await waitUntil(() => opened.length == 2, reason: 'the next one');
+
+      expect(opened, [1, 2]);
+    });
+
+    test('an outcome sent before any greeting reaches the listeners', () async {
+      await client.start(url: url, credentialsProvider: () async => const GreetingCredentials.unpaired());
+      final seen = <String>[];
+      final sub = client.events.listen((e) => seen.add(e.event));
+      addTearDown(sub.cancel);
+
+      factory.latest.pushEvent(seq: 0, event: 'pair.resolved', data: const {'outcome': 'denied'});
+      await waitUntil(() => seen.isNotEmpty, reason: 'the event is delivered');
+
+      expect(seen, ['pair.resolved']);
+      expect(client.currentPhase, SessionPhase.connecting, reason: 'an off-journal event is no greeting');
     });
   });
 
@@ -955,6 +1068,7 @@ class ScriptedTargets implements SocketTargetProvider {
   bool slow = false;
   final List<Uri> greeted = <Uri>[];
   final List<Uri> refused = <Uri>[];
+  final List<(Uri, ChannelFailure?)> failed = <(Uri, ChannelFailure?)>[];
 
   @override
   Future<Uri?> nextTarget() async {
@@ -973,4 +1087,7 @@ class ScriptedTargets implements SocketTargetProvider {
 
   @override
   void reportWrongServer(Uri url) => refused.add(url);
+
+  @override
+  void reportFailed(Uri url, ChannelFailure? failure) => failed.add((url, failure));
 }

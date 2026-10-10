@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -16,7 +17,6 @@ import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
 import 'package:nox_app/data/repository/app/session_repository_impl.dart';
 import 'package:nox_app/data/service/tor/fake_tor_service.dart';
 import 'package:nox_app/data/sync/attachment_prefetch_service.dart';
-import 'package:nox_app/data/sync/connection/access_key_registrar.dart';
 import 'package:nox_app/data/sync/connection/connection_path_selector.dart';
 import 'package:nox_app/data/sync/live_session_starter.dart';
 import 'package:nox_app/data/sync/sync_service.dart';
@@ -31,7 +31,6 @@ import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
-import 'package:nox_app/domain/repository/connection/access_key_repository.dart';
 import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/service/attachment_download_service.dart';
@@ -76,7 +75,7 @@ void main() {
     // The window `pair` runs in. Greeting here would be refused - the server
     // does not know the key yet - and the refusal reads as a revocation, which
     // wipes the key and address the sign-in in progress just wrote, spending
-    // the one-shot claim token for nothing.
+    // the one-shot pairing token for nothing.
     expect((await session.readSession()).data, isNull);
 
     const credentials = GreetingCredentials.unpaired();
@@ -154,7 +153,6 @@ void main() {
         prober,
         tor,
         getIt<ServerAddressesRepository>(),
-        getIt<AccessKeyRepository>(),
         getIt<NetworkChangeService>(),
         getIt<AppLifecycleService>(),
         socket,
@@ -171,20 +169,18 @@ void main() {
         getIt<FileRepository>(),
         channels,
         selector,
-        AccessKeyRegistrar(socket, getIt<AccessKeyRepository>()),
         getIt<ServerAddressesRepository>(),
       );
     });
     tearDown(() async => starter.stop());
 
     /// A server reachable only through its onion address: the direct ones say
-    /// nothing, Tor works, and this device's key is registered there.
+    /// nothing, Tor works, and the person allows it (phase 045).
     Future<void> onlyThroughTor() async {
       prober.home = <String>{};
       tor.supported = true;
       await getIt<ServerAddressesRepository>().saveFromServer(direct: const <String>[], onion: '${'a' * 56}.onion:443');
-      await getIt<AccessKeyRepository>().deviceKey();
-      await getIt<AccessKeyRepository>().markRegistered(true);
+      await getIt<ServerAddressesRepository>().setUseTor(true);
     }
 
     Future<void> settle() async {
@@ -222,6 +218,19 @@ void main() {
 
       expect(factory.urls.single.scheme, 'wss');
       expect(factory.urls.single.toString(), 'wss://10.0.0.5:9000/ws');
+    });
+
+    test('a stored address in URL form keeps its port, 443 included', () async {
+      // A Uri drops its scheme's default port: read through hasPort, this was
+      // a bare host - no address the probe dials.
+      await session.saveIdentifier(identifier: 'tok', onboardingComplete: true);
+      await session.saveServer(address: 'https://10.0.0.5:443', serverKey: kKeyA);
+
+      await starter.start();
+      await settle();
+
+      expect(prober.rounds.first, ['10.0.0.5:443']);
+      expect(factory.urls.single.toString(), 'wss://10.0.0.5:443/ws');
     });
 
     test('the server key from the link is bound to every connection the channel opens (phase 044)', () async {
@@ -445,9 +454,9 @@ void main() {
       await settle();
 
       expect(factory.urls.single.toString(), 'wss://${'a' * 56}.onion/ws');
-      // The access key went to the Tor client; the channel itself is opened
-      // by the transport, through the module (phase 044).
-      expect(tor.target?.host, '${'a' * 56}.onion');
+      // Tor came up; the channel itself is opened by the transport, through
+      // the module, to the address alone (phases 044, 045).
+      expect(tor.status.isReady, isTrue);
     });
 
     test('attachment bytes follow the path the socket took (FR-009)', () async {
@@ -579,7 +588,7 @@ void main() {
 
     test('an unpaired install connects but says nothing, leaving room for pair', () async {
       // No session at all: this is the state a fresh install signs in from, and
-      // greeting here would spend the claim token on a refusal.
+      // greeting here would spend the pairing token on a refusal.
       await session.saveServer(address: '10.0.0.5:9000', serverKey: kKeyA);
 
       await starter.start();
@@ -589,6 +598,36 @@ void main() {
 
       expect(factory.latest.commandNamed('session.hello'), isNull);
       expect(factory.latest.closed, isFalse);
+    });
+
+    test(
+      'an unpaired install away from home pairs through Tor when Use Tor is on - the first device included (phase 045, FR-008)',
+      () async {
+        await session.saveServer(address: '10.0.0.5:9000', serverKey: kKeyA);
+        await onlyThroughTor();
+
+        await starter.start();
+        await settle();
+        expect(factory.urls.single.host, '${'a' * 56}.onion', reason: 'no direct address answered, so the onion one is dialled');
+        unawaited(socket.pair(token: 'machine', platform: 'macos').then((_) {}, onError: (Object _) {}));
+        for (var i = 0; i < 40 && factory.latest.commandNamed('pair') == null; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+
+        expect(factory.latest.commandNamed('pair')?['data'], {'token': 'machine', 'platform': 'macos'});
+      },
+    );
+
+    test('with Use Tor off an unpaired install away from home dials nothing through Tor', () async {
+      await session.saveServer(address: '10.0.0.5:9000', serverKey: kKeyA);
+      await onlyThroughTor();
+      await getIt<ServerAddressesRepository>().setUseTor(false);
+
+      await starter.start();
+      await settle();
+
+      expect(factory.urls, isEmpty, reason: 'no direct address answered, and Tor is not allowed');
+      expect(tor.starts, 0);
     });
 
     test('a paired install greets naming nobody: the channel proved the device (phase 044)', () async {
@@ -644,12 +683,10 @@ void main() {
           prober,
           tor,
           getIt<ServerAddressesRepository>(),
-          getIt<AccessKeyRepository>(),
           getIt<NetworkChangeService>(),
           getIt<AppLifecycleService>(),
           socket,
         ),
-        AccessKeyRegistrar(socket, getIt<AccessKeyRepository>()),
         getIt<ServerAddressesRepository>(),
       );
       addTearDown(locked.stop);
