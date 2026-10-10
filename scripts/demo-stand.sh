@@ -9,6 +9,13 @@
 # TWO stands can run at once, which is what proves the channel check: a second
 # server on a second key, at a second port, is the only way to show that a
 # device refuses the machine it did not pair with.
+#
+# The server starts LOCKED (047): its data is encrypted, and the password that
+# opens it is entered after every start. This script enters it with `noxd
+# unlock` - from NOX_STAND_PASSWORD when that is set, piped on standard input
+# and never written anywhere, or by asking at the terminal. A fresh stand takes
+# the password as its first one; a stand that is reused needs the one it was
+# given.
 set -euo pipefail
 
 PORT="${PORT:-8080}"
@@ -31,6 +38,10 @@ usage: scripts/demo-stand.sh [--stand DIR] [--port N] [--status-port N] [--fresh
                    needs to come BACK to a stand look like a broken build.
   --reset-app      also wipe the macOS app's data, so the next launch is a
                    genuine first install (container + keychain)
+
+  NOX_STAND_PASSWORD  the stand's password, entered with noxd unlock: the first
+                   one on a fresh stand, the same one on a reused stand. Unset,
+                   noxd unlock asks at the terminal.
 USAGE
 }
 
@@ -62,9 +73,9 @@ if [ "$FRESH" = 1 ]; then
 fi
 mkdir -p "$STAND"
 if [ -f "$STAND/nox.db" ]; then
-  echo "==> reusing the database in $STAND (same key, old links still work)"
+  echo "==> reusing the database in $STAND (same key, same password, old pairings still work)"
 else
-  echo "==> new database in $STAND (the server will mint a key)"
+  echo "==> new database in $STAND (the server will mint a key; the password you give now is its first)"
 fi
 
 if [ "$RESET_APP" = 1 ]; then
@@ -79,15 +90,55 @@ echo "==> starting the server"
 "$STAND-noxd" -addr "0.0.0.0:$PORT" -db "$STAND/nox.db" -status-addr "127.0.0.1:$STATUS_PORT" \
   > "$STAND/server.log" 2>&1 &
 
+# The server comes up locked: only its service page listens, and the main port
+# opens once the password is in. So first the page, then the password, then
+# the main port.
+#
+# OUR page, by our log: a page answering on the port may be another stand's,
+# and the password must not go there. The line is written once the page's
+# listener is bound.
+echo -n "==> waiting for the service page"
+for _ in $(seq 1 100); do
+  if grep -q '"level":"ERROR"' "$STAND/server.log" 2>/dev/null; then
+    echo
+    echo "the server refused to start:" >&2
+    grep '"level":"ERROR"' "$STAND/server.log" >&2
+    exit 1
+  fi
+  if ! pgrep -f "$STAND-noxd" >/dev/null 2>&1; then
+    echo
+    echo "the server stopped while starting:" >&2
+    tail -20 "$STAND/server.log" >&2
+    exit 1
+  fi
+  if grep -qE '"msg":"(no password is set yet|this server is locked)' "$STAND/server.log" 2>/dev/null; then break; fi
+  echo -n "."
+  sleep 0.2
+done
+echo
+
+echo "==> unlocking the server with noxd unlock"
+if [ -n "${NOX_STAND_PASSWORD:-}" ]; then
+  # Twice: a fresh server asks for the password and its repeat, a locked one
+  # reads the first line and leaves the second.
+  printf '%s\n%s\n' "$NOX_STAND_PASSWORD" "$NOX_STAND_PASSWORD" \
+    | "$STAND-noxd" unlock -status-addr "127.0.0.1:$STATUS_PORT"
+elif [ -t 0 ]; then
+  "$STAND-noxd" unlock -status-addr "127.0.0.1:$STATUS_PORT"
+else
+  echo "no terminal to ask the password at: set NOX_STAND_PASSWORD" >&2
+  exit 1
+fi
+
 # Waiting for OUR server, which is not the same as waiting for the port.
 #
-# Two traps, both hit in practice. noxd writes "listening" one statement BEFORE
-# it binds, so a server whose port is taken prints that line and then dies -
-# this script used to believe it and announce a stand that was not running,
-# with a key and a claim link for a dead process. And probing the port
-# is no better on its own: a clash means somebody ELSE answers there, healthily.
-# So: wait for our process to settle, refuse on any ERROR it logged, and then
-# confirm the machine on that port is the one whose key we just minted.
+# Two traps, both hit in practice. A server whose port is taken can say it is
+# about to listen and then die - this script used to believe that and announce
+# a stand that was not running, with a key and a link for a dead process. And
+# probing the port is no better on its own: a clash means somebody ELSE answers
+# there, healthily. So: wait for our process to settle, refuse on any ERROR it
+# logged, and then confirm the machine on that port is the one whose key we
+# just minted.
 echo -n "==> waiting for the server"
 for _ in $(seq 1 100); do
   if grep -q '"level":"ERROR"' "$STAND/server.log" 2>/dev/null; then
@@ -110,8 +161,8 @@ for _ in $(seq 1 100); do
 done
 echo
 
-# "listening" is written before the bind, so give the bind a moment to fail and
-# re-read the error before believing the line.
+# "listening" is written once the port is bound; a moment more, and a failure
+# right after it would be in the log too.
 sleep 0.3
 if grep -q '"level":"ERROR"' "$STAND/server.log" 2>/dev/null; then
   echo "the server refused to start:" >&2
@@ -136,18 +187,11 @@ if ! "$STAND-smoke" -check "127.0.0.1:$PORT" "$server_key" >/dev/null 2>"$STAND/
   exit 1
 fi
 
-# Two links, one token. The startup line addresses the machine itself, because
-# that is who reads a terminal; the page addresses the network, because that is
-# who reads a QR off a screen. Same right, different reader.
-local_link="$(grep -oE 'nox://pair/[A-Za-z0-9_-]+' "$STAND/server.log" | head -1 || true)"
+# The link for a first device is on the page - never in the log. A machine
+# that has devices shows none until somebody asks for one (Add a device, or
+# noxd link), and asking voids the previous one.
 page_link="$(curl -fsS "http://127.0.0.1:$STATUS_PORT/" 2>/dev/null \
   | grep -oE 'nox://pair/[A-Za-z0-9_-]+' | head -1 || true)"
-
-if [ -z "$local_link" ] && [ -z "$server_key" ]; then
-  echo "the server printed neither a claim link nor its key:" >&2
-  cat "$STAND/server.log" >&2
-  exit 1
-fi
 
 cat <<INFO
 
@@ -159,15 +203,16 @@ cat <<INFO
   database       $STAND/nox.db
   log            $STAND/server.log
 
-  claim link for an app on THIS machine
-  ${local_link:-none: this server already has an owner}
+  link for a first device (the one the page shows, as text and as a QR)
+  ${page_link:-none on the page: this server has devices - get one with: $STAND-noxd link -status-addr 127.0.0.1:$STATUS_PORT}
 
-  claim link for a phone (the one the page shows as a QR)
-  ${page_link:-none: this machine has no address another device could reach, or it is already claimed}
+  the server is unlocked until it stops; after every start it waits for its
+  password again:
+      $STAND-noxd unlock -status-addr 127.0.0.1:$STATUS_PORT
 
   check it works, without clicking anything:
-      (cd client_backend && go run ./cmd/smoke '${local_link:-<claim link>}')
-      # then re-run this script: the smoke test claims the server
+      (cd client_backend && go run ./cmd/smoke '${page_link:-<link>}')
+      # the smoke test pairs its own devices with the server
 
   or run the demo by hand:
       open http://127.0.0.1:$STATUS_PORT
