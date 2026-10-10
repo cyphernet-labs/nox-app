@@ -125,6 +125,8 @@ $script:UndoFailed = $false
 # ServerLockedAgain is set when taking back started the server that ran before
 # the run: it starts locked, as every start does.
 $script:ServerLockedAgain = $false
+# CtrlCGuard says whether the rollback can make the process ignore Ctrl+C.
+$script:CtrlCGuard = $false
 
 function Add-Undo([string]$Action, [string]$A = '', [string]$B = '') {
     $entry = [pscustomobject]@{ Action = $Action; A = $A; B = $B }
@@ -397,6 +399,26 @@ function Start-ServiceAgain([string]$Name) {
     $s.Refresh()
     if ($s.Status -ne 'Running' -and $s.Status -ne 'StartPending') { Start-Service -Name $Name }
     if ($Name -eq $ServerService) { $script:ServerLockedAgain = $true }
+}
+
+# Initialize-CtrlCGuard prepares what keeps Ctrl+C from cutting a rollback
+# short: SetConsoleCtrlHandler(NULL, TRUE) makes the process ignore Ctrl+C
+# whatever its standard input is. [Console]::TreatControlCAsInput, the other
+# way, needs the console as standard input - and a password given from a
+# file, as deploy/README.md describes, takes it away. Without the guard (a
+# system that refuses Add-Type) the rollback falls back to the other way.
+function Initialize-CtrlCGuard {
+    try {
+        Add-Type -Namespace NoxInstall -Name Native -MemberDefinition '[DllImport("kernel32.dll")] public static extern bool SetConsoleCtrlHandler(System.IntPtr handler, bool add);'
+        $script:CtrlCGuard = $true
+    } catch {
+        $script:CtrlCGuard = $false
+    }
+}
+
+# Set-CtrlCIgnored turns ignoring Ctrl+C on or off, where the guard exists.
+function Set-CtrlCIgnored([bool]$Ignored) {
+    if ($script:CtrlCGuard) { try { [void][NoxInstall.Native]::SetConsoleCtrlHandler([IntPtr]::Zero, $Ignored) } catch { } }
 }
 
 # --- the server binary -------------------------------------------------------
@@ -946,7 +968,9 @@ function Invoke-Install {
         if (-not $script:PublicAddress) { $script:PublicAddress = Read-PublicAddr }
     }
 
-    # From here on the machine changes; a failure takes every change back.
+    # From here on the machine changes; a failure takes every change back,
+    # and nothing - not Ctrl+C either - cuts the taking back short.
+    Initialize-CtrlCGuard
     Step "Installing the server at $($script:Noxd)"
     if ($Prefix) { Stop-Background 'noxd' $script:ServerPidFile } else { Stop-ServiceForUpdate $ServerService }
     New-Directory $script:ProgramDir
@@ -1010,10 +1034,13 @@ try {
 } finally {
     # The taking back is here and not in the catch: Ctrl+C stops the script
     # past every catch, and only finally blocks run. It comes before the
-    # scratch directory goes, which holds the copies it restores from, and a
-    # second Ctrl+C does not cut it short.
+    # scratch directory goes, which holds the copies it restores from. A
+    # Ctrl+C during it is ignored: one that started it is no threat - the
+    # pipeline is already stopping - but one during a rollback a failure
+    # started would stop it half way, with standard input redirected too.
     $script:Password = $null
     if (-not $completed -and -not $script:Committed -and ($script:UndoTor.Count -gt 0 -or $script:UndoMain.Count -gt 0)) {
+        Set-CtrlCIgnored $true
         $ctrlC = $null
         try { $ctrlC = [Console]::TreatControlCAsInput; [Console]::TreatControlCAsInput = $true } catch { $ctrlC = $null }
         try {
@@ -1031,6 +1058,7 @@ try {
             }
         } finally {
             if ($null -ne $ctrlC) { try { [Console]::TreatControlCAsInput = $ctrlC } catch { } }
+            Set-CtrlCIgnored $false
         }
     }
     if ($script:Work -and (Test-Path -LiteralPath $script:Work)) { Remove-Item -LiteralPath $script:Work -Recurse -Force -ErrorAction SilentlyContinue }
