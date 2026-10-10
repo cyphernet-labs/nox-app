@@ -186,8 +186,9 @@ void main() {
       channels.unbind();
     });
 
-    test('a body larger than the window is written through addStream and arrives whole', () async {
-      final api = LoopbackChannelApi(server.port);
+    test('a body larger than the window is written through addStream, held to the window, and arrives whole', () async {
+      // Paced, so the queue outgrows the window and the writer is held back.
+      final api = LoopbackChannelApi(server.port, 16 * 1024 * 1024);
       final channels = ChannelHttpClient(api)..bind(serverKey: serverKey, deviceSeed: deviceSeed);
       final dio = Dio()..httpClientAdapter = IOHttpClientAdapter(createHttpClient: () => channels.transferClient);
       final size = 3 * channelWindowBytes + 17;
@@ -197,6 +198,9 @@ void main() {
         options: Options(headers: {Headers.contentLengthHeader: size}, responseType: ResponseType.plain),
       );
       expect(response.data, 'PUT /files/token $size');
+      final peak = api.opened.single.peakQueued;
+      expect(peak, greaterThan(channelWindowBytes), reason: 'the queue did outgrow the window');
+      expect(peak, lessThanOrEqualTo(2 * channelWindowBytes), reason: 'by one write at most: the source was paused');
       channels.unbind();
     });
 
