@@ -39,11 +39,11 @@ Material Scaffold с `resizeToAvoidBottomInset: true`; адаптируется 
 
 Над лентой — **одна** плашка (`AppNoticeStripWidget`), выбранная по старшинству:
 
-1. **Чужой сервер** — `This isn't the server you paired with` + `Try again` (см. Server mismatch).
+1. **Чужой сервер** — `This onion address belongs to a different server.` + `Try again` (см. Server mismatch).
 2. **Имя занято** — `Another chat already has this name. Rename this one to finish creating it.` + `Rename`. Действие открывает обычный диалог переименования; переименование делается на устройстве, без сервера, возвращает чат в «ждёт создания», и создание уходит само.
 3. **Не создан** — `This chat couldn't be created on your server.` + `Try again`. Действие возвращает чат в «ждёт создания» и просит очередь пройти.
 4. **Ждёт создания** — `This chat isn't on your server yet. It will be once NOX connects.` — **только пока канал не текущий**. С текущим каналом создание идёт прямо сейчас, и плашка лишь мелькнула бы. Без связи она стоит **вместо** `No connection`: говорит больше.
-5. **Нет связи** — `No connection` с действием `Try again`; без действия — для сервера, который не поддерживает эту сборку (фаза 042).
+5. **Нет связи** — причина неудачи, если она известна, иначе `No connection`; с действием `Try again`, без действия — для сервера, который не поддерживает эту сборку (фаза 042).
 
 Плашка читает состояние чата живьём (`WatchChat`): как только сервер принял чат, она уходит, а сообщения по очереди получают галочку.
 
@@ -94,8 +94,8 @@ Material Scaffold с `resizeToAvoidBottomInset: true`; адаптируется 
 | Send-error | Не удалось отправить. Статус `error` на сообщении; тап → retry. |
 | Connecting | Путь до сервера ищется или поднимается: в углу AppBar (перед действием приглашения) `Connecting…`, через Tor — с бейджем `Tor` ([overview / Состояние связи](../overview.md#состояние-связи-в-углу-экрана)). Баннера нет; отправленное ждёт подъёма пути в `pending`. |
 | Через Tor | Связь есть, путь — Tor: в углу бейдж `Tor`. |
-| Offline | Целый раунд поиска пути не дал ничего — постоянный `MaterialBanner` `No connection` сверху (см. [overview.md / Offline](../overview.md#offline--нет-соединения)), угол пуст. Отправка офлайн → `pending` до восстановления. Плашка несёт действие `Try again` (фаза 042): оно перезапускает канал — новая попытка начинается сразу, плашка уступает углу `Connecting…` и возвращается, если и эта попытка не удалась. Для сервера, который не поддерживает эту сборку, плашка остаётся без действия: повтор не изменит его ответа. |
-| Server mismatch | Сервер, до которого приложение дошло по его **onion-адресу**, предъявил не тот ключ, что назвала ссылка спаривания (чужой ключ на прямом адресе — «не дома», не это состояние). Постоянная плашка `This isn't the server you paired with` с действием `Try again`. **Вместо** `Offline`, а не вместе с ним: сервер ответил, и «нет соединения» здесь — неправда. Ничего локального не стирается, переписка видна под плашкой, а отправленное ждёт в очереди со статусом `pending` и **не** получает `error`. Само не проходит: единственный выход — действие. |
+| Offline | Целый раунд поиска пути не дал ничего — постоянный `MaterialBanner` сверху (см. [overview.md / Offline](../overview.md#offline--нет-соединения)), угол пуст. Текст плашки — **причина**, если она известна ([overview / Причины неудачи](../overview.md#причины-неудачи)), иначе `No connection`; глиф `wifi_off` в обоих случаях. Отправка офлайн → `pending` до восстановления. Плашка несёт действие `Try again` (фаза 042): оно перезапускает канал — новая попытка начинается сразу, плашка уступает углу `Connecting…` и возвращается, если и эта попытка не удалась. Для сервера, который не поддерживает эту сборку, плашка остаётся без действия: повтор не изменит его ответа. |
+| Server mismatch | Сервер, до которого приложение дошло по его **onion-адресу**, предъявил не тот ключ, что назвала ссылка спаривания (чужой ключ на прямом адресе — «не дома», не это состояние). Постоянная плашка `This onion address belongs to a different server.` с глифом ошибки и действием `Try again`. **Вместо** `Offline`, а не вместе с ним: сервер ответил, и «нет соединения» здесь — неправда. Ничего локального не стирается, переписка видна под плашкой, а отправленное ждёт в очереди со статусом `pending` и **не** получает `error`. Само не проходит: выход — действие или исправленный onion-адрес в [7.10](connection.md). |
 | Ждёт создания | Чат ещё не на сервере, канала нет: плашка `This chat isn't on your server yet. It will be once NOX connects.` вместо `No connection`; сообщения с часиками. С текущим каналом плашки нет (см. «Чат, которого ещё нет на сервере»). |
 | Имя занято | Сервер ответил, что чат с таким именем уже есть: плашка `Another chat already has this name. Rename this one to finish creating it.` с действием `Rename`. Сообщения ждут с часиками, не ошибкой. |
 | Не создан | Сервер отказал создавать чат по иной причине: плашка `This chat couldn't be created on your server.` с действием `Try again`. Сообщения ждут с часиками. |
@@ -140,9 +140,10 @@ Material Scaffold с `resizeToAvoidBottomInset: true`; адаптируется 
 | Empty state title | `No messages yet` |
 | Empty state message | `Send the first one.` |
 | System event (chat created) | `Chat created by {username}` |
-| Offline banner | `No connection` |
+| Offline banner (причина неизвестна) | `No connection` |
+| Offline banner (причина известна) | текст причины: `This isn't a valid onion address.` · `No server answers at this onion address. Check the address and that Tor is running on the server.` · `Your server isn't answering through Tor right now. Check that it is running.` · `Can't connect to the Tor network. Check your internet connection.` · `Can't reach the server directly. Turn on Use Tor to connect through Tor.` |
 | Offline action | `Try again` |
-| Server-mismatch banner | `This isn't the server you paired with` |
+| Server-mismatch banner | `This onion address belongs to a different server.` |
 | Server-mismatch action | `Try again` |
 | Waiting-chat notice | `This chat isn't on your server yet. It will be once NOX connects.` |
 | Name-taken notice | `Another chat already has this name. Rename this one to finish creating it.` |
@@ -173,6 +174,7 @@ Material Scaffold с `resizeToAvoidBottomInset: true`; адаптируется 
 | — | Ключ автора | Идентификатор (стабильный), label — отображаемый |
 | — | Шов приглашения (фаза 037) | Действие `Invite a person` в шапке, **всегда неактивное**; нажатие не даёт ничего, включая сообщение об ошибке. Обе ширины |
 | — | Чат, которого нет на сервере (фаза 041) | Одна плашка над лентой по старшинству: чужой сервер → имя занято (`Rename`) → не создан (`Try again`) → ждёт создания (только без текущего канала, вместо `No connection`) → нет связи. Сообщения такого чата ждут с часиками; окно и файлы у сервера не запрашиваются. Обе ширины |
+| — | Текст плашки «нет связи» (фаза 045) | Причина неудачи, когда она известна, вместо `No connection`; `Try again` остаётся. Обе ширины (уточнение 2026-10-09) |
 
 ## Десктоп-раскладка (этап M4, сверено с корпусом)
 
@@ -182,4 +184,4 @@ Material Scaffold с `resizeToAvoidBottomInset: true`; адаптируется 
 - **Реконсиляция под NOX-модель:** ThreadHeader НЕ показывает состав участников, per-chat-поиск и папки. Состава участников у чата нет: сервер принадлежит одному человеку, а всё, что между людьми, уходит на relay (вне объёма); per-chat-поиск и папки — вне scope. Этот спек — источник истины; реализация и десктоп-корпус приведены к нему (Принцип II).
 - **Второе действие в шапке добавлено фазой 037.** До неё корпус описывал шапку как несущую ровно одно info-действие; корпус приведён в соответствие (`nox-desktop-screens/screens/01-chats.md`).
 - Тап на file-chip → 5.3 (на десктопе — lightbox-`Dialog`). Владелец ленты-BLoC — `AppThreadViewWidget` (общий для мобайл-страницы и десктоп-панели).
-- Плашка чата, которого ещё нет на сервере, — та же на обеих ширинах: на десктопе она стоит в thread-pane под ThreadHeader'ом.
+- Плашка чата, которого ещё нет на сервере, — та же на обеих ширинах: на десктопе она стоит в thread-pane под ThreadHeader'ом. Там же — плашки «нет связи» (с причиной, когда она известна) и «другой сервер»: тексты те же, что на узкой ширине.
