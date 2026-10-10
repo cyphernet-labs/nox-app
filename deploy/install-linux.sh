@@ -30,7 +30,7 @@ umask 022
 
 DEPLOY_DIR=$(cd "$(dirname "$0")" && pwd -P)
 REPO_DIR=$(dirname "$DEPLOY_DIR")
-# shellcheck source=install-common.sh
+# shellcheck source-path=SCRIPTDIR source=install-common.sh
 . "$DEPLOY_DIR/install-common.sh"
 
 SERVER_ACCOUNT=nox
