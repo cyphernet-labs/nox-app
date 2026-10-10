@@ -15,6 +15,7 @@ pub mod engine;
 pub mod obsolete;
 pub mod onion;
 pub mod status;
+pub mod vault;
 
 use std::ffi::{c_char, CStr};
 use std::panic::{catch_unwind, UnwindSafe};
@@ -33,6 +34,11 @@ fn guarded(f: impl FnOnce() -> i32 + UnwindSafe) -> i32 {
 /// `guarded` for the channel's functions, whose INTERNAL is its own.
 fn chan_guarded<T: From<i32>>(f: impl FnOnce() -> T + UnwindSafe) -> T {
     catch_unwind(f).unwrap_or_else(|_| T::from(-code::INTERNAL))
+}
+
+/// `guarded` for the vault's functions, whose INTERNAL is its own.
+fn vault_guarded(f: impl FnOnce() -> i32 + UnwindSafe) -> i32 {
+    catch_unwind(f).unwrap_or(vault::code::RET_INTERNAL)
 }
 
 /// # Safety
@@ -114,10 +120,12 @@ pub extern "C" fn nox_tor_version() -> *const c_char {
 /// Opens a channel: the handle at once, the outcome as an event (OPEN, or
 /// CLOSED with the kind of failure). `target_kind` 0 is a direct address - an
 /// IP or a name - and 1 an onion service through the started Tor client.
+/// Every event of the channel is posted with `post` (`Dart_PostCObject`) to
+/// `events_port`, a native port of the isolate that opens it.
 ///
 /// # Safety
 /// `host` is NUL-terminated UTF-8; `device_seed32` and `server_key32` point at
-/// 32 bytes each.
+/// 32 bytes each; `post` is `Dart_PostCObject`, or behaves as it does.
 #[no_mangle]
 pub unsafe extern "C" fn nox_chan_open(
     target_kind: i32,
@@ -126,14 +134,21 @@ pub unsafe extern "C" fn nox_chan_open(
     device_seed32: *const u8,
     server_key32: *const u8,
     connect_timeout_ms: u32,
-    on_event: Option<channel::EventFn>,
+    post: Option<channel::dart::PostFn>,
+    events_port: i64,
 ) -> i64 {
     chan_guarded(|| {
         let invalid = i64::from(code::RET_INVALID_ARGUMENT);
-        let (Some(on_event), Some(host)) = (on_event, read_str(host)) else {
+        let (Some(post), Some(host)) = (post, read_str(host)) else {
             return invalid;
         };
-        if host.is_empty() || port == 0 || connect_timeout_ms == 0 || device_seed32.is_null() || server_key32.is_null()
+        // 0 is ILLEGAL_PORT: no isolate has it.
+        if host.is_empty()
+            || port == 0
+            || connect_timeout_ms == 0
+            || device_seed32.is_null()
+            || server_key32.is_null()
+            || events_port == 0
         {
             return invalid;
         }
@@ -154,7 +169,7 @@ pub unsafe extern "C" fn nox_chan_open(
         let mut server_key = [0u8; 32];
         server_key.copy_from_slice(std::slice::from_raw_parts(server_key32, 32));
         let budget = Duration::from_millis(u64::from(connect_timeout_ms));
-        channel::open(target, seed, server_key, budget, on_event)
+        channel::open(target, seed, server_key, budget, channel::dart::Port::new(post, events_port))
     })
 }
 
@@ -200,14 +215,121 @@ pub extern "C" fn nox_chan_close(handle: i64) -> i32 {
     chan_guarded(|| channel::close(handle))
 }
 
+/// Ends every channel whose isolate is gone, and returns how many there were:
+/// a probe goes to each channel's events port, and a port that refuses it
+/// belongs to an isolate that died. A new isolate calls this before it opens a
+/// channel of its own.
+#[no_mangle]
+pub extern "C" fn nox_chan_reap() -> i32 {
+    chan_guarded(channel::reap)
+}
+
+/// Frees a buffer the module handed out as a result.
+///
 /// # Safety
-/// `data` and `len` are what one OPEN or DATA event carried, each freed once.
+/// `data` and `len` are what one call handed out, each freed once.
 #[no_mangle]
 pub unsafe extern "C" fn nox_chan_buf_free(data: *mut u8, len: usize) {
     chan_guarded(|| {
         channel::free_buffer(data, len);
         0
     });
+}
+
+/// Sets the local-database key (phase 048), over any key set before; the
+/// vault draws the keys it seals with from it. 0, or -7: no key, or one of all
+/// zeros.
+///
+/// # Safety
+/// `key32` is null or points at 32 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn nox_vault_set_key(key32: *const u8) -> i32 {
+    vault_guarded(|| {
+        if key32.is_null() {
+            return vault::code::RET_INVALID_ARGUMENT;
+        }
+        vault::set_key(&*key32.cast::<[u8; vault::KEY_LEN]>())
+    })
+}
+
+/// Wipes the key: every seal and open is -9 until the next
+/// `nox_vault_set_key`.
+#[no_mangle]
+pub extern "C" fn nox_vault_clear() {
+    let _ = vault_guarded(|| {
+        vault::clear();
+        0
+    });
+}
+
+/// Seals a record: `*out` is `nonce (12) ‖ ciphertext ‖ tag (16)`, freed with
+/// `nox_chan_buf_free`. -9 without a key.
+///
+/// # Safety
+/// `data` points at `len` bytes, or `len` is 0; `out` and `out_len` point at
+/// writable slots. They hold a buffer only after a 0 return.
+#[no_mangle]
+pub unsafe extern "C" fn nox_vault_seal(data: *const u8, len: usize, out: *mut *mut u8, out_len: *mut usize) -> i32 {
+    vault_guarded(|| vault::call(data, len, out, out_len, vault::seal))
+}
+
+/// Opens a record `nox_vault_seal` made; an empty one is null. -4 when it was
+/// forged or sealed under another key, -9 without a key.
+///
+/// # Safety
+/// As for `nox_vault_seal`.
+#[no_mangle]
+pub unsafe extern "C" fn nox_vault_open(data: *const u8, len: usize, out: *mut *mut u8, out_len: *mut usize) -> i32 {
+    vault_guarded(|| vault::call(data, len, out, out_len, vault::open))
+}
+
+/// Seals chunk `index` of the file `name` (UTF-8, not empty, the file's for
+/// the life of its bytes: see `vault`), as the file's last chunk when `last` is
+/// 1 and not when it is 0: `*out` is `ciphertext ‖ tag (16)`, freed with
+/// `nox_chan_buf_free`. -9 without a key.
+///
+/// # Safety
+/// `name` is null or NUL-terminated; the rest as for `nox_vault_seal`.
+#[no_mangle]
+pub unsafe extern "C" fn nox_vault_seal_chunk(
+    name: *const c_char,
+    index: u64,
+    last: i32,
+    data: *const u8,
+    len: usize,
+    out: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    vault_guarded(|| {
+        let (Some(name), Some(last)) = (read_str(name), vault::flag(last)) else {
+            return vault::code::RET_INVALID_ARGUMENT;
+        };
+        vault::call(data, len, out, out_len, |data| vault::seal_chunk(name, index, last, data))
+    })
+}
+
+/// Opens chunk `index` of the file `name`; an empty one is null. -4 when it
+/// was forged, sealed under another key, or sealed for another file, another
+/// index or the other `last`; -9 without a key.
+///
+/// # Safety
+/// As for `nox_vault_seal_chunk`.
+#[no_mangle]
+pub unsafe extern "C" fn nox_vault_open_chunk(
+    name: *const c_char,
+    index: u64,
+    last: i32,
+    data: *const u8,
+    len: usize,
+    out: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    vault_guarded(|| {
+        let (Some(name), Some(last)) = (read_str(name), vault::flag(last)) else {
+            return vault::code::RET_INVALID_ARGUMENT;
+        };
+        vault::call(data, len, out, out_len, |data| vault::open_chunk(name, index, last, data))
+    })
 }
 
 #[cfg(test)]
@@ -323,9 +445,11 @@ mod tests {
         let _ = std::fs::remove_file(blocker);
     }
 
-    fn record() -> Option<channel::EventFn> {
+    fn record() -> Option<channel::dart::PostFn> {
         Some(channel::registry::tests::record)
     }
+
+    const PORT: i64 = channel::registry::tests::LIVE;
 
     /// The code of the handle's CLOSED, waiting for it ten seconds at most.
     fn closed(handle: i64) -> Option<i32> {
@@ -342,7 +466,8 @@ mod tests {
     fn open_onion(host: &str, budget_ms: u32) -> i64 {
         let host = CString::new(host).unwrap();
         let (seed, key) = ([1u8; 32], [2u8; 32]);
-        let handle = unsafe { nox_chan_open(1, host.as_ptr(), 443, seed.as_ptr(), key.as_ptr(), budget_ms, record()) };
+        let handle =
+            unsafe { nox_chan_open(1, host.as_ptr(), 443, seed.as_ptr(), key.as_ptr(), budget_ms, record(), PORT) };
         assert!(handle > 0, "{handle}");
         handle
     }
@@ -354,12 +479,16 @@ mod tests {
         let empty = CString::new("").unwrap();
         let (seed, key, zero) = ([1u8; 32], [2u8; 32], [0u8; 32]);
         let not_utf8 = [0xffu8, 0xfe, 0];
-        let open = |kind, host: *const c_char, port, seed: *const u8, key: *const u8, ms, on_event| unsafe {
-            nox_chan_open(kind, host, port, seed, key, ms, on_event)
+        let open = |kind, host: *const c_char, port, seed: *const u8, key: *const u8, ms, post| unsafe {
+            nox_chan_open(kind, host, port, seed, key, ms, post, PORT)
         };
         let null = std::ptr::null();
         for (refused, why) in [
-            (open(0, host.as_ptr(), 443, seed.as_ptr(), key.as_ptr(), 1000, None), "no callback"),
+            (open(0, host.as_ptr(), 443, seed.as_ptr(), key.as_ptr(), 1000, None), "nothing to post with"),
+            (
+                unsafe { nox_chan_open(0, host.as_ptr(), 443, seed.as_ptr(), key.as_ptr(), 1000, record(), 0) },
+                "no port to post to",
+            ),
             (open(0, null as *const c_char, 443, seed.as_ptr(), key.as_ptr(), 1000, record()), "no host"),
             (open(0, empty.as_ptr(), 443, seed.as_ptr(), key.as_ptr(), 1000, record()), "an empty host"),
             (

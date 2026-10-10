@@ -29,7 +29,8 @@ import (
 const KeySize = 32
 
 // ErrWrongKey is a database file the data key does not open - a key file and
-// a database that do not belong together.
+// a database that do not belong together. Open says so before SQLite touches
+// any of the database's files (keycheck.go).
 var ErrWrongKey = errors.New("the data key does not open this database")
 
 // pragmas are fixed for every connection (CLAUDE.md invariant 13). They run
@@ -54,10 +55,15 @@ type DB struct {
 
 // Open opens both pools over the database file at path, encrypted with key.
 // A file that is not there yet is created empty; a file the key does not open
-// is ErrWrongKey.
+// is ErrWrongKey, with nothing on disk changed.
 func Open(path string, key []byte) (*DB, error) {
 	if len(key) != KeySize {
 		return nil, fmt.Errorf("open database: the data key is %d bytes, want %d", len(key), KeySize)
+	}
+	// Before SQLite: let near the files with another key, it deletes a WAL it
+	// cannot read, committed transactions and all (keycheck.go).
+	if err := checkKey(path, key); err != nil {
+		return nil, err
 	}
 	readURI, err := fileURI(path, url.Values{"vfs": {"adiantum"}})
 	if err != nil {
@@ -104,7 +110,10 @@ func connect(key []byte) func(*sqlite3.Conn) error {
 		for _, p := range pragmas {
 			if err := c.Exec(p); err != nil {
 				// The WAL pragma is the first to read the file's header, and a
-				// header the key does not decrypt is "not a database".
+				// header the key does not decrypt is "not a database". Open has
+				// refused such a key already, before any of this ran; what is
+				// left to land here is a database file too short or too damaged
+				// to say whose it is.
 				if errors.Is(err, sqlite3.NOTADB) {
 					return ErrWrongKey
 				}
@@ -166,20 +175,28 @@ func QuickCheck(ctx context.Context, conn *sql.DB) error {
 	return nil
 }
 
-// fileURI is the SQLite URI for the file at path. Absolute and escaped: a
-// path with a space, a percent sign or a question mark in it is a file name,
-// not the start of a query, and a relative one would read as a host.
+// fileURI is the SQLite URI for the file at path, made absolute first: a
+// relative path would read as an authority.
 func fileURI(path string, query url.Values) (string, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return "", fmt.Errorf("resolve %q: %w", path, err)
 	}
-	p := filepath.ToSlash(abs)
-	if !strings.HasPrefix(p, "/") {
-		// A Windows path, C:/... - the URI form is file:///C:/...
-		p = "/" + p
-	}
-	return (&url.URL{Scheme: "file", Path: p, RawQuery: query.Encode()}).String(), nil
+	return slashURI(filepath.ToSlash(abs), query), nil
+}
+
+// slashURI is the URI for an absolute path written with forward slashes:
+// file:/srv/nox.db on Unix, file:C:/srv/nox.db on Windows.
+//
+// With no authority, so with no "//": SQLite hands the VFS whatever follows
+// "file:" or an authority, and given file:///C:/srv/nox.db that is
+// "/C:/srv/nox.db". SQLite's own Windows VFS drops such a leading slash; the
+// Go VFS this driver runs on does not, takes the path for one on the current
+// drive whose first directory is named "C:", and every open fails. Escaped
+// either way: a space, '%', '?' or '#' in a path is part of a name, not the
+// start of an escape, a query or a fragment.
+func slashURI(path string, query url.Values) string {
+	return (&url.URL{Scheme: "file", Path: path, OmitHost: true, RawQuery: query.Encode()}).String()
 }
 
 // redact is err's message with secret taken out of it.

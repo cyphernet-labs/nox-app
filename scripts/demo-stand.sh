@@ -6,6 +6,13 @@
 # binds every interface, which is how a household server actually runs, and the
 # link then carries an address a phone can reach.
 #
+# tor runs BESIDE the server, as the separate service it is on a real machine:
+# the server never starts tor and only stores the onion address it is given.
+# The stand gets a tor of its own - its own torrc, data directory and onion
+# service inside the stand directory - and the server is started with the
+# address tor writes. No tor, or a tor that does not come up, leaves a stand
+# reachable directly only.
+#
 # TWO stands can run at once, which is what proves the channel check: a second
 # server on a second key, at a second port, is the only way to show that a
 # device refuses the machine it did not pair with.
@@ -15,27 +22,37 @@
 # unlock` - from NOX_STAND_PASSWORD when that is set, piped on standard input
 # and never written anywhere, or by asking at the terminal. A fresh stand takes
 # the password as its first one; a stand that is reused needs the one it was
-# given.
+# given. tor does not wait for it: its onion service points at a port nobody
+# holds until the password is in, which is what a device away from home sees
+# of a locked server.
 set -euo pipefail
 
 PORT="${PORT:-8080}"
 STATUS_PORT="${STATUS_PORT:-8081}"
 STAND="${STAND:-/tmp/nox-demo}"
+TOR_BIN="${TOR_BIN:-}"
+USE_TOR=1
 RESET_APP=0
 FRESH=0
 
 usage() {
   cat <<USAGE
-usage: scripts/demo-stand.sh [--stand DIR] [--port N] [--status-port N] [--fresh] [--reset-app]
+usage: scripts/demo-stand.sh [--stand DIR] [--port N] [--status-port N]
+                             [--tor-bin PATH] [--no-tor] [--fresh] [--reset-app]
 
-  --stand DIR      where the database and log live (default /tmp/nox-demo)
+  --stand DIR      where the database, the logs and the stand's tor live
+                   (default /tmp/nox-demo)
   --port N         the server port (default 8080)
   --status-port N  the service page port, loopback only (default 8081)
-  --fresh          delete the stand first. A FRESH STAND IS A FRESH KEY: every
-                   link ever issued by the old one stops working, and every
-                   device paired with it refuses to connect. Off by default -
-                   it used to be unconditional, which made every scenario that
-                   needs to come BACK to a stand look like a broken build.
+  --tor-bin PATH   the tor to run beside the server (default: \$TOR_BIN, else
+                   tor on the PATH; 0.4.9 or newer)
+  --no-tor         no tor: the stand is reachable directly only
+  --fresh          delete the stand first. A FRESH STAND IS A FRESH KEY, A
+                   FRESH ONION ADDRESS AND A FRESH PASSWORD: every link ever
+                   issued by the old one stops working, and every device paired
+                   with it refuses to connect. Off by default - it used to be
+                   unconditional, which made every scenario that needs to come
+                   BACK to a stand look like a broken build.
   --reset-app      also wipe the macOS app's data, so the next launch is a
                    genuine first install (container + keychain)
 
@@ -50,6 +67,8 @@ while [ $# -gt 0 ]; do
     --stand) STAND="$2"; shift 2 ;;
     --port) PORT="$2"; shift 2 ;;
     --status-port) STATUS_PORT="$2"; shift 2 ;;
+    --tor-bin) TOR_BIN="$2"; shift 2 ;;
+    --no-tor) USE_TOR=0; shift ;;
     --fresh) FRESH=1; shift ;;
     --reset-app) RESET_APP=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -65,10 +84,18 @@ echo "==> building noxd and the smoke tool"
 
 echo "==> stopping any stand left from last time"
 pkill -f "$STAND-noxd" 2>/dev/null || true
+# The stand's OWN tor, found by its own torrc: a tor anybody else runs on this
+# machine is none of this script's business. It has to be gone before the next
+# one starts, because two tors cannot share one data directory.
+pkill -f "$STAND/torrc" 2>/dev/null || true
+for _ in $(seq 1 50); do
+  pgrep -f "$STAND/torrc" >/dev/null 2>&1 || break
+  sleep 0.2
+done
 sleep 1
 
 if [ "$FRESH" = 1 ]; then
-  echo "==> deleting $STAND - the server will mint a NEW key"
+  echo "==> deleting $STAND - the server will mint a NEW key, and tor a NEW onion address"
   rm -rf "$STAND"
 fi
 mkdir -p "$STAND"
@@ -86,9 +113,71 @@ if [ "$RESET_APP" = 1 ]; then
   while security delete-generic-password -s flutter_secure_storage_service >/dev/null 2>&1; do :; done
 fi
 
+# tor first: the server is started with the address tor writes. The onion
+# service points at the server's port on loopback, which the server holds
+# because it binds every interface.
+onion=""
+tor_note=""
+if [ "$USE_TOR" = 0 ]; then
+  tor_note="none: --no-tor, so the stand is reachable directly only"
+else
+  if [ -z "$TOR_BIN" ]; then
+    TOR_BIN="$(command -v tor || true)"
+  fi
+  if [ -z "$TOR_BIN" ] || [ ! -x "$TOR_BIN" ]; then
+    tor_note="none: no tor binary (pass --tor-bin, or put tor 0.4.9+ on the PATH), so the stand is reachable directly only"
+  elif [[ "$STAND" =~ [[:space:]] ]]; then
+    tor_note="none: the stand path holds a space, which a torrc line cannot carry; the stand is reachable directly only"
+  else
+    echo "==> starting tor beside the server (its own torrc in $STAND)"
+    # tor refuses a data or service directory anybody else can read.
+    mkdir -p "$STAND/tor" "$STAND/hs"
+    chmod 700 "$STAND/tor" "$STAND/hs"
+    cat > "$STAND/torrc" <<TORRC
+# The stand's tor: one onion service for the server, nothing else.
+SocksPort 0
+DataDirectory $STAND/tor
+HiddenServiceDir $STAND/hs
+HiddenServicePort 443 127.0.0.1:$PORT
+HiddenServicePoWDefensesEnabled 1
+# PoW prices new circuits, not the streams on one already built: at most 16 at
+# once on a circuit, and one that asks for more is closed whole.
+HiddenServiceMaxStreams 16
+HiddenServiceMaxStreamsCloseCircuit 1
+Log notice file $STAND/tor.log
+TORRC
+    # tor writes the hostname from the service key on every start; removed
+    # first, so a file left by the last run cannot pass for this one's.
+    rm -f "$STAND/hs/hostname" "$STAND/tor.log"
+    "$TOR_BIN" -f "$STAND/torrc" > "$STAND/tor.out" 2>&1 &
+    tor_pid=$!
+    echo -n "==> waiting for tor to write the onion address"
+    for _ in $(seq 1 300); do
+      if [ -s "$STAND/hs/hostname" ] || ! kill -0 "$tor_pid" 2>/dev/null; then break; fi
+      echo -n "."
+      sleep 0.2
+    done
+    echo
+    if [ -s "$STAND/hs/hostname" ] && kill -0 "$tor_pid" 2>/dev/null; then
+      onion="$(tr -d '[:space:]' < "$STAND/hs/hostname")"
+      tor_note="running, log $STAND/tor.log"
+    else
+      echo "tor did not write its onion address; the stand goes on reachable directly only:" >&2
+      # Before the log file is open, tor complains to its standard output.
+      tail -20 "$STAND/tor.log" 2>/dev/null >&2 || true
+      tail -20 "$STAND/tor.out" 2>/dev/null >&2 || true
+      kill "$tor_pid" 2>/dev/null || true
+      tor_note="none: tor did not write its onion address (see $STAND/tor.log and $STAND/tor.out)"
+    fi
+  fi
+fi
+
 echo "==> starting the server"
-"$STAND-noxd" -addr "0.0.0.0:$PORT" -db "$STAND/nox.db" -status-addr "127.0.0.1:$STATUS_PORT" \
-  > "$STAND/server.log" 2>&1 &
+noxd_args=(-addr "0.0.0.0:$PORT" -db "$STAND/nox.db" -status-addr "127.0.0.1:$STATUS_PORT")
+if [ -n "$onion" ]; then
+  noxd_args+=(-onion-addr "$onion")
+fi
+"$STAND-noxd" "${noxd_args[@]}" > "$STAND/server.log" 2>&1 &
 
 # The server comes up locked: only its service page listens, and the main port
 # opens once the password is in. So first the page, then the password, then
@@ -118,13 +207,32 @@ done
 echo
 
 echo "==> unlocking the server with noxd unlock"
+# noxd unlock says why it failed - a wrong password, or why a server with the
+# right one could not start, its main port taken by another process above all.
+# A server that could not start also writes it to its log on the way down, a
+# moment after the command returned: show that too, rather than let set -e end
+# the script on the command's line alone.
+unlock_failed() {
+  for _ in $(seq 1 10); do
+    grep -q '"level":"ERROR"' "$STAND/server.log" 2>/dev/null && break
+    pgrep -f "$STAND-noxd" >/dev/null 2>&1 || break
+    sleep 0.2
+  done
+  if grep -q '"level":"ERROR"' "$STAND/server.log" 2>/dev/null; then
+    echo "the server could not start:" >&2
+    grep '"level":"ERROR"' "$STAND/server.log" >&2
+  fi
+  exit 1
+}
 if [ -n "${NOX_STAND_PASSWORD:-}" ]; then
   # Twice: a fresh server asks for the password and its repeat, a locked one
   # reads the first line and leaves the second.
-  printf '%s\n%s\n' "$NOX_STAND_PASSWORD" "$NOX_STAND_PASSWORD" \
-    | "$STAND-noxd" unlock -status-addr "127.0.0.1:$STATUS_PORT"
+  if ! printf '%s\n%s\n' "$NOX_STAND_PASSWORD" "$NOX_STAND_PASSWORD" \
+    | "$STAND-noxd" unlock -status-addr "127.0.0.1:$STATUS_PORT"; then
+    unlock_failed
+  fi
 elif [ -t 0 ]; then
-  "$STAND-noxd" unlock -status-addr "127.0.0.1:$STATUS_PORT"
+  "$STAND-noxd" unlock -status-addr "127.0.0.1:$STATUS_PORT" || unlock_failed
 else
   echo "no terminal to ask the password at: set NOX_STAND_PASSWORD" >&2
   exit 1
@@ -132,13 +240,12 @@ fi
 
 # Waiting for OUR server, which is not the same as waiting for the port.
 #
-# Two traps, both hit in practice. A server whose port is taken can say it is
-# about to listen and then die - this script used to believe that and announce
-# a stand that was not running, with a key and a link for a dead process. And
-# probing the port is no better on its own: a clash means somebody ELSE answers
-# there, healthily. So: wait for our process to settle, refuse on any ERROR it
-# logged, and then confirm the machine on that port is the one whose key we
-# just minted.
+# Two traps. A server that cannot start - its port taken, its database written
+# by another build - logs an ERROR and exits, and announcing a stand for it
+# would hand out a key and a link for a dead process. And probing the port is
+# no better on its own: a clash means somebody ELSE answers there, healthily.
+# So: wait for our process to settle, refuse on any ERROR it logged, and then
+# confirm the machine on that port is the one whose key we just minted.
 echo -n "==> waiting for the server"
 for _ in $(seq 1 100); do
   if grep -q '"level":"ERROR"' "$STAND/server.log" 2>/dev/null; then
@@ -187,11 +294,38 @@ if ! "$STAND-smoke" -check "127.0.0.1:$PORT" "$server_key" >/dev/null 2>"$STAND/
   exit 1
 fi
 
-# The link for a first device is on the page - never in the log. A machine
-# that has devices shows none until somebody asks for one (Add a device, or
-# noxd link), and asking voids the previous one.
-page_link="$(curl -fsS "http://127.0.0.1:$STATUS_PORT/" 2>/dev/null \
-  | grep -oE 'nox://pair/[A-Za-z0-9_-]+' | head -1 || true)"
+# The link comes from the running server itself, through `noxd link`: the log
+# never carries one. Asking issues a fresh link and voids the one before, which
+# is what a stand wants - ten minutes from now, not from whenever the page last
+# minted one. It is the same link the page shows as a QR code: it names the
+# machine's address on the network, which a phone and an app on this machine
+# can both dial, and the public and onion addresses when the server has them.
+if ! link_out="$("$STAND-noxd" link -status-addr "127.0.0.1:$STATUS_PORT" 2>"$STAND/link.err")"; then
+  echo "the server did not hand out a pairing link:" >&2
+  cat "$STAND/link.err" >&2
+  exit 1
+fi
+link="$(printf '%s\n' "$link_out" | grep -oE 'nox://pair/[A-Za-z0-9_-]+' | head -1 || true)"
+if [ -z "$link" ]; then
+  echo "noxd link answered without a link:" >&2
+  printf '%s\n' "$link_out" >&2
+  exit 1
+fi
+
+# The onion address itself is not printed: with no access keys, knowing it is
+# all that stands between a stranger and the onion service, and terminal output
+# gets pasted into bug reports. It is in the file tor wrote, for whoever needs it.
+onion_line="none"
+if [ -n "$onion" ]; then
+  onion_line="given to the server with -onion-addr; it is in $STAND/hs/hostname"
+fi
+onion_hint=""
+if [ -z "$onion" ]; then
+  onion_hint="
+  (an onion address stored by an earlier run stays until it is cleared on the
+  service page - the devices would be told an address nobody answers at)
+"
+fi
 
 cat <<INFO
 
@@ -199,26 +333,32 @@ cat <<INFO
 
   service page   http://127.0.0.1:$STATUS_PORT      (this machine only, plain HTTP by design)
   server         https://0.0.0.0:$PORT        (TLS 1.3 + the channel check against the server key)
-  server key     ${server_key:-unknown}
+  server key     $server_key
   database       $STAND/nox.db
   log            $STAND/server.log
+  tor            $tor_note
+  onion address  $onion_line
+$onion_hint
+  pairing link - ten minutes, the same one the page shows as a QR code
+  $link
 
-  link for a first device (the one the page shows, as text and as a QR)
-  ${page_link:-none on the page: this server has devices - get one with: $STAND-noxd link -status-addr 127.0.0.1:$STATUS_PORT}
+  a new one - the one above stops working (-qr draws it in the terminal too):
+      $STAND-noxd link -status-addr 127.0.0.1:$STATUS_PORT
 
   the server is unlocked until it stops; after every start it waits for its
-  password again:
+  password again, and hands out no link until it has it:
       $STAND-noxd unlock -status-addr 127.0.0.1:$STATUS_PORT
 
   check it works, without clicking anything:
-      (cd client_backend && go run ./cmd/smoke '${page_link:-<link>}')
-      # the smoke test pairs its own devices with the server
+      (cd client_backend && go run ./cmd/smoke '$link')
+      # the smoke test spends the link and leaves its own devices paired:
+      # run this script with --fresh again before a demo from scratch
 
   or run the demo by hand:
       open http://127.0.0.1:$STATUS_PORT
       fvm flutter run -d macos --dart-define-from-file=config/stage.json
 
-  a SECOND stand, on its own key, to show a device refusing the wrong server:
+  a SECOND stand, on its own key and with its own tor, to show a device refusing the wrong server:
       scripts/demo-stand.sh --stand /tmp/nox-other --port 8090 --status-port 8091
 
 INFO

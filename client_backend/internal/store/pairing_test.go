@@ -279,6 +279,34 @@ func TestDeviceListCarriesWhatDistinguishesADevice(t *testing.T) {
 	}
 }
 
+// What a restore shows (047): every device the store lets in, oldest first,
+// found without knowing whose they are - and a revoked one is not among them.
+func TestAllDevicesAreTheOnesTheStoreLetsIn(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	pairFirst(t, s, "dev-phone")
+	for i, key := range []string{"dev-laptop", "dev-tablet"} {
+		now := int64(200 + 100*i)
+		if _, err := pairID(ctx, s, issueLink(t, s, now), key, "macos", now); err != nil {
+			t.Fatalf("pair %s: %v", key, err)
+		}
+	}
+	if _, err := s.RevokeDevice(ctx, "dev-tablet", 400); err != nil {
+		t.Fatalf("RevokeDevice: %v", err)
+	}
+	devices, err := s.AllDevices(ctx)
+	if err != nil {
+		t.Fatalf("AllDevices: %v", err)
+	}
+	var keys []string
+	for _, d := range devices {
+		keys = append(keys, d.DeviceKey)
+	}
+	if strings.Join(keys, ",") != "dev-phone,dev-laptop" {
+		t.Fatalf("devices = %v, want the phone and the laptop, oldest first", keys)
+	}
+}
+
 // `pair` commits and then replies, so a connection that drops in that window
 // leaves the device paired and the client believing nothing happened. Refusing
 // the retry would leave it without the identity it was just given.

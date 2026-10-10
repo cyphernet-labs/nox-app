@@ -13,7 +13,10 @@
 // A restore needs the same password, an empty place and nothing else: no
 // server running, no network. The restored server keeps its own key - the
 // devices know it and go on without pairing - and gets a new journal id, so
-// each device drops what it cached and reads the conversation again.
+// each device drops what it cached and reads the conversation again. Its list
+// of devices is the backup's too: a device revoked after the backup was made
+// is let in again, and the restore names every device it lets in so that one
+// can be revoked again.
 package backup
 
 import (
@@ -402,19 +405,32 @@ type Target struct {
 	FilesPath string
 }
 
+// Restored is what a restore put in place, as the person who ran it is told.
+type Restored struct {
+	// JournalID is the restored server's new journal id.
+	JournalID string
+	// MadeAt is the moment the backup was made, from its manifest.
+	MadeAt time.Time
+	// Devices are the devices the restored server lets in: the ones paired
+	// when the backup was made. Revoking a device deletes its row, so one
+	// revoked after that moment is among them - nothing in a backup can know
+	// of a revocation that came later.
+	Devices []store.Device
+}
+
 // Restore unpacks the backup at archive onto target, which must be empty.
 // password is asked for once the backup's key file has been read and found
 // to be one; a password that does not open it ends the restore with
 // vault.ErrWrongPassword. Nothing is put in place until every entry checked
 // out against the MAC and the database passed its check: a wrong password, a
 // damaged backup or a target that is not empty changes nothing on disk.
-func Restore(ctx context.Context, archive string, target Target, password func() (string, error)) (journalID string, err error) {
+func Restore(ctx context.Context, archive string, target Target, password func() (string, error)) (Restored, error) {
 	if err := checkEmpty(target); err != nil {
-		return "", err
+		return Restored{}, err
 	}
 	in, err := os.Open(archive)
 	if err != nil {
-		return "", fmt.Errorf("open the backup: %w", err)
+		return Restored{}, fmt.Errorf("open the backup: %w", err)
 	}
 	defer func() { _ = in.Close() }()
 	tr := tar.NewReader(in)
@@ -423,33 +439,33 @@ func Restore(ctx context.Context, archive string, target Target, password func()
 	// before anybody types a password.
 	keyFile, err := readEntry(tr, keyEntry, 1<<16)
 	if err != nil {
-		return "", err
+		return Restored{}, err
 	}
 	if err := vault.Validate(keyFile); err != nil {
-		return "", fmt.Errorf("%w: its key file does not read", ErrDamaged)
+		return Restored{}, fmt.Errorf("%w: its key file does not read", ErrDamaged)
 	}
 	pw, err := password()
 	if err != nil {
-		return "", err
+		return Restored{}, err
 	}
 	dataKey, err := vault.Unseal(keyFile, pw)
 	if err != nil {
-		return "", err
+		return Restored{}, err
 	}
 
 	st, err := unpack(ctx, tr, target, keyFile, dataKey)
 	if err != nil {
-		return "", err
+		return Restored{}, err
 	}
 	defer st.cleanup()
-	journalID, err = st.prepare(ctx, dataKey)
+	restored, err := st.prepare(ctx, dataKey)
 	if err != nil {
-		return "", err
+		return Restored{}, err
 	}
 	if err := st.place(target, keyFile); err != nil {
-		return "", err
+		return Restored{}, err
 	}
-	return journalID, nil
+	return restored, nil
 }
 
 // checkEmpty refuses a target that holds anything of a server - and one whose
@@ -501,6 +517,9 @@ type staging struct {
 	db    string
 	files string
 	ids   []string
+	// madeAt is the moment the backup was made, unix seconds, as its manifest
+	// says - read only once the MAC vouched for it.
+	madeAt int64
 }
 
 // cleanup removes whatever of the staging was not put in place.
@@ -585,6 +604,7 @@ func unpack(ctx context.Context, tr *tar.Reader, target Target, keyFile, dataKey
 	case !hmac.Equal(m.sum(man.CreatedAt, len(seen)), man.MAC):
 		return nil, fmt.Errorf("%w: it changed after it was made", ErrDamaged)
 	}
+	st.madeAt = man.CreatedAt
 	ok = true
 	return st, nil
 }
@@ -620,31 +640,40 @@ func copyTo(ctx context.Context, path string, r io.Reader, size int64) error {
 	return nil
 }
 
-// prepare checks the staged database and gives it a new journal id. It is
-// opened with the backup's data key - the one any server restored from it
-// opens it with - and closed again before anything moves, so no journal of it
-// is left beside the staged file.
-func (s *staging) prepare(ctx context.Context, dataKey []byte) (string, error) {
+// prepare checks the staged database, reads the devices it lets in and gives
+// it a new journal id. It is opened with the backup's data key - the one any
+// server restored from it opens it with - and closed again before anything
+// moves, so no journal of it is left beside the staged file.
+func (s *staging) prepare(ctx context.Context, dataKey []byte) (Restored, error) {
 	d, err := db.Open(s.db, dataKey)
 	if err != nil {
-		return "", fmt.Errorf("%w: its database does not open: %v", ErrDamaged, err)
+		return Restored{}, fmt.Errorf("%w: its database does not open: %v", ErrDamaged, err)
 	}
-	id, err := func() (string, error) {
+	restored, err := func() (Restored, error) {
 		if err := db.QuickCheck(ctx, d.Read); err != nil {
-			return "", fmt.Errorf("%w: %v", ErrDamaged, err)
+			return Restored{}, fmt.Errorf("%w: %v", ErrDamaged, err)
 		}
-		return store.New(d.Read, d.Write).RotateJournal(ctx)
+		st := store.New(d.Read, d.Write)
+		devices, err := st.AllDevices(ctx)
+		if err != nil {
+			return Restored{}, err
+		}
+		id, err := st.RotateJournal(ctx)
+		if err != nil {
+			return Restored{}, err
+		}
+		return Restored{JournalID: id, MadeAt: time.Unix(s.madeAt, 0), Devices: devices}, nil
 	}()
 	if cerr := d.Close(); cerr != nil && err == nil {
 		err = fmt.Errorf("close the restored database: %w", cerr)
 	}
 	if err != nil {
-		return "", err
+		return Restored{}, err
 	}
 	if _, err := os.Stat(s.db + "-wal"); err == nil {
-		return "", errors.New("the restored database's journal was not folded back into it")
+		return Restored{}, errors.New("the restored database's journal was not folded back into it")
 	}
-	return id, nil
+	return restored, nil
 }
 
 // place moves the staged backup into the target: the attachments, then the

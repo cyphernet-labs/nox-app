@@ -171,14 +171,6 @@
   "@attachmentGone": {
     "description": "Terminal state on the file screen: the bytes are gone. Contract 2.1 forbids offering a retry here."
   },
-  "serverNotRecognised": "Це не той сервер, з яким ви з'єдналися",
-  "@serverNotRecognised": {
-    "description": "Banner on the chats list, the thread and the chat card when the machine at the paired address presents a key the pairing link did not name. Paired with the existing actionTryAgain. Deliberately not 'no connection': something answered, and waiting will not change it."
-  },
-  "loginServerNotRecognised": "Сервер не збігається з посиланням",
-  "@loginServerNotRecognised": {
-    "description": "The same refusal on the sign-in screen, where there is no relationship with a server yet - so it names the link rather than a pairing that has not happened."
-  },
   "windowSubtitleSignIn": "Вхід",
   "windowSubtitleSetUp": "Початок роботи",
   "windowSubtitleScanQr": "Сканування QR",
@@ -186,6 +178,7 @@
   "videoPlay": "Відтворити",
   "videoPause": "Пауза",
   "videoPlaybackError": "Не вдалося відтворити це відео. Збережіть його, щоб відкрити в іншій програмі.",
+  "fileOpenError": "Не вдалося відкрити цей файл. Звільніть місце і спробуйте ще раз.",
   "connectionTorBadge": "Tor",
   "connectionConnecting": "Підключення…",
   "connectionSemanticsTor": "Підключено через Tor",
@@ -197,12 +190,38 @@
   "connectionInfoLocalNetwork": "Якщо ви вдома, перевірте, що NOX має доступ до локальної мережі в Параметрах.",
   "connectionTorObsolete": "Оновіть NOX, щоб підключатися поза домом",
   "devicesInviteHomeOnly": "Це посилання працює лише у вашій домашній мережі.",
-  "loginHomeNetworkOnly": "Не вдалося зв'язатися з вашим сервером. Звʼязування працює у вашій домашній мережі.",
   "chatCreationPending": "Очікує на створення",
   "chatCreationNameTaken": "Назву вже зайнято",
   "chatCreationFailed": "Не вдалося створити",
   "chatCreationPendingNotice": "Цього чату ще немає на вашому сервері. Він з'явиться там, щойно NOX під'єднається.",
   "chatCreationNameTakenNotice": "Інший чат уже має цю назву. Перейменуйте цей, щоб завершити створення.",
   "chatCreationFailedNotice": "Не вдалося створити цей чат на вашому сервері.",
-  "actionRename": "Перейменувати"
+  "actionRename": "Перейменувати",
+  "connectionProblemInvalidOnion": "Це неправильна onion-адреса.",
+  "connectionProblemOnionNotFound": "За цією onion-адресою не відповідає жоден сервер. Перевірте адресу і чи працює Tor на сервері.",
+  "connectionProblemOnionUnreachable": "Ваш сервер зараз не відповідає через Tor. Перевірте, чи він працює.",
+  "connectionProblemOtherServer": "Ця onion-адреса належить іншому серверу.",
+  "connectionProblemTorNetwork": "Не вдається під'єднатися до мережі Tor. Перевірте підключення до інтернету.",
+  "connectionProblemTurnOnTor": "Не вдається зв'язатися з сервером напряму. Увімкніть «Використовувати Tor», щоб під'єднатися через Tor.",
+  "connectTitle": "Під'єднання до вашого сервера",
+  "connectServerAddressLabel": "Адреса сервера",
+  "connectOnionAddressLabel": "Onion-адреса",
+  "connectOnionAddressHint": "Необов'язково",
+  "connectUseTor": "Використовувати Tor",
+  "connectUseTorCaption": "NOX використовує Tor, лише коли не може зв'язатися з сервером напряму.",
+  "connectAction": "Під'єднатися",
+  "connectInvalidServerAddress": "Це неправильна адреса сервера.",
+  "settingsConnectionTitle": "Зв'язок",
+  "connectWaitingApproval": "Очікуємо підтвердження на вашому іншому пристрої",
+  "connectDeclined": "Ваш інший пристрій відхилив цей запит.",
+  "pairRequestMessage": "Новий пристрій: {platform}. Дозволити йому приєднатися?",
+  "pairRequestAllow": "Дозволити",
+  "pairRequestDeny": "Відхилити",
+  "pairRequestAnswerError": "Не вдалося надіслати відповідь. Спробуйте ще раз.",
+  "devicePlatformIos": "iPhone або iPad",
+  "devicePlatformAndroid": "Android",
+  "devicePlatformMacos": "Mac",
+  "devicePlatformWindows": "Windows",
+  "devicePlatformLinux": "Linux",
+  "devicePlatformUnknown": "Невідома система"
 }

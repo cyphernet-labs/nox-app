@@ -169,14 +169,17 @@ class SyncService {
   Future<void> _applyAddresses(Map<String, dynamic> data) async {
     final stated = ServerAddressesParser.parse(data);
     if (stated == null) return;
-    final saved = await _addresses.saveFromServer(direct: stated.direct, onion: stated.onion);
+    final saved = await _addresses.saveFromServer(direct: stated.direct, public: stated.public, onion: stated.onion);
     if (!saved.hasData) {
       logRepository.debug(target: this, message: 'sync: the server addresses could not be stored');
       return;
     }
     // Counts only: the onion address lets anyone who has it ask whether this
     // server is online, and it stays out of the logs (FR-013).
-    logRepository.debug(target: this, message: 'sync: server addresses: direct=${stated.direct.length} onion=${stated.onion != null}');
+    logRepository.debug(
+      target: this,
+      message: 'sync: server addresses: direct=${stated.direct.length} public=${stated.public != null} onion=${stated.onion != null}',
+    );
   }
 
   /// Takes a rename made from another device of this person.

@@ -233,10 +233,11 @@ func TestARestoredServerIsTheSameMachineWithANewJournal(t *testing.T) {
 	s := newServer(t, t.TempDir())
 	dst := s.write(t)
 	target := emptyTarget(t)
-	journal, err := Restore(context.Background(), dst, target, asked(password))
+	restored, err := Restore(context.Background(), dst, target, asked(password))
 	if err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
+	journal := restored.JournalID
 	if journal == "" || journal == s.journal {
 		t.Fatalf("the restored journal id = %q, want a new one (was %q)", journal, s.journal)
 	}
@@ -284,6 +285,46 @@ func TestARestoredServerIsTheSameMachineWithANewJournal(t *testing.T) {
 	defer func() { _ = r.Close() }()
 	if got, err := io.ReadAll(r); err != nil || !bytes.Equal(got, s.content) {
 		t.Fatalf("the restored attachment does not read back (%v)", err)
+	}
+}
+
+// Revoking a device deletes its row, and a backup made before the revocation
+// still holds it: the restored server lets that device in again. Nothing in
+// the backup can know better, so the restore names every device it lets in
+// and the moment the backup was made - the list a revoked device is found on.
+func TestARestoreNamesTheDevicesItLetsBackIn(t *testing.T) {
+	s := newServer(t, t.TempDir())
+	ctx := context.Background()
+	for i, device := range []struct{ key, platform string }{{"dev-phone", "android"}, {"dev-laptop", "macos"}} {
+		now := int64(1000 + i)
+		link, err := s.st.IssueMachineLink(ctx, now)
+		if err != nil {
+			t.Fatalf("IssueMachineLink: %v", err)
+		}
+		if _, err := s.st.Pair(ctx, link.Token, device.key, device.platform, now); err != nil {
+			t.Fatalf("Pair %s: %v", device.key, err)
+		}
+	}
+	before := time.Now().Truncate(time.Second)
+	dst := s.write(t)
+	// The phone is stolen after the backup, and revoked on the live server.
+	if _, err := s.st.RevokeDevice(ctx, "dev-phone", 2000); err != nil {
+		t.Fatalf("RevokeDevice: %v", err)
+	}
+
+	restored, err := Restore(ctx, dst, emptyTarget(t), asked(password))
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if restored.MadeAt.Before(before) || restored.MadeAt.After(time.Now()) {
+		t.Fatalf("the backup's moment = %v, want the moment it was written (after %v)", restored.MadeAt, before)
+	}
+	var got []string
+	for _, d := range restored.Devices {
+		got = append(got, d.DeviceKey+"/"+d.Platform)
+	}
+	if strings.Join(got, ",") != "dev-phone/android,dev-laptop/macos" {
+		t.Fatalf("the restore names %v, want both devices of the backup - the phone revoked since among them", got)
 	}
 }
 

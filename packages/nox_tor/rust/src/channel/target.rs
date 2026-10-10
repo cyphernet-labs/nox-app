@@ -2,7 +2,8 @@
 //! service through the client `engine` runs.
 //!
 //! The onion connect is the one the loopback bridge made until 044, moved
-//! here whole: hedged after HEDGE_AFTER in a fresh isolation group, bounded by
+//! here whole: hedged after HEDGE_AFTER in a fresh isolation group - at once
+//! when the way the first attempt was given says nothing - bounded by
 //! CONNECT_BUDGET, and its outcome written into the Tor status snapshot as the
 //! bridge's was - the channel's own failure goes to its CLOSED event besides.
 //! Since 045 it goes by the address alone: the client holds no keys, and no
@@ -11,6 +12,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -137,6 +139,7 @@ async fn connect_and_record(
             let prefs = prefs_in(group);
             client.connect_with_prefs(target, &prefs).await
         },
+        unanswered,
         HEDGE_AFTER,
     );
     match tokio::time::timeout(CONNECT_BUDGET, connect).await {
@@ -177,6 +180,29 @@ fn onion_failure_kind(kind: ErrorKind) -> i32 {
         | ErrorKind::OnionServiceProtocolViolation
         | ErrorKind::OnionServiceMissingClientAuth
         | ErrorKind::OnionServiceWrongClientAuth => code::TOR_ONION_UNREACHABLE,
+        // The service's own answer to the stream: an END cell, which only
+        // comes back over a finished rendezvous - so the Tor network works and
+        // the service was reached, and what stands behind it did not take the
+        // stream. A server that is down behind a running tor reads exactly so
+        // (the tor answers CONNECTREFUSED), and "the Tor network" would send
+        // the person to check their internet instead of their server.
+        ErrorKind::RemoteConnectionRefused
+        | ErrorKind::RemoteStreamClosed
+        | ErrorKind::RemoteStreamReset
+        | ErrorKind::RemoteStreamError
+        | ErrorKind::RemoteNetworkFailed
+        | ErrorKind::RemoteHostNotFound
+        | ErrorKind::RemoteHostResolutionFailed
+        | ErrorKind::ExitPolicyRejected
+        | ErrorKind::ExitTimeout => code::TOR_ONION_UNREACHABLE,
+        // No answer at all where the service should have given one (see
+        // `unanswered_kind`): the Tor network carried the connect as far as
+        // the service, so it is the service that is out of reach - the app
+        // reads a connect that runs out of CONNECT_BUDGET the same way. By the
+        // time this is the answer, a fresh group has been tried beside it, and
+        // a network that is really down shows up as that attempt's own failure
+        // - the later one, and so the answer - instead.
+        ErrorKind::RemoteNetworkTimeout => code::TOR_ONION_UNREACHABLE,
         ErrorKind::BootstrapRequired => code::TOR_NOT_READY,
         _ => match classify_kind(kind) {
             // The network no longer takes this client: Tor is not coming up.
@@ -188,15 +214,40 @@ fn onion_failure_kind(kind: ErrorKind) -> i32 {
     }
 }
 
+/// Whether an onion connect failed because the way it was given to the service
+/// said nothing (see `unanswered_kind`).
+fn unanswered(e: &arti_client::Error) -> bool {
+    use arti_client::HasKind;
+    unanswered_kind(e.kind())
+}
+
+/// `unanswered`, by the kind: Arti's own clock ran out on a way to the service
+/// that was there. arti-client raises `RemoteNetworkTimeout` for a BEGIN that
+/// gets no answer within its connect timeout (ten seconds) over the rendezvous
+/// tunnel it was handed, and tor-hsclient for a rendezvous the service never
+/// came to after its introduction point took the introduction.
+///
+/// The first is how a cached tunnel whose service half died unseen - a home
+/// router restarting under the server, with no FIN reaching anybody - looks:
+/// tor-hsclient hands that tunnel out for as long as it is not closed, and
+/// every use keeps it from ageing out, so the next connect in the same group
+/// gets it again. Never the service's own END: that is an answer
+/// (`ExitTimeout` included) and the tunnel it came over works.
+fn unanswered_kind(kind: ErrorKind) -> bool {
+    kind == ErrorKind::RemoteNetworkTimeout
+}
+
 /// The isolation group connects to each onion service go in: Arti's default
 /// until a hedge to that service is won in a fresh group, and that group from
-/// then on. Kept for every service apart - a group won for one says nothing
-/// about another - and for as long as the client lives (see engine).
+/// then on - or until the way a connect in it was given says nothing, and then
+/// another one. Kept for every service apart - a group won for one says
+/// nothing about another - and for as long as the client lives (see engine).
 ///
 /// Arti lets connects to an onion service share an attempt only when their
 /// isolation is compatible, and an attempt that hangs runs on in a task of its
 /// own after its connect gives up on it. A later connect in the same group would
-/// join it and wait for the hedge all over again. Isolation decides only which
+/// join it and wait for the hedge all over again - and one after a tunnel that
+/// said nothing would be handed that tunnel again. Isolation decides only which
 /// circuits to this one service are shared, so a new group costs nothing in
 /// privacy.
 #[derive(Default)]
@@ -209,7 +260,8 @@ impl ConnectGroups {
         lock(&self.0).get(&service).copied()
     }
 
-    /// A hedge to `service` won in `group`: later connects to it go there.
+    /// Later connects to `service` go in `group`: a hedge was won there, or
+    /// the group they went in before handed out a way that says nothing.
     pub(crate) fn won(&self, service: HsId, group: IsolationToken) {
         lock(&self.0).insert(service, group);
     }
@@ -228,28 +280,59 @@ fn prefs_in(group: Option<IsolationToken>) -> StreamPrefs {
 /// the hedge in a fresh one - it starts afresh, descriptor, introduction and
 /// rendezvous, instead of waiting on the attempt that hangs - and once that one
 /// wins, its group is the service's current one.
-async fn connect_in_groups<T, E, C, F>(
+///
+/// A failure `unanswered` calls silence means the group handed out a way that
+/// says nothing, and does so again for every later connect in it: tor-hsclient
+/// keeps a rendezvous tunnel for as long as it is not closed, and each use
+/// keeps it from ageing out. So the group is left for good, whatever this
+/// connect ends in - for the fresh one, unless that said nothing as well, and
+/// then for one neither used. Without that, a server back online could never be
+/// reached again until Tor itself was restarted.
+async fn connect_in_groups<T, E, C, F, U>(
     groups: &ConnectGroups,
     service: HsId,
     connect: C,
+    unanswered: U,
     after: Duration,
 ) -> Result<T, E>
 where
     C: Fn(Option<IsolationToken>) -> F,
     F: Future<Output = Result<T, E>>,
+    U: Fn(&E) -> bool,
 {
-    let connect = &connect;
+    let (connect, unanswered) = (&connect, &unanswered);
     let current = groups.current(service);
-    let first = async move { connect(current).await.map(|won| (won, None)) };
-    let second = move || async move {
-        let fresh = IsolationToken::new();
-        connect(Some(fresh)).await.map(|won| (won, Some(fresh)))
+    let fresh = IsolationToken::new();
+    // Which attempts met silence, apart from the answer: the hedge returns one
+    // outcome, and the group must not stay where either of them did. Atomics
+    // only so the connect stays Send - both attempts run in this one task.
+    let silent = &[AtomicBool::new(false), AtomicBool::new(false)];
+    let first = async move {
+        let settled = connect(current).await;
+        silent[0].store(settled.as_ref().is_err_and(unanswered), Ordering::Relaxed);
+        settled.map(|won| (won, false))
     };
-    let (won, fresh) = hedged(first, second, after).await?;
-    if let Some(fresh) = fresh {
-        groups.won(service, fresh);
+    let second = move || async move {
+        let settled = connect(Some(fresh)).await;
+        silent[1].store(settled.as_ref().is_err_and(unanswered), Ordering::Relaxed);
+        settled.map(|won| (won, true))
+    };
+    let outcome = hedged(first, second, unanswered, after).await;
+    let [current_silent, fresh_silent] = silent.each_ref().map(|s| s.load(Ordering::Relaxed));
+    match outcome {
+        Ok((won, in_fresh)) => {
+            if in_fresh {
+                groups.won(service, fresh);
+            }
+            Ok(won)
+        }
+        Err(e) => {
+            if current_silent {
+                groups.won(service, if fresh_silent { IsolationToken::new() } else { fresh });
+            }
+            Err(e)
+        }
     }
-    Ok(won)
 }
 
 /// Runs `first`, and if it has not settled after `after`, `second()` beside it.
@@ -257,15 +340,25 @@ where
 /// The first success wins. A failure of one waits for the other, and when both
 /// fail the later failure is the answer. Whatever `first` settles to before
 /// `after` is the answer at once, and `second` is never made: a failure that
-/// early is not a hang, and the app's reconnect ladder is the retry.
-async fn hedged<T, E, F1, F2>(first: F1, second: impl FnOnce() -> F2, after: Duration) -> Result<T, E>
+/// early is not a hang, and the app's reconnect ladder is the retry - unless
+/// `unanswered` calls it silence. That is a hang Arti's own clock cut short of
+/// `after`, and its answer says nothing about the service, so `second()` is
+/// made at once and is the answer.
+async fn hedged<T, E, F1, F2>(
+    first: F1,
+    second: impl FnOnce() -> F2,
+    unanswered: impl Fn(&E) -> bool,
+    after: Duration,
+) -> Result<T, E>
 where
     F1: Future<Output = Result<T, E>>,
     F2: Future<Output = Result<T, E>>,
 {
     tokio::pin!(first);
-    if let Ok(settled) = tokio::time::timeout(after, &mut first).await {
-        return settled;
+    match tokio::time::timeout(after, &mut first).await {
+        Ok(Err(e)) if unanswered(&e) => return second().await,
+        Ok(settled) => return settled,
+        Err(_) => {}
     }
     let second = second();
     tokio::pin!(second);
@@ -333,7 +426,9 @@ mod tests {
     }
 
     /// A service that asks for a key is out of reach: since 045 the client
-    /// holds none, and TOR_CLIENT_AUTH is never the answer.
+    /// holds none, and TOR_CLIENT_AUTH is never the answer. Neither is the
+    /// service's own END to the stream a fault of the Tor network, nor its
+    /// silence on a way the network carried as far as the service.
     #[test]
     fn an_arti_failure_is_the_channels_by_its_kind() {
         for (kind, expected) in [
@@ -343,13 +438,44 @@ mod tests {
             (ErrorKind::OnionServiceConnectionFailed, code::TOR_ONION_UNREACHABLE),
             (ErrorKind::OnionServiceProtocolViolation, code::TOR_ONION_UNREACHABLE),
             (ErrorKind::OnionServiceNotFound, code::TOR_ONION_NOT_FOUND),
+            // The service's END: the server behind a running tor is down.
+            (ErrorKind::RemoteConnectionRefused, code::TOR_ONION_UNREACHABLE),
+            (ErrorKind::RemoteStreamClosed, code::TOR_ONION_UNREACHABLE),
+            (ErrorKind::RemoteStreamReset, code::TOR_ONION_UNREACHABLE),
+            (ErrorKind::RemoteStreamError, code::TOR_ONION_UNREACHABLE),
+            (ErrorKind::RemoteNetworkFailed, code::TOR_ONION_UNREACHABLE),
+            (ErrorKind::ExitPolicyRejected, code::TOR_ONION_UNREACHABLE),
+            (ErrorKind::ExitTimeout, code::TOR_ONION_UNREACHABLE),
             (ErrorKind::OnionServiceAddressInvalid, code::TOR_ONION_INVALID),
             (ErrorKind::BootstrapRequired, code::TOR_NOT_READY),
             (ErrorKind::SoftwareDeprecated, code::TOR_NOT_READY),
             (ErrorKind::Internal, code::INTERNAL),
+            // Arti's clock ran out on a way to the service that was there: a
+            // BEGIN nobody answered, a rendezvous the service never came to.
+            (ErrorKind::RemoteNetworkTimeout, code::TOR_ONION_UNREACHABLE),
             (ErrorKind::TorNetworkTimeout, code::NETWORK),
+            (ErrorKind::CircuitCollapse, code::NETWORK),
         ] {
             assert_eq!(onion_failure_kind(kind), expected, "{kind:?}");
+        }
+    }
+
+    /// Only Arti's own clock running out on a way that was there is silence:
+    /// any answer - the service's END with a timeout reason included - came
+    /// over a tunnel that works, and a timeout on the way in is the network's.
+    #[test]
+    fn silence_is_arti_waiting_out_a_way_that_was_there() {
+        assert!(unanswered_kind(ErrorKind::RemoteNetworkTimeout));
+        for kind in [
+            ErrorKind::ExitTimeout,
+            ErrorKind::RemoteConnectionRefused,
+            ErrorKind::RemoteStreamClosed,
+            ErrorKind::TorNetworkTimeout,
+            ErrorKind::CircuitCollapse,
+            ErrorKind::OnionServiceConnectionFailed,
+            ErrorKind::OnionServiceNotFound,
+        ] {
+            assert!(!unanswered_kind(kind), "{kind:?}");
         }
     }
 
@@ -470,6 +596,16 @@ mod tests {
             assert!(elapsed >= expected && elapsed < expected + Duration::from_millis(10), "settled at {elapsed:?}");
         }
 
+        /// How these connects spell Arti's clock running out on a way that was
+        /// there; every other failure is an answer.
+        fn silent(e: &&'static str) -> bool {
+            *e == "silent"
+        }
+
+        /// Arti's own connect timeout: how long a BEGIN on a tunnel that says
+        /// nothing takes to fail - well short of HEDGE_AFTER.
+        const ARTI_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
         #[tokio::test(start_paused = true)]
         async fn a_first_in_time_wins_and_no_second_is_made() {
             let (start, made) = (Instant::now(), Cell::new(false));
@@ -479,6 +615,7 @@ mod tests {
                     made.set(true);
                     settles(secs(1), Ok("second"))
                 },
+                silent,
                 HEDGE_AFTER,
             )
             .await;
@@ -490,7 +627,8 @@ mod tests {
         #[tokio::test(start_paused = true)]
         async fn a_first_that_hangs_is_overtaken_by_the_second() {
             let start = Instant::now();
-            let hedge = hedged(std::future::pending::<Outcome>(), || settles(secs(4), Ok("second")), HEDGE_AFTER);
+            let hedge =
+                hedged(std::future::pending::<Outcome>(), || settles(secs(4), Ok("second")), silent, HEDGE_AFTER);
             // Bounded, so a hedge that never comes fails here instead of hanging.
             let got = tokio::time::timeout(secs(60), hedge).await.expect("the hang was never overtaken");
             assert_eq!(got, Ok("second"));
@@ -506,6 +644,7 @@ mod tests {
                     made.set(true);
                     settles(secs(1), Ok("second"))
                 },
+                silent,
                 HEDGE_AFTER,
             )
             .await;
@@ -514,10 +653,39 @@ mod tests {
             at(start, secs(2));
         }
 
+        /// Silence before HEDGE_AFTER is a hang Arti cut short: the second
+        /// goes at once rather than at HEDGE_AFTER or never, and what it ends
+        /// in is the answer - its failure is the later one.
+        #[tokio::test(start_paused = true)]
+        async fn a_first_met_with_silence_makes_the_second_at_once() {
+            let start = Instant::now();
+            let got = hedged(
+                settles(ARTI_CONNECT_TIMEOUT, Err("silent")),
+                || settles(secs(3), Ok("second")),
+                silent,
+                HEDGE_AFTER,
+            )
+            .await;
+            assert_eq!(got, Ok("second"));
+            at(start, ARTI_CONNECT_TIMEOUT + secs(3));
+
+            let start = Instant::now();
+            let got = hedged(
+                settles(ARTI_CONNECT_TIMEOUT, Err("silent")),
+                || settles(secs(3), Err("refused")),
+                silent,
+                HEDGE_AFTER,
+            )
+            .await;
+            assert_eq!(got, Err("refused"));
+            at(start, ARTI_CONNECT_TIMEOUT + secs(3));
+        }
+
         #[tokio::test(start_paused = true)]
         async fn a_second_that_fails_waits_for_the_first() {
             let start = Instant::now();
-            let got = hedged(settles(secs(20), Ok("first")), || settles(secs(1), Err("second")), HEDGE_AFTER).await;
+            let got =
+                hedged(settles(secs(20), Ok("first")), || settles(secs(1), Err("second")), silent, HEDGE_AFTER).await;
             assert_eq!(got, Ok("first"));
             at(start, secs(20));
         }
@@ -525,12 +693,14 @@ mod tests {
         #[tokio::test(start_paused = true)]
         async fn when_both_fail_the_later_failure_is_the_answer() {
             let start = Instant::now();
-            let got = hedged(settles(secs(20), Err("first")), || settles(secs(10), Err("second")), HEDGE_AFTER).await;
+            let got =
+                hedged(settles(secs(20), Err("first")), || settles(secs(10), Err("second")), silent, HEDGE_AFTER).await;
             assert_eq!(got, Err("second"), "the second failed at 25 s, after the first at 20 s");
             at(start, HEDGE_AFTER + secs(10));
 
             let start = Instant::now();
-            let got = hedged(settles(secs(30), Err("first")), || settles(secs(1), Err("second")), HEDGE_AFTER).await;
+            let got =
+                hedged(settles(secs(30), Err("first")), || settles(secs(1), Err("second")), silent, HEDGE_AFTER).await;
             assert_eq!(got, Err("first"), "the first failed at 30 s, after the second at 16 s");
             at(start, secs(30));
         }
@@ -560,14 +730,14 @@ mod tests {
                 one_hangs(g, None)
             };
             let start = Instant::now();
-            assert_eq!(connect_in_groups(&groups, service(), connect, HEDGE_AFTER).await, Ok("connected"));
+            assert_eq!(connect_in_groups(&groups, service(), connect, silent, HEDGE_AFTER).await, Ok("connected"));
             at(start, HEDGE_AFTER + secs(2));
             let won = groups.current(service()).expect("the group the hedge won in is current");
             assert_eq!(*made.borrow(), [None, Some(won)]);
 
             // The next connect goes straight to the group that works.
             let start = Instant::now();
-            assert_eq!(connect_in_groups(&groups, service(), connect, HEDGE_AFTER).await, Ok("connected"));
+            assert_eq!(connect_in_groups(&groups, service(), connect, silent, HEDGE_AFTER).await, Ok("connected"));
             at(start, secs(2));
             assert_eq!(*made.borrow(), [None, Some(won), Some(won)]);
             assert_eq!(groups.current(service()), Some(won));
@@ -578,7 +748,7 @@ mod tests {
             let groups = ConnectGroups::default();
             let hung = IsolationToken::new();
             groups.won(service(), hung);
-            let got = connect_in_groups(&groups, service(), |g| one_hangs(g, Some(hung)), HEDGE_AFTER).await;
+            let got = connect_in_groups(&groups, service(), |g| one_hangs(g, Some(hung)), silent, HEDGE_AFTER).await;
             assert_eq!(got, Ok("connected"));
             let now = groups.current(service());
             assert!(now.is_some_and(|now| now != hung), "still {now:?}");
@@ -591,17 +761,17 @@ mod tests {
                 made.borrow_mut().push(g);
                 settles(secs(1), Ok("connected"))
             };
-            assert_eq!(connect_in_groups(&groups, service(), quick, HEDGE_AFTER).await, Ok("connected"));
+            assert_eq!(connect_in_groups(&groups, service(), quick, silent, HEDGE_AFTER).await, Ok("connected"));
             assert_eq!(groups.current(service()), None);
             let stored = IsolationToken::new();
             groups.won(service(), stored);
-            assert_eq!(connect_in_groups(&groups, service(), quick, HEDGE_AFTER).await, Ok("connected"));
+            assert_eq!(connect_in_groups(&groups, service(), quick, silent, HEDGE_AFTER).await, Ok("connected"));
             assert_eq!(groups.current(service()), Some(stored));
             assert_eq!(*made.borrow(), [None, Some(stored)], "no fresh group without a hedge");
 
             // Won by the first after the hedge was made: still the first's group.
             let slow_first = |g| settles(if g == Some(stored) { secs(20) } else { secs(30) }, Ok("connected"));
-            assert_eq!(connect_in_groups(&groups, service(), slow_first, HEDGE_AFTER).await, Ok("connected"));
+            assert_eq!(connect_in_groups(&groups, service(), slow_first, silent, HEDGE_AFTER).await, Ok("connected"));
             assert_eq!(groups.current(service()), Some(stored));
         }
 
@@ -611,8 +781,106 @@ mod tests {
             let stored = IsolationToken::new();
             groups.won(service(), stored);
             let refused = |g| settles(if g == Some(stored) { secs(20) } else { secs(1) }, Err("refused"));
-            assert_eq!(connect_in_groups(&groups, service(), refused, HEDGE_AFTER).await, Err("refused"));
+            assert_eq!(connect_in_groups(&groups, service(), refused, silent, HEDGE_AFTER).await, Err("refused"));
             assert_eq!(groups.current(service()), Some(stored));
+        }
+
+        /// A connect in `group`: the stale group holds a cached tunnel whose
+        /// service half died unseen, so its BEGIN goes unanswered until Arti's
+        /// own timeout; any other group builds a fresh rendezvous and ends in
+        /// `fresh` after three seconds.
+        async fn over_a_stale_tunnel(
+            group: Option<IsolationToken>,
+            stale: Option<IsolationToken>,
+            fresh: Outcome,
+        ) -> Outcome {
+            if group == stale {
+                settles(ARTI_CONNECT_TIMEOUT, Err("silent")).await
+            } else {
+                settles(secs(3), fresh).await
+            }
+        }
+
+        /// The server's home router restarted under a live connection: the
+        /// current group's tunnel says nothing, and the failure comes before
+        /// HEDGE_AFTER. The fresh group goes at once, and every later connect
+        /// goes there - never back to the dead tunnel.
+        #[tokio::test(start_paused = true)]
+        async fn a_group_whose_tunnel_says_nothing_is_left_at_once_and_for_good() {
+            let (groups, made) = (ConnectGroups::default(), RefCell::new(Vec::new()));
+            let stale = IsolationToken::new();
+            groups.won(service(), stale);
+            let connect = |g| {
+                made.borrow_mut().push(g);
+                over_a_stale_tunnel(g, Some(stale), Ok("connected"))
+            };
+            let start = Instant::now();
+            assert_eq!(connect_in_groups(&groups, service(), connect, silent, HEDGE_AFTER).await, Ok("connected"));
+            at(start, ARTI_CONNECT_TIMEOUT + secs(3));
+            let now = groups.current(service()).expect("a group is current");
+            assert_ne!(now, stale);
+            assert_eq!(*made.borrow(), [Some(stale), Some(now)]);
+
+            let start = Instant::now();
+            assert_eq!(connect_in_groups(&groups, service(), connect, silent, HEDGE_AFTER).await, Ok("connected"));
+            at(start, secs(3));
+            assert_eq!(*made.borrow(), [Some(stale), Some(now), Some(now)]);
+        }
+
+        /// The server is still down, so the fresh group fails too - and the
+        /// next connect is still not handed the tunnel that said nothing. Arti's
+        /// default group can hold one as well.
+        #[tokio::test(start_paused = true)]
+        async fn a_connect_that_fails_after_silence_still_moves_the_next_one_on() {
+            let (groups, made) = (ConnectGroups::default(), RefCell::new(Vec::new()));
+            let connect = |g| {
+                made.borrow_mut().push(g);
+                over_a_stale_tunnel(g, None, Err("refused"))
+            };
+            assert_eq!(connect_in_groups(&groups, service(), connect, silent, HEDGE_AFTER).await, Err("refused"));
+            let next = groups.current(service()).expect("the default group is left");
+            assert_eq!(*made.borrow(), [None, Some(next)], "the group the fresh attempt went in is the next one");
+
+            assert_eq!(connect_in_groups(&groups, service(), connect, silent, HEDGE_AFTER).await, Err("refused"));
+            assert_eq!(*made.borrow(), [None, Some(next), Some(next)]);
+            assert_eq!(groups.current(service()), Some(next), "a plain failure leaves the group alone");
+        }
+
+        /// Silence in both groups: the next connect goes in a group neither
+        /// used, since either would hand out a tunnel that says nothing.
+        #[tokio::test(start_paused = true)]
+        async fn when_both_say_nothing_the_next_connect_goes_in_a_group_neither_used() {
+            let (groups, made) = (ConnectGroups::default(), RefCell::new(Vec::new()));
+            let connect = |g| {
+                made.borrow_mut().push(g);
+                settles(ARTI_CONNECT_TIMEOUT, Err("silent"))
+            };
+            assert_eq!(connect_in_groups(&groups, service(), connect, silent, HEDGE_AFTER).await, Err("silent"));
+            let tried = made.borrow().clone();
+            assert_eq!(tried.len(), 2);
+            let next = groups.current(service()).expect("moved on");
+            assert!(!tried.contains(&Some(next)), "{next:?} was one of {tried:?}");
+        }
+
+        /// Silence that comes after the hedge was made - the stale group's
+        /// tunnel took a while to hand over - moves the group just the same.
+        #[tokio::test(start_paused = true)]
+        async fn silence_after_the_hedge_was_made_moves_the_group_too() {
+            let (groups, made) = (ConnectGroups::default(), RefCell::new(Vec::new()));
+            let stale = IsolationToken::new();
+            groups.won(service(), stale);
+            let connect = |g| {
+                made.borrow_mut().push(g);
+                // The stale group fails at 18 s, after the fresh one at 16 s.
+                settles(
+                    if g == Some(stale) { secs(18) } else { secs(1) },
+                    Err(if g == Some(stale) { "silent" } else { "refused" }),
+                )
+            };
+            assert_eq!(connect_in_groups(&groups, service(), connect, silent, HEDGE_AFTER).await, Err("silent"));
+            let next = groups.current(service()).expect("a group is current");
+            assert_ne!(next, stale);
+            assert_eq!(*made.borrow(), [Some(stale), Some(next)], "the fresh group, which answered, is the next one");
         }
 
         /// A group won for one service is no place for another's first
@@ -624,13 +892,16 @@ mod tests {
                 made.borrow_mut().push(g);
                 one_hangs(g, None)
             };
-            assert_eq!(connect_in_groups(&groups, service(), connect, HEDGE_AFTER).await, Ok("connected"));
+            assert_eq!(connect_in_groups(&groups, service(), connect, silent, HEDGE_AFTER).await, Ok("connected"));
             let first = groups.current(service()).expect("the hedge to the first service won");
             assert_eq!(groups.current(another_service()), None, "nothing is won for the other yet");
 
             made.borrow_mut().clear();
             let start = Instant::now();
-            assert_eq!(connect_in_groups(&groups, another_service(), connect, HEDGE_AFTER).await, Ok("connected"));
+            assert_eq!(
+                connect_in_groups(&groups, another_service(), connect, silent, HEDGE_AFTER).await,
+                Ok("connected")
+            );
             at(start, HEDGE_AFTER + secs(2));
             let other = groups.current(another_service()).expect("the hedge to the other service won");
             assert_eq!(*made.borrow(), [None, Some(other)], "the other's first attempt is in Arti's default");

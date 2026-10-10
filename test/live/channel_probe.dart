@@ -8,6 +8,7 @@ import 'dart:typed_data';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
+import 'package:nox_app/data/local/device_vault.dart';
 import 'package:nox_app/data/remote/api_client.dart';
 import 'package:nox_app/data/remote/datasource/real/real_chat_remote_data_source.dart';
 import 'package:nox_app/data/remote/datasource/real/real_file_remote_data_source.dart';
@@ -24,6 +25,7 @@ import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_tor/channel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'live_harness.dart';
 import 'live_target.dart';
 
 /// The secure channel end to end (phase 044): the app's Dart code over the
@@ -36,10 +38,16 @@ import 'live_target.dart';
 /// second - and checks the refusal that matters most: a channel that expects
 /// another server key never opens (SC-003, US2).
 ///
-/// Manual, outside the gates - it needs the server and the new module:
-///   (cd client_backend && go build -o /tmp/nox044/noxd . && \
-///     /tmp/nox044/noxd -db /tmp/nox044/nox.db -addr 127.0.0.1:8443 -status-addr 127.0.0.1:8081 -tor=false)
-///   fvm flutter test test/live/channel_probe.dart --dart-define=link=LINK   # the nox://pair/ link noxd prints
+/// Manual, outside the gates - it needs the server and the new module. The
+/// server starts locked (phase 047): only its page listens until the password
+/// is in - a fresh one takes it twice, at the terminal or piped - and only
+/// then does the page show the machine link. The password goes in once the
+/// page answers:
+///   (cd client_backend && go build -o /tmp/nox044/noxd .)
+///   /tmp/nox044/noxd -db /tmp/nox044/nox.db -addr 127.0.0.1:8443 -status-addr 127.0.0.1:8081 &
+///   curl -s -o /dev/null --retry 30 --retry-delay 1 --retry-connrefused http://127.0.0.1:8081/health
+///   /tmp/nox044/noxd unlock -status-addr 127.0.0.1:8081
+///   fvm flutter test test/live/channel_probe.dart --dart-define=link=LINK   # the machine link on http://127.0.0.1:8081, or the first line of `noxd link`
 void main() {
   setUpAll(() async {
     SharedPreferences.setMockInitialValues({});
@@ -115,7 +123,7 @@ void main() {
     final config = getIt<AppConfigRepository>();
     await config.initialize(flavorType: AppFlavorType.stage);
     final apiClient = ApiClient(config, channels)..initBase(address: target.restUrl);
-    final files = FileRepositoryImpl(RealFileRemoteDataSource(socket, apiClient), config);
+    final files = FileRepositoryImpl(RealFileRemoteDataSource(socket, apiClient), config, getIt<DeviceVault>());
     final random = Random(20441009);
     final payload = List<int>.generate(3 * channelWindowBytes + 17, (_) => random.nextInt(256));
     final source = File('${Directory.systemTemp.path}/nox_channel_probe_${DateTime.now().microsecondsSinceEpoch}.bin')
@@ -131,7 +139,9 @@ void main() {
     expect(withFile.success, isTrue, reason: 'message.send with the file: ${withFile.error?.code}');
     final fetched = await files.download(fileId: uploaded.data!, suggestedName: 'payload.bin');
     expect(fetched.hasData, isTrue, reason: 'download: ${fetched.exception}');
-    expect(File(fetched.data!).readAsBytesSync(), payload, reason: 'the same bytes back');
+    // The bytes land sealed (phase 048): the plain ones come out of the file
+    // the way the app reads it, never off the disk.
+    expect(await (await openSealed(fetched.data!)).readAll(), payload, reason: 'the same bytes back');
     channels.unbind();
   }, timeout: const Timeout(Duration(minutes: 2)));
 }

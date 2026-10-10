@@ -44,9 +44,33 @@ func TestTheMachineLinkCreatesThePersonThenJoinsThem(t *testing.T) {
 	// The spent first link presented by a key that never used it.
 	other := dialWS(t, ts, srv)
 	other.expectGreeting()
-	other.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"test"}}`, first))
+	other.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"linux"}}`, first))
 	if code := expectErrCode(t, other, 1); code != protocol.ErrInvalidToken {
 		t.Fatalf("a spent link = %q, want %q", code, protocol.ErrInvalidToken)
+	}
+}
+
+// A device names itself by its OS family and nothing else: the name lands in
+// the Allow dialog of the device that issued the invite, so free text there is
+// a stolen invite's chance to pass itself off as anything. Refused before the
+// token is looked at, so the refusal spends nothing.
+func TestPairTakesOnlyAKnownPlatform(t *testing.T) {
+	ts, srv := newTestServer(t)
+	token := mustMachineLink(t, srv)
+	for _, platform := range []string{"test", "iPhone of a friend", "IOS", "ios ios"} {
+		c := dialWS(t, ts, srv)
+		c.expectGreeting()
+		c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":%q}}`, token, platform))
+		if code := expectErrCode(t, c, 1); code != protocol.ErrInvalidRequest {
+			t.Fatalf("platform %q = %q, want %q", platform, code, protocol.ErrInvalidRequest)
+		}
+	}
+	// The link is still whole: a refused name took nothing from it.
+	_, data := pairDevice(t, ts, token)
+	var created identity
+	mustUnmarshal(t, data["identity"], &created)
+	if !created.Created {
+		t.Fatalf("identity = %+v, want the person the unspent link creates", created)
 	}
 }
 
@@ -473,7 +497,7 @@ func TestPairingTellsTheOtherDevicesAndNotTheOneThatJustJoined(t *testing.T) {
 	joiner := newDevice(t)
 	c := dialAs(t, ts, srv, joiner)
 	c.expectGreeting()
-	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"test"}}`, token))
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"linux"}}`, token))
 
 	// Raw frames, not expectReply: that helper SKIPS events, which is exactly
 	// the mistake being looked for here. The reply comes first (the fan-out
@@ -520,7 +544,7 @@ func TestThePairedEventGoesOnlyToConnectionsOfThisPerson(t *testing.T) {
 	joiner := newDevice(t)
 	c := dialAs(t, ts, srv, joiner)
 	c.expectGreeting()
-	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"test"}}`, token))
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"linux"}}`, token))
 	c.expectOK(1)
 
 	// The owner first: it proves the fan-out ran at all, so the silence below
@@ -555,7 +579,7 @@ func TestTheJoiningDeviceIsAnsweredEvenWhileAnotherConnectionIsWedged(t *testing
 	joiner := newDevice(t)
 	c := dialAs(t, ts, srv, joiner)
 	c.expectGreeting()
-	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"test"}}`, token))
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"linux"}}`, token))
 	// Fails by timing out rather than by comparing anything: with the fan-out
 	// first, this reply is behind a queue nobody is draining.
 	c.expectOK(1)
@@ -598,7 +622,7 @@ func TestTheRevokingDeviceIsAnsweredEvenWhileTheRevokedOneIsWedged(t *testing.T)
 	joiner := newDevice(t)
 	pairing := dialAs(t, ts, srv, joiner)
 	pairing.expectGreeting()
-	pairing.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"test"}}`, token))
+	pairing.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"linux"}}`, token))
 	pairing.expectOK(1)
 	// The owner is told about the pairing; read it so the assertion below is
 	// about the revoke and nothing else.
@@ -707,7 +731,7 @@ func TestThePairedEventCarriesNoCredentialAndNoKey(t *testing.T) {
 	joiner := newDevice(t)
 	c := dialAs(t, ts, srv, joiner)
 	c.expectGreeting()
-	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"test"}}`, token))
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"linux"}}`, token))
 	c.expectOK(1)
 
 	seq, name, data := owner.expectEvent()
@@ -744,7 +768,7 @@ func TestTheFirstDeviceAnnouncesToNobody(t *testing.T) {
 	first := newDevice(t)
 	c := dialAs(t, ts, srv, first)
 	c.expectGreeting()
-	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"test"}}`, token))
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"linux"}}`, token))
 
 	frame := c.read()
 	if _, isEvent := frame["event"]; isEvent {

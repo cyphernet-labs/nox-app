@@ -24,8 +24,9 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// The library's message can quote Host, and a connection through the
 		// onion service carries the onion name there (FR-022). Nothing tells
-		// such a connection apart any more, so every one is masked.
-		s.logger.Warn("websocket accept failed", "err", maskOnion(err.Error()))
+		// such a connection apart any more; the log's handler masks the name
+		// in every line (logscrub.go).
+		s.logger.Warn("websocket accept failed", "err", err)
 		return
 	}
 	// Track the hijacked connection so shutdown can wait for it (invariant 9).
@@ -41,6 +42,19 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	defer s.untrack(c)
 	defer c.close(websocket.StatusNormalClosure, "")
 	defer c.cleanup()
+	// A stranger's connection is held to a deadline and a cap (unpaired.go) -
+	// or, while an invite it presented waits for Allow, to that request's own
+	// deadline alone (awaitAnswer). The returned release lets go of either.
+	// Asked AFTER the connection joined the registry, the way a transfer asks
+	// (files.go): a revocation from here on finds it and drops it, so a
+	// "paired" read here cannot outlive the device, and a "not paired" one
+	// can go stale only by a pairing, which settles it. The door asked too,
+	// before the upgrade (limitStrangers), but only to decide whether a refusal
+	// ends the connection: this answer is the one the session is held to.
+	if !s.pairedKey(c.ctx, c.deviceKey, c.logger) {
+		release := s.holdUnpaired(c)
+		defer release()
+	}
 
 	go c.writePump()
 

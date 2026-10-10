@@ -11,7 +11,6 @@ import 'package:nox_app/data/sync/connection/connection_path_selector.dart';
 import 'package:nox_app/data/sync/connection/connection_status_service_impl.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/domain/model/connection/connection_status.dart';
-import 'package:nox_app/domain/repository/connection/access_key_repository.dart';
 import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_app/domain/service/app_lifecycle_service.dart';
@@ -69,7 +68,6 @@ void main() {
       prober,
       tor,
       getIt<ServerAddressesRepository>(),
-      getIt<AccessKeyRepository>(),
       _Network(),
       _Lifecycle(),
       socket,
@@ -119,8 +117,7 @@ void main() {
   test('another key behind the onion address is the banner', () async {
     tor.supported = true;
     await getIt<ServerAddressesRepository>().saveFromServer(direct: const <String>[], onion: '$onionHost:443');
-    await getIt<AccessKeyRepository>().deviceKey();
-    await getIt<AccessKeyRepository>().markRegistered(true);
+    await getIt<ServerAddressesRepository>().setUseTor(true);
     prober.home = <String>{};
     await socket.start(targets: selector, credentialsProvider: () async => const GreetingCredentials());
     await waitUntil(() => factory.created.isNotEmpty, reason: 'dialled');

@@ -2,10 +2,14 @@ import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:injectable/injectable.dart' show Environment;
+import 'package:nox_app/data/local/secure/secure_store_options.dart';
 import 'package:nox_app/data/repository/app/session_repository_impl.dart';
 import 'package:nox_app/data/repository/connection/connection_storage.dart';
 import 'package:nox_app/data/repository/log_repository_impl.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/model/connection/connection_settings.dart';
+import 'package:nox_app/domain/model/session/pending_pairing.dart';
 import 'package:nox_app/domain/repository/log_repository.dart';
 import 'package:nox_app/general/pairing/device_keys.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -20,7 +24,13 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     final prefs = await SharedPreferences.getInstance();
     repository = SessionRepositoryImpl(const FlutterSecureStorage(), prefs);
+    // The storage mock of `flutter test` ignores options, so the sweep of the
+    // records written under the options before phase 048 - iOS and macOS only
+    // - would delete today's records here. The group that tests it says so.
+    SessionRepositoryImpl.debugApplePlatform = false;
   });
+
+  tearDown(() => SessionRepositoryImpl.debugApplePlatform = null);
 
   test('reads a null session when no identifier is stored', () async {
     final result = await repository.readSession();
@@ -248,6 +258,82 @@ void main() {
     });
   });
 
+  group('a pairing waiting for approval (phase 046, FR-011)', () {
+    final waitUntil = DateTime.utc(2026, 10, 10, 12, 30);
+    final pending = PendingPairing(
+      link: 'nox://pair/link',
+      waitUntil: waitUntil,
+      connection: ConnectionSettings(serverAddress: '192.168.1.20:8443', onionAddress: '${'a' * 56}.onion:443', useTor: true),
+    );
+
+    test('is remembered whole - the link, the deadline and what was set on the connection screen', () async {
+      await repository.savePendingPairing(pending);
+
+      expect((await repository.readPendingPairing()).data, pending);
+    });
+
+    test('a link remembered with no connection settings comes back without them', () async {
+      await repository.savePendingPairing(PendingPairing(link: 'nox://pair/link', waitUntil: waitUntil));
+
+      final read = (await repository.readPendingPairing()).data!;
+      expect(read.connection, isNull);
+      expect(read.waitUntil, waitUntil);
+    });
+
+    test('lives in secure storage, never in the preferences: the link carries the token', () async {
+      await repository.savePendingPairing(pending);
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getKeys().any((key) => (prefs.get(key)?.toString() ?? '').contains('nox://pair/link')), isFalse);
+      expect(await const FlutterSecureStorage().read(key: 'session.pending_pairing'), contains('nox://pair/link'));
+    });
+
+    test('nothing remembered reads as none, and so does a value nothing could resume', () async {
+      expect((await repository.readPendingPairing()).data, isNull);
+
+      await const FlutterSecureStorage().write(key: 'session.pending_pairing', value: '{not json');
+      expect((await repository.readPendingPairing()).data, isNull);
+      await const FlutterSecureStorage().write(key: 'session.pending_pairing', value: jsonEncode({'link': 'nox://pair/link'}));
+      expect((await repository.readPendingPairing()).data, isNull, reason: 'no deadline, nothing to wait until');
+    });
+
+    test('is forgotten when the wait ends', () async {
+      await repository.savePendingPairing(pending);
+      await repository.clearPendingPairing();
+
+      expect((await repository.readPendingPairing()).data, isNull);
+    });
+
+    test('goes with a discarded sign-in, and with a logout', () async {
+      await repository.savePendingPairing(pending);
+      await repository.discardSignIn();
+      expect((await repository.readPendingPairing()).data, isNull);
+
+      await repository.savePendingPairing(pending);
+      await repository.clear();
+      expect((await repository.readPendingPairing()).data, isNull);
+    });
+
+    test('is kept for this device only, like every record of the store (phase 048)', () async {
+      // The write names no options of its own, so the store's apply - and the
+      // store the app is built with keeps every record for this device only:
+      // out of every backup, on no other device. The link is a credential.
+      final storage = _RecordingWrites();
+      final prefs = await SharedPreferences.getInstance();
+
+      await SessionRepositoryImpl(storage, prefs).savePendingPairing(pending);
+
+      final write = storage.writes.singleWhere((w) => w.key == 'session.pending_pairing');
+      expect(write.ios, isNull);
+      expect(write.macOs, isNull);
+      addTearDown(getIt.reset);
+      await configureDependencies(Environment.test);
+      final store = getIt<FlutterSecureStorage>();
+      expect(store.iOptions, SecureStoreOptions.ios);
+      expect(store.mOptions, SecureStoreOptions.macOs);
+    });
+  });
+
   group('updateLabel (feature 015)', () {
     test('persists the new label and leaves the identifier untouched', () async {
       await repository.saveIdentifier(identifier: 'abc', onboardingComplete: true, label: 'Alice');
@@ -370,35 +456,127 @@ void main() {
     });
   });
 
-  group('phase 040 records', () {
+  group('the local-data key (phase 048)', () {
+    test('no key is a key that is not there - an answer, not an error', () async {
+      final result = await repository.storageKey();
+      expect(result.hasData, isTrue);
+      expect(result.data, isNull);
+    });
+
+    test('a key stored reads back, and forgotten it is gone', () async {
+      await repository.saveStorageKey(key: 'a2V5');
+      expect((await repository.storageKey()).data, 'a2V5');
+      expect((await repository.forgetStorageKey()).hasData, isTrue);
+      expect((await repository.storageKey()).data, isNull);
+      // Forgetting what is not there is no failure either.
+      expect((await repository.forgetStorageKey()).hasData, isTrue);
+    });
+
+    test('a store that does not answer is an error, never "no key" - which would cost the data', () async {
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<LogRepository>(LoggerLogRepository());
+      addTearDown(getIt.reset);
+      final prefs = await SharedPreferences.getInstance();
+      final locked = SessionRepositoryImpl(const _LockedStorage(), prefs);
+
+      expect((await locked.storageKey()).hasData, isFalse);
+    });
+
+    test('a failed sign-in keeps it: the key is the device\'s, and the data it sealed stays', () async {
+      await repository.saveStorageKey(key: 'a2V5');
+      await repository.saveIdentifier(identifier: 'abc', onboardingComplete: false);
+
+      await repository.discardSignIn();
+
+      expect((await repository.storageKey()).data, 'a2V5');
+    });
+  });
+
+  group('the records of builds before phase 048', () {
+    test('on iOS and macOS the sweep deletes everything under the old options - and only under them', () async {
+      SessionRepositoryImpl.debugApplePlatform = true;
+      final storage = _RecordingStorage();
+      final prefs = await SharedPreferences.getInstance();
+
+      expect((await SessionRepositoryImpl(storage, prefs).sweepLegacyKeys()).hasData, isTrue);
+
+      final sweep = storage.deletedAll.single;
+      // The plugin's own keychain service, of the class a backup carries off
+      // the device, and the legacy file keychain on macOS.
+      expect(sweep.ios?.accountName, const IOSOptions().accountName);
+      expect(sweep.ios?.accessibility, KeychainAccessibility.unlocked);
+      expect((sweep.macOs as MacOsOptions?)?.usesDataProtectionKeychain, isFalse);
+      // Today's records live under another service, out of its reach.
+      expect(SecureStoreOptions.ios.accountName, isNot(sweep.ios?.accountName));
+      expect(SecureStoreOptions.macOs.accountName, isNot(sweep.macOs?.accountName));
+    });
+
+    test('elsewhere the options did not change, and the session outlives the sweep', () async {
+      await repository.saveIdentifier(identifier: 'abc', onboardingComplete: true);
+      await repository.saveStorageKey(key: 'a2V5');
+
+      expect((await repository.sweepLegacyKeys()).hasData, isTrue);
+
+      expect((await repository.readSession()).data?.identifier, 'abc');
+      expect((await repository.storageKey()).data, 'a2V5');
+    });
+
+    test('the store of today is for this device only', () {
+      expect(SecureStoreOptions.ios.accessibility, KeychainAccessibility.first_unlock_this_device);
+      expect(SecureStoreOptions.macOs.accessibility, KeychainAccessibility.first_unlock_this_device);
+      expect(SecureStoreOptions.macOs.usesDataProtectionKeychain, isTrue);
+      expect(SecureStoreOptions.ios.synchronizable, isFalse);
+      expect(SecureStoreOptions.macOs.synchronizable, isFalse);
+    });
+  });
+
+  group('connection records (phases 040, 045)', () {
     const storage = FlutterSecureStorage();
 
-    Future<void> writeAll() async {
-      await storage.write(key: ConnectionStorage.serverAddresses, value: '{"direct":["10.0.0.5:8443"]}');
-      await storage.write(key: ConnectionStorage.accessKeyRegistered, value: '1');
+    Future<void> writeSettings() =>
+        storage.write(key: ConnectionStorage.serverAddresses, value: '{"direct":["10.0.0.5:8443"],"use_tor":true}');
+
+    /// What builds of phases 040-044 kept: the device's onion access key and
+    /// its registration mark.
+    Future<void> writeLegacyAccessKey() async {
+      await storage.write(key: ConnectionStorage.legacyAccessKeyRegistered, value: '1');
       await storage.write(
-        key: ConnectionStorage.accessKey,
+        key: ConnectionStorage.legacyAccessKey,
         value: 'BBBB',
-        iOptions: ConnectionStorage.keyIOSOptions,
-        mOptions: ConnectionStorage.keyMacOsOptions,
+        iOptions: ConnectionStorage.legacyKeyIOSOptions,
+        mOptions: ConnectionStorage.legacyKeyMacOsOptions,
       );
     }
 
-    test('logout removes the addresses and the access key', () async {
+    test('logout removes the connection settings', () async {
       await repository.saveIdentifier(identifier: 'abc', onboardingComplete: true);
-      await writeAll();
+      await writeSettings();
       await repository.clear();
-      for (final key in [ConnectionStorage.serverAddresses, ConnectionStorage.accessKeyRegistered, ConnectionStorage.accessKey]) {
-        expect(await storage.read(key: key), isNull, reason: key);
-      }
+      expect(await storage.read(key: ConnectionStorage.serverAddresses), isNull);
     });
 
-    test('a failed sign-in keeps the device access key and drops the rest', () async {
-      await writeAll();
+    test('a failed sign-in drops the connection settings it wrote', () async {
+      await writeSettings();
       await repository.discardSignIn();
       expect(await storage.read(key: ConnectionStorage.serverAddresses), isNull);
-      expect(await storage.read(key: ConnectionStorage.accessKeyRegistered), isNull);
-      expect(await storage.read(key: ConnectionStorage.accessKey), 'BBBB');
+    });
+
+    test('the bootstrap sweep drops the access key of earlier builds and its mark (phase 045)', () async {
+      // The onion address opens for no key since phase 045, and nothing reads
+      // either record any more.
+      await writeLegacyAccessKey();
+
+      expect((await repository.sweepLegacyKeys()).hasData, isTrue);
+
+      expect(await storage.read(key: ConnectionStorage.legacyAccessKeyRegistered), isNull);
+      expect(
+        await storage.read(
+          key: ConnectionStorage.legacyAccessKey,
+          iOptions: ConnectionStorage.legacyKeyIOSOptions,
+          mOptions: ConnectionStorage.legacyKeyMacOsOptions,
+        ),
+        isNull,
+      );
     });
 
     test('the bootstrap sweep drops a one-time invite key left by earlier builds', () async {
@@ -409,8 +587,8 @@ void main() {
       await storage.write(
         key: 'session.invite_access_key',
         value: 'AAAA',
-        iOptions: ConnectionStorage.keyIOSOptions,
-        mOptions: ConnectionStorage.keyMacOsOptions,
+        iOptions: ConnectionStorage.legacyKeyIOSOptions,
+        mOptions: ConnectionStorage.legacyKeyMacOsOptions,
       );
 
       expect((await repository.sweepLegacyKeys()).hasData, isTrue);
@@ -421,12 +599,10 @@ void main() {
 
     test('a new server starts with nothing an earlier one said about itself', () async {
       // A sign-in the process did not survive leaves the old server's records
-      // behind; kept, they would send the next connection to its onion.
-      await writeAll();
+      // behind; kept, they would send the next connection to its addresses.
+      await writeSettings();
       await repository.saveServer(address: '10.0.0.9:8443', serverKey: 'oJql9HpnWYAv+VX43C0qFKXJnSO+l/hkEn/5ODRVpPA=');
       expect(await storage.read(key: ConnectionStorage.serverAddresses), isNull);
-      expect(await storage.read(key: ConnectionStorage.accessKeyRegistered), isNull);
-      expect(await storage.read(key: ConnectionStorage.accessKey), 'BBBB', reason: 'the key names this install');
       expect((await repository.serverAddress()).data, '10.0.0.9:8443');
     });
   });
@@ -446,6 +622,23 @@ class _NoSweepStorage extends FlutterSecureStorage {
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
   }) async {}
+}
+
+/// Records every `deleteAll` and deletes nothing.
+class _RecordingStorage extends FlutterSecureStorage {
+  _RecordingStorage();
+
+  final List<({AppleOptions? ios, AppleOptions? macOs})> deletedAll = <({AppleOptions? ios, AppleOptions? macOs})>[];
+
+  @override
+  Future<void> deleteAll({
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async => deletedAll.add((ios: iOptions, macOs: mOptions));
 }
 
 /// A keychain that is still locked after a reboot: every read throws.
@@ -481,5 +674,27 @@ class _UndeletableIdentityStorage extends _NoSweepStorage {
   }) async {
     if (key == 'session.identifier') return;
     await super.delete(key: key);
+  }
+}
+
+/// Records the options each write names of its own, and writes to the mock.
+class _RecordingWrites extends FlutterSecureStorage {
+  _RecordingWrites();
+
+  final List<({String key, AppleOptions? ios, AppleOptions? macOs})> writes = <({String key, AppleOptions? ios, AppleOptions? macOs})>[];
+
+  @override
+  Future<void> write({
+    required String key,
+    required String? value,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) {
+    writes.add((key: key, ios: iOptions, macOs: mOptions));
+    return super.write(key: key, value: value);
   }
 }

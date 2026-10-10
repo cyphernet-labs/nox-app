@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/entity/base/error_wire_entity.dart';
@@ -13,9 +13,12 @@ import 'package:nox_app/domain/model/file/transfer_cancellation.dart';
 /// `[prod, test]`. `Environment.dev` — the one the `stage` flavor boots —
 /// resolves [RealFileRemoteDataSource] instead. There is no `dev` flavor.
 ///
-/// It keeps bytes in a temp directory and hands out ids the way the server
-/// would, so the repository runs the SAME code on both paths — and so the test
-/// suite and the goldens never need a server to be running.
+/// It keeps the bytes it was sent in memory, as the server keeps them on its
+/// disk, and hands out ids the way the server would, so the repository runs
+/// the SAME code on both paths — and so the test suite and the goldens never
+/// need a server to be running. In memory, not in a file: what it was sent is
+/// the plain file (phase 048), and nothing plain may land on this device's
+/// disk on the way.
 @LazySingleton(as: FileRemoteDataSource, env: [Environment.prod, Environment.test])
 class MockFileRemoteDataSource implements FileRemoteDataSource {
   int _counter = 0;
@@ -29,8 +32,8 @@ class MockFileRemoteDataSource implements FileRemoteDataSource {
   /// bytes it holds (phase 043).
   final Map<String, ({int size, int received})> _uploads = <String, ({int size, int received})>{};
 
-  /// Bytes the "server" holds, by file id.
-  final Map<String, String> _stored = <String, String>{};
+  /// Bytes the "server" holds, by file id: whole files and unfinished ones.
+  final Map<String, Uint8List> _stored = <String, Uint8List>{};
 
   @override
   Future<ResponseEntity<UploadTicketWireEntity>> uploadBegin({
@@ -75,8 +78,9 @@ class MockFileRemoteDataSource implements FileRemoteDataSource {
   @override
   Future<void> putBytes({
     required String uploadPath,
-    required File file,
+    required int size,
     required int offset,
+    required Stream<List<int>> body,
     TransferProgress? onProgress,
     TransferCancellation? cancellation,
   }) async {
@@ -88,17 +92,21 @@ class MockFileRemoteDataSource implements FileRemoteDataSource {
     // instead would tell it the bytes are there when they are not.
     final granted = _passes.remove(pass);
     if (granted == null || granted.offset != offset) throw const FileTransferException(FileTransferFailure.passRejected);
-    // As the real source does: the error of a file that will not open carries
-    // its path, and goes no further than here.
-    final int total;
+    // As the real source does: a body that breaks is the source failing, and
+    // its error - which may carry a path - goes no further than here.
+    final bytes = BytesBuilder(copy: false)..add(_stored[granted.fileId]?.sublist(0, offset) ?? Uint8List(offset));
     try {
-      total = await file.length();
-    } on FileSystemException {
+      await for (final chunk in body) {
+        bytes.add(chunk);
+      }
+    } on Object {
       throw const FileTransferException(FileTransferFailure.sourceUnreadable);
     }
-    onProgress?.call(total, total);
-    _uploads[granted.fileId] = (size: total, received: total);
-    _stored[granted.fileId] = file.path;
+    // What was sent is not what was announced: 413 or 400 from the server.
+    if (bytes.length != size) throw const FileTransferException(FileTransferFailure.sizeMismatch);
+    onProgress?.call(size, size);
+    _uploads[granted.fileId] = (size: size, received: size);
+    _stored[granted.fileId] = bytes.takeBytes();
   }
 
   @override
@@ -118,21 +126,25 @@ class MockFileRemoteDataSource implements FileRemoteDataSource {
   @override
   Future<FetchedBytes> openBytes({required String downloadPath, required int offset, String? validator}) async {
     final id = downloadPath.split('/').last.replaceFirst('get_', '');
-    final source = _stored[id];
+    final stored = _stored[id];
     // The server answers a bare 404 here; returning quietly would let the
     // repository treat an empty destination as a complete download, and the
     // suite would be green over a defect.
-    if (source == null || !File(source).existsSync()) {
-      throw const FileTransferException(FileTransferFailure.passRejected);
-    }
-    final file = File(source);
-    final total = await file.length();
-    final version = 'v-${(await file.lastModified()).millisecondsSinceEpoch}';
+    if (stored == null) throw const FileTransferException(FileTransferFailure.passRejected);
+    final total = stored.length;
+    // A file id names one content for good, so its version is its id.
+    final version = 'v-$id';
     // The rest only for bytes of this very version - as the server does with
     // If-Range - and the whole file for anything else.
     final rest = offset > 0 && validator == version;
     if (rest && offset >= total) throw const FileTransferException(FileTransferFailure.staleRange);
-    return FetchedBytes(whole: !rest, total: total, validator: version, bytes: file.openRead(rest ? offset : 0), abandon: () {});
+    return FetchedBytes(
+      whole: !rest,
+      total: total,
+      validator: version,
+      bytes: Stream<List<int>>.value(Uint8List.sublistView(stored, rest ? offset : 0)),
+      abandon: () {},
+    );
   }
 
   /// Nothing here outlives the call that started it, so there is nothing to end.

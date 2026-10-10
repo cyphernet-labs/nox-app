@@ -54,6 +54,7 @@ lib/data/
     outbox_service.dart          # слив очереди исходящих — единственный отправитель (027)
     retry_ladder.dart            # одна лестница пауз и предел отказов для всего, что повторяется само (043)
     attachment_download_service_impl.dart  # скачивание вложений с продолжением и повторами (043)
+    connection/connection_path_selector.dart  # выбор пути перед каждой попыткой и причина неудачи раунда (040, 045), см. 14 §6
   remote/
     api_client.dart              # тонкая Dio-обёртка байтов вложений, env: [dev], + initBase(address:) (см. §7а)
     interceptor/auth_interceptor.dart   # Bearer-заголовок из шва auth_id_token; ошибки, 401 включительно, только пробрасывает (019/S5)
@@ -68,6 +69,7 @@ lib/data/
     socket/nox_socket_client.dart        # клиент конверта: корреляция, фазы, реконнект, keepalive (026)
     socket/socket_channel_factory.dart   # узкий порт сокета + IOWebSocketChannel(pingInterval: 25s)
     socket/server_frame.dart
+    socket/server_addresses_parser.dart  # объект addresses приветствия и server.addresses: {direct, public?, onion?} (040, 045)
     api/item/get_items_api.dart  # mock-генератор верификационного среза (FR-013)
     # --- TARGET-форма request-builder-обвязки REST (ещё не построена) ---
     # api/base/base_api_repository.dart
@@ -76,13 +78,15 @@ lib/data/
     # request_builder/item/get_items_api_request_builder.dart
   repository/
     app_config/app_config_repository_impl.dart
+    connection/server_addresses_repository_impl.dart  # настройки связи в защищённом хранилище (§6в)
+    connection/connection_storage.dart  # имена записей настроек связи и устаревших ключей; удаление по имени (§6в)
     item/item_repository_impl.dart
     log_repository_impl.dart
 ```
 
 > **SKELETON vs полный блюпринт.** Из перечисленного выше `remote/request_builder/` и `BaseApiRepository` — единственная **TARGET-форма**: в коде их нет. Всё остальное построено: тонкий `ApiClient` с `initBase()` + `AuthInterceptor` (019/S5), `Mock*RemoteDataSource` за интерфейсом (016) и — с фазы 026 — `Real*RemoteDataSource` (`remote/datasource/real/`) поверх сокет-клиента конверта (`remote/socket/`), зарегистрированные в окружении `dev` (флейвор `stage`), тогда как чат/сообщенческие моки сужены до `[prod, test]`; network-only `ItemRepositoryImpl` верификационного среза, а кэш-first DAO-обвязка реализована для продуктовых фич (`local/chat/chat_dao.dart`, `message_dao.dart`, `local/chat/outbox_dao.dart`, `local/sync/sync_dao.dart`, фичи 013–027). Пометки SKELETON/TARGET по тексту показывают, что уже построено, а что — канон-к-построению; **`Item`-срез заморожен** как верификационный harness и не является продуктовым каноном.
 
-> `path_provider` — обязательная зависимость `pubspec.yaml`: файловый бэкенд Sembast (`databaseFactoryIo`) резолвит путь к базе через `getApplicationDocumentsDirectory()`.
+> `path_provider` — обязательная зависимость `pubspec.yaml`: файловый бэкенд Sembast (`databaseFactoryIo`) резолвит путь к базе через папку данных приложения — `AppDataRoot`, то есть `getApplicationSupportDirectory()` (на Windows — `%LOCALAPPDATA%\NOX`, §6г). «Документы» не используются: их забирают iCloud и синхронизации.
 
 ---
 
@@ -428,7 +432,7 @@ mixin BaseRepositoryHelper {
 
 ## 6. Sembast DAO (реактивный)
 
-> **Локальная БД — Sembast (OQ-1 закрыт 2026-06-08).** Документная NoSQL, **schema-less** (хранит JSON-maps → миграций как класса нет: новые/отсутствующие поля гасятся дефолтами в маппере), чистый Dart без codegen, реактивные стримы (`onSnapshots`). Набор: `sembast` + `shared_preferences` (флаги/`themeMode`) + `flutter_secure_storage` (секреты сессии: технический идентификатор `session.identifier`, семя ключа устройства `session.device_secret`, ключ сервера из ссылки спаривания `session.server_key`; ключ `auth_id_token` заведён под `Authorization`-токен, но **писателя нет** — соединение аутентифицирует канал, токенов контракт v0 не несёт). **Единый подход на все платформы, включая web:** mobile/desktop — `sembast_io` (`databaseFactoryIo`), Test — `databaseFactoryMemory`, **web (будущий клиент)** — `sembast_web` (`databaseFactoryWeb`, IndexedDB/WASM); код DAO/репозиториев не меняется — за абстракцией `AppDatabase` подменяется только фабрика. Отвергнуты: ObjectBox/Realm (нет web), Drift/PowerSync (реляционные), Isar (web только через community-форк + типизированная схема требует миграций). Контракты репозиториев (`03-domain-layer.md`) и потребители от БД не зависят.
+> **Локальная БД — Sembast (OQ-1 закрыт 2026-06-08).** Документная NoSQL, **schema-less** (хранит JSON-maps → миграций как класса нет: новые/отсутствующие поля гасятся дефолтами в маппере), чистый Dart без codegen, реактивные стримы (`onSnapshots`). Набор: `sembast` + `shared_preferences` (флаги/`themeMode`) + `flutter_secure_storage` с опциями «только это устройство» (`09-build-and-secrets-infra.md`; секреты сессии: технический идентификатор `session.identifier`, семя ключа устройства `session.device_secret`, ключ сервера из ссылки спаривания `session.server_key`, настройки связи `session.server_addresses` (§6в), спаривание, которое ждёт одобрения, `session.pending_pairing` (046), ключ локальной базы `device.storage_key` (§6г); ключ `auth_id_token` заведён под `Authorization`-токен, но **писателя нет** — соединение аутентифицирует канал, токенов контракт v0 не несёт). **Единый подход на все платформы, включая web:** mobile/desktop — `sembast_io` (`databaseFactoryIo`), Test — `databaseFactoryMemory`, **web (будущий клиент)** — `sembast_web` (`databaseFactoryWeb`, IndexedDB/WASM); код DAO/репозиториев не меняется — за абстракцией `AppDatabase` подменяется только фабрика. Отвергнуты: ObjectBox/Realm (нет web), Drift/PowerSync (реляционные), Isar (web только через community-форк + типизированная схема требует миграций). Контракты репозиториев (`03-domain-layer.md`) и потребители от БД не зависят.
 
 DAO используют `StoreRef<String, Map<String, dynamic>>`, отдают реактивные потоки через `onSnapshots()` / `onSnapshot()` и поддерживают атомарные записи через `db.transaction()`. **Типизированного `DaoException` нет** — при сбое хранилища исключения самого Sembast **пробрасываются наружу** (DAO их не оборачивает в свой тип), а ловит их catch-all ветка `execute()` репозитория → `RepositoryException.unknown`. Cache-miss / not-found — это **не** забота DAO: DAO просто отдаёт `null` / пустой список, а проверку отсутствия и `RepositoryException.notFound` решает callback репозитория (полная форма, §8). Битые записи **пропускаются** при декодировании (`_tryDecode` → `null`), а не убивают поток.
 
@@ -564,7 +568,7 @@ Future<void> mutate({
 
 > В коллекционном варианте `notFound` всё равно решает **callback репозитория**: для точного кода проверь отсутствие записи в callback'е и верни `RepositoryResult.error(exception: RepositoryException.notFound)` явно, а не полагайся на сырое исключение из `firstWhere`.
 
-> **`AppDatabase` (env-scoped).** Сама база — `abstract AppDatabase` (интерфейс: `Future<Database> get db;` + `Future<void> clearEntireDatabase();`) с тремя реализациями, привязанными к `Environment` через `@LazySingleton(as: AppDatabase, env: [...])`: `AppDatabaseDev`/`AppDatabaseProd` на `databaseFactoryIo` (файл под app-documents directory; mobile/desktop, web — будущий `databaseFactoryWeb`), `AppDatabaseTest` на `databaseFactoryMemory` (эфемерная in-memory). Сброс БД — единый `clearEntireDatabase()` (удаляет файл/in-memory и обнуляет хэндл); per-DAO `cleanData()` чистит свой store. Полный шаблон провайдеров и почему env-список «load-bearing» — в `02-dependency-injection.md`. Здесь DAO просто инжектирует `AppDatabase` и не знает, какой env активен.
+> **`AppDatabase` (env-scoped).** Сама база — `abstract AppDatabase` (интерфейс: `Future<Database> get db;` + `Future<void> close();` + `Future<void> clearEntireDatabase();`) с тремя реализациями, привязанными к `Environment` через `@LazySingleton(as: AppDatabase, env: [...])`: `AppDatabaseDev`/`AppDatabaseProd` на `databaseFactoryIo` с кодеком `VaultCodec` (`app_dev.db`/`app.db` в папке данных приложения; открывается только после `DeviceVault.ensureOpen()`, §6г; web — будущий `databaseFactoryWeb`), `AppDatabaseTest` на `databaseFactoryMemory` (эфемерная in-memory, без кодека). Открытие разделяется всеми, кто спросил, пока оно идёт, и забывается при ошибке — хранилище ключа, не ответившее сейчас, может ответить при следующем вопросе. Сброс БД — единый `clearEntireDatabase()` (закрывает и удаляет: на диске — все базы под ключом локальной базы, обоих окружений, с файлами сжатия Sembast, свою последней, §6г; in-memory — свою); per-DAO `cleanData()` чистит свой store. Полный шаблон провайдеров и почему env-список «load-bearing» — в `02-dependency-injection.md`. Здесь DAO просто инжектирует `AppDatabase` и не знает, какой env активен.
 
 ---
 
@@ -588,7 +592,7 @@ Future<void> mutate({
 
 Экран очередь **проецирует, а не хранит**: `ChatThreadBloc.outgoing` пересчитывается из `watchQueue(chatId:)`. Перечитывать сообщения из кэша нужно только на тике, где **какая-то запись исчезла**. Обычно это значит, что сервер её принял, и подмена «пузырь очереди → персистированная строка» обязана лечь одним `emit`, иначе пузырь на кадр пропадёт. Отмена вручную попадает под то же условие и вызывает лишнее чтение — сознательный размен: различить два повода исчезновения по самой очереди нельзя, а лишнее чтение кэша дешевле мигающего пузыря.
 
-**Запись очереди называет свою копию файла** (фаза 043): `enqueue` копирует файл вложения в `Application Support/nox_outbox/<client_message_id>/<имя>` (`local/chat/outbox_copies.dart`) и пишет запись с путём копии — выбранный файл может перестать читаться раньше, чем байты дойдут (песочница macOS после перезапуска, временный каталог iOS). Перед `message.send` `keepCopy` переносит копию туда, куда легло бы скачивание (`FileRepository.cachePathFor`), и запись называет уже это место; `remove`/`removeForChat`/`clean` уносят копии. Двигается и удаляется только папка, названная ключом записи, — путь из записи старой сборки (файл человека) не трогается; путь копии пересчитывается на каждом запуске, потому что iOS переносит контейнер при обновлении.
+**Запись очереди называет свою копию файла** (фаза 043): `enqueue` копирует файл вложения — запечатанным, §6г — в `<папка данных>/nox_outbox/<client_message_id>/<имя>` (`local/chat/outbox_copies.dart`) и пишет запись с путём копии — выбранный файл может перестать читаться раньше, чем байты дойдут (песочница macOS после перезапуска, временный каталог iOS). Перед `message.send` `keepCopy` переносит копию туда, куда легло бы скачивание (`FileRepository.cachePathFor`), и запись называет уже это место; `remove`/`removeForChat`/`clean` уносят копии. Двигается и удаляется только папка, названная ключом записи, — путь из записи старой сборки (файл человека) не трогается; путь копии пересчитывается на каждом запуске, потому что iOS переносит контейнер при обновлении.
 
 **Запись очереди помнит и незаконченную загрузку** (фаза 043): ручка `UnfinishedUpload {fileId, sourceSize, sourceModifiedAt}` — три необязательных поля записи (`uploadFileId`, `uploadSourceSize`, `uploadSourceModifiedAt`; старые записи читаются как есть). Ручку пишет `OutboxRepository.noteUpload`, как только сервер назвал загрузку, — **до первого байта**: перезапуск посреди передачи найдёт её и продолжит с того, что сервер хранит. `attachFile` (байты подтверждены) ручку забывает; окончательный отказ загрузки — тоже, чтобы ручной повтор отправил файл таким, какой он сейчас; исчерпанная лестница — нет, и ручной повтор продолжает с последнего полученного сервером байта. Отказы сервера на загрузке тратят тот же лимит из десяти, что и `message.send` (`RetryLadder.refusalLimit`); лестница пауз одна на всё приложение — `data/sync/retry_ladder.dart`.
 
@@ -615,6 +619,88 @@ Future<void> mutate({
 **У каждого ждущего чата своя пауза**, по той же лестнице, что у сообщений (`min(30s, 1s × 2^(attempts − 1))` ±20%), и проход из-за неё **не останавливается**: остановка всей очереди заставила бы сообщения других чатов ждать чужой паузы. Попытки — на строке (лестница переживает перезапуск), сама пауза — в памяти: после перезапуска первая попытка идёт сразу. Новый текущий канал снимает все паузы. Отказов **сервера** — не больше десяти, затем `failed`; обрыв канала отказом не считается, как и у сообщений. Пауза чата, который перестал ждать (сервер прислал его событие, его переименовали), снимается, чтобы не будить очередь впустую.
 
 Событие сервера `chat.created` / `chat.updated` с этим id снимает состояние, где бы оно ни пришло первым: `SyncService._applyChat` пишет строку из провода, а в ней состояния создания нет. Окно сообщений и файлы такого чата у сервера не запрашиваются (`MessageRepositoryImpl` проверяет строку чата перед `_fetchWindow`) — ответ мог бы быть только `not_found`. Выход и смена мира стирают ждущие чаты вместе с остальными строками. В логах — только id и коды, имена чатов — никогда.
+
+### 6в. Настройки связи — одна запись в защищённом хранилище (040, 045)
+
+Где сервер можно найти и как человек хочет до него ходить — не Sembast, а одна JSON-запись `session.server_addresses` в `flutter_secure_storage`: onion-адрес позволяет спросить сеть Tor, в сети ли сервер. Доменная модель — `ServerAddresses` (`lib/domain/model/connection/server_addresses.dart`), репозиторий — `ServerAddressesRepository` / `ServerAddressesRepositoryImpl` (`repository/connection/`, одна реализация во всех трёх окружениях).
+
+| Поле модели | Ключ JSON | Что |
+|---|---|---|
+| `direct` | `direct` | адреса, которые сервер нашёл в своих локальных сетях, в его порядке; пробуются, не показываются |
+| `public` | `public` | публичный `host:port`, если он задан на сервере |
+| `onion` | `onion` | `<56>.onion:443`, если сервер его назвал |
+| `manualAddress` | `manual_address` | адрес, вписанный человеком; нет — поле не правили |
+| `manualOnion` | `manual_onion` | onion-адрес, вписанный человеком; пустая строка — поле очищено, onion-адреса нет |
+| `useTor` | `use_tor` | `Use Tor`; по умолчанию `false`, пишется только `true` |
+| `lastGood` | `last_good` | последний прямой адрес, где ответил этот сервер |
+| `viaTorLast` | `via_tor` | последнее приветствие пришло через Tor; пишется только `true` |
+
+Запись, которую эта сборка не может прочесть, читается как пустая: следующее приветствие пишет годную.
+
+**Два источника и одно правило.** Слово сервера — `direct`, `public`, `onion`; правка человека — `manualAddress`, `manualOnion`. Сервер — источник истины о своих адресах: `saveFromServer({direct, public, onion})` заменяет правку того поля, значение которого сервер назвал, а поле, которого сервер не назвал, правку оставляет и прежнее значение сервера стирает. `lastGood` и `useTor` он не трогает. Остальные записи:
+
+- `saveFromLink({direct, onion, manualAddress, manualOnion, useTor})` — вход по ссылке: запись заводится заново (это новый сервер), адреса ссылки — как слово сервера, изменённые на экране подключения поля — как правка, `useTor` — как отмечено;
+- `saveManual({manualAddress, manualOnion})` — раздел «Связь»: `null` — поле показывает слово сервера, пустой `manualOnion` — onion-адреса нет;
+- `setUseTor`, `recordLastGood` (заодно снимает `viaTorLast`), `recordGreetedViaTor`;
+- `watch()` — сохранённое при подписке, затем каждая записанная перемена: подписка ставится до первого чтения, так что запись между ними не теряется (в худшем случае одно значение приходит дважды);
+- `clear()` — после всех записей, уже стоящих в очереди: стирание при выходе не обгоняет приветствие, записанное за миг до остановки канала.
+
+Записи — чтение-изменение-запись, поэтому идут **строго по одной** через общую очередь (`_writes`): приветствие и удачное прямое соединение иначе потеряли бы одну из двух; запись, которая ничего не меняет, не пишется. Действующие значения считает модель: поле «адрес сервера» — `fieldAddress(linkAddress)` (`manualAddress ?? public ?? linkAddress`, где `linkAddress` — `session.server_address`, первый прямой адрес ссылки), onion-адрес — `effectiveOnion` (`manualOnion ?? onion`), прямые кандидаты — `candidates(linkAddress)` (последний работавший, правка, публичный, найденные сервером, адрес ссылки — без повторов). Кто и когда пишет — [14-networking-and-auth.md](14-networking-and-auth.md) §6.4.
+
+**Имена записей — в одном месте**, `ConnectionStorage` (`repository/connection/connection_storage.dart`): удаление идёт по имени и с теми же параметрами, с какими запись была сделана, — иначе запись, сделанная с другими параметрами, переживает удаление молча. `ConnectionStorage.delete` стирает `session.server_addresses` (выход, неудачный вход, новый сервер — `SessionRepository.clear` / `discardSignIn` / `saveServer`). `ConnectionStorage.sweepLegacy` стирает то, что держали сборки фаз 040–044 и больше никто не читает, — ключ доступа к onion-сервису `session.access_key` (с параметрами `unlocked_this_device` на iOS и старой связки ключей на macOS) и отметку `session.access_key_registered`; его зовёт `SessionRepository.sweepLegacyKeys` при каждом запуске (`main.dart`).
+
+### 6г. Данные на диске устройства (048)
+
+Всё, что приложение держит на диске, лежит в **папке данных приложения** и **запечатано ключом локальной базы**; ничего из этого не попадает в системные бэкапы (`09-build-and-secrets-infra.md`, «Данные не уходят в бэкапы»). Шифр — в модуле канала (`package:nox_tor/vault.dart`, `NoxVault`, контракт `specs/048-device-data-at-rest/contracts/ffi-vault.md`): ChaCha20-Poly1305 и HKDF-SHA256 на `ring`, вызовы синхронные.
+
+**Папка данных** — `AppDataRoot` (`local/app_data_root.dart`): `getApplicationSupportDirectory()`; на Windows `main` первым делом ставит `LocalAppDataPathProvider`, и `path_provider` отвечает `%LOCALAPPDATA%\NOX` всем, кто спрашивает эту папку, включая файл сейфа. Раскладка:
+
+| Путь | Что | Запечатано |
+|---|---|---|
+| `app.db` / `app_dev.db` (+ `~<имя>` — файл сжатия Sembast) | Sembast с `VaultCodec` | каждая строка |
+| `nox_attachments/<file_id>.<ext>` | скачанное вложение; после отправки — и своё | куски |
+| `nox_attachments/<file_id>.<ext>.part` + `.part.tag` | незаконченное скачивание и версия файла (`Last-Modified`) | куски; версия — открыто |
+| `nox_outbox/<client_message_id>/<имя>` | копия исходящего | куски |
+| `nox_tor_state/` | состояние Tor-клиента | своё |
+| `<temp>/nox_open/<своя папка>/<имя>` | временные открытые копии | нет; живут по правилам ниже |
+
+**Ключ локальной базы** — 32 случайных байта в сейфе (`device.storage_key`, base64). `DeviceVault` (`local/device_vault.dart`) читает его и отдаёт модулю (`NoxVault.setKey`); пара `ensureOpen()` — для всего, что запечатывает или открывает (база, файлы, копии): открывает, а без ключа и без базы заводит новый. Решения при запуске принимает `AuthRepository.openLocalData()` — `main` вызывает его до всего, что читает базу, а `AppStateRepository.holdUntil` держит первое решение навигации, пока старт не кончится (на экране заставка):
+
+| Сейф | База на диске | Решение |
+|---|---|---|
+| ключ есть | открывается под ним | открыть |
+| ключ есть | не открывается (другой ключ — `DatabaseException.invalidCodec`; нечитаемый файл) | стереть данные, принудительный выход, спаривание |
+| ключа нет | нет | новый ключ; файлы в папке, которые ничем не открыть, удалить |
+| ключа нет | есть | стереть данные, принудительный выход, спаривание |
+| ошибка чтения | — | ничего не стирать; спросить снова через 2, 4, 8, 16, 30, 30… с |
+
+Стирание здесь — пофайловое (ни база, ни файлы без ключа не открываются), затем обычный `logout(forced: true)`. Принудительный выход уносит сессию целиком, и спаривание, ждавшее одобрения (`session.pending_pairing`, фаза 046), — вместе с ней: ключ устройства, с которым шло ожидание, стёрт, а экран входа спрашивает об ожидании только после старта, так что продолжать нечего и устройство спаривается заново. После спаривания переписка возвращается с сервера.
+
+«База» в таблице — любая из баз обоих окружений или файл сжатия Sembast рядом с ней (`AppDataRoot.databasePaths`): `stage` и `prod` для платформы одно приложение (один id, одна папка данных, один сейф), поэтому ключ и сессия у них общие. Стирание — при выходе и при отставке данных — удаляет все эти файлы (`clearEntireDatabase()`), свою базу последней: пока она лежит, чтение, попавшее в середину стирания, находит базу без ключа и ничего не открывает. Оставленная база другого окружения читалась бы как данные без ключа при каждом запуске обоих окружений, и ни одна база на устройстве больше не открылась бы. Прочитать при этом нечего: без ключа ни одна из них не открывается.
+
+**База** — `VaultCodec` (`local/vault_codec.dart`, подпись `nox-vault-1`): каждая строка файла — `base64(nonce ‖ шифротекст ‖ тег)` под ключом записей, который модуль выводит из ключа локальной базы (`HKDF-SHA256(ключ, "nox/devrec/v1")`). Подпись лежит в первой строке запечатанной, поэтому под чужим ключом база не открывается вовсе; изменённая строка Sembast отбрасывает и как другую не читает. Sembast держит записи в памяти расшифрованными: запросы списка и треда шифр не трогают, платится только открытие базы на старте и каждая запись.
+
+**Файлы** — формат `SealedFile` (`local/sealed_file.dart`) — тот же, что у файлов сервера (047), под ключом устройства:
+
+```text
+заголовок (32):  "NOXF" (4) ‖ версия 1 (1) ‖ 0 (3) ‖ размер куска, u32 BE: 65536 (4) ‖ id файла (16) ‖ 0 (4)
+кусок i:         открытые байты [i·64 КиБ, min((i+1)·64 КиБ, размер)), запечатанные: шифротекст ‖ тег (16)
+```
+
+Ключ куска — `HKDF-SHA256(ключ локальной базы, "nox/devfile/v1|" + hex(id файла))`, nonce — номер куска, AAD — номер ‖ признак последнего. Id лежит в заголовке, поэтому файл открывается после любого переноса и переименования (копия исходящего, перенесённая в `nox_attachments`, и `.part`, ставший файлом); кусок открывается только в своём файле, на своём месте и как то, чем был запечатан, так что файл, обрезанный по границе куска, не читается как более короткий, а пустой файл — один пустой последний кусок. `SealedWriter` запечатывает кусок, когда он целый, последний — когда целый файл; хвост ждёт в памяти. Новые байты под тем же id и номером не запечатываются никогда: начать файл заново — значит завести новый id.
+
+- **Скачивание** (`FileRepositoryImpl.download`) пишет `.part` кусками по мере прихода и продолжается (043) с последнего целого куска, который открывается (`SealedFile.resumable` обрезает недописанный крахом кусок и проверяет последний): `Range` от его конца и `If-Range` с версией из `.part.tag`; ответ целиком (`200`) — новая часть под новым id. Часть, которая не является запечатанной частью (открытая часть старой сборки), начинается заново.
+- **Копия исходящего** запечатывается при постановке в очередь (`OutboxCopies.keep`); загрузка читает открытые байты через расшифровку: `FileRemoteDataSource.putBytes` получает поток и открытую длину, а не путь, так что продолжение с `received` посреди куска отправляет ровно остаток. Поток расшифровки — `Stream<Uint8List>`: источник принимает любой подтип `Stream<List<int>>` и оборачивает тело через `StreamTransformer.bind`, а не `body.transform(...)` — `transform` сверяет аргумент с типом элементов потока во время выполнения и бросает `TypeError` до первого байта. Обрезанная копия или кусок, который не открывается, — `notFound`, без повтора.
+- **Файл человека** — выбранный в композере, или запись очереди старой сборки — читается как есть: формат узнаётся по заголовку (`SealedReader.open` → `null` для открытого файла).
+
+**Чтение для экранов** — доменный `LocalFilesService` (`data/service/file/local_files_service_impl.dart`):
+
+- `read` — открытые байты в память: картинки рисует `LocalFileImage` (превью в треде и черновике, просмотрщик, 5.3), открытой копии на диске нет;
+- `openCopy` / `releaseCopy` — открытая копия во временной папке (`TempCopies`, `<temp>/nox_open/<своя папка>/<имя>`; папка создаётся как временная, на Linux и macOS войти в неё может только этот пользователь). Видео 5.3 играет из такой копии; копию делает `FileViewBloc`, когда байты на месте, и стирает при закрытии экрана с плеером. Копию, которую не сделать (нет места), экран называет фразой `Couldn't open this file. Free up some space and try again.` на месте плеера. Копия для «Открыть в…» живёт до следующего запуска или выхода;
+- `saveTo` — «Сохранить»: открытый файл в выбранное человеком место;
+- `clearCopies` — при каждом запуске (`main`) и при выходе: оставшиеся копии.
+
+**Выход** (`AuthRepositoryImpl.logout`) — добровольный сначала отзывает ключ устройства по поприветствованному соединению (фаза 046, [14-networking-and-auth.md](14-networking-and-auth.md) §6.4а) — стирает сессию и хранилища (§6), затем закрывает базу под ключом, забывает ключ (модуль и сейф), удаляет файлы баз и временные копии. В этом порядке крах оставляет либо базу без ключа — её снимет следующий старт, — либо ничего. Второй выход, начатый во время идущего (эхо `device.revoked` на собственный отзыв), присоединяется к нему: стирание и забывание ключа идут один раз. Следующий вход заведёт новый ключ.
 
 ---
 
@@ -1192,7 +1278,10 @@ Future<RepositoryResult<(List<ItemModel>, PageMetadata)>> getItems({required Get
 | `BaseMapper` | `mapper/base_mapper.dart` | базовый класс (без DI) |
 | `ItemMapper` | `mapper/item/item_mapper.dart` | `@lazySingleton` |
 | `BaseRepositoryHelper` | `exception/base_repository_helper.dart` | mixin |
-| `AppDatabaseDev/Prod/Test` | `local/app_database.dart` | `@LazySingleton(as: AppDatabase, env: [...])` (см. `02-dependency-injection.md`) |
+| `AppDatabaseDev/Prod/Test` | `local/app_database.dart` | `@LazySingleton(as: AppDatabase, env: [...])` (см. `02-dependency-injection.md`); Dev/Prod получают `DeviceVault` |
+| `DeviceVault` | `local/device_vault.dart` | `@lazySingleton` во всех окружениях (§6г) |
+| `TempCopies` | `service/file/temp_copies.dart` | `@lazySingleton` |
+| `LocalFilesServiceImpl` | `service/file/local_files_service_impl.dart` | `@LazySingleton(as: LocalFilesService, env: [dev, prod, test])` |
 | `ItemDao` | `local/item/item_dao.dart` | `@lazySingleton` |
 | `ApiClient` | `remote/api_client.dart` | `@LazySingleton(env: [Environment.dev])` (Dio + `initBase(address:)`, инжектирует `AppConfigRepository` и `ChannelHttpClient`) |
 | `ChannelHttpClient` | `remote/channel/channel_http_client.dart` | `@LazySingleton(env: [Environment.dev])` (инжектирует `NoxChannelApi` — провайдер `RegisterModule`, см. `02-dependency-injection.md`) |
@@ -1201,6 +1290,8 @@ Future<RepositoryResult<(List<ItemModel>, PageMetadata)>> getItems({required Get
 | `ItemRemoteDataSource` / `MockItemRemoteDataSource` | `remote/datasource/item_remote_data_source.dart`, `datasource/mock/...` | `@LazySingleton(as: ItemRemoteDataSource, env: [dev, prod, test])` |
 | `GetItemsApi` (mock-генератор, заморожен) | `remote/api/item/get_items_api.dart` | `@lazySingleton` |
 | `ItemRepositoryImpl` | `repository/item/item_repository_impl.dart` | `@LazySingleton(as: ItemRepository, env: [dev, prod, test])` |
+| `ServerAddressesRepositoryImpl` | `repository/connection/server_addresses_repository_impl.dart` | `@LazySingleton(as: ServerAddressesRepository, env: [dev, prod, test])` (инжектирует `FlutterSecureStorage`) |
+| `ConnectionStorage` | `repository/connection/connection_storage.dart` | без DI — статические имена записей и удаление |
 | `BaseApiRepository` (TARGET) | `remote/api/base/base_api_repository.dart` | абстрактный базовый (ещё нет в коде) |
 | `RequestBuilder` / `RequestBuilderHelper` (TARGET) | `remote/request_builder/base/...` | базовый / mixin (ещё нет в коде) |
 | `GetItemsApiRequestBuilder` (TARGET) | `remote/request_builder/item/get_items_api_request_builder.dart` | `@lazySingleton` (ещё нет в коде) |
@@ -1221,11 +1312,13 @@ fvm dart run build_runner build --delete-conflicting-outputs
 - [ ] `ItemMapper` расширяет `BaseMapper` (4-арг, `dynamic, dynamic` для простого случая), коэрция enum через `name`/`firstWhere(orElse:)`, дата — защитно в UTC (`DateTime.tryParse(...)?.toUtc() ?? DateTime.now().toUtc()` / `.toUtc().toIso8601String()`); импортирует `item_status.dart`; дочерние мапперы инжектируются конструктором.
 - [ ] **Нет** транспортной иерархии `DaoException` / `ApiException` / `BaseDomainExceptionHelper`; есть **маркер** `BaseRepositoryException`, который реализует `RepositoryException` (enum `{unknown, internal, authentication, connection, unauthenticated, notFound, invalidRequest, nameTaken, payloadTooLarge, attachmentGone, rateLimited, unsupportedSchema}` + статический `fromWireCode(String)`, незнакомый код → `internal`) и любые feature-enum'ы; `RepositoryResult.error` всегда несёт подтип маркера. Единственный коэрсный механизм — `mixin BaseRepositoryHelper` с `execute<TD>(Function executionFunction)`; импл подмешивает **только** `with BaseRepositoryHelper` (без `on`-ограничения).
 - [ ] `BaseRepositoryHelper.execute<T>()` имеет **ровно три** `catch`-ветки — `on BaseRepositoryException` (пробрасывается как есть, не понижается до `unknown`), `on DioException` → `_mapDioException` (таймауты/`connectionError` → `connection`; 401 → `unauthenticated`; 403 → `authentication`; 404 → `notFound`; иначе `internal`), общий `catch` → `RepositoryException.unknown`; **обязательно** логирует через `LogRepository` в каждой ветке (никакого `print`) перед возвратом `RepositoryResult.error(...)`. Тот же mixin даёт `unwrapEnvelope<TD>(ResponseEntity<TD>, String what)`: payload, иначе `fromWireCode(error.code)`, иначе `StateError`. Callback `executionFunction` сам возвращает уже-обёрнутый `RepositoryResult`; конкретный доменный код (`notFound`/`unknown` при пустом payload) — внутри callback'а, не в catch.
-- [ ] `AppDatabase` env-scoped (интерфейс `db` + `clearEntireDatabase()`; `Dev`/`Prod` = `databaseFactoryIo`, `Test` = `databaseFactoryMemory`); `path_provider` — зависимость пакета; env-список в репозитории полный.
+- [ ] `AppDatabase` env-scoped (интерфейс `db` + `close()` + `clearEntireDatabase()`; `Dev`/`Prod` = `databaseFactoryIo` с `VaultCodec` в папке данных приложения, `Test` = `databaseFactoryMemory`); `path_provider` — зависимость пакета; env-список в репозитории полный.
+- [ ] **Данные на диске (048, §6г)**: всё на диске — в папке данных приложения (`AppDataRoot`) и запечатано ключом локальной базы: база — `VaultCodec`, файлы — `SealedFile` (запись кусками, докачка с последнего целого куска, загрузка через поток расшифровки); картинки — из памяти (`LocalFileImage`), видео и «Открыть в…» — через временные копии `TempCopies`, «Сохранить» — открытый файл; ключа нет при базе на диске — стирание и спаривание (сессия уходит целиком, ожидание одобрения 046 — с ней), ошибка сейфа — повтор без стирания; выход — после отзыва своего ключа (046) — стирает базу, файлы, копии и ключ, один раз и тогда, когда к нему присоединилось эхо отзыва.
 - [ ] `ItemDao` (PRIMARY) — **per-ID records store** `stringMapStoreFactory.store('items')`, ключ = `item.id`: `watch()` как `Stream<List<ItemEntity>> async*`, `getById(String)`, позиционные `saveData(List)`/`upsert(ItemEntity)`/`removeById(String)`/`cleanData()`, `_decode`/`_tryDecode` пропускают битую запись (`null`). DAO **не** оборачивает сбои в `StateError` — исключения Sembast летят в catch-all `execute()`. Cache-miss/not-found решает callback репозитория. Single-record collection store — альтернативный вариант.
 - [ ] **`ItemRepositoryImpl` (замороженный верификационный срез)** реализует **узкий** контракт `ItemRepository` (`getItems({GetItemsConfig config}) -> (List, PageMetadata)` + `clean() -> Future<void>`): инжектирует только маппер + `ItemRemoteDataSource` (интерфейс, seam 016), без DAO/subject/dispose; пустой payload → `RepositoryException.unknown` в callback'е; `PageMetadata` сворачивается из offset-обёртки среза (`hasMore = (page * pageSize) < total`, `nextPage = hasMore ? page + 1 : null`) — **в самой `PageMetadata` полей `total`/`pageSize` нет**, только `{hasMore, nextPage?}`; `clean()` — no-op. **Полный** env-список `@LazySingleton`. Полная (TARGET) форма добавляет `watchItem`/`fetchItem`/CRUD + `ItemDao` + ОДИН `BehaviorSubject` (подписка раз в конструкторе) + `@disposeMethod`, читает через `hasData`/`match` (не `result.data!`).
 - [ ] REST **построенное**: `ApiClient` (`remote/api_client.dart`, `@LazySingleton(env: [Environment.dev])`) с `initBase({required String address})` — base URL из **спаренного** адреса (`https`, не `http`), `IOHttpClientAdapter` на клиент передач `ChannelHttpClient.transferClient` (отдельный от клиента сокета; каждое его соединение — канал нативного модуля с проверкой Eidolon) и однократная установка `AuthInterceptor`, который асинхронно читает `AppConfigRepository.getUserAuthIdToken()` и любую ошибку, `401` включительно, только пробрасывает — выхода по ответу `/files` нет. Зовёт его только `LiveSessionStarter`; `AppConfig.apiUrl` источником живого адреса не является. Транспорт контракта v0 — WS-конверт (фаза 026); REST остаётся за blob upload/download. **TARGET (не построено)**: `BaseApiRepository` + `RequestBuilder`/`RequestBuilderHelper`; API-класс оборачивает `response.data` в `ResponseEntity<T>.fromJson`; на non-2xx Dio бросает `DioException`, не перехватываемый на уровне API → `execute()` → `_mapDioException` (никакого `ApiException`). В замороженном `Item`-срезе wire-параметр поиска — `search` (не `q`); `page` 1-based (`defaultPage = 1`).
 - [ ] **Кэш-first — форма по умолчанию; carve-out «пагинированный список = network-only» ретайрен.** Список чатов и история сообщений — кэш-first (013): один seed в Sembast, дальше срезы/поиск/`PageMetadata` из DAO. Network-only (без DAO, без subject) допустим только там, где кэшировать нечего: замороженный `Item`-срез и one-shot команды без локальной проекции — и это обосновывается, а не предполагается. Форма возврата на обеих ветках одна — `RepositoryResult<(List<Model>, PageMetadata)>`, без отдельного `getItemsPage`/`watchItems` (см. `07-pagination.md`). Контракт пагинации зафиксирован v0: `{chats, has_more}` по `page`/`page_size`, `{messages, has_more}` по `before_seq`/`limit`.
 - [ ] **Очередь исходящих построена (027)**: store `outbox` (`local/chat/outbox_dao.dart`), где **ключ записи = `client_message_id`** контракта — повторная постановка физически не даёт дубля; `ordinal` назначается `max + 1` **внутри одной транзакции** с записью (сортировка по времени не годится); фильтрация и сортировка — в Dart по декодированным сущностям, не `Finder`'ом по camelCase-ключу (`field_rename: snake`); в `OutboxStatus` ровно `{pending, error}` — состояния `sending` на диске **нет**. `data/sync/outbox_service.dart` — **единственный отправитель**: проходы сериализованы цепочкой `Future _queue`, идут по `ordinal` по одной записи, запись удаляется **только после** персиста сообщения репозиторием; отказ классифицируется — `connection`/`rateLimited`/`internal`/`unknown`/нераспознанный повторяемы (пауза `min(30s, 1s × 2^(attempts − 1))` ±20%, где `attempts` берётся у записи), прочие окончательны (`error`, проход идёт дальше). Экран очередь **проецирует**, а не хранит (`ChatThreadBloc.outgoing` из `watchQueue(chatId:)`).
 - [ ] **Чат создаётся на устройстве (041)**: `createChat` не ходит на сервер — id `c_` + 32 hex из `Random.secure()`, строка с `creation: pending`; очередь создаёт ждущие чаты раньше сообщений и **удерживает** сообщения чата, которого нет на сервере (без попытки и без ошибки); у каждого ждущего чата своя пауза, проход не останавливается; исходы `name_taken` → `nameTaken` (переименование на устройстве), окончательный отказ → `failed` (`retryCreation`), другой id → `moveChat` + `adoptServerChat`; окно и файлы ждущего чата у сервера не запрашиваются.
+- [ ] **Настройки связи (§6в)**: одна JSON-запись `session.server_addresses` в защищённом хранилище за `ServerAddressesRepository` (все три окружения); поля `direct`/`public`/`onion` (слово сервера), `manualAddress`/`manualOnion` (правка; пустой `manualOnion` — onion-адреса нет), `useTor` (по умолчанию `false`), `lastGood`, `viaTorLast`; названное сервером значение заменяет правку того же поля, неназванное — правку оставляет; записи строго по одной; `watch()` без потери записи между подпиской и чтением; имена и удаление — только через `ConnectionStorage`, устаревшие `session.access_key` и `session.access_key_registered` стирает `sweepLegacy` при каждом запуске.
 - [ ] `build_runner` перезапущен один раз в корне пакета после изменений аннотаций.

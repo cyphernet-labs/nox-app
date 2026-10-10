@@ -2309,6 +2309,7 @@ dependencies = [
  "eidolon-auth",
  "futures",
  "rcgen",
+ "ring",
  "rustls",
  "sha3 0.10.9",
  "tokio",

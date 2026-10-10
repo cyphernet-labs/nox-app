@@ -5,6 +5,7 @@ import 'package:injectable/injectable.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
 import 'package:nox_app/l10n/app_localizations_en.dart';
 import 'package:nox_app/presentation/app/app_root.dart';
+import 'package:nox_app/presentation/pages/connect_page/connect_page.dart';
 import 'package:nox_app/presentation/pages/set_username_page/set_username_page.dart';
 import 'package:nox_app/presentation/widgets/shell/tab_bar_shell_widget.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -41,13 +42,21 @@ void main() {
   // A link the Go server actually produced, captured from a live noxd.
   const link = 'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODwEGwKgBFCD7';
 
-  testWidgets('presenting a pairing link lands on Set username, stack cleared', (tester) async {
+  testWidgets('presenting a pairing link goes through the connection screen and lands on Set username, stack cleared', (tester) async {
     // No live channel in this environment, so there is no server to ask and
     // the naming screen is due - which is what makes the decision honest
     // rather than guessed from a hardcoded list, as it once was.
     await bootToLogin(tester);
     await signIn(tester, link);
+
+    // Every link stops at the connection screen first (phase 045, FR-013).
+    expect(find.byType(ConnectPage), findsOneWidget);
+    expect(find.text('192.168.1.20:8443'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, l10nEn.connectAction));
+    await tester.pumpAndSettle();
+
     expect(find.byType(SetUsernamePage), findsOneWidget);
+    expect(find.byType(ConnectPage), findsNothing, reason: 'nothing to go back to');
     expect(find.text(l10nEn.loginSignIn), findsNothing);
   });
 

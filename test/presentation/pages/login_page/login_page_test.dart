@@ -1,16 +1,26 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:injectable/injectable.dart';
+import 'package:mockito/mockito.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/model/connection/connection_settings.dart';
+import 'package:nox_app/domain/model/session/pending_pairing.dart';
+import 'package:nox_app/domain/repository/app/auth_repository.dart';
+import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:nox_app/general/qr_scanner_capability.dart';
 import 'package:nox_app/l10n/app_localizations_en.dart';
+import 'package:nox_app/general/pairing/pairing_link.dart';
+import 'package:nox_app/presentation/pages/connect_page/connect_page.dart';
 import 'package:nox_app/presentation/pages/login_page/login_page.dart';
 import 'package:nox_app/presentation/pages/set_username_page/set_username_page.dart';
 import 'package:nox_app/presentation/pages/qr_scan_page/qr_scan_page.dart';
 
 import '../../../utils/pump_app.dart';
+import 'bloc/login_bloc_test.mocks.dart';
 
 final l10nEn = AppLocalizationsEn();
 
@@ -62,6 +72,33 @@ void main() {
     expect(find.byType(QrScanPage), findsOneWidget);
   });
 
+  testWidgets('a readable link goes on to the connection screen, which shows where it leads (FR-013)', (tester) async {
+    await pumpApp(tester, const LoginPage());
+
+    await tester.enterText(find.byType(TextField), PairingLink.demo);
+    await tester.pump();
+    await tester.tap(signInButton());
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ConnectPage), findsOneWidget);
+    expect(find.text(l10nEn.connectTitle), findsOneWidget);
+    expect(find.text('192.168.1.20:8443'), findsOneWidget);
+  });
+
+  testWidgets('back from the connection screen the link is still in the field', (tester) async {
+    await pumpApp(tester, const LoginPage());
+    await tester.enterText(find.byType(TextField), PairingLink.demo);
+    await tester.pump();
+    await tester.tap(signInButton());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(TextButton, l10nEn.actionCancel));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ConnectPage), findsNothing);
+    expect(find.text(PairingLink.demo), findsOneWidget);
+  });
+
   testWidgets('a link from a newer server says to update the app, apart from a broken one (FR-017)', (tester) async {
     // The real sign-in of the test flavour: the link is refused before
     // anything is stored or dialled.
@@ -98,4 +135,42 @@ void main() {
 
     expect(find.widgetWithText(TextButton, l10nEn.loginScanQr), findsNothing);
   });
+
+  for (final (width, size) in [('phone', const Size(420, 900)), ('desktop', const Size(1200, 900))]) {
+    testWidgets('on a $width: a wait for approval the app was closed in goes on, on the connection screen (phase 046, FR-011)', (
+      tester,
+    ) async {
+      const link = 'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODwEGwKgBFCD7';
+      const settings = ConnectionSettings(serverAddress: '192.168.1.20:8443', useTor: true);
+      final auth = MockAuthRepository();
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<AuthRepository>(auth);
+      provideDummy<RepositoryResult<PendingPairing?>>(const RepositoryResult<PendingPairing?>.success(data: null));
+      provideDummy<RepositoryResult<bool>>(const RepositoryResult<bool>.success(data: true));
+      when(auth.pendingPairing()).thenAnswer(
+        (_) async => RepositoryResult<PendingPairing?>.success(
+          data: PendingPairing(link: link, waitUntil: DateTime.now().add(const Duration(minutes: 5)), connection: settings),
+        ),
+      );
+      final approval = StreamController<bool>.broadcast();
+      addTearDown(approval.close);
+      when(auth.watchAwaitingApproval()).thenAnswer((_) => approval.stream);
+      when(auth.signIn(identifier: anyNamed('identifier'), connection: anyNamed('connection'))).thenAnswer((_) async {
+        approval.add(true);
+        return Completer<RepositoryResult<bool>>().future;
+      });
+      await tester.binding.setSurfaceSize(size);
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      await pumpApp(tester, const LoginPage(), settle: false);
+      // The wait's spinner turns: pumped, not settled.
+      for (var i = 0; i < 12; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+
+      expect(find.byType(ConnectPage), findsOneWidget);
+      expect(find.text(l10nEn.connectWaitingApproval), findsOneWidget);
+      verify(auth.signIn(identifier: link, connection: settings)).called(1);
+    });
+  }
 }

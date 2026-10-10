@@ -29,7 +29,6 @@ import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
-import 'package:nox_app/domain/repository/connection/access_key_repository.dart';
 import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
@@ -42,7 +41,8 @@ import 'fake_direct_prober.dart';
 
 /// Twenty switches between the direct path and Tor, each with a message going
 /// out and one coming in while the connection is being replaced (phase 040,
-/// FR-004, SC-005). Nothing may be lost and nothing may arrive twice.
+/// FR-004, SC-005; phase 045, US1 scenario 4: Tor by `Use Tor`, with no access
+/// key). Nothing may be lost and nothing may arrive twice.
 ///
 /// Everything on the client side is the real thing - socket, path selector,
 /// journal applier, outgoing queue, message repository - over a server that
@@ -233,13 +233,11 @@ void main() {
     tor = FakeTorService()..supported = true;
     network = _Network();
     await getIt<ServerAddressesRepository>().saveFromServer(direct: const [_link], onion: _onion);
-    await getIt<AccessKeyRepository>().deviceKey();
-    await getIt<AccessKeyRepository>().markRegistered(true);
+    await getIt<ServerAddressesRepository>().setUseTor(true);
     selector = ConnectionPathSelector.forTest(
       prober,
       tor,
       getIt<ServerAddressesRepository>(),
-      getIt<AccessKeyRepository>(),
       network,
       _Lifecycle(),
       socket,

@@ -79,23 +79,21 @@ class DeviceRepositoryImpl with BaseRepositoryHelper implements DeviceRepository
   @override
   Future<RepositoryResult<DeviceInvite>> inviteDevice() {
     return execute<DeviceInvite>(() async {
-      // Always asked for, on every server: a server that cannot offer onion -
-      // Tor off, tor not connected - answers with an ordinary link, and one
-      // older than 039 skips a field it does not know (contract §2.1). Only the
-      // server knows which of these it is right now.
-      final reply = await _socket.send('device.invite', const <String, dynamic>{'onion': true});
+      // Nothing to ask for: the link names every address this machine has to
+      // offer (contract §8A, phase 045).
+      final reply = await _socket.send('device.invite', const <String, dynamic>{});
       if (!reply.ok) throw RepositoryException.fromWireCode(reply.errorCode ?? '');
       final link = reply.data?['link'] as String? ?? '';
       if (link.isEmpty) throw RepositoryException.internal;
-      // The card promises "works from anywhere" only when both halves say so:
-      // the reply's flag and the link itself, which is what the other device
-      // will actually hold. Until phase 045 the server always answers false -
-      // a new device pairs only at home, whatever the link carries - so the
-      // card says so. Erring the other way sends a person to the office with
-      // a link that works only at home and nothing to say why.
+      // The card promises more than the home network only when the server
+      // says the link carries it - its onion address, which the link itself
+      // shows as well, or its public address, which a link writes like any
+      // other. Erring the other way sends a person to the office with a link
+      // that works only at home and nothing to say why.
       final onion = reply.data?['onion'] == true && PairingLink.tryParse(link)?.onionServiceKey != null;
+      final public = reply.data?['public'] == true;
       return RepositoryResult<DeviceInvite>.success(
-        data: DeviceInvite(link: link, onion: onion),
+        data: DeviceInvite(link: link, onion: onion, public: public),
       );
     });
   }

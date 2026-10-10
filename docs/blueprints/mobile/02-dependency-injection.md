@@ -137,12 +137,12 @@ Future<void> configureDependencies(String env) async {
 - `ConnectivityService` — `ConnectivityServiceImpl` для `[dev, prod]`, `MockConnectivityService` для `[test]` (плагину нужен platform channel, которого под `flutter_test` нет);
 - `ChatRemoteDataSource` / `MessageRemoteDataSource` — после флипа фазы 026 `Real*` живут в `[dev]`, моки сужены до `[prod, test]` (§6.2);
 - `SessionPhaseService` — `SocketSessionPhaseService` (фаза сессии из живого канала) в `[dev]`, `ConnectivitySessionPhaseService` (фаза из коннективности) в `[prod, test]`. С фазы 036 у него есть и `reconnect()`: терминальной фазе лестницы переподключения не осталось, и без явного «попробовать ещё раз» приложение, однажды отказавшее серверу, не возвращается никогда. В мок-окружениях это no-op — канала там нет.
-- `TorService` (фаза 040) — `NativeTorService` (Arti через `package:nox_tor`) в `[dev, prod]`, `FakeTorService` в `[test]`: тесты никогда не грузят нативную библиотеку, а фейк по умолчанию «не поддерживается», поэтому всё прежнее идёт только прямым путём.
+- `TorService` (фаза 040) — `NativeTorService` (Arti через `package:nox_tor`) в `[dev, prod]`, `FakeTorService` в `[test]`: тесты никогда не грузят нативную библиотеку, а фейк по умолчанию «не поддерживается», поэтому тест, который не включил его сам, идёт только прямым путём.
 - `AppLifecycleService` и `NetworkChangeService` (фаза 040) — `AppLifecycleServiceImpl` / `NetworkChangeServiceImpl` в `[dev, prod]`, `ForegroundAppLifecycleService` / `QuietNetworkChangeService` в `[test]`.
 - `ConnectionStatusService` (фаза 040) — `LiveConnectionStatusService` (фаза сокета + выбор пути + статус Tor) в `[dev]`, вывод из `SessionPhaseService` в `[prod, test]`.
-- `ServerAddressesRepository` и `AccessKeyRepository` (фаза 040) — одна реализация на все три окружения поверх защищённого хранилища.
+- `ServerAddressesRepository` (фазы 040, 045) — одна реализация на все три окружения поверх защищённого хранилища: настройки связи (адреса сервера, ручная правка, `Use Tor`) нужны экрану подключения и разделу «Связь» в любом флейворе.
 
-Сверх этого есть регистрации **без пары** — они существуют только в `[Environment.dev]`, потому что без живого канала бессмысленны: `NoxSocketClient`, `WebSocketChannelFactory` (под `SocketChannelFactory`), `SyncService`, `LiveSessionStarter`, `LiveIdentityHandshake`, `DeviceRepositoryImpl` (под `DeviceRepository`), `ConnectionPathSelector`, `ChannelDirectProber` (под `DirectProber`), `AccessKeyRegistrar`, а также канал нативного модуля: `NoxChannelApi` (провайдер `RegisterModule`, §2), `ChannelHttpClient` — единственное место, где открываются соединения для HTTP и WebSocket, — и `ApiClient` поверх его клиента передач. Соединение с сервером открывает только флейвор, который с ним говорит; в `prod`/`test` канала нет вовсе. Потребители этих типов обязаны спрашивать `getIt.isRegistered<T>()` перед резолвом — в `prod`/`test` их в контейнере нет (так делают `AuthRepositoryImpl`, см. §5, и `LiveSessionStarter` перед `ApiClient.initBase`).
+Сверх этого есть регистрации **без пары** — они существуют только в `[Environment.dev]`, потому что без живого канала бессмысленны: `NoxSocketClient`, `WebSocketChannelFactory` (под `SocketChannelFactory`), `SyncService`, `LiveSessionStarter`, `LiveIdentityHandshake`, `DeviceRepositoryImpl` (под `DeviceRepository`), `PairRequestServiceImpl` (под `PairRequestService`, фаза 046 — `@Singleton`, а не ленивый: сервер спрашивает о новом устройстве сразу после приветствия, и первое приветствие может прийти раньше, чем экран попросит службу), `ConnectionPathSelector`, `ChannelDirectProber` (под `DirectProber`), а также канал нативного модуля: `NoxChannelApi` (провайдер `RegisterModule`, §2), `ChannelHttpClient` — единственное место, где открываются соединения для HTTP и WebSocket, — и `ApiClient` поверх его клиента передач. Соединение с сервером открывает только флейвор, который с ним говорит; в `prod`/`test` канала нет вовсе. Потребители этих типов обязаны спрашивать `getIt.isRegistered<T>()` перед резолвом — в `prod`/`test` их в контейнере нет (так делают `AuthRepositoryImpl`, см. §5, и `LiveSessionStarter` перед `ApiClient.initBase`).
 
 Любой новый сервис поверх платформенного плагина обязан следовать той же схеме, иначе widget/BLoC-тесты падают на резолве.
 
@@ -165,18 +165,25 @@ Future<void> configureDependencies(String env) async {
 
 Локальное хранилище (Sembast) выбирается **по окружению декларативно**: три провайдера, каждый со своим `env`-списком. Генератор зарегистрирует ровно один из них под интерфейс `AppDatabase`. Никакой рантайм-`if`-ветки в `configureDependencies` (правило блюпринта: БД не регистрируется через `if (env == Environment.test)`).
 
-Интерфейс и все три реализации живут в **одном** файле `lib/data/local/app_database.dart` (подробно — в [04-data-layer.md](04-data-layer.md)); здесь — только DI-аспект. Фактический интерфейс — два метода:
+Интерфейс и все три реализации живут в **одном** файле `lib/data/local/app_database.dart` (подробно — в [04-data-layer.md](04-data-layer.md)); здесь — только DI-аспект. Фактический интерфейс — три метода:
 
 ```dart
 // lib/data/local/app_database.dart
 abstract class AppDatabase {
   Future<Database> get db;
 
+  /// Closes the database when it is open. The next [db] opens it again.
+  Future<void> close();
+
+  /// Closes the database and deletes it. On the disk that is every database
+  /// sealed under the local-data key, the other environment's too: it runs
+  /// when the key goes (a logout, data whose key is lost), and the key is
+  /// shared ([AppDataRoot.databaseFiles]).
   Future<void> clearEntireDatabase();
 }
 ```
 
-> `AppDatabase` несёт ровно эти две операции (`db`-геттер + `clearEntireDatabase()`, удаляющий файл БД и сбрасывающий кэш-инстанс). Логаут-fan-out **не** оркестрируется через `AppDatabase`: `cleanData()` есть у каждого DAO (`ChatDao`, `MessageDao`, `OutboxDao`, `SyncDao`, `ItemDao`), а вызывает их `AuthRepositoryImpl.logout` через репозитории — но перед вытиранием сначала гасятся два фоновых источника записи: `LiveSessionStarter.stop()` (живой канал — резолвится под `getIt.isRegistered<T>()`, потому что зарегистрирован только в `[dev]`, §3), затем `OutboxService.stop()` (слив очереди исходящих — он есть во всех трёх окружениях, но зовётся под тем же guard'ом). Дальше идут хранилища: `SyncRepository.clear()` (курсор первым), затем `ChatRepository.clean()`, `MessageRepository.clean()` и `OutboxRepository.clean()`. Файл БД при этом не удаляется. См. [04-data-layer.md](04-data-layer.md) §6.
+> `AppDatabase` несёт ровно эти три операции (`db`-геттер, `close()` и `clearEntireDatabase()`, закрывающий базу и удаляющий её; на диске — вместе с базой другого окружения и файлами сжатия Sembast, своя — последней: у окружений одна папка данных и один ключ, [04-data-layer.md](04-data-layer.md) §6г). Дисковые `Dev`/`Prod` получают `DeviceVault` и открывают базу только после `ensureOpen()` — с кодеком `VaultCodec`, в папке данных приложения (фаза 048, [04-data-layer.md](04-data-layer.md) §6г). Логаут-fan-out **не** оркестрируется через `AppDatabase`: `cleanData()` есть у каждого DAO (`ChatDao`, `MessageDao`, `OutboxDao`, `SyncDao`, `ItemDao`), а вызывает их `AuthRepositoryImpl.logout` через репозитории — но перед вытиранием сначала гасятся два фоновых источника записи: `LiveSessionStarter.stop()` (живой канал — резолвится под `getIt.isRegistered<T>()`, потому что зарегистрирован только в `[dev]`, §3), затем `OutboxService.stop()` (слив очереди исходящих — он есть во всех трёх окружениях, но зовётся под тем же guard'ом). Дальше идут хранилища: `SyncRepository.clear()` (курсор первым), затем `ChatRepository.clean()`, `MessageRepository.clean()` и `OutboxRepository.clean()`; в конце база закрывается под своим ключом, ключ забывается (`DeviceVault.forget`), и `clearEntireDatabase()` удаляет файлы баз обоих окружений (фаза 048). См. [04-data-layer.md](04-data-layer.md) §6.
 
 ```dart
 // lib/data/local/app_database.dart (same file, dev provider)
@@ -184,8 +191,8 @@ import 'package:injectable/injectable.dart';
 import 'package:sembast/sembast_io.dart';
 
 @LazySingleton(as: AppDatabase, env: [Environment.dev])
-class AppDatabaseDev implements AppDatabase {
-  // databaseFactoryIo — on-disk, getApplicationDocumentsDirectory()
+class AppDatabaseDev extends _DiskAppDatabase {
+  // databaseFactoryIo — on-disk, app_dev.db in the data folder, every line sealed (VaultCodec)
 }
 ```
 
@@ -195,8 +202,8 @@ import 'package:injectable/injectable.dart';
 import 'package:sembast/sembast_io.dart';
 
 @LazySingleton(as: AppDatabase, env: [Environment.prod])
-class AppDatabaseProd implements AppDatabase {
-  // databaseFactoryIo — on-disk, getApplicationDocumentsDirectory()
+class AppDatabaseProd extends _DiskAppDatabase {
+  // databaseFactoryIo — on-disk, app.db in the data folder, every line sealed (VaultCodec)
 }
 ```
 
@@ -213,11 +220,11 @@ class AppDatabaseTest implements AppDatabase {
 
 | Провайдер | `env` | Sembast factory |
 |---|---|---|
-| `AppDatabaseDev` | `[Environment.dev]` | `databaseFactoryIo` (on-disk) |
-| `AppDatabaseProd` | `[Environment.prod]` | `databaseFactoryIo` (on-disk) |
+| `AppDatabaseDev` | `[Environment.dev]` | `databaseFactoryIo` (on-disk, `VaultCodec`) |
+| `AppDatabaseProd` | `[Environment.prod]` | `databaseFactoryIo` (on-disk, `VaultCodec`) |
 | `AppDatabaseTest` | `[Environment.test]` | `databaseFactoryMemory` (in-memory) |
 
-> Почему декларативно, а не `if`: генератор сам подставит верный провайдер по `environment`, контейнер остаётся плоским и предсказуемым, а тест автоматически получает in-memory БД без ручных свопов. `Dev`/`Prod` намеренно разделены (а не схлопнуты в один «не-test»): это уже даёт per-env различия без правки `configureDependencies` — каждый провайдер открывает свой файл (`app.db` для prod, `app_dev.db` для dev, `app_test.db` in-memory для test) и оставляет точку для будущих расширений (путь, шифрование).
+> Почему декларативно, а не `if`: генератор сам подставит верный провайдер по `environment`, контейнер остаётся плоским и предсказуемым, а тест автоматически получает in-memory БД без ручных свопов. `Dev`/`Prod` намеренно разделены (а не схлопнуты в один «не-test»): это уже даёт per-env различия без правки `configureDependencies` — каждый провайдер открывает свой файл (`app.db` для prod, `app_dev.db` для dev, `app_test.db` in-memory для test) и общую основу для пути и шифрования (папка данных приложения и кодек под ключом локальной базы, фаза 048).
 
 > **Локальная БД — Sembast (OQ-1 закрыт).** Env-scoping (dev/prod/test) ортогонален платформе: фабрика выбирается по **платформе** внутри impl — `databaseFactoryIo` (mobile/desktop), `databaseFactoryMemory` (test); web у NOX **вне скоупа** (пять целей: iOS/Android/Windows/Linux/macOS), и если он когда-нибудь появится — это `databaseFactoryWeb` из `sembast_web`. Абстракция `AppDatabase` и весь DAO/репозиторный слой при этом не меняются — один подход на все платформы. См. [04-data-layer.md](04-data-layer.md) §6.
 

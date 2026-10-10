@@ -1,11 +1,43 @@
+import 'package:nox_app/domain/exception/pairing_exception.dart';
+import 'package:nox_app/domain/model/connection/connection_settings.dart';
+import 'package:nox_app/domain/model/session/pending_pairing.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 
 /// Orchestrates session mutations on the "mutate source-of-truth → fetchAppState()"
-/// contract. The single home of the logout path; future home of real sign-in
-/// (backend TBD). Sign-in is currently stubbed (no client-side validation).
+/// contract. The single home of the logout path, and of sign-in by a pairing
+/// link.
 abstract class AuthRepository {
-  /// Stub sign-in: persists the identifier, then re-derives app state.
-  Future<RepositoryResult<bool>> signIn({required String identifier});
+  /// Pairs this device by the pairing link [identifier], then re-derives app
+  /// state. [connection] is what the person confirmed on the connection
+  /// screen (phase 045): the server address and onion address - stored as
+  /// hand edits where they differ from the link's - and `Use Tor`, which
+  /// decides whether the pairing itself may go through Tor. Without it the
+  /// link's own addresses are used, with Tor off.
+  ///
+  /// An invite pairs only once the device that issued it answers Allow (phase
+  /// 046): until then this waits, and [watchAwaitingApproval] says so. It ends
+  /// with [PairingException.declined] for a Deny, `notFound` when the time ran
+  /// out - the expired-link answer - and [PairingException.cancelled] when
+  /// the person withdrew the request ([cancelPairing]).
+  Future<RepositoryResult<bool>> signIn({required String identifier, ConnectionSettings? connection});
+
+  /// Whether a [signIn] waits for approval on the device that issued the
+  /// invite (phase 046). Emits the current value on listen, then every
+  /// change.
+  Stream<bool> watchAwaitingApproval();
+
+  /// Withdraws the request a [signIn] waits on (FR-010): the token is spent,
+  /// the device that issued the invite stops being asked, and the sign-in
+  /// ends with [PairingException.cancelled] - or pairs after all, when that
+  /// device's Allow got there first. Nothing to do when nothing waits.
+  Future<void> cancelPairing();
+
+  /// The pairing this install was waiting on when the app last closed, while
+  /// it may still be answered (FR-011) - presenting the same link again from
+  /// this device goes on waiting for the same request. Null when there is
+  /// none; one whose time ran out meanwhile is undone here, the way a failed
+  /// sign-in is, and is null too.
+  Future<RepositoryResult<PendingPairing?>> pendingPairing();
 
   /// First-login completion (Set username 2.3): marks onboarding complete, re-derives.
   Future<RepositoryResult<bool>> completeOnboarding({String? label});
@@ -16,6 +48,17 @@ abstract class AuthRepository {
   /// revocation from another. Nothing about the channel - another server's key, a
   /// failed open, a 401 on a file transfer - ever reaches it.
   Future<RepositoryResult<bool>> logout({bool forced = false});
+
+  /// Opens the local data under its key, at the start, before anything reads
+  /// it (phase 048). The key the secure store holds - or a new one, when there
+  /// is neither a key nor a database. A database whose key is gone, or that
+  /// the key does not open, can never be read again: the device's data goes
+  /// through one forced [logout] - its full wipe, and the pairing screen - and
+  /// the conversation comes back from the server once the device is paired
+  /// again (FR-011). A secure store that does not answer wipes nothing: the
+  /// read is tried again, with a pause, until it does. `true` when the data
+  /// went.
+  Future<RepositoryResult<bool>> openLocalData();
 
   /// Retires a session paired before phase 044 - an identifier with no server
   /// key (FR-025): one forced logout through [logout], the full wipe, and the

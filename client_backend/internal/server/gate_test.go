@@ -442,7 +442,7 @@ func TestTheLockRefusesWhatABrowserCanSend(t *testing.T) {
 		return rec.Code
 	}
 	body := `{"password":"` + testPassword + `","repeat":"` + testPassword + `","path":"/tmp/x.tar","current":"x"}`
-	for _, p := range []string{controlStatePath, controlUnlockPath, controlPasswordPath, controlBackupPath} {
+	for _, p := range []string{controlStatePath, controlUnlockPath, controlPasswordPath, controlBackupPath, controlLinkPath} {
 		method := http.MethodPost
 		if p == controlStatePath {
 			method = http.MethodGet
@@ -573,6 +573,89 @@ func TestALockedServerStopsCleanly(t *testing.T) {
 	if conn, err := net.DialTimeout("tcp", cfg.StatusAddr, time.Second); err == nil {
 		_ = conn.Close()
 		t.Fatal("the page still listens after the stop")
+	}
+}
+
+// The password is accepted - here a first one - and the server still cannot
+// start, because its main port is somebody else's: the trap a stand falls into
+// most. Whoever typed the password hears that, with the port named, from the
+// command and from the page alike - not "the server is stopping", which is
+// what stopping the page made of every such answer. And the server does stop,
+// with the same reason.
+func TestAServerThatCannotStartAfterItsPasswordSaysWhy(t *testing.T) {
+	for _, via := range []string{"noxd unlock", "the page"} {
+		t.Run(via, func(t *testing.T) {
+			cfg := testRunConfig(t)
+			holder, err := net.Listen("tcp", cfg.Addr)
+			if err != nil {
+				t.Fatalf("hold the main port: %v", err)
+			}
+			defer func() { _ = holder.Close() }()
+			_, stop := startRun(t, cfg)
+
+			var status int
+			var message string
+			if via == "noxd unlock" {
+				var refused *CommandError
+				if err := RequestUnlock(t.Context(), cfg.StatusAddr, testPassword, testPassword); !errors.As(err, &refused) {
+					t.Fatalf("noxd unlock on a server whose port is taken = %v, want a refusal", err)
+				} else if refused.Code != codeInternal {
+					t.Fatalf("the refusal's code = %q, want %s", refused.Code, codeInternal)
+				} else {
+					status, message = refused.Status, refused.Message
+				}
+			} else {
+				token := formTokenOn(t, getPage(t, cfg.StatusAddr))
+				form := url.Values{"token": {token}, "password": {testPassword}, "repeat": {testPassword}}
+				req, err := http.NewRequest(http.MethodPost, "http://"+cfg.StatusAddr+"/password/setup", strings.NewReader(form.Encode()))
+				if err != nil {
+					t.Fatalf("NewRequest: %v", err)
+				}
+				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+				req.Header.Set("Origin", "http://"+cfg.StatusAddr)
+				resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+				if err != nil {
+					t.Fatalf("POST the first password: %v", err)
+				}
+				body, err := io.ReadAll(resp.Body)
+				_ = resp.Body.Close()
+				if err != nil {
+					t.Fatalf("read the answer: %v", err)
+				}
+				status, message = resp.StatusCode, string(body)
+			}
+			if status != http.StatusInternalServerError || !strings.Contains(message, "main port "+cfg.Addr) ||
+				!strings.Contains(message, "password was accepted") {
+				t.Fatalf("the answer = %d %q, want 500 saying the password was accepted and the main port %s is the trouble",
+					status, message, cfg.Addr)
+			}
+			if err := stop(); err == nil || !strings.Contains(err.Error(), cfg.Addr) {
+				t.Fatalf("Run returned %v, want the reason it could not start", err)
+			}
+		})
+	}
+}
+
+// An answer the gate gave before the request's context ended is the answer,
+// even when both are ready by the time the request looks: the server answers
+// why it cannot start and THEN stops its page, and a select between the two
+// would otherwise report "stopping" about half the time. Many rounds, because
+// the two arrive together only now and then.
+func TestAnAnswerGivenBeforeTheStopIsTheAnswer(t *testing.T) {
+	g := newGate(config.Config{DBPath: filepath.Join(t.TempDir(), "nox.db")}, stateSetup, testKDF,
+		slog.New(slog.NewTextHandler(io.Discard, nil)))
+	for i := range 500 {
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			req := <-g.requests
+			req.answer(codeInternal, "why")
+			cancel()
+		}()
+		rep, ok := g.ask(ctx, gateRequest{kind: reqOpen})
+		cancel()
+		if !ok || rep.code != codeInternal || rep.message != "why" {
+			t.Fatalf("round %d: the answer = %+v, %v; want the one given before the stop", i, rep, ok)
+		}
 	}
 }
 

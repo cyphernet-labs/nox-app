@@ -1,4 +1,5 @@
 import 'package:nox_app/domain/model/app/session_model.dart';
+import 'package:nox_app/domain/model/session/pending_pairing.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 
 /// Cache-only session store. `identifier` lives in secure storage; the
@@ -31,6 +32,19 @@ abstract class SessionRepository {
   /// This device's key seed, minted on first use. The public half of the pair
   /// is what the server knows as `device_key`; this half never leaves.
   Future<RepositoryResult<String>> deviceSecret();
+
+  /// The local-data key (phase 048): base64 of 32 bytes, kept for this device
+  /// only, that the database and the files on the disk are sealed under. Null
+  /// when the secure store has none; an error when the store did not answer,
+  /// which is never the same thing - a key that is not there costs the data,
+  /// a store that is not ready yet costs a wait.
+  Future<RepositoryResult<String?>> storageKey();
+
+  /// Stores a new local-data key.
+  Future<RepositoryResult<bool>> saveStorageKey({required String key});
+
+  /// Deletes the local-data key (a logout, or a key that opens nothing).
+  Future<RepositoryResult<bool>> forgetStorageKey();
 
   /// Records which server this installation was paired with, from the link:
   /// where the connection starts, and the server's Ed25519 key (base64) every
@@ -85,6 +99,18 @@ abstract class SessionRepository {
   /// would otherwise swap the root route out from under someone mid-name.
   void noteOnboardingStartedHere();
 
+  /// Remembers a pairing that waits for approval on the device that issued
+  /// the invite (phase 046), so a restart within its time goes on waiting for
+  /// the same request rather than opening a new one (FR-011). The link
+  /// carries the token - a credential - so this lives in secure storage.
+  Future<RepositoryResult<bool>> savePendingPairing(PendingPairing pairing);
+
+  /// The pairing [savePendingPairing] remembered, or null.
+  Future<RepositoryResult<PendingPairing?>> readPendingPairing();
+
+  /// Forgets it: the wait ended, whichever way.
+  Future<RepositoryResult<bool>> clearPendingPairing();
+
   /// Undoes what a failed sign-in wrote, and nothing else. Narrower than
   /// [clear] on purpose: the device id survives, because a sign-in that never
   /// reached the server did not change which install this is.
@@ -102,6 +128,9 @@ abstract class SessionRepository {
   /// free to ignore it. A key that outlives one more launch costs nothing.
   Future<RepositoryResult<bool>> sweepLegacyKeys();
 
-  /// Full wipe: secure storage deleteAll + remove prefs keys (logout).
+  /// Full wipe: secure storage deleteAll + remove prefs keys (logout). The
+  /// sweep may take the local-data key with it; the module keeps its copy, so
+  /// what is open stays readable until the end of the wipe, which deletes the
+  /// key by name ([forgetStorageKey]).
   Future<RepositoryResult<bool>> clear();
 }

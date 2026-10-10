@@ -1,19 +1,39 @@
 # 09 — Сборка, секреты и CI
 
-## Ключ устройства (фаза 032) — платформенный fallback
+## Сейф «только это устройство» (фазы 032, 048)
 
-Приватный ключ устройства (семя Ed25519, 32 байта) хранится в `flutter_secure_storage` под `session.device_secret`. Модуль канала получает семя при каждом открытии соединения и доказывает им ключ устройства в проверке Eidolon; держит его в затираемом буфере на время рукопожатия, по сети уходит только открытый ключ. Блюпринт определяет хранение секретов для iOS/Android; для **desktop** здесь фиксируется явный fallback, как требует Принцип III:
+В `flutter_secure_storage` лежат два ключа и секреты сессии (среди них — ожидание одобрения `session.pending_pairing`, фаза 046: ссылка, которую оно держит, несёт токен):
 
-| Платформа | Хранилище |
+- **ключ устройства** — семя Ed25519, 32 байта, `session.device_secret`. Модуль канала получает семя при каждом открытии соединения и доказывает им ключ устройства в проверке Eidolon; держит его в затираемом буфере на время рукопожатия, по сети уходит только открытый ключ;
+- **ключ локальной базы** — 32 случайных байта, `device.storage_key` (base64). Им запечатаны база и файлы на диске (`04-data-layer.md` §6г); модуль канала держит его в затираемом буфере процесса.
+
+Ни один из них не попадает в системные бэкапы и на другие устройства. Опции сейфа — `SecureStoreOptions` (`lib/data/local/secure/secure_store_options.dart`), единые для всех записей:
+
+| Платформа | Хранилище и опции |
 |---|---|
-| iOS / macOS | Keychain (macOS пришпилен к legacy keychain, `usesDataProtectionKeychain: false`) |
-| Android | EncryptedSharedPreferences |
-| Windows | DPAPI |
-| Linux | libsecret |
+| iOS | Keychain, класс `first_unlock_this_device` (читается с первой разблокировки после перезапуска, в бэкап на другой телефон не переносится), сервис `com.cyphernetlabs.noxapp` |
+| macOS | Keychain с защитой данных (`usesDataProtectionKeychain: true`), тот же класс и сервис. Требует `keychain-access-groups`, поэтому macOS-сборка подписывается командой (§7a) |
+| Android | хранилище плагина: данные AES-GCM под ключом Android Keystore, который не покидает устройство; бэкап и перенос выключены в манифесте (раздел «Данные не уходят в бэкапы») |
+| Windows | DPAPI текущего пользователя; файл плагина — в `%LOCALAPPDATA%\NOX`, а не в перемещаемом профиле |
+| Linux | libsecret (локальная связка ключей); работает, только если запущена служба ключей |
 
-⚠️ **Ключ извлекаем.** Он лежит в защищённом хранилище ОС, но не в аппаратном анклаве: настоящая неизвлекаемость требует нативного кода на пяти платформах и в фазу 032 не входила. Записано явно, потому что модель аутентификации обещает «приватные ключи не переезжают», и это обещание надо читать как «не передаются по сети», а не «защищены железом».
+Записи сборок до фазы 048 лежат под прежними опциями (сервис плагина по умолчанию и класс по умолчанию на iOS, legacy keychain на macOS). `sweepLegacyKeys()` на старте удаляет их целиком по старым опциям — на iOS запись старого класса иначе мешала бы записать новую под тем же именем, — и сессия спаривается заново. На Android, Windows и Linux опции не менялись, удалять там нечего: старый файл сейфа Windows из перемещаемого профиля удаляет `AppDataRoot.sweepLegacy()`.
 
-Стирается тем же путём, что и всё остальное при выходе: `SessionRepository.clear()` делает `deleteAll`.
+⚠️ **Ключи извлекаемы.** Они лежат в защищённом хранилище ОС, но не в аппаратном анклаве: настоящая неизвлекаемость требует нативного кода на пяти платформах. «Приватные ключи не переезжают» читается как «не передаются по сети и не уходят в бэкапы», а не «защищены железом».
+
+Выход стирает сейф: `SessionRepository.clear()` удаляет записи сессии по имени — ожидание одобрения тоже — и делает `deleteAll`; ключ локальной базы удаляется по имени в конце стирания, когда база, которую он запечатал, закрыта. Тот же принудительный выход идёт на старте, когда ключа локальной базы нет при базе (`04-data-layer.md` §6г): сессия уходит целиком, и ожидание одобрения вместе с ключом устройства, с которым оно шло.
+
+## Данные не уходят в бэкапы (фаза 048)
+
+Данные приложения — база, файлы, состояние Tor — лежат в папке данных приложения (`AppDataRoot`, `04-data-layer.md` §6г), а не в «Документах», и ни в один системный бэкап не попадают:
+
+- **iOS** — папка данных при каждом запуске помечается `isExcludedFromBackup` (ни iCloud, ни бэкап на компьютер): `AppDataRoot.excludeFromBackup()` вызывает метод `exclude` канала `nox/backup`, который отвечает в `ios/Runner/AppDelegate.swift` (регистрируется в `didInitializeImplicitFlutterEngine`);
+- **macOS** — та же метка (Time Machine её соблюдает; `tmutil isexcluded <папка>` → `[Excluded]`), канал регистрирует `MainFlutterWindow.swift`, обработчик — в `macos/Runner/AppDelegate.swift`;
+- **Android** — `android:allowBackup="false"`, `android:fullBackupContent="false"` и `android:dataExtractionRules="@xml/data_extraction_rules"`: правила исключают все домены и из облачного бэкапа, и из переноса на новое устройство (Android 12+ переносит данные и при `allowBackup="false"`, если правила этого не запрещают);
+- **Windows** — папка данных `%LOCALAPPDATA%\NOX`: `main` первым делом ставит `LocalAppDataPathProvider`, и `path_provider` отвечает ею на вопрос о папке поддержки приложения для всех, включая файл сейфа;
+- **Linux** — `~/.local/share/<id приложения>` (XDG), которую не подхватывают синхронизации «Документов».
+
+Временные открытые копии (видео, «Открыть в…») живут в `<temp>/nox_open` и стираются при закрытии плеера, при каждом запуске и при выходе.
 
 ## Что НЕ идёт в защищённое хранилище
 
@@ -57,7 +77,7 @@ String.fromEnvironment('API_URL') / AppFlavor.getFlavor() / configureDependencie
 
 ## 0a. Rust для нативного модуля: канал и Tor-клиент
 
-Пакет `packages/nox_tor` — Rust-крейт: канал к серверу (TLS 1.3 на rustls и проверка Eidolon) и Tor-клиент Arti. Его нативный хук собирает библиотеку при каждой сборке приложения и при `flutter test` на хосте — на всех пяти платформах: каждое соединение с сервером открывает канал модуля, другого пути к серверу у приложения нет. Tor на Linux при этом выключен (`TorCapability`), но собирается в ту же библиотеку. Что нужно на машине:
+Пакет `packages/nox_tor` — Rust-крейт: канал к серверу (TLS 1.3 на rustls и проверка Eidolon) и Tor-клиент Arti. Его нативный хук собирает библиотеку при каждой сборке приложения и при `flutter test` на хосте — на всех пяти платформах: каждое соединение с сервером открывает канал модуля, другого пути к серверу у приложения нет. Встроенный Tor собирается в ту же библиотеку и работает на всех пяти платформах, Linux включительно. Что нужно на машине:
 
 | Где | Что |
 |---|---|
@@ -578,6 +598,7 @@ afterEvaluate {
 В этой итерации desktop-таргеты несут **только prod-идентичность** на нативном уровне (одна нативная конфигурация на платформу). Отдельная нативная `.stage`-идентичность (и, соответственно, упаковка двух раздельных артефактов) — **на будущее** (§11a). Stage на desktop виден исключительно через `app.flavor` в Dart (`--dart-define-from-file=config/stage.json`), нативная конфигурация при этом не меняется.
 
 - **macOS.** В `macos/Runner/Configs/AppInfo.xcconfig` prod-идентичность: `PRODUCT_BUNDLE_IDENTIFIER = com.cyphernetlabs.noxapp` + `PRODUCT_NAME = NOX` (подтверждено кодом). Отдельная `.stage`-идентичность (`com.cyphernetlabs.noxapp.stage`) → упаковка **на будущее** (§11a).
+- **Подпись macOS-сборки (фаза 048).** Таргет `Runner` подписывается командой во всех конфигурациях: `DEVELOPMENT_TEAM = W84KAPTJ9Y`, `CODE_SIGN_STYLE = Automatic`, `CODE_SIGN_IDENTITY = "Apple Development"`; оба файла прав (`DebugProfile.entitlements`, `Release.entitlements`) несут `keychain-access-groups` = `$(AppIdentifierPrefix)com.cyphernetlabs.noxapp`. Без группы доступа связка ключей с защитой данных отвечает `errSecMissingEntitlement` (-34018), и сейф не работает. Локальной сборке нужен профиль Mac App Development для `com.cyphernetlabs.noxapp` в команде: Xcode заводит его сам при сборке из IDE под учётной записью команды (или `xcodebuild -allowProvisioningUpdates`); без профиля `flutter build macos` останавливается на «No profiles for 'com.cyphernetlabs.noxapp' were found». CI собирает macOS без подписи (§8.2).
 - **Windows.** В `windows/CMakeLists.txt` — `BINARY_NAME = "nox_app"` (technical-имя бинарника); в `windows/runner/Runner.rc` блок `VERSIONINFO` несёт `CompanyName = "Cyphernet Labs"`, `ProductName = "NOX"`, `FileDescription = "NOX"`, `InternalName = "nox_app"`. Закоммиченный стабильный GUID приложения (между сборками) — **на будущее** (в текущем `Runner.rc` отдельного app-GUID нет). Отдельная `.stage`-идентичность → упаковка **на будущее** (§11a).
 - **Linux.** В `linux/CMakeLists.txt` — `APPLICATION_ID = "com.cyphernetlabs.noxapp"`, `BINARY_NAME = "nox_app"` (technical-имя). `Name` в `.desktop`-файле — `NOX`; сам `.desktop`-файл — **на будущее** (генерируется при упаковке, §11a). Отдельная `.stage`-идентичность → упаковка **на будущее** (§11a).
 
@@ -699,7 +720,11 @@ jobs:
         with: { flutter-version: '3.44.1', channel: stable, cache: true }
       - run: flutter pub get
       - run: dart run build_runner build --delete-conflicting-outputs
+      # Unsigned: CI holds no certificate and never runs the app (phase 048).
       - run: flutter build macos --debug --dart-define-from-file=config/stage.json
+        env:
+          FLUTTER_XCODE_CODE_SIGNING_ALLOWED: 'NO'
+          FLUTTER_XCODE_CODE_SIGNING_REQUIRED: 'NO'
 
   compile-windows:
     runs-on: windows-latest
@@ -733,7 +758,7 @@ jobs:
 ```
 
 Замечания:
-- Smoke-сборки запускаются в `--debug` и **не требуют секретов** — мы не вызываем decrypt и не используем секрето-несущий `--dart-define-from-file`. Это компайл-чек, а не релиз. Все пять джобов единообразно передают `--dart-define-from-file=config/stage.json` (`app.flavor=stage` + `app.apiUrl` локального `noxd` — на compile-smoke это не влияет, сборка ни к чему не подключается); iOS добавляет `--no-codesign`; Linux ставит `ninja-build libgtk-3-dev libsecret-1-dev libjsoncpp-dev` (GTK-тулчейн для desktop-эмбеддера + **build-time** зависимости плагина `flutter_secure_storage_linux`: его `CMakeLists.txt` делает `pkg_check_modules` на `libsecret-1`/`jsoncpp`, иначе `flutter build linux` падает на конфигурации CMake — `required packages were not found: libsecret-1`).
+- Smoke-сборки запускаются в `--debug` и **не требуют секретов** — мы не вызываем decrypt и не используем секрето-несущий `--dart-define-from-file`. Это компайл-чек, а не релиз. Все пять джобов единообразно передают `--dart-define-from-file=config/stage.json` (`app.flavor=stage` + `app.apiUrl` локального `noxd` — на compile-smoke это не влияет, сборка ни к чему не подключается); iOS добавляет `--no-codesign`, macOS — `FLUTTER_XCODE_CODE_SIGNING_ALLOWED=NO` (flutter передаёт переменные `FLUTTER_XCODE_*` в `xcodebuild` как настройки сборки; подпись командой нужна только запуску, §7a); Linux ставит `ninja-build libgtk-3-dev libsecret-1-dev libjsoncpp-dev` (GTK-тулчейн для desktop-эмбеддера + **build-time** зависимости плагина `flutter_secure_storage_linux`: его `CMakeLists.txt` делает `pkg_check_modules` на `libsecret-1`/`jsoncpp`, иначе `flutter build linux` падает на конфигурации CMake — `required packages were not found: libsecret-1`).
 - Каждый джоб ставит тулчейн Rust из `rust-toolchain.toml` с целями своей платформы — Linux-джоб тоже (`x86_64-unknown-linux-gnu`): нативный хук собирает модуль `nox_tor` (канал к серверу и Tor-клиент) при каждой сборке на всех пяти платформах (§0a). Хук сам скачал бы тулчейн, но явный шаг держит лог сборки читаемым и цели — только нужными джобу. Android-джоб ставит ещё NDK `28.2.13676358`: хук линкует библиотеку clang'ом NDK раньше, чем начинает работать Gradle.
 - Этот compile-check покрывает все **5 целевых платформ** (конституция, принцип VI — паритет mobile↔desktop): Android + iOS + macOS + Windows + Linux. Desktop compile-smoke **включён**; упаковка/подпись (packaging/signing) — **на будущее** (§11a). Сверх тулчейна Rust (и NDK для Android) никаких desktop/FFI-шагов нет.
 
@@ -836,7 +861,7 @@ lib/design/gen/
 `TODO(blueprint-desktop-packaging)` — **без реализации** в этой итерации; скелет даёт только `--debug` compile-smoke (§8.2) и `build:<desktop>:<flavor>` без упаковки (§4). Когда desktop-дистрибуция активируется, по платформам:
 
 - **Windows.** MSIX-пакет + подпись инсталлятора code-signing-сертификатом (EV/OV).
-- **macOS.** DMG + `codesign` + нотаризация через `xcrun notarytool` + hardened runtime.
+- **macOS.** DMG + `codesign` + нотаризация через `xcrun notarytool` + hardened runtime. Подпись командой для разработки заведена фазой 048 (§7a); дистрибуционная подпись и нотаризация — здесь.
 - **Linux.** AppImage и/или `.deb`.
 
 Блокер тот же, что у мобильного/desktop CD (§11): нет аккаунтов/сертификатов для подписи (Apple Developer / code-signing cert) — пока они не заведены, упаковка и подпись desktop остаются на будущее, параллельно отложенному CD.

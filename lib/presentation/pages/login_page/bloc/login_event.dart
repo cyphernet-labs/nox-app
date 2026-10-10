@@ -8,15 +8,14 @@ sealed class LoginEvent with _$LoginEvent {
   /// Clipboard availability checked → toggles the `Paste` action.
   const factory LoginEvent.clipboardChecked({required bool hasText}) = ClipboardChecked;
 
-  /// `Sign in` tapped; [outcome] is the (debug) sign-in result.
+  /// `Sign in` tapped: the link is read, and a readable one goes on to the
+  /// connection screen (phase 045). [outcome] is the (debug) result in demo mode.
   const factory LoginEvent.signInRequested({@Default(LoginOutcome.auto) LoginOutcome outcome}) = SignInRequested;
 
   /// The page consumed a terminal `nav*` status (navigated away) → reset to idle.
   const factory LoginEvent.navigationHandled() = NavigationHandled;
 
-  /// The channel refused the machine the link named. Comes from the session
-  /// phase rather than from the sign-in result: the refusal happens in the TLS
-  /// handshake, before `pair` is sent, so what the sign-in call reports is the
-  /// absence of a channel and not the reason for it.
-  const factory LoginEvent.serverRefused() = ServerRefused;
+  /// The screen opened: a wait for approval the app was closed in, still
+  /// within its time, goes on (phase 046, FR-011).
+  const factory LoginEvent.resumeChecked() = ResumeChecked;
 }

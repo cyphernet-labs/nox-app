@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"nox.app/client-backend/internal/backup"
@@ -149,7 +150,9 @@ func backupCommand(args []string) int {
 // backup unpacked onto an empty place, on this machine or any other, once the
 // server's password opens it. No server runs for it - the place is empty. The
 // restored server keeps its key, so devices go on without pairing, and gets a
-// new journal id, so each of them reads the conversation again.
+// new journal id, so each of them reads the conversation again. It also lets
+// in every device the backup does - one revoked since among them - so the
+// command names them.
 func restore(args []string) int {
 	cfg, err := config.LoadRestore(args)
 	if err != nil {
@@ -159,7 +162,7 @@ func restore(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	in := prompt.New(os.Stdin, os.Stderr)
-	_, err = backup.Restore(ctx, cfg.File, backup.Target{DBPath: cfg.DBPath, FilesPath: cfg.FilesPath}, func() (string, error) {
+	restored, err := backup.Restore(ctx, cfg.File, backup.Target{DBPath: cfg.DBPath, FilesPath: cfg.FilesPath}, func() (string, error) {
 		return in.Password("Password: ")
 	})
 	switch {
@@ -171,7 +174,36 @@ func restore(args []string) int {
 		return 1
 	}
 	fmt.Printf("Restored to %s. Start the server there and unlock it with the same password.\n", cfg.DBPath)
+	fmt.Print(restoredDevices(restored, time.Local))
 	return 0
+}
+
+// restoredDevices tells the person who restored which devices the restored
+// server lets in, and what that means for a device revoked after the backup
+// was made. Revoking deletes the device's row; a backup made before carries
+// the row, and the restored server takes that device back like any other -
+// the spec keeps the restored server the same machine to every device it
+// knew, without pairing again, and the backup cannot know which of them was
+// revoked later. So the list is shown with the backup's moment, in the words
+// of the app's device list, and with what to do about such a device. Platform
+// and dates only: they are what tells one's own devices apart, and the keys
+// are nothing a person reads.
+func restoredDevices(r backup.Restored, loc *time.Location) string {
+	at := func(t time.Time) string { return t.In(loc).Format("2006-01-02 15:04 MST") }
+	var b strings.Builder
+	fmt.Fprintf(&b, "\nThe backup was made %s.", at(r.MadeAt))
+	if len(r.Devices) == 0 {
+		b.WriteString(" No device was paired then: once the server is unlocked, its service page shows a link to pair one.\n")
+		return b.String()
+	}
+	b.WriteString(" The restored server lets in the devices paired then:\n")
+	for _, d := range r.Devices {
+		fmt.Fprintf(&b, "  %-8s paired %s, last seen %s\n", d.Platform, at(time.Unix(d.CreatedAt, 0)), at(time.Unix(d.LastSeenAt, 0)))
+	}
+	b.WriteString("A device revoked after the backup was made is on this list and can connect again: revoke it again " +
+		"in Settings > Devices as soon as the server is unlocked. A device paired after the backup is not on it, " +
+		"and has to pair again.\n")
+	return b.String()
 }
 
 // checkNew is the rule for a new password, as the server applies it: the

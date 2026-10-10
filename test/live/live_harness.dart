@@ -1,15 +1,28 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nox_app/data/local/device_vault.dart';
+import 'package:nox_app/data/local/sealed_file.dart';
+import 'package:nox_app/data/remote/channel/channel_http_client.dart';
+import 'package:nox_app/data/remote/socket/nox_socket_client.dart';
+import 'package:nox_app/data/remote/socket/server_frame.dart';
+import 'package:nox_app/data/remote/socket/socket_channel_factory.dart';
 import 'package:nox_app/data/sync/connection/direct_prober.dart';
+import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_app/domain/service/network_change_service.dart';
+import 'package:nox_app/general/pairing/pairing_link.dart';
+import 'package:nox_tor/channel.dart';
 
 /// What the live probes share: a `noxd` of their own, "away from home" on
-/// demand, and a network that changes when told to. Not a test - imported by
-/// the probes under `test/live/`, none of which the suite ever collects.
+/// demand, a network that changes when told to, another device spoken for
+/// over the wire, and the files the app keeps read the way it reads them. Not
+/// a test - imported by the probes under `test/live/`, none of which the
+/// suite ever collects.
 
 /// Waits for [done], failing the probe when [budget] runs out first.
 Future<void> liveUntil(String what, Duration budget, FutureOr<bool> Function() done) async {
@@ -44,29 +57,187 @@ class FakeNetwork implements NetworkChangeService {
   Stream<void> watchChanges() => _changes.stream;
 }
 
+/// A tor of the probe's own, run as the separate service the server expects
+/// since phase 045 - set up the way the install script sets it up: an onion
+/// service on port 443 pointed at the server's port, proof-of-work defences
+/// on, at most 16 streams at once on a circuit, no SOCKS port. The server
+/// never starts it, never sees its keys, and learns its address only through
+/// `-onion-addr`.
+///
+/// Its directories live under `<work>`: the service's keys in `<work>/hs`, so
+/// a tor started again over the same work directory keeps the same onion
+/// address - what a server moved to another port looks like from outside.
+class LiveTor {
+  LiveTor._(this.pid, this.onion);
+
+  final int pid;
+
+  /// `<56>.onion`, as tor wrote it to `<work>/hs/hostname`.
+  final String onion;
+
+  /// Starts tor with an onion service that forwards to [target], the address
+  /// `noxd` listens on - `127.0.0.1:<port>` for a server listening on all
+  /// interfaces, its LAN address for one bound to it, as the probes' are. tor
+  /// then connects from that same address, and the server counts it as this
+  /// machine's, the way it counts loopback.
+  static Future<LiveTor> start({required String tor, required String work, required String target, String log = 'tor.log'}) async {
+    final torrc = File('$work/torrc')
+      ..writeAsStringSync(
+        [
+          'SocksPort 0',
+          'DataDirectory $work/tor-data',
+          'HiddenServiceDir $work/hs',
+          'HiddenServicePort 443 $target',
+          'HiddenServicePoWDefensesEnabled 1',
+          // Proof of work prices new circuits, not the streams on one already
+          // built: at most 16 at once on a circuit, and one that asks for more
+          // is closed whole.
+          'HiddenServiceMaxStreams 16',
+          'HiddenServiceMaxStreamsCloseCircuit 1',
+          'Log notice file $work/$log',
+        ].join('\n'),
+      );
+    final shell = await Process.run('/bin/sh', ['-c', '"$tor" -f "${torrc.path}" > /dev/null 2>&1 & echo \$!']);
+    final pid = int.parse((shell.stdout as String).trim());
+    final hostname = File('$work/hs/hostname');
+    try {
+      await liveUntil(
+        'tor writes the onion address',
+        const Duration(seconds: 60),
+        () => hostname.existsSync() && hostname.readAsStringSync().trim().isNotEmpty,
+      );
+    } on Object {
+      // Detached like the server, and as long-lived when left behind.
+      Process.killPid(pid);
+      rethrow;
+    }
+    return LiveTor._(pid, hostname.readAsStringSync().trim());
+  }
+
+  Future<void> stop() async {
+    Process.killPid(pid);
+    await Future<void>.delayed(const Duration(seconds: 1));
+  }
+}
+
 /// A `noxd` run detached from the probe, so it can outlive it.
+///
+/// It starts LOCKED (phase 047): its data is sealed under a password, only
+/// the service page listens, and the main port opens once the password is
+/// in. [start] enters it the way an install script does - `noxd unlock`, the
+/// password piped on its standard input - and returns once the server
+/// listens.
 class LiveNoxd {
-  LiveNoxd._(this.pid, this._log);
+  LiveNoxd._(this.pid, this._log, this.pagePort, this.password);
+
+  /// The password the probes' servers are given. A fresh database takes it
+  /// as its first password; a server started again over the same work
+  /// directory is opened with it again - one it was not given would not open
+  /// the data.
+  static const String probePassword = 'nox-live-probe-password';
 
   final int pid;
   final File _log;
 
+  /// The loopback port of the server's service page - where the password
+  /// goes in (phase 047), and where its machine link is while no device is
+  /// paired: the server never writes one to its log (phases 045 and 046).
+  final int pagePort;
+
+  /// What this server's data opens with.
+  final String password;
+
+  /// The service page's address, as `noxd link` and `noxd unlock` take it in
+  /// `-status-addr`.
+  String get pageAddress => '127.0.0.1:$pagePort';
+
+  /// Starts `noxd` on [addr], with its service page on a free loopback port,
+  /// and unlocks it with [password]. [onionAddr] is the address of the onion
+  /// service a separate tor publishes for it ([LiveTor]); the server only
+  /// stores it and hands it out (phase 045).
   static Future<LiveNoxd> start({
     required String noxd,
-    required String tor,
     required String work,
     required String addr,
     required String log,
+    String? onionAddr,
+    String password = probePassword,
   }) async {
     final file = File('$work/$log');
+    final onion = onionAddr == null ? '' : '-onion-addr $onionAddr';
+    final page = await _freeLoopbackPort();
     final shell = await Process.run('/bin/sh', [
       '-c',
-      '"$noxd" -addr $addr -db "$work/probe.db" -tor -tor-bin "$tor" -status-addr "" > "${file.path}" 2>&1 & echo \$!',
+      '"$noxd" -addr $addr -db "$work/probe.db" $onion -status-addr 127.0.0.1:$page > "${file.path}" 2>&1 & echo \$!',
     ]);
     final pid = int.parse((shell.stdout as String).trim());
-    final server = LiveNoxd._(pid, file);
-    await liveUntil('noxd listening on $addr', const Duration(seconds: 30), () => server.lines().any((l) => l['msg'] == 'listening'));
-    return server;
+    final server = LiveNoxd._(pid, file, page, password);
+    try {
+      // The lock's line is written once the page listens: before it, a
+      // `noxd unlock` would find nobody to give the password to.
+      await liveUntil('noxd waiting for its password', const Duration(seconds: 30), () {
+        server._failOnError();
+        return server.lines().any(_isLockLine);
+      });
+      await server._unlock(noxd);
+      await liveUntil('noxd listening on $addr', const Duration(seconds: 60), () {
+        server._failOnError();
+        return server.lines().any((l) => l['msg'] == 'listening');
+      });
+      return server;
+    } on Object {
+      // Detached, it outlives the probe: a server that never came up for it
+      // would go on holding its ports, and a work directory the next run
+      // empties under it.
+      Process.killPid(pid);
+      rethrow;
+    }
+  }
+
+  /// The lines a server waiting for its password writes (phase 047): the
+  /// first password of a fresh one, or the password of a locked one.
+  static bool _isLockLine(Map<String, dynamic> line) {
+    final msg = line['msg'];
+    return msg is String && (msg.startsWith('no password is set yet') || msg.startsWith('this server is locked'));
+  }
+
+  /// A server that cannot start - its port taken, its database another
+  /// build's - logs why and exits: said at once rather than waited out.
+  void _failOnError() {
+    for (final line in lines()) {
+      if (line['level'] == 'ERROR') fail('noxd could not start: ${line['msg']}: ${line['err']}');
+    }
+  }
+
+  /// `noxd unlock` with the password on its standard input, twice: a fresh
+  /// server reads the password and its repeat, a locked one the first line
+  /// alone.
+  Future<void> _unlock(String noxd) async {
+    final unlock = await Process.start(noxd, ['unlock', '-status-addr', pageAddress]);
+    final out = unlock.stdout.transform(utf8.decoder).join();
+    final err = unlock.stderr.transform(utf8.decoder).join();
+    unlock.stdin.write('$password\n$password\n');
+    try {
+      await unlock.stdin.close();
+    } on Object {
+      // A command that ended before reading both lines says why in its exit
+      // code and its output, below.
+    }
+    final code = await unlock.exitCode.timeout(
+      const Duration(minutes: 2),
+      onTimeout: () {
+        unlock.kill();
+        fail('noxd unlock did not end within 2 minutes');
+      },
+    );
+    if (code != 0) fail('noxd unlock exited with $code: ${(await err).trim()} ${(await out).trim()}');
+  }
+
+  static Future<int> _freeLoopbackPort() async {
+    final socket = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    final port = socket.port;
+    await socket.close();
+    return port;
   }
 
   /// The server's log, one JSON object per line.
@@ -82,17 +253,182 @@ class LiveNoxd {
     }
   }
 
-  Future<String> claimLink() async {
+  /// The machine link, as the service page shows it while no device is paired. Needs the network let
+  /// through (`LiveTarget.letTheNetworkThrough`): the page is plain HTTP.
+  Future<String> machineLink() async {
     String? link;
-    await liveUntil('the claim link', const Duration(seconds: 10), () {
-      link = lines().map((l) => l['link']).whereType<String>().firstOrNull;
+    await liveUntil('the machine link on the service page', const Duration(seconds: 10), () async {
+      link = await _linkOnPage();
       return link != null;
     });
     return link!;
+  }
+
+  Future<String?> _linkOnPage() async {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 2);
+    try {
+      final response = await (await client.getUrl(Uri.parse('http://$pageAddress/'))).close();
+      final page = await response.transform(utf8.decoder).join();
+      return RegExp(r'nox://pair/[A-Za-z0-9_-]+').firstMatch(page)?.group(0);
+    } on Object {
+      return null;
+    } finally {
+      client.close(force: true);
+    }
   }
 
   Future<void> stop() async {
     Process.killPid(pid);
     await liveUntil('noxd stopped', const Duration(seconds: 30), () => lines().any((l) => l['msg'] == 'server stopped'));
   }
+}
+
+/// Opens a file the app keeps on the disk - a download, the queue's kept
+/// copy - the way the app opens it (phase 048). It has to be sealed: a plain
+/// file there is the very defect the phase closed, and the plain bytes come
+/// out of the reader, not off the disk. Only the header is checked here; the
+/// chunks open under this device's local-data key as they are read.
+Future<SealedReader> openSealed(String path) async {
+  final file = File(path);
+  expect(await SealedFile.isSealed(file), isTrue, reason: 'what the app keeps on the disk is sealed (phase 048)');
+  await getIt<DeviceVault>().ensureOpen();
+  return (await SealedReader.open(file))!;
+}
+
+/// The plain bytes of the sealed file at [path] against [source], a mebibyte
+/// at a time: neither side of a big file is ever in memory whole.
+Future<void> expectSamePlainBytes(String path, File source) async {
+  final plain = await openSealed(path);
+  final size = source.lengthSync();
+  expect(plain.length, size, reason: 'the plain length');
+  const window = 1024 * 1024;
+  final original = await source.open();
+  final held = Uint8List(window);
+  var filled = 0;
+  var at = 0;
+  Future<void> compare() async {
+    final want = await original.read(filled);
+    if (want.length != filled) fail('the source ends at ${at + want.length}, the file goes on');
+    for (var i = 0; i < filled; i++) {
+      if (want[i] != held[i]) fail('the bytes differ at ${at + i}');
+    }
+    at += filled;
+    filled = 0;
+  }
+
+  try {
+    await for (final chunk in plain.read()) {
+      var taken = 0;
+      while (taken < chunk.length) {
+        final n = min(window - filled, chunk.length - taken);
+        held.setRange(filled, filled + n, chunk, taken);
+        filled += n;
+        taken += n;
+        if (filled == window) await compare();
+      }
+    }
+    if (filled > 0) await compare();
+  } finally {
+    await original.close();
+  }
+  expect(at, size, reason: 'every byte compared');
+}
+
+/// Another device of the same person, spoken for over the wire: a key of its
+/// own, its own channel and socket - the classes the app uses, without the
+/// app around them. It dials the link's first direct address: it is at home.
+class WireDevice {
+  WireDevice(this.link) : _seed = Uint8List.fromList(List<int>.generate(32, (_) => Random.secure().nextInt(256))) {
+    _channel = ChannelHttpClient(const NativeNoxChannelApi())..bind(serverKey: link.serverKey, deviceSeed: _seed);
+    socket = NoxSocketClient(WebSocketChannelFactory(_channel), _NoCursor());
+    _events = socket.events.listen(_seen.add);
+  }
+
+  /// Pairs a new device by a machine link and greets as it.
+  static Future<WireDevice> paired(String machineLink, {required String platform}) async {
+    final wire = WireDevice(PairingLink.parse(machineLink));
+    final reply = await wire.present(platform: platform);
+    expect(reply.ok && reply.data?['identity'] != null, isTrue, reason: 'pair: ${reply.errorCode}');
+    await wire.greet();
+    return wire;
+  }
+
+  final PairingLink link;
+  final Uint8List _seed;
+  late final ChannelHttpClient _channel;
+  late final NoxSocketClient socket;
+  late final StreamSubscription<ServerEvent> _events;
+  final StreamController<ServerEvent> _seen = StreamController<ServerEvent>.broadcast();
+
+  Uri get _url => Uri.parse('wss://${link.directAddresses.first}/ws');
+
+  /// Presents this link's token as a device that is not paired yet.
+  Future<CommandReply> present({required String platform}) async {
+    await socket.start(url: _url, credentialsProvider: () async => const GreetingCredentials.unpaired());
+    return socket.pair(token: link.token, platform: platform);
+  }
+
+  /// Opens the socket again as the paired device it now is, and greets.
+  Future<void> greet() async {
+    await socket.stop();
+    await socket.start(url: _url, credentialsProvider: () async => const GreetingCredentials());
+    final watch = Stopwatch()..start();
+    while (socket.identity == null) {
+      if (watch.elapsed > const Duration(seconds: 15)) fail('the wire device never greeted');
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+  }
+
+  /// The next [name] event - about [requestId], when given.
+  Future<ServerEvent> next(String name, {String? requestId, Duration within = const Duration(seconds: 15)}) =>
+      _seen.stream.firstWhere((e) => e.event == name && (requestId == null || e.data['request_id'] == requestId)).timeout(within);
+
+  /// Issues an invite and returns its link.
+  Future<String> invite() async {
+    final reply = await socket.send('device.invite', <String, dynamic>{});
+    expect(reply.ok, isTrue, reason: 'device.invite: ${reply.errorCode}');
+    return reply.data!['link'] as String;
+  }
+
+  /// Answers a request; false when the server had nothing left to answer.
+  Future<bool> approve(String requestId, {required bool allow}) async {
+    final reply = await socket.send('device.approve', <String, dynamic>{'request_id': requestId, 'allow': allow});
+    if (!reply.ok && reply.errorCode == 'not_found') return false;
+    expect(reply.ok, isTrue, reason: 'device.approve: ${reply.errorCode}');
+    return true;
+  }
+
+  /// The person's devices, as the server lists them.
+  Future<List<dynamic>> devices() async {
+    final reply = await socket.send('device.list', <String, dynamic>{});
+    expect(reply.ok, isTrue, reason: 'device.list: ${reply.errorCode}');
+    return reply.data!['devices'] as List<dynamic>;
+  }
+
+  Future<void> close() async {
+    await _events.cancel();
+    await socket.stop();
+    _channel.unbind();
+    await _seen.close();
+  }
+}
+
+/// The wire devices keep no cursor: they read nothing from the journal.
+class _NoCursor implements SyncRepository {
+  @override
+  Future<int> getCursor() async => 0;
+  @override
+  Future<bool> hasCursor() async => false;
+  @override
+  Future<void> advanceCursor(int seq) async {}
+  @override
+  Future<void> clear() async {}
+  @override
+  Future<String?> getEpoch() async => null;
+  @override
+  Future<void> setEpoch(String epoch) async {}
+  @override
+  Future<String?> getJournal() async => null;
+  @override
+  Future<void> setJournal(String journalId) async {}
 }

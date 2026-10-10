@@ -64,6 +64,10 @@ func (c *client) handlePair(cmd protocol.Command) {
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "token and platform are required"))
 		return
 	}
+	if !knownPlatform(platform) {
+		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInvalidRequest, "platform must be ios, android, macos, windows or linux"))
+		return
+	}
 	// Whatever path this connection came by (FR-008): a connection from tor
 	// arrives on the main port like any other, proved its key the same way,
 	// and nothing here could tell it apart if it tried.
@@ -88,6 +92,12 @@ func (c *client) handlePair(cmd protocol.Command) {
 		status := r.Outcome
 		if status == "" {
 			status = statusPending
+			// The device waits here for an answer that can take the invite's
+			// ten minutes, so the connection waits with it, free of a
+			// stranger's two minutes and of being pushed out for a newcomer
+			// (unpaired.go) - set up before the reply, so neither can land
+			// between the two.
+			c.awaitAnswer(r)
 		}
 		c.sendFrame(protocol.OKReply(cmd.ID, pairReply{Status: status, RequestID: r.RequestID, ExpiresAt: r.ExpiresAt}))
 		// After the reply, like every fan-out (§9): the issuing device is asked
@@ -103,6 +113,11 @@ func (c *client) handlePair(cmd protocol.Command) {
 		}
 		return
 	}
+
+	// The key is a paired device's now, so the connection leaves the limits
+	// a stranger's is held to - before the reply, so its deadline cannot land
+	// between the two.
+	c.srv.settleUnpaired(c)
 
 	// Created is the whole reason this reply exists: it says whether the person
 	// was brought into being by THIS operation, which is what tells the client
@@ -294,11 +309,12 @@ func (c *client) handleDeviceRevoke(cmd protocol.Command) {
 	c.sendFrame(protocol.OKReply(cmd.ID, struct{}{}))
 	c.srv.dropDevice(key)
 	// The requests the revoked device took part in closed with it. The device
-	// waiting on each is told; so is the device asked to answer it, unless that
-	// is the one just revoked - its connections are closing, and the dialog
-	// goes with the device.
+	// waiting on each is told, its connection a stranger again (endWait); so
+	// is the device asked to answer it, unless that is the one just revoked -
+	// its connections are closing, and the dialog goes with the device.
 	for _, r := range rev.Closed {
 		c.logger.Info("pairing request closed", "outcome", r.Outcome)
+		c.srv.endWait(r)
 		c.srv.tellNewDevice(r, nil)
 		if r.IssuerKey != key {
 			c.srv.tellIssuer(r)
@@ -366,8 +382,9 @@ func (c *client) handleDeviceInvite(cmd protocol.Command) {
 	link, carries, err := buildLink(id.PublicKey, token, addr, conf)
 	if err != nil {
 		// The error can quote the host it could not encode, and that host came
-		// from the Host header.
-		c.logger.Error("build invite link", "err", maskOnion(err.Error()))
+		// from the Host header - the onion name, through the onion service. The
+		// log's handler masks it (logscrub.go).
+		c.logger.Error("build invite link", "err", err)
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to build the link"))
 		return
 	}
@@ -420,4 +437,17 @@ func (c *client) handleIdentitySetLabel(cmd protocol.Command) {
 	// Nothing in the reply depends on this - the label it echoes is the one
 	// already written to the store.
 	c.srv.refreshLabel(c.identity.UserID, label, c)
+}
+
+// knownPlatform reports whether p is one of the OS families a device may name
+// itself by (contract §8A). Anything else is refused before a token is looked
+// at: the name is shown in the Allow dialog of the device that issued the
+// invite, and free text there would let whoever holds a leaked invite pass
+// itself off as whatever it liked.
+func knownPlatform(p string) bool {
+	switch p {
+	case "ios", "android", "macos", "windows", "linux":
+		return true
+	}
+	return false
 }

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nox_app/data/local/sealed_file.dart';
 import 'package:injectable/injectable.dart' show Environment;
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
@@ -588,7 +589,7 @@ void main() {
 
       final kept = sentLocalPaths.single!;
       expect(kept, await files.cachePathFor(fileId: sentAttachmentIds.single, suggestedName: 'shot.png'));
-      expect(File(kept).readAsBytesSync(), List<int>.filled(64, 7));
+      expect(await (await SealedReader.open(File(kept)))!.readAll(), List<int>.filled(64, 7), reason: 'sealed where it lies (phase 048)');
       expect(copy.existsSync(), isFalse);
       expect(copy.parent.existsSync(), isFalse);
     });

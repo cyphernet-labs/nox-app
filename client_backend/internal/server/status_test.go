@@ -626,7 +626,7 @@ func TestTheLinkButtonIssuesANewLinkAndVoidsThePrevious(t *testing.T) {
 	}
 	c := dialWS(t, ts, srv)
 	c.expectGreeting()
-	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"test"}}`, previous))
+	c.send(fmt.Sprintf(`{"id":1,"cmd":"pair","data":{"token":%q,"platform":"linux"}}`, previous))
 	if code := expectErrCode(t, c, 1); code != "invalid_token" {
 		t.Fatalf("the link the button replaced = %q, want invalid_token", code)
 	}

@@ -27,7 +27,7 @@ void main() {
 
   test('a known upload is continued under the same id, from what it holds', () async {
     final first = (await source.uploadBegin(name: 'a.bin', sizeBytes: 4, mime: 'application/octet-stream')).data!;
-    await source.putBytes(uploadPath: first.uploadUrl, file: file, offset: 0);
+    await source.putBytes(uploadPath: first.uploadUrl, size: 4, offset: 0, body: file.openRead(0));
 
     final again = await source.uploadBegin(name: 'a.bin', sizeBytes: 4, mime: 'application/octet-stream', fileId: first.fileId);
 
@@ -47,17 +47,17 @@ void main() {
   test('a spent pass is refused the way the server refuses it, not waved through', () async {
     // It used to return quietly, which told the repository the bytes were there.
     final ticket = (await source.uploadBegin(name: 'a.bin', sizeBytes: 4, mime: 'application/octet-stream')).data!;
-    await source.putBytes(uploadPath: ticket.uploadUrl, file: file, offset: 0);
+    await source.putBytes(uploadPath: ticket.uploadUrl, size: 4, offset: 0, body: file.openRead(0));
 
     await expectLater(
-      source.putBytes(uploadPath: ticket.uploadUrl, file: file, offset: 0),
+      source.putBytes(uploadPath: ticket.uploadUrl, size: 4, offset: 0, body: file.openRead(0)),
       throwsA(isA<FileTransferException>().having((e) => e.failure, 'failure', FileTransferFailure.passRejected)),
     );
   });
 
   test('the rest comes for bytes of the version it holds, the whole file for anything else', () async {
     final ticket = (await source.uploadBegin(name: 'a.bin', sizeBytes: 4, mime: 'application/octet-stream')).data!;
-    await source.putBytes(uploadPath: ticket.uploadUrl, file: file, offset: 0);
+    await source.putBytes(uploadPath: ticket.uploadUrl, size: 4, offset: 0, body: file.openRead(0));
     final pass = (await source.downloadBegin(fileId: ticket.fileId)).data!.downloadUrl;
 
     final first = await source.openBytes(downloadPath: pass, offset: 0);

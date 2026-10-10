@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
@@ -82,5 +84,52 @@ void main() {
     await repository.fetchAppState();
     final first = await repository.watchAppState().first;
     expect(first.data!.state, AppStateType.authorized);
+  });
+
+  group('the start-up hold (phase 048)', () {
+    test('no state is resolved for the screens until the start-up is over', () async {
+      stubSession(const SessionModel(identifier: 'abc', onboardingComplete: true));
+      final startUp = Completer<void>();
+      repository.holdUntil(startUp.future);
+      final heard = <AppStateType>[];
+      final subscription = repository.watchAppState().listen((result) => heard.add(result.data!.state));
+      addTearDown(subscription.cancel);
+
+      await pumpEventQueue();
+      expect(heard, isEmpty, reason: 'the splash stays while the local data opens');
+      verifyNever(session.readSession());
+
+      startUp.complete();
+      await pumpEventQueue();
+      expect(heard, [AppStateType.authorized]);
+    });
+
+    test('the start-up resolves through it meanwhile - its own logout is not held', () async {
+      stubSession(null);
+      final startUp = Completer<void>();
+      repository.holdUntil(startUp.future);
+
+      final result = await repository.fetchAppState(sessionExpired: true);
+
+      expect(result.data!.state, AppStateType.unauthorized);
+      final heard = <AppStateType>[];
+      final subscription = repository.watchAppState().listen((r) => heard.add(r.data!.state));
+      addTearDown(subscription.cancel);
+      startUp.complete();
+      await pumpEventQueue();
+      expect(heard, [AppStateType.unauthorized], reason: 'what the start-up resolved, replayed - not resolved again');
+      verify(session.readSession()).called(1);
+    });
+
+    test('a start-up that failed still lets the app open', () async {
+      stubSession(null);
+      final startUp = Completer<void>();
+      repository.holdUntil(startUp.future);
+      final first = repository.watchAppState().first;
+
+      startUp.completeError(StateError('the start-up broke'));
+
+      expect((await first).data!.state, AppStateType.unauthorized);
+    });
   });
 }

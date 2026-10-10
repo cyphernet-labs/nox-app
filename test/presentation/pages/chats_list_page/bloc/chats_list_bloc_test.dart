@@ -17,6 +17,7 @@ import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/get_chats_config.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
 import 'package:nox_app/domain/model/connection/connection_path.dart';
+import 'package:nox_app/domain/model/connection/connection_problem.dart';
 import 'package:nox_app/domain/model/connection/connection_status.dart';
 import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/service/connection_status_service.dart';
@@ -386,6 +387,39 @@ void main() {
       final state = bloc.state as Initialized;
       expect(state.torObsolete, isTrue);
       expect(state.isOffline, isFalse);
+    });
+
+    test('a failed round with a known cause carries it, and a greeting takes it away (phase 045)', () async {
+      final bloc = await boot(const ConnectionStatus(state: LinkState.offline, problem: ConnectionProblem.onionNotFound));
+      expect((bloc.state as Initialized).isOffline, isTrue);
+      expect((bloc.state as Initialized).problem, ConnectionProblem.onionNotFound);
+
+      status.emit(const ConnectionStatus(state: LinkState.offline, problem: ConnectionProblem.torNetwork));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect((bloc.state as Initialized).problem, ConnectionProblem.torNetwork, reason: 'the last round says why');
+
+      status.emit(FixedConnectionStatusService.direct);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect((bloc.state as Initialized).problem, isNull);
+    });
+
+    test('another server behind the onion address is the mismatch banner with its own cause', () async {
+      final bloc = await boot(const ConnectionStatus(state: LinkState.serverMismatch, problem: ConnectionProblem.otherServer));
+
+      final state = bloc.state as Initialized;
+      expect(state.isServerMismatch, isTrue);
+      expect(state.problem, ConnectionProblem.otherServer);
+    });
+
+    test('the debug stand-in plays a failed round whose cause is a switched-off Use Tor', () async {
+      final bloc = await boot(FixedConnectionStatusService.direct);
+
+      bloc.add(const ChatsListEvent.setScenario(ChatsListScenario.turnOnTor));
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+
+      final state = bloc.state as Initialized;
+      expect(state.isOffline, isTrue);
+      expect(state.problem, ConnectionProblem.turnOnTor);
     });
   });
 

@@ -23,7 +23,6 @@ import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/app/auth_repository.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
-import 'package:nox_app/domain/repository/connection/access_key_repository.dart';
 import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/service/attachment_download_service.dart';
@@ -39,7 +38,7 @@ import 'live_target.dart';
 /// file up and down the onion service, with the link broken under it, the
 /// queue "restarted" in the middle, and the path changed from Tor to direct
 /// while the bytes are going - the app's own code throughout, against a `noxd`
-/// that publishes its onion service.
+/// whose onion service a separate tor publishes (phase 045).
 ///
 /// What it proves: the file arrives whole both ways (SC-001), nothing that
 /// already arrived is sent again (SC-002), neither a restart nor a change of
@@ -51,7 +50,11 @@ import 'live_target.dart';
 ///   (cd client_backend && go build -o /tmp/noxd .)
 ///   fvm flutter test test/live/resumable_files_probe.dart \
 ///     --dart-define=noxd=/tmp/noxd --dart-define=tor=/path/to/tor \
-///     --dart-define=host=192.168.1.20 --dart-define=work=/tmp/nox_files_e2e [--dart-define=mib=100]
+///     --dart-define=host=192.168.1.20 --dart-define=work=/tmp/nox_files_e2e [--dart-define=mib=100] [--dart-define=port=18543]
+///
+/// The work directory is emptied at the start; keep anything worth keeping
+/// elsewhere. The server starts locked, and the harness unlocks it with its
+/// probe password (phase 047).
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -60,6 +63,7 @@ void main() {
   const host = String.fromEnvironment('host');
   const work = String.fromEnvironment('work');
   const mib = int.fromEnvironment('mib', defaultValue: 100);
+  const port = int.fromEnvironment('port', defaultValue: 18543);
 
   test(
     'a big file up and down through the onion service: broken, restarted and moved, and never sent twice',
@@ -88,10 +92,13 @@ void main() {
       }
       out.closeSync();
 
-      // --- The server, with tor, on this machine's LAN address. ---
-      final server = await LiveNoxd.start(noxd: noxd, tor: tor, work: work, addr: '$host:18543', log: 'noxd.log');
+      // --- tor as its own service, and the server on this machine's LAN
+      // address, told where its onion service is (phase 045). ---
+      final onionService = await LiveTor.start(tor: tor, work: work, target: '$host:$port');
+      addTearDown(() => Process.killPid(onionService.pid));
+      final server = await LiveNoxd.start(noxd: noxd, work: work, addr: '$host:$port', log: 'noxd.log', onionAddr: onionService.onion);
       addTearDown(() => Process.killPid(server.pid));
-      final claim = await server.claimLink();
+      final machine = await server.machineLink();
 
       // --- The app, with the two seams of the Tor probe. ---
       FlutterSecureStorage.setMockInitialValues({});
@@ -108,12 +115,11 @@ void main() {
       bool liveOn(ConnectionPath path) => socket.currentPhase == SessionPhase.live && selector.currentPath == path;
 
       final auth = getIt<AuthRepository>();
-      expect((await auth.signIn(identifier: claim)).hasData, isTrue, reason: 'sign-in by the claim link');
+      expect((await auth.signIn(identifier: machine)).hasData, isTrue, reason: 'sign-in by the machine link');
       expect((await auth.completeOnboarding(label: 'FilesProbe')).hasData, isTrue);
       await liveUntil('direct and live', const Duration(seconds: 30), () => liveOn(ConnectionPath.direct));
-      await liveUntil('the key registered', const Duration(seconds: 30), () async {
-        return (await getIt<AccessKeyRepository>().isRegistered()).data ?? false;
-      });
+      // Tor only by the person's leave (phase 045).
+      expect((await getIt<ServerAddressesRepository>().setUseTor(true)).hasData, isTrue);
       await liveUntil('the onion address', const Duration(minutes: 5), () async {
         return (await getIt<ServerAddressesRepository>().read()).data?.onion != null;
       });
@@ -210,7 +216,10 @@ void main() {
       // as another device would, with that copy out of the way.
       final kept = await getIt<FileRepository>().localPathFor(fileId: sent.attachmentId!, suggestedName: 'big.bin');
       expect(kept, isNotNull, reason: 'the bytes this device sent stay on it');
-      expect(File(kept!).lengthSync(), size);
+      // Sealed, like everything the app keeps (phase 048): every chunk opens
+      // under this device's key, and the bytes are the ones that went up -
+      // compared before the copy goes, a mebibyte at a time.
+      await expectSamePlainBytes(kept!, source);
       File(kept).deleteSync();
       final attachment = MessageAttachment(
         id: sent.attachmentId!,
@@ -246,15 +255,9 @@ void main() {
       expect(fetched.hasData, isTrue, reason: 'download: ${fetched.exception}');
       expect(lowestAfterBreak, greaterThan(0.3), reason: 'it went on from the bytes already here, not from the first byte');
 
-      // The same bytes, compared a mebibyte at a time.
-      final a = source.openSync();
-      final b = File(fetched.data!).openSync();
-      expect(b.lengthSync(), size);
-      for (var at = 0; at < size; at += 1024 * 1024) {
-        expect(b.readSync(1024 * 1024), a.readSync(1024 * 1024), reason: 'the bytes at $at');
-      }
-      a.closeSync();
-      b.closeSync();
+      // The same bytes, opened the way the app opens them and compared a
+      // mebibyte at a time.
+      await expectSamePlainBytes(fetched.data!, source);
 
       File('$work/measure.txt').writeAsStringSync('${measures.join('\n')}\n');
     },

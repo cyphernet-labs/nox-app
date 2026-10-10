@@ -139,12 +139,15 @@ type gate struct {
 	openPage atomic.Pointer[http.Handler]
 }
 
+// newGate builds the lock over what the disk says. Its log goes through the
+// scrubbing handler whatever logger it is handed, as New's does (logscrub.go):
+// Run hands it one already, a test need not.
 func newGate(cfg config.Config, state lockState, kdf vault.Params, logger *slog.Logger) *gate {
 	g := &gate{
 		dbPath:    cfg.DBPath,
 		keyPath:   cfg.KeyPath(),
 		kdf:       kdf,
-		logger:    logger,
+		logger:    scrubbedLogger(logger),
 		formToken: newFormToken(),
 		requests:  make(chan gateRequest),
 	}
@@ -390,7 +393,15 @@ func (g *gate) ask(ctx context.Context, req gateRequest) (gateReply, bool) {
 	case rep := <-req.reply:
 		return rep, true
 	case <-ctx.Done():
-		return gateReply{}, false
+		// An answer given before the context ended still wins: a server that
+		// cannot start answers why and then stops its page, which ends this
+		// context - and with both ready, select picks either.
+		select {
+		case rep := <-req.reply:
+			return rep, true
+		default:
+			return gateReply{}, false
+		}
 	}
 }
 
@@ -415,6 +426,9 @@ func startPage(ln net.Listener, h http.Handler, logger *slog.Logger) *servicePag
 			Handler:           h,
 			ReadHeaderTimeout: pageReadHeaderTimeout,
 			BaseContext:       func(net.Listener) context.Context { return ctx },
+			// net/http's own complaints go through the same scrubbing handler
+			// as every other line (logscrub.go), instead of straight to stderr.
+			ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelError),
 		},
 		addr:   ln.Addr().String(),
 		cancel: cancel,
@@ -455,6 +469,7 @@ func (g *gate) handler() http.Handler {
 	mux.HandleFunc("POST "+controlUnlockPath, g.handleControlUnlock)
 	mux.HandleFunc("POST "+controlPasswordPath, g.handleControlPassword)
 	mux.HandleFunc("POST "+controlBackupPath, g.handleControlBackup)
+	mux.HandleFunc("POST "+controlLinkPath, g.handleControlLink)
 	mux.HandleFunc("POST /password/setup", g.handlePasswordForm(reqSetup))
 	mux.HandleFunc("POST /password/unlock", g.handlePasswordForm(reqUnlock))
 	mux.HandleFunc("POST /password/change", g.handlePasswordForm(reqChange))
@@ -472,6 +487,22 @@ func (g *gate) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(status))
+}
+
+// handleControlLink is `noxd link` (046) in every state: the open server's
+// own once there is one, and before that a refusal that names the state. The
+// refusal comes after the same three checks every command is held to
+// (controlAllowed), so whatever a browser can send is a 403 here too, locked
+// or open, and the lock is told only to the command.
+func (g *gate) handleControlLink(w http.ResponseWriter, r *http.Request) {
+	if h := g.openPage.Load(); h != nil && g.current() == stateOpen {
+		(*h).ServeHTTP(w, r)
+		return
+	}
+	if !controlAllowed(w, r) {
+		return
+	}
+	writeControlJSON(w, http.StatusConflict, ControlError{Error: codeState})
 }
 
 // handleRest is the open server's page once there is one. Before that, the

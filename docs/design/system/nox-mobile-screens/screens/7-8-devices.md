@@ -1,6 +1,6 @@
 # 7.8 · Devices
 
-> **Settings** · mobile (iOS / Android) · Material 3 · new in feature 032
+> **Settings** · mobile (iOS / Android) · Material 3 · new in feature 032 · invites need Allow since feature 046
 
 **Purpose.** Show the keys allowed to speak as this person, and let any of them be cut off. Without it pairing has no undo and every lost device stays an open door.
 
@@ -13,8 +13,8 @@ Detail scaffold (back + title). One group holding every device, the current one 
 - `alone` — nothing but this device
 - `error` — Couldn't load your devices.
 - `action error` — Couldn't revoke that device. Try again. (its own line above the list, never the list's)
-- `invite` — QR card with a `nox://pair/…` link (version 3), valid for 10 minutes. Until 045 a new device pairs over the server's direct address only (the onion service opens only for a paired device's access key), so the server answers `"onion": false` and the card always carries the note under its message, above the link itself: “This link works only on your home network.” (`onSurfaceVariant`)
-- `invite-home-only` — the same card and note; kept as its own state because the note follows the server's answer, not a guess of the app
+- `invite` — QR card with a `nox://pair/…` link (version 3), valid for 10 minutes. It pairs nothing by itself: the new device that presents it waits, and THIS device asks “New device: {platform}. Allow it to join?” in a dialog over whatever screen is up (8.2 · Pair request); only Allow lets it in. The link carries every address the server has to offer: its public address when one is set, a direct address, and its onion address when one is set (feature 045). A new device pairs with it from wherever one of them answers — through Tor too, if it ticks Use Tor on Connect (2.4).
+- `invite-home-only` — the link carries neither the server's onion address nor its public address, so it works only on the home network, and the card says so under its message, above the link itself: “This link works only on your home network.” (`onSurfaceVariant`). The note follows the server's reply to `device.invite` — its `public` flag, and its `onion` flag counted only when the link itself carries the onion address — never a guess of the app
 - `Revoke` is destructive (`error`), not the brand accent: it cannot be undone without a new pairing link, and on the current device it is a logout
 
 ## Behavior
@@ -24,6 +24,10 @@ Detail scaffold (back + title). One group holding every device, the current one 
 - A device paired from elsewhere appears in the open list on its own (phase 038): the server says so, and the screen re-reads. Leaving the section and coming back is no longer how you find out.
 - The whole invite surface disappears when a device joins: the card, because the token is one-shot and the server will now refuse that QR, and
   the "Couldn't create an invite." line with it, because a device joined anyway - which is what the failed request was asking for.
+- It also disappears when a request opened with an invite this device issued closes, whichever way - Allow, Deny, its ten minutes running
+  out, or Cancel on the new device (feature 046): the invite is spent whatever the outcome, and a Deny or an expiry changes no list, so the
+  pairing event would never say so. The event names a request, not a token, so a card showing a NEWER invite than the spent one goes too -
+  the price is one more tap on Add a device.
 - The list is also re-read when the live channel comes back: the pairing event does not survive a disconnect, and the person whose connection blinked would otherwise keep a wrong list.
 - A revoke that fails says so in its own sentence, above the list. Separate from the load error since phase 038: the screen now re-reads
   the list by itself, so a revoke can fail on a list that loaded fine, and one shared sentence would blame the wrong thing.
