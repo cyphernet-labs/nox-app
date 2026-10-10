@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:nox_app/design/app_spacing_tokens.dart';
 import 'package:nox_app/design/nox_icons.dart';
+import 'package:nox_app/domain/model/connection/connection_problem.dart';
 import 'package:nox_app/general/l10n_extension.dart';
 import 'package:nox_app/presentation/helpers/connection_problem_text.dart';
 import 'package:nox_app/presentation/pages/connection_page/bloc/connection_settings_bloc.dart';
@@ -77,7 +78,11 @@ class _ConnectionBodyState extends State<ConnectionBody> {
         if (state.loading) return const Center(child: CircularProgressIndicator());
         final colorScheme = Theme.of(context).colorScheme;
         final textTheme = Theme.of(context).textTheme;
-        final line = state.problem?.text(context.l10n) ?? (state.offline ? context.l10n.noConnection : null);
+        // An onion address the module refused is the onion field's fault, and
+        // the field says so (contract connection-ui.md); the line above the
+        // fields would only repeat it.
+        final atOnionField = state.problem == ConnectionProblem.invalidOnion;
+        final line = atOnionField ? null : state.problem?.text(context.l10n) ?? (state.offline ? context.l10n.noConnection : null);
         return ListView(
           // Vertical only: the group card sets its own screen inset, and
           // everything else is inset explicitly, as on Devices.
@@ -99,7 +104,7 @@ class _ConnectionBodyState extends State<ConnectionBody> {
                 onServerChanged: (value) => _bloc.add(ConnectionSettingsEvent.serverAddressChanged(value)),
                 onOnionChanged: (value) => _bloc.add(ConnectionSettingsEvent.onionAddressChanged(value)),
                 serverError: state.showServerAddressError ? context.l10n.connectInvalidServerAddress : null,
-                onionError: state.showOnionAddressError ? context.l10n.connectionProblemInvalidOnion : null,
+                onionError: state.showOnionAddressError || atOnionField ? context.l10n.connectionProblemInvalidOnion : null,
                 enabled: !state.saving,
               ),
             ),
