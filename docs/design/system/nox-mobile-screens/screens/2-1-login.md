@@ -21,9 +21,11 @@ App bar (NOX wordmark + splash hairline). Multiline mono “Pairing link” fiel
 - Sign in (or Enter) reads the link on the device; nothing is dialled here and there is no spinner. A link that will not parse — not a link, truncated, or a format older than version 3: inline errorText “This isn't a pairing link”. A link whose version is above 3 — a newer server issued it: inline errorText “This link needs a newer version of NOX. Update the app and try again.”, its own string because the next action is to update the app rather than to scan again. Editing the field clears the error.
 - A readable link opens Connect (2.4) at once. Whether the server answers, which path works and what the server says about the token are all said there, not here. Coming back from 2.4 keeps the link in the field.
 - A scan on QR scan (2.2) lands on the same path: the link is put into the field and read exactly as if Sign in had been pressed.
+- A wait for approval the app was closed in (feature 046) goes on: as soon as this screen opens, it hands that link to Connect (2.4) with the settings it was set up with, and Connect presents it again at once. A wait whose time ran out meanwhile is not offered - what it left is wiped, and the screen opens as usual.
 
 ## Navigation
 - Readable link → Connect (2.4).
+- A wait the app was closed in, still within its time → Connect (2.4) at once, as it opens.
 - Scan QR → QR scan (2.2).
 
 ## Copy (EN)

@@ -56,10 +56,12 @@ window.NOX_SPECS = [
       "The field is monospace, multiline (min 120), and wraps break-all so a long link never overflows.",
       "Empty: Sign in disabled, paste icon at 38%. As soon as there is a value → enabled.",
       "Sign in reads the link on the device and dials nothing; there is no spinner here. A link that will not parse → inline errorText “This isn't a pairing link”; a link from a newer app (version above 3) → “This link needs a newer version of NOX. Update the app and try again.”",
-      "A readable link opens Connect (2.4) at once (phase 045): pairing, the path and the server's answer about the token are said there. Coming back keeps the link in the field. A scan on 2.2 takes the same path."
+      "A readable link opens Connect (2.4) at once (phase 045): pairing, the path and the server's answer about the token are said there. Coming back keeps the link in the field. A scan on 2.2 takes the same path.",
+      "A wait for approval the app was closed in goes on (phase 046): as this screen opens it hands that link to Connect (2.4), which presents it again at once with the settings it was set up with. A wait whose time ran out is not offered."
     ],
     "navigation": [
       "Readable link → Connect (2.4).",
+      "A wait the app was closed in, still within its time → Connect (2.4) at once.",
       "Scan QR → QR scan (2.2)."
     ],
     "copy": [

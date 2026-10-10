@@ -224,10 +224,12 @@ window.NOX_SPECS = [
     "behavior": [
       "Same field rules as mobile 2.1 (mono, multiline, paste), re-laid into a centered card.",
       "Empty → Sign in disabled. Sign in reads the link and dials nothing: “This isn't a pairing link” or “This link needs a newer version of NOX. Update the app and try again.” inline; a readable link opens Connect at once (phase 045).",
-      "Use a QR image (Windows, Linux): a link read from the picked image takes the path of a pasted one; an image with no link → snackbar “Couldn't read a pairing link from that image.”"
+      "Use a QR image (Windows, Linux): a link read from the picked image takes the path of a pasted one; an image with no link → snackbar “Couldn't read a pairing link from that image.”",
+      "A wait for approval the app was closed in goes on (phase 046): as this screen opens it hands that link to Connect, which presents it again at once with the same settings. A wait whose time ran out is not offered."
     ],
     "navigation": [
       "Readable link → Connect (spec screens/11-connect.md).",
+      "A wait the app was closed in, still within its time → Connect at once.",
       "Scan QR → QR scan (03), macOS."
     ],
     "copy": [
