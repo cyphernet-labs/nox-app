@@ -1,6 +1,7 @@
 import 'package:injectable/injectable.dart';
 import 'package:nox_app/data/local/app_data_root.dart';
 import 'package:nox_app/data/local/device_vault.dart';
+import 'package:nox_app/data/local/vault_codec.dart';
 import 'package:sembast/sembast_io.dart';
 import 'package:sembast/sembast_memory.dart';
 
@@ -14,8 +15,11 @@ abstract class AppDatabase {
   Future<void> clearEntireDatabase();
 }
 
-/// The database on the disk (phase 048): in the app's data folder, opened only
-/// once the local-data key is in the module.
+/// The database on the disk (phase 048): in the app's data folder, every line
+/// of it sealed under the local-data key ([VaultCodec]), opened only once the
+/// key is in the module. Opened under another key it does not open at all
+/// (`DatabaseException.invalidCodec`), which the start reads as data whose
+/// key is gone.
 abstract class _DiskAppDatabase implements AppDatabase {
   _DiskAppDatabase(this._vault, this._name);
 
@@ -34,7 +38,7 @@ abstract class _DiskAppDatabase implements AppDatabase {
 
   Future<Database> _open() async {
     await _vault.ensureOpen();
-    return databaseFactoryIo.openDatabase(await AppDataRoot.pathOf(_name));
+    return databaseFactoryIo.openDatabase(await AppDataRoot.pathOf(_name), codec: VaultCodec.sembast);
   }
 
   @override
