@@ -41,10 +41,13 @@
 ```text
 deploy/
 ├── install-linux.sh, install-macos.sh, install-windows.ps1
+├── install-common.sh                  # общее для двух bash-скриптов (bash 3.2)
 ├── nox-tor.conf.tmpl                  # строки onion-сервиса NOX
+├── torrc.tmpl                         # свой tor на macOS и Windows и при проверке
 ├── noxd.service.tmpl, com.cyphernetlabs.noxd.plist.tmpl
+├── com.cyphernetlabs.nox-tor.plist.tmpl
 └── README.md                          # как запустить и как вручную (по системам)
-client_backend/cmd → main.go: noxd link -qr
+client_backend/main.go: noxd link -qr (046); service_windows.go, servicelog.go — noxd службой Windows
 docs/client-backend/{README,demo-runbook}.md, client_backend/CLAUDE.md
 ```
 
