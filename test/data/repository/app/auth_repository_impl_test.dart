@@ -23,6 +23,7 @@ import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/repository/device/device_repository.dart';
 import 'package:nox_app/domain/repository/log_repository.dart';
 import 'package:nox_app/domain/service/attachment_download_service.dart';
 import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
@@ -31,7 +32,10 @@ import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_app/data/service/tor/fake_tor_service.dart';
 import 'package:nox_app/domain/model/connection/tor_status.dart';
+import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/domain/service/tor_service.dart';
+import 'package:nox_app/domain/model/session/session_phase.dart';
+import 'package:nox_app/general/pairing/device_keys.dart';
 
 import 'package:nox_app/general/pairing/pairing_link.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -312,6 +316,91 @@ void main() {
     await repository.logout(forced: true);
     verify(session.clear()).called(1);
     verify(appState.fetchAppState(sessionExpired: true)).called(1);
+  });
+
+  // Logging out is revoking this device's own key, then wiping (contract §8A,
+  // phase 046 SC-006): the key stops being a way in, rather than merely being
+  // forgotten here.
+  group('logout revokes this device\'s own key first (SC-006)', () {
+    const seed = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=';
+    late _RecordingDevices devices;
+    late _FixedPhase phase;
+    late List<String> order;
+
+    setUp(() {
+      order = <String>[];
+      devices = _RecordingDevices(order);
+      phase = _FixedPhase(SessionPhase.live);
+      getIt.allowReassignment = true;
+      getIt.registerSingleton<DeviceRepository>(devices);
+      getIt.registerSingleton<SessionPhaseService>(phase);
+      when(session.deviceSecret()).thenAnswer((_) async => const RepositoryResult<String>.success(data: seed));
+      when(session.clear()).thenAnswer((_) async {
+        order.add('clear');
+        return const RepositoryResult<bool>.success(data: true);
+      });
+      when(chats.clean()).thenAnswer((_) async => order.add('chats'));
+    });
+
+    test('connected: the revoke of this very key goes out before anything is wiped', () async {
+      await repository.logout();
+
+      expect(devices.revoked, [await DeviceKeys.publicKey(seed)]);
+      expect(order, ['revoke', 'clear', 'chats']);
+    });
+
+    for (final offline in [SessionPhase.disconnected, SessionPhase.connecting, SessionPhase.serverMismatch]) {
+      test('${offline.name}: nothing is sent, and the wipe does not wait for a connection', () async {
+        phase.value = offline;
+
+        final result = await repository.logout();
+
+        expect(result.data, isTrue);
+        expect(devices.revoked, isEmpty, reason: 'the orphaned key is revoked from another device');
+        verify(session.clear()).called(1);
+      });
+    }
+
+    test('a forced logout revokes nothing: the server already refused this key', () async {
+      await repository.logout(forced: true);
+
+      expect(devices.revoked, isEmpty);
+    });
+
+    test('a revoke the server refuses does not stop the wipe', () async {
+      devices.fail = true;
+
+      final result = await repository.logout();
+
+      expect(result.data, isTrue);
+      expect(order, ['revoke', 'clear', 'chats']);
+    });
+
+    test('the echo of its own revoke joins the logout under way: one wipe, and no "session expired"', () async {
+      // The server tells every connection of the revoked key, this one
+      // included, and that event is the forced logout's trigger.
+      final answer = Completer<void>();
+      devices.hold = answer.future;
+
+      final voluntary = repository.logout();
+      await pumpEventQueue();
+      final echo = repository.logout(forced: true);
+      answer.complete();
+
+      expect((await voluntary).data, isTrue);
+      expect((await echo).data, isTrue);
+      verify(session.clear()).called(1);
+      verifyNever(appState.fetchAppState(sessionExpired: true));
+      verify(appState.fetchAppState(sessionExpired: false)).called(1);
+    });
+
+    test('once a logout is over, the next one is its own', () async {
+      await repository.logout();
+      await repository.logout(forced: true);
+
+      verify(session.clear()).called(2);
+      verify(appState.fetchAppState(sessionExpired: true)).called(1);
+    });
   });
 
   group('a session paired before phase 044 (T038, FR-025)', () {
@@ -787,4 +876,48 @@ class _RecordingPrefetch implements AttachmentPrefetchService {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// Records each revoke - the key, and when, among the other steps of a
+/// logout - and answers it as told.
+class _RecordingDevices implements DeviceRepository {
+  _RecordingDevices(this.order);
+
+  final List<String> order;
+  final List<String> revoked = <String>[];
+
+  /// Holds the answer until it completes.
+  Future<void>? hold;
+
+  /// Answers with a refusal.
+  bool fail = false;
+
+  @override
+  Future<RepositoryResult<bool>> revoke({required String deviceKey}) async {
+    order.add('revoke');
+    revoked.add(deviceKey);
+    await hold;
+    return fail
+        ? const RepositoryResult<bool>.error(exception: RepositoryException.internal)
+        : const RepositoryResult<bool>.success(data: true);
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// A connection that stands where it is told.
+class _FixedPhase implements SessionPhaseService {
+  _FixedPhase(this.value);
+
+  SessionPhase value;
+
+  @override
+  SessionPhase get phase => value;
+
+  @override
+  Stream<SessionPhase> watchPhase() => Stream<SessionPhase>.value(value);
+
+  @override
+  Future<void> reconnect() async {}
 }

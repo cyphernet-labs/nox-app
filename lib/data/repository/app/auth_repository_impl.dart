@@ -20,6 +20,7 @@ import 'package:nox_app/domain/model/app/app_state_type.dart';
 import 'package:nox_app/domain/model/connection/connection_settings.dart';
 import 'package:nox_app/domain/model/session/pair_refusal.dart';
 import 'package:nox_app/domain/model/session/pending_pairing.dart';
+import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/app/app_state_repository.dart';
 import 'package:nox_app/domain/repository/app/auth_repository.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
@@ -31,6 +32,7 @@ import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
+import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/domain/service/tor_service.dart';
 
 /// Mutate source-of-truth (session) → re-derive app state. Single logout path;
@@ -325,9 +327,21 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
   /// Revokes this device's own key before the local wipe, when there is a
   /// channel to say it on. Never blocks the logout: a person who chose to sign
   /// out must sign out.
+  ///
+  /// "A channel" is a greeted one, now (contract §8A: with a live connection
+  /// the revoke goes out before the wipe; without one the wipe is
+  /// unconditional). A command sent without one would wait for a connection
+  /// that may be minutes away through Tor - the person staring at the logout
+  /// for the bound below to buy nothing, since the orphaned key is revoked
+  /// from another device either way.
   Future<void> _revokeOwnKey() async {
     final devices = getIt.isRegistered<DeviceRepository>() ? getIt<DeviceRepository>() : null;
     if (devices == null) return;
+    final phase = getIt.isRegistered<SessionPhaseService>() ? getIt<SessionPhaseService>().phase : null;
+    if (phase != SessionPhase.live && phase != SessionPhase.catchingUp) {
+      logRepository.debug(target: this, message: 'logout: not connected, the key is revoked from another device');
+      return;
+    }
     try {
       final seed = await _sessionRepository.deviceSecret();
       if (!seed.hasData) return;
@@ -385,8 +399,32 @@ class AuthRepositoryImpl with BaseRepositoryHelper implements AuthRepository {
     return _deriveAfter(() => _sessionRepository.setOnboardingComplete(label: landed ? label : null));
   }
 
+  /// The logout under way, if one is.
+  Future<RepositoryResult<bool>>? _loggingOut;
+
+  /// One logout at a time, and a second one joins the first.
+  ///
+  /// The case this exists for is a voluntary logout's own echo. It revokes
+  /// this device's key first, and the server answers that by telling every
+  /// connection of the key - this one included - `device.revoked`, which is
+  /// the forced logout's trigger. The guard against acting on it reads the
+  /// session, and the wipe that empties it is a few storage calls behind the
+  /// revoke's reply: the event can win that race, and a second, forced wipe
+  /// then tells the person their session expired when they signed out.
+  /// Joined, the forced one IS the voluntary one - same wipe, same outcome,
+  /// no expiry notice.
   @override
   Future<RepositoryResult<bool>> logout({bool forced = false}) {
+    final running = _loggingOut;
+    if (running != null) return running;
+    final run = _logout(forced: forced);
+    _loggingOut = run;
+    return run.whenComplete(() {
+      if (identical(_loggingOut, run)) _loggingOut = null;
+    });
+  }
+
+  Future<RepositoryResult<bool>> _logout({required bool forced}) {
     // Gate the re-derive on a successful wipe: a failed clear() (e.g. a secure-storage
     // PlatformException) must NOT report success while the identifier survives —
     // otherwise the user silently stays authorized (Constitution I: logout fully wipes).
