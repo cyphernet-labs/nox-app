@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -584,6 +585,33 @@ void main() {
 
       expect(factory.latest.commandNamed('session.hello'), isNull);
       expect(factory.latest.closed, isFalse);
+    });
+
+    test('an unpaired install away from home pairs through Tor when Use Tor is on - a claim included (phase 045, FR-008)', () async {
+      await session.saveServer(address: '10.0.0.5:9000', serverKey: kKeyA);
+      await onlyThroughTor();
+
+      await starter.start();
+      await settle();
+      expect(factory.urls.single.host, '${'a' * 56}.onion', reason: 'no direct address answered, so the onion one is dialled');
+      unawaited(socket.pair(token: 'claim', platform: 'macos').then((_) {}, onError: (Object _) {}));
+      for (var i = 0; i < 40 && factory.latest.commandNamed('pair') == null; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+
+      expect(factory.latest.commandNamed('pair')?['data'], {'token': 'claim', 'platform': 'macos'});
+    });
+
+    test('with Use Tor off an unpaired install away from home dials nothing through Tor', () async {
+      await session.saveServer(address: '10.0.0.5:9000', serverKey: kKeyA);
+      await onlyThroughTor();
+      await getIt<ServerAddressesRepository>().setUseTor(false);
+
+      await starter.start();
+      await settle();
+
+      expect(factory.urls, isEmpty, reason: 'no direct address answered, and Tor is not allowed');
+      expect(tor.starts, 0);
     });
 
     test('a paired install greets naming nobody: the channel proved the device (phase 044)', () async {

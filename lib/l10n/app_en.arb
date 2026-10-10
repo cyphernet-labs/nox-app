@@ -218,10 +218,6 @@
   "@attachmentGone": {
     "description": "Terminal state on the file screen: the bytes are gone. Contract 2.1 forbids offering a retry here."
   },
-  "loginServerNotRecognised": "This server doesn't match its link",
-  "@loginServerNotRecognised": {
-    "description": "The same refusal on the sign-in screen, where there is no relationship with a server yet - so it names the link rather than a pairing that has not happened."
-  },
   "windowSubtitleSignIn": "Sign in",
   "@windowSubtitleSignIn": {
     "description": "Desktop window titlebar subtitle, rendered after the NOX wordmark as \"NOX — <subtitle>\"."
@@ -294,10 +290,6 @@
   "@devicesInviteHomeOnly": {
     "description": "Under an invite the server could not make reachable from anywhere (phase 040, FR-019)."
   },
-  "loginHomeNetworkOnly": "Couldn't reach your server. Pairing works on your home network.",
-  "@loginHomeNetworkOnly": {
-    "description": "Pairing link whose server did not answer, or answered with a key the link does not name (phase 040, FR-022)."
-  },
   "chatCreationPending": "Waiting to be created",
   "@chatCreationPending": {
     "description": "Screen-reader name of the clock that replaces the time in a chats-list row whose chat is not on the person's server yet (phase 041)."
@@ -349,5 +341,37 @@
   "connectionProblemTurnOnTor": "Can't reach the server directly. Turn on Use Tor to connect through Tor.",
   "@connectionProblemTurnOnTor": {
     "description": "Why there is no connection (phase 045): the direct path did not answer, Use Tor is off and an onion address is known. 'Use Tor' is the name of the switch."
+  },
+  "connectTitle": "Connect to your server",
+  "@connectTitle": {
+    "description": "Heading of the connection screen shown after a pairing link arrives - pasted, scanned or read from a QR image (phase 045)."
+  },
+  "connectServerAddressLabel": "Server address",
+  "@connectServerAddressLabel": {
+    "description": "Field label on the connection screen and in Settings > Connection: host:port of the server (phase 045)."
+  },
+  "connectOnionAddressLabel": "Onion address",
+  "@connectOnionAddressLabel": {
+    "description": "Field label on the connection screen and in Settings > Connection: the server's .onion address (phase 045)."
+  },
+  "connectOnionAddressHint": "Optional",
+  "@connectOnionAddressHint": {
+    "description": "Hint of the empty onion address field (phase 045)."
+  },
+  "connectUseTor": "Use Tor",
+  "@connectUseTor": {
+    "description": "Checkbox on the connection screen and switch in Settings > Connection (phase 045). Off by default."
+  },
+  "connectUseTorCaption": "NOX uses Tor only when it can't reach your server directly.",
+  "@connectUseTorCaption": {
+    "description": "Caption under Use Tor (phase 045, FR-011)."
+  },
+  "connectAction": "Connect",
+  "@connectAction": {
+    "description": "Primary button of the connection screen; pairs the device (phase 045)."
+  },
+  "connectInvalidServerAddress": "This isn't a valid server address.",
+  "@connectInvalidServerAddress": {
+    "description": "Field error when the server address is not host:port (phase 045)."
   }
 }

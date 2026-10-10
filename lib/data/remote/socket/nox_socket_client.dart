@@ -304,7 +304,10 @@ class NoxSocketClient {
       try {
         return await _sendOnce(isGreeting: true, via: connection, 'pair', data, left: left);
       } on SocketUnavailableException {
-        if (!_started || left() <= Duration.zero) rethrow;
+        // A refusal for good - another server behind the onion address - is
+        // not a loss to wait out: no connection comes after it until the
+        // channel is started again (phase 045).
+        if (!_started || left() <= Duration.zero || _phase.value.isTerminal) rethrow;
         logRepository.debug(target: this, message: 'socket: the connection carrying pair went away, presenting it again');
       }
     }
@@ -386,10 +389,13 @@ class NoxSocketClient {
       final connection = _connection;
       if (connection != null) return connection;
       if (!_started) throw const SocketUnavailableException('no connection');
+      // Terminal: nothing will open until the channel is started again - a
+      // pairing waiting here would sit out its whole budget for nothing.
+      if (_phase.value.isTerminal) throw const SocketUnavailableException('refused for good');
       final wait = remaining();
       if (wait <= Duration.zero) throw const SocketUnavailableException('no connection');
       try {
-        await _opened.stream.first.timeout(wait);
+        await Rx.merge<Object?>([_opened.stream, _phase.stream.where((phase) => phase.isTerminal)]).first.timeout(wait);
       } on TimeoutException {
         // Looked at again: the slow path may have shown meanwhile.
       }

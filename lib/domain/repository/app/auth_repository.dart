@@ -1,11 +1,17 @@
+import 'package:nox_app/domain/model/connection/connection_settings.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 
 /// Orchestrates session mutations on the "mutate source-of-truth → fetchAppState()"
-/// contract. The single home of the logout path; future home of real sign-in
-/// (backend TBD). Sign-in is currently stubbed (no client-side validation).
+/// contract. The single home of the logout path, and of sign-in by a pairing
+/// link.
 abstract class AuthRepository {
-  /// Stub sign-in: persists the identifier, then re-derives app state.
-  Future<RepositoryResult<bool>> signIn({required String identifier});
+  /// Pairs this device by the pairing link [identifier], then re-derives app
+  /// state. [connection] is what the person confirmed on the connection
+  /// screen (phase 045): the server address and onion address - stored as
+  /// hand edits where they differ from the link's - and `Use Tor`, which
+  /// decides whether the pairing itself may go through Tor. Without it the
+  /// link's own addresses are used, with Tor off.
+  Future<RepositoryResult<bool>> signIn({required String identifier, ConnectionSettings? connection});
 
   /// First-login completion (Set username 2.3): marks onboarding complete, re-derives.
   Future<RepositoryResult<bool>> completeOnboarding({String? label});

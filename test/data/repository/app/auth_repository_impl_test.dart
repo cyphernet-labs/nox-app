@@ -12,6 +12,7 @@ import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/session/pair_refusal.dart';
 import 'package:nox_app/domain/model/app/app_state_model.dart';
 import 'package:nox_app/domain/model/app/app_state_type.dart';
+import 'package:nox_app/domain/model/connection/connection_settings.dart';
 import 'package:nox_app/domain/repository/app/app_state_repository.dart';
 import 'package:nox_app/domain/repository/app/session_repository.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
@@ -130,9 +131,7 @@ void main() {
     verifyNever(session.saveServer(address: anyNamed('address'), serverKey: anyNamed('serverKey')));
   });
 
-  test('a link with no direct address cannot pair until phase 045, and stores nothing', () async {
-    // Only an onion address: the onion service opens for a paired device's
-    // key, and this one is not paired yet (FR-019).
+  test('a link with no direct address and nothing typed has nowhere to start, and stores nothing', () async {
     final onionOnly = PairingLink(
       serverKey: PairingLink.parse(link).serverKey,
       token: PairingLink.parse(link).token,
@@ -141,8 +140,27 @@ void main() {
 
     final result = await repository.signIn(identifier: onionOnly);
 
-    expect(result.exception, RepositoryException.connection, reason: 'out of reach from here - which says pairing works at home');
+    expect(result.exception, RepositoryException.connection);
     verifyNever(session.saveServer(address: anyNamed('address'), serverKey: anyNamed('serverKey')));
+  });
+
+  test('a link with no direct address starts at the address typed on the connection screen (phase 045)', () async {
+    when(
+      session.saveServer(address: anyNamed('address'), serverKey: anyNamed('serverKey')),
+    ).thenAnswer((_) async => const RepositoryResult<bool>.success(data: true));
+    final onionOnly = PairingLink(
+      serverKey: PairingLink.parse(link).serverKey,
+      token: PairingLink.parse(link).token,
+      addresses: [OnionLinkAddress(PairingLink.parse(link).serverKey)],
+    ).encode();
+
+    await repository.signIn(
+      identifier: onionOnly,
+      connection: const ConnectionSettings(serverAddress: '10.8.0.2:8443'),
+    );
+
+    verify(session.saveServer(address: '10.8.0.2:8443', serverKey: serverKey)).called(1);
+    expect((await getIt<ServerAddressesRepository>().read()).data!.manualAddress, isNull, reason: 'no edit of anything');
   });
 
   test('FR-004: signing in never states a label, so a known name cannot be overwritten', () async {
@@ -386,8 +404,75 @@ void main() {
       final stored = (await getIt<ServerAddressesRepository>().read()).data!;
       expect(stored.direct, ['192.168.1.20:8443', 'nox.example.org:8443']);
       expect(stored.onion, '${'a' * 56}.onion:443', reason: 'derived from the service key by the Tor module');
+      expect(stored.useTor, isFalse, reason: 'off unless the person ticked it');
+      expect(stored.manualAddress, isNull);
+      expect(stored.manualOnion, isNull);
       final handed = verify(handshake.pair(link: captureAnyNamed('link'), platform: anyNamed('platform'))).captured.single as PairingLink;
       expect(handed.directAddresses, ['192.168.1.20:8443', 'nox.example.org:8443']);
+    });
+
+    group('what the person set on the connection screen (phase 045)', () {
+      const full =
+          'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODwEGwKgBFCD7AxFub3guZXhhbXBsZS5vcmcg-wQgF8t5-ytBIPKx7GXkGY1uCLKOgT_rAeSkAIObheGAgM4';
+      final linkOnion = '${'a' * 56}.onion:443';
+      final typedOnion = '${'b' * 56}.onion:443';
+
+      setUp(() {
+        (getIt<TorService>() as FakeTorService).supported = true;
+        when(
+          handshake.pair(link: anyNamed('link'), platform: anyNamed('platform')),
+        ).thenAnswer((_) async => const IdentityHandshake(authorId: 'u_1', label: 'Anna', created: false));
+      });
+
+      test('the link\'s own values, unchanged, are no edits, and Use Tor is stored as ticked', () async {
+        await repository.signIn(
+          identifier: full,
+          connection: ConnectionSettings(serverAddress: '192.168.1.20:8443', onionAddress: linkOnion, useTor: true),
+        );
+
+        final stored = (await getIt<ServerAddressesRepository>().read()).data!;
+        expect(stored.manualAddress, isNull);
+        expect(stored.manualOnion, isNull);
+        expect(stored.useTor, isTrue);
+        expect(stored.effectiveOnion, linkOnion);
+      });
+
+      test('a changed field is a hand edit, the session still starting at the link\'s own address', () async {
+        await repository.signIn(
+          identifier: full,
+          connection: ConnectionSettings(serverAddress: '10.8.0.2:8443', onionAddress: typedOnion),
+        );
+
+        verify(session.saveServer(address: '192.168.1.20:8443', serverKey: serverKey)).called(1);
+        final stored = (await getIt<ServerAddressesRepository>().read()).data!;
+        expect(stored.manualAddress, '10.8.0.2:8443');
+        expect(stored.manualOnion, typedOnion);
+        expect(stored.effectiveOnion, typedOnion);
+        expect(stored.candidates('192.168.1.20:8443').first, '10.8.0.2:8443', reason: 'the edit is tried first');
+      });
+
+      test('an emptied onion field means no onion address, even though the link carried one', () async {
+        await repository.signIn(
+          identifier: full,
+          connection: const ConnectionSettings(serverAddress: '192.168.1.20:8443', useTor: true),
+        );
+
+        final stored = (await getIt<ServerAddressesRepository>().read()).data!;
+        expect(stored.manualOnion, '');
+        expect(stored.effectiveOnion, isNull);
+      });
+
+      test('an onion address typed for a link without one is a hand edit too', () async {
+        await repository.signIn(
+          identifier: link,
+          connection: ConnectionSettings(serverAddress: '192.168.1.20:8443', onionAddress: typedOnion, useTor: true),
+        );
+
+        final stored = (await getIt<ServerAddressesRepository>().read()).data!;
+        expect(stored.onion, isNull);
+        expect(stored.manualOnion, typedOnion);
+        expect(stored.useTor, isTrue);
+      });
     });
 
     test('the device key is read before anything is presented, and an unreadable one rolls back', () async {

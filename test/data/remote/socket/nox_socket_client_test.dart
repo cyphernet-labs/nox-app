@@ -916,6 +916,34 @@ void main() {
       expect(waited.elapsed, lessThan(NoxSocketClient.sendTimeout + const Duration(seconds: 2)));
     }, timeout: const Timeout(Duration(seconds: 30)));
 
+    test('a pairing through an onion address that proves another key ends at once, and the token never goes out (phase 045)', () async {
+      // Pairing may go through Tor now. Behind an onion address another key is
+      // another server - terminal - and nothing comes after it to wait for:
+      // the pairing used to sit out the rest of its slow budget, minutes.
+      // A connection whose channel never opens: what it is given goes nowhere,
+      // as the real one holds frames until the server key is proved.
+      factory.refuseEvery = ChannelFailure.wrongServer;
+      final targets = ScriptedTargets([Uri.parse('wss://${'a' * 56}.onion/ws')]);
+      await client.start(targets: targets, credentialsProvider: () async => const GreetingCredentials.unpaired());
+      final waited = Stopwatch()..start();
+
+      await expectLater(client.pair(token: 't', platform: 'macos'), throwsA(isA<SocketUnavailableException>()));
+
+      expect(waited.elapsed, lessThan(const Duration(seconds: 2)));
+      expect(client.currentPhase, SessionPhase.serverMismatch);
+      expect(factory.created.every((c) => c.commandNamed('pair') == null), isTrue, reason: 'the token never reached a channel');
+    });
+
+    test('a pairing begun while the channel is already refused for good fails at once', () async {
+      await client.start(targets: ScriptedTargets([Uri.parse('wss://${'a' * 56}.onion/ws')]));
+      factory.latest.refuseServerKey();
+      await waitUntil(() => client.currentPhase == SessionPhase.serverMismatch, reason: 'refused');
+      final waited = Stopwatch()..start();
+
+      await expectLater(client.pair(token: 't', platform: 'macos'), throwsA(isA<SocketUnavailableException>()));
+      expect(waited.elapsed, lessThan(const Duration(seconds: 1)));
+    });
+
     test('pairing carries the token and the platform - no device key and no access key', () async {
       await client.start(url: url, credentialsProvider: () async => const GreetingCredentials.unpaired());
       final socket = factory.latest;

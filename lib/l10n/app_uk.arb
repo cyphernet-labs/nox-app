@@ -171,10 +171,6 @@
   "@attachmentGone": {
     "description": "Terminal state on the file screen: the bytes are gone. Contract 2.1 forbids offering a retry here."
   },
-  "loginServerNotRecognised": "Сервер не збігається з посиланням",
-  "@loginServerNotRecognised": {
-    "description": "The same refusal on the sign-in screen, where there is no relationship with a server yet - so it names the link rather than a pairing that has not happened."
-  },
   "windowSubtitleSignIn": "Вхід",
   "windowSubtitleSetUp": "Початок роботи",
   "windowSubtitleScanQr": "Сканування QR",
@@ -193,7 +189,6 @@
   "connectionInfoLocalNetwork": "Якщо ви вдома, перевірте, що NOX має доступ до локальної мережі в Параметрах.",
   "connectionTorObsolete": "Оновіть NOX, щоб підключатися поза домом",
   "devicesInviteHomeOnly": "Це посилання працює лише у вашій домашній мережі.",
-  "loginHomeNetworkOnly": "Не вдалося зв'язатися з вашим сервером. Звʼязування працює у вашій домашній мережі.",
   "chatCreationPending": "Очікує на створення",
   "chatCreationNameTaken": "Назву вже зайнято",
   "chatCreationFailed": "Не вдалося створити",
@@ -206,5 +201,13 @@
   "connectionProblemOnionUnreachable": "Ваш сервер зараз не відповідає через Tor. Перевірте, чи він працює.",
   "connectionProblemOtherServer": "Ця onion-адреса належить іншому серверу.",
   "connectionProblemTorNetwork": "Не вдається під'єднатися до мережі Tor. Перевірте підключення до інтернету.",
-  "connectionProblemTurnOnTor": "Не вдається зв'язатися з сервером напряму. Увімкніть «Використовувати Tor», щоб під'єднатися через Tor."
+  "connectionProblemTurnOnTor": "Не вдається зв'язатися з сервером напряму. Увімкніть «Використовувати Tor», щоб під'єднатися через Tor.",
+  "connectTitle": "Під'єднання до вашого сервера",
+  "connectServerAddressLabel": "Адреса сервера",
+  "connectOnionAddressLabel": "Onion-адреса",
+  "connectOnionAddressHint": "Необов'язково",
+  "connectUseTor": "Використовувати Tor",
+  "connectUseTorCaption": "NOX використовує Tor, лише коли не може зв'язатися з сервером напряму.",
+  "connectAction": "Під'єднатися",
+  "connectInvalidServerAddress": "Це неправильна адреса сервера."
 }
