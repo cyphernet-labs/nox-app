@@ -327,11 +327,23 @@ function Write-ServerLockedAgain {
 
 function Invoke-UndoAction($U) {
     switch ($U.Action) {
-        'remove' { Remove-Item -LiteralPath $U.A -Recurse -Force -ErrorAction SilentlyContinue }
+        # Removing what was never made is nothing; what is still there after
+        # the removal is a step that did not go back, and is named.
+        'remove' {
+            Remove-Item -LiteralPath $U.A -Recurse -Force -ErrorAction SilentlyContinue
+            if (Test-Path -LiteralPath $U.A) { throw "$($U.A) is still there" }
+        }
         'restore' { Copy-Item -LiteralPath $U.A -Destination $U.B -Force }
         'stop-background' { Stop-Background $U.A $U.B }
-        'service-command' { [void](Invoke-Native "$env:SystemRoot\System32\sc.exe" @('config', $U.A, 'binPath=', $U.B)) }
-        'service-delete' { [void](Invoke-Native "$env:SystemRoot\System32\sc.exe" @('delete', $U.A)) }
+        'service-command' {
+            $out = Invoke-Native "$env:SystemRoot\System32\sc.exe" @('config', $U.A, 'binPath=', $U.B)
+            if ($out.ExitCode -ne 0) { throw "sc.exe could not give the service $($U.A) its command line back: $($out.Output.Trim())" }
+        }
+        # 1060: the service was never created; 1072: it is already going.
+        'service-delete' {
+            $out = Invoke-Native "$env:SystemRoot\System32\sc.exe" @('delete', $U.A)
+            if ($out.ExitCode -notin @(0, 1060, 1072)) { throw "sc.exe could not delete the service $($U.A): $($out.Output.Trim())" }
+        }
         'service-start' { Start-ServiceAgain $U.A }
         'service-stop' { Stop-Service -Name $U.A -Force -ErrorAction SilentlyContinue }
         'firewall-port' { Get-NetFirewallRule -Name $U.A | Get-NetFirewallPortFilter | Set-NetFirewallPortFilter -LocalPort $U.B }
