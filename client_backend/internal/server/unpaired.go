@@ -1,18 +1,23 @@
 package server
 
 import (
+	"context"
+	"log/slog"
+	"net"
+	"net/http"
 	"time"
 
 	"github.com/coder/websocket"
 )
 
-// A /ws connection whose key no device row names may only pair (contract §1,
+// A key no device row names may only pair, and only over /ws (contract §1,
 // §8A). The channel accepts every key that proves itself, because a device
 // about to pair is unknown by definition - so a key made for the occasion
 // passes it like any other, and since 045 anybody who knows the onion address
-// can make one. What such a connection may hold is bounded here: in time, and
-// in how many are open at once. A paired device's connection is held to
-// neither.
+// can make one. What such a key's connections may hold is bounded here: a /ws
+// session in time and in how many are open at once, and any other request by
+// ending its connection with the answer. A paired device's connection is held
+// to none of it.
 
 const (
 	// defaultUnpairedTimeout is how long a connection of a key nobody paired
@@ -38,16 +43,108 @@ const (
 	defaultMaxUnpaired = 32
 )
 
-// pairedKey reports whether c's key is a paired device's. A store that cannot
+// pairedKey reports whether key is a paired device's. A store that cannot
 // answer counts as "no": the connection is then held to a stranger's limits,
-// which a paired device leaves the moment it greets.
-func (s *Server) pairedKey(c *client) bool {
-	_, found, err := s.store.DeviceOwner(c.ctx, c.deviceKey)
+// which a paired device leaves the moment it greets - or, off /ws, with the
+// next connection it opens.
+func (s *Server) pairedKey(ctx context.Context, key string, logger *slog.Logger) bool {
+	_, found, err := s.store.DeviceOwner(ctx, key)
 	if err != nil {
-		c.logger.Error("read the connection's device", "err", err)
+		logger.Error("read the connection's device", "err", err)
 		return false
 	}
 	return found
+}
+
+// limitStrangers is the main port's door. Before any handler runs, it asks
+// whether the request's connection proved a paired device's key, and holds a
+// key nobody paired to one request per connection: every answer to it but a
+// WebSocket upgrade ends the connection (endWithAnswer, strangerWriter). Kept
+// open, such a connection would be the stranger's for as long as it asked
+// again within each idle timeout. An upgrade goes on as a session, held to the
+// deadline and the cap of holdUnpaired. A paired device's request passes as
+// it is.
+//
+// The door decides only whether the connection outlives the request. What the
+// request may do is still decided where it was, after the request is
+// registered (admitTransfer, handleWS), so a revocation landing between the
+// two is caught there - and a 401 there ends the connection too.
+func (s *Server) limitStrangers(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if peer, ok := channelPeerFrom(r.Context()); ok && s.pairedKey(r.Context(), peer.deviceKey(), s.logger) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		endWithAnswer(w, r)
+		next.ServeHTTP(&strangerWriter{ResponseWriter: w}, r)
+	})
+}
+
+// endWithAnswer makes the answer to r the last thing its connection carries.
+// "Connection: close" has net/http close the connection once the answer is
+// out, and skip reading the rest of a body before it writes the answer - which
+// a declared and unsent body would hold up, the answer not yet written.
+// net/http still reads that rest once the answer is out, for up to the body's
+// budget (boundRequestBody), so a request that declared one also gets a read
+// deadline already past: nothing here reads a body it is about to refuse, and
+// the connection ends at once instead of half a minute later.
+//
+// Only a request that declared a body gets the deadline. Without one net/http
+// is already reading the connection behind the handler, to notice the peer
+// hanging up, and that read failing on a deadline ends the request's context
+// under the handler - a stranger's pairing session with it.
+func endWithAnswer(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Connection", "close")
+	if r.ContentLength != 0 {
+		_ = http.NewResponseController(w).SetReadDeadline(time.Now())
+	}
+}
+
+// strangerWriter is the response writer of a stranger's request: whatever the
+// handler answers says "Connection: close", unless it is the 101 of a
+// WebSocket upgrade, which turns the connection into a session instead. The
+// header is set again at WriteHeader, not only before the handler, because the
+// WebSocket library writes "Connection: Upgrade" onto the refusals it answers
+// too, and the value set last is the one sent.
+type strangerWriter struct {
+	http.ResponseWriter
+}
+
+func (w *strangerWriter) WriteHeader(code int) {
+	if code != http.StatusSwitchingProtocols {
+		w.Header().Set("Connection", "close")
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+// Unwrap is what the WebSocket library follows to take the connection over,
+// and http.ResponseController to reach its deadlines.
+func (w *strangerWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
+// boundRequestBody is the main port's ConnState hook. Once a request's headers
+// are in, it gives the body that may follow them bodyTimeout, the slow path's
+// budget - for any key. The main port sets no ReadTimeout, since a transfer
+// has no time limit (043), and this bounds no transfer either: a handler that
+// reads a body sets a deadline of its own before every read (stallReader),
+// and net/http lifts the deadline itself whenever it reads behind a request
+// with no body left, to notice the peer hanging up - a download's case. What
+// it bounds is a body nobody of ours reads. net/http answers some requests
+// itself, before any handler - an Expect it does not support - and reads what
+// is left of a declared body before it lets the connection go; it does the
+// same behind a handler that answered without reading one. Unbounded, that
+// read would wait for good on a peer that declared a body and never sent it.
+// The door cuts it short for a stranger's request (endWithAnswer).
+//
+// net/http calls this on the connection's own goroutine, between reading the
+// headers and answering or starting a handler, and nothing in between touches
+// the read deadline. Every other state is left alone: a new connection is
+// reported on the accept loop, and the rest come with deadlines of their own.
+func (s *Server) boundRequestBody(c net.Conn, state http.ConnState) {
+	if state == http.StateActive {
+		_ = c.SetReadDeadline(time.Now().Add(s.bodyTimeout))
+	}
 }
 
 // holdUnpaired puts c among the connections of keys nobody paired - closing

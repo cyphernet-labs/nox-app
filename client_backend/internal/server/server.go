@@ -49,14 +49,18 @@ const (
 	// readHeaderTimeout bounds the request headers that follow the channel
 	// check on the main port.
 	readHeaderTimeout = slowPathTimeout
-	// defaultIdleTimeout bounds how long a connection that passed the channel
-	// may sit between two HTTP requests. Without it a keep-alive connection
-	// stays for as long as its peer likes - and since 045 the peer can be
-	// anybody who knows the onion address and made a key for the occasion.
-	// Well above the 15 s after which dart:io's client lets an idle connection
-	// go by default, so the server never closes one the app still means to
-	// use.
+	// defaultIdleTimeout bounds how long a connection kept for its next HTTP
+	// request may wait for it. Only a paired device's connection is kept - a
+	// stranger's ends with its answer (limitStrangers) - but a device can be
+	// revoked while its connection sits idle, and without a limit that
+	// connection would stay for as long as its holder liked. Well above the
+	// 15 s after which dart:io's client lets an idle connection go by default,
+	// so the server never closes one the app still means to use.
 	defaultIdleTimeout = 2 * time.Minute
+	// defaultBodyTimeout bounds a request's body where nothing of ours reads
+	// it (boundRequestBody): the slow path's budget, like the headers before
+	// it.
+	defaultBodyTimeout = slowPathTimeout
 	// pageReadHeaderTimeout is the service page's: a browser on this same
 	// machine, never a path through Tor.
 	pageReadHeaderTimeout = 5 * time.Second
@@ -102,6 +106,9 @@ type Server struct {
 	// idleTimeout is the main port's http.Server.IdleTimeout. A field so tests
 	// can scale it.
 	idleTimeout time.Duration
+	// bodyTimeout bounds a request's body where nothing of ours reads it
+	// (boundRequestBody). A field so tests can scale it.
+	bodyTimeout time.Duration
 	// maxUnpaired and unpairedTimeout bound the /ws connections of keys
 	// nobody paired (unpaired.go). Fields so tests can scale them.
 	maxUnpaired     int
@@ -201,6 +208,7 @@ func New(cfg config.Config, st *store.Store, h *hub.Hub, bl *blob.Store, logger 
 		writeTimeout:     defaultWriteTimeout,
 		channelTimeout:   defaultChannelTimeout,
 		idleTimeout:      defaultIdleTimeout,
+		bodyTimeout:      defaultBodyTimeout,
 		maxUnpaired:      defaultMaxUnpaired,
 		unpairedTimeout:  defaultUnpairedTimeout,
 		addrKick:         make(chan struct{}, 1),
@@ -286,23 +294,35 @@ func (s *Server) runDispatcher(ctx context.Context) error {
 // the WebSocket and the file bytes, and nothing else. /health lives on the
 // service page's loopback listener (044): the main port answers nobody who has
 // not proved a key, and a probe that has not cannot ask it anything.
+//
+// Every request passes the door first (limitStrangers), unmatched ones
+// included: the 404 and 405 the mux writes end a stranger's connection like
+// any other answer.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /ws", s.handleWS)
 	mux.HandleFunc("PUT /files/{token}", s.handlePutFile)
 	mux.HandleFunc("GET /files/{token}", s.handleGetFile)
-	return s.logRequests(mux)
+	return s.logRequests(s.limitStrangers(mux))
 }
 
 // configureMain sets what the main port's http.Server holds a connection to
 // once it passed the channel: the connection - and the key it proved - in
-// every request's context, the slow path's 30 s for a request's headers, since
-// a connection from tor looks like any other (045), and idleTimeout between two
-// requests. One place, so the test stack serves exactly what Run serves.
+// every request's context; the slow path's 30 s for a request's headers, since
+// a connection from tor looks like any other (045), and bodyTimeout - the same
+// 30 s - for a body nothing of ours reads (boundRequestBody); and idleTimeout
+// between two requests. One place, so the test stack serves exactly what Run
+// serves.
+//
+// "OPTIONS *" goes to the handler like any other request. Answered by net/http
+// itself it would never reach the door, and a stranger could keep its
+// connection by asking it again within each idle timeout.
 func (s *Server) configureMain(hs *http.Server) {
 	hs.ConnContext = withChannelPeer
+	hs.ConnState = s.boundRequestBody
 	hs.ReadHeaderTimeout = readHeaderTimeout
 	hs.IdleTimeout = s.idleTimeout
+	hs.DisableGeneralOptionsHandler = true
 }
 
 // CloseConnections force-closes every live WebSocket with the going-away

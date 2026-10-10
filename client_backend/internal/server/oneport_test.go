@@ -1,13 +1,9 @@
 package server
 
 import (
-	"bufio"
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -62,10 +58,19 @@ func TestEveryConnectionGetsTheSlowPathTimeouts(t *testing.T) {
 		"the frame write and pong wait":   srv.writeTimeout,
 		"TLS and the channel check":       srv.channelTimeout,
 		"the request headers on the port": main.ReadHeaderTimeout,
+		// Where nothing of ours reads it (boundRequestBody).
+		"a request body": srv.bodyTimeout,
 	} {
 		if got != 30*time.Second {
 			t.Errorf("%s: %v, want 30s", name, got)
 		}
+	}
+	if main.ConnState == nil {
+		t.Error("nothing bounds a body nothing of ours reads")
+	}
+	// Answered by net/http itself, "OPTIONS *" would never reach the door.
+	if !main.DisableGeneralOptionsHandler {
+		t.Error(`net/http answers "OPTIONS *" itself, past the door`)
 	}
 	// A ping goes out before its predecessor's budget runs out, or a quiet
 	// connection would be cut by its own keepalive.
@@ -80,43 +85,23 @@ func TestEveryConnectionGetsTheSlowPathTimeouts(t *testing.T) {
 	}
 }
 
-// A connection that passed the channel waits for its next request for the
-// idle timeout and no longer. Without one a keep-alive connection stayed for
-// as long as its peer liked - and since 045 its peer can be anybody who knows
-// the onion address and made a key for the occasion.
+// A connection kept for the next request waits for it for the idle timeout
+// and no longer. Only a paired device's connection is kept at all - a
+// stranger's ends with its answer (unpaired_test.go) - and without the timeout
+// one would stay for as long as its peer liked, a revoked device's among them.
 func TestAnIdleConnectionIsClosedAfterItsIdleTimeout(t *testing.T) {
 	const idle = 300 * time.Millisecond
 	ts, srv := newTestServerWith(t, func(s *Server) { s.idleTimeout = idle })
-	conn, err := dialChannel(t.Context(), ts.Listener.Addr().String(), serverKeyOf(t, srv), newDevice(t).priv)
-	if err != nil {
-		t.Fatalf("open a channel: %v", err)
-	}
-	defer func() { _ = conn.Close() }()
+	c := openRawChannel(t, ts, pairedDevice(t, ts, srv))
 
-	// One request - a stranger's, refused - and then nothing at all.
-	if _, err := io.WriteString(conn, "GET /files/whatever HTTP/1.1\r\nHost: nox\r\n\r\n"); err != nil {
-		t.Fatalf("write the request: %v", err)
-	}
-	r := bufio.NewReader(conn)
-	resp, err := http.ReadResponse(r, nil)
-	if err != nil {
-		t.Fatalf("read the answer: %v", err)
-	}
-	_, _ = io.Copy(io.Discard, resp.Body)
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized || resp.Close {
-		t.Fatalf("answer %d (close=%v), want a 401 that keeps the connection: anything else proves nothing here",
+	// One request - a paired device's with a token that is no token - and
+	// then nothing at all.
+	resp := c.ask("GET /files/not-a-token HTTP/1.1\r\nHost: nox\r\n\r\n")
+	if resp.StatusCode != http.StatusNotFound || resp.Close {
+		t.Fatalf("answer %d (close=%v), want a 404 that keeps the connection: anything else proves nothing here",
 			resp.StatusCode, resp.Close)
 	}
-	answered := time.Now()
-
-	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	_, err = r.ReadByte()
-	var ne net.Error
-	if err == nil || (errors.As(err, &ne) && ne.Timeout()) {
-		t.Fatalf("the idle connection was not closed (read: %v)", err)
-	}
-	if took := time.Since(answered); took < idle/2 {
+	if took := c.closedWithin(5 * time.Second); took < idle/2 {
 		t.Fatalf("closed %v after the answer, well inside its idle timeout of %v", took, idle)
 	}
 }

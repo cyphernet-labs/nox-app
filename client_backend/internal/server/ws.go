@@ -46,8 +46,10 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	// Asked AFTER the connection joined the registry, the way a transfer asks
 	// (files.go): a revocation from here on finds it and drops it, so a
 	// "paired" read here cannot outlive the device, and a "not paired" one
-	// can go stale only by a pairing, which settles it.
-	if !s.pairedKey(c) {
+	// can go stale only by a pairing, which settles it. The door asked too,
+	// before the upgrade (limitStrangers), but only to decide whether a refusal
+	// ends the connection: this answer is the one the session is held to.
+	if !s.pairedKey(c.ctx, c.deviceKey, c.logger) {
 		release := s.holdUnpaired(c)
 		defer release()
 	}
