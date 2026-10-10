@@ -97,7 +97,8 @@ func load(args []string, getenv func(string) string, usage io.Writer) (Config, e
 
 	fs := flag.NewFlagSet("noxd", flag.ContinueOnError)
 	fs.SetOutput(usage)
-	addr := fs.String("addr", defAddr, "listen address (host:port); tor's onion service points here too")
+	addr := fs.String("addr", defAddr,
+		"listen address (host:port); with tor, bind 0.0.0.0 or 127.0.0.1 and point HiddenServicePort 443 at 127.0.0.1:<port>")
 	dbPath := fs.String("db", defDB, "path to the SQLite database file")
 	filesPath := fs.String("files", defFiles, "attachment bytes directory (default <db>-files)")
 	statusAddr := fs.String("status-addr", defStatus, "loopback address for the service page and /health, empty to disable both")

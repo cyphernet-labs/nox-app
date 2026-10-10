@@ -66,6 +66,10 @@ func (c *client) handlePair(cmd protocol.Command) {
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to pair"))
 		return
 	}
+	// The key is a paired device's now, so the connection leaves the limits
+	// a stranger's is held to - before the reply, so its deadline cannot land
+	// between the two.
+	c.srv.settleUnpaired(c)
 
 	// Created is the whole reason this reply exists: it says whether the person
 	// was brought into being by THIS operation, which is what tells the client

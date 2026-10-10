@@ -129,6 +129,11 @@ func (c *client) handleSessionHello(cmd protocol.Command) {
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to resolve identity"))
 		return
 	}
+	// A key unknown when this connection opened may have paired on another
+	// connection since; it is a paired device's now either way, so the
+	// connection leaves a stranger's limits (unpaired.go). A no-op for every
+	// other greeting.
+	c.srv.settleUnpaired(c)
 	c.srv.setIdentity(c, id)
 
 	journalID, err := c.srv.store.JournalID(c.ctx)

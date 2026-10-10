@@ -42,6 +42,15 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	defer s.untrack(c)
 	defer c.close(websocket.StatusNormalClosure, "")
 	defer c.cleanup()
+	// A stranger's connection is held to a deadline and a cap (unpaired.go).
+	// Asked AFTER the connection joined the registry, the way a transfer asks
+	// (files.go): a revocation from here on finds it and drops it, so a
+	// "paired" read here cannot outlive the device, and a "not paired" one
+	// can go stale only by a pairing, which settles it.
+	if !s.pairedKey(c) {
+		release := s.holdUnpaired(c)
+		defer release()
+	}
 
 	go c.writePump()
 

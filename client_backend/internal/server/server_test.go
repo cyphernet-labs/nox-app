@@ -179,8 +179,7 @@ func serveChannel(t *testing.T, srv *Server, raw net.Listener, cfg *tls.Config, 
 	ts := httptest.NewUnstartedServer(srv.Handler())
 	_ = ts.Listener.Close()
 	ts.Listener = srv.newChannelListener(raw, cfg, key, srv.channelTimeout)
-	ts.Config.ConnContext = withChannelPeer
-	ts.Config.ReadHeaderTimeout = readHeaderTimeout
+	srv.configureMain(ts.Config)
 	// Transport-level complaints go nowhere: several tests break connections
 	// on purpose, and http.Server would print each one to stderr.
 	ts.Config.ErrorLog = log.New(io.Discard, "", 0)
