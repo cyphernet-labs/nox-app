@@ -85,9 +85,9 @@
 
 - [X] T023 [P] Спецификация дизайна: `docs/design/spec/screens/{connect,connection}.md` (новые), `{login,qr-scan,devices,chats-list,chat,chat-card}.md`, `docs/design/spec/overview.md` (отмена «путь выбирается сам», строки пути, состояния связи, приглашения); корпуса `docs/design/system/nox-mobile-screens/screens/` и `nox-desktop-screens/screens/` — новые экраны и изменённые
 - [X] T024 [P] Документы: блюпринты `docs/blueprints/mobile/{04-data-layer,05-presentation-layer,14-networking-and-auth}.md`, `docs/client-backend/{README,demo-runbook}.md`, `docs/client-backend/architecture/transport.md`, `scripts/demo-stand.sh` (tor отдельно, `-onion-addr`), `CLAUDE.md`, `client_backend/CLAUDE.md` (инварианты 1 и 9, файлы, флаги, тесты `TestOnion*`)
-- [ ] T025 Логи: onion-адреса заменяются меткой и на сервере (замена из `internal/tor/logscrub.go` переезжает туда, где сервер пишет адреса) и в приложении; токены и ключи не пишутся; тесты
+- [X] T025 Логи: onion-адреса заменяются меткой и на сервере (замена из `internal/tor/logscrub.go` переезжает туда, где сервер пишет адреса) и в приложении; токены и ключи не пишутся; тесты
 - [ ] T026 Гейты: `make tor-test`; в `client_backend/` — `gofmt -l .`, `go vet ./...`, `go test -race ./...`; `make gate`; `make golden-verify`
-- [ ] T027 Сквозной прогон на macOS по `quickstart.md` §2 с tor из scratchpad; итог — в `research.md` («Проверка»)
+- [X] T027 Сквозной прогон на macOS по `quickstart.md` §2 с tor из scratchpad; итог — в `research.md` («Проверка»)
 - [X] T028 Трекер `docs/client-backend/roadmap-security.md`: 045 реализована
 
 ---
