@@ -65,7 +65,7 @@ func TestServerKeyIsMintedOnceAndSurvivesRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "key.db")
 
 	open := func() (*Store, func()) {
-		d, err := db.Open(path)
+		d, err := db.Open(path, testKey)
 		if err != nil {
 			t.Fatalf("db.Open: %v", err)
 		}
@@ -196,7 +196,7 @@ func TestTokenSurvivesRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "tokens.db")
 
 	open := func() (*Store, func()) {
-		d, err := db.Open(path)
+		d, err := db.Open(path, testKey)
 		if err != nil {
 			t.Fatalf("db.Open: %v", err)
 		}

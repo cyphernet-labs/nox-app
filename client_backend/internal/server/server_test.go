@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -25,7 +26,21 @@ import (
 	"nox.app/client-backend/internal/eidolon"
 	"nox.app/client-backend/internal/hub"
 	"nox.app/client-backend/internal/store"
+	"nox.app/client-backend/internal/vault"
 )
+
+// testDataKey is the data key every test database and files directory built
+// by openStack is encrypted with (047). Fixed, so a test that stops a stack
+// and starts another over the same files opens them again.
+var testDataKey = bytes.Repeat([]byte{0x47}, 32)
+
+// testKDF are Argon2id costs a test can afford many times over: what is under
+// test around the lock is the lock, not Argon2's price. The production costs
+// have a test of their own in the vault package.
+var testKDF = vault.Params{MemoryKiB: 64, Iterations: 1, Parallelism: 1}
+
+// testPassword is the password tests set and enter.
+const testPassword = "correct horse battery"
 
 // newTestServer builds the full stack over a temp database and returns the
 // running httptest server plus the Server for direct inspection.
@@ -63,7 +78,7 @@ func newTestServerLogging(t *testing.T, logger *slog.Logger) (*httptest.Server, 
 func openStack(t *testing.T, path string, logger *slog.Logger, tweak ...func(*Server)) (*httptest.Server, *Server, func()) {
 	t.Helper()
 
-	dbs, err := db.Open(path)
+	dbs, err := db.Open(path, testDataKey)
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}
@@ -370,10 +385,11 @@ func TestHealthIsNotOnTheMainPort(t *testing.T) {
 
 // readDB opens a second read handle over the server's own database file, so a
 // test can assert on rows the command surface does not expose. Same process,
-// so invariant 1 (one process per file) holds.
+// so invariant 1 (one process per file) holds. A harness server's database is
+// encrypted with testDataKey.
 func readDB(t *testing.T, srv *Server) *sql.DB {
 	t.Helper()
-	d, err := db.Open(srv.cfg.DBPath)
+	d, err := db.Open(srv.cfg.DBPath, testDataKey)
 	if err != nil {
 		t.Fatalf("db.Open for reading: %v", err)
 	}
@@ -385,7 +401,7 @@ func readDB(t *testing.T, srv *Server) *sql.DB {
 // leaving the database the way a hand edit or a partial restore would.
 func readWriteDB(t *testing.T, srv *Server) *sql.DB {
 	t.Helper()
-	d, err := db.Open(srv.cfg.DBPath)
+	d, err := db.Open(srv.cfg.DBPath, testDataKey)
 	if err != nil {
 		t.Fatalf("db.Open for writing: %v", err)
 	}
@@ -399,7 +415,7 @@ func readWriteDB(t *testing.T, srv *Server) *sql.DB {
 // still has a way back, right up until something destroys it for them.
 func TestAnAbortedStartupDoesNotRotateTheJournal(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "restore.db")
-	dbs, err := db.Open(path)
+	dbs, err := db.Open(path, testDataKey)
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}

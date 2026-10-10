@@ -21,6 +21,7 @@ import (
 
 	"nox.app/client-backend/internal/config"
 	"nox.app/client-backend/internal/db"
+	"nox.app/client-backend/internal/vault"
 )
 
 // These tests drive Run itself rather than the harness: what they hold is the
@@ -55,21 +56,40 @@ func (l *syncLog) String() string {
 	return l.buf.String()
 }
 
-// runServer starts Run and returns a function that stops it and reports how.
-//
-// Ready means both doors answer: /health on the service page's listener, and
-// on the main port a channel that proves the key the startup line printed - a
-// device dialling with that key as the only acceptable answer gets in.
-func runServer(t *testing.T, cfg config.Config) (*syncLog, func() error) {
+// startRun starts run over cfg with the test's Argon2id costs and returns the
+// log it writes and a function that stops it and reports how. It returns as
+// soon as the service page answers: the server may still be locked.
+func startRun(t *testing.T, cfg config.Config) (*syncLog, func() error) {
 	t.Helper()
 	logs := &syncLog{}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- Run(ctx, cfg, os.DirFS("../../migrations"), slog.New(slog.NewTextHandler(logs, nil)))
+		done <- run(ctx, cfg, os.DirFS("../../migrations"), slog.New(slog.NewTextHandler(logs, nil)), testKDF)
 	}()
+	stopped := false
+	stop := func() error {
+		if stopped {
+			return nil
+		}
+		stopped = true
+		cancel()
+		select {
+		case err := <-done:
+			return err
+		case <-time.After(45 * time.Second):
+			t.Fatal("Run did not stop")
+			return nil
+		}
+	}
+	t.Cleanup(func() { _ = stop() })
 	client := &http.Client{Timeout: 2 * time.Second}
 	eventually(t, "/health answers on the service page's listener", func() bool {
+		select {
+		case err := <-done:
+			t.Fatalf("Run ended before its page answered: %v", err)
+		default:
+		}
 		resp, err := client.Get("http://" + cfg.StatusAddr + "/health")
 		if err != nil {
 			return false
@@ -77,6 +97,36 @@ func runServer(t *testing.T, cfg config.Config) (*syncLog, func() error) {
 		_ = resp.Body.Close()
 		return resp.StatusCode == http.StatusOK
 	})
+	return logs, stop
+}
+
+// health is GET /health on a server Run started.
+func health(t *testing.T, statusAddr string) string {
+	t.Helper()
+	resp, err := (&http.Client{Timeout: 2 * time.Second}).Get("http://" + statusAddr + "/health")
+	if err != nil {
+		t.Fatalf("GET /health: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /health = %d (%v)", resp.StatusCode, err)
+	}
+	return string(body)
+}
+
+// runServer starts Run, sets its first password the way `noxd unlock` does
+// (047), and returns a function that stops it and reports how.
+//
+// Ready means both doors answer: /health on the service page's listener, and
+// on the main port a channel that proves the key the startup line printed - a
+// device dialling with that key as the only acceptable answer gets in.
+func runServer(t *testing.T, cfg config.Config) (*syncLog, func() error) {
+	t.Helper()
+	logs, stop := startRun(t, cfg)
+	if err := RequestUnlock(t.Context(), cfg.StatusAddr, testPassword, testPassword); err != nil {
+		t.Fatalf("set the first password: %v", err)
+	}
 	var key ed25519.PublicKey
 	eventually(t, "the startup line names the server key", func() bool {
 		raw, err := base64.StdEncoding.DecodeString(loggedServerKey(logs.String()))
@@ -97,16 +147,18 @@ func runServer(t *testing.T, cfg config.Config) (*syncLog, func() error) {
 		_ = conn.Close()
 		return true
 	})
-	return logs, func() error {
-		cancel()
-		select {
-		case err := <-done:
-			return err
-		case <-time.After(45 * time.Second):
-			t.Fatal("Run did not stop")
-			return nil
-		}
+	return logs, stop
+}
+
+// runDataKey is the data key of a server Run set up with testPassword: what a
+// test opens its database with once it stopped.
+func runDataKey(t *testing.T, cfg config.Config) []byte {
+	t.Helper()
+	key, err := vault.Open(cfg.KeyPath(), testPassword)
+	if err != nil {
+		t.Fatalf("open the key file: %v", err)
 	}
+	return key
 }
 
 // loggedServerKey digs the server key out of the startup line. The text
@@ -141,7 +193,7 @@ func TestTheStartupLineNamesTheServerKeyAndNothingSecret(t *testing.T) {
 		t.Fatalf("Run returned %v", err)
 	}
 
-	dbs, err := db.Open(cfg.DBPath)
+	dbs, err := db.Open(cfg.DBPath, runDataKey(t, cfg))
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}
@@ -266,7 +318,7 @@ func TestStartParametersLandBeforeTheLinkAndNeverInTheLog(t *testing.T) {
 		t.Fatalf("the page's first link names no onion service: %+v", got)
 	}
 
-	dbs, err := db.Open(cfg.DBPath)
+	dbs, err := db.Open(cfg.DBPath, runDataKey(t, cfg))
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}

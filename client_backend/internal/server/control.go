@@ -1,8 +1,10 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -28,7 +30,8 @@ import (
 // Each failure is a 403 with nothing issued. The answer is the link itself, so
 // the response is never stored anywhere on the way.
 //
-// The same road is what `noxd unlock` will take in 047.
+// `noxd unlock` and `noxd password` (047) take the same road, held to the same
+// three checks (controlAllowed, gate.go).
 const (
 	controlLinkPath = "/control/link"
 	controlHeader   = "X-Nox-Control"
@@ -48,10 +51,7 @@ type MachineLinkReply struct {
 // link stops working, the way it does for the page's button (SC-004), and the
 // log says who asked - never the link (FR-005).
 func (s *Server) handleControlLink(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	if !localHost(r.Host) || r.Header.Get(controlHeader) != "1" || len(r.Header.Values("Origin")) > 0 {
-		http.Error(w, "this answers the noxd link command on this machine, and nothing else", http.StatusForbidden)
+	if !controlAllowed(w, r) {
 		return
 	}
 	link, ml, err := s.issueMachineLink(r.Context(), "noxd link")
@@ -89,6 +89,9 @@ func RequestMachineLink(ctx context.Context, statusAddr string) (MachineLinkRepl
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxControlReplyBytes))
 	if err != nil {
 		return MachineLinkReply{}, fmt.Errorf("read the answer: %w", err)
+	}
+	if resp.StatusCode == http.StatusConflict {
+		return MachineLinkReply{}, errors.New("the server is locked - unlock it first with noxd unlock")
 	}
 	if resp.StatusCode != http.StatusOK {
 		return MachineLinkReply{}, fmt.Errorf("the server at %s refused: %s", statusAddr, resp.Status)
@@ -130,4 +133,106 @@ func LinkReachesOnlyThisMachine(link string) bool {
 		}
 	}
 	return len(parsed.Direct) > 0
+}
+
+// The commands' side of the lock (047): `noxd unlock` and `noxd password` ask
+// the server running on this machine, over its service page's listener, the
+// way `noxd link` does. A refusal comes back as a *CommandError carrying the
+// server's code.
+
+// CommandError is a request the server refused, with its code
+// (contracts/control-and-page.md) and, for a failure, what it said.
+type CommandError struct {
+	Status  int
+	Code    string
+	Message string
+}
+
+func (e *CommandError) Error() string {
+	if e.Message != "" {
+		return e.Code + ": " + e.Message
+	}
+	return e.Code
+}
+
+// RequestState asks the server on statusAddr where it stands: "setup",
+// "locked" or "open".
+func RequestState(ctx context.Context, statusAddr string) (string, error) {
+	var got ControlState
+	if err := controlCall(ctx, http.MethodGet, statusAddr, controlStatePath, nil, &got); err != nil {
+		return "", err
+	}
+	switch got.State {
+	case "setup", "locked", "open":
+		return got.State, nil
+	default:
+		return "", fmt.Errorf("the server at %s answered a state it does not name: %q", statusAddr, got.State)
+	}
+}
+
+// RequestUnlock hands the server its password. repeat is the first
+// password's repeat, and empty when the server is locked rather than new.
+func RequestUnlock(ctx context.Context, statusAddr, password, repeat string) error {
+	body := map[string]string{"password": password}
+	if repeat != "" {
+		body["repeat"] = repeat
+	}
+	return controlCall(ctx, http.MethodPost, statusAddr, controlUnlockPath, body, nil)
+}
+
+// RequestPasswordChange asks the server to re-seal its data key under next.
+// The repeat is checked before this is called.
+func RequestPasswordChange(ctx context.Context, statusAddr, current, next string) error {
+	return controlCall(ctx, http.MethodPost, statusAddr, controlPasswordPath,
+		map[string]string{"current": current, "password": next}, nil)
+}
+
+// controlCall is one request of a command to the running server. The
+// passwords travel in the body, over loopback, and nowhere else: never in a
+// URL, never through a proxy.
+func controlCall(ctx context.Context, method, statusAddr, path string, in, out any) error {
+	var body io.Reader
+	if in != nil {
+		raw, err := json.Marshal(in)
+		if err != nil {
+			return fmt.Errorf("build the request: %w", err)
+		}
+		body = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, "http://"+statusAddr+path, body)
+	if err != nil {
+		return fmt.Errorf("build the request: %w", err)
+	}
+	req.Header.Set(controlHeader, "1")
+	if in != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	client := &http.Client{Transport: &http.Transport{Proxy: nil}}
+	defer client.CloseIdleConnections()
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("no server answered on %s - is noxd running, and is that its -status-addr? (%w)", statusAddr, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxControlReplyBytes))
+	if err != nil {
+		return fmt.Errorf("read the answer: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		var refusal ControlError
+		if json.Unmarshal(raw, &refusal) == nil && refusal.Error != "" {
+			return &CommandError{Status: resp.StatusCode, Code: refusal.Error, Message: refusal.Message}
+		}
+		if resp.StatusCode == http.StatusConflict {
+			return &CommandError{Status: resp.StatusCode, Code: codeState}
+		}
+		return fmt.Errorf("the server at %s refused: %s", statusAddr, resp.Status)
+	}
+	if out == nil {
+		return nil
+	}
+	if err := json.Unmarshal(raw, out); err != nil {
+		return fmt.Errorf("the server at %s answered something else: %w", statusAddr, err)
+	}
+	return nil
 }

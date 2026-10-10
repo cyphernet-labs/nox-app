@@ -5,6 +5,8 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+
+	"nox.app/client-backend/internal/db"
 )
 
 const (
@@ -142,8 +144,8 @@ func TestABackupCarriesTheAddresses(t *testing.T) {
 		t.Fatalf("SetAddress: %v", err)
 	}
 	backup := filepath.Join(dir, "backup.db")
-	if _, err := live.write.ExecContext(ctx, "VACUUM INTO ?", backup); err != nil {
-		t.Fatalf("VACUUM INTO: %v", err)
+	if err := db.Snapshot(ctx, live.read, backup, testKey); err != nil {
+		t.Fatalf("snapshot: %v", err)
 	}
 	if got := mustAddresses(t, openStoreAt(t, backup)); got.Onion != testOnion {
 		t.Fatalf("the restored copy stores %+v, want the onion address", got)

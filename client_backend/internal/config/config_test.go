@@ -16,12 +16,12 @@ func TestLoad(t *testing.T) {
 		want    Config
 	}{
 		{
-			// Empty is not "unset": it removes the page and its listener with
-			// it, so nothing holds the port and nothing answers on it.
-			name:   "an empty status address disables the service page",
-			args:   []string{"-status-addr", ""},
-			getenv: noEnv,
-			want:   Config{Addr: "127.0.0.1:8080", DBPath: "nox.db", FilesPath: "nox.db-files", StatusAddr: "", Limits: DefaultLimits()},
+			// The password that opens the server's data is entered on the page
+			// or through it (047): a server with no page could never open.
+			name:    "an empty status address is refused",
+			args:    []string{"-status-addr", ""},
+			getenv:  noEnv,
+			wantErr: true,
 		},
 		{
 			name:   "the service page port can be moved",
@@ -269,6 +269,54 @@ func TestLoadLink(t *testing.T) {
 			}
 			if err != nil || got != tc.want {
 				t.Fatalf("LoadLink = %+v, %v; want %+v", got, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestTheKeyFileLiesBesideTheDatabase(t *testing.T) {
+	cfg, err := Load([]string{"-db", "/srv/nox/nox.db"}, func(string) string { return "" })
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.KeyPath(); got != "/srv/nox/nox.db.key" {
+		t.Fatalf("KeyPath() = %q, want the database path with .key", got)
+	}
+}
+
+func TestLoadCommand(t *testing.T) {
+	noEnv := func(string) string { return "" }
+	env := func(k string) string {
+		if k == "NOX_STATUS_ADDR" {
+			return "127.0.0.1:9100"
+		}
+		return ""
+	}
+	tests := []struct {
+		name    string
+		args    []string
+		getenv  func(string) string
+		want    string
+		wantErr string
+	}{
+		{name: "the server's default page address", getenv: noEnv, want: "127.0.0.1:8081"},
+		{name: "the address the server was started with", getenv: env, want: "127.0.0.1:9100"},
+		{name: "the flag wins", args: []string{"-status-addr", "127.0.0.1:9200"}, getenv: env, want: "127.0.0.1:9200"},
+		{name: "an address on a network", args: []string{"-status-addr", "192.168.1.10:8081"}, getenv: noEnv, wantErr: "loopback"},
+		{name: "no page at all", args: []string{"-status-addr", ""}, getenv: noEnv, wantErr: "must name"},
+		{name: "a password on the command line", args: []string{"correct horse battery"}, getenv: noEnv, wantErr: "never given"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := LoadCommand("unlock", tt.args, tt.getenv)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("LoadCommand(%q) = %v, want an error about %q", tt.args, err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil || got.StatusAddr != tt.want {
+				t.Fatalf("LoadCommand(%q) = %+v, %v; want %s", tt.args, got, err, tt.want)
 			}
 		})
 	}
