@@ -1,6 +1,7 @@
 package config
 
 import (
+	"io"
 	"strings"
 	"testing"
 )
@@ -32,7 +33,8 @@ func TestLoad(t *testing.T) {
 		{
 			// The flag moves the port; it does not put the page on a network.
 			// Somebody who tries has to learn it now rather than when a
-			// stranger claims their server.
+			// stranger pairs a device with their server through the link the
+			// page hands out.
 			name:    "a service page bound off loopback is refused",
 			args:    []string{"-status-addr", "0.0.0.0:8081"},
 			getenv:  noEnv,
@@ -141,6 +143,44 @@ func TestTheAddressParametersArriveRawFromAFlagOrTheEnvironment(t *testing.T) {
 	}
 }
 
+// The usage text a mistyped flag brings up goes to stderr - the service's
+// journal - and lists every flag's default. The address parameters have none,
+// so the onion address the environment holds stays out of it (FR-022); it still
+// arrives, and a flag still wins over it, even an empty one.
+func TestTheUsageTextNeverCarriesTheAddressesOfTheEnvironment(t *testing.T) {
+	const onion = "6bauzvyr6myctqykmykeuo3p3yc3iy7tilx5g3sxxpuifdwab54o56id.onion"
+	env := func(k string) string {
+		switch k {
+		case "NOX_ONION_ADDR":
+			return onion
+		case "NOX_PUBLIC_ADDR":
+			return "nox.example.org:8443"
+		}
+		return ""
+	}
+	for _, args := range [][]string{{"-h"}, {"-no-such-flag"}, {"-onion-addr"}} {
+		var usage strings.Builder
+		if _, err := load(args, env, &usage); err == nil {
+			t.Fatalf("load(%q) succeeded", args)
+		}
+		if !strings.Contains(usage.String(), "-onion-addr") {
+			t.Fatalf("load(%q) printed no usage, so this test proves nothing:\n%s", args, usage.String())
+		}
+		if strings.Contains(usage.String(), onion[:56]) || strings.Contains(usage.String(), "nox.example.org") {
+			t.Fatalf("load(%q) printed an address of the environment:\n%s", args, usage.String())
+		}
+	}
+
+	cfg, err := load(nil, env, io.Discard)
+	if err != nil || cfg.OnionAddr != onion || cfg.PublicAddr != "nox.example.org:8443" {
+		t.Fatalf("from the environment: onion=%q public=%q err=%v", cfg.OnionAddr, cfg.PublicAddr, err)
+	}
+	cfg, err = load([]string{"-onion-addr", "", "-public-addr="}, env, io.Discard)
+	if err != nil || cfg.OnionAddr != "" || cfg.PublicAddr != "" {
+		t.Fatalf("empty flags over the environment: onion=%q public=%q err=%v", cfg.OnionAddr, cfg.PublicAddr, err)
+	}
+}
+
 // The server's own tor is gone (045). A unit file still carrying one of its
 // flags was written by somebody who expects this server to run tor; the start
 // fails and says where tor went, whatever spelling the flag was written in.
@@ -226,5 +266,50 @@ func TestAStrayArgumentIsRefusedRatherThanEndingTheFlags(t *testing.T) {
 	}
 	if _, err := Load([]string{"extra"}, noEnv); err == nil {
 		t.Fatal("a positional argument was accepted")
+	}
+}
+
+// `noxd link` (046) finds the running server the way the server was told where
+// to listen - flag, then NOX_STATUS_ADDR, then the default - and is held to
+// loopback by the same rule: it asks for a link, and the answer must come from
+// this machine.
+func TestLoadLink(t *testing.T) {
+	noEnv := func(string) string { return "" }
+	env := func(k string) string {
+		if k == "NOX_STATUS_ADDR" {
+			return "127.0.0.1:9100"
+		}
+		return ""
+	}
+	for _, tc := range []struct {
+		name    string
+		args    []string
+		getenv  func(string) string
+		want    LinkConfig
+		wantErr string
+	}{
+		{name: "the server's default page address", getenv: noEnv, want: LinkConfig{StatusAddr: "127.0.0.1:8081"}},
+		{name: "the address the server was started with", getenv: env, want: LinkConfig{StatusAddr: "127.0.0.1:9100"}},
+		{name: "the flag wins", args: []string{"-status-addr", "127.0.0.1:9200"}, getenv: env, want: LinkConfig{StatusAddr: "127.0.0.1:9200"}},
+		{name: "localhost is loopback", args: []string{"-status-addr", "localhost:8081"}, getenv: noEnv, want: LinkConfig{StatusAddr: "localhost:8081"}},
+		{name: "the code as well", args: []string{"-qr"}, getenv: noEnv, want: LinkConfig{StatusAddr: "127.0.0.1:8081", QR: true}},
+		{name: "an address on a network", args: []string{"-status-addr", "192.168.1.10:8081"}, getenv: noEnv, wantErr: "loopback"},
+		{name: "every interface", args: []string{"-status-addr", "0.0.0.0:8081"}, getenv: noEnv, wantErr: "loopback"},
+		{name: "no page at all", args: []string{"-status-addr", ""}, getenv: noEnv, wantErr: "no way to hand out a link"},
+		{name: "a stray word", args: []string{"now"}, getenv: noEnv, wantErr: `"now"`},
+		{name: "a server flag", args: []string{"-db", "x.db"}, getenv: noEnv, wantErr: "flag provided but not defined"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := LoadLink(tc.args, tc.getenv)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("LoadLink = %+v, %v; want an error saying %q", got, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Fatalf("LoadLink = %+v, %v; want %+v", got, err, tc.want)
+			}
+		})
 	}
 }

@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
+import 'package:nox_app/di/global_aliases.dart';
+import 'package:nox_app/domain/model/session/pending_pairing.dart';
 import 'package:nox_app/general/onboarding_mock_data.dart';
 import 'package:nox_app/general/pairing/pairing_link.dart';
 import 'package:nox_app/presentation/base/base_bloc.dart';
@@ -14,7 +16,9 @@ part 'login_state.dart';
 /// [AppRootState] — no init/loaded/error trio. The pairing link is READ here and
 /// nothing more (phase 045): a link that will not parse, or one newer than this
 /// build, is refused on this screen; a readable one goes on to the connection
-/// screen, which pairs. In demo mode (gallery) the outcome is a debug stand-in.
+/// screen, which pairs. A wait for approval the app was closed in goes on
+/// there too, as soon as this screen opens (phase 046, FR-011). In demo mode
+/// (gallery) the outcome is a debug stand-in.
 class LoginBloc extends BaseBloc<LoginEvent, LoginState> {
   LoginBloc({this.demo = false, LoginStatus? initialStatus})
     : super(initialStatus == null ? const LoginState() : LoginState(status: initialStatus)) {
@@ -22,6 +26,7 @@ class LoginBloc extends BaseBloc<LoginEvent, LoginState> {
     on<ClipboardChecked>(_onClipboardChecked);
     on<SignInRequested>(_onSignInRequested);
     on<NavigationHandled>(_onNavigationHandled);
+    on<ResumeChecked>(_onResumeChecked);
   }
 
   /// In demo mode (gallery) the sign-in outcome is a debug stand-in and navigation
@@ -38,7 +43,18 @@ class LoginBloc extends BaseBloc<LoginEvent, LoginState> {
   }
 
   void _onNavigationHandled(NavigationHandled event, Emitter<LoginState> emit) {
-    emit(state.copyWith(status: LoginStatus.idle));
+    emit(state.copyWith(status: LoginStatus.idle, resume: null));
+  }
+
+  /// A wait for approval the app was closed in (phase 046): presenting the
+  /// same link from this device again is the same request, so the person
+  /// lands back on it rather than having to find the link again. One whose
+  /// time ran out meanwhile is undone by the repository and is not offered.
+  Future<void> _onResumeChecked(ResumeChecked event, Emitter<LoginState> emit) async {
+    if (demo) return;
+    final pending = (await authRepository.pendingPairing()).data;
+    if (pending == null) return;
+    emit(state.copyWith(status: LoginStatus.navResume, resume: pending));
   }
 
   Future<void> _onSignInRequested(SignInRequested event, Emitter<LoginState> emit) async {

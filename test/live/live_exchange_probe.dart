@@ -27,8 +27,9 @@ import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 ///
 /// These three probes pair a device key of their own first, with the link's
 /// token (phase 044): the server knows a device only by the key its channel
-/// proves, and a key it does not know may do nothing but pair. A claim link
-/// pairs once - each run needs a fresh one, or an invite.
+/// proves, and a key it does not know may do nothing but pair. A machine link
+/// pairs once - each run needs a fresh one, which `noxd link` prints; an invite
+/// pairs nothing until it is allowed (phase 046).
 /// `pairing_live_probe.dart` drives the app's own sign-in instead.
 ///
 /// It is the cheapest honest answer to "does the vertical actually work" —

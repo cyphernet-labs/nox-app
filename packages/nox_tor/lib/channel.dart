@@ -9,10 +9,10 @@
 /// The module never blocks the caller (specs/044-secure-channel/contracts/
 /// ffi-channel.md): `nox_chan_open` returns a handle at once, and everything
 /// after - verified, data, room to write, drained, closed - comes back as
-/// events through ONE `NativeCallable.listener` per isolate. Each OPEN and
-/// DATA buffer is copied into Dart memory and freed at once; incoming bytes are
-/// acknowledged as they are handed to a listener that is not paused, which is
-/// what holds the module to one window of unread data.
+/// events posted to ONE native port per isolate, each a message of its own
+/// that Dart owns outright. Incoming bytes are acknowledged as they are handed
+/// to a listener that is not paused, which is what holds the module to one
+/// window of unread data.
 library;
 
 import 'dart:typed_data';

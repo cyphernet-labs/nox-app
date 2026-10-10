@@ -129,6 +129,11 @@ func (c *client) handleSessionHello(cmd protocol.Command) {
 		c.sendFrame(protocol.ErrReply(cmd.ID, protocol.ErrInternal, "failed to resolve identity"))
 		return
 	}
+	// A key unknown when this connection opened may have paired on another
+	// connection since; it is a paired device's now either way, so the
+	// connection leaves a stranger's limits (unpaired.go). A no-op for every
+	// other greeting.
+	c.srv.settleUnpaired(c)
 	c.srv.setIdentity(c, id)
 
 	journalID, err := c.srv.store.JournalID(c.ctx)
@@ -185,6 +190,11 @@ func (c *client) handleSessionHello(cmd protocol.Command) {
 	// watcher send at once if the list moved between the read above and here.
 	c.srv.markGreeted(c, addrs.Version)
 	c.srv.pokeAddresses()
+	// Every request still waiting for this device's answer, again (046): the
+	// event that first asked does not survive a disconnect, and a device whose
+	// app was closed is asked the moment it is back. After markGreeted, so a
+	// request opened meanwhile reaches this connection one way or the other.
+	c.resendPairRequests()
 
 	if req.Since != nil {
 		since := *req.Since

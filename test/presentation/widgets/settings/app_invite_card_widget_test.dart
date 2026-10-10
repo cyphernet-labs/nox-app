@@ -9,7 +9,7 @@ import '../../../utils/pump_app.dart';
 
 final l10nEn = AppLocalizationsEn();
 
-const String _link = 'https://nox.app/p/#k=abc123&t=def456';
+const String _link = 'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAECAwQFBgcICQoLDA0ODwEGwKgBFCD7';
 
 void main() {
   group('AppInviteCardWidget', () {
@@ -39,7 +39,7 @@ void main() {
       expect(dismissed, 1);
     });
 
-    testWidgets('a link that works only at home says so, under the message (FR-019)', (tester) async {
+    testWidgets('a link that works only at home says so, under the message (phase 045)', (tester) async {
       // The person decides on this card where to carry the link. Without the
       // note, one carried to an office fails with nothing to explain why.
       await pumpApp(tester, AppInviteCardWidget(link: _link, message: 'This link works for 10 minutes.', homeOnly: true, onDismiss: () {}));

@@ -3,7 +3,9 @@ library;
 
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
+import 'package:cryptography/cryptography.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart' show Environment;
@@ -26,11 +28,13 @@ import 'package:nox_app/domain/model/session/session_phase.dart';
 import 'package:nox_app/domain/repository/app/auth_repository.dart';
 import 'package:nox_app/domain/repository/chat/chat_repository.dart';
 import 'package:nox_app/domain/repository/chat/message_repository.dart';
+import 'package:nox_app/domain/repository/chat/outbox_repository.dart';
 import 'package:nox_app/domain/repository/connection/server_addresses_repository.dart';
 import 'package:nox_app/domain/repository/device/device_repository.dart';
 import 'package:nox_app/domain/repository/file/file_repository.dart';
 import 'package:nox_app/domain/repository/sync/sync_repository.dart';
 import 'package:nox_app/domain/service/network_change_service.dart';
+import 'package:nox_app/domain/service/session_phase_service.dart';
 import 'package:nox_app/domain/service/tor_service.dart';
 import 'package:nox_app/general/pairing/pairing_link.dart';
 import 'package:nox_tor/channel.dart';
@@ -54,11 +58,16 @@ import 'live_target.dart';
 /// address while [AwayProber.away] is set. Everything past it is real.
 ///
 /// Run manually, not in the gate - it needs a tor binary and the Tor network,
-/// and takes minutes:
+/// and takes ten to twenty minutes:
 ///   (cd client_backend && go build -o /tmp/noxd .)
 ///   fvm flutter test test/live/tor_live_probe.dart \
 ///     --dart-define=noxd=/tmp/noxd --dart-define=tor=/path/to/tor \
 ///     --dart-define=host=192.168.1.20 --dart-define=work=/tmp/nox_e2e   # host: this machine's LAN address
+///     [--dart-define=port=18443]          # the server's port; the moved server takes the next one
+///     [--dart-define=other_onion=<56>.onion]   # another server's onion service, for «a different server»
+///
+/// The work directory is emptied at the start; keep anything worth keeping
+/// elsewhere.
 ///
 /// The LAN address matters: a server bound to loopback lists no direct address
 /// at all (contract §3), and scenario 8 is about learning a new one. `noxd` and
@@ -72,6 +81,8 @@ void main() {
   const tor = String.fromEnvironment('tor');
   const host = String.fromEnvironment('host');
   const work = String.fromEnvironment('work');
+  const port = int.fromEnvironment('port', defaultValue: 18443);
+  const otherOnion = String.fromEnvironment('other_onion');
 
   test('away, home, a new address and back - through the real Tor network', () async {
     if (noxd.isEmpty || tor.isEmpty || host.isEmpty || work.isEmpty) {
@@ -88,13 +99,21 @@ void main() {
       stdout.writeln('MEASURE: $line');
     }
 
+    // What did not go as the spec says, kept to the end so the run still
+    // leaves its measures and invites behind.
+    final findings = <String>[];
+    void finding(String line) {
+      findings.add(line);
+      stdout.writeln('FINDING: $line');
+    }
+
     // --- tor as its own service, then the server on this machine's LAN
     // address, told where its onion service is. ---
-    final firstTor = await LiveTor.start(tor: tor, work: work, target: '$host:18443');
-    final first = await LiveNoxd.start(noxd: noxd, work: work, addr: '$host:18443', log: 'noxd1.log', onionAddr: firstTor.onion);
-    final claim = await first.claimLink();
+    final firstTor = await LiveTor.start(tor: tor, work: work, target: '$host:$port');
+    final first = await LiveNoxd.start(noxd: noxd, work: work, addr: '$host:$port', log: 'noxd1.log', onionAddr: firstTor.onion);
+    final machine = await first.machineLink();
     stdout.writeln('NOXD: pid=${first.pid}; TOR: pid=${firstTor.pid}');
-    expect(PairingLink.parse(claim).onionServiceKey, isNotNull, reason: 'the link carries the onion address the server was given');
+    expect(PairingLink.parse(machine).onionServiceKey, isNotNull, reason: 'the link carries the onion address the server was given');
 
     // --- The app, with two seams: where "away" comes from, and when the
     // network changes. Registered before anything resolves the selector.
@@ -115,17 +134,33 @@ void main() {
     final addresses = getIt<ServerAddressesRepository>();
 
     bool liveOn(ConnectionPath path) => socket.currentPhase == SessionPhase.live && selector.currentPath == path;
+    ConnectionProblem? problem() => getIt<ConnectionStatusService>().status.problem;
 
-    // --- 1. Pair at home by the claim link, as the connection screen hands
+    /// Waits for one of [wanted] as the shown cause, and says which came and
+    /// which others were seen on the way when none did.
+    Future<ConnectionProblem?> cause(String what, Duration budget, Set<ConnectionProblem> wanted) async {
+      final seen = <ConnectionProblem?>{};
+      final clock = Stopwatch()..start();
+      while (clock.elapsed < budget) {
+        final now = problem();
+        seen.add(now);
+        if (wanted.contains(now)) return now;
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+      }
+      finding('$what: none of ${wanted.map((p) => p.name)} within ${budget.inSeconds} s; seen ${seen.map((p) => p?.name)}');
+      return null;
+    }
+
+    // --- 1. Pair at home by the machine link, as the connection screen hands
     // it over: the link's addresses, Use Tor off. Direct; Tor never started.
     var watch = Stopwatch()..start();
-    final link = PairingLink.parse(claim);
+    final link = PairingLink.parse(machine);
     final linkOnion = '${torService.onionFromPublicKey(link.onionServiceKey!)}:443';
     final signedIn = await auth.signIn(
-      identifier: claim,
+      identifier: machine,
       connection: ConnectionSettings(serverAddress: link.directAddresses.first, onionAddress: linkOnion),
     );
-    expect(signedIn.hasData, isTrue, reason: 'sign-in by the claim link');
+    expect(signedIn.hasData, isTrue, reason: 'sign-in by the machine link');
     expect((await auth.completeOnboarding(label: 'TorProbe')).hasData, isTrue);
     await liveUntil('direct and live', const Duration(seconds: 30), () => liveOn(ConnectionPath.direct));
     measure('pairing at home, to live: ${watch.elapsedMilliseconds} ms');
@@ -162,6 +197,47 @@ void main() {
 
     expect(await send('direct 1'), isTrue);
 
+    // Messages queued while the path changes under them: a send whose reply
+    // went down with the old connection goes again on the new one, under the
+    // same client_message_id, and the server keeps one (FR-012).
+    final queued = <String>[];
+    Future<void> enqueue(String text) async {
+      final entry = await getIt<OutboxRepository>().enqueue(chatId: chatId, text: text);
+      expect(entry.hasData, isTrue, reason: 'enqueue "$text"');
+      queued.add(text);
+      unawaited(getIt<OutboxService>().flush());
+    }
+
+    Future<void> burstAcross(String label, void Function() change) async {
+      for (var i = 0; i < 3; i++) {
+        await enqueue('$label, before $i');
+      }
+      change();
+      for (var i = 0; i < 3; i++) {
+        await enqueue('$label, during $i');
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+      }
+    }
+
+    Future<void> expectEachOnce(String label) async {
+      final texts = queued.where((t) => t.startsWith(label)).toList();
+      await liveUntil('the queue drained ($label)', const Duration(minutes: 4), () async {
+        return (await getIt<OutboxRepository>().pending()).isEmpty;
+      });
+      await liveUntil('the burst back from the server ($label)', const Duration(minutes: 2), () async {
+        final rows = await getIt<MessageDao>().getByChatSorted(chatId);
+        return texts.every((t) => rows.any((r) => r.text == t));
+      });
+      // A message the server stored twice comes back as a second row of its
+      // own, a little later than the first.
+      await Future<void>.delayed(const Duration(seconds: 3));
+      final rows = await getIt<MessageDao>().getByChatSorted(chatId);
+      final copies = {for (final t in texts) t: rows.where((r) => r.text == t).length};
+      final wrong = copies.entries.where((e) => e.value != 1).toList();
+      measure('$label: ${texts.length} messages queued across the switch, each stored ${wrong.isEmpty ? 'once' : 'NOT once: $wrong'}');
+      if (wrong.isNotEmpty) finding('$label: not exactly once: $wrong');
+    }
+
     // --- 2. Away: Tor comes up (cold) and the conversation goes on (US1). ---
     away.away = true;
     watch = Stopwatch()..start();
@@ -196,22 +272,29 @@ void main() {
     expect(File(fetched.data!).readAsBytesSync(), payload, reason: 'the same bytes back');
     measure('a 64 KiB file through Tor, up, sent and down: ${watch.elapsedMilliseconds} ms');
 
-    // --- 3. Home: back to direct, Tor stopped within ten seconds (SC-002). ---
+    // --- 3. Home: back to direct, Tor stopped within ten seconds (SC-002),
+    // with messages queued across the switch. ---
     away.away = false;
-    watch = Stopwatch()..start();
-    network.change();
+    await burstAcross('tor to direct', () {
+      watch = Stopwatch()..start();
+      network.change();
+    });
     await liveUntil('live direct again', const Duration(seconds: 30), () => liveOn(ConnectionPath.direct));
     final toDirect = watch.elapsedMilliseconds;
     await liveUntil('Tor stopped', const Duration(seconds: 10), () => torService.status.state == TorState.stopped);
     measure('home, back to direct: $toDirect ms; Tor stopped after ${watch.elapsedMilliseconds} ms');
+    await expectEachOnce('tor to direct');
     expect(await send('direct 2'), isTrue);
 
-    // --- 2 again, warm. ---
+    // --- 2 again, warm, with messages queued across the switch. ---
     away.away = true;
-    watch = Stopwatch()..start();
-    network.change();
+    await burstAcross('direct to tor', () {
+      watch = Stopwatch()..start();
+      network.change();
+    });
     await liveUntil('live through Tor, warm', const Duration(minutes: 4), () => liveOn(ConnectionPath.tor));
     measure('away, warm Tor, to live: ${watch.elapsedMilliseconds} ms');
+    await expectEachOnce('direct to tor');
     expect(await send('through Tor 2'), isTrue);
     away.away = false;
     network.change();
@@ -225,13 +308,13 @@ void main() {
     final before = await _count(chatId);
     await first.stop();
     await firstTor.stop();
-    final secondTor = await LiveTor.start(tor: tor, work: work, target: '$host:18444', log: 'tor2.log');
+    final secondTor = await LiveTor.start(tor: tor, work: work, target: '$host:${port + 1}', log: 'tor2.log');
     expect(secondTor.onion, firstTor.onion, reason: 'the same keys, the same address');
-    final second = await LiveNoxd.start(noxd: noxd, work: work, addr: '$host:18444', log: 'noxd2.log');
+    final second = await LiveNoxd.start(noxd: noxd, work: work, addr: '$host:${port + 1}', log: 'noxd2.log');
     stdout.writeln('NOXD: pid=${second.pid}; TOR: pid=${secondTor.pid}');
     watch = Stopwatch()..start();
     await liveUntil('live direct on the new address', const Duration(minutes: 8), () {
-      return liveOn(ConnectionPath.direct) && socket.currentUrl?.port == 18444;
+      return liveOn(ConnectionPath.direct) && socket.currentUrl?.port == port + 1;
     });
     measure('new server address, back to direct on it: ${watch.elapsedMilliseconds} ms');
     expect(await getIt<SyncRepository>().getEpoch(), epoch, reason: 'the world is named by the key, not the address');
@@ -253,6 +336,74 @@ void main() {
     away.away = false;
     network.change();
     await liveUntil('home again', const Duration(seconds: 30), () => liveOn(ConnectionPath.direct));
+
+    // --- 5. Why Tor does not get through, in the person's words (US5,
+    // FR-017, the spec's edge cases). Away with Use Tor on: Tor is the only
+    // way. An edit in Settings > Connection is applied the way the section
+    // applies it - stored, then the channel started again. ---
+    Future<void> reconnect() => getIt<SessionPhaseService>().reconnect();
+    away.away = true;
+    network.change();
+    await liveUntil('live through Tor', const Duration(minutes: 4), () => liveOn(ConnectionPath.tor));
+
+    // An onion address nobody publishes - a real key, so the address is
+    // well formed down to its curve point.
+    final nobodysKey = await (await Ed25519().newKeyPair()).extractPublicKey();
+    final nobody = torService.onionFromPublicKey(Uint8List.fromList(nobodysKey.bytes))!;
+    expect((await addresses.saveManual(manualAddress: null, manualOnion: '$nobody:443')).hasData, isTrue);
+    watch = Stopwatch()..start();
+    await reconnect();
+    final unpublished = await cause('an onion address nobody publishes', const Duration(minutes: 5), {ConnectionProblem.onionNotFound});
+    measure('an onion address nobody publishes: ${unpublished?.name ?? problem()?.name} after ${watch.elapsedMilliseconds} ms');
+
+    // Another server's onion service: the channel check finds another key.
+    if (otherOnion.isNotEmpty) {
+      expect((await addresses.saveManual(manualAddress: null, manualOnion: '$otherOnion:443')).hasData, isTrue);
+      watch = Stopwatch()..start();
+      await reconnect();
+      final other = await cause('another server\'s onion address', const Duration(minutes: 5), {ConnectionProblem.otherServer});
+      measure('another server\'s onion address: ${other?.name ?? problem()?.name} after ${watch.elapsedMilliseconds} ms');
+    }
+    expect((await addresses.saveManual(manualAddress: null, manualOnion: null)).hasData, isTrue);
+    await reconnect();
+    await liveUntil('live through Tor, the server\'s own address back', const Duration(minutes: 4), () => liveOn(ConnectionPath.tor));
+
+    // The server's tor stopped: the address is still in the directories, and
+    // nothing answers behind it.
+    watch = Stopwatch()..start();
+    await secondTor.stop();
+    final torGone = await cause('the server\'s tor stopped', const Duration(minutes: 6), {
+      ConnectionProblem.onionNotFound,
+      ConnectionProblem.onionUnreachable,
+    });
+    measure('the server\'s tor stopped: ${torGone?.name ?? problem()?.name} after ${watch.elapsedMilliseconds} ms');
+    final thirdTor = await LiveTor.start(tor: tor, work: work, target: '$host:${port + 1}', log: 'tor3.log');
+    expect(thirdTor.onion, firstTor.onion, reason: 'the same keys, the same address');
+    watch = Stopwatch()..start();
+    await liveUntil('live through Tor, the server\'s tor back', const Duration(minutes: 8), () => liveOn(ConnectionPath.tor));
+    measure('the server\'s tor back, live through Tor again: ${watch.elapsedMilliseconds} ms');
+
+    // The server stopped behind a running tor: the service answers, the
+    // server behind it does not.
+    watch = Stopwatch()..start();
+    await second.stop();
+    final serverGone = await cause('the server stopped behind a running tor', const Duration(minutes: 6), {
+      ConnectionProblem.onionUnreachable,
+    });
+    measure('the server stopped behind a running tor: ${serverGone?.name ?? problem()?.name} after ${watch.elapsedMilliseconds} ms');
+    final third = await LiveNoxd.start(noxd: noxd, work: work, addr: '$host:${port + 1}', log: 'noxd3.log');
+    stdout.writeln('NOXD: pid=${third.pid}; TOR: pid=${thirdTor.pid}');
+    watch = Stopwatch()..start();
+    await liveUntil('live through Tor, the server back', const Duration(minutes: 6), () => liveOn(ConnectionPath.tor));
+    measure('the server back, live through Tor again: ${watch.elapsedMilliseconds} ms');
+
+    // Home with no network change to say so: the periodic look at the direct
+    // path finds it within two minutes (SC-002).
+    away.away = false;
+    watch = Stopwatch()..start();
+    await liveUntil('back to direct with no network change', const Duration(minutes: 3), () => liveOn(ConnectionPath.direct));
+    measure('home with no network change, back to direct: ${watch.elapsedMilliseconds} ms');
+    expect(await send('direct after the causes'), isTrue);
 
     // --- 4. Invites are version 3 and carry the onion address, so a new
     // device can pair through Tor from anywhere (phase 045). ---
@@ -277,11 +428,12 @@ void main() {
     expect(await storage.read(key: ConnectionStorage.serverAddresses), isNull);
     expect(Directory('${support.path}${Platform.pathSeparator}nox_tor_state').existsSync(), isFalse);
 
-    File('$work/measure.txt').writeAsStringSync('${measures.join('\n')}\n');
+    File('$work/measure.txt').writeAsStringSync('${[...measures, ...findings.map((f) => 'FINDING: $f')].join('\n')}\n');
     stdout.writeln(
-      'INVITES: ${invites.length} written to $work/invites.txt; noxd left running, pid ${second.pid}; tor, pid ${secondTor.pid}',
+      'INVITES: ${invites.length} written to $work/invites.txt; noxd left running, pid ${third.pid}; tor, pid ${thirdTor.pid}',
     );
-  }, timeout: const Timeout(Duration(minutes: 30)));
+    expect(findings, isEmpty, reason: 'what did not go as the spec says');
+  }, timeout: const Timeout(Duration(minutes: 50)));
 }
 
 Future<int> _count(String chatId) async => (await getIt<MessageDao>().getByChatSorted(chatId)).length;

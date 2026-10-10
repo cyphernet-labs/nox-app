@@ -60,8 +60,8 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 | Search-empty | По запросу ничего не найдено — надпись `No chats found` в области результата. |
 | Connecting | Путь до сервера ищется или поднимается: в углу AppBar `Connecting…`, через Tor — с бейджем `Tor` ([overview / Состояние связи](../overview.md#состояние-связи-в-углу-экрана)). Баннера нет, список показывает кэш. |
 | Через Tor | Связь есть, путь — Tor: в углу бейдж `Tor`. |
-| Offline | Целый раунд поиска пути не дал ничего — постоянный `MaterialBanner` `No connection` сверху (под AppBar/SearchBar), угол пуст. Список показывает кэш. Плашка несёт действие `Try again` (фаза 042): оно перезапускает канал — новая попытка начинается сразу, плашка уступает углу `Connecting…` и возвращается, если и эта попытка не удалась. Для сервера, который не поддерживает эту сборку, плашка остаётся без действия: повтор не изменит его ответа. |
-| Server mismatch | Сервер, до которого приложение дошло по его **onion-адресу**, предъявил не тот ключ, что назвала ссылка спаривания. Постоянная плашка `This isn't the server you paired with` с действием `Try again`. **Вместо** `Offline`, а не вместе с ним: сервер ответил, и «нет соединения» здесь — неправда. Ничего локального не стирается, переписка видна под плашкой. Само не проходит: единственный выход — действие. Чужой ключ на прямом адресе это состояние не вызывает. |
+| Offline | Целый раунд поиска пути не дал ничего — постоянный `MaterialBanner` сверху (под AppBar/SearchBar), угол пуст. Текст плашки — **причина**, если она известна ([overview / Причины неудачи](../overview.md#причины-неудачи)), иначе `No connection`; глиф `wifi_off` в обоих случаях. Список показывает кэш. Плашка несёт действие `Try again` (фаза 042): оно перезапускает канал — новая попытка начинается сразу, плашка уступает углу `Connecting…` и возвращается, если и эта попытка не удалась. Для сервера, который не поддерживает эту сборку, плашка остаётся без действия: повтор не изменит его ответа. |
+| Server mismatch | Сервер, до которого приложение дошло по его **onion-адресу**, предъявил не тот ключ, что назвала ссылка спаривания. Постоянная плашка `This onion address belongs to a different server.` с глифом ошибки и действием `Try again`. **Вместо** `Offline`, а не вместе с ним: сервер ответил, и «нет соединения» здесь — неправда. Ничего локального не стирается, переписка видна под плашкой. Само не проходит: выход — действие или исправленный onion-адрес в [7.10](connection.md). Чужой ключ на прямом адресе это состояние не вызывает. |
 | Tor устарел | Сеть Tor объявила встроенный клиент устаревшим: плашка `Update NOX to connect away from home` сверху (обе ширины); дома связь идёт напрямую как обычно. |
 | Inline-error | Не удалось загрузить — `MaterialBanner` сверху с предложением обновить (pull-to-refresh / action). |
 | Fatal | Передача в 3.1 (embedded). |
@@ -97,9 +97,10 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 | Empty state title | `No chats yet` |
 | Empty state message | `Tap + to create the first one.` |
 | Search empty | `No chats found` |
-| Offline banner | `No connection` |
+| Offline banner (причина неизвестна) | `No connection` |
+| Offline banner (причина известна) | текст причины: `This isn't a valid onion address.` · `No server answers at this onion address. Check the address and that Tor is running on the server.` · `Your server isn't answering through Tor right now. Check that it is running.` · `Can't connect to the Tor network. Check your internet connection.` · `Can't reach the server directly. Turn on Use Tor to connect through Tor.` |
 | Offline action | `Try again` |
-| Server-mismatch banner | `This isn't the server you paired with` |
+| Server-mismatch banner | `This onion address belongs to a different server.` |
 | Server-mismatch action | `Try again` |
 | Waiting chat, clock (имя для чтения с экрана) | `Waiting to be created` |
 | Name-taken chat, status line | `Name already taken` |
@@ -124,6 +125,7 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 | Q9 | Initial-loading | Centered `CircularProgressIndicator` |
 | Q10 | Empty state | Композиция `EmptyState`: обведённый квадрат 132 + стоковый глиф 56 + две брендовые точки + заголовок и текст |
 | — | Чат, которого нет на сервере (фаза 041) | Часики вместо времени, пока ждёт создания; знак ошибки вместо времени и причина вместо превью, если сервер отказал. Обе ширины |
+| — | Текст плашки «нет связи» (фаза 045) | Причина неудачи, когда она известна, вместо `No connection`; `Try again` остаётся. Обе ширины (уточнение 2026-10-09) |
 
 ## Десктоп-раскладка (этап M3, сверено с корпусом)
 
@@ -131,5 +133,5 @@ Material Scaffold внутри `Tab bar shell` (4.1). Сверху вниз:
 
 - Десктоп (`>= 840dp`) — **list-detail**: `NavigationRail` (шелл) + chat-list-pane ≈360 (pane-header + поле поиска) + thread-pane. Выбор строки подсвечивает её (`secondaryContainer`) и загружает ленту справа **без** навигационного push (выбор — view-state в `ChatsListBloc`, контейнер `AppListDetailWidget`).
 - **Контент ленты (5.2) на этапе M3 — лёгкий плейсхолдер** «лента — в M4»; состояние no-selection — `Select a chat` / `Choose a conversation on the left, or press + to start a new one.`. Механика master-detail построена полностью; реальная лента 5.2 — этап M4.
-- Офлайн/inline-error — баннер под поиском в list-pane; список показывает кэш.
+- Офлайн/inline-error — баннер под поиском в list-pane; список показывает кэш. Текст офлайн-баннера и плашки «другой сервер» — те же, что на узкой ширине; в панели ленты — своя такая же плашка.
 - Строка чата, которого ещё нет на сервере, на широкой ветке та же, что на узкой: часики или знак ошибки вместо времени, причина отказа вместо превью.

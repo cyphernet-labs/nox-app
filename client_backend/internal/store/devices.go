@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"time"
 )
 
 // Device is one authorised install of a person, as shown in the device list.
@@ -44,6 +43,14 @@ func (s *Store) ListDevices(ctx context.Context, userID string) ([]Device, error
 	return devices, nil
 }
 
+// Revocation is what revoking a device set in motion besides the row itself.
+type Revocation struct {
+	// Closed are the requests the revoked device took part in, now closed -
+	// denied, or expired when their time had already run out - so the devices
+	// on the other side of each can be told.
+	Closed []PairRequest
+}
+
 // RevokeDevice removes a key from the allowed list.
 //
 // Deletion rather than a revoked_at flag: a third state would have to be
@@ -57,12 +64,12 @@ func (s *Store) ListDevices(ctx context.Context, userID string) ([]Device, error
 // dropped connection look like a failure.
 //
 // The person's row is deliberately left alone, even when this was their last
-// device: an identity has to survive losing every device, or recovery would
-// have nothing to reattach to.
-func (s *Store) RevokeDevice(ctx context.Context, deviceKey string) error {
+// device: the person and every conversation outlive their devices, and the
+// machine link joins the next device to them (FR-015).
+func (s *Store) RevokeDevice(ctx context.Context, deviceKey string, now int64) (Revocation, error) {
 	tx, err := s.write.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin revoke device: %w", err)
+		return Revocation{}, fmt.Errorf("begin revoke device: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
@@ -70,28 +77,51 @@ func (s *Store) RevokeDevice(ctx context.Context, deviceKey string) error {
 	err = tx.QueryRowContext(ctx, "SELECT user_id FROM devices WHERE device_key = ?", deviceKey).Scan(&userID)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		// Already gone. Nothing to revoke and nothing to retire.
-		return tx.Commit()
+		// Already gone. Nothing to revoke and nothing to retire: everything
+		// below happened when it went.
+		return Revocation{}, tx.Commit()
 	case err != nil:
-		return fmt.Errorf("read device before revoke: %w", err)
+		return Revocation{}, fmt.Errorf("read device before revoke: %w", err)
 	}
 
 	if _, err := tx.ExecContext(ctx, "DELETE FROM devices WHERE device_key = ?", deviceKey); err != nil {
-		return fmt.Errorf("revoke device: %w", err)
+		return Revocation{}, fmt.Errorf("revoke device: %w", err)
 	}
-	// Live invites of this person die with it. A revoked device may well have
-	// issued one minutes ago, and leaving it usable would let whoever holds
-	// that link walk straight back in - the revocation would have removed the
-	// key and left the door it opened.
+	// The requests it takes part in close as denied: nobody is left to press
+	// Allow on the ones it was asked to answer, and the person who revoked it
+	// is not to be asked to let it back in on one it opened.
+	closed, err := closeRequestsOf(ctx, tx, deviceKey, now)
+	if err != nil {
+		return Revocation{}, err
+	}
+	// The invites it issued that nobody has presented die with it. Leaving one
+	// usable would let whoever holds that link ask the person's OTHER devices to
+	// let them in on the authority of a device that was just told to leave. The
+	// invites of the person's other devices are theirs and stay.
 	if _, err := tx.ExecContext(ctx,
-		"UPDATE pair_tokens SET used_at = ? WHERE user_id = ? AND used_at IS NULL",
-		time.Now().Unix(), userID); err != nil {
-		return fmt.Errorf("retire invites: %w", err)
+		"UPDATE pair_tokens SET used_at = ? WHERE issuer_key = ? AND used_at IS NULL", now, deviceKey); err != nil {
+		return Revocation{}, fmt.Errorf("void the device's invites: %w", err)
+	}
+	// The last device going away puts the machine back to "no devices", where
+	// the service page shows a machine link at once (FR-015). A machine link that
+	// already ran out unused would stand in the way - the page shows an unspent
+	// link as "Link expired" rather than minting over it - so it is voided here.
+	// A live one stays: it is the link somebody may be scanning right now.
+	devices, err := countDevices(ctx, tx)
+	if err != nil {
+		return Revocation{}, err
+	}
+	if devices == 0 {
+		if _, err := tx.ExecContext(ctx,
+			"UPDATE pair_tokens SET used_at = ? WHERE kind = ? AND used_at IS NULL AND expires_at <= ?",
+			now, TokenMachine, now); err != nil {
+			return Revocation{}, fmt.Errorf("void a machine link that ran out: %w", err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit revoke device: %w", err)
+		return Revocation{}, fmt.Errorf("commit revoke device: %w", err)
 	}
-	return nil
+	return Revocation{Closed: closed}, nil
 }
 
 // DeviceOwner reports which person a key belongs to, so a caller can refuse to

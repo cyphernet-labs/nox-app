@@ -307,7 +307,7 @@ func (s *Server) markGreeted(c *client, version uint64) {
 // inviteDirectAddress is the direct host for an invite requested through the
 // onion service, where the Host header holds the onion name: the head of the
 // list, which is in order of preference with IPv4 first, else the bind address
-// as the claim link would print it.
+// as listenAddress renders it.
 func (s *Server) inviteDirectAddress() string {
 	if cur := s.addrs.Load(); cur != nil && len(cur.Direct) > 0 {
 		return cur.Direct[0]

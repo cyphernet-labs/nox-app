@@ -112,7 +112,7 @@ func onionChecksum(key []byte) [32]byte {
 //
 // Everything accepted here goes into pairing links, so it is held to what the
 // link builder can encode: a name of at most 253 bytes and no zone on an IPv6
-// address. A link that cannot be built would leave the machine with no claim
+// address. A link that cannot be built would leave the machine with no machine
 // link and no invites at all.
 func parsePublicAddress(raw string) (string, error) {
 	host, portStr, err := net.SplitHostPort(raw)
@@ -266,12 +266,13 @@ func applyAddressParams(ctx context.Context, st *store.Store, cfg config.Config,
 		if err != nil {
 			// The value stays out of the line for an onion address, which a
 			// typo leaves one character away from the real one (FR-022). A
-			// public address is not a secret - every device is told it - but
-			// it goes through the mask too: an onion name pasted into the
-			// wrong parameter is exactly what this branch catches.
+			// public address is not a secret - every device is told it - and
+			// is named; an onion name pasted into the wrong parameter, which
+			// is exactly what this branch catches, is masked by the log's
+			// own handler (logscrub.go).
 			attrs := []any{"param", paramFlag(p.kind), "reason", err.Error()}
 			if p.kind == store.AddressPublic {
-				attrs = append(attrs, "value", maskOnion(p.param))
+				attrs = append(attrs, "value", p.param)
 			}
 			logger.Error("start parameter not applied, the server keeps the address it has", attrs...)
 			warnings = append(warnings, addressWarning{Kind: p.kind})
@@ -297,21 +298,6 @@ func applyAddressParams(ctx context.Context, st *store.Store, cfg config.Config,
 		logger.Error("the stored onion address is not valid and is left out until it is set again on the service page")
 	}
 	return warnings, nil
-}
-
-// onionInText finds a v3 onion address in any text, with or without its
-// suffix and in either case. Generous on purpose, like the scrubber it
-// replaces: a run of base32 masked by mistake costs nothing, an onion address
-// let through costs the address.
-var onionInText = regexp.MustCompile(`(?i)[a-z2-7]{56}(\.onion)?`)
-
-// maskOnion replaces every onion address in s with "[onion]" (FR-022). Applied
-// wherever text the server did not write itself - a library's error quoting a
-// Host header, above all - is about to reach the log: a connection through the
-// onion service carries the onion name as its Host, and nothing tells it apart
-// from any other connection any more.
-func maskOnion(s string) string {
-	return onionInText.ReplaceAllString(s, "[onion]")
 }
 
 // onionHost reports whether a Host header names an onion service. It is the

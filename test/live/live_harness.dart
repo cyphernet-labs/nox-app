@@ -47,8 +47,9 @@ class FakeNetwork implements NetworkChangeService {
 /// A tor of the probe's own, run as the separate service the server expects
 /// since phase 045 - set up the way the install script sets it up: an onion
 /// service on port 443 pointed at the server's port, proof-of-work defences
-/// on, no SOCKS port. The server never starts it, never sees its keys, and
-/// learns its address only through `-onion-addr`.
+/// on, at most 16 streams at once on a circuit, no SOCKS port. The server
+/// never starts it, never sees its keys, and learns its address only through
+/// `-onion-addr`.
 ///
 /// Its directories live under `<work>`: the service's keys in `<work>/hs`, so
 /// a tor started again over the same work directory keeps the same onion
@@ -63,7 +64,9 @@ class LiveTor {
 
   /// Starts tor with an onion service that forwards to [target], the address
   /// `noxd` listens on - `127.0.0.1:<port>` for a server listening on all
-  /// interfaces, its LAN address for one bound to it, as the probes' are.
+  /// interfaces, its LAN address for one bound to it, as the probes' are. tor
+  /// then connects from that same address, and the server counts it as this
+  /// machine's, the way it counts loopback.
   static Future<LiveTor> start({required String tor, required String work, required String target, String log = 'tor.log'}) async {
     final torrc = File('$work/torrc')
       ..writeAsStringSync(
@@ -73,6 +76,11 @@ class LiveTor {
           'HiddenServiceDir $work/hs',
           'HiddenServicePort 443 $target',
           'HiddenServicePoWDefensesEnabled 1',
+          // Proof of work prices new circuits, not the streams on one already
+          // built: at most 16 at once on a circuit, and one that asks for more
+          // is closed whole.
+          'HiddenServiceMaxStreams 16',
+          'HiddenServiceMaxStreamsCloseCircuit 1',
           'Log notice file $work/$log',
         ].join('\n'),
       );
@@ -95,14 +103,20 @@ class LiveTor {
 
 /// A `noxd` run detached from the probe, so it can outlive it.
 class LiveNoxd {
-  LiveNoxd._(this.pid, this._log);
+  LiveNoxd._(this.pid, this._log, this.pagePort);
 
   final int pid;
   final File _log;
 
-  /// Starts `noxd` on [addr]. [onionAddr] is the address of the onion
-  /// service a separate tor publishes for it ([LiveTor]); the server only
-  /// stores it and hands it out (phase 045).
+  /// The loopback port of the server's service page - where its machine link
+  /// is while no device is paired: the server never writes one to its log
+  /// (phases 045 and 046).
+  final int pagePort;
+
+  /// Starts `noxd` on [addr], with its service page on a free loopback port.
+  /// [onionAddr] is the address of the onion service a separate tor publishes
+  /// for it ([LiveTor]); the server only stores it and hands it out (phase
+  /// 045).
   static Future<LiveNoxd> start({
     required String noxd,
     required String work,
@@ -112,14 +126,22 @@ class LiveNoxd {
   }) async {
     final file = File('$work/$log');
     final onion = onionAddr == null ? '' : '-onion-addr $onionAddr';
+    final page = await _freeLoopbackPort();
     final shell = await Process.run('/bin/sh', [
       '-c',
-      '"$noxd" -addr $addr -db "$work/probe.db" $onion -status-addr "" > "${file.path}" 2>&1 & echo \$!',
+      '"$noxd" -addr $addr -db "$work/probe.db" $onion -status-addr 127.0.0.1:$page > "${file.path}" 2>&1 & echo \$!',
     ]);
     final pid = int.parse((shell.stdout as String).trim());
-    final server = LiveNoxd._(pid, file);
+    final server = LiveNoxd._(pid, file, page);
     await liveUntil('noxd listening on $addr', const Duration(seconds: 30), () => server.lines().any((l) => l['msg'] == 'listening'));
     return server;
+  }
+
+  static Future<int> _freeLoopbackPort() async {
+    final socket = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    final port = socket.port;
+    await socket.close();
+    return port;
   }
 
   /// The server's log, one JSON object per line.
@@ -135,13 +157,28 @@ class LiveNoxd {
     }
   }
 
-  Future<String> claimLink() async {
+  /// The machine link, as the service page shows it while no device is paired. Needs the network let
+  /// through (`LiveTarget.letTheNetworkThrough`): the page is plain HTTP.
+  Future<String> machineLink() async {
     String? link;
-    await liveUntil('the claim link', const Duration(seconds: 10), () {
-      link = lines().map((l) => l['link']).whereType<String>().firstOrNull;
+    await liveUntil('the machine link on the service page', const Duration(seconds: 10), () async {
+      link = await _linkOnPage();
       return link != null;
     });
     return link!;
+  }
+
+  Future<String?> _linkOnPage() async {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 2);
+    try {
+      final response = await (await client.getUrl(Uri.parse('http://127.0.0.1:$pagePort/'))).close();
+      final page = await response.transform(utf8.decoder).join();
+      return RegExp(r'nox://pair/[A-Za-z0-9_-]+').firstMatch(page)?.group(0);
+    } on Object {
+      return null;
+    } finally {
+      client.close(force: true);
+    }
   }
 
   Future<void> stop() async {

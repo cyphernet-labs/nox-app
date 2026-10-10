@@ -50,7 +50,10 @@ import 'live_target.dart';
 ///   (cd client_backend && go build -o /tmp/noxd .)
 ///   fvm flutter test test/live/resumable_files_probe.dart \
 ///     --dart-define=noxd=/tmp/noxd --dart-define=tor=/path/to/tor \
-///     --dart-define=host=192.168.1.20 --dart-define=work=/tmp/nox_files_e2e [--dart-define=mib=100]
+///     --dart-define=host=192.168.1.20 --dart-define=work=/tmp/nox_files_e2e [--dart-define=mib=100] [--dart-define=port=18543]
+///
+/// The work directory is emptied at the start; keep anything worth keeping
+/// elsewhere.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -59,6 +62,7 @@ void main() {
   const host = String.fromEnvironment('host');
   const work = String.fromEnvironment('work');
   const mib = int.fromEnvironment('mib', defaultValue: 100);
+  const port = int.fromEnvironment('port', defaultValue: 18543);
 
   test(
     'a big file up and down through the onion service: broken, restarted and moved, and never sent twice',
@@ -89,11 +93,11 @@ void main() {
 
       // --- tor as its own service, and the server on this machine's LAN
       // address, told where its onion service is (phase 045). ---
-      final onionService = await LiveTor.start(tor: tor, work: work, target: '$host:18543');
+      final onionService = await LiveTor.start(tor: tor, work: work, target: '$host:$port');
       addTearDown(() => Process.killPid(onionService.pid));
-      final server = await LiveNoxd.start(noxd: noxd, work: work, addr: '$host:18543', log: 'noxd.log', onionAddr: onionService.onion);
+      final server = await LiveNoxd.start(noxd: noxd, work: work, addr: '$host:$port', log: 'noxd.log', onionAddr: onionService.onion);
       addTearDown(() => Process.killPid(server.pid));
-      final claim = await server.claimLink();
+      final machine = await server.machineLink();
 
       // --- The app, with the two seams of the Tor probe. ---
       FlutterSecureStorage.setMockInitialValues({});
@@ -110,7 +114,7 @@ void main() {
       bool liveOn(ConnectionPath path) => socket.currentPhase == SessionPhase.live && selector.currentPath == path;
 
       final auth = getIt<AuthRepository>();
-      expect((await auth.signIn(identifier: claim)).hasData, isTrue, reason: 'sign-in by the claim link');
+      expect((await auth.signIn(identifier: machine)).hasData, isTrue, reason: 'sign-in by the machine link');
       expect((await auth.completeOnboarding(label: 'FilesProbe')).hasData, isTrue);
       await liveUntil('direct and live', const Duration(seconds: 30), () => liveOn(ConnectionPath.direct));
       // Tor only by the person's leave (phase 045).

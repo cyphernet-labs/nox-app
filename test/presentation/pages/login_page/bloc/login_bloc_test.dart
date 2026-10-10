@@ -4,6 +4,9 @@ import 'package:injectable/injectable.dart' show Environment;
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/exception/repository_exception.dart';
+import 'package:nox_app/domain/model/connection/connection_settings.dart';
+import 'package:nox_app/domain/model/session/pending_pairing.dart';
 import 'package:nox_app/domain/repository/app/auth_repository.dart';
 import 'package:nox_app/domain/repository/base/repository_result.dart';
 import 'package:nox_app/presentation/pages/login_page/bloc/login_bloc.dart';
@@ -24,6 +27,7 @@ const String _newerLink = 'nox://pair/BKCapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0Va
 @GenerateMocks([AuthRepository])
 void main() {
   provideDummy<RepositoryResult<bool>>(const RepositoryResult.success(data: true));
+  provideDummy<RepositoryResult<PendingPairing?>>(const RepositoryResult<PendingPairing?>.success(data: null));
 
   group('LoginBloc (demo)', () {
     setUp(() async {
@@ -179,6 +183,74 @@ void main() {
         predicate<LoginState>((s) => s.status == LoginStatus.idle && s.id == _homeLink),
         predicate<LoginState>((s) => s.status == LoginStatus.navConnect),
       ],
+    );
+  });
+
+  // A wait for approval the app was closed in goes on as soon as this screen
+  // opens (phase 046, FR-011): the same link from this device is the same
+  // request.
+  group('LoginBloc resuming a wait for approval (phase 046)', () {
+    late MockAuthRepository auth;
+    final pending = PendingPairing(
+      link: _homeLink,
+      waitUntil: DateTime.utc(2026, 10, 10, 12, 30),
+      connection: const ConnectionSettings(serverAddress: '192.168.1.20:8443', useTor: true),
+    );
+
+    setUp(() async {
+      await configureDependencies(Environment.test);
+      getIt.allowReassignment = true;
+      auth = MockAuthRepository();
+      getIt.registerSingleton<AuthRepository>(auth);
+    });
+    tearDown(() async => getIt.reset());
+
+    blocTest<LoginBloc, LoginState>(
+      'a wait still within its time goes on, on the connection screen',
+      build: () {
+        when(auth.pendingPairing()).thenAnswer((_) async => RepositoryResult<PendingPairing?>.success(data: pending));
+        return LoginBloc();
+      },
+      act: (bloc) => bloc.add(const LoginEvent.resumeChecked()),
+      expect: () => [predicate<LoginState>((s) => s.status == LoginStatus.navResume && s.resume == pending)],
+    );
+
+    blocTest<LoginBloc, LoginState>(
+      'nothing waiting, nothing to do',
+      build: () {
+        when(auth.pendingPairing()).thenAnswer((_) async => const RepositoryResult<PendingPairing?>.success(data: null));
+        return LoginBloc();
+      },
+      act: (bloc) => bloc.add(const LoginEvent.resumeChecked()),
+      expect: () => const <LoginState>[],
+    );
+
+    blocTest<LoginBloc, LoginState>(
+      'a keychain that cannot be read resumes nothing',
+      build: () {
+        when(
+          auth.pendingPairing(),
+        ).thenAnswer((_) async => const RepositoryResult<PendingPairing?>.error(exception: RepositoryException.unknown));
+        return LoginBloc();
+      },
+      act: (bloc) => bloc.add(const LoginEvent.resumeChecked()),
+      expect: () => const <LoginState>[],
+    );
+
+    blocTest<LoginBloc, LoginState>(
+      'the gallery preview asks nothing',
+      build: () => LoginBloc(demo: true),
+      act: (bloc) => bloc.add(const LoginEvent.resumeChecked()),
+      expect: () => const <LoginState>[],
+      verify: (_) => verifyNever(auth.pendingPairing()),
+    );
+
+    blocTest<LoginBloc, LoginState>(
+      'once the screen is pushed the wait is handed over, not offered again',
+      build: LoginBloc.new,
+      seed: () => LoginState(status: LoginStatus.navResume, resume: pending),
+      act: (bloc) => bloc.add(const LoginEvent.navigationHandled()),
+      expect: () => [predicate<LoginState>((s) => s.status == LoginStatus.idle && s.resume == null)],
     );
   });
 }

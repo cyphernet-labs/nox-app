@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"nox.app/client-backend/internal/protocol"
 	"nox.app/client-backend/internal/store"
@@ -432,42 +433,51 @@ func TestAnInviteNamesTheStoredAddressesAndSaysWhichItCarries(t *testing.T) {
 	}
 }
 
-// The claim link follows the same rule, and the page builds it from the
-// database on every load: an address set a moment ago is already in it.
-func TestTheClaimLinkCarriesTheStoredAddresses(t *testing.T) {
-	_, srv := newTestServerWith(t, func(s *Server) { s.cfg.Addr = "192.168.1.10:8080" })
-	link, scannable, err := srv.claimLink(context.Background())
+// machineLinkNow builds a machine link the way the page and `noxd link` do,
+// for a freshly minted token, and says whether a phone could follow it.
+func machineLinkNow(t *testing.T, srv *Server) (string, bool) {
+	t.Helper()
+	b, err := srv.machineLinkBuilder(context.Background())
 	if err != nil {
-		t.Fatalf("claimLink: %v", err)
+		t.Fatalf("machineLinkBuilder: %v", err)
 	}
+	link, scannable, err := b.build(mustMachineLink(t, srv))
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	return link, scannable
+}
+
+// The machine link follows the same rule, and is built from the database on
+// every use: an address set a moment ago is already in it.
+func TestTheMachineLinkCarriesTheStoredAddresses(t *testing.T) {
+	_, srv := newTestServerWith(t, func(s *Server) { s.cfg.Addr = "192.168.1.10:8080" })
+	link, scannable := machineLinkNow(t, srv)
 	if got := readLink(t, link); got.Onion != nil || !slices.Equal(got.Direct, []string{"192.168.1.10:8080"}) || !scannable {
-		t.Fatalf("claim link with nothing stored = %+v (scannable %v)", got, scannable)
+		t.Fatalf("machine link with nothing stored = %+v (scannable %v)", got, scannable)
 	}
 
 	setStored(t, srv, store.AddressPublic, "nox.example.org:8443")
 	setStored(t, srv, store.AddressOnion, testOnionAddr)
-	link, _, err = srv.claimLink(context.Background())
-	if err != nil {
-		t.Fatalf("claimLink: %v", err)
-	}
+	link, _ = machineLinkNow(t, srv)
 	got := readLink(t, link)
 	if !got.Onion.Equal(onionKeyOf(t, testOnionAddr)) || !got.ServerKey.Equal(serverKeyOf(t, srv)) ||
 		!slices.Equal(got.Direct, []string{"nox.example.org:8443", "192.168.1.10:8080"}) {
-		t.Fatalf("claim link with both stored = %+v", got)
+		t.Fatalf("machine link with both stored = %+v", got)
 	}
 }
 
 // A machine on loopback behind tor has nothing a phone can dial directly - and
-// a phone can still claim it through Tor (045, FR-008). The code is drawn
+// a phone can still pair with it through Tor (045, FR-008). The code is drawn
 // whenever the link names an address another device can reach.
 func TestALoopbackServerWithAnOnionAddressDrawsTheCode(t *testing.T) {
 	_, srv := newTestServer(t) // bound to 127.0.0.1
-	if _, scannable, err := srv.claimLink(context.Background()); err != nil || scannable {
-		t.Fatalf("loopback with nothing stored: scannable=%v err=%v, want no code", scannable, err)
+	if _, scannable := machineLinkNow(t, srv); scannable {
+		t.Fatal("loopback with nothing stored is scannable, want no code")
 	}
 	setStored(t, srv, store.AddressOnion, testOnionAddr)
-	if _, scannable, err := srv.claimLink(context.Background()); err != nil || !scannable {
-		t.Fatalf("loopback with an onion address: scannable=%v err=%v, want a code", scannable, err)
+	if _, scannable := machineLinkNow(t, srv); !scannable {
+		t.Fatal("loopback with an onion address is not scannable, want a code")
 	}
 	if !strings.Contains(statusBody(t, srv), "<svg") {
 		t.Fatal("the page drew no code for a link a phone can follow through Tor")
@@ -485,7 +495,7 @@ func TestADeviceRevokedMidSessionCannotIssueAnInvite(t *testing.T) {
 	c.hello(1, "")
 	// Revoked from elsewhere: straight in the store, so this socket stays open
 	// the way it does between a revocation's commit and the server's close.
-	if err := srv.store.RevokeDevice(context.Background(), c.dev.pub); err != nil {
+	if _, err := srv.store.RevokeDevice(context.Background(), c.dev.pub, time.Now().Unix()); err != nil {
 		t.Fatalf("RevokeDevice: %v", err)
 	}
 	c.send(`{"id":2,"cmd":"device.invite","data":{}}`)

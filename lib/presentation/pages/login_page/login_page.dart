@@ -71,6 +71,8 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
   void initState() {
     super.initState();
     _bloc = LoginBloc(demo: widget.demo, initialStatus: widget.initialStatus);
+    // A wait for approval the app was closed in goes on (phase 046, FR-011).
+    if (!widget.demo) _bloc.add(const LoginEvent.resumeChecked());
     WidgetsBinding.instance.addObserver(this);
     _refreshClipboard();
   }
@@ -156,6 +158,11 @@ class _LoginPageState extends BaseStatePage<LoginPage> with WidgetsBindingObserv
         // Every way a link arrives ends here: the connection screen shows
         // where it leads, and pairs (FR-013).
         Navigator.of(context).push(ConnectPage.route(link: state.id.trim()));
+        _bloc.add(const LoginEvent.navigationHandled());
+      case LoginStatus.navResume:
+        // Back to the wait, over the same path it was set up for.
+        final resume = state.resume;
+        if (resume != null) Navigator.of(context).push(ConnectPage.route(link: resume.link, resume: true, settings: resume.connection));
         _bloc.add(const LoginEvent.navigationHandled());
       case LoginStatus.navNewId:
         Navigator.of(context).push(SetUsernamePage.route());

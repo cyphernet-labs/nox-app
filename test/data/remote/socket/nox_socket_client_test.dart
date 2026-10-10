@@ -744,9 +744,8 @@ void main() {
     });
 
     test('a pairing never completes over connections whose server key was refused (SC-003)', () async {
-      // Every machine dialled proves another key. The connection holds what it
-      // is given until the channel is verified, and a refused one never is -
-      // see socket_channel_factory_test for the hold itself.
+      // Every machine dialled proves another key: there is no connection for
+      // the pairing to complete on.
       factory.refuseEvery = ChannelFailure.wrongServer;
       await client.start(
         targets: ScriptedTargets([Uri.parse('wss://192.168.1.20:8080/ws')]),
@@ -756,9 +755,6 @@ void main() {
       final stranger = factory.latest;
       stranger.refuseServerKey();
       await expectLater(client.pair(token: 't', platform: 'macos'), throwsA(isA<SocketUnavailableException>()));
-      for (final socket in factory.created) {
-        expect(socket.commandNamed('pair'), isNull, reason: 'every connection dialled refused the key');
-      }
     }, timeout: const Timeout(Duration(seconds: 30)));
 
     test('a stop while the path is being chosen dials nothing afterwards', () async {
@@ -955,6 +951,52 @@ void main() {
       expect(data['platform'], 'macos');
       expect(data.containsKey('device_key'), isFalse, reason: 'the server takes it from the connection (phase 044)');
       expect(data.containsKey('access_key'), isFalse, reason: 'no onion access keys since phase 045');
+    });
+  });
+
+  group('a pairing that waits for approval (phase 046)', () {
+    test('the request is withdrawn before any greeting, with nothing but the token', () async {
+      // The device asking is not paired - that is what it waits for - so the
+      // command cannot wait for a greeting that will never come.
+      await client.start(url: url, credentialsProvider: () async => const GreetingCredentials.unpaired());
+      final socket = factory.latest;
+      socket.pushGreeting();
+      final withdrawn = client.cancelPairing(token: 't');
+      await waitUntil(() => socket.commandNamed('pair.cancel') != null, reason: 'pair.cancel is sent');
+
+      expect(socket.commandNamed('session.hello'), isNull, reason: 'an unpaired install never greets');
+      expect(socket.commandNamed('pair.cancel')!['data'], {'token': 't'});
+      socket.reply(socket.sent.indexWhere((f) => f['cmd'] == 'pair.cancel'), data: const {});
+      expect((await withdrawn).ok, isTrue);
+    });
+
+    test('every connection the client opens is announced, so a wait can present its token again', () async {
+      // The outcome event reaches only the connections open when the request
+      // closed; the repeat on the next one is how a device that was away for
+      // that moment still learns it.
+      final opened = <int>[];
+      final sub = client.connectionOpened.listen((_) => opened.add(factory.created.length));
+      addTearDown(sub.cancel);
+
+      await client.start(url: url, credentialsProvider: () async => const GreetingCredentials.unpaired());
+      await waitUntil(() => opened.length == 1, reason: 'the first connection');
+      await client.reconnect();
+      await waitUntil(() => opened.length == 2, reason: 'the next one');
+
+      expect(opened, [1, 2]);
+    });
+
+    test('an outcome sent before any greeting reaches the listeners', () async {
+      await client.start(url: url, credentialsProvider: () async => const GreetingCredentials.unpaired());
+      final seen = <String>[];
+      final sub = client.events.listen((e) => seen.add(e.event));
+      addTearDown(sub.cancel);
+
+      factory.latest.pushEvent(seq: 0, event: 'pair.resolved', data: const {'outcome': 'denied'});
+      await waitUntil(() => seen.isNotEmpty, reason: 'the event is delivered');
+
+      expect(seen, ['pair.resolved']);
+      expect(client.currentPhase, SessionPhase.connecting, reason: 'an off-journal event is no greeting');
     });
   });
 

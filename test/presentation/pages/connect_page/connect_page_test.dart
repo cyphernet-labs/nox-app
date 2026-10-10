@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:injectable/injectable.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nox_app/di/configure_dependencies.dart';
+import 'package:nox_app/domain/exception/pairing_exception.dart';
 import 'package:nox_app/domain/exception/repository_exception.dart';
 import 'package:nox_app/domain/model/connection/connection_problem.dart';
 import 'package:nox_app/domain/model/connection/connection_settings.dart';
@@ -30,6 +31,7 @@ const String _link = 'nox://pair/A6CapfR6Z1mAL_lV-NwtKhSlyZ0jvpf4ZBJ_-Tg0VaTwAAE
 /// what it refuses, and the way back.
 void main() {
   late MockAuthRepository auth;
+  late StreamController<bool> approval;
 
   setUp(() async {
     FlutterSecureStorage.setMockInitialValues({});
@@ -37,6 +39,10 @@ void main() {
     await configureDependencies(Environment.test);
     provideDummy<RepositoryResult<bool>>(const RepositoryResult.success(data: true));
     auth = MockAuthRepository();
+    approval = StreamController<bool>.broadcast();
+    addTearDown(approval.close);
+    when(auth.watchAwaitingApproval()).thenAnswer((_) => approval.stream);
+    when(auth.cancelPairing()).thenAnswer((_) async {});
     getIt.allowReassignment = true;
     getIt.registerSingleton<AuthRepository>(auth);
   });
@@ -193,5 +199,98 @@ void main() {
     await pumpAt(tester, const Size(420, 900));
 
     expect(find.byTooltip(l10nEn.tooltipBack), findsOneWidget);
+  });
+
+  group('an invite that waits for approval (phase 046)', () {
+    /// Opens the screen over another and presses Connect on a sign-in that
+    /// reports the wait, then holds until [answer].
+    Future<void> waitAt(WidgetTester tester, Size size, Completer<RepositoryResult<bool>> answer) async {
+      when(auth.signIn(identifier: anyNamed('identifier'), connection: anyNamed('connection'))).thenAnswer((_) async {
+        approval.add(true);
+        return answer.future;
+      });
+      await tester.binding.setSurfaceSize(size);
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await pumpApp(
+        tester,
+        Builder(
+          builder: (context) => Center(
+            child: TextButton(
+              onPressed: () => Navigator.of(context).push(ConnectPage.route(link: _link)),
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      await tester.tap(connectButton());
+      // The spinner turns for as long as the wait lasts: pumped, not settled.
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+    }
+
+    for (final (width, size) in [('phone', const Size(420, 900)), ('desktop', const Size(1200, 900))]) {
+      testWidgets('on a $width: the fields give way to the wait, with Cancel the one thing to press', (tester) async {
+        final answer = Completer<RepositoryResult<bool>>();
+        await waitAt(tester, size, answer);
+
+        expect(find.text(l10nEn.connectWaitingApproval), findsOneWidget);
+        expect(find.byType(CircularProgressIndicator), findsOneWidget);
+        expect(find.byType(TextField), findsNothing, reason: 'the fields have done their work');
+        expect(connectButton(), findsNothing);
+        expect(tester.widget<TextButton>(find.widgetWithText(TextButton, l10nEn.actionCancel)).onPressed, isNotNull);
+        answer.complete(const RepositoryResult.error(exception: RepositoryException.connection));
+        await tester.pump();
+      });
+    }
+
+    testWidgets('no way back but Cancel while it waits', (tester) async {
+      final answer = Completer<RepositoryResult<bool>>();
+      await waitAt(tester, const Size(420, 900), answer);
+
+      expect(find.byWidgetPredicate((w) => w is PopScope && !w.canPop), findsOneWidget);
+      final back = find.ancestor(of: find.byTooltip(l10nEn.tooltipBack), matching: find.byType(IconButton));
+      expect(tester.widget<IconButton>(back).onPressed, isNull);
+      answer.complete(const RepositoryResult.error(exception: RepositoryException.connection));
+      await tester.pump();
+    });
+
+    testWidgets('Cancel withdraws the request and closes the screen', (tester) async {
+      final answer = Completer<RepositoryResult<bool>>();
+      when(auth.cancelPairing()).thenAnswer((_) async {
+        answer.complete(const RepositoryResult.error(exception: PairingException.cancelled));
+      });
+      await waitAt(tester, const Size(1200, 900), answer);
+
+      await tester.tap(find.widgetWithText(TextButton, l10nEn.actionCancel));
+      await tester.pumpAndSettle();
+
+      verify(auth.cancelPairing()).called(1);
+      expect(find.byType(ConnectPage), findsNothing, reason: 'back to where links are entered');
+    });
+
+    testWidgets('a Deny is said under Connect, and the way back opens again', (tester) async {
+      final answer = Completer<RepositoryResult<bool>>();
+      await waitAt(tester, const Size(420, 900), answer);
+
+      answer.complete(const RepositoryResult.error(exception: PairingException.declined));
+      await tester.pumpAndSettle();
+
+      expect(find.text(l10nEn.connectDeclined), findsOneWidget);
+      expect(find.text(l10nEn.connectWaitingApproval), findsNothing);
+      expect(find.byWidgetPredicate((w) => w is PopScope && w.canPop), findsOneWidget);
+    });
+
+    testWidgets('no answer in time reads as an expired link', (tester) async {
+      final answer = Completer<RepositoryResult<bool>>();
+      await waitAt(tester, const Size(420, 900), answer);
+
+      answer.complete(const RepositoryResult.error(exception: RepositoryException.notFound));
+      await tester.pumpAndSettle();
+
+      expect(find.text(l10nEn.loginLinkExpired), findsOneWidget);
+    });
   });
 }

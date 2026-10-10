@@ -20,10 +20,19 @@ final DateTime kGoldenClock = DateTime(2026, 6, 15, 21, 30);
 /// Precache it on SETTLED screens so logo-bearing goldens capture it reliably
 /// (animated `settle: false` screens never render the logo, so skip them — pumping
 /// them again would only shift the animation a frame). Mirrors splash_page_golden_test.dart.
-Future<void> _settleWithBrandLogo(WidgetTester tester, bool settle) async {
-  if (!settle) return;
+///
+/// [brandLogo] does the same for an UNSETTLED screen that shows the logo - a
+/// spinner on the desktop onboarding card: the logo is precached and one frame
+/// pumped a fixed step on, so it renders and a spinner shows as an arc rather
+/// than the dot of its first frame - the same arc on every run.
+Future<void> _settleWithBrandLogo(WidgetTester tester, bool settle, {bool brandLogo = false}) async {
+  if (!settle && !brandLogo) return;
   await tester.runAsync(() => precacheImage(Assets.png.logo.provider(), tester.element(find.byType(MaterialApp))));
-  await tester.pumpAndSettle();
+  if (settle) {
+    await tester.pumpAndSettle();
+  } else {
+    await tester.pump(const Duration(milliseconds: 300));
+  }
 }
 
 /// Runs a curated golden for [name] in BOTH light and dark, on the fixed design
@@ -39,7 +48,7 @@ Future<void> _settleWithBrandLogo(WidgetTester tester, bool settle) async {
 /// goldens are the true MOBILE design. dpr 3 keeps the PNG crisp (1080x2337).
 /// Desktop/wide branches (`>= Constants.railBreakpoint`) get their own baselines via
 /// [goldenTestDesktop].
-void goldenTest(String name, Widget Function() build, {bool settle = true}) {
+void goldenTest(String name, Widget Function() build, {bool settle = true, bool brandLogo = false}) {
   group('$name golden', () {
     setUpAll(loadNoxFonts);
     for (final entry in const <(ThemeMode, String)>[(ThemeMode.light, 'light'), (ThemeMode.dark, 'dark')]) {
@@ -55,7 +64,7 @@ void goldenTest(String name, Widget Function() build, {bool settle = true}) {
           tester.view.resetPhysicalSize();
         });
         await pumpApp(tester, build(), themeMode: mode, settle: settle);
-        await _settleWithBrandLogo(tester, settle);
+        await _settleWithBrandLogo(tester, settle, brandLogo: brandLogo);
         await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/${name}_$suffix.png'));
       });
     }
@@ -77,7 +86,7 @@ const Size kDesktopGoldenSize = Size(1280, 800);
 /// surface (spacing → 1.2 ceiling, fonts → 1.0 ceiling), so the baseline reflects
 /// the real desktop rendering, not an up-scaled phone. dpr 2 mirrors a Retina
 /// display and keeps glyphs crisp. [settle] = false for animated content.
-void goldenTestDesktop(String name, Widget Function() build, {bool settle = true, Size size = kDesktopGoldenSize}) {
+void goldenTestDesktop(String name, Widget Function() build, {bool settle = true, Size size = kDesktopGoldenSize, bool brandLogo = false}) {
   group('$name desktop golden', () {
     setUpAll(loadNoxFonts);
     for (final entry in const <(ThemeMode, String)>[(ThemeMode.light, 'light'), (ThemeMode.dark, 'dark')]) {
@@ -93,7 +102,7 @@ void goldenTestDesktop(String name, Widget Function() build, {bool settle = true
           tester.view.resetPhysicalSize();
         });
         await pumpApp(tester, build(), themeMode: mode, settle: settle);
-        await _settleWithBrandLogo(tester, settle);
+        await _settleWithBrandLogo(tester, settle, brandLogo: brandLogo);
         await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/${name}_desktop_$suffix.png'));
       });
     }

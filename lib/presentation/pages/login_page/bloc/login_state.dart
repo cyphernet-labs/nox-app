@@ -27,6 +27,10 @@ enum LoginStatus {
 
   /// A readable link: on to the connection screen (phase 045).
   navConnect,
+
+  /// A wait for approval the app was closed in, still within its time: on to
+  /// the connection screen, which goes on with it (phase 046, FR-011).
+  navResume,
   navNewId,
   navRegistered,
   navFatal,
@@ -36,8 +40,14 @@ enum LoginStatus {
 abstract class LoginState with _$LoginState {
   const LoginState._();
 
-  const factory LoginState({@Default('') String id, @Default(LoginStatus.idle) LoginStatus status, @Default(false) bool canPaste}) =
-      _LoginState;
+  const factory LoginState({
+    @Default('') String id,
+    @Default(LoginStatus.idle) LoginStatus status,
+    @Default(false) bool canPaste,
+
+    /// The wait [LoginStatus.navResume] goes on with.
+    PendingPairing? resume,
+  }) = _LoginState;
 
   bool get isLoading => status == LoginStatus.loading;
 

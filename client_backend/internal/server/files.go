@@ -290,29 +290,49 @@ func (c *client) handleChatFiles(cmd protocol.Command) {
 //
 // Asked BEFORE the token is looked at, so a stranger who somehow holds one can
 // neither spend it nor learn whether it is live. The key is looked up on every
-// request, not once per connection: a device revoked while its connection is
-// still open loses its transfers with the row, exactly as it loses its socket.
+// request, not once per connection, so a request on a connection that outlived
+// its device's revocation is refused.
+//
+// An admitted transfer stays registered under its key until the handler calls
+// done, and revoking the device cuts it there and then (dropDevice): a
+// transfer has no time limit, and a lost phone halfway through a download
+// would otherwise go on reading for as long as it liked. It is registered
+// BEFORE the key is looked up, and the order is what closes the gap between
+// the two. A revocation deletes the row and only then walks the registry, so
+// either the walk finds this transfer and cuts it, or the walk came first -
+// and the deletion before it, which the lookup then sees.
 //
 // 401 for a stranger, and still 404 for a bad token from a paired device: the
 // 404 is how a client of 043 knows to ask for a new pass, and that must not
 // change. A store that cannot answer is a 500 - the device did nothing wrong.
-func (s *Server) admitTransfer(w http.ResponseWriter, r *http.Request) bool {
-	peer, ok := channelPeerFrom(r.Context())
+//
+// A 401 ends the connection (endWithAnswer). The door has ended a stranger's
+// already; a 401 that is still to be decided here is a device revoked between
+// the door's question and this one, whose connection would otherwise be kept
+// for its next request.
+func (s *Server) admitTransfer(w http.ResponseWriter, r *http.Request) (done func(), ok bool) {
+	conn, ok := channelConnFrom(r.Context())
 	if !ok {
+		endWithAnswer(w, r)
 		http.Error(w, "the connection proved no device key", http.StatusUnauthorized)
-		return false
+		return nil, false
 	}
-	_, paired, err := s.store.DeviceOwner(r.Context(), peer.deviceKey())
+	key := conn.peer.deviceKey()
+	done = s.trackTransfer(key, conn)
+	_, paired, err := s.store.DeviceOwner(r.Context(), key)
 	if err != nil {
+		done()
 		s.logger.Error("transfer device lookup failed", "err", err)
 		http.Error(w, "storage failure", http.StatusInternalServerError)
-		return false
+		return nil, false
 	}
 	if !paired {
+		done()
+		endWithAnswer(w, r)
 		http.Error(w, "the connection's device is not paired", http.StatusUnauthorized)
-		return false
+		return nil, false
 	}
-	return true
+	return done, true
 }
 
 // handlePutFile receives attachment bytes for a one-shot upload token
@@ -322,9 +342,11 @@ func (s *Server) admitTransfer(w http.ResponseWriter, r *http.Request) bool {
 // to continue from. All token failures are 404 alike: existence is not
 // disclosed to guessers.
 func (s *Server) handlePutFile(w http.ResponseWriter, r *http.Request) {
-	if !s.admitTransfer(w, r) {
+	done, ok := s.admitTransfer(w, r)
+	if !ok {
 		return
 	}
+	defer done()
 	fileID, offset, ok := s.tokens.consume(r.PathValue("token"), opUpload)
 	if !ok {
 		http.NotFound(w, r)
@@ -700,9 +722,11 @@ func (s *stallWriter) finish() {
 // the client continues with Range from what it has and If-Range with the
 // Last-Modified of its first response (contract §7).
 func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
-	if !s.admitTransfer(w, r) {
+	done, ok := s.admitTransfer(w, r)
+	if !ok {
 		return
 	}
+	defer done()
 	// The mux routes HEAD through GET patterns; a HEAD would burn the
 	// one-shot token without delivering a byte (an accidental curl -I
 	// would kill the link). Reject it before consuming.

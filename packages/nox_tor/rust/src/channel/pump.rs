@@ -4,9 +4,14 @@
 //! stops reading TLS at the window and reads again on `nox_chan_ack`, so a
 //! listener that pauses its stream pauses the server as well. Outbound, a write
 //! is copied into a queue the writer drains into TLS; once a write left more
-//! than WINDOW queued, Dart pauses its source until WRITABLE, sent when the
-//! queue is down to half. Without the two, a large file would pile up in the
-//! memory of whichever side cannot keep up.
+//! than WINDOW queued, Dart pauses its source until WRITABLE, sent as soon as
+//! the queue is back within the window. Without the two, a large file would
+//! pile up in the memory of whichever side cannot keep up.
+//!
+//! WRITABLE comes back after about one chunk drained, not after half the
+//! window: what Dart writes next is what moves an upload's progress, and the
+//! app ends a transfer whose progress stands still for 45 s. Held to half a
+//! window, a path draining at 11 KiB/s - Tor on a bad day - would read as dead.
 //!
 //! Both loops run in the channel's one driver task, so a channel's events come
 //! from one place at a time.
@@ -185,7 +190,7 @@ impl Pump {
         let mut out = lock(&self.outbound);
         out.queued -= len;
         out.written += len as u64;
-        if out.writable_owed && out.queued <= WINDOW / 2 {
+        if out.writable_owed && out.queued <= WINDOW {
             out.writable_owed = false;
             return true;
         }
@@ -320,12 +325,17 @@ mod tests {
         assert_eq!(pump.write(&vec![2u8; WINDOW]), (WINDOW + 1000) as i64);
         assert!(lock(&pump.outbound).writable_owed);
 
-        // Down to just above half: not yet.
-        assert!(!pump.wrote(WINDOW / 2));
+        // Down to just above the window: not yet.
         assert!(!pump.wrote(999));
-        // At half: once, and only once.
+        // Back within it: once, and only once - a chunk later, not half a
+        // window later.
         assert!(pump.wrote(1));
         assert!(!pump.wrote(1));
+        assert!(!pump.wrote(WINDOW / 2));
+
+        // Past the window again: owed again.
+        assert!(pump.write(&vec![3u8; WINDOW]) > WINDOW as i64);
+        assert!(lock(&pump.outbound).writable_owed);
     }
 
     #[test]

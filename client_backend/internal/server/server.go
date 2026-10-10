@@ -4,6 +4,7 @@
 package server
 
 import (
+	"container/list"
 	"context"
 	"crypto/rand"
 	"database/sql"
@@ -48,6 +49,18 @@ const (
 	// readHeaderTimeout bounds the request headers that follow the channel
 	// check on the main port.
 	readHeaderTimeout = slowPathTimeout
+	// defaultIdleTimeout bounds how long a connection kept for its next HTTP
+	// request may wait for it. Only a paired device's connection is kept - a
+	// stranger's ends with its answer (limitStrangers) - but a device can be
+	// revoked while its connection sits idle, and without a limit that
+	// connection would stay for as long as its holder liked. Well above the
+	// 15 s after which dart:io's client lets an idle connection go by default,
+	// so the server never closes one the app still means to use.
+	defaultIdleTimeout = 2 * time.Minute
+	// defaultBodyTimeout bounds a request's body where nothing of ours reads
+	// it (boundRequestBody): the slow path's budget, like the headers before
+	// it.
+	defaultBodyTimeout = slowPathTimeout
 	// pageReadHeaderTimeout is the service page's: a browser on this same
 	// machine, never a path through Tor.
 	pageReadHeaderTimeout = 5 * time.Second
@@ -90,6 +103,16 @@ type Server struct {
 	// channelTimeout is the budget for TLS and the channel check together
 	// (044). A field so tests can scale it.
 	channelTimeout time.Duration
+	// idleTimeout is the main port's http.Server.IdleTimeout. A field so tests
+	// can scale it.
+	idleTimeout time.Duration
+	// bodyTimeout bounds a request's body where nothing of ours reads it
+	// (boundRequestBody). A field so tests can scale it.
+	bodyTimeout time.Duration
+	// maxUnpaired and unpairedTimeout bound the /ws connections of keys
+	// nobody paired (unpaired.go). Fields so tests can scale them.
+	maxUnpaired     int
+	unpairedTimeout time.Duration
 
 	// addrs is the current address snapshot. After startup only the watcher
 	// writes it; greetings read it.
@@ -114,6 +137,11 @@ type Server struct {
 	// part became its file and before the database hears of it - the window a
 	// client hanging up, a continuation or a crash lands in. Nil outside tests.
 	afterFinalize func(fileID string)
+	// And in pairing (046): right after `pair` found its request waiting and
+	// before the connection's wait takes hold - the window an Allow, a Deny,
+	// a cancel or the sweep can close the request in with nobody waiting on
+	// it yet. Nil outside tests.
+	beforeWait func(requestID string)
 	// What the service page shows about the process itself. Set once at
 	// startup: the schema version the migrator reported, the moment this
 	// process began. A person who closed that terminal has no other way to it.
@@ -122,29 +150,60 @@ type Server struct {
 	// addrWarnings are the start parameters that were not applied (045). Set
 	// once at startup before anything serves, read by the page after.
 	addrWarnings []addressWarning
-	// formToken is what the service page's Set forms carry and POST
-	// /addresses checks: 32 random bytes per process, hex. A page from another
-	// site cannot read it, so it cannot forge the form even from this
-	// machine's own browser.
+	// formToken is what the service page's forms carry - Set, and the link
+	// buttons - and what POST /addresses and POST /link check: 32 random bytes
+	// per process, hex. A page from another site cannot read it, so it cannot
+	// forge the form even from this machine's own browser.
 	formToken string
 
-	// claim guards the one claim link this process ever hands out.
-	claim      sync.Mutex
-	claimToken string
+	// requestSweep is how often the sweeper closes pairing requests whose time
+	// ran out (046). A field so tests can scale it.
+	requestSweep time.Duration
 
 	// kick wakes the event dispatcher after a committed mutation; capacity 1
 	// coalesces bursts (the dispatcher drains the log until it is current).
 	kick chan struct{}
 
-	// mu guards conns; wg tracks connection handlers so shutdown can wait
-	// for hijacked connections. Infrastructure-only synchronization
-	// (ws-rest-patterns §5); business state stays goroutine-owned.
+	// mu guards conns, transfers, unpaired and waits; wg tracks connection
+	// handlers so shutdown can wait for hijacked connections.
+	// Infrastructure-only synchronization (ws-rest-patterns §5); business
+	// state stays goroutine-owned.
 	mu    sync.Mutex
 	conns map[*client]struct{}
+	// transfers holds the file transfers under way. Each runs on a connection
+	// of its own since 044, which closing a device's socket does not touch, so
+	// a revocation walks this set beside conns (dropDevice).
+	transfers map[*transfer]struct{}
+	// unpaired holds the connections in conns whose key no device row named
+	// when they connected - strangers, who may only pair - oldest first, but
+	// for those waiting on a pairing request (waits) (unpaired.go). Under mu
+	// with conns: a newcomer's handler takes the oldest out to make room, a
+	// request closing on another goroutine puts its waiting connection back,
+	// and each one's deadline, on a timer's goroutine, takes it out if it is
+	// still there. unpairedCut and unpairedWarned space the warning about the
+	// ones taken out to make room.
+	unpaired       *list.List
+	unpairedCut    int
+	unpairedWarned time.Time
+	// waits holds, by request id, the connection waiting on each pairing
+	// request an invite opened (046): the one that presented it last. Such a
+	// connection has left unpaired - held to neither of its limits while the
+	// request waits - and its request's end, by whoever brings it, finds it
+	// here. Under mu with conns, for the same reasons as unpaired.
+	waits map[string]*client
 	wg    sync.WaitGroup
 }
 
+// transfer is one /files request under way: the device key its connection
+// proved, and that connection.
+type transfer struct {
+	deviceKey string
+	conn      *channelConn
+}
+
 // New builds a Server over an opened store, a running hub and a blob store.
+// Its log goes through the scrubbing handler whatever logger it is handed
+// (logscrub.go).
 func New(cfg config.Config, st *store.Store, h *hub.Hub, bl *blob.Store, logger *slog.Logger) *Server {
 	return &Server{
 		cfg:              cfg,
@@ -152,7 +211,7 @@ func New(cfg config.Config, st *store.Store, h *hub.Hub, bl *blob.Store, logger 
 		hub:              h,
 		blob:             bl,
 		tokens:           newTokenStore(),
-		logger:           logger,
+		logger:           scrubbedLogger(logger),
 		writers:          newUploadWriters(),
 		stallTimeout:     defaultStallTimeout,
 		checkpointBytes:  defaultCheckpointBytes,
@@ -161,14 +220,22 @@ func New(cfg config.Config, st *store.Store, h *hub.Hub, bl *blob.Store, logger 
 		pingInterval:     defaultPingInterval,
 		writeTimeout:     defaultWriteTimeout,
 		channelTimeout:   defaultChannelTimeout,
+		idleTimeout:      defaultIdleTimeout,
+		bodyTimeout:      defaultBodyTimeout,
+		maxUnpaired:      defaultMaxUnpaired,
+		unpairedTimeout:  defaultUnpairedTimeout,
 		addrKick:         make(chan struct{}, 1),
 		addressPoll:      defaultAddressPoll,
 		listIPs:          usableIPs,
 		resolveHost:      resolveHost,
 		startedAt:        time.Now(),
 		formToken:        newFormToken(),
+		requestSweep:     defaultRequestSweep,
 		kick:             make(chan struct{}, 1),
 		conns:            make(map[*client]struct{}),
+		transfers:        make(map[*transfer]struct{}),
+		unpaired:         list.New(),
+		waits:            make(map[string]*client),
 	}
 }
 
@@ -242,12 +309,35 @@ func (s *Server) runDispatcher(ctx context.Context) error {
 // the WebSocket and the file bytes, and nothing else. /health lives on the
 // service page's loopback listener (044): the main port answers nobody who has
 // not proved a key, and a probe that has not cannot ask it anything.
+//
+// Every request passes the door first (limitStrangers), unmatched ones
+// included: the 404 and 405 the mux writes end a stranger's connection like
+// any other answer.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /ws", s.handleWS)
 	mux.HandleFunc("PUT /files/{token}", s.handlePutFile)
 	mux.HandleFunc("GET /files/{token}", s.handleGetFile)
-	return s.logRequests(mux)
+	return s.logRequests(s.limitStrangers(mux))
+}
+
+// configureMain sets what the main port's http.Server holds a connection to
+// once it passed the channel: the connection - and the key it proved - in
+// every request's context; the slow path's 30 s for a request's headers, since
+// a connection from tor looks like any other (045), and bodyTimeout - the same
+// 30 s - for a body nothing of ours reads (boundRequestBody); and idleTimeout
+// between two requests. One place, so the test stack serves exactly what Run
+// serves.
+//
+// "OPTIONS *" goes to the handler like any other request. Answered by net/http
+// itself it would never reach the door, and a stranger could keep its
+// connection by asking it again within each idle timeout.
+func (s *Server) configureMain(hs *http.Server) {
+	hs.ConnContext = withChannelPeer
+	hs.ConnState = s.boundRequestBody
+	hs.ReadHeaderTimeout = readHeaderTimeout
+	hs.IdleTimeout = s.idleTimeout
+	hs.DisableGeneralOptionsHandler = true
 }
 
 // CloseConnections force-closes every live WebSocket with the going-away
@@ -289,21 +379,43 @@ func (s *Server) WaitConnections(ctx context.Context) error {
 	}
 }
 
-// dropDevice cuts off every live connection authenticated with a revoked key,
-// and tells each one why before the socket closes.
+// dropDevice cuts off every live connection authenticated with a revoked key:
+// its sockets, each told why before it closes, and its file transfers under
+// way, cut without a word - a transfer has no frame to carry a reason on, and
+// the socket carries it.
 //
 // Immediately, not on the device's next attempt: a sold tablet would otherwise
 // keep reading the conversation for as long as it stays online, which is the
-// whole thing revocation exists to stop.
+// whole thing revocation exists to stop. For a transfer that is no figure of
+// speech: nothing but silence ends one (043), so a download already under way
+// would go on for as long as the tablet kept reading it.
+//
+// The transfers go first. Cutting one only closes a socket and never waits,
+// while telling a socket why can wait on that connection's full queue.
 func (s *Server) dropDevice(deviceKey string) {
 	s.mu.Lock()
 	doomed := make([]*client, 0, 1)
 	for c := range s.conns {
 		if c.deviceKey == deviceKey {
 			doomed = append(doomed, c)
+			// A connection on its way out holds no place and waits on
+			// nothing (unpaired.go): its goodbye can take seconds, and a
+			// request of the revoked device closing right after this must
+			// not put it back among the strangers, where it would push out
+			// one of them.
+			s.letGoLocked(c)
+		}
+	}
+	var cut []*channelConn
+	for tr := range s.transfers {
+		if tr.deviceKey == deviceKey {
+			cut = append(cut, tr.conn)
 		}
 	}
 	s.mu.Unlock()
+	for _, conn := range cut {
+		conn.cut()
+	}
 	payload, err := json.Marshal(map[string]string{"device_key": deviceKey})
 	if err != nil {
 		// Cannot fail for a map of strings, but the connections still have to
@@ -354,8 +466,23 @@ func (s *Server) refreshLabel(userID, label string, origin *client) {
 }
 
 // announcePaired tells a person's OTHER live connections that a device has just
-// been added, so an open device list refreshes itself instead of showing a
-// stale one until somebody leaves the screen and comes back.
+// been added through `pair`, so an open device list refreshes itself instead of
+// showing a stale one until somebody leaves the screen and comes back.
+//
+// The connection it came from is the RECEIVER, not a parameter, and that is
+// deliberate: excluding the wrong one is then unrepresentable. It cannot be
+// asked through a socket - a device that is pairing has not greeted and so has
+// no identity to match on - and it is still live: a greeting that fails on the
+// journal id or the cursor leaves identity.UserID written and helloDone false,
+// dispatch still admits `pair` on that connection, and without the exclusion
+// the device would be told about its own pairing.
+func (origin *client) announcePaired(userID string) {
+	origin.srv.announceDevicesChanged(userID, origin)
+}
+
+// announceDevicesChanged sends device.paired to every live connection of one
+// person but except (nil for none): the set of devices changed, and the
+// receiver re-reads device.list.
 //
 // Shaped after refreshLabel and NOT after dropDevice: the two answer different
 // questions. dropDevice looks for the connections holding ONE KEY and closes
@@ -364,9 +491,7 @@ func (s *Server) refreshLabel(userID, label string, origin *client) {
 //
 // Collected under s.mu and sent outside it, for refreshLabel's reason:
 // sendFrame writes to a bounded queue, and a full one under the registry lock
-// would hold up every other connection on the server. (refreshLabel says "of
-// every other person", which this server has not had since 037 - one machine,
-// one person - but the lock is shared by every connection all the same.)
+// would hold up every other connection on the server.
 //
 // The loop is sequential and send blocks, so a recipient whose queue is full
 // holds up the recipients AFTER it, in an order map iteration does not fix. It
@@ -377,43 +502,15 @@ func (s *Server) refreshLabel(userID, label string, origin *client) {
 // it would change delivery for device.revoked too, which deserves its own
 // decision rather than arriving as a side effect of this one.
 //
-// The connection it came from is the RECEIVER, not a parameter, and that is
-// deliberate: excluding the wrong one is then unrepresentable. refreshLabel
-// takes an origin because its caller could legitimately pass a different one;
-// this caller never can - and no test could catch it passing nil, because the
-// pairing connection has no identity to match on in the ordinary case, so the
-// mistake would look correct through every socket in the suite.
-//
-// The exclusion is live, not a statement of intent. It is easy to read
-// the code as one - handlePair refuses an already-greeted connection, so the
-// pairing device usually has no identity to match on - but "greeted" and "has
-// an identity" are two different marks, and handleSessionHello sets the second
-// several steps before the first: a greeting that fails on the journal id or
-// the cursor leaves identity.UserID written and helloDone false, and dispatch
-// still admits `pair` on that connection. Then it DOES match, and without this
-// the device would be told about its own pairing.
-//
-// Inherited with the shape: a connection in the MIDDLE of greeting also has an
+// Inherited with the shape: a connection in the MIDDLE of greeting has an
 // empty identity.UserID, because the greeting reads the person from the store
 // and writes it to the connection a few lines later. Such a connection misses
 // this event - and reads the list when its screen opens, which is where every
 // device that was offline ends up anyway. It is the same window the rename
 // carries (see client_backend/CLAUDE.md), and it closes here when it closes
 // there.
-func (origin *client) announcePaired(userID string) {
-	s := origin.srv
-	s.mu.Lock()
-	notify := make([]*client, 0, 1)
-	for c := range s.conns {
-		if c.identity.UserID == userID && c != origin {
-			notify = append(notify, c)
-		}
-	}
-	s.mu.Unlock()
-
-	if len(notify) == 0 {
-		return
-	}
+func (s *Server) announceDevicesChanged(userID string, except *client) {
+	notify := s.connectionsWhere(func(c *client) bool { return c.identity.UserID == userID && c != except })
 	// Empty on purpose (contract §8A): the event says the set of devices
 	// changed, not how, and the receiver re-reads device.list. A device key here
 	// would be a public key on a frame nobody reads it from, and a spent token
@@ -440,9 +537,9 @@ func (s *Server) setIdentity(c *client, id store.Identity) {
 // currentIdentity reads back the person this connection speaks as.
 //
 // Needed only where the LABEL is consumed: refreshLabel rewrites it from
-// another goroutine, while user_id and the ownership flag are written once by
-// the read goroutine itself and never change. The name matters because it is
-// frozen into message history at send time.
+// another goroutine, while user_id is written once by the read goroutine itself
+// and never changes. The name matters because it is frozen into message history
+// at send time.
 func (s *Server) currentIdentity(c *client) store.Identity {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -455,10 +552,28 @@ func (s *Server) track(c *client) {
 	s.mu.Unlock()
 }
 
+// untrack takes c out of the registry, and out of a stranger's limits if it was
+// still held to them: a connection that is gone holds no place and waits on
+// nothing.
 func (s *Server) untrack(c *client) {
 	s.mu.Lock()
 	delete(s.conns, c)
+	s.letGoLocked(c)
 	s.mu.Unlock()
+}
+
+// trackTransfer registers a transfer under the device key its connection
+// proved, until the returned func takes it out again.
+func (s *Server) trackTransfer(deviceKey string, conn *channelConn) (untrack func()) {
+	tr := &transfer{deviceKey: deviceKey, conn: conn}
+	s.mu.Lock()
+	s.transfers[tr] = struct{}{}
+	s.mu.Unlock()
+	return func() {
+		s.mu.Lock()
+		delete(s.transfers, tr)
+		s.mu.Unlock()
+	}
 }
 
 func (s *Server) logRequests(next http.Handler) http.Handler {
@@ -485,6 +600,10 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 // and the HTTP server, and shuts everything down in order on ctx
 // cancellation. It returns when the process is fully stopped.
 func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.Logger) error {
+	// Every line of the process goes through the scrubbing handler, from the
+	// first one on: the address parameters are applied below, before anything
+	// listens (FR-022).
+	logger = scrubbedLogger(logger)
 	dbs, err := db.Open(cfg.DBPath)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
@@ -513,14 +632,6 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 
 	h := hub.New()
 	st := store.New(dbs.Read, dbs.Write)
-	// One read, one snapshot. The warning and the decision about printing a
-	// claim link are the same fact, and asking for it twice is how the two
-	// start disagreeing - an operator getting a link with no warning, or a
-	// warning with no link.
-	ownership, err := st.ReadOwnershipState(ctx)
-	if err != nil {
-		return fmt.Errorf("read ownership state: %w", err)
-	}
 	// The machine's own identity is settled BEFORE the journal is touched.
 	//
 	// EnsureServerIdentity refuses to mint a key for a store that already holds
@@ -543,29 +654,20 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 	if err != nil {
 		return fmt.Errorf("read the server key: %w", err)
 	}
-	// The address parameters land before anything is announced, so the claim
-	// link printed next already names them, and before any listener opens, so
-	// the first greeting does too (045, FR-003). A malformed one is a warning,
-	// never a reason to stay down.
+	// The address parameters land before any listener opens, so the first
+	// greeting and the first link the page or `noxd link` hands out already
+	// name them (045, FR-003). A malformed one is a warning, never a reason to
+	// stay down.
 	addrWarnings, err := applyAddressParams(ctx, st, cfg, logger)
 	if err != nil {
 		return err
 	}
-	stored, err := st.Addresses(ctx)
-	if err != nil {
-		return fmt.Errorf("read addresses: %w", err)
-	}
-	claimToken, err := announceClaim(ctx, st, cfg.Addr, ownership, machine, configured(stored), logger)
-	if err != nil {
+	if err := sayHowToPair(ctx, st, cfg, logger); err != nil {
 		return err
 	}
 	srv := New(cfg, st, h, bl, logger)
 	srv.schemaVersion = version
 	srv.addrWarnings = addrWarnings
-	// The page hands out the SAME right the terminal just printed. A second
-	// token would be a second unrevocable door, and the claim token has no
-	// expiry to close it.
-	srv.seedClaimToken(claimToken)
 
 	// Startup sweep before endpoints open (research R10): abandoned uploads
 	// older than a day are the only garbage under indefinite retention.
@@ -591,10 +693,13 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 	// like one from the next room and is held to the same rules - and to the
 	// same slow-path timeouts.
 	httpServer := &http.Server{
-		Handler:           srv.Handler(),
-		ReadHeaderTimeout: readHeaderTimeout,
-		ConnContext:       withChannelPeer,
+		Handler: srv.Handler(),
+		// net/http's own complaints - a handler's panic value above all - go
+		// through the same handler as every other line, scrubbed, instead of
+		// straight to stderr.
+		ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}
+	srv.configureMain(httpServer)
 	httpServer.RegisterOnShutdown(srv.CloseConnections)
 
 	// The first address snapshot is taken before any listener opens, so the
@@ -630,12 +735,16 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 			// The config check catches the mistake when it is made; this is the
 			// guarantee. A name can resolve to loopback at parse time and
 			// somewhere else at bind time, and the difference between those two
-			// moments is a claim link on a network.
+			// moments is a machine link on a network.
 			_ = statusListener.Close()
 			return err
 		}
 		if statusListener != nil {
-			statusServer = &http.Server{Handler: srv.StatusHandler(), ReadHeaderTimeout: pageReadHeaderTimeout}
+			statusServer = &http.Server{
+				Handler:           srv.StatusHandler(),
+				ReadHeaderTimeout: pageReadHeaderTimeout,
+				ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelError),
+			}
 		}
 	}
 
@@ -644,9 +753,12 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 	// The watcher gets a context of its OWN, like the hub: it sends to the
 	// connections that are still being told goodbye, and it reads the
 	// database, so it stops after the drain and before the database closes
-	// (invariant 9) rather than the moment shutdown begins.
+	// (invariant 9) rather than the moment shutdown begins. The request sweeper
+	// (046) does both as well, and stops beside it.
 	watchCtx, stopWatch := context.WithCancel(context.Background())
 	defer stopWatch()
+	sweepCtx, stopSweep := context.WithCancel(context.Background())
+	defer stopSweep()
 
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
@@ -658,6 +770,10 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 	})
 	g.Go(func() error {
 		srv.runAddressWatcher(watchCtx)
+		return nil
+	})
+	g.Go(func() error {
+		srv.runRequestSweeper(sweepCtx)
 		return nil
 	})
 	g.Go(func() error {
@@ -677,11 +793,10 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 	})
 	if statusServer != nil {
 		g.Go(func() error {
-			// Printed, or nobody learns it exists. Next to the claim link,
-			// because the two are read at the same moment.
-			// The scheme is stated on purpose: the main listener is https now,
-			// and an operator who assumes the page followed it gets a browser
-			// error instead of a claim link.
+			// Printed, or nobody learns it exists: it is where the link for a
+			// new device is. The scheme is stated on purpose: the main listener
+			// is TLS, and an operator who assumes the page followed it gets a
+			// browser error instead of a pairing code.
 			logger.Info("service page for this machine only, plain HTTP by design",
 				"url", "http://"+statusListener.Addr().String(), "tls", false)
 			if err := statusServer.Serve(statusListener); !errors.Is(err, http.ErrServerClosed) {
@@ -725,9 +840,10 @@ func Run(ctx context.Context, cfg config.Config, migrations fs.FS, logger *slog.
 			logger.Warn("connections still draining at shutdown deadline", "err", waitErr)
 		}
 		cancelDrain()
-		// Then the watcher, and the hub; Run returns - the errgroup waits for
-		// both before the database closes.
+		// Then the watcher, the request sweeper and the hub; Run returns - the
+		// errgroup waits for all three before the database closes.
 		stopWatch()
+		stopSweep()
 		stopHub()
 		if err != nil {
 			return fmt.Errorf("shutdown: %w", err)
@@ -761,11 +877,11 @@ func assertIdentitySchema(ctx context.Context, read *sql.DB, migrations fs.FS, d
 	var present int
 	err := read.QueryRowContext(ctx,
 		"SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name IN "+
-			"('users', 'devices', 'journal', 'server_identity', 'pair_tokens')").Scan(&present)
+			"('users', 'devices', 'journal', 'server_identity', 'pair_tokens', 'pair_requests')").Scan(&present)
 	if err != nil {
 		return fmt.Errorf("inspect schema: %w", err)
 	}
-	if present != 5 {
+	if present != 6 {
 		return staleSchemaError(dbPath)
 	}
 	want, err := db.Fingerprint(migrations)
@@ -789,68 +905,33 @@ func staleSchemaError(dbPath string) error {
 		dbPath, dbPath)
 }
 
-// announceClaim mints the server's own key on first start and, while nobody
-// owns this server yet, prints the pairing link.
+// sayHowToPair tells the operator, when no device can reach this machine, where
+// a link for one is - and never the link itself (046, FR-005; 045, FR-022).
 //
-// The link goes to the log, and since 035 to the service page as well - which
-// is why that page binds to loopback and refuses to start anywhere else. What
-// the pre-035 rule guarded against (a page serving the QR to everyone on the
-// network while the transport is not TLS) is answered by the bind, checked on
-// the socket rather than on the address somebody typed. It is reprinted on
-// every start until somebody claims the server, because a terminal scrolls and
-// an unclaimed server has to stay claimable.
-//
-// This is a place a token is deliberately written to output. It is the claim
-// mechanism itself, and it is only visible to whoever can already read
-// the machine's logs - which is whoever could take the database anyway. The
-// link is base64, so an onion address it names stays packed inside it and
-// never reaches the log as text.
-func announceClaim(
-	ctx context.Context,
-	st *store.Store,
-	addr string,
-	ownership store.OwnershipState,
-	machine store.ServerIdentity,
-	conf configuredAddresses,
-	logger *slog.Logger,
-) (string, error) {
-	// Silent while a device can still reach this server. Not "while an owner is
-	// recorded": a store that lost its ownership marker still has a person who
-	// can get in, and printing a claim link there offers their machine to
-	// whoever reads the log.
-	//
-	// The answer comes from the snapshot startup already took: re-deriving it
-	// here would evaluate the same rule twice against a store another
-	// connection could have changed in between.
-	if ownership.OwnerCanGetIn {
-		return "", nil
-	}
-	token, err := st.IssueClaimToken(ctx, time.Now().Unix())
+// The log is the one place a pairing link must not go: it is kept, copied,
+// shipped to collectors and read by whoever reads logs, while the link is a way
+// in for ten minutes - from anywhere, since a device can pair through the onion
+// service, whose key the link carries packed. The service page and `noxd link`
+// hand it out on this machine instead, and both are named here. Without the
+// page's listener there is no way to get a link at all - neither of them works
+// - and that is said loudly, because a machine with no device and no link
+// cannot be paired.
+func sayHowToPair(ctx context.Context, st *store.Store, cfg config.Config, logger *slog.Logger) error {
+	counts, err := st.CountEverything(ctx)
 	if err != nil {
-		return "", fmt.Errorf("issue claim token: %w", err)
+		return fmt.Errorf("count devices: %w", err)
 	}
-	// The same addresses every link carries (045): the public one first when
-	// it is set, the bind address, then the onion service when it is set - a
-	// claim through Tor is a claim like any other.
-	link, _, err := buildLink(machine.PublicKey, token, listenAddress(addr), conf)
-	if err != nil {
-		return "", fmt.Errorf("build pairing link: %w", err)
+	if counts.Devices > 0 {
+		return nil
 	}
-	// Three situations, and saying the wrong one tells the operator the wrong
-	// story about what is about to happen. The machine may never have been
-	// claimed; its owner may have run out of devices; or the ownership marker
-	// may be missing from a store that still holds a person and their whole
-	// conversation - in which case presenting this link signs the device in AS
-	// that person rather than making it the owner of an empty machine.
-	switch {
-	case ownership.Owned:
-		logger.Info("this server has an owner but no devices left - present this link in the app to get back in", "link", link)
-	case ownership.HasPerson:
-		logger.Info("this server holds a conversation but records no owner - present this link to sign in as the person it belongs to", "link", link)
-	default:
-		logger.Info("this server has no owner yet - present this link in the app to claim it", "link", link)
+	if cfg.StatusAddr == "" {
+		logger.Error("no device can reach this server, and the service page is off (-status-addr is empty) - " +
+			"neither the page nor `noxd link` can hand out a link to pair one; start it with -status-addr")
+		return nil
 	}
-	return token, nil
+	logger.Info("no device can reach this server yet - the service page shows a link to pair one, and `noxd link` prints it",
+		"page", "http://"+cfg.StatusAddr)
+	return nil
 }
 
 // assertLoopback refuses a service-page listener that ended up anywhere else.

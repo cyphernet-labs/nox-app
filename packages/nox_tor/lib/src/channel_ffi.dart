@@ -1,4 +1,5 @@
 import 'dart:ffi';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
@@ -8,24 +9,38 @@ import 'nox_tor_bindings.dart';
 
 /// The channels of this isolate over the native module.
 ///
-/// ONE event callback for every channel of the isolate, never closed: the
-/// module may call it at any moment until the last channel's CLOSED. It does
-/// not keep the isolate alive on its own. Statics are per isolate, so each
-/// isolate that opens channels gets its own callback and its own registry.
-final ChannelCore ffiChannelCore = ChannelCore(const FfiChannelAbi());
+/// The module posts every event of this isolate's channels to ONE native port
+/// of the isolate, never closed. It does not keep the isolate alive, and it
+/// dies with it - and then the module's posts are refused, and the module ends
+/// those channels itself. A function of the isolate's, which a
+/// `NativeCallable` would be, cannot be used for this: it is deleted with the
+/// isolate, and the VM aborts the process on the next call into it, while the
+/// module's channels outlive any isolate - a hot restart, an engine Android
+/// tears down on Back, leave them running in the same process.
+///
+/// Statics are per isolate, so each isolate that opens channels gets its own
+/// port and its own registry. The first thing each one does is end the
+/// channels an isolate before it left behind.
+final ChannelCore ffiChannelCore = _startCore();
 
-final NativeCallable<NoxChanEventNative> _events = NativeCallable<NoxChanEventNative>.listener(_dispatch)..keepIsolateAlive = false;
+ChannelCore _startCore() {
+  noxChanReap();
+  return ChannelCore(const FfiChannelAbi());
+}
 
-void _dispatch(int handle, int kind, Pointer<Uint8> data, int len, int code) {
-  Uint8List? bytes;
-  if ((kind == ChannelEvent.open || kind == ChannelEvent.data) && data != nullptr) {
-    // Copied out and freed at once: the module allocated it for this event
-    // alone, and Dart owns it from here - whether or not anybody still holds
-    // the channel it names.
-    bytes = len == 0 ? Uint8List(0) : Uint8List.fromList(data.asTypedList(len));
-    noxChanBufFree(data, len);
-  }
-  ffiChannelCore.deliver(handle, kind, bytes, code);
+final RawReceivePort _events = RawReceivePort(_dispatch, 'nox_chan events')..keepIsolateAlive = false;
+
+/// The header of an event message: handle (8), kind (4), code (4), in this
+/// machine's byte order; the bytes of an OPEN or a DATA follow.
+const int _header = 16;
+
+void _dispatch(Object? message) {
+  if (message is! Uint8List || message.length < _header) return;
+  final header = ByteData.sublistView(message, 0, _header);
+  final kind = header.getInt32(8, Endian.host);
+  if (kind == ChannelEvent.probe) return;
+  final bytes = kind == ChannelEvent.open || kind == ChannelEvent.data ? Uint8List.sublistView(message, _header) : null;
+  ffiChannelCore.deliver(header.getInt64(0, Endian.host), kind, bytes, header.getInt32(12, Endian.host));
 }
 
 /// [ChannelAbi] over `nox_chan_*`.
@@ -40,7 +55,7 @@ class FfiChannelAbi implements ChannelAbi {
     try {
       seed.asTypedList(32).setAll(0, deviceSeed);
       key.asTypedList(32).setAll(0, serverKey);
-      return noxChanOpen(targetKind, hostText, port, seed, key, timeoutMs, _events.nativeFunction);
+      return noxChanOpen(targetKind, hostText, port, seed, key, timeoutMs, NativeApi.postCObject, _events.sendPort.nativePort);
     } finally {
       // The seed is this device's private key: no copy of it outlives the
       // call. The module keeps its own, in a buffer it wipes.

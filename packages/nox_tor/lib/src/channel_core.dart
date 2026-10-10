@@ -5,6 +5,8 @@ import 'channel_types.dart';
 
 /// Event kinds of the C ABI (specs/044-secure-channel/contracts/ffi-channel.md).
 abstract final class ChannelEvent {
+  /// No event: the module asking whether this isolate is still there.
+  static const int probe = 0;
   static const int open = 1;
   static const int data = 2;
   static const int writable = 3;
@@ -40,7 +42,7 @@ abstract class ChannelAbi {
 
 /// The channels of one ABI: opens them and routes the module's events to the
 /// channel each one names. The native ABI has one per isolate; every event
-/// reaches it through [deliver], its buffer already copied out.
+/// reaches it through [deliver], read off the isolate's events port.
 class ChannelCore {
   ChannelCore(this._abi, {this.openGrace = const Duration(seconds: 5)});
 
@@ -87,9 +89,9 @@ class ChannelCore {
     return channel._opening.future;
   }
 
-  /// One event of the module for [handle]: [data] is the copy of an OPEN's or
-  /// a DATA's buffer, [code] the DRAINED ticket or the CLOSED kind. An event
-  /// for a handle this core does not hold is dropped.
+  /// One event of the module for [handle]: [data] is the bytes of an OPEN or a
+  /// DATA, [code] the DRAINED ticket or the CLOSED kind. An event for a handle
+  /// this core does not hold is dropped.
   void deliver(int handle, int kind, Uint8List? data, int code) {
     final channel = _channels[handle];
     if (channel == null) return;
@@ -310,8 +312,8 @@ final class _CoreChannel implements NoxChannel {
   }
 
   void _onWritable() {
-    // At most half a window is queued now. Overwritten by the next write.
-    _queued = channelWindowBytes ~/ 2;
+    // The queue is back within the window. Overwritten by the next write.
+    _queued = channelWindowBytes;
     final waiting = _writable;
     _writable = null;
     waiting?.complete();
